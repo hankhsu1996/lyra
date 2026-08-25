@@ -1,5 +1,6 @@
 #include "lyra/runtime/plusargs.hpp"
 
+#include <cstddef>
 #include <cstdint>
 #include <optional>
 #include <string>

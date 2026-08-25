@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <cstddef>
+#include <cstdint>
 #include <expected>
 #include <optional>
 #include <span>
@@ -148,8 +149,40 @@ auto BuildPrintValueItem(
   return mir::RuntimePrintValue(value, type, std::move(spec));
 }
 
+// The string LRM 21.2.1.5 `%m` names: the hierarchical name of the scope the
+// directive was written in. That scope is the innermost named block around it
+// when there is one (LRM 9.3.5), a task or function when the directive sits in
+// one (LRM 23.9), and the body's own scope otherwise. Each of those is a
+// runtime object that knows its own path, so the whole answer is asking the
+// object the frame's scope names -- or the enclosing object itself where the
+// scope owns none. A deferred caller ($strobe, an NBA) captures `self` along
+// with the rest of its operands, so a delayed fire still reads the issuing
+// scope's name.
 template <ExprLowerer Lowerer>
-auto BuildPrintItemFromDirective(
+auto BuildHierarchicalNameExpr(Lowerer& lowerer, const WalkFrame& frame)
+    -> mir::ExprId {
+  auto& unit = lowerer.Owner().Unit();
+  auto& block = *frame.current_block;
+  const mir::ExprId receiver_id =
+      frame.scope_name_borrowed_handle.has_value()
+          ? block.exprs.Add(BuildStructuralFieldAccessExpr(
+                frame, unit, mir::EnclosingHops{},
+                *frame.scope_name_borrowed_handle))
+          : block.exprs.Add(
+                MakeSelfRefExpr(frame, frame.current_class->self_pointer_type));
+  return block.exprs.Add(
+      mir::Expr{
+          .data =
+              mir::CallExpr{
+                  .callee =
+                      mir::Direct{
+                          .target = support::BuiltinFn::kHierarchicalPath},
+                  .arguments = {receiver_id}},
+          .type = unit.builtins.string});
+}
+
+template <ExprLowerer Lowerer>
+auto LowerPrintItemForDirective(
     Lowerer& lowerer, WalkFrame frame, const value::FormatDirective& directive,
     std::span<const hir::ExprId> args, std::size_t& value_index,
     diag::SourceSpan span) -> diag::Result<mir::RuntimePrintItem> {
@@ -157,33 +190,16 @@ auto BuildPrintItemFromDirective(
     case value::FormatDirective::Role::kLiteral:
       return mir::RuntimePrintLiteral{.text = directive.literal};
 
-    case value::FormatDirective::Role::kModulePath: {
-      // LRM 21.2.1.1: the hierarchical name of the enclosing scope. Reach it
-      // through `self`, the body's first binding -- the same receiver pattern
-      // every other scope-method call uses. A deferred caller ($strobe, NBA)
-      // captures `self` via the closure builder, so a delayed fire still reads
-      // the issuing scope's path. The directive takes no operand, so it leaves
-      // the operand cursor where it found it; its modifiers ride through the
-      // string-format spec like an ordinary `%s` argument.
-      auto& block = *frame.current_block;
-      const auto& builtins = lowerer.Owner().Unit().builtins;
-      const mir::ExprId self_id = block.exprs.Add(
-          MakeSelfRefExpr(frame, frame.current_class->self_pointer_type));
-      const mir::ExprId path_id = block.exprs.Add(
-          mir::Expr{
-              .data =
-                  mir::CallExpr{
-                      .callee =
-                          mir::Direct{
-                              .target = support::BuiltinFn::kHierarchicalPath},
-                      .arguments = {self_id}},
-              .type = builtins.string});
+    case value::FormatDirective::Role::kModulePath:
+      // The directive takes no operand, so it leaves the operand cursor where
+      // it found it; its modifiers ride through the string-format spec like an
+      // ordinary `%s` argument.
       return mir::RuntimePrintValue(
-          path_id, builtins.string,
+          BuildHierarchicalNameExpr(lowerer, frame),
+          lowerer.Owner().Unit().builtins.string,
           mir::FormatSpec(
               value::FormatKind::kString,
               ToMirFormatModifiers(directive.modifiers)));
-    }
 
     case value::FormatDirective::Role::kValue: {
       if (value_index >= args.size()) {
@@ -198,8 +214,7 @@ auto BuildPrintItemFromDirective(
               directive.kind, ToMirFormatModifiers(directive.modifiers)));
     }
   }
-  throw InternalError(
-      "BuildPrintItemFromDirective: unreachable directive role");
+  throw InternalError("LowerPrintItemForDirective: unreachable directive role");
 }
 
 // The format grammar is span-free so the runtime can share it (LRM 21.3.3
@@ -363,10 +378,10 @@ auto BuildRuntimePrintItemsFromCallArgs(
     ++cursor;
     auto value_index = cursor;
     for (const auto& directive : parsed.directives) {
-      auto item_or = BuildPrintItemFromDirective(
+      auto item_or = LowerPrintItemForDirective(
           lowerer, frame, directive, args, value_index, literal->span);
       if (!item_or) return std::unexpected(std::move(item_or.error()));
-      items.push_back(std::move(*item_or));
+      items.push_back(*std::move(item_or));
     }
     cursor = value_index;
   }
@@ -441,17 +456,7 @@ auto BuildRuntimeFormatCallExpr(
   // The hierarchical name a `%m` renders and the scope's time unit a `%t`
   // scales against are facts of the call site, not of the format text, so they
   // reach the parse as operands.
-  const mir::ExprId self_id = block.exprs.Add(
-      MakeSelfRefExpr(frame, frame.current_class->self_pointer_type));
-  const mir::ExprId path_id = block.exprs.Add(
-      mir::Expr{
-          .data =
-              mir::CallExpr{
-                  .callee =
-                      mir::Direct{
-                          .target = support::BuiltinFn::kHierarchicalPath},
-                  .arguments = {self_id}},
-          .type = unit.builtins.string});
+  const mir::ExprId path_id = BuildHierarchicalNameExpr(lowerer, frame);
 
   const mir::ExprId runtime_id =
       block.exprs.Add(BuildCurrentRuntimeCallExpr(lowerer.Owner()));

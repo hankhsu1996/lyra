@@ -66,17 +66,22 @@ auto LowerVariableDeclStmt(
   auto type_id_or =
       proc.Owner().InternType(sym.getType(), mapper.PointSpanOf(sym.location));
   if (!type_id_or) return std::unexpected(std::move(type_id_or.error()));
-  const auto local_id = proc.AddProceduralVar(
-      frame, *frame.current_procedural_body, sym, *type_id_or);
+  // The identity is minted before the initializer lowers, because the
+  // initializer is bound in the scope the declaration has already entered
+  // (`int x = x;` names this very declaration), so a reference inside it has to
+  // resolve to this identity.
+  auto& body = *frame.current_procedural_body;
+  const auto local_id = proc.DeclareProceduralVar(frame, body, sym);
   std::optional<hir::ExprId> init_id;
   if (const auto* init_expr = sym.getInitializer()) {
     auto init_or = proc.LowerExpr(*init_expr, frame);
     if (!init_or) return std::unexpected(std::move(init_or.error()));
     init_id = frame.Exprs().Add(*std::move(init_or));
   }
+  proc.DefineProceduralVar(body, local_id, sym, *type_id_or, init_id);
   return hir::Stmt{
       .label = std::nullopt,
-      .data = hir::VarDeclStmt{.var = local_id, .init = init_id},
+      .data = hir::VarDeclStmt{.var = local_id},
       .span = span};
 }
 

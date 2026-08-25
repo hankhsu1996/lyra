@@ -1,6 +1,7 @@
 #include "lyra/lowering/hir_to_mir/sensitivity_wait.hpp"
 
 #include <cstdint>
+#include <optional>
 #include <utility>
 #include <vector>
 
@@ -84,7 +85,7 @@ auto BuildTriggerExpr(
 
 }  // namespace
 
-auto MakeValueChangeWaitStmt(
+auto BuildValueChangeWaitStmt(
     mir::Block& target_block, const WalkFrame& frame,
     const StructuralScopeLowerer& lowerer,
     const std::vector<hir::SensitivityEntry>& sensitivity_list) -> mir::Stmt {

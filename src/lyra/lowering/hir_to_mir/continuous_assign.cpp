@@ -175,7 +175,7 @@ auto LowerContinuousAssign(
     return std::unexpected(std::move(stored.error()));
   }
 
-  body_block.AppendStmt(MakeValueChangeWaitStmt(
+  body_block.AppendStmt(BuildValueChangeWaitStmt(
       body_block, body_frame, lowerer, src.sensitivity_list));
 
   const mir::BlockId body_scope_id =

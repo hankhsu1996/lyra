@@ -1,5 +1,6 @@
 #include "lyra/lowering/hir_to_mir/expression/enum_method.hpp"
 
+#include <cstddef>
 #include <cstdint>
 #include <format>
 #include <optional>

@@ -1,6 +1,7 @@
 #include "lyra/hir/dump.hpp"
 
 #include <cstddef>
+#include <cstdint>
 #include <format>
 #include <optional>
 #include <string>
@@ -9,6 +10,7 @@
 #include <variant>
 #include <vector>
 
+#include "lyra/base/arena.hpp"
 #include "lyra/base/internal_error.hpp"
 #include "lyra/base/overloaded.hpp"
 #include "lyra/hir/binary_op.hpp"
@@ -16,6 +18,7 @@
 #include "lyra/hir/continuous_assign.hpp"
 #include "lyra/hir/expr.hpp"
 #include "lyra/hir/primary.hpp"
+#include "lyra/hir/procedural_scope.hpp"
 #include "lyra/hir/procedural_var.hpp"
 #include "lyra/hir/process.hpp"
 #include "lyra/hir/stmt.hpp"
@@ -43,6 +46,21 @@ auto ForkJoinModeLabel(JoinMode mode) -> std::string_view {
       return "join_none";
   }
   return "join";
+}
+
+auto ProceduralScopeKindLabel(ProceduralScopeKind kind) -> std::string_view {
+  switch (kind) {
+    case ProceduralScopeKind::kProcessRoot:
+      return "process-root";
+    case ProceduralScopeKind::kSubroutineRoot:
+      return "subroutine-root";
+    case ProceduralScopeKind::kBlock:
+      return "block";
+    case ProceduralScopeKind::kFork:
+      return "fork";
+  }
+  throw InternalError(
+      "ProceduralScopeKindLabel: unknown hir::ProceduralScopeKind");
 }
 
 auto FormatClassRef(const ClassRef& ref) -> std::string {
@@ -712,11 +730,12 @@ class HirDumper {
             },
             [](const TaggedPattern& t) -> std::string {
               if (!t.value_pattern.has_value()) {
-                return std::format("TaggedPattern member={}", t.member_index);
+                return std::format(
+                    "TaggedPattern member={}", t.member_index.value);
               }
               return std::format(
-                  "TaggedPattern member={} value=Pattern[{}]", t.member_index,
-                  t.value_pattern->value);
+                  "TaggedPattern member={} value=Pattern[{}]",
+                  t.member_index.value, t.value_pattern->value);
             },
             [](const StructurePattern& s) -> std::string {
               std::string fields;
@@ -940,10 +959,10 @@ class HirDumper {
               if (t.payload.has_value()) {
                 return std::format(
                     "TaggedUnionExpr member={} payload=Expr[{}]",
-                    t.member_index, t.payload->value);
+                    t.member_index.value, t.payload->value);
               }
               return std::format(
-                  "TaggedUnionExpr member={} void", t.member_index);
+                  "TaggedUnionExpr member={} void", t.member_index.value);
             },
         },
         e.data);
@@ -967,30 +986,24 @@ class HirDumper {
 
     Line("Types:");
     Indent();
-    for (std::size_t i = 0; i < u.types.size(); ++i) {
-      Line(
-          std::format(
-              "[{}] {}", i,
-              FormatType(u.types.Get(TypeId{static_cast<std::uint32_t>(i)}))));
+    for (const TypeId id : u.types.Ids()) {
+      Line(std::format("[{}] {}", id.value, FormatType(u.types.Get(id))));
     }
     Dedent();
 
-    for (std::size_t i = 0; i < u.foreign_imports.size(); ++i) {
-      DumpForeignImport(
-          i, u.foreign_imports.Get(
-                 ForeignImportId{static_cast<std::uint32_t>(i)}));
+    for (const ForeignImportId id : u.foreign_imports.Ids()) {
+      DumpForeignImport(id.value, u.foreign_imports.Get(id));
     }
 
     if (u.classes.size() > 0) {
       Line("Classes:");
       Indent();
-      for (std::size_t i = 0; i < u.classes.size(); ++i) {
-        const ClassId id{static_cast<std::uint32_t>(i)};
+      for (const ClassId id : u.classes.Ids()) {
         if (!u.classes.IsDefined(id)) {
-          Line(std::format("[{}] <declared>", i));
+          Line(std::format("[{}] <declared>", id.value));
           continue;
         }
-        DumpClass(i, u.classes.Get(id));
+        DumpClass(id.value, u.classes.Get(id));
       }
       Dedent();
     }
@@ -1022,11 +1035,11 @@ class HirDumper {
               "FieldInit target=Field[{}] value=Expr[{}]", init.target.value,
               init.value.value));
     }
-    for (std::size_t i = 0; i < c.methods.size(); ++i) {
+    for (const MethodId id : c.methods.Ids()) {
       DumpSubroutine(
-          "Method", i, c.methods.Get(MethodId{static_cast<std::uint32_t>(i)}));
+          "Method", id.value, c.methods.Get(id), c.procedural_scopes);
     }
-    DumpSubroutine("Constructor", 0, c.constructor);
+    DumpSubroutine("Constructor", 0, c.constructor, c.procedural_scopes);
     if (c.base_call.has_value()) {
       std::string args;
       for (std::size_t i = 0; i < c.base_call->arguments.size(); ++i) {
@@ -1038,13 +1051,83 @@ class HirDumper {
     Dedent();
   }
 
+  static auto FormatIndices(const std::vector<std::uint32_t>& indices)
+      -> std::string {
+    std::string out;
+    for (const auto index : indices) {
+      out += std::format("[{}]", index);
+    }
+    return out;
+  }
+
+  static auto FormatRoutedPathRecipe(const RoutedPathRecipe& r) -> std::string {
+    std::string out = std::visit(
+        Overloaded{
+            [](const InUnitHead& h) {
+              return std::format("self^{}", h.hops.value);
+            },
+            [](const RootHead&) { return std::string{"$root"}; },
+            [](const VisibleChildHead& h) {
+              return std::format(
+                  "visible \"{}\"{}", h.head_name,
+                  FormatIndices(h.head_indices));
+            }},
+        r.head);
+    for (const auto& step : r.steps) {
+      out += std::visit(
+          Overloaded{
+              [](const OwnedChildStep& owned) {
+                return std::visit(
+                    Overloaded{
+                        [&](const InstanceMemberId& id) {
+                          return std::format(
+                              " . InstanceMember[{}]{}", id.value,
+                              FormatIndices(owned.indices));
+                        },
+                        [&](const GenerateChildRef& g) {
+                          return std::format(
+                              " . Generate[{}].Scope[{}]{}", g.generate.value,
+                              g.scope.value, FormatIndices(owned.indices));
+                        }},
+                    owned.child);
+              },
+              [](const OpaqueStep& opaque) {
+                return std::format(
+                    " . \"{}\"{}", opaque.name, FormatIndices(opaque.indices));
+              }},
+          step);
+    }
+    out += std::visit(
+        Overloaded{
+            [](const StructuralDataObjectLeaf& l) {
+              return std::format(" . StructuralDataObject[{}]", l.object.value);
+            },
+            [](const ProceduralStaticLeaf& l) {
+              const std::string body = std::visit(
+                  Overloaded{
+                      [](const ProcessId& id) {
+                        return std::format("Process[{}]", id.value);
+                      },
+                      [](const StructuralSubroutineId& id) {
+                        return std::format(
+                            "StructuralSubroutine[{}]", id.value);
+                      }},
+                  l.body);
+              return std::format(" . {}.ProceduralVar[{}]", body, l.var.value);
+            },
+            [](const OpaqueLeaf& l) {
+              return std::format(" . \"{}\"", l.name);
+            }},
+        r.leaf);
+    return std::format("{} : Type[{}]", out, r.type.value);
+  }
+
   void DumpScope(const StructuralScope& s) {
     scope_stack_.push_back(&s);
     Line("Scope:");
     Indent();
-    for (std::size_t i = 0; i < s.structural_data_objects.size(); ++i) {
-      const auto& v = s.structural_data_objects.Get(
-          StructuralDataObjectId{static_cast<std::uint32_t>(i)});
+    for (const StructuralDataObjectId id : s.structural_data_objects.Ids()) {
+      const auto& v = s.structural_data_objects.Get(id);
       std::string suffix;
       if (const auto* var = std::get_if<StructuralVariableDecl>(&v.kind)) {
         if (var->reference.has_value()) {
@@ -1061,30 +1144,25 @@ class HirDumper {
       }
       Line(
           std::format(
-              "StructuralDataObject[{}] \"{}\" : Type[{}]{}", i, v.name,
+              "StructuralDataObject[{}] \"{}\" : Type[{}]{}", id.value, v.name,
               v.type.value, suffix));
     }
-    for (std::size_t i = 0; i < s.structural_subroutines.size(); ++i) {
+    for (const StructuralSubroutineId id : s.structural_subroutines.Ids()) {
       DumpSubroutine(
-          "StructuralSubroutine", i,
-          s.structural_subroutines.Get(
-              StructuralSubroutineId{static_cast<std::uint32_t>(i)}));
+          "StructuralSubroutine", id.value, s.structural_subroutines.Get(id),
+          s.procedural_scopes);
     }
     if (!s.exprs.empty()) {
       Line("Exprs:");
       Indent();
-      for (std::size_t i = 0; i < s.exprs.size(); ++i) {
-        Line(
-            std::format(
-                "Expr[{}] {}", i,
-                FormatExpr(
-                    s.exprs.Get(ExprId{static_cast<std::uint32_t>(i)}))));
+      for (const ExprId id : s.exprs.Ids()) {
+        Line(std::format("Expr[{}] {}", id.value, FormatExpr(s.exprs.Get(id))));
       }
       Dedent();
     }
     DumpPatterns(s.patterns);
     for (const auto& p : s.processes) {
-      DumpProcess(p);
+      DumpProcess(p, s.procedural_scopes);
     }
     for (const auto& ca : s.continuous_assigns) {
       DumpContinuousAssign(ca);
@@ -1092,20 +1170,31 @@ class HirDumper {
     for (const auto& g : s.generates) {
       DumpGenerate(g);
     }
-    for (std::size_t i = 0; i < s.instance_members.size(); ++i) {
-      const auto& im = s.instance_members.Get(
-          InstanceMemberId{static_cast<std::uint32_t>(i)});
+    for (const InstanceMemberId id : s.instance_members.Ids()) {
+      const auto& im = s.instance_members.Get(id);
       std::string array_suffix;
       for (const auto dim : im.array_dims) {
         array_suffix += std::format("[{}]", dim);
       }
       Line(
           std::format(
-              "InstanceMember[{}] \"{}\"{} : {}", i, im.instance_name,
+              "InstanceMember[{}] \"{}\"{} : {}", id.value, im.instance_name,
               array_suffix, im.target_unit));
     }
-    for (std::size_t i = 0; i < s.port_connections.size(); ++i) {
-      const auto& pc = s.port_connections[i];
+    for (const RoutedRefId id : s.routed_refs.Ids()) {
+      const auto& r = s.routed_refs.Get(id);
+      std::string net_suffix;
+      if (r.target_net_type.has_value()) {
+        net_suffix =
+            *r.target_net_type == NetType::kWire ? " net=wire" : " net=tri";
+      }
+      Line(
+          std::format(
+              "RoutedRef[{}] {}{}", id.value, FormatRoutedPathRecipe(r.recipe),
+              net_suffix));
+    }
+    for (const PortConnectionId id : s.port_connections.Ids()) {
+      const auto& pc = s.port_connections.Get(id);
       std::string_view direction = "ref";
       switch (pc.direction) {
         case PortDirection::kInput:
@@ -1123,20 +1212,21 @@ class HirDumper {
                 return std::format("cell=Expr[{}]", c.cell.value);
               },
               [](const RoutedPathRecipe& r) -> std::string {
-                return std::format("alias_to:Type[{}]", r.type.value);
+                return std::format("alias_to:{}", FormatRoutedPathRecipe(r));
               }},
           pc.endpoint);
       Line(
           std::format(
-              "PortConnection[{}] {} {} peer=Expr[{}]", i, direction, endpoint,
-              pc.peer.value));
+              "PortConnection[{}] {} {} peer=Expr[{}]", id.value, direction,
+              endpoint, pc.peer.value));
     }
     Dedent();
     scope_stack_.pop_back();
   }
 
   void DumpSubroutine(
-      std::string_view label, std::size_t index, const SubroutineDecl& d) {
+      std::string_view label, std::size_t index, const SubroutineDecl& d,
+      const base::Registry<ProceduralScopeDecl, ProceduralScopeId>& scopes) {
     std::string flags;
     if (d.is_virtual) flags += " virtual";
     if (d.is_prototype) flags += " prototype";
@@ -1160,8 +1250,13 @@ class HirDumper {
     if (d.result_var.has_value()) {
       Line(std::format("Result var=ProceduralVar[{}]", d.result_var->value));
     }
-    if (!d.is_prototype) {
-      DumpProceduralBody(d.body);
+    // A pure virtual method is a prototype with no implementation (LRM 8.21):
+    // its formals and the scope owning them are real declarations, but there
+    // is no statement tree behind the signature to walk.
+    if (d.is_prototype) {
+      DumpProceduralDeclarations(d.body, scopes);
+    } else {
+      DumpProceduralBody(d.body, scopes);
     }
     Dedent();
   }
@@ -1201,7 +1296,9 @@ class HirDumper {
     throw InternalError("FormatParamDirection: unknown hir::ParamDirection");
   }
 
-  void DumpProcess(const Process& p) {
+  void DumpProcess(
+      const Process& p,
+      const base::Registry<ProceduralScopeDecl, ProceduralScopeId>& scopes) {
     switch (p.kind) {
       case ProcessKind::kInitial:
         Line("Process (Initial)");
@@ -1234,7 +1331,7 @@ class HirDumper {
       }
       Dedent();
     }
-    DumpProceduralBody(p.body);
+    DumpProceduralBody(p.body, scopes);
     Dedent();
   }
 
@@ -1244,41 +1341,76 @@ class HirDumper {
     if (patterns.empty()) return;
     Line("Patterns:");
     Indent();
-    for (std::size_t i = 0; i < patterns.size(); ++i) {
+    for (const PatternId id : patterns.Ids()) {
       Line(
           std::format(
-              "Pattern[{}] {}", i,
-              FormatPattern(
-                  patterns.Get(PatternId{static_cast<std::uint32_t>(i)}))));
+              "Pattern[{}] {}", id.value, FormatPattern(patterns.Get(id))));
     }
     Dedent();
   }
 
-  void DumpProceduralBody(const ProceduralBody& body) {
-    if (!body.procedural_vars.empty()) {
+  // One arena holds the scopes of every body in a structural scope or class,
+  // while the scopes of a single body form a tree under that body's root.
+  // Descending from the root is what separates one body's scopes from its
+  // peers', so the tree is walked instead of the arena being listed flat.
+  void DumpProceduralScope(
+      const base::Registry<ProceduralScopeDecl, ProceduralScopeId>& scopes,
+      ProceduralScopeId id) {
+    const auto& s = scopes.Get(id);
+    std::string declares;
+    for (std::size_t i = 0; i < s.declarations.size(); ++i) {
+      declares += i == 0 ? " declares=(" : ", ";
+      declares += std::format("ProceduralVar[{}]", s.declarations[i].value);
+    }
+    if (!s.declarations.empty()) declares += ")";
+    Line(
+        std::format(
+            "ProceduralScope[{}] {} \"{}\"{}", id.value,
+            ProceduralScopeKindLabel(s.kind), SegmentName(s, id), declares));
+    Indent();
+    for (const ProceduralScopeId child : s.child_scopes) {
+      DumpProceduralScope(scopes, child);
+    }
+    Dedent();
+  }
+
+  void DumpProceduralDeclarations(
+      const ProceduralBody& body,
+      const base::Registry<ProceduralScopeDecl, ProceduralScopeId>& scopes) {
+    if (body.procedural_vars.size() != 0) {
       Line("ProceduralVars:");
       Indent();
-      for (std::size_t i = 0; i < body.procedural_vars.size(); ++i) {
-        const auto& lv = body.procedural_vars.Get(
-            ProceduralVarId{static_cast<std::uint32_t>(i)});
+      for (const ProceduralVarId id : body.procedural_vars.Ids()) {
+        const auto& lv = body.procedural_vars.Get(id);
         Line(
             std::format(
-                "ProceduralVar[{}] \"{}\" : Type[{}]{}{}", i, lv.name,
+                "ProceduralVar[{}] \"{}\" : Type[{}]{}{}{}", id.value, lv.name,
                 lv.type.value,
                 lv.lifetime == VariableLifetime::kStatic ? " static" : "",
-                lv.lifetime_extended ? " lifetime-extended" : ""));
+                lv.lifetime_extended ? " lifetime-extended" : "",
+                lv.init.has_value()
+                    ? std::format(" init=Expr[{}]", lv.init->value)
+                    : ""));
       }
       Dedent();
     }
+    Line("ProceduralScopes:");
+    Indent();
+    DumpProceduralScope(scopes, body.root_scope);
+    Dedent();
+  }
+
+  void DumpProceduralBody(
+      const ProceduralBody& body,
+      const base::Registry<ProceduralScopeDecl, ProceduralScopeId>& scopes) {
+    DumpProceduralDeclarations(body, scopes);
     if (!body.exprs.empty()) {
       Line("Exprs:");
       Indent();
-      for (std::size_t i = 0; i < body.exprs.size(); ++i) {
+      for (const ExprId id : body.exprs.Ids()) {
         Line(
             std::format(
-                "Expr[{}] {}", i,
-                FormatExpr(
-                    body.exprs.Get(ExprId{static_cast<std::uint32_t>(i)}))));
+                "Expr[{}] {}", id.value, FormatExpr(body.exprs.Get(id))));
       }
       Dedent();
     }
@@ -1306,19 +1438,11 @@ class HirDumper {
     Dedent();
   }
 
-  void DumpVarDeclStmtNode(
-      const ProceduralBody& p, StmtId id, const VarDeclStmt& v) {
+  void DumpVarDeclStmtNode(StmtId id, const VarDeclStmt& v) {
     Line(
         std::format(
             "Stmt[{}] VarDeclStmt var=ProceduralVar[{}]", id.value,
             v.var.value));
-    if (v.init.has_value()) {
-      Indent();
-      Line(
-          std::format(
-              "init: Expr[{}] {}", v.init->value, FormatProcExpr(p, *v.init)));
-      Dedent();
-    }
   }
 
   void DumpExprStmtNode(const ProceduralBody& p, StmtId id, const ExprStmt& e) {
@@ -1333,7 +1457,8 @@ class HirDumper {
       const ProceduralBody& p, StmtId id, const BlockStmt& b) {
     Line(
         std::format(
-            "Stmt[{}] BlockStmt (count={})", id.value, b.statements.size()));
+            "Stmt[{}] BlockStmt (count={}) scope=ProceduralScope[{}]", id.value,
+            b.statements.size(), b.scope.value));
     Indent();
     for (const auto child : b.statements) {
       DumpStmt(p, child);
@@ -1344,8 +1469,10 @@ class HirDumper {
   void DumpForkStmtNode(const ProceduralBody& p, StmtId id, const ForkStmt& f) {
     Line(
         std::format(
-            "Stmt[{}] ForkStmt {} (locals={}, branches={})", id.value,
-            ForkJoinModeLabel(f.mode), f.locals.size(), f.branches.size()));
+            "Stmt[{}] ForkStmt {} (locals={}, branches={}) "
+            "scope=ProceduralScope[{}]",
+            id.value, ForkJoinModeLabel(f.mode), f.locals.size(),
+            f.branches.size(), f.scope.value));
     Indent();
     for (const auto local : f.locals) {
       DumpStmt(p, local);
@@ -1588,7 +1715,7 @@ class HirDumper {
             [&](const EmptyStmt&) {
               Line(std::format("Stmt[{}] EmptyStmt", id.value));
             },
-            [&](const VarDeclStmt& v) { DumpVarDeclStmtNode(p, id, v); },
+            [&](const VarDeclStmt& v) { DumpVarDeclStmtNode(id, v); },
             [&](const ExprStmt& e) { DumpExprStmtNode(p, id, e); },
             [&](const BlockStmt& b) { DumpBlockStmtNode(p, id, b); },
             [&](const ForkStmt& f) { DumpForkStmtNode(p, id, f); },
@@ -1674,14 +1801,14 @@ class HirDumper {
   }
 
   void DumpGenerate(const Generate& g) {
-    Line(std::format("Generate items={}", g.data.items.size()));
+    Line(std::format("Generate blocks={}", g.child_scopes.size()));
     Indent();
-    for (const auto& item : g.data.items) {
+    for (const auto& scope : g.child_scopes) {
       const std::string idx =
-          item.index.has_value() ? std::format("[{}]", *item.index) : "[-]";
+          scope.index.has_value() ? std::format("[{}]", *scope.index) : "[-]";
       Line(std::format("{}:", idx));
       Indent();
-      DumpScope(g.child_scopes.Get(item.scope));
+      DumpScope(scope);
       Dedent();
     }
     Dedent();

@@ -334,11 +334,11 @@ struct DiagnosticType {
 };
 
 // A pass-through value type from the runtime library that MIR never inspects:
-// it is constructed (via ConstructExpr) and forwarded to a runtime-effect call,
-// and MIR makes no decision on its contents. The branch selects which library
-// type, and the backend maps the branch to the concrete library name. Distinct
-// from RuntimeEffectsType / ScopeType, which are runtime object-model handles
-// the receiver semantics reason about; these are inert payloads.
+// it is constructed and forwarded to a runtime-effect call, and MIR makes no
+// decision on its contents. The branch selects which library type, and the
+// backend maps the branch to the concrete library name. An object-model handle
+// is a different thing -- receiver semantics reason about one -- while these
+// are inert payloads.
 enum class RuntimeLibraryKind : std::uint8_t {
   kPrintItem,
   kPrintLiteralItem,
@@ -369,15 +369,15 @@ enum class RuntimeLibraryKind : std::uint8_t {
   // The owner of a child threads this into the child's constructor as a
   // single packaged value.
   kHierarchySegment,
-  // The runtime records a scope's generated behavior is stated in: a scope's
-  // `lyra::runtime::ScopeProgram` (constant metadata plus lifecycle entries), a
-  // design unit's `lyra::runtime::UnitDefinition` (root program plus construct
-  // entry), the `lyra::runtime::ScopeMetadata` inside a program, its
+  // The runtime records a scope's generated behavior is stated in: a scope
+  // class's `lyra::runtime::ScopeProgram` (constant metadata plus lifecycle
+  // entries), its `lyra::runtime::ScopeDefinition` (that program plus the
+  // construct entry), the `lyra::runtime::ScopeMetadata` inside a program, its
   // `lyra::runtime::AbiStringRef` def-name, and the `lyra::runtime::ScopeEntry`
-  // function-pointer an entry field holds. HIR-to-MIR builds a unit's
+  // function-pointer an entry field holds. HIR-to-MIR builds each scope class's
   // definition as an ordinary constructed value of these types.
   kScopeProgram,
-  kUnitDefinition,
+  kScopeDefinition,
   kScopeMetadata,
   kAbiStringRef,
   // The DPI-C exports a scope publishes (LRM 35.4): one
@@ -676,6 +676,12 @@ struct Type {
   // decide whether an operand may be transferred consult this: an alias
   // handle carries no ownership to move.
   [[nodiscard]] auto IsAliasHandle() const -> bool;
+  // True for a wrapper that grants an access capability over a value it holds
+  // rather than being that value: the observable cell, a procedural reference,
+  // a net's resolved cell, a net driver's handle. `WrappedValueType` is the
+  // value it wraps, and throws where there is none.
+  [[nodiscard]] auto IsCapabilityWrapper() const -> bool;
+  [[nodiscard]] auto WrappedValueType() const -> TypeId;
 };
 
 class CompilationUnit;
@@ -695,12 +701,4 @@ using ChildScope = std::variant<GenerateScopeChild, ModuleInstanceChild>;
 // True for a capability wrapper: a type that represents a storage place rather
 // than being a value, so the value it stands for is named one dereference
 // further and the protocol realizing that access comes from this type. The
-// family is the observable cell, a procedural reference, a net's resolved cell,
-// and a net driver's handle. Which accesses a given wrapper answers is its own
-// affair -- a net's cell takes no store, since a value reaches it only through
-// a driver (LRM 6.5).
-[[nodiscard]] auto IsCapabilityWrapperType(const Type& ty) -> bool;
-
-[[nodiscard]] auto CapabilityWrapperValueType(const Type& ty) -> TypeId;
-
 }  // namespace lyra::mir

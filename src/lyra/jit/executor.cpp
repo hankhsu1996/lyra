@@ -1,5 +1,6 @@
 #include "lyra/jit/executor.hpp"
 
+#include <cstddef>
 #include <cstdint>
 #include <filesystem>
 #include <memory>
@@ -132,7 +133,8 @@ void DefineRuntimeAbi(llvm::orc::LLJIT& jit) {
   add("lyra_rt_make_trigger", &lyra_rt_make_trigger);
   add("lyra_rt_wait_any", &lyra_rt_wait_any);
   add("lyra_rt_make_segment", &lyra_rt_make_segment);
-  add("lyra_rt_make_unit", &lyra_rt_make_unit);
+  add("lyra_rt_make_scope", &lyra_rt_make_scope);
+  add("lyra_rt_hierarchical_path", &lyra_rt_hierarchical_path);
   add("lyra_rt_add_owned_child", &lyra_rt_add_owned_child);
   add("lyra_rt_member_addr", &lyra_rt_member_addr);
   add("lyra_rt_register_signal", &lyra_rt_register_signal);
@@ -461,18 +463,16 @@ auto DescribeMembers(const lir::CompilationUnit& unit, const lir::Class& cls)
   return descriptors;
 }
 
-// Fills a unit's runtime definition from its JIT-compiled entries and its
-// source-level metadata. The lifecycle entries are ABI-compatible native
-// functions over the generic scope receiver; an entry the scope has no work for
-// is absent and keeps the runtime no-op default. Looking a symbol up here
-// materializes its module, which resolves that module's cross-unit definition
-// references -- every definition symbol is injected before any is filled, so
-// those references find their address regardless of fill order.
+// Fills one scope class's runtime definition from its JIT-compiled entries. The
+// lifecycle entries are ABI-compatible native functions over the generic scope
+// receiver; an entry the class has no work for is absent and keeps the runtime
+// no-op default. Looking a symbol up here materializes its module, which
+// resolves that module's definition references -- every definition symbol is
+// injected before any is filled, so those references find their address
+// regardless of fill order.
 void FillDefinition(
-    llvm::orc::LLJIT& jit, const lir::CompilationUnit& unit,
-    const compiler::ElaboratedUnitMetadata& metadata,
-    runtime::UnitDefinition& definition) {
-  const lir::Class& root_class = unit.classes.Get(unit.root);
+    llvm::orc::LLJIT& jit, std::string_view class_name,
+    std::int8_t time_precision_power, runtime::ScopeDefinition& definition) {
   // An entry the scope has no work for was never emitted, and the session
   // reports exactly that: the name has no definition. Any other failure means
   // the entry does exist and could not be brought up -- typically a runtime
@@ -480,7 +480,8 @@ void FillDefinition(
   // silently missing a body it was compiled to have.
   auto lookup =
       [&](std::string_view entry) -> std::optional<llvm::orc::ExecutorAddr> {
-    const std::string symbol = root_class.name + "." + std::string(entry);
+    const std::string symbol =
+        std::string(class_name) + "." + std::string(entry);
     auto found = jit.lookup(symbol);
     if (found) {
       return *found;
@@ -494,35 +495,80 @@ void FillDefinition(
         "jit executor: the scope entry '" + symbol +
         "' did not resolve: " + llvm::toString(std::move(reason)));
   };
-  definition.root.metadata.def_name = runtime::AbiStringRef(
-      metadata.def_name.data(),
-      static_cast<std::uint32_t>(metadata.def_name.size()));
-  definition.root.metadata.time_precision_power = metadata.time_precision_power;
+  definition.program.metadata.time_precision_power = time_precision_power;
   if (auto entry = lookup("ResolveState")) {
-    definition.root.resolve_state = entry->toPtr<runtime::ScopeEntry>();
+    definition.program.resolve_state = entry->toPtr<runtime::ScopeEntry>();
   }
   if (auto entry = lookup("InitializeState")) {
-    definition.root.initialize_state = entry->toPtr<runtime::ScopeEntry>();
+    definition.program.initialize_state = entry->toPtr<runtime::ScopeEntry>();
   }
   if (auto entry = lookup("CreateProcesses")) {
-    definition.root.create_processes = entry->toPtr<runtime::ScopeEntry>();
+    definition.program.create_processes = entry->toPtr<runtime::ScopeEntry>();
   }
   if (auto entry = lookup("constructor")) {
     definition.construct = entry->toPtr<runtime::ScopeEntry>();
   }
 }
 
-// One design unit loaded into the JIT: its executable body, its source-level
-// metadata, the storage schema its instances realize, and the runtime
-// definition built from those, which owns a stable address the runtime and peer
-// units reference. The schema is held here because the definition names it as
-// plain data it does not own.
-struct LoadedUnit {
-  const lir::CompilationUnit* unit;
-  const compiler::ElaboratedUnitMetadata* metadata;
+// One scope class loaded into the JIT: the storage schema its instances
+// realize, and the runtime definition built from its compiled entries, which
+// owns a stable address every site constructing an instance references. The
+// schema is held here because the definition names it as plain data it does not
+// own.
+struct LoadedScopeClass {
+  std::string name;
+  std::int8_t time_precision_power = 0;
   std::vector<runtime::MemberStorageDescriptor> members;
-  std::unique_ptr<runtime::UnitDefinition> definition;
+  std::unique_ptr<runtime::ScopeDefinition> definition;
 };
+
+// The class an owned-child member reaches, absent for a member that reaches
+// storage instead.
+auto OwnedChildClass(const lir::CompilationUnit& unit, lir::TypeId type)
+    -> std::optional<lir::ClassId> {
+  const std::optional<lir::TypeId> pointee = lir::Pointee(unit.types, type);
+  if (!pointee) {
+    return std::nullopt;
+  }
+  const auto* object =
+      std::get_if<lir::ObjectType>(&unit.types.Get(*pointee).data);
+  return object != nullptr ? std::optional{object->class_id} : std::nullopt;
+}
+
+// One entry per node of the unit's object tree, reached by descending
+// containment from its root. A class no containment edge reaches is one the
+// program allocates as an ordinary object; the runtime never builds it and it
+// needs no definition.
+auto LoadScopeClasses(
+    const lir::CompilationUnit& unit,
+    const compiler::ElaboratedUnitMetadata& metadata)
+    -> std::vector<LoadedScopeClass> {
+  std::vector<LoadedScopeClass> loaded;
+  const auto descend = [&](const auto& self_ref, lir::ClassId id) -> void {
+    const lir::Class& cls = unit.classes.Get(id);
+    // Every scope of a unit runs at the unit's precision: a scope inside a unit
+    // has no timescale declaration of its own and takes the enclosing one (LRM
+    // 3.14.2.3).
+    loaded.push_back(
+        LoadedScopeClass{
+            .name = cls.name,
+            .time_precision_power = metadata.time_precision_power,
+            .members = DescribeMembers(unit, cls),
+            .definition = std::make_unique<runtime::ScopeDefinition>()});
+    // A member whose type reaches an object of this unit is a child this class
+    // owns; one reaching a value reaches storage instead. The type says which,
+    // so descending it needs nothing beside the members already declared.
+    for (const lir::Member& member : cls.members) {
+      if (const auto child = OwnedChildClass(unit, member.type)) {
+        self_ref(self_ref, *child);
+      }
+    }
+  };
+  if (unit.root.has_value()) {
+    descend(descend, *unit.root);
+  }
+  return loaded;
+}
 
 }  // namespace
 
@@ -543,37 +589,44 @@ auto Execute(
   }
 
   // Every unit -- the source units and the design-root -- becomes one module in
-  // the shared JIT, so a unit's construct reaches another unit's entries and
-  // definition by symbol. Each unit's definition owns a stable address for the
-  // whole run; the runtime holds pointers into it. The root is loaded and
+  // the shared JIT, so a construct reaches the entries and the definition of
+  // the class it builds by symbol. Each definition owns a stable address for
+  // the whole run; the runtime holds pointers into it. The root is loaded and
   // driven like any other unit, distinguished only as the bootstrap entry
   // below.
-  const auto load = [](const lir::CompilationUnit& unit,
-                       const compiler::ElaboratedUnitMetadata& unit_metadata) {
-    return LoadedUnit{
-        .unit = &unit,
-        .metadata = &unit_metadata,
-        .members = DescribeMembers(unit, unit.classes.Get(unit.root)),
-        .definition = std::make_unique<runtime::UnitDefinition>()};
-  };
-
-  std::vector<LoadedUnit> loaded;
-  loaded.reserve(units.size() + 1);
+  std::vector<const lir::CompilationUnit*> loaded_units;
+  std::vector<LoadedScopeClass> loaded;
+  loaded_units.reserve(units.size() + 1);
   for (std::size_t i = 0; i < units.size(); ++i) {
-    loaded.push_back(load(units[i], metadata[i]));
+    loaded_units.push_back(&units[i]);
+    std::vector<LoadedScopeClass> unit_classes =
+        LoadScopeClasses(units[i], metadata[i]);
+    loaded.insert(
+        loaded.end(), std::make_move_iterator(unit_classes.begin()),
+        std::make_move_iterator(unit_classes.end()));
   }
-  loaded.push_back(load(root_unit, root_metadata));
+  loaded_units.push_back(&root_unit);
+  if (!root_unit.root.has_value()) {
+    throw InternalError("jit executor: the design root roots no object tree");
+  }
+  const std::string root_class_name =
+      root_unit.classes.Get(*root_unit.root).name;
+  std::vector<LoadedScopeClass> root_classes =
+      LoadScopeClasses(root_unit, root_metadata);
+  loaded.insert(
+      loaded.end(), std::make_move_iterator(root_classes.begin()),
+      std::make_move_iterator(root_classes.end()));
 
-  // The schema is named only once every unit is in place, so no descriptor
+  // The schema is named only once every class is in place, so no descriptor
   // vector is reallocated out from under a definition that points at it.
-  for (LoadedUnit& entry : loaded) {
+  for (LoadedScopeClass& entry : loaded) {
     entry.definition->members = runtime::MemberStorageSchema{
         .data = entry.members.data(),
         .size = static_cast<std::uint32_t>(entry.members.size())};
   }
 
-  for (const LoadedUnit& entry : loaded) {
-    auto owned = backend::llvm_backend::EmitModule(*entry.unit).Release();
+  for (const lir::CompilationUnit* unit : loaded_units) {
+    auto owned = backend::llvm_backend::EmitModule(*unit).Release();
     Check(
         jit->addIRModule(
             llvm::orc::ThreadSafeModule(
@@ -581,14 +634,14 @@ auto Execute(
         "add module");
   }
 
-  // A unit publishes its definition as an injected data symbol its peers'
-  // construct entries reference. Each definition is filled from the unit's
-  // JIT-compiled entries after every definition's address is injected, so a
-  // cross-unit reference resolves regardless of the order the units are filled.
+  // Each scope class publishes its definition as an injected data symbol the
+  // construct that builds an instance of it references. Every definition is
+  // filled from its JIT-compiled entries after every address is injected, so a
+  // reference resolves regardless of the order the definitions are filled.
   llvm::orc::SymbolMap definition_symbols;
-  for (const LoadedUnit& entry : loaded) {
-    const std::string symbol = backend::llvm_backend::UnitDefinitionSymbolName(
-        entry.unit->classes.Get(entry.unit->root).name);
+  for (const LoadedScopeClass& entry : loaded) {
+    const std::string symbol =
+        backend::llvm_backend::ScopeDefinitionSymbolName(entry.name);
     definition_symbols[jit->getExecutionSession().intern(symbol)] =
         llvm::orc::ExecutorSymbolDef(
             llvm::orc::ExecutorAddr::fromPtr(entry.definition.get()),
@@ -597,10 +650,11 @@ auto Execute(
   Check(
       jit->getMainJITDylib().define(
           llvm::orc::absoluteSymbols(std::move(definition_symbols))),
-      "define unit definitions");
+      "define scope definitions");
 
-  for (const LoadedUnit& entry : loaded) {
-    FillDefinition(*jit, *entry.unit, *entry.metadata, *entry.definition);
+  for (const LoadedScopeClass& entry : loaded) {
+    FillDefinition(
+        *jit, entry.name, entry.time_precision_power, *entry.definition);
   }
 
   runtime::Runtime runtime_instance;
@@ -610,8 +664,13 @@ auto Execute(
   // their subtrees. The bootstrap allocates the root instance and runs that
   // construct in a generated-call scope, exactly as the runtime enters any
   // construct entry; the runtime then walks the built tree.
-  const runtime::UnitDefinition& root_definition = *loaded.back().definition;
-  auto root = std::make_unique<runtime::GeneratedInstance>(
+  const auto root_entry =
+      std::ranges::find(loaded, root_class_name, &LoadedScopeClass::name);
+  if (root_entry == loaded.end()) {
+    throw InternalError("jit executor: the design root has no scope class");
+  }
+  const runtime::ScopeDefinition& root_definition = *root_entry->definition;
+  auto root = std::make_unique<runtime::GeneratedScope>(
       nullptr, runtime::HierarchySegment{"$root", {}}, &root_definition);
   {
     runtime::GeneratedCallScope construct_scope;

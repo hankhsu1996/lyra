@@ -36,9 +36,10 @@ struct SubroutineParam {
 // `is_prototype` records that the source declared this method as a pure
 // virtual prototype (LRM 8.21 `pure virtual function ...;`) -- the signature
 // exists but the source supplied no body. `body.procedural_vars` still
-// carries the parameter var arena so a backend can emit the declaration,
-// but every other body field (stmts, exprs, root_stmt, root_scope) is left
-// at construction default and never consumed. This bit is source-level
+// carries the parameter var arena so a backend can emit the declaration, and
+// `body.root_scope` still names the scope those parameters are declared in;
+// the statement fields are left at construction default and never consumed,
+// there being no body to hold statements. This bit is source-level
 // truth: a bodyless prototype and a legal empty body (LRM 8.21 note) are
 // distinct forms that emptiness alone cannot separate. Only class methods
 // carry it; free subroutines and processes always ship a body.

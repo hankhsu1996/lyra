@@ -39,8 +39,8 @@ auto EmitModule(const lir::CompilationUnit& unit) -> EmittedModule {
   return CodeGenModule(unit).Run();
 }
 
-auto UnitDefinitionSymbolName(std::string_view unit_name) -> std::string {
-  return std::format("{}.definition", unit_name);
+auto ScopeDefinitionSymbolName(std::string_view class_name) -> std::string {
+  return std::format("{}.definition", class_name);
 }
 
 }  // namespace lyra::backend::llvm_backend

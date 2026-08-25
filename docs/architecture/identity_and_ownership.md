@@ -38,6 +38,16 @@ references another; ownership is which entity holds a given piece of state.
    (compilation unit, callable, type, etc.). It does not depend on traversal order, enumeration
    order, or insertion position. Inserting, removing, or reordering one entity does not shift the
    identity of unrelated entities.
+8. Whether an identity may precede its content is a property of the entity, and the pool that holds
+   it states the answer. An entity something can reference before its content exists -- a
+   declaration a peer may name, whatever order the two are reached in -- is held in a pool that
+   mints the identity separately from filling it. An entity built and consumed within one walk,
+   which nothing names before it exists, is held in a pool that mints identity and content together.
+   The question that settles which is "can anything name this before it is complete", asked of the
+   entity, never of the pass that happens to build it. _Consequence: a pass that must name what a
+   later pass will build never keeps a private counter, a parallel table, or an
+   append-in-the-right-order agreement checked after the fact -- it takes the identity from the pool
+   that will answer to it, or, where that pool does not exist yet, from a typed allocator for it._
 
 ## Boundary to Adjacent Layers
 
@@ -64,6 +74,14 @@ references another; ownership is which entity holds a given piece of state.
 - An identity scheme where inserting, removing, or reordering one node shifts the identity of
   unrelated nodes.
 - Identity derived from traversal order rather than ownership structure.
+- A raw integer standing in for an identity anywhere between the pass that reserves it and the pool
+  that answers to it. The counter a pass keeps to predict a later pass's insertion positions is an
+  identity allocator with its type erased; erasing the type is what lets the two drift until a
+  separate check catches them.
+- A declaration held in a pool that mints identity and content together, when a peer can name it
+  before that content exists. The staging is then re-created outside the pool -- a pre-built copy
+  seeded in, or the content parked on a neighbouring node until the declaration can take it -- and
+  the declaration stops being the one place that says what it is.
 
 ## Notes / Examples
 

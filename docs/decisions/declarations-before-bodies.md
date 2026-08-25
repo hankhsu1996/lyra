@@ -18,8 +18,8 @@ programming-language compilers: a body cannot reference what is not yet declared
 that admits mutual reference within a structural scope must produce all identities before any body
 is lowered.
 
-The lowering today honors this for the smallest case -- a structural scope's subroutines reserve
-their `MethodId`s before any subroutine body lowers, so a peer call resolves regardless of source
+The lowering honors this for the smallest case -- a structural scope's subroutines take their
+callable identities before any subroutine body lowers, so a peer call resolves regardless of source
 order. Larger cases (cross-scope hierarchical reference, class mutual reference, hierarchical
 callable) need the same property at compilation-unit scope. Pinning the invariant once, with a
 single mechanism, prevents the codebase from re-deriving it per feature and lets every consumer rely
@@ -51,52 +51,72 @@ and body, but neither HIR nor MIR is such a layer.
 
 ### D1. Lowering is staged: declarations precede executable bodies
 
-A lowering pass that produces a structural-declaration-bearing IR runs in two stages over the
+A lowering pass that produces a structural-declaration-bearing IR runs in stages over the
 compilation unit, in this order:
 
-1. **Declare** -- mint every declaration's identity and populate its shape on the compilation unit's
-   registries. No expression is lowered, no executable statement is emitted, no block accumulates.
-2. **Lower bodies** -- lower every body (subroutine, process, initializer, action, constructor,
+1. **Take identities** -- take an identity for everything another declaration can name before that
+   thing is settled: every declaration, and every member of one a peer declaration refers to. Reads
+   nothing but the entity it is naming, so entities take theirs in any order.
+2. **Settle declarations** -- populate each declaration's shape. A declaration may name any identity
+   from stage 1, in any direction, so declarations settle in any order too.
+3. **Lower bodies** -- lower every body (subroutine, process, initializer, action, constructor,
    install statement) into blocks attached to the relevant declarations. Cross-declaration
-   references resolve through the registries populated in stage 1.
+   references resolve through what stages 1 and 2 published.
+
+The stage count is not a matter of taste. A stage exists for each kind of fact that something else
+needs before its own kind can be produced, and only three kinds qualify: an identity, a
+declaration's content, and a body. There is no fourth because nothing ever needs another entity's
+body in order to be built, which is why bodies are always last.
+
+Stage 1 exists exactly when a declaration can name another declaration's identity -- inheritance is
+the case here: an overriding method states its dispatch role against the slot its base was given
+(LRM 8.20). Ordering the declarations so that a base settles first would also serve, and is
+rejected: an order is a property of the whole dependency graph, so it must be stated in one place
+that every new cross-declaration reference has to revisit, and every declaration's position then
+depends on every other. Taking the identities first is a map over entities -- each answer reads only
+its own entity -- which is what leaves stages 2 and 3 free of order.
 
 A lowering pass that violates this staging cannot satisfy mutual reference; the staging is not an
 optimization.
 
-### D2. Published shape is canonical for cross-declaration query during lowering
+### D2. The declared shape is canonical for cross-declaration query during lowering
 
-A declared shape becomes a canonical query target the moment the declare pass publishes it. Lowerer
-objects, builder objects, and walk-time stack frames do not own published shape; they may hold local
-state while constructing one shape value, but the queryable home is a registry whose contract is
-"every id resolves to a complete shape". A consumer that wants to read peer shape during body
-lowering reaches that registry by id, never another lowerer's private state.
+A declared shape becomes a canonical query target the moment the declare pass records it. Lowerer
+objects, builder objects, and walk-time stack frames do not own declared shape; they may hold local
+state while constructing one shape value, but the queryable home is the symbol table, whose contract
+is "every id resolves to a complete shape". A consumer that wants to read peer shape during body
+lowering reaches that table by id, never another lowerer's private state.
 
-The publication store's lifetime is the lowering pass. Once the pass returns its finished
-compilation unit, the publication store is destroyed; the compilation unit holds the sole
-authoritative class store thereafter (the final `mir::Class` registry). No half-alive,
-partially-consumed shape registry survives into the finished unit.
+The symbol table's lifetime is the lowering pass. Once the pass returns its finished compilation
+unit, the symbol table is destroyed; the compilation unit holds the sole authoritative class store
+thereafter (the final `mir::Class` registry). No half-alive, partially-consumed symbol table
+survives into the finished unit.
 
 ### D3. Declaration ordering inside a CU is unspecified
 
 The declare stage may visit declarations in any order that respects each declaration's own
-dependencies (a member typed by an internal object type requires that object type's id minted
-first). The lowering pipeline picks an order that satisfies these intra-declaration dependencies;
-the order is an implementation matter and is not observable to body lowering, which reads
-declarations by id without seeing how they were ordered. Source order does not classify and does not
-select mechanism.
+dependencies: a member typed by an internal object type requires that object type's id minted first,
+and a class that extends another is declared after it, because an overriding method states its
+dispatch role (LRM 8.20) against the slot identity the base's declaration handed out. The lowering
+pipeline picks an order that satisfies these intra-declaration dependencies; the order is an
+implementation matter and is not observable to body lowering, which reads declarations by id without
+seeing how they were ordered. Source order does not classify and does not select mechanism.
 
-### D4. Reservation and population are one step per declaration
+### D4. An identity outruns its content only where something names it that early
 
-A declaration's identity and its shape are minted as one step. The registry does not expose a
-half-state where an id exists but the shape is absent; either the id is in the registry with a
-populated shape, or the id has not yet been minted. This is the operational form of "queryable after
-declare stage": every minted id resolves to a usable shape.
+Identity and content are taken together wherever nothing needs the identity sooner, so the common
+case exposes no half-state: an id resolves to a usable value from the moment it exists. Reaching for
+the split is answered by asking of the entity "can anything name this before it is complete", never
+by asking what is convenient for the pass that happens to build it.
 
-A declaration may carry a forward-typed reference to another declaration that has not yet been
-minted (a class that names another class as a field type). The pass orders the mints to satisfy
-those dependencies, or uses a registry primitive that supports forward identity reservation followed
-by shape attachment for the cyclic case; either way, the consumer-visible contract is "every
-queryable id has a populated shape."
+Two things do name that early, and both take their identity in stage 1. A declaration can name
+another declaration's identity in a cycle -- two classes each holding the other as a field type --
+which no order can serve. A declaration can also name a member of another declaration, which is
+inheritance. Where the pool that will answer to such an identity does not exist yet, the identity
+comes from a typed allocator for it, never from a bare counter.
+
+Whatever the split, the consumer-visible contract is the same by the time anything reads: every
+queryable id resolves.
 
 ### D5. Executable bodies attach to existing declarations; they never grow new shape
 
@@ -110,7 +130,7 @@ This does not forbid stage 2 from adding declarations that no body references --
 deferred-check site, a per-action capture descriptor -- whose existence is local to body lowering
 and whose id is never read cross-declaration.
 
-### D6. The shape store is the sole source of cross-class structural queries during body lowering
+### D6. The symbol table is the sole source of cross-class structural queries during body lowering
 
 During the body-lowering stage, the compilation unit's class registry is a one-way commit sink: each
 class is added once when its bodies are complete, and the registry's only use from inside the
@@ -123,18 +143,22 @@ such a read would succeed for classes that happened to finalize earlier and fail
 have not yet finalized, silently reintroducing source-order dependence into what must be
 order-independent.
 
-### D7. Anticipated future extension: callable signatures join the shape
+### D7. A callable's signature joins the shape; its identity comes from there
 
-When a body lowering needs peer callable identity or signature -- the case for SV class virtual
-dispatch and for hierarchical callable resolution -- the callable's signature joins the structural
-shape, leaving the callable's body in the body-lowering stage. The expected concrete form is to
-split `MethodDecl` into a signature part (name, parameter list, result type, override target -- in
-the shape) and a body part (the executable block -- composed at finalize alongside the constructor
-block and the other lifecycle blocks).
+A body lowering needs peer callable identity and signature -- for SV class virtual dispatch, and for
+a forward or mutual call within a structural scope (LRM 13.7). So the callable's signature sits on
+the structural shape, leaving the callable's body to the body-lowering stage.
 
-The split has not happened yet because the current consumer (cross-scope typed member access) needs
-only member ids, not method ids. The split lands together with the work that first requires it; no
-field on the shape is added speculatively before then.
+The shape's signature pool is therefore the pool that mints callable identity. The body stage fills
+the identity the shape handed out; it does not append and it does not compute where the shape would
+have put things. A callable nothing can name early -- a process, a continuous assign, a synthesized
+method -- has no signature on the shape and takes identity and body together where it is built, in
+the same pool, past the reserved range.
+
+Predicting the identity instead is the shape this rules out: the declare stage writing down the
+index it expects the body stage to append at, and the body stage checking that it did. The two sides
+then hold the same fact separately, which is what lets them drift, and the check is what the drift
+costs. Taking the identity from the pool that answers to it removes both.
 
 ## Applications
 
@@ -142,9 +166,9 @@ The invariant covers every IR boundary that admits mutual reference within a str
 following are the known applications; each is one instance of the same staging, not a separate
 mechanism.
 
-- **Subroutine forward / mutual reference within a structural scope** (LRM 13.7). Peer subroutine
-  call resolves to a `MethodId` minted before any subroutine body lowers. Today's code already
-  honors this with `MapStructuralSubroutine` reserving ids in advance.
+- **Subroutine forward / mutual reference within a structural scope** (LRM 13.7). A peer subroutine
+  call resolves to a callable identity the shape minted before any subroutine body lowers, and the
+  body stage fills that identity.
 - **Cross-scope hierarchical reference's typed segments**
   (`../decisions/hierarchical-reference-routing.md`). A sibling reference's typed `MemberAccess`
   chain reaches peer scope members via `MemberId`s minted before any body lowers. The structural
@@ -159,11 +183,18 @@ mechanism.
 - **Interface and modport reference.** An interface's externally visible surface (modport
   declarations, virtual interface targets) is shape; a body that references it reads through the
   registry.
-- **Procedural storage scope materialization** (`procedural-storage-scope.md`). A named procedural
-  block whose subtree owns hierarchy-addressable storage is a structural declaration: its class
-  identity, its statics, the parent's owning-pointer companion member, and the contained-class edge
-  are minted by the shape pass. A sibling process's body lowering reaches its peer block's static
-  through a head the shape pass already registered; the body never mints any of these.
+- **Procedural scope realization** (`procedural-storage-scope.md`). A procedural block scope is a
+  structural declaration: its class identity, the handle reaching its runtime object, the statics
+  declared in it, and the contained-class edge are minted by the shape pass. A sibling process's
+  body lowering reaches its peer block's static through a binding the shape pass already registered;
+  the body never mints any of these.
+- **A static a hierarchical path can name** (LRM 23.9), at the AST-to-HIR boundary. A process may
+  read a static declared by a process that has not yet lowered, so the static's HIR id is minted by
+  the compilation unit's declaration pass and the declaring body binds that id instead of assigning
+  its own. This is the same staging one layer up: AST-to-HIR admits mutual reference, so it produces
+  the identities that admit it before any body lowers. An identity minted during body lowering could
+  not be named by a peer that lowers first, and a reference-only second identity for the same
+  declaration is what this staging exists to avoid.
 
 The same invariant applies to future structural concepts that admit cross-reference; new
 applications do not introduce new mechanism.
@@ -171,8 +202,8 @@ applications do not introduce new mechanism.
 ## Rejected alternatives
 
 - **Lowerer-owned `optional<mir::Class>` carrying the in-progress declaration.** Puts the source of
-  truth for declared shape on a sibling lowerer object rather than on a published registry. Peer
-  body lowering must thread the lowerer tree to find a peer's shape; cross-scope queries become
+  truth for declared shape on a sibling lowerer object rather than in the symbol table. Peer body
+  lowering must thread the lowerer tree to find a peer's shape; cross-scope queries become
   walk-coupled. Race-prone in practice: a query against a peer whose lowerer has not yet populated
   its `optional` fails opaquely, and the lowering tree's traversal order leaks into what a body can
   read. Rejected.
@@ -217,38 +248,40 @@ applications do not introduce new mechanism.
   through the original `Declare` / `Define`-once contract, not by relaxing the primitive. The
   parallel form `Refine(id, fn)` is the same relaxation in different syntax. Rejected.
 
-- **Per-class consume that leaves the publication store partially moved-from while still alive.** At
-  finalize time, each class's shape entry is moved into the composed `mir::Class`; the shape store
+- **Per-class consume that leaves the symbol table partially moved-from while still alive.** At
+  finalize time, each class's shape entry is moved into the composed `mir::Class`; the symbol table
   still exists with the remaining slots populated and the moved-from slots holding empty values. Any
   later read of a moved-from slot returns an empty shape silently. Type / lifetime do not encode
-  "this slot has been consumed". Rejected in favor of whole-store consume: the shape store's
+  "this slot has been consumed". Rejected in favor of whole-store consume: the symbol table's
   lifetime is the lowering pass; once the pass returns, the store is destroyed wholesale. Within the
-  pass, individual finalizes copy shape into the composed `mir::Class`, leaving the shape store's
+  pass, individual finalizes copy shape into the composed `mir::Class`, leaving the symbol table's
   slots intact for peer queries from later finalizes.
 
 ## Consequences
 
 - **Shape and final class are two value-immutable artifacts under one identity.** A class's identity
-  is one id. Its shape is a value built once during the declare pass and published to a registry
-  that exists for the lifetime of the lowering pass; the registry's contract is the original "every
-  minted id resolves to a populated value" (one `Declare` + one `Define` per id). Its final form is
-  a second value built once during the body pass and posted to the compilation unit's own class
-  registry through the same contract. Neither value is mutated after publication; the staged
-  construction is purely internal to the lowering pass.
+  is one id, minted by the compilation unit's own class registry and by nothing else. Its shape is a
+  value built once during the declare pass and recorded under that id in a table that exists for the
+  lifetime of the lowering pass. The store mints nothing: it answers for ids the unit minted,
+  accepts one value per id, and reports any id the declare pass left undeclared at the moment a body
+  reads it -- which is the earliest point at which a gap is a real defect. Its final form is a
+  second value built once during the body pass and posted to the unit's class registry. Neither
+  value is mutated after it is recorded; the staged construction is purely internal to the lowering
+  pass.
 
-- **The publication store of shapes lives on the lowering pass, not on the compilation unit.** After
-  the lowering pass returns its finished compilation unit, the shape store is destroyed. The
-  finished unit holds the sole authoritative class store -- the registry of fully-composed
-  `mir::Class` values. Downstream consumers (backend, dump, validators) see one class per id, with
-  shape and bodies together; they never reach for a separate shape store, and no shape store
-  survives in any form they could touch.
+- **The symbol table of shapes lives on the lowering pass, not on the compilation unit.** After the
+  lowering pass returns its finished compilation unit, the symbol table is destroyed. The finished
+  unit holds the sole authoritative class store -- the registry of fully-composed `mir::Class`
+  values. Downstream consumers (backend, dump, validators) see one class per id, with shape and
+  bodies together; they never reach for a separate symbol table, and no symbol table survives in any
+  form they could touch.
 
-- **The composed `mir::Class` copies its shape fields from the published shape at finalize.** The
-  shape store stays valid throughout the body pass so peer body lowerings can keep reading it
+- **The composed `mir::Class` copies its shape fields from the declared shape at finalize.** The
+  symbol table stays valid throughout the body pass so peer body lowerings can keep reading it
   through finalize boundaries; each per-class finalize copies the relevant shape into the freshly
   constructed `mir::Class` and adds the body parts. Memory cost is one extra arena per class for the
-  shape's lifetime, traded for the clean property that the publication store is never partly
-  moved-from while it is still being read.
+  shape's lifetime, traded for the clean property that the symbol table is never partly moved-from
+  while it is still being read.
 
 - **Lowering passes split into two CU-wide stages.** A pass that produces declared-shape-bearing IR
   drives a recursive declare walk first and a recursive body-lowering walk second. Each stage's
@@ -258,17 +291,17 @@ applications do not introduce new mechanism.
   the pass class, not two pass classes.
 
 - **`StructuralScopeLowerer` carries no in-progress declared shape.** After the declare stage, the
-  scope's shape lives on the lowering pass's publication store. The lowerer's per-instance state
-  shrinks to its HIR-to-MIR identity maps, the child-lowerer tree it owns for the body stage, and
-  whichever local facts the body stage needs that derive from neither registry nor maps. The blocks
-  the body stage accumulates (constructor, resolve, initialize, activate) are body-stage locals; the
-  slot-var lists, instance-member-var lists, and generate binding tables an earlier draft of this
-  refactor cached as parallel state are derivable from the publication store plus the existing
-  identity maps and are not stored separately.
+  scope's shape lives on the lowering pass's symbol table. The lowerer's per-instance state shrinks
+  to its HIR-to-MIR identity maps, the child-lowerer tree it owns for the body stage, and whichever
+  local facts the body stage needs that derive from neither registry nor maps. The blocks the body
+  stage accumulates (constructor, resolve, initialize, activate) are body-stage locals; the slot-var
+  lists, instance-member-var lists, and generate binding tables an earlier draft of this refactor
+  cached as parallel state are derivable from the symbol table plus the existing identity maps and
+  are not stored separately.
 
-- **Cross-class shape query is one path.** Peer body lowering reads peer shape through the
-  publication store's `GetClassShape(id)`. There is no parallel query route through the lowerer
-  tree; the publication store is the single source of truth for shape during the body pass.
+- **Cross-class shape query is one path.** Peer body lowering reads peer shape through the symbol
+  table's `GetClassShape(id)`. There is no parallel query route through the lowerer tree; the symbol
+  table is the single source of truth for shape during the body pass.
 
 - **Acceptance for an architectural refactor under this contract is semantic equivalence, not
   byte-for-byte MIR identity.** Declaration ordering within the unit is unspecified; consumers must

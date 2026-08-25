@@ -1,5 +1,7 @@
 #include "lyra/lowering/hir_to_mir/cast_lowering.hpp"
 
+#include <cstdint>
+
 #include "lyra/lowering/hir_to_mir/default_value.hpp"
 #include "lyra/mir/compilation_unit.hpp"
 #include "lyra/mir/expr.hpp"
@@ -20,7 +22,7 @@ auto IsRealFamilyKind(mir::TypeKind k) -> bool {
 // `Real(operand)` / `ShortReal(operand)` invokes the explicit `RealValue`
 // converting constructor. Used both for cross-precision real reshape and as
 // the outer step of the integral-to-real bridge (Real(packed.ToInt64())).
-auto BuildRealConstructorCall(mir::ExprId operand_id, mir::TypeId dst_type)
+auto MakeRealConstructorCall(mir::ExprId operand_id, mir::TypeId dst_type)
     -> mir::Expr {
   return mir::Expr{
       .data =
@@ -28,7 +30,7 @@ auto BuildRealConstructorCall(mir::ExprId operand_id, mir::TypeId dst_type)
       .type = dst_type};
 }
 
-auto BuildToInt64Call(const mir::CompilationUnit& unit, mir::ExprId operand_id)
+auto MakeToInt64Call(const mir::CompilationUnit& unit, mir::ExprId operand_id)
     -> mir::Expr {
   return mir::Expr{
       .data =
@@ -38,7 +40,7 @@ auto BuildToInt64Call(const mir::CompilationUnit& unit, mir::ExprId operand_id)
       .type = unit.builtins.machine_int64};
 }
 
-auto BuildRoundCall(const mir::CompilationUnit& unit, mir::ExprId operand_id)
+auto MakeRoundCall(const mir::CompilationUnit& unit, mir::ExprId operand_id)
     -> mir::Expr {
   return mir::Expr{
       .data =
@@ -88,7 +90,7 @@ auto BuildPackedArrayConvertFrom(
 
 // `String::FromPackedArray(bits)` / `String::FromByteArray(bytes)` static
 // factories.
-auto BuildStringFromFactory(
+auto MakeStringFromFactory(
     const mir::CompilationUnit& unit, mir::ExprId src_id, support::BuiltinFn id)
     -> mir::Expr {
   return mir::Expr{
@@ -133,21 +135,21 @@ auto BuildValueConversion(
     if (src_kind == dst_kind) {
       return operand_expr;
     }
-    return BuildRealConstructorCall(operand_id, dst_type);
+    return MakeRealConstructorCall(operand_id, dst_type);
   }
 
   // Integral -> real: read out the host int64, build the real from it.
   if (src_ty.IsIntegralPacked() && IsRealFamilyKind(dst_kind)) {
     const mir::ExprId int_id =
-        block.exprs.Add(BuildToInt64Call(unit, operand_id));
-    return BuildRealConstructorCall(int_id, dst_type);
+        block.exprs.Add(MakeToInt64Call(unit, operand_id));
+    return MakeRealConstructorCall(int_id, dst_type);
   }
 
   // Real -> integral: round to int64, then `PackedArray::FromInt(...)` lands
   // the rounded value into the destination shape.
   if (IsRealFamilyKind(src_kind) && dst_ty.IsIntegralPacked()) {
     const mir::ExprId rounded_id =
-        block.exprs.Add(BuildRoundCall(unit, operand_id));
+        block.exprs.Add(MakeRoundCall(unit, operand_id));
     return BuildPackedArrayFromInt(
         block, rounded_id, dst_ty.AsIntegralPacked(), dst_type);
   }
@@ -191,13 +193,13 @@ auto BuildValueConversion(
   // Unpacked-array-of-byte -> string (LRM 21.3.4.3 $sscanf source lift).
   if (src_kind == mir::TypeKind::kUnpackedArray &&
       dst_kind == mir::TypeKind::kString) {
-    return BuildStringFromFactory(
+    return MakeStringFromFactory(
         unit, operand_id, support::BuiltinFn::kFromByteArray);
   }
 
   // Integral -> string (LRM 6.16 bit pattern -> string value).
   if (src_ty.IsIntegralPacked() && dst_kind == mir::TypeKind::kString) {
-    return BuildStringFromFactory(
+    return MakeStringFromFactory(
         unit, operand_id, support::BuiltinFn::kFromPackedArray);
   }
 

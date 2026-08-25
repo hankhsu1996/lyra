@@ -1,8 +1,6 @@
 #include "lyra/lowering/hir_to_mir/callable_bindings.hpp"
 
 #include <algorithm>
-#include <cstddef>
-#include <cstdint>
 #include <string>
 #include <utility>
 #include <variant>
@@ -91,7 +89,7 @@ auto CallableBindings::EnsureCarrier(BindingOriginId origin) -> BodyBindingRef {
 
   const mir::FieldId field = closure_decl_->fields.Add(
       mir::FieldDecl{.name = name, .type = field_type});
-  captures_.push_back(CaptureEntry{.key = origin, .source = source});
+  captures_.Define(field, CaptureEntry{.origin = origin, .source = source});
   const BodyBindingRef result{.ref = field};
   available_.insert_or_assign(origin, result);
   return result;
@@ -140,19 +138,17 @@ auto CallableBindings::NameOf(BodyBindingRef ref) const -> const std::string& {
 }
 
 auto CallableBindings::Finalize() -> std::vector<mir::FieldInit> {
-  const std::size_t count = captures_.size();
-
   // Canonical field order: field ids ordered by their binding origin. This is
   // the deterministic emission order (capture clause, dump), independent of the
   // order captures were discovered; the invoke body reads by stable field id,
   // so it is untouched. Not a physical layout -- offsets belong to LIR.
   std::vector<mir::FieldId> order;
-  order.reserve(count);
-  for (std::size_t i = 0; i < count; ++i) {
-    order.push_back(mir::FieldId{static_cast<std::uint32_t>(i)});
+  order.reserve(closure_decl_->fields.size());
+  for (const mir::FieldId id : closure_decl_->fields.Ids()) {
+    order.push_back(id);
   }
   std::ranges::stable_sort(order, [&](mir::FieldId a, mir::FieldId b) {
-    return captures_[a.value].key < captures_[b.value].key;
+    return captures_.Get(a).origin < captures_.Get(b).origin;
   });
   closure_decl_->field_order = std::move(order);
 
@@ -160,12 +156,10 @@ auto CallableBindings::Finalize() -> std::vector<mir::FieldInit> {
   // of an already-materialized capture source, so their construction order is
   // independent of both the layout order and the source evaluation order.
   std::vector<mir::FieldInit> inits;
-  inits.reserve(count);
-  for (std::size_t i = 0; i < count; ++i) {
+  inits.reserve(closure_decl_->fields.size());
+  for (const mir::FieldId id : closure_decl_->fields.Ids()) {
     inits.push_back(
-        mir::FieldInit{
-            .target = mir::FieldId{static_cast<std::uint32_t>(i)},
-            .value = captures_[i].source});
+        mir::FieldInit{.target = id, .value = captures_.Get(id).source});
   }
   return inits;
 }

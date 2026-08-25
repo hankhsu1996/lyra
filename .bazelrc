@@ -1,9 +1,6 @@
 build --action_env=CC=clang
 build --action_env=CXX=clang++
 build --cxxopt='-std=c++23'
-build --cxxopt='-Wall'
-build --cxxopt='-Wextra'
-build --cxxopt='-Wno-unused-parameter'
 
 # LLVM 17 doesn't build with C++23 (constexpr unique_ptr requires complete types)
 build --per_file_copt=external/llvm-project.*.cpp@-std=c++17
@@ -36,10 +33,6 @@ build --verbose_failures
 
 # Debug build configuration
 build:debug --compilation_mode=dbg
-build:debug --cxxopt='-Wall'
-build:debug --cxxopt='-Wextra'
-build:debug --cxxopt='-Wno-unused-parameter'
-build:debug --cxxopt='-Wno-deprecated-declarations'
 
 # Release build configuration
 build:release --compilation_mode=opt

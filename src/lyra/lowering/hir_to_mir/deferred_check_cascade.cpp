@@ -1,5 +1,6 @@
 #include "lyra/lowering/hir_to_mir/deferred_check_cascade.hpp"
 
+#include <cstddef>
 #include <cstdint>
 #include <expected>
 #include <format>

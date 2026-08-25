@@ -9,7 +9,6 @@
 #include "lyra/hir/procedural_var.hpp"
 #include "lyra/hir/stmt.hpp"
 #include "lyra/lowering/hir_to_mir/callable_bindings.hpp"
-#include "lyra/lowering/hir_to_mir/callable_storage_plan.hpp"
 #include "lyra/lowering/hir_to_mir/cast_lowering.hpp"
 #include "lyra/lowering/hir_to_mir/default_value.hpp"
 #include "lyra/lowering/hir_to_mir/process_lowerer.hpp"
@@ -22,26 +21,6 @@ namespace lyra::lowering::hir_to_mir {
 
 namespace {
 
-// LRM 13.3.1: a static-lifetime body local has per-instance storage that
-// outlives every activation of the body. Body lowering records the
-// initializer as a pending request (var + HIR init expression + placement);
-// the dedicated initializer lowering path runs in the Initialize phase and
-// produces the AssignExpr to the placement. The body's declaration
-// statement itself emits no executable text.
-auto LowerStaticVarDeclStmt(
-    ProcessLowerer& process, std::optional<std::string> label,
-    const hir::VarDeclStmt& v, const hir::ProceduralVarDecl& hir_local,
-    mir::TypeId type) -> diag::Result<mir::Stmt> {
-  process.RecordPendingStaticInitializer(
-      PendingStaticInitializer{
-          .var = v.var,
-          .hir_type = hir_local.type,
-          .init_expr = v.init,
-          .placement = process.LookupStaticPlacement(v.var),
-          .storage_type = type});
-  return mir::Stmt{.label = std::move(label), .data = mir::EmptyStmt{}};
-}
-
 auto LowerAutomaticVarDeclStmt(
     ProcessLowerer& process, WalkFrame frame, std::optional<std::string> label,
     const hir::VarDeclStmt& v, const hir::ProceduralVarDecl& hir_local,
@@ -53,9 +32,9 @@ auto LowerAutomaticVarDeclStmt(
   process.MapProceduralVar(v.var, AutomaticVarBinding{.type = type});
 
   mir::ExprId init_value{};
-  if (v.init.has_value()) {
+  if (hir_local.init.has_value()) {
     auto init_or =
-        process.LowerExpr(process.HirBody().exprs.Get(*v.init), frame);
+        process.LowerExpr(process.HirBody().exprs.Get(*hir_local.init), frame);
     if (!init_or) return std::unexpected(std::move(init_or.error()));
     init_value = block.exprs.Add(*std::move(init_or));
   } else {
@@ -76,8 +55,8 @@ auto LowerAutomaticVarDeclStmt(
 // HIR id order, to register the binding its references resolve through.
 auto LowerPromotedVarDeclStmt(
     ProcessLowerer& process, WalkFrame frame, std::optional<std::string> label,
-    const hir::VarDeclStmt& v, hir::TypeId hir_type, mir::TypeId type)
-    -> diag::Result<mir::Stmt> {
+    const hir::VarDeclStmt& v, const hir::ProceduralVarDecl& hir_local,
+    mir::TypeId type) -> diag::Result<mir::Stmt> {
   const PromotedVarBinding pb = process.TakePendingActivation(v.var);
   process.MapProceduralVar(v.var, pb);
   auto& block = *frame.current_block;
@@ -86,14 +65,14 @@ auto LowerPromotedVarDeclStmt(
   const mir::ExprId target =
       block.exprs.Add(mir::MakeFieldAccessExpr(handle_ref, pb.field, type));
   mir::ExprId init_value{};
-  if (v.init.has_value()) {
+  if (hir_local.init.has_value()) {
     auto init_or =
-        process.LowerExpr(process.HirBody().exprs.Get(*v.init), frame);
+        process.LowerExpr(process.HirBody().exprs.Get(*hir_local.init), frame);
     if (!init_or) return std::unexpected(std::move(init_or.error()));
     init_value = block.exprs.Add(*std::move(init_or));
   } else {
     init_value = block.exprs.Add(
-        BuildDefaultValueFromHir(process.Owner(), frame, hir_type));
+        BuildDefaultValueFromHir(process.Owner(), frame, hir_local.type));
   }
   init_value = ConvertToType(process.Owner().Unit(), block, init_value, type);
   const mir::ExprId assign =
@@ -111,11 +90,15 @@ auto LowerVarDeclStmt(
   const mir::TypeId type = process.Owner().TranslateType(hir_local.type);
   if (hir_local.lifetime_extended) {
     return LowerPromotedVarDeclStmt(
-        process, frame, std::move(label), v, hir_local.type, type);
+        process, frame, std::move(label), v, hir_local, type);
   }
+  // LRM 13.3.1: a static-lifetime body local keeps per-instance storage that
+  // outlives every activation, so its storage and its binding are both settled
+  // before the body lowers and its declaration assignment runs once, in the
+  // Initialize phase. Reaching the declaration is therefore not an event: it
+  // binds nothing and emits nothing.
   if (hir_local.lifetime == hir::VariableLifetime::kStatic) {
-    return LowerStaticVarDeclStmt(
-        process, std::move(label), v, hir_local, type);
+    return mir::Stmt{.label = std::move(label), .data = mir::EmptyStmt{}};
   }
   return LowerAutomaticVarDeclStmt(
       process, frame, std::move(label), v, hir_local, type);

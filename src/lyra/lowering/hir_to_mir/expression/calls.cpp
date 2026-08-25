@@ -1,5 +1,7 @@
 #include "lyra/lowering/hir_to_mir/expression/calls.hpp"
 
+#include <cstddef>
+#include <cstdint>
 #include <expected>
 #include <optional>
 #include <string>
@@ -7,6 +9,7 @@
 #include <variant>
 #include <vector>
 
+#include "lyra/base/component_index.hpp"
 #include "lyra/base/internal_error.hpp"
 #include "lyra/base/overloaded.hpp"
 #include "lyra/diag/diag_code.hpp"
@@ -580,7 +583,7 @@ auto LowerMethodCall(
     user_args.push_back(block.exprs.Add(*std::move(arg_or)));
   }
 
-  // Cross-unit instance method: no local shape store to query for the
+  // Cross-unit instance method: no local declaration to query for the
   // callee's dispatch role, so the HIR target's `is_virtual` fact -- read
   // from the callee's frontend view when the target was minted -- decides
   // between virtual dispatch (LRM 8.20) and static dispatch. A super
@@ -635,7 +638,7 @@ auto LowerMethodCall(
   // dispatch mechanically. Every other receiver form defers to the
   // callee's own dispatch role: `Virtual` when the target participates in
   // a slot, `Direct` otherwise. Cross-class dispatch role is queried
-  // through the shape store, not the unit's class registry: while any peer
+  // through the unit's declarations, not its class registry: while any peer
   // body is lowering the registry is one-way `Define`, so a `Get` there
   // would leak lowering order into the reading site.
   const bool through_super =
@@ -812,7 +815,9 @@ auto ProjectCompletionResult(
   auto& block = *frame.current_block;
   const mir::ExprId completion = block.exprs.Add(*std::move(call));
   return mir::Expr{
-      .data = mir::TupleGetExpr{.tuple = completion, .index = 0},
+      .data =
+          mir::TupleGetExpr{
+              .tuple = completion, .index = base::ComponentIndex{}},
       .type = result_type};
 }
 

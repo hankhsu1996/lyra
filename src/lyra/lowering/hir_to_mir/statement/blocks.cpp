@@ -3,6 +3,7 @@
 #include <cstddef>
 #include <expected>
 #include <optional>
+#include <span>
 #include <string>
 #include <utility>
 #include <variant>
@@ -37,10 +38,11 @@ namespace {
 // promoted var's field so its declaration and references reach `handle->field`.
 // The branch keeps the scope alive by holding a by-value copy of the handle.
 void OpenActivationScope(
-    ProcessLowerer& process, const WalkFrame& frame, const hir::BlockStmt& b) {
+    ProcessLowerer& process, const WalkFrame& frame,
+    std::span<const hir::StmtId> statements) {
   const hir::ProceduralBody& body = process.HirBody();
   std::vector<hir::ProceduralVarId> promoted;
-  for (const hir::StmtId sid : b.statements) {
+  for (const hir::StmtId sid : statements) {
     const auto* vd = std::get_if<hir::VarDeclStmt>(&body.stmts.Get(sid).data);
     if (vd != nullptr && body.procedural_vars.Get(vd->var).lifetime_extended) {
       promoted.push_back(vd->var);
@@ -116,39 +118,36 @@ auto CancellationGuardType(mir::CompilationUnit& unit) -> mir::TypeId {
           .kind = mir::RuntimeLibraryKind::kCancellationGuard});
 }
 
-// The storage holding a block's cancellation source (LRM 9.6.2), or nullopt
-// when the block carries no SV name. A `disable` reaches its target by naming
-// it, so an unnamed block is one no `disable` can reach and it needs no region.
-auto BlockCancellationSource(
+// The cancellation source of a block that is a `disable` target (LRM 9.6.2),
+// absent when it is none. A `disable` reaches its target by naming it, so an
+// unnamed block is one no `disable` can reach and it needs no region -- which
+// is what owning no cancellation source says.
+auto BlockCancellationTarget(
     const ProcessLowerer& process, const hir::BlockStmt& b)
-    -> std::optional<StaticStoragePlacement> {
-  // The source is per-instance storage projected from the body's own object, so
-  // a body that reaches none can hold no target.
-  if (!b.scope.has_value() || !process.BodyHasReceiver()) {
+    -> std::optional<mir::FieldId> {
+  // The source is per-instance storage read off the body's own object, so a
+  // body that reaches none can hold no target.
+  if (!process.BodyHasReceiver()) {
     return std::nullopt;
   }
-  const MaterializedProceduralScope& scope =
-      process.StoragePlan().ScopeMaterialization(*b.scope);
-  if (!scope.materialized) {
-    return std::nullopt;
-  }
-  return scope.cancellation_source;
+  return process.Scopes().Get(b.scope).cancellation_source;
+}
+
+// The lvalue reaching a cancellation source: the expression a region names to
+// recognize the control effect it consumes and a `disable` names to invalidate
+// (LRM 9.6.2).
+auto CancellationSourceAccess(
+    const ProcessLowerer& process, const WalkFrame& frame, mir::FieldId source)
+    -> mir::ExprId {
+  return frame.current_block->exprs.Add(BuildStructuralFieldAccessExpr(
+      frame, process.Owner().Unit(), mir::EnclosingHops{}, source));
 }
 
 }  // namespace
 
-// The lvalue reaching a scope's cancellation source, projected from `self`
-// through whatever storage owner the plan placed it on.
-auto CancellationSourceAccess(
-    const ProcessLowerer& process, const WalkFrame& frame,
-    StaticStoragePlacement placement) -> mir::ExprId {
-  return frame.current_block->exprs.Add(
-      process.BuildStaticStorageAccess(frame, placement));
-}
-
 auto EmitCancellationGuard(
-    ProcessLowerer& process, const WalkFrame& frame,
-    StaticStoragePlacement placement) -> mir::LocalId {
+    ProcessLowerer& process, const WalkFrame& frame, mir::FieldId source)
+    -> mir::LocalId {
   UnitLowerer& unit_lowerer = process.Owner();
   mir::CompilationUnit& unit = unit_lowerer.Unit();
   mir::Block& block = *frame.current_block;
@@ -157,8 +156,7 @@ auto EmitCancellationGuard(
       CancellationSourceType(unit), mir::PointerOwnership::kBorrowed);
   const mir::TypeId guard_type = CancellationGuardType(unit);
 
-  const mir::ExprId member =
-      CancellationSourceAccess(process, frame, placement);
+  const mir::ExprId member = CancellationSourceAccess(process, frame, source);
   const mir::ExprId addr = block.exprs.Add(
       mir::Expr{
           .data = mir::AddressOfExpr{.operand = member}, .type = source_ptr});
@@ -174,17 +172,16 @@ auto EmitCancellationGuard(
   const BindingOriginId origin =
       BindingOriginId::Synthesized(unit_lowerer.NextSynthesizedSite(), 0);
   const mir::LocalId guard = frame.bindings->Declare(
-      origin,
-      mir::LocalDecl{
-          .name = "cancel_guard_" + std::to_string(placement.field.value),
-          .type = guard_type});
+      origin, mir::LocalDecl{
+                  .name = "cancel_guard_" + std::to_string(source.value),
+                  .type = guard_type});
   block.AppendStmt(mir::LocalDeclStmt{.target = guard, .init = construct});
   return guard;
 }
 
-auto MakeCancellableRegion(
+auto BuildCancellableRegion(
     ProcessLowerer& process, const WalkFrame& frame, mir::BlockId body,
-    StaticStoragePlacement placement) -> mir::TryStmt {
+    mir::FieldId source) -> mir::TryStmt {
   UnitLowerer& unit_lowerer = process.Owner();
   mir::CompilationUnit& unit = unit_lowerer.Unit();
   mir::Block& block = *frame.current_block;
@@ -195,13 +192,12 @@ auto MakeCancellableRegion(
       BindingOriginId::Synthesized(unit_lowerer.NextSynthesizedSite(), 0);
   const mir::LocalId caught = frame.bindings->Declare(
       origin, mir::LocalDecl{
-                  .name = "effect_" + std::to_string(placement.field.value),
+                  .name = "effect_" + std::to_string(source.value),
                   .type = effect_type});
 
   const mir::ExprId caught_ref =
       block.exprs.Add(mir::MakeLocalRefExpr(caught, effect_type));
-  const mir::ExprId target =
-      CancellationSourceAccess(process, frame, placement);
+  const mir::ExprId target = CancellationSourceAccess(process, frame, source);
   const mir::ExprId handler = block.exprs.Add(
       mir::Expr{
           .data =
@@ -222,41 +218,44 @@ auto LowerEmptyStmt(std::optional<std::string> label)
 auto LowerBlockStmt(
     ProcessLowerer& process, WalkFrame frame, std::optional<std::string> label,
     const hir::BlockStmt& b) -> diag::Result<mir::Stmt> {
-  const hir::ProceduralBody& hir_proc = process.HirBody();
   mir::Block child_block;
-  const WalkFrame child_frame = frame.WithBlock(&child_block);
-  OpenActivationScope(process, child_frame, b);
+  // A block is part of the hierarchical name of everything inside it, so
+  // entering it adopts the name node the shape phase gave it.
+  const WalkFrame child_frame =
+      frame.WithBlock(&child_block)
+          .WithScopeNameBorrowedHandle(
+              process.Scopes().Get(b.scope).NameBorrowedHandle());
+  OpenActivationScope(process, child_frame, b.statements);
 
   // A named block (LRM 9.6.2) is a region that consumes the effect naming it:
   // an execution anywhere inside it -- including inside a callable it invoked
   // -- leaves the block and resumes just past it. An unnamed block is an
   // ordinary one and needs nothing.
-  const std::optional<StaticStoragePlacement> cancel_source =
-      BlockCancellationSource(process, b);
-  if (cancel_source.has_value()) {
+  const std::optional<mir::FieldId> cancel_target =
+      BlockCancellationTarget(process, b);
+  if (cancel_target.has_value()) {
     // Entering the target is the body's own first act, so an execution inside
     // the body -- including one suspended in a callable it invoked -- is known
     // to be inside the target, and leaving the body leaves it.
-    EmitCancellationGuard(process, child_frame, *cancel_source);
+    EmitCancellationGuard(process, child_frame, *cancel_target);
   }
 
+  const hir::ProceduralBody& hir_proc = process.HirBody();
   for (const hir::StmtId child_hir_id : b.statements) {
-    const hir::Stmt& child = hir_proc.stmts.Get(child_hir_id);
-    auto lowered = process.LowerStmt(child, child_frame);
-    if (!lowered) {
-      return std::unexpected(std::move(lowered.error()));
-    }
-    child_block.AppendStmt(*std::move(lowered));
+    auto child_or =
+        process.LowerStmt(hir_proc.stmts.Get(child_hir_id), child_frame);
+    if (!child_or) return std::unexpected(std::move(child_or.error()));
+    child_block.AppendStmt(*std::move(child_or));
   }
   const mir::BlockId scope_id =
       frame.current_block->child_scopes.Add(std::move(child_block));
   // The handler is built where the region sits, not inside its body: it runs
   // once the body has already been left.
-  if (cancel_source.has_value()) {
+  if (cancel_target.has_value()) {
     return mir::Stmt{
         .label = std::move(label),
         .data =
-            MakeCancellableRegion(process, frame, scope_id, *cancel_source)};
+            BuildCancellableRegion(process, frame, scope_id, *cancel_target)};
   }
   return mir::Stmt{
       .label = std::move(label), .data = mir::BlockStmt{.scope = scope_id}};
@@ -272,19 +271,20 @@ auto LowerDisableStmt(
   // Reaching the target means projecting its per-instance source from the
   // disabling body's own object; a body that reaches none -- a package callable
   // (LRM 26.3), a static class method (LRM 8.10) -- cannot name a target.
-  const std::optional<StaticStoragePlacement> placement =
-      process.BodyHasReceiver() ? process.StoragePlan()
-                                      .ScopeMaterialization(d.target)
-                                      .cancellation_source
-                                : std::nullopt;
-  if (!placement.has_value()) {
+  if (!process.BodyHasReceiver()) {
     return diag::Fail(
         diag::SourceSpan{}, diag::DiagCode::kUnsupportedStatementForm,
         "disable from a body that has no enclosing instance is not yet "
         "supported");
   }
-  const mir::ExprId member =
-      CancellationSourceAccess(process, frame, *placement);
+  const std::optional<mir::FieldId> target =
+      process.Scopes().Get(d.target).cancellation_source;
+  if (!target.has_value()) {
+    throw InternalError(
+        "LowerDisableStmt: the target scope owns no cancellation source, so no "
+        "name could have reached it -- please report this as a bug");
+  }
+  const mir::ExprId member = CancellationSourceAccess(process, frame, *target);
   const mir::ExprId services =
       block.exprs.Add(BuildCurrentRuntimeCallExpr(unit_lowerer));
   // One call carries the whole statement (LRM 9.6.2): it invalidates the

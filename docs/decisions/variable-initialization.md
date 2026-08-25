@@ -49,9 +49,10 @@ The value is the user-supplied expression when present, otherwise the LRM Table 
 the statement shape is uniform either way. The `mir::MemberDecl.initializer` field is removed; a
 member declaration carries name and type only.**
 
-Vars whose type has no value-assignment semantics -- owned children (pointer, vector), object
-companions, cross-instance reference slots (borrowed pointers filled in Resolve), and named events
--- do not receive an init statement. Their declaration shape itself fixes the field at construction:
+Vars whose type has no value-assignment semantics -- owned children (pointer, vector), borrowed
+handles to objects, cross-instance reference slots (borrowed pointers filled in Resolve), and named
+events -- do not receive an init statement. Their declaration shape itself fixes the field at
+construction:
 
 - Pointer / vector / object / external-unit-object fields default to their C++ default (null
   pointer, empty container).
@@ -73,7 +74,7 @@ The C++ constructor body is a thin wrapper that delegates to a static helper:
 
 ```cpp
 Test(Scope* parent, std::string name, RuntimeServices& services)
-    : Instance(parent, std::move(name), services) {
+    : Scope(parent, std::move(name), definition) {
   init(this);
 }
 static void init(Test* self) {
@@ -157,7 +158,7 @@ pointers). The filter is structural: any var whose MIR type is in the set
   direction.
 
 - **Use C++ member-initializer list
-  (`Top(...) : Instance(...), a(1), b(this->a.Get() + Int(1)) { ... }`).** Native C++ alternative to
+  (`Top(...) : Scope(...), a(1), b(this->a.Get() + Int(1)) { ... }`).** Native C++ alternative to
   NSDMI and a closer match to "born with value" timing. Same conceptual position as NSDMI -- a
   separate syntactic position from the constructor body, with `this` available but `self` not. The
   render would still need a flag to switch receiver rendering. No advantage.

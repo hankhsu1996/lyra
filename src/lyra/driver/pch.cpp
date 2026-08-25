@@ -11,6 +11,7 @@
 #include <fstream>
 #include <functional>
 #include <iterator>
+#include <optional>
 #include <random>
 #include <string>
 #include <system_error>

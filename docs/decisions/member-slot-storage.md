@@ -5,9 +5,9 @@ Date: 2026-07-09 Status: accepted
 ## Context
 
 A design unit's construct writes into its own members. A scalar submodule instance is attached to
-the runtime tree (`AddOwnedChild`) and, additionally, its borrowed typed handle is stored in a
-companion member of the parent -- the layout-visible head a cross-unit reference projects
-(`self -> companion -> ...`). This store is part of every construct that instantiates a scalar
+the runtime tree (`AddOwnedChild`) and, additionally, a borrowed handle to it is stored in a member
+of the parent -- the layout-visible head a cross-unit reference projects
+(`self -> borrowed handle -> ...`). This store is part of every construct that instantiates a scalar
 submodule, including the synthesized `$root` unit constructing the top-level units.
 
 The C++ backend realizes a member as a native C++ field on its instance subclass; the store is an
@@ -55,12 +55,12 @@ through the ABI, and no physical layout is derived.
 
 ## Rejected alternatives
 
-- **Demand-driven companions (allocate a companion only when a cross-unit reference projects through
-  it).** Whether a companion is needed is known to the _referrer_, which is a different unit than
-  the parent that allocates the member. Deciding member allocation from another unit's body breaks
-  per-unit independent lowering. Even restricted to `$root` -- whose companions are provably dead,
+- **Demand-driven borrowed handles (allocate one only when a cross-unit reference projects through
+  it).** Whether a handle is needed is known to the _referrer_, which is a different unit than the
+  parent that allocates the member. Deciding member allocation from another unit's body breaks
+  per-unit independent lowering. Even restricted to `$root` -- whose handles are provably dead,
   since nothing references a top through the root's typed handle -- it special-cases the top level,
-  which the elaboration model deliberately does not do. A dead companion on `$root` is a separate,
+  which the elaboration model deliberately does not do. A dead handle on `$root` is a separate,
   legitimate later optimization, not the basis for avoiding member storage.
 
 - **Move the typed route head into runtime-owned by-name storage instead of a member.** This would
@@ -96,6 +96,6 @@ through the ABI, and no physical layout is derived.
   as the baseline, physical layout later)
 - `docs/decisions/generated-behavior-boundary.md` (the unit definition; allocation stays a backend
   concern until member storage is unified)
-- `docs/decisions/root-unit-elaboration.md` (the `$root` construct whose companion store this
+- `docs/decisions/root-unit-elaboration.md` (the `$root` construct whose borrowed-handle store this
   storage realizes)
 - `docs/architecture/lir.md` (a member is a logical place; physical layout is derived below LIR)

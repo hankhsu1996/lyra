@@ -56,20 +56,33 @@ class ProcessLowerer {
 
   // Computes which automatic locals a detached fork branch borrows and can
   // outlive (LRM 6.21), as a set of slang symbols. Run once over the body
-  // before it is lowered, so `AddProceduralVar` knows each decl's status at
-  // creation rather than back-patching it at a later reference.
+  // before it is lowered, so each declaration's status is settled when the
+  // declaration is created rather than back-patched at a later reference.
   void AnalyzeLifetimeExtended(const slang::ast::Statement& body);
 
-  // Composite: appends a `ProceduralVarDecl` to `body`, registers the
-  // slang-to-HIR binding for `var` in the procedural-var registry, and
-  // attaches the new id to the lexical scope the walk frame is currently
-  // building. The three halves stay atomic so no caller forgets to register
-  // a binding it later looks up, and no var slips out of its declaring
-  // scope's downward-ownership list.
+  // Mints the local's identity and registers it: the slang-to-HIR binding for
+  // `var`, and membership in the lexical scope the walk frame is building. A
+  // static a hierarchical path can name already has an identity from the
+  // compilation unit's declaration pass, so the body binds that one rather than
+  // minting a second. The declaration's content is filled in a second step,
+  // because the initializer is an expression of this body that may name this
+  // very identity -- so the identity has to exist before its content does.
+  auto DeclareProceduralVar(
+      const WalkFrame& frame, hir::ProceduralBody& body,
+      const slang::ast::VariableSymbol& var) -> hir::ProceduralVarId;
+
+  void DefineProceduralVar(
+      hir::ProceduralBody& body, hir::ProceduralVarId id,
+      const slang::ast::VariableSymbol& var, hir::TypeId type,
+      std::optional<hir::ExprId> init);
+
+  // Both steps for a declaration whose initializer is already known -- which is
+  // every one but a source declaration statement, whose initializer has to
+  // lower against the identity this mints.
   auto AddProceduralVar(
       const WalkFrame& frame, hir::ProceduralBody& body,
-      const slang::ast::VariableSymbol& var, hir::TypeId type)
-      -> hir::ProceduralVarId;
+      const slang::ast::VariableSymbol& var, hir::TypeId type,
+      std::optional<hir::ExprId> init = std::nullopt) -> hir::ProceduralVarId;
 
   [[nodiscard]] auto LookupProceduralVar(const slang::ast::VariableSymbol& var)
       const -> std::optional<hir::ProceduralVarId>;

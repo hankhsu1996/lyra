@@ -202,8 +202,8 @@ auto RenderTypeAsCpp(const mir::CompilationUnit& unit, mir::TypeId type_id)
                 return std::string{"lyra::runtime::ScopeExport"};
               case mir::RuntimeLibraryKind::kScopeExportTable:
                 return std::string{"lyra::runtime::ScopeExportTable"};
-              case mir::RuntimeLibraryKind::kUnitDefinition:
-                return std::string{"lyra::runtime::UnitDefinition"};
+              case mir::RuntimeLibraryKind::kScopeDefinition:
+                return std::string{"lyra::runtime::ScopeDefinition"};
               case mir::RuntimeLibraryKind::kScopeMetadata:
                 return std::string{"lyra::runtime::ScopeMetadata"};
               case mir::RuntimeLibraryKind::kAbiStringRef:

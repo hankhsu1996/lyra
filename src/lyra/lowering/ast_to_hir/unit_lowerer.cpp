@@ -9,6 +9,7 @@
 #include <unordered_map>
 #include <unordered_set>
 #include <utility>
+#include <variant>
 #include <vector>
 
 #include <slang/ast/Expression.h>
@@ -49,7 +50,9 @@ UnitLowerer::UnitLowerer(
 
 auto UnitLowerer::Run() -> diag::Result<hir::CompilationUnit> {
   WalkFrame frame;
-  DeclareStructuralIdentities(*scope_);
+  if (auto r = DeclareStructuralIdentities(*scope_); !r) {
+    return std::unexpected(std::move(r.error()));
+  }
   if (auto r = InternOwnClassDeclarations(); !r) {
     return std::unexpected(std::move(r.error()));
   }
@@ -101,7 +104,8 @@ auto UnitLowerer::NextWithClauseId() -> hir::WithClauseId {
   return hir::WithClauseId{.value = next_with_clause_++};
 }
 
-void UnitLowerer::DeclareStructuralIdentities(const slang::ast::Scope& scope) {
+auto UnitLowerer::DeclareStructuralIdentities(const slang::ast::Scope& scope)
+    -> diag::Result<void> {
   const ScopeFrameId frame = NextScopeFrameId();
   scope_frames_.emplace(&scope, frame);
   // A generate or instance owned-child id is the source-order position of that
@@ -110,58 +114,128 @@ void UnitLowerer::DeclareStructuralIdentities(const slang::ast::Scope& scope) {
   // uninstantiated `if` / `case` arm carries no runtime object (LRM 27.5) and
   // consumes no id. An instance-member id counts instances and non-empty
   // instance arrays -- a zero-element array (LRM 23.3.2) constructs nothing and
-  // consumes no id. A named procedural block (LRM 9.3.5 / 23.9) is keyed by its
-  // SV label instead of a position, so it needs no counter; slang exposes it as
-  // a direct scope member (unnamed begin/ends are transparent), and a reference
-  // heads at it only from the structural scope that owns it, never at a deeper
-  // named block nested inside it.
-  std::uint32_t generate_count = 0;
-  std::uint32_t instance_count = 0;
+  // consumes no id. A subroutine id counts body-bearing subroutines, so a
+  // bodyless DPI-C import consumes none; a process id counts procedural
+  // blocks. Both match the arena index the body pass assigns, and both are
+  // minted here so a call or a hierarchical reference resolves regardless of
+  // source order (LRM 13.4.2 / 23.9).
+  ScopeDeclarations& decls = scope_declarations_[&scope];
   for (const auto& member : scope.members()) {
     if (member.kind == slang::ast::SymbolKind::GenerateBlock) {
       const auto& block = member.as<slang::ast::GenerateBlockSymbol>();
       if (block.isUninstantiated) continue;
       MapOwnedChildBinding(
           block, frame,
-          hir::DownwardHead{
-              .child = hir::GenerateChildRef{
-                  .generate = hir::GenerateId{generate_count++},
-                  .scope = hir::StructuralScopeId{0}}});
-      DeclareStructuralIdentities(block);
+          hir::GenerateChildRef{
+              .generate = decls.generates.Declare(),
+              .scope = hir::StructuralScopeId{0}});
+      if (auto r = DeclareStructuralIdentities(block); !r) {
+        return std::unexpected(std::move(r.error()));
+      }
     } else if (member.kind == slang::ast::SymbolKind::GenerateBlockArray) {
       const auto& array = member.as<slang::ast::GenerateBlockArraySymbol>();
       if (array.entries.empty()) continue;
-      MapOwnedChildBinding(
-          array, frame,
-          hir::DownwardHead{
-              .child = hir::GenerateChildRef{
-                  .generate = hir::GenerateId{generate_count++},
-                  .scope = hir::StructuralScopeId{0}}});
+      // A loop generate elaborates each iteration into a block of its own
+      // (LRM 27.4), so every iteration is a distinct child of this scope and
+      // gets its own id rather than sharing the array's. Which iteration a
+      // hierarchical reference names is then part of the child's identity,
+      // not a coordinate carried alongside it.
+      const hir::GenerateId generate = decls.generates.Declare();
+      std::uint32_t block_index = 0;
       for (const auto* entry : array.entries) {
-        DeclareStructuralIdentities(*entry);
+        MapOwnedChildBinding(
+            *entry, frame,
+            hir::GenerateChildRef{
+                .generate = generate,
+                .scope = hir::StructuralScopeId{block_index++}});
+        if (auto r = DeclareStructuralIdentities(*entry); !r) {
+          return std::unexpected(std::move(r.error()));
+        }
       }
     } else if (member.kind == slang::ast::SymbolKind::Instance) {
-      MapOwnedChildBinding(
-          member, frame,
-          hir::DownwardHead{.child = hir::InstanceMemberId{instance_count++}});
+      MapOwnedChildBinding(member, frame, decls.instance_members.Declare());
     } else if (member.kind == slang::ast::SymbolKind::InstanceArray) {
       if (!ResolveInstanceArrayShape(
                member.as<slang::ast::InstanceArraySymbol>())
                .has_value()) {
         continue;
       }
-      MapOwnedChildBinding(
-          member, frame,
-          hir::DownwardHead{.child = hir::InstanceMemberId{instance_count++}});
-    } else if (member.kind == slang::ast::SymbolKind::StatementBlock) {
-      const auto& block = member.as<slang::ast::StatementBlockSymbol>();
-      if (block.name.empty()) continue;
-      MapOwnedChildBinding(
-          block, frame,
-          hir::DownwardHead{
-              .child = hir::NamedBlockRef{.label = std::string{block.name}}});
+      MapOwnedChildBinding(member, frame, decls.instance_members.Declare());
+    } else if (member.kind == slang::ast::SymbolKind::Subroutine) {
+      const auto& sub = member.as<slang::ast::SubroutineSymbol>();
+      // A DPI-C import declares no body and reserves no subroutine id; the
+      // unit interns its record on first sight from either side. What it does
+      // record here is the scope it is declared in, which a `context` import
+      // observes during its foreign call (LRM 35.5.3).
+      if (sub.flags.has(slang::ast::MethodFlags::DPIImport)) {
+        MapForeignImportScope(sub, frame);
+        continue;
+      }
+      const hir::StructuralSubroutineId id =
+          decls.structural_subroutines.Declare();
+      MapSubroutineBinding(sub, frame, id);
+      DeclareProceduralStatics(sub, sub, hir::ProceduralBodyRef{id}, frame);
+    } else if (member.kind == slang::ast::SymbolKind::ProceduralBlock) {
+      const auto& proc = member.as<slang::ast::ProceduralBlockSymbol>();
+      if (!Contains(proc)) continue;
+      const hir::ProcessId id = decls.processes.Declare();
+      MapProcessBinding(proc, id);
+      // The frontend hoists a process's outermost block into this scope's
+      // member list, so the process is the only place that says which of those
+      // blocks is its body.
+      const auto* body_block =
+          proc.getBody().as_if<slang::ast::BlockStatement>();
+      if (body_block == nullptr || body_block->blockSymbol == nullptr) {
+        continue;
+      }
+      DeclareProceduralStatics(
+          *body_block->blockSymbol, proc, hir::ProceduralBodyRef{id}, frame);
     }
   }
+  return {};
+}
+
+void UnitLowerer::DeclareProceduralStatics(
+    const slang::ast::Scope& block, const slang::ast::Symbol& body_symbol,
+    hir::ProceduralBodyRef body, ScopeFrameId frame) {
+  for (const auto& member : block.members()) {
+    if (member.kind == slang::ast::SymbolKind::StatementBlock) {
+      DeclareProceduralStatics(
+          member.as<slang::ast::StatementBlockSymbol>(), body_symbol, body,
+          frame);
+      continue;
+    }
+    if (member.kind != slang::ast::SymbolKind::Variable) continue;
+    const auto& var = member.as<slang::ast::VariableSymbol>();
+    if (var.lifetime != slang::ast::VariableLifetime::Static) continue;
+
+    const hir::ProceduralVarId id =
+        procedural_static_vars_[&body_symbol].Declare();
+    const auto [_, inserted] = procedural_static_bindings_.emplace(
+        &var,
+        ProceduralStaticBinding{.home_frame = frame, .body = body, .var = id});
+    if (!inserted) {
+      throw InternalError(
+          "UnitLowerer::DeclareProceduralStatics: procedural static already "
+          "mapped");
+    }
+  }
+}
+
+auto UnitLowerer::MakeProceduralBody(const slang::ast::Symbol& body_symbol)
+    -> hir::ProceduralBody {
+  hir::ProceduralBody body;
+  const auto it = procedural_static_vars_.find(&body_symbol);
+  if (it == procedural_static_vars_.end()) return body;
+  body.procedural_vars = std::move(it->second);
+  return body;
+}
+
+auto UnitLowerer::TakeScopeDeclarations(const slang::ast::Scope& scope)
+    -> ScopeDeclarations {
+  const auto it = scope_declarations_.find(&scope);
+  if (it == scope_declarations_.end()) return {};
+  return std::move(it->second);
 }
 
 auto UnitLowerer::LookupScopeFrame(const slang::ast::Scope& scope) const
@@ -275,10 +349,9 @@ auto UnitLowerer::LookupPatternVar(const slang::ast::PatternVarSymbol& sym)
 
 void UnitLowerer::MapOwnedChildBinding(
     const slang::ast::Symbol& child, ScopeFrameId home_frame,
-    hir::DownwardHead head) {
+    hir::OwnedChildRef child_ref) {
   const auto [_, inserted] = owned_child_bindings_.emplace(
-      &child,
-      OwnedChildBinding{.home_frame = home_frame, .head = std::move(head)});
+      &child, OwnedChildBinding{.home_frame = home_frame, .child = child_ref});
   if (!inserted) {
     throw InternalError(
         "UnitLowerer::MapOwnedChildBinding: owned child already mapped");
@@ -289,6 +362,34 @@ auto UnitLowerer::LookupOwnedChildBinding(const slang::ast::Symbol& child) const
     -> std::optional<OwnedChildBinding> {
   const auto it = owned_child_bindings_.find(&child);
   if (it == owned_child_bindings_.end()) {
+    return std::nullopt;
+  }
+  return it->second;
+}
+
+void UnitLowerer::MapProcessBinding(
+    const slang::ast::ProceduralBlockSymbol& proc, hir::ProcessId id) {
+  const auto [_, inserted] = process_bindings_.emplace(&proc, id);
+  if (!inserted) {
+    throw InternalError(
+        "UnitLowerer::MapProcessBinding: process symbol already mapped");
+  }
+}
+
+auto UnitLowerer::LookupProcessBinding(
+    const slang::ast::ProceduralBlockSymbol& proc) const
+    -> std::optional<hir::ProcessId> {
+  const auto it = process_bindings_.find(&proc);
+  if (it == process_bindings_.end()) {
+    return std::nullopt;
+  }
+  return it->second;
+}
+
+auto UnitLowerer::LookupProceduralStatic(const slang::ast::Symbol& var) const
+    -> std::optional<ProceduralStaticBinding> {
+  const auto it = procedural_static_bindings_.find(&var);
+  if (it == procedural_static_bindings_.end()) {
     return std::nullopt;
   }
   return it->second;
@@ -340,8 +441,7 @@ auto DeclaringUnitOfValue(const slang::ast::ValueSymbol& value)
 
 auto UnitLowerer::MapOrGetRoutedRef(
     const slang::ast::ValueSymbol& target, ScopeFrameId slot_owner_frame,
-    hir::RoutedRefHead head, std::vector<hir::PathSegment> path,
-    hir::TypeId type) -> hir::RoutedRefId {
+    hir::RoutedPathRecipe recipe) -> hir::RoutedRefId {
   auto& frame_dedup = routed_ref_dedup_[slot_owner_frame];
   if (const auto it = frame_dedup.find(&target); it != frame_dedup.end()) {
     return it->second;
@@ -350,8 +450,7 @@ auto UnitLowerer::MapOrGetRoutedRef(
   const hir::RoutedRefId id{static_cast<std::uint32_t>(slots.size())};
   slots.push_back(
       hir::RoutedRefDecl{
-          .recipe =
-              {.head = std::move(head), .path = std::move(path), .type = type},
+          .recipe = std::move(recipe),
           .target_net_type = TargetNetType(target)});
   frame_dedup.emplace(&target, id);
   return id;
@@ -370,10 +469,10 @@ auto UnitLowerer::TakeRoutedRefsForFrame(ScopeFrameId slot_owner_frame)
 
 auto UnitLowerer::MakeRoutedMemberRef(
     const slang::ast::ValueSymbol& target, ScopeFrameId slot_owner_frame,
-    hir::RoutedRefHead head, std::vector<hir::PathSegment> path,
-    hir::TypeId type, diag::SourceSpan span) -> hir::Expr {
-  const hir::RoutedRefId slot = MapOrGetRoutedRef(
-      target, slot_owner_frame, std::move(head), std::move(path), type);
+    hir::RoutedPathRecipe recipe, diag::SourceSpan span) -> hir::Expr {
+  const hir::TypeId type = recipe.type;
+  const hir::RoutedRefId slot =
+      MapOrGetRoutedRef(target, slot_owner_frame, std::move(recipe));
   return hir::Expr{
       .type = type,
       .data = hir::PrimaryExpr{.data = hir::RoutedRef{.id = slot}},
@@ -384,33 +483,62 @@ auto UnitLowerer::MakeRoutedMemberRef(
 auto UnitLowerer::TranslateReferenceRoute(
     const WalkFrame& frame, const slang::ast::ValueSymbol& value)
     -> std::optional<hir::ReferenceRoute> {
-  // The target sits on the reader's own scope or an ancestor scope of the same
-  // unit. `hops == 0` is a direct member of `self` -- an empty route with no
-  // sealed endpoint. `hops > 0` reaches an enclosing ancestor member: a routed
-  // reference whose head is a typed climb of `hops` parent edges and whose
-  // single path segment is the leaf member, sealed once in the resolve phase
-  // like every other routed reference rather than re-walked on each access.
-  if (const auto binding = LookupStructuralDataObjectBinding(value)) {
-    if (const auto hops = frame.HopsTo(binding->home_frame)) {
-      if (hops->value == 0) {
-        return hir::ReferenceRoute{
-            hir::DirectMemberRef{.var = binding->var_id}};
-      }
-      const auto enclosing_type = InternType(
-          value.getType(), SourceMapper().PointSpanOf(value.location));
-      if (!enclosing_type) return std::nullopt;
-      const hir::RoutedRefId id = MapOrGetRoutedRef(
-          value, frame.Current(),
-          hir::RoutedRefHead{hir::EnclosingHead{.hops = *hops}},
-          {hir::PathSegment{.name = std::string{value.name}, .indices = {}}},
-          *enclosing_type);
-      return hir::ReferenceRoute{hir::RoutedRef{.id = id}};
-    }
+  // This unit's own identity for the target, if it declares it.
+  const auto data_object = LookupStructuralDataObjectBinding(value);
+  const auto procedural_static = LookupProceduralStatic(value);
+  const std::optional<hir::StructuralHops> data_object_hops =
+      data_object ? frame.HopsTo(data_object->home_frame) : std::nullopt;
+
+  // A data object of the reader's own scope is a direct member of `self`: the
+  // one shape that is no route at all, and so has no leaf and no sealed
+  // endpoint.
+  if (data_object_hops.has_value() && data_object_hops->value == 0) {
+    return hir::ReferenceRoute{
+        hir::DirectMemberRef{.var = data_object->var_id}};
   }
 
   const auto type =
       InternType(value.getType(), SourceMapper().PointSpanOf(value.location));
   if (!type) return std::nullopt;
+
+  // What the route ends at. This unit's own identity for the target when it
+  // declares it -- and for a static a named block puts on the hierarchical
+  // path (LRM 23.9), that identity also says the blocks between the static and
+  // its structural scope describe where the storage sits rather than steps the
+  // route takes. A target another unit declares is named, like the opaque
+  // steps that reach it.
+  const hir::RouteLeaf leaf = [&]() -> hir::RouteLeaf {
+    if (data_object) {
+      return hir::StructuralDataObjectLeaf{.object = data_object->var_id};
+    }
+    if (procedural_static) {
+      return hir::ProceduralStaticLeaf{
+          .body = procedural_static->body, .var = procedural_static->var};
+    }
+    return hir::OpaqueLeaf{.name = std::string{value.name}};
+  }();
+
+  // The target's storage hangs under an ancestor scope of the same unit, so
+  // the whole route is a typed climb to it: a routed reference sealed once in
+  // the resolve phase rather than re-walked on each access.
+  const auto in_unit_route = [&](hir::StructuralHops hops) {
+    return hir::ReferenceRoute{hir::RoutedRef{
+        .id = MapOrGetRoutedRef(
+            value, frame.Current(),
+            hir::RoutedPathRecipe{
+                .head = hir::InUnitHead{.hops = hops},
+                .steps = {},
+                .leaf = leaf,
+                .type = *type})}};
+  };
+  if (data_object_hops.has_value()) {
+    return in_unit_route(*data_object_hops);
+  }
+  if (procedural_static) {
+    if (const auto hops = frame.HopsTo(procedural_static->home_frame)) {
+      return in_unit_route(*hops);
+    }
+  }
 
   // The reader's elaborated ancestor scopes, across unit boundaries (slang's
   // `getHierarchicalParent` crosses the boundary at the instance-body
@@ -428,14 +556,17 @@ auto UnitLowerer::TranslateReferenceRoute(
   // addressable owned child is resolved: the instance member (not its body)
   // across a unit boundary, the array member for a generate-loop iteration or
   // instance-array element with the elaborated index attached.
-  std::vector<hir::PathSegment> descent;
-  descent.push_back(
-      hir::PathSegment{.name = std::string{value.name}, .indices = {}});
+  std::vector<hir::PathStep> descent;
   const slang::ast::Scope* scope = value.getHierarchicalParent();
   while (scope != nullptr) {
     const slang::ast::Symbol* owned = &scope->asSymbol();
     const slang::ast::Scope* next = owned->getHierarchicalParent();
     std::vector<std::uint32_t> indices;
+    if (owned->kind == slang::ast::SymbolKind::StatementBlock &&
+        !std::holds_alternative<hir::OpaqueLeaf>(leaf)) {
+      scope = next;
+      continue;
+    }
     if (owned->kind == slang::ast::SymbolKind::InstanceBody) {
       const auto* inst =
           owned->as<slang::ast::InstanceBodySymbol>().parentInstance;
@@ -458,11 +589,20 @@ auto UnitLowerer::TranslateReferenceRoute(
       next = owned->getHierarchicalParent();
     } else if (const auto* gb = owned->as_if<slang::ast::GenerateBlockSymbol>();
                gb != nullptr && gb->getArrayIndex() != nullptr) {
-      indices.push_back(
-          static_cast<std::uint32_t>(
-              gb->getArrayIndex()->as<std::int64_t>().value_or(0)));
-      owned = &owned->getHierarchicalParent()->asSymbol();
-      next = owned->getHierarchicalParent();
+      const slang::ast::Symbol& array =
+          owned->getHierarchicalParent()->asSymbol();
+      // The unit that declares a loop iteration declares it as a child in its
+      // own right, so the iteration is the step and its elaborated position is
+      // already part of that identity. Across the artifact boundary only the
+      // array's source name travels, and the position picks the iteration out
+      // of it (LRM 27.4).
+      if (!LookupOwnedChildBinding(*owned).has_value()) {
+        indices.push_back(
+            static_cast<std::uint32_t>(
+                gb->getArrayIndex()->as<std::int64_t>().value_or(0)));
+        owned = &array;
+      }
+      next = array.getHierarchicalParent();
     }
 
     // The head is the child of the deepest scope shared with the reader: the
@@ -472,30 +612,30 @@ auto UnitLowerer::TranslateReferenceRoute(
     // nested head (a named block inside another) head at the block the shared
     // scope directly exposes, not the inner one.
     if (next != nullptr && reader_ancestors.contains(next)) {
-      std::ranges::reverse(descent);
-      // A head whose owning scope this unit emits routes as a downward head:
-      // the enclosing climb stays typed, and the head step is a typed member of
-      // the enclosing class. A generate block / array names that member
-      // directly; a named block (LRM 23.9) names it by the block's SV label,
-      // from which HIR-to-MIR recovers the materialized scope's companion. An
-      // instance head at hops > 0 is excluded -- crossing an instance body
-      // crosses into another compilation unit, so the climb cannot stay typed
-      // and the head is reached by name.
+      // A head whose owning scope this unit emits stays inside this unit's
+      // layout: the climb to that scope is typed, and the head becomes the
+      // route's first typed step. An instance head at hops > 0 is excluded --
+      // crossing an instance body crosses into another compilation unit, so
+      // the climb cannot stay typed and the head is reached by name.
       const bool head_is_intra_unit =
           owned->kind == slang::ast::SymbolKind::GenerateBlock ||
-          owned->kind == slang::ast::SymbolKind::GenerateBlockArray ||
-          owned->kind == slang::ast::SymbolKind::StatementBlock;
+          owned->kind == slang::ast::SymbolKind::GenerateBlockArray;
       if (const auto obinding = LookupOwnedChildBinding(*owned)) {
         if (const auto hops = frame.HopsTo(obinding->home_frame);
             hops.has_value() && (hops->value == 0 || head_is_intra_unit)) {
-          hir::DownwardHead head = obinding->head;
-          head.hops = *hops;
-          head.head_indices = std::move(indices);
+          descent.emplace_back(
+              hir::OwnedChildStep{
+                  .child = obinding->child, .indices = std::move(indices)});
+          std::ranges::reverse(descent);
           const ScopeFrameId slot_owner =
               hops->value == 0 ? obinding->home_frame : frame.Current();
           const hir::RoutedRefId id = MapOrGetRoutedRef(
-              value, slot_owner, hir::RoutedRefHead{std::move(head)},
-              std::move(descent), *type);
+              value, slot_owner,
+              hir::RoutedPathRecipe{
+                  .head = hir::InUnitHead{.hops = *hops},
+                  .steps = std::move(descent),
+                  .leaf = leaf,
+                  .type = *type});
           return hir::ReferenceRoute{hir::RoutedRef{.id = id}};
         }
       }
@@ -504,20 +644,34 @@ auto UnitLowerer::TranslateReferenceRoute(
       // through the reader's own instance to reach it). A generate block or a
       // named block in that other unit is reached by name across the boundary,
       // the same as an instance head. When this unit does own the head the
-      // typed branch above always takes it -- a missing companion or
-      // materialization then surfaces downstream, never a silent by-name.
+      // typed branch above always takes it, so reaching here is exactly the
+      // cross-unit case and never a silent fallback for a local one.
+      std::ranges::reverse(descent);
       const hir::RoutedRefId id = MapOrGetRoutedRef(
           value, frame.Current(),
-          hir::RoutedRefHead{hir::UpwardNamedHead{
-              .head_name = std::string{owned->name},
-              .head_indices = std::move(indices)}},
-          std::move(descent), *type);
+          hir::RoutedPathRecipe{
+              .head =
+                  hir::VisibleChildHead{
+                      .head_name = std::string{owned->name},
+                      .head_indices = std::move(indices)},
+              .steps = std::move(descent),
+              .leaf = leaf,
+              .type = *type});
       return hir::ReferenceRoute{hir::RoutedRef{.id = id}};
     }
 
-    descent.push_back(
-        hir::PathSegment{
-            .name = std::string{owned->name}, .indices = std::move(indices)});
+    // A step this unit declares stays inside its layout and carries the
+    // declaring scope's identity; one it does not is past the artifact
+    // boundary, where the canonical name is the only identity that travels.
+    if (const auto obinding = LookupOwnedChildBinding(*owned)) {
+      descent.emplace_back(
+          hir::OwnedChildStep{
+              .child = obinding->child, .indices = std::move(indices)});
+    } else {
+      descent.emplace_back(
+          hir::OpaqueStep{
+              .name = std::string{owned->name}, .indices = std::move(indices)});
+    }
     scope = next;
   }
   return std::nullopt;
@@ -582,6 +736,49 @@ auto UnitLowerer::TranslateSensitivityReads(
             .edge_kind = edge});
   }
   return out;
+}
+
+void DeclareProceduralScopes(
+    const slang::ast::Scope& slang_scope, UnitLowerer& owner,
+    base::Registry<hir::ProceduralScopeDecl, hir::ProceduralScopeId>& scopes) {
+  for (const auto& member : slang_scope.members()) {
+    // Slang lists a base class's members in the derived class's member list
+    // too (LRM 8.13 inheritance), and this pass mints for one declaration
+    // scope: a member declared elsewhere is that declaration's own to mint,
+    // and minting a second identity for it would leave one of them unfilled.
+    if (member.getParentScope() != &slang_scope) {
+      continue;
+    }
+    if (member.kind == slang::ast::SymbolKind::ProceduralBlock) {
+      if (!owner.Contains(member.as<slang::ast::ProceduralBlockSymbol>())) {
+        continue;
+      }
+      owner.DeclareProceduralScope(member, scopes.Declare());
+    } else if (member.kind == slang::ast::SymbolKind::StatementBlock) {
+      const auto& block = member.as<slang::ast::StatementBlockSymbol>();
+      // Only a block the source named can be named from elsewhere, so only one
+      // needs an identity before the bodies lower. A block slang recorded for
+      // its own reasons -- the implicit scope a pattern arm's bindings live in,
+      // the one a loop's control variables live in -- is reached only by the
+      // walk that lowers it, which mints its identity there.
+      if (!block.name.empty()) {
+        owner.DeclareProceduralScope(block, scopes.Declare());
+      }
+      DeclareProceduralScopes(block, owner, scopes);
+    } else if (member.kind == slang::ast::SymbolKind::Subroutine) {
+      const auto& sub = member.as<slang::ast::SubroutineSymbol>();
+      // A bodyless DPI-C import (LRM 35.4) and a compiler-generated class
+      // built-in (the randomize family, LRM 18.6) are both provided rather
+      // than lowered from source, so no pass goes on to fill a scope for
+      // either -- and nothing inside one is lowered either.
+      if (sub.flags.has(slang::ast::MethodFlags::DPIImport) ||
+          sub.flags.has(slang::ast::MethodFlags::BuiltIn)) {
+        continue;
+      }
+      owner.DeclareProceduralScope(sub, scopes.Declare());
+      DeclareProceduralScopes(sub, owner, scopes);
+    }
+  }
 }
 
 }  // namespace lyra::lowering::ast_to_hir

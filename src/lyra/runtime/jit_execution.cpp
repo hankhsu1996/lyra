@@ -176,16 +176,16 @@ using lyra::runtime::Coroutine;
 using lyra::runtime::CoroutineHandle;
 using lyra::runtime::FileTable;
 using lyra::runtime::GeneratedCallScope;
-using lyra::runtime::GeneratedInstance;
+using lyra::runtime::GeneratedScope;
 using lyra::runtime::HierarchySegment;
 using lyra::runtime::Observable;
 using lyra::runtime::Own;
 using lyra::runtime::Read;
 using lyra::runtime::RuntimeEffects;
 using lyra::runtime::Scope;
+using lyra::runtime::ScopeDefinition;
 using lyra::runtime::SubscribeValueChange;
 using lyra::runtime::Trigger;
-using lyra::runtime::UnitDefinition;
 using lyra::runtime::Var;
 using lyra::value::Chandle;
 using lyra::value::Format;
@@ -340,10 +340,10 @@ auto lyra_rt_make_segment(void* label, LyraSpan indices) -> void* {
       std::string(static_cast<const char*>(label)), resolved);
 }
 
-auto lyra_rt_make_unit(const void* definition, void* parent, void* segment)
+auto lyra_rt_make_scope(const void* definition, void* parent, void* segment)
     -> void* {
-  const auto* def = static_cast<const UnitDefinition*>(definition);
-  auto instance = std::make_unique<GeneratedInstance>(
+  const auto* def = static_cast<const ScopeDefinition*>(definition);
+  auto instance = std::make_unique<GeneratedScope>(
       static_cast<Scope*>(parent), *static_cast<HierarchySegment*>(segment),
       def);
   {
@@ -353,13 +353,18 @@ auto lyra_rt_make_unit(const void* definition, void* parent, void* segment)
   return instance.release();
 }
 
+auto lyra_rt_hierarchical_path(void* self) -> void* {
+  return GeneratedCallScope::Current().Arena().New<String>(
+      static_cast<Scope*>(self)->HierarchicalPath());
+}
+
 auto lyra_rt_add_owned_child(void* parent, void* child) -> void* {
   return static_cast<Scope*>(parent)->AddOwnedChild(
       std::unique_ptr<Scope>(static_cast<Scope*>(child)));
 }
 
 auto lyra_rt_member_addr(void* self, std::uint32_t index) -> void* {
-  return static_cast<GeneratedInstance*>(self)->MemberAddress(index);
+  return static_cast<GeneratedScope*>(self)->MemberAddress(index);
 }
 
 void lyra_rt_register_signal(void* self, const void* name, void* cell) {

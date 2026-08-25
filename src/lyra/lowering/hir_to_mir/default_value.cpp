@@ -1,12 +1,15 @@
 #include "lyra/lowering/hir_to_mir/default_value.hpp"
 
 #include <algorithm>
+#include <cstddef>
 #include <cstdint>
+#include <optional>
 #include <string>
 #include <utility>
 #include <variant>
 #include <vector>
 
+#include "lyra/base/component_index.hpp"
 #include "lyra/base/internal_error.hpp"
 #include "lyra/base/overloaded.hpp"
 #include "lyra/hir/type.hpp"
@@ -244,7 +247,10 @@ auto BuildDefaultValueExpr(
             const mir::ExprId member_default = block.exprs.Add(
                 BuildDefaultValueExpr(unit_lowerer, frame, u.elements.front()));
             return mir::Expr{
-                .data = mir::UnionExpr{.index = 0, .value = member_default},
+                .data =
+                    mir::UnionExpr{
+                        .index = base::ComponentIndex{},
+                        .value = member_default},
                 .type = type};
           },
           // LRM 11.9: an uninitialized tagged union variable is undefined. The
@@ -255,7 +261,7 @@ auto BuildDefaultValueExpr(
             return mir::Expr{
                 .data =
                     mir::TaggedExpr{
-                        .tag_index = 0,
+                        .tag_index = base::ComponentIndex{},
                         .payload = block.exprs.Add(
                             BuildDefaultValueExpr(unit_lowerer, frame, first))},
                 .type = type};

@@ -60,10 +60,10 @@ auto BuildRuntimeFormatCallExpr(
     Lowerer& lowerer, WalkFrame frame, const hir::CallExpr& call,
     std::size_t arg_offset) -> diag::Result<mir::Expr>;
 
-// Materializes a runtime print-item DTO list into MIR construction nodes: each
-// item becomes a `ConstructExpr` of its runtime-library type (literal or value
-// item), and the sequence becomes an `ArrayLiteralExpr` typed as an array of
-// `print_item`. The element subtrees are interned into `block`; the returned
+// Materializes a runtime print-item list into MIR: each item is constructed as
+// its runtime-library type -- a literal item or a value item -- and the
+// sequence becomes an array literal of those. The element subtrees are
+// interned into `block`; the returned
 // array root is left for the caller to intern. `time_unit_power` scales a %t
 // directive (LRM 21.2.1.3) and is unread when no item carries a kTime spec.
 // The canonical item-array builder every print-item-bearing effect reuses.

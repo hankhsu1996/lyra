@@ -8,6 +8,7 @@
 #include <string>
 #include <string_view>
 #include <variant>
+#include <vector>
 
 #include "lyra/backend/cpp/formatting.hpp"
 #include "lyra/backend/cpp/place_access.hpp"
@@ -306,10 +307,6 @@ auto RenderIntCastExpr(
       RenderExpr(view, view.Expr(cast.operand)));
 }
 
-// The BuiltinFn name and namespace tables, plus the per-callee-variant call
-// renderers and the `RenderCallExpr` dispatch, live in `render_call.cpp` so
-// this file stays focused on the per-Expr-shape dispatch.
-
 }  // namespace
 
 // How a field access reaches its field: the C++ field name, plus whether it is
@@ -429,11 +426,12 @@ auto RenderProjectionChain(
     rendered = std::visit(
         Overloaded{
             [&](const mir::ComponentSelector& c) -> std::string {
-              return std::format("({}).template Get<{}>()", rendered, c.index);
+              return std::format(
+                  "({}).template Get<{}>()", rendered, c.index.value);
             },
             [&](const mir::UnionMemberSelector& m) -> std::string {
               return std::format(
-                  "({}).template GetRef<{}>()", rendered, m.index);
+                  "({}).template GetRef<{}>()", rendered, m.index.value);
             },
             [&](const mir::ElementSelector& e) -> std::string {
               return std::format(
@@ -495,7 +493,7 @@ auto RenderLhsExpr(const ScopeView& view, const mir::Expr& expr)
           [&](const mir::DerefExpr& d) -> std::string {
             const mir::Expr& place = view.Expr(d.pointer);
             const mir::Type& place_type = view.Unit().types.Get(place.type);
-            if (mir::IsCapabilityWrapperType(place_type)) {
+            if (place_type.IsCapabilityWrapper()) {
               return RenderLendThrough(place_type, RenderLhsExpr(view, place));
             }
             return std::format("(*{})", RenderExpr(view, place));
@@ -507,7 +505,7 @@ auto RenderLhsExpr(const ScopeView& view, const mir::Expr& expr)
           [&](const mir::TupleGetExpr& g) -> std::string {
             return std::format(
                 "({}).template Get<{}>()",
-                RenderLhsExpr(view, view.Expr(g.tuple)), g.index);
+                RenderLhsExpr(view, view.Expr(g.tuple)), g.index.value);
           },
           // A union member write: a reference to the active member reached
           // through the union as a place. The reference makes the member
@@ -524,7 +522,8 @@ auto RenderLhsExpr(const ScopeView& view, const mir::Expr& expr)
           [&](const mir::TaggedGetRefExpr& g) -> std::string {
             return std::format(
                 "({}).template GetRef<{}>()",
-                RenderLhsExpr(view, view.Expr(g.union_value)), g.tag_index);
+                RenderLhsExpr(view, view.Expr(g.union_value)),
+                g.tag_index.value);
           },
           [&](const auto&) -> std::string {
             throw InternalError(
@@ -659,6 +658,21 @@ auto RenderStructConstructExpr(
 // referencing site. The clause never contains `[this]`, `[=]`, or `[&]`: each
 // entry is a by-value field, and an alias field is a `Ref<T>`, not a hidden C++
 // reference.
+// The value a construction supplies for one field. A field init names its
+// target, because the entries are in the source's evaluation order and that is
+// not the order the fields were declared in -- so the entry for a field is the
+// one that says so, never the entry sitting at the field's own position.
+auto FieldInitValue(
+    const std::vector<mir::FieldInit>& inits, mir::FieldId field)
+    -> mir::ExprId {
+  for (const mir::FieldInit& init : inits) {
+    if (init.target == field) return init.value;
+  }
+  throw InternalError(
+      "FieldInitValue: the construction supplies no value for a field it "
+      "declares -- please report this as a bug");
+}
+
 auto RenderClosureExpr(const ScopeView& view, const mir::ClosureExpr& construct)
     -> std::string {
   const mir::ClosureDecl& decl = view.Unit().GetClosure(construct.closure);
@@ -690,7 +704,7 @@ auto RenderClosureExpr(const ScopeView& view, const mir::ClosureExpr& construct)
           "{} {}", RenderTypeAsCpp(view.Unit(), field.type),
           ClosureCaptureCppName(decl, field_id));
       args_text += RenderExpr(
-          view, view.Expr(construct.field_inits[field_id.value].value));
+          view, view.Expr(FieldInitValue(construct.field_inits, field_id)));
       first = false;
     }
     return std::format(
@@ -704,7 +718,7 @@ auto RenderClosureExpr(const ScopeView& view, const mir::ClosureExpr& construct)
     captures_text += std::format(
         "{} = {}", ClosureCaptureCppName(decl, field_id),
         RenderExpr(
-            view, view.Expr(construct.field_inits[field_id.value].value)));
+            view, view.Expr(FieldInitValue(construct.field_inits, field_id))));
     first_capture = false;
   }
 
@@ -782,6 +796,22 @@ auto RenderTupleExpr(
   return out;
 }
 
+// Render the full `std::vector<...>{...}` rather than a bare brace list, for
+// the same reason a product value does: the element type has to be stated
+// where the sequence appears as an argument or an element of an outer literal.
+auto RenderVectorExpr(
+    const ScopeView& view, const mir::Expr& expr, const mir::VectorExpr& v)
+    -> std::string {
+  std::string out =
+      std::format("{}{{", RenderTypeAsCpp(view.Unit(), expr.type));
+  for (std::size_t i = 0; i < v.elements.size(); ++i) {
+    if (i != 0) out += ", ";
+    out += RenderExpr(view, view.Expr(v.elements[i]));
+  }
+  out += "}";
+  return out;
+}
+
 auto RenderReplicationExpr(
     const ScopeView& view, const mir::Expr& expr, const mir::ReplicationExpr& r)
     -> std::string {
@@ -813,7 +843,7 @@ auto RenderDerefExpr(const ScopeView& view, const mir::DerefExpr& d)
     -> std::string {
   const mir::Expr& place = view.Expr(d.pointer);
   const mir::Type& place_type = view.Unit().types.Get(place.type);
-  if (mir::IsCapabilityWrapperType(place_type)) {
+  if (place_type.IsCapabilityWrapper()) {
     return RenderLoadThrough(place_type, RenderLhsExpr(view, place));
   }
   return std::format("(*{})", RenderExpr(view, place));
@@ -974,6 +1004,9 @@ auto RenderExpr(const ScopeView& view, const mir::Expr& expr) -> std::string {
           [&](const mir::TupleExpr& t) -> std::string {
             return RenderTupleExpr(view, expr, t);
           },
+          [&](const mir::VectorExpr& v) -> std::string {
+            return RenderVectorExpr(view, expr, v);
+          },
           [&](const mir::AwaitExpr& a) -> std::string {
             return std::format(
                 "co_await {}", RenderExpr(view, view.Expr(a.awaitable)));
@@ -981,17 +1014,22 @@ auto RenderExpr(const ScopeView& view, const mir::Expr& expr) -> std::string {
           [&](const mir::TupleGetExpr& g) -> std::string {
             return std::format(
                 "({}).template Get<{}>()", RenderExpr(view, view.Expr(g.tuple)),
-                g.index);
+                g.index.value);
+          },
+          [&](const mir::VectorGetExpr& g) -> std::string {
+            return std::format(
+                "({})[{}]", RenderExpr(view, view.Expr(g.vector)),
+                RenderExpr(view, view.Expr(g.index)));
           },
           [&](const mir::UnionExpr& u) -> std::string {
             return std::format(
                 "{}::Make<{}>({})", RenderTypeAsCpp(view.Unit(), expr.type),
-                u.index, RenderExpr(view, view.Expr(u.value)));
+                u.index.value, RenderExpr(view, view.Expr(u.value)));
           },
           [&](const mir::UnionGetExpr& g) -> std::string {
             return std::format(
                 "({}).template Get<{}>()",
-                RenderExpr(view, view.Expr(g.union_value)), g.index);
+                RenderExpr(view, view.Expr(g.union_value)), g.index.value);
           },
           // A designator reaches value position where a construct binds one
           // rather than writing it -- a reference actual, an output pack
@@ -1003,22 +1041,22 @@ auto RenderExpr(const ScopeView& view, const mir::Expr& expr) -> std::string {
           [&](const mir::TaggedExpr& t) -> std::string {
             return std::format(
                 "{}::Make<{}>({})", RenderTypeAsCpp(view.Unit(), expr.type),
-                t.tag_index, RenderExpr(view, view.Expr(t.payload)));
+                t.tag_index.value, RenderExpr(view, view.Expr(t.payload)));
           },
           [&](const mir::TaggedGetExpr& g) -> std::string {
             return std::format(
                 "({}).template Get<{}>()",
-                RenderExpr(view, view.Expr(g.union_value)), g.tag_index);
+                RenderExpr(view, view.Expr(g.union_value)), g.tag_index.value);
           },
           [&](const mir::TaggedGetRefExpr& g) -> std::string {
             return std::format(
                 "({}).template GetRef<{}>()",
-                RenderExpr(view, view.Expr(g.union_value)), g.tag_index);
+                RenderExpr(view, view.Expr(g.union_value)), g.tag_index.value);
           },
           [&](const mir::TaggedIsExpr& g) -> std::string {
             return std::format(
                 "lyra::value::PackedArray::Bit(({}).template IsTagged<{}>())",
-                RenderExpr(view, view.Expr(g.union_value)), g.tag_index);
+                RenderExpr(view, view.Expr(g.union_value)), g.tag_index.value);
           },
       },
       expr.data);

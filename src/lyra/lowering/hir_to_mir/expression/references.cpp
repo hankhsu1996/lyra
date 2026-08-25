@@ -1,5 +1,6 @@
 #include "lyra/lowering/hir_to_mir/expression/references.hpp"
 
+#include <cstddef>
 #include <cstdint>
 #include <string_view>
 #include <utility>
@@ -181,35 +182,38 @@ auto LowerPatternVarRefExpr(WalkFrame frame, const hir::PatternVarRef& r)
 auto LowerProceduralVarRefExpr(
     ProcessLowerer& process, const WalkFrame& frame,
     const hir::ProceduralVarRef& l, mir::TypeId type) -> mir::Expr {
-  // Storage placement (static, LRM 13.3.1) and body-local environment
-  // (automatic / promoted) are separate authorities. Presence in the
-  // body-local environment is the authoritative signal: a body-declared
-  // static is not registered there and resolves through the storage plan,
-  // while subroutine params / output / result_var ARE registered (regardless
-  // of their slang-reported lifetime) and resolve through it.
-  const auto* binding = process.LookupProceduralVar(l.var);
-  if (binding == nullptr) {
-    return process.BuildStaticStorageAccess(
-        frame, process.LookupStaticPlacement(l.var));
-  }
-  // A lifetime-extended automatic (LRM 6.21) lives in a shared activation
-  // frame; the read / write reaches its field through the handle. The handle
-  // is a carrier the resolver makes available in this body (a by-value, owning
-  // copy inside a detached branch), and the promoted field projects from it.
-  if (const auto* pb = std::get_if<PromotedVarBinding>(binding)) {
-    const BodyBindingRef handle =
-        frame.bindings->EnsureCarrier(pb->handle_origin);
-    const mir::ExprId handle_ref = frame.current_block->exprs.Add(
-        frame.bindings->MakeReadExpr(handle, *frame.current_block));
-    return mir::MakeFieldAccessExpr(handle_ref, pb->field, type);
-  }
-  // An ordinary automatic local: resolve its carrier in this body -- a direct
-  // local in the declaring body, a captured field in a closure -- and read it.
-  // The reference's value-versus-cell shape follows the materialized binding's
-  // type, which the dispatcher dereferences when it is a cell.
-  const BodyBindingRef ref =
-      frame.bindings->EnsureCarrier(BindingOriginId::Procedural(l.var));
-  return frame.bindings->MakeReadExpr(ref, *frame.current_block);
+  return std::visit(
+      Overloaded{
+          // Storage that outlives every activation (LRM 13.3.1) is one cell per
+          // instance, so it is a field of the enclosing class like any other
+          // and the body reads it off its own `self`.
+          [&](const StaticVarBinding& binding) {
+            return BuildStructuralFieldAccessExpr(
+                frame, process.Owner().Unit(), mir::EnclosingHops{},
+                binding.field);
+          },
+          // A lifetime-extended automatic (LRM 6.21) lives in a shared
+          // activation object; the read reaches its field through the handle,
+          // a carrier the resolver makes available in this body (a by-value,
+          // owning copy inside a detached branch).
+          [&](const PromotedVarBinding& promoted) {
+            const BodyBindingRef handle =
+                frame.bindings->EnsureCarrier(promoted.handle_origin);
+            const mir::ExprId handle_ref = frame.current_block->exprs.Add(
+                frame.bindings->MakeReadExpr(handle, *frame.current_block));
+            return mir::MakeFieldAccessExpr(handle_ref, promoted.field, type);
+          },
+          // An ordinary automatic local: resolve its carrier in this body -- a
+          // direct local in the declaring body, a captured field in a closure
+          // -- and read it. The reference's value-versus-cell shape follows the
+          // materialized binding's type, which the dispatcher dereferences when
+          // it is a cell.
+          [&](const AutomaticVarBinding&) {
+            const BodyBindingRef ref = frame.bindings->EnsureCarrier(
+                BindingOriginId::Procedural(l.var));
+            return frame.bindings->MakeReadExpr(ref, *frame.current_block);
+          }},
+      process.LookupProceduralVar(l.var));
 }
 
 // LRM 7.12.4: a with-clause iteration reference reads the named clause's
@@ -254,11 +258,13 @@ auto LowerStaticPropertyRefExpr(
     mir::TypeId result_type) -> mir::Expr {
   if (const auto* local =
           std::get_if<hir::LocalStaticPropertyTarget>(&r.target)) {
+    const mir::ClassId owner = unit_lowerer.TranslateClass(local->owner);
     return mir::Expr{
         .data =
             mir::StaticPropertyRef{
-                .owner = unit_lowerer.TranslateClass(local->owner),
-                .prop = UnitLowerer::TranslateStaticProperty(local->prop),
+                .owner = owner,
+                .prop = unit_lowerer.GetClassShape(owner)
+                            .static_property_translation.Get(local->prop),
             },
         .type = result_type};
   }

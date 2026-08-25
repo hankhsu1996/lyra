@@ -167,7 +167,7 @@ auto LowerEventTimedStmt(
             union_reads.push_back(leaf);
           }
         }
-        return MakeValueChangeWaitStmt(
+        return BuildValueChangeWaitStmt(
             child_block, child_frame, process.EnclosingScopeLowerer(),
             union_reads);
       });
@@ -182,7 +182,7 @@ auto LowerImplicitEventTimedStmt(
       process, frame, std::move(label), t.stmt,
       [&](mir::Block& child_block,
           WalkFrame child_frame) -> diag::Result<mir::Stmt> {
-        return MakeValueChangeWaitStmt(
+        return BuildValueChangeWaitStmt(
             child_block, child_frame, process.EnclosingScopeLowerer(),
             ie.sensitivity_list);
       });
@@ -238,7 +238,7 @@ auto LowerDelayTimedStmt(
 
 auto LowerTimedStmt(
     ProcessLowerer& process, WalkFrame frame, std::optional<std::string> label,
-    diag::SourceSpan span, const hir::TimedStmt& t) -> diag::Result<mir::Stmt> {
+    const hir::TimedStmt& t, diag::SourceSpan span) -> diag::Result<mir::Stmt> {
   if (const auto* ie = std::get_if<hir::ImplicitEventControl>(&t.timing)) {
     return LowerImplicitEventTimedStmt(
         process, frame, std::move(label), t, *ie);
@@ -309,7 +309,7 @@ auto LowerWaitStmt(
 
   mir::Block inner_block;
   const WalkFrame inner_frame = wrapper_frame.WithBlock(&inner_block);
-  inner_block.AppendStmt(MakeValueChangeWaitStmt(
+  inner_block.AppendStmt(BuildValueChangeWaitStmt(
       inner_block, inner_frame, process.EnclosingScopeLowerer(), reads));
 
   const mir::BlockId inner_scope_id =

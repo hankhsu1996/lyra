@@ -1,10 +1,12 @@
 #include "lyra/lowering/ast_to_hir/structural_scope_lowerer.hpp"
 
-#include <cstdint>
 #include <expected>
+#include <format>
 #include <optional>
 #include <string>
+#include <string_view>
 #include <utility>
+#include <variant>
 
 #include <slang/ast/Compilation.h>
 #include <slang/ast/Scope.h>
@@ -41,33 +43,36 @@ namespace lyra::lowering::ast_to_hir {
 
 namespace {
 
-// Mints the identity of every procedural scope this structural scope contains.
-// A procedural scope is what slang records as one: a process body, a subroutine
-// body, and each block that introduces declarations or carries a name (LRM
-// 9.3.4 / 9.3.5). A construct that introduces neither is transparent and is no
-// scope at all, so nothing is minted for it. Instance and generate members are
-// not crossed, being their own structural scopes with their own identities.
-void DeclareProceduralScopes(
-    const slang::ast::Scope& slang_scope, UnitLowerer& owner,
-    hir::StructuralScope& hir_scope) {
-  for (const auto& member : slang_scope.members()) {
-    if (member.kind == slang::ast::SymbolKind::ProceduralBlock) {
-      owner.DeclareProceduralScope(
-          member, hir_scope.procedural_scopes.Declare());
-    } else if (member.kind == slang::ast::SymbolKind::StatementBlock) {
-      const auto& block = member.as<slang::ast::StatementBlockSymbol>();
-      owner.DeclareProceduralScope(
-          block, hir_scope.procedural_scopes.Declare());
-      DeclareProceduralScopes(block, owner, hir_scope);
-    } else if (member.kind == slang::ast::SymbolKind::Subroutine) {
-      const auto& sub = member.as<slang::ast::SubroutineSymbol>();
-      if (sub.flags.has(slang::ast::MethodFlags::DPIImport)) {
-        continue;
-      }
-      owner.DeclareProceduralScope(sub, hir_scope.procedural_scopes.Declare());
-      DeclareProceduralScopes(sub, owner, hir_scope);
-    }
+// The identity the compilation unit's declaration pass minted for an owned
+// child, as the kind of child `Ref` names it. Reaching this with the wrong
+// kind, or with none, means the walk that mints and the walk that fills
+// disagree about what the member even is.
+template <typename Ref>
+auto ReservedOwnedChild(
+    const UnitLowerer& owner, const slang::ast::Symbol& child,
+    std::string_view what) -> const Ref& {
+  const auto binding = owner.LookupOwnedChildBinding(child);
+  const auto* reserved =
+      binding.has_value() ? std::get_if<Ref>(&binding->child) : nullptr;
+  if (reserved == nullptr) {
+    throw InternalError(
+        std::format("{} was not minted by the declaration pass", what));
   }
+  return *reserved;
+}
+
+auto ReservedGenerate(const UnitLowerer& owner, const slang::ast::Symbol& child)
+    -> hir::GenerateId {
+  return ReservedOwnedChild<hir::GenerateChildRef>(
+             owner, child, "generate block")
+      .generate;
+}
+
+auto ReservedInstanceMember(
+    const UnitLowerer& owner, const slang::ast::Symbol& child)
+    -> hir::InstanceMemberId {
+  return ReservedOwnedChild<hir::InstanceMemberId>(
+      owner, child, "instance member");
 }
 
 }  // namespace
@@ -117,37 +122,21 @@ auto StructuralScopeLowerer::ReferenceBindingFor(
 auto StructuralScopeLowerer::Run(WalkFrame parent_frame)
     -> diag::Result<hir::StructuralScope> {
   hir::StructuralScope scope;
-  const WalkFrame frame = parent_frame.WithStructuralFrame(
-      frame_, slang_scope_, &scope, &scope.exprs, &scope.patterns);
+  // Filling a declaration is defining the identity a peer may already hold,
+  // which is why this scope takes the pools rather than growing its own.
+  ScopeDeclarations declarations = owner_->TakeScopeDeclarations(*slang_scope_);
+  scope.structural_subroutines = std::move(declarations.structural_subroutines);
+  scope.processes = std::move(declarations.processes);
+  scope.generates = std::move(declarations.generates);
+  scope.instance_members = std::move(declarations.instance_members);
+  const WalkFrame frame =
+      parent_frame.WithStructuralFrame(frame_, slang_scope_, &scope)
+          .WithProceduralScopeOwner(&scope.procedural_scopes);
   scope.time_resolution = ResolveTimeResolution(slang_scope_->getTimeScale());
 
-  // Forward-declare every subroutine's binding before lowering any body so a
-  // call resolves regardless of source order: direct self-recursion, mutual
-  // recursion, and forward references (LRM 13.4.2). Ids are sequential in
-  // source order and match the arena index the member walk below fills.
-  // A DPI-C import declares no body and is not one of these: the unit interns
-  // its record on first sight from either side, so it reserves no id. What it
-  // does record here is the scope it is declared in, which a `context` import
-  // observes during its foreign call (LRM 35.5.3) -- established ahead of the
-  // bodies for the same reason the ids are, so a call preceding the declaration
-  // resolves it too.
-  std::uint32_t reserved_subroutine_id = 0;
-  for (const auto& member : slang_scope_->members()) {
-    if (member.kind != slang::ast::SymbolKind::Subroutine) continue;
-    const auto& sub = member.as<slang::ast::SubroutineSymbol>();
-    if (sub.flags.has(slang::ast::MethodFlags::DPIImport)) {
-      owner_->MapForeignImportScope(sub, frame_);
-      continue;
-    }
-    owner_->MapSubroutineBinding(
-        sub, frame_, hir::StructuralSubroutineId{reserved_subroutine_id++});
-  }
-
-  // Forward-declare every procedural scope for the same reason, one step
-  // further out: a `disable` names a block or task by static identity (LRM
-  // 9.6.2), so it can name one whose body lowers later, or lives in another
-  // process entirely. Each body then only fills in the scope it was given.
-  DeclareProceduralScopes(*slang_scope_, *owner_, scope);
+  // A `disable` names a block or task by static identity (LRM 9.6.2), so it can
+  // name one whose body lowers later, or lives in another process entirely.
+  DeclareProceduralScopes(*slang_scope_, *owner_, scope.procedural_scopes);
 
   // Instance member decls are built ahead of the port-connection synthesis
   // below, which reads them to wire each connection. The owned-child binding a
@@ -488,18 +477,13 @@ auto StructuralScopeLowerer::PopulateSubroutineMember(
   if (!decl_or) return std::unexpected(std::move(decl_or.error()));
 
   const auto binding = owner_->LookupSubroutineBinding(sym);
-  if (!binding.has_value() ||
-      binding->subroutine_id.value !=
-          static_cast<std::uint32_t>(
-              frame.current_structural_scope->structural_subroutines.size())) {
+  if (!binding.has_value()) {
     throw InternalError(
-        "StructuralScopeLowerer::PopulateSubroutineMember: subroutine added "
-        "out of "
-        "reserved order; ReserveSubroutineBinding must run first in the same "
-        "order");
+        "StructuralScopeLowerer::PopulateSubroutineMember: the subroutine was "
+        "not minted by the declaration pass");
   }
-  frame.current_structural_scope->structural_subroutines.Add(
-      *std::move(decl_or));
+  frame.current_structural_scope->structural_subroutines.Define(
+      binding->subroutine_id, *std::move(decl_or));
 
   // An `export "DPI-C"` (LRM 35.5) names a subroutine of its own scope, so the
   // exported subroutine reaches this ordinary body path and the export is
@@ -528,18 +512,19 @@ auto StructuralScopeLowerer::PopulateForeignImportMember(
 auto StructuralScopeLowerer::PopulateProceduralBlockMember(
     const slang::ast::ProceduralBlockSymbol& proc, WalkFrame frame)
     -> diag::Result<void> {
-  // A concurrent assertion declared as a module item becomes a process whose
-  // entire body is the assertion. When assertions are disabled the process
-  // contributes no behavior, so it is dropped at the source rather than emptied
-  // -- an always block with no body and no timing control would be a zero-delay
-  // infinite loop.
-  if (owner_->DisableAssertions() && proc.isFromAssertion) {
+  if (!owner_->Contains(proc)) {
     return {};
   }
   ProcessLowerer proc_lowerer(*owner_, proc);
   auto p = proc_lowerer.Run(proc, frame);
   if (!p) return std::unexpected(std::move(p.error()));
-  frame.current_structural_scope->processes.Add(*std::move(p));
+  const auto reserved = owner_->LookupProcessBinding(proc);
+  if (!reserved.has_value()) {
+    throw InternalError(
+        "StructuralScopeLowerer::PopulateProceduralBlockMember: the process "
+        "was not minted by the declaration pass");
+  }
+  frame.current_structural_scope->processes.Define(*reserved, *std::move(p));
   return {};
 }
 
@@ -555,9 +540,15 @@ auto StructuralScopeLowerer::PopulateContinuousAssignMember(
 auto StructuralScopeLowerer::PopulateGenerateArrayMember(
     const slang::ast::GenerateBlockArraySymbol& array, WalkFrame frame)
     -> diag::Result<void> {
-  auto g = BuildResolvedGenerateFromArray(array, frame);
+  // A loop generate whose range is empty elaborates no iteration, so it has no
+  // runtime object and takes no generate id.
+  if (array.entries.empty()) {
+    return {};
+  }
+  auto g = BuildGenerateFromArray(array, frame);
   if (!g) return std::unexpected(std::move(g.error()));
-  frame.current_structural_scope->generates.Add(*std::move(g));
+  frame.current_structural_scope->generates.Define(
+      ReservedGenerate(*owner_, *array.entries.front()), *std::move(g));
   return {};
 }
 
@@ -570,16 +561,18 @@ auto StructuralScopeLowerer::PopulateGenerateBlockMember(
   if (block.isUninstantiated) {
     return {};
   }
-  auto g = BuildResolvedGenerateFromBlock(block, frame);
+  auto g = BuildGenerateFromBlock(block, frame);
   if (!g) return std::unexpected(std::move(g.error()));
-  frame.current_structural_scope->generates.Add(*std::move(g));
+  frame.current_structural_scope->generates.Define(
+      ReservedGenerate(*owner_, block), *std::move(g));
   return {};
 }
 
 auto StructuralScopeLowerer::PopulateInstanceMember(
     const slang::ast::InstanceSymbol& inst, WalkFrame frame)
     -> diag::Result<void> {
-  frame.current_structural_scope->instance_members.Add(
+  frame.current_structural_scope->instance_members.Define(
+      ReservedInstanceMember(*owner_, inst),
       hir::InstanceMemberDecl{
           .instance_name = std::string{inst.name},
           .target_unit = SpecializationName(inst),
@@ -594,7 +587,8 @@ auto StructuralScopeLowerer::PopulateInstanceArrayMember(
   if (!shape) {
     return {};
   }
-  frame.current_structural_scope->instance_members.Add(
+  frame.current_structural_scope->instance_members.Define(
+      ReservedInstanceMember(*owner_, array),
       hir::InstanceMemberDecl{
           .instance_name = std::string{array.name},
           .target_unit = SpecializationName(*shape->leaf),

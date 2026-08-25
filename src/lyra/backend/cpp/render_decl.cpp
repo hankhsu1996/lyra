@@ -1,7 +1,6 @@
 #include "lyra/backend/cpp/render_decl.hpp"
 
 #include <cstddef>
-#include <cstdint>
 #include <format>
 #include <string>
 #include <string_view>
@@ -512,25 +511,22 @@ auto RenderUnitClasses(const mir::CompilationUnit& unit) -> ClassText {
   ClassText text;
   std::string forward_declarations;
   std::string struct_definitions;
-  for (std::size_t i = 0; i < unit.classes.size(); ++i) {
-    const mir::ClassId id{static_cast<std::uint32_t>(i)};
+  for (const mir::ClassId id : unit.classes.Ids()) {
     forward_declarations +=
         std::format("class {};\n", ToCppName(unit.GetClass(id).name));
   }
   // A struct's forward declaration leads every struct body, because one
   // generated scope's field may name another's.
-  for (std::size_t i = 0; i < unit.structs.size(); ++i) {
-    const mir::StructDecl& decl =
-        unit.GetStruct(mir::StructId{static_cast<std::uint32_t>(i)});
+  for (const mir::StructId id : unit.structs.Ids()) {
+    const mir::StructDecl& decl = unit.GetStruct(id);
     forward_declarations += std::format("struct {};\n", decl.name);
     struct_definitions += RenderStruct(unit, decl);
   }
   AppendSection(text.declaration, forward_declarations);
   AppendSection(text.declaration, struct_definitions);
   std::vector<bool> emitted(unit.classes.size(), false);
-  for (std::size_t i = 0; i < unit.classes.size(); ++i) {
-    AppendClassInDependencyOrder(
-        unit, mir::ClassId{static_cast<std::uint32_t>(i)}, emitted, text);
+  for (const mir::ClassId id : unit.classes.Ids()) {
+    AppendClassInDependencyOrder(unit, id, emitted, text);
   }
   return text;
 }

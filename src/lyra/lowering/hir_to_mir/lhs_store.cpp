@@ -1,5 +1,6 @@
 #include "lyra/lowering/hir_to_mir/lhs_store.hpp"
 
+#include <optional>
 #include <utility>
 #include <variant>
 
@@ -32,7 +33,7 @@ auto FindLhsRootId(
     // capability wrapper) -- is itself the root cell, reached by a field access
     // over the closure receiver. Stop here rather than projecting through it as
     // if it were a struct member of an observable aggregate.
-    if (mir::IsCapabilityWrapperType(unit.types.Get(expr.type))) {
+    if (unit.types.Get(expr.type).IsCapabilityWrapper()) {
       return lhs_id;
     }
     // A designated part of a value states its owner, so the root is reached
@@ -62,7 +63,7 @@ auto ReplaceLhsRoot(
   const auto& expr = block.exprs.Get(lhs_id);
   // The descent stops where the root walk stops, so the two agree on which node
   // is the root: whatever that finds, this one substitutes.
-  if (mir::IsCapabilityWrapperType(unit.types.Get(expr.type))) {
+  if (unit.types.Get(expr.type).IsCapabilityWrapper()) {
     return root_id;
   }
   if (const auto* projection =
@@ -98,7 +99,7 @@ auto StoragePlaceOf(
     -> mir::ExprId {
   const mir::ExprId root_id = FindLhsRootId(unit, block, lhs_id);
   const mir::Type& root_ty = unit.types.Get(block.exprs.Get(root_id).type);
-  if (!mir::IsCapabilityWrapperType(root_ty)) {
+  if (!root_ty.IsCapabilityWrapper()) {
     return lhs_id;
   }
   // A net's resolved cell is readable and observable, but its storage is not
@@ -112,8 +113,8 @@ auto StoragePlaceOf(
         "StoragePlaceOf: a net's cell holds no storage a write or a reference "
         "may reach; the destination is one of its drivers");
   }
-  const mir::ExprId storage_id = block.exprs.Add(
-      mir::MakeDerefExpr(root_id, mir::CapabilityWrapperValueType(root_ty)));
+  const mir::ExprId storage_id =
+      block.exprs.Add(mir::MakeDerefExpr(root_id, root_ty.WrappedValueType()));
   return ReplaceLhsRoot(unit, block, lhs_id, storage_id);
 }
 
@@ -133,9 +134,7 @@ auto BuildStoreExpr(
     const mir::TypeId lhs_type = block.exprs.Get(lhs_id).type;
     const mir::Type& lhs_ty = unit.types.Get(lhs_type);
     const mir::TypeId dst_value_type =
-        mir::IsCapabilityWrapperType(lhs_ty)
-            ? mir::CapabilityWrapperValueType(lhs_ty)
-            : lhs_type;
+        lhs_ty.IsCapabilityWrapper() ? lhs_ty.WrappedValueType() : lhs_type;
     rhs_id = ConvertToType(unit, block, rhs_id, dst_value_type);
   }
   const mir::ExprId target_id = StoragePlaceOf(unit, block, lhs_id);

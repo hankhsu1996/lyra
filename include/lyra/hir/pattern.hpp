@@ -7,6 +7,7 @@
 #include <variant>
 #include <vector>
 
+#include "lyra/base/component_index.hpp"
 #include "lyra/diag/source_span.hpp"
 #include "lyra/hir/expr_id.hpp"
 #include "lyra/hir/pattern_id.hpp"
@@ -45,7 +46,7 @@ struct VariablePattern {
 // names are dropped -- position is the tag, consistent with the untagged /
 // packed handling.
 struct TaggedPattern {
-  std::size_t member_index;
+  base::ComponentIndex member_index;
   std::optional<PatternId> value_pattern;
 };
 

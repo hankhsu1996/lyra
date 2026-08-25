@@ -102,8 +102,14 @@ threaded down, a per-callable-body temp counter) is defined separately under "Re
    references in the signature).
 
 5. Every class member is one of three kinds: **facts** (set at construction, never mutated
-   thereafter), **registries** (append-only accumulators whose API exposes `Add` and `Lookup`), or
-   the **owned root output** the pass exists to produce.
+   thereafter), **registries** (accumulators the pass fills as it walks and reads back through a
+   typed id), or the **owned root output** the pass exists to produce.
+   - **A registry's API follows from whether it mints the identity it is keyed by.** One that mints
+     appends and hands the identity back. One keyed by another pool's identities mints nothing, so
+     it offers no append: it is built whole against that pool's own count, which is what makes it
+     total and lets a read be a plain lookup rather than a search that can come back empty. Two
+     pools claiming to mint one identity is two authorities for it, and the drift between them is
+     what an append-in-the-right-order agreement then has to police.
    - **Root output ownership.** The root lives as a member on the pass class, with lifetime equal to
      the pass instance, shared by every handler. `Run` moves it out at the end; after `Run` returns,
      the class holds no IR pointer. This is the load-bearing no-leak guarantee.
@@ -278,6 +284,107 @@ Two consequences for type structure:
   promoted to a per-instance member). Forcing the two axes onto one mechanism would either carry a
   chain a construction pass never reads or demand a name a counter cannot produce.
 
+## Data Flow
+
+A construction pass moves three kinds of fact, and each has one carrier. A fact that reaches a
+consumer any other way is a defect, whatever it looks like locally.
+
+- **Context flows down**, in the walk position: the enclosing class, the current block, the
+  resolution the enclosing scope declared. A node reads what it needs from the frame it was handed.
+- **Results flow up**, as return values the caller places: a handler returns a detached node and its
+  caller interns it, a declare step returns the identity it minted. A produced fact reaches its
+  consumer because the producer handed it over, never because the consumer went looking.
+- **Lateral facts go through a declaration table**, read by identity. A reference to a peer -- not
+  an ancestor, not a descendant -- cannot be served by either flow above, because the peer may not
+  be built yet.
+
+Laterality is the whole reason a pass ever needs more than one sweep. A language that admitted only
+downward reference would lower in a single bottom-up walk; mutual reference between siblings is what
+forces the declaring sweep to finish before the building sweep starts. So the test for whether a new
+construct needs the staging is not "is it complex" but "can something name it from the side".
+
+### Forbidden Data Flow
+
+- Recovering a fact by scanning output the pass already produced, when the producer knew it. A
+  summary computed over a block the same function just built is not this shape; reconstructing an
+  identity or a name is.
+- Deriving a name, key, or identity from a pool's current size. The result shifts when an unrelated
+  entity is added, which is exactly the property a name must not have.
+- Reading another walker's in-progress state to answer a lateral question. The declaration table is
+  the only lateral channel.
+- Computing where a peer pass will put something instead of reading where it did. Two sides then
+  hold one fact separately, and a check against drift is what the arrangement costs.
+
+## Conferred and Derived Identity
+
+Before choosing a container, decide which kind of sameness the entity has, because the two kinds
+admit opposite treatment and confusing them is the defect this section exists to name.
+
+An entity is **nominal** when two of them declared separately are distinct however alike they look.
+Its identity is _conferred_: nothing in the content determines it, so something has to mint the
+distinction and remember it. An entity is **structural** when two that look the same are the same --
+which is what lets it be interned. Its identity is _derived_ from its own content, and minting one
+would be wrong, because a mint would make two identical things differ.
+
+Three rules follow, and every one of them has been violated in this codebase at least once:
+
+- **A conferred identity is recorded by whoever conferred it, and read by everyone else.** Where two
+  layers each mint their own, neither determines the other; the mapping between them is a fact the
+  minting side has and the reading side does not. Computing it instead asserts that two independent
+  authorities agree, which is not something that can be asserted -- only arranged, and then relied
+  on. The arrangement's cost is a check against drift, and the presence of such a check is the
+  symptom.
+- **A structural aggregate's parts are named by position, never by a minted identity.** Interning
+  compares content, so content that carried mints would never compare equal. Position is all that is
+  left, and it is enough.
+- **A position is not an identity and takes a different type.** A position is arithmetic -- it
+  orders, it indexes, it can be a tag -- and it needs no translation crossing a lowering boundary,
+  because the layers agree about it by describing the same structure rather than by keeping a table.
+  An identity is none of those things. Spelling them alike lets either be passed where the other is
+  meant, and the tell is a supposed identity being unwrapped to a bare integer at every use.
+
+The failure has two directions and they look nothing alike from close up. Treating a conferred
+identity as derived shows up as a name or an id computed from a pool's size or from a peer layer's
+numbering. Treating a position as conferred shows up as an identity type borrowed for a structural
+slot, or -- once that feels wrong -- as a bare integer with no type at all. A concept that is
+missing does not announce itself once; it appears in as many degenerate forms as there are sites
+that need it.
+
+## Pool Selection
+
+Four containers carry the entities a pass produces. Which one is a function of two questions, and
+reaching for a bare `std::vector` where one of them fits is how an unnamed pool with hand-written
+bounds checks appears.
+
+| Does this pass mint the identity? | Is there a window where the identity exists without its value? | Container           |
+| --------------------------------- | -------------------------------------------------------------- | ------------------- |
+| Yes                               | No                                                             | `base::Arena`       |
+| Yes                               | Yes -- a peer names it before its content exists               | `base::Registry`    |
+| No -- another pool minted it      | No -- answered in the source pool's own order                  | `base::Translation` |
+| No -- another pool minted it      | Yes -- answered in an order the writer does not choose         | `base::SymbolTable` |
+
+A bare `std::vector` is right for a list nothing names from a distance: the components of one
+construct, consumed whole. It is wrong the moment something holds an index into it, because the
+index is then an identity with its type erased and its bounds unchecked.
+
+A transient marker the walk keeps about its own progress -- which nodes it has already visited -- is
+not a pool. It answers "have I done this one", it is consumed by nothing outside the algorithm, and
+it dies with the function.
+
+## Free Functions
+
+A pass is a class, but not everything around it is. A free function is correct where a member is
+impossible or would invert a dependency:
+
+- The type is a variant alias or belongs to a foreign library, so it has no member surface to join.
+- The operation belongs to a higher layer than the type it reads. A lowering concern must not become
+  a member of the IR type it consumes; that would make the lower layer know the higher one.
+- It is one of the pass shapes defined above -- a per-kind handler, a node builder, a fold.
+
+Outside those, an operation on a type this layer owns belongs to that type. The signal that one has
+drifted out is a free function whose only meaningful parameter is the value it operates on, sitting
+beside a type that already carries members of the same kind.
+
 ## Rendering Folds
 
 A rendering fold emits an unstructured medium (today, C++ text) from an IR. It is not a construction
@@ -361,7 +468,7 @@ structured-IR emit is a construction pass.
   its `mir::ExprId`. A freshly built node is returned as a detached `mir::Expr` by a `Make*` /
   `Build*` factory and interned by the caller; `mir::ExprId`-returning helpers are reserved for
   transforms keyed on an input `mir::ExprId` (which read or pass through an existing arena node).
-  See "Expression-Builder Helpers".
+  See "Node-Builder Helpers".
 - A base class that spans construction-pass classes to share their state or machinery -- registries,
   a dispatcher, `WalkFrame` fields, the root output. The construction-pass shape is followed, not
   inherited; a base that owns cross-pass state forces every derived pass to carry state it may not
@@ -374,6 +481,15 @@ structured-IR emit is a construction pass.
   only by the constructor.
 - A bundle of multiple kinds (facts + registry + builder) into one type. Each member of a class is a
   single-kind object; a bundle that mixes kinds is a god object regardless of size.
+- A registry keyed by another pool's identities that accepts an append. Appending mints, and the
+  identity is not this registry's to mint; what the pass then needs is an agreement that the caller
+  appended in the source's order, plus a check that it did. Both disappear when the registry is
+  built against the source's count instead.
+- Two registries keyed by the same identity. Whatever the pass settled about one entity is one
+  answer, so it is one registry whose value type carries the parts; split across two, the pair has
+  to be kept in step by whoever writes them and noticed by whoever reads them, and the drift when it
+  comes surfaces as a wrong answer rather than a missing one. The test is mechanical: no two
+  registry members of a pass share a key type.
 - A separate dispatch-contract header (e.g. `dispatch.hpp`) declaring the dispatcher entries outside
   the pass class. The dispatcher is a method on the pass class; subsystem files reach it through the
   class header. Maintaining a parallel contract header duplicates the surface and adds a
@@ -428,15 +544,16 @@ the registry operations, the fact accessors, and the `Run` entry. Per-kind handl
 on the pass class -- they are free functions in subsystem files, so adding a kind does not bloat the
 class header or trigger a header-level recompile cascade.
 
-## Expression-Builder Helpers
+## Node-Builder Helpers
 
-Helpers that construct MIR expressions come in two shapes, distinguished by whether the helper is
-keyed on an input `mir::ExprId`:
+Helpers that construct an IR node -- an expression, a statement, a block, on either lowering
+boundary -- come in two shapes, distinguished by whether the helper is keyed on an input arena
+handle:
 
 - **Factory** -- builds a fresh node (or a subtree whose top is a fresh node) from inputs that are
   not an arena handle: a `mir::TypeId`, an HIR node, a literal value, or the body's `self`. A
   factory carries one of two prefixes, split by whether it mutates a scope -- not by whether it
-  reads the frame:
+  reads the frame, and not by what kind of node it returns:
   - **`Make*`** is pure: it interns nothing. It assembles the returned node from ready-made parts
     and may read a `const` frame (the `self` hop count, a builtin `mir::TypeId`), but it touches no
     arena. The caller interns the single returned node with `scope.AddExpr(...)`. Examples:
@@ -458,10 +575,13 @@ keyed on an input `mir::ExprId`:
   index input unchanged when the declared range needs no rebase), `CloneLhsExprForNbaBody` (rebuilds
   an lvalue node's structure into a closure body).
 
-The rule follows from the dispatcher contract: `LowerExpr` returns a detached `mir::Expr` whose
-children are already interned, so every hand-written expression builder obeys the same shape. The
-only way to obtain a `mir::ExprId` is `scope.AddExpr(<an Expr produced by a factory>)`; a freshly
-built node is never interned behind an `Add*` helper that hands back the id.
+The rule follows from the dispatcher contract, and it is the same contract on both node kinds:
+`LowerExpr` returns a detached `mir::Expr` whose children are already interned, and `LowerStmt`
+returns a detached `mir::Stmt` the caller appends. So a hand-written builder of either kind obeys
+one shape, and the prefix answers one question at the call site -- has the arena already been
+written to? That question does not change with the node kind, which is why the split does not
+either. The only way to obtain a `mir::ExprId` is `scope.AddExpr(<an Expr produced by a factory>)`;
+a freshly built node is never interned behind an `Add*` helper that hands back the id.
 
 ## Notes
 

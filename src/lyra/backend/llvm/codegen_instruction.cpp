@@ -404,7 +404,7 @@ auto CodeGenFunction::LowerAggregateExtract(
                 module_->Runtime().TupleExtract(),
                 {aggregate, llvm::ConstantInt::get(
                                 llvm::Type::getInt64Ty(module_->Context()),
-                                element.index)});
+                                element.index.value)});
           },
           [&](const lir::UnionMember&) -> llvm::Value* {
             throw InternalError(
@@ -447,7 +447,8 @@ auto CodeGenFunction::LowerAggregateUpdate(
                 module_->Runtime().TupleUpdate(),
                 {aggregate,
                  llvm::ConstantInt::get(
-                     llvm::Type::getInt64Ty(module_->Context()), element.index),
+                     llvm::Type::getInt64Ty(module_->Context()),
+                     element.index.value),
                  replacement});
           },
           [&](const lir::UnionMember&) -> llvm::Value* {
@@ -614,6 +615,8 @@ auto CodeGenFunction::BuiltinCallee(
       return module_->Runtime().WaitAny();
     case support::BuiltinFn::kAddOwnedChild:
       return module_->Runtime().AddOwnedChild();
+    case support::BuiltinFn::kHierarchicalPath:
+      return module_->Runtime().HierarchicalPath();
     case support::BuiltinFn::kRegisterSignal:
       return module_->Runtime().RegisterSignal();
     case support::BuiltinFn::kInitialize:
@@ -737,13 +740,12 @@ auto CodeGenFunction::ConstructCallee(const lir::CallInstr& call)
                     "lowerable");
             }
           },
-          [&](const lir::PointerType& p) -> llvm::FunctionCallee {
-            if (std::holds_alternative<lir::ExternalUnitObjectType>(
-                    module_->Unit().types.Get(p.pointee).data)) {
-              return module_->Runtime().MakeUnit();
-            }
-            throw InternalError(
-                "llvm codegen: pointer construct is not yet lowerable");
+          // A construct whose result is a pointer to an object builds a scope:
+          // the runtime owns the object tree, so it is the runtime that builds
+          // a node of it. An object the program owns instead is a managed
+          // reference, a different result type reaching a different arm.
+          [&](const lir::PointerType&) -> llvm::FunctionCallee {
+            return module_->Runtime().MakeScope();
           },
           [&](const lir::RealType&) -> llvm::FunctionCallee {
             return RealConstructCallee(call, ValueDomain::kReal);
@@ -778,19 +780,15 @@ auto CodeGenFunction::RealConstructCallee(
 
 auto CodeGenFunction::ConstructDefinitionArg(lir::TypeId result)
     -> llvm::Value* {
-  // Only a construct of a pointer to an external unit leads with a definition;
-  // its reference comes from the type-keyed projection, so this call knows the
+  // A construct of a scope leads with that scope class's definition; the
+  // reference comes from the type-keyed projection, so this call knows the
   // symbol is needed without knowing how it is named.
   const auto* pointer =
       std::get_if<lir::PointerType>(&module_->Unit().types.Get(result).data);
   if (pointer == nullptr) {
     return nullptr;
   }
-  if (!std::holds_alternative<lir::ExternalUnitObjectType>(
-          module_->Unit().types.Get(pointer->pointee).data)) {
-    return nullptr;
-  }
-  return module_->UnitDefinitionRef(pointer->pointee);
+  return module_->ScopeDefinitionRef(pointer->pointee);
 }
 
 }  // namespace lyra::backend::llvm_backend

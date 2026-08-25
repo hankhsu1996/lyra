@@ -109,7 +109,7 @@ auto WritesBack(const SubroutineCallee& plan) -> bool {
 // lvalue to write and which payload component supplies it.
 struct CompletionWriteback {
   mir::ExprId place{};
-  std::size_t component_index = 0;
+  base::ComponentIndex component_index{};
   mir::TypeId type{};
 };
 
@@ -268,7 +268,8 @@ auto LowerWritingBackCall(
   mir::Expr closure_value =
       plan.result_type.has_value()
           ? closure.Build(ProjectCompletionComponent(
-                body, completion, payload_type, 0, *plan.result_type))
+                body, completion, payload_type, base::ComponentIndex{},
+                *plan.result_type))
           : closure.BuildVoid();
   return BuildClosureCallExpr(
       unit, *frame.current_block, std::move(closure_value));
@@ -311,7 +312,9 @@ auto LowerSubroutineCall(
   mir::Block& block = *frame.current_block;
   const mir::ExprId completion = block.exprs.Add(std::move(emitted->call));
   return diag::Result<mir::Expr>{mir::Expr{
-      .data = mir::TupleGetExpr{.tuple = completion, .index = 0},
+      .data =
+          mir::TupleGetExpr{
+              .tuple = completion, .index = base::ComponentIndex{}},
       .type = *callee->result_type}};
 }
 

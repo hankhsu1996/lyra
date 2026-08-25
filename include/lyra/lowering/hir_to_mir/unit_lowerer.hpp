@@ -1,44 +1,50 @@
 #pragma once
 
 #include <cstdint>
-#include <optional>
 #include <string>
 #include <string_view>
 #include <unordered_map>
 #include <utility>
-#include <vector>
 
 #include "lyra/base/internal_error.hpp"
+#include "lyra/base/symbol_table.hpp"
+#include "lyra/base/translation.hpp"
 #include "lyra/diag/diagnostic.hpp"
 #include "lyra/diag/source_manager.hpp"
 #include "lyra/hir/class_ref.hpp"
 #include "lyra/hir/compilation_unit.hpp"
-#include "lyra/hir/field_id.hpp"
-#include "lyra/hir/static_property_id.hpp"
 #include "lyra/hir/subroutine_ref.hpp"
 #include "lyra/hir/type.hpp"
+#include "lyra/lowering/hir_to_mir/class_shape.hpp"
 #include "lyra/lowering/hir_to_mir/package_initialization.hpp"
-#include "lyra/mir/class.hpp"
 #include "lyra/mir/class_id.hpp"
 #include "lyra/mir/class_ref.hpp"
 #include "lyra/mir/compilation_unit.hpp"
 #include "lyra/mir/expr.hpp"
-#include "lyra/mir/field.hpp"
-#include "lyra/mir/static_property_id.hpp"
 #include "lyra/mir/type.hpp"
 
 namespace lyra::lowering::hir_to_mir {
 
-// Per-unit lowerer for the HIR-to-MIR pass.
-//
-// Fact: a reference to the input `hir::CompilationUnit`.
-// Registry: the HIR-TypeId to MIR-TypeId translation map, populated by `Run`
-// as it walks the input's type list.
-// Root output: the in-progress `mir::CompilationUnit`. Constructed in the
-// ctor; populated by `Run`; moved out by `Run`'s return. After `Run` returns
-// the class holds no IR pointer. Handlers reach the unit's append-only API
-// through the mutable `Unit()` overload; downstream consumers post-`Run` use
-// the const overload, which is the same shape they hold post-move.
+// What one HIR class declaration became: its MIR identity, and the interned
+// object type that names it. Both are settled together before any type is
+// translated, so a class handle type resolves to its managed-reference pointee
+// while the class body is still being built.
+struct ClassTranslation {
+  mir::ClassId id{};
+  mir::TypeId object_type{};
+  // The callable identity of each method. An overriding method states its
+  // dispatch role (LRM 8.20) against the slot its base was given, so a class's
+  // declaration names another class's method identity and these are settled
+  // before any declaration is.
+  base::Translation<hir::MethodId, mir::CallableId> methods;
+};
+
+// Lowers one HIR compilation unit into one MIR compilation unit, holding that
+// unit as it is built along with everything the declaration stages settled
+// about it. A body reads a peer's answer from here rather than from the
+// lowering that produced it, which is what leaves the bodies free of any order
+// among themselves. The finished unit is moved out, and nothing here points
+// into it afterwards.
 class UnitLowerer {
  public:
   UnitLowerer(
@@ -82,76 +88,30 @@ class UnitLowerer {
     return *hir_;
   }
 
-  // Resolves a `SourceSpan` to a "file:line:col" string for diagnostic
-  // origin tagging (LRM 20.10 source identification). Returned by value so
-  // the caller can intern it as a MIR `StringLiteral` at the emit site.
+  // Where a construct was written, which a diagnostic the lowering emits names
+  // its origin by (LRM 20.10).
   [[nodiscard]] auto SourceManager() const -> const diag::SourceManager& {
     return *source_manager_;
   }
 
   [[nodiscard]] auto TranslateType(hir::TypeId hir_id) const -> mir::TypeId {
-    if (hir_id.value >= type_map_.size()) {
-      throw InternalError("UnitLowerer::TranslateType: unmapped HIR type");
-    }
-    return type_map_[hir_id.value];
-  }
-
-  void MapType(hir::TypeId hir_id, mir::TypeId mir_id) {
-    if (hir_id.value != type_map_.size()) {
-      throw InternalError(
-          "UnitLowerer::MapType: HIR types must be mapped in HIR id order");
-    }
-    type_map_.emplace_back(mir_id);
-  }
-
-  // A HIR class declaration's MIR identity and the interned `ObjectType` that
-  // names it. Both are minted before any type is translated, so a class handle
-  // type can resolve to its managed-reference pointee while the class body is
-  // still being built.
-  void MapClass(
-      hir::ClassId hir_id, mir::ClassId mir_id, mir::TypeId object_type) {
-    if (hir_id.value != class_map_.size()) {
-      throw InternalError(
-          "UnitLowerer::MapClass: HIR classes must be mapped in HIR id "
-          "order");
-    }
-    class_map_.emplace_back(mir_id);
-    class_object_type_map_.emplace_back(object_type);
+    return type_translations_.Get(hir_id);
   }
 
   [[nodiscard]] auto TranslateClass(hir::ClassId hir_id) const -> mir::ClassId {
-    if (hir_id.value >= class_map_.size()) {
-      throw InternalError("UnitLowerer::TranslateClass: unmapped HIR class");
-    }
-    return class_map_[hir_id.value];
+    return class_translations_.Get(hir_id).id;
   }
 
-  // Translates a HIR class field's identity to its MIR counterpart. Peer to
-  // `TranslateClass` / `TranslateType`: the layer-boundary crossing is one
-  // named function so a consumer never has to know that the HIR and MIR
-  // field arenas presently share value semantics (fields are appended in
-  // lockstep during the shape pass), and a later divergence rewires the
-  // mapping in one place without touching any consumer.
-  [[nodiscard]] static auto TranslateField(hir::FieldId hir_id)
-      -> mir::FieldId {
-    return mir::FieldId{.value = hir_id.value};
-  }
-
-  // Translates a HIR class static property's identity to its MIR counterpart.
-  // Peer of `TranslateField` on the type-associated axis; the HIR and MIR
-  // static-property arenas are appended in lockstep during class lowering, so
-  // the mapping is positional today. Kept as a named function so a later
-  // divergence rewires here without touching any consumer.
-  [[nodiscard]] static auto TranslateStaticProperty(
-      hir::StaticPropertyId hir_id) -> mir::StaticPropertyId {
-    return mir::StaticPropertyId{.value = hir_id.value};
+  // The callable identity a class's method was given. Answered from what the
+  // declaration pass took, so a class that overrides can state its dispatch
+  // role whether or not its base has settled -- no order among declarations.
+  [[nodiscard]] auto TranslateMethod(
+      hir::ClassId owner, hir::MethodId method) const -> mir::CallableId {
+    return class_translations_.Get(owner).methods.Get(method);
   }
 
   [[nodiscard]] auto ClassObjectType(hir::ClassId hir_id) const -> mir::TypeId {
-    if (hir_id.value >= class_object_type_map_.size()) {
-      throw InternalError("UnitLowerer::ClassObjectType: unmapped HIR class");
-    }
-    return class_object_type_map_[hir_id.value];
+    return class_translations_.Get(hir_id).object_type;
   }
 
   // The pointee object type a managed handle to an imported runtime-library
@@ -245,29 +205,14 @@ class UnitLowerer {
     return next_synthesized_site_++;
   }
 
-  // Posts a class's structural shape; the shape is committed once and is
-  // read back during peer-body lowering.
-  void DefineClassShape(mir::ClassId id, mir::ClassShape shape) {
-    if (id.value >= class_shapes_.size()) {
-      class_shapes_.resize(id.value + 1);
-    }
-    auto& slot = class_shapes_[id.value];
-    if (slot.has_value()) {
-      throw InternalError(
-          "UnitLowerer::DefineClassShape: shape for this id is already "
-          "defined");
-    }
-    slot = std::move(shape);
+  // Settles one class's structural declaration; it is written once and read
+  // back by every peer body that names the class.
+  void DefineClassShape(mir::ClassId id, ClassShape shape) {
+    declarations_.Define(id, std::move(shape));
   }
 
-  [[nodiscard]] auto GetClassShape(mir::ClassId id) const
-      -> const mir::ClassShape& {
-    if (id.value >= class_shapes_.size() ||
-        !class_shapes_[id.value].has_value()) {
-      throw InternalError(
-          "UnitLowerer::GetClassShape: shape for this id is not defined");
-    }
-    return *class_shapes_[id.value];
+  [[nodiscard]] auto GetClassShape(mir::ClassId id) const -> const ClassShape& {
+    return declarations_.Get(id);
   }
 
   // Per-unit dedup of the callables synthesized for the LRM 6.19.5 `name` and
@@ -290,6 +235,12 @@ class UnitLowerer {
   auto LowerModuleUnit(PackageInitializationPlan package_init_plan)
       -> diag::Result<mir::CompilationUnit>;
 
+  // Everything one class declaration can be named by before it settles: its
+  // own identity, the object type that names it, and one identity per method a
+  // deriving class may state a dispatch role against. Reads nothing but this
+  // declaration, so classes take theirs in any order and none waits on another.
+  auto TakeClassIdentities(const hir::ClassDecl& decl) -> ClassTranslation;
+
   // Publishes everything the unit declares before any root-scope body lowers:
   // every class identity and body, every interned type, and the prototype of
   // every foreign symbol the unit takes part in. Shared prologue of every unit
@@ -304,15 +255,14 @@ class UnitLowerer {
   const hir::CompilationUnit* hir_;
   const diag::SourceManager* source_manager_;
   mir::CompilationUnit unit_;
-  std::vector<mir::TypeId> type_map_;
-  std::vector<mir::ClassId> class_map_;
-  std::vector<mir::TypeId> class_object_type_map_;
+  base::Translation<hir::TypeId, mir::TypeId> type_translations_;
+  base::Translation<hir::ClassId, ClassTranslation> class_translations_;
   std::uint32_t next_generate_scope_name_ = 0;
   std::uint32_t next_synthesized_site_ = 0;
-  // Class shapes published during the declare pass and read during peer-body
-  // lowering. Lives only on the lowerer; the finished compilation unit holds
-  // the only authoritative class representation.
-  std::vector<std::optional<mir::ClassShape>> class_shapes_;
+  // What the declare stage settled about each class, read by every body that
+  // names a peer. Lives only on the lowerer; the finished compilation unit
+  // holds the only authoritative class representation.
+  base::SymbolTable<mir::ClassId, ClassShape> declarations_;
   std::unordered_map<std::uint32_t, mir::CallableTarget> enum_name_helpers_;
   std::unordered_map<std::uint32_t, mir::CallableTarget> enum_step_helpers_;
 };

@@ -40,6 +40,16 @@ Comments fill what the language cannot express -- intent, context, the algorithm
 7. **No inline comments on struct fields or variable declarations.** Put the comment on the line
    above.
 
+8. **No defence of the change.** A comment that only makes sense read against the version it
+   replaced is changelog: `// keyed rather than parallel`, `// the alternative would ...`,
+   `// never a mix of X and Y`. It can be technically correct, cite the LRM, and name no sister
+   symbol -- passing every ban above -- and still be wrong. Changelog belongs in the PR, the commit
+   message, and the conversation. Two consequences make this the ban that is hardest to see: it
+   grows only where the code was just edited, so it shows up as one commented member in a block
+   where nothing else carries a comment; and no search finds it, because the words it uses are the
+   same ones a legitimate comment uses to contrast what the code is against what a reader would
+   assume.
+
 ## Litmus checklist
 
 Run per comment before keeping it:
@@ -51,3 +61,5 @@ Run per comment before keeping it:
 3. **Why/How check** -- is this Why, How, or LRM citation? If none, it is a What. Cut and rename the
    symbol so the code self-explains.
 4. **Drift check** -- does the comment still match the code as it stands now? Update or cut.
+5. **Changelog check** -- would this comment exist if the code had always been this way? If no, it
+   is a defence of the edit. Cut.

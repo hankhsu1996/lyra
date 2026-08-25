@@ -408,8 +408,8 @@ enough to warrant its own focused review.
       whether the helper consults the frame -- a factory that reads `self` off a `const` frame and
       interns nothing is `Make`. A full audit of the construction helpers found the codebase already
       largely conformant; the few pure factories mislabelled `Build` were renamed to `Make`. The
-      rule now lives as an invariant in `lowering_organization.md` (Expression-Builder Helpers), so
-      it outlives this entry.
+      rule now lives as an invariant in `lowering_organization.md` (Node-Builder Helpers), so it
+      outlives this entry.
 
 - [x] R33 -- A diagnostic's metadata is a property of its code, derived at construction, never
       re-supplied at the report site, and construction never throws. The per-kind factories and the
@@ -951,27 +951,75 @@ enough to warrant its own focused review.
   - [ ] The queue and associative-array interior writes connect to the same path once those value
         domains are realized on the execution backend.
 
-- [ ] R62 -- A procedural scope's runtime realization is gated on whether the source gave it a name.
-      A scope carrying an SV block identifier can become a runtime hierarchy node and own its own
-      storage; one without a name never can, and its static-lifetime storage is instead flattened
-      onto the nearest enclosing scope that does, under a mangled member name. So two procedural
-      scopes that are identical in every semantic respect -- same declarations, same nesting, same
-      lifetime -- are realized two different ways, and the planner carries a predicate to choose
-      between them. **Why this is suspect**: naming and hierarchical reachability are separate
-      concerns. An unnamed scope can be given a synthesized identity that source can never spell,
-      which costs nothing and collides with nothing; whether a path may reach a scope is then a
-      question about what the language exposes, answered independently of whether the compiler gave
-      the scope an identity. Conflating the two is what forces the predicate, and the predicate is
-      what makes an unnamed scope's storage land somewhere other than its own scope. **Target
-      shape**: every procedural scope has an identity and owns the storage its declarations name;
-      reachability by a hierarchical path is a separate property that decides only what is exposed
-      by name, never where storage lives or whether a scope exists. **Blocker**: none identified.
-      This reverses part of `../decisions/procedural-storage-scope.md` D3 / D4, whose recorded
-      rationale is that a runtime node no SV path can name would not match the SV-visible path
-      namespace; that rationale answers the exposure question and should be re-examined against
-      whether it also has to answer the existence and placement questions. Re-deciding it touches
-      how every body-local static is placed, so it warrants its own review rather than riding along
-      with a feature cut.
+- [ ] R62 -- Diagnostics reaches its source files through a hand-rolled pool. The source manager
+      keeps its files in a plain sequence, mints a file identity from that sequence's running count,
+      and reserves zero to mean "no file", so every reader tests the identity for the reserved value
+      and the lookup answers with a pointer that may be null. Two different facts are fused into one
+      integer: which file, and whether there is one. An identity a pool confers should answer only
+      the first; whether a source span has a file is the span's own question and belongs in an
+      optional. Fusing them leaves the identity type unable to state what it is, moves the check to
+      every read, and leaves the pool's bounds hand-written -- the unnamed-pool shape
+      `../architecture/lowering_organization.md` names under Pool Selection. Target: the files are a
+      pool like any other, minting the identity and answering totally, and a source span carries an
+      optional file identity so a span with none says so. No prerequisite blocks it, but the span
+      type is read across most of the compiler and pinned by the diagnostic golden tests, so the
+      optionality change is broad enough to warrant its own focused review.
+
+- [ ] R63 -- A function's basic blocks are a bare sequence indexed by a typed identity, so the
+      identity's bounds are unchecked. The reason was real: a block used to be filled in place after
+      it was appended, which the append-only pool contract forbids. That reason is gone -- the pass
+      that builds a function now holds its open blocks in its own shape, where a block with no
+      decided exit is representable, and appends only finished blocks, in order. What remains is a
+      typed identity indexing a plain vector, which is the shape Pool Selection rules out. Target: a
+      function's blocks are a pool, and the building pass takes block identities from a typed
+      allocator the way the declaration stages take identities before their pool exists.
+
+- [ ] R64 -- Two counters confer one callable identity. The stage that takes identities before any
+      declaration settles mints a class's callable identities from a typed allocator, whose stated
+      contract is that it is the authority for that id space and nothing downstream re-derives it.
+      The class's own callable pool then mints the same range again, one slot per signature. The two
+      agree because both count from zero over the same sequence, and nothing checks that they do: a
+      callable synthesized between the two points would shift one sequence and not the other,
+      silently. Correct today, but by arrangement rather than by fact. Target: the pool that will
+      own the identities is the one that confers them -- created where the identities are taken and
+      carried into the class, so the later stage adopts a pool instead of re-minting its range.
+
+- [ ] R65 -- The terminator for a block control never reaches has no producer in practice. Its only
+      source is the step that closes blocks the lowering left open, which selects it for a
+      value-returning body; across the whole test corpus it is never produced. Either the case
+      cannot arise -- because every block of a value-returning body is already closed by the time
+      that step runs, which would make the selection dead and the close unconditionally an implicit
+      return -- or it can arise and nothing exercises it. Both are answers; neither is established.
+      An IR node with no producer is a claim about the language nobody has checked. Target: settle
+      the derivation, then either drop the terminator and the selection, or add the case that
+      produces it.
+
+- [ ] R66 -- "Sees every unit" is spelled as a plain sequence. A per-unit lowering takes one unit
+      and nothing else, which is what lets units lower independently; above it, the design-root
+      assembly, the host-main emission, and the foreign-boundary header each take a bare sequence of
+      units. Per-unit independence is the property incremental and parallel compilation rest on, and
+      today it holds because nobody has passed the sequence downward -- a convention, not a fact the
+      types carry. Target: the whole-program view is a named type, so work that reads the whole
+      program is identifiable by signature and a per-unit pass cannot acquire that reach by a
+      parameter change nobody notices.
+
+- [ ] R67 -- A package's variables are unreachable on the execution backend. A package cell is
+      reached by name rather than through a scope, so a read of one is an expression that names a
+      program-global cell; the execution backend has no place for that form and refuses it. The
+      cell's storage is not per-instance and hangs under no scope, so the member-storage path every
+      other variable takes does not describe it. Target: a program-global cell is storage the
+      execution session owns and hands out by name, reached by the same load and store any other
+      cell is. Nothing blocks it; it is the next wall a design with package variables meets there,
+      and the C++ backend has run them all along, so only the execution backend is behind.
+
+- [ ] R68 -- MIR's homogeneous sequence vocabulary has no producer. `VectorType`, the sequence value
+      that builds it, and the projection that reads one element are declared, translated to LIR, and
+      handled by both backends, while nothing in any lowering produces one. A node no pass emits is
+      a claim about the language that nothing tests: every arm handling it is unexercised, and the
+      first producer would discover whether those arms were ever right. Target: settle whether a
+      homogeneous sequence is a value MIR needs -- the associative literal its type doc names as the
+      motivating use is built another way today -- and either give it the producer that use implies
+      or drop the vocabulary and the arms that carry it.
 
 ## Out of Scope
 

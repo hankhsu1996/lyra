@@ -40,14 +40,13 @@ local declared in place" to map onto.
 ## Decision
 
 **Honor the frontend's resolved lifetime; realize a static-lifetime body local as a per-instance
-member of its nearest enclosing addressable scope's class, default-initialized once; realize an
-automatic local as a C++ local at its source position.** A process and a method use the identical
-mechanism.
+member of the class enclosing the body, default-initialized once; realize an automatic local as a
+C++ local at its source position.** A process and a method use the identical mechanism.
 
-- An addressable scope is the structural scope (module / generate / SV class) or a materialized
-  procedural storage scope (`procedural-storage-scope.md`). A static at the body's top level lives
-  on the structural class; a static directly inside a materialized named block lives on the block's
-  class.
+- Per-instance is what the lifetime says, and the instance is the object the body already runs on,
+  so the member sits there whichever block of the body declared it. A static inside a method lives
+  on the SV class for the same reason. What the declaring block decides is the name a hierarchical
+  path reaches the member by (`procedural-storage-scope.md`), never where the member sits.
 - The body reaches the static local by the same scoped reference it uses for any local; the backend
   resolves that reference to the per-instance member.
 - The per-instance member is a flat member on the owner class's member arena -- not a sub-struct
