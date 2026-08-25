@@ -191,6 +191,8 @@ direction. The governing thesis:
 - An emission placement stored on the generic object declaration for a backend to read. Placement is
   the backend's own; storing it is what lets one declaration's name mean different things at
   different reference sites. (Invariant 10.)
+- A runtime registry of per-slot type metadata. A member's type is known from the MIR type system at
+  the point that reads it; a parallel runtime table is a second answer that can disagree.
 
 ## Notes / Examples
 

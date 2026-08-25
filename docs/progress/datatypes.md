@@ -1,29 +1,27 @@
 # Datatypes
 
-Tracks SystemVerilog data type coverage on the current pipeline. The integral family (`int`, `byte`,
-`shortint`, `longint`, `time`, `integer`, `bit [N:0]`, `logic [N:0]`) lives in `integral.md`. This
-file covers every other family: `datatypes/enum`, `datatypes/string`, `datatypes/unpacked` (fixed
-unpacked arrays here; the variable-size aggregate family in `aggregate.md`), `datatypes/general`
-(chandle, parameters, typedef), `datatypes/real`, `datatypes/default_init`,
-`datatypes/representation`.
+Tracks SystemVerilog data type coverage on the current pipeline, other than the integral family
+(`int`, `byte`, `shortint`, `longint`, `time`, `integer`, `bit [N:0]`, `logic [N:0]`), whose surface
+is complete. This file covers every other family: enum, string, fixed unpacked arrays, chandle,
+parameters and typedef, real, tagged union, default initialization, and value representation.
 
 ## Actionable
 
 The datatype surface in scope is complete but for the gaps below. Real, string, fixed-size unpacked
 arrays, the integral-family declaration initializers, and parameter references in expressions are
 complete; enum is complete but for the package-context method gap E4 below. The variable-size
-aggregate family (dynamic array, queue, associative array) is complete; see `aggregate.md`. Unpacked
-struct and union, tagged and untagged, are complete. Default initialization (LRM Table 6-7) and
-value representation, including a wide value carrying X/Z across the 64-bit word boundary, are
-complete. Chandle is complete.
+aggregate family (dynamic array, queue, associative array) is complete. Unpacked struct and union,
+tagged and untagged, are complete. Default initialization (LRM Table 6-7) and value representation,
+including a wide value carrying X/Z across the 64-bit word boundary, are complete. Chandle is
+complete.
 
 ## Tagged union
 
 LRM 7.3.2: a tagged union carries a tag naming the active member, and every read of a member checks
 it. Construction (`tagged Member value`, or the bare `tagged Member` of a void member), member read
 and write including nested and compound writes, whole-value copy, equality, and Table 6-7 default
-initialization are complete for the unpacked form. Pattern matching over one (LRM 12.6) is tracked
-in `control-flow.md`. The packed form, whose bit layout the LRM fixes, is tracked as `packed.md` P4.
+initialization are complete for the unpacked form, as is pattern matching over one (LRM 12.6). The
+packed form, whose bit layout the LRM fixes, is tracked as `packed.md` P4.
 
 ## Enum
 
@@ -33,8 +31,8 @@ integral -> enum requires an explicit cast.
 - [x] E1 -- Declarations, member references, comparisons, arithmetic, and conversions, including the
       explicit base type form and the `first` / `last` / `num` / `num_auto_values` methods.
 - [x] E2 -- `next` / `prev` methods with optional step argument (LRM 6.19.5.3 / 6.19.5.4).
-      Non-member receivers fall back to a zero default; LRM Table 6-7 4-state `'x` behaviour is
-      tracked under `datatypes/default_init`.
+      Non-member receivers fall back to a zero default; the LRM Table 6-7 4-state `'x` behaviour
+      belongs to default initialization.
 - [x] E3 -- `name()` method (LRM 6.19.5.6); empty string for non-member values.
 - [ ] E4 -- `name` / `next` / `prev` invoked from inside a package subroutine's body are not yet
       supported; the same methods in a module, interface, or program context are complete.
@@ -42,8 +40,6 @@ integral -> enum requires an explicit cast.
 ### Cross-references
 
 - LRM 6.19 (Enumerations), 6.19.3 (conversions), 6.19.5 (methods).
-- Archive items: `datatypes/enum/{enum,enum_implicit_conversion,enum_methods}`.
-- Unblocks: `control-flow.md` C16 (enum-typed `case` selectors).
 
 ## Real
 
@@ -64,12 +60,19 @@ LRM 6.12: `real` is IEEE 754 double, `shortreal` is IEEE 754 single, `realtime` 
       continuous assignment, non-blocking writes, and the explicit any-change `@(sig)` event control
       all propagate change events. An edge form (`@(posedge sig)`) stays frontend-rejected per LRM
       9.4.2 (an edge requires an integral LSB).
+- [ ] C6 -- The real math functions (LRM 20.8.2): `$ceil`, `$floor`, `$pow`, `$ln`, `$log10`,
+      `$exp`, `$sqrt`, the trigonometric family, and the integer-returning `$rtoi`. Each is a pure
+      function of its real arguments and maps onto the host's own math library, so what the work
+      needs is the call path for a real-typed result, not new runtime state.
+- [ ] C7 -- Real / bit-vector reinterpretation (LRM 20.5): `$bitstoreal` and `$realtobits`, and the
+      `shortreal` pair. These expose the bits of a real as a packed vector and back, so they need
+      the bit-level correspondence between a real and its representation -- not the numeric
+      conversion C3 covers.
 
 ### Cross-references
 
 - LRM 6.12 (Real, shortreal, realtime), 6.12.1 (Conversion), 11.3.1 (Operators with real operands),
   Table 11-1 (Operators and data types).
-- Archive items: `datatypes/real/{real_types,shortreal_types,realtime_types}`.
 
 ## Structural Initializers
 
@@ -88,8 +91,7 @@ LRM 6.8: a static-lifetime variable declaration may carry an initializer express
 
 ### Cross-references
 
-- LRM 6.8 (Variable declarations); Table 6-7 (Default initial values, tracked separately under
-  `datatypes/default_init`).
+- LRM 6.8 (Variable declarations); Table 6-7 (Default initial values).
 
 ## String
 
@@ -129,7 +131,6 @@ frontend inserts an implicit conversion when a literal participates in an expres
 
 - LRM 6.16 (String data type), Table 6-9 (String operators), 6.16.1 -- 6.16.15 (String methods),
   Table 6-7 (Default initial values).
-- Archive items: `datatypes/string/{string_concat}`.
 
 ## Chandle
 

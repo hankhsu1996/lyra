@@ -4,7 +4,14 @@ Tracks the MIR / LIR -> LLVM execution backend's own realization -- the parts th
 backend's, not a single SystemVerilog feature. Per-feature backend status lives in the feature files
 (a DPI scalar in `dpi.md`, a timing control in `processes.md`); this file owns the backend
 infrastructure: how a runtime value lives, what the backend can and cannot lower yet, and its
-coverage. The roll-up entry is the "Execution backend" item in `architecture-reset.md`.
+coverage.
+
+JIT and AOT are link-time choices over this one backend, not separate surfaces. Design elaboration
+runs here as it does on the C++ backend: the backend lowers cross-unit construction and realizes
+members as runtime-owned storage, so it elaborates a hierarchy of modules through the design root.
+
+Done when a design compiles and runs through this backend end to end, matching the C++ backend's
+answers wherever both accept the source.
 
 Contracts: `../architecture/backend_contract.md`, `../architecture/lir.md`,
 `../architecture/runtime_distribution.md`, `../architecture/object_lifetime.md`.
@@ -135,14 +142,20 @@ each meets the same lifetime question above; none is lowerable on the execution 
 
 - [ ] A task enable. Control returns to the enabler only once the task completes (LRM 13.3), so the
       enabler suspends on another activation's completion rather than on a wakeup source it
-      registered itself -- the one suspension whose resumption is a second body's to signal. The
-      feature is rolled up in `functions.md`.
+      registered itself -- the one suspension whose resumption is a second body's to signal.
 - [ ] Non-blocking assignment (a deferred closure submit). Rolled up in `processes.md` (P4).
-- [ ] Fork / join and closures. Rolled up in `fork-join.md`.
+- [ ] Fork / join and the closures a spawned branch carries.
 - [ ] Named events across a suspension. Rolled up in `processes.md` (P9).
 
 ## Other backend surfaces
 
+- [ ] Storage reached by name rather than through a receiver: a package or `$unit` variable, a class
+      static property, and a class static constant. All three are the same shape -- storage no local
+      slot and no receiver chain arrives at -- and lowering has no place to base them on, because a
+      LIR operand names a code symbol but has no data equivalent. One addition serves all three.
+- [ ] `dump llvm`, and `run` / `compile` end to end against this backend, so a design goes from
+      source to a running program without the C++ backend.
+- [ ] The smoke, benchmark, and AOT CI jobs, which are disabled until a design runs end to end here.
 - [ ] An array of owned children. A scalar child scope -- a module instance, a generate block, a
       procedural block scope -- is constructed, reached, and reports its hierarchical name; an array
       of them is not, because the sequence of handles a member of that shape holds has no runtime

@@ -7,9 +7,9 @@ forms.
 
 Done when:
 
-- `datatypes/packed/packed_struct`, `packed_union`, `assignment_pattern_fill`,
-  `assignment_pattern_multibit`, `nested_aggregates`, and `packed_integral_default` reproduce.
-- `operators/replication_patterns` reproduces (`'{N{x}}` array-literal forms over packed types).
+- Packed struct and union, assignment patterns (fill and multi-bit), nested aggregates, and packed
+  default initialization all run.
+- Replication patterns run (`'{N{x}}` array-literal forms over packed types).
 
 ## Actionable
 
@@ -34,17 +34,16 @@ The numeric IDs are stable references.
       error (LRM 11.9), including when the tag itself is unknown. The tag width is what separates
       the two forms, so an untagged union is the case where nothing distinguishes the members.
       Whole-union copy, equality, bit / part selects, `$bits`, and default initialization all ride
-      on the "treated as a single vector" projection. Pattern matching over a tagged packed union
-      (LRM 12.6) is covered in `control-flow.md`.
+      on the "treated as a single vector" projection, as does pattern matching over a tagged packed
+      union (LRM 12.6).
 
 - [x] P5 -- Assignment patterns over packed aggregates (LRM 10.9). Positional `'{a, b, c}`, named /
       type-key / index-key `'{x: v, default: w}`, `'{default: v}`, and replication `'{N{items}}`
       over packed structs and packed arrays. The four non-replicated forms collapse into a per-field
       expression list at the slang binding boundary; replication preserves the LRM shape and unrolls
       into the same packed concat path used for `{a,b,c}`. The type-prefixed self-determined form
-      `T'{...}` is in. Closes `datatypes/packed/assignment_pattern_fill` and
-      `datatypes/packed/assignment_pattern_multibit`. Unpacked-array targets are deferred behind the
-      unpacked-array push.
+      `T'{...}` is in, so both the fill and multi-bit pattern forms are complete. Unpacked-array
+      targets are deferred behind the unpacked-array push.
   - [ ] The assignment pattern as an assignment target (LRM 10.9): the LHS-destructuring form
         `'{a, b, c} = B` is rejected with a diagnostic. The concatenation spelling `{a, b, c} = B`
         (LRM 11.4.12) is supported, so only the pattern spelling is missing.
@@ -55,7 +54,6 @@ The numeric IDs are stable references.
   (assignment patterns), 11.5.1 (bit-select / part-select on packed arrays, structs, and unions).
 - Prerequisite: `operators.md` W4..W6 (P3 adds packed-struct field access as a new addressable
   expression form on top of the existing selectors).
-- `datatypes/packed/indexed_part_select`, `datatypes/packed/packed_2d`, `packed_3d`,
-  `datatypes/wide_integral/packed_2d`, and `operators/{concat,replicate,compound_assignment}` are
-  tracked under `operators.md`, not here, even though the archive groups some under
-  `datatypes/packed`. The split follows the type-vs-operator boundary, not archive layout.
+- Indexed part-select, multi-dimensional packed selection, concatenation, replication, and compound
+  assignment are tracked under `operators.md`, not here. The split follows the type-vs-operator
+  boundary: this file owns the type, `operators.md` owns what acts on it.

@@ -10,9 +10,15 @@ have different cost models and different measurement methods.
 Simulation execution speed: the cost of running processes, scheduling events, and reading and
 writing state once the object graph is built.
 
-Re-establishing runtime performance tracking on the current architecture is pending the execution
-backends and the benchmark CI jobs that drive it (`architecture-reset.md` R6). No concrete item is
-open here until that lands.
+How hard a program is compiled is settled and is not a tracked gap. The runtime library an emitted
+program links is optimized as shipped, independent of how the compiler that ships it was built,
+because a user recompiles none of it. The design's own translation unit is compiled unoptimized by
+default and optimized under `--release`, which is the one place the build-time / run-time trade is a
+choice: iterating pays the compile on every edit, while a long run earns it back.
+
+Re-establishing runtime performance _tracking_ -- a benchmark that runs in CI and a number that
+regressions move -- is pending the execution backend and the benchmark CI jobs that drive it
+(`execution-backend.md`). No concrete item is open here until that lands.
 
 ## Construction / compile-time performance
 

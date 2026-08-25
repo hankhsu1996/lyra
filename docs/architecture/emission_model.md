@@ -14,6 +14,10 @@ The C++ backend exists today; an LLVM backend is the eventual target. The rules 
 any backend. Where the current C++ backend takes a transitional shortcut, that is noted as
 non-conforming code, not as a relaxation of the contract.
 
+The largest such shortcut is that emission aggregates a design into a single translation unit rather
+than producing one artifact per unit specialization assembled by linking. Invariant 1 states the
+target; the aggregation is what has to go.
+
 ## Owns
 
 - The rule that a backend emits one artifact per compilation-unit specialization, and that the

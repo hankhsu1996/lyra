@@ -9,13 +9,12 @@ foreign C function) and `export "DPI-C"` (foreign C calls an SV subroutine). It 
 post-reset architecture, where the pipeline is HIR -> MIR -> LIR -> LLVM and two backends consume
 MIR: the C++ backend (transitional) and the LLVM/JIT backend.
 
-A pre-reset DPI implementation exists as reference (`archived/`). It was built for an LLVM backend
-and modeled DPI as its own parallel IR subsystem: a dedicated MIR call family (`DpiCall`,
-`DpiImportRef`) separate from ordinary calls, and marshaling logic that lived in the LLVM backend.
-That shape is a good source for the ABI type classification, the export-context mechanism, and the
-header/link design, but its MIR node shape is a forbidden shape after the reset: `mir.md` bans a
-node kind invented to express a runtime-library wrapper, and `callable.md` already defines the right
-home.
+A pre-reset DPI implementation informed this entry. It was built for an LLVM backend and modeled DPI
+as its own parallel IR subsystem: a dedicated MIR call family (`DpiCall`, `DpiImportRef`) separate
+from ordinary calls, and marshaling logic that lived in the LLVM backend. That shape is a good
+source for the ABI type classification, the export-context mechanism, and the header/link design,
+but its MIR node shape is a forbidden shape after the reset: `mir.md` bans a node kind invented to
+express a runtime-library wrapper, and `callable.md` already defines the right home.
 
 This entry fixes how DPI fits the callable model, the value model, and the two-backend boundary
 before implementation begins.
@@ -202,9 +201,9 @@ usage inflate the scope.
 
 ## Rejected alternatives
 
-- **A separate DPI call family (`DpiCall` / `DpiImportRef`), as in the archive.** A DPI-specific
-  bypass around the callable and call vocabulary; a forbidden shape after the reset (`mir.md`). The
-  external-callable arm carries the same information without a parallel subsystem.
+- **A separate DPI call family (`DpiCall` / `DpiImportRef`), as the pre-reset tree had.** A
+  DPI-specific bypass around the callable and call vocabulary; a forbidden shape after the reset
+  (`mir.md`). The external-callable arm carries the same information without a parallel subsystem.
 - **Backend-realized marshaling driven by the ABI signature.** Forces DPI-ABI-driven conversion
   logic into value emission, which `backend_contract.md` forbids, and duplicates the logic across
   the two backends' different runtime ABIs.

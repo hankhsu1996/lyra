@@ -2,9 +2,8 @@
 
 Tracks multi-level module structure and hierarchical paths: a module instantiating other modules,
 the per-instance object tree this builds, the connections across that tree (ports), and references
-that name signals in another instance (hierarchical references). Covers the archive items under
-`archived/tests/sv_features/hierarchy/` (`instantiation`, `ports`, `refs`) and the instantiation
-side of `archived/tests/sv_features/generate/`.
+that name signals in another instance (hierarchical references), including the instantiation side of
+generate.
 
 The stage IDs (A1, B1, ...) are stable references. Stage letters **do** imply dependency order: a
 later stage may not begin until the stages it depends on are settled. Within a stage the items are
@@ -248,7 +247,7 @@ Unlocks `refs/hierarchical_refs`, `refs/upward_refs`, and `instantiation/hierarc
       connected in both directions. An unpacked struct port rides on unpacked-struct type support
       and lands with it.
 
-Unlocks the `ports/*` archive group.
+Unlocks the port-connection surface.
 
 ## Open Questions
 

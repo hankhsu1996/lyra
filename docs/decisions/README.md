@@ -5,8 +5,8 @@ immutable once accepted, and a superseding decision links back to the one it rep
 
 Decisions are reserved for choices with real trade-offs: rejected alternatives, load-bearing
 invariants, or constraints that bind the codebase going forward. Housekeeping notes (e.g., "this
-archive item is subsumed by an existing surface") do not warrant a decisions entry; record the
-reason inline at the point it matters.
+item is subsumed by an existing surface") do not warrant a decisions entry; record the reason inline
+at the point it matters.
 
 ## Index
 

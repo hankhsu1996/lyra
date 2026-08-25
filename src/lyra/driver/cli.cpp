@@ -134,6 +134,8 @@ struct ParsedArgs {
   bool no_project = false;
   bool format = false;
   bool no_pch = false;
+  lyra::driver::Optimization optimization =
+      lyra::driver::Optimization::kIterate;
   std::string pch_cache_dir;
   // The host C++ compiler the C++ backend builds emitted code with: a program
   // name or path, never flags.
@@ -159,6 +161,7 @@ struct CliOptions {
   std::optional<bool> format;
   std::optional<bool> disable_assertions;
   std::optional<bool> no_pch;
+  std::optional<bool> release;
   std::optional<std::string> pch_cache_dir;
   std::optional<std::string> cxx;
   std::optional<std::string> out_dir;
@@ -183,6 +186,9 @@ void RegisterCliOptions(slang::CommandLine& cmd, CliOptions& opts) {
   cmd.add(
       "--disable-assertions", opts.disable_assertions,
       "skip assertion constructs during lowering instead of rejecting them");
+  cmd.add(
+      "--release", opts.release,
+      "optimize the simulation rather than the time to build it");
   cmd.add(
       "--no-pch", opts.no_pch,
       "disable the precompiled-header cache for this invocation");
@@ -326,6 +332,9 @@ auto ResolveCliOptions(
   out.no_project = opts.no_project.value_or(false);
   out.format = opts.format.value_or(false);
   out.no_pch = opts.no_pch.value_or(false);
+  out.optimization = opts.release.value_or(false)
+                         ? lyra::driver::Optimization::kRelease
+                         : lyra::driver::Optimization::kIterate;
   out.lowering.disable_assertions = opts.disable_assertions.value_or(false);
   out.pch_cache_dir = opts.pch_cache_dir.value_or("");
   out.cxx = opts.cxx.value_or("clang++");
@@ -452,7 +461,9 @@ auto ResolveHostBuild(const CommandContext& ctx)
     return std::nullopt;
   }
   return lyra::driver::HostBuild{
-      .cxx = *std::move(cxx_or), .pch = MakePchOptions(*ctx.args)};
+      .cxx = *std::move(cxx_or),
+      .pch = MakePchOptions(*ctx.args),
+      .optimization = ctx.args->optimization};
 }
 
 // How far the compiler has to lower for a command to have what it reads.

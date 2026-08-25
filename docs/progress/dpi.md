@@ -2,7 +2,7 @@
 
 Tracks the SystemVerilog Direct Programming Interface (LRM 35): `import "DPI-C"`, where SV calls a
 foreign C function, and `export "DPI-C"`, where foreign C calls an SV subroutine. This is the
-foreign-language-boundary workstream that `functions.md` lists as out of scope for user subroutines.
+foreign-language-boundary workstream, which the user-subroutine surface excludes.
 
 Under the post-reset architecture a DPI import is not a separate call subsystem: it is the
 **external** implementation form of the one callable concept (`callable.md`) -- a signature plus a
@@ -46,7 +46,7 @@ and the element types Annex H.7.3 puts in C-compatible representation.
 On the execution backend scalar import (D10) is in: a foreign call lowers to an external-linkage
 symbol and the by-value carriers marshal. The rest of the import surface (D11) is blocked, and not
 by anything DPI owns: by-pointer marshaling is expressed as a closure, which that backend does not
-yet lower at all (`architecture-reset.md`). Export and tasks there (D12) follow once the C++-backend
+yet lower at all (`execution-backend.md`). Export and tasks there (D12) follow once the C++-backend
 items fix their shape.
 
 ## Sub-Steps
@@ -225,7 +225,7 @@ surface at a time; export and tasks follow once the C++-backend items fix their 
       resolves, the by-value carriers marshal, and a JIT run cross-checks the result against the C++
       backend. A `real` import is excluded, but not by anything DPI owns: the execution backend has
       no real value domain at all, so it cannot read a real out of an SV value in the first place
-      (`architecture-reset.md`).
+      (`execution-backend.md`).
 - [ ] D11 -- General and 4-state / wide import marshaling on the execution backend: the D2 and D3
       surface -- `output` / `inout` copy-back, `chandle`, and canonical `svBitVecVal*` /
       `svLogicVecVal*` buffers. Blocked on closures reaching that backend: a by-pointer argument is
@@ -254,5 +254,4 @@ and the out-of-scope boundary. Work proceeds against that record.
   artifacts, header and link), `runtime_distribution.md` (link and run model), `scheduling.md`
   (suspending tasks).
 - Rides on: `scheduling.md` and `processes.md` (suspending DPI tasks, D6b).
-- `functions.md` lists DPI as its out-of-scope sibling; the scope-declared export D4a is the
-  `ibex.md` full-top frontier.
+- The scope-declared export D4a is the `ibex.md` full-top frontier.

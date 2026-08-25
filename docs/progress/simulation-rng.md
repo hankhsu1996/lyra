@@ -31,9 +31,9 @@ Done when:
       algorithm, because a design that seeds one expects the sequence the standard prescribes.
 
 - [ ] `shuffle()` (LRM 7.12.2) on every unpacked container (dynamic array, queue, fixed unpacked).
-      The array-manipulation method family is otherwise complete (see `aggregate.md`); `shuffle` is
-      the one member held back here because it permutes its receiver using the RNG rather than being
-      a pure function of it.
+      The array-manipulation method family is otherwise complete; `shuffle` is the one member held
+      back here because it permutes its receiver using the RNG rather than being a pure function of
+      it.
 
 ## Out of Scope
 

@@ -1,0 +1,22 @@
+# Copy to `.bazelrc.user` to add settings that are yours rather than the
+# project's. The file is git-ignored, and `.bazelrc` imports it last so
+# anything here wins. Nothing in it is required: the project builds without it.
+
+# How much of this machine a build may take. Bazel schedules on core count and
+# assumes no memory budget, so on a box with more cores than memory-per-core a
+# build can outgrow the machine.
+# build --local_resources=cpu=HOST_CPUS*0.7
+# build --local_resources=memory=HOST_RAM*0.5
+
+# A cache shared across checkouts, so a second clone reuses the first's work.
+# It grows to whatever bound it is given and needs one.
+# build --disk_cache=~/.cache/bazel-disk
+
+# A BuildBuddy key, which `--config=ci` and `--config=rbe` need and neither
+# defines. Both configs work only for someone who has an account; the project
+# never requires one.
+# build --remote_header=x-buildbuddy-api-key=YOUR_KEY_HERE
+
+# Applies a config to every build without naming it on the command line. Under
+# `rbe` the compiler is the remote image's, not the one `.bazelrc` names.
+# build --config=rbe

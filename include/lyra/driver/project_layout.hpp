@@ -1,8 +1,22 @@
 #pragma once
 
+#include <cstdint>
 #include <string_view>
 
 namespace lyra::driver {
+
+// How hard the host compiler works on a design. Iterating pays the compile on
+// every edit and the run once; a long run inverts that. The runtime library is
+// prebuilt and always optimized, so it is not on this axis.
+enum class Optimization : std::uint8_t { kIterate, kRelease };
+
+// Both arms are spelled rather than one left to the compiler's default: a
+// precompiled header and the unit including it must be compiled alike, and two
+// command lines cannot be checked against a default.
+[[nodiscard]] constexpr auto OptimizationFlag(Optimization optimization)
+    -> std::string_view {
+  return optimization == Optimization::kRelease ? "-O2" : "-O0";
+}
 
 // Relative layout and build recipe of a self-contained emitted C++ project.
 // Shared by the `build.sh` the project ships and the in-process build that

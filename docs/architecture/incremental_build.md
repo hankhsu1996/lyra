@@ -5,6 +5,10 @@
 Define how incremental compilation works at the architectural level: what is cached, how identity is
 defined across sessions, and how reuse is determined.
 
+This is a contract the compiler does not yet realize: today a change recompiles everything. The
+rules here constrain every layer regardless, because they are what keeps a later query-based
+implementation possible -- a design that assumes whole-design recompilation forecloses it.
+
 ## Owns
 
 - The query model: compilation expressed as a graph of memoized queries.

@@ -71,6 +71,9 @@ with the process's resumption schedule. A process that does `q <= d; #5; ...` sh
 to suspend before `#5` just because the NBA write has not yet committed; the write commits in the
 NBA region of this same time slot regardless of where the process is by then.
 
+**Forbidden:** routing deferred writes into per-signal queues. Every closure is submitted to one
+region queue, so commit order is the region's, not a function of which signal a write targets.
+
 ## Region structure
 
 A time slot runs regions in LRM 4.4 order: Preponed, Active, Inactive, NBA, Observed, Reactive,

@@ -333,6 +333,12 @@ implies; the diagnostic for any new forbidden shape is "what identity property d
   endpoint is materialized as a stored member, hoisted into a local, or rematerialized at each use
   is a layout choice owned by LIR; MIR states the reference's identity, its route, and the protocol
   the body uses to access it.
+- A mutation-op node family parallel to the expression family. A write reaches storage through the
+  value's own store boundary, so there is one write vocabulary rather than two. (A second family
+  would make "how does this program write" have two answers.)
+- A lifecycle node family for value copy or move. Copy and move independence is a property of the
+  value model itself, not an operation a program spells. (The layer would be modelling a C++
+  mechanism rather than the source language.)
 
 ## Notes / Examples
 

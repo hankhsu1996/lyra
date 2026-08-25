@@ -618,17 +618,16 @@ enough to warrant its own focused review.
       `ConversionKind`) retires; HIR's `ConversionExpr` + `ConversionKind` stay as SV vocab in HIR
       and collapse into these primitives at HIR-to-MIR.
 
-- [ ] R49 -- Unify callable identity. Today `mir::Direct::target` is `variant<MethodId, BuiltinFn>`
-      -- a built-in is a closed-enum global id; a user method is a per-class arena id. As DPI
-      imports, future SV class statics, and future package-level free functions land, each currently
-      brings a new identity space (the historical pattern is one variant arm per origin). The target
-      is one `CallableId` space whose entries name a `CallableDecl` carrying signature,
-      implementation form (internal body / external symbol / built-in intrinsic), receiver
-      convention, and per-backend render metadata. `mir::Direct::target` becomes a single
-      `CallableId`; the `MethodId` / `BuiltinFn` distinction collapses into the declaration's
-      implementation form. Backend tables (`BuiltinFnCppName`, `BuiltinFnCppNamespace`) re-key by
-      `CallableId`. **Gated on**: R8e (external callable form) and a co-design with DPI's
-      symbol-contract structure -- the `CallableDecl` shape is the same one those features need.
+- [ ] R49 -- Unify callable identity. A direct call's target is a variant with one arm per origin --
+      a built-in, a user method, an imported runtime entry, a callable in another unit, a method on
+      another unit's class -- so each origin carries its own identity space, and every new kind of
+      callable adds an arm rather than an entry. Each arm is a place a consumer must branch, and the
+      branch says nothing about the call: what differs between origins is where the declaration
+      lives and how it is reached, not what a call to it means. The target is one identity space
+      whose entries name a declaration carrying signature, implementation form (internal body,
+      external symbol, built-in intrinsic), receiver convention, and per-backend render metadata; a
+      call names one identity and nothing branches on origin. **Gated on**: R8e (external callable
+      form) and a co-design with DPI's symbol contract, which needs the same declaration shape.
 
 - [ ] R50 -- Add `Namespace` qualifier to `mir::ScopeQualifier`. Today the type carries one arm
       (`TypeQualifier{TypeId}`) because SV only exposes type-as-namespace at the source level
@@ -1023,7 +1022,6 @@ enough to warrant its own focused review.
 
 ## Out of Scope
 
-- Per-feature workstreams. Those live in the dedicated feature files (`control-flow.md`,
-  `operators.md`, etc.).
+- Per-feature workstreams. Those live in the dedicated feature files (`operators.md`,
+  `processes.md`, etc.).
 - One-PR cleanups with no architectural shift. Those land directly without a tracking entry.
-- The pre-reset surface re-implementation backlog. That lives in `architecture-reset.md`.
