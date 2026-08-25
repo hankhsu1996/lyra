@@ -30,12 +30,15 @@ namespace lyra::lowering::hir_to_mir {
 
 namespace {
 
-// The equality primitive one case label is tested with. The membership
-// condition (LRM 12.5.4) tests its labels a different way and never asks.
+// The equality primitive one case label is tested with. Every condition
+// compares its labels exactly: an x or a z stands for itself and matches
+// itself, where logical equality would answer x and send the whole statement
+// to its default arm (LRM 12.5). The membership condition (LRM 12.5.4) tests
+// its labels a different way and never asks.
 auto CaseCompareOp(hir::CaseCondition condition) -> mir::BinaryOp {
   switch (condition) {
     case hir::CaseCondition::kNormal:
-      return mir::BinaryOp::kEquality;
+      return mir::BinaryOp::kCaseEquality;
     case hir::CaseCondition::kWildcardJustZ:
       return mir::BinaryOp::kCasezEquality;
     case hir::CaseCondition::kWildcardXOrZ:
@@ -60,9 +63,8 @@ auto BuildCaseSelection(
     const PredicateBuilder& build_predicate) -> diag::Result<mir::Stmt> {
   if (!check.has_value()) {
     return BuildCaseCascade(
-        frame, std::move(wrapper), std::move(label), body_scopes.size(),
-        std::move(body_scopes), std::move(default_scope), bit1_type,
-        build_predicate);
+        frame, std::move(wrapper), std::move(label), std::move(body_scopes),
+        std::move(default_scope), bit1_type, build_predicate);
   }
 
   const WalkFrame wrapper_frame = frame.WithBlock(&wrapper);
