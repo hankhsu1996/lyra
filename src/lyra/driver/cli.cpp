@@ -8,6 +8,7 @@
 #include <expected>
 #include <filesystem>
 #include <format>
+#include <iostream>
 #include <iterator>
 #include <optional>
 #include <ranges>
@@ -19,7 +20,11 @@
 #include <vector>
 
 #include <fmt/core.h>
+#include <slang/ast/ASTSerializer.h>
+#include <slang/ast/Compilation.h>
+#include <slang/ast/symbols/CompilationUnitSymbols.h>
 #include <slang/driver/Driver.h>
+#include <slang/text/Json.h>
 #include <slang/util/CommandLine.h>
 
 #include "lyra/backend/llvm/emit.hpp"
@@ -45,6 +50,7 @@ namespace {
 
 enum class CommandKind : std::uint8_t {
   kCheck,
+  kDumpAst,
   kDumpHir,
   kDumpMir,
   kDumpLir,
@@ -73,6 +79,10 @@ constexpr auto kCommands = std::to_array<CommandSpec>(
     {{.verb = "check",
       .object = "",
       .kind = CommandKind::kCheck,
+      .requires_out_dir = false},
+     {.verb = "dump",
+      .object = "ast",
+      .kind = CommandKind::kDumpAst,
       .requires_out_dir = false},
      {.verb = "dump",
       .object = "hir",
@@ -451,6 +461,7 @@ auto ResolveHostBuild(const CommandContext& ctx)
 auto LoweringDepth(const ParsedArgs& args) -> lyra::compiler::StopAfter {
   switch (args.cmd) {
     case CommandKind::kCheck:
+    case CommandKind::kDumpAst:
       return lyra::compiler::StopAfter::kParse;
     case CommandKind::kDumpHir:
       return lyra::compiler::StopAfter::kHir;
@@ -467,6 +478,41 @@ auto LoweringDepth(const ParsedArgs& args) -> lyra::compiler::StopAfter {
       return lyra::compiler::StopAfter::kMir;
   }
   return lyra::compiler::StopAfter::kMir;
+}
+
+// The front end's own account of the design, upstream of every form Lyra
+// derives from it.
+//
+// One writer lives across the whole run, because state it carries between
+// values -- which enum types have already been printed -- has to stay
+// consistent. Flushing after each complete top-level value then keeps peak
+// memory proportional to the largest single object rather than to the design,
+// which is what makes a design of any size dumpable at all.
+auto RunDumpAst(const CommandContext& ctx) -> int {
+  slang::JsonWriter writer;
+  writer.setPrettyPrint(true);
+
+  slang::ast::Compilation& compilation = ctx.artifacts->Elaboration();
+  slang::ast::ASTSerializer serializer(compilation, writer);
+  serializer.setTryConstantFold(false);
+
+  serializer.startObject();
+  serializer.writeProperty("design");
+  serializer.serialize(compilation.getRoot());
+  writer.flushTo(std::cout);
+
+  serializer.writeProperty("definitions");
+  serializer.startArray();
+  for (const auto* definition : compilation.getDefinitions()) {
+    serializer.serialize(*definition);
+    writer.flushTo(std::cout);
+  }
+  serializer.endArray();
+  serializer.endObject();
+
+  writer.writeNewLine();
+  writer.flushTo(std::cout);
+  return 0;
 }
 
 auto RunDumpHir(const CommandContext& ctx) -> int {
@@ -646,6 +692,8 @@ auto RunCommand(const CommandContext& ctx) -> int {
       // The front end has already run and everything it had to say has already
       // been reported, so arriving here is the whole answer `check` gives.
       return 0;
+    case CommandKind::kDumpAst:
+      return RunDumpAst(ctx);
     case CommandKind::kDumpHir:
       return RunDumpHir(ctx);
     case CommandKind::kDumpMir:

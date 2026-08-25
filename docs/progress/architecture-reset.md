@@ -214,6 +214,14 @@ Tracked in `processes.md`.
       `$unsigned`) are supported, as is the LRM 20.9 bit vector family (`$countbits`, `$countones`,
       `$onehot`, `$onehot0`, `$isunknown`) -- except a `$countbits` control bit the running
       simulation computes, which LRM 20.9 spells as a literal.
+- [ ] Real math functions (LRM 20.8.2) -- `$ceil`, `$floor`, `$pow`, `$ln`, `$log10`, `$exp`,
+      `$sqrt` and the trigonometric family, plus the integer-returning `$rtoi`. Each is a pure
+      function of its real arguments and maps onto the host's own math library, so the work is the
+      registry entries and the real-typed call path rather than any new runtime state.
+- [ ] Real / bit-vector conversion (LRM 20.5) -- `$bitstoreal` and `$realtobits`, and the shortreal
+      pair `$bitstoshortreal` / `$shortrealtobits`. These reinterpret the bits of a real as a packed
+      vector and back, so they need the bit-level correspondence between a real and its 64-bit (or
+      32-bit) representation rather than a numeric conversion.
 
 ### system tasks
 
