@@ -5,6 +5,7 @@ Checks: >
   readability-*,
   cppcoreguidelines-*,
   clang-analyzer-*,
+  bugprone-*,
   -clang-analyzer-optin.cplusplus.UninitializedObject,
   misc-include-cleaner,
   -readability-identifier-length,
@@ -16,6 +17,9 @@ Checks: >
   -google-readability-braces-around-statements,
   -cppcoreguidelines-avoid-magic-numbers,
   -cppcoreguidelines-avoid-capturing-lambda-coroutines,
+  -bugprone-easily-swappable-parameters,
+  -bugprone-branch-clone,
+  -bugprone-unchecked-optional-access,
 
 CheckOptions:
   # Ignore external headers for misc-include-cleaner

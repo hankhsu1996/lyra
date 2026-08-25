@@ -42,27 +42,32 @@ auto AppendCaseSnapshot(
 // constructs them.
 //
 // build_predicate(level_frame, item_idx) is invoked once per item from
-// innermost (item_count - 1) to outermost (0). level_frame's current_block
-// points at the block into which the predicate is lowered (wrapper_block for
-// the outermost item, a fresh intermediate block for the rest). The snapshot
-// var is a body-local, so the predicate names it directly with no hop
-// bookkeeping.
+// innermost to outermost, so it is borrowed rather than forwarded: a callable
+// forwarded more than once would be consumed by its first call. level_frame's
+// current_block points at the block into which the predicate is lowered
+// (wrapper_block for the outermost item, a fresh intermediate block for the
+// rest). The snapshot var is a body-local, so the predicate names it directly
+// with no hop bookkeeping.
+//
+// An item count of zero is the ordinary shape of `case (x) default: ...`, whose
+// only arm the front end reports separately from the items. It is also what a
+// miscounted item list looks like, which is why the count is taken from the
+// vector here and never accepted as a parameter beside it.
 //
 // Returns a BlockStmt wrapping the snapshot + cascade.
 template <typename PredicateBuilder>
 auto BuildCaseCascade(
     WalkFrame frame, mir::Block wrapper_block,
-    std::optional<std::string> outer_label, std::size_t item_count,
-    std::vector<mir::Block> body_scopes,
+    std::optional<std::string> outer_label, std::vector<mir::Block> body_scopes,
     std::optional<mir::Block> default_scope, mir::TypeId bit1_type,
-    PredicateBuilder&& build_predicate) -> diag::Result<mir::Stmt> {
+    const PredicateBuilder& build_predicate) -> diag::Result<mir::Stmt> {
+  const std::size_t item_count = body_scopes.size();
   std::optional<mir::Block> tail = std::move(default_scope);
 
   for (std::size_t i = item_count; i-- > 1;) {
     mir::Block level_block;
     const WalkFrame level_frame = frame.WithBlock(&level_block);
-    auto pred_or =
-        std::forward<PredicateBuilder>(build_predicate)(level_frame, i);
+    auto pred_or = build_predicate(level_frame, i);
     if (!pred_or) {
       return std::unexpected(std::move(pred_or.error()));
     }
@@ -85,8 +90,7 @@ auto BuildCaseCascade(
 
   if (item_count > 0) {
     const WalkFrame wrapper_frame = frame.WithBlock(&wrapper_block);
-    auto pred0_or =
-        std::forward<PredicateBuilder>(build_predicate)(wrapper_frame, 0);
+    auto pred0_or = build_predicate(wrapper_frame, 0);
     if (!pred0_or) {
       return std::unexpected(std::move(pred0_or.error()));
     }
