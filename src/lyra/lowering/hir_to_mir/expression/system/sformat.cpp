@@ -6,11 +6,14 @@
 #include <optional>
 #include <string>
 #include <utility>
+#include <vector>
 
 #include "lyra/base/internal_error.hpp"
 #include "lyra/diag/diagnostic.hpp"
 #include "lyra/hir/expr.hpp"
+#include "lyra/hir/expr_id.hpp"
 #include "lyra/hir/procedural_body.hpp"
+#include "lyra/lowering/hir_to_mir/call_operands.hpp"
 #include "lyra/lowering/hir_to_mir/cast_lowering.hpp"
 #include "lyra/lowering/hir_to_mir/lhs_store.hpp"
 #include "lyra/lowering/hir_to_mir/print_items.hpp"
@@ -87,23 +90,14 @@ auto LowerSFormatSystemSubroutineCallStmt(
         .label = std::move(label), .data = mir::ExprStmt{.expr = expr_id}};
   }
 
-  if (call.arguments.empty()) {
-    throw InternalError(
-        "LowerSFormatSystemSubroutineCallStmt: $sformat / $swrite requires "
-        "an output_var argument; slang's arg-count check should have "
-        "rejected the call");
-  }
+  // $sformat / $swrite write into their first operand (LRM 21.3.3); the
+  // format and its items follow.
+  const std::vector<hir::ExprId> operands = RequiredLeadingOperands(call, 1);
 
-  if (!call.arguments[0].has_value()) {
-    throw InternalError(
-        "LowerSFormatSystemSubroutineCallStmt: output_var arg unexpectedly "
-        "elided");
-  }
-  auto out_or =
-      process.LowerLhsExpr(hir_proc.exprs.Get(*call.arguments[0]), frame);
+  auto out_or = process.LowerLhsExpr(hir_proc.exprs.Get(operands[0]), frame);
   if (!out_or) return std::unexpected(std::move(out_or.error()));
-  const mir::TypeId out_type = process.Owner().TranslateType(
-      hir_proc.exprs.Get(*call.arguments[0]).type);
+  const mir::TypeId out_type =
+      process.Owner().TranslateType(hir_proc.exprs.Get(operands[0]).type);
   const mir::ExprId out_id = block.exprs.Add(*std::move(out_or));
 
   auto call_expr_or = BuildSFormatCallExpr(process, frame, call, info, 1);

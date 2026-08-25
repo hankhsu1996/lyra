@@ -12,9 +12,11 @@
 #include "lyra/diag/diag_code.hpp"
 #include "lyra/diag/diagnostic.hpp"
 #include "lyra/hir/expr.hpp"
+#include "lyra/hir/expr_id.hpp"
 #include "lyra/hir/subroutine_ref.hpp"
 #include "lyra/hir/with_clause_id.hpp"
 #include "lyra/lowering/hir_to_mir/binding_origin.hpp"
+#include "lyra/lowering/hir_to_mir/call_operands.hpp"
 #include "lyra/lowering/hir_to_mir/closure_builder.hpp"
 #include "lyra/lowering/hir_to_mir/completion_payload.hpp"
 #include "lyra/lowering/hir_to_mir/default_value.hpp"
@@ -60,14 +62,12 @@ template <ExprLowerer Lowerer>
 auto LowerAssociativeTraversal(
     Lowerer& lowerer, WalkFrame frame, const hir::CallExpr& c,
     support::BuiltinFn fn, mir::TypeId result_type) -> diag::Result<mir::Expr> {
-  if (!c.arguments[1].has_value()) {
-    throw InternalError(
-        "LowerAssociativeTraversal: index argument unexpectedly elided");
-  }
+  // The receiver, then the index whose neighbour is asked for (LRM 7.9.4).
+  const std::vector<hir::ExprId> operands = RequiredOperands(c, 2);
   const auto& unit_lowerer = lowerer.Owner();
   const auto& hir_exprs = lowerer.HirExprs();
-  const auto recv_hir = *c.arguments[0];
-  const auto idx_hir = *c.arguments[1];
+  const hir::ExprId recv_hir = operands[0];
+  const hir::ExprId idx_hir = operands[1];
   const mir::TypeId key_type =
       unit_lowerer.TranslateType(hir_exprs.Get(idx_hir).type);
 
@@ -447,11 +447,9 @@ auto LowerBuiltinMethodCall(
 
   // Skip args[0] -- it was either pushed above as the lowered receiver
   // (instance call) or discarded as the type-bearer (static call).
-  for (std::size_t i = 1; i < c.arguments.size(); ++i) {
-    if (!c.arguments[i].has_value()) {
-      throw InternalError("builtin-method call argument unexpectedly elided");
-    }
-    auto arg_or = lowerer.LowerExpr(hir_exprs.Get(*c.arguments[i]), frame);
+  const std::vector<hir::ExprId> operands = RequiredOperands(c);
+  for (std::size_t i = 1; i < operands.size(); ++i) {
+    auto arg_or = lowerer.LowerExpr(hir_exprs.Get(operands[i]), frame);
     if (!arg_or) return std::unexpected(std::move(arg_or.error()));
     args.push_back(block.exprs.Add(*std::move(arg_or)));
   }

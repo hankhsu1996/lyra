@@ -2,12 +2,15 @@
 
 #include <cstdint>
 #include <format>
+#include <optional>
 #include <string>
 #include <utility>
 #include <vector>
 
 #include "lyra/base/internal_error.hpp"
 #include "lyra/diag/diag_code.hpp"
+#include "lyra/hir/expr_id.hpp"
+#include "lyra/lowering/hir_to_mir/call_operands.hpp"
 #include "lyra/lowering/hir_to_mir/default_value.hpp"
 #include "lyra/lowering/hir_to_mir/process_lowerer.hpp"
 #include "lyra/lowering/hir_to_mir/structural_scope_lowerer.hpp"
@@ -396,8 +399,9 @@ auto LowerEnumMethodCall(
   const mir::TypeId int_ty = unit.builtins.int_type;
   const bool is_prev = b.method == support::BuiltinFn::kEnumPrev;
   mir::ExprId step_id{};
-  if (c.arguments.size() > 1 && c.arguments[1].has_value()) {
-    auto step_or = lowerer.LowerExpr(hir_exprs.Get(*c.arguments[1]), frame);
+  // `next` / `prev` take an optional step count (LRM 6.19.5).
+  if (const std::optional<hir::ExprId> step = OptionalOperand(c, 1)) {
+    auto step_or = lowerer.LowerExpr(hir_exprs.Get(*step), frame);
     if (!step_or) return std::unexpected(std::move(step_or.error()));
     const mir::ExprId raw = block.exprs.Add(*std::move(step_or));
     if (is_prev) {

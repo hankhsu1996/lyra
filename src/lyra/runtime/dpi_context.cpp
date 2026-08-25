@@ -141,9 +141,13 @@ auto svGetTimeUnit(void* scope, void* time_unit) -> int {
   }
   lyra::runtime::RuntimeEffects& effects =
       lyra::runtime::AmbientRunContext::Current().Effects();
-  *static_cast<std::int32_t*>(time_unit) = resolved != nullptr
-                                               ? resolved->TimeUnitPower()
-                                               : effects.GlobalPrecisionPower();
+  const std::int8_t unit_power = resolved != nullptr
+                                     ? resolved->TimeUnitPower()
+                                     : effects.GlobalPrecisionPower();
+  // A time power is a small signed number (LRM 3.14): -9 is ns, so widening it
+  // with sign extension is the meaning, not the byte read this check looks for.
+  // NOLINTNEXTLINE(bugprone-signed-char-misuse)
+  *static_cast<std::int32_t*>(time_unit) = unit_power;
   return 0;
 }
 
@@ -157,9 +161,13 @@ auto svGetTimePrecision(void* scope, void* time_precision) -> int {
   }
   lyra::runtime::RuntimeEffects& effects =
       lyra::runtime::AmbientRunContext::Current().Effects();
-  *static_cast<std::int32_t*>(time_precision) =
-      resolved != nullptr ? resolved->TimePrecisionPower()
-                          : effects.GlobalPrecisionPower();
+  const std::int8_t precision = resolved != nullptr
+                                    ? resolved->TimePrecisionPower()
+                                    : effects.GlobalPrecisionPower();
+  // A time power is a small signed number (LRM 3.14): -9 is ns, so widening it
+  // with sign extension is the meaning, not the byte read this check looks for.
+  // NOLINTNEXTLINE(bugprone-signed-char-misuse)
+  *static_cast<std::int32_t*>(time_precision) = precision;
   return 0;
 }
 

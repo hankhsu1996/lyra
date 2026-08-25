@@ -7,6 +7,7 @@
 
 #include "lyra/base/internal_error.hpp"
 #include "lyra/base/simulation_error.hpp"
+#include "lyra/runtime/cancellation.hpp"
 #include "lyra/runtime/gc_ref.hpp"
 #include "lyra/runtime/pending_wait.hpp"
 #include "lyra/runtime/registration.hpp"
@@ -83,7 +84,7 @@ inline void ProcessKill(
     for (CoroutineHandle waiter : woken) {
       runtime.ScheduleNextDelta(waiter);
     }
-    UnwindForProcessTermination();
+    RaiseUnclaimableEffect();
   }
   std::vector<CoroutineHandle> woken;
   target.TerminateSubtreeKilled(woken);

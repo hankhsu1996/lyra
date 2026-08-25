@@ -13,8 +13,10 @@
 
 #include "lyra/base/overloaded.hpp"
 #include "lyra/diag/diag_code.hpp"
+#include "lyra/hir/expr_id.hpp"
 #include "lyra/hir/procedural_body.hpp"
 #include "lyra/hir/type.hpp"
+#include "lyra/lowering/hir_to_mir/call_operands.hpp"
 #include "lyra/lowering/hir_to_mir/cast_lowering.hpp"
 #include "lyra/lowering/hir_to_mir/copy_out_desugar.hpp"
 #include "lyra/lowering/hir_to_mir/default_value.hpp"
@@ -145,7 +147,8 @@ auto LowerMemFileSystemSubroutineCallStmt(
 
   // LRM 21.4 / 21.5: arg[0] is the file name, arg[1] the memory, arg[2] /
   // arg[3] the optional start / finish addresses.
-  const auto& mem_hir = hir_proc.exprs.Get(*call.arguments[1]);
+  const std::vector<hir::ExprId> head = RequiredLeadingOperands(call, 2);
+  const auto& mem_hir = hir_proc.exprs.Get(head[1]);
 
   mir::Block wrapper;
   const WalkFrame wrapper_frame = frame.WithBlock(&wrapper);
@@ -168,8 +171,7 @@ auto LowerMemFileSystemSubroutineCallStmt(
             task));
   }
 
-  auto name_or =
-      process.LowerExpr(hir_proc.exprs.Get(*call.arguments[0]), wrapper_frame);
+  auto name_or = process.LowerExpr(hir_proc.exprs.Get(head[0]), wrapper_frame);
   if (!name_or) return std::unexpected(std::move(name_or.error()));
   // The file name is an SV string; a string literal reaches here as a packed
   // value, so route it to the runtime's String type (LRM 21.4 / 21.5).
@@ -189,7 +191,7 @@ auto LowerMemFileSystemSubroutineCallStmt(
     mem_arg_id = wrapper.exprs.Add(*std::move(mem_or));
   } else {
     auto slot_or = BuildOutputArgSlot(
-        process, wrapper_frame, *call.arguments[1], "_lyra_readmem_dest");
+        process, wrapper_frame, head[1], "_lyra_readmem_dest");
     if (!slot_or) return std::unexpected(std::move(slot_or.error()));
     slots.push_back(*slot_or);
     mem_arg_id = wrapper.exprs.Add(
@@ -210,7 +212,10 @@ auto LowerMemFileSystemSubroutineCallStmt(
       mir::MakeIntLiteral(
           builtins.int_type, static_cast<std::int64_t>(info.base))));
   for (std::size_t i = 2; i < call.arguments.size(); ++i) {
-    if (!call.arguments[i].has_value()) {
+    // Unlike the two above, a bound this lowering cannot realize is the
+    // program's shape, not the compiler's, so it earns a diagnostic.
+    const std::optional<hir::ExprId> bound = OptionalOperand(call, i);
+    if (!bound.has_value()) {
       return diag::Fail(
           diag::DiagCode::kUnsupportedSubroutineArgument,
           std::format(
@@ -218,8 +223,7 @@ auto LowerMemFileSystemSubroutineCallStmt(
               "(LRM 21.4 / 21.5)",
               task));
     }
-    auto arg_or = process.LowerExpr(
-        hir_proc.exprs.Get(*call.arguments[i]), wrapper_frame);
+    auto arg_or = process.LowerExpr(hir_proc.exprs.Get(*bound), wrapper_frame);
     if (!arg_or) return std::unexpected(std::move(arg_or.error()));
     operands.push_back(wrapper.exprs.Add(*std::move(arg_or)));
   }

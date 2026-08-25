@@ -148,6 +148,12 @@ each meets the same lifetime question above; none is lowerable on the execution 
       runtime from generated code yet, so a net-bearing design does not run here. Rolled up in
       `nets.md`.
 - [ ] By-pointer DPI-C marshaling (the by-value scalar surface runs; see `dpi.md`).
+- [ ] A region that consumes a control effect -- what `disable` of a named block or task needs (LRM
+      9.6.2). `mir_to_lir` refuses it by name, so every `disable` corpus case is claimed by the C++
+      backend alone. The C++ backend realizes the region as a `catch`; LIR has no such construct and
+      does not need one, because an activation now settles cancellation as a completion outcome
+      rather than only as an unwind -- the shape a landing can be lowered against without exception
+      handling.
 - [ ] The transient-escape rule is held by construction and naming, not by a checker.
 - [ ] Displaying an aggregate. A print item is named by the operand's value domain, and the erased
       container this backend realizes exposes no per-element walk for a formatter to use. It is the

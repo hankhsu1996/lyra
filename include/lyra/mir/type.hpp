@@ -433,12 +433,12 @@ enum class RuntimeLibraryKind : std::uint8_t {
   // `lyra::runtime::CancellationSource` a scope is named through, carrying the
   // generation an execution captures on entry and `disable` advances; the
   // `lyra::runtime::CancellationGuard` whose lifetime marks the executing
-  // process as inside that scope; and `lyra::runtime::Abort`, the effect
-  // raised by leaving a disabled scope, which the region naming that scope
-  // binds and consumes.
+  // process as inside that scope; and `lyra::runtime::ControlEffect`, the
+  // effect raised by leaving a disabled scope, which the region naming that
+  // scope binds and consumes.
   kCancellationSource,
   kCancellationGuard,
-  kAbort,
+  kControlEffect,
 };
 
 struct RuntimeLibraryType {

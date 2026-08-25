@@ -8,6 +8,7 @@
 #include <variant>
 #include <vector>
 
+#include "lyra/base/internal_error.hpp"
 #include "lyra/base/overloaded.hpp"
 #include "lyra/diag/diag_code.hpp"
 #include "lyra/lir/class_id.hpp"
@@ -147,12 +148,13 @@ auto UnitLowerer::LowerClass(mir::ClassId owner, const mir::Class& cls)
     if (!fn) {
       return std::unexpected(std::move(fn.error()));
     }
-    if (out_.functions.Add(*std::move(fn)) != *planned.methods[i]) {
+    const lir::FunctionId planned_id = MethodFunction(owner, cid);
+    if (out_.functions.Add(*std::move(fn)) != planned_id) {
       throw InternalError(
           "mir_to_lir: a lowered function landed on an identity other than the "
           "one planned for it");
     }
-    out.methods.push_back(*planned.methods[i]);
+    out.methods.push_back(planned_id);
   }
   return out;
 }

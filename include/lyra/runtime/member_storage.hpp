@@ -14,6 +14,15 @@
 
 namespace lyra::runtime {
 
+// The box a borrowed handle is: a pointer the instance does not own, held so
+// that reading the member loads the pointer out rather than the target. It is a
+// type of its own rather than a bare pointer so that every alternative of the
+// storage below is an object, which keeps a member's address the address of an
+// object in every case and never a pointer to a pointer.
+struct BorrowedHandle {
+  void* target = nullptr;
+};
+
 // One member's runtime-owned storage, realized from the descriptor its unit
 // definition carries. The instance owns this object and a member place resolves
 // to its address; what the address means follows the member's storage kind. A
@@ -35,9 +44,10 @@ class MemberStorage {
 
  private:
   std::variant<
-      void*, Var<value::PackedArray>, Var<value::String>, Var<value::Real>,
-      Var<value::ShortReal>, value::Chandle, Var<value::RuntimeTuple>,
-      Var<value::RuntimeDynamicArray>, CancellationSource>
+      BorrowedHandle, Var<value::PackedArray>, Var<value::String>,
+      Var<value::Real>, Var<value::ShortReal>, value::Chandle,
+      Var<value::RuntimeTuple>, Var<value::RuntimeDynamicArray>,
+      CancellationSource>
       object_;
 };
 

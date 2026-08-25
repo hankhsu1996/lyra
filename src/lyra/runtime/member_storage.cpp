@@ -3,7 +3,6 @@
 #include <variant>
 
 #include "lyra/base/internal_error.hpp"
-#include "lyra/base/overloaded.hpp"
 #include "lyra/runtime/scope_program.hpp"
 #include "lyra/value/packed_array.hpp"
 #include "lyra/value/real.hpp"
@@ -16,7 +15,7 @@ namespace lyra::runtime {
 MemberStorage::MemberStorage(MemberStorageDescriptor descriptor) {
   switch (descriptor.kind) {
     case MemberStorageKind::kBorrowedHandle:
-      object_.emplace<void*>(nullptr);
+      object_.emplace<BorrowedHandle>();
       return;
     case MemberStorageKind::kCancellationSource:
       object_.emplace<CancellationSource>();
@@ -59,11 +58,7 @@ MemberStorage::MemberStorage(MemberStorageDescriptor descriptor) {
 }
 
 auto MemberStorage::Address() -> void* {
-  return std::visit(
-      Overloaded{
-          [](void*& handle) -> void* { return &handle; },
-          [](auto& cell) -> void* { return &cell; }},
-      object_);
+  return std::visit([](auto& cell) -> void* { return &cell; }, object_);
 }
 
 }  // namespace lyra::runtime

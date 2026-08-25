@@ -189,17 +189,17 @@ auto MakeCancellableRegion(
   mir::CompilationUnit& unit = unit_lowerer.Unit();
   mir::Block& block = *frame.current_block;
 
-  const mir::TypeId abort_type = unit.types.Intern(
-      mir::RuntimeLibraryType{.kind = mir::RuntimeLibraryKind::kAbort});
+  const mir::TypeId effect_type = unit.types.Intern(
+      mir::RuntimeLibraryType{.kind = mir::RuntimeLibraryKind::kControlEffect});
   const BindingOriginId origin =
       BindingOriginId::Synthesized(unit_lowerer.NextSynthesizedSite(), 0);
   const mir::LocalId caught = frame.bindings->Declare(
       origin, mir::LocalDecl{
-                  .name = "abort_" + std::to_string(placement.field.value),
-                  .type = abort_type});
+                  .name = "effect_" + std::to_string(placement.field.value),
+                  .type = effect_type});
 
   const mir::ExprId caught_ref =
-      block.exprs.Add(mir::MakeLocalRefExpr(caught, abort_type));
+      block.exprs.Add(mir::MakeLocalRefExpr(caught, effect_type));
   const mir::ExprId target =
       CancellationSourceAccess(process, frame, placement);
   const mir::ExprId handler = block.exprs.Add(
@@ -208,7 +208,7 @@ auto MakeCancellableRegion(
               mir::CallExpr{
                   .callee =
                       mir::Direct{
-                          .target = support::BuiltinFn::kAbortConsumeOrRethrow},
+                          .target = support::BuiltinFn::kClaimControlEffect},
                   .arguments = {caught_ref, target}},
           .type = unit.builtins.void_type});
   return mir::TryStmt{.body = body, .caught = caught, .handler = handler};

@@ -39,29 +39,6 @@ enum class ProcessTerminationCause : std::uint8_t {
   kKilled,
 };
 
-// The sentinel that unwinds the calling process's own body to the engine's
-// resume boundary. A running frame cannot be destroyed synchronously, so `kill`
-// / `disable` targeting the calling process records the terminal cause and
-// throws this: the body's destructors run and control returns to the resume
-// boundary, where the terminal state is published and the frame released.
-//
-// It is structured control flow, not an error: no base, no message, thrown only
-// by `UnwindForProcessTermination` after a termination request is recorded, and
-// consumed only at the resume boundary under that pending request. It travels
-// the coroutine's completion channel (the promise's unhandled-exception slot),
-// not a `catch` around a resume. It must never cross a boundary the runtime
-// does not own: a foreign (`extern "C"`) frame has no C++ unwind contract, so a
-// termination that must pass through foreign code uses the LRM cooperative
-// return protocol to reach a simulator-owned boundary first, and only unwinds
-// there.
-struct ProcessTerminationUnwind final {};
-
-// The sole throw site for the termination sentinel, so every delivery is one
-// auditable point. Call only after the termination cause has been recorded.
-[[noreturn]] inline void UnwindForProcessTermination() {
-  throw ProcessTerminationUnwind{};
-}
-
 // A node of the dynamic process lineage (LRM 9.5) and, while its body runs, the
 // owner of the coroutine frame executing it. The two lifetimes are distinct:
 // the frame is released the moment the body terminates, whereas the node
@@ -244,7 +221,7 @@ class RuntimeProcess : public std::enable_shared_from_this<RuntimeProcess> {
             .source = target, .captured_generation = target->Generation()});
   }
 
-  // Leave a target. Reached on every exit path including an abort unwinding
+  // Leave a target. Reached on every exit path including an effect unwinding
   // through the frame, so it never raises: it runs during unwinding, where
   // raising would end the program instead of reporting anything.
   void PopEnclosingTarget(CancellationSource* target) noexcept {
@@ -264,18 +241,6 @@ class RuntimeProcess : public std::enable_shared_from_this<RuntimeProcess> {
       }
     }
     return nullptr;
-  }
-
-  // Records that this execution has begun, or has finished, leaving a disabled
-  // target (LRM 9.6.2). A process that ends while it is still leaving one was
-  // forcibly terminated rather than faulted or run to its end, and the frame
-  // that settles it reads that from here instead of inspecting what is
-  // unwinding through it.
-  void NoteAbortRaised() {
-    leaving_disabled_target_ = true;
-  }
-  void NoteAbortConsumed() {
-    leaving_disabled_target_ = false;
   }
 
   // LRM 9.6.2 "all activities enabled within" a target: an activity spawned
@@ -374,12 +339,6 @@ class RuntimeProcess : public std::enable_shared_from_this<RuntimeProcess> {
   // or terminated process is a no-op.
   void RequestTermination(ProcessTerminationCause cause);
 
-  // Whether a deferred termination has been requested but not yet published --
-  // the window between phase 1 and phase 2, during which the body unwinds.
-  [[nodiscard]] auto TerminationRequested() const -> bool {
-    return termination_requested_;
-  }
-
   // Unlinks this process from its parent's lineage, dropping the parent's
   // ownership of it (a surviving `process` handle keeps the node alive as a
   // parent-less orphan). A process with no parent is owned by its scope and is
@@ -449,10 +408,6 @@ class RuntimeProcess : public std::enable_shared_from_this<RuntimeProcess> {
   // Set when a deferred termination is requested (phase 1) and consumed at the
   // resume boundary (phase 2): pending while the body unwinds.
   bool termination_requested_ = false;
-  // Set while this execution is leaving a disabled target, so the frame that
-  // settles it reports KILLED rather than FINISHED (LRM 9.7). A process that
-  // runs to the end of its body leaves it false.
-  bool leaving_disabled_target_ = false;
   RuntimeProcess* parent_ = nullptr;
   std::vector<std::shared_ptr<RuntimeProcess>> children_;
   // One disable target this execution is inside (LRM 9.6.2), with the target's

@@ -62,6 +62,23 @@ struct CompileArtifacts {
   // is compiled but is not a top.
   std::vector<std::string> top_unit_names;
 
+  // Reading a stage's product asserts that the stage ran. Which optionals are
+  // filled follows from how far down the pipeline the caller asked to go, and
+  // nothing in this type carries that choice: asking for LIR after stopping at
+  // MIR is a driver bug, and a bare dereference makes it undefined behaviour
+  // instead of a report. Each accessor names the stage it wanted.
+  [[nodiscard]] auto HirUnits() const
+      -> const std::vector<hir::CompilationUnit>&;
+  [[nodiscard]] auto MirUnits() const
+      -> const std::vector<mir::CompilationUnit>&;
+  [[nodiscard]] auto RootUnit() const -> const mir::CompilationUnit&;
+  [[nodiscard]] auto LirUnits() const
+      -> const std::vector<lir::CompilationUnit>&;
+  [[nodiscard]] auto RootLirUnit() const -> const lir::CompilationUnit&;
+  [[nodiscard]] auto UnitMetadata() const
+      -> const std::vector<ElaboratedUnitMetadata>&;
+  [[nodiscard]] auto RootMetadata() const -> const ElaboratedUnitMetadata&;
+
   CompileArtifacts() = default;
   CompileArtifacts(const CompileArtifacts&) = delete;
   auto operator=(const CompileArtifacts&) -> CompileArtifacts& = delete;
