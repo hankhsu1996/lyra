@@ -1,6 +1,6 @@
 # Examples
 
-Two sample designs, both of which run end to end.
+Sample designs, each of which runs end to end.
 
 | Project      | What it exercises                                                    |
 | ------------ | -------------------------------------------------------------------- |

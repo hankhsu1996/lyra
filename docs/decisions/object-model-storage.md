@@ -1,6 +1,7 @@
 # Object model storage: a unit-wide nominal-object registry
 
-Date: 2026-06-25 Status: accepted (one mechanism detail open, noted below)
+Date: 2026-06-25 Status: accepted. The mechanism left open below resolved the way it leaned: the
+canonical local identity is a dedicated object id, not the type-system id reused.
 
 ## Why this decision matters
 
@@ -48,13 +49,14 @@ compilation-unit specialization model (a stable id within a unit, a canonical pu
 units) -- the same "generic declaration plus materialized specializations" shape a parameterized
 module uses.
 
-**One mechanism detail is open.** Whether the canonical local identity is the object type's existing
-type-system id reused directly, or a dedicated object id the object type carries, is pending. The
-**principle** -- one canonical identity, no second inter-convertible id -- is settled; the mechanism
-turns on whether an object declaration has a single canonical type-system id today (it may have
-several content-equal ones, since type interning does not deduplicate). The lean is the dedicated
-id, because the object type's payload is already moving off a name to a direct nominal reference,
-and a dedicated id absorbs those content-equal type-system ids cleanly.
+**One mechanism detail was left open here and has since resolved.** The question was whether the
+canonical local identity should reuse the object type's existing type-system id or be a dedicated
+object id the object type carries. The **principle** -- one canonical identity, no second
+inter-convertible id -- was settled either way; the mechanism turned on whether an object
+declaration has a single canonical type-system id (it may have several content-equal ones, since
+type interning does not deduplicate). It resolved to the dedicated id, as the reasoning leaned: the
+object type carries a nominal reference to that id, and the dedicated id absorbs the content-equal
+type-system ids cleanly.
 
 ## Rejected alternatives
 
@@ -78,10 +80,9 @@ and a dedicated id absorbs those content-equal type-system ids cleanly.
 
 - The lexical-tree class storage is replaced by a unit-wide registry; generate-scope objects become
   registry records, with structural containment retained as a relation for construction and for
-  nested emission. This lands as its own slice before SystemVerilog classes (see
-  `../progress/object-model.md`); it is not pulled ahead of the lifecycle-override and construction
-  cuts, and the existing non-registry storage is not flattened as a standalone change (a flatten
-  would alter emitted C++ nesting for no behavioral gain).
+  nested emission. It lands as its own slice, ahead of SystemVerilog classes but behind the
+  lifecycle-override and construction work, and the existing non-registry storage is not flattened
+  as a standalone change (a flatten would alter emitted C++ nesting for no behavioral gain).
 - `object_model.md` invariant 10 states the registry and the three-relation separation as contract.
 - Cross-unit references stay by public name (unit independence); the registry is unit-local.
 

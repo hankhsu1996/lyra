@@ -82,7 +82,7 @@ from pathlib import Path
 
 EXTENSIONS = frozenset({".cpp", ".hpp", ".cc", ".cxx", ".h", ".hh"})
 HEADER_EXTENSIONS = frozenset({".hpp", ".h", ".hh", ".hxx"})
-SKIP_PREFIXES = ("archived/", "external/", "bazel-")
+SKIP_PREFIXES = ("external/", "bazel-")
 
 # Match /*name=*/ (parameter label) and /*name*/ (unused-parameter comment).
 PARAM_COMMENT_PATTERN = re.compile(r"/\*[A-Za-z_][A-Za-z0-9_]*=?\*/")

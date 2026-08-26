@@ -2,8 +2,7 @@
 
 Layer contracts live under `docs/architecture/`, settled choices under `docs/decisions/`, and gaps
 against those contracts under `docs/progress/`. `docs/README.md` indexes them; `docs/style.md`
-governs writing them. The `/archived` directory is read-only reference from earlier iterations --
-never import from it.
+governs writing them.
 
 ## Commands
 

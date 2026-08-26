@@ -46,6 +46,13 @@ Rules:
         blocks, links, and code spans are exempt, as is a digit bound to
         a word (`C++23`).
 
+  D006  A permanent doc must not cite the progress queue.
+        Scope: docs/architecture/**, docs/decisions/**, docs/glossary/**.
+        The dependency runs one way, from permanent to ephemeral. A
+        contract that points at a working queue cannot outlive it, and a
+        finished progress file cannot be deleted without stranding the
+        pointer. State the permanent fact instead.
+
 Usage:
   python3 tools/policy/check_docs.py
 """
@@ -55,7 +62,7 @@ import sys
 from pathlib import Path
 
 SKIP_PREFIXES = (
-    "archived/", "external/", "bazel-", "node_modules/",
+    "external/", "bazel-", "node_modules/",
     # Slash-command definitions for the coding assistant, not project docs.
     ".claude/",
 )
@@ -111,6 +118,10 @@ READER_FACING = ("README.md", "examples/README.md")
 # A standalone integer of two digits or more. The lookarounds keep a digit
 # bound to a word out of it, so `C++23` and `1800-2023` are not counts.
 BARE_COUNT_PATTERN = re.compile(r"(?<![A-Za-z0-9+_-])\d{2,}(?![A-Za-z0-9+_-])")
+
+# --- Rule D006 -----------------------------------------------------------
+PERMANENT_DIRS = ("docs/architecture/", "docs/decisions/", "docs/glossary/")
+PROGRESS_REFERENCE_PATTERN = re.compile(r"progress/[A-Za-z0-9_.-]+\.md")
 
 
 def strip_fenced(text: str) -> str:
@@ -247,6 +258,20 @@ def check_d005(repo_root: Path) -> list[str]:
     return errors
 
 
+def check_d006(repo_root: Path) -> list[str]:
+    errors = []
+    for path, rel in iter_docs(repo_root):
+        if not rel.startswith(PERMANENT_DIRS):
+            continue
+        text = path.read_text()
+        for m in PROGRESS_REFERENCE_PATTERN.finditer(text):
+            errors.append(
+                f"  {rel}:{line_of(text, m.start())}: D006 cites "
+                f"'{m.group(0)}'; state the permanent fact instead"
+            )
+    return errors
+
+
 # --- Self-tests ----------------------------------------------------------
 
 def run_self_tests() -> bool:
@@ -333,6 +358,22 @@ def run_self_tests() -> bool:
     ok &= expect(not BARE_COUNT_PATTERN.search("one of 5 things"),
                  "D005 ignores a single digit")
 
+    # D006 fires on a progress citation and leaves sibling tiers alone.
+    ok &= expect(
+        PROGRESS_REFERENCE_PATTERN.search("see `../progress/object-model.md`)")
+        is not None,
+        "D006 detects a relative progress citation")
+    ok &= expect(
+        PROGRESS_REFERENCE_PATTERN.search("tracked in docs/progress/nets.md")
+        is not None,
+        "D006 detects a repo-rooted progress citation")
+    ok &= expect(
+        not PROGRESS_REFERENCE_PATTERN.search("see `../decisions/mir.md`"),
+        "D006 false-pos: a decisions citation is allowed")
+    ok &= expect(
+        not PROGRESS_REFERENCE_PATTERN.search("progress is tracked elsewhere"),
+        "D006 false-pos: the bare word is not a citation")
+
     return ok
 
 
@@ -344,6 +385,7 @@ CHECKS = [
     ("D003 cadence vocabulary in a timeless doc", check_d003),
     ("D004 index omits a document in its directory", check_d004),
     ("D005 reader-facing README states a count", check_d005),
+    ("D006 permanent doc cites the progress queue", check_d006),
 ]
 
 VIOLATION_HINT = """

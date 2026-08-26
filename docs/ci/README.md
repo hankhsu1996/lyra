@@ -104,6 +104,11 @@ compiles with the runner's own would go green while testing something nobody ask
 prints each tool's full `--version` output and fails the step on a major-version mismatch, so the
 wrong toolchain surfaces at setup rather than as a puzzling result much later.
 
+It checks only the names the job installed a release binary for. The runner image ships older LLVM
+tools at unsuffixed paths -- a `clang-tidy` several majors behind is there whether or not anything
+asked for it -- and failing a job over a tool it never invokes would be a false alarm rather than
+the hazard. A job that wants a tool covered asks for it in `tools`.
+
 `bazel-build.yml` deliberately installs nothing. It compiles under the runner image's own clang, and
 under the remote image's GCC when the RBE key is set, so the merge gate sees two standard libraries
 rather than one pinned toolchain. That divergence is coverage, not an oversight, and unifying it

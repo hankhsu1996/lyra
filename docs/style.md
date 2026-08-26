@@ -65,12 +65,16 @@ invariant or a forbidden shape, which must survive the next rename.
 
 `tools/policy/check_docs.py` settles the claims a machine can settle: a repo-rooted path cited in
 any doc exists, a relative link resolves, an index lists every document in its directory, no cadence
-vocabulary (`in this cut`, `a later cut`) appears in a timeless doc, and no reader-facing README
-states a count. It deliberately checks nothing about whether a contract is the right contract or a
-stated capability is real -- that needs a reader, and it is what a reader's attention is for. Two
-known gaps: a bare filename (`test.yml`) is not repo-rooted, so no rule confirms it exists, and the
-other words principle 5 bans ("currently", "transitional") carry legitimate uses that a regex cannot
-separate from the rot.
+vocabulary (`in this cut`, `a later cut`) appears in a timeless doc, no reader-facing README states
+a count, and no permanent doc cites the progress queue. It deliberately checks nothing about whether
+a contract is the right contract or a stated capability is real -- that needs a reader, and it is
+what a reader's attention is for.
+
+Its known gaps, all of the same kind: a bare filename (`test.yml`) is not repo-rooted, so no rule
+confirms it exists; the other words principle 5 bans ("currently", "transitional") carry legitimate
+uses; and a count spelled as a word ("two sample designs") reads exactly like a structural one ("two
+paths out of MIR"), which is a distinction only a reader can draw. Each is a place where the regex
+would cost more in false alarms than it saves.
 
 ### Type-Contract Template
 

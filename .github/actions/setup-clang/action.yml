@@ -1,8 +1,8 @@
 name: Setup Clang
 description: >
   Install the pinned LLVM release from apt.llvm.org, point the unsuffixed tool
-  names at it, and verify that the bare names actually resolve there. Every
-  workflow needing a specific LLVM comes through here, so the release is
+  names at it, and verify that the names it installed actually resolve there.
+  Every workflow needing a specific LLVM comes through here, so the release is
   written once and a job that would have silently used the runner's own
   toolchain fails at setup instead.
 
@@ -68,6 +68,12 @@ runs:
 
         status=0
         for tool in clang clang++ lli clang-tidy clang-format; do
+          # Only the names this job installed a release binary for. A runner
+          # image ships older LLVM tools at unsuffixed paths, and one this job
+          # never asked for is not its problem: `cpp-style` requests
+          # clang-format and must not fail over a stale clang-tidy it will
+          # never invoke.
+          [[ -x "/usr/bin/${tool}-${LLVM_VERSION}" ]] || continue
           command -v "${tool}" >/dev/null 2>&1 || continue
           out=$("${tool}" --version 2>&1 || true)
           # The first version number anywhere in the output, not the first
