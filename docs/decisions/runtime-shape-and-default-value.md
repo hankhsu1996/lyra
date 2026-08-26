@@ -76,11 +76,11 @@ Three questions surface:
    parameter seeds both `element_default_` and `discard_sink_` rather than being consumed during the
    fill, so the canonical default is available for later resize and miss paths.
 
-6. **The canonical default flows from MIR lowering.** `SynthesizeDefaultValueExpr` (HIR-to-MIR)
-   already produces shape-correct default expressions from MIR type information. The emit chain is:
-   MIR type -> default-value expression -> wrapper-constructor argument -> stored `element_default_`
-   / `discard_sink_` members. The shape information that is "lost" at the C++ template-parameter
-   level is restored via this explicit channel; no separate channel is introduced.
+6. **The canonical default flows from MIR lowering.** HIR-to-MIR already produces shape-correct
+   default expressions from MIR type information. The emit chain is: MIR type -> default-value
+   expression -> wrapper-constructor argument -> stored `element_default_` / `discard_sink_`
+   members. The shape information that is "lost" at the C++ template-parameter level is restored via
+   this explicit channel; no separate channel is introduced.
 
 _Rejected alternatives:_
 
@@ -158,7 +158,7 @@ _Rejected alternatives:_
 
 - LRM 7.4.5 (Indexing and slicing of arrays), 7.4.6 (Operations on arrays), Table 6-7 (Default
   initial values), Table 7-1 (Value read from a nonexistent array entry).
-- `src/lyra/lowering/hir_to_mir/default_value.cpp` -- `SynthesizeDefaultValueExpr`.
+- `src/lyra/lowering/hir_to_mir/default_value.cpp` -- default-expression synthesis.
 - `include/lyra/value/packed_array.hpp` -- runtime-shape `PackedArray` definition and
   `ResetToDefault`.
 - `include/lyra/value/dynamic_array.hpp`, `include/lyra/value/unpacked_array.hpp` -- first wrappers

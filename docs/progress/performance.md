@@ -39,6 +39,22 @@ specializations, not with instance count.
       (`docs/decisions/specialization-identity.md`) is fed only the code-shape-affecting subset, and
       value-only parameters are demoted to constructor inputs.
 
+- [ ] The generate axis of that same sharing. A `generate for` lowers concretely: N iterations
+      become N scope classes and N construction statements, so the artifact grows one-for-one with
+      the iteration count even when no parameter varies and every body is identical. Measured over
+      16, 64, and 256 iterations of one trivial child, emitted lines and generated classes both
+      scale linearly with N. This is the concrete baseline `specialization_model.md` invariant 1
+      calls correct, in its simplest form; the optimization is recognizing that iterations whose
+      generated code is identical can share one class carrying a loop, which is the shape
+      `runtime_model.md` describes. It needs a construction-time iteration vehicle, the same thing
+      the parameter classification above needs, so the two are naturally taken together.
+
+      `runtime_model.md` states this one as an absolute ("if you find compile-time work that scales
+      with instance count, the design has been violated") where `specialization_model.md` invariant
+      1 admits the concrete form as correct and scopes the requirement to the optimized steady
+      state. The two should be reconciled when this is picked up, with the specialization model
+      governing.
+
 ### Open questions
 
 - How thin the specialization key goes. The fat-value runtime representation carries packed width

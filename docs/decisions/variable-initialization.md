@@ -125,8 +125,8 @@ the constructor function, with no NSDMI analogue.
 
 Owned children, cross-instance reference slots, and named events have no value-assignment operation:
 
-- An owned child is constructed by `ConstructExternalUnitStmt` or generate-construction stmts later
-  in `root_stmts`, with its own arguments.
+- An owned child is constructed by its own construction, or by generate construction, later in
+  `root_stmts`, with its own arguments.
 - A cross-instance reference slot is a borrowed pointer written once by the resolve-phase route
   code, never through `AssignExpr` in the constructor.
 - A `NamedEvent` is non-copyable and non-movable by design (LRM 15.5; the runtime takes pointers

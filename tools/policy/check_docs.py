@@ -36,6 +36,16 @@ Rules:
         An index that silently omits an entry is worse than no index --
         it reads as complete.
 
+  D005  A reader-facing README must not state a count of anything the
+        repository contains.
+        Scope: README.md, examples/README.md.
+        A case total or a coverage ratio is wrong the next time someone
+        adds one of the thing counted, nothing forces its update, and
+        publishing it as a measure of scope makes it a target. Say that
+        coverage is measured and point at where. Numbers inside code
+        blocks, links, and code spans are exempt, as is a digit bound to
+        a word (`C++23`).
+
 Usage:
   python3 tools/policy/check_docs.py
 """
@@ -94,6 +104,13 @@ INDEXES = (
     ("docs/decisions/README.md", "docs/decisions"),
     ("docs/architecture/README.md", "docs/architecture"),
 )
+
+# --- Rule D005 -----------------------------------------------------------
+READER_FACING = ("README.md", "examples/README.md")
+
+# A standalone integer of two digits or more. The lookarounds keep a digit
+# bound to a word out of it, so `C++23` and `1800-2023` are not counts.
+BARE_COUNT_PATTERN = re.compile(r"(?<![A-Za-z0-9+_-])\d{2,}(?![A-Za-z0-9+_-])")
 
 
 def strip_fenced(text: str) -> str:
@@ -214,6 +231,22 @@ def check_d004(repo_root: Path) -> list[str]:
     return errors
 
 
+def check_d005(repo_root: Path) -> list[str]:
+    errors = []
+    for rel in READER_FACING:
+        path = repo_root / rel
+        if not path.exists():
+            continue
+        body = strip_inline_code(strip_fenced(path.read_text()))
+        body = re.sub(r"\[[^\]]*\]\([^)]*\)", "", body)
+        for m in BARE_COUNT_PATTERN.finditer(body):
+            errors.append(
+                f"  {rel}:{line_of(body, m.start())}: D005 bare count "
+                f"'{m.group(0)}'; say coverage is measured and point at where"
+            )
+    return errors
+
+
 # --- Self-tests ----------------------------------------------------------
 
 def run_self_tests() -> bool:
@@ -284,6 +317,22 @@ def run_self_tests() -> bool:
 
     ok &= expect(line_of("a\nb\nc", 4) == 3, "line_of counts newlines")
 
+    # D005 fires on counts and stays quiet on version-like digits.
+    ok &= expect(
+        BARE_COUNT_PATTERN.search("a corpus of 908 cases") is not None,
+        "D005 detects a case count")
+    ok &= expect(
+        BARE_COUNT_PATTERN.search("claims 457 of the 908") is not None,
+        "D005 detects a coverage ratio")
+    ok &= expect(not BARE_COUNT_PATTERN.search("A C++23 compiler"),
+                 "D005 false-pos: C++23 is a language version")
+    ok &= expect(not BARE_COUNT_PATTERN.search("targets IEEE 1800-2023"),
+                 "D005 false-pos: a hyphenated standard number")
+    ok &= expect(not BARE_COUNT_PATTERN.search("clang-format-20 is used"),
+                 "D005 false-pos: a digit bound to a tool name")
+    ok &= expect(not BARE_COUNT_PATTERN.search("one of 5 things"),
+                 "D005 ignores a single digit")
+
     return ok
 
 
@@ -294,6 +343,7 @@ CHECKS = [
     ("D002 relative link does not resolve", check_d002),
     ("D003 cadence vocabulary in a timeless doc", check_d003),
     ("D004 index omits a document in its directory", check_d004),
+    ("D005 reader-facing README states a count", check_d005),
 ]
 
 VIOLATION_HINT = """
