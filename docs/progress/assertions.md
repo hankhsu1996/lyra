@@ -42,6 +42,24 @@ That shape -- evaluate now, capture the operands, run in a later region -- is th
 assignment already uses. The deferred action is a closure submitted to a region, not a mechanism of
 its own.
 
+### Corner cases worth stating before implementing
+
+These were established once already and are the ones easy to get backwards.
+
+- **A pass action does not replace the default failure report.** All four action combinations behave
+  distinctly: with both, the matching one runs; with a pass action only, a false condition still
+  emits the default error; with a fail action only, a true condition falls through silently.
+- **`assume` mirrors `assert` across every one of those shapes.** It differs in verification intent,
+  never in what simulation does.
+- **A false cover is not a failure.** It records no hit and must not emit the default assertion
+  error, which is what makes the disposition genuinely inverted rather than a renamed assert.
+- **Cover hits count per site.** A cover inside a loop accumulates across iterations, and two cover
+  statements hold separate counters.
+- **Deferred reports are independent per process.** Two processes each holding a pending report
+  flush on their own schedule; neither invalidates the other's.
+- **The reference-actual restrictions reject three separate things**: an automatic variable, a type
+  mismatch against the formal, and a dynamic index. Each is its own diagnostic.
+
 ## Sub-Steps
 
 The IDs are stable references and do not imply execution order beyond the dependencies noted.
