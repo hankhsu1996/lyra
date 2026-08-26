@@ -43,7 +43,7 @@ shows on other simulators, or a Lyra evaluation difference, is unexamined.
 2. **Execution backend** -- also down for the C++ path, which carries the run above. What remains is
    convenience rather than reach: project mode (`lyra.toml` lookup) is still not wired, so sources,
    includes, and defines must be passed explicitly on the command line. The LLVM / JIT path is a
-   separate backend tracked in `architecture-reset.md`; it is not required for the C++ run.
+   separate backend tracked in `execution-backend.md`; it is not required for the C++ run.
 
 ## Feature gaps
 
@@ -197,7 +197,7 @@ Independent of whether the feature is supported, each of these should fail clean
 
 ## Cross-references
 
-- Execution-path wall: `architecture-reset.md`.
+- Execution-path wall: `execution-backend.md`.
 - Net-typed ports and hierarchical references also surface in the hierarchy workstream; close them
   there if that file's items cover the same construct.
 - The Ibex-side how-to-reproduce and status snapshot live in the Ibex checkout's `LYRA.md`.

@@ -12,9 +12,8 @@ Accepted
 
 SystemVerilog has multiple array families. The packed family is handled by
 [integral-representation.md](integral-representation.md). This document handles the fixed-size
-unpacked family -- the gating type for the `datatypes/unpacked` archive item, and the foundation for
-the variable-size container types covered by `datatypes/general` (dynamic array, queue, associative
-array).
+unpacked family -- the gating type for the unpacked surface, and the foundation for the
+variable-size container types (dynamic array, queue, associative array).
 
 The choices here bind every layer the unpacked surface touches:
 

@@ -38,9 +38,9 @@ syntactic origin (`int` vs `bit signed [31:0]`), not a semantic distinction.
 **Consequence:** a lyra backend that wants to be honest about integral semantics has exactly three
 attributes to dispatch on. Any further split is the backend's own invention.
 
-### F2. The lyra legacy archive mirrored slang directly
+### F2. An earlier tree mirrored slang directly
 
-`archived/include/lyra/common/type.hpp:117`:
+Its integral type carried exactly the same three attributes:
 
 ```cpp
 struct IntegralInfo {

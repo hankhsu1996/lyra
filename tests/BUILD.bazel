@@ -84,7 +84,11 @@ cc_test(
     # dominated by compilation rather than by simulation. Declaring that cost is
     # what keeps a loaded machine from reporting a timeout as a test failure.
     size = "large",
-    srcs = ["cpp_test.cpp"],
+    srcs = ["corpus_test.cpp"],
+    args = [
+        "--suite",
+        "cpp",
+    ],
     copts = LYRA_COPTS,
     data = [
         "suites.yaml",
@@ -113,7 +117,7 @@ cc_test(
 
 cc_test(
     name = "jit_tests",
-    srcs = ["cpp_test.cpp"],
+    srcs = ["corpus_test.cpp"],
     args = [
         "--suite",
         "jit",

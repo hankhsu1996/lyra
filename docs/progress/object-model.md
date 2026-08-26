@@ -178,6 +178,15 @@ space explored while scoping this deferral surfaced:
       procedural block). MIR now names them uniformly by qualified string, but the runtime library
       has not yet been collapsed to one scope class with the def-name facet as an optional field. Do
       it when the runtime cadence allows; MIR-side consumers already treat the three as one.
+
+- [ ] An instance is still a backend-private shell rather than a generic object over its definition.
+      The runtime no longer reaches generated behavior through a C++ base class, so a scope's
+      lifecycle and identity already arrive as data; what remains is member storage, which each
+      backend still lays out its own way behind its own allocator. Until that unifies through the
+      place model, the C++ backend emits a subclass per scope and the execution backend allocates a
+      generic instance, which is two representations of one concept and the last thing keeping the
+      allocator boundary. The target shape and why it was split from the dispatch work are settled
+      in `../decisions/generated-behavior-boundary.md`.
 - Nullability stays a value-level fact, not a type axis, until an analysis that reads it (e.g.
   static null-safety) exists.
 - The reference-representation axis gains a managed kind whose name no longer reads as pure

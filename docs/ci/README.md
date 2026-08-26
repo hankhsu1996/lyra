@@ -1,77 +1,68 @@
-# CI Design Notes (Architecture Reset Context)
+# CI Design Notes
 
-## Bazel CI Strategy
+## Strategy
 
-- Build: `bazel build //...`
-- Test: `bazel test //...`
-- Avoid hardcoding targets; rely on the Bazel graph so new targets are picked up automatically.
+Build and test by asking for the whole graph -- `bazel build //...`, `bazel test //...` -- rather
+than naming targets, so a new target is covered the moment it exists and no list has to be kept in
+step with the `BUILD` files.
 
-## Active Workflows
+One split cuts across that, on cost. Three targets spawn the host C++ compiler once per case, which
+dominates their runtime and does not fit a merge-time budget: `cpp_tests`, `run_tests`, and
+`pch_audit_test`, all tagged `requires-host-cxx`. The merge gate filters them out with
+`--test_tag_filters=-requires-host-cxx`, and `host-cxx-nightly.yml` runs exactly them with the
+positive form of the same filter.
 
-- `bazel-build.yml` -- builds and tests `//...`. The historical `aot-full` job is preserved with
-  `if: false` for future re-enablement.
-- `cpp-format.yml` -- runs `clang-format-20 --dry-run --Werror` over `src include tests`.
-- `bazel-lint.yml` -- runs `buildifier -mode=check -r .` plus a warning pass.
-- `md-format.yml` -- runs `prettier --check "**/*.md"`.
-- `ascii-policy.yml` -- runs `tools/policy/check_ascii.py` on the diff vs `origin/main`.
-- `exception-policy.yml` -- runs `tools/policy/check_exceptions.py` on the diff vs `origin/main`.
-- `architecture-boundaries.yml` -- runs `tools/policy/check_architecture_boundaries.py` (rules
-  described in that script).
-- `cpp-tidy.yml` -- placeholder (steps commented out until a new pipeline lands).
+The two filters are complements, so every test target is covered once and none twice. That is the
+property to preserve: a new target joins whichever side its tag puts it on, and neither list is
+maintained by hand. What it costs is latency rather than coverage. The C++ backend accepts more of
+the language than the execution backend does, and a regression in it surfaces within a day rather
+than at the merge that caused it.
 
-## Disabled Workflows
+## Gating workflows
 
-These workflows depend on runtime artifacts and CLI shapes that the architecture reset removed
-(`-C`, `run`, `compile`, `dump llvm`, `liblyra_runtime_static.a`). Triggers are intact but the main
-job carries `if: false`:
+Each runs on push to `main` and on pull requests.
 
-- `bazel-build.yml` -> `aot-full` job
-- `smoke-test.yml` -> `smoke` job
-- `benchmark.yml` -> `benchmark` job
-- `benchmark-nightly.yml` -> `benchmark` job
-- `sigill-diagnosis.yml` -> `diagnose` job
+| Workflow               | What it enforces                                               |
+| ---------------------- | -------------------------------------------------------------- |
+| `bazel-build.yml`      | `bazel build //...`, then the tests minus `requires-host-cxx`  |
+| `cpp-style.yml`        | `clang-format` over `src include tests`, plus C++ style policy |
+| `bazel-lint.yml`       | `buildifier` formatting and lint warnings                      |
+| `md-format.yml`        | Prettier over every markdown file                              |
+| `ascii-policy.yml`     | ASCII-only, on the diff against `origin/main`                  |
+| `exception-policy.yml` | The thrown-type policy, on the same diff                       |
+| `architecture.yml`     | Layer boundaries between the IRs and the backends              |
+| `docs-policy.yml`      | The doc claims a machine can settle (paths, links, indexes)    |
 
-Re-enable a job by removing its `if: false` line once the runtime layer it depends on is rebuilt.
+## Nightly workflows
 
-## Historical Test Matrix (Disabled)
+Two run on a schedule and on demand rather than per merge, for the same reason and with opposite
+severity.
 
-The previous `bazel-build.yml` test job ran a 3-target matrix on every push/PR plus a push-only
-AOT-full job:
+`cpp-tidy.yml` re-analyzes every translation unit from scratch. It **reports rather than gates**, so
+its findings are a backlog to pay down and a red run is not an alarm.
 
-- JIT: `//tests:jit_dev_tests`
-- JIT-2S: `//tests:jit_two_state_tests`
-- AOT Smoke: `//tests:aot_smoke_tests`
-- AOT Full (push only): `//tests:aot_dev_tests`
+`host-cxx-nightly.yml` runs the three `requires-host-cxx` targets. It **gates its own run**: a
+corpus case that stops passing is a regression, and a red nightly is the thing to act on that day.
 
-All four targets were deleted by the reset. The current single `bazel test //...` step subsumes them
-via the Bazel graph; per-target enumeration is intentionally not reintroduced.
+## Jobs waiting on the execution backend
 
-## LLVM Toolchain Setup (CI)
+These carry `if: false`. Their triggers and setup steps are intact so each returns by deleting that
+one line.
 
-The installation snippet used by AOT/JIT-bearing jobs:
+| Workflow                | Job         | Waiting on                                           |
+| ----------------------- | ----------- | ---------------------------------------------------- |
+| `smoke-test.yml`        | `smoke`     | A design running end to end on the execution backend |
+| `benchmark.yml`         | `benchmark` | The same, plus a stable number to compare against    |
+| `benchmark-nightly.yml` | `benchmark` | The same                                             |
+| `sigill-diagnosis.yml`  | `diagnose`  | The LLVM path it diagnoses                           |
 
-```yaml
-- name: Install LLVM 20
-  run: |
-    wget -qO /tmp/llvm.key https://apt.llvm.org/llvm-snapshot.gpg.key
-    sudo gpg --dearmor -o /etc/apt/trusted.gpg.d/apt.llvm.org.gpg /tmp/llvm.key
-    . /etc/lsb-release
-    echo "deb http://apt.llvm.org/${DISTRIB_CODENAME}/ llvm-toolchain-${DISTRIB_CODENAME}-20 main" | sudo tee /etc/apt/sources.list.d/llvm.list
-    sudo apt-get update
-    sudo apt-get install -y clang-20 llvm-20
-    sudo update-alternatives --install /usr/bin/clang++ clang++ /usr/bin/clang++-20 100
-    sudo update-alternatives --install /usr/bin/clang clang /usr/bin/clang-20 100
-    sudo update-alternatives --install /usr/bin/lli lli /usr/bin/lli-20 100
-    sudo update-alternatives --set clang++ /usr/bin/clang++-20
-    sudo update-alternatives --set clang /usr/bin/clang-20
-    sudo update-alternatives --set lli /usr/bin/lli-20
-```
+What they need is not a CLI surface -- `run`, `compile`, and `dump llvm` all exist, and the runtime
+ships as a static library -- but a design that survives the whole execution-backend path. Until it
+does, these jobs would measure a failure rather than a result.
 
-The `cpp-format.yml` workflow uses a smaller variant that only installs `clang-format-20`.
+## Remote execution
 
-## RBE / BuildBuddy
-
-Build and test steps in `bazel-build.yml` (and benchmark/smoke flows) construct RBE flags from the
+`bazel-build.yml` and the benchmark and smoke flows build their remote flags from the
 `BUILDBUDDY_API_KEY` repository secret:
 
 ```bash
@@ -82,21 +73,43 @@ fi
 bazel build //... $RBE_FLAGS
 ```
 
-When the secret is unset (forks, dispatch from PRs without secret access) the commands fall back to
-local execution.
+With the secret unset -- a fork, or a dispatch without secret access -- the same commands run
+locally. Nothing requires an account.
 
-## PR vs Push Strategy
+Remote execution resolves the toolchain registered for the remote platform, which is that image's
+system GCC rather than the clang a local build picks up. A change can therefore compile in one place
+and fail in the other, usually through the standard library; `CLAUDE.md` states the boundary.
 
-- PR: lighter test coverage (currently `bazel test //...`).
-- Push to `main`: previously also ran the AOT-full suite; that path is disabled until the runtime
-  layer is rebuilt.
+## LLVM toolchain
 
-The split exists so AOT toolchain costs only land on push. While the runtime is offline the strategy
-is simplified to a single `bazel test //...` invocation.
+A job that needs a specific LLVM gets it from the `setup-clang` composite action, naming only the
+extra tools it wants:
 
-## Benchmark / Smoke / Sigill Workflows
+```yaml
+- name: Setup Clang
+  uses: ./.github/actions/setup-clang
+  with:
+    tools: llvm
+```
 
-These depend on `lyra -C <path> run|compile`, `dump llvm`, and the runtime static library. All three
-are removed on the reset branch, so the workflows are kept disabled via `if: false`. Their LLVM
-install steps and Verilator setup remain in place so the recipes can be restored verbatim once the
-runtime returns.
+The action also points the unsuffixed names at that release, and every call site uses them: a job
+runs `clang-format` or `run-clang-tidy`, never a version-suffixed binary. So the release is written
+once, inside the action, and a bump is one edit with nothing else to keep in step.
+
+Pointing a name at a release and that name resolving there are different facts, and the action
+verifies the second one before any job proceeds. It has to: `update-alternatives` governs `/usr/bin`
+alone, so anything earlier on PATH still wins, and it declines a path that is already a plain file
+rather than a symlink. Both failures are silent, and a job that installs a toolchain and then
+compiles with the runner's own would go green while testing something nobody asked for. The check
+prints each tool's full `--version` output and fails the step on a major-version mismatch, so the
+wrong toolchain surfaces at setup rather than as a puzzling result much later.
+
+It checks only the names the job installed a release binary for. The runner image ships older LLVM
+tools at unsuffixed paths -- a `clang-tidy` several majors behind is there whether or not anything
+asked for it -- and failing a job over a tool it never invokes would be a false alarm rather than
+the hazard. A job that wants a tool covered asks for it in `tools`.
+
+`bazel-build.yml` deliberately installs nothing. It compiles under the runner image's own clang, and
+under the remote image's GCC when the RBE key is set, so the merge gate sees two standard libraries
+rather than one pinned toolchain. That divergence is coverage, not an oversight, and unifying it
+away would delete the only place a standard-library incompatibility surfaces before release.

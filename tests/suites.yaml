@@ -1,5 +1,5 @@
 suites:
-  architecture_reset:
+  cpp:
     include_tags: [emit, errors, cpp_run]
     exclude: []
   # The same corpus on the execution backend. A case carries `jit_run` once that

@@ -169,7 +169,7 @@ MUTABLE_STATE_PARAM_RE = re.compile(
     r"\b[A-Za-z_][A-Za-z0-9_]*State\s*&\s*\w+"
 )
 
-SKIP_PREFIXES = ("archived/", "external/", "bazel-")
+SKIP_PREFIXES = ("external/", "bazel-")
 EXTENSIONS = frozenset({".cpp", ".hpp", ".cc", ".cxx", ".h", ".hh"})
 
 

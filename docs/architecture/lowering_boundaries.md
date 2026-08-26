@@ -49,16 +49,16 @@ belongs to whichever layer already held what the property was computed from.
    by the target layer's contract; a lowering may only use identity kinds that belong to the input
    or output layer.
 7. The pipeline branches at MIR into two backends: the LIR-then-LLVM path (the architectural target)
-   and the C++ emitter (a transitional realization that consumes the same MIR while LIR is being
-   built). A backend emit makes no semantic decisions -- every semantic fact is fixed in MIR -- and
-   chooses only how to represent each MIR node in its target, a representation fixed by the node's
-   kind. The two backends represent the same node differently (a coroutine method versus an LLVM
-   coroutine frame) yet realize the same behaviour, which holds only because neither adds, infers,
-   or re-derives a semantic fact. **Both backends are mechanical at the same discipline.** The C++
-   backend's transitional status does not loosen this -- if its render needs decision logic in value
-   emission (an `if` whose arms produce different syntactic shapes), the MIR is wrong, and the
-   LIR/LLVM path would face the same obstruction. The C++ backend's render is therefore the
-   cross-check on MIR shape today (`backend_contract.md`).
+   and the C++ emitter (a transitional realization that consumes the same MIR while the LIR path
+   fills in language coverage). A backend emit makes no semantic decisions -- every semantic fact is
+   fixed in MIR -- and chooses only how to represent each MIR node in its target, a representation
+   fixed by the node's kind. The two backends represent the same node differently (a coroutine
+   method versus an LLVM coroutine frame) yet realize the same behaviour, which holds only because
+   neither adds, infers, or re-derives a semantic fact. **Both backends are mechanical at the same
+   discipline.** The C++ backend's transitional status does not loosen this -- if its render needs
+   decision logic in value emission (an `if` whose arms produce different syntactic shapes), the MIR
+   is wrong, and the LIR/LLVM path would face the same obstruction. The C++ backend's render is
+   therefore the cross-check on MIR shape today (`backend_contract.md`).
 8. A lowering translates node by node, with no preliminary pass over its input. Each input node's
    output follows from that node and its own subtree; every input node produces output, whether or
    not it declares anything. A step that needs to know a property of the whole input before it can

@@ -5,8 +5,8 @@ immutable once accepted, and a superseding decision links back to the one it rep
 
 Decisions are reserved for choices with real trade-offs: rejected alternatives, load-bearing
 invariants, or constraints that bind the codebase going forward. Housekeeping notes (e.g., "this
-archive item is subsumed by an existing surface") do not warrant a decisions entry; record the
-reason inline at the point it matters.
+item is subsumed by an existing surface") do not warrant a decisions entry; record the reason inline
+at the point it matters.
 
 ## Index
 
@@ -25,6 +25,8 @@ the detail lives in the entry itself.
   `PackedArray`; one OOB shield slot is both the canonical default and the out-of-bounds discard.
 - [string-packed-conversion](string-packed-conversion.md) -- a `value::String` holds no NUL;
   packed-to-string strips NUL, `%s` formats bits without a string value.
+- [enum-representation](enum-representation.md) -- an enum's semantic type identity is separate from
+  its runtime value; the value is the base integral, never a distinct C++ type.
 
 ### Aggregate types and access
 
@@ -34,6 +36,13 @@ the detail lives in the entry itself.
   fixed-size unpacked array.
 - [unpacked-struct-representation](unpacked-struct-representation.md) -- an unpacked struct is the
   generic product type (MIR `TupleType`), positional access, defaults synthesized at lowering.
+- [unpacked-union-representation](unpacked-union-representation.md) -- the sibling the struct
+  decision left open: overlapping storage is neither a product nor a sum, and this settles which one
+  MIR models it as.
+- [unpacked-range-belongs-to-type](unpacked-range-belongs-to-type.md) -- an unpacked array's index
+  range is part of its type, not a size carried beside it; packed arrays are carved out.
+- [selector-coordinate-resolution](selector-coordinate-resolution.md) -- `a[1:7]`, `b[7:1]`, and
+  `c[0:6]` are three distinct types, so resolving a subscript to a coordinate is the type's job.
 - [jit-aggregate-realization](jit-aggregate-realization.md) -- on the execution backend every
   aggregate is a runtime-owned opaque value (erasure), not structurally monomorphized; the choice is
   below LIR, and LIR's aggregate operations stay realization-agnostic.
@@ -66,6 +75,9 @@ the detail lives in the entry itself.
 - [declarations-before-bodies](declarations-before-bodies.md) -- every structural declaration's
   identity and shape is CU-global and queryable before any executable lowering begins.
 - [foreach-lowering](foreach-lowering.md) -- the lowering shape of `foreach`.
+- [compound-assignment-write-location](compound-assignment-write-location.md) -- one uniform node
+  evaluating the left-hand side exactly once (LRM 11.4.1); superseded for value interiors by
+  [value-projection-write](value-projection-write.md).
 - [conversion-folding](conversion-folding.md) -- when type conversions are folded.
 - [variable-initialization](variable-initialization.md) -- LRM 10.5 variable initialization as a
   constructor-scope statement.
@@ -84,7 +96,7 @@ the detail lives in the entry itself.
 - [callable-receiver](callable-receiver.md) -- every callable body's first binding is `self`; how it
   is supplied differs per callable form.
 - [unified-callable-model](unified-callable-model.md) -- one callable concept: callable code vs
-  callable value (code + bound environment). Target model; not yet built.
+  callable value (code + bound environment), with no kind tag on the body.
 - [closure-environment-and-activation-frame](closure-environment-and-activation-frame.md) -- a
   closure (`ClosureType`, an anonymous concrete callable value: captures plus one invoke) and a
   promoted automatic scope (`StructType` reached via `Shared<>`, fields only, no invoke) are two

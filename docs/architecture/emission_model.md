@@ -10,9 +10,16 @@ what role the runtime SDK plays as the link-time-resolution substrate. It is the
 between the principle in `reference_resolution.md` (a cross-unit reference resolves at construction,
 not at the referrer's compile time) and the backend code that must obey it.
 
-The C++ backend exists today; an LLVM backend is the eventual target. The rules here are stated for
-any backend. Where the current C++ backend takes a transitional shortcut, that is noted as
-non-conforming code, not as a relaxation of the contract.
+Both backends exist; the LLVM one is where the design is heading. The rules here are stated for any
+backend. Where a backend takes a transitional shortcut, that is noted as non-conforming code, not as
+a relaxation of the contract.
+
+The largest such shortcut is that a design still compiles as one translation unit. The per-unit
+boundary itself holds -- each unit specialization is emitted as its own file, keyed by its
+specialization -- but those files are headers pulled into one compiled root rather than artifacts
+compiled separately and linked. The file boundary is therefore real while the compilation boundary
+is not, so the independence invariant 1 requires is stated but not yet paid for: editing one unit
+still recompiles the design.
 
 ## Owns
 

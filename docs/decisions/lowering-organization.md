@@ -22,8 +22,8 @@ functions took the Context as a separate parameter rather than being methods on 
 
 Three pass layers (AST-to-HIR, HIR-to-MIR, MIR-to-C++) each carried a variant of the same
 organizational decision; the decisions had drifted enough that consistency and symmetry had been
-lost. This decision is the architecture reset: it pins one shape used across every lowering and
-rendering pass. The architecture contract is in `docs/architecture/lowering_organization.md`.
+lost. This decision pins one shape used across every lowering and rendering pass. The architecture
+contract is in `docs/architecture/lowering_organization.md`.
 
 ## Decision
 
@@ -178,8 +178,8 @@ translation unit. Two concerns drove this follow-up decision:
    internal contract header containing dispatchers plus shared utilities plus per-kind handler
    declarations -- introduced a new namespace convention not used elsewhere in the codebase, and the
    shared header drifted into the same shape (a junk drawer of `LowerInsideItemImpl`,
-   `ValidateAssignableImpl`, `MakeRefExpr`, `TypeIdOfSlangExpr`, `MakeReturnConventionType`) that
-   the architecture reset existed to prevent.
+   `ValidateAssignableImpl`, `MakeRefExpr`, `TypeIdOfSlangExpr`, `MakeReturnConventionType`) this
+   decision exists to prevent.
 
 The lesson from `RenderContext` and `ProcessLoweringState` was: when a single header / class carries
 "everything the layer needs", the structure invites unbounded growth and the convention that limits
@@ -214,7 +214,7 @@ stylistic.
   (`ProcessLowerer&` or `StructuralScopeLowerer&`) plus the walk frame plus the slang node plus the
   source span. They are not methods on the pass class; methods would grow the public class
   declaration and the recompile cost of every translation unit that includes it, and would reproduce
-  the kind-by-kind growth the architecture reset abolished at the lower-layer level.
+  the kind-by-kind growth this decision abolishes, one layer down.
 
 ### Rejected alternatives
 
@@ -233,10 +233,10 @@ stylistic.
   of expression", which is the god-bag failure mode at the class level.
 
 - **Per-kind handlers as free functions with narrowed parameters (separate facts / registry /
-  builder references in the signature).** Reproduces the sig-explosion shape the architecture reset
-  exists to escape. The pass class instance is the single access pass to the task; narrowing the
-  signature does not add safety because the pass class API is already bounded by the two-kind rule
-  and the IR shape upstream.
+  builder references in the signature).** Reproduces the sig-explosion shape this decision exists to
+  escape. The pass class instance is the single access pass to the task; narrowing the signature
+  does not add safety because the pass class API is already bounded by the two-kind rule and the IR
+  shape upstream.
 
 - **Compile-time / CI structural enforcement on pass class method counts.** Considered as an
   additional safeguard against future drift on the pass class's derived-accessor API. Not adopted:

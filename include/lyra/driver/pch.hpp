@@ -5,6 +5,7 @@
 #include <optional>
 
 #include "lyra/diag/diagnostic.hpp"
+#include "lyra/driver/project_layout.hpp"
 
 namespace lyra::driver::pch {
 
@@ -26,14 +27,17 @@ struct Options {
 
 // Return the PCH path to pass via `-include-pch`, building it on demand. The
 // cache filename is fully content-addressed (clang identity + include-root
-// path + every header's content), so a cache hit means content match by
-// construction and no staleness check is needed at lookup time. Returns
-// nullopt when PCH is disabled, the compiler is not clang, or no writable
-// cache directory is available -- the caller then falls back to plain
-// compilation.
+// path + every header's content + the optimization the header is compiled
+// at), so a cache hit means content match by construction and no staleness
+// check is needed at lookup time. `optimization` must be the one the
+// including translation unit is compiled at: clang rejects a header compiled
+// under different options. Returns nullopt when PCH is disabled, the compiler
+// is not clang, or no writable cache directory is available -- the caller then
+// falls back to plain compilation.
 auto EnsureCached(
     const std::filesystem::path& cxx, const std::filesystem::path& include_root,
-    const Options& opts) -> std::optional<std::filesystem::path>;
+    const Options& opts, Optimization optimization)
+    -> std::optional<std::filesystem::path>;
 
 // Remove every PCH file in the active cache directory. Returns the number of
 // files actually removed; a failure to resolve the cache directory surfaces

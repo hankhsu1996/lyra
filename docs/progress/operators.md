@@ -1,16 +1,15 @@
 # Operators
 
-Tracks the operator surface that does not live in `integral.md`: set membership, wildcard / case
-equality, selectors (bit-select, part-select, indexed part-select) on both read and write sides,
+Tracks the operator surface outside the integral family: set membership, wildcard / case equality,
+selectors (bit-select, part-select, indexed part-select) on both read and write sides,
 concatenation, replication, compound assignment, and the `++` / `--` family.
 
 Done when:
 
-- `operators/inside`, `operators/wildcard_equality`, `operators/case_equality`, `operators/concat`,
-  `operators/replicate`, `operators/compound_assignment`, and the `++` / `--` portion of
-  `operators/unary` reproduce.
-- `datatypes/packed/indexed_part_select` reproduces (the selector surface lives here even though the
-  archive groups it under `datatypes/packed`).
+- Set membership, wildcard and case equality, concatenation, replication, compound assignment, and
+  `++` / `--` all run.
+- The indexed part-select surface runs. The selector lives here rather than in `packed.md`,
+  following the type-vs-operator boundary.
 
 ## Actionable
 
@@ -65,8 +64,8 @@ merged node.
   - [ ] Range-select on an operand that is neither integral nor an unpacked array (LRM 7.4.6) is
         rejected.
 - [x] W6 -- Selector lvalue (write side, including NBA + selector). LRM 11.5.1 write rules
-      (fully-OOB no-op, partial-OOB only in-range bits, X / Z position no-op) all hold. Closes
-      `datatypes/packed/indexed_part_select` for the write half.
+      (fully-OOB no-op, partial-OOB only in-range bits, X / Z position no-op) all hold, so the
+      indexed part-select surface is complete on the write half.
 - [x] W14 -- A selector whose bound or index comes from a differently typed expression reads
       correctly: a range-select `v[$bits(t)-1:1]` mixing a 4-state and a 2-state bound, or a
       bit-select on a non-zero-based range with a 4-state index. The selector lowering carries only
@@ -98,8 +97,8 @@ merged node.
 
 - [x] W11 -- Compound assignment `+= -= *= /= %= &= |= ^= <<= >>= <<<= >>>=`. LRM 11.4.1 "evaluate
       target only once" applies; falls out of the C++ eval-once rule on the compound expression.
-      NBA + compound is rejected at slang parsing per LRM A.6.2. Closes
-      `operators/compound_assignment` for whole-var, selector, and mixed-state target shapes.
+      NBA + compound is rejected at slang parsing per LRM A.6.2. Complete for whole-variable,
+      selector, and mixed-state target shapes.
 - [x] W12 -- `++` / `--` (prefix and postfix, LRM 11.4.2). Behave as blocking assignments; postfix
       yields the operand's prior value, prefix yields the new value. Integer and real operands;
       selector chains (`array[i]++`, `++a[15:8]`) and observable structural roots are covered. NBA
@@ -120,6 +119,5 @@ merged node.
   equality), 11.4.6 (wildcard equality), 11.4.10 (shift), 11.4.12 / 11.4.12.1 (concatenation,
   replication), 11.4.13 (set membership), 11.5.1 (bit-select / part-select / indexed part-select on
   packed).
-- Unblocks: `control-flow.md` C11 (via W2), C12 (via W1 + W2); `integral.md` archive sweep relies on
-  W4..W6 for sub-bit operands; `packed.md` P3..P5 extend the addressable-expression set with
-  packed-struct field access and packed-union variant access.
+- Unblocks: `packed.md` P3..P5, which extend the addressable-expression set with packed-struct field
+  access and packed-union variant access.

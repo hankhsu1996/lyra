@@ -1,3 +1,11 @@
+# Facts about building Lyra, and the definition of each opt-in `--config`.
+# Nothing here requires an account, a credential, or a particular machine:
+# `git clone` then `bazel build //...` works for anyone. Machine tuning and
+# credentials go in `.bazelrc.user`, git-ignored and imported at the bottom.
+
+# Names the local compiler by environment, which is not toolchain resolution:
+# a config that sets `--platforms` resolves a registered toolchain and ignores
+# these, so the compiler differs between configs.
 build --action_env=CC=clang
 build --action_env=CXX=clang++
 build --cxxopt='-std=c++23'
@@ -5,22 +13,37 @@ build --cxxopt='-std=c++23'
 # LLVM 17 doesn't build with C++23 (constexpr unique_ptr requires complete types)
 build --per_file_copt=external/llvm-project.*.cpp@-std=c++17
 build --incompatible_strict_action_env
-build --disk_cache=~/.cache/bazel-disk
+build --verbose_failures
 
-# Optional user-local overrides
-try-import %workspace%/.bazelrc.user
+test --test_output=errors
 
-# CI config: BuildBuddy remote cache + BES
+build:debug --compilation_mode=dbg
+
+build:release --compilation_mode=opt
+build:release --cxxopt='-O3'
+build:release --cxxopt='-DNDEBUG'
+
+build:fastbuild --compilation_mode=fastbuild
+build:fastbuild --cxxopt='-O1'
+
+# Shared cache and result streaming with actions still running locally, so the
+# compiler is the one named above. Needs a BuildBuddy key via `--remote_header`.
 build:ci --bes_results_url=https://app.buildbuddy.io/invocation/
 build:ci --bes_backend=grpcs://remote.buildbuddy.io
 build:ci --remote_cache=grpcs://remote.buildbuddy.io
 build:ci --remote_timeout=10m
 build:ci --remote_upload_local_results=true
 
-# RBE config: Remote Build Execution (requires BuildBuddy API key in .bazelrc.user)
+# Actions run in BuildBuddy's Ubuntu container under the toolchain registered
+# for its platform, which is that image's system GCC. Cache entries are keyed
+# by toolchain, so this config shares nothing with a local build. Outputs stay
+# remote because a compile gate and a remotely executed test never read what
+# they produce, and transfer is metered. Needs a BuildBuddy key via
+# `--remote_header`.
 build:rbe --remote_executor=grpcs://remote.buildbuddy.io
 build:rbe --remote_cache=grpcs://remote.buildbuddy.io
 build:rbe --remote_timeout=10m
+build:rbe --remote_download_minimal
 build:rbe --extra_execution_platforms=@buildbuddy_toolchain//:platform
 build:rbe --host_platform=@buildbuddy_toolchain//:platform
 build:rbe --platforms=@buildbuddy_toolchain//:platform
@@ -28,20 +51,4 @@ build:rbe --jobs=50
 build:rbe --bes_results_url=https://app.buildbuddy.io/invocation/
 build:rbe --bes_backend=grpcs://remote.buildbuddy.io
 
-build --local_resources=cpu=HOST_CPUS*0.7
-build --verbose_failures
-
-# Debug build configuration
-build:debug --compilation_mode=dbg
-
-# Release build configuration
-build:release --compilation_mode=opt
-build:release --cxxopt='-O3'
-build:release --cxxopt='-DNDEBUG'
-
-# Fastbuild configuration
-build:fastbuild --compilation_mode=fastbuild
-build:fastbuild --cxxopt='-O1'
-
-# Test configuration
-test --test_output=errors
+try-import %workspace%/.bazelrc.user

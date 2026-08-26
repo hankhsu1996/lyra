@@ -122,6 +122,8 @@ constraint that the type system should be enforcing.
 - A free-standing `AssignExpr` in a structural scope.
 - A pipeline where the frontend-elaborated instance graph drives compile-time work.
 - A constructor body that yields to the scheduler or advances simulation time.
+- A trace or update-set subsystem layered over writes. A store notifies its subscribers as it
+  happens, so there is no separate pass that reconciles what changed afterwards.
 
 ## Adjacent docs
 

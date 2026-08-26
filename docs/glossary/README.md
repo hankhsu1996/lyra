@@ -1,13 +1,17 @@
 # Glossary
 
-Canonical definitions for terminology used across architecture docs. Every term used as a contract
-keyword (for example, "compilation unit", "specialization", "body", "action") has exactly one entry
-here.
+Canonical definitions for terminology used across architecture docs. A term earns an entry when its
+everyday meaning is wide enough that two readers would take a contract differently -- "class",
+"member", and "object type" are here because SystemVerilog and C++ each supply a plausible reading
+and the docs mean one of them. A term the surrounding prose already pins needs no entry, so this
+directory is deliberately small and grows only where an ambiguity has actually cost someone.
+
+Where an entry exists it is the single definition: an architecture doc using the term means what the
+entry says, and a doc that needs a different meaning names a different term.
 
 ## File Naming
 
-One file per term or closely related cluster of terms, using kebab-case: `compilation-unit.md`,
-`specialization.md`, `generate-region.md`.
+One file per term or closely related cluster of terms, using kebab-case.
 
 ## Entry Contents
 

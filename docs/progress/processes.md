@@ -1,7 +1,6 @@
 # Processes
 
-Tracks SystemVerilog procedural-block constructs and the supporting timing-control machinery. Covers
-archive items under `archived/tests/sv_features/processes/`.
+Tracks SystemVerilog procedural-block constructs and the supporting timing-control machinery.
 
 The numeric IDs (P1..P15, T1..T5) are stable references and do **not** imply execution order.
 
@@ -38,6 +37,10 @@ machinery owned by other workstreams; see [Blocked](#blocked).
       (always_comb / always_latch) or after the first wait (`@*`), then waits on any change to the
       read set. Reads collapse to whole-variable subscription until the runtime supports bit-level
       any-change.
+  - [ ] Sensitivity narrowed below whole-variable granularity: a process reading one bit, one
+        element, or one field wakes only when that sub-part changes, rather than on any write to the
+        variable containing it. Correctness is unaffected -- the process re-evaluates and reaches
+        the same answer -- so this is what separates a correct wake set from a minimal one.
 
 ### Variable lifetime
 
@@ -46,8 +49,8 @@ machinery owned by other workstreams; see [Blocked](#blocked).
       entry and lives only for that activation; a static local (the module default) has one
       per-instance copy that is default-initialized once and persists across activations, so it
       stays live after the process body completes -- which is what lets a detached fork branch read
-      it (`fork-join.md` FJ4). A bare declaration takes the module's static default. Static locals
-      that share a name across sibling or nested blocks of one process are kept distinct. See
+      it after detaching. A bare declaration takes the module's static default. Static locals that
+      share a name across sibling or nested blocks of one process are kept distinct. See
       `decisions/variable-lifetime-storage.md` for the storage rationale.
 
 ### Procedural assignments
@@ -86,8 +89,7 @@ machinery owned by other workstreams; see [Blocked](#blocked).
       Runtime per-leaf classification samples each waiter's projection on every variable write, so
       changes outside the projection do not cause spurious wakes (LRM 9.4.2 "no change in result"
       rule). `ClassifyEdge` covers the LRM Table 9-2 4-state transition matrix; `kBothEdges` matches
-      either posedge or negedge. Covers `processes/event_triggers` and
-      `processes/edge_trigger_bit_select` for the packed-vector, constant-selector, single-leaf
+      either posedge or negedge. Complete for the packed-vector, constant-selector, single-leaf
       subset, including multi-dimensional packed selects and ascending / negative-base ranges (LRM
       11.5.1 direction translation). Compound expressions (concatenation, arithmetic, dynamic index)
       remain rejected -- see Blocked.
@@ -109,14 +111,13 @@ machinery owned by other workstreams; see [Blocked](#blocked).
 - [x] P11 -- `wait (cond) body` level-sensitive control (LRM 9.4.3). Sensitivity is precomputed by
       slang's flow analysis on `cond` as a standalone expression. The "skip suspend if cond is
       already true" semantic falls out of the lowering. `wait fork;` (LRM 9.6.1) is a distinct
-      process-control construct tracked in `fork-join.md`; `wait_order(...)` (LRM 15.6) is out of
-      scope.
+      process-control construct belonging to the fork surface; `wait_order(...)` (LRM 15.6) is out
+      of scope.
 
 ### Concurrency
 
-- [ ] P8 -- `fork` / `join` / `join_any` / `join_none` (LRM 9.3). Spawns concurrent processes; the
-      parent resumes per the join condition. Now tracked in its own workstream (`fork-join.md`),
-      unblocked: the single-process timing surface (T1, T2..T5, P9, P11) is settled.
+- [x] P8 -- `fork` / `join` / `join_any` / `join_none` (LRM 9.3). Spawns concurrent processes; the
+      parent resumes per the join condition.
 
 ### Generate
 
@@ -126,7 +127,7 @@ machinery owned by other workstreams; see [Blocked](#blocked).
 ## Out of Scope
 
 - Scheduler-region behaviour (Active / Inactive / NBA / Observed / Reactive / Postponed). Each
-  region's invariants are tracked under `scheduling/*` archive items; create `scheduling.md` when
-  that workstream becomes actionable.
+  region's invariants belong to a scheduling workstream; create `scheduling.md` when that workstream
+  becomes actionable.
 - `disable` and `disable fork` (LRM 9.6). Tracked separately under process control.
 - `expect` statement and `wait_order`. Verification-only constructs.

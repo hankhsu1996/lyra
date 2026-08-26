@@ -3,6 +3,7 @@ load("@rules_cc//cc:cc_binary.bzl", "cc_binary")
 load("@rules_cc//cc:cc_library.bzl", "cc_library")
 load("@rules_cc//cc:cc_static_library.bzl", "cc_static_library")
 load("//tools/bazel:copts.bzl", "LYRA_COPTS")
+load("//tools/bazel:shipped.bzl", "shipped_artifact")
 
 # Compile every declared header once on its own, so a header that only builds
 # because some source happened to include its dependency first fails here
@@ -108,9 +109,19 @@ cc_library(
 )
 
 cc_static_library(
-    name = "cpp_runtime",
+    name = "cpp_runtime_lib",
     visibility = ["//visibility:public"],
     deps = [":runtime"],
+)
+
+# What an emitted program links. Optimized whatever mode built the compiler:
+# a user's simulation runs this code, and none of it is recompiled on their
+# side, so its speed is fixed here and nowhere else.
+shipped_artifact(
+    name = "cpp_runtime",
+    out = "libcpp_runtime.a",
+    lib = ":cpp_runtime_lib",
+    visibility = ["//visibility:public"],
 )
 
 cc_library(

@@ -16,21 +16,14 @@ jobs:
         with:
           fetch-depth: 0
 
-      - name: Install clang-format
-        run: |
-          wget -qO /tmp/llvm.key https://apt.llvm.org/llvm-snapshot.gpg.key
-          sudo gpg --dearmor -o /etc/apt/trusted.gpg.d/apt.llvm.org.gpg /tmp/llvm.key
-          . /etc/lsb-release
-          echo "deb http://apt.llvm.org/${DISTRIB_CODENAME}/ llvm-toolchain-${DISTRIB_CODENAME}-20 main" | sudo tee /etc/apt/sources.list.d/llvm.list
-          sudo apt-get update
-          sudo apt-get install -y clang-format-20
-
-      - name: Print tool version
-        run: clang-format-20 --version
+      - name: Setup Clang
+        uses: ./.github/actions/setup-clang
+        with:
+          tools: clang-format
 
       - name: Check formatting
         run: |
-          find src include tests -name '*.cpp' -o -name '*.hpp' | xargs clang-format-20 --dry-run --Werror
+          find src include tests -name '*.cpp' -o -name '*.hpp' | xargs clang-format --dry-run --Werror
 
       - name: Check C++ style policy
         run: python3 tools/policy/check_cpp_style.py

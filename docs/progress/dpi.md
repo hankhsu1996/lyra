@@ -2,25 +2,24 @@
 
 Tracks the SystemVerilog Direct Programming Interface (LRM 35): `import "DPI-C"`, where SV calls a
 foreign C function, and `export "DPI-C"`, where foreign C calls an SV subroutine. This is the
-foreign-language-boundary workstream that `functions.md` lists as out of scope for user subroutines.
+foreign-language-boundary workstream, which the user-subroutine surface excludes.
 
-Under the post-reset architecture a DPI import is not a separate call subsystem: it is the
-**external** implementation form of the one callable concept (`callable.md`) -- a signature plus a
-foreign linkage name and calling convention, with no body -- and an import call is an ordinary call.
-A DPI export is an ordinary internal SV subroutine that additionally gets a foreign-linkage entry
-point; the entry obtains its runtime context (design object, engine, and, for an export declared in
-a structural scope, the calling instance) from a runtime-installed context, never from the foreign
-caller. An exported name is one program-global symbol while the subroutine behind it is compiled
-once per specialization of its declaring scope, so the symbol resolves against the scope the foreign
-call established rather than naming any one of them. Export is supported within the LRM import ->
-export call chain, under Lyra as the driver; the distinct execution model where an external C
-program drives a Lyra design as a linked library is a separate roadmap capability, out of scope
-here. The DPI type mapping between an SV type and its C ABI type (LRM 35.5.6) is a backend
-type-mapping concern, so the MIR representation is backend-agnostic: the same MIR is materialized by
-the C++ backend as an `extern "C"` entry linked by the emitted build recipe, and by the LLVM / JIT
-backend as an external-linkage symbol resolved by its execution session. Lyra never compiles the
-user's C; it provides the ABI surface (a generated header, resolved symbol names) and orchestrates
-linkage.
+A DPI import is not a separate call subsystem: it is the **external** implementation form of the one
+callable concept (`callable.md`) -- a signature plus a foreign linkage name and calling convention,
+with no body -- and an import call is an ordinary call. A DPI export is an ordinary internal SV
+subroutine that additionally gets a foreign-linkage entry point; the entry obtains its runtime
+context (design object, engine, and, for an export declared in a structural scope, the calling
+instance) from a runtime-installed context, never from the foreign caller. An exported name is one
+program-global symbol while the subroutine behind it is compiled once per specialization of its
+declaring scope, so the symbol resolves against the scope the foreign call established rather than
+naming any one of them. Export is supported within the LRM import -> export call chain, under Lyra
+as the driver; the distinct execution model where an external C program drives a Lyra design as a
+linked library is a separate roadmap capability, out of scope here. The DPI type mapping between an
+SV type and its C ABI type (LRM 35.5.6) is a backend type-mapping concern, so the MIR representation
+is backend-agnostic: the same MIR is materialized by the C++ backend as an `extern "C"` entry linked
+by the emitted build recipe, and by the LLVM / JIT backend as an external-linkage symbol resolved by
+its execution session. Lyra never compiles the user's C; it provides the ABI surface (a generated
+header, resolved symbol names) and orchestrates linkage.
 
 The settled IR, value, and boundary model -- import as the external arm of the one callable,
 marshaling as a cross-ABI carrier conversion through runtime primitives, the export context, and the
@@ -46,7 +45,7 @@ and the element types Annex H.7.3 puts in C-compatible representation.
 On the execution backend scalar import (D10) is in: a foreign call lowers to an external-linkage
 symbol and the by-value carriers marshal. The rest of the import surface (D11) is blocked, and not
 by anything DPI owns: by-pointer marshaling is expressed as a closure, which that backend does not
-yet lower at all (`architecture-reset.md`). Export and tasks there (D12) follow once the C++-backend
+yet lower at all (`execution-backend.md`). Export and tasks there (D12) follow once the C++-backend
 items fix their shape.
 
 ## Sub-Steps
@@ -225,7 +224,7 @@ surface at a time; export and tasks follow once the C++-backend items fix their 
       resolves, the by-value carriers marshal, and a JIT run cross-checks the result against the C++
       backend. A `real` import is excluded, but not by anything DPI owns: the execution backend has
       no real value domain at all, so it cannot read a real out of an SV value in the first place
-      (`architecture-reset.md`).
+      (`execution-backend.md`).
 - [ ] D11 -- General and 4-state / wide import marshaling on the execution backend: the D2 and D3
       surface -- `output` / `inout` copy-back, `chandle`, and canonical `svBitVecVal*` /
       `svLogicVecVal*` buffers. Blocked on closures reaching that backend: a by-pointer argument is
@@ -254,5 +253,4 @@ and the out-of-scope boundary. Work proceeds against that record.
   artifacts, header and link), `runtime_distribution.md` (link and run model), `scheduling.md`
   (suspending tasks).
 - Rides on: `scheduling.md` and `processes.md` (suspending DPI tasks, D6b).
-- `functions.md` lists DPI as its out-of-scope sibling; the scope-declared export D4a is the
-  `ibex.md` full-top frontier.
+- The scope-declared export D4a is the `ibex.md` full-top frontier.

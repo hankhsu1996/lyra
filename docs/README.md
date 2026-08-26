@@ -14,9 +14,11 @@ the doc.
   architecture.
 - `decisions/` -- logged architectural decisions (one file per decision).
 - `glossary/` -- canonical definitions of terminology used across docs.
-- `ci/` -- CI workflow inventory.
+- `ci/` -- what each workflow enforces, and why some of it runs nightly instead.
 - `design-process.md` -- how to arrive at a design and how to falsify one.
-- `style.md` -- writing contract for docs in this directory.
+- `style.md` -- writing contract for these docs and for the READMEs above them.
+- `code-comments.md` -- when a comment earns its place in the source, and when it does not.
+- `profiling.md` -- how to measure the compiler and an emitted program honestly.
 
 ## Reading Order
 

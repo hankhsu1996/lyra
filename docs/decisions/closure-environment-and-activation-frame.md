@@ -62,8 +62,7 @@ signature is not an identity.
 ```text
 D1. A promoted automatic scope is a named generic StructType{StructId}. StructDecl carries fields
     only and NEVER an invoke (a scope is storage, not callable). It is reached through Shared<>. It
-    is a compiler-generated nominal aggregate; in this cut it is not a source-level user-declarable
-    struct feature.
+    is a compiler-generated nominal aggregate; no source-level struct feature declares one.
 
 D2. A closure is an anonymous concrete callable value: ClosureType{ClosureId}. ClosureDecl carries
     capture fields plus exactly one invoke body. Callability is the unconditional presence of the
@@ -74,7 +73,7 @@ D3. Closure and scope share ONLY the field substrate (FieldDecl, FieldId, FieldA
     realization. No universal Record<Storage, Behavior> type; no StructType with an is_closure /
     is_frame discriminator.
 
-D4. A closure's invoke reads captures through its receiver, which in this cut is a read-only borrow
+D4. A closure's invoke reads captures through its receiver, a read-only borrow
     Borrowed<ClosureType> (the invoke body's locals[0]). A write to captured state is a write through
     a captured Ref<T> or through a captured Shared<StructType> field, never a write to the capture
     slot itself.

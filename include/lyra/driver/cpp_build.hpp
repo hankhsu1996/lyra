@@ -8,6 +8,7 @@
 #include "lyra/diag/diagnostic.hpp"
 #include "lyra/driver/dpi_boundary.hpp"
 #include "lyra/driver/pch.hpp"
+#include "lyra/driver/project_layout.hpp"
 #include "lyra/driver/runtime_export.hpp"
 #include "lyra/mir/compilation_unit.hpp"
 
@@ -17,13 +18,15 @@ namespace lyra::driver {
 // rather than a bare bool so a call site says which it means.
 enum class SourceFormatting : std::uint8_t { kOff, kOn };
 
-// How this host turns emitted C++ into a program: which compiler to invoke and
-// what to do about the precompiled header. Resolved once at the CLI boundary
-// and passed unchanged down every path, so the recipe an emitted project
-// carries and the compile Lyra performs cannot disagree about the toolchain.
+// How this host turns emitted C++ into a program: which compiler to invoke,
+// what to do about the precompiled header, and how hard to optimize. Resolved
+// once at the CLI boundary and passed unchanged down every path, so the recipe
+// an emitted project carries and the compile Lyra performs cannot disagree
+// about any of the three.
 struct HostBuild {
   std::filesystem::path cxx;
   pch::Options pch;
+  Optimization optimization = Optimization::kIterate;
 };
 
 // Assemble a self-contained C++ project into `dir`: one translation unit per

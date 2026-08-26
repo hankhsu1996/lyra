@@ -119,14 +119,14 @@ PCH_FLAG=""
 if [ "$USE_PCH" = "1" ]; then
   PRELUDE="@INCLUDE@/@PRELUDE@"
   FP=$(find @INCLUDE@ -name '*.hpp' -print0 | sort -z | xargs -0 sha1sum | sha1sum | cut -c1-16)
-  PCH="@CACHE@/prelude-${FP}.pch"
+  PCH="@CACHE@/prelude-${FP}-@OPTTAG@.pch"
   if [ ! -f "$PCH" ]; then
     mkdir -p "$(dirname "$PCH")"
-    "$CXX" @STD@ -I @INCLUDE@ -xc++-header "$PRELUDE" -o "$PCH"
+    "$CXX" @STD@ @OPT@ -I @INCLUDE@ -xc++-header "$PRELUDE" -o "$PCH"
   fi
   PCH_FLAG="-include-pch $PCH"
 fi
-@DPICOMPILE@"$CXX" @STD@ -I @INCLUDE@ $PCH_FLAG @MAIN@@DPIOBJS@ @LIBDIR@/@LIB@ -o @PROG@
+@DPICOMPILE@"$CXX" @STD@ @OPT@ -I @INCLUDE@ $PCH_FLAG @MAIN@@DPIOBJS@ @LIBDIR@/@LIB@ -o @PROG@
 )sh";
 
 // Where a DPI-C source sits once copied into the project, relative to it. The
@@ -146,7 +146,9 @@ struct DpiRecipe {
   std::string link_inputs;
 };
 
-auto RenderDpiRecipe(std::span<const DpiLinkInput> inputs) -> DpiRecipe {
+auto RenderDpiRecipe(
+    std::span<const DpiLinkInput> inputs, std::string_view optimization_flag)
+    -> DpiRecipe {
   DpiRecipe recipe;
   for (const DpiLinkInput& input : inputs) {
     const std::string relative = DpiSourceRelPath(input);
@@ -155,26 +157,33 @@ auto RenderDpiRecipe(std::span<const DpiLinkInput> inputs) -> DpiRecipe {
       continue;
     }
     const std::string object = relative + ".o";
-    recipe.compile_steps +=
-        std::format("\"$CXX\" -x c -c {} -I . -o {}\n", relative, object);
+    recipe.compile_steps += std::format(
+        "\"$CXX\" {} -x c -c {} -I . -o {}\n", optimization_flag, relative,
+        object);
     recipe.link_inputs += std::format(" {}", object);
   }
   return recipe;
 }
 
 auto RenderBuildScript(
-    const std::filesystem::path& cxx, std::span<const DpiLinkInput> dpi_inputs)
-    -> std::string {
-  const DpiRecipe dpi = RenderDpiRecipe(dpi_inputs);
+    const std::filesystem::path& cxx, std::span<const DpiLinkInput> dpi_inputs,
+    Optimization optimization) -> std::string {
+  const std::string_view optimization_flag = OptimizationFlag(optimization);
+  const DpiRecipe dpi = RenderDpiRecipe(dpi_inputs, optimization_flag);
   // Named locals, because the bindings below hold `string_view`s and are read
   // after this statement: a temporary would already have died.
   const std::string cxx_exe = cxx.string();
-  const std::array<std::pair<std::string_view, std::string_view>, 11> bindings =
+  // The recipe keys its own PCH cache by header content, which does not
+  // separate two builds clang will refuse to share.
+  const std::string_view optimization_tag = optimization_flag.substr(1);
+  const std::array<std::pair<std::string_view, std::string_view>, 13> bindings =
       {{
           {"@INCLUDE@", kRuntimeIncludeDir},
           {"@PRELUDE@", support::kRuntimePreludeHeader},
           {"@CACHE@", kRuntimeCacheDir},
           {"@STD@", kCxxStandardFlag},
+          {"@OPT@", optimization_flag},
+          {"@OPTTAG@", optimization_tag},
           {"@CXX@", cxx_exe},
           {"@MAIN@", kMainSource},
           {"@LIBDIR@", kRuntimeLibDir},
@@ -258,7 +267,7 @@ auto EmitAndWriteSources(
 // directly. `header_dir` holds the generated ABI header the source may include.
 // Returns the path to add to the link line.
 auto PrepareDpiLinkInput(
-    const std::filesystem::path& cxx, const DpiLinkInput& input,
+    const HostBuild& host, const DpiLinkInput& input,
     const std::filesystem::path& header_dir,
     const std::filesystem::path& work_dir) -> diag::Result<std::string> {
   const std::string source = input.source.string();
@@ -268,8 +277,16 @@ auto PrepareDpiLinkInput(
   const std::filesystem::path obj =
       work_dir / (input.source.filename().string() + ".o");
   const std::vector<std::string> compile_args = {
-      "-x", "c", "-c", source, "-I", header_dir.string(), "-o", obj.string()};
-  auto compiled = support::RunProcessCaptured(cxx, compile_args);
+      std::string(OptimizationFlag(host.optimization)),
+      "-x",
+      "c",
+      "-c",
+      source,
+      "-I",
+      header_dir.string(),
+      "-o",
+      obj.string()};
+  auto compiled = support::RunProcessCaptured(host.cxx, compile_args);
   if (!compiled) {
     return IoError(std::move(compiled.error()));
   }
@@ -295,7 +312,7 @@ auto CompileProgram(
   link_inputs.reserve(dpi_inputs.size());
   for (const DpiLinkInput& input : dpi_inputs) {
     auto prepared =
-        PrepareDpiLinkInput(host.cxx, input, header_dir, program.parent_path());
+        PrepareDpiLinkInput(host, input, header_dir, program.parent_path());
     if (!prepared) {
       return std::unexpected(std::move(prepared.error()));
     }
@@ -303,8 +320,11 @@ auto CompileProgram(
   }
 
   std::vector<std::string> args = {
-      std::string(kCxxStandardFlag), "-I", include_root.string()};
-  if (auto cached = pch::EnsureCached(host.cxx, include_root, host.pch)) {
+      std::string(kCxxStandardFlag),
+      std::string(OptimizationFlag(host.optimization)), "-I",
+      include_root.string()};
+  if (auto cached = pch::EnsureCached(
+          host.cxx, include_root, host.pch, host.optimization)) {
     args.emplace_back("-include-pch");
     args.push_back(cached->string());
   }
@@ -347,7 +367,9 @@ auto AssembleProject(
   }
 
   const auto script_path = dir / "build.sh";
-  if (auto r = WriteFile(script_path, RenderBuildScript(host.cxx, dpi_inputs));
+  if (auto r = WriteFile(
+          script_path,
+          RenderBuildScript(host.cxx, dpi_inputs, host.optimization));
       !r) {
     return r;
   }

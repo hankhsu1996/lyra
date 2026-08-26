@@ -10,9 +10,15 @@ have different cost models and different measurement methods.
 Simulation execution speed: the cost of running processes, scheduling events, and reading and
 writing state once the object graph is built.
 
-Re-establishing runtime performance tracking on the current architecture is pending the execution
-backends and the benchmark CI jobs that drive it (`architecture-reset.md` R6). No concrete item is
-open here until that lands.
+How hard a program is compiled is settled and is not a tracked gap. The runtime library an emitted
+program links is optimized as shipped, independent of how the compiler that ships it was built,
+because a user recompiles none of it. The design's own translation unit is compiled unoptimized by
+default and optimized under `--release`, which is the one place the build-time / run-time trade is a
+choice: iterating pays the compile on every edit, while a long run earns it back.
+
+Re-establishing runtime performance _tracking_ -- a benchmark that runs in CI and a number that
+regressions move -- is pending the execution backend and the benchmark CI jobs that drive it
+(`execution-backend.md`). No concrete item is open here until that lands.
 
 ## Construction / compile-time performance
 
@@ -32,6 +38,22 @@ specializations, not with instance count.
       mechanism is unchanged from the functional case: the same canonical binding serializer
       (`docs/decisions/specialization-identity.md`) is fed only the code-shape-affecting subset, and
       value-only parameters are demoted to constructor inputs.
+
+- [ ] The generate axis of that same sharing. A `generate for` lowers concretely: N iterations
+      become N scope classes and N construction statements, so the artifact grows one-for-one with
+      the iteration count even when no parameter varies and every body is identical. Measured over
+      16, 64, and 256 iterations of one trivial child, emitted lines and generated classes both
+      scale linearly with N. This is the concrete baseline `specialization_model.md` invariant 1
+      calls correct, in its simplest form; the optimization is recognizing that iterations whose
+      generated code is identical can share one class carrying a loop, which is the shape
+      `runtime_model.md` describes. It needs a construction-time iteration vehicle, the same thing
+      the parameter classification above needs, so the two are naturally taken together.
+
+      `runtime_model.md` states this one as an absolute ("if you find compile-time work that scales
+      with instance count, the design has been violated") where `specialization_model.md` invariant
+      1 admits the concrete form as correct and scopes the requirement to the optimized steady
+      state. The two should be reconciled when this is picked up, with the specialization model
+      governing.
 
 ### Open questions
 

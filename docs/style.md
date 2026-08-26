@@ -1,7 +1,8 @@
 # Documentation Style
 
-Contract for writing and maintaining docs under `docs/`. This file covers content and structure
-rules only. Formatting is enforced by Prettier; see the Formatting section at the end.
+Contract for writing and maintaining docs under `docs/`, and for the reader-facing `README.md` files
+that sit above them. This file covers content and structure rules only. Formatting is enforced by
+Prettier; see the Formatting section at the end.
 
 ## Core Principles
 
@@ -21,6 +22,11 @@ rules only. Formatting is enforced by Prettier; see the Formatting section at th
    described by what types live in a layer and what shapes are forbidden. Behavioral, protocol, or
    decision-cluster subjects find their own structure. Consistency comes from copying close existing
    examples, not from forcing every subject through one section list.
+8. **Every document has a level, and a fact belongs at the level where it stays true longest.** A
+   lower-level fact borrowed into a higher-level document is the most common way docs rot, because a
+   document is revisited on its own cadence and not on the cadence of whatever it quoted. The test
+   before writing a sentence: would an ordinary change one layer down make this false? If so it
+   belongs one layer down, and this document should point at it instead of restating it.
 
 ## Architecture Docs Are Contracts
 
@@ -36,6 +42,39 @@ earns its space with its reason; abstract principles without consequences do not
 
 In both cases the rules under Core Principles still apply: no narrative framing, no "currently /
 historically / not yet / migration", no platitudes that are trivially true of any reasonable system.
+
+### When status genuinely has to be stated
+
+Principle 5 bans "not yet" from an architecture doc, and a contract for something unbuilt still has
+to say so somewhere or it reads as a description of the code. The resolution is placement, not
+vocabulary: **the admission goes in one paragraph directly under the title, scoping the whole
+document, or it does not appear at all.** `architecture/incremental_build.md` is the worked example
+-- it opens by saying the compiler does not realize the contract yet and that the rules bind every
+layer regardless, then never mentions status again.
+
+What rots is the other shape: one status clause buried in a bullet, in a section about something
+else. Nothing forces a reader past it, so it survives every refactor that falsifies it. A doc that
+needs more than its opening paragraph to describe what is unbuilt is describing progress, and
+progress has its own directory.
+
+The same placement rule covers mechanism. An architecture doc names file layouts, type spellings,
+and command names only under Notes / Examples, prefixed as the current implementation -- never in an
+invariant or a forbidden shape, which must survive the next rename.
+
+### What is machine-checked
+
+`tools/policy/check_docs.py` settles the claims a machine can settle: a repo-rooted path cited in
+any doc exists, a relative link resolves, an index lists every document in its directory, no cadence
+vocabulary (`in this cut`, `a later cut`) appears in a timeless doc, no reader-facing README states
+a count, and no permanent doc cites the progress queue. It deliberately checks nothing about whether
+a contract is the right contract or a stated capability is real -- that needs a reader, and it is
+what a reader's attention is for.
+
+Its known gaps, all of the same kind: a bare filename (`test.yml`) is not repo-rooted, so no rule
+confirms it exists; the other words principle 5 bans ("currently", "transitional") carry legitimate
+uses; and a count spelled as a word ("two sample designs") reads exactly like a structural one ("two
+paths out of MIR"), which is a distinction only a reader can draw. Each is a place where the regex
+would cost more in false alarms than it saves.
 
 ### Type-Contract Template
 
@@ -77,6 +116,44 @@ decision or glossary doc that cites a `progress/` file is the same violation: a 
 not depend on an ephemeral queue. Because nothing permanent points at `progress/`, a completed
 progress file can be deleted with no dangling pointer left behind.
 
+### The README is the top of that stack
+
+A reader-facing `README.md` sits above every doc kind above, which by principle 8 makes it the
+document least free to borrow. These belong to lower layers and never appear here:
+
+- **A count of anything the repository contains.** Case totals, backend coverage ratios, file
+  counts. Such a number is wrong the next time someone adds one of the thing counted, nothing forces
+  its update, and publishing it as a measure of scope makes it a target, which collides directly
+  with the rule that cases group by feature rather than by assertion. State that coverage is
+  measured and point at where.
+- **An inventory of supported constructs.** `progress/README.md` already forbids this for progress
+  docs, on the grounds that `tests/cases/` and the code are the source of truth and a parallel
+  inventory rots. The same reasoning binds harder at the top: a capability table goes stale on every
+  feature merge.
+- **SystemVerilog at the syntax level.** Naming a specific keyword or net type in the README is a
+  detail-layer fact in the highest-level document. Write about what the tool is and what it handles
+  in categories; leave the constructs to `progress/` and the corpus.
+- **A description of what a directory contains, when that directory has its own README.** Link to it
+  and say why a reader would go there. Listing its contents duplicates a document whose whole job is
+  to describe itself, and the copy is the one that goes stale.
+
+What does belong is what stays true across releases: what the project is, what it optimizes for, the
+shape of its pipeline, how to run it, and where to look next.
+
+A diagram is held to the same rule. It shows structure, so it carries only what changes when the
+structure changes. A judgment about a component -- which one is the product, which is transitional,
+which is deprecated -- changes on its own schedule, and putting it in a box makes the diagram rot on
+a strategy call rather than on an architectural one. Such judgments go in the prose beneath, where
+one sentence is cheap to revise and a reader already expects an opinion. The same goes for grouping
+boxes: group only when every box groups on one axis, since two taxonomies drawn as peers read as
+one.
+
+A demonstration is a fourth trap, and a tempting one. A worked example proves the tool runs, but it
+also tells the reader what level the project is at, and a small one says "toy" louder than any prose
+says otherwise. LLVM does not open with a C++ hello world. Where an example would be at the
+project's actual level it is too long for a README, and where it is short enough it undersells; the
+resolution is to point at `examples/` and let the reader pick their own depth.
+
 ## Editing Discipline
 
 - Read the entire document before editing.
@@ -94,8 +171,9 @@ progress file can be deleted with no dangling pointer left behind.
 - Prefer **object graph** when referring to hierarchy or navigation.
 - Use **compilation-unit-local** (consistently) when referring to local identity scope.
 - Use **dump** for the readable textual serialization of HIR or MIR, not "projection" or
-  "rendering". Use **backend** for a MIR consumer that emits executable artifacts (e.g.,
-  `backend::cpp`). Dump and backend are distinct surfaces; do not conflate them.
+  "rendering". Use **backend** for a MIR consumer that emits executable artifacts, named in prose as
+  the C++ backend and the LLVM backend rather than by their namespace spelling. Dump and backend are
+  distinct surfaces; do not conflate them.
 
 ## Anti-Patterns
 

@@ -1,6 +1,9 @@
 # Unpacked union is overlapping storage realized as an active-member value (MIR `UnionType`)
 
-Date: 2026-06-27 Status: accepted
+Date: 2026-06-27 Status: accepted; the write encoding is superseded by
+[value-projection-designator](value-projection-designator.md), which deletes the `Ref`-suffixed
+access forms -- the union write form among them -- in favour of one write designator. The
+representation this entry settles, an active-member value, is unchanged.
 
 ## Why this decision matters
 

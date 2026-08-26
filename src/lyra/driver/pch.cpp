@@ -153,16 +153,18 @@ auto HeaderTreeFingerprint(const std::filesystem::path& include_root)
   return std::hash<std::string>{}(buf);
 }
 
-// Cache filename derived from cxx identity + include-root path + tree
-// content. The triple provides three independent invalidation axes: upgrading
-// the compiler, swapping runtime installations, or editing any header. Two
-// cache entries with the same name are byte-equivalent by construction.
+// Cache filename derived from cxx identity + include-root path + tree content
+// + optimization. The four provide independent invalidation axes: upgrading
+// the compiler, swapping runtime installations, editing any header, or
+// compiling the design differently. Two cache entries with the same name are
+// byte-equivalent by construction.
 auto CacheFilename(
-    const std::filesystem::path& cxx, const std::filesystem::path& include_root)
-    -> std::string {
+    const std::filesystem::path& cxx, const std::filesystem::path& include_root,
+    Optimization optimization) -> std::string {
   return std::format(
-      "prelude-{:016x}-{:016x}-{:016x}.pch", HashCxxIdentity(cxx),
-      HashIncludeRootPath(include_root), HeaderTreeFingerprint(include_root));
+      "prelude-{:016x}-{:016x}-{:016x}-{}.pch", HashCxxIdentity(cxx),
+      HashIncludeRootPath(include_root), HeaderTreeFingerprint(include_root),
+      OptimizationFlag(optimization).substr(1));
 }
 
 // 64 bits of entropy for a tmp filename suffix. Two random_device draws are
@@ -187,12 +189,14 @@ auto RandomTmpSuffix() -> std::string {
 // fingerprint, so the two layers together produce a coherent cache.
 auto BuildAt(
     const std::filesystem::path& cxx, const std::filesystem::path& include_root,
-    const std::filesystem::path& pch_path) -> diag::Result<void> {
+    const std::filesystem::path& pch_path, Optimization optimization)
+    -> diag::Result<void> {
   const auto prelude = include_root / support::kRuntimePreludeHeader;
   const auto tmp = pch_path.parent_path() /
                    std::format(".prelude.pch.tmp.{}", RandomTmpSuffix());
   const std::vector<std::string> args = {
       std::string(kCxxStandardFlag),
+      std::string(OptimizationFlag(optimization)),
       "-I",
       include_root.string(),
       "-xc++-header",
@@ -226,19 +230,21 @@ auto BuildAt(
 
 auto EnsureCached(
     const std::filesystem::path& cxx, const std::filesystem::path& include_root,
-    const Options& opts) -> std::optional<std::filesystem::path> {
+    const Options& opts, Optimization optimization)
+    -> std::optional<std::filesystem::path> {
   if (opts.disabled) return std::nullopt;
   if (!IsClangCompiler(cxx)) return std::nullopt;
 
   auto cache_or = ResolveCacheDir(opts);
   if (!cache_or) return std::nullopt;
-  const auto pch_path = *cache_or / CacheFilename(cxx, include_root);
+  const auto pch_path =
+      *cache_or / CacheFilename(cxx, include_root, optimization);
 
   std::error_code ec;
   if (std::filesystem::exists(pch_path, ec) && !ec) {
     return pch_path;
   }
-  if (auto r = BuildAt(cxx, include_root, pch_path); !r) {
+  if (auto r = BuildAt(cxx, include_root, pch_path, optimization); !r) {
     return std::nullopt;
   }
   return pch_path;

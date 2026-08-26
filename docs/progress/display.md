@@ -2,8 +2,8 @@
 
 Tracks `$display` / `$write` / `$strobe` format-specifier coverage and file-sink support.
 
-The format-specifier sub-steps gate the `expect.variables` shape of `architecture-reset.md` R7,
-since the test harness can only probe a variable whose type has an implemented specifier.
+The test harness can only probe a variable whose type has an implemented specifier, so the
+format-specifier sub-steps bound what `expect.variables` can assert.
 
 ## Sub-Steps
 
@@ -11,9 +11,8 @@ since the test harness can only probe a variable whose type has an implemented s
       byte's X/Z poison collapses to a single character following simulator convention -- any X bit
       yields `x`, otherwise any Z bit yields `z`. Width / precision modifiers are rejected by the
       slang frontend, so the lowered form is always a single character.
-- [x] DI2 -- `%t` (time): formatted against the active timescale. Implemented under `timescale.md`
-      TS3 -- the display unit, precision, suffix and field width come from `$timeformat` (LRM
-      20.4.3), applied design-wide.
+- [x] DI2 -- `%t` (time): formatted against the active timescale. The display unit, precision,
+      suffix and field width come from `$timeformat` (LRM 20.4.3), applied design-wide.
 - [x] DI3 -- `%f` / `%e` / `%g` (real). Default precision 6 per LRM Table 21-2. Coverage tracked
       under `datatypes.md` Real C1.
 - [x] DI4 -- `%m` (hierarchical name, LRM 21.2.1.5). The reported name is the scope the call was

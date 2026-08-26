@@ -52,6 +52,7 @@ buildifier -mode=check -lint=warn -r .
 python3 tools/policy/check_architecture.py
 python3 tools/policy/check_ascii.py --diff-base origin/main
 python3 tools/policy/check_cpp_style.py
+python3 tools/policy/check_docs.py
 python3 tools/policy/check_exceptions.py --diff-base origin/main
 ```
 
@@ -101,7 +102,7 @@ Bullet points should be **concise** (under 60 chars each) and describe **what ch
 1. **Check branch first** - See "STOP: Check Branch First" section above. Do NOT skip this.
 2. Build and test
 3. Format (clang-format, prettier, buildifier - once each, write mode)
-4. Lint and policy (buildifier lint + four `check_*.py`)
+4. Lint and policy (buildifier lint + every `check_*.py`)
 5. **Check git status again** - Formatters may modify files beyond your original changeset. Run `git status --short` to see all modified files before staging.
 6. Stage files with `git add <files>` (do NOT use `git add -A`). **Staging is the user's signal:**
    a file already staged has been reviewed, so commit what is staged and never unstage or

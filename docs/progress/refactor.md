@@ -88,16 +88,15 @@ enough to warrant its own focused review.
       constant case, which is acceptable -- it faithfully mirrors the MIR. See
       `decisions/conversion-folding.md`.
 
-- [ ] R8 -- Unify the callable forms onto one concept, per `../decisions/unified-callable-model.md`.
-      Today a process (`mir::Process`), a method (`mir::MethodDecl`), the constructor block, the
-      per-class resolve and initialize phase bodies, and a closure (`mir::ClosureExpr`) are separate
-      constructs whose bodies are all the same `Block`, and the same fact ("is this a coroutine") is
-      encoded several ways. The target is one callable concept -- callable code (a signature plus an
-      internal body or an external symbol) and a callable value (code plus a bound environment) --
-      with the result type carrying the call protocol and parameter direction normalized to data
-      flow. It rebases callable machinery across lowering, MIR, the dumper, and the backend (where
-      the per-shape `Render*` paths collapse into one generic function renderer), so it lands in
-      staged cuts, each its own focused review:
+- [ ] R8 -- A closure's code is not a callable declaration. Every other body a class owns -- a
+      process, a lifecycle phase, a subroutine, an imported foreign symbol -- is one declaration
+      kind reached by one identity, so a consumer asking "what does this class call" has one answer.
+      A closure is the exception: its code is carried inside an expression, so the same body reached
+      through a closure and through a call is two shapes to a backend, a dumper, and anything that
+      walks a class's callables. The target of the unified model is a callable _value_ being code
+      plus a bound environment, where the code half is the same declaration everything else uses.
+      Rebasing it touches lowering, MIR, the dumper, and the backend, so it lands in staged cuts,
+      each its own focused review:
   - [x] R8a -- The result type is the sole carrier of the call protocol. A method's coroutine-ness
         is read from its result type (a coroutine result is a task, a value / void result a
         function), not a side enum; `MethodKind` is removed. Behavior-neutral; existing task /
@@ -590,10 +589,9 @@ enough to warrant its own focused review.
       already fixes") be violated -- the LLVM backend's realization does not consult the arm; for
       the C++ backend, instance-form / free-form is a per-id render fact, not structure. Landed as:
       `Callee = variant<Direct, Indirect, Construct>`, where
-      `Direct { target, qualification: optional<ScopeQualifier> }`. `target` is the symbol identity
-      (`variant<MethodId, BuiltinFn>` today; R49 unifies into one `CallableId`). `ScopeQualifier`
-      starts as `variant<TypeQualifier{TypeId}>`; R50 adds `Namespace{...}` for future SV packages.
-      `MethodRef`'s `hops` field retires -- the receiver becomes explicit
+      `Direct { target, qualification: optional<ScopeQualifier> }`. `target` is the symbol identity,
+      which R49 unifies into one space, and `qualification` names the scope a source-level `::`
+      resolved through. `MethodRef`'s `hops` field retires -- the receiver becomes explicit
       (`Deref(LocalRef(self_at_hops))` in `args[0]`), the receiver's type pins the enclosing class
       whose `methods` arena names the `MethodId`. Render mode is read off the callee's signature: a
       self formal (built-in: per-`BuiltinFn` metadata table; user method:
@@ -618,26 +616,16 @@ enough to warrant its own focused review.
       `ConversionKind`) retires; HIR's `ConversionExpr` + `ConversionKind` stay as SV vocab in HIR
       and collapse into these primitives at HIR-to-MIR.
 
-- [ ] R49 -- Unify callable identity. Today `mir::Direct::target` is `variant<MethodId, BuiltinFn>`
-      -- a built-in is a closed-enum global id; a user method is a per-class arena id. As DPI
-      imports, future SV class statics, and future package-level free functions land, each currently
-      brings a new identity space (the historical pattern is one variant arm per origin). The target
-      is one `CallableId` space whose entries name a `CallableDecl` carrying signature,
-      implementation form (internal body / external symbol / built-in intrinsic), receiver
-      convention, and per-backend render metadata. `mir::Direct::target` becomes a single
-      `CallableId`; the `MethodId` / `BuiltinFn` distinction collapses into the declaration's
-      implementation form. Backend tables (`BuiltinFnCppName`, `BuiltinFnCppNamespace`) re-key by
-      `CallableId`. **Gated on**: R8e (external callable form) and a co-design with DPI's
-      symbol-contract structure -- the `CallableDecl` shape is the same one those features need.
-
-- [ ] R50 -- Add `Namespace` qualifier to `mir::ScopeQualifier`. Today the type carries one arm
-      (`TypeQualifier{TypeId}`) because SV only exposes type-as-namespace at the source level
-      (`MyEnum::first`, `PackedArray::FromInt`). SV packages (LRM 26) expose namespace-as-namespace
-      (`P::pkg_func`, `P::MyEnum::first`); for a package-qualified call the call site provides a
-      `NamespaceId` instead of (or composed with) a `TypeId`. Adds `Namespace{NamespaceId}` and a
-      `Path` composition for the cross-cut case. **Gated on**: SV package support landing in HIR --
-      this is a refactor of MIR's existing qualifier shape to match the feature's needs, not an
-      independent migration.
+- [ ] R49 -- Unify callable identity. A direct call's target is a variant with one arm per origin --
+      a built-in, a user method, an imported runtime entry, a callable in another unit, a method on
+      another unit's class -- so each origin carries its own identity space, and every new kind of
+      callable adds an arm rather than an entry. Each arm is a place a consumer must branch, and the
+      branch says nothing about the call: what differs between origins is where the declaration
+      lives and how it is reached, not what a call to it means. The target is one identity space
+      whose entries name a declaration carrying signature, implementation form (internal body,
+      external symbol, built-in intrinsic), receiver convention, and per-backend render metadata; a
+      call names one identity and nothing branches on origin. **Gated on**: R8e (external callable
+      form) and a co-design with DPI's symbol contract, which needs the same declaration shape.
 
 - [x] R51 -- Reaching a capability wrapper's storage is place formation, not a call. A bare wrapper
       place denotes the wrapper and a dereference of it denotes the storage it represents, so an
@@ -962,8 +950,8 @@ enough to warrant its own focused review.
       `../architecture/lowering_organization.md` names under Pool Selection. Target: the files are a
       pool like any other, minting the identity and answering totally, and a source span carries an
       optional file identity so a span with none says so. No prerequisite blocks it, but the span
-      type is read across most of the compiler and pinned by the diagnostic golden tests, so the
-      optionality change is broad enough to warrant its own focused review.
+      type is read across most of the compiler and pinned by every case that asserts a diagnostic's
+      text, so the optionality change is broad enough to warrant its own focused review.
 
 - [ ] R63 -- A function's basic blocks are a bare sequence indexed by a typed identity, so the
       identity's bounds are unchecked. The reason was real: a block used to be filled in place after
@@ -1023,7 +1011,6 @@ enough to warrant its own focused review.
 
 ## Out of Scope
 
-- Per-feature workstreams. Those live in the dedicated feature files (`control-flow.md`,
-  `operators.md`, etc.).
+- Per-feature workstreams. Those live in the dedicated feature files (`operators.md`,
+  `processes.md`, etc.).
 - One-PR cleanups with no architectural shift. Those land directly without a tracking entry.
-- The pre-reset surface re-implementation backlog. That lives in `architecture-reset.md`.

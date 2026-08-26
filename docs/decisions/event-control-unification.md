@@ -22,7 +22,7 @@ suspend, wake when a relevant leaf changes":
 - `wait (cond) body` (LRM 9.4.3)
 - `@(expr) body`, including event-list forms `@(expr_1 or expr_2)` (LRM 9.4.2)
 
-Before this cut, the first three shared the `SensitivityWaitStmt` machinery introduced for the
+Before this decision, the first three shared the `SensitivityWaitStmt` machinery introduced for the
 continuous-assignment unification (see [read-set-inference.md](read-set-inference.md)). `@(...)` had
 a parallel `EventControl` chain whose `EventTrigger.signal` was a single expression and whose
 runtime subscription was always at whole-variable granularity. The moment a selector or compound

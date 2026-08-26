@@ -24,18 +24,10 @@ jobs:
           disk-cache: ${{ github.workflow }}-${{ hashFiles('MODULE.bazel') }}
           repository-cache: true
 
-      - name: Install Clang 20 toolchain
-        run: |
-          wget -qO /tmp/llvm.key https://apt.llvm.org/llvm-snapshot.gpg.key
-          sudo gpg --dearmor -o /etc/apt/trusted.gpg.d/apt.llvm.org.gpg /tmp/llvm.key
-          . /etc/lsb-release
-          echo "deb http://apt.llvm.org/${DISTRIB_CODENAME}/ llvm-toolchain-${DISTRIB_CODENAME}-20 main" | sudo tee /etc/apt/sources.list.d/llvm.list
-          sudo apt-get update
-          sudo apt-get install -y clang-20 clang-tidy-20
-          sudo update-alternatives --install /usr/bin/clang++ clang++ /usr/bin/clang++-20 100
-          sudo update-alternatives --install /usr/bin/clang clang /usr/bin/clang-20 100
-          sudo update-alternatives --set clang++ /usr/bin/clang++-20
-          sudo update-alternatives --set clang /usr/bin/clang-20
+      - name: Setup Clang
+        uses: ./.github/actions/setup-clang
+        with:
+          tools: clang-tidy
 
       - name: Build
         env:
@@ -55,7 +47,7 @@ jobs:
         run: |
           CPP_FILES=$(find src -name '*.cpp' | tr '\n' ' ')
           set +e
-          run-clang-tidy-20 -p . -j "$(nproc)" -quiet \
+          run-clang-tidy -p . -j "$(nproc)" -quiet \
             -header-filter='^.*(src|include)/lyra/.*' \
             $CPP_FILES > tidy.log 2>&1
           echo "status=$?" >> "$GITHUB_OUTPUT"

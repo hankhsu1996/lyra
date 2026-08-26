@@ -1,27 +1,40 @@
 # Examples
 
-Sample Lyra projects.
+Sample designs, each of which runs end to end.
 
-| Project      | Description                                |
-| ------------ | ------------------------------------------ |
-| `hello/`     | Minimal example with `$display`            |
-| `riscv-cpu/` | Single-cycle RISC-V CPU with test programs |
+| Project      | What it exercises                                                    |
+| ------------ | -------------------------------------------------------------------- |
+| `hello/`     | A single module printing with `$display`                             |
+| `riscv-cpu/` | Packages, a module hierarchy, parameterized modules, and `$readmemh` |
 
-## Emit C++
-
-```bash
-cd examples/hello
-../../bazel-bin/lyra emit cpp
-```
-
-The CLI does not provide a `run` subcommand; the available pipeline is emit-only.
+Each carries a `lyra.toml` naming its top and its sources. Reading that manifest is not implemented
+yet, so the commands below pass `--no-project` and name the sources on the command line.
 
 ## hello
 
-A minimal one-module project that prints via `$display`.
+```bash
+cd examples/hello
+../../bazel-bin/lyra run --no-project --top Top hello.sv
+```
 
 ## riscv-cpu
 
-A simple RISC-V RV32I CPU using packages, multi-module hierarchy, parameterized modules, and
-`$readmemh`. These constructs are outside the current backend's support set; the sources are
-retained as a reference design.
+A single-cycle RV32I core. `tests/` holds testbenches that load a program with `$readmemh`, run it,
+and check the result register.
+
+```bash
+cd examples/riscv-cpu
+../../bazel-bin/lyra run --no-project --top all_tests *.sv tests/*.sv
+```
+
+```
+Running all tests...
+
+sum_test: PASS (x3 = 55)
+fib_test: PASS (x3 = 55, fib(10))
+
+Results: 2 passed, 0 failed
+```
+
+Any command takes the place of `run` here: `check` for diagnostics alone, `dump hir|mir|lir` to
+inspect a stage, `emit cpp -o <dir>` to write a self-contained C++ project.

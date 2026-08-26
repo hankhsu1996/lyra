@@ -135,6 +135,10 @@ interior moves from "a location realized by a reference" to "a projection throug
 
 ## Migration shape
 
+Every step below has landed: MIR carries the formal write designator and the nested-lvalue encoding
+is gone, so the adapter described in step 1 no longer exists. The sequence is kept for the reasoning
+about why it was staged that way.
+
 The change reverses two accepted decisions for value interiors and is cross-cutting, so it lands in
 reviewed cuts rather than one change. The staged shape:
 
