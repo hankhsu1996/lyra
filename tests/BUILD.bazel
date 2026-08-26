@@ -6,6 +6,12 @@ load("//tools/bazel:copts.bzl", "LYRA_COPTS")
 # the headers under test.
 package(features = ["parse_headers"])
 
+# `requires-host-cxx` marks a test that shells out to the host C++ compiler to
+# build emitted code. That compiler is not a Bazel action, so remote execution
+# cannot provision it, and `no-remote-exec` holds such a test on a machine that
+# has one. The tag also selects the whole group in or out of a run, which is how
+# a cost dominated by compilation is kept off a merge-time budget.
+
 cc_library(
     name = "framework",
     srcs = glob(["framework/*.cpp"]),
@@ -40,18 +46,19 @@ cc_test(
 )
 
 cc_test(
-    name = "run_tests",
+    name = "cli_tests",
     # Every case builds emitted C++ with the host compiler, which costs far more
     # than running the simulation does. Declaring that cost is what keeps a
     # loaded machine from reporting a timeout as a test failure.
     size = "large",
-    srcs = ["run_test.cpp"],
+    srcs = ["cli_test.cpp"],
     copts = LYRA_COPTS,
     data = ["//:lyra"],
-    # `compile`/`run` drive the host C++ compiler, so this is excluded from CI's
-    # `Test` job (which filters out `requires-host-cxx`). Run locally with
-    # `bazel test //tests:run_tests`.
-    tags = ["requires-host-cxx"],
+    shard_count = 4,
+    tags = [
+        "no-remote-exec",
+        "requires-host-cxx",
+    ],
     deps = [
         ":framework",
         "//:support",
@@ -66,9 +73,11 @@ cc_test(
     copts = LYRA_COPTS,
     data = ["//:lyra"],
     # Spawns the host C++ compiler with `-H` to enumerate every header opened
-    # while building the prelude PCH. Filtered out of CI's `Test` job for the
-    # same reason as run_tests/cpp_tests; run locally as needed.
-    tags = ["requires-host-cxx"],
+    # while building the prelude PCH.
+    tags = [
+        "no-remote-exec",
+        "requires-host-cxx",
+    ],
     deps = [
         "//:driver",
         "//:support",
@@ -103,10 +112,10 @@ cc_test(
         allow_empty = True,
     ),
     shard_count = 16,
-    # cpp-backend cases run `lyra run`, which builds with the host C++ compiler.
-    # CI's `Test` job passes `--test_tag_filters=-requires-host-cxx` so this
-    # target is excluded; run locally with `bazel test //tests:cpp_tests`.
-    tags = ["requires-host-cxx"],
+    tags = [
+        "no-remote-exec",
+        "requires-host-cxx",
+    ],
     deps = [
         ":framework",
         "@bazel_tools//tools/cpp/runfiles",
@@ -136,9 +145,6 @@ cc_test(
         allow_empty = True,
     ),
     shard_count = 8,
-    # The execution backend compiles nothing through the host C++ compiler, so
-    # unlike cpp_tests this target carries no `requires-host-cxx` tag and CI's
-    # `Test` job runs it.
     deps = [
         ":framework",
         "@bazel_tools//tools/cpp/runfiles",

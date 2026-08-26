@@ -7,10 +7,14 @@ than naming targets, so a new target is covered the moment it exists and no list
 step with the `BUILD` files.
 
 One split cuts across that, on cost. Three targets spawn the host C++ compiler once per case, which
-dominates their runtime and does not fit a merge-time budget: `cpp_tests`, `run_tests`, and
+dominates their runtime and does not fit a merge-time budget: `cpp_tests`, `cli_tests`, and
 `pch_audit_test`, all tagged `requires-host-cxx`. The merge gate filters them out with
 `--test_tag_filters=-requires-host-cxx`, and `host-cxx-nightly.yml` runs exactly them with the
 positive form of the same filter.
+
+The same three carry `no-remote-exec`. A compiler spawned from inside a test is not a Bazel action,
+so remote execution cannot provision it, and the tag holds those tests on a machine that has one
+while every other target is free to run remotely.
 
 The two filters are complements, so every test target is covered once and none twice. That is the
 property to preserve: a new target joins whichever side its tag puts it on, and neither list is

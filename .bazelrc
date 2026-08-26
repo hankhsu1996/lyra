@@ -51,4 +51,12 @@ build:rbe --jobs=50
 build:rbe --bes_results_url=https://app.buildbuddy.io/invocation/
 build:rbe --bes_backend=grpcs://remote.buildbuddy.io
 
+# Remote execution for the edit loop rather than for a gate. The one difference
+# is that top-level outputs come back: a loop runs the binary it just built,
+# where a gate reads nothing it produces. Concurrency needs no setting here --
+# the remote scheduler is a single queue across every invocation, which is the
+# coordination that several Bazel servers on one machine cannot have.
+build:dev --config=rbe
+build:dev --remote_download_toplevel
+
 try-import %workspace%/.bazelrc.user
