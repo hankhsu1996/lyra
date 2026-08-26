@@ -30,6 +30,7 @@ cc_test(
     srcs = ["diag/render_test.cpp"],
     copts = LYRA_COPTS,
     deps = [
+        "//:base",
         "//:diag",
         "@googletest//:gtest_main",
     ],
