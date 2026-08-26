@@ -28,18 +28,10 @@ jobs:
           bazelisk-cache: true
           repository-cache: true
 
-      - name: Install LLVM 20
-        run: |
-          wget -qO /tmp/llvm.key https://apt.llvm.org/llvm-snapshot.gpg.key
-          sudo gpg --dearmor -o /etc/apt/trusted.gpg.d/apt.llvm.org.gpg /tmp/llvm.key
-          . /etc/lsb-release
-          echo "deb http://apt.llvm.org/${DISTRIB_CODENAME}/ llvm-toolchain-${DISTRIB_CODENAME}-20 main" | sudo tee /etc/apt/sources.list.d/llvm.list
-          sudo apt-get update
-          sudo apt-get install -y clang-20 llvm-20
-          sudo update-alternatives --install /usr/bin/clang++ clang++ /usr/bin/clang++-20 100
-          sudo update-alternatives --install /usr/bin/clang clang /usr/bin/clang-20 100
-          sudo update-alternatives --set clang++ /usr/bin/clang++-20
-          sudo update-alternatives --set clang /usr/bin/clang-20
+      - name: Setup Clang
+        uses: ./.github/actions/setup-clang
+        with:
+          tools: llvm
 
       # Build lyra from remote cache (the potentially bad compiler).
       - name: "Build lyra (cached)"

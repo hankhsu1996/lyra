@@ -1,0 +1,93 @@
+name: Setup Clang
+description: >
+  Install the pinned LLVM release from apt.llvm.org, point the unsuffixed tool
+  names at it, and verify that the bare names actually resolve there. Every
+  workflow needing a specific LLVM comes through here, so the release is
+  written once and a job that would have silently used the runner's own
+  toolchain fails at setup instead.
+
+inputs:
+  tools:
+    description: >
+      Extra unversioned tool names from the same LLVM release, space
+      separated, for example "llvm" or "clang-tidy". The release version is
+      appended by this action. `clang` itself is always installed.
+    required: false
+    default: ''
+
+runs:
+  using: composite
+  steps:
+    - name: Install LLVM toolchain
+      shell: bash
+      env:
+        LLVM_VERSION: '20'
+      run: |
+        set -euo pipefail
+
+        PACKAGES="clang-${LLVM_VERSION}"
+        for tool in ${{ inputs.tools }}; do
+          PACKAGES="${PACKAGES} ${tool}-${LLVM_VERSION}"
+        done
+
+        wget -qO /tmp/llvm.key https://apt.llvm.org/llvm-snapshot.gpg.key
+        sudo gpg --dearmor -o /etc/apt/trusted.gpg.d/apt.llvm.org.gpg /tmp/llvm.key
+        . /etc/lsb-release
+        echo "deb http://apt.llvm.org/${DISTRIB_CODENAME}/ llvm-toolchain-${DISTRIB_CODENAME}-${LLVM_VERSION} main" \
+          | sudo tee /etc/apt/sources.list.d/llvm.list
+        sudo apt-get update
+        sudo apt-get install -y ${PACKAGES}
+
+        # Point the unsuffixed names at this release, so a caller that shells
+        # out to `clang` reaches the version installed above rather than
+        # whatever the runner image shipped.
+        for tool in clang clang++ lli clang-tidy run-clang-tidy clang-format; do
+          if [[ -x "/usr/bin/${tool}-${LLVM_VERSION}" ]]; then
+            sudo update-alternatives --install \
+              "/usr/bin/${tool}" "${tool}" "/usr/bin/${tool}-${LLVM_VERSION}" 100
+            sudo update-alternatives --set "${tool}" "/usr/bin/${tool}-${LLVM_VERSION}"
+          fi
+        done
+
+        # Expose the release to later steps that would rather name a suffixed
+        # binary outright than trust the alternative.
+        echo "LLVM_VERSION=${LLVM_VERSION}" >> "$GITHUB_ENV"
+
+    # Pointing a name at a release and that name resolving there are different
+    # facts, and only the second one matters. `update-alternatives` manages
+    # `/usr/bin` alone, so anything earlier on PATH still wins, and it declines
+    # to manage a path that is already a plain file rather than a symlink.
+    # Either way the job would go on to compile with the runner's own
+    # toolchain and pass, which is the failure worth spending a step on.
+    - name: Verify the toolchain in use
+      shell: bash
+      env:
+        LLVM_VERSION: '20'
+      run: |
+        set -euo pipefail
+
+        status=0
+        for tool in clang clang++ lli clang-tidy clang-format; do
+          command -v "${tool}" >/dev/null 2>&1 || continue
+          out=$("${tool}" --version 2>&1 || true)
+          # The first version number anywhere in the output, not the first
+          # line: an unpatched `lli` opens with a banner and reports below it.
+          major=$(sed -n 's/.*version \([0-9][0-9]*\).*/\1/p' <<<"${out}" | head -1)
+
+          if [[ "${major}" == "${LLVM_VERSION}" ]]; then
+            echo "ok    ${tool} -> $(command -v "${tool}")"
+          else
+            echo "WRONG ${tool} -> $(command -v "${tool}"), wanted major ${LLVM_VERSION}"
+            status=1
+          fi
+          # Printed whole, so a mismatch shows what was actually found rather
+          # than whichever line a formatter happened to keep.
+          sed 's/^/      /' <<<"${out}"
+        done
+
+        if [[ "${status}" -ne 0 ]]; then
+          echo "A tool on PATH is not the installed LLVM release." >&2
+          echo "Name it with the -${LLVM_VERSION} suffix at the call site," >&2
+          echo "or fix what precedes /usr/bin on PATH." >&2
+        fi
+        exit "${status}"

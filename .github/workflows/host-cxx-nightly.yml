@@ -1,0 +1,48 @@
+name: Host C++ Tests (Nightly)
+
+# The merge gate excludes every target tagged `requires-host-cxx`, because each
+# spawns the host C++ compiler once per case and that does not fit a per-PR
+# budget. What that leaves out is the whole of the C++ backend's corpus, so
+# without this job the backend every other one is checked against would never
+# run in CI at all. Here it runs on its own schedule.
+#
+# Unlike the nightly clang-tidy sweep, this one gates its own run: a corpus
+# case that stops passing is a regression, not a backlog item, so a red nightly
+# is the signal to act on.
+on:
+  schedule:
+    - cron: '0 6 * * *'
+  workflow_dispatch:
+
+jobs:
+  host-cxx:
+    name: Run host-toolchain tests
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v6
+
+      - name: Setup Bazel
+        uses: bazel-contrib/setup-bazel@0.18.0
+        with:
+          bazelisk-cache: true
+          disk-cache: ${{ github.workflow }}-${{ hashFiles('MODULE.bazel') }}
+          repository-cache: true
+
+      - name: Setup Clang
+        uses: ./.github/actions/setup-clang
+
+      # Runs on the runner rather than through `--config=rbe`, which is remote
+      # execution: an action sent there runs under the remote image's system
+      # GCC, and these three targets each spawn a host C++ compiler of their
+      # own. Remote execution would silently test a different toolchain from
+      # the one installed above, and the precompiled-header path only engages
+      # for clang at all.
+      #
+      # The positive filter is the exact complement of the merge gate's
+      # negative one, so the two together cover every test target once.
+      - name: Test
+        run: |
+          bazel test //... \
+            --test_tag_filters=requires-host-cxx \
+            --test_output=errors --verbose_failures

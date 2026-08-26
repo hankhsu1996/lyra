@@ -6,13 +6,17 @@ Build and test by asking for the whole graph -- `bazel build //...`, `bazel test
 than naming targets, so a new target is covered the moment it exists and no list has to be kept in
 step with the `BUILD` files.
 
-One filter cuts across that. The test job passes `--test_tag_filters=-requires-host-cxx`, and three
-targets carry the tag: `cpp_tests`, `run_tests`, and `pch_audit_test`. Each spawns the host C++
-compiler once per case, which is the dominant cost in all three. What that filter excludes is the
-whole of the C++ backend's corpus, so what CI gates today is the execution backend's claimed set
-plus the unit tests; the C++ backend is verified locally, before a commit, and not again on merge.
-This is a real hole rather than a rule about scope, and the ratio makes it worse over time: the C++
-backend claims roughly twice the corpus the execution backend does.
+One split cuts across that, on cost. Three targets spawn the host C++ compiler once per case, which
+dominates their runtime and does not fit a merge-time budget: `cpp_tests`, `run_tests`, and
+`pch_audit_test`, all tagged `requires-host-cxx`. The merge gate filters them out with
+`--test_tag_filters=-requires-host-cxx`, and `host-cxx-nightly.yml` runs exactly them with the
+positive form of the same filter.
+
+The two filters are complements, so every test target is covered once and none twice. That is the
+property to preserve: a new target joins whichever side its tag puts it on, and neither list is
+maintained by hand. What it costs is latency rather than coverage. The C++ backend accepts more of
+the language than the execution backend does, and a regression in it surfaces within a day rather
+than at the merge that caused it.
 
 ## Gating workflows
 
@@ -29,18 +33,24 @@ Each runs on push to `main` and on pull requests.
 | `architecture.yml`     | Layer boundaries between the IRs and the backends              |
 | `docs-policy.yml`      | The doc claims a machine can settle (paths, links, indexes)    |
 
-`cpp-tidy.yml` runs nightly and on demand rather than per merge: clang-tidy re-analyzes every
-translation unit from scratch, which does not fit a merge-time budget. It reports rather than gates,
-so its findings are a backlog to pay down.
+## Nightly workflows
+
+Two run on a schedule and on demand rather than per merge, for the same reason and with opposite
+severity.
+
+`cpp-tidy.yml` re-analyzes every translation unit from scratch. It **reports rather than gates**, so
+its findings are a backlog to pay down and a red run is not an alarm.
+
+`host-cxx-nightly.yml` runs the three `requires-host-cxx` targets. It **gates its own run**: a
+corpus case that stops passing is a regression, and a red nightly is the thing to act on that day.
 
 ## Jobs waiting on the execution backend
 
-Five jobs carry `if: false`. Their triggers and setup steps are intact so each returns by deleting
-that one line.
+These carry `if: false`. Their triggers and setup steps are intact so each returns by deleting that
+one line.
 
 | Workflow                | Job         | Waiting on                                           |
 | ----------------------- | ----------- | ---------------------------------------------------- |
-| `bazel-build.yml`       | `aot-full`  | A test target that does not exist yet                |
 | `smoke-test.yml`        | `smoke`     | A design running end to end on the execution backend |
 | `benchmark.yml`         | `benchmark` | The same, plus a stable number to compare against    |
 | `benchmark-nightly.yml` | `benchmark` | The same                                             |
@@ -72,23 +82,29 @@ and fail in the other, usually through the standard library; `CLAUDE.md` states 
 
 ## LLVM toolchain
 
-The jobs that need a specific clang install it themselves:
+A job that needs a specific LLVM gets it from the `setup-clang` composite action, naming only the
+extra tools it wants:
 
 ```yaml
-- name: Install LLVM 20
-  run: |
-    wget -qO /tmp/llvm.key https://apt.llvm.org/llvm-snapshot.gpg.key
-    sudo gpg --dearmor -o /etc/apt/trusted.gpg.d/apt.llvm.org.gpg /tmp/llvm.key
-    . /etc/lsb-release
-    echo "deb http://apt.llvm.org/${DISTRIB_CODENAME}/ llvm-toolchain-${DISTRIB_CODENAME}-20 main" | sudo tee /etc/apt/sources.list.d/llvm.list
-    sudo apt-get update
-    sudo apt-get install -y clang-20 llvm-20
-    sudo update-alternatives --install /usr/bin/clang++ clang++ /usr/bin/clang++-20 100
-    sudo update-alternatives --install /usr/bin/clang clang /usr/bin/clang-20 100
-    sudo update-alternatives --install /usr/bin/lli lli /usr/bin/lli-20 100
-    sudo update-alternatives --set clang++ /usr/bin/clang++-20
-    sudo update-alternatives --set clang /usr/bin/clang-20
-    sudo update-alternatives --set lli /usr/bin/lli-20
+- name: Setup Clang
+  uses: ./.github/actions/setup-clang
+  with:
+    tools: llvm
 ```
 
-`cpp-style.yml` installs only `clang-format-20`, since that is all it runs.
+The action also points the unsuffixed names at that release, and every call site uses them: a job
+runs `clang-format` or `run-clang-tidy`, never a version-suffixed binary. So the release is written
+once, inside the action, and a bump is one edit with nothing else to keep in step.
+
+Pointing a name at a release and that name resolving there are different facts, and the action
+verifies the second one before any job proceeds. It has to: `update-alternatives` governs `/usr/bin`
+alone, so anything earlier on PATH still wins, and it declines a path that is already a plain file
+rather than a symlink. Both failures are silent, and a job that installs a toolchain and then
+compiles with the runner's own would go green while testing something nobody asked for. The check
+prints each tool's full `--version` output and fails the step on a major-version mismatch, so the
+wrong toolchain surfaces at setup rather than as a puzzling result much later.
+
+`bazel-build.yml` deliberately installs nothing. It compiles under the runner image's own clang, and
+under the remote image's GCC when the RBE key is set, so the merge gate sees two standard libraries
+rather than one pinned toolchain. That divergence is coverage, not an oversight, and unifying it
+away would delete the only place a standard-library incompatibility surfaces before release.
