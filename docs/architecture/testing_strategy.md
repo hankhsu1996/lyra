@@ -2,79 +2,115 @@
 
 ## Purpose
 
-Define the test taxonomy: which tests exist, what each is allowed to check, and what shapes are
-forbidden.
+Define what a test may claim, where it lives, and who decides whether it passed. The corpus answers
+one question -- does Lyra implement IEEE 1800 correctly -- so it is a conformance suite against a
+published standard, and everything below follows from that.
 
 ## Owns
 
-- The two test categories, and what decides which one a new test belongs to.
-- The contract of each category: scope, input form, expected output form.
-- The rule that all SystemVerilog-semantic coverage is case coverage.
-- The rule that no test asserts on the text of an intermediate form.
+- The distinction between a conformance case and every other kind of test.
+- What a case may state, and in what form.
+- Where a case lives, and why the location is the standard's structure.
+- Where a path's limitations are recorded, and how they are kept honest.
 
 ## Does Not Own
 
 - Individual test contents.
-- Test runner implementation details.
-- Benchmark methodology (covered elsewhere).
+- The harness implementation.
+- Benchmark methodology.
 
 ## Core Invariants
 
-1. **Any test that validates SystemVerilog semantics is a case.** There is no partial exemption for
-   "small", "minimal", or "helper" coverage. What decides membership is the question the test
-   answers, never the size of the input it needs.
-2. **A case is a directory of SystemVerilog sources plus a manifest declaring the expected
-   behavior.** It runs the whole pipeline and simulates; what it asserts is the design's observable
-   result, not any intermediate the compiler passed through on the way.
-3. **A case asserts the thing the feature produces, not a downstream effect of it.** A feature whose
-   contract is "this variable now holds X" is checked against the variable. Formatted output is
-   asserted only where formatting is itself the feature under test.
-4. **A case names the backends that run it, and every backend claiming it answers to the same
-   expectations.** A case is written once; a backend that has not reached a construct leaves it
-   unclaimed rather than lowering it to a weaker assertion. Coverage is therefore measured rather
-   than asserted, and the claimed set is what grows as a backend fills in.
-5. **Everything outside the case corpus tests machinery with no SystemVerilog-semantic dimension**
-   -- a runtime data structure, diagnostic rendering, the driver's own command-line behavior. Such a
-   test may never stand in for language coverage.
-6. **Every SystemVerilog behavior has exactly one owning case.** Coverage is not duplicated between
-   cases, and never mirrored outside the corpus.
-7. **One case per meaningful semantic group, not per assertion.** A case pays the full fixed cost of
-   elaboration, lowering, emission, host compilation, and a run, so sharding one code path across
-   many cases buys wall-clock and no signal. Split only when the assertions exercise genuinely
-   different paths.
-8. **No test asserts on the text of an HIR, MIR, or LIR dump.** A dump is a debugging view whose
-   wording is free to change; pinning it tests the printer and obstructs every later refactor. What
-   a lowering produced is proven by what the program does.
+1. **A case states what IEEE 1800 requires of a program, and nothing else.** It names no path
+   through the compiler, no backend, no command, and no host tool. The same file is valid whether
+   Lyra has one path or twenty, and runs unmodified under any conforming simulator.
+
+2. **A case checks itself in SystemVerilog.** It compares in the language, calls `$fatal` on
+   mismatch, and prints a fixed sentinel from a single `final` procedure once every check has
+   passed. Pass or fail is read from the exit status and the presence of that sentinel; nothing else
+   about the program's output is parsed. The two signals divide the failures between them: `$fatal`
+   sets a nonzero exit (LRM 20.10), and a missing sentinel means the checks never ran.
+
+3. **The expected value is written by a human and is never a value Lyra produced.** A comparison
+   whose both sides pass through the same implementation proves only that the implementation agrees
+   with itself.
+
+4. **The corpus rests on the smallest subset that can express a check** -- a conditional, case
+   equality, and `$fatal`. A construct the corpus depends on is a construct whose defects fail every
+   case, so the foundation stays narrow and everything above it, immediate assertions included, is a
+   subject the corpus tests rather than a tool it uses.
+
+5. **A case's directory is the LRM clause it tests.** The standard's structure is the only
+   enumeration of its requirements, so it is the only basis on which coverage can be measured. Two
+   clauses that separately require the same behavior each get a case; those are two requirements.
+
+6. **Each requirement has one owning case.** A case that would extend an existing case's subject
+   extends it instead of joining the corpus beside it.
+
+7. **What a path cannot do is recorded once per path, never on a case.** The record pairs a case
+   with the refusal that path currently produces. A case that unexpectedly passes fails the run
+   exactly as an unexpected refusal does, so the record can only shrink as a path fills in, and it
+   is the coverage report.
+
+8. **A path is the artifact it produces, not the way that artifact is run.** Execution modes over
+   one emitted form share an acceptance surface and therefore one record; they cannot disagree about
+   which programs are accepted.
+
+9. **Everything whose subject is not an IEEE 1800 requirement is not a case** -- the command line,
+   the emitted project's portability, the harness's own machinery. Such a test may never stand in
+   for language coverage.
+
+10. **No test asserts on the text of an HIR, MIR, or LIR dump.** A dump is a debugging view whose
+    wording is free to change; what a lowering produced is proven by what the program does.
 
 ## Boundary to Adjacent Layers
 
-- A case exercises the full pipeline, so a failure in one may point at any layer. Bisecting it is
-  done by reading the dumps, not by pinning them in another test.
-- A test outside the corpus isolates one piece of machinery and must not depend on the shape of any
-  intermediate form.
+- A case exercises the whole pipeline, so a failure in one may point at any layer. Bisecting it is
+  done by reading the dumps, never by pinning them in another test.
+- A refusal recorded against a path is a refusal the compiler stated. A crash, or an invariant
+  violation reported as a compiler bug, is not a limitation and may not be recorded as one; the
+  error-handling policy in `CLAUDE.md` is what keeps the two distinguishable.
 
 ## Forbidden Shapes
 
-- A C++ test that constructs compiler objects and asserts on their fields to check SystemVerilog
-  semantics.
-- A case without a manifest.
-- Any assertion on a dump's text, in any category, to prove a language behavior.
-- Labels like "partial semantics", "small behavior", or "minimal repro" used to justify placing
-  SystemVerilog-semantic coverage outside the corpus.
-- A case one backend is held to more weakly than another.
-- A new case duplicating a path an existing case already covers, where extending that case would
-  serve.
-- Tests that exercise code outside the current source tree.
-- Relying on a file-path regex as the primary classification between categories. Membership follows
-  from what the test answers, not from what it is named.
+- A manifest that states the expected value of a variable inside the program. Reaching a value from
+  outside means reaching into the program, and the mechanisms for that -- rewriting the source,
+  synthesizing a probe -- put the implementation on both sides of the comparison.
+- Golden output used as the general mechanism. It couples every case to output formatting; reserve
+  it for cases whose subject is the output channel itself.
+- A path, backend, or execution mode named anywhere in the corpus tree or in a case.
+- A per-case tag declaring which paths run it. Absence of such a tag cannot distinguish a refusal
+  from an omission.
+- An expectation derived by recording a run, which freezes present behavior as the specification.
+- A case that reports success without having run its checks.
+- A C++ test that constructs compiler objects and asserts on their fields to establish a
+  SystemVerilog behavior.
+- Relying on a file-path pattern as the primary classification between kinds of test. What a test
+  answers decides what it is.
 
 ## Notes / Examples
 
-Current implementation: cases live under `tests/cases/`, each a directory holding `main.sv`, any
-support sources, and a `case.yaml` manifest declaring expected variables, expected output, and the
-backend tags that claim it. `tests/suites.yaml` maps a suite to the tags it collects. The tests
-outside the corpus are the diagnostic renderer, a runtime reference type, the driver's command-line
-behavior, and an audit of the precompiled header's contents.
+A case is one file. Prose states the claim and cites the clause; the checks and the sentinel sit in
+one `final` procedure:
+
+```systemverilog
+// A conditional generate block whose condition holds is elaborated, and the
+// initial procedure it contains runs (LRM 27.5).
+module Top;
+  bit ran;
+  if (1) begin : g
+    initial ran = 1;
+  end
+  final begin
+    if (!ran) $fatal(1, "the generate block's initial procedure did not run");
+    $display("All checks passed");
+  end
+endmodule
+```
+
+What a case genuinely needs beyond that -- extra sources, a front-end flag, the simulated program's
+argv, a required refusal -- is a `// @key: value` line at the top of the same file. Golden output,
+where the output channel is the subject, is a sibling file.
 
 Adding a SystemVerilog feature means adding or extending a case first, then implementing until it
 passes.

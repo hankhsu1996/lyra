@@ -25,9 +25,16 @@ Three layers, and a setting belongs to exactly one:
 | `.bazelrc.user` | your credentials and your default config           | no      |
 | `~/.bazelrc`    | this machine: resource limits, disk cache location | no      |
 
-`git clone` then `bazel build //...` works with no account and no local setup. `--config=ci` and
-`--config=rbe` are opt-in and each needs a BuildBuddy key from `.bazelrc.user`; nobody is required
-to have one. `.bazelrc.user.example` lists what may go there.
+`git clone` then `bazel build //...` works with no account and no local setup. `--config=ci`,
+`--config=rbe`, and `--config=dev` are opt-in and each needs a BuildBuddy key from `.bazelrc.user`;
+nobody is required to have one. `.bazelrc.user.example` lists what may go there.
+
+`ci` shares a cache while actions stay local; `rbe` runs the actions remotely for a gate that reads
+none of what it produces; `dev` is `rbe` for the edit loop, where top-level outputs come back so the
+binary just built can be run. Under either remote-execution config the concurrency of several
+sessions at once needs no local setting, because the remote scheduler is one queue across every
+invocation -- the coordination that separate Bazel servers on one machine cannot have. A test that
+drives the host C++ compiler cannot run remotely at all and is tagged to stay local.
 
 **The compiler differs between configs.** `--action_env=CC=clang` names the local compiler by
 environment, but a config setting `--platforms` resolves a registered toolchain instead, so
@@ -98,7 +105,7 @@ bazel test //tests:cpp_tests --test_filter='Cpp.errors.nets_multi_driver'
 ```
 
 CI's test job passes `--test_tag_filters=-requires-host-cxx`, which excludes `cpp_tests`,
-`run_tests`, and `pch_audit_test` -- everything that spawns the host C++ compiler. The C++ backend
+`cli_tests`, and `pch_audit_test` -- everything that spawns the host C++ compiler. The C++ backend
 is therefore verified before a commit and not again on merge, so a full local `bazel test //...` is
 the only gate it gets.
 

@@ -50,7 +50,7 @@ auto RunSimulation(Runtime& runtime) -> int {
     std::cerr << e.what() << "\n";
     return EXIT_FAILURE;
   } catch (const InternalError& e) {
-    std::cerr << e.what() << "\n";
+    std::cerr << "internal error: " << e.what() << "\n";
     return EXIT_FAILURE;
   } catch (const std::bad_alloc&) {
     std::cerr << "out of memory\n";

@@ -4,6 +4,7 @@
 #include <gtest/gtest.h>
 #include <string>
 
+#include "lyra/base/internal_error.hpp"
 #include "lyra/diag/diag_code.hpp"
 #include "lyra/diag/diagnostic.hpp"
 #include "lyra/diag/kind.hpp"
@@ -40,6 +41,18 @@ TEST(DiagRender, HostErrorColored) {
 TEST(DiagRender, InternalErrorIsAlwaysPlain) {
   const auto out = lyra::diag::RenderInternalError("invariant violated");
   EXPECT_EQ(out, "lyra: internal error: invariant violated\n");
+}
+
+// The exception carries the invariant that was violated and the fact that it is
+// a bug; naming it as an internal error belongs to whichever surface reports
+// it. Both would otherwise label it and the reader sees the label twice.
+TEST(DiagRender, InternalErrorLabelIsNotDoubled) {
+  const lyra::InternalError error("llvm codegen: no runtime domain");
+  const auto out = lyra::diag::RenderInternalError(error.what());
+  EXPECT_FALSE(Has(out, "internal error: Internal error:")) << out;
+  EXPECT_TRUE(Has(out, "lyra: internal error: llvm codegen: no runtime domain"))
+      << out;
+  EXPECT_TRUE(Has(out, "This is a bug in Lyra")) << out;
 }
 
 TEST(DiagRender, UnsupportedWithUnknownSpan) {

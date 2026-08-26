@@ -257,6 +257,12 @@ the detail lives in the entry itself.
 - [diagnostic-construction](diagnostic-construction.md) -- a diagnostic's kind is derived from its
   code at construction; construction is infallible; the `UnsupportedCategory` axis is removed.
 
+### Conformance testing
+
+- [conformance-case-shape](conformance-case-shape.md) -- a case is a self-checking SystemVerilog
+  program indexed by LRM clause; it names no path, states no expected variable, and carries no
+  manifest, and what a path cannot do is recorded once per path.
+
 ## File Naming
 
 `kebab-case.md`. The name describes the decision, not when it was made; the date lives inside the
