@@ -620,38 +620,55 @@ auto InstallPortConnections(
   UnitLowerer& unit_lowerer = lowerer.Owner();
   for (const hir::PortConnectionId id : hir_scope.port_connections.Ids()) {
     const hir::PortConnection& pc = hir_scope.port_connections.Get(id);
-    if (pc.direction == hir::PortDirection::kRef) {
-      // A `ref` port reaches the child's reference member by the same route
-      // navigation a routed reference uses, then binds it to the peer's cell
-      // through the one canonical reference-store primitive. It holds no
-      // persistent slot -- a `ref` needs no simulation-time reach, so the
-      // member is reached once here in the resolve phase (LRM 23.3.3.2).
-      const auto& recipe = std::get<hir::RoutedPathRecipe>(pc.endpoint);
-      if (!std::holds_alternative<hir::InUnitHead>(recipe.head)) {
+    // A `ref` port binds once and is done; the two value directions share the
+    // reactive edge built below and differ only in which end of it drives
+    // (LRM 23.3.3).
+    switch (pc.direction) {
+      case hir::PortDirection::kInput:
+      case hir::PortDirection::kOutput:
+        break;
+      // A unit publishes every direction the language admits, and AST-to-HIR
+      // refuses these two, so a recorded connection never carries one.
+      case hir::PortDirection::kInOut:
+      case hir::PortDirection::kConstRef:
         throw InternalError(
-            "InstallPortConnections: a ref port reaches its child downward");
+            "InstallPortConnections: a refused port direction reached the "
+            "connection switch");
+      case hir::PortDirection::kRef: {
+        // A `ref` port reaches the child's reference member by the same route
+        // navigation a routed reference uses, then binds it to the peer's cell
+        // through the one canonical reference-store primitive. It holds no
+        // persistent slot -- a `ref` needs no simulation-time reach, so the
+        // member is reached once here in the resolve phase (LRM 23.3.3.2).
+        const auto& recipe = std::get<hir::RoutedPathRecipe>(pc.endpoint);
+        if (!std::holds_alternative<hir::InUnitHead>(recipe.head)) {
+          throw InternalError(
+              "InstallPortConnections: a ref port reaches its child downward");
+        }
+        const mir::TypeId value_type = unit_lowerer.TranslateType(recipe.type);
+        const mir::TypeId ref_type = unit_lowerer.Unit().types.Intern(
+            mir::RefType{
+                .pointee = value_type,
+                .mutability = mir::Mutability::kMutable});
+        const mir::TypeId slot_type = unit_lowerer.Unit().types.PointerTo(
+            ref_type, mir::PointerOwnership::kBorrowed);
+        const mir::ExprId nav =
+            BuildRouteValue(lowerer, resolve_frame, recipe, slot_type);
+        const mir::ExprId target = resolve_block.exprs.Add(
+            mir::Expr{
+                .data = mir::DerefExpr{.pointer = nav}, .type = ref_type});
+
+        auto peer_or =
+            lowerer.LowerLhsExpr(hir_scope.exprs.Get(pc.peer), resolve_frame);
+        if (!peer_or) return std::unexpected(std::move(peer_or.error()));
+        const mir::ExprId peer_cell =
+            resolve_block.exprs.Add(*std::move(peer_or));
+
+        const mir::ExprId bind = BindReferenceSlot(
+            unit_lowerer.Unit(), resolve_block, target, peer_cell);
+        resolve_block.AppendStmt(mir::ExprStmt{.expr = bind});
+        continue;
       }
-      const mir::TypeId value_type = unit_lowerer.TranslateType(recipe.type);
-      const mir::TypeId ref_type = unit_lowerer.Unit().types.Intern(
-          mir::RefType{
-              .pointee = value_type, .mutability = mir::Mutability::kMutable});
-      const mir::TypeId slot_type = unit_lowerer.Unit().types.PointerTo(
-          ref_type, mir::PointerOwnership::kBorrowed);
-      const mir::ExprId nav =
-          BuildRouteValue(lowerer, resolve_frame, recipe, slot_type);
-      const mir::ExprId target = resolve_block.exprs.Add(
-          mir::Expr{.data = mir::DerefExpr{.pointer = nav}, .type = ref_type});
-
-      auto peer_or =
-          lowerer.LowerLhsExpr(hir_scope.exprs.Get(pc.peer), resolve_frame);
-      if (!peer_or) return std::unexpected(std::move(peer_or.error()));
-      const mir::ExprId peer_cell =
-          resolve_block.exprs.Add(*std::move(peer_or));
-
-      const mir::ExprId bind = BindReferenceSlot(
-          unit_lowerer.Unit(), resolve_block, target, peer_cell);
-      resolve_block.AppendStmt(mir::ExprStmt{.expr = bind});
-      continue;
     }
     const auto& cell = std::get<hir::PortCellEndpoint>(pc.endpoint);
     const bool is_input = pc.direction == hir::PortDirection::kInput;
@@ -1766,8 +1783,8 @@ auto StructuralScopeLowerer::PopulateBodies(WalkFrame parent_frame)
     unit_lowerer.Unit().foreign_surface.push_back(
         mir::ForeignSymbol{
             .linkage = entry.linkage,
-            .signature = entry.signature,
-            .definition = mir::ForeignDefinition::kPerScopeEntry});
+            .definition =
+                mir::PerScopeEntryDefinition{.signature = entry.signature}});
     mir_class.abi_adapters.Add(
         mir::AbiAdapter{
             .name = std::format("{}__export", export_decl.foreign_name),

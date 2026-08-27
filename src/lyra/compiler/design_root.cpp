@@ -9,8 +9,10 @@
 #include <unordered_map>
 #include <unordered_set>
 #include <utility>
+#include <variant>
 #include <vector>
 
+#include "lyra/base/overloaded.hpp"
 #include "lyra/compiler/unit_metadata.hpp"
 #include "lyra/hir/compilation_unit.hpp"
 #include "lyra/hir/structural_scope.hpp"
@@ -304,21 +306,29 @@ void DefineExportSymbols(
   std::unordered_set<std::string> defined;
   for (const mir::CompilationUnit& unit : units) {
     for (const mir::ForeignSymbol& symbol : unit.foreign_surface) {
-      if (symbol.definition != mir::ForeignDefinition::kPerScopeEntry ||
-          !defined.insert(symbol.linkage.foreign_name).second) {
-        continue;
-      }
-      const auto& signature = std::get<mir::MachineFunctionType>(
-          unit.types.Get(symbol.signature).data);
-      std::vector<mir::TypeId> params;
-      params.reserve(signature.params.size());
-      for (const mir::TypeId param : signature.params) {
-        params.push_back(ReinternForeignType(root, unit, param));
-      }
-      const mir::MachineFunctionType local{
-          .params = std::move(params),
-          .result = ReinternForeignType(root, unit, signature.result)};
-      DefineExportSymbol(root, symbol.linkage, local);
+      std::visit(
+          Overloaded{
+              // The unit that owns the callable defines the symbol itself, so
+              // the design has nothing left to define for this name.
+              [](const mir::UnitSymbolDefinition&) {},
+              [&](const mir::PerScopeEntryDefinition& per_scope) {
+                if (!defined.insert(symbol.linkage.foreign_name).second) {
+                  return;
+                }
+                const auto& signature = std::get<mir::MachineFunctionType>(
+                    unit.types.Get(per_scope.signature).data);
+                std::vector<mir::TypeId> params;
+                params.reserve(signature.params.size());
+                for (const mir::TypeId param : signature.params) {
+                  params.push_back(ReinternForeignType(root, unit, param));
+                }
+                const mir::MachineFunctionType local{
+                    .params = std::move(params),
+                    .result =
+                        ReinternForeignType(root, unit, signature.result)};
+                DefineExportSymbol(root, symbol.linkage, local);
+              }},
+          symbol.definition);
     }
   }
 }

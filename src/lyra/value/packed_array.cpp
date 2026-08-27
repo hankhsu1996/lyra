@@ -582,6 +582,22 @@ auto PackedArray::HasUnknown() const -> bool {
       UnknownWords(), [](std::uint64_t w) { return w != 0U; });
 }
 
+auto PackedArray::Truth() const -> Truthiness {
+  const auto value_words = ValueWords();
+  const auto unknown_words = UnknownWords();
+  bool has_unknown_bit = false;
+  for (std::size_t i = 0; i < value_words.size(); ++i) {
+    const std::uint64_t unk = i < unknown_words.size() ? unknown_words[i] : 0U;
+    if ((value_words[i] & ~unk) != 0U) {
+      return Truthiness::kKnownNonzero;
+    }
+    if (unk != 0U) {
+      has_unknown_bit = true;
+    }
+  }
+  return has_unknown_bit ? Truthiness::kUnknown : Truthiness::kKnownZero;
+}
+
 auto PackedArray::Clog2() const -> PackedArray {
   // ceil(log2(n)) is the index of n's highest set bit, plus one unless n is an
   // exact power of two; n in {0, 1} yields 0. Read the operand as unsigned:
@@ -1097,25 +1113,31 @@ auto FillTopBits(
   MaskUnusedTopBits(dst, bit_width);
 }
 
-enum class Truthiness : std::uint8_t { kKnownZero, kKnownNonzero, kUnknown };
-
-// LRM 11.4.7 truth value. kKnownNonzero requires a definitively-one bit
-// (no other 1 dominates), so `(1, X, X, X)` is kKnownNonzero but
-// `(X, X, X, X)` is kUnknown.
-auto TruthinessOf(const PackedArray& v) -> Truthiness {
-  const auto vw = v.ValueWords();
-  const auto uw = v.UnknownWords();
+// LRM 11.4.5 logical equality, which is x only where the unknown bits leave
+// the relation ambiguous: a position both operands know and disagree on
+// settles them as unequal however many unknown bits sit beside it, so only
+// agreement everywhere both are known leaves the answer to those bits.
+auto KnownBitsEqual(const PackedArray& a, const PackedArray& b)
+    -> std::optional<bool> {
+  const auto a_val = a.ValueWords();
+  const auto b_val = b.ValueWords();
+  const auto a_unk = a.UnknownWords();
+  const auto b_unk = b.UnknownWords();
   bool has_unknown_bit = false;
-  for (std::size_t i = 0; i < vw.size(); ++i) {
-    const std::uint64_t unk = i < uw.size() ? uw[i] : 0U;
-    if ((vw[i] & ~unk) != 0U) {
-      return Truthiness::kKnownNonzero;
+  for (std::size_t i = 0; i < a_val.size(); ++i) {
+    const std::uint64_t unk =
+        (i < a_unk.size() ? a_unk[i] : 0U) | (i < b_unk.size() ? b_unk[i] : 0U);
+    if (((a_val[i] ^ b_val[i]) & ~unk) != 0U) {
+      return false;
     }
     if (unk != 0U) {
       has_unknown_bit = true;
     }
   }
-  return has_unknown_bit ? Truthiness::kUnknown : Truthiness::kKnownZero;
+  if (has_unknown_bit) {
+    return std::nullopt;
+  }
+  return true;
 }
 
 }  // namespace
@@ -1335,22 +1357,20 @@ auto PackedArray::BitwiseXnor(const PackedArray& other) const -> PackedArray {
 
 auto PackedArray::operator==(const PackedArray& other) const -> PackedArray {
   RequireSameStorageDomain(*this, other, "operator==");
-  if (HasUnknown() || other.HasUnknown()) {
+  const std::optional<bool> equal = KnownBitsEqual(*this, other);
+  if (!equal.has_value()) {
     return AllX(1U, false);
   }
-  return OneBitResult(
-      UnsignedCompare(ValueWords(), other.ValueWords()) == 0,
-      type_.is_four_state);
+  return OneBitResult(*equal, type_.is_four_state);
 }
 
 auto PackedArray::operator!=(const PackedArray& other) const -> PackedArray {
   RequireSameStorageDomain(*this, other, "operator!=");
-  if (HasUnknown() || other.HasUnknown()) {
+  const std::optional<bool> equal = KnownBitsEqual(*this, other);
+  if (!equal.has_value()) {
     return AllX(1U, false);
   }
-  return OneBitResult(
-      UnsignedCompare(ValueWords(), other.ValueWords()) != 0,
-      type_.is_four_state);
+  return OneBitResult(!*equal, type_.is_four_state);
 }
 
 auto PackedArray::WildcardEquals(const PackedArray& other) const
@@ -1442,6 +1462,36 @@ auto PackedArray::CasexEquals(const PackedArray& other) const -> PackedArray {
     }
   }
   return OneBitResult(true, type_.is_four_state);
+}
+
+auto PackedArray::MergeConditional(const PackedArray& other) const
+    -> PackedArray {
+  RequireSameStorageDomain(*this, other, "MergeConditional");
+  const auto words = WordCountForBits(type_.bit_width);
+  const auto a_val = ValueWords();
+  const auto b_val = other.ValueWords();
+  const auto a_unk = UnknownWords();
+  const auto b_unk = other.UnknownWords();
+  const auto top_mask = MaskForWidth(type_.bit_width - ((words - 1U) * 64U));
+  std::vector<std::uint64_t> res_val(words, 0U);
+  std::vector<std::uint64_t> res_unk(words, 0U);
+  for (std::size_t w = 0; w < words; ++w) {
+    const std::uint64_t au = w < a_unk.size() ? a_unk[w] : 0U;
+    const std::uint64_t bu = w < b_unk.size() ? b_unk[w] : 0U;
+    // X is (value=1, unknown=1), which is what every bit the two arms do not
+    // both know and agree on becomes.
+    const std::uint64_t agreed = ~(a_val[w] ^ b_val[w]) & ~(au | bu);
+    std::uint64_t v = (a_val[w] & agreed) | ~agreed;
+    std::uint64_t u = ~agreed;
+    if (w + 1U == words) {
+      v &= top_mask;
+      u &= top_mask;
+    }
+    res_val[w] = v;
+    res_unk[w] = u;
+  }
+  return FromWords(
+      res_val, res_unk, PackedType{type_.dims, type_.is_signed, true});
 }
 
 auto PackedArray::ResolveTriState(const PackedArray& other) const
@@ -1962,8 +2012,8 @@ auto PackedArray::operator~() const -> PackedArray {
 }
 
 auto PackedArray::operator&&(const PackedArray& other) const -> PackedArray {
-  const auto a = TruthinessOf(*this);
-  const auto b = TruthinessOf(other);
+  const auto a = Truth();
+  const auto b = other.Truth();
   const bool result_four_state =
       type_.is_four_state || other.type_.is_four_state;
   if (a == Truthiness::kKnownZero || b == Truthiness::kKnownZero) {
@@ -1976,8 +2026,8 @@ auto PackedArray::operator&&(const PackedArray& other) const -> PackedArray {
 }
 
 auto PackedArray::operator||(const PackedArray& other) const -> PackedArray {
-  const auto a = TruthinessOf(*this);
-  const auto b = TruthinessOf(other);
+  const auto a = Truth();
+  const auto b = other.Truth();
   const bool result_four_state =
       type_.is_four_state || other.type_.is_four_state;
   if (a == Truthiness::kKnownNonzero || b == Truthiness::kKnownNonzero) {
@@ -1990,7 +2040,7 @@ auto PackedArray::operator||(const PackedArray& other) const -> PackedArray {
 }
 
 auto PackedArray::operator!() const -> PackedArray {
-  switch (TruthinessOf(*this)) {
+  switch (Truth()) {
     case Truthiness::kKnownZero:
       return OneBitResult(true, type_.is_four_state);
     case Truthiness::kKnownNonzero:
@@ -2003,8 +2053,8 @@ auto PackedArray::operator!() const -> PackedArray {
 
 auto PackedArray::LogicalImplication(const PackedArray& other) const
     -> PackedArray {
-  const auto a = TruthinessOf(*this);
-  const auto b = TruthinessOf(other);
+  const auto a = Truth();
+  const auto b = other.Truth();
   const bool result_four_state =
       type_.is_four_state || other.type_.is_four_state;
   if (a == Truthiness::kKnownZero || b == Truthiness::kKnownNonzero) {
@@ -2018,8 +2068,8 @@ auto PackedArray::LogicalImplication(const PackedArray& other) const
 
 auto PackedArray::LogicalEquivalence(const PackedArray& other) const
     -> PackedArray {
-  const auto a = TruthinessOf(*this);
-  const auto b = TruthinessOf(other);
+  const auto a = Truth();
+  const auto b = other.Truth();
   const bool result_four_state =
       type_.is_four_state || other.type_.is_four_state;
   if (a == Truthiness::kUnknown || b == Truthiness::kUnknown) {
@@ -2149,7 +2199,12 @@ auto PackedArray::Pow(const PackedArray& exponent) const -> PackedArray {
     return AllX(type_.bit_width, type_.is_signed);
   }
   if (exp < 0) {
-    // Negative exp on integer base rounds to zero except for base == +-1.
+    // LRM Table 11-4: a negative exponent is a reciprocal, which integer
+    // division truncates to zero for every base but +-1 -- and for a zero base
+    // is a division by zero, so the whole result is x.
+    if (IsZero(ValueWords())) {
+      return AllX(type_.bit_width, type_.is_signed);
+    }
     const auto one =
         FromInt(1, type_.bit_width, type_.is_signed, type_.is_four_state);
     if (UnsignedCompare(ValueWords(), one.ValueWords()) == 0) {

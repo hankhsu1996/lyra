@@ -16,4 +16,9 @@ auto PlaceType(
     const CompilationUnit& unit, const Function& fn, const Place& place)
     -> TypeId;
 
+// Whether the operand names a local that is storage of its own. Such an operand
+// already is the address the storage lives at; every other operand is a value,
+// which reaches storage only through a dereference.
+auto IsPlaceLocal(const Function& fn, const Operand& operand) -> bool;
+
 }  // namespace lyra::lir

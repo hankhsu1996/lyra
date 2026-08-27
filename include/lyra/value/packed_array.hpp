@@ -18,6 +18,11 @@ namespace lyra::value {
 class PackedArrayRef;
 class String;
 
+// LRM 11.4.7 truth value of an integral. A definitively-one bit settles the
+// value as nonzero however many unknown bits sit beside it, so `(1, x, x, x)`
+// is known nonzero while `(x, x, x, x)` is unknown.
+enum class Truthiness : std::uint8_t { kKnownZero, kKnownNonzero, kUnknown };
+
 // Unified integral value, mirroring slang's `IntegralType`: one type for every
 // integral, three attributes plus a dim stack. `backend::cpp` emits every
 // SystemVerilog integral (`byte`, `shortint`, `int`, `longint`, `integer`,
@@ -304,6 +309,8 @@ class PackedArray {
   // power return all-X (or 1-bit X) when any operand has HasUnknown().
   [[nodiscard]] auto HasUnknown() const -> bool;
 
+  [[nodiscard]] auto Truth() const -> Truthiness;
+
   // LRM 20.9 `$isunknown` -- the SV-surface query. Returns a 1-bit, 2-state
   // `PackedArray` so the MIR call's result type matches the C++ return type
   // with no backend lift. The host-bool `HasUnknown()` above is the
@@ -417,6 +424,11 @@ class PackedArray {
   // operand is a wildcard; remaining bits must match on the value plane.
   // Returns a deterministic 1-bit result.
   [[nodiscard]] auto CasexEquals(const PackedArray& other) const -> PackedArray;
+  // LRM 11.4.11 Table 11-20: the two arms of a conditional operator whose
+  // condition is ambiguous, combined bit by bit -- a bit both arms know and
+  // agree on survives, and every other bit becomes x.
+  [[nodiscard]] auto MergeConditional(const PackedArray& other) const
+      -> PackedArray;
   // LRM 6.6.1 Table 6-2 tri-state resolution of two driver contributions: Z
   // (the resolution identity) defers to the other, equal drivers pass through,
   // and a 0/1 conflict yields X. Associative and commutative, so a net folds
@@ -707,5 +719,6 @@ static_assert(ShapedSliceableRef<PackedArray>);
 static_assert(Ownable<PackedArray>);
 static_assert(Defaultable<PackedArray>);
 static_assert(NetResolvable<PackedArray>);
+static_assert(ConditionallyMergeable<PackedArray>);
 
 }  // namespace lyra::value

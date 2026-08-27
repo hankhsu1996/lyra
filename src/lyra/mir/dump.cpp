@@ -744,6 +744,12 @@ class MirDumper {
                   "ConditionalExpr cond=Expr[{}] then=Expr[{}] else=Expr[{}]",
                   c.condition.value, c.then_value.value, c.else_value.value);
             },
+            [](const MergingConditionalExpr& c) -> std::string {
+              return std::format(
+                  "MergingConditionalExpr cond=Expr[{}] then=Expr[{}] "
+                  "else=Expr[{}]",
+                  c.condition.value, c.then_value.value, c.else_value.value);
+            },
             [](const AssignExpr& a) -> std::string {
               const std::string op_str =
                   a.compound_op.has_value()

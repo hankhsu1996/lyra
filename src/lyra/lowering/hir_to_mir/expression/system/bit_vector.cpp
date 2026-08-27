@@ -9,6 +9,7 @@
 #include <variant>
 #include <vector>
 
+#include "lyra/base/internal_error.hpp"
 #include "lyra/diag/diag_code.hpp"
 #include "lyra/hir/expr.hpp"
 #include "lyra/hir/expr_id.hpp"
@@ -159,19 +160,30 @@ auto LowerBitVectorSystemSubroutineCall(
   // with control bits and the rest take nothing more. None of them elides.
   const std::vector<hir::ExprId> operands = RequiredOperands(call);
 
-  if (info.values == support::BitValueSet::kUnknowns &&
-      info.reading == support::BitCountReading::kAny) {
-    return LowerUnknownTest(lowerer, frame, operands[0]);
-  }
-
-  AdmittedBitValues admitted = FlagOfPlanes(true, false);
-  if (info.values == support::BitValueSet::kControlArguments) {
-    auto named = AdmittedByControlArguments(
-        lowerer, std::span{operands}.subspan(1), span);
-    if (!named) {
-      return std::unexpected(std::move(named.error()));
+  AdmittedBitValues admitted = 0;
+  switch (info.values) {
+    // The unknown set is only ever asked whether any bit is in it
+    // (`$isunknown`), which the runtime answers directly rather than by
+    // counting.
+    case support::BitValueSet::kUnknowns:
+      if (info.reading != support::BitCountReading::kAny) {
+        throw InternalError(
+            "LowerBitVectorSystemSubroutineCall: counting the unknown bits is "
+            "not a reading any subroutine declares");
+      }
+      return LowerUnknownTest(lowerer, frame, operands[0]);
+    case support::BitValueSet::kOnes:
+      admitted = FlagOfPlanes(true, false);
+      break;
+    case support::BitValueSet::kControlArguments: {
+      auto named = AdmittedByControlArguments(
+          lowerer, std::span{operands}.subspan(1), span);
+      if (!named) {
+        return std::unexpected(std::move(named.error()));
+      }
+      admitted = *named;
+      break;
     }
-    admitted = *named;
   }
 
   auto& unit = lowerer.Owner().Unit();

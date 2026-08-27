@@ -290,6 +290,26 @@ auto BuildValueConversion(
   return operand_expr;
 }
 
+auto BuildPropagatedConversion(
+    const mir::CompilationUnit& unit, mir::Block& block, mir::ExprId operand_id,
+    mir::TypeId dst_type) -> mir::Expr {
+  const auto& src_ty = unit.types.Get(block.exprs.Get(operand_id).type);
+  const auto& dst_ty = unit.types.Get(dst_type);
+  if (src_ty.IsIntegralPacked() && dst_ty.IsIntegralPacked()) {
+    const mir::Signedness propagated = dst_ty.AsIntegralPacked().signedness;
+    if (src_ty.AsIntegralPacked().signedness != propagated) {
+      // Restating the operand's own representation under the propagated
+      // signedness is what leaves the ordinary widening behind it: the fill
+      // then follows the signedness the value carries, as everywhere else.
+      mir::PackedArrayType restated = src_ty.AsIntegralPacked();
+      restated.signedness = propagated;
+      operand_id =
+          ConvertToType(unit, block, operand_id, unit.types.Intern(restated));
+    }
+  }
+  return BuildValueConversion(unit, block, operand_id, dst_type);
+}
+
 auto ConvertToType(
     const mir::CompilationUnit& unit, mir::Block& block, mir::ExprId operand_id,
     mir::TypeId dst_type) -> mir::ExprId {

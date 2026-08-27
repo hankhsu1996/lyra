@@ -2,6 +2,8 @@
 
 #include <cstdint>
 
+#include "lyra/base/internal_error.hpp"
+
 namespace lyra::hir {
 
 // LRM 13.5 argument directions. On a subroutine declaration a formal is also a
@@ -23,8 +25,16 @@ enum class ParamDirection : std::uint8_t {
 // written -- so neither hands anything back.
 [[nodiscard]] constexpr auto RequiresWriteback(ParamDirection direction)
     -> bool {
-  return direction == ParamDirection::kOutput ||
-         direction == ParamDirection::kInOut;
+  switch (direction) {
+    case ParamDirection::kOutput:
+    case ParamDirection::kInOut:
+      return true;
+    case ParamDirection::kInput:
+    case ParamDirection::kRef:
+    case ParamDirection::kConstRef:
+      return false;
+  }
+  throw InternalError("hir::RequiresWriteback: unknown ParamDirection");
 }
 
 }  // namespace lyra::hir

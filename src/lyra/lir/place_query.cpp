@@ -23,12 +23,12 @@ auto AsClassId(const CompilationUnit& unit, TypeId type)
   return object != nullptr ? std::optional{object->class_id} : std::nullopt;
 }
 
-auto IsPlaceLocal(const Function& fn, const Operand& op) -> bool {
-  const auto* use = std::get_if<Use>(&op);
-  return use != nullptr && fn.values.Get(use->value).kind == LocalKind::kPlace;
-}
-
 }  // namespace
+
+auto IsPlaceLocal(const Function& fn, const Operand& operand) -> bool {
+  const auto* use = std::get_if<Use>(&operand);
+  return use != nullptr && fn.values.Get(use->value).NamesStorage();
+}
 
 auto PlaceType(
     const CompilationUnit& unit, const Function& fn, const Place& place)

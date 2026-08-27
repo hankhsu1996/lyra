@@ -56,6 +56,19 @@ inline auto ClassifyEdge(
   return EdgeTransition::kChangeOnly;
 }
 
+// Whether the transition names a direction, as opposed to a change that names
+// none (LRM 9.4.2 Table 9-2).
+[[nodiscard]] constexpr auto IsDirectedEdge(EdgeTransition transition) -> bool {
+  switch (transition) {
+    case EdgeTransition::kPosedge:
+    case EdgeTransition::kNegedge:
+      return true;
+    case EdgeTransition::kChangeOnly:
+      return false;
+  }
+  throw InternalError("runtime::IsDirectedEdge: unknown EdgeTransition");
+}
+
 inline auto EdgeMatches(
     support::EventEdge subscribed, EdgeTransition transition) -> bool {
   switch (subscribed) {
@@ -66,10 +79,9 @@ inline auto EdgeMatches(
     case support::EventEdge::kNegedge:
       return transition == EdgeTransition::kNegedge;
     case support::EventEdge::kBothEdges:
-      return transition == EdgeTransition::kPosedge ||
-             transition == EdgeTransition::kNegedge;
+      return IsDirectedEdge(transition);
   }
-  return false;
+  throw InternalError("runtime::EdgeMatches: unknown EventEdge");
 }
 
 class Observable {

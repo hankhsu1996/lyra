@@ -523,6 +523,7 @@ enum class BuiltinFn : std::uint16_t {
   kCaseEqual,
   kCasezEquals,
   kCasexEquals,
+  kMergeConditional,
   kReductionAnd,
   kReductionOr,
   kReductionXor,

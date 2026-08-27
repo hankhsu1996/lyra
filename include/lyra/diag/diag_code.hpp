@@ -8,7 +8,11 @@
 
 namespace lyra::diag {
 
-// Stable identity for primary diagnostics. Notes have no code.
+// Stable identity for primary diagnostics. Notes have no code. Nothing branches
+// per code -- each is looked up by identity for the name and kind it registers,
+// and by name to parse one back -- so it is not a dispatch set. What every code
+// does need is an entry in that registry: a code without one is a lookup that
+// fails while reporting something else, in front of a user.
 enum class DiagCode : std::uint32_t {
   kUnsupportedAssociativeArrayType,
   kUnsupportedTypeKind,
@@ -29,6 +33,7 @@ enum class DiagCode : std::uint32_t {
   kUnsupportedSubroutineArgument,
   kUnsupportedClassFeature,
   kUnsupportedDpi,
+  kUnsupportedConversionForm,
 
   kErrorDelayValueOutOfRange,
   kErrorCaseEqualityOnRealOperand,

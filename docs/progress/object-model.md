@@ -190,6 +190,11 @@ this list is what remembers.
       project fails to compile (LRM 8.7).
 - [ ] Storing into an inherited member produces LIR the verifier rejects, so the execution backend
       cannot run a case that writes one; the C++ path does.
+- [ ] Reaching a member through a null handle crashes the simulation instead of reporting it. The
+      access is the design's own failure, so it owes the run a diagnostic naming what was
+      dereferenced; today the process dies on a signal and says nothing. Reachable from an
+      unassigned handle, and from any construct whose defined answer is null -- a conditional
+      operator whose condition is ambiguous among them (LRM Table 7-1).
 
 ## Open Questions and Deferred Choices
 

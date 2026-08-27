@@ -19,7 +19,8 @@ namespace lyra::runtime {
 
 // LRM 9.7 `process::state`, in declaration order: `status()` reports the
 // process's state as one of these, and the underlying integer is what the
-// SystemVerilog program compares against the enum members.
+// SystemVerilog program compares against the enum members. The simulated
+// program is what tells these apart, never Lyra, so it is not a dispatch set.
 enum class ProcessStatusCode : std::int32_t {
   kFinished = 0,
   kRunning = 1,

@@ -6,8 +6,11 @@
 // agree on and making every other bit x. The two expressions are
 // context-determined and are brought up to the width of the wider one while
 // the predicate is self-determined, and the operator associates to the right
-// and binds looser than the arithmetic and relational operators
-// (LRM 11.4.11, Table 11-20, 11.3.2, 11.6.1, Table 11-21).
+// and binds looser than the arithmetic and relational operators. Arms that are
+// arrays of the same size combine element by element instead of bit by bit: an
+// element the two agree on survives whole and one they disagree on takes the
+// element type's default
+// (LRM 11.4.11, Table 11-20, Table 7-1, 11.3.2, 11.6.1, Table 11-21).
 module Top;
   int picked_true;
   int picked_false;
@@ -21,6 +24,7 @@ module Top;
 
   logic [3:0] merged_differing;
   logic [3:0] merged_high_impedance;
+  logic [3:0] merged_elements [2];
 
   initial begin
     int a;
@@ -30,6 +34,8 @@ module Top;
     logic ambiguous;
     logic [3:0] narrow_arm;
     logic [7:0] wide_zero;
+    logic [3:0] left_elements [2];
+    logic [3:0] right_elements [2];
 
     right_associative = 9;
 
@@ -53,6 +59,15 @@ module Top;
     merged_differing = ambiguous ? 4'b1010 : 4'b1100;
     ambiguous = 1'bz;
     merged_high_impedance = ambiguous ? 4'b1010 : 4'b1100;
+
+    // An array element is kept or defaulted whole; the differing element does
+    // not merge bit by bit the way a packed arm does.
+    ambiguous = 1'bx;
+    left_elements[0] = 4'b1010;
+    left_elements[1] = 4'b0110;
+    right_elements[0] = 4'b1100;
+    right_elements[1] = 4'b0110;
+    merged_elements = ambiguous ? left_elements : right_elements;
 
     // A concatenation makes its operand self-determined, so the width the
     // conditional operator settles on is the only thing that decides whether
@@ -99,6 +114,12 @@ module Top;
     if (merged_high_impedance !== 4'b1xx0)
       $fatal(1, "merged_high_impedance was %b, expected 1xx0",
              merged_high_impedance);
+    if (merged_elements[0] !== 4'bxxxx)
+      $fatal(1, "merged_elements[0] was %b, expected xxxx",
+             merged_elements[0]);
+    if (merged_elements[1] !== 4'b0110)
+      $fatal(1, "merged_elements[1] was %b, expected 0110",
+             merged_elements[1]);
     $display("All checks passed");
   end
 endmodule

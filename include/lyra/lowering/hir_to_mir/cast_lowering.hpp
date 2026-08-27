@@ -27,6 +27,15 @@ namespace lyra::lowering::hir_to_mir {
     const mir::CompilationUnit& unit, mir::Block& block, mir::ExprId operand_id,
     mir::TypeId dst_type) -> mir::Expr;
 
+// The conversion LRM 11.8.2 puts on a context-determined operand, which differs
+// from every other context in what fixes the fill above the operand's width:
+// the operand is converted to the propagated type first, so that type's
+// signedness decides whether the widening replicates the sign bit, where an
+// assignment's right-hand side is extended by its own signedness (LRM 11.8.3).
+[[nodiscard]] auto BuildPropagatedConversion(
+    const mir::CompilationUnit& unit, mir::Block& block, mir::ExprId operand_id,
+    mir::TypeId dst_type) -> mir::Expr;
+
 // The declared representation a packed value-layer call lands its result into,
 // carried as an ordinary MIR value of that type -- a default literal -- so the
 // representation reaches the runtime through the argument list, not composed by

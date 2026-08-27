@@ -24,6 +24,9 @@ namespace lyra::compiler {
 // with `$`); a backend maps it to a target-language identifier when emitting.
 inline constexpr std::string_view kDesignRootUnitName = "$root";
 
+// The last stage a compile runs, in pipeline order. A stage asks whether the
+// request reaches past it and so compares position rather than naming a
+// member, which makes this an ordered scale and not a dispatch set.
 enum class StopAfter : std::uint8_t { kParse, kHir, kMir, kLir };
 
 // Move-only owning bag of artifacts produced by Compile. Each optional is

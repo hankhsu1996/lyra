@@ -516,6 +516,8 @@ auto BuiltinFnName(BuiltinFn id) -> std::string_view {
       return "casez_equals";
     case BuiltinFn::kCasexEquals:
       return "casex_equals";
+    case BuiltinFn::kMergeConditional:
+      return "merge_conditional";
     case BuiltinFn::kReductionAnd:
       return "reduction_and";
     case BuiltinFn::kReductionOr:
