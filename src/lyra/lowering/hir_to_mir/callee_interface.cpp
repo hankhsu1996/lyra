@@ -1,10 +1,11 @@
-#include "lyra/lowering/hir_to_mir/completion_payload.hpp"
+#include "lyra/lowering/hir_to_mir/callee_interface.hpp"
 
 #include <cstdint>
 #include <optional>
 #include <vector>
 
 #include "lyra/base/component_index.hpp"
+#include "lyra/base/internal_error.hpp"
 #include "lyra/hir/procedural_var.hpp"
 #include "lyra/hir/subroutine.hpp"
 #include "lyra/lowering/hir_to_mir/unit_lowerer.hpp"
@@ -50,6 +51,28 @@ auto BuildCompletionLayout(
   return layout;
 }
 
+auto ParamTypeOf(
+    UnitLowerer& unit, hir::TypeId value_type, hir::ParamDirection direction)
+    -> std::optional<mir::TypeId> {
+  const mir::TypeId mir_value = unit.TranslateType(value_type);
+  switch (direction) {
+    case hir::ParamDirection::kOutput:
+      return std::nullopt;
+    case hir::ParamDirection::kInput:
+    case hir::ParamDirection::kInOut:
+      return mir_value;
+    case hir::ParamDirection::kRef:
+    case hir::ParamDirection::kConstRef:
+      return unit.Unit().types.Intern(
+          mir::RefType{
+              .pointee = mir_value,
+              .mutability = direction == hir::ParamDirection::kConstRef
+                                ? mir::Mutability::kReadOnly
+                                : mir::Mutability::kMutable});
+  }
+  throw InternalError("ParamTypeOf: unknown parameter direction");
+}
+
 auto CalleeFormalsOf(UnitLowerer& unit, const hir::SubroutineDecl& decl)
     -> std::vector<CalleeFormal> {
   std::vector<CalleeFormal> formals;
@@ -60,6 +83,20 @@ auto CalleeFormalsOf(UnitLowerer& unit, const hir::SubroutineDecl& decl)
             .direction = param.direction,
             .type = unit.TranslateType(
                 decl.body.procedural_vars.Get(param.var).type)});
+  }
+  return formals;
+}
+
+auto CalleeFormalsOf(
+    UnitLowerer& unit, const hir::ExternalCalleeInterface& interface)
+    -> std::vector<CalleeFormal> {
+  std::vector<CalleeFormal> formals;
+  formals.reserve(interface.params.size());
+  for (const hir::ExternalCalleeParam& param : interface.params) {
+    formals.push_back(
+        CalleeFormal{
+            .direction = param.direction,
+            .type = unit.TranslateType(param.type)});
   }
   return formals;
 }

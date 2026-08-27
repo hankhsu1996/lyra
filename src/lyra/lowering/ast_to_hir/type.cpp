@@ -32,6 +32,7 @@
 #include "lyra/hir/stmt.hpp"
 #include "lyra/hir/subroutine.hpp"
 #include "lyra/lowering/ast_to_hir/constant_value.hpp"
+#include "lyra/lowering/ast_to_hir/expression/slang_atoms.hpp"
 #include "lyra/lowering/ast_to_hir/integral_constant.hpp"
 #include "lyra/lowering/ast_to_hir/process_lowerer.hpp"
 #include "lyra/lowering/ast_to_hir/specialization_name.hpp"
@@ -583,6 +584,9 @@ auto BuildInterfaceForwardingMethod(
   std::vector<hir::SubroutineParam> params;
   std::vector<std::optional<hir::ExprId>> args;
   for (const auto* formal : impl.getArguments()) {
+    // The forwarder would have to hand its own completion whatever the
+    // forwarded call's completion carried back, which is a composition its
+    // one-statement body does not express.
     if (formal->direction != slang::ast::ArgumentDirection::In) {
       return diag::Fail(
           span, diag::DiagCode::kUnsupportedClassFeature,
@@ -621,6 +625,8 @@ auto BuildInterfaceForwardingMethod(
       impl.getParentScope()->asSymbol().as<slang::ast::ClassType>();
   auto impl_ref = unit_lowerer.ResolveClassRef(impl_class, span);
   if (!impl_ref) return std::unexpected(std::move(impl_ref.error()));
+  auto impl_callee = unit_lowerer.MakeMethodCallee(*impl_ref, impl, span);
+  if (!impl_callee) return std::unexpected(std::move(impl_callee.error()));
   const hir::ExprId call = body.exprs.Add(
       hir::Expr{
           .type = result_type,
@@ -629,8 +635,7 @@ auto BuildInterfaceForwardingMethod(
                   .callee =
                       hir::MethodCallRef{
                           .receiver = hir::SuperReceiver{},
-                          .target = unit_lowerer.MakeClassMethodTarget(
-                              *impl_ref, impl)},
+                          .callee = *std::move(impl_callee)},
                   .arguments = std::move(args)},
           .span = span});
   // Forwarding is the whole body: one return of the forwarded call, with the
@@ -724,6 +729,75 @@ auto SynthesizeInterfaceForwardingMethods(
   return {};
 }
 
+// The method this one overrides, or nothing where it introduces its own
+// behaviour. The frontend resolves the ordinary case, having already matched
+// signature, direction, return type and every other LRM 8.20 compatibility
+// rule, so that answer is consumed rather than recomputed. It leaves the link
+// unset in the two cases where the overridden declaration carries no body -- a
+// pure virtual method in the base chain (LRM 8.21) and an interface class's
+// contract (LRM 8.26) -- so those are re-established against the chains that
+// can hold one, and each answers through the stub carrying its signature.
+auto OverriddenMethod(
+    const slang::ast::ClassType& cls,
+    const slang::ast::SubroutineSymbol& method)
+    -> const slang::ast::SubroutineSymbol* {
+  if (const auto* resolved = method.getOverride(); resolved != nullptr) {
+    return resolved;
+  }
+  const slang::ast::MethodPrototypeSymbol* contract =
+      FindOverriddenPureInBaseChain(cls, method.name);
+  if (contract == nullptr) {
+    contract = FindOverriddenPureInImplementsChain(cls, method.name);
+  }
+  if (contract == nullptr) {
+    return nullptr;
+  }
+  const auto* stub = contract->getSubroutine();
+  if (stub == nullptr) {
+    throw InternalError(
+        "OverriddenMethod: pure virtual prototype has no stub subroutine "
+        "slang normally materializes");
+  }
+  return stub;
+}
+
+// Lowers one method a class defines. SystemVerilog has two spellings for that
+// and they differ only in where the source put the body: written inline in the
+// class body, or declared there as an `extern` prototype with the definition
+// outside it (LRM 8.24). Both arrive here as the subroutine the frontend
+// resolved the declaration to, carrying the same source-level dispatch facts --
+// `static` (LRM 8.10) makes the signature receiver-less, `virtual` (LRM 8.20)
+// puts the method in the class's dispatch table.
+auto LowerDefinedClassMethod(
+    UnitLowerer& unit_lowerer, const slang::ast::ClassType& cls,
+    const slang::ast::SubroutineSymbol& method, const WalkFrame& class_frame,
+    diag::SourceSpan span) -> diag::Result<hir::SubroutineDecl> {
+  auto method_decl = LowerSubroutineDecl(unit_lowerer, method, class_frame);
+  if (!method_decl) return std::unexpected(std::move(method_decl.error()));
+  method_decl->is_static = method.flags.has(slang::ast::MethodFlags::Static);
+  method_decl->is_virtual = method.flags.has(slang::ast::MethodFlags::Virtual);
+  // Slang enforces at declaration that static and virtual are mutually
+  // exclusive, so a receiver-less method fills no slot.
+  const auto* overridden =
+      method_decl->is_static ? nullptr : OverriddenMethod(cls, method);
+  if (overridden == nullptr) {
+    return method_decl;
+  }
+  // The base link the class shape carries has resolved a `LocalClassRef` for a
+  // same-unit owner and an `ExternalClassRef` for a cross-unit one; the
+  // override target follows the same axis, owner-qualified in either case.
+  const auto& slot_class =
+      overridden->getParentScope()->asSymbol().as<slang::ast::ClassType>();
+  auto slot_ref = unit_lowerer.ResolveClassRef(slot_class, span);
+  if (!slot_ref) return std::unexpected(std::move(slot_ref.error()));
+  method_decl->overrides =
+      unit_lowerer.MakeClassMethodTarget(*slot_ref, *overridden);
+  // A method that overrides another is itself virtual, whether or not the
+  // derived declaration repeated the keyword (LRM 8.20, 8.26.2).
+  method_decl->is_virtual = true;
+  return method_decl;
+}
+
 // Walks a class's parent-scope chain to find the compilation-unit-level
 // symbol that owns its declaration -- a package (LRM 26), a module body
 // (LRM 23.2), or an interface body (LRM 25). A class nested in another
@@ -759,8 +833,44 @@ auto UnitLowerer::MakeClassMethodTarget(
   return hir::ExternalClassMethodTarget{
       .unit_name = ext.unit_name,
       .class_name = ext.class_name,
-      .method_name = std::string(method.name),
-      .is_virtual = method.isVirtual()};
+      .method_name = std::string(method.name)};
+}
+
+auto UnitLowerer::MakeMethodCallee(
+    const hir::ClassRef& class_ref, const slang::ast::SubroutineSymbol& method,
+    diag::SourceSpan span) -> diag::Result<hir::MethodCallee> {
+  auto target = MakeClassMethodTarget(class_ref, method);
+  if (const auto* local = std::get_if<hir::LocalClassMethodTarget>(&target)) {
+    return *local;
+  }
+  // The callee's declaration is in another unit, so this unit recomputes the
+  // interface it would otherwise have read off one: the call protocol, and each
+  // formal's direction and type (LRM 13.5). Both sides derive it from the same
+  // declaration, so the call cannot ask for a shape the definition does not
+  // produce.
+  auto interface = MakeExternalCalleeInterface(method, span);
+  if (!interface) return std::unexpected(std::move(interface.error()));
+  return hir::ExternalMethodCallee{
+      .target = std::get<hir::ExternalClassMethodTarget>(std::move(target)),
+      .is_virtual = method.isVirtual(),
+      .interface = *std::move(interface)};
+}
+
+auto UnitLowerer::MakeExternalCalleeInterface(
+    const slang::ast::SubroutineSymbol& sym, diag::SourceSpan span)
+    -> diag::Result<hir::ExternalCalleeInterface> {
+  std::vector<hir::ExternalCalleeParam> params;
+  params.reserve(sym.getArguments().size());
+  for (const auto* formal : sym.getArguments()) {
+    auto formal_type = InternType(formal->getType(), span);
+    if (!formal_type) return std::unexpected(std::move(formal_type.error()));
+    params.push_back(
+        hir::ExternalCalleeParam{
+            .direction = ParamDirectionOf(*formal), .type = *formal_type});
+  }
+  return hir::ExternalCalleeInterface{
+      .kind = ToHirSubroutineKind(sym.subroutineKind),
+      .params = std::move(params)};
 }
 
 auto UnitLowerer::MakeClassPropertyTarget(
@@ -907,7 +1017,17 @@ auto UnitLowerer::InternLocalClass(
         hir::ClassField{.name = std::string(prop.name), .type = *prop_type});
     RegisterClassPropertyFieldId(prop, field_id);
   }
-  std::optional<hir::SubroutineDecl> user_constructor;
+  // Every callable the class body declares, resolved to the subroutine that
+  // carries its declaration. SystemVerilog spells a definition two ways and
+  // they differ only in where the body sits: written inline, the class scope
+  // holds the subroutine; declared `extern`, the class scope holds a prototype
+  // and the definition sits outside the class body (LRM 8.24). A pure virtual
+  // prototype (LRM 8.21) is the one form with no definition behind it. The
+  // constructor is taken out of both: it is a construction-protocol fact the
+  // class holds beside its methods (LRM 8.7), not a slot in the method arena.
+  std::vector<const slang::ast::SubroutineSymbol*> defined_methods;
+  std::vector<const slang::ast::MethodPrototypeSymbol*> pure_prototypes;
+  const slang::ast::SubroutineSymbol* constructor_sym = nullptr;
   for (const auto& method : cls.membersOfType<slang::ast::SubroutineSymbol>()) {
     if (method.getParentScope() != &cls) {
       continue;
@@ -918,139 +1038,65 @@ auto UnitLowerer::InternLocalClass(
       continue;
     }
     if (method.flags.has(slang::ast::MethodFlags::Constructor)) {
-      for (const auto* formal : method.getArguments()) {
-        if (formal->direction != slang::ast::ArgumentDirection::In) {
-          return diag::Fail(
-              span, diag::DiagCode::kUnsupportedClassFeature,
-              "a constructor with an output / inout / ref argument is not yet "
-              "supported");
-        }
-      }
-      // `getBaseConstructorCall` returns the `super.new(...)` slang lifted out
-      // of the ctor body: null when the source did not write one (LRM 8.7
-      // implicit forwarding, materialized as an empty stated base_init in
-      // HIR-to-MIR) or when this class has no base.
-      const slang::ast::Expression* base_call_ast =
-          cls.getBaseConstructorCall();
-      auto ctor_or =
-          LowerConstructorDecl(*this, method, class_frame, base_call_ast);
-      if (!ctor_or) return std::unexpected(std::move(ctor_or.error()));
-      user_constructor = std::move(ctor_or->constructor);
-      decl.base_call = std::move(ctor_or->base_call);
+      constructor_sym = &method;
       continue;
     }
-    if (method.subroutineKind == slang::ast::SubroutineKind::Task) {
-      return diag::Fail(
-          span, diag::DiagCode::kUnsupportedClassFeature,
-          "class task methods are not yet supported");
-    }
-    auto method_decl = LowerSubroutineDecl(*this, method, class_frame);
-    if (!method_decl) return std::unexpected(std::move(method_decl.error()));
-    // Source-level facts on a class method: `static` (LRM 8.10) makes the
-    // signature receiver-less; `virtual` (LRM 8.20) puts the method in the
-    // class's dispatch table. Slang enforces at declaration that static and
-    // virtual are mutually exclusive, so the override / dispatch wiring
-    // below runs only for non-static methods.
-    method_decl->is_static = method.flags.has(slang::ast::MethodFlags::Static);
-    method_decl->is_virtual =
-        method.flags.has(slang::ast::MethodFlags::Virtual);
-    if (!method_decl->is_static) {
-      // The frontend has already matched signature, direction, return type,
-      // and any other LRM 8.20 override compatibility rule when it resolved
-      // this reference; the HIR consumes it as an already-resolved identity.
-      // The base link the class shape carries has resolved a `LocalClassRef`
-      // for a same-unit base or an `ExternalClassRef` for a cross-unit base;
-      // the override target follows the same axis, owner-qualified in either
-      // case.
-      if (const auto* overridden = method.getOverride();
-          overridden != nullptr) {
-        const auto& base_class = overridden->getParentScope()
-                                     ->asSymbol()
-                                     .as<slang::ast::ClassType>();
-        auto base_ref = ResolveClassRef(base_class, span);
-        if (!base_ref) return std::unexpected(std::move(base_ref.error()));
-        method_decl->overrides = MakeClassMethodTarget(*base_ref, *overridden);
-      } else if (const auto* pure_base =
-                     FindOverriddenPureInBaseChain(cls, method.name);
-                 pure_base != nullptr) {
-        // Slang leaves the override link unset when the base method is a
-        // pure virtual prototype (LRM 8.21); wire it here so downstream
-        // dispatch canonicalizes to the base's slot rather than treating
-        // this method as a fresh introducer.
-        const auto& base_class =
-            pure_base->getParentScope()->asSymbol().as<slang::ast::ClassType>();
-        auto base_ref = ResolveClassRef(base_class, span);
-        if (!base_ref) return std::unexpected(std::move(base_ref.error()));
-        const auto* proto_stub = pure_base->getSubroutine();
-        if (proto_stub == nullptr) {
-          throw InternalError(
-              "UnitLowerer::InternLocalClass: pure virtual prototype has no "
-              "stub subroutine slang normally materializes");
-        }
-        method_decl->overrides = MakeClassMethodTarget(*base_ref, *proto_stub);
-        // An override of a base virtual method is itself virtual (LRM 8.20),
-        // even when the derived declaration omits the `virtual` keyword.
-        method_decl->is_virtual = true;
-      } else if (const auto* pure_iface =
-                     FindOverriddenPureInImplementsChain(cls, method.name);
-                 pure_iface != nullptr) {
-        // The method satisfies an interface class's pure virtual contract
-        // (LRM 8.26). Slang validates the satisfaction but leaves the
-        // override link unset on the concrete method; wire it so downstream
-        // dispatch canonicalizes to the interface's slot instead of
-        // treating this method as a fresh introducer.
-        const auto& iface_class = pure_iface->getParentScope()
-                                      ->asSymbol()
-                                      .as<slang::ast::ClassType>();
-        auto iface_ref = ResolveClassRef(iface_class, span);
-        if (!iface_ref) return std::unexpected(std::move(iface_ref.error()));
-        const auto* proto_stub = pure_iface->getSubroutine();
-        if (proto_stub == nullptr) {
-          throw InternalError(
-              "UnitLowerer::InternLocalClass: interface pure virtual "
-              "prototype has no stub subroutine slang normally materializes");
-        }
-        method_decl->overrides = MakeClassMethodTarget(*iface_ref, *proto_stub);
-        // A method satisfying an interface pure virtual is itself virtual
-        // (LRM 8.26.2 requires the implementation carry `virtual`).
-        method_decl->is_virtual = true;
-      }
-    }
-    const hir::MethodId method_id = decl.methods.Add(*std::move(method_decl));
-    RegisterMethodId(method, method_id);
+    defined_methods.push_back(&method);
   }
-
-  // A pure virtual method (LRM 8.21 `pure virtual function ...;`) lands in
-  // slang as a `MethodPrototypeSymbol`, not a `SubroutineSymbol`, because it
-  // has no body. Its signature still occupies a class-owned method slot the
-  // dispatch table introduces and every extended concrete class must fill,
-  // so it enters the same `methods` arena that carries ordinary instance
-  // methods; the record is marked `is_prototype` so the backend renders it
-  // as a C++ pure declaration (`= 0;`) instead of a body.
   for (const auto& proto :
        cls.membersOfType<slang::ast::MethodPrototypeSymbol>()) {
     if (proto.getParentScope() != &cls) {
       continue;
     }
-    if (!proto.flags.has(slang::ast::MethodFlags::Pure)) {
-      return diag::Fail(
-          span, diag::DiagCode::kUnsupportedClassFeature,
-          "extern / out-of-block class method prototypes are not yet "
-          "supported");
+    const auto* subroutine = proto.getSubroutine();
+    if (subroutine == nullptr) {
+      throw InternalError(
+          "UnitLowerer::InternLocalClass: a class method prototype has no "
+          "subroutine slang normally materializes");
     }
-    if (proto.subroutineKind == slang::ast::SubroutineKind::Task) {
-      return diag::Fail(
-          span, diag::DiagCode::kUnsupportedClassFeature,
-          "pure virtual class task prototypes are not yet supported");
+    if (proto.flags.has(slang::ast::MethodFlags::Constructor)) {
+      constructor_sym = subroutine;
+      continue;
     }
-    auto proto_decl = LowerMethodPrototypeDecl(*this, proto, class_frame);
+    if (proto.flags.has(slang::ast::MethodFlags::Pure)) {
+      pure_prototypes.push_back(&proto);
+      continue;
+    }
+    defined_methods.push_back(subroutine);
+  }
+
+  // Take an identity for every method before any body lowers, so a body may
+  // name a peer whatever order the source declared them in (LRM 13.7) and so a
+  // method whose definition sits outside the class body is still nameable from
+  // inside it (LRM 8.24).
+  for (const auto* method : defined_methods) {
+    RegisterMethodId(*method, decl.methods.Declare());
+  }
+  for (const auto* proto : pure_prototypes) {
+    RegisterMethodId(*proto->getSubroutine(), decl.methods.Declare());
+  }
+
+  for (const auto* method : defined_methods) {
+    auto method_decl =
+        LowerDefinedClassMethod(*this, cls, *method, class_frame, span);
+    if (!method_decl) return std::unexpected(std::move(method_decl.error()));
+    decl.methods.Define(LookupMethodId(*method), *std::move(method_decl));
+  }
+
+  // A pure virtual method's signature occupies a class-owned method slot the
+  // dispatch table introduces and every extended concrete class must fill, so
+  // it enters the same arena that carries ordinary instance methods; the record
+  // is marked a prototype so a backend renders a declaration rather than a
+  // body.
+  for (const auto* proto : pure_prototypes) {
+    auto proto_decl = LowerMethodPrototypeDecl(*this, *proto, class_frame);
     if (!proto_decl) return std::unexpected(std::move(proto_decl.error()));
     // A middle abstract class re-declaring an ancestor's pure virtual method
     // as another `pure virtual` produces a prototype whose overrides link
     // slang exposes as a `Symbol*` (either the ancestor prototype's stub or
     // another prototype). Translate the reachable stub form to the HIR
     // identity registered when that ancestor was interned.
-    if (const auto* overridden = proto.getOverride(); overridden != nullptr) {
+    if (const auto* overridden = proto->getOverride(); overridden != nullptr) {
       const slang::ast::SubroutineSymbol* overridden_sub = nullptr;
       if (overridden->kind == slang::ast::SymbolKind::Subroutine) {
         overridden_sub = &overridden->as<slang::ast::SubroutineSymbol>();
@@ -1068,19 +1114,40 @@ auto UnitLowerer::InternLocalClass(
             MakeClassMethodTarget(*base_ref, *overridden_sub);
       }
     }
-    const hir::MethodId method_id = decl.methods.Add(*std::move(proto_decl));
-    // Register the prototype's stub subroutine so a downstream override
-    // walker or the `FindOverriddenPureInBaseChain` fallback can translate
-    // the prototype to its HIR method identity through the same
-    // `SubroutineSymbol`-keyed registry every other override lookup uses.
-    if (const auto* proto_stub = proto.getSubroutine(); proto_stub != nullptr) {
-      RegisterMethodId(*proto_stub, method_id);
+    decl.methods.Define(
+        LookupMethodId(*proto->getSubroutine()), *std::move(proto_decl));
+  }
+
+  // The class's `new` (LRM 8.7), lowered once every method identity exists so
+  // its body reaches them the same way any other body does.
+  std::optional<hir::SubroutineDecl> user_constructor;
+  if (constructor_sym != nullptr) {
+    // LRM 8.7 gives a constructor the argument conventions of any other
+    // subroutine call, but a construction yields the object it built and so
+    // carries nothing a value could travel back to the caller in, and its
+    // actuals are bound as values rather than as aliases.
+    for (const auto* formal : constructor_sym->getArguments()) {
+      if (formal->direction != slang::ast::ArgumentDirection::In) {
+        return diag::Fail(
+            span, diag::DiagCode::kUnsupportedClassFeature,
+            "a constructor with an output / inout / ref argument is not yet "
+            "supported");
+      }
     }
+    // `getBaseConstructorCall` returns the `super.new(...)` slang lifted out of
+    // the ctor body: null when the source did not write one (LRM 8.7 implicit
+    // forwarding, materialized as an empty stated base call in HIR-to-MIR) or
+    // when this class has no base.
+    auto ctor_or = LowerConstructorDecl(
+        *this, *constructor_sym, class_frame, cls.getBaseConstructorCall());
+    if (!ctor_or) return std::unexpected(std::move(ctor_or.error()));
+    user_constructor = std::move(ctor_or->constructor);
+    decl.base_call = std::move(ctor_or->base_call);
   }
 
   // Forward every interface pure virtual this class satisfies by inheritance
-  // rather than a local definition (LRM 8.26.2); a locally-satisfied contract
-  // is already wired by the method loop above.
+  // rather than a local definition (LRM 8.26.2); a contract a method of this
+  // class satisfies is wired when that method is lowered.
   if (auto forwards = SynthesizeInterfaceForwardingMethods(
           *this, cls, span, decl, class_frame);
       !forwards) {

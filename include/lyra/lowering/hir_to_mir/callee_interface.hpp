@@ -4,6 +4,7 @@
 #include <vector>
 
 #include "lyra/base/component_index.hpp"
+#include "lyra/hir/external_callee.hpp"
 #include "lyra/hir/param_direction.hpp"
 #include "lyra/hir/subroutine_kind.hpp"
 #include "lyra/mir/compilation_unit.hpp"
@@ -77,9 +78,26 @@ auto BuildCompletionLayout(
     const std::vector<CalleeFormal>& formals,
     std::optional<mir::TypeId> result_type) -> CompletionLayout;
 
+// The type a formal carries as a parameter of the callable, or nothing where it
+// is no parameter at all. An `input` and an `inout` carry the formal's value
+// type; a `ref` / `const ref` carries a reference to it, being a live alias of
+// the caller's storage (LRM 13.5.2); an `output` carries nothing, being a body
+// local whose final value rides the completion instead (LRM 13.5). This is the
+// sole statement of which formals are parameters, so a definition and the
+// prototype it implements cannot declare different parameter lists.
+auto ParamTypeOf(
+    UnitLowerer& unit, hir::TypeId value_type, hir::ParamDirection direction)
+    -> std::optional<mir::TypeId>;
+
 // A subroutine declaration's formals, read into the shape a completion derives
 // from.
 auto CalleeFormalsOf(UnitLowerer& unit, const hir::SubroutineDecl& decl)
+    -> std::vector<CalleeFormal>;
+
+// The same, for a callee this unit has no declaration of, read off the
+// interface a call recomputed for it.
+auto CalleeFormalsOf(
+    UnitLowerer& unit, const hir::ExternalCalleeInterface& interface)
     -> std::vector<CalleeFormal>;
 
 // The type a call to `decl` yields: its completion under the protocol its kind

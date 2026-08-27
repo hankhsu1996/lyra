@@ -106,18 +106,41 @@ auto FormatStaticPropertyTarget(const StaticPropertyTarget& target)
       target);
 }
 
+auto FormatLocalClassMethod(const LocalClassMethodTarget& t) -> std::string {
+  return std::format("Class[{}].{}", t.owner.value, t.method.value);
+}
+
+auto FormatExternalClassMethod(const ExternalClassMethodTarget& t)
+    -> std::string {
+  return std::format(
+      "Class[external={}::{}].{}", t.unit_name, t.class_name, t.method_name);
+}
+
 auto FormatClassMethodTarget(const ClassMethodTarget& target) -> std::string {
   return std::visit(
       Overloaded{
-          [](const LocalClassMethodTarget& t) -> std::string {
-            return std::format("Class[{}].{}", t.owner.value, t.method.value);
+          [](const LocalClassMethodTarget& t) {
+            return FormatLocalClassMethod(t);
           },
-          [](const ExternalClassMethodTarget& t) -> std::string {
-            return std::format(
-                "Class[external={}::{}].{}", t.unit_name, t.class_name,
-                t.method_name);
+          [](const ExternalClassMethodTarget& t) {
+            return FormatExternalClassMethod(t);
           }},
       target);
+}
+
+auto FormatMethodCallee(const MethodCallee& callee) -> std::string {
+  return std::visit(
+      Overloaded{
+          [](const LocalClassMethodTarget& t) {
+            return FormatLocalClassMethod(t);
+          },
+          [](const ExternalMethodCallee& c) {
+            return std::format(
+                "{} {}{}", FormatExternalClassMethod(c.target),
+                c.interface.kind == SubroutineKind::kTask ? "task" : "function",
+                c.is_virtual ? " virtual" : "");
+          }},
+      callee);
 }
 
 class HirDumper {
@@ -652,12 +675,12 @@ class HirDumper {
                       }},
                   m.receiver);
               return std::format(
-                  "Method target={} recv={}", FormatClassMethodTarget(m.target),
+                  "Method target={} recv={}", FormatMethodCallee(m.callee),
                   recv);
             },
             [](const StaticMethodCallRef& s) -> std::string {
               return std::format(
-                  "StaticMethod target={}", FormatClassMethodTarget(s.target));
+                  "StaticMethod target={}", FormatMethodCallee(s.callee));
             },
             [](const SystemSubroutineRef& s) -> std::string {
               const auto& desc = support::LookupSystemSubroutine(s.id);
@@ -689,7 +712,8 @@ class HirDumper {
             [](const ExternalUnitSubroutineRef& e) -> std::string {
               return std::format(
                   "ExternalUnitSubroutine {} \"{}::{}\"",
-                  e.kind == SubroutineKind::kTask ? "task" : "function",
+                  e.interface.kind == SubroutineKind::kTask ? "task"
+                                                            : "function",
                   e.unit_name, e.subroutine_name);
             },
         },

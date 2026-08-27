@@ -614,18 +614,12 @@ auto LowerCallExpr(
       sym->getParentScope() != nullptr &&
       sym->getParentScope()->asSymbol().kind ==
           slang::ast::SymbolKind::ClassType) {
-    for (const auto* formal : sym->getArguments()) {
-      if (formal->direction != slang::ast::ArgumentDirection::In) {
-        return diag::Fail(
-            span, diag::DiagCode::kUnsupportedClassFeature,
-            "static class methods with output / inout / ref arguments are not "
-            "yet supported");
-      }
-    }
     const auto& declaring_class =
         sym->getParentScope()->asSymbol().as<slang::ast::ClassType>();
     auto class_ref = unit_lowerer.ResolveClassRef(declaring_class, span);
     if (!class_ref) return std::unexpected(std::move(class_ref.error()));
+    auto callee = unit_lowerer.MakeMethodCallee(*class_ref, *sym, span);
+    if (!callee) return std::unexpected(std::move(callee.error()));
     auto static_result_type = unit_lowerer.InternType(*call.type, span);
     if (!static_result_type) {
       return std::unexpected(std::move(static_result_type.error()));
@@ -635,9 +629,7 @@ auto LowerCallExpr(
         .data =
             hir::CallExpr{
                 .callee =
-                    hir::StaticMethodCallRef{
-                        .target = unit_lowerer.MakeClassMethodTarget(
-                            *class_ref, *sym)},
+                    hir::StaticMethodCallRef{.callee = *std::move(callee)},
                 .arguments = std::move(arg_ids),
             },
         .span = span,
@@ -651,20 +643,14 @@ auto LowerCallExpr(
   // resolved callee, which already accounts for inheritance and super
   // resolution.
   if (CallReachesInstanceMethod(call, *sym)) {
-    for (const auto* formal : sym->getArguments()) {
-      if (formal->direction != slang::ast::ArgumentDirection::In) {
-        return diag::Fail(
-            span, diag::DiagCode::kUnsupportedClassFeature,
-            "instance methods with output / inout / ref arguments are not yet "
-            "supported");
-      }
-    }
     auto receiver_or = ClassifyMethodReceiver(lowerer, frame, call);
     if (!receiver_or) return std::unexpected(std::move(receiver_or.error()));
     const auto& declaring_class =
         sym->getParentScope()->asSymbol().as<slang::ast::ClassType>();
     auto class_ref = unit_lowerer.ResolveClassRef(declaring_class, span);
     if (!class_ref) return std::unexpected(std::move(class_ref.error()));
+    auto callee = unit_lowerer.MakeMethodCallee(*class_ref, *sym, span);
+    if (!callee) return std::unexpected(std::move(callee.error()));
     auto method_result_type = unit_lowerer.InternType(*call.type, span);
     if (!method_result_type) {
       return std::unexpected(std::move(method_result_type.error()));
@@ -676,8 +662,7 @@ auto LowerCallExpr(
                 .callee =
                     hir::MethodCallRef{
                         .receiver = *std::move(receiver_or),
-                        .target = unit_lowerer.MakeClassMethodTarget(
-                            *class_ref, *sym)},
+                        .callee = *std::move(callee)},
                 .arguments = std::move(arg_ids),
             },
         .span = span,
@@ -688,7 +673,7 @@ auto LowerCallExpr(
   // program-global (LRM 35.4), so this unit reaches it through its own record
   // and never across a unit boundary -- which is why a declaration in a
   // package or at `$unit` scope resolves here exactly as one written in this
-  // unit's own scope does, before the cross-unit branch below.
+  // unit's own scope does, rather than through the cross-unit boundary.
   if (sym->flags.has(slang::ast::MethodFlags::DPIImport)) {
     auto import_id = unit_lowerer.EnsureForeignImport(*sym);
     if (!import_id) return std::unexpected(std::move(import_id.error()));
@@ -730,15 +715,8 @@ auto LowerCallExpr(
   // boundary exactly as an intra-unit one. The call's result type is the
   // enclosing expression's own type and is not recorded again here.
   if (const auto* unit = DeclaringUnitOfSubroutine(*sym)) {
-    std::vector<hir::ExternalUnitParam> params;
-    params.reserve(sym->getArguments().size());
-    for (const auto* formal : sym->getArguments()) {
-      auto formal_type = unit_lowerer.InternType(formal->getType(), span);
-      if (!formal_type) return std::unexpected(std::move(formal_type.error()));
-      params.push_back(
-          hir::ExternalUnitParam{
-              .direction = ParamDirectionOf(*formal), .type = *formal_type});
-    }
+    auto interface = unit_lowerer.MakeExternalCalleeInterface(*sym, span);
+    if (!interface) return std::unexpected(std::move(interface.error()));
     auto result_type = unit_lowerer.InternType(*call.type, span);
     if (!result_type) return std::unexpected(std::move(result_type.error()));
     return hir::Expr{
@@ -749,8 +727,7 @@ auto LowerCallExpr(
                     hir::ExternalUnitSubroutineRef{
                         .unit_name = CompilationUnitName(*unit),
                         .subroutine_name = std::string{sym->name},
-                        .kind = ToHirSubroutineKind(sym->subroutineKind),
-                        .params = std::move(params)},
+                        .interface = *std::move(interface)},
                 .arguments = std::move(arg_ids)},
         .span = span,
     };

@@ -13,7 +13,7 @@
 #include "lyra/hir/process.hpp"
 #include "lyra/hir/stmt.hpp"
 #include "lyra/lowering/hir_to_mir/callable_bindings.hpp"
-#include "lyra/lowering/hir_to_mir/completion_payload.hpp"
+#include "lyra/lowering/hir_to_mir/callee_interface.hpp"
 #include "lyra/lowering/hir_to_mir/default_value.hpp"
 #include "lyra/lowering/hir_to_mir/self_ref.hpp"
 #include "lyra/lowering/hir_to_mir/sensitivity_wait.hpp"
@@ -240,55 +240,36 @@ auto ProcessLowerer::Run(const hir::SubroutineDecl& src)
           .WithBindings(&bindings)
           .WithScopeNameBorrowedHandle(RootScope().NameBorrowedHandle());
 
-  // Formals normalize into the signature's data flow (LRM 13.5). An `input` and
-  // a `ref` / `const ref` are parameters (the latter carries a `Ref<T>`); an
-  // `output` is not a parameter but a default-initialized body local whose
-  // final value rides the completion payload (copy-out at completion, not a
-  // live alias); an `inout` is both an input parameter and a payload component.
-  // Every formal is a binding in the callable, identified by its HIR id.
+  // Formals normalize into the signature's data flow (LRM 13.5). Every formal
+  // is a binding in the callable, identified by its HIR id; one that is no
+  // parameter is a default-initialized body local instead, whose final value
+  // rides the completion payload -- copied out at completion rather than
+  // aliased live. An `inout` is both a parameter and a payload component.
   for (const auto& param : src.params) {
     const auto& hir_var = src.body.procedural_vars.Get(param.var);
     const mir::TypeId value_type = owner_->TranslateType(hir_var.type);
     const hir::ParamDirection dir = param.direction;
+    const std::optional<mir::TypeId> param_type =
+        ParamTypeOf(*owner_, hir_var.type, dir);
 
-    const auto reference_type = [&](mir::Mutability mutability) {
-      return owner_->Unit().types.Intern(
-          mir::RefType{.pointee = value_type, .mutability = mutability});
-    };
-
-    // An `output` is not a parameter at all, so its whole shape is settled in
-    // its own arm; the rest differ only in what the parameter carries.
-    mir::TypeId type = value_type;
-    switch (dir) {
-      case hir::ParamDirection::kOutput: {
-        const mir::ExprId default_init = code.Body().exprs.Add(
-            BuildDefaultValueFromHir(*owner_, body_frame, hir_var.type));
-        const mir::LocalId local = bindings.Declare(
-            BindingOriginId::Procedural(param.var),
-            mir::LocalDecl{.name = hir_var.name, .type = value_type});
-        code.Body().AppendStmt(
-            mir::LocalDeclStmt{.target = local, .init = default_init});
-        MapProceduralVar(param.var, AutomaticVarBinding{.type = value_type});
-        output_pack_vars_.push_back(local);
-        output_pack_types_.push_back(value_type);
-        continue;
-      }
-      // A `ref` / `const ref` formal's parameter type is a `Ref<T>` over the
-      // value type (LRM 13.5.2); every other parameter carries the value type.
-      case hir::ParamDirection::kRef:
-        type = reference_type(mir::Mutability::kMutable);
-        break;
-      case hir::ParamDirection::kConstRef:
-        type = reference_type(mir::Mutability::kReadOnly);
-        break;
-      case hir::ParamDirection::kInput:
-      case hir::ParamDirection::kInOut:
-        break;
+    if (!param_type.has_value()) {
+      const mir::ExprId default_init = code.Body().exprs.Add(
+          BuildDefaultValueFromHir(*owner_, body_frame, hir_var.type));
+      const mir::LocalId local = bindings.Declare(
+          BindingOriginId::Procedural(param.var),
+          mir::LocalDecl{.name = hir_var.name, .type = value_type});
+      code.Body().AppendStmt(
+          mir::LocalDeclStmt{.target = local, .init = default_init});
+      MapProceduralVar(param.var, AutomaticVarBinding{.type = value_type});
+      output_pack_vars_.push_back(local);
+      output_pack_types_.push_back(value_type);
+      continue;
     }
+
     const mir::LocalId mir_var = bindings.Declare(
         BindingOriginId::Procedural(param.var),
-        mir::LocalDecl{.name = hir_var.name, .type = type});
-    MapProceduralVar(param.var, AutomaticVarBinding{.type = type});
+        mir::LocalDecl{.name = hir_var.name, .type = *param_type});
+    MapProceduralVar(param.var, AutomaticVarBinding{.type = *param_type});
     params.push_back(mir_var);
     if (dir == hir::ParamDirection::kInOut) {
       output_pack_vars_.push_back(mir_var);

@@ -9,14 +9,16 @@
 #include <variant>
 #include <vector>
 
+#include "lyra/base/component_index.hpp"
 #include "lyra/base/internal_error.hpp"
+#include "lyra/base/overloaded.hpp"
 #include "lyra/hir/expr.hpp"
 #include "lyra/hir/expr_id.hpp"
 #include "lyra/hir/subroutine.hpp"
 #include "lyra/hir/subroutine_ref.hpp"
 #include "lyra/lowering/hir_to_mir/call_operands.hpp"
+#include "lyra/lowering/hir_to_mir/callee_interface.hpp"
 #include "lyra/lowering/hir_to_mir/closure_builder.hpp"
-#include "lyra/lowering/hir_to_mir/completion_payload.hpp"
 #include "lyra/lowering/hir_to_mir/lhs_store.hpp"
 #include "lyra/lowering/hir_to_mir/process_lowerer.hpp"
 #include "lyra/lowering/hir_to_mir/runtime_call.hpp"
@@ -30,27 +32,168 @@ namespace lyra::lowering::hir_to_mir {
 
 namespace {
 
-// The callee-interface facts a subroutine call needs, read uniformly for an
-// intra-unit callee (from its HIR declaration) and a cross-unit one (from the
-// by-name reference's recorded signature). The callee's kind states its call
-// protocol; each argument's direction says how the call transfers it, and its
-// component says what the completion hands back to it. `receiver_hops` is the
-// enclosing-scope level of an intra-unit callee's receiver; it is absent for a
-// receiver-less cross-unit callee, which takes the ambient runtime handle in
-// that position instead.
+// The ambient handle a callee's first parameter binds, named by where it comes
+// from rather than by a value, because it has to be evaluated in whichever
+// block the call is finally emitted into.
+struct EnclosingScopeReceiver {
+  mir::EnclosingHops hops;
+};
+struct AmbientRuntimeHandle {};
+struct CalledObject {
+  hir::MethodReceiver source;
+};
+using AmbientHandle =
+    std::variant<EnclosingScopeReceiver, AmbientRuntimeHandle, CalledObject>;
+
+// The callee is named outright, and `handle`, where the callee takes one,
+// leads the arguments the source wrote. A type-associated function (LRM 8.10)
+// takes none.
+struct NamedCallee {
+  mir::Callee callee;
+  std::optional<AmbientHandle> handle;
+};
+
+// The callee is a slot, and which implementation runs is the receiver's dynamic
+// type to decide (LRM 8.20). The receiver rides the callee rather than the
+// argument list, so nothing leads the arguments the source wrote.
+struct DispatchedCallee {
+  hir::MethodReceiver receiver;
+  mir::VirtualSlot slot;
+};
+
+using CalleeForm = std::variant<NamedCallee, DispatchedCallee>;
+
+// The callee-interface facts a subroutine call needs, read uniformly however
+// the callee is named: from its HIR declaration when this unit holds one, and
+// from the by-name reference's recorded interface when another unit does.
 struct SubroutineCallee {
   hir::SubroutineKind kind = hir::SubroutineKind::kFunction;
   std::optional<mir::TypeId> result_type;
   CompletionLayout completion;
-  mir::Callee callee;
-  std::optional<mir::EnclosingHops> receiver_hops;
+  CalleeForm form;
 };
 
-// Reads the callee's interface out of whichever HIR reference names it.
-// Nothing for a callee that is not a user subroutine -- a system, builtin,
-// imported, or foreign one -- each of which has its own boundary.
+// Reads the virtual slot a method participates in off its stated dispatch role.
+// Every participating method already names its slot -- an introducer names its
+// own (owner, id), an intra-unit override was populated with the canonical
+// intra-unit id at class lowering, and a cross-unit override names the
+// introducing (unit, class, method) triple -- so this is a one-arm dispatch,
+// never a chain walk. A method whose slot was introduced in another compilation
+// unit resolves by name, reached through the declaring unit's header.
+auto CanonicalVirtualSlot(
+    mir::ClassId self_owner, mir::CallableId self_slot,
+    const mir::VirtualDispatchRole& role) -> mir::VirtualSlot {
+  return std::visit(
+      Overloaded{
+          [&](const mir::IntroducesVirtualSlot&) -> mir::VirtualSlot {
+            return mir::LocalVirtualSlot{
+                .owner_class = self_owner, .slot = self_slot};
+          },
+          [](const mir::OverridesIntraUnitSlot& s) -> mir::VirtualSlot {
+            return mir::LocalVirtualSlot{
+                .owner_class = s.slot_owner, .slot = s.slot_id};
+          },
+          [](const mir::OverridesExternalSlot& e) -> mir::VirtualSlot {
+            return mir::ExternalVirtualSlot{
+                .unit_name = e.unit_name,
+                .class_name = e.class_name,
+                .method_name = e.method_name};
+          }},
+      role);
+}
+
+// What a call reads off a class method it reaches: the interface it marshals
+// against, the target a direct call names, and the slot the callee fills where
+// it takes part in dispatch (LRM 8.20). Where these come from differs by
+// whether this unit declares the class; what a call then does with them does
+// not.
+struct MethodCalleeFacts {
+  hir::SubroutineKind kind = hir::SubroutineKind::kFunction;
+  std::vector<CalleeFormal> formals;
+  mir::Callee direct;
+  std::optional<mir::VirtualSlot> slot;
+};
+
+auto ReadMethodCallee(
+    UnitLowerer& unit_lowerer, const hir::MethodCallee& callee)
+    -> MethodCalleeFacts {
+  if (const auto* ext = std::get_if<hir::ExternalMethodCallee>(&callee)) {
+    MethodCalleeFacts facts{
+        .kind = ext->interface.kind,
+        .formals = CalleeFormalsOf(unit_lowerer, ext->interface),
+        .direct =
+            mir::Direct{
+                .target = unit_lowerer.MakeExternalMethodTarget(ext->target),
+                .qualification = std::nullopt},
+        .slot = std::nullopt};
+    if (ext->is_virtual) {
+      facts.slot = unit_lowerer.MakeExternalVirtualSlot(ext->target);
+    }
+    return facts;
+  }
+  const auto& local = std::get<hir::LocalClassMethodTarget>(callee);
+  const hir::SubroutineDecl& decl =
+      unit_lowerer.Hir().classes.Get(local.owner).methods.Get(local.method);
+  const mir::ClassId owner = unit_lowerer.TranslateClass(local.owner);
+  const mir::CallableId slot{local.method.value};
+  // A method's dispatch role is queried through the unit's declarations, not
+  // its class registry: while any peer body is lowering the registry is
+  // one-way, so a read there would leak lowering order into the reading site.
+  const auto& signature =
+      unit_lowerer.GetClassShape(owner).callable_signatures.Get(slot);
+  return MethodCalleeFacts{
+      .kind = decl.kind,
+      .formals = CalleeFormalsOf(unit_lowerer, decl),
+      .direct =
+          mir::Direct{
+              .target = mir::CallableTarget{.owner = owner, .slot = slot},
+              .qualification = std::nullopt},
+      .slot = signature.virtual_dispatch.transform(
+          [&](const mir::VirtualDispatchRole& role) {
+            return CanonicalVirtualSlot(owner, slot, role);
+          })};
+}
+
+// Plans a call to a class method, instance or type-associated (LRM 8.6, 8.10).
+// It dispatches when the callee fills a slot and the source did not demand the
+// base's implementation: `super` demands it whatever role the callee carries
+// (LRM 8.15), and a type-associated function has no receiver to dispatch on.
+auto PlanClassMethodCall(
+    UnitLowerer& unit_lowerer, const hir::MethodCallee& callee,
+    const std::optional<hir::MethodReceiver>& receiver,
+    std::optional<mir::TypeId> result_type) -> SubroutineCallee {
+  MethodCalleeFacts facts = ReadMethodCallee(unit_lowerer, callee);
+  const bool through_super =
+      receiver.has_value() &&
+      std::holds_alternative<hir::SuperReceiver>(*receiver);
+  const bool dispatches =
+      receiver.has_value() && !through_super && facts.slot.has_value();
+
+  SubroutineCallee plan;
+  plan.kind = facts.kind;
+  plan.result_type = result_type;
+  plan.completion = BuildCompletionLayout(facts.formals, result_type);
+  plan.form =
+      dispatches
+          ? CalleeForm{DispatchedCallee{
+                .receiver = *receiver, .slot = *std::move(facts.slot)}}
+          : CalleeForm{NamedCallee{
+                .callee = std::move(facts.direct),
+                .handle = receiver.transform([](const hir::MethodReceiver& r) {
+                  return AmbientHandle{CalledObject{.source = r}};
+                })}};
+  return plan;
+}
+
+// Reads the callee's interface out of whichever HIR reference names it, and
+// nothing for a callee that is not a user subroutine -- a system, builtin,
+// imported, or foreign one, each of which has its own boundary. Every user
+// subroutine goes through this one reading, so a call site cannot state an
+// interface the callee's definition does not have. The visit is exhaustive, so
+// a callee kind added later is classified here rather than falling silently to
+// one side.
 template <ExprLowerer Lowerer>
-auto ResolveSubroutineCallee(
+auto PlanSubroutineCall(
     Lowerer& lowerer, const hir::CallExpr& call, mir::TypeId call_result_type)
     -> std::optional<SubroutineCallee> {
   auto& unit_lowerer = lowerer.Owner();
@@ -60,40 +203,54 @@ auto ResolveSubroutineCallee(
       call_result_type == unit_lowerer.Unit().builtins.void_type
           ? std::nullopt
           : std::optional<mir::TypeId>{call_result_type};
-  if (const auto* ref =
-          std::get_if<hir::StructuralSubroutineRef>(&call.callee)) {
-    const hir::SubroutineDecl& decl =
-        lowerer.LookupHirSubroutine(ref->hops, ref->subroutine);
-    SubroutineCallee plan;
-    plan.kind = decl.kind;
-    plan.result_type = result_type;
-    plan.completion =
-        BuildCompletionLayout(CalleeFormalsOf(unit_lowerer, decl), result_type);
-    plan.callee =
-        lowerer.TranslateStructuralSubroutine(ref->hops, ref->subroutine);
-    plan.receiver_hops = mir::EnclosingHops{.value = ref->hops.value};
-    return plan;
-  }
-  if (const auto* ref =
-          std::get_if<hir::ExternalUnitSubroutineRef>(&call.callee)) {
-    std::vector<CalleeFormal> formals;
-    formals.reserve(ref->params.size());
-    for (const auto& param : ref->params) {
-      formals.push_back(
-          CalleeFormal{
-              .direction = param.direction,
-              .type = unit_lowerer.TranslateType(param.type)});
-    }
-    SubroutineCallee plan;
-    plan.kind = ref->kind;
-    plan.result_type = result_type;
-    plan.completion = BuildCompletionLayout(formals, result_type);
-    plan.callee =
-        mir::Direct{.target = unit_lowerer.MakeExternalCallableTarget(*ref)};
-    plan.receiver_hops = std::nullopt;
-    return plan;
-  }
-  return std::nullopt;
+  using Planned = std::optional<SubroutineCallee>;
+  return std::visit(
+      Overloaded{
+          [&](const hir::StructuralSubroutineRef& ref) -> Planned {
+            const hir::SubroutineDecl& decl =
+                lowerer.LookupHirSubroutine(ref.hops, ref.subroutine);
+            SubroutineCallee plan;
+            plan.kind = decl.kind;
+            plan.result_type = result_type;
+            plan.completion = BuildCompletionLayout(
+                CalleeFormalsOf(unit_lowerer, decl), result_type);
+            plan.form = NamedCallee{
+                .callee = lowerer.TranslateStructuralSubroutine(
+                    ref.hops, ref.subroutine),
+                .handle = AmbientHandle{EnclosingScopeReceiver{
+                    .hops = mir::EnclosingHops{.value = ref.hops.value}}}};
+            return plan;
+          },
+          [&](const hir::ExternalUnitSubroutineRef& ref) -> Planned {
+            SubroutineCallee plan;
+            plan.kind = ref.interface.kind;
+            plan.result_type = result_type;
+            plan.completion = BuildCompletionLayout(
+                CalleeFormalsOf(unit_lowerer, ref.interface), result_type);
+            plan.form = NamedCallee{
+                .callee =
+                    mir::Direct{
+                        .target = unit_lowerer.MakeExternalCallableTarget(ref)},
+                .handle = AmbientHandle{AmbientRuntimeHandle{}}};
+            return plan;
+          },
+          [&](const hir::MethodCallRef& ref) -> Planned {
+            return PlanClassMethodCall(
+                unit_lowerer, ref.callee, ref.receiver, result_type);
+          },
+          [&](const hir::StaticMethodCallRef& ref) -> Planned {
+            return PlanClassMethodCall(
+                unit_lowerer, ref.callee, std::nullopt, result_type);
+          },
+          [](const hir::SystemSubroutineRef&) -> Planned {
+            return std::nullopt;
+          },
+          [](const hir::BuiltinMethodRef&) -> Planned { return std::nullopt; },
+          [](const hir::ForeignImportRef&) -> Planned { return std::nullopt; },
+          [](const hir::ImportedMethodRef&) -> Planned {
+            return std::nullopt;
+          }},
+      call.callee);
 }
 
 // A component landing in an actual is what gives a call something to sequence
@@ -122,11 +279,72 @@ struct EmittedCall {
   std::vector<CompletionWriteback> writebacks;
 };
 
-// Emits the call boundary into `frame`: the leading argument (an intra-unit
-// receiver or the ambient runtime handle) and each actual bound by its
-// direction -- an `input` value, an `inout`'s incoming value, an `output`'s
-// nothing, a `ref` cell alias. The call is typed with the protocol its callee
-// states, so whether the caller awaits it is readable from the call alone.
+// A callee once its operands exist: how the call names it, and the value that
+// leads the arguments the source wrote. A dispatched call has no leading value,
+// its receiver riding the callee itself.
+struct ResolvedCallee {
+  mir::Callee callee;
+  std::optional<mir::ExprId> leading;
+};
+
+// The borrowed pointer an instance method's body reads as its `self`. An
+// explicit handle evaluates and then derefs the managed wrapper to reach the
+// object; an implicit self and a `super` qualifier both read the enclosing
+// method's own self binding, which is already such a pointer -- the three
+// differ in which implementation runs, not in where the receiver comes from.
+template <ExprLowerer Lowerer>
+auto BuildReceiverPointer(
+    Lowerer& lowerer, const WalkFrame& frame,
+    const hir::MethodReceiver& receiver) -> diag::Result<mir::ExprId> {
+  mir::Block& block = *frame.current_block;
+  const auto* handle = std::get_if<hir::HandleReceiver>(&receiver);
+  if (handle == nullptr) {
+    return block.exprs.Add(
+        MakeSelfRefExpr(frame, frame.current_class->self_pointer_type));
+  }
+  auto& types = lowerer.Owner().Unit().types;
+  auto handle_or =
+      lowerer.LowerExpr(lowerer.HirExprs().Get(handle->expr), frame);
+  if (!handle_or) return std::unexpected(std::move(handle_or.error()));
+  const mir::TypeId object_type =
+      std::get<mir::ManagedRefType>(types.Get(handle_or->type).data).pointee;
+  const mir::ExprId handle_id = block.exprs.Add(*std::move(handle_or));
+  const mir::ExprId object_id = block.exprs.Add(
+      mir::Expr{
+          .data = mir::DerefExpr{.pointer = handle_id}, .type = object_type});
+  return block.exprs.Add(
+      mir::MakeAddressOfExpr(
+          object_id,
+          types.PointerTo(object_type, mir::PointerOwnership::kBorrowed)));
+}
+
+// Evaluates the ambient handle a callee's first parameter binds, in the block
+// the call is being emitted into.
+template <ExprLowerer Lowerer>
+auto BuildAmbientHandle(
+    Lowerer& lowerer, const WalkFrame& frame, const AmbientHandle& handle)
+    -> diag::Result<mir::ExprId> {
+  return std::visit(
+      Overloaded{
+          [&](const EnclosingScopeReceiver& r) -> diag::Result<mir::ExprId> {
+            return BuildEnclosingScopeReceiver(
+                frame, lowerer.Owner().Unit(), r.hops);
+          },
+          [&](const AmbientRuntimeHandle&) -> diag::Result<mir::ExprId> {
+            return frame.current_block->exprs.Add(
+                BuildCurrentRuntimeCallExpr(lowerer.Owner()));
+          },
+          [&](const CalledObject& o) -> diag::Result<mir::ExprId> {
+            return BuildReceiverPointer(lowerer, frame, o.source);
+          }},
+      handle);
+}
+
+// Emits the call boundary into `frame`: the callee with whatever leads the
+// arguments the source wrote, and each actual bound by its direction -- an
+// `input` value, an `inout`'s incoming value, an `output`'s nothing, a `ref`
+// cell alias. The call is typed with the protocol its callee states, so whether
+// the caller awaits it is readable from the call alone.
 template <ExprLowerer Lowerer>
 auto EmitSubroutineCall(
     Lowerer& lowerer, const WalkFrame& frame, const hir::CallExpr& call,
@@ -144,28 +362,54 @@ auto EmitSubroutineCall(
   const mir::TypeId call_result_type =
       SubroutineCallType(unit, plan.kind, payload_type);
 
+  auto resolved_or = std::visit(
+      Overloaded{
+          [&](const NamedCallee& named) -> diag::Result<ResolvedCallee> {
+            if (!named.handle.has_value()) {
+              return ResolvedCallee{
+                  .callee = named.callee, .leading = std::nullopt};
+            }
+            auto handle_or = BuildAmbientHandle(lowerer, frame, *named.handle);
+            if (!handle_or) {
+              return std::unexpected(std::move(handle_or.error()));
+            }
+            return ResolvedCallee{
+                .callee = named.callee, .leading = *handle_or};
+          },
+          [&](const DispatchedCallee& dispatched)
+              -> diag::Result<ResolvedCallee> {
+            auto receiver_or =
+                BuildReceiverPointer(lowerer, frame, dispatched.receiver);
+            if (!receiver_or) {
+              return std::unexpected(std::move(receiver_or.error()));
+            }
+            return ResolvedCallee{
+                .callee =
+                    mir::Virtual{
+                        .receiver = *receiver_or, .slot = dispatched.slot},
+                .leading = std::nullopt};
+          }},
+      plan.form);
+  if (!resolved_or) return std::unexpected(std::move(resolved_or.error()));
+
   std::vector<mir::ExprId> call_args;
   call_args.reserve(call.arguments.size() + 1);
-  // The leading argument is the callee's ambient handle: the enclosing object's
-  // receiver for an intra-unit callable, the runtime handle for a
-  // receiver-less cross-unit one.
-  call_args.push_back(
-      plan.receiver_hops.has_value()
-          ? BuildEnclosingScopeReceiver(frame, unit, *plan.receiver_hops)
-          : block.exprs.Add(BuildCurrentRuntimeCallExpr(unit_lowerer)));
+  if (resolved_or->leading.has_value()) {
+    call_args.push_back(*resolved_or->leading);
+  }
 
   std::vector<CompletionWriteback> writebacks;
 
-  // The arity was matched against the completion layout above, and a user
-  // call fills every position it declares.
+  // A user call fills every position its completion layout declares, and the
+  // two counts were matched on entry.
   const std::vector<hir::ExprId> operands = RequiredOperands(call);
   for (std::size_t i = 0; i < operands.size(); ++i) {
     const CompletionLayout::Formal& formal = plan.completion.formals[i];
-    const hir::ParamDirection dir = formal.direction;
     const hir::Expr& hir_arg = hir_exprs.Get(operands[i]);
-    const mir::TypeId formal_type = formal.type;
 
-    switch (dir) {
+    // Exhaustive over the directions, so one added to the language is bound
+    // here rather than silently passed as a value.
+    switch (formal.direction) {
       // An `output` passes no argument; an `inout` passes its incoming value.
       // Both bind the actual place for a post-completion writeback.
       case hir::ParamDirection::kOutput:
@@ -173,7 +417,7 @@ auto EmitSubroutineCall(
         auto place_or = lowerer.LowerLhsExpr(hir_arg, frame);
         if (!place_or) return std::unexpected(std::move(place_or.error()));
         const mir::ExprId place = block.exprs.Add(*std::move(place_or));
-        if (dir == hir::ParamDirection::kInOut) {
+        if (formal.direction == hir::ParamDirection::kInOut) {
           auto value_or = lowerer.LowerExpr(hir_arg, frame);
           if (!value_or) return std::unexpected(std::move(value_or.error()));
           call_args.push_back(block.exprs.Add(*std::move(value_or)));
@@ -181,7 +425,7 @@ auto EmitSubroutineCall(
         writebacks.push_back(
             {.place = place,
              .component_index = *formal.component,
-             .type = formal_type});
+             .type = formal.type});
         break;
       }
 
@@ -189,8 +433,8 @@ auto EmitSubroutineCall(
       // 13.5.2). A bare actual is lent as it stands, so a reference over a
       // capability wrapper aliases the wrapper and keeps the wrapper's own
       // access -- the update event a write fires included. A projected actual
-      // designates part of a value, which is not a place a reference can alias,
-      // so what is lent is the storage the chain descends into.
+      // designates part of a value, which is not a place a reference can
+      // alias, so what is lent is the storage the chain descends into.
       case hir::ParamDirection::kRef:
       case hir::ParamDirection::kConstRef: {
         auto arg_or = lowerer.LowerLhsExpr(hir_arg, frame);
@@ -218,7 +462,8 @@ auto EmitSubroutineCall(
           mir::Expr{
               .data =
                   mir::CallExpr{
-                      .callee = plan.callee, .arguments = std::move(call_args)},
+                      .callee = std::move(resolved_or->callee),
+                      .arguments = std::move(call_args)},
               .type = call_result_type},
       .payload_type = payload_type,
       .writebacks = std::move(writebacks)};
@@ -286,17 +531,18 @@ template <ExprLowerer Lowerer>
 auto LowerSubroutineCall(
     Lowerer& lowerer, WalkFrame frame, const hir::CallExpr& call,
     mir::TypeId result_type) -> std::optional<diag::Result<mir::Expr>> {
-  const std::optional<SubroutineCallee> callee =
-      ResolveSubroutineCallee(lowerer, call, result_type);
-  if (!callee.has_value()) return std::nullopt;
+  const std::optional<SubroutineCallee> planned =
+      PlanSubroutineCall(lowerer, call, result_type);
+  if (!planned.has_value()) return std::nullopt;
+  const SubroutineCallee& callee = *planned;
 
-  if (WritesBack(*callee)) {
+  if (WritesBack(callee)) {
     // Writing a value back reaches a caller's storage, which only a procedural
     // statement does; the frontend rejects an output / inout call outside
     // procedural code (LRM 13.4), so one arriving in a structural context is a
     // compiler-invariant violation rather than a user-diagnosable form.
     if constexpr (std::same_as<Lowerer, ProcessLowerer>) {
-      return LowerWritingBackCall(lowerer, frame, call, *callee);
+      return LowerWritingBackCall(lowerer, frame, call, callee);
     } else {
       throw InternalError(
           "LowerSubroutineCall: a structural subroutine call carries an "
@@ -307,11 +553,11 @@ auto LowerSubroutineCall(
   // With nothing to sequence, the call is the expression, and its result is
   // read straight out of the completion it yields. A void callee's completion
   // carries no component to read, so the call stands as the expression itself.
-  auto emitted = EmitSubroutineCall(lowerer, frame, call, *callee);
+  auto emitted = EmitSubroutineCall(lowerer, frame, call, callee);
   if (!emitted) {
     return diag::Result<mir::Expr>{std::unexpected(std::move(emitted.error()))};
   }
-  if (!callee->result_type.has_value()) {
+  if (!callee.result_type.has_value()) {
     return diag::Result<mir::Expr>{std::move(emitted->call)};
   }
   mir::Block& block = *frame.current_block;
@@ -320,7 +566,7 @@ auto LowerSubroutineCall(
       .data =
           mir::TupleGetExpr{
               .tuple = completion, .index = base::ComponentIndex{}},
-      .type = *callee->result_type}};
+      .type = *callee.result_type}};
 }
 
 template auto LowerSubroutineCall(

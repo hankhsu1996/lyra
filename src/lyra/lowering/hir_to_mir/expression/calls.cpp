@@ -9,7 +9,6 @@
 #include <variant>
 #include <vector>
 
-#include "lyra/base/component_index.hpp"
 #include "lyra/base/internal_error.hpp"
 #include "lyra/base/overloaded.hpp"
 #include "lyra/diag/diag_code.hpp"
@@ -21,7 +20,6 @@
 #include "lyra/lowering/hir_to_mir/binding_origin.hpp"
 #include "lyra/lowering/hir_to_mir/call_operands.hpp"
 #include "lyra/lowering/hir_to_mir/closure_builder.hpp"
-#include "lyra/lowering/hir_to_mir/completion_payload.hpp"
 #include "lyra/lowering/hir_to_mir/default_value.hpp"
 #include "lyra/lowering/hir_to_mir/expression/dpi_call.hpp"
 #include "lyra/lowering/hir_to_mir/expression/enum_method.hpp"
@@ -42,7 +40,6 @@
 #include "lyra/lowering/hir_to_mir/lhs_store.hpp"
 #include "lyra/lowering/hir_to_mir/process_lowerer.hpp"
 #include "lyra/lowering/hir_to_mir/runtime_call.hpp"
-#include "lyra/lowering/hir_to_mir/self_ref.hpp"
 #include "lyra/lowering/hir_to_mir/subroutine_call.hpp"
 #include "lyra/lowering/hir_to_mir/walk_frame.hpp"
 #include "lyra/mir/compilation_unit.hpp"
@@ -529,248 +526,6 @@ auto LowerBuiltinMethodCall(
       .type = result_type};
 }
 
-// Reads the virtual slot a method participates in off its stated
-// `virtual_dispatch`. Every participating method already names its slot -- an
-// introducer names its own (owner, id), an intra-unit override was populated
-// with the canonical intra-unit id at class lowering, and a cross-unit
-// override names the introducing (unit, class, method) triple -- so this is a
-// one-arm dispatch, never a chain walk. A method whose slot was introduced in
-// another compilation unit resolves to an `ExternalVirtualSlot`, reached
-// through the declaring unit's header.
-auto CanonicalVirtualSlot(
-    mir::ClassId self_owner, mir::CallableId self_slot,
-    const mir::VirtualDispatchRole& role) -> mir::VirtualSlot {
-  return std::visit(
-      Overloaded{
-          [&](const mir::IntroducesVirtualSlot&) -> mir::VirtualSlot {
-            return mir::LocalVirtualSlot{
-                .owner_class = self_owner, .slot = self_slot};
-          },
-          [](const mir::OverridesIntraUnitSlot& s) -> mir::VirtualSlot {
-            return mir::LocalVirtualSlot{
-                .owner_class = s.slot_owner, .slot = s.slot_id};
-          },
-          [](const mir::OverridesExternalSlot& e) -> mir::VirtualSlot {
-            return mir::ExternalVirtualSlot{
-                .unit_name = e.unit_name,
-                .class_name = e.class_name,
-                .method_name = e.method_name};
-          }},
-      role);
-}
-
-// An instance-method call (LRM 8.6): the receiver evaluates to the managed
-// handle, and the borrowed pointer to the object reaches the method body as
-// its `self`. A direct call passes that pointer as `arguments[0]` and names
-// the concrete method arena entry; a virtual call carries it as
-// `Virtual::receiver` and names the slot's canonical identity so the
-// receiver's dynamic type -- not the call site -- picks the implementation
-// (LRM 8.20).
-template <ExprLowerer Lowerer>
-auto LowerMethodCall(
-    Lowerer& lowerer, WalkFrame frame, const hir::CallExpr& c,
-    const hir::MethodCallRef& m, mir::TypeId result_type)
-    -> diag::Result<mir::Expr> {
-  auto& block = *frame.current_block;
-  auto& types = lowerer.Owner().Unit().types;
-
-  // The receiver pointer origin depends only on whether the source supplied
-  // an explicit handle. A `HandleReceiver` evaluates the handle expression
-  // then derefs the managed wrapper to reach the object; both
-  // `ImplicitSelfReceiver` and `SuperReceiver` read the enclosing method's
-  // own self binding, which is already a borrowed pointer to the object.
-  // The super arm shares the self read here because it differs only in
-  // dispatch semantics, decided below.
-  mir::ExprId receiver_ptr{};
-  if (const auto* handle = std::get_if<hir::HandleReceiver>(&m.receiver)) {
-    auto handle_or =
-        lowerer.LowerExpr(lowerer.HirExprs().Get(handle->expr), frame);
-    if (!handle_or) return std::unexpected(std::move(handle_or.error()));
-    const mir::TypeId object_type =
-        std::get<mir::ManagedRefType>(types.Get(handle_or->type).data).pointee;
-    const mir::ExprId handle_id = block.exprs.Add(*std::move(handle_or));
-    const mir::ExprId object_id = block.exprs.Add(
-        mir::Expr{
-            .data = mir::DerefExpr{.pointer = handle_id}, .type = object_type});
-    const mir::TypeId self_pointer_type =
-        types.PointerTo(object_type, mir::PointerOwnership::kBorrowed);
-    receiver_ptr =
-        block.exprs.Add(mir::MakeAddressOfExpr(object_id, self_pointer_type));
-  } else {
-    receiver_ptr = block.exprs.Add(
-        MakeSelfRefExpr(frame, frame.current_class->self_pointer_type));
-  }
-
-  std::vector<mir::ExprId> user_args;
-  user_args.reserve(c.arguments.size());
-  for (const auto& arg : c.arguments) {
-    if (!arg.has_value()) {
-      throw InternalError("LowerMethodCall: method-call argument elided");
-    }
-    auto arg_or = lowerer.LowerExpr(lowerer.HirExprs().Get(*arg), frame);
-    if (!arg_or) return std::unexpected(std::move(arg_or.error()));
-    user_args.push_back(block.exprs.Add(*std::move(arg_or)));
-  }
-
-  // Cross-unit instance method: no local declaration to query for the
-  // callee's dispatch role, so the HIR target's `is_virtual` fact -- read
-  // from the callee's frontend view when the target was minted -- decides
-  // between virtual dispatch (LRM 8.20) and static dispatch. A super
-  // qualifier always demands the base's implementation regardless of the
-  // callee's virtuality, so it lowers as a direct owner-qualified call
-  // even when the target is virtual.
-  if (const auto* ext_target =
-          std::get_if<hir::ExternalClassMethodTarget>(&m.target)) {
-    const bool through_super_ext =
-        std::holds_alternative<hir::SuperReceiver>(m.receiver);
-    if (!through_super_ext && ext_target->is_virtual) {
-      return mir::Expr{
-          .data =
-              mir::CallExpr{
-                  .callee =
-                      mir::Virtual{
-                          .receiver = receiver_ptr,
-                          .slot = lowerer.Owner().MakeExternalVirtualSlot(
-                              *ext_target)},
-                  .arguments = std::move(user_args)},
-          .type = result_type};
-    }
-    std::vector<mir::ExprId> direct_args;
-    direct_args.reserve(user_args.size() + 1);
-    direct_args.push_back(receiver_ptr);
-    for (const mir::ExprId a : user_args) direct_args.push_back(a);
-    return mir::Expr{
-        .data =
-            mir::CallExpr{
-                .callee =
-                    mir::Direct{
-                        .target = lowerer.Owner().MakeExternalMethodTarget(
-                            *ext_target),
-                        .qualification = std::nullopt},
-                .arguments = std::move(direct_args)},
-        .type = result_type};
-  }
-
-  // The method's declaring class is stated on the HIR node; the receiver's
-  // runtime class is only used to type the self parameter (which pairs with
-  // the target's own arena entry through C++ member lookup). For a super
-  // call HIR already sets the target to the base's identity.
-  const auto& local_target = std::get<hir::LocalClassMethodTarget>(m.target);
-  const mir::ClassId owner_class =
-      lowerer.Owner().TranslateClass(local_target.owner);
-  const mir::CallableId method_slot{local_target.method.value};
-
-  // A super call (LRM 8.15) is a dispatch fact independent of the callee's
-  // virtual role: the source demands the base's implementation regardless
-  // of the receiver's dynamic type, so it lowers as `Direct` on the base's
-  // method. The backend's uniform owner-qualified render skips dynamic
-  // dispatch mechanically. Every other receiver form defers to the
-  // callee's own dispatch role: `Virtual` when the target participates in
-  // a slot, `Direct` otherwise. Cross-class dispatch role is queried
-  // through the unit's declarations, not its class registry: while any peer
-  // body is lowering the registry is one-way `Define`, so a `Get` there
-  // would leak lowering order into the reading site.
-  const bool through_super =
-      std::holds_alternative<hir::SuperReceiver>(m.receiver);
-  const auto& method_sig = lowerer.Owner()
-                               .GetClassShape(owner_class)
-                               .callable_signatures.Get(method_slot);
-  if (!through_super && method_sig.virtual_dispatch.has_value()) {
-    return mir::Expr{
-        .data =
-            mir::CallExpr{
-                .callee =
-                    mir::Virtual{
-                        .receiver = receiver_ptr,
-                        .slot = CanonicalVirtualSlot(
-                            owner_class, method_slot,
-                            *method_sig.virtual_dispatch)},
-                .arguments = std::move(user_args)},
-        .type = result_type};
-  }
-
-  std::vector<mir::ExprId> direct_args;
-  direct_args.reserve(user_args.size() + 1);
-  direct_args.push_back(receiver_ptr);
-  for (const mir::ExprId a : user_args) direct_args.push_back(a);
-  return mir::Expr{
-      .data =
-          mir::CallExpr{
-              .callee =
-                  mir::Direct{
-                      .target =
-                          mir::CallableTarget{
-                              .owner = owner_class, .slot = method_slot},
-                      .qualification = std::nullopt},
-              .arguments = std::move(direct_args)},
-      .type = result_type};
-}
-
-// Lowers a static class method call (LRM 8.10). The signature has no `self`
-// so the MIR call carries exactly the user's arguments; the callee is a
-// direct owner-qualified target with no dispatch role.
-template <ExprLowerer Lowerer>
-auto LowerStaticMethodCall(
-    Lowerer& lowerer, WalkFrame frame, const hir::CallExpr& c,
-    const hir::StaticMethodCallRef& m, mir::TypeId result_type)
-    -> diag::Result<mir::Expr> {
-  auto& block = *frame.current_block;
-  const auto* local_target =
-      std::get_if<hir::LocalClassMethodTarget>(&m.target);
-  if (local_target == nullptr) {
-    // Cross-unit static method: no receiver, rendered by the backend as the
-    // free qualified `unit::Class::method(args)` after the declaring unit's
-    // header is included.
-    const auto& ext_target = std::get<hir::ExternalClassMethodTarget>(m.target);
-    std::vector<mir::ExprId> args;
-    args.reserve(c.arguments.size());
-    for (const auto& arg : c.arguments) {
-      if (!arg.has_value()) {
-        throw InternalError("LowerStaticMethodCall: argument elided");
-      }
-      auto arg_or = lowerer.LowerExpr(lowerer.HirExprs().Get(*arg), frame);
-      if (!arg_or) return std::unexpected(std::move(arg_or.error()));
-      args.push_back(block.exprs.Add(*std::move(arg_or)));
-    }
-    return mir::Expr{
-        .data =
-            mir::CallExpr{
-                .callee =
-                    mir::Direct{
-                        .target = lowerer.Owner().MakeExternalMethodTarget(
-                            ext_target),
-                        .qualification = std::nullopt},
-                .arguments = std::move(args)},
-        .type = result_type};
-  }
-  const mir::ClassId owner_class =
-      lowerer.Owner().TranslateClass(local_target->owner);
-  const mir::CallableId method_slot{local_target->method.value};
-
-  std::vector<mir::ExprId> args;
-  args.reserve(c.arguments.size());
-  for (const auto& arg : c.arguments) {
-    if (!arg.has_value()) {
-      throw InternalError("LowerStaticMethodCall: argument elided");
-    }
-    auto arg_or = lowerer.LowerExpr(lowerer.HirExprs().Get(*arg), frame);
-    if (!arg_or) return std::unexpected(std::move(arg_or.error()));
-    args.push_back(block.exprs.Add(*std::move(arg_or)));
-  }
-
-  return mir::Expr{
-      .data =
-          mir::CallExpr{
-              .callee =
-                  mir::Direct{
-                      .target =
-                          mir::CallableTarget{
-                              .owner = owner_class, .slot = method_slot},
-                      .qualification = std::nullopt},
-              .arguments = std::move(args)},
-      .type = result_type};
-}
-
 }  // namespace
 
 // A call to a method the runtime library provides for an imported class (LRM
@@ -824,32 +579,6 @@ auto LowerImportedMethodCall(
       .type = result_type};
 }
 
-// A user subroutine hands its completion back as a product -- its result
-// followed by each value it writes back -- so a call is typed with the payload
-// its callee produces and the caller projects the component it wants (LRM 13.4,
-// 13.5). A callee with no writeback formals carries only its result, and a void
-// one carries nothing at all: an empty payload has no component to read, so the
-// call stands as a value nothing consumes.
-template <ExprLowerer Lowerer>
-auto ProjectCompletionResult(
-    Lowerer& lowerer, WalkFrame frame, mir::TypeId result_type,
-    diag::Result<mir::Expr> call) -> diag::Result<mir::Expr> {
-  if (!call) return call;
-  auto& unit = lowerer.Owner().Unit();
-  const bool has_result = result_type != unit.builtins.void_type;
-  std::vector<mir::TypeId> components;
-  if (has_result) components.push_back(result_type);
-  call->type = CompletionPayloadType(unit, components);
-  if (!has_result) return call;
-  auto& block = *frame.current_block;
-  const mir::ExprId completion = block.exprs.Add(*std::move(call));
-  return mir::Expr{
-      .data =
-          mir::TupleGetExpr{
-              .tuple = completion, .index = base::ComponentIndex{}},
-      .type = result_type};
-}
-
 template <ExprLowerer Lowerer>
 auto LowerHirCallExpr(
     Lowerer& lowerer, WalkFrame frame, const hir::CallExpr& c,
@@ -871,15 +600,15 @@ auto LowerHirCallExpr(
                 "LowerHirCallExpr: a user subroutine call is planned before "
                 "this dispatch");
           },
-          [&](const hir::MethodCallRef& m) -> diag::Result<mir::Expr> {
-            return ProjectCompletionResult(
-                lowerer, frame, result_type,
-                LowerMethodCall(lowerer, frame, c, m, result_type));
+          [](const hir::MethodCallRef&) -> diag::Result<mir::Expr> {
+            throw InternalError(
+                "LowerHirCallExpr: a class method call is planned before this "
+                "dispatch");
           },
-          [&](const hir::StaticMethodCallRef& s) -> diag::Result<mir::Expr> {
-            return ProjectCompletionResult(
-                lowerer, frame, result_type,
-                LowerStaticMethodCall(lowerer, frame, c, s, result_type));
+          [](const hir::StaticMethodCallRef&) -> diag::Result<mir::Expr> {
+            throw InternalError(
+                "LowerHirCallExpr: a class method call is planned before this "
+                "dispatch");
           },
           [&](const hir::BuiltinMethodRef& b) -> diag::Result<mir::Expr> {
             return LowerBuiltinMethodCall(lowerer, frame, c, b, result_type);
