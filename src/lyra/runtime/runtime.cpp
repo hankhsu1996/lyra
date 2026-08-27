@@ -386,22 +386,26 @@ auto Runtime::CheckedAdd(SimTime base, SimDuration delta) -> SimTime {
   return base + delta;
 }
 
-void RegisterInitialProcess(Scope* owning_scope, Coroutine<void> coroutine) {
+void RegisterInitialProcess(
+    Scope* owning_scope, Scope* unit_instance, Coroutine<void> coroutine) {
   // Runtime is the sole concrete `RuntimeEffects` derived class (declared
   // `final`), so recovering it from the ambient view is safe.
   // NOLINTNEXTLINE(cppcoreguidelines-pro-type-static-cast-downcast)
   auto& rt = static_cast<Runtime&>(current_runtime());
   rt.RegisterProcessInRegistry(
       std::make_shared<RuntimeProcess>(
-          owning_scope, ProcessKind::kInitial, std::move(coroutine)));
+          owning_scope, ProcessKind::kInitial, std::move(coroutine),
+          unit_instance->InitializationSeeds().NextSeed()));
 }
 
-void RegisterFinalProcess(Scope* owning_scope, Coroutine<void> coroutine) {
+void RegisterFinalProcess(
+    Scope* owning_scope, Scope* unit_instance, Coroutine<void> coroutine) {
   // NOLINTNEXTLINE(cppcoreguidelines-pro-type-static-cast-downcast)
   auto& rt = static_cast<Runtime&>(current_runtime());
   rt.RegisterProcessInRegistry(
       std::make_shared<RuntimeProcess>(
-          owning_scope, ProcessKind::kFinal, std::move(coroutine)));
+          owning_scope, ProcessKind::kFinal, std::move(coroutine),
+          unit_instance->InitializationSeeds().NextSeed()));
 }
 
 }  // namespace lyra::runtime

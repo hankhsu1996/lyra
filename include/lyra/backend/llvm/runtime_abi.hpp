@@ -107,6 +107,14 @@ class RuntimeAbi {
   // 20.17.1); `argument_count` selects which, as an overload set would.
   auto RunHostCommand(std::size_t argument_count) -> llvm::FunctionCallee;
 
+  // Draws from the calling process's generator (LRM 18.13.1 -- 18.13.2). The
+  // generator is the running process's, read from the runtime, so none is
+  // passed; the seeded form restarts it before drawing, and the range form
+  // bounds the result between the two bounds it takes.
+  auto Urandom() -> llvm::FunctionCallee;
+  auto UrandomSeeded() -> llvm::FunctionCallee;
+  auto UrandomRange() -> llvm::FunctionCallee;
+
   // Builds one leaf of a wait: the observable cell it watches, the bit
   // projection of that cell it watches, and the edge polarity it watches for.
   auto MakeTrigger() -> llvm::FunctionCallee;

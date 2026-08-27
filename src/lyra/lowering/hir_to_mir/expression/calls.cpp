@@ -33,6 +33,7 @@
 #include "lyra/lowering/hir_to_mir/expression/system/host_command.hpp"
 #include "lyra/lowering/hir_to_mir/expression/system/plusargs.hpp"
 #include "lyra/lowering/hir_to_mir/expression/system/print.hpp"
+#include "lyra/lowering/hir_to_mir/expression/system/random.hpp"
 #include "lyra/lowering/hir_to_mir/expression/system/scan.hpp"
 #include "lyra/lowering/hir_to_mir/expression/system/sformat.hpp"
 #include "lyra/lowering/hir_to_mir/expression/system/time.hpp"
@@ -360,6 +361,11 @@ auto LowerSystemSubroutineCall(
             } else {
               return RejectStructuralEffect(span);
             }
+          },
+          [&](const support::RandomSystemSubroutineInfo& random_info)
+              -> diag::Result<mir::Expr> {
+            return LowerRandomSystemSubroutineCall(
+                lowerer, frame, call, random_info);
           },
           [&](const support::MemFileSystemSubroutineInfo&)
               -> diag::Result<mir::Expr> {

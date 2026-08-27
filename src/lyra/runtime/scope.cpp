@@ -167,4 +167,8 @@ auto Scope::ResolveRoot() -> Scope* {
   return level;
 }
 
+auto Scope::InitializationSeeds() -> InitializationRng& {
+  return initialization_seeds_;
+}
+
 }  // namespace lyra::runtime

@@ -9,6 +9,7 @@
 #include "lyra/runtime/pending_wait.hpp"
 #include "lyra/runtime/process_kind.hpp"
 #include "lyra/runtime/registration.hpp"
+#include "lyra/runtime/rng.hpp"
 
 namespace lyra::runtime {
 
@@ -65,8 +66,13 @@ class RuntimeProcess : public std::enable_shared_from_this<RuntimeProcess> {
   // to the same scope the outer body's would. The registration site owns
   // the process's shared handle; the process's `owning_scope_` is a
   // borrowed pointer whose lifetime is that of the owning scope.
+  // `seed` starts this process's own generator. LRM 18.14.1 fixes where it
+  // comes from by how the process was created: a dynamically created one draws
+  // it from the process that created it, a static one from the initialization
+  // RNG of the unit instance its declaration belongs to.
   RuntimeProcess(
-      Scope* owning_scope, ProcessKind kind, Coroutine<void> coroutine);
+      Scope* owning_scope, ProcessKind kind, Coroutine<void> coroutine,
+      RandomSeed seed);
 
   RuntimeProcess(const RuntimeProcess&) = delete;
   auto operator=(const RuntimeProcess&) -> RuntimeProcess& = delete;
@@ -81,6 +87,13 @@ class RuntimeProcess : public std::enable_shared_from_this<RuntimeProcess> {
   ~RuntimeProcess() = default;
 
   [[nodiscard]] auto Kind() const -> ProcessKind;
+
+  // The generator every randomization system call made from this process draws
+  // from (LRM 18.14.2), and the one a process spawned from here takes its own
+  // seed out of.
+  [[nodiscard]] auto Rng() -> ProcessRng& {
+    return rng_;
+  }
 
   // The scope this process's runtime side effects attribute to. Inherited
   // by fork branches so a branch's effects belong to the same scope as the
@@ -381,6 +394,7 @@ class RuntimeProcess : public std::enable_shared_from_this<RuntimeProcess> {
   ProcessKind kind_;
   Scope* owning_scope_;
   Coroutine<void> coroutine_;
+  ProcessRng rng_;
   // The frame the engine will resume next for this process (invariant: a
   // non-executing process has exactly one active leaf). Starts at the top frame
   // and follows the innermost parked frame as waits block it.

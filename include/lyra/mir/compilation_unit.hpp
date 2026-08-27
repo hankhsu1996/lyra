@@ -54,6 +54,7 @@ struct StaticVariableDecl {
 // off the unit.
 struct BuiltinMirTypes {
   TypeId int_type;
+  TypeId int_unsigned;
   TypeId integer;
   TypeId bit1;
   // The machine integer a runtime entry hands back as a plain value. It is the
@@ -174,6 +175,12 @@ struct CompilationUnit {
                 PackedArrayType{
                     .atom = BitAtom::kBit,
                     .signedness = Signedness::kSigned,
+                    .dims = {PackedRange{.left = 31, .right = 0}},
+                    .form = PackedArrayForm::kInt}),
+            .int_unsigned = types.Intern(
+                PackedArrayType{
+                    .atom = BitAtom::kBit,
+                    .signedness = Signedness::kUnsigned,
                     .dims = {PackedRange{.left = 31, .right = 0}},
                     .form = PackedArrayForm::kInt}),
             .integer = types.Intern(

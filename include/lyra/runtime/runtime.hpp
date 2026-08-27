@@ -206,7 +206,13 @@ class Runtime final : public RuntimeEffects {
 // `final` parks on the finals list until shutdown. The scope handle arrives
 // as a pointer because the generated call site is holding the `self` pointer
 // from its enclosing body.
-void RegisterInitialProcess(Scope* owning_scope, Coroutine<void> coroutine);
-void RegisterFinalProcess(Scope* owning_scope, Coroutine<void> coroutine);
+// `unit_instance` is the module, interface, or program instance the process is
+// declared within, which holds the seeds LRM 18.14.1 starts a static process
+// from. It is the scope itself unless the process is declared inside a generate
+// scope, which has no seeds of its own.
+void RegisterInitialProcess(
+    Scope* owning_scope, Scope* unit_instance, Coroutine<void> coroutine);
+void RegisterFinalProcess(
+    Scope* owning_scope, Scope* unit_instance, Coroutine<void> coroutine);
 
 }  // namespace lyra::runtime

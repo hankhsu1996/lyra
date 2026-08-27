@@ -234,6 +234,12 @@ auto BuiltinFnCppName(support::BuiltinFn id) -> std::string_view {
       return "STimeInUnit";
     case support::BuiltinFn::kRealTime:
       return "RealTimeInUnit";
+    case support::BuiltinFn::kUrandom:
+      return "Urandom";
+    case support::BuiltinFn::kUrandomSeeded:
+      return "UrandomSeeded";
+    case support::BuiltinFn::kUrandomRange:
+      return "UrandomRange";
     case support::BuiltinFn::kFinish:
       return "Finish";
     case support::BuiltinFn::kFatalFinish:
@@ -418,6 +424,9 @@ auto BuiltinFnCppNamespace(support::BuiltinFn id) -> std::string_view {
     case support::BuiltinFn::kSimTime:
     case support::BuiltinFn::kSTime:
     case support::BuiltinFn::kRealTime:
+    case support::BuiltinFn::kUrandom:
+    case support::BuiltinFn::kUrandomSeeded:
+    case support::BuiltinFn::kUrandomRange:
     case support::BuiltinFn::kFinish:
     case support::BuiltinFn::kFatalFinish:
     case support::BuiltinFn::kForkWaitAll:

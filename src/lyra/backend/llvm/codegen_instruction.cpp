@@ -913,6 +913,12 @@ auto CodeGenFunction::BuiltinCallee(
       return module_->Runtime().FatalFinish();
     case support::BuiltinFn::kRunHostCommand:
       return module_->Runtime().RunHostCommand(call.args.size());
+    case support::BuiltinFn::kUrandom:
+      return module_->Runtime().Urandom();
+    case support::BuiltinFn::kUrandomSeeded:
+      return module_->Runtime().UrandomSeeded();
+    case support::BuiltinFn::kUrandomRange:
+      return module_->Runtime().UrandomRange();
     case support::BuiltinFn::kAddOwnedChild:
       return module_->Runtime().AddOwnedChild();
     case support::BuiltinFn::kHierarchicalPath:

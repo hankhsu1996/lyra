@@ -141,6 +141,9 @@ void DefineRuntimeAbi(llvm::orc::LLJIT& jit) {
   add("lyra_rt_fatal_finish", &lyra_rt_fatal_finish);
   add("lyra_rt_run_host_command", &lyra_rt_run_host_command);
   add("lyra_rt_run_null_host_command", &lyra_rt_run_null_host_command);
+  add("lyra_rt_urandom", &lyra_rt_urandom);
+  add("lyra_rt_urandom_seeded", &lyra_rt_urandom_seeded);
+  add("lyra_rt_urandom_range", &lyra_rt_urandom_range);
   add("lyra_rt_make_segment", &lyra_rt_make_segment);
   add("lyra_rt_make_scope", &lyra_rt_make_scope);
   add("lyra_rt_hierarchical_path", &lyra_rt_hierarchical_path);

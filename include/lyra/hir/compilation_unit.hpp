@@ -32,6 +32,7 @@ struct BuiltinHirTypes {
   TypeId scalar_logic;
   TypeId void_type;
   TypeId int_type;
+  TypeId int_unsigned;
   TypeId integer;
   TypeId string;
   TypeId time;
@@ -82,6 +83,12 @@ struct CompilationUnit {
                 .dim = PackedRange{.left = 31, .right = 0},
                 .element_type = scalar_bit,
                 .signedness = Signedness::kSigned,
+                .form = PackedArrayForm::kInt}),
+        .int_unsigned =
+            add(PackedArrayType{
+                .dim = PackedRange{.left = 31, .right = 0},
+                .element_type = scalar_bit,
+                .signedness = Signedness::kUnsigned,
                 .form = PackedArrayForm::kInt}),
         .integer =
             add(PackedArrayType{

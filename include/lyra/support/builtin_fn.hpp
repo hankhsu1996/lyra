@@ -269,6 +269,18 @@ enum class BuiltinFn : std::uint16_t {
   kSimTime,
   kSTime,
   kRealTime,
+  // LRM 18.13.1 -- 18.13.2 unconstrained random number functions. Free
+  // functions on `lyra::runtime` taking the runtime handle; each draws from the
+  // calling process's own generator, which the runtime reads ambiently, so no
+  // generator reaches the call as an operand. `$urandom`'s optional seed
+  // re-seeds that generator before the draw, which is a different runtime entry
+  // rather than an optional operand, so which form a call means is settled here
+  // instead of by counting its arguments. `kUrandomRange` always takes both
+  // bounds; an omitted low bound is the zero LRM 18.13.2 defines it to be, and
+  // the lowering supplies it.
+  kUrandom,
+  kUrandomSeeded,
+  kUrandomRange,
   // LRM 20.2 simulation termination. Takes the runtime handle and the LRM
   // diagnostic level (0 / 1 / 2). The call suspends and never resumes; the
   // runtime drops the process at the next dispatch. `kFatalFinish` is the
