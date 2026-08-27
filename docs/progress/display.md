@@ -170,9 +170,10 @@ sanctions; the runtime-parsed path continues silently.
 
 ## Conformance gaps the corpus records
 
-Behaviour the corpus asks for and does not get. Each is held by a disabled check inside a case that
-otherwise runs. Re-enabling that check is manual: nothing detects that the behaviour became right,
-so this list is what remembers.
+Behaviour the corpus asks for and does not get. Each is a case that runs and keeps every check it
+makes, recorded against the path it answers wrongly on; the day the answer becomes right the case
+passes and that record fails until its entry goes. What is written here is what the standard
+requires.
 
 - [ ] **A conversion with no field width does not pad to the operand's size** (LRM 21.2.1.2). The
       clause's own worked example fixes `%d` of a 32-bit value in ten right-justified columns and
@@ -186,12 +187,6 @@ so this list is what remembers.
       them is open; today they silently follow C.
 - [ ] **`%p` of an enumeration prints the integer** (LRM 21.2.1.6), where the clause requires the
       enumeration name.
-- [ ] **`$fflush` with no argument flushes nothing.** LRM 21.3.6 requires that form to flush every
-      open file; output written before such a call is still missing when the file is read back
-      through a second descriptor. The form taking a descriptor flushes that one.
-- [ ] **A seek counted from the current position moves twice the offset** (LRM 21.3.5, operation 1).
-      Operation 0 (from the start of the file), operation 2 (from the end), and `$rewind` all land
-      where the clause puts them.
 
 ## Out of Scope
 
@@ -199,8 +194,7 @@ so this list is what remembers.
   specifier) -- already implemented, not gaps.
 - `$monitor` / `$fmonitor`. Not modelled today; add an entry when a concrete consumer needs it.
 - File read / positioning tasks (`$fgetc` / `$ungetc` / `$fseek` / `$rewind` / `$ftell` / `$feof` /
-  `$fflush`) are implemented per LRM 21.3.4..21.3.8, but for the two gaps recorded above. The
-  output-argument reads `$fgets` / `$fread` / `$ferror` are implemented in statement position; their
-  expression-position gap is tracked above.
+  `$fflush`) are implemented per LRM 21.3.4..21.3.8. The output-argument reads `$fgets` / `$fread` /
+  `$ferror` are implemented in statement position; their expression-position gap is tracked above.
 - `%u` / `%z` (binary-packed unsigned / signed) and `%v` (strength). Not on the immediate roadmap;
   add entries when concrete consumers appear.

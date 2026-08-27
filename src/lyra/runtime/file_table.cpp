@@ -676,8 +676,9 @@ auto FileTable::Seek(
   }
   auto& stream = *slot->file;
   stream.clear();
+  // LRM 21.3.5 gives a descriptor one position, used by whichever input or
+  // output operation comes next; a stream's get and put sides share it.
   stream.seekg(offset_v, dir);
-  stream.seekp(offset_v, dir);
   if (stream.fail()) {
     SetError(fd, errno, "$fseek: seek failed");
     return MakeInt(-1);
@@ -728,11 +729,14 @@ auto FileTable::Error(const value::PackedArray& fd_pa, value::String& dest)
 }
 
 void FileTable::Flush() {
-  // Flush-all path: iterate every set bit in the entire 1..30 MCD range and
-  // every reserved+pool FD index. Cheap enough vs disk cost.
-  for (std::uint32_t bit = 1; bit <= 30U; ++bit) {
-    std::fstream* s = Resolve(static_cast<std::int32_t>(1U << bit));
-    if (s != nullptr) s->flush();
+  // LRM 21.3.1 makes standard output channel 0 of a multichannel descriptor,
+  // so it is one of the open files LRM 21.3.6 reaches.
+  stream_->Drain();
+  for (auto& slot : mcd_slots_) {
+    if (slot.file != nullptr) slot.file->flush();
+  }
+  for (auto& slot : fd_pool_) {
+    if (slot.file != nullptr) slot.file->flush();
   }
 }
 
@@ -741,13 +745,17 @@ void FileTable::Flush(const value::PackedArray& descriptor_pa) {
   if (descriptor == 0) return;
   const auto raw = static_cast<std::uint32_t>(descriptor);
   if ((raw & (1U << 31U)) != 0U) {
-    // FD form: stdio sentinels need no flush from us (the sink-write path
-    // routes them through the stream dispatcher / std::cerr).
+    if (descriptor == support::kStdoutFd) {
+      stream_->Drain();
+      return;
+    }
     std::fstream* s = Resolve(descriptor);
     if (s != nullptr) s->flush();
     return;
   }
-  // MCD form: walk set bits and flush each owned channel.
+  // MCD form: bit 0 names standard output (LRM 21.3.1); bits 1..30 are the
+  // channels this table owns.
+  if ((raw & 1U) != 0U) stream_->Drain();
   for (std::uint32_t bit = 1; bit <= 30U; ++bit) {
     if ((raw & (1U << bit)) == 0U) continue;
     std::fstream* s = Resolve(static_cast<std::int32_t>(1U << bit));
