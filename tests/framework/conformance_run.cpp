@@ -212,17 +212,20 @@ auto CheckParkedCase(
     return Render(what, test_case, "elaboration only", argv, outcome);
   };
 
+  const bool elaborated =
+      outcome.termination == TerminationKind::kExitedNormally;
+
   // A case the standard requires a tool to reject is parked the same way any
   // other is, and elaborating one is supposed to fail.
   if (test_case.required_error.has_value()) {
-    if (outcome.exit_code == 0) {
+    if (elaborated) {
       return report(
           "the standard requires this program to be rejected, and it "
           "elaborated");
     }
     return std::nullopt;
   }
-  if (outcome.termination != TerminationKind::kExitedNormally) {
+  if (!elaborated) {
     return report("this parked case no longer elaborates");
   }
   return std::nullopt;
@@ -251,10 +254,10 @@ auto RunConformanceCase(
     return outcome.stderr_text.find(text) != std::string::npos;
   };
 
-  // A compiler bug is not a limitation, so it is neither a refusal a path may
-  // be recorded as producing nor the rejection a case requires. Were it either,
-  // "this is not implemented yet" and "this is implemented wrongly" would be
-  // recorded the same way, and the record would stop being a coverage report.
+  // A compiler bug is not a limitation and not a wrong answer, so it is neither
+  // of the outcomes a path may be recorded as producing, nor the rejection a
+  // case requires. It fails whatever is recorded, which is what keeps "not
+  // implemented yet" and "implemented wrongly" answerable apart.
   if (mentions(kInternalErrorReport)) {
     return report("the run reported a compiler bug");
   }
@@ -299,9 +302,8 @@ auto RunConformanceCase(
 
   // A recorded defect is a wrong answer someone diagnosed and left standing, so
   // what the run is held to is producing that same wrong answer. The case keeps
-  // every check it makes, which is what lets the record notice the day the
-  // answer becomes right -- a check commented out instead would leave nothing
-  // to notice it.
+  // every check it makes, which is what lets the run notice the day the answer
+  // becomes right.
   if (const std::optional<std::string> defect =
           records.defects.Find(test_case.id)) {
     if (succeeded && checked) {

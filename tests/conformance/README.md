@@ -227,12 +227,16 @@ bazel test //tests:llvm_tests
 bazel test //tests:cpp_tests
 ```
 
-To run one case, filter by its path with `/` written as `.`, prefixed by the path that ran it:
+To run one case, filter by its path under this directory with `/` written as `.`. Nothing names the
+path that runs it, because the target already does:
 
 ```bash
 bazel test //tests:llvm_tests \
-  --test_filter='Llvm.27_generate_constructs.loop_increment_forms'
+  --test_filter='27_generate_constructs.loop_increment_forms'
 ```
+
+A parked case's elaboration check answers to `Parked.` and then the same name, that being the one
+thing the target does not already say.
 
 Adding a SystemVerilog feature means adding or extending a case first, then implementing until it
 passes.

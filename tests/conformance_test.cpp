@@ -81,21 +81,24 @@ auto FindForeign(std::string_view name) -> std::optional<Foreign> {
   return std::nullopt;
 }
 
+// The two names a test filter takes, which a case id already is: the clause it
+// tests, and the subject within that clause. A target runs one path, so the
+// path is the target's to name and no part of these.
+struct FilterName {
+  std::string group;
+  std::string name;
+};
+
 // A case id reads as a file path, which a test filter cannot take: `/` has no
 // spelling in one. Substituting the separator is the whole difference between
 // the two, and the corpus admits no other character that would need changing,
 // so a name and a path convert to each other by inspection.
-auto TestName(std::string_view id) -> std::string {
-  std::string name(id);
+auto SplitCaseId(std::string_view id) -> FilterName {
+  const std::size_t clause_end = id.find('/');
+  std::string name(id.substr(clause_end + 1));
   std::ranges::replace(name, '/', '.');
-  return name;
-}
-
-auto GroupName(std::string_view path_name) -> std::string {
-  std::string group(path_name);
-  group[0] =
-      static_cast<char>(std::toupper(static_cast<unsigned char>(group[0])));
-  return group;
+  return FilterName{
+      .group = std::string(id.substr(0, clause_end)), .name = std::move(name)};
 }
 
 class ConformanceTest : public testing::Test {
@@ -245,14 +248,13 @@ auto main(int argc, char** argv) -> int {
       "{} of {} cases on the {} path, built with {}\n", selected.size(),
       kCases.size(), kPath.name, HostCompiler());
 
-  const std::string group = GroupName(kPath.name);
   // NOLINTBEGIN(cppcoreguidelines-owning-memory)
   for (const ConformanceCase* selected_case : selected) {
     const ConformanceCase& c = *selected_case;
-    const std::string name = TestName(c.id);
+    const FilterName filter = SplitCaseId(c.id);
     testing::RegisterTest(
-        group.c_str(), name.c_str(), nullptr, nullptr, __FILE__, __LINE__,
-        [&c]() -> testing::Test* {
+        filter.group.c_str(), filter.name.c_str(), nullptr, nullptr, __FILE__,
+        __LINE__, [&c]() -> testing::Test* {
           return new ConformanceTest(c, &kCorpus.lyra_exe, &kPath, &kRecords);
         });
   }
@@ -261,8 +263,11 @@ auto main(int argc, char** argv) -> int {
   // target holds them to the same thing rather than one being picked to.
   static const std::vector<ConformanceCase> kParked =
       LoadParkedCases(kCorpus.cases_root);
+  // A parked case answers to a group of its own, since a target holds both
+  // kinds and only the name says which of the two a result came from.
   for (const ConformanceCase& c : kParked) {
-    const std::string name = TestName(c.id);
+    const FilterName filter = SplitCaseId(c.id);
+    const std::string name = filter.group + "." + filter.name;
     testing::RegisterTest(
         "Parked", name.c_str(), nullptr, nullptr, __FILE__, __LINE__,
         [&c]() -> testing::Test* {
