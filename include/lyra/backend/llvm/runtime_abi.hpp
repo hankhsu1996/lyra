@@ -39,6 +39,7 @@ enum class ValueDomain : std::uint8_t {
   kChandle,
   kTuple,
   kDynArray,
+  kUnpackedArray,
 };
 
 auto ValueDomainName(ValueDomain domain) -> std::string_view;
@@ -226,6 +227,7 @@ class RuntimeAbi {
   auto MakeDynamicArrayNew() -> llvm::FunctionCallee;
   auto MakeDynamicArrayNewCopy() -> llvm::FunctionCallee;
   auto MakeDynamicArrayFromLiteral(ValueDomain domain) -> llvm::FunctionCallee;
+  auto MakeUnpackedArrayFromLiteral(ValueDomain domain) -> llvm::FunctionCallee;
 
   // Builds the format specification of one conversion, and the print item that
   // pairs a value with it. A specification is written either as a bare

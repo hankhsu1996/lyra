@@ -67,7 +67,7 @@ namespace lyra::lowering::hir_to_mir {
     std::vector<mir::ExprId> elements) -> mir::Expr;
 
 // Builds the construction call for a uniform array-container value: `count`
-// tilings of the repeat unit `unit`, seeded with `element_default` (the
+// replications of the repeat unit `unit`, seeded with `element_default` (the
 // wrapper's OOB / discard source). The unit rides as an aggregate literal and
 // the count as a machine scalar, so the constructor arguments are
 // `[element_default, unit, count]` (plus the LRM 7.10.5 bound for a bounded

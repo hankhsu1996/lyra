@@ -185,6 +185,8 @@ struct Formatter<RealValue<Host>> {
 static_assert(LyraValue<Real>);
 static_assert(LyraValue<ShortReal>);
 static_assert(Ordered<Real>);
+static_assert(Defaultable<Real>);
+static_assert(Defaultable<ShortReal>);
 static_assert(Ordered<ShortReal>);
 static_assert(!CaseEqualComparable<Real>);
 static_assert(!CaseEqualComparable<ShortReal>);

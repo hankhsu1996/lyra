@@ -92,6 +92,7 @@ class Chandle {
 
 static_assert(LyraValue<Chandle>);
 static_assert(CaseEqualComparable<Chandle>);
+static_assert(Defaultable<Chandle>);
 static_assert(!Ordered<Chandle>);
 static_assert(!WildcardComparable<Chandle>);
 

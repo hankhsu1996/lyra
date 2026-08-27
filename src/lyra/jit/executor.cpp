@@ -422,6 +422,8 @@ auto AbiDomain(backend::llvm_backend::ValueDomain domain)
       return runtime::ValueDomain::kTuple;
     case backend::llvm_backend::ValueDomain::kDynArray:
       return runtime::ValueDomain::kDynArray;
+    case backend::llvm_backend::ValueDomain::kUnpackedArray:
+      return runtime::ValueDomain::kUnpackedArray;
   }
   throw InternalError("jit executor: unknown value domain");
 }

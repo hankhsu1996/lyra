@@ -60,11 +60,21 @@ class RuntimeTuple {
   [[nodiscard]] auto HasUnknown() const -> bool;
   [[nodiscard]] auto IsUnknown() const -> PackedArray;
 
+  // LRM 20.6.2 `$bits`: the sum of the components' own widths, an aggregate's
+  // bit stream being its components' laid end to end.
+  [[nodiscard]] auto BitstreamWidth() const -> PackedArray;
+
+  // LRM 20.9 `$countbits`: the sum of the components' own counts, a product
+  // value's bit stream being its components' laid end to end.
+  [[nodiscard]] auto CountBits(const PackedArray& control_bits) const
+      -> PackedArray;
+
  private:
   std::vector<RuntimeValue> components_;
 };
 
 static_assert(LyraValue<RuntimeTuple>);
 static_assert(CaseEqualComparable<RuntimeTuple>);
+static_assert(BitstreamSizable<RuntimeTuple>);
 
 }  // namespace lyra::value

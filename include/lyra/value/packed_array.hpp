@@ -690,6 +690,9 @@ class PackedArrayRef {
 };
 
 static_assert(LyraValue<PackedArray>);
+static_assert(CaseEqualComparable<PackedArray>);
+static_assert(WildcardComparable<PackedArray>);
+static_assert(Ordered<PackedArray>);
 static_assert(BitstreamSizable<PackedArray>);
 static_assert(Indexable<PackedArray>);
 static_assert(ShapedSliceable<PackedArray>);

@@ -40,6 +40,9 @@ MemberStorage::MemberStorage(MemberStorageDescriptor descriptor) {
         case ValueDomain::kDynArray:
           object_.emplace<Var<value::RuntimeDynamicArray>>();
           return;
+        case ValueDomain::kUnpackedArray:
+          object_.emplace<Var<value::RuntimeUnpackedArray>>();
+          return;
         case ValueDomain::kChandle:
           throw InternalError(
               "MemberStorage: a chandle is not observable storage");
@@ -47,6 +50,7 @@ MemberStorage::MemberStorage(MemberStorageDescriptor descriptor) {
           throw InternalError(
               "MemberStorage: an observable cell needs a value domain");
       }
+      throw InternalError("MemberStorage: unknown value domain");
     case MemberStorageKind::kInlineValue:
       if (descriptor.domain == ValueDomain::kChandle) {
         object_.emplace<value::Chandle>();

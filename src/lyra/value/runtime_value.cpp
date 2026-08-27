@@ -64,4 +64,39 @@ auto RuntimeValueHasUnknown(const RuntimeValue& value) -> bool {
       [](const auto& v) -> bool { return v.HasUnknown(); }, value.value);
 }
 
+auto RuntimeValueBitstreamWidth(const RuntimeValue& value) -> PackedArray {
+  return std::visit(
+      [](const auto& v) -> PackedArray {
+        using T = std::decay_t<decltype(v)>;
+        if constexpr (
+            std::is_same_v<T, Real> || std::is_same_v<T, ShortReal> ||
+            std::is_same_v<T, Chandle>) {
+          throw InternalError(
+              "RuntimeValue::BitstreamWidth: a real and a chandle are not "
+              "bit-stream types (LRM 6.24.3)");
+        } else {
+          return v.BitstreamWidth();
+        }
+      },
+      value.value);
+}
+
+auto RuntimeValueCountBits(
+    const RuntimeValue& value, const PackedArray& control_bits) -> PackedArray {
+  return std::visit(
+      [&](const auto& v) -> PackedArray {
+        using T = std::decay_t<decltype(v)>;
+        if constexpr (
+            std::is_same_v<T, Real> || std::is_same_v<T, ShortReal> ||
+            std::is_same_v<T, Chandle>) {
+          throw InternalError(
+              "RuntimeValue::CountBits: $countbits takes a bit-stream operand, "
+              "which a real or a chandle is not (LRM 20.9)");
+        } else {
+          return v.CountBits(control_bits);
+        }
+      },
+      value.value);
+}
+
 }  // namespace lyra::value

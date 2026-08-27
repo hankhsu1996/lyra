@@ -54,9 +54,9 @@ class Queue {
       : shield_(std::move(element_default)), data_(init.begin(), init.end()) {
   }
 
-  // LRM 10.9.1 `'{count{...}}` replicated pattern: `count` tilings of `unit`.
-  // Built from the repeat unit and a count so the value costs O(unit), not
-  // O(unit * count); mirrors `UnpackedArray`'s tiling ctor.
+  // LRM 10.9.1 `'{count{...}}` pattern: `count` replications of `unit`.
+  // Taking the repeat unit and the count separately keeps the value O(unit)
+  // to build rather than O(unit * count).
   Queue(T element_default, std::span<const T> unit, std::size_t count)
       : shield_(std::move(element_default)) {
     for (std::size_t i = 0; i < count; ++i) {
@@ -82,9 +82,8 @@ class Queue {
     EnforceBound();
   }
 
-  // LRM 7.10.5 bounded queue initialized by a replicated pattern: tile `unit`
-  // `count` times, record the bound, and trim any overflow on entry. The
-  // tiling counterpart of the `(element_default, init, max_bound)` ctor.
+  // LRM 7.10.5 bounded queue initialized by a replication: repeat `unit`
+  // `count` times, record the bound, and trim any overflow on entry.
   Queue(
       T element_default, std::span<const T> unit, std::size_t count,
       const PackedArray& max_bound)

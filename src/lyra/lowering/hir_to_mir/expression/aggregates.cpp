@@ -28,7 +28,7 @@ namespace {
 
 // LRM 10.9.1: the replication count of an assignment pattern is a constant
 // expression; slang has already evaluated it to an integer literal. The array
-// path carries this count into the container's tiling construction, and the
+// path carries this count into the container's repeat construction, and the
 // packed path folds it into the flat replication width.
 auto ExtractHirLiteralUint64(const hir::Expr& expr) -> std::uint64_t {
   const auto* primary = std::get_if<hir::PrimaryExpr>(&expr.data);

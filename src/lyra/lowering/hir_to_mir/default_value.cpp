@@ -212,10 +212,10 @@ auto BuildDefaultValueExpr(
                 .data = mir::RealLiteral{.value = 0.0}, .type = type};
           },
           // LRM Table 7-1: a fixed unpacked array defaults to every element at
-          // the element type's default. That uniform value is one tiling of the
-          // element default across the array's size, so it builds through the
-          // repeat call and stays O(1) in the array's element count. The shield
-          // seed and the repeat unit are the same element default.
+          // the element type's default. That uniform value is the element
+          // default replicated across the array's size, so it builds through
+          // the repeat call and stays O(1) in the array's element count. The
+          // shield seed and the repeat unit are the same element default.
           [&](const mir::UnpackedArrayType& ua) -> mir::Expr {
             const mir::ExprId element_default = block.exprs.Add(
                 BuildDefaultValueExpr(unit_lowerer, frame, ua.element_type));

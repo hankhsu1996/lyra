@@ -19,15 +19,15 @@ buildifier -r .
 
 Three layers, and a setting belongs to exactly one:
 
-| File            | Holds                                              | Tracked |
-| --------------- | -------------------------------------------------- | ------- |
-| `.bazelrc`      | build facts, and the definition of each `--config` | yes     |
-| `.bazelrc.user` | your credentials and your default config           | no      |
-| `~/.bazelrc`    | this machine: resource limits, disk cache location | no      |
+| File            | Holds                                                      | Tracked |
+| --------------- | ---------------------------------------------------------- | ------- |
+| `.bazelrc`      | build facts, and the definition of each `--config`         | yes     |
+| `.bazelrc.user` | this checkout: its default config, and keys only it uses   | no      |
+| `~/.bazelrc`    | this machine: resource limits, cache location, shared keys | no      |
 
 `git clone` then `bazel build //...` works with no account and no local setup. `--config=ci`,
-`--config=rbe`, and `--config=dev` are opt-in and each needs a BuildBuddy key from `.bazelrc.user`;
-nobody is required to have one. `.bazelrc.user.example` lists what may go there.
+`--config=rbe`, and `--config=dev` are opt-in and each needs a BuildBuddy key from one of the two
+untracked layers; nobody is required to have one. `.bazelrc.user.example` lists what may go there.
 
 `ci` shares a cache while actions stay local; `rbe` runs the actions remotely for a gate that reads
 none of what it produces; `dev` is `rbe` for the edit loop, where top-level outputs come back so the

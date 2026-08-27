@@ -88,10 +88,23 @@ ownership, or native in-frame layout) for every value.
       -- never an in-place mutation of a value reached through a possibly-shared handle -- so value
       semantics hold across a copy; this is the mutating-container protocol the queue and
       associative array reuse.
-- [ ] **The remaining collection domains** (unpacked array, queue, associative array) -- not
-      realized on the execution backend yet. Each is a homogeneous or keyed collection whose element
-      count is a runtime quantity; the dynamic array established the erased-container and
-      functional-update shape they follow.
+- [x] **The fixed-size unpacked array** (LRM 7.4.2) -- realized on the execution backend as a
+      fixed-arity container value domain. It default-constructs member-wise, builds from an
+      enumerated element list and from a replicated pattern through one repeat-unit-and-count path,
+      copies with value semantics, takes the equality and case-equality families, reports its size
+      and its bit-stream width and count, reads and writes an element, takes a contiguous range
+      select, lives in a member slot as a whole-cell observable signal, and crosses a suspension as
+      an activation-frame value. Its payload is ordinal-only: the declared range is the receiver's
+      static type's and arrives at a select as its own operand, so a whole-value store copies
+      positions and relabels nothing. A store between two arrays whose declared ranges differ is
+      refused rather than lowered, because this layer still gives each declared range its own type
+      identity and the two sides therefore arrive as unequal types; closing that means making a LIR
+      type's identity its content.
+- [ ] **The remaining collection domains** (queue, associative array) -- not realized on the
+      execution backend yet. Each is a homogeneous or keyed collection whose element count is a
+      runtime quantity; the dynamic array established the erased-container and functional-update
+      shape they follow, and the unpacked array added the repeat-unit construction and the
+      coordinate-resolving select they share.
 - [ ] **A managed value (class handle) across a suspension.** A traceable frame and precise
       reclamation, none of which is implemented: the managed reference is realized as a
       reference-counted handle that does not reclaim cycles, and only in the C++ backend. Contract:

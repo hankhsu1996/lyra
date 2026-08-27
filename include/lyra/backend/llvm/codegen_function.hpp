@@ -50,6 +50,9 @@ class CodeGenFunction {
   auto LowerErasedDynamicArrayConstruct(
       const lir::CallInstr& call, const lir::DynamicArrayType& type)
       -> diag::Result<llvm::Value*>;
+  auto LowerErasedUnpackedArrayConstruct(
+      const lir::CallInstr& call, const lir::UnpackedArrayType& type)
+      -> diag::Result<llvm::Value*>;
   auto LowerAggregateExtract(const lir::AggregateExtractInstr& extract)
       -> diag::Result<llvm::Value*>;
   auto LowerAggregateUpdate(const lir::AggregateUpdateInstr& update)

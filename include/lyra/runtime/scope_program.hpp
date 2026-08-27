@@ -136,6 +136,7 @@ enum class ValueDomain : std::uint8_t {
   kChandle,
   kTuple,
   kDynArray,
+  kUnpackedArray,
 };
 
 // How a member's storage is realized. A borrowed handle is a box holding a

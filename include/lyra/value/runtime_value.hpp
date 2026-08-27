@@ -7,6 +7,7 @@
 #include "lyra/value/real.hpp"
 #include "lyra/value/runtime_dynamic_array.hpp"
 #include "lyra/value/runtime_tuple.hpp"
+#include "lyra/value/runtime_unpacked_array.hpp"
 #include "lyra/value/string.hpp"
 
 namespace lyra::value {
@@ -15,12 +16,12 @@ namespace lyra::value {
 // active alternative is the value's current runtime domain. This is a runtime
 // representation, not a compiler-IR value -- it is neither an MIR nor a LIR
 // value type. It closes over the aggregate realizations (`RuntimeTuple`,
-// `RuntimeDynamicArray`), so a struct component or an array element may itself
-// be an aggregate.
+// `RuntimeDynamicArray`, `RuntimeUnpackedArray`), so a struct component or an
+// array element may itself be an aggregate.
 struct RuntimeValue {
   std::variant<
       PackedArray, String, Real, ShortReal, Chandle, RuntimeTuple,
-      RuntimeDynamicArray>
+      RuntimeDynamicArray, RuntimeUnpackedArray>
       value;
 };
 
@@ -45,5 +46,16 @@ struct RuntimeValue {
 
 // LRM 20.9: whether the value carries any unknown bit.
 [[nodiscard]] auto RuntimeValueHasUnknown(const RuntimeValue& value) -> bool;
+
+// LRM 20.6.2 `$bits`: how many bits the value currently holds. An aggregate
+// reduces over this, its bit stream being its parts' laid end to end.
+[[nodiscard]] auto RuntimeValueBitstreamWidth(const RuntimeValue& value)
+    -> PackedArray;
+
+// LRM 20.9 `$countbits`: how many of the value's bits match the control set.
+// An aggregate reduces over this, its bit stream being its parts' laid end to
+// end.
+[[nodiscard]] auto RuntimeValueCountBits(
+    const RuntimeValue& value, const PackedArray& control_bits) -> PackedArray;
 
 }  // namespace lyra::value

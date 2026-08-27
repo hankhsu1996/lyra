@@ -3,6 +3,7 @@
 #include <memory>
 #include <vector>
 
+#include "lyra/value/concepts.hpp"
 #include "lyra/value/packed_array.hpp"
 
 namespace lyra::value {
@@ -102,6 +103,15 @@ class RuntimeDynamicArray {
   [[nodiscard]] auto HasUnknown() const -> bool;
   [[nodiscard]] auto IsUnknown() const -> PackedArray;
 
+  // LRM 20.6.2 `$bits`: the sum of the elements' own widths, an aggregate's
+  // bit stream being its elements' laid end to end.
+  [[nodiscard]] auto BitstreamWidth() const -> PackedArray;
+
+  // LRM 20.9 `$countbits`: the sum of the elements' own counts, a container's
+  // bit stream being its elements' laid end to end.
+  [[nodiscard]] auto CountBits(const PackedArray& control_bits) const
+      -> PackedArray;
+
  private:
   // A negative, out-of-range, or x / z index (LRM 7.4.5). A valid index is
   // returned as its storage ordinal.
@@ -112,5 +122,10 @@ class RuntimeDynamicArray {
   std::unique_ptr<RuntimeValue> element_default_;
   std::vector<RuntimeValue> data_;
 };
+
+static_assert(LyraValue<RuntimeDynamicArray>);
+static_assert(CaseEqualComparable<RuntimeDynamicArray>);
+static_assert(Sized<RuntimeDynamicArray>);
+static_assert(BitstreamSizable<RuntimeDynamicArray>);
 
 }  // namespace lyra::value
