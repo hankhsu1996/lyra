@@ -64,6 +64,15 @@ belongs to whichever layer already held what the property was computed from.
    not it declares anything. A step that needs to know a property of the whole input before it can
    emit any of it has taken on a decision that belongs upstream.
 
+   Staging a lowering into declarations and then bodies is not such a pass, and the discriminator is
+   what the earlier stage leaves behind. A declaration stage **emits** -- its output is declarations
+   the body stage reads by identity, each derived from its own entity, so it is a map over entities
+   rather than a fold over the input. A preliminary pass instead **decides**: it computes one
+   property of the whole input that the real pass then branches on, which is the decision belonging
+   upstream. The staging exists because a body may reference a declaration while a declaration never
+   references a body, so no ordering of a single pass can serve mutual reference. It is not an
+   optimization and it does not weaken this invariant.
+
 ## Boundary to Adjacent Layers
 
 - Each lowering produces output that is valid in the target layer's contract. The output passes the

@@ -201,7 +201,7 @@ struct DynamicArrayNewExpr {
 // LRM 8.5 class object construction `new`. Allocates a new object of the named
 // class and runs its constructor, yielding a handle. The class is named by a
 // `ClassRef`: a local id when the class is declared by this unit, or a by-name
-// reference against another unit's interface when the class is declared
+// reference against another unit's signature when the class is declared
 // elsewhere. `Expr::type` is the class handle type. `arguments` are the
 // constructor actuals (LRM 8.7), empty for the default `new`.
 struct ClassNewExpr {

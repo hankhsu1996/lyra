@@ -28,8 +28,11 @@
 #include "lyra/hir/pattern_id.hpp"
 #include "lyra/hir/structural_data_object.hpp"
 #include "lyra/hir/structural_scope.hpp"
+#include "lyra/hir/type_import.hpp"
+#include "lyra/hir/unit_signature.hpp"
 #include "lyra/hir/value_ref.hpp"
 #include "lyra/lowering/ast_to_hir/sensitivity.hpp"
+#include "lyra/lowering/ast_to_hir/unit_signatures.hpp"
 #include "lyra/lowering/ast_to_hir/walk_frame.hpp"
 #include "lyra/support/event_edge.hpp"
 
@@ -180,16 +183,32 @@ class LoweringFacts {
 // HIR identity this unit gave each slang symbol, so a reference resolves
 // against what the unit already decided rather than by re-reading the frontend.
 //
-// The unit is constructed with its name and an initial builtins table,
-// populated by `Run`, and moved out by `Run`'s return; afterwards the lowerer
-// holds no IR.
+// A unit lowers in two phases, and every unit completes the first before any
+// unit begins the second. `Declare` reads this unit's own declarations and
+// nothing else, which is what lets the design run it for every unit in any
+// order; `LowerBodies` lowers what executes, against the signatures the first
+// phase produced. The compilation unit is populated across both and moved out
+// by the second's return; afterwards the lowerer holds no IR.
 class UnitLowerer {
  public:
   UnitLowerer(
       const LoweringFacts& facts, const slang::ast::Scope& scope,
-      std::string name);
+      std::string name, hir::UnitKind kind);
 
-  auto Run() -> diag::Result<hir::CompilationUnit>;
+  // The declaration phase: everything this unit states about itself, including
+  // the signature it publishes. Reads no other unit, so a body that later
+  // references one cannot observe whether it had been declared yet.
+  auto Declare() -> diag::Result<void>;
+
+  // What this unit publishes, moved out once its declaration phase has run.
+  // The design collects these before any body lowers and hands each unit the
+  // ones it may read.
+  [[nodiscard]] auto TakeSignature() -> hir::UnitSignature;
+
+  // The body phase: everything this unit executes, resolved against what the
+  // units it references published.
+  auto LowerBodies(const UnitSignatures& signatures)
+      -> diag::Result<hir::CompilationUnit>;
 
   // Read access to the in-progress unit. Handlers reach the unit's type vocab
   // and builtins through this accessor; downstream consumers post-Run use the
@@ -205,19 +224,26 @@ class UnitLowerer {
     return *scope_;
   }
 
-  // Lowers a slang type to a HIR TypeId, memoizing by slang canonical pointer.
-  // The slang-keyed cache and the unit's type table are coordinated together:
-  // the dedup invariant (same slang canonical -> same HIR TypeId) is enforced
-  // structurally here, so callers cannot bypass it by writing to the unit
-  // directly.
+  // Lowers a slang type to a HIR TypeId. Identity is the pool's and is
+  // structural, so what the frontend-keyed memo here adds is only a shortcut
+  // past the translation work for a type already translated; two frontend
+  // spellings of one type reach the same id whether or not either took it.
   auto InternType(const slang::ast::Type& type, diag::SourceSpan span)
       -> diag::Result<hir::TypeId>;
 
   // Adds a type the lowering itself composes rather than reads off the
   // frontend -- the array of a type's per-dimension query results that an LRM
   // 20.7 query selects from when its dimension is named at run time. There is
-  // no frontend type to key the cache on, so it is added directly.
+  // no frontend type to take the shortcut on, so it goes straight to the pool.
   auto AddComposedType(hir::TypeData data) -> hir::TypeId;
+
+  // Takes a type another unit published into this unit's own pool, and answers
+  // with the identity this unit knows it by. The published pool's identities
+  // index storage that unit carries, so what crosses is the type's structure,
+  // re-identified here; a type taken twice out of one signature is taken once.
+  auto ImportSignatureType(
+      const hir::UnitSignature& signature, hir::TypeId published)
+      -> hir::TypeId;
 
   // Mints a class of this unit into the unit's class registry: allocates the
   // `ClassId`, populates the shape, and returns the id. The caller carries the
@@ -345,6 +371,19 @@ class UnitLowerer {
   [[nodiscard]] auto ForeignExportName(const slang::ast::SubroutineSymbol& sub)
       const -> std::optional<std::string_view> {
     return facts_.ForeignExportName(sub);
+  }
+  // What the unit named `unit_name` published, for a lowering that reaches
+  // across the unit boundary. A name with no entry is one no unit in the design
+  // declares.
+  [[nodiscard]] auto SignatureOf(const std::string& unit_name) const
+      -> const hir::UnitSignature* {
+    if (unit_signatures_ == nullptr) {
+      throw InternalError(
+          "UnitLowerer::SignatureOf: another unit's signature is reachable "
+          "only while bodies lower; the declaration phase reads this unit "
+          "alone");
+    }
+    return unit_signatures_->Find(unit_name);
   }
   // Whether the design being built contains this procedural block. A concurrent
   // assertion is a process whose whole body is the assertion, so disabling
@@ -546,6 +585,12 @@ class UnitLowerer {
       -> diag::Result<std::vector<hir::SensitivityEntry>>;
 
  private:
+  // Derives what this unit publishes from its own declarations: one entry per
+  // port, whose parts the instantiating unit's connections are consumed in step
+  // with. The type each part carries is interned by this unit and then taken
+  // into the signature's own pool, so what leaves stands on its own.
+  auto PublishSignature() -> diag::Result<void>;
+
   // The reader-relative route to a cell in an instantiated scope: a direct
   // member when the target sits on the reader's own scope, a routed reference
   // otherwise -- a typed enclosing climb to a this-unit ancestor member, a
@@ -571,6 +616,19 @@ class UnitLowerer {
   const slang::ast::Scope* scope_;
 
   hir::CompilationUnit unit_;
+
+  // What this unit publishes, built by the declaration phase and moved out
+  // before any body lowers.
+  hir::UnitSignature signature_;
+  // What every unit publishes, for the body phase alone. The declaration phase
+  // has none, which is what makes "a declaration reads only its own unit" a
+  // property of the code rather than a discipline.
+  const UnitSignatures* unit_signatures_ = nullptr;
+  // What each signature this unit has read out of became in this unit's pool,
+  // one entry per signature, so a type published once is taken once however
+  // many connections name it.
+  std::unordered_map<const hir::UnitSignature*, hir::TypeImportMemo>
+      signature_type_memos_;
 
   std::unordered_map<const slang::ast::Type*, hir::TypeId> type_cache_;
   // The classification of every class this unit's lowering has resolved: the

@@ -261,9 +261,14 @@ Unlocks the port-connection surface.
 
 ## Out of Scope
 
-- Interfaces, modports, and programs as compilation-unit kinds. They are unit kinds in
-  `compilation_unit_model.md` but are a separate workstream from module hierarchy. A hierarchical
-  reference resolved via an interface port belongs to that workstream.
+- Interfaces and modports, tracked in `interfaces.md`. An interface is a compilation-unit kind that
+  instantiates, parameterizes, and is referenced hierarchically exactly as a module does, so this
+  workstream already carries it; what that one adds is how a module reaches an interface it does not
+  own -- the interface port, the modport view over it, and the virtual interface. A hierarchical
+  reference resolved through an interface port belongs there.
+- Programs as a compilation-unit kind. A program is a unit kind in `compilation_unit_model.md`, but
+  its scheduling region and termination semantics are its own subject rather than a facet of module
+  hierarchy.
 - Primitive and gate-level instances (UDPs, built-in gates).
 - Specify parameters (`specparam`, LRM 6.20.5). They carry timing and delay values for specify
   blocks and belong to the timing domain, not the parameter-specialization path; they wait for a

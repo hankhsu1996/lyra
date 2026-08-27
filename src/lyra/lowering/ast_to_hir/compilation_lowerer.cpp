@@ -1,3 +1,4 @@
+#include <memory>
 #include <string>
 #include <unordered_set>
 #include <utility>
@@ -14,26 +15,34 @@
 #include "lyra/lowering/ast_to_hir/lower.hpp"
 #include "lyra/lowering/ast_to_hir/specialization_name.hpp"
 #include "lyra/lowering/ast_to_hir/unit_lowerer.hpp"
+#include "lyra/lowering/ast_to_hir/unit_signatures.hpp"
 
 namespace lyra::lowering::ast_to_hir {
 
 namespace {
 
-// Collects the distinct unit bodies reachable from the tops. slang owns the
+// Collects the distinct units reachable from the tops. slang owns the
 // structural descent: visiting an instance recurses into its body, and every
 // container (generate blocks, instance arrays) is a Scope the visitor walks
 // through, so an instance nested in a generate block is reached without this
-// code knowing the container taxonomy. The canonical body keys the dedup so a
-// module instantiated many times is lowered once.
+// code knowing the container taxonomy.
+//
+// The specialization name keys the dedup, because that is what identifies a
+// unit: a definition and the bindings selected for it, which is what a referrer
+// can compute about the child it constructs. Two instances agreeing on it are
+// one unit however many bodies the frontend chose to build -- it declines to
+// share one when a name inside reaches outward, since the resolution differs
+// per instance, but that resolution is settled per instance at construction and
+// never inside the unit, so the unit itself is the same.
 struct UnitCollector
     : slang::ast::ASTVisitor<UnitCollector, slang::ast::VisitFlags::Canonical> {
-  std::unordered_set<const slang::ast::InstanceBodySymbol*> seen;
+  std::unordered_set<std::string> seen;
   std::vector<const slang::ast::InstanceBodySymbol*> order;
 
   void handle(const slang::ast::InstanceSymbol& inst) {
     const auto* canonical = inst.getCanonicalBody();
     const auto& body = canonical != nullptr ? *canonical : inst.body;
-    if (seen.insert(&body).second) {
+    if (seen.insert(SpecializationName(body)).second) {
       order.push_back(&body);
       visitDefault(inst);
     }
@@ -64,21 +73,6 @@ auto CollectForeignExportNames(const LowerCompilationFacts& facts)
   return names;
 }
 
-auto LowerUnit(
-    const LowerCompilationFacts& facts, const ForeignExportNames& export_names,
-    const slang::ast::InstanceBodySymbol& body)
-    -> diag::Result<hir::CompilationUnit> {
-  const LoweringFacts unit_facts(
-      facts.SourceMapper(), facts.Sensitivity(), export_names,
-      facts.DisableAssertions());
-  UnitLowerer lowerer(unit_facts, body, SpecializationName(body));
-  auto unit = lowerer.Run();
-  if (unit) {
-    unit->kind = hir::UnitKind::kModule;
-  }
-  return unit;
-}
-
 auto CollectPackages(const LowerCompilationFacts& facts)
     -> std::vector<const slang::ast::PackageSymbol*> {
   // `getPackages` includes the built-in `std` package (LRM 6.7.1); the runtime
@@ -92,21 +86,6 @@ auto CollectPackages(const LowerCompilationFacts& facts)
     }
   }
   return packages;
-}
-
-auto LowerPackageUnit(
-    const LowerCompilationFacts& facts, const ForeignExportNames& export_names,
-    const slang::ast::PackageSymbol& package)
-    -> diag::Result<hir::CompilationUnit> {
-  const LoweringFacts unit_facts(
-      facts.SourceMapper(), facts.Sensitivity(), export_names,
-      facts.DisableAssertions());
-  UnitLowerer lowerer(unit_facts, package, std::string{package.name});
-  auto unit = lowerer.Run();
-  if (unit) {
-    unit->kind = hir::UnitKind::kPackage;
-  }
-  return unit;
 }
 
 // Whether a compilation-unit scope declares a member that becomes namespace
@@ -144,50 +123,59 @@ auto CollectCompilationUnits(const LowerCompilationFacts& facts)
   return units;
 }
 
-auto LowerCompilationUnitUnit(
-    const LowerCompilationFacts& facts, const ForeignExportNames& export_names,
-    const slang::ast::CompilationUnitSymbol& cu)
-    -> diag::Result<hir::CompilationUnit> {
-  const LoweringFacts unit_facts(
-      facts.SourceMapper(), facts.Sensitivity(), export_names,
-      facts.DisableAssertions());
-  UnitLowerer lowerer(unit_facts, cu, CompilationUnitName(cu));
-  auto unit = lowerer.Run();
-  if (unit) {
-    // A `$unit` scope is lowered, emitted, and initialized exactly as a package
-    // is -- a rootless namespace unit -- so it carries the same unit kind;
-    // nothing downstream distinguishes the two, so there is no separate kind.
-    unit->kind = hir::UnitKind::kPackage;
-  }
-  return unit;
-}
-
 }  // namespace
 
 auto LowerCompilationToHir(const LowerCompilationFacts& facts)
     -> diag::Result<std::vector<hir::CompilationUnit>> {
-  std::vector<hir::CompilationUnit> units;
   const auto packages = CollectPackages(facts);
   const auto compilation_units = CollectCompilationUnits(facts);
   const auto bodies = CollectUnitBodies(facts);
   const auto export_names = CollectForeignExportNames(facts);
-  units.reserve(packages.size() + compilation_units.size() + bodies.size());
+  const LoweringFacts unit_facts(
+      facts.SourceMapper(), facts.Sensitivity(), export_names,
+      facts.DisableAssertions());
+
+  std::vector<std::unique_ptr<UnitLowerer>> lowerers;
+  lowerers.reserve(packages.size() + compilation_units.size() + bodies.size());
   for (const auto* package : packages) {
-    auto unit = LowerPackageUnit(facts, export_names, *package);
-    if (!unit) {
-      return std::unexpected(std::move(unit.error()));
-    }
-    units.push_back(*std::move(unit));
+    lowerers.push_back(
+        std::make_unique<UnitLowerer>(
+            unit_facts, *package, std::string{package->name},
+            hir::UnitKind::kPackage));
   }
   for (const auto* cu : compilation_units) {
-    auto unit = LowerCompilationUnitUnit(facts, export_names, *cu);
-    if (!unit) {
-      return std::unexpected(std::move(unit.error()));
-    }
-    units.push_back(*std::move(unit));
+    // A `$unit` scope is lowered, emitted, and initialized exactly as a package
+    // is -- a rootless namespace unit -- so it carries the same unit kind;
+    // nothing downstream distinguishes the two, so there is no separate kind.
+    lowerers.push_back(
+        std::make_unique<UnitLowerer>(
+            unit_facts, *cu, CompilationUnitName(*cu),
+            hir::UnitKind::kPackage));
   }
   for (const auto* body : bodies) {
-    auto unit = LowerUnit(facts, export_names, *body);
+    lowerers.push_back(
+        std::make_unique<UnitLowerer>(
+            unit_facts, *body, SpecializationName(*body),
+            hir::UnitKind::kModule));
+  }
+
+  // Every unit declares before any unit lowers a body, because a body may
+  // reference another unit and cannot reference what has not been declared.
+  // This is the design-scope reading of the same ordering a single unit already
+  // applies to its own declarations. A declaration reads only its own unit, so
+  // nothing orders this pass and no cycle among units can arise.
+  UnitSignatures signatures;
+  for (const auto& lowerer : lowerers) {
+    if (auto r = lowerer->Declare(); !r) {
+      return std::unexpected(std::move(r.error()));
+    }
+    signatures.Publish(lowerer->TakeSignature());
+  }
+
+  std::vector<hir::CompilationUnit> units;
+  units.reserve(lowerers.size());
+  for (const auto& lowerer : lowerers) {
+    auto unit = lowerer->LowerBodies(signatures);
     if (!unit) {
       return std::unexpected(std::move(unit.error()));
     }

@@ -1151,7 +1151,7 @@ auto UnitLowerer::InternLocalClass(
 }
 
 auto UnitLowerer::AddComposedType(hir::TypeData data) -> hir::TypeId {
-  return unit_.types.Add(hir::Type{.data = std::move(data)});
+  return unit_.types.Intern(std::move(data));
 }
 
 auto UnitLowerer::InternType(
@@ -1163,8 +1163,7 @@ auto UnitLowerer::InternType(
   }
   auto data_or = TranslateTypeData(*this, type, span);
   if (!data_or) return std::unexpected(std::move(data_or.error()));
-  const hir::TypeId id =
-      unit_.types.Add(hir::Type{.data = *std::move(data_or)});
+  const hir::TypeId id = unit_.types.Intern(*std::move(data_or));
   type_cache_.emplace(canonical, id);
   return id;
 }

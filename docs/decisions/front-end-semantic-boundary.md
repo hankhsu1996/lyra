@@ -6,7 +6,9 @@
 
 ## Status
 
-Accepted
+Accepted. D3's navigation-segment classifier is widened by `unit-signature.md`: descending into
+another unit's instance body crosses the boundary, but the step is still typed when its target is a
+declaration that unit published, and by-name only when it is not.
 
 ## Why this decision matters
 

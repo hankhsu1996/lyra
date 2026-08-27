@@ -13,6 +13,7 @@
 #include "lyra/hir/structural_scope.hpp"
 #include "lyra/hir/type.hpp"
 #include "lyra/hir/type_id.hpp"
+#include "lyra/hir/type_pool.hpp"
 
 namespace lyra::hir {
 
@@ -43,7 +44,7 @@ struct BuiltinHirTypes {
 struct CompilationUnit {
   std::string name;
   UnitKind kind = UnitKind::kModule;
-  base::Arena<Type, TypeId> types;
+  TypePool types;
   BuiltinHirTypes builtins;
   StructuralScope root_scope;
   // A class can be referenced -- as a handle type or a `new` target -- before
@@ -67,10 +68,9 @@ struct CompilationUnit {
   // canonical types. The leaves are added first; the predefined integers are
   // single-dimension packed arrays over them (LRM 7.4.1: an integer type with a
   // predefined width matches a single-dimension packed array).
-  static auto MakeBuiltins(base::Arena<Type, TypeId>& types)
-      -> BuiltinHirTypes {
+  static auto MakeBuiltins(TypePool& types) -> BuiltinHirTypes {
     const auto add = [&](TypeData data) {
-      return types.Add(Type{.data = std::move(data)});
+      return types.Intern(std::move(data));
     };
     const TypeId scalar_bit = add(ScalarBitType{.atom = BitAtom::kBit});
     const TypeId scalar_logic = add(ScalarBitType{.atom = BitAtom::kLogic});

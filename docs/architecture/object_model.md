@@ -145,6 +145,16 @@ direction. The governing thesis:
     are properties read off that identity, never substitutes for it, and one storage serves every
     object type._
 
+11. **An object type states which of its members it publishes.** Publication is a property of each
+    member, not a second list beside the type: a member is reachable by name from another
+    compilation unit or it is not, and the declaration says which. It is not a storage
+    classification -- the type still carries every fact about how a member is stored -- but the
+    access-control axis every generic object model has, and it is what a compilation unit's
+    signature projects. A published member's position is fixed ahead of every unpublished one, so
+    what a unit keeps to itself cannot move what it promised. _Object-model consequence: an object's
+    promise and its storage are one declaration read two ways, never two declarations that can
+    disagree._
+
 ## Boundary to Adjacent Layers
 
 - **Peer to `mir.md` and `callable.md`.** `mir.md` owns the overall MIR shape and the value-type
@@ -193,6 +203,10 @@ direction. The governing thesis:
   different reference sites. (Invariant 10.)
 - A runtime registry of per-slot type metadata. A member's type is known from the MIR type system at
   the point that reads it; a parallel runtime table is a second answer that can disagree.
+- A separate list of which members are published, or publication inferred from a member's name,
+  position, or storage shape. The declaration states it. (Invariant 11.)
+- An unpublished member placed among the published ones, so that adding or retyping something a unit
+  never promised moves something it did. (Invariant 11.)
 
 ## Notes / Examples
 

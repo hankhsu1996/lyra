@@ -210,6 +210,7 @@
 23_hierarchy/instance_array_element_select: "the get_signal builtin has no entry on this backend; its receiver type is pointer"
 23_hierarchy/instance_array_port_connection: "the get_signal builtin has no entry on this backend; its receiver type is pointer"
 23_hierarchy/instance_creates_its_own_copy: "the get_signal builtin has no entry on this backend; its receiver type is pointer"
+23_hierarchy/multi_port_bundles_internal_names: "the get_signal builtin has no entry on this backend; its receiver type is pointer"
 23_hierarchy/named_block_in_hierarchical_path: "a region consuming a control effect is not yet lowerable to LIR"
 23_hierarchy/non_integral_port_connection: "the get_signal builtin has no entry on this backend; its receiver type is pointer"
 23_hierarchy/path_head_root_or_generate_block: "the get_child builtin has no entry on this backend; its receiver type is pointer"

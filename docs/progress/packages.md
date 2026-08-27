@@ -119,11 +119,11 @@ Nothing blocked. The remaining PK3 increment checkboxes are the actionable follo
 - LRM anchors: 26.1 (overview), 26.2 (package declarations), 26.3 (referencing package contents;
   `import`; search order), 26.4 (search order precedence); 3.12.1 (`$unit` compilation-unit scope).
 - Architecture contracts the work must satisfy: `../architecture/compilation_unit_model.md` (a
-  package is a compilation unit; its interface is its set of exported declarations, generalizing the
-  module-centric "parameters and ports" wording), `../architecture/object_model.md` (a namespace is
-  the type-associated member scope, here standing alone as a unit root rather than attached to an
-  object type), `../architecture/reference_resolution.md` and `../architecture/emission_model.md`
-  (by-name cross-unit resolution and per-unit emission), `../architecture/north_star.md` (the
-  cross-unit dependency is explicitly declared, per the incremental / parallel constraints).
+  package is a compilation unit whose signature is its declarations),
+  `../architecture/object_model.md` (a namespace is the type-associated member scope, here standing
+  alone as a unit root rather than attached to an object type),
+  `../architecture/reference_resolution.md` and `../architecture/emission_model.md` (by-name
+  cross-unit resolution and per-unit emission), `../architecture/north_star.md` (the cross-unit
+  dependency is explicitly declared, per the incremental / parallel constraints).
 - Unblocks: `ibex.md` (the Ibex design leans on `ibex_pkg`), `dpi.md` (the package / `$unit`-scoped
   side of both DPI directions hangs off the package unit and callable established here).

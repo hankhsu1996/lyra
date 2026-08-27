@@ -1,8 +1,11 @@
+#include <cstddef>
 #include <cstdint>
 #include <expected>
 #include <optional>
+#include <ranges>
 #include <string>
 #include <utility>
+#include <variant>
 #include <vector>
 
 #include <slang/ast/Expression.h>
@@ -22,7 +25,9 @@
 #include "lyra/diag/diagnostic.hpp"
 #include "lyra/hir/structural_scope.hpp"
 #include "lyra/lowering/ast_to_hir/constant_value.hpp"
+#include "lyra/lowering/ast_to_hir/instance_array_shape.hpp"
 #include "lyra/lowering/ast_to_hir/sensitivity.hpp"
+#include "lyra/lowering/ast_to_hir/specialization_name.hpp"
 #include "lyra/lowering/ast_to_hir/structural_scope_lowerer.hpp"
 #include "lyra/lowering/ast_to_hir/unit_lowerer.hpp"
 
@@ -36,6 +41,22 @@ auto PortConnectionUnsupported(diag::SourceSpan span, std::string message)
       span, diag::DiagCode::kUnsupportedPortConnectionForm, std::move(message));
 }
 
+// What the unit an instance is built from publishes. Resolved where the
+// dependency on that unit is declared, so the connections under it -- one
+// element or a thousand -- consume one resolution instead of re-deriving the
+// unit's identity per element.
+auto InstantiatedUnitSignature(
+    const UnitLowerer& unit_lowerer, const std::string& unit_name)
+    -> const hir::UnitSignature& {
+  const hir::UnitSignature* signature = unit_lowerer.SignatureOf(unit_name);
+  if (signature == nullptr) {
+    throw InternalError(
+        "PopulatePortConnections: every unit's signature is derived before any "
+        "body lowers, so an instantiated unit always has one");
+  }
+  return *signature;
+}
+
 // Records one instance's port connections as HIR. The instance is reached
 // from its owning scope as `child`, with `element_indices` selecting the
 // element when it is an instance array (empty for a scalar); each port is a
@@ -45,36 +66,61 @@ auto PortConnectionUnsupported(diag::SourceSpan span, std::string message)
 // with its direction; HIR-to-MIR realizes it (LRM 23.3.3).
 auto ConnectElementPorts(
     StructuralScopeLowerer& scope, UnitLowerer& unit_lowerer,
-    const slang::ast::InstanceSymbol& inst, hir::OwnedChildRef child,
+    const slang::ast::InstanceSymbol& inst,
+    const hir::UnitSignature& child_signature, hir::OwnedChildRef child,
     ScopeFrameId home_frame, std::vector<std::uint32_t> element_indices,
     WalkFrame frame) -> diag::Result<void> {
   const hir::OwnedChildStep instance_step{
       .child = child, .indices = std::move(element_indices)};
   const auto span = unit_lowerer.SourceMapper().PointSpanOf(inst.location);
 
-  for (const auto* conn : inst.getPortConnections()) {
-    if (conn->port.kind != slang::ast::SymbolKind::Port) {
-      return PortConnectionUnsupported(
-          span,
-          "interface or non-variable port connection is not yet supported");
+  // A connection reaches one part of one port, and the child states its parts
+  // in the order connections arrive at them, so the two are walked in step
+  // rather than searched: the direction each connection runs in is then the
+  // child's own statement of it, at the granularity data actually flows.
+  const auto connections = inst.getPortConnections();
+  auto published_parts = child_signature.ports |
+                         std::views::transform(&hir::PortDecl::parts) |
+                         std::views::join;
+
+  std::size_t index = 0;
+  for (const hir::PortPart& published : published_parts) {
+    if (index >= connections.size()) {
+      throw InternalError(
+          "ConnectElementPorts: a unit publishes one part per connection its "
+          "instances make, so the two are the same sequence");
     }
-    const auto& port = conn->port.as<slang::ast::PortSymbol>();
-    if (port.direction == slang::ast::ArgumentDirection::InOut) {
+    const auto* conn = connections[index++];
+
+    const auto* data = std::get_if<hir::DataPortPart>(&published);
+    if (data == nullptr) {
+      return PortConnectionUnsupported(
+          span, "interface port connection is not yet supported");
+    }
+    if (data->direction == hir::PortDirection::kInOut) {
       return PortConnectionUnsupported(
           span, "inout port connection is not yet supported");
     }
+    const auto* port = conn->port.as_if<slang::ast::PortSymbol>();
+    if (port == nullptr) {
+      return PortConnectionUnsupported(
+          span, "non-variable port connection is not yet supported");
+    }
     const auto* internal =
-        port.internalSymbol == nullptr
+        port->internalSymbol == nullptr
             ? nullptr
-            : port.internalSymbol->as_if<slang::ast::ValueSymbol>();
+            : port->internalSymbol->as_if<slang::ast::ValueSymbol>();
     if (internal == nullptr) {
       return PortConnectionUnsupported(
           span,
           "port not bound to a connectable variable is not yet supported");
     }
-    auto type_id = unit_lowerer.InternType(port.getType(), span);
-    if (!type_id) return std::unexpected(std::move(type_id.error()));
-    if (!unit_lowerer.Unit().types.Get(*type_id).IsValueChangeObservable()) {
+    // What crosses is the type the child published, taken into this unit's own
+    // pool -- so the parent's record of the connection rests on the child's
+    // statement of its port and not on a second reading of the frontend.
+    const hir::TypeId type_id =
+        unit_lowerer.ImportSignatureType(child_signature, data->type);
+    if (!unit_lowerer.Unit().types.Get(type_id).IsValueChangeObservable()) {
       return PortConnectionUnsupported(
           span,
           "port connection of a handle / event type is not yet supported");
@@ -90,7 +136,7 @@ auto ConnectElementPorts(
     // boundary like any cross-unit cell (LRM 6.5, 23.3.3); HIR-to-MIR realizes
     // the connection as a reactive edge whose net side attaches a driver. Only
     // the `wire` / `tri` resolution is supported; other net types are rejected.
-    if (port.isNetPort()) {
+    if (port->isNetPort()) {
       switch (internal->as<slang::ast::NetSymbol>().netType.netKind) {
         case slang::ast::NetType::Wire:
         case slang::ast::NetType::Tri:
@@ -101,17 +147,13 @@ auto ConnectElementPorts(
       }
     }
 
-    const bool is_ref = port.direction == slang::ast::ArgumentDirection::Ref;
-    if (is_ref) {
-      // A `const ref` port shares storage but forbids the child writing through
-      // it (LRM 23.3.3.2); the child member is a read-only reference the parent
-      // still rebinds at construction, which is a storage shape of its own and
-      // not the rebindable plain `ref`.
-      if (const auto* iv = internal->as_if<slang::ast::VariableSymbol>();
-          iv != nullptr && iv->flags.has(slang::ast::VariableFlags::Const)) {
-        return PortConnectionUnsupported(
-            span, "const ref port connection is not yet supported");
-      }
+    // A `const ref` port shares storage but forbids the child writing through
+    // it (LRM 23.3.3.2); the child member is a read-only reference the parent
+    // still rebinds at construction, which is a storage shape of its own and
+    // not the rebindable plain `ref`.
+    if (data->direction == hir::PortDirection::kConstRef) {
+      return PortConnectionUnsupported(
+          span, "const ref port connection is not yet supported");
     }
 
     const auto port_recipe = [&]() -> hir::RoutedPathRecipe {
@@ -119,7 +161,7 @@ auto ConnectElementPorts(
           .head = hir::InUnitHead{.hops = {}},
           .steps = {hir::PathStep{instance_step}},
           .leaf = hir::OpaqueLeaf{.name = std::string{internal->name}},
-          .type = *type_id};
+          .type = type_id};
     };
     // An input/output port reads the child cell during simulation, so it holds
     // a persistent routed reference; a `ref` port is bound once in the resolve
@@ -130,16 +172,15 @@ auto ConnectElementPorts(
               *internal, home_frame, port_recipe(), span))};
     };
 
-    hir::PortDirection direction{};
+    const hir::PortDirection direction = data->direction;
     hir::PortEndpoint endpoint;
     hir::ExprId peer{};
     std::vector<hir::SensitivityEntry> sensitivity;
 
-    switch (port.direction) {
-      case slang::ast::ArgumentDirection::In: {
-        direction = hir::PortDirection::kInput;
+    switch (direction) {
+      case hir::PortDirection::kInput: {
         endpoint = cell_endpoint();
-        if (expr == port.getInitializer()) {
+        if (expr == port->getInitializer()) {
           // An omitted input port takes its declared default (LRM 23.2.2.4),
           // which slang surfaces through getExpression() as the port's own
           // getInitializer(); the default's names resolve in the child, so its
@@ -151,7 +192,7 @@ auto ConnectElementPorts(
                 "ConnectElementPorts: port default did not fold to a constant");
           }
           auto peer_or = MakeConstantValueExpr(
-              unit_lowerer.Unit(), frame, *constant, *type_id, span);
+              unit_lowerer.Unit(), frame, *constant, type_id, span);
           if (!peer_or) return std::unexpected(std::move(peer_or.error()));
           peer = frame.Exprs().Add(*std::move(peer_or));
         } else {
@@ -166,8 +207,7 @@ auto ConnectElementPorts(
         }
         break;
       }
-      case slang::ast::ArgumentDirection::Out: {
-        direction = hir::PortDirection::kOutput;
+      case hir::PortDirection::kOutput: {
         endpoint = cell_endpoint();
         // slang models an output connection as `parent_target = <port>`, the
         // port value standing in as an EmptyArgument; the parent target is the
@@ -190,17 +230,18 @@ auto ConnectElementPorts(
         sensitivity = *std::move(entries);
         break;
       }
-      case slang::ast::ArgumentDirection::Ref: {
-        direction = hir::PortDirection::kRef;
+      case hir::PortDirection::kRef: {
         endpoint = port_recipe();
         auto peer_or = scope.LowerExpr(*expr, frame);
         if (!peer_or) return std::unexpected(std::move(peer_or.error()));
         peer = frame.Exprs().Add(*std::move(peer_or));
         break;
       }
-      case slang::ast::ArgumentDirection::InOut:
+      case hir::PortDirection::kInOut:
+      case hir::PortDirection::kConstRef:
         throw InternalError(
-            "ConnectElementPorts: inout reached the connection switch");
+            "ConnectElementPorts: a direction this connection rejects reached "
+            "the connection switch");
     }
 
     frame.current_structural_scope->port_connections.Add(
@@ -210,6 +251,11 @@ auto ConnectElementPorts(
             .endpoint = std::move(endpoint),
             .peer = peer,
             .sensitivity = std::move(sensitivity)});
+  }
+  if (index != connections.size()) {
+    throw InternalError(
+        "ConnectElementPorts: a unit publishes one part per connection its "
+        "instances make, so the two are the same sequence");
   }
   return {};
 }
@@ -221,7 +267,8 @@ auto ConnectElementPorts(
 // routes each to the right cell.
 auto ConnectArrayElements(
     StructuralScopeLowerer& scope, UnitLowerer& unit_lowerer,
-    const slang::ast::InstanceArraySymbol& array, hir::OwnedChildRef child,
+    const slang::ast::InstanceArraySymbol& array,
+    const hir::UnitSignature& child_signature, hir::OwnedChildRef child,
     ScopeFrameId home_frame, const std::vector<std::uint32_t>& index_prefix,
     WalkFrame frame) -> diag::Result<void> {
   for (std::uint32_t i = 0; i < array.elements.size(); ++i) {
@@ -231,13 +278,13 @@ auto ConnectArrayElements(
     if (element->kind == slang::ast::SymbolKind::InstanceArray) {
       auto r = ConnectArrayElements(
           scope, unit_lowerer, element->as<slang::ast::InstanceArraySymbol>(),
-          child, home_frame, element_prefix, frame);
+          child_signature, child, home_frame, element_prefix, frame);
       if (!r) return std::unexpected(std::move(r.error()));
       continue;
     }
     auto r = ConnectElementPorts(
-        scope, unit_lowerer, element->as<slang::ast::InstanceSymbol>(), child,
-        home_frame, std::move(element_prefix), frame);
+        scope, unit_lowerer, element->as<slang::ast::InstanceSymbol>(),
+        child_signature, child, home_frame, std::move(element_prefix), frame);
     if (!r) return std::unexpected(std::move(r.error()));
   }
   return {};
@@ -257,8 +304,10 @@ auto StructuralScopeLowerer::PopulatePortConnections(
         throw InternalError(
             "PopulatePortConnections: instance member has no binding");
       }
+      const auto& inst = member.as<slang::ast::InstanceSymbol>();
       auto r = ConnectElementPorts(
-          *this, *owner_, member.as<slang::ast::InstanceSymbol>(),
+          *this, *owner_, inst,
+          InstantiatedUnitSignature(*owner_, SpecializationName(inst)),
           binding->child, binding->home_frame, {}, frame);
       if (!r) return std::unexpected(std::move(r.error()));
     } else if (member.kind == slang::ast::SymbolKind::InstanceArray) {
@@ -268,8 +317,21 @@ auto StructuralScopeLowerer::PopulatePortConnections(
       if (!binding.has_value()) {
         continue;
       }
+      // Every element of an array is built from the one unit the array's shape
+      // names, so the dependency on that unit resolves once for the whole
+      // array. The shape is resolved through the same predicate the declaration
+      // pass used, so the unit named here and the member built there cannot
+      // drift.
+      const auto& array = member.as<slang::ast::InstanceArraySymbol>();
+      const auto shape = ResolveInstanceArrayShape(array);
+      if (!shape.has_value()) {
+        throw InternalError(
+            "PopulatePortConnections: an array with a bound member has a "
+            "shape, since the same predicate decided both");
+      }
       auto r = ConnectArrayElements(
-          *this, *owner_, member.as<slang::ast::InstanceArraySymbol>(),
+          *this, *owner_, array,
+          InstantiatedUnitSignature(*owner_, SpecializationName(*shape->leaf)),
           binding->child, binding->home_frame, {}, frame);
       if (!r) return std::unexpected(std::move(r.error()));
     }

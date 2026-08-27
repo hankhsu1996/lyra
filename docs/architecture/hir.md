@@ -104,6 +104,10 @@ faithful, compiler-identity-owning IR implies.
 - Dependence on a global lookup table to resolve a local reference. (Local references resolve inside
   the unit by structure.)
 - Carrying frontend ids into HIR or any downstream layer. Frontend ids end at AST-to-HIR.
+- Type identity that reproduces whichever types the frontend happened to merge, rather than the
+  type's own structure. (A frontend key may shortcut translation work; it may not decide which types
+  are the same, or two types equal in HIR terms differ in id according to how the frontend spelled
+  them.)
 
 ## Notes / Examples
 

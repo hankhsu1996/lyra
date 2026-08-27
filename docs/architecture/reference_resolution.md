@@ -3,15 +3,17 @@
 ## Purpose
 
 Define how a reference reaches its target. A route from referrer to target is a sequence of
-segments; each segment's realization follows whether the emitting artifact owns its layout. The same
-resolution serves both accessing the target's value and observing its changes.
+segments; each segment's realization follows whether the referrer has a declaration to compile
+against for that step. The same resolution serves both accessing the target's value and observing
+its changes.
 
 ## Owns
 
 - The decomposition of a reference's route into segments and the rule that each segment is
-  classified independently by layout visibility.
-- The rule that a layout-visible segment realizes as typed navigation through stable member
-  identities, and an opaque segment realizes as a runtime-SDK by-name lookup.
+  classified independently by whether the referrer has a declaration for its target.
+- The rule that a declared segment realizes as typed navigation -- through an in-artifact member
+  identity, or through a signature member's name resolved at the referrer's compile time -- and that
+  an opaque segment realizes as a runtime-SDK by-name lookup.
 - The contract that route execution is total: a route that fails to seal is either a
   user-diagnosable elaboration error (a non-constructed target, a forwarding cycle with no storage
   root) or a compiler-invariant violation, never a runtime fallback.
@@ -27,7 +29,7 @@ resolution serves both accessing the target's value and observing its changes.
 - The shape of the object graph, the construction order, and the graph's faithfulness to the
   frontend's elaboration (see `hierarchy_and_generate.md`). This doc relies on that faithfulness but
   does not establish it.
-- The compilation-unit boundary that defines which segments are layout-visible (see
+- What each unit kind publishes, which is what decides whether a segment is declared (see
   `compilation_unit_model.md`).
 - The compile-time identity kinds used to thread route segments (see `identity_and_ownership.md`,
   `hir.md`, `mir.md`).
@@ -47,11 +49,19 @@ resolution serves both accessing the target's value and observing its changes.
 1. Every reference is a route from a structural origin to an endpoint. The route is a sequence of
    segments; the endpoint, once sealed, is the canonical access point for every read, write, and
    observation against the reference.
-2. Each segment is classified by layout visibility. A **layout-visible** segment's source class and
-   target class are both owned by the emitting artifact; its realization is typed navigation through
-   stable member identities, with no string lookup and no SDK call. An **opaque** segment crosses
-   into another compilation unit's body; its realization is a runtime-SDK by-name lookup. A single
-   route may alternate segments freely.
+2. Each segment is classified by whether the referrer has a declaration to compile against for that
+   step. A **declared** segment's target is one the referrer already compiles against -- a class its
+   own artifact owns, or a member on a signature it consumes -- and its realization is typed
+   navigation, with no string lookup and no SDK call at simulation or elaboration time. An
+   **opaque** segment reaches past a unit's signature, where the referrer has no declaration; its
+   realization is a runtime-SDK by-name lookup. A single route may alternate segments freely.
+
+   A declared segment's identity comes from one of two places, which changes nothing about its cost
+   or its realization: an in-artifact member identity when the emitting artifact owns both classes,
+   and the member's name resolved against the consumed signature at the referrer's compile time when
+   it does not. The second is not a weaker identity -- a name checked by the compiler that consumes
+   it and a name looked up in a run-time registry share a spelling and nothing else.
+
 3. A reference's route executes once during the binding-graph phase, producing a candidate endpoint;
    the endpoint is committed at the sealing barrier and read directly thereafter. Simulation-time
    access reads the sealed endpoint with no per-access lookup, no hierarchy traversal, and no name
@@ -77,8 +87,8 @@ resolution serves both accessing the target's value and observing its changes.
 
 ## Boundary to Adjacent Layers
 
-- `compilation_unit_model.md` owns the unit boundary that decides which segments are layout-visible
-  to which artifact.
+- `compilation_unit_model.md` owns the signature each unit kind publishes, which is what decides
+  whether a segment is declared to a given artifact.
 - `hierarchy_and_generate.md` owns the object graph the routes navigate and the faithfulness of that
   graph to the frontend's elaboration that makes route execution total.
 - `runtime_model.md` places route execution in the constructor context (the binding-graph phases at
@@ -94,18 +104,21 @@ resolution serves both accessing the target's value and observing its changes.
   An opaque segment is by-name through the SDK by definition; baking the target's layout is the
   canonical artifact-boundary violation.
 - Route mechanism dispatched on the frontend's lexical-form classification or on source order. The
-  mechanism follows each segment's layout visibility; the form that named the target is not visible
-  past the AST-to-HIR boundary.
+  mechanism follows whether each segment is declared to the referrer; the form that named the target
+  is not visible past the AST-to-HIR boundary.
+- An opaque segment used for a name the target unit published. A published name has a declaration to
+  compile against, so routing it through the SDK converts a compile-time check into an elaboration
+  failure and leaves an unchecked cast where the check belonged.
 - A reference shape per direction or per lexical form (as separate species). One semantic shape; one
   route decomposition.
 - Resolution driven from the target's side: the referenced unit wiring, pushing, or storing its own
-  member into the units that reference it. A unit compiles against its own interface and cannot know
+  member into the units that reference it. A unit compiles against its own signature and cannot know
   who references it, so it never drives resolution for a consumer and never carries a list of its
   referrers. Every route's opaque segment is driven by the referrer, which reaches the target by
-  name at Resolve; the target only answers by-name queries about its own interface.
-- A typed segment crossing into another unit's body, naming the other unit's members, fields, or
-  child types. Typed segments stay within the artifact that owns both the source and target class;
-  the segment that crosses the unit boundary is opaque by contract.
+  name at Resolve; the target only answers by-name queries about its own declarations.
+- A typed segment naming a declaration the target unit did not publish -- an internal member, an
+  internal type, a child it owns. A typed segment stops at what the referrer compiles against; the
+  step that reaches past a signature is opaque by contract.
 - A resolution path for ports that is distinct from the one for hierarchical references. Two
   mechanisms for cross-instance access is the canonical violation.
 - Resolution by flattened symbol-name lookup or a design-global path table that mirrors the object
@@ -133,28 +146,31 @@ resolution serves both accessing the target's value and observing its changes.
 **Same-unit sibling reference.** `always_comb from_b = b.bx;` inside generate block `a` of `Top`,
 where `b` is a sibling generate of `a`. The route has two segments: `a -> Top` (the typed parent
 edge) and `Top -> b -> bx` (typed member access into the sibling generate's class then into its
-variable). Both segments are layout-visible: `Top`'s artifact owns `a`'s class, `b`'s class, and the
-`bx` member. The route executes the typed chain once and seals to the variable's cell. The mechanism
-does not depend on whether `a` is declared before or after `b`.
+variable). Both segments are declared: `Top`'s artifact owns `a`'s class, `b`'s class, and the `bx`
+member. The route executes the typed chain once and seals to the variable's cell. The mechanism does
+not depend on whether `a` is declared before or after `b`.
 
-**Cross-unit downward reference.** `always_comb r = c.x;` inside a parent module, where `c` is a
-child module instance: the route has two segments: `parent -> c` (typed; the parent's artifact owns
-the `c` member's pointer type) and `c -> x` (opaque; `x` lives inside `c`'s unit, whose body is not
-visible). The typed segment executes by member access, the opaque segment by SDK by-name lookup, and
-the route seals to the variable's cell. The body reads the sealed endpoint; sensitivity rides the
-same endpoint.
+**The same cross-unit reference splits by what the child published.** `always_comb r = c.p;` and
+`always_comb r = c.x;` inside a parent module, where `c` is a child module instance, `p` is one of
+its ports, and `x` is an internal variable. Both routes begin with the same declared segment
+`parent -> c`, reached through the `c` member's pointer type the parent's artifact owns. They differ
+at the second step, and the child decides which: `c -> p` is declared, because `p` is on the
+module's signature and the parent already compiles against it, so a renamed port fails where the
+parent compiles; `c -> x` is opaque, because the child published nothing to compile against, so the
+name resolves through the SDK at Resolve and a renamed `x` fails at elaboration. Both seal to a
+cell, and the body and its sensitivity read the sealed endpoint either way.
 
-**Multi-segment mixed route.** In `top.gen.child.x`, `top.gen` is typed (the generate scope belongs
-to top's unit), `gen.child` is typed (`child` is a member of `gen`'s class in the same unit), and
-`child.x` is opaque (it crosses into `child`'s unit). The route alternates two typed segments and
-one opaque segment; the SDK is reached only at the boundary crossing.
+**Multi-segment mixed route.** In `top.gen.child.x`, `top.gen` is declared (the generate scope
+belongs to top's unit), `gen.child` is declared (`child` is a member of `gen`'s class in the same
+unit), and `child.x` is opaque (`x` is not on `child`'s signature). The route alternates two typed
+segments and one opaque segment; the SDK is reached only where the route passes a signature.
 
 **Port connections share the routing.** An input or output port is a continuous-assignment edge
 between the two objects' own storage (LRM 23.3.3); the cross-unit side reaches the partner cell
-through one route. A `ref` port (LRM 23.3.3.2) is a forwarding link that resolves to the connected
-cell at sealing. An `inout` port is a bidirectional net connection and belongs to the deferred
-net-resolution domain. Every form whose cross-instance reach passes through Resolve shares the one
-route mechanism.
+through one route, whose final segment is declared because a port is on the module's signature. A
+`ref` port (LRM 23.3.3.2) is a forwarding link that resolves to the connected cell at sealing. An
+`inout` port is a bidirectional net connection and belongs to the deferred net-resolution domain.
+Every form whose cross-instance reach passes through Resolve shares the one route mechanism.
 
 **Routing is deferred to Resolve, not dynamic.** The deferral keeps each unit independently and
 incrementally compilable; it carries no semantic uncertainty. The frontend has already proven every
