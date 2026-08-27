@@ -2,6 +2,7 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <format>
 #include <optional>
 #include <ranges>
 #include <string>
@@ -521,8 +522,9 @@ auto FunctionLowerer::Load(lir::Place place, lir::TypeId type) -> lir::Operand {
   return Emit(type, lir::LoadInstr{.place = std::move(place)});
 }
 
-void FunctionLowerer::Store(lir::Place place, lir::Operand value) {
-  Emit(
+auto FunctionLowerer::Store(lir::Place place, lir::Operand value)
+    -> lir::Operand {
+  return Emit(
       unit_->TranslateType(unit_->Mir().builtins.void_type),
       lir::StoreInstr{.place = std::move(place), .value = std::move(value)});
 }
@@ -547,9 +549,9 @@ auto FunctionLowerer::LoadActivationValue(
                       .args = {std::move(handle)}});
 }
 
-void FunctionLowerer::StoreActivationValue(
-    lir::Operand handle, lir::Operand value) {
-  Emit(
+auto FunctionLowerer::StoreActivationValue(
+    lir::Operand handle, lir::Operand value) -> lir::Operand {
+  return Emit(
       unit_->TranslateType(unit_->Mir().builtins.void_type),
       lir::CallInstr{
           .target =
@@ -1064,7 +1066,7 @@ auto FunctionLowerer::LowerCall(
   if (const auto fn = DirectBuiltinFn(call);
       fn.has_value() && support::IsMutatingBuiltinFn(*fn) &&
       !call.arguments.empty()) {
-    return LowerMutatingCall(block, call, *fn);
+    return LowerMutatingCall(block, call, *fn, type);
   }
 
   if (const auto* indirect = std::get_if<mir::Indirect>(&call.callee)) {
@@ -1202,15 +1204,13 @@ auto FunctionLowerer::WriteWholeValue(
     -> diag::Result<lir::Operand> {
   if (const std::optional<lir::Operand> handle =
           ActivationValueHandleForTarget(block, id)) {
-    StoreActivationValue(*handle, value);
-    return value;
+    return StoreActivationValue(*handle, std::move(value));
   }
   auto place = LowerPlace(block, id);
   if (!place) {
     return std::unexpected(std::move(place.error()));
   }
-  Store(*std::move(place), value);
-  return value;
+  return Store(*std::move(place), std::move(value));
 }
 
 // Read the owner's whole value, descend the path, let `make_leaf` produce the
@@ -1344,7 +1344,10 @@ auto FunctionLowerer::LowerProjectionUpdate(
 auto FunctionLowerer::LowerProjectionAssign(
     const mir::Block& block, const mir::AssignExpr& assign)
     -> diag::Result<lir::Operand> {
-  return LowerProjectionUpdate(
+  // What the update stores is the owner's whole value; the assignment's own
+  // value is the part it wrote.
+  std::optional<lir::Operand> assigned;
+  auto written = LowerProjectionUpdate(
       block, assign.target,
       [&](const LeafReader& read_leaf,
           lir::TypeId leaf_type) -> diag::Result<lir::Operand> {
@@ -1353,7 +1356,8 @@ auto FunctionLowerer::LowerProjectionAssign(
           return std::unexpected(std::move(rhs.error()));
         }
         if (!assign.compound_op.has_value()) {
-          return *std::move(rhs);
+          assigned = *std::move(rhs);
+          return *assigned;
         }
         const std::optional<lir::BinaryOp> op =
             TranslateBinaryOp(*assign.compound_op);
@@ -1362,16 +1366,32 @@ auto FunctionLowerer::LowerProjectionAssign(
               "mir_to_lir: compound assignment operator has no direct "
               "realization");
         }
-        return Emit(
+        assigned = Emit(
             leaf_type,
             lir::BinaryInstr{
                 .op = *op, .lhs = read_leaf(), .rhs = *std::move(rhs)});
+        return *assigned;
       });
+  if (!written) {
+    return std::unexpected(std::move(written.error()));
+  }
+  return *assigned;
 }
 
 auto FunctionLowerer::LowerMutatingCall(
-    const mir::Block& block, const mir::CallExpr& call, support::BuiltinFn fn)
-    -> diag::Result<lir::Operand> {
+    const mir::Block& block, const mir::CallExpr& call, support::BuiltinFn fn,
+    mir::TypeId type) -> diag::Result<lir::Operand> {
+  // The entry yields the receiver's updated whole value, which is the call's
+  // one result, so a builtin that also states a result of its own -- a queue
+  // pop yields the element it removed (LRM 7.10.2.4) -- would need the call to
+  // produce two values.
+  if (type != unit_->Mir().builtins.void_type) {
+    return Unsupported(
+        std::format(
+            "mir_to_lir: the {} builtin updates its receiver and yields a "
+            "result of its own, which is not yet lowerable to LIR",
+            support::BuiltinFnName(fn)));
+  }
   const mir::ExprId receiver = call.arguments[0];
   const lir::TypeId container_type =
       unit_->TranslateType(block.exprs.Get(receiver).type);
@@ -1620,6 +1640,14 @@ auto FunctionLowerer::LowerExpr(const mir::Block& block, mir::ExprId id)
                     .selector = lir::TupleElement{.index = get.index}});
           },
           [&](const mir::ClosureExpr& cl) -> diag::Result<lir::Operand> {
+            // A closure that completes as a coroutine is that coroutine:
+            // building it starts a frame the scheduler owns, which a record of
+            // captures carrying no code identity cannot stand for.
+            if (unit_->Mir().types.IsCoroutine(type)) {
+              return Unsupported(
+                  "mir_to_lir: a coroutine closure, the process a fork branch "
+                  "or a task enable starts, is not yet lowerable to LIR");
+            }
             // Constructing a closure builds its capture record, and nothing
             // else: which body a call runs is already fixed by the type, so no
             // code identity is stored alongside the captures. Initializers are

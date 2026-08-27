@@ -46,11 +46,11 @@ auto ParseHeaderTrace(std::string_view stderr_text)
   return out;
 }
 
-// A path is "fingerprint-covered" if it lives under `include_root`. The
-// HeaderTreeFingerprint walks `include_root` recursively, so any content
-// change to a covered header drives a different cache filename. Compare
-// both the raw runfiles-relative form and the symlink-resolved form so the
-// check is robust against either side dereferencing first.
+// Whether a header's content is part of what names the cache entry. The
+// fingerprint that does the naming walks `include_root` recursively, so a
+// header under it cannot change without the cache filename changing too.
+// Both the raw and the symlink-resolved form are compared, since either side
+// may have dereferenced already.
 auto IsFingerprintCovered(
     const std::filesystem::path& p, const std::filesystem::path& include_root)
     -> bool {
@@ -68,15 +68,8 @@ auto IsFingerprintCovered(
   return starts_under(canonical_h, canonical_root);
 }
 
-// A path is "system-covered" if it lives in a well-known system include
-// path. clang stores each input header's mtime in the PCH and re-validates
-// them on load by default, so a system-stdlib or libc upgrade that bumps
-// header mtimes surfaces as a loud load-time error rather than a silent
-// stale PCH; this is the safety net for inputs the fingerprint cannot see.
-// The compiler's own system include directories, as the compiler reports them.
-// `-E -v` prints the search list to stderr between two fixed markers; every
-// entry is a directory the driver treats as a system include root, which is
-// exactly the property this audit needs.
+// The compiler's own system include directories, as the compiler reports them:
+// `-E -v` prints the search list to stderr between two fixed markers.
 //
 // Asking beats a hardcoded prefix list. A toolchain is not obliged to live
 // under the FHS roots -- clang's own resource directory sits next to wherever
@@ -126,6 +119,10 @@ auto IsUnder(const std::filesystem::path& p, const std::filesystem::path& dir)
   return !rel.empty() && *rel.begin() != "..";
 }
 
+// Whether a header is one the compiler validates for itself. clang stores each
+// input header's mtime in the PCH and re-checks it on load, so a stdlib or libc
+// upgrade surfaces as a loud load-time error rather than a silent stale cache.
+// That is the safety net for inputs no content fingerprint of ours can see.
 auto IsSystemPath(
     const std::filesystem::path& p,
     std::span<const std::filesystem::path> system_dirs) -> bool {

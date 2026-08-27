@@ -35,7 +35,8 @@ auto EmittedModule::Release() && -> Owned {
   return Owned{.context = std::move(context_), .module = std::move(module_)};
 }
 
-auto EmitModule(const lir::CompilationUnit& unit) -> EmittedModule {
+auto EmitModule(const lir::CompilationUnit& unit)
+    -> diag::Result<EmittedModule> {
   return CodeGenModule(unit).Run();
 }
 

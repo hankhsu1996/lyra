@@ -19,7 +19,6 @@ cc_library(
     copts = LYRA_COPTS,
     visibility = ["//tests:__subpackages__"],
     deps = [
-        "//:value",
         "@fmt",
         "@yaml-cpp//:yaml-cpp",
     ],
@@ -88,30 +87,36 @@ cc_test(
     ],
 )
 
+# The conformance corpus, run once per path. A path is the artifact a run
+# produces, so the two here are the C++ project and the LLVM module; how that
+# module is then executed does not change which programs it accepts. Each target
+# reads the same corpus and the record of what its own path currently refuses.
+CONFORMANCE_DATA = [
+    "//:lyra",
+] + glob(
+    [
+        "conformance/**/*.sv",
+        "conformance/**/*.sv.deferred",
+        "conformance/**/*.c",
+        "conformance/**/*.cpp",
+        "paths/*.yaml",
+    ],
+    allow_empty = True,
+)
+
 cc_test(
     name = "cpp_tests",
     # Each case builds emitted C++ with the host compiler, so a shard's cost is
     # dominated by compilation rather than by simulation. Declaring that cost is
     # what keeps a loaded machine from reporting a timeout as a test failure.
     size = "large",
-    srcs = ["corpus_test.cpp"],
+    srcs = ["conformance_test.cpp"],
     args = [
-        "--suite",
+        "--path",
         "cpp",
     ],
     copts = LYRA_COPTS,
-    data = [
-        "suites.yaml",
-        "//:lyra",
-    ] + glob(
-        [
-            "cases/**/*.yaml",
-            "cases/**/*.sv",
-            "cases/**/*.c",
-            "cases/**/*.cpp",
-        ],
-        allow_empty = True,
-    ),
+    data = CONFORMANCE_DATA,
     shard_count = 16,
     tags = [
         "no-remote-exec",
@@ -126,26 +131,44 @@ cc_test(
 )
 
 cc_test(
-    name = "jit_tests",
-    srcs = ["corpus_test.cpp"],
+    name = "llvm_tests",
+    srcs = ["conformance_test.cpp"],
     args = [
-        "--suite",
-        "jit",
+        "--path",
+        "llvm",
+        "--foreign",
+        "exclude",
     ],
     copts = LYRA_COPTS,
-    data = [
-        "suites.yaml",
-        "//:lyra",
-    ] + glob(
-        [
-            "cases/**/*.yaml",
-            "cases/**/*.sv",
-            "cases/**/*.c",
-            "cases/**/*.cpp",
-        ],
-        allow_empty = True,
-    ),
+    data = CONFORMANCE_DATA,
     shard_count = 8,
+    deps = [
+        ":framework",
+        "@bazel_tools//tools/cpp/runfiles",
+        "@fmt",
+        "@googletest//:gtest",
+    ],
+)
+
+# The other half of the LLVM path. A case carrying foreign sources builds them
+# with the host C compiler whatever path it is on -- a path changes how the
+# design is translated, not how a foreign symbol is produced -- so these are
+# split out rather than holding the whole corpus to a machine that has one.
+cc_test(
+    name = "llvm_dpi_tests",
+    srcs = ["conformance_test.cpp"],
+    args = [
+        "--path",
+        "llvm",
+        "--foreign",
+        "only",
+    ],
+    copts = LYRA_COPTS,
+    data = CONFORMANCE_DATA,
+    tags = [
+        "no-remote-exec",
+        "requires-host-cxx",
+    ],
     deps = [
         ":framework",
         "@bazel_tools//tools/cpp/runfiles",

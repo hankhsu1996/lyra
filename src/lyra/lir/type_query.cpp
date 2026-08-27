@@ -1,6 +1,7 @@
 #include "lyra/lir/type_query.hpp"
 
 #include <optional>
+#include <string_view>
 #include <variant>
 
 #include "lyra/base/internal_error.hpp"
@@ -9,6 +10,49 @@
 #include "lyra/lir/type_id.hpp"
 
 namespace lyra::lir {
+
+auto TypeKindName(const Type& type) -> std::string_view {
+  return std::visit(
+      Overloaded{
+          [](const PackedArrayType&) { return "packed array"; },
+          [](const EnumType&) { return "enumeration"; },
+          [](const UnpackedArrayType&) { return "unpacked array"; },
+          [](const DynamicArrayType&) { return "dynamic array"; },
+          [](const QueueType&) { return "queue"; },
+          [](const AssociativeArrayType&) { return "associative array"; },
+          [](const WildcardIndexType&) { return "wildcard index"; },
+          [](const StringType&) { return "string"; },
+          [](const MachineCStringType&) { return "machine C string"; },
+          [](const MachineIntType&) { return "machine integer"; },
+          [](const MachineFloatType&) { return "machine float"; },
+          [](const MachineArrayType&) { return "machine array"; },
+          [](const EventType&) { return "named event"; },
+          [](const RealType&) { return "real"; },
+          [](const ShortRealType&) { return "shortreal"; },
+          [](const RealTimeType&) { return "realtime"; },
+          [](const ChandleType&) { return "chandle"; },
+          [](const VoidType&) { return "void"; },
+          [](const EmptyType&) { return "empty"; },
+          [](const ObjectType&) { return "class object"; },
+          [](const ExternalUnitObjectType&) { return "external unit object"; },
+          [](const ExternalClassType&) { return "external class"; },
+          [](const RuntimeEffectsType&) { return "runtime services"; },
+          [](const FilesType&) { return "file table"; },
+          [](const DiagnosticType&) { return "diagnostic dispatcher"; },
+          [](const RuntimeLibraryType&) { return "runtime library value"; },
+          [](const CoroutineType&) { return "coroutine"; },
+          [](const RefType&) { return "reference"; },
+          [](const PointerType&) { return "pointer"; },
+          [](const ManagedRefType&) { return "managed reference"; },
+          [](const VectorType&) { return "vector"; },
+          [](const TupleType&) { return "product"; },
+          [](const UnionType&) { return "union"; },
+          [](const TaggedUnionType&) { return "tagged union"; },
+          [](const ResolvedType&) { return "net resolution node"; },
+          [](const DriverType&) { return "net driver"; },
+          [](const ObservableType&) { return "observable cell"; }},
+      type.data);
+}
 
 auto Pointee(const TypeArena& types, TypeId type) -> std::optional<TypeId> {
   return std::visit(

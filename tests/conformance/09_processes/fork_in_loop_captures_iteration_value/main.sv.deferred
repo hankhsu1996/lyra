@@ -1,0 +1,41 @@
+// A fork in a loop hands each spawned process its own copy of the
+// per-iteration value through the block_item_declaration, which is initialized
+// as execution enters the block. A declaration inside the branch instead reads
+// the loop variable as it stands once the branch runs, which is after the loop
+// has already ended, so it sees the value the control variable was left at
+// (LRM 9.3.2, 12.7.1).
+//
+// Parked: a declaration inside the branch reading the loop variable aborts the
+// run, so this case cannot reach a check to fail at.
+module Top;
+  int tag_seen[5];
+  int after_loop_is_four;
+
+  initial begin
+    for (int j = 1; j <= 3; j++)
+      fork
+        automatic int tag = j;
+        begin
+          automatic int after_loop = j;
+          tag_seen[tag] = tag_seen[tag] + 1;
+          if (after_loop == 4)
+            after_loop_is_four = after_loop_is_four + 1;
+        end
+      join_none
+    #1;
+  end
+
+  final begin
+    if (tag_seen[1] !== 1)
+      $fatal(1, "tag_seen[1] was %0d, expected 1", tag_seen[1]);
+    if (tag_seen[2] !== 1)
+      $fatal(1, "tag_seen[2] was %0d, expected 1", tag_seen[2]);
+    if (tag_seen[3] !== 1)
+      $fatal(1, "tag_seen[3] was %0d, expected 1", tag_seen[3]);
+    if (tag_seen[4] !== 0)
+      $fatal(1, "tag_seen[4] was %0d, expected 0", tag_seen[4]);
+    if (after_loop_is_four !== 3)
+      $fatal(1, "after_loop_is_four was %0d, expected 3", after_loop_is_four);
+    $display("All checks passed");
+  end
+endmodule

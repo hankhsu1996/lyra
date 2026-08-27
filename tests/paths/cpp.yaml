@@ -1,0 +1,11 @@
+# What the cpp path refuses, one entry per conformance case: the case's id,
+# and text the run it produces contains.
+#
+# A case listed here is expected to be refused. One that starts running instead
+# fails until its entry goes, so this file only ever shrinks -- which makes it
+# the record of what this path does not yet cover.
+#
+# A case may appear in this file or in the defect record, never both.
+20_utility/simulation_time_functions: "delay durations beyond an integer or time literal are not yet supported"
+35_dpi/concurrent_context_call_chains_keep_scope: "delay durations beyond an integer or time literal are not yet supported"
+35_dpi/imported_task_consumes_simulation_time: "delay durations beyond an integer or time literal are not yet supported"

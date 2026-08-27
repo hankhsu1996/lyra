@@ -4,6 +4,8 @@
 #include <string>
 #include <string_view>
 
+#include "lyra/diag/diagnostic.hpp"
+
 namespace llvm {
 class LLVMContext;
 class Module;
@@ -50,8 +52,10 @@ class EmittedModule {
 // type is an opaque runtime handle reached through the runtime facade; a
 // callable whose result is a coroutine is a process step body, and a coroutine
 // value is an opaque handle the runtime builds from a step entry and its
-// environment.
-auto EmitModule(const lir::CompilationUnit& unit) -> EmittedModule;
+// environment. A construct this backend has no entry for is refused, naming
+// what was met.
+auto EmitModule(const lir::CompilationUnit& unit)
+    -> diag::Result<EmittedModule>;
 
 // The linkage symbol under which a scope class publishes its runtime
 // definition. A construct references the definition of the class it builds by

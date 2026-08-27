@@ -15,6 +15,7 @@
 #include "lyra/runtime/activation_value_cell.hpp"
 #include "lyra/runtime/coroutine.hpp"
 #include "lyra/runtime/delay.hpp"
+#include "lyra/runtime/diagnostic.hpp"
 #include "lyra/runtime/file_table.hpp"
 #include "lyra/runtime/generated_call_scope.hpp"
 #include "lyra/runtime/hierarchy_segment.hpp"
@@ -174,6 +175,7 @@ auto DynArrayFromLiteral(const void* prototype, LyraSpan elements) -> void* {
 using lyra::runtime::ActivationValueCell;
 using lyra::runtime::Coroutine;
 using lyra::runtime::CoroutineHandle;
+using lyra::runtime::DiagnosticDispatcher;
 using lyra::runtime::FileTable;
 using lyra::runtime::GeneratedCallScope;
 using lyra::runtime::GeneratedScope;
@@ -272,6 +274,33 @@ void lyra_rt_write(void* files, void* descriptor, void* text) {
       *static_cast<PackedArray*>(descriptor), *static_cast<String*>(text));
 }
 
+auto lyra_rt_diagnostic(void* runtime) -> void* {
+  return &static_cast<RuntimeEffects*>(runtime)->Diagnostic();
+}
+
+void lyra_rt_emit_info(void* dispatcher, const void* origin, const void* text) {
+  static_cast<DiagnosticDispatcher*>(dispatcher)
+      ->EmitInfo(Read<String>(origin), Read<String>(text));
+}
+
+void lyra_rt_emit_warning(
+    void* dispatcher, const void* origin, const void* text) {
+  static_cast<DiagnosticDispatcher*>(dispatcher)
+      ->EmitWarning(Read<String>(origin), Read<String>(text));
+}
+
+void lyra_rt_emit_error(
+    void* dispatcher, const void* origin, const void* text) {
+  static_cast<DiagnosticDispatcher*>(dispatcher)
+      ->EmitError(Read<String>(origin), Read<String>(text));
+}
+
+void lyra_rt_emit_fatal(
+    void* dispatcher, const void* origin, const void* text) {
+  static_cast<DiagnosticDispatcher*>(dispatcher)
+      ->EmitFatal(Read<String>(origin), Read<String>(text));
+}
+
 auto lyra_rt_make_coroutine(void* (*ramp)(void*), void* env) -> void* {
   return GeneratedCallScope::Current().Arena().New<Coroutine<void>>(
       lyra::runtime::RunGeneratedProcess(ramp, env));
@@ -314,6 +343,16 @@ void lyra_rt_wait_any(void* runtime, LyraSpan triggers) {
     collected.push_back(*handle);
   }
   SubscribeValueChange(svc.CurrentProcess().TopHandle(), collected);
+}
+
+void lyra_rt_finish(void* runtime, const void* level) {
+  static_cast<RuntimeEffects*>(runtime)->RequestFinish(
+      static_cast<int>(Read<PackedArray>(level).ToInt64()));
+}
+
+void lyra_rt_fatal_finish(void* runtime, const void* level) {
+  static_cast<RuntimeEffects*>(runtime)->RequestFinish(
+      static_cast<int>(Read<PackedArray>(level).ToInt64()), true);
 }
 
 void lyra_rt_register_initial(void* self, void* coroutine) {

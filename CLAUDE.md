@@ -88,26 +88,26 @@ Headers in `include/lyra/`, implementations in `src/lyra/`.
 
 ## Testing
 
-Nearly every test is an end-to-end case under `tests/cases/` driven by SystemVerilog input: one
-`case.yaml` per case, grouped into suites by `tests/suites.yaml`. `expect.variables` asserts a
-variable's final value and accepts `0x` hex and SV-sized literals.
+Nearly every test is a conformance case under `tests/conformance/`: a self-checking SystemVerilog
+program stating what IEEE 1800 requires of it. The outer directory is the LRM clause, the inner one
+is the subject, and `main.sv` is the entry. `tests/conformance/README.md` is the contract every case
+answers to, and `docs/decisions/conformance-case-shape.md` records why it has that shape.
 
-A case carries a tag per backend that runs it, and each backend that claims a case is held to the
-expectations the case already states -- so a construct a backend has not reached is simply left
-unclaimed, and coverage is measured rather than assumed. The suites read those tags: `cpp_tests`
-runs everything tagged for the C++ backend, `jit_tests` everything tagged for the execution backend.
+A case names no path. What a path currently refuses is recorded once for the path in
+`tests/paths/<path>.yaml`, and a case that starts passing fails until its entry is dropped, so the
+file only shrinks and is therefore the coverage report.
 
-To iterate on one failing case, filter by its gtest name -- the case `id` with dots, prefixed by the
-backend that ran it:
+To iterate on one case, filter by its path with `/` written as `.`, prefixed by the path that ran
+it:
 
 ```bash
-bazel test //tests:cpp_tests --test_filter='Cpp.errors.nets_multi_driver'
+bazel test //tests:llvm_tests --test_filter='Llvm.12_statements.case_default_item'
 ```
 
-CI's test job passes `--test_tag_filters=-requires-host-cxx`, which excludes `cpp_tests`,
-`cli_tests`, and `pch_audit_test` -- everything that spawns the host C++ compiler. The C++ backend
-is therefore verified before a commit and not again on merge, so a full local `bazel test //...` is
-the only gate it gets.
+CI's test job passes `--test_tag_filters=-requires-host-cxx`, which excludes everything that spawns
+a host compiler: `cpp_tests`, `llvm_dpi_tests`, `cli_tests`, and `pch_audit_test`. What is left is
+`llvm_tests`, the corpus minus the cases carrying foreign sources, which is the merge gate and the
+one that grows as the execution backend fills in.
 
 ## Code style
 

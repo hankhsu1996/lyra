@@ -1,0 +1,46 @@
+// A named event's triggered state persists for the rest of the time step it was
+// triggered in (LRM 15.5.3), so a procedure waiting on that state unblocks
+// whether it reached the wait before the trigger or only in the same time step
+// as the trigger -- which is not so of a procedure waiting on the event itself.
+//
+// Parked: waiting on the triggered state produces C++ that does not compile,
+// the event being handed where an observable value is expected, so this case
+// cannot reach a check to fail at.
+module Top;
+  event signalled;
+  event same_step;
+
+  time waited_from_time_zero_at;
+  time waited_in_same_step_at;
+
+  initial begin
+    wait (signalled.triggered);
+    waited_from_time_zero_at = $time;
+  end
+
+  initial begin
+    #5;
+    -> signalled;
+  end
+
+  initial begin
+    #5;
+    -> same_step;
+  end
+
+  initial begin
+    #5;
+    wait (same_step.triggered);
+    waited_in_same_step_at = $time;
+  end
+
+  final begin
+    if (waited_from_time_zero_at !== 5)
+      $fatal(1, "waited_from_time_zero_at was %0d, expected 5",
+             waited_from_time_zero_at);
+    if (waited_in_same_step_at !== 5)
+      $fatal(1, "waited_in_same_step_at was %0d, expected 5",
+             waited_in_same_step_at);
+    $display("All checks passed");
+  end
+endmodule

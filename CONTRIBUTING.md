@@ -64,7 +64,8 @@ clang-tidy -p . <files>
 
 ## Tests
 
-YAML-based tests live in `tests/cases/`. Suite definitions are in `tests/suites.yaml`. CI runs
+Tests live in `tests/conformance/`, one directory per case entered through `main.sv`.
+`tests/conformance/README.md` states what a case may claim and how to add one. CI runs
 `bazel test //...`; do the same locally before submitting.
 
 ```bash

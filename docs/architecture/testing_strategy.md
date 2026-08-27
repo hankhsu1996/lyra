@@ -11,7 +11,7 @@ published standard, and everything below follows from that.
 - The distinction between a conformance case and every other kind of test.
 - What a case may state, and in what form.
 - Where a case lives, and why the location is the standard's structure.
-- Where a path's limitations are recorded, and how they are kept honest.
+- Where a path's limitations and its defects are recorded, and how they are kept honest.
 
 ## Does Not Own
 
@@ -47,10 +47,15 @@ published standard, and everything below follows from that.
 6. **Each requirement has one owning case.** A case that would extend an existing case's subject
    extends it instead of joining the corpus beside it.
 
-7. **What a path cannot do is recorded once per path, never on a case.** The record pairs a case
-   with the refusal that path currently produces. A case that unexpectedly passes fails the run
-   exactly as an unexpected refusal does, so the record can only shrink as a path fills in, and it
-   is the coverage report.
+7. **What a path does other than run a case correctly is recorded once per path, never on a case.**
+   Two records: what the path refuses, and where it answers wrongly. Each pairs a case with text the
+   run it produces has to contain, and a case that stops producing it fails the run, so a record can
+   only shrink as a path fills in. A case sits in one record or neither, so the path's coverage is
+   what is absent from both.
+
+   A defect belongs in the second record rather than in the case, commented out. A check that does
+   not run cannot report that the behaviour became right, which leaves the defect resting on someone
+   remembering it.
 
 8. **A path is the artifact it produces, not the way that artifact is run.** Execution modes over
    one emitted form share an acceptance surface and therefore one record; they cannot disagree about
@@ -83,6 +88,8 @@ published standard, and everything below follows from that.
   from an omission.
 - An expectation derived by recording a run, which freezes present behavior as the specification.
 - A case that reports success without having run its checks.
+- A check commented out to hold a known defect. It stops running, so it cannot report that the
+  behavior became right, and the defect survives only as long as someone remembers it.
 - A C++ test that constructs compiler objects and asserts on their fields to establish a
   SystemVerilog behavior.
 - Relying on a file-path pattern as the primary classification between kinds of test. What a test

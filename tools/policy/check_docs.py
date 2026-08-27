@@ -15,7 +15,7 @@ Rules:
         Scope: every tracked markdown file.
         A path counts as repo-rooted when its first component is a
         directory at the repo root, which is what distinguishes
-        `tests/cases/` from a bare `dispatch.hpp` named relative to
+        `tests/conformance/` from a bare `dispatch.hpp` named relative to
         whatever directory the surrounding prose is discussing.
 
   D002  A relative markdown link must resolve.
@@ -44,7 +44,8 @@ Rules:
         publishing it as a measure of scope makes it a target. Say that
         coverage is measured and point at where. Numbers inside code
         blocks, links, and code spans are exempt, as is a digit bound to
-        a word (`C++23`).
+        a word (`C++23`) and a standard's designation (`IEEE 1800`),
+        which counts nothing this repository contains.
 
   D006  A permanent doc must not cite the progress queue.
         Scope: docs/architecture/**, docs/decisions/**, docs/glossary/**.
@@ -118,6 +119,12 @@ READER_FACING = ("README.md", "examples/README.md")
 # A standalone integer of two digits or more. The lookarounds keep a digit
 # bound to a word out of it, so `C++23` and `1800-2023` are not counts.
 BARE_COUNT_PATTERN = re.compile(r"(?<![A-Za-z0-9+_-])\d{2,}(?![A-Za-z0-9+_-])")
+
+# A standard's designation names nothing this repository contains, so it is not
+# a count of anything and cannot go stale as one. `1800-2023` already falls out
+# of the pattern above because the digits are bound by the hyphen; the bare form
+# needs the naming word to say the same thing.
+DESIGNATION_PATTERN = re.compile(r"\b(?:IEEE|LRM)\s+\d[\d.-]*")
 
 # --- Rule D006 -----------------------------------------------------------
 PERMANENT_DIRS = ("docs/architecture/", "docs/decisions/", "docs/glossary/")
@@ -250,6 +257,9 @@ def check_d005(repo_root: Path) -> list[str]:
             continue
         body = strip_inline_code(strip_fenced(path.read_text()))
         body = re.sub(r"\[[^\]]*\]\([^)]*\)", "", body)
+        # Same-length so every later offset, and so every reported line
+        # number, still points where it did.
+        body = DESIGNATION_PATTERN.sub(lambda m: "-" * len(m.group(0)), body)
         for m in BARE_COUNT_PATTERN.finditer(body):
             errors.append(
                 f"  {rel}:{line_of(body, m.start())}: D005 bare count "
@@ -333,8 +343,8 @@ def run_self_tests() -> bool:
                  "D002 accepts a directory")
 
     # D001 only fires on repo-rooted paths.
-    m = CITED_PATH_PATTERN.search("see `tests/cases/` for the corpus")
-    ok &= expect(m is not None and m.group(1) == "tests/cases/",
+    m = CITED_PATH_PATTERN.search("see `tests/conformance/` for the corpus")
+    ok &= expect(m is not None and m.group(1) == "tests/conformance/",
                  "D001 captures a repo-rooted path")
     m2 = CITED_PATH_PATTERN.search("the `dispatch.hpp` entry")
     ok &= expect(m2 is not None and "/" not in m2.group(1),

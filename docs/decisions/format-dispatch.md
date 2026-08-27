@@ -4,13 +4,12 @@ Date: 2026-06-04 Status: accepted
 
 ## Context
 
-The runtime print pipeline (`$display` / `$write` / `$strobe` / `$sformat` / `$fdisplay` and the
-test framework's `expect.variables` round-trip) needs to format operands of many SystemVerilog
-types: integral (packed bit vectors with 2-state / 4-state semantics), string, real32 / real64,
-fixed unpacked array, dynamic array, and -- planned -- queue, associative array, struct, union,
-enum, class instance, chandle. Each type has its own per-spec format rules (LRM 21.2.1.1
-"unformatted" radix, LRM 21.2.1.3 `%t` time rescale, LRM 21.2.1.6 `%p` assignment pattern, LRM 6.16
-string, etc.).
+The runtime print pipeline (`$display` / `$write` / `$strobe` / `$sformat` / `$fdisplay`) needs to
+format operands of many SystemVerilog types: integral (packed bit vectors with 2-state / 4-state
+semantics), string, real32 / real64, fixed unpacked array, dynamic array, and -- planned -- queue,
+associative array, struct, union, enum, class instance, chandle. Each type has its own per-spec
+format rules (LRM 21.2.1.1 "unformatted" radix, LRM 21.2.1.3 `%t` time rescale, LRM 21.2.1.6 `%p`
+assignment pattern, LRM 6.16 string, etc.).
 
 Two constraints define the dispatch problem:
 
@@ -99,17 +98,7 @@ The value-layer items-walk takes the `TimeFormat` by reference and builds one
 record through a `TimeFormat` accessor on `services` and threaded into the walk as an explicit
 operand at lowering, rather than pulled from inside the walk -- so the format step itself holds no
 engine state. Formatters that consult context for the requested spec kind check the relevant pointer
-and throw on `nullptr`; the test framework passes the default `{}` because its specs never reach
-those paths.
-
-### Test framework integration
-
-`ExpectedValue::BuildFormatArg()` returns a `FormatArg` whose `format_fn` is a static dispatcher
-keyed on `ExpectedValueKind`. For integral / SV literal kinds the dispatcher materializes a
-`PackedArray` from the owned word storage and routes through `Formatter<PackedArray>::Format`; for
-string it routes through `Formatter<String>::Format`; for aggregates it walks the owned `elements`
-vector and recurses. The YAML-side expected text and the SV-side observed text go through the same
-`Format(...)` entry, agreeing byte-for-byte by construction.
+and throw on `nullptr`.
 
 ## Aggregate `%p` shape (LRM 21.2.1.6)
 
@@ -126,11 +115,6 @@ Decisions about the OUTPUT shape, independent of dispatch:
 4. **No index labels on fixed-size or dynamic arrays.** LRM permits `'{0:e0, 1:e1, ...}` but does
    not require it. Labels matter for associative arrays where position is otherwise undefined; for
    indexed containers position is implicit. Matches Verilator / VCS conventions.
-5. **Test framework `expect.variables` accepts YAML sequences.** `a: [10, 20, 30]` (nested
-   `a: [[1, 2, 3], [4, 5, 6]]`) parses to a recursive `ExpectedValue` of kind `kAggregate`. The
-   per-variable rewrite emits `$display("a=%p", a)` so the SV side and YAML side go through the same
-   format pipeline. _Rejected:_ SV-grammar string syntax in YAML (`"'{10, 20, 30}"`) would force the
-   framework to ship an SV assignment-pattern parser and force escape-laden YAML for nested forms.
 
 ## Consequences
 

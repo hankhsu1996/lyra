@@ -21,9 +21,9 @@ Contracts: `../architecture/backend_contract.md`, `../architecture/lir.md`,
 Wherever both backends accept a source they answer the same, and what this backend has not realized
 refuses to lower and says which construct it was. The difference between the two is a diagnostic,
 never a different answer -- a construct that lowers and then answers wrongly is a defect, not a gap.
-A corpus case says which backends run it, and a case this backend claims is held to the expectations
-it already states -- the same ones the C++ backend meets, since a case is written once. A construct
-the backend has not reached is simply not claimed, so what it does run is measured, never assumed.
+A conformance case says nothing about either backend; it states what IEEE 1800 requires and both are
+held to it. What this one refuses is recorded once for the path, so the cases absent from that
+record are the cases it runs -- coverage is read off a file that only ever shrinks, never asserted.
 
 ## Runtime-value lifetime
 
@@ -153,6 +153,15 @@ each meets the same lifetime question above; none is lowerable on the execution 
       static property, and a class static constant. All three are the same shape -- storage no local
       slot and no receiver chain arrives at -- and lowering has no place to base them on, because a
       LIR operand names a code symbol but has no data equivalent. One addition serves all three.
+- [ ] Where a base class's storage sits inside a derived object. A member is reached by its position
+      in the owning class's member list, and the runtime builds that list from the class's own
+      members alone, so a field declared by a base indexes the derived object's list instead.
+      Calling an inherited method has the same hole seen from the call side: the receiver crosses
+      without being re-typed to the class that declares the body. Both need one decision -- a base
+      sub-object as a place step, or one flattened member list with the base's members first -- and
+      the runtime's member table has to match whichever it is. The C++ backend never had to answer
+      this, because the host language answers it. Unreachable end to end today, since constructing
+      an object is itself refused here.
 - [ ] `dump llvm`, and `run` / `compile` end to end against this backend, so a design goes from
       source to a running program without the C++ backend.
 - [ ] The smoke, benchmark, and AOT CI jobs, which are disabled until a design runs end to end here.
@@ -185,9 +194,9 @@ each meets the same lifetime question above; none is lowerable on the execution 
       Closing this means admitting a module against what the runtime realizes before codegen runs,
       or threading `diag::Result` through codegen; a hand-kept list in the lowering is not it, since
       the lowering is the wrong layer to know which library entries exist.
-- [x] **End-to-end coverage is the corpus, not a handful of cases.** A run case carries a tag per
-      backend that runs it, and every backend that claims it is held to the case's own expectations.
-      The claimed set is this backend's coverage and is the thing that grows: landing a construct
-      here means tagging the cases it unlocks in the same change, the way a checkbox above is
-      flipped with the code that closes it. A tag claims the case everywhere, not on the machine it
-      was derived on -- a case that passes on one host toolchain and not another is not claimed.
+- [x] **End-to-end coverage is the corpus, not a handful of cases.** What this path refuses is
+      recorded once for the path rather than on any case, and a case that starts running fails until
+      its entry is dropped. So the record only ever shrinks, and dropping entries is what landing a
+      construct looks like -- in the same change, the way a checkbox above is flipped with the code
+      that closes it. Absence of an entry is a claim the run checks, which is what makes the record
+      a measurement rather than an assertion.

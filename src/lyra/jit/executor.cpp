@@ -102,7 +102,7 @@ void LowerCoroutines(llvm::orc::LLJIT& jit) {
           passes.addPass(llvm::CoroCleanupPass());
           passes.run(ir, modules);
         });
-        return std::move(module);
+        return module;
       });
 }
 
@@ -126,12 +126,19 @@ void DefineRuntimeAbi(llvm::orc::LLJIT& jit) {
   add("lyra_rt_packed_const", &lyra_rt_packed_const);
   add("lyra_rt_writeln", &lyra_rt_writeln);
   add("lyra_rt_write", &lyra_rt_write);
+  add("lyra_rt_diagnostic", &lyra_rt_diagnostic);
+  add("lyra_rt_emit_info", &lyra_rt_emit_info);
+  add("lyra_rt_emit_warning", &lyra_rt_emit_warning);
+  add("lyra_rt_emit_error", &lyra_rt_emit_error);
+  add("lyra_rt_emit_fatal", &lyra_rt_emit_fatal);
   add("lyra_rt_make_coroutine", &lyra_rt_make_coroutine);
   add("lyra_rt_register_initial", &lyra_rt_register_initial);
   add("lyra_rt_register_final", &lyra_rt_register_final);
   add("lyra_rt_delay", &lyra_rt_delay);
   add("lyra_rt_make_trigger", &lyra_rt_make_trigger);
   add("lyra_rt_wait_any", &lyra_rt_wait_any);
+  add("lyra_rt_finish", &lyra_rt_finish);
+  add("lyra_rt_fatal_finish", &lyra_rt_fatal_finish);
   add("lyra_rt_make_segment", &lyra_rt_make_segment);
   add("lyra_rt_make_scope", &lyra_rt_make_scope);
   add("lyra_rt_hierarchical_path", &lyra_rt_hierarchical_path);
@@ -425,10 +432,12 @@ auto DescribeMember(const lir::CompilationUnit& unit, lir::TypeId type)
     -> runtime::MemberStorageDescriptor {
   const auto& data = unit.types.Get(type).data;
   if (const auto* observable = std::get_if<lir::ObservableType>(&data)) {
-    return runtime::MemberStorageDescriptor{
-        .kind = runtime::MemberStorageKind::kObservableCell,
-        .domain = AbiDomain(
-            backend::llvm_backend::ValueDomainOf(unit, observable->value))};
+    if (const std::optional<backend::llvm_backend::ValueDomain> domain =
+            backend::llvm_backend::ValueDomainOf(unit, observable->value)) {
+      return runtime::MemberStorageDescriptor{
+          .kind = runtime::MemberStorageKind::kObservableCell,
+          .domain = AbiDomain(*domain)};
+    }
   }
   if (const auto* library = std::get_if<lir::RuntimeLibraryType>(&data);
       library != nullptr &&
@@ -577,7 +586,8 @@ auto Execute(
     std::span<const compiler::ElaboratedUnitMetadata> metadata,
     const lir::CompilationUnit& root_unit,
     const compiler::ElaboratedUnitMetadata& root_metadata,
-    const std::optional<std::filesystem::path>& dpi_library) -> int {
+    const std::optional<std::filesystem::path>& dpi_library)
+    -> diag::Result<int> {
   llvm::InitializeNativeTarget();
   llvm::InitializeNativeTargetAsmPrinter();
 
@@ -590,22 +600,40 @@ auto Execute(
 
   // Every unit -- the source units and the design-root -- becomes one module in
   // the shared JIT, so a construct reaches the entries and the definition of
-  // the class it builds by symbol. Each definition owns a stable address for
-  // the whole run; the runtime holds pointers into it. The root is loaded and
-  // driven like any other unit, distinguished only as the bootstrap entry
-  // below.
+  // the class it builds by symbol. The root is loaded and driven like any other
+  // unit, distinguished only as the bootstrap entry below.
   std::vector<const lir::CompilationUnit*> loaded_units;
-  std::vector<LoadedScopeClass> loaded;
   loaded_units.reserve(units.size() + 1);
+  for (const lir::CompilationUnit& unit : units) {
+    loaded_units.push_back(&unit);
+  }
+  loaded_units.push_back(&root_unit);
+
+  // Generation runs ahead of any state the run needs, so a unit this backend
+  // cannot lower is refused with none of the design yet standing.
+  for (const lir::CompilationUnit* unit : loaded_units) {
+    auto emitted = backend::llvm_backend::EmitModule(*unit);
+    if (!emitted) {
+      return std::unexpected(std::move(emitted.error()));
+    }
+    auto owned = std::move(*emitted).Release();
+    Check(
+        jit->addIRModule(
+            llvm::orc::ThreadSafeModule(
+                std::move(owned.module), std::move(owned.context))),
+        "add module");
+  }
+
+  // Each definition owns a stable address for the whole run; the runtime holds
+  // pointers into it.
+  std::vector<LoadedScopeClass> loaded;
   for (std::size_t i = 0; i < units.size(); ++i) {
-    loaded_units.push_back(&units[i]);
     std::vector<LoadedScopeClass> unit_classes =
         LoadScopeClasses(units[i], metadata[i]);
     loaded.insert(
         loaded.end(), std::make_move_iterator(unit_classes.begin()),
         std::make_move_iterator(unit_classes.end()));
   }
-  loaded_units.push_back(&root_unit);
   if (!root_unit.root.has_value()) {
     throw InternalError("jit executor: the design root roots no object tree");
   }
@@ -623,15 +651,6 @@ auto Execute(
     entry.definition->members = runtime::MemberStorageSchema{
         .data = entry.members.data(),
         .size = static_cast<std::uint32_t>(entry.members.size())};
-  }
-
-  for (const lir::CompilationUnit* unit : loaded_units) {
-    auto owned = backend::llvm_backend::EmitModule(*unit).Release();
-    Check(
-        jit->addIRModule(
-            llvm::orc::ThreadSafeModule(
-                std::move(owned.module), std::move(owned.context))),
-        "add module");
   }
 
   // Each scope class publishes its definition as an injected data symbol the

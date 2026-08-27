@@ -127,7 +127,7 @@ document least free to borrow. These belong to lower layers and never appear her
   with the rule that cases group by feature rather than by assertion. State that coverage is
   measured and point at where.
 - **An inventory of supported constructs.** `progress/README.md` already forbids this for progress
-  docs, on the grounds that `tests/cases/` and the code are the source of truth and a parallel
+  docs, on the grounds that `tests/conformance/` and the code are the source of truth and a parallel
   inventory rots. The same reasoning binds harder at the top: a capability table goes stale on every
   feature merge.
 - **SystemVerilog at the syntax level.** Naming a specific keyword or net type in the README is a

@@ -867,9 +867,9 @@ auto RenderAddressOfExpr(const ScopeView& view, const mir::AddressOfExpr& a)
   return std::format("&{}", RenderLhsExpr(view, operand_expr));
 }
 
-// Reinterprets a borrowed pointer as a different pointer type stated by the
-// expression's `type`. Renders as `static_cast<DestType>(operand)`; the
-// destination spelling comes from the type table, not from any local inference.
+// Re-types a reference as the reference type the expression's `type` states.
+// Renders as `static_cast<DestType>(operand)`; the destination spelling comes
+// from the type table, not from any local inference.
 auto RenderPointerCastExpr(
     const ScopeView& view, const mir::PointerCastExpr& cast, mir::TypeId dest)
     -> std::string {

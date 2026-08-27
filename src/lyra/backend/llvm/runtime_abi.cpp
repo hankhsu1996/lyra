@@ -2,6 +2,7 @@
 
 #include <cstddef>
 #include <format>
+#include <optional>
 #include <string>
 #include <string_view>
 
@@ -40,35 +41,41 @@ auto ValueDomainName(ValueDomain domain) -> std::string_view {
 }
 
 auto ValueDomainOf(const lir::CompilationUnit& unit, lir::TypeId type)
-    -> ValueDomain {
+    -> std::optional<ValueDomain> {
+  using Domain = std::optional<ValueDomain>;
   return std::visit(
       Overloaded{
-          [](const lir::PackedArrayType&) { return ValueDomain::kPacked; },
+          [](const lir::PackedArrayType&) -> Domain {
+            return ValueDomain::kPacked;
+          },
           // An enumeration is a packed value at runtime; only its own entries,
           // which read its declared members, need more than that.
-          [](const lir::EnumType&) { return ValueDomain::kPacked; },
-          [](const lir::StringType&) { return ValueDomain::kString; },
+          [](const lir::EnumType&) -> Domain { return ValueDomain::kPacked; },
+          [](const lir::StringType&) -> Domain { return ValueDomain::kString; },
           // `real` and `realtime` are one host-precision value (LRM 6.12.1);
           // `shortreal` is the single-precision one.
-          [](const lir::RealType&) { return ValueDomain::kReal; },
-          [](const lir::RealTimeType&) { return ValueDomain::kReal; },
-          [](const lir::ShortRealType&) { return ValueDomain::kShortReal; },
+          [](const lir::RealType&) -> Domain { return ValueDomain::kReal; },
+          [](const lir::RealTimeType&) -> Domain { return ValueDomain::kReal; },
+          [](const lir::ShortRealType&) -> Domain {
+            return ValueDomain::kShortReal;
+          },
           // A chandle (LRM 6.14) is a pointer-sized value carried inline: the
           // domain's handle is the chandle value itself, not a reference to a
           // runtime-owned value object.
-          [](const lir::ChandleType&) { return ValueDomain::kChandle; },
+          [](const lir::ChandleType&) -> Domain {
+            return ValueDomain::kChandle;
+          },
           // An unpacked struct (LRM 7.2) is MIR's product type; its runtime
           // realization is a type-erased product value carried inline behind an
           // opaque handle, like every other value domain.
-          [](const lir::TupleType&) { return ValueDomain::kTuple; },
+          [](const lir::TupleType&) -> Domain { return ValueDomain::kTuple; },
           // A dynamic array (LRM 7.5) is MIR's `DynamicArrayType`; its runtime
           // realization is a type-erased container carried behind an opaque
           // handle, like every other value domain.
-          [](const lir::DynamicArrayType&) { return ValueDomain::kDynArray; },
-          [](const auto&) -> ValueDomain {
-            throw InternalError(
-                "llvm codegen: value type has no runtime library domain");
-          }},
+          [](const lir::DynamicArrayType&) -> Domain {
+            return ValueDomain::kDynArray;
+          },
+          [](const auto&) -> Domain { return std::nullopt; }},
       unit.types.Get(type).data);
 }
 
@@ -118,6 +125,34 @@ auto RuntimeAbi::Write() -> llvm::FunctionCallee {
       {types_->Ptr(), types_->Ptr(), types_->Ptr()});
 }
 
+auto RuntimeAbi::Diagnostic() -> llvm::FunctionCallee {
+  return Get("lyra_rt_diagnostic", types_->Ptr(), {types_->Ptr()});
+}
+
+auto RuntimeAbi::EmitInfo() -> llvm::FunctionCallee {
+  return Get(
+      "lyra_rt_emit_info", types_->Void(),
+      {types_->Ptr(), types_->Ptr(), types_->Ptr()});
+}
+
+auto RuntimeAbi::EmitWarning() -> llvm::FunctionCallee {
+  return Get(
+      "lyra_rt_emit_warning", types_->Void(),
+      {types_->Ptr(), types_->Ptr(), types_->Ptr()});
+}
+
+auto RuntimeAbi::EmitError() -> llvm::FunctionCallee {
+  return Get(
+      "lyra_rt_emit_error", types_->Void(),
+      {types_->Ptr(), types_->Ptr(), types_->Ptr()});
+}
+
+auto RuntimeAbi::EmitFatal() -> llvm::FunctionCallee {
+  return Get(
+      "lyra_rt_emit_fatal", types_->Void(),
+      {types_->Ptr(), types_->Ptr(), types_->Ptr()});
+}
+
 auto RuntimeAbi::RegisterInitial() -> llvm::FunctionCallee {
   return Get(
       "lyra_rt_register_initial", types_->Void(),
@@ -143,6 +178,15 @@ auto RuntimeAbi::Delay() -> llvm::FunctionCallee {
 auto RuntimeAbi::WaitAny() -> llvm::FunctionCallee {
   return Get(
       "lyra_rt_wait_any", types_->Void(), {types_->Ptr(), types_->Span()});
+}
+
+auto RuntimeAbi::Finish() -> llvm::FunctionCallee {
+  return Get("lyra_rt_finish", types_->Void(), {types_->Ptr(), types_->Ptr()});
+}
+
+auto RuntimeAbi::FatalFinish() -> llvm::FunctionCallee {
+  return Get(
+      "lyra_rt_fatal_finish", types_->Void(), {types_->Ptr(), types_->Ptr()});
 }
 
 auto RuntimeAbi::MakeTrigger() -> llvm::FunctionCallee {

@@ -12,6 +12,7 @@
 #include "lyra/diag/diag_code.hpp"
 #include "lyra/hir/expr_id.hpp"
 #include "lyra/lowering/hir_to_mir/call_operands.hpp"
+#include "lyra/lowering/hir_to_mir/condition.hpp"
 #include "lyra/lowering/hir_to_mir/default_value.hpp"
 #include "lyra/lowering/hir_to_mir/process_lowerer.hpp"
 #include "lyra/lowering/hir_to_mir/structural_scope_lowerer.hpp"
@@ -97,14 +98,20 @@ auto Binary(
           .type = type});
 }
 
+// A conditional expression whose condition is reduced to the predicate a branch
+// tests. Every condition below is an ordinary value expression, so the
+// reduction belongs to building the conditional rather than to each condition
+// in turn.
 auto Cond(
     mir::Block& body, mir::ExprId c, mir::ExprId t, mir::ExprId e,
-    mir::TypeId type) -> mir::ExprId {
+    mir::TypeId type, mir::TypeId bit_ty) -> mir::ExprId {
   return body.exprs.Add(
       mir::Expr{
           .data =
               mir::ConditionalExpr{
-                  .condition = c, .then_value = t, .else_value = e},
+                  .condition = ReduceToCondition(body, c, bit_ty),
+                  .then_value = t,
+                  .else_value = e},
           .type = type});
 }
 
@@ -164,7 +171,7 @@ auto SynthesizeEnumNameCallable(
         MemberLiteral(body, enum_ty, base, members[i].value);
     const mir::ExprId cond = CaseEq(body, val_ref, member_lit, bit_ty);
     const mir::ExprId name_lit = StringValue(body, str_ty, members[i].name);
-    acc = Cond(body, cond, name_lit, acc, str_ty);
+    acc = Cond(body, cond, name_lit, acc, str_ty, bit_ty);
   }
   body.AppendStmt(mir::ReturnStmt{.value = acc});
 
@@ -212,7 +219,7 @@ auto SynthesizeEnumStepCallable(
     const mir::ExprId cond = CaseEq(body, val_ref, member_lit, bit_ty);
     idx_chain = Cond(
         body, cond, IntLit(body, int_ty, static_cast<std::int64_t>(i)),
-        idx_chain, int_ty);
+        idx_chain, int_ty, bit_ty);
   }
   body.AppendStmt(mir::LocalDeclStmt{.target = idx_id, .init = idx_chain});
 
@@ -241,7 +248,7 @@ auto SynthesizeEnumStepCallable(
         IntLit(body, int_ty, static_cast<std::int64_t>(i)), bit_ty);
     member_chain = Cond(
         body, cond, MemberLiteral(body, enum_ty, base, members[i].value),
-        member_chain, enum_ty);
+        member_chain, enum_ty, bit_ty);
   }
 
   // return (idx < 0) ? default : member-at(newidx)
@@ -252,7 +259,7 @@ auto SynthesizeEnumStepCallable(
       bit_ty);
   const mir::ExprId default_val = DefaultLiteral(body, enum_ty, base);
   const mir::ExprId result =
-      Cond(body, not_member, default_val, member_chain, enum_ty);
+      Cond(body, not_member, default_val, member_chain, enum_ty, bit_ty);
   body.AppendStmt(mir::ReturnStmt{.value = result});
 
   return owner.callables.Add(

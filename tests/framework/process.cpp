@@ -59,6 +59,15 @@ auto WaitPidBlocking(pid_t pid, int* status) -> std::expected<void, int> {
   }
 }
 
+// Waits for a child that was just killed, so it does not linger as a zombie.
+// A caller reaching here is already reporting a failure of its own, so neither
+// the child's status nor a failure to collect it can change what it reports.
+void ReapKilledChild(pid_t pid) {
+  int status = 0;
+  while (waitpid(pid, &status, 0) < 0 && errno == EINTR) {
+  }
+}
+
 auto ComputePollTimeoutMs(
     std::chrono::steady_clock::time_point deadline, bool has_timeout) -> int {
   if (!has_timeout) {
@@ -78,8 +87,7 @@ auto ComputePollTimeoutMs(
 
 auto RunChildProcess(
     const std::filesystem::path& exe, std::span<const std::string> args,
-    std::chrono::seconds timeout, std::optional<std::filesystem::path> cwd)
-    -> ProcessOutcome {
+    std::chrono::seconds timeout) -> ProcessOutcome {
   std::array<int, 2> stdout_pipe{};
   std::array<int, 2> stderr_pipe{};
   if (pipe(stdout_pipe.data()) != 0) {
@@ -105,11 +113,6 @@ auto RunChildProcess(
   posix_spawn_file_actions_addclose(&actions, stdout_pipe[1]);
   posix_spawn_file_actions_addclose(&actions, stderr_pipe[0]);
   posix_spawn_file_actions_addclose(&actions, stderr_pipe[1]);
-  std::string cwd_str;
-  if (cwd.has_value()) {
-    cwd_str = cwd->string();
-    posix_spawn_file_actions_addchdir_np(&actions, cwd_str.c_str());
-  }
 
   std::string exe_str = exe.string();
   std::vector<char*> argv;
@@ -159,8 +162,7 @@ auto RunChildProcess(
     const int ready = poll(fds.data(), fds.size(), poll_timeout_ms);
     if (ready < 0 && errno != EINTR) {
       kill(pid, SIGKILL);
-      int discard = 0;
-      (void)WaitPidBlocking(pid, &discard);
+      ReapKilledChild(pid);
       outcome.termination = TerminationKind::kWaitFailed;
       outcome.stderr_text =
           std::format("poll failed: {}", std::strerror(errno));

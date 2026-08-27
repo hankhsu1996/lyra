@@ -1,0 +1,28 @@
+// A constant expression pattern succeeds when the value it is matched against
+// equals it, whatever the member's type -- the standard's own worked example
+// matches constants against members declared 2-state (LRM 12.6).
+//
+// Parked: the run aborts comparing a constant pattern with a 2-state member,
+// reporting an operand state-kind mismatch, so this case cannot reach a check
+// to fail at.
+module Top;
+  typedef union tagged {
+    int Simple;
+    void Empty;
+  } value_t;
+
+  value_t v;
+  int two_state_constant = -1;
+
+  initial begin
+    v = tagged Simple 42;
+    if (v matches tagged Simple 42) two_state_constant = 1;
+    else two_state_constant = 0;
+  end
+
+  final begin
+    if (two_state_constant !== 1)
+      $fatal(1, "two_state_constant was %0d, expected 1", two_state_constant);
+    $display("All checks passed");
+  end
+endmodule

@@ -2,6 +2,7 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <optional>
 #include <string>
 #include <string_view>
 
@@ -42,10 +43,11 @@ enum class ValueDomain : std::uint8_t {
 
 auto ValueDomainName(ValueDomain domain) -> std::string_view;
 
-// The domain a LIR type is realized in. The one place a LIR type is classified,
-// so the entry a call names and the storage a cell owns cannot disagree.
+// The domain a LIR type is realized in, absent for a type the runtime library
+// has no value realization for. The one place a LIR type is classified, so the
+// entry a call names and the storage a cell owns cannot disagree.
 auto ValueDomainOf(const lir::CompilationUnit& unit, lir::TypeId type)
-    -> ValueDomain;
+    -> std::optional<ValueDomain>;
 
 // The runtime ABI the generated module calls: each runtime entry point declared
 // once with its canonical signature. The ABI is execution-strategy-neutral --
@@ -64,6 +66,16 @@ class RuntimeAbi {
   auto Writeln() -> llvm::FunctionCallee;
   auto Write() -> llvm::FunctionCallee;
 
+  // The severity-fixed diagnostic channel (LRM 20.10). The dispatcher is
+  // reached from the runtime, and each severity has its own emit entry, so the
+  // generated module names the severity it means and no severity tag crosses
+  // into the runtime.
+  auto Diagnostic() -> llvm::FunctionCallee;
+  auto EmitInfo() -> llvm::FunctionCallee;
+  auto EmitWarning() -> llvm::FunctionCallee;
+  auto EmitError() -> llvm::FunctionCallee;
+  auto EmitFatal() -> llvm::FunctionCallee;
+
   // Binds a coroutine to an instance's startup or shutdown lifecycle. The
   // coroutine crosses as an opaque handle; the runtime owns the coroutine, so
   // no C++ coroutine frame is built on the generated side.
@@ -79,6 +91,14 @@ class RuntimeAbi {
   // runtime call a value-change wait's suspend edge is preceded by. Like a
   // delay, the wakeup source is the running process, read from the runtime.
   auto WaitAny() -> llvm::FunctionCallee;
+
+  // Records a request to tear the simulation down once the current time slot
+  // completes (LRM 20.2); the fatal form (LRM 20.10) additionally makes the run
+  // report a non-zero exit code. Neither parks the caller: the body's own
+  // suspension follows the call, and the recorded request is what keeps the
+  // process from ever being dispatched again.
+  auto Finish() -> llvm::FunctionCallee;
+  auto FatalFinish() -> llvm::FunctionCallee;
 
   // Builds one leaf of a wait: the observable cell it watches, the bit
   // projection of that cell it watches, and the edge polarity it watches for.

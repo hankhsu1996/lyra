@@ -374,10 +374,13 @@ struct MoveExpr {
   ExprId operand;
 };
 
-// Reinterprets a borrowed pointer as a pointer to a different pointee type.
-// `operand` is a pointer-typed expression; `Expr::type` is the destination
-// `PointerType`. Used when a runtime entry returns a type-erased pointer
-// (`void*`) that the call site re-types -- the lowering states the
+// Re-types a reference as a reference to a different pointee type, moving no
+// bits and leaving the referent untouched. `operand` is a reference-typed
+// expression -- a borrowed pointer, or a handle to an object -- and
+// `Expr::type` is the destination reference type of the same wrapper. Used
+// where a runtime entry returns a type-erased pointer (`void*`) that the call
+// site re-types, and where a handle to a subclass reaches a variable declared
+// with the base class (LRM 8.14). Either way the lowering states the
 // destination type in MIR so the backend never picks it from context.
 struct PointerCastExpr {
   ExprId operand;

@@ -1,0 +1,89 @@
+// The case equality operators take x and z in a member as values that have to
+// match rather than as unknowns, so comparing two unpacked structures with them
+// always yields a known bit -- 1 or 0, never x, however many unknown bits the
+// members hold. The comparison descends into a member that is itself a
+// structure or an array (LRM 11.4.5, 7.2).
+//
+// Parked: the known bit such a comparison produces cannot be stored, and the
+// run aborts reporting that a required conversion was not emitted, so this case
+// cannot reach a check to fail at.
+module Top;
+  typedef struct {
+    int count;
+    byte code;
+  } entry_t;
+
+  typedef struct {
+    entry_t entry;
+    int elements [2];
+  } record_t;
+
+  typedef struct {
+    int count;
+    logic [7:0] flags;
+  } masked_t;
+
+  entry_t entry_a, entry_b, entry_c;
+  record_t record_a, record_b, record_c;
+  masked_t masked_a, masked_b, masked_c;
+
+  logic case_equal_entries, case_equal_other_entry;
+  logic case_equal_records, case_equal_other_record;
+  logic case_equal_masked, case_equal_other_masked;
+  logic case_different_masked;
+
+  initial begin
+    entry_a.count = 5;
+    entry_a.code = 8'd6;
+    entry_b.count = 5;
+    entry_b.code = 8'd6;
+    entry_c.count = 5;
+    entry_c.code = 8'd7;
+
+    case_equal_entries = (entry_a === entry_b);
+    case_equal_other_entry = (entry_a === entry_c);
+
+    record_a.entry = entry_a;
+    record_a.elements[0] = 30;
+    record_a.elements[1] = 40;
+    record_b = record_a;
+    record_c = record_a;
+    record_c.elements[1] = 41;
+
+    case_equal_records = (record_a === record_b);
+    case_equal_other_record = (record_a === record_c);
+
+    masked_a.count = 5;
+    masked_a.flags = 8'bx;
+    masked_b.count = 5;
+    masked_b.flags = 8'bx;
+    masked_c.count = 6;
+    masked_c.flags = 8'bx;
+
+    case_equal_masked = (masked_a === masked_b);
+    case_equal_other_masked = (masked_a === masked_c);
+    case_different_masked = (masked_a !== masked_c);
+  end
+
+  final begin
+    if (case_equal_entries !== 1'b1)
+      $fatal(1, "case_equal_entries was %0h, expected 1", case_equal_entries);
+    if (case_equal_other_entry !== 1'b0)
+      $fatal(1, "case_equal_other_entry was %0h, expected 0",
+             case_equal_other_entry);
+    if (case_equal_records !== 1'b1)
+      $fatal(1, "case_equal_records was %0h, expected 1", case_equal_records);
+    if (case_equal_other_record !== 1'b0)
+      $fatal(1, "case_equal_other_record was %0h, expected 0",
+             case_equal_other_record);
+    if (case_equal_masked !== 1'b1)
+      $fatal(1, "case_equal_masked was %0h, expected 1", case_equal_masked);
+    if (case_equal_other_masked !== 1'b0)
+      $fatal(1, "case_equal_other_masked was %0h, expected 0",
+             case_equal_other_masked);
+    if (case_different_masked !== 1'b1)
+      $fatal(1, "case_different_masked was %0h, expected 1",
+             case_different_masked);
+    $display("All checks passed");
+  end
+endmodule
