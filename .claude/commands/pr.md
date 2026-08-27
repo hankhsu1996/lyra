@@ -1,6 +1,6 @@
 ---
 description: Create a pull request with a well-formatted description
-allowed-tools: Bash(git status:*), Bash(git log:*), Bash(git diff:*), Bash(git push:*), Bash(git branch:*), Bash(git fetch:*), Bash(git rev-list:*), Bash(git rebase:*), Bash(gh pr create:*), Bash(gh pr merge:*)
+allowed-tools: Bash(git status:*), Bash(git log:*), Bash(git diff:*), Bash(git push:*), Bash(git branch:*), Bash(git fetch:*), Bash(git rev-list:*), Bash(git rebase:*), Bash(gh pr create:*)
 ---
 
 # Pull Request
@@ -58,7 +58,6 @@ change in front of you.
 4. Push if needed: `git push -u origin <branch>`
 5. Create PR: write the body to a file and pass `gh pr create --title "..." --body-file <file>`.
    Inline `--body` does not survive shell quoting once the text contains a table or a fenced block.
-6. Enable auto-merge: `gh pr merge --auto --squash`
-7. Return the PR URL to the user
+6. Return the PR URL to the user
 
 If updating an existing PR, push the new commits and update the PR body with `gh pr edit`.
