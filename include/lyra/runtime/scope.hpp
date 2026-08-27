@@ -11,6 +11,7 @@
 
 #include "lyra/runtime/hierarchy_segment.hpp"
 #include "lyra/runtime/member_storage.hpp"
+#include "lyra/runtime/rng.hpp"
 #include "lyra/runtime/scope_program.hpp"
 #include "lyra/value/packed_array.hpp"
 #include "lyra/value/string.hpp"
@@ -121,6 +122,13 @@ class Scope {
   // suffix is strictly below `$root`.
   [[nodiscard]] auto ResolveRoot() -> Scope*;
 
+  // This instance's own source of seeds for the static processes and static
+  // initializers declared within it (LRM 18.14.1). Meaningful on a module,
+  // interface, or program instance; a caller names that instance rather than
+  // asking a scope inside one to find it. Every instance's runs from the same
+  // default seed, which is what keeps one instance's draws out of another's.
+  [[nodiscard]] auto InitializationSeeds() -> InitializationRng&;
+
   // The scope's declared time precision as a power of ten (LRM Table 20-2),
   // read from its metadata; a scope with no timescale of its own reports the
   // unspecified sentinel. The engine takes the minimum across the tree to fix
@@ -185,6 +193,9 @@ class Scope {
   // Filled during construction; scanned only at construction-time
   // resolution, never on the simulation path.
   std::vector<SignalEntry> signals_;
+  // LRM 18.14.1 puts one on each module, interface, and program instance. A
+  // generate scope is none of those and nothing draws from the one it carries.
+  InitializationRng initialization_seeds_;
 };
 
 // A scope whose member storage the runtime owns, rather than a backend's native

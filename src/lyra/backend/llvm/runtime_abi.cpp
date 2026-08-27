@@ -167,12 +167,13 @@ auto RuntimeAbi::EmitFatal() -> llvm::FunctionCallee {
 auto RuntimeAbi::RegisterInitial() -> llvm::FunctionCallee {
   return Get(
       "lyra_rt_register_initial", types_->Void(),
-      {types_->Ptr(), types_->Ptr()});
+      {types_->Ptr(), types_->Ptr(), types_->Ptr()});
 }
 
 auto RuntimeAbi::RegisterFinal() -> llvm::FunctionCallee {
   return Get(
-      "lyra_rt_register_final", types_->Void(), {types_->Ptr(), types_->Ptr()});
+      "lyra_rt_register_final", types_->Void(),
+      {types_->Ptr(), types_->Ptr(), types_->Ptr()});
 }
 
 auto RuntimeAbi::MakeCoroutine() -> llvm::FunctionCallee {
@@ -212,6 +213,21 @@ auto RuntimeAbi::RunHostCommand(std::size_t argument_count)
   }
   throw InternalError(
       "llvm codegen: a host command call carries a command line or nothing");
+}
+
+auto RuntimeAbi::Urandom() -> llvm::FunctionCallee {
+  return Get("lyra_rt_urandom", types_->Ptr(), {types_->Ptr()});
+}
+
+auto RuntimeAbi::UrandomSeeded() -> llvm::FunctionCallee {
+  return Get(
+      "lyra_rt_urandom_seeded", types_->Ptr(), {types_->Ptr(), types_->Ptr()});
+}
+
+auto RuntimeAbi::UrandomRange() -> llvm::FunctionCallee {
+  return Get(
+      "lyra_rt_urandom_range", types_->Ptr(),
+      {types_->Ptr(), types_->Ptr(), types_->Ptr()});
 }
 
 auto RuntimeAbi::MakeTrigger() -> llvm::FunctionCallee {

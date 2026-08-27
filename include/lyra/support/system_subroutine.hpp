@@ -36,10 +36,13 @@ enum class SystemSubroutineKind : std::uint8_t {
 // arithmetic context align on the 4-state form, so functions whose LRM
 // example types the return as `integer` (e.g. `$sscanf`, `$fscanf` per
 // LRM 21.3.4.3) must pick `kInteger` to avoid state-axis mismatch on
-// surrounding operators.
+// surrounding operators. `kIntUnsigned` is SV `int unsigned`, which the
+// standard states in the function's own prototype rather than leaving to
+// context (LRM 18.13.1).
 enum class ReturnConvention : std::uint8_t {
   kVoid,
   kInt32,
+  kIntUnsigned,
   kInteger,
   kBit,
   kString,
@@ -209,6 +212,18 @@ struct BitVectorSystemSubroutineInfo {
 // written as a statement discards that value like any other.
 struct HostCommandSystemSubroutineInfo {};
 
+// LRM 18.13.1 -- 18.13.2 unconstrained random number functions. Both draw from
+// the calling process's own generator, which is what makes the values a process
+// observes independent of the order in which processes run (LRM 18.14.2). The
+// kind axis is what the lowering branches on to pick the runtime entry, since
+// the two differ in what they do with their arguments rather than in where the
+// bits come from: `$urandom`'s optional argument re-seeds the generator before
+// the draw, while `$urandom_range`'s two bound the result.
+enum class RandomKind : std::uint8_t { kUrandom, kUrandomRange };
+struct RandomSystemSubroutineInfo {
+  RandomKind kind;
+};
+
 using SystemSubroutineSemantic = std::variant<
     PrintSystemSubroutineInfo, TerminationSystemSubroutineInfo,
     DiagnosticSystemSubroutineInfo, FileIOSystemSubroutineInfo,
@@ -216,7 +231,7 @@ using SystemSubroutineSemantic = std::variant<
     TimeSystemSubroutineInfo, TimeFormatSystemSubroutineInfo,
     PrintTimescaleSystemSubroutineInfo, PlusargsSystemSubroutineInfo,
     MemFileSystemSubroutineInfo, BitVectorSystemSubroutineInfo,
-    HostCommandSystemSubroutineInfo>;
+    HostCommandSystemSubroutineInfo, RandomSystemSubroutineInfo>;
 
 struct SystemSubroutineDesc {
   SystemSubroutineId id;
@@ -1022,6 +1037,25 @@ inline constexpr std::array kSystemSubroutines = {
         .result_conv = ReturnConvention::kInt32,
         .arg_policy = ArgCountPolicy{.min_args = 0, .max_args = 1},
         .semantic = HostCommandSystemSubroutineInfo{},
+    },
+    SystemSubroutineDesc{
+        .id = SystemSubroutineId{66},
+        .name = "$urandom",
+        .origin = SystemSubroutineOrigin::kLanguageBuiltin,
+        .kind = SystemSubroutineKind::kFunction,
+        .result_conv = ReturnConvention::kIntUnsigned,
+        .arg_policy = ArgCountPolicy{.min_args = 0, .max_args = 1},
+        .semantic = RandomSystemSubroutineInfo{.kind = RandomKind::kUrandom},
+    },
+    SystemSubroutineDesc{
+        .id = SystemSubroutineId{67},
+        .name = "$urandom_range",
+        .origin = SystemSubroutineOrigin::kLanguageBuiltin,
+        .kind = SystemSubroutineKind::kFunction,
+        .result_conv = ReturnConvention::kIntUnsigned,
+        .arg_policy = ArgCountPolicy{.min_args = 1, .max_args = 2},
+        .semantic =
+            RandomSystemSubroutineInfo{.kind = RandomKind::kUrandomRange},
     },
 };
 

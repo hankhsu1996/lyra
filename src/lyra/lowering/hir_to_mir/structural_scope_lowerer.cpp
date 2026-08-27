@@ -539,6 +539,12 @@ void InstallRoutedRefs(
 // then registers it for the scope's startup (`is_final == false`) or shutdown
 // (`is_final == true`) lifecycle (LRM 9.2). Startup and shutdown are distinct
 // registration callees, not one tagged call.
+//
+// The registration also names the unit instance the process belongs to, which
+// is where LRM 18.14.1 keeps the seeds a static process starts from. That
+// instance is the scope the artifact's own class tree is rooted at, a fixed
+// number of steps out from wherever the process is declared, so the call
+// reaches it by typed navigation over a distance this walk already knows.
 void AppendProcessRegistration(
     UnitLowerer& unit_lowerer, const WalkFrame& activate_frame,
     mir::CallableId body, bool is_final) {
@@ -561,6 +567,8 @@ void AppendProcessRegistration(
           .type = unit_lowerer.Unit().builtins.coroutine_void});
   const mir::ExprId reg_self =
       block.exprs.Add(MakeSelfRefExpr(activate_frame, self_ptr_type));
+  const mir::ExprId unit_instance = BuildEnclosingScopeReceiver(
+      activate_frame, unit_lowerer.Unit(), activate_frame.HopsToUnitRoot());
   const mir::ExprId reg_call = block.exprs.Add(
       mir::Expr{
           .data =
@@ -570,7 +578,7 @@ void AppendProcessRegistration(
                           .target = is_final
                                         ? support::BuiltinFn::kRegisterFinal
                                         : support::BuiltinFn::kRegisterInitial},
-                  .arguments = {reg_self, body_call}},
+                  .arguments = {reg_self, unit_instance, body_call}},
           .type = unit_lowerer.Unit().builtins.void_type});
   block.AppendStmt(mir::ExprStmt{.expr = reg_call});
 }

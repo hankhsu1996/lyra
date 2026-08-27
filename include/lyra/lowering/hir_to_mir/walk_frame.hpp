@@ -135,6 +135,19 @@ struct WalkFrame {
     return EnclosingClass{.cls = node->cls, .id = node->cls_id};
   }
 
+  // How many steps out the class its unit is rooted at sits. The outer chain
+  // starts empty and grows one node per class the walk opens, so at the unit's
+  // own root it is empty and its depth elsewhere is the distance to it -- which
+  // is what a body reaching a member of its unit instance names.
+  [[nodiscard]] auto HopsToUnitRoot() const -> mir::EnclosingHops {
+    std::uint32_t hops = 0;
+    for (const ScopeChainNode* node = outer_classes; node != nullptr;
+         node = node->parent) {
+      ++hops;
+    }
+    return mir::EnclosingHops{hops};
+  }
+
   [[nodiscard]] auto WithBlock(mir::Block* block) const -> WalkFrame {
     WalkFrame next = *this;
     next.current_block = block;

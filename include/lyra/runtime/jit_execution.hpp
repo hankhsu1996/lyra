@@ -54,8 +54,8 @@ void lyra_rt_emit_fatal(void* dispatcher, const void* origin, const void* text);
 // generated one through its handle; the generated body never owns the
 // scheduler's coroutine.
 auto lyra_rt_make_coroutine(void* (*ramp)(void* env), void* env) -> void*;
-void lyra_rt_register_initial(void* self, void* coroutine);
-void lyra_rt_register_final(void* self, void* coroutine);
+void lyra_rt_register_initial(void* self, void* unit_instance, void* coroutine);
+void lyra_rt_register_final(void* self, void* unit_instance, void* coroutine);
 
 // Registers the running process to wake after `ticks` steps of its scope's
 // precision (`precision_power`), the registration a delay's suspend edge is
@@ -98,6 +98,15 @@ void lyra_rt_fatal_finish(void* runtime, const void* level);
 // and the answer as an opaque packed value, like every scalar.
 auto lyra_rt_run_host_command(void* runtime, const void* command) -> void*;
 auto lyra_rt_run_null_host_command() -> void*;
+
+// Draws from the calling process's generator (LRM 18.13.1 -- 18.13.2). The
+// generator is the running process's, read from the runtime, so none crosses
+// the boundary; the seed and the two bounds cross as opaque packed values, as
+// every scalar does, and so does the result.
+auto lyra_rt_urandom(void* runtime) -> void*;
+auto lyra_rt_urandom_seeded(void* runtime, const void* seed) -> void*;
+auto lyra_rt_urandom_range(
+    void* runtime, const void* maxval, const void* minval) -> void*;
 
 // Builds a scope's structural identity from its base label and per-dimension
 // indices (a span of 32-bit index values, empty for a scalar). The segment is

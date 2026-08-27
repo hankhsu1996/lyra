@@ -20,6 +20,7 @@
 #include "lyra/runtime/generated_call_scope.hpp"
 #include "lyra/runtime/hierarchy_segment.hpp"
 #include "lyra/runtime/host_command.hpp"
+#include "lyra/runtime/random.hpp"
 #include "lyra/runtime/runtime.hpp"
 #include "lyra/runtime/runtime_effects.hpp"
 #include "lyra/runtime/runtime_process.hpp"
@@ -427,15 +428,34 @@ auto lyra_rt_run_null_host_command() -> void* {
   return Own(RunHostCommand());
 }
 
-void lyra_rt_register_initial(void* self, void* coroutine) {
+auto lyra_rt_urandom(void* runtime) -> void* {
+  return Own(lyra::runtime::Urandom(*static_cast<RuntimeEffects*>(runtime)));
+}
+
+auto lyra_rt_urandom_seeded(void* runtime, const void* seed) -> void* {
+  return Own(
+      lyra::runtime::UrandomSeeded(
+          *static_cast<RuntimeEffects*>(runtime), Read<PackedArray>(seed)));
+}
+
+auto lyra_rt_urandom_range(
+    void* runtime, const void* maxval, const void* minval) -> void* {
+  return Own(
+      lyra::runtime::UrandomRange(
+          *static_cast<RuntimeEffects*>(runtime), Read<PackedArray>(maxval),
+          Read<PackedArray>(minval)));
+}
+
+void lyra_rt_register_initial(
+    void* self, void* unit_instance, void* coroutine) {
   RegisterInitialProcess(
-      static_cast<Scope*>(self),
+      static_cast<Scope*>(self), static_cast<Scope*>(unit_instance),
       std::move(*static_cast<Coroutine<void>*>(coroutine)));
 }
 
-void lyra_rt_register_final(void* self, void* coroutine) {
+void lyra_rt_register_final(void* self, void* unit_instance, void* coroutine) {
   RegisterFinalProcess(
-      static_cast<Scope*>(self),
+      static_cast<Scope*>(self), static_cast<Scope*>(unit_instance),
       std::move(*static_cast<Coroutine<void>*>(coroutine)));
 }
 

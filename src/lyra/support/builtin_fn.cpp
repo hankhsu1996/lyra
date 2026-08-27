@@ -298,6 +298,12 @@ auto BuiltinFnName(BuiltinFn id) -> std::string_view {
       return "stime";
     case BuiltinFn::kRealTime:
       return "realtime";
+    case BuiltinFn::kUrandom:
+      return "urandom";
+    case BuiltinFn::kUrandomSeeded:
+      return "urandom_seeded";
+    case BuiltinFn::kUrandomRange:
+      return "urandom_range";
     case BuiltinFn::kFinish:
       return "finish";
     case BuiltinFn::kFatalFinish:

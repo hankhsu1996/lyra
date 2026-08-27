@@ -16,10 +16,12 @@
 namespace lyra::runtime {
 
 RuntimeProcess::RuntimeProcess(
-    Scope* owning_scope, ProcessKind kind, Coroutine<void> coroutine)
+    Scope* owning_scope, ProcessKind kind, Coroutine<void> coroutine,
+    RandomSeed seed)
     : kind_(kind),
       owning_scope_(owning_scope),
       coroutine_(std::move(coroutine)),
+      rng_(seed),
       // Before the body runs, the top frame is the active leaf (what the engine
       // schedules to start the process); a wait moves the leaf inward.
       current_leaf_(coroutine_.Token()) {

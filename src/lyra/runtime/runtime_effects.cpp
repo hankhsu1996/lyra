@@ -147,8 +147,12 @@ void RuntimeEffects::Spawn(Coroutine<void> coroutine) {
         "RuntimeEffects::Spawn: no ambient process to parent the branch to");
   }
   RuntimeProcess& parent = *rt.current_process_;
+  // Hierarchical seeding (LRM 18.14.1): the branch starts from the spawner's
+  // next value, so a whole subtree of threads follows from the seed of the one
+  // at its root and the order the branches then run in does not move any of it.
   auto child = std::make_shared<RuntimeProcess>(
-      parent.OwningScope(), ProcessKind::kSpawned, std::move(coroutine));
+      parent.OwningScope(), ProcessKind::kSpawned, std::move(coroutine),
+      parent.Rng().NextSeed());
   const CoroutineHandle handle = child->TopHandle();
   // The spawned activity is enabled within whatever disable targets the spawner
   // is inside (LRM 9.6.2), so it takes that membership here rather than

@@ -114,6 +114,8 @@ auto MakeReturnConventionType(
       return builtins.void_type;
     case support::ReturnConvention::kInt32:
       return builtins.int_type;
+    case support::ReturnConvention::kIntUnsigned:
+      return builtins.int_unsigned;
     case support::ReturnConvention::kBit:
       return builtins.scalar_bit;
     case support::ReturnConvention::kInteger:

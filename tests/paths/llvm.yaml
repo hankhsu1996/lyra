@@ -157,6 +157,7 @@
 13_tasks_and_functions/task_enable_statement: "a region consuming a control effect is not yet lowerable to LIR"
 13_tasks_and_functions/task_enables_subroutine: "a region consuming a control effect is not yet lowerable to LIR"
 13_tasks_and_functions/task_return_exits_task: "a region consuming a control effect is not yet lowerable to LIR"
+18_random_value_generation/initialization_rng_is_per_instance: "the get_signal builtin has no entry on this backend"
 20_utility/array_query_dynamic_dimensions: "a value of type queue has no runtime library realization"
 20_utility/bits_expression_size: "a value of type queue has no runtime library realization"
 20_utility/simulation_time_functions: "delay durations beyond an integer or time literal are not yet supported"
