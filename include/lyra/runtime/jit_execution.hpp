@@ -310,8 +310,40 @@ auto lyra_rt_real_le(const void* lhs, const void* rhs) -> void*;
 auto lyra_rt_real_gt(const void* lhs, const void* rhs) -> void*;
 auto lyra_rt_real_ge(const void* lhs, const void* rhs) -> void*;
 auto lyra_rt_real_to_bool(const void* operand) -> bool;
+
+// The LRM 20.8.2 Table 20-4 mathematics, whose behavior the standard defines
+// to be that of the C library function each is cross-listed with. The
+// two-argument rows take their second operand after the receiver, and `pow` is
+// the row LRM 11.4.3 `**` on real operands asks for as well.
 auto lyra_rt_real_pow(const void* base, const void* exponent) -> void*;
+auto lyra_rt_real_ln(const void* value) -> void*;
+auto lyra_rt_real_log10(const void* value) -> void*;
+auto lyra_rt_real_exp(const void* value) -> void*;
+auto lyra_rt_real_sqrt(const void* value) -> void*;
+auto lyra_rt_real_floor(const void* value) -> void*;
+auto lyra_rt_real_ceil(const void* value) -> void*;
+auto lyra_rt_real_sin(const void* value) -> void*;
+auto lyra_rt_real_cos(const void* value) -> void*;
+auto lyra_rt_real_tan(const void* value) -> void*;
+auto lyra_rt_real_asin(const void* value) -> void*;
+auto lyra_rt_real_acos(const void* value) -> void*;
+auto lyra_rt_real_atan(const void* value) -> void*;
+auto lyra_rt_real_atan2(const void* y, const void* x) -> void*;
+auto lyra_rt_real_hypot(const void* x, const void* y) -> void*;
+auto lyra_rt_real_sinh(const void* value) -> void*;
+auto lyra_rt_real_cosh(const void* value) -> void*;
+auto lyra_rt_real_tanh(const void* value) -> void*;
+auto lyra_rt_real_asinh(const void* value) -> void*;
+auto lyra_rt_real_acosh(const void* value) -> void*;
+auto lyra_rt_real_atanh(const void* value) -> void*;
+
+// Reading a real out as an integer: LRM 6.12.1 rounds, LRM 20.5 `$rtoi`
+// truncates, and the bit-pattern pair carries the IEEE 754 encoding itself.
 auto lyra_rt_real_round(const void* value) -> std::int64_t;
+auto lyra_rt_real_truncate(const void* value) -> std::int64_t;
+auto lyra_rt_real_to_bits(const void* value) -> std::int64_t;
+auto lyra_rt_real_from_bits(std::int64_t bits) -> void*;
+
 auto lyra_rt_real_const(double value) -> void*;
 auto lyra_rt_real_from_int64(std::int64_t value) -> void*;
 auto lyra_rt_real_from_shortreal(const void* value) -> void*;
@@ -340,6 +372,8 @@ auto lyra_rt_shortreal_ge(const void* lhs, const void* rhs) -> void*;
 auto lyra_rt_shortreal_to_bool(const void* operand) -> bool;
 auto lyra_rt_shortreal_pow(const void* base, const void* exponent) -> void*;
 auto lyra_rt_shortreal_round(const void* value) -> std::int64_t;
+auto lyra_rt_shortreal_to_bits(const void* value) -> std::int64_t;
+auto lyra_rt_shortreal_from_bits(std::int64_t bits) -> void*;
 auto lyra_rt_shortreal_const(float value) -> void*;
 auto lyra_rt_shortreal_from_int64(std::int64_t value) -> void*;
 auto lyra_rt_shortreal_from_real(const void* value) -> void*;

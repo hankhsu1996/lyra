@@ -202,6 +202,7 @@ void DefineRuntimeAbi(llvm::orc::LLJIT& jit) {
   add("lyra_rt_packed_to_int64", &lyra_rt_packed_to_int64);
   add("lyra_rt_packed_is_unknown", &lyra_rt_packed_is_unknown);
   add("lyra_rt_packed_count_bits", &lyra_rt_packed_count_bits);
+  add("lyra_rt_packed_from_string", &lyra_rt_packed_from_string);
   add("lyra_rt_packed_clog2", &lyra_rt_packed_clog2);
   add("lyra_rt_packed_pow", &lyra_rt_packed_pow);
   add("lyra_rt_packed_shift_left", &lyra_rt_packed_shift_left);
@@ -230,6 +231,7 @@ void DefineRuntimeAbi(llvm::orc::LLJIT& jit) {
   add("lyra_rt_packed_slice", &lyra_rt_packed_slice);
   add("lyra_rt_packed_with_slice", &lyra_rt_packed_with_slice);
   add("lyra_rt_string_from_packed_array", &lyra_rt_string_from_packed_array);
+  add("lyra_rt_string_count_bits", &lyra_rt_string_count_bits);
   add("lyra_rt_string_string_cstr", &lyra_rt_string_string_cstr);
   add("lyra_rt_string_len", &lyra_rt_string_len);
   add("lyra_rt_string_getc", &lyra_rt_string_getc);
@@ -281,6 +283,29 @@ void DefineRuntimeAbi(llvm::orc::LLJIT& jit) {
   add("lyra_rt_real_to_bool", &lyra_rt_real_to_bool);
   add("lyra_rt_real_pow", &lyra_rt_real_pow);
   add("lyra_rt_real_round", &lyra_rt_real_round);
+  add("lyra_rt_real_truncate", &lyra_rt_real_truncate);
+  add("lyra_rt_real_to_bits", &lyra_rt_real_to_bits);
+  add("lyra_rt_real_from_bits", &lyra_rt_real_from_bits);
+  add("lyra_rt_real_ln", &lyra_rt_real_ln);
+  add("lyra_rt_real_log10", &lyra_rt_real_log10);
+  add("lyra_rt_real_exp", &lyra_rt_real_exp);
+  add("lyra_rt_real_sqrt", &lyra_rt_real_sqrt);
+  add("lyra_rt_real_floor", &lyra_rt_real_floor);
+  add("lyra_rt_real_ceil", &lyra_rt_real_ceil);
+  add("lyra_rt_real_sin", &lyra_rt_real_sin);
+  add("lyra_rt_real_cos", &lyra_rt_real_cos);
+  add("lyra_rt_real_tan", &lyra_rt_real_tan);
+  add("lyra_rt_real_asin", &lyra_rt_real_asin);
+  add("lyra_rt_real_acos", &lyra_rt_real_acos);
+  add("lyra_rt_real_atan", &lyra_rt_real_atan);
+  add("lyra_rt_real_atan2", &lyra_rt_real_atan2);
+  add("lyra_rt_real_hypot", &lyra_rt_real_hypot);
+  add("lyra_rt_real_sinh", &lyra_rt_real_sinh);
+  add("lyra_rt_real_cosh", &lyra_rt_real_cosh);
+  add("lyra_rt_real_tanh", &lyra_rt_real_tanh);
+  add("lyra_rt_real_asinh", &lyra_rt_real_asinh);
+  add("lyra_rt_real_acosh", &lyra_rt_real_acosh);
+  add("lyra_rt_real_atanh", &lyra_rt_real_atanh);
   add("lyra_rt_real_const", &lyra_rt_real_const);
   add("lyra_rt_real_from_int64", &lyra_rt_real_from_int64);
   add("lyra_rt_real_from_shortreal", &lyra_rt_real_from_shortreal);
@@ -309,6 +334,8 @@ void DefineRuntimeAbi(llvm::orc::LLJIT& jit) {
   add("lyra_rt_shortreal_to_bool", &lyra_rt_shortreal_to_bool);
   add("lyra_rt_shortreal_pow", &lyra_rt_shortreal_pow);
   add("lyra_rt_shortreal_round", &lyra_rt_shortreal_round);
+  add("lyra_rt_shortreal_to_bits", &lyra_rt_shortreal_to_bits);
+  add("lyra_rt_shortreal_from_bits", &lyra_rt_shortreal_from_bits);
   add("lyra_rt_shortreal_const", &lyra_rt_shortreal_const);
   add("lyra_rt_shortreal_from_int64", &lyra_rt_shortreal_from_int64);
   add("lyra_rt_shortreal_from_real", &lyra_rt_shortreal_from_real);
@@ -333,6 +360,7 @@ void DefineRuntimeAbi(llvm::orc::LLJIT& jit) {
   add("lyra_rt_value_box_dynarray", &lyra_rt_value_box_dynarray);
   add("lyra_rt_tuple_make", &lyra_rt_tuple_make);
   add("lyra_rt_tuple_extract", &lyra_rt_tuple_extract);
+  add("lyra_rt_tuple_count_bits", &lyra_rt_tuple_count_bits);
   add("lyra_rt_tuple_update", &lyra_rt_tuple_update);
   add("lyra_rt_tuple_eq", &lyra_rt_tuple_eq);
   add("lyra_rt_tuple_ne", &lyra_rt_tuple_ne);
@@ -380,6 +408,46 @@ void DefineRuntimeAbi(llvm::orc::LLJIT& jit) {
       &lyra_rt_activation_frame_store_dynarray);
   add("lyra_rt_activation_frame_load_dynarray",
       &lyra_rt_activation_frame_load_dynarray);
+  add("lyra_rt_dynarray_count_bits", &lyra_rt_dynarray_count_bits);
+  add("lyra_rt_dynarray_from_literal_unpackedarray",
+      &lyra_rt_dynarray_from_literal_unpackedarray);
+  add("lyra_rt_value_box_unpackedarray", &lyra_rt_value_box_unpackedarray);
+  add("lyra_rt_unpackedarray_from_literal_packed",
+      &lyra_rt_unpackedarray_from_literal_packed);
+  add("lyra_rt_unpackedarray_from_literal_string",
+      &lyra_rt_unpackedarray_from_literal_string);
+  add("lyra_rt_unpackedarray_from_literal_real",
+      &lyra_rt_unpackedarray_from_literal_real);
+  add("lyra_rt_unpackedarray_from_literal_shortreal",
+      &lyra_rt_unpackedarray_from_literal_shortreal);
+  add("lyra_rt_unpackedarray_from_literal_chandle",
+      &lyra_rt_unpackedarray_from_literal_chandle);
+  add("lyra_rt_unpackedarray_from_literal_tuple",
+      &lyra_rt_unpackedarray_from_literal_tuple);
+  add("lyra_rt_unpackedarray_from_literal_dynarray",
+      &lyra_rt_unpackedarray_from_literal_dynarray);
+  add("lyra_rt_unpackedarray_from_literal_unpackedarray",
+      &lyra_rt_unpackedarray_from_literal_unpackedarray);
+  add("lyra_rt_unpackedarray_from_string", &lyra_rt_unpackedarray_from_string);
+  add("lyra_rt_unpackedarray_element", &lyra_rt_unpackedarray_element);
+  add("lyra_rt_unpackedarray_with_element",
+      &lyra_rt_unpackedarray_with_element);
+  add("lyra_rt_unpackedarray_slice", &lyra_rt_unpackedarray_slice);
+  add("lyra_rt_unpackedarray_size", &lyra_rt_unpackedarray_size);
+  add("lyra_rt_unpackedarray_count_bits", &lyra_rt_unpackedarray_count_bits);
+  add("lyra_rt_unpackedarray_eq", &lyra_rt_unpackedarray_eq);
+  add("lyra_rt_unpackedarray_ne", &lyra_rt_unpackedarray_ne);
+  add("lyra_rt_unpackedarray_case_equal", &lyra_rt_unpackedarray_case_equal);
+  add("lyra_rt_cell_unpackedarray_get", &lyra_rt_cell_unpackedarray_get);
+  add("lyra_rt_cell_unpackedarray_initialize",
+      &lyra_rt_cell_unpackedarray_initialize);
+  add("lyra_rt_cell_unpackedarray_set", &lyra_rt_cell_unpackedarray_set);
+  add("lyra_rt_activation_frame_alloc_unpackedarray",
+      &lyra_rt_activation_frame_alloc_unpackedarray);
+  add("lyra_rt_activation_frame_store_unpackedarray",
+      &lyra_rt_activation_frame_store_unpackedarray);
+  add("lyra_rt_activation_frame_load_unpackedarray",
+      &lyra_rt_activation_frame_load_unpackedarray);
   Check(
       jit.getMainJITDylib().define(
           llvm::orc::absoluteSymbols(std::move(symbols))),

@@ -100,6 +100,46 @@ auto BuiltinFnCppName(support::BuiltinFn id) -> std::string_view {
       return "CountBits";
     case support::BuiltinFn::kClog2:
       return "Clog2";
+    case support::BuiltinFn::kLn:
+      return "Ln";
+    case support::BuiltinFn::kLog10:
+      return "Log10";
+    case support::BuiltinFn::kExp:
+      return "Exp";
+    case support::BuiltinFn::kSqrt:
+      return "Sqrt";
+    case support::BuiltinFn::kFloor:
+      return "Floor";
+    case support::BuiltinFn::kCeil:
+      return "Ceil";
+    case support::BuiltinFn::kSin:
+      return "Sin";
+    case support::BuiltinFn::kCos:
+      return "Cos";
+    case support::BuiltinFn::kTan:
+      return "Tan";
+    case support::BuiltinFn::kAsin:
+      return "Asin";
+    case support::BuiltinFn::kAcos:
+      return "Acos";
+    case support::BuiltinFn::kAtan:
+      return "Atan";
+    case support::BuiltinFn::kAtan2:
+      return "Atan2";
+    case support::BuiltinFn::kHypot:
+      return "Hypot";
+    case support::BuiltinFn::kSinh:
+      return "Sinh";
+    case support::BuiltinFn::kCosh:
+      return "Cosh";
+    case support::BuiltinFn::kTanh:
+      return "Tanh";
+    case support::BuiltinFn::kAsinh:
+      return "Asinh";
+    case support::BuiltinFn::kAcosh:
+      return "Acosh";
+    case support::BuiltinFn::kAtanh:
+      return "Atanh";
     case support::BuiltinFn::kLen:
       return "Len";
     case support::BuiltinFn::kGetc:
@@ -278,6 +318,12 @@ auto BuiltinFnCppName(support::BuiltinFn id) -> std::string_view {
       return "ToInt64";
     case support::BuiltinFn::kRound:
       return "Round";
+    case support::BuiltinFn::kTruncate:
+      return "Truncate";
+    case support::BuiltinFn::kToBits:
+      return "ToBits";
+    case support::BuiltinFn::kFromBits:
+      return "FromBits";
     case support::BuiltinFn::kRealValue:
       return "Value";
     case support::BuiltinFn::kStringCStr:

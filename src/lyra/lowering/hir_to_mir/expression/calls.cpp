@@ -26,6 +26,7 @@
 #include "lyra/lowering/hir_to_mir/expression/dpi_call.hpp"
 #include "lyra/lowering/hir_to_mir/expression/enum_method.hpp"
 #include "lyra/lowering/hir_to_mir/expression/expr_lowerer.hpp"
+#include "lyra/lowering/hir_to_mir/expression/real_conversion.hpp"
 #include "lyra/lowering/hir_to_mir/expression/system/bit_vector.hpp"
 #include "lyra/lowering/hir_to_mir/expression/system/control.hpp"
 #include "lyra/lowering/hir_to_mir/expression/system/diagnostic.hpp"
@@ -421,6 +422,14 @@ auto LowerBuiltinMethodCall(
       b.method == support::BuiltinFn::kEnumNext ||
       b.method == support::BuiltinFn::kEnumPrev) {
     return LowerEnumMethodCall(lowerer, frame, c, b, result_type);
+  }
+  // LRM 20.5 conversions answer in a machine integer, which the destination's
+  // declared representation then has to land, so each is a pair of steps
+  // rather than the single call the generic path builds.
+  if (b.method == support::BuiltinFn::kTruncate ||
+      b.method == support::BuiltinFn::kToBits ||
+      b.method == support::BuiltinFn::kFromBits) {
+    return LowerRealConversionCall(lowerer, frame, c, b, result_type);
   }
   const auto& unit_lowerer = lowerer.Owner();
   const auto& hir_exprs = lowerer.HirExprs();

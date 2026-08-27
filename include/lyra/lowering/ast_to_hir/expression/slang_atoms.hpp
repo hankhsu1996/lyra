@@ -7,6 +7,7 @@
 #include <slang/ast/SemanticFacts.h>
 #include <slang/ast/expressions/Operator.h>
 #include <slang/numeric/Time.h>
+#include <slang/parsing/KnownSystemName.h>
 #include <slang/syntax/SyntaxNode.h>
 
 #include "lyra/hir/binary_op.hpp"
@@ -59,6 +60,19 @@ auto LowerQueueMethodName(std::string_view name)
     -> std::optional<support::BuiltinFn>;
 
 auto LowerAssociativeMethodName(std::string_view name)
+    -> std::optional<support::BuiltinFn>;
+
+// LRM 20.8.2 Table 20-4. The standard cross-lists every row with a C standard
+// math library function and defines the SV function's behavior to be that
+// function's, so which entry a call names is the whole of what separates one
+// row from another.
+auto LowerRealMathName(slang::parsing::KnownSystemName name)
+    -> std::optional<support::BuiltinFn>;
+
+// LRM 20.5 conversions that read a real as an integral value or the reverse.
+// `$itor` is not among them: it asks for the LRM 6.12.1 conversion an ordinary
+// assignment already performs, so it needs no entry of its own.
+auto LowerRealConversionName(slang::parsing::KnownSystemName name)
     -> std::optional<support::BuiltinFn>;
 
 // Recover the original user-written rhs from slang's compound expansion:
