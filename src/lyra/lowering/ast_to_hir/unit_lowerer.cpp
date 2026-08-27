@@ -815,6 +815,67 @@ auto UnitLowerer::TranslateSensitivityReads(
   return out;
 }
 
+namespace {
+
+// The subroutine body a scope member declares, or nothing when it declares
+// none. A scope holds the subroutine itself where the source wrote the body
+// inline, and holds a prototype where the source put the body outside the class
+// (LRM 8.24) -- one declaration, reached two ways. Three members declare no
+// body at all: a pure virtual method (LRM 8.21) is a signature and nothing
+// else, and a DPI-C import (LRM 35.4) and a compiler-generated class built-in
+// (the randomize family, LRM 18.6) are provided rather than lowered from
+// source.
+auto DeclaredSubroutineBody(const slang::ast::Symbol& member)
+    -> const slang::ast::SubroutineSymbol* {
+  if (member.kind == slang::ast::SymbolKind::MethodPrototype) {
+    const auto& proto = member.as<slang::ast::MethodPrototypeSymbol>();
+    return proto.flags.has(slang::ast::MethodFlags::Pure)
+               ? nullptr
+               : proto.getSubroutine();
+  }
+  if (member.kind != slang::ast::SymbolKind::Subroutine) {
+    return nullptr;
+  }
+  const auto& sub = member.as<slang::ast::SubroutineSymbol>();
+  const bool provided = sub.flags.has(slang::ast::MethodFlags::DPIImport) ||
+                        sub.flags.has(slang::ast::MethodFlags::BuiltIn);
+  return provided ? nullptr : &sub;
+}
+
+// What one member of a declaration scope gives this pass: the symbol whose
+// procedural-scope identity is minted now, and the scope the walk continues
+// into. The two are independent questions and all four answers occur -- a
+// subroutine gives both, an unnamed block only a scope to walk, a procedural
+// block only an identity, and a variable or a type neither -- so they are
+// answered as data rather than decided inside a branch that then acts.
+struct ScopeContribution {
+  const slang::ast::Symbol* minted = nullptr;
+  const slang::ast::Scope* walked = nullptr;
+};
+
+auto ContributionOf(const slang::ast::Symbol& member, const UnitLowerer& owner)
+    -> ScopeContribution {
+  if (const auto* body = DeclaredSubroutineBody(member); body != nullptr) {
+    return {.minted = body, .walked = body};
+  }
+  if (member.kind == slang::ast::SymbolKind::ProceduralBlock) {
+    const auto& proc = member.as<slang::ast::ProceduralBlockSymbol>();
+    return {.minted = owner.Contains(proc) ? &member : nullptr};
+  }
+  if (member.kind == slang::ast::SymbolKind::StatementBlock) {
+    const auto& block = member.as<slang::ast::StatementBlockSymbol>();
+    // Only a block the source named can be named from elsewhere, so only one
+    // needs an identity before the bodies lower. A block slang recorded for its
+    // own reasons -- the implicit scope a pattern arm's bindings live in, the
+    // one a loop's control variables live in -- is reached only by the walk
+    // that lowers it, which mints its identity there.
+    return {.minted = block.name.empty() ? nullptr : &member, .walked = &block};
+  }
+  return {};
+}
+
+}  // namespace
+
 void DeclareProceduralScopes(
     const slang::ast::Scope& slang_scope, UnitLowerer& owner,
     base::Registry<hir::ProceduralScopeDecl, hir::ProceduralScopeId>& scopes) {
@@ -826,34 +887,12 @@ void DeclareProceduralScopes(
     if (member.getParentScope() != &slang_scope) {
       continue;
     }
-    if (member.kind == slang::ast::SymbolKind::ProceduralBlock) {
-      if (!owner.Contains(member.as<slang::ast::ProceduralBlockSymbol>())) {
-        continue;
-      }
-      owner.DeclareProceduralScope(member, scopes.Declare());
-    } else if (member.kind == slang::ast::SymbolKind::StatementBlock) {
-      const auto& block = member.as<slang::ast::StatementBlockSymbol>();
-      // Only a block the source named can be named from elsewhere, so only one
-      // needs an identity before the bodies lower. A block slang recorded for
-      // its own reasons -- the implicit scope a pattern arm's bindings live in,
-      // the one a loop's control variables live in -- is reached only by the
-      // walk that lowers it, which mints its identity there.
-      if (!block.name.empty()) {
-        owner.DeclareProceduralScope(block, scopes.Declare());
-      }
-      DeclareProceduralScopes(block, owner, scopes);
-    } else if (member.kind == slang::ast::SymbolKind::Subroutine) {
-      const auto& sub = member.as<slang::ast::SubroutineSymbol>();
-      // A bodyless DPI-C import (LRM 35.4) and a compiler-generated class
-      // built-in (the randomize family, LRM 18.6) are both provided rather
-      // than lowered from source, so no pass goes on to fill a scope for
-      // either -- and nothing inside one is lowered either.
-      if (sub.flags.has(slang::ast::MethodFlags::DPIImport) ||
-          sub.flags.has(slang::ast::MethodFlags::BuiltIn)) {
-        continue;
-      }
-      owner.DeclareProceduralScope(sub, scopes.Declare());
-      DeclareProceduralScopes(sub, owner, scopes);
+    const ScopeContribution contribution = ContributionOf(member, owner);
+    if (contribution.minted != nullptr) {
+      owner.DeclareProceduralScope(*contribution.minted, scopes.Declare());
+    }
+    if (contribution.walked != nullptr) {
+      DeclareProceduralScopes(*contribution.walked, owner, scopes);
     }
   }
 }

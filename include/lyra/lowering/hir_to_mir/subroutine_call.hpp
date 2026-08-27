@@ -14,11 +14,13 @@ struct CallExpr;
 
 namespace lyra::lowering::hir_to_mir {
 
-// Lowers a call to a user subroutine -- an intra-unit structural subroutine or
-// a cross-unit package / `$unit` one -- to the expression it yields (LRM 13.4,
-// 13.5). A call is an expression wherever it is written: statement position is
-// that expression under an expression statement, and `lhs = f(...)` is an
-// assignment over it, so neither is a shape of its own.
+// Lowers a call to a user subroutine -- an intra-unit structural one, a
+// cross-unit package / `$unit` one (LRM 26.3), or a class method whether it
+// carries a receiver or not (LRM 8.6, 8.10) -- to the expression it yields
+// (LRM 13.4, 13.5). The four differ in how the callee is named and in nothing
+// after that. A call is an expression wherever it is written: statement
+// position is that expression under an expression statement, and
+// `lhs = f(...)` is an assignment over it, so neither is a shape of its own.
 //
 // The expression binds the actuals and calls the callee, typed with the
 // protocol the callee states: a task's completion is a coroutine its caller

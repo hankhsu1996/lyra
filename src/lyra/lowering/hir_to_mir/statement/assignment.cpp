@@ -239,10 +239,8 @@ auto CallStatementSuspends(
           // A foreign task import (LRM 35.5.2) completes as a coroutine too,
           // which the call's type already answered.
           [](const hir::ForeignImportRef&) { return false; },
-          // A class method is always a function today -- a task declared in a
-          // class body is rejected at AST-to-HIR -- so no receiver-bearing call
-          // yields. When a class task method becomes lowerable, its enable
-          // completes as a coroutine and the type answers it too.
+          // A class method that is a task (LRM 8.6, 13.3) completes as a
+          // coroutine, which the call's type already answered.
           [](const hir::MethodCallRef&) { return false; },
           [](const hir::StaticMethodCallRef&) { return false; },
           // A built-in method (LRM 6.16 / 7.9 / 7.12 / 15.5) computes a value

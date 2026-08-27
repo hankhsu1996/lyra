@@ -130,19 +130,33 @@ each stage establishes, not how.
       expression (a continuous-assignment right-hand side), which re-evaluates when the cell
       changes; an instance property has no structural form, having no receiver to reach it through.
 
-- [ ] Class-method argument directions beyond `input` (LRM 13.5): an instance method, a static
-      method, or a constructor declared with an `output`, `inout`, or `ref` formal is rejected. A
-      free subroutine carries these back to the caller's actuals in every position the LRM allows;
-      the class surface has no equivalent yet, so a method's results must be returned rather than
-      written back through an argument.
+- [x] Class-method argument directions beyond `input` (LRM 13.5): an instance method and a static
+      method carry an `output`, `inout`, `ref`, or `const ref` formal back to the caller's actual in
+      every position the LRM allows, through a direct call and through a virtual override alike. A
+      class property is legal as a ref actual and as an output one, so one object may be handed
+      another's property to read or to write. One satisfier is still rejected: an interface class
+      contract that a class meets by inheriting a base implementation rather than defining one,
+      where the forwarding this needs would have to hand its own completion whatever the forwarded
+      call's carried back (LRM 8.26.2).
 
-- [ ] Class task methods (LRM 8.6, 13.3): a `task` declared in a class body, and its pure-virtual
-      prototype form (LRM 8.21), are rejected. A class method must be a function today, so a
-      class-owned behaviour that suspends has no home.
+- [x] Class task methods (LRM 8.6, 13.3): a `task` declared in a class body, in its instance,
+      static, virtual and pure-virtual prototype forms. Enabling one suspends the enabler until it
+      completes and carries its output formals back at that moment; the method is always automatic
+      (LRM 13.3.1), so two activations running at once keep their own formals and locals while
+      reaching one object through the receiver each was enabled on.
 
-- [ ] Out-of-block method definitions (LRM 8.24): a method declared as an `extern` prototype in the
-      class body and defined outside it (`function ClassName::m; ... endfunction`) is rejected. A
-      method must be defined inline in the class body today.
+- [x] Out-of-block method definitions (LRM 8.24): a method declared as an `extern` prototype in the
+      class body and defined outside it (`function ClassName::m; ... endfunction`), for a function
+      and a task alike, with the prototype carrying the qualifiers and specifiers the definition
+      drops. The body reaches every declaration of the class, a virtual prototype defined out of
+      block still dispatches to the override a derived class defines the same way, and a return type
+      the class declares is named through the class scope.
+
+- [ ] Constructor argument directions (LRM 8.7): a constructor declared with an `output`, `inout`,
+      or `ref` formal is rejected. The standard gives it the argument conventions of any other
+      subroutine call, but a construction yields the object it built and carries nothing a value
+      could travel back to the caller in, so this waits on the construction model rather than on the
+      method surface.
 
 ## Managed-object lifetime: current implementation status
 
@@ -183,9 +197,6 @@ this list is what remembers.
       the rule of members generally, and its worked example is a derived class that redeclares the
       base's variable and reads it back through `super`; reading a shadowed property that way yields
       the derived class's own instead.
-- [ ] An abstract class with a pure virtual method that a concrete subclass implements is not
-      compiled; elaboration stops reporting that the owning class was not interned before its method
-      was looked up (LRM 8.21).
 - [ ] A constructor chain through more than one level does not survive C++ emission -- the emitted
       project fails to compile (LRM 8.7).
 - [ ] Storing into an inherited member produces LIR the verifier rejects, so the execution backend

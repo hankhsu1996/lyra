@@ -301,6 +301,24 @@ class UnitLowerer {
       const slang::ast::SubroutineSymbol& method) const
       -> hir::ClassMethodTarget;
 
+  // The method a call reaches. Intra-unit that is the slot alone, since the
+  // declaration it resolves to answers everything else about the callee;
+  // cross-unit there is no such declaration to reach, so the callee also
+  // carries its dispatch role (LRM 8.20) and the interface a call marshals
+  // against (LRM 13.5).
+  auto MakeMethodCallee(
+      const hir::ClassRef& class_ref,
+      const slang::ast::SubroutineSymbol& method, diag::SourceSpan span)
+      -> diag::Result<hir::MethodCallee>;
+
+  // The interface a call recomputes for a callee in another compilation unit:
+  // its call protocol and each formal's direction and type (LRM 13.5). Both
+  // sides derive it from the callee's own declaration, so no table is shared
+  // and neither can state an interface the other does not have.
+  auto MakeExternalCalleeInterface(
+      const slang::ast::SubroutineSymbol& sym, diag::SourceSpan span)
+      -> diag::Result<hir::ExternalCalleeInterface>;
+
   // The instance-property peer of `MakeClassMethodTarget`. Local when the
   // class was interned by this unit; external when the class lives in another
   // compilation unit, in which case the property is named by its source name.

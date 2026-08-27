@@ -14,8 +14,8 @@
 #include "lyra/hir/procedural_var.hpp"
 #include "lyra/lowering/hir_to_mir/binding_origin.hpp"
 #include "lyra/lowering/hir_to_mir/callable_bindings.hpp"
+#include "lyra/lowering/hir_to_mir/callee_interface.hpp"
 #include "lyra/lowering/hir_to_mir/class_shape.hpp"
-#include "lyra/lowering/hir_to_mir/completion_payload.hpp"
 #include "lyra/lowering/hir_to_mir/declaration_initializer.hpp"
 #include "lyra/lowering/hir_to_mir/declared_scope.hpp"
 #include "lyra/lowering/hir_to_mir/default_value.hpp"
@@ -371,10 +371,14 @@ auto ClassDeclLowerer::PopulateBodies() -> diag::Result<void> {
       proto_params.reserve(method.params.size() + 1);
       for (const auto& hir_param : method.params) {
         const auto& hir_var = method.body.procedural_vars.Get(hir_param.var);
-        const mir::TypeId param_type = unit_lowerer.TranslateType(hir_var.type);
+        const std::optional<mir::TypeId> param_type =
+            ParamTypeOf(unit_lowerer, hir_var.type, hir_param.direction);
+        if (!param_type.has_value()) {
+          continue;
+        }
         const mir::LocalId param_id = proto_bindings.Declare(
             BindingOriginId::Procedural(hir_param.var),
-            mir::LocalDecl{.name = hir_var.name, .type = param_type});
+            mir::LocalDecl{.name = hir_var.name, .type = *param_type});
         proto_params.push_back(param_id);
       }
       proto_code.params = std::move(proto_params);

@@ -3,16 +3,13 @@
 #include <optional>
 #include <string>
 #include <variant>
-#include <vector>
 
 #include "lyra/hir/class_ref.hpp"
 #include "lyra/hir/expr_id.hpp"
+#include "lyra/hir/external_callee.hpp"
 #include "lyra/hir/foreign_import_id.hpp"
-#include "lyra/hir/param_direction.hpp"
 #include "lyra/hir/structural_hops.hpp"
 #include "lyra/hir/subroutine_id.hpp"
-#include "lyra/hir/subroutine_kind.hpp"
-#include "lyra/hir/type_id.hpp"
 #include "lyra/support/builtin_fn.hpp"
 #include "lyra/support/imported_runtime_class.hpp"
 #include "lyra/support/system_subroutine.hpp"
@@ -71,14 +68,29 @@ struct SuperReceiver {};
 using MethodReceiver =
     std::variant<HandleReceiver, ImplicitSelfReceiver, SuperReceiver>;
 
-// Calls an instance method (LRM 8.6). `target` names the declaring class and
-// the method's declaration-order position in that class's method arena.
-// `receiver` states which of the three LRM-defined source forms reached this
-// call site. The external arm is used when the method's declaring class
-// lives in another compilation unit.
+// Calls a class method whose declaring class is in another compilation unit.
+// Beside naming the callee it carries the two facts this unit cannot look up
+// about one: whether the method is virtual (LRM 8.20), which routes the call
+// between dynamic and static dispatch, and its interface, which shapes the
+// arguments the call passes and the completion it consumes. Both are read from
+// the frontend's view of the callee where this callee is minted.
+struct ExternalMethodCallee {
+  ExternalClassMethodTarget target;
+  bool is_virtual = false;
+  ExternalCalleeInterface interface;
+};
+
+// The method a call reaches. Intra-unit it is a slot in a class's own method
+// arena, and everything the call needs follows from the declaration that slot
+// resolves to; cross-unit there is no such declaration to reach, so the callee
+// carries what the call would have read off one.
+using MethodCallee = std::variant<LocalClassMethodTarget, ExternalMethodCallee>;
+
+// Calls an instance method (LRM 8.6). `receiver` states which of the three
+// LRM-defined source forms reached this call site.
 struct MethodCallRef {
   MethodReceiver receiver;
-  ClassMethodTarget target;
+  MethodCallee callee;
 };
 
 // Calls a `$xxx` system subroutine. The id resolves through
@@ -104,50 +116,27 @@ struct ImportedMethodRef {
   std::optional<ExprId> receiver = std::nullopt;
 };
 
-// One formal of a cross-unit callee, as the referring unit recomputes it from
-// the callee's declaration. The direction classifies how the actual is
-// marshalled at the boundary (LRM 13.5); the type is the formal's type interned
-// in the referring unit, needed to shape the completion payload an output /
-// inout rides back in and the writeback assignment.
-struct ExternalUnitParam {
-  ParamDirection direction = ParamDirection::kInput;
-  TypeId type{};
-};
-
 // Calls a subroutine that belongs to another compilation unit -- a package
 // function or task (LRM 26.3), reached by name. The target lives outside this
 // unit, so it carries no unit-local id: the referring unit names the package
 // and the subroutine by name and resolves against that interface at link time,
 // the way an instantiated child names its unit, and never through an
-// enclosing-scope hop within this unit. `kind` is the callee's call protocol,
-// part of that interface: a task enable suspends the caller until completion
-// (LRM 13.3), so the call site awaits it, exactly as it does an intra-unit task
-// enable whose kind it reads from the callee's declaration. `params` is the
-// callee's argument-marshalling interface, recomputed from the same declaration
-// both sides see: an output / inout argument is carried back through the
-// callee's completion payload, so the call site reproduces that payload's shape
-// from the formal directions and types, exactly as it reproduces the callee's
-// name. The result component of that payload is the call's own result type --
-// the enclosing expression's type -- so it is not recorded here.
+// enclosing-scope hop within this unit.
 struct ExternalUnitSubroutineRef {
   std::string unit_name;
   std::string subroutine_name;
-  SubroutineKind kind;
-  std::vector<ExternalUnitParam> params;
+  ExternalCalleeInterface interface;
 };
 
 // Calls a static class method (LRM 8.10). Distinct from `MethodCallRef`
 // because a static method has no receiver -- neither an explicit handle, an
 // implicit self, nor a super qualifier -- and encoding it as a receiver-
-// optional variant of `MethodCallRef` would admit an invalid state. `target`
-// names the declaring class and the method's declaration-order position in
-// that class's method arena. Under inheritance,
-// `Derived::inherited_static()` still names the base -- the method lives on
-// the base's arena -- mirroring the owner-qualified rule for inherited
-// instance access. The external arm is used when the declaring class lives
-// in another compilation unit.
+// optional variant of `MethodCallRef` would admit an invalid state. Under
+// inheritance, `Derived::inherited_static()` still names the base -- the method
+// lives on the base's arena -- mirroring the owner-qualified rule for inherited
+// instance access.
 struct StaticMethodCallRef {
-  ClassMethodTarget target;
+  MethodCallee callee;
 };
 
 using SubroutineRef = std::variant<

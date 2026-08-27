@@ -80,7 +80,10 @@ struct BaseCall {
 // instance methods; references to a class name resolve to this declaration's
 // id. A class is reached through a handle, so it carries no structural
 // position of its own. Each method (LRM 8.6) is a subroutine reached through
-// the instance, reading the receiver and the class's properties through it.
+// the instance, reading the receiver and the class's properties through it. A
+// method's identity exists before its lowered form does: one method's body may
+// name another the source declared later (LRM 13.7), and a method declared
+// `extern` has its body outside the class body entirely (LRM 8.24).
 //
 // `is_interface_class` marks an `interface class` declaration (LRM 8.26): a
 // class whose body carries only pure virtual method contracts -- no
@@ -156,7 +159,7 @@ struct ClassDecl {
   std::vector<ClassRef> implements;
   base::Arena<ClassField, FieldId> fields;
   base::Arena<ClassStaticProperty, StaticPropertyId> static_properties;
-  base::Arena<SubroutineDecl, MethodId> methods;
+  base::Registry<SubroutineDecl, MethodId> methods;
   SubroutineDecl constructor;
   std::optional<BaseCall> base_call;
   std::vector<FieldInit> field_inits;
