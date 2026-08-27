@@ -1,21 +1,50 @@
 #pragma once
 
+#include <compare>
+#include <cstdint>
+#include <optional>
 #include <string>
+#include <string_view>
 #include <variant>
 #include <vector>
 
+#include "lyra/base/arena.hpp"
 #include "lyra/hir/port_direction.hpp"
+#include "lyra/hir/structural_data_object.hpp"
 #include "lyra/hir/type_id.hpp"
 #include "lyra/hir/type_pool.hpp"
 
 namespace lyra::hir {
 
-// A port part carrying data across the boundary: which way it flows, and the
-// type of what crosses. The type is an identity in the signature's own pool, so
-// a consumer reads it without reaching into the unit that published it.
-struct DataPortPart {
-  PortDirection direction;
+struct PublishedMemberId {
+  std::uint32_t value;
+
+  auto operator<=>(const PublishedMemberId&) const
+      -> std::strong_ordering = default;
+};
+
+// One declaration an instance of this unit exposes to another unit by name.
+// `net_type` is present when the storage is a net (LRM 6.7), which fixes how
+// its drivers resolve and what it holds while undriven, and absent when it is
+// a variable -- the pair being what decides the cell a reader reaches. Both
+// stand on the publishing unit's own declaration, so a referrer never reads
+// that declaration to learn them.
+struct PublishedMember {
+  std::string name;
   TypeId type;
+  std::optional<NetType> net_type;
+};
+
+// A port part carrying data across the boundary: which way it flows, the type
+// of what crosses, and the member of this unit's instance whose storage it
+// reaches. The type is not always the whole of that member: a port expression
+// (LRM 23.2.2.2) names part of an internal name, and the two then differ.
+// `member` is absent when the port connects to nothing inside the unit, which
+// the same clause admits.
+struct DataPortPart {
+  PortDirection direction{};
+  TypeId type{};
+  std::optional<PublishedMemberId> member;
 };
 
 // A port part naming a scope rather than carrying data -- an interface port
@@ -31,15 +60,38 @@ struct InterfacePortPart {};
 using PortPart = std::variant<DataPortPart, InterfacePortPart>;
 
 // One port a unit publishes (LRM 23.2.2). `name` is the external name -- what
-// another unit connects to, which the LRM lets differ from the name of whatever
-// the port reaches inside the unit, so what is published is the port and never
-// the declaration behind it.
+// another unit connects to, which the LRM lets differ from the name of
+// whatever the port reaches inside the unit, so what is published is the port
+// and never the declaration behind it.
 struct PortDecl {
   std::string name;
   // Least significant first, since LRM 23.2.2.1 gives the first bundled name
   // written the most significant bits and a connection reaches them in bit
   // order.
   std::vector<PortPart> parts;
+};
+
+// The object an instance of this unit is: the class's own name, and the
+// members another unit may name on it. A unit's name and the name of the class
+// it builds are two facts, so a referrer reads the class it reaches here
+// rather than deriving it from the unit it reached through.
+struct InstanceClassSignature {
+  std::string class_name;
+  // In declaration order, which is as much a part of the promise as the names
+  // are: a member's position is what fixes where its storage sits, and both
+  // sides of the boundary read that position out of this one order.
+  base::Arena<PublishedMember, PublishedMemberId> members;
+
+  // The member published under `name`, or nothing when the unit published no
+  // such name. A name with no answer here is one the unit never promised, and
+  // that is exactly what leaves a reference to it resolving at elaboration.
+  [[nodiscard]] auto Find(std::string_view name) const
+      -> std::optional<PublishedMemberId> {
+    for (const PublishedMemberId id : members.Ids()) {
+      if (members.Get(id).name == name) return id;
+    }
+    return std::nullopt;
+  }
 };
 
 // What a unit publishes: the declarations another unit may name. Derived by the
@@ -61,6 +113,9 @@ struct UnitSignature {
   // parts in step with them rather than searching for each, so the two cannot
   // disagree about which point is which.
   std::vector<PortDecl> ports;
+  // Absent on a unit with no instance: a package names its declarations and
+  // roots no object, so nothing reaches it through a receiver.
+  std::optional<InstanceClassSignature> instance_class;
 };
 
 }  // namespace lyra::hir

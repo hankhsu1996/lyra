@@ -77,14 +77,13 @@ why nothing a signature states may rest on it.
       other's storage or re-deriving it from the frontend. A port's type crosses this way; a
       callable's formals and result, and a published member's type, cross the same way once those
       are published.
-- [ ] S4 -- A published port states the storage it reaches: whether that storage is a net and under
-      which resolution its drivers combine. A net type the compiler does not model is still
-      published as a net, since the unit declared one, and the consumer that cannot realize it says
-      so. What consumes this is not the refusal at the connection -- the declaring unit's own walk
-      refuses a net type it cannot model anyway -- but the route a reference to that port's storage
-      carries: a route states the cell it ends at, and for a cross-unit target the net half of that
-      is read off the other unit's declaration today. So this sub-step lands in the routed-reference
-      recipe, beside the leaf type it already carries, rather than at the connection.
+- [x] S4 -- A published port states the storage it reaches: which member of the unit's object, and
+      whether that member is a net and under which resolution its drivers combine. A route to that
+      storage takes both from the statement rather than from the declaration behind it, so the cell
+      a cross-unit route ends at is the publishing unit's own answer. What is not done is the wider
+      vocabulary: a net type the compiler does not model is refused where it is declared, so a
+      signature only ever carries the net types the vocabulary spells, and publishing an unmodelled
+      one for the consumer to refuse waits on that.
 - [ ] S5 -- A published port states the default value an omitted connection materializes (LRM
       23.2.2.4). The default is written in the declaring unit and resolves there, so what crosses is
       the value it folded to rather than the expression that produced it. Publishing the value is
@@ -103,7 +102,16 @@ why nothing a signature states may rest on it.
       published class, each carrying its own name and its published members in declaration order.
       Which class a referrer instantiates is stated rather than inferred from a name that matches
       the unit's or from a position in a list.
-- [ ] S8 -- A reference whose target is on a signature the referrer consumes carries the declaring
+
+      The entry for the object an instance of the unit is -- its class's own name, and the members
+      another unit may name on it -- is published, and a reference landing on one of those members
+      takes the class from there. What still infers it is the instantiation: the handle a parent
+      holds to a child is typed by composing the class name from the unit's, and the design root
+      builds its instance members from the top-level names alone, consuming no signature at all.
+      Closing that means handing the design root the signatures of the units it instantiates, which
+      is the same reach S6 narrows, so the two are one piece of work rather than two.
+
+- [x] S8 -- A reference whose target is on a signature the referrer consumes carries the declaring
       unit, the class, and the member's name, and is a member access on a receiver that names that
       unit. A reference past a signature keeps the by-name form the runtime answers during
       elaboration. Which of the two a route's leaf takes is settled where the step reaching the

@@ -200,9 +200,17 @@ already forms, that yields more per entry than a reader would name unaided.
 - A **port** carries its external name and one or more parts. The external name is what a referrer
   connects to and the LRM lets it differ from the name of whatever the port reaches inside the unit,
   so what is published is the port and never the declaration behind it. A part is a point a
-  connection reaches individually, and each carries a direction, a type, whether it is a net and
-  under which net type, and the default value an omitted connection materializes (LRM 23.2.2.4);
-  each of those changes what a referrer emits.
+  connection reaches individually, and each carries a direction, the type of what crosses, the
+  default an omitted connection materializes (LRM 23.2.2.4), and which published member of the
+  unit's object it reaches. Each of those changes what a referrer emits.
+
+  A part names its member rather than restating what that member is. Whether the storage is a net
+  and under which net type is a property of the storage, so it is stated once, on the member, and a
+  connection reads it there -- otherwise a referrer that wants it reaches past the port into the
+  declaration behind it, which is the one thing the external name exists to prevent. The part's own
+  type stays separate because the two genuinely differ: a port expression (LRM 23.2.2.2) connects
+  part of an internal name, so what crosses is narrower than what it lands on, and a part whose type
+  is not its member's whole type has a projection standing between them.
 
   Parts exist because a port may bundle several internal names (LRM 23.2.2.1), which carry data
   under directions that need not agree -- the port's own direction is only the most restrictive of

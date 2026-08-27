@@ -3,6 +3,7 @@
 #include <cstdint>
 #include <map>
 #include <optional>
+#include <span>
 #include <string>
 #include <string_view>
 #include <unordered_map>
@@ -116,6 +117,17 @@ struct ProceduralStaticBinding {
 
 using ProceduralStaticBindings =
     std::unordered_map<const slang::ast::Symbol*, ProceduralStaticBinding>;
+
+// What a route ends at, and what storage that is. One question settles both --
+// whether the unit owning the target published its name -- so they are decided
+// together rather than each answering it again: a published member states its
+// own type and its own net-ness on the signature that carries it, and every
+// other target is described the way the reader already knows it.
+struct RouteTarget {
+  hir::RouteLeaf leaf;
+  hir::TypeId type;
+  std::optional<hir::NetType> net_type;
+};
 
 // The declarations of one structural scope that a peer may name before the
 // scope is built, minted here and handed to the scope when it is.
@@ -476,7 +488,7 @@ class UnitLowerer {
   // owner.
   auto MapOrGetRoutedRef(
       const slang::ast::ValueSymbol& target, ScopeFrameId slot_owner_frame,
-      hir::RoutedPathRecipe recipe) -> hir::RoutedRefId;
+      hir::RoutedRefDecl decl) -> hir::RoutedRefId;
   auto TakeRoutedRefsForFrame(ScopeFrameId slot_owner_frame)
       -> std::vector<hir::RoutedRefDecl>;
 
@@ -552,13 +564,13 @@ class UnitLowerer {
   // still lands here, in its declaring unit.
   auto InternOwnClassDeclarations() -> diag::Result<void>;
 
-  // Builds a HIR Expr referring to the leaf `recipe` navigates to. `target` is
+  // Builds a HIR Expr referring to the leaf `decl` navigates to. `target` is
   // the leaf value symbol, which is also the key two references to one target
   // dedup on; `slot_owner_frame` is the frame whose routed-reference arena
   // holds the slot.
   auto MakeRoutedMemberRef(
       const slang::ast::ValueSymbol& target, ScopeFrameId slot_owner_frame,
-      hir::RoutedPathRecipe recipe, diag::SourceSpan span) -> hir::Expr;
+      hir::RoutedRefDecl decl, diag::SourceSpan span) -> hir::Expr;
 
   // Where a named value lives, as this unit reaches it. One answer serves
   // every consumer of a reference -- reading it, writing it, and waiting on it
@@ -585,9 +597,10 @@ class UnitLowerer {
       -> diag::Result<std::vector<hir::SensitivityEntry>>;
 
  private:
-  // Derives what this unit publishes from its own declarations: one entry per
-  // port, whose parts the instantiating unit's connections are consumed in step
-  // with. The type each part carries is interned by this unit and then taken
+  // Derives what this unit publishes from its own declarations: the object an
+  // instance of it is, with a member per declaration another unit may name, and
+  // one entry per port, whose parts the instantiating unit's connections are
+  // consumed in step with. Every type is interned by this unit and then taken
   // into the signature's own pool, so what leaves stands on its own.
   auto PublishSignature() -> diag::Result<void>;
 
@@ -598,7 +611,20 @@ class UnitLowerer {
   // head where the route crosses into another instance's unit.
   [[nodiscard]] auto TranslateReferenceRoute(
       const WalkFrame& frame, const slang::ast::ValueSymbol& value)
-      -> std::optional<hir::ReferenceRoute>;
+      -> diag::Result<std::optional<hir::ReferenceRoute>>;
+
+  // What the route ending in `steps` reaches, and what storage that is.
+  [[nodiscard]] auto ResolveRouteTarget(
+      const slang::ast::ValueSymbol& value,
+      std::span<const hir::PathStep> steps) -> diag::Result<RouteTarget>;
+
+  // The same, when the unit owning `value` published its name and the route's
+  // own last step lands on an object of that unit. Empty otherwise, which is
+  // every case where no declaration stands behind the name at the point the
+  // reference is compiled.
+  [[nodiscard]] auto PublishedRouteTarget(
+      const slang::ast::ValueSymbol& value,
+      std::span<const hir::PathStep> steps) -> std::optional<RouteTarget>;
 
   // Reserves an identity for each static-lifetime local one procedural block
   // subtree of `body` declares, and recurses into the blocks nested in it.

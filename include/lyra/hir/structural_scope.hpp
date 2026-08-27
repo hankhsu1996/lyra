@@ -119,8 +119,9 @@ using RouteHead = std::variant<InUnitHead, RootHead, VisibleChildHead>;
 // land on, or a static-lifetime local of one of that scope's bodies, which a
 // named block puts on the hierarchical path (LRM 23.9) -- the blocks between
 // are part of where the storage sits, not steps of their own, so the leaf
-// identity fixes the whole procedural descent. A leaf in another unit's body
-// is named, like the opaque steps that reach it.
+// identity fixes the whole procedural descent. A leaf in another unit is named
+// instead, against that unit's signature when it published the name and
+// against the runtime when it did not.
 struct StructuralDataObjectLeaf {
   StructuralDataObjectId object;
 
@@ -139,14 +140,30 @@ struct ProceduralStaticLeaf {
   auto operator==(const ProceduralStaticLeaf&) const -> bool = default;
 };
 
+// The route ends at a member another unit published: the declaring unit, the
+// class an instance of it is, and the member's own name. The referrer resolves
+// all three against the signature it consumed, where it compiles, so a renamed
+// member fails there rather than while the design elaborates.
+struct SignatureMemberLeaf {
+  std::string unit_name;
+  std::string class_name;
+  std::string member_name;
+
+  auto operator==(const SignatureMemberLeaf&) const -> bool = default;
+};
+
+// The route ends past a signature, at a declaration no unit promised. Nothing
+// was published to compile against, so the name is all that crosses and the
+// runtime answers it while the design elaborates (LRM 23.6).
 struct OpaqueLeaf {
   std::string name;
 
   auto operator==(const OpaqueLeaf&) const -> bool = default;
 };
 
-using RouteLeaf =
-    std::variant<StructuralDataObjectLeaf, ProceduralStaticLeaf, OpaqueLeaf>;
+using RouteLeaf = std::variant<
+    StructuralDataObjectLeaf, ProceduralStaticLeaf, SignatureMemberLeaf,
+    OpaqueLeaf>;
 
 // How to navigate from a scope to a target elsewhere on the object tree:
 // `head` is where navigation starts, `steps` carries the descent from there,
