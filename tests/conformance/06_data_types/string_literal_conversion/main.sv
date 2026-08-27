@@ -22,6 +22,9 @@ module Top;
   int odd_width_first;
   int odd_width_second;
 
+  string odd_width_fills_to_nul;
+  int odd_width_fills_to_nul_len;
+
   initial begin
     only_nuls = "\0\0";
     blank = "";
@@ -38,6 +41,11 @@ module Top;
     odd_width_len = odd_width.len();
     odd_width_first = odd_width.getc(0);
     odd_width_second = odd_width.getc(1);
+
+    // The fill itself makes the leading character a "\0", which the removal
+    // then takes back out.
+    odd_width_fills_to_nul = string'(9'h041);
+    odd_width_fills_to_nul_len = odd_width_fills_to_nul.len();
   end
 
   final begin
@@ -68,6 +76,13 @@ module Top;
       $fatal(1, "odd_width_first was %h, expected 0a", odd_width_first);
     if (odd_width_second !== 8'h41)
       $fatal(1, "odd_width_second was %h, expected 41", odd_width_second);
+
+    if (odd_width_fills_to_nul != "A")
+      $fatal(1, "odd_width_fills_to_nul was \"%s\", expected \"A\"",
+             odd_width_fills_to_nul);
+    if (odd_width_fills_to_nul_len !== 1)
+      $fatal(1, "odd_width_fills_to_nul_len was %0d, expected 1",
+             odd_width_fills_to_nul_len);
     $display("All checks passed");
   end
 endmodule

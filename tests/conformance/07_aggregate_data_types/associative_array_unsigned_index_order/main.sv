@@ -2,10 +2,6 @@
 // unsigned integral index that order is unsigned numerical, so 32'hFFFFFFFF is
 // the largest of a set of unsigned indices rather than the smallest -- which it
 // would be under the signed reading (LRM 7.8.4, 7.9.4, 7.9.5).
-//
-// Parked: the run aborts on an unsigned index reaching first() or last(),
-// reporting that a required conversion was not emitted, so this case cannot
-// reach a check to fail at.
 module Top;
   int unsigned_keys [int unsigned];
   int unsigned unsigned_first;

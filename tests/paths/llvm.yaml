@@ -45,6 +45,7 @@
 07_aggregate_data_types/associative_array_nonexistent_index: "a value of type associative array has no runtime library realization"
 07_aggregate_data_types/associative_array_packed_struct_index: "MIR expression form is not yet lowerable to LIR"
 07_aggregate_data_types/associative_array_traversal: "a value of type associative array has no runtime library realization"
+07_aggregate_data_types/associative_array_unsigned_index_order: "a value of type associative array has no runtime library realization"
 07_aggregate_data_types/associative_array_wildcard_index: "a value of type associative array has no runtime library realization"
 07_aggregate_data_types/dynamic_array_slice: "a whole-value store between unpacked arrays of different declared ranges is not yet lowerable to LIR"
 07_aggregate_data_types/dynamic_array_whole_assignment: "a reference to a runtime cell is not yet lowerable to LIR"

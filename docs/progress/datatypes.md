@@ -134,9 +134,10 @@ frontend inserts an implicit conversion when a literal participates in an expres
 
 ## Conformance gaps the corpus records
 
-Behaviour IEEE 1800 requires and Lyra does not deliver. Most are held by a disabled check inside a
-case that otherwise runs; the rest say so. Re-enabling a disabled check is manual either way --
-nothing detects that the behaviour became right -- so this list is what remembers.
+Behaviour IEEE 1800 requires and Lyra does not deliver. A wrong answer is held by a case that runs
+and keeps every check it makes, recorded against the path that answers it wrongly; the day the
+answer becomes right the case passes and that record fails until its entry goes. A bullet saying no
+case holds it is one nothing watches.
 
 - [ ] A dynamic array cannot be sized by its own declaration assignment. LRM 7.5.1 permits `new[]`
       "in place of the right-hand side expression of variable declaration assignments and blocking
@@ -154,26 +155,11 @@ nothing detects that the behaviour became right -- so this list is what remember
       and both-empty answers are built as two-state regardless. No case holds this one: every
       comparison the corpus makes reaches an element-by-element path, where the class is right. It
       is recorded because a wrong answer is worse than a refusal, and this one is silent.
-- [ ] An `unsigned` keyword on an integer type is dropped, so the type keeps its default signedness.
-      LRM 6.11.3 lets the keyword override the default and 11.8.1 makes a comparison with an
-      unsigned operand unsigned, so `int unsigned a = 32'hFFFFFFFF; a > 0` is required to be true
-      and comes out false. `longint unsigned` and `integer unsigned` answer wrongly the same way;
-      `byte unsigned` and `shortint unsigned` lose the keyword too but happen to answer correctly,
-      because a comparison widens them through a conversion that is unsigned in its own right. The
-      associative-array gap below is the same defect reaching a different consumer.
-- [ ] An `int unsigned` associative-array index passed to `first()` or `last()` aborts the run,
-      reporting that a required conversion was not emitted. The unsigned half of LRM 7.8.4 -- where
-      `32'hFFFFFFFF` is the largest index rather than the smallest -- is therefore unexercised.
 - [ ] A product of two `shortreal` operands assigned to a `real` keeps double precision instead of
       rounding to single. LRM 11.3.1 makes the result type operand-driven, so the product is
       `shortreal` and narrows before it reaches the wider destination. The front end propagates the
       assignment's type into the operands, so the narrowing never happens; the defect is upstream of
       anything Lyra can decide.
-- [ ] A string cast of an integral whose width is not a multiple of 8 drops the low bits. LRM 6.16
-      left-extends such a value with zeros until its width is a multiple of 8, so the clause's own
-      example makes `string'(12'ha41)` the two characters of `16'h0a41`. Lyra builds one character
-      from the top 8 bits and drops the remaining 4. A width that is already a multiple of 8
-      converts correctly, the `"\0"` removal rule included.
 
 ## Chandle
 
