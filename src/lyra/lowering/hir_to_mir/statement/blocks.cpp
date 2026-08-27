@@ -314,7 +314,7 @@ auto LowerStmtIntoChildScope(
     return std::unexpected(std::move(lowered.error()));
   }
   child_block.AppendStmt(*std::move(lowered));
-  return std::move(child_block);
+  return child_block;
 }
 
 }  // namespace lyra::lowering::hir_to_mir
