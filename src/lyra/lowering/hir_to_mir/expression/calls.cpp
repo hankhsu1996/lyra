@@ -30,6 +30,7 @@
 #include "lyra/lowering/hir_to_mir/expression/system/control.hpp"
 #include "lyra/lowering/hir_to_mir/expression/system/diagnostic.hpp"
 #include "lyra/lowering/hir_to_mir/expression/system/file_io.hpp"
+#include "lyra/lowering/hir_to_mir/expression/system/host_command.hpp"
 #include "lyra/lowering/hir_to_mir/expression/system/plusargs.hpp"
 #include "lyra/lowering/hir_to_mir/expression/system/print.hpp"
 #include "lyra/lowering/hir_to_mir/expression/system/scan.hpp"
@@ -351,6 +352,14 @@ auto LowerSystemSubroutineCall(
               -> diag::Result<mir::Expr> {
             return LowerBitVectorSystemSubroutineCall(
                 lowerer, frame, call, bit_vector, span);
+          },
+          [&](const support::HostCommandSystemSubroutineInfo&)
+              -> diag::Result<mir::Expr> {
+            if constexpr (kProcedural) {
+              return LowerHostCommandSystemSubroutineCall(lowerer, frame, call);
+            } else {
+              return RejectStructuralEffect(span);
+            }
           },
           [&](const support::MemFileSystemSubroutineInfo&)
               -> diag::Result<mir::Expr> {

@@ -200,13 +200,23 @@ struct BitVectorSystemSubroutineInfo {
   BitCountReading reading;
 };
 
+// LRM 20.17.1: `$system` executes its argument through the host's command
+// processor as if it had been typed at the terminal and reports what the host
+// answered, or, called with no argument, reaches the host with the null
+// command, which runs nothing and reports whether a command processor exists.
+// The standard admits it as either a task or a function, which is why it is the
+// one subroutine here typed a task that still answers with a value; a call
+// written as a statement discards that value like any other.
+struct HostCommandSystemSubroutineInfo {};
+
 using SystemSubroutineSemantic = std::variant<
     PrintSystemSubroutineInfo, TerminationSystemSubroutineInfo,
     DiagnosticSystemSubroutineInfo, FileIOSystemSubroutineInfo,
     ScanSystemSubroutineInfo, SFormatSystemSubroutineInfo,
     TimeSystemSubroutineInfo, TimeFormatSystemSubroutineInfo,
     PrintTimescaleSystemSubroutineInfo, PlusargsSystemSubroutineInfo,
-    MemFileSystemSubroutineInfo, BitVectorSystemSubroutineInfo>;
+    MemFileSystemSubroutineInfo, BitVectorSystemSubroutineInfo,
+    HostCommandSystemSubroutineInfo>;
 
 struct SystemSubroutineDesc {
   SystemSubroutineId id;
@@ -1003,6 +1013,15 @@ inline constexpr std::array kSystemSubroutines = {
             BitVectorSystemSubroutineInfo{
                 .values = BitValueSet::kUnknowns,
                 .reading = BitCountReading::kAny},
+    },
+    SystemSubroutineDesc{
+        .id = SystemSubroutineId{65},
+        .name = "$system",
+        .origin = SystemSubroutineOrigin::kLanguageBuiltin,
+        .kind = SystemSubroutineKind::kTask,
+        .result_conv = ReturnConvention::kInt32,
+        .arg_policy = ArgCountPolicy{.min_args = 0, .max_args = 1},
+        .semantic = HostCommandSystemSubroutineInfo{},
     },
 };
 

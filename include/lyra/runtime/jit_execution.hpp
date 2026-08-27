@@ -92,6 +92,13 @@ void lyra_rt_wait_any(void* runtime, LyraSpan triggers);
 void lyra_rt_finish(void* runtime, const void* level);
 void lyra_rt_fatal_finish(void* runtime, const void* level);
 
+// Runs a command line through the host's command processor and yields what it
+// answered; the null form runs nothing and yields whether a command processor
+// exists at all (LRM 20.17.1). The command crosses as an opaque string value
+// and the answer as an opaque packed value, like every scalar.
+auto lyra_rt_run_host_command(void* runtime, const void* command) -> void*;
+auto lyra_rt_run_null_host_command() -> void*;
+
 // Builds a scope's structural identity from its base label and per-dimension
 // indices (a span of 32-bit index values, empty for a scalar). The segment is
 // a transient runtime value owned by the current call scope.

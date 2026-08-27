@@ -66,6 +66,9 @@ SKIP_PREFIXES = (
     "external/", "bazel-", "node_modules/",
     # Slash-command definitions for the coding assistant, not project docs.
     ".claude/",
+    # Git-ignored scratch. A check that goes red over a working note nobody
+    # will commit teaches its reader to ignore it.
+    "tmp/",
 )
 
 # Per-workspace scratch, git-ignored, and free to name anything.

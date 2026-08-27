@@ -100,6 +100,12 @@ class RuntimeAbi {
   auto Finish() -> llvm::FunctionCallee;
   auto FatalFinish() -> llvm::FunctionCallee;
 
+  // Runs a command line through the host's command processor and reports what
+  // it answered, or, given no command line, reaches the host with the null
+  // command and reports whether a command processor exists at all (LRM
+  // 20.17.1); `argument_count` selects which, as an overload set would.
+  auto RunHostCommand(std::size_t argument_count) -> llvm::FunctionCallee;
+
   // Builds one leaf of a wait: the observable cell it watches, the bit
   // projection of that cell it watches, and the edge polarity it watches for.
   auto MakeTrigger() -> llvm::FunctionCallee;

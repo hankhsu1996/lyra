@@ -282,6 +282,8 @@ auto BuiltinFnName(BuiltinFn id) -> std::string_view {
       return "test_plusargs";
     case BuiltinFn::kValuePlusargs:
       return "value_plusargs";
+    case BuiltinFn::kRunHostCommand:
+      return "run_host_command";
     case BuiltinFn::kReadMem:
       return "read_mem";
     case BuiltinFn::kWriteMem:
