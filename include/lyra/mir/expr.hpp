@@ -190,7 +190,7 @@ struct ExternalUnitCallableTarget {
 // instance method or a static method (LRM 8.6 / 8.10) on a class the referring
 // unit reaches by name. The declaring class carries no unit-local id here, so
 // the target names the declaring unit, the class's canonical (specialization)
-// name, and the method's source name, resolved against that unit's interface
+// name, and the method's source name, resolved against that unit's signature
 // at link time. A backend renders a static call as the qualified
 // `unit::Class::method(args)` and an instance call as `receiver->method(args)`
 // after including the declaring unit's header.

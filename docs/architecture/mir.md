@@ -325,9 +325,12 @@ implies; the diagnostic for any new forbidden shape is "what identity property d
 - A reference whose mechanism is selected by a frontend-supplied lexical-form discriminator at MIR
   consumption time. The form that produced a reference is consumed at AST-to-HIR; no MIR consumer
   reads it.
-- An identity for a layout-visible route segment that is a textual name. A segment whose source and
-  target classes are both owned by the emitting artifact has a stable in-artifact identity; textual
-  names belong to segments crossing the unit boundary, where the by-name SDK consumes them.
+- An identity for a route segment inside the emitting artifact that is a textual name. A segment
+  whose source and target classes the artifact both owns has a stable in-artifact identity. A name
+  is the right identity in exactly two other places, and they are not the same place: a member on
+  another unit's signature, where producer and consumer derive the same name independently and the
+  referrer's compiler checks it, and a target past a signature, where the by-name SDK consumes it at
+  Resolve because nothing was published to check against.
 - A MIR shape that decides a sealed reference's storage placement at this layer. Whether a sealed
   endpoint is materialized as a stored member, hoisted into a local, or rematerialized at each use
   is a layout choice owned by LIR; MIR states the reference's identity, its route, and the protocol

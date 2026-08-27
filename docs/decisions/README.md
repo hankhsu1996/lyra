@@ -122,6 +122,9 @@ the detail lives in the entry itself.
   `Id` is the only durable handle, so lowering projects value facts before mutating.
 - [mir-type-interning](mir-type-interning.md) -- the MIR type pool is a structural-equality
   interner; each semantic type has one canonical `TypeId`, enabling recursive class types.
+- [hir-type-interning](hir-type-interning.md) -- the same for HIR, so a type published by one unit
+  and read by another lands on the entry the reader already had; identity is the unit's own, never
+  the frontend's.
 - [context-free-call-lowering](context-free-call-lowering.md) -- one expression dispatcher template
   per boundary; the call family becomes a template once the `with`-clause element / index are
   co-equal closure parameters.
@@ -226,6 +229,10 @@ the detail lives in the entry itself.
 
 ### Compile-time model and specialization
 
+- [unit-signature](unit-signature.md) -- what each unit kind publishes and how that set is known to
+  be complete; a signature member is named where the referrer compiles, a name past a signature
+  resolves at elaboration; the signature is an artifact separate from code, and that split decides
+  what a change recompiles.
 - [parameter-code-shape-over-approximation](parameter-code-shape-over-approximation.md) -- every
   parameter is treated as code-shape-affecting for now (conservative over-approximation);
   classification and constructor-input threading are deferred.

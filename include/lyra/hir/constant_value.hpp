@@ -23,6 +23,8 @@ using ConstantValueData = std::variant<
 
 struct ConstantValue {
   ConstantValueData data;
+
+  auto operator==(const ConstantValue&) const -> bool = default;
 };
 
 }  // namespace lyra::hir

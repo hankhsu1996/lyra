@@ -108,7 +108,7 @@ struct PatternVarRef {
 // A reference to a variable declared in a namespace unit -- a package (LRM
 // 26.2) or the anonymous `$unit` scope (LRM 3.12.1) -- reached by name. Such a
 // unit has no instance and no receiver, so its variable is one program-global
-// cell, resolved against that unit's interface at link time rather than reached
+// cell, resolved against that unit's signature at link time rather than reached
 // by a route out of anyone's storage. The same by-name form serves a referrer
 // in another unit and the declaring unit's own body, neither of which has a
 // receiver to reach it through.
@@ -116,8 +116,7 @@ struct ExternalUnitValueRef {
   std::string unit_name;
   std::string variable_name;
   // The cell's type. The declaring unit compiles separately, so no member of
-  // this unit states it; it crosses as part of what this unit knows of that
-  // unit's interface.
+  // this unit states it; it crosses as part of that unit's signature.
   TypeId value_type;
 
   auto operator==(const ExternalUnitValueRef&) const -> bool = default;

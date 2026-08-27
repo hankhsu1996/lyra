@@ -6,7 +6,10 @@
 
 ## Status
 
-Accepted. Supersedes `hierarchical-reference-resolution.md`.
+Accepted. Supersedes `hierarchical-reference-resolution.md`. D2's classifier is widened by
+`unit-signature.md`: per-segment classification stands, but a segment is classified by whether the
+referrer has a declaration to compile against, which includes a member on a signature it consumes
+and not only a class its own artifact owns.
 
 ## Why this decision matters
 

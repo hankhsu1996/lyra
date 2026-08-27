@@ -17,22 +17,25 @@ a relaxation of the contract.
 The largest such shortcut is that a design still compiles as one translation unit. The per-unit
 boundary itself holds -- each unit specialization is emitted as its own file, keyed by its
 specialization -- but those files are headers pulled into one compiled root rather than artifacts
-compiled separately and linked. The file boundary is therefore real while the compilation boundary
-is not, so the independence invariant 1 requires is stated but not yet paid for: editing one unit
-still recompiles the design.
+compiled separately and linked, and each carries its unit's bodies in the same file as its
+signature. The file boundary is therefore real while the compilation boundary is not, so the
+independence invariant 1 requires is stated but not yet paid for: editing one unit still recompiles
+the design.
 
 ## Owns
 
-- The rule that a backend emits one artifact per compilation-unit specialization, and that the
-  program is assembled by linking those artifacts -- never by a single artifact that aggregates many
-  units.
-- The set of inputs one unit's emission may depend on: its own MIR, the interfaces of the units it
-  instantiates, and the runtime SDK.
-- The contract that a cross-unit reference into another unit's per-instance layout is realized at
-  construction through the SDK / object graph, that a cross-unit call of a package's receiver-less
-  callable (which has no per-instance layout) is instead a direct link-time symbol, and that either
-  way the referrer's emitted artifact never embeds another unit's storage layout and never names a
-  unit it neither instantiates nor calls.
+- The rule that a backend emits, per compilation-unit specialization, a signature artifact and a
+  code artifact, and that the program is assembled by linking those artifacts -- never by a single
+  artifact that aggregates many units.
+- The set of inputs one unit's emission may depend on: its own MIR, the signatures of the units it
+  references, and the runtime SDK.
+- The contract that a reference reaching past another unit's signature is realized at construction
+  through the SDK / object graph, that a reference to a name on a signature the referrer consumes is
+  a direct named access resolved where the referrer compiles, and that either way the referrer's
+  emitted artifact never embeds another unit's storage layout and never names a unit it does not
+  reference.
+- The rule that what a change re-emits follows the signatures a referrer consumes, not the files it
+  reads.
 - The role of the runtime SDK as the substrate that stands in for link-time symbol resolution and
   (under LLVM) intrinsics.
 
@@ -42,7 +45,8 @@ still recompiles the design.
   an emitted project publishes to a user's own sources (see `runtime_distribution.md`). That surface
   is program-level rather than per-unit; the reasoning for why that is not the aggregate artifact
   this doc forbids lives there.
-- The compilation-unit boundary itself and what an interface is (see `compilation_unit_model.md`).
+- The compilation-unit boundary itself and what a unit's signature is (see
+  `compilation_unit_model.md`).
 - When and into what a cross-unit reference resolves, semantically (see `reference_resolution.md`);
   this doc owns only how a backend _realizes_ that resolution.
 - The object-graph shape the resolution navigates (see `hierarchy_and_generate.md`).
@@ -50,18 +54,22 @@ still recompiles the design.
 
 ## Core Invariants
 
-1. **One artifact per unit specialization; the program is linked, not aggregated.** A backend emits
-   each unit's code as a self-contained artifact. No emitted artifact contains the bodies of more
-   than one unit, and none enumerates "all units." The program is formed by linking the per-unit
-   artifacts. This is what keeps compilation parallel and incremental (`north_star.md` inv 3, 4).
-2. **A unit's emission depends only on itself, the interfaces of the units it references, and the
-   SDK.** The inputs to emitting unit U are: U's own MIR; the interface (name, parameters, ports for
-   an instantiated unit; declared callables and variables for a referenced package) of each unit U
-   references -- one it instantiates, one it calls a receiver-less callable of (LRM 26.3), or one it
-   reads or writes a static variable of by name (LRM 26.2); and the runtime SDK. U's artifact never
-   depends on a unit it neither instantiates nor references, and never on another unit's body or
-   internal layout (`compilation_unit_model.md` inv 8, which already scopes this to a unit U
-   "instantiates or references").
+1. **Two artifacts per unit specialization; the program is linked, not aggregated.** A backend emits
+   each unit specialization as a signature artifact and a code artifact. The signature is derived
+   from the unit's declarations alone, so it completes without lowering a single body; the code
+   carries the bodies. No emitted artifact contains the bodies of more than one unit, and none
+   enumerates "all units." The program is formed by linking the per-unit artifacts. This is what
+   keeps compilation parallel and incremental (`north_star.md` inv 3, 4), and the split is what
+   makes it pipelined: a unit's referrers compile against its signature while its own code is still
+   being emitted.
+2. **A unit's emission depends only on itself, the signatures of the units it references, and the
+   SDK.** The inputs to emitting unit U are: U's own MIR; the signature of each unit U references;
+   and the runtime SDK. U references a unit it instantiates, one it holds a handle to an instance
+   of, one it calls a receiver-less callable of (LRM 26.3), and one it reads or writes a static
+   variable of by name (LRM 26.2). U's artifact never depends on a unit it does not reference, on
+   another unit's code, or on a declaration that unit did not publish (`compilation_unit_model.md`
+   inv 8). Because those are the only inputs, a fact absent from every signature cannot have reached
+   U, so it cannot invalidate U (`compilation_unit_model.md` inv 11).
 3. **The runtime SDK is the link-time-resolution substrate.** Cross-unit operations the referrer
    cannot resolve from its own inputs are expressed as SDK operations. In the C++ backend the SDK is
    the runtime library; under LLVM its operations become intrinsics the linker resolves. A backend
@@ -70,31 +78,48 @@ still recompiles the design.
    Resolve; each route produces a candidate endpoint that the sealing barrier commits as the
    reference's final access point. The simulation-time read and change observation read the sealed
    endpoint directly with no per-access lookup (`reference_resolution.md` inv 3, 5).
-5. **Storage and fill by segment layout visibility.** A route is a sequence of segments; each
-   segment's realization is determined by whether the emitting artifact owns the segment's source
-   and target classes:
-   - **Layout-visible segment** -- both classes live in the emitting artifact. Realization is typed
-     navigation through stable MIR member identities. The emitted code reaches the next pointer /
-     class member via a typed access expression; no string lookup, no SDK call.
-   - **Opaque segment** -- the segment crosses into another compilation unit's body. Realization is
-     one runtime-SDK by-name lookup, executed once at Resolve. The opaque segment carries the
-     canonical name (interface or registered signal name) and any indices it needs; it never names
-     the other unit's internal members, fields, or child types. A single route may alternate; an
-     artifact emits typed prefix code for the layout-visible segments and SDK calls for the opaque
-     ones, composed in route order. The sealed endpoint is one access point regardless of how many
-     segments of each kind the route contained.
-6. **A unit exposes its hierarchically reachable signals and owned children through the SDK.** So
-   that any artifact's opaque segments can reach into a unit whose body it does not know, each unit
-   registers its reachable signals and its owned children by name into the object graph node during
-   construction, and the base SDK answers a by-name query from those registrations -- the unit never
-   inspects who asks, and the dispatch is one generic scan, not a per-unit synthesized branch. The
-   referrer's emission consumes those registrations through one route execution and stores the
-   sealed endpoint; it never embeds another unit's layout.
+5. **Storage and fill by whether a segment is declared to the referrer.** A route is a sequence of
+   segments; each segment's realization is determined by whether the referrer has a declaration to
+   compile against for that step:
+   - **Declared segment** -- the target is a class the emitting artifact owns, or a member on a
+     signature the artifact consumes. Realization is typed navigation: through a stable MIR member
+     identity when the artifact owns both classes, and through the member's name resolved against
+     the consumed signature at the referrer's compile time when it does not. Either way the emitted
+     code reaches the next pointer / class member via a typed access expression; no run-time lookup
+     and no SDK call.
+   - **Opaque segment** -- the segment reaches past a unit's signature, where the referrer has no
+     declaration. Realization is one runtime-SDK by-name lookup, executed once at Resolve. The
+     opaque segment carries the canonical name and any indices it needs; it never names the other
+     unit's internal members, fields, or child types.
+
+   A single route may alternate; an artifact emits typed code for the declared segments and SDK
+   calls for the opaque ones, composed in route order. The sealed endpoint is one access point
+   regardless of how many segments of each kind the route contained.
+
+6. **A unit exposes what lies past its signature through the SDK.** So that any artifact's opaque
+   segments can reach a declaration a unit did not publish, each unit registers its hierarchically
+   reachable signals and its owned children by name into the object graph node during construction,
+   and the base SDK answers a by-name query from those registrations -- the unit never inspects who
+   asks, and the dispatch is one generic scan, not a per-unit synthesized branch. The referrer's
+   emission consumes those registrations through one route execution and stores the sealed endpoint;
+   it never embeds another unit's layout. A name on the signature needs none of this, because the
+   referrer already compiles against it.
+7. **A change re-emits exactly the referrers whose consumed signature changed.** A change confined
+   to a unit's bodies changes no signature and re-emits no referrer. A change to a signature
+   re-emits every unit that consumes it, which is the dependency being real rather than the
+   mechanism being coarse. A referrer that only reaches past a signature consumes nothing and is
+   re-emitted by no change to the unit it reaches -- the price of a reference to something never
+   published, paid as an elaboration failure instead of a compile error.
+8. **A published member's placement is derivable from the signature alone.** A signature member sits
+   in a fixed prefix of its object, ahead of everything the unit did not publish, so a referrer and
+   the declaring unit derive the same placement independently from the same signature, and a
+   declaration a unit never published cannot move one that it did. A backend realizes this rule with
+   whatever its target provides; it never re-decides it.
 
 ## Boundary to Adjacent Layers
 
-- `compilation_unit_model.md` defines the unit and its interface; this doc defines what a unit's
-  _emitted artifact_ may depend on, which is exactly that interface plus the SDK.
+- `compilation_unit_model.md` defines the unit and its signature; this doc defines what a unit's
+  _emitted artifact_ may depend on, which is exactly those signatures plus the SDK.
 - `reference_resolution.md` defines route segment classification and the sealing contract; this doc
   defines how a backend realizes each segment kind without breaking unit independence.
 - `backend_contract.md` defines the per-node within-an-artifact realization rules: how a MIR node
@@ -110,16 +135,21 @@ still recompiles the design.
 - An emitted artifact that contains more than one unit's bodies, or that enumerates all units (a
   global "wiring" file). This is the canonical violation: it serializes otherwise-independent
   compilation and reintroduces an undeclared whole-design dependency.
-- A referrer's artifact that names, includes, or casts to the type of a unit it neither instantiates
-  nor calls -- in particular, an opaque-segment realization naming the target unit's internal type,
-  member, or field. Naming a called package's own declared callable is not this shape: a package
-  exposes only namespace-level declarations and no instance layout, so a caller reaches its callable
-  by the same by-name link every ordinary symbol uses, never by the target's internal layout.
+- A referrer's artifact that names, includes, or casts to the type of a unit it does not reference
+  -- in particular, an opaque-segment realization naming the target unit's internal type, member, or
+  field. Naming a referenced unit's own published declaration is not this shape: that declaration is
+  the promise the referrer compiles against, and reaching it by name is what a declared dependency
+  is for.
 - Embedding another unit's storage offset in the referrer's own emitted output. An opaque segment is
-  by-name through the SDK; a layout-visible segment uses a stable in-artifact member identity, not
+  by-name through the SDK; a declared segment uses a stable member identity or a published name, not
   an offset.
+- A run-time by-name lookup emitted for a name the target unit published. The referrer already
+  consumes that signature, so the access is typed; the lookup buys no independence the declared
+  dependency has not already spent, and it replaces a compile-time check with an unchecked cast.
+- A signature artifact that also carries the unit's bodies, so that editing a body re-emits the
+  unit's referrers. The file boundary is not the dependency boundary.
 - A route mechanism dispatched on the frontend's lexical-form classification or on source order.
-  Mechanism follows segment layout visibility.
+  Mechanism follows whether the segment is declared to the referrer.
 - A reference shape that splits cross-unit and intra-unit references into separate IR species,
   separate install paths, separate vocabulary items. One reference, one route, one sealing.
 - A design-global signal or path table that mirrors the object graph. Opaque segments resolve
@@ -141,10 +171,22 @@ artifact) and `Top -> b -> bx` (typed; sibling member access plus variable acces
 artifact). Top's emission produces a typed pointer chain; no SDK call. Resolve produces the
 candidate endpoint; Seal commits the variable's cell.
 
-**Cross-unit downward reference.** `always_comb r = c.x;`. The route has two segments: `parent -> c`
-(typed; the parent's artifact owns the `c` member's pointer type) and `c -> x` (opaque; `x` lives
-inside `c`'s unit). The parent's artifact emits the typed access for the first segment, then an SDK
-by-name lookup for the second; the SDK answers from `c`'s registered signals.
+**Cross-unit downward reference, split by what the child published.** `always_comb r = c.p;` where
+`p` is one of `c`'s ports, and `always_comb r = c.x;` where `x` is one of its internal variables.
+Both routes open with the same declared segment `parent -> c`, since the parent's artifact owns the
+`c` member's pointer type. The second step differs: `c -> p` is declared, so the parent emits a
+typed access against `c`'s signature and a renamed port fails where the parent compiles; `c -> x` is
+opaque, so the parent emits one SDK by-name lookup the SDK answers from `c`'s registered signals,
+and a renamed `x` fails at elaboration instead.
+
+**What each backend borrows to realize a declared cross-unit segment.** A referrer needs three
+things to reach a published member: the name resolved against the declaring unit's declaration, the
+member's placement, and the binding of its use to that unit's definition. A backend emitting to a
+language with its own name resolution borrows all three from that language's compiler, which is why
+including a declaration-only header is sufficient there. A backend emitting machine code borrows
+none of them and performs all three itself, resolving the name against the signature it consumed and
+deriving the placement from the prefix rule (inv 8). Both realize the same reference; only the party
+doing the work differs.
 
 **Cross-unit upward reference.** `always_comb x = Top.g;`. The referrer does not instantiate `Top`.
 The entire route is opaque: the SDK climbs the runtime tree by canonical instance name to the scope

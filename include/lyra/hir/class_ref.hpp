@@ -36,7 +36,7 @@ struct ExternalClassRef {
 // A reference naming a class from a use site: a base's target, a `new`'s
 // target, a receiver's declared class, an override's declaring class.
 // Intra-unit identity is a compiler-owned id; cross-unit identity is a
-// by-name reference resolved against another unit's interface at link time.
+// by-name reference resolved against another unit's signature at link time.
 // The two never share a key space.
 using ClassRef = std::variant<LocalClassRef, ExternalClassRef>;
 

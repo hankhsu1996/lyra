@@ -63,6 +63,8 @@ struct PackedRange {
   [[nodiscard]] auto IsAscending() const -> bool;
   [[nodiscard]] auto Contains(std::int64_t index) const -> bool;
   [[nodiscard]] auto LinearOffset(std::int64_t index) const -> std::uint64_t;
+
+  auto operator==(const PackedRange&) const -> bool = default;
 };
 
 // A single bit, the terminal of every integral type. `logic`, `bit`, and `reg`
@@ -71,6 +73,8 @@ struct PackedRange {
 // nature.
 struct ScalarBitType {
   BitAtom atom;
+
+  auto operator==(const ScalarBitType&) const -> bool = default;
 };
 
 // LRM 7.4.1: a packed array is one declared dimension over an element type,
@@ -84,16 +88,22 @@ struct PackedArrayType {
   TypeId element_type;
   Signedness signedness;
   PackedArrayForm form;
+
+  auto operator==(const PackedArrayType&) const -> bool = default;
 };
 
 struct EnumMember {
   std::string name;
   IntegralConstant value;
+
+  auto operator==(const EnumMember&) const -> bool = default;
 };
 
 struct EnumType {
   TypeId base_type;
   std::vector<EnumMember> members;
+
+  auto operator==(const EnumType&) const -> bool = default;
 };
 
 // A named member of a packed aggregate (struct or union), identified by its
@@ -104,6 +114,8 @@ struct EnumType {
 struct PackedAggregateField {
   std::string name;
   TypeId type;
+
+  auto operator==(const PackedAggregateField&) const -> bool = default;
 };
 
 // LRM 7.2.1: a packed struct is a heterogeneous set of bit-fields packed into
@@ -113,6 +125,8 @@ struct PackedAggregateField {
 struct PackedStructType {
   std::vector<PackedAggregateField> fields;
   Signedness signedness;
+
+  auto operator==(const PackedStructType&) const -> bool = default;
 };
 
 // LRM 7.3.1 / 7.3.2: a packed union's members overlap at the least significant
@@ -126,6 +140,8 @@ struct PackedUnionType {
   std::vector<PackedAggregateField> fields;
   Signedness signedness;
   bool tagged;
+
+  auto operator==(const PackedUnionType&) const -> bool = default;
 };
 
 // A named member of an unpacked aggregate (struct or union). Unlike a packed
@@ -141,6 +157,8 @@ struct UnpackedAggregateField {
   std::string name;
   TypeId type;
   std::optional<ConstantValue> default_init;
+
+  auto operator==(const UnpackedAggregateField&) const -> bool = default;
 };
 
 // LRM 7.2 unpacked structure: a heterogeneous aggregate whose members each hold
@@ -149,6 +167,8 @@ struct UnpackedAggregateField {
 // including a string, another unpacked aggregate, or a variable-size container.
 struct UnpackedStructType {
   std::vector<UnpackedAggregateField> fields;
+
+  auto operator==(const UnpackedStructType&) const -> bool = default;
 };
 
 // LRM 7.3 unpacked union: one storage shared across the member types, with one
@@ -159,30 +179,42 @@ struct UnpackedStructType {
 struct UnpackedUnionType {
   std::vector<UnpackedAggregateField> fields;
   bool tagged;
+
+  auto operator==(const UnpackedUnionType&) const -> bool = default;
 };
 
 struct UnpackedRange {
   std::int64_t left;
   std::int64_t right;
+
+  auto operator==(const UnpackedRange&) const -> bool = default;
 };
 
 struct UnpackedArrayType {
   TypeId element_type;
   UnpackedRange dim;
+
+  auto operator==(const UnpackedArrayType&) const -> bool = default;
 };
 
 struct DynamicArrayType {
   TypeId element_type;
+
+  auto operator==(const DynamicArrayType&) const -> bool = default;
 };
 
 struct QueueType {
   TypeId element_type;
   std::optional<std::uint64_t> max_bound;
+
+  auto operator==(const QueueType&) const -> bool = default;
 };
 
 struct AssociativeArrayType {
   TypeId element_type;
   TypeId key_type;
+
+  auto operator==(const AssociativeArrayType&) const -> bool = default;
 };
 
 // LRM 7.8.1 wildcard index type (`[*]`): the key type of an associative array
@@ -190,23 +222,43 @@ struct AssociativeArrayType {
 // index expression's width. It declares no member structure of its own; it is
 // the type that distinguishes a wildcard-keyed array from a string- or
 // integral-keyed one.
-struct WildcardIndexType {};
+// These types carry nothing beyond being themselves, so two are equal exactly
+// when they are the same type.
+struct WildcardIndexType {
+  auto operator==(const WildcardIndexType&) const -> bool = default;
+};
 
-struct StringType {};
-struct EventType {};
-struct RealType {};
-struct ShortRealType {};
-struct RealTimeType {};
-struct ChandleType {};
-struct VoidType {};
+struct StringType {
+  auto operator==(const StringType&) const -> bool = default;
+};
+struct EventType {
+  auto operator==(const EventType&) const -> bool = default;
+};
+struct RealType {
+  auto operator==(const RealType&) const -> bool = default;
+};
+struct ShortRealType {
+  auto operator==(const ShortRealType&) const -> bool = default;
+};
+struct RealTimeType {
+  auto operator==(const RealTimeType&) const -> bool = default;
+};
+struct ChandleType {
+  auto operator==(const ChandleType&) const -> bool = default;
+};
+struct VoidType {
+  auto operator==(const VoidType&) const -> bool = default;
+};
 
 // LRM 8.3 class handle: the type of a variable that refers to a class object.
 // Null is a legal value, the object is reached through the handle, and the
 // referenced class is named by a `ClassRef`: a local declaration id when the
 // class is declared by this unit, or a by-name reference resolved against
-// another unit's interface when the class is declared elsewhere.
+// another unit's signature when the class is declared elsewhere.
 struct ClassHandleType {
   ClassRef class_ref;
+
+  auto operator==(const ClassHandleType&) const -> bool = default;
 };
 
 // LRM 8.3 class handle whose referenced class is an imported runtime-library
@@ -215,12 +267,16 @@ struct ClassHandleType {
 // class id.
 struct ImportedClassHandleType {
   support::ImportedRuntimeClass klass;
+
+  auto operator==(const ImportedClassHandleType&) const -> bool = default;
 };
 
 // LRM 8.4: the type slang gives the `null` literal. It is assignment- and
 // comparison-compatible with any class handle; the contextual handle determines
 // the operation, so this type carries no class identity of its own.
-struct NullType {};
+struct NullType {
+  auto operator==(const NullType&) const -> bool = default;
+};
 
 using TypeData = std::variant<
     ScalarBitType, PackedArrayType, PackedStructType, PackedUnionType, EnumType,

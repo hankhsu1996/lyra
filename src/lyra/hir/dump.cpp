@@ -1195,7 +1195,7 @@ class HirDumper {
     }
     for (const PortConnectionId id : s.port_connections.Ids()) {
       const auto& pc = s.port_connections.Get(id);
-      std::string_view direction = "ref";
+      std::string_view direction;
       switch (pc.direction) {
         case PortDirection::kInput:
           direction = "input";
@@ -1203,7 +1203,14 @@ class HirDumper {
         case PortDirection::kOutput:
           direction = "output";
           break;
+        case PortDirection::kInOut:
+          direction = "inout";
+          break;
         case PortDirection::kRef:
+          direction = "ref";
+          break;
+        case PortDirection::kConstRef:
+          direction = "const ref";
           break;
       }
       const std::string endpoint = std::visit(

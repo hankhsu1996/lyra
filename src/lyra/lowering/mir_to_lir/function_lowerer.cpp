@@ -59,16 +59,23 @@ auto LocalPlace(lir::ValueId local) -> lir::Place {
   return lir::Place{.base = lir::Use{.value = local}, .chain = {}};
 }
 
-auto FieldSlot(const mir::FieldAccessExpr& field) -> std::uint32_t {
+// Which member position a field access names, or nothing when the field belongs
+// to a class another unit declares. Such a field is named rather than numbered,
+// and turning that name into a position needs the declaring unit's signature,
+// which this lowering does not consume -- so the position does not exist here
+// rather than being wrong here.
+auto FieldSlot(const mir::FieldAccessExpr& field)
+    -> std::optional<std::uint32_t> {
   return std::visit(
       Overloaded{
-          [](const mir::FieldTarget& t) { return t.slot.value; },
-          [](const mir::FieldId& id) { return id.value; },
-          [](const mir::ExternalFieldTarget&) -> std::uint32_t {
-            throw InternalError(
-                "mir_to_lir: cross-unit field access is not supported by the "
-                "LIR path (LIR is not the target backend for cross-unit class "
-                "references today)");
+          [](const mir::FieldTarget& t) -> std::optional<std::uint32_t> {
+            return t.slot.value;
+          },
+          [](const mir::FieldId& id) -> std::optional<std::uint32_t> {
+            return id.value;
+          },
+          [](const mir::ExternalFieldTarget&) -> std::optional<std::uint32_t> {
+            return std::nullopt;
           }},
       field.field);
 }
@@ -334,11 +341,16 @@ auto FunctionLowerer::CaptureRead(
   if (captures == nullptr) {
     return std::nullopt;
   }
-  const std::uint32_t slot = FieldSlot(field);
-  if (slot >= captures->captures.size()) {
+  // A closure's captures are its own, so a field naming another unit's class is
+  // not one of them and this is not a capture read.
+  const std::optional<std::uint32_t> slot = FieldSlot(field);
+  if (!slot.has_value()) {
+    return std::nullopt;
+  }
+  if (*slot >= captures->captures.size()) {
     throw InternalError("mir_to_lir: closure capture read is out of range");
   }
-  return captures->captures[slot];
+  return captures->captures[*slot];
 }
 
 void FunctionLowerer::BindCaptureParams(
@@ -908,6 +920,12 @@ auto FunctionLowerer::LowerPlace(const mir::Block& block, mir::ExprId id)
                   "mir_to_lir: a closure capture is read-only and names no "
                   "storage");
             }
+            const std::optional<std::uint32_t> slot = FieldSlot(field);
+            if (!slot.has_value()) {
+              return Unsupported(
+                  "mir_to_lir: a member of a class another compilation unit "
+                  "declares is not yet reachable on this backend");
+            }
             auto receiver = LowerExpr(block, field.receiver);
             if (!receiver) {
               return std::unexpected(std::move(receiver.error()));
@@ -917,7 +935,7 @@ auto FunctionLowerer::LowerPlace(const mir::Block& block, mir::ExprId id)
                 .chain = {
                     lir::Projection{lir::DerefProjection{}},
                     lir::Projection{lir::MemberProjection{
-                        .member = lir::MemberId{FieldSlot(field)}}}}};
+                        .member = lir::MemberId{*slot}}}}};
           },
           [&](const mir::DerefExpr& deref) -> diag::Result<lir::Place> {
             const mir::TypeId operand_type =

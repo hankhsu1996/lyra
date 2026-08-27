@@ -102,9 +102,9 @@ struct BuiltinTarget {
 
 // A function of this unit, named outright. The callee is static, so it is
 // reached at compile time -- there is no code value in flight and no dispatch.
-// A function that a class lists in its interface takes its receiver as the
-// first argument like any other, so naming one is no different from naming a
-// function no class lists.
+// A function a class declares as a method takes its receiver as the first
+// argument like any other, so naming one is no different from naming a
+// function no class declares.
 struct FunctionTarget {
   FunctionId function;
 };

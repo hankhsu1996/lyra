@@ -44,18 +44,30 @@ namespace lyra::lowering::ast_to_hir {
 
 UnitLowerer::UnitLowerer(
     const LoweringFacts& facts, const slang::ast::Scope& scope,
-    std::string name)
+    std::string name, hir::UnitKind kind)
     : facts_(facts), scope_(&scope), unit_{std::move(name)} {
+  unit_.kind = kind;
+  signature_.unit_name = unit_.name;
 }
 
-auto UnitLowerer::Run() -> diag::Result<hir::CompilationUnit> {
-  WalkFrame frame;
+auto UnitLowerer::Declare() -> diag::Result<void> {
   if (auto r = DeclareStructuralIdentities(*scope_); !r) {
     return std::unexpected(std::move(r.error()));
   }
   if (auto r = InternOwnClassDeclarations(); !r) {
     return std::unexpected(std::move(r.error()));
   }
+  return PublishSignature();
+}
+
+auto UnitLowerer::TakeSignature() -> hir::UnitSignature {
+  return std::move(signature_);
+}
+
+auto UnitLowerer::LowerBodies(const UnitSignatures& signatures)
+    -> diag::Result<hir::CompilationUnit> {
+  unit_signatures_ = &signatures;
+  WalkFrame frame;
   StructuralScopeLowerer root(*this, *scope_);
   auto root_scope_or = root.Run(frame);
   if (!root_scope_or) {

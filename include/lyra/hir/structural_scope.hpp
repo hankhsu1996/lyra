@@ -14,6 +14,7 @@
 #include "lyra/hir/expr.hpp"
 #include "lyra/hir/foreign_export.hpp"
 #include "lyra/hir/pattern.hpp"
+#include "lyra/hir/port_direction.hpp"
 #include "lyra/hir/procedural_scope.hpp"
 #include "lyra/hir/process.hpp"
 #include "lyra/hir/structural_data_object.hpp"
@@ -187,8 +188,6 @@ struct InstanceMemberDecl {
   std::string target_unit;
   std::vector<std::uint32_t> array_dims;
 };
-
-enum class PortDirection : std::uint8_t { kInput, kOutput, kRef };
 
 // How the child port is reached, by endpoint capability. An input or output
 // port has its own cell, realized as a reactive edge over it (a variable cell
