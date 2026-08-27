@@ -6,7 +6,6 @@
 
 #include "lyra/runtime/file_table.hpp"
 #include "lyra/runtime/runtime_effects.hpp"
-#include "lyra/runtime/stream_dispatcher.hpp"
 #include "lyra/value/packed_array.hpp"
 #include "lyra/value/string.hpp"
 
@@ -19,7 +18,6 @@ namespace {
 // would surface after the command's own output, and a file the design just
 // wrote would reach the command incomplete.
 void PublishPendingOutput(RuntimeEffects& runtime) {
-  runtime.Stream().Drain();
   runtime.Files().Flush();
   std::fflush(nullptr);
 }

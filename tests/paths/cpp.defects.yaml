@@ -18,6 +18,4 @@
 11_operators/real_shortreal_result_type: "narrow_square was 1.000244155526, expected 1.000244140625"
 11_operators/wide_integral_arithmetic: "0 ** -1 gave 00000000000000000000000000000000, expected all x"
 21_output/assignment_pattern_format_of_singular_values: "a declared enumeration value gave '0', expected ON"
-21_output/fflush_writes_buffered_output: "the byte after flushing every file was -1, expected 113"
 21_output/format_field_width_and_automatic_size: "an unsized decimal was '10', expected 10 right-justified"
-21_output/fseek_ftell_positioning: "$ftell after seeking back four was 0, expected 4"
