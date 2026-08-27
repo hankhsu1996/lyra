@@ -165,47 +165,52 @@ auto EmitSubroutineCall(
     const hir::Expr& hir_arg = hir_exprs.Get(operands[i]);
     const mir::TypeId formal_type = formal.type;
 
-    // An `output` passes no argument; an `inout` passes its incoming value.
-    // Both bind the actual place for a post-completion writeback.
-    if (dir == hir::ParamDirection::kOutput ||
-        dir == hir::ParamDirection::kInOut) {
-      auto place_or = lowerer.LowerLhsExpr(hir_arg, frame);
-      if (!place_or) return std::unexpected(std::move(place_or.error()));
-      const mir::ExprId place = block.exprs.Add(*std::move(place_or));
-      if (dir == hir::ParamDirection::kInOut) {
-        auto value_or = lowerer.LowerExpr(hir_arg, frame);
-        if (!value_or) return std::unexpected(std::move(value_or.error()));
-        call_args.push_back(block.exprs.Add(*std::move(value_or)));
+    switch (dir) {
+      // An `output` passes no argument; an `inout` passes its incoming value.
+      // Both bind the actual place for a post-completion writeback.
+      case hir::ParamDirection::kOutput:
+      case hir::ParamDirection::kInOut: {
+        auto place_or = lowerer.LowerLhsExpr(hir_arg, frame);
+        if (!place_or) return std::unexpected(std::move(place_or.error()));
+        const mir::ExprId place = block.exprs.Add(*std::move(place_or));
+        if (dir == hir::ParamDirection::kInOut) {
+          auto value_or = lowerer.LowerExpr(hir_arg, frame);
+          if (!value_or) return std::unexpected(std::move(value_or.error()));
+          call_args.push_back(block.exprs.Add(*std::move(value_or)));
+        }
+        writebacks.push_back(
+            {.place = place,
+             .component_index = *formal.component,
+             .type = formal_type});
+        break;
       }
-      writebacks.push_back(
-          {.place = place,
-           .component_index = *formal.component,
-           .type = formal_type});
-      continue;
-    }
 
-    // A ref / const-ref formal aliases what the actual designates (LRM
-    // 13.5.2). A bare actual is lent as it stands, so a reference over a
-    // capability wrapper aliases the wrapper and keeps the wrapper's own
-    // access -- the update event a write fires included. A projected actual
-    // designates part of a value, which is not a place a reference can alias,
-    // so what is lent is the storage the chain descends into.
-    if (dir == hir::ParamDirection::kRef ||
-        dir == hir::ParamDirection::kConstRef) {
-      auto arg_or = lowerer.LowerLhsExpr(hir_arg, frame);
-      if (!arg_or) return std::unexpected(std::move(arg_or.error()));
-      mir::ExprId actual_id = block.exprs.Add(*std::move(arg_or));
-      if (FindLhsRootId(unit, block, actual_id) != actual_id) {
-        actual_id = StoragePlaceOf(unit, block, actual_id);
+      // A ref / const-ref formal aliases what the actual designates (LRM
+      // 13.5.2). A bare actual is lent as it stands, so a reference over a
+      // capability wrapper aliases the wrapper and keeps the wrapper's own
+      // access -- the update event a write fires included. A projected actual
+      // designates part of a value, which is not a place a reference can alias,
+      // so what is lent is the storage the chain descends into.
+      case hir::ParamDirection::kRef:
+      case hir::ParamDirection::kConstRef: {
+        auto arg_or = lowerer.LowerLhsExpr(hir_arg, frame);
+        if (!arg_or) return std::unexpected(std::move(arg_or.error()));
+        mir::ExprId actual_id = block.exprs.Add(*std::move(arg_or));
+        if (FindLhsRootId(unit, block, actual_id) != actual_id) {
+          actual_id = StoragePlaceOf(unit, block, actual_id);
+        }
+        call_args.push_back(BuildReferenceArg(
+            unit, block, actual_id, block.exprs.Get(actual_id).type));
+        break;
       }
-      call_args.push_back(BuildReferenceArg(
-          unit, block, actual_id, block.exprs.Get(actual_id).type));
-      continue;
-    }
 
-    auto arg_or = lowerer.LowerExpr(hir_arg, frame);
-    if (!arg_or) return std::unexpected(std::move(arg_or.error()));
-    call_args.push_back(block.exprs.Add(*std::move(arg_or)));
+      case hir::ParamDirection::kInput: {
+        auto arg_or = lowerer.LowerExpr(hir_arg, frame);
+        if (!arg_or) return std::unexpected(std::move(arg_or.error()));
+        call_args.push_back(block.exprs.Add(*std::move(arg_or)));
+        break;
+      }
+    }
   }
 
   return EmittedCall{

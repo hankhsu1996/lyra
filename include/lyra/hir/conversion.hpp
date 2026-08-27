@@ -14,7 +14,8 @@ enum class ConversionKind : std::uint8_t {
   kBitstreamCast,
 };
 
-// Diagnostic metadata; never drives simulation behavior.
+// How the source spelled the literal. Diagnostic metadata that never drives
+// simulation behavior, so it is not a dispatch set.
 enum class IntegerLiteralBase : std::uint8_t {
   kBinary,
   kOctal,

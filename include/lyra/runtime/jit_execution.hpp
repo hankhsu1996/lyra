@@ -241,6 +241,8 @@ auto lyra_rt_packed_case_equal(const void* lhs, const void* rhs) -> void*;
 auto lyra_rt_packed_wildcard_equals(const void* lhs, const void* rhs) -> void*;
 auto lyra_rt_packed_casez_equals(const void* lhs, const void* rhs) -> void*;
 auto lyra_rt_packed_casex_equals(const void* lhs, const void* rhs) -> void*;
+auto lyra_rt_packed_merge_conditional(const void* lhs, const void* rhs)
+    -> void*;
 auto lyra_rt_packed_reduction_and(const void* value) -> void*;
 auto lyra_rt_packed_reduction_or(const void* value) -> void*;
 auto lyra_rt_packed_reduction_xor(const void* value) -> void*;

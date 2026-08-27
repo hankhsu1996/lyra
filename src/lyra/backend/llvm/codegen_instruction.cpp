@@ -164,10 +164,7 @@ auto CodeGenFunction::ResolvePlaceAddress(const lir::Place& place)
   llvm::Value* address = nullptr;
 
   const auto* use = std::get_if<lir::Use>(&place.base);
-  const bool is_place_local =
-      use != nullptr &&
-      fn_->values.Get(use->value).kind == lir::LocalKind::kPlace;
-  if (is_place_local) {
+  if (lir::IsPlaceLocal(*fn_, place.base)) {
     address = values_.at(use->value);
   } else {
     if (step == place.chain.end() ||

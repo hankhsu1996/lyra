@@ -326,9 +326,22 @@ auto Runtime::HasNextDeltaWork() const -> bool {
 }
 
 auto Runtime::IsRunnablePhase() const -> bool {
-  return phase_ == SchedulerPhase::kActive ||
-         phase_ == SchedulerPhase::kInactive ||
-         phase_ == SchedulerPhase::kReactive;
+  // The regions of a time slot that dispatch process code (LRM 4.4); the rest
+  // either move values between regions or move time.
+  switch (phase_) {
+    case SchedulerPhase::kActive:
+    case SchedulerPhase::kInactive:
+    case SchedulerPhase::kReactive:
+      return true;
+    case SchedulerPhase::kIdle:
+    case SchedulerPhase::kFlushUpdates:
+    case SchedulerPhase::kCommitNba:
+    case SchedulerPhase::kObserved:
+    case SchedulerPhase::kPostponed:
+    case SchedulerPhase::kAdvanceTime:
+      return false;
+  }
+  throw InternalError("Runtime::IsRunnablePhase: unknown SchedulerPhase");
 }
 
 auto Runtime::ResumeProcess(

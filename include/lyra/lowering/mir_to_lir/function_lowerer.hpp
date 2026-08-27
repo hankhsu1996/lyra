@@ -165,6 +165,13 @@ class FunctionLowerer {
   auto LowerConditional(
       const mir::Block& block, const mir::ConditionalExpr& cond,
       mir::TypeId type) -> diag::Result<lir::Operand>;
+  // The conditional operator over a three-valued predicate, which a two-way
+  // branch cannot express: a predicate that is neither definitely true nor
+  // definitely false evaluates both arms and combines them, so each arm is
+  // evaluated under its own guard and the three outcomes meet at one result.
+  auto LowerMergingConditional(
+      const mir::Block& block, const mir::MergingConditionalExpr& cond,
+      mir::TypeId type) -> diag::Result<lir::Operand>;
 
   auto Emit(lir::TypeId type, lir::InstrData data) -> lir::Operand;
   auto NewPlaceLocal(lir::TypeId type) -> lir::ValueId;

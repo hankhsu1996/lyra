@@ -82,7 +82,7 @@ auto CallableBindings::EnsureCarrier(BindingOriginId origin) -> BodyBindingRef {
 
   mir::ExprId source = read;
   mir::TypeId field_type = parent_type;
-  if (policy_.ViewFor(origin) == CaptureView::kAlias) {
+  if (CapturesByReference(policy_.ViewFor(origin))) {
     source = BuildReferenceArg(*unit_, *capture_site_, read, parent_type);
     field_type = capture_site_->exprs.Get(source).type;
   }

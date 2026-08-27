@@ -67,6 +67,9 @@ the detail lives in the entry itself.
 
 ### Lowering and IR shape
 
+- [exhaustive-alternative-consumption](exhaustive-alternative-consumption.md) -- a closed set of
+  alternatives is consumed by a switch, never by `==`, so a fact the front end resolved cannot be
+  dropped silently.
 - [lowering-organization](lowering-organization.md) -- how lowering passes organize their internal
   objects (facts, registries, builders, walk frame).
 - [storage-access-as-place-formation](storage-access-as-place-formation.md) -- a dereference of a

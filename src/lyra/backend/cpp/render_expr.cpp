@@ -294,6 +294,19 @@ auto RenderConditionalExpr(const ScopeView& view, const mir::ConditionalExpr& c)
       RenderExpr(view, view.Expr(c.else_value)));
 }
 
+// An arm reaches the entry as a callable, so the entry still evaluates only the
+// arm the predicate selects, and evaluates both only where it selects neither.
+auto RenderMergingConditionalExpr(
+    const ScopeView& view, const mir::MergingConditionalExpr& c)
+    -> std::string {
+  return std::format(
+      "lyra::value::SelectByCondition({}, [&] {{ return {}; }}, [&] {{ "
+      "return {}; }})",
+      RenderExpr(view, view.Expr(c.condition)),
+      RenderExpr(view, view.Expr(c.then_value)),
+      RenderExpr(view, view.Expr(c.else_value)));
+}
+
 // Converts a machine integer to the machine integer named by the enclosing
 // `Expr::type` -- a truncation or an extension, which `static_cast` performs.
 // This is a machine conversion, not a simulation-value one: every SV value
@@ -915,6 +928,9 @@ auto RenderExpr(const ScopeView& view, const mir::Expr& expr) -> std::string {
           },
           [&](const mir::ConditionalExpr& c) -> std::string {
             return RenderConditionalExpr(view, c);
+          },
+          [&](const mir::MergingConditionalExpr& c) -> std::string {
+            return RenderMergingConditionalExpr(view, c);
           },
           [&](const mir::AssignExpr& a) -> std::string {
             return RenderAssignExpr(view, a);

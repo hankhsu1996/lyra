@@ -225,6 +225,26 @@ class Queue {
     data_.clear();
   }
 
+  // LRM 11.4.11: the two arms of a conditional operator whose condition is
+  // ambiguous, combined element by element -- an element the arms agree on
+  // survives, and one they disagree on, or cannot know, takes the element
+  // default (Table 7-1). Arms of unequal size put no elements in
+  // correspondence, so the result is the empty queue that is a queue's own
+  // default.
+  [[nodiscard]] auto MergeConditional(const Queue& other) const -> Queue {
+    Queue result = *this;
+    if (RawSize() != other.RawSize()) {
+      result.ResetToDefault();
+      return result;
+    }
+    for (std::size_t i = 0; i < result.data_.size(); ++i) {
+      if ((data_[i] == other.data_[i]).Truth() != Truthiness::kKnownNonzero) {
+        result.data_[i] = shield_.Default();
+      }
+    }
+    return result;
+  }
+
   // LRM 7.10.1 / 7.4.5 read: an index outside `0..size-1` (or carrying x/z)
   // misses. Reads never grow the queue -- the write path owns the `q[$+1]`
   // append semantic. The non-const overload returns the shield's discard
@@ -594,6 +614,7 @@ static_assert(Indexable<Queue<PackedArray>>);
 // arity it carries its own `Slice` rather than claiming that concept.
 static_assert(Ownable<Queue<PackedArray>>);
 static_assert(Defaultable<Queue<PackedArray>>);
+static_assert(ConditionallyMergeable<Queue<PackedArray>>);
 static_assert(Sortable<Queue<PackedArray>>);
 
 }  // namespace lyra::value

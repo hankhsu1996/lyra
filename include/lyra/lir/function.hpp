@@ -11,6 +11,7 @@
 
 #include "lyra/base/arena.hpp"
 #include "lyra/base/component_index.hpp"
+#include "lyra/base/internal_error.hpp"
 #include "lyra/lir/function_id.hpp"
 #include "lyra/lir/integral_constant.hpp"
 #include "lyra/lir/operator.hpp"
@@ -47,6 +48,19 @@ struct Local {
   std::string name;
   TypeId type;
   LocalKind kind;
+
+  // Whether the local names storage that is written through and addressed, as
+  // opposed to standing for the value it was bound to once.
+  [[nodiscard]] constexpr auto NamesStorage() const -> bool {
+    switch (kind) {
+      case LocalKind::kPlace:
+        return true;
+      case LocalKind::kParam:
+      case LocalKind::kTemp:
+        return false;
+    }
+    throw InternalError("lir::Local::NamesStorage: unknown LocalKind");
+  }
 };
 
 struct Use {

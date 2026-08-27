@@ -233,6 +233,25 @@ class UnpackedArray {
     }
   }
 
+  // LRM 11.4.11: the two arms of a conditional operator whose condition is
+  // ambiguous, combined element by element -- an element the arms agree on
+  // survives, and one they disagree on, or cannot know, takes the element
+  // default (Table 7-1). Arms of unequal size put no elements in
+  // correspondence, so every element takes that default.
+  [[nodiscard]] auto MergeConditional(const UnpackedArray& other) const
+      -> UnpackedArray {
+    const bool paired = RawSize() == other.RawSize();
+    UnpackedArray result = *this;
+    for (std::size_t i = 0; i < result.data_.size(); ++i) {
+      const bool agree = paired && (data_[i] == other.data_[i]).Truth() ==
+                                       Truthiness::kKnownNonzero;
+      if (!agree) {
+        result.data_[i] = shield_.Default();
+      }
+    }
+    return result;
+  }
+
   // LRM 7.4.5: an invalid-index write lands on the shield's discard target. The
   // declared range `[left:right]` comes from the receiver's static type as a
   // select operand.
@@ -604,6 +623,7 @@ static_assert(RangedSliceable<UnpackedArray<PackedArray>>);
 static_assert(RangedSliceableRef<UnpackedArray<PackedArray>>);
 static_assert(Ownable<UnpackedArray<PackedArray>>);
 static_assert(Defaultable<UnpackedArray<PackedArray>>);
+static_assert(ConditionallyMergeable<UnpackedArray<PackedArray>>);
 static_assert(Sortable<UnpackedArray<PackedArray>>);
 static_assert(NetResolvable<UnpackedArray<PackedArray>>);
 static_assert(NetResolvable<UnpackedArray<UnpackedArray<PackedArray>>>);

@@ -251,33 +251,40 @@ auto ProcessLowerer::Run(const hir::SubroutineDecl& src)
     const mir::TypeId value_type = owner_->TranslateType(hir_var.type);
     const hir::ParamDirection dir = param.direction;
 
-    if (dir == hir::ParamDirection::kOutput) {
-      const mir::ExprId default_init = code.Body().exprs.Add(
-          BuildDefaultValueFromHir(*owner_, body_frame, hir_var.type));
-      const mir::LocalId local = bindings.Declare(
-          BindingOriginId::Procedural(param.var),
-          mir::LocalDecl{.name = hir_var.name, .type = value_type});
-      code.Body().AppendStmt(
-          mir::LocalDeclStmt{.target = local, .init = default_init});
-      MapProceduralVar(param.var, AutomaticVarBinding{.type = value_type});
-      output_pack_vars_.push_back(local);
-      output_pack_types_.push_back(value_type);
-      continue;
-    }
+    const auto reference_type = [&](mir::Mutability mutability) {
+      return owner_->Unit().types.Intern(
+          mir::RefType{.pointee = value_type, .mutability = mutability});
+    };
 
-    // A `ref` / `const ref` formal's parameter type is a `Ref<T>` over the
-    // value type (LRM 13.5.2); every other parameter carries the value type.
-    const bool by_reference = dir == hir::ParamDirection::kRef ||
-                              dir == hir::ParamDirection::kConstRef;
-    const mir::TypeId type =
-        by_reference
-            ? owner_->Unit().types.Intern(
-                  mir::RefType{
-                      .pointee = value_type,
-                      .mutability = dir == hir::ParamDirection::kConstRef
-                                        ? mir::Mutability::kReadOnly
-                                        : mir::Mutability::kMutable})
-            : value_type;
+    // An `output` is not a parameter at all, so its whole shape is settled in
+    // its own arm; the rest differ only in what the parameter carries.
+    mir::TypeId type = value_type;
+    switch (dir) {
+      case hir::ParamDirection::kOutput: {
+        const mir::ExprId default_init = code.Body().exprs.Add(
+            BuildDefaultValueFromHir(*owner_, body_frame, hir_var.type));
+        const mir::LocalId local = bindings.Declare(
+            BindingOriginId::Procedural(param.var),
+            mir::LocalDecl{.name = hir_var.name, .type = value_type});
+        code.Body().AppendStmt(
+            mir::LocalDeclStmt{.target = local, .init = default_init});
+        MapProceduralVar(param.var, AutomaticVarBinding{.type = value_type});
+        output_pack_vars_.push_back(local);
+        output_pack_types_.push_back(value_type);
+        continue;
+      }
+      // A `ref` / `const ref` formal's parameter type is a `Ref<T>` over the
+      // value type (LRM 13.5.2); every other parameter carries the value type.
+      case hir::ParamDirection::kRef:
+        type = reference_type(mir::Mutability::kMutable);
+        break;
+      case hir::ParamDirection::kConstRef:
+        type = reference_type(mir::Mutability::kReadOnly);
+        break;
+      case hir::ParamDirection::kInput:
+      case hir::ParamDirection::kInOut:
+        break;
+    }
     const mir::LocalId mir_var = bindings.Declare(
         BindingOriginId::Procedural(param.var),
         mir::LocalDecl{.name = hir_var.name, .type = type});

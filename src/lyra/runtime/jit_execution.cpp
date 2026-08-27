@@ -837,6 +837,11 @@ auto lyra_rt_packed_casex_equals(const void* lhs, const void* rhs) -> void* {
   return Own(Read<PackedArray>(lhs).CasexEquals(Read<PackedArray>(rhs)));
 }
 
+auto lyra_rt_packed_merge_conditional(const void* lhs, const void* rhs)
+    -> void* {
+  return Own(Read<PackedArray>(lhs).MergeConditional(Read<PackedArray>(rhs)));
+}
+
 auto lyra_rt_packed_reduction_and(const void* value) -> void* {
   return Own(Read<PackedArray>(value).ReductionAnd());
 }

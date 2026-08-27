@@ -1550,6 +1550,104 @@ auto FunctionLowerer::LowerConditional(
   return Load(LocalPlace(slot), result_type);
 }
 
+auto FunctionLowerer::LowerMergingConditional(
+    const mir::Block& block, const mir::MergingConditionalExpr& cond,
+    mir::TypeId type) -> diag::Result<lir::Operand> {
+  auto predicate = LowerExpr(block, cond.condition);
+  if (!predicate) {
+    return std::unexpected(std::move(predicate.error()));
+  }
+  const lir::TypeId result_type = unit_->TranslateType(type);
+  const lir::Operand selects_then =
+      Emit(unit_->MachineBoolType(), lir::BoolCastInstr{.operand = *predicate});
+  // LRM 11.4.7: negating an ambiguous truth value is ambiguous again, so a
+  // predicate that neither reduces to true nor negates to true is the
+  // ambiguous one, and no separate ambiguity query is needed.
+  const lir::Operand negated = Emit(
+      unit_->TranslateType(block.exprs.Get(cond.condition).type),
+      lir::UnaryInstr{
+          .op = lir::UnaryOp::kLogicalNot, .operand = *std::move(predicate)});
+  const lir::Operand selects_else =
+      Emit(unit_->MachineBoolType(), lir::BoolCastInstr{.operand = negated});
+
+  // Each arm is evaluated once, under the guard that names every outcome
+  // needing it: the arm the predicate selects, and both when it selects
+  // neither.
+  const lir::ValueId then_slot = NewPlaceLocal(result_type);
+  const lir::ValueId else_slot = NewPlaceLocal(result_type);
+  auto evaluate_arm = [&](mir::ExprId arm, lir::Operand skip_when,
+                          lir::ValueId slot) -> diag::Result<std::monostate> {
+    const lir::BlockId evaluate_id = NewBlock();
+    const lir::BlockId after_id = NewBlock();
+    Terminate(
+        lir::CondBranchTerm{
+            .condition = std::move(skip_when),
+            .if_true = after_id,
+            .if_false = evaluate_id});
+    SetCurrent(evaluate_id);
+    auto value = LowerExpr(block, arm);
+    if (!value) {
+      return std::unexpected(std::move(value.error()));
+    }
+    Store(LocalPlace(slot), *std::move(value));
+    Terminate(lir::BranchTerm{.target = after_id});
+    SetCurrent(after_id);
+    return std::monostate{};
+  };
+  if (auto done = evaluate_arm(cond.then_value, selects_else, then_slot);
+      !done) {
+    return std::unexpected(std::move(done.error()));
+  }
+  if (auto done = evaluate_arm(cond.else_value, selects_then, else_slot);
+      !done) {
+    return std::unexpected(std::move(done.error()));
+  }
+
+  const lir::ValueId slot = NewPlaceLocal(result_type);
+  const lir::BlockId then_id = NewBlock();
+  const lir::BlockId not_then_id = NewBlock();
+  const lir::BlockId else_id = NewBlock();
+  const lir::BlockId combine_id = NewBlock();
+  const lir::BlockId merge_id = NewBlock();
+  Terminate(
+      lir::CondBranchTerm{
+          .condition = selects_then,
+          .if_true = then_id,
+          .if_false = not_then_id});
+
+  SetCurrent(then_id);
+  Store(LocalPlace(slot), Load(LocalPlace(then_slot), result_type));
+  Terminate(lir::BranchTerm{.target = merge_id});
+
+  SetCurrent(not_then_id);
+  Terminate(
+      lir::CondBranchTerm{
+          .condition = selects_else,
+          .if_true = else_id,
+          .if_false = combine_id});
+
+  SetCurrent(else_id);
+  Store(LocalPlace(slot), Load(LocalPlace(else_slot), result_type));
+  Terminate(lir::BranchTerm{.target = merge_id});
+
+  SetCurrent(combine_id);
+  Store(
+      LocalPlace(slot),
+      Emit(
+          result_type, lir::CallInstr{
+                           .target =
+                               lir::BuiltinTarget{
+                                   .fn = support::BuiltinFn::kMergeConditional,
+                                   .qualifier = std::nullopt},
+                           .args = {
+                               Load(LocalPlace(then_slot), result_type),
+                               Load(LocalPlace(else_slot), result_type)}}));
+  Terminate(lir::BranchTerm{.target = merge_id});
+
+  SetCurrent(merge_id);
+  return Load(LocalPlace(slot), result_type);
+}
+
 auto FunctionLowerer::LowerExpr(const mir::Block& block, mir::ExprId id)
     -> diag::Result<lir::Operand> {
   const mir::Expr& expr = block.exprs.Get(id);
@@ -1851,6 +1949,10 @@ auto FunctionLowerer::LowerExpr(const mir::Block& block, mir::ExprId id)
           },
           [&](const mir::ConditionalExpr& cond) -> diag::Result<lir::Operand> {
             return LowerConditional(block, cond, type);
+          },
+          [&](const mir::MergingConditionalExpr& cond)
+              -> diag::Result<lir::Operand> {
+            return LowerMergingConditional(block, cond, type);
           },
           [&](const mir::MoveExpr& m) -> diag::Result<lir::Operand> {
             // A move is a last-use transfer marker placed at HIR-to-MIR; it

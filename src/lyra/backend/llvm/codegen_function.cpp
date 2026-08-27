@@ -62,7 +62,7 @@ auto CodeGenFunction::Run() -> diag::Result<void> {
   builder_.SetInsertPoint(entry);
   for (const lir::ValueId id : fn_->values.Ids()) {
     const lir::Local& local = fn_->values.Get(id);
-    if (local.kind == lir::LocalKind::kPlace) {
+    if (local.NamesStorage()) {
       values_.emplace(
           id, builder_.CreateAlloca(module_->Types().Map(local.type)));
     }

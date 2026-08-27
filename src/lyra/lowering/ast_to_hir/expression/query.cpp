@@ -575,9 +575,17 @@ auto LowerQueryExpr(
         return LowerDimensionCountQuery(unit_lowerer, frame, call, false, span);
       case QueryKind::kUnpackedDimensions:
         return LowerDimensionCountQuery(unit_lowerer, frame, call, true, span);
-      default:
+      // The rest ask about one dimension of the operand (LRM 20.7), and the
+      // kind names which of its bounds or extents the answer is.
+      case QueryKind::kLeft:
+      case QueryKind::kRight:
+      case QueryKind::kLow:
+      case QueryKind::kHigh:
+      case QueryKind::kIncrement:
+      case QueryKind::kSize:
         return LowerDimensionQuery(lowerer, frame, call, *query, span);
     }
+    throw InternalError("LowerQueryCall: unknown QueryKind");
   }();
   if (!result) {
     return std::unexpected(std::move(result.error()));

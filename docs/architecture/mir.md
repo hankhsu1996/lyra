@@ -369,10 +369,16 @@ the runtime, not through sugar nodes in MIR.
 
 Constructs in the expression set that look like sugar are not. The rvalue conditional form (`?:`) is
 preserved because MIR's `if` is a statement; there is no primitive rvalue branching in MIR's
-expression set that decomposes the ternary. Value-build primitives for aggregate construction
-(concatenation, replication, structured literal, and similar) have no smaller decomposition. Select
-expressions are access primitives. Each of these stays in MIR for the same reason: removing it would
-require expanding into a statement-form rewrite that does not fit the expression context.
+expression set that decomposes the ternary. It is two primitives rather than one because LRM 11.4.11
+reads its predicate's truth as three-valued: a predicate that can be ambiguous selects neither arm
+in that case but evaluates both and combines them, which no two-way select expresses. Which of the
+two a conditional is follows from the predicate's type and is settled at HIR-to-MIR, so the
+selection semantics is the node's own -- a consumer reads it and never derives it from the
+predicate's type, and the plain form keeps the invariant that a condition arrives already reduced to
+what a branch tests. Value-build primitives for aggregate construction (concatenation, replication,
+structured literal, and similar) have no smaller decomposition. Select expressions are access
+primitives. Each of these stays in MIR for the same reason: removing it would require expanding into
+a statement-form rewrite that does not fit the expression context.
 
 A callable is one concept: callable code (a signature, plus a body where the declaration defines it)
 and a callable value (code plus a bound environment). A closure is a callable value with a captured

@@ -61,6 +61,32 @@ Rules:
         (`auto Class::AppendXxx(...) -> Type {` /
         `void Class::AppendXxx(...) {`) definition shapes.
 
+  A013  A closed set of alternatives -- an `enum class` with three or more
+        enumerators declared under include/lyra -- must be consumed by at
+        least one `switch`. A switch is checked by -Werror=switch, so gaining
+        an alternative breaks the build until every consumer says what it
+        means. Reading the set with `==` alone is not consumption: the new
+        alternative silently takes whichever side of the comparison did not
+        name it, which is how a fact the front end resolved gets dropped
+        without a trace. Where several places ask the same question of one
+        set, give the question a name and define that name by one switch.
+        A dump writer's switch does not count -- it renders every alternative
+        by construction and decides nothing.
+        A set nothing dispatches on -- metadata the compiler only prints, an
+        encoding it only emits, an ordered scale consumers compare by
+        position -- is exempt by saying "not a dispatch set" in the comment
+        above it.
+        Scope: every .cpp/.hpp under src/lyra and include/lyra, dump writers
+               excepted.
+
+  A014  Every `DiagCode` enumerator has an entry in the diagnostic registry.
+        The registry is a table rather than a switch because it is read in
+        both directions -- a code to its name and kind, and a name back to a
+        code -- so no `-Werror=switch` holds it complete. A code with no entry
+        compiles, and the lookup then throws while reporting some other
+        diagnostic, in front of a user.
+        Scope: include/lyra/diag/diag_code.hpp, src/lyra/diag/diag_code.cpp.
+
 When a rule fires, the printed message includes a fixed reminder that the
 fix is to change the ownership boundary, NOT to rename the function.
 
@@ -190,7 +216,10 @@ This usually means:
 - diagnostics must be built with diag::Fail (or diag::Make), not
   std::unexpected of a raw Diagnostic;
 - arena allocation belongs at the owner boundary, not inside semantic
-  lowering.
+  lowering;
+- a closed set of alternatives must be consumed by a switch, so the
+  compiler holds every consumer to the whole set -- give the question
+  each comparison asks a name, and define that name by one switch.
 
 Stop and ask the user for architecture direction if the fix is not
 obvious.
@@ -429,6 +458,105 @@ def check_a010(repo_root: Path) -> list[str]:
     return errors
 
 
+# --- Rule A013 -----------------------------------------------------------
+MIN_ALTERNATIVES = 3
+ENUM_DECL_PATTERN = re.compile(r"enum class (\w+)[^{;]*\{(.*?)\}", re.S)
+ENUM_BODY_COMMENT_PATTERN = re.compile(r"//[^\n]*|/\*.*?\*/", re.S)
+ENUMERATOR_PATTERN = re.compile(r"(?:^|,)\s*(k\w+)")
+NOT_A_DISPATCH_SET_MARKER = "not a dispatch set"
+
+
+def enumerators(body: str) -> list[str]:
+    """The names an enum body declares.
+
+    A comment inside the body can hold a word that reads like an enumerator
+    (`kill` in prose about `kKilled`), so comments come out before counting.
+    """
+    return ENUMERATOR_PATTERN.findall(ENUM_BODY_COMMENT_PATTERN.sub("", body))
+
+
+def leading_comment(text: str, start: int) -> str:
+    """The contiguous `//` block immediately above the declaration."""
+    lines = text[:start].splitlines()
+    block = []
+    for line in reversed(lines):
+        stripped = line.strip()
+        if not stripped.startswith("//"):
+            break
+        block.append(stripped)
+    return "\n".join(reversed(block))
+
+
+def switches_on(blob: str, name: str) -> bool:
+    """Whether anything switches on our enum of this name.
+
+    A qualification naming slang is slang's own enum, which may share the
+    name and says nothing about how ours is consumed.
+    """
+    for m in re.finditer(rf"case\s*((?:\w+::)*){re.escape(name)}::", blob):
+        if "slang" not in m.group(1):
+            return True
+    return False
+
+
+def check_a013(repo_root: Path) -> list[str]:
+    declarations = []
+    for path, rel in iter_lyra_files(repo_root):
+        if Path(rel).stem == "dump":
+            continue
+        text = path.read_text()
+        for m in ENUM_DECL_PATTERN.finditer(text):
+            values = enumerators(m.group(2))
+            if len(values) < MIN_ALTERNATIVES:
+                continue
+            if NOT_A_DISPATCH_SET_MARKER in leading_comment(text, m.start()):
+                continue
+            lineno = text.count("\n", 0, m.start()) + 1
+            declarations.append((m.group(1), rel, lineno, len(values)))
+
+    consumers = []
+    for path, rel in iter_lyra_files(repo_root):
+        if Path(rel).stem == "dump":
+            continue
+        consumers.append(path.read_text())
+    blob = "\n".join(consumers)
+
+    errors = []
+    for name, rel, lineno, count in declarations:
+        if switches_on(blob, name):
+            continue
+        errors.append(
+            f"  {rel}:{lineno}: A013 '{name}' has {count} alternatives and "
+            f"nothing switches on it; a comparison lets a new one pass "
+            f"unnoticed"
+        )
+    return errors
+
+
+# --- Rule A014 -----------------------------------------------------------
+DIAG_CODE_HEADER = "include/lyra/diag/diag_code.hpp"
+DIAG_CODE_SOURCE = "src/lyra/diag/diag_code.cpp"
+DIAG_CODE_ENUM_PATTERN = re.compile(r"enum class DiagCode[^{]*\{(.*?)\n\};", re.S)
+DIAG_CODE_ENTRY_PATTERN = re.compile(r"DiagCode::(\w+)\s*,")
+
+
+def check_a014(repo_root: Path) -> list[str]:
+    header = repo_root / DIAG_CODE_HEADER
+    source = repo_root / DIAG_CODE_SOURCE
+    if not header.exists() or not source.exists():
+        return []
+    declared = DIAG_CODE_ENUM_PATTERN.search(header.read_text())
+    if not declared:
+        return [f"  {DIAG_CODE_HEADER}: A014 DiagCode declaration not found"]
+    registered = set(DIAG_CODE_ENTRY_PATTERN.findall(source.read_text()))
+    return [
+        f"  {DIAG_CODE_HEADER}: A014 '{name}' has no registry entry in "
+        f"{DIAG_CODE_SOURCE}"
+        for name in enumerators(declared.group(1))
+        if name not in registered
+    ]
+
+
 # --- Self-tests ----------------------------------------------------------
 
 def run_self_tests() -> bool:
@@ -650,6 +778,69 @@ def run_self_tests() -> bool:
     ok &= expect(om2 is not None and om2.group(1) == "AppendRootStmt",
                  "A012 parser sees `void Class::Append*` definition")
 
+    # A013
+    declared = (
+        "// How the source spelled it, so it is not a dispatch set.\n"
+        "enum class Base : std::uint8_t { kBin, kOct, kDec };\n"
+        "\n"
+        "// LRM 13.5 argument directions.\n"
+        "enum class Direction : std::uint8_t {\n"
+        "  kInput,\n"
+        "  kOutput,\n"
+        "  kRef,\n"
+        "};\n"
+    )
+    found = {m.group(1): m for m in ENUM_DECL_PATTERN.finditer(declared)}
+    ok &= expect(set(found) == {"Base", "Direction"},
+                 "A013 parser sees both declarations")
+    ok &= expect(
+        enumerators(found["Direction"].group(2)) == ["kInput", "kOutput",
+                                                     "kRef"],
+        "A013 parser counts alternatives")
+    ok &= expect(
+        enumerators(
+            "  // Forcibly terminated by `kill`.\n  kKilled,\n  kDone,\n")
+        == ["kKilled", "kDone"],
+        "A013 a comment word that reads like an enumerator is not counted")
+    ok &= expect(
+        NOT_A_DISPATCH_SET_MARKER
+        in leading_comment(declared, found["Base"].start()),
+        "A013 exemption marker read off the comment above")
+    ok &= expect(
+        NOT_A_DISPATCH_SET_MARKER
+        not in leading_comment(declared, found["Direction"].start()),
+        "A013 exemption does not leak to the next declaration")
+    ok &= expect(switches_on("case hir::Direction::kInput:", "Direction"),
+                 "A013 qualified switch counts")
+    ok &= expect(switches_on("case Direction::kInput:", "Direction"),
+                 "A013 unqualified switch counts")
+    ok &= expect(
+        not switches_on("case slang::ast::Direction::In:", "Direction"),
+        "A013 slang's own enum does not count")
+    ok &= expect(
+        not switches_on("if (d == hir::Direction::kInput) {", "Direction"),
+        "A013 a comparison is not consumption")
+
+    # A014
+    codes = DIAG_CODE_ENUM_PATTERN.search(
+        "enum class DiagCode : std::uint32_t {\n"
+        "  kUnsupportedTypeKind,\n"
+        "\n"
+        "  kHostIoError,\n"
+        "};\n"
+    )
+    ok &= expect(
+        codes is not None
+        and enumerators(codes.group(1)) == ["kUnsupportedTypeKind",
+                                            "kHostIoError"],
+        "A014 parser reads the declared codes")
+    ok &= expect(
+        DIAG_CODE_ENTRY_PATTERN.findall(
+            "        DiagCode::kHostIoError,\n"
+            "        DiagCodeInfo{.name = \"host_io_error\"}},\n")
+        == ["kHostIoError"],
+        "A014 parser reads a registry entry")
+
     return ok
 
 
@@ -669,6 +860,8 @@ CHECKS = [
     ("A010 Lower*Data shape violation", check_a010),
     ("A011 Lowered* staging struct in lowering layer", check_a011),
     ("A012 Append* body must be thin storage", check_a012),
+    ("A013 closed alternative set nothing switches on", check_a013),
+    ("A014 DiagCode without a registry entry", check_a014),
 ]
 
 

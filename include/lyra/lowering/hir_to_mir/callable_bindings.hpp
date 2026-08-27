@@ -7,6 +7,7 @@
 #include <variant>
 #include <vector>
 
+#include "lyra/base/internal_error.hpp"
 #include "lyra/base/symbol_table.hpp"
 #include "lyra/lowering/hir_to_mir/binding_origin.hpp"
 #include "lyra/mir/closure_id.hpp"
@@ -33,6 +34,19 @@ enum class CaptureView : std::uint8_t {
   kAlias,
   kOwning,
 };
+
+// Whether the captured field aliases the origin's live storage rather than
+// holding a value of its own.
+[[nodiscard]] constexpr auto CapturesByReference(CaptureView view) -> bool {
+  switch (view) {
+    case CaptureView::kAlias:
+      return true;
+    case CaptureView::kSnapshot:
+    case CaptureView::kOwning:
+      return false;
+  }
+  throw InternalError("hir_to_mir::CapturesByReference: unknown CaptureView");
+}
 
 // What a callable body reads directly: an activation local / parameter of this
 // callable (a `LocalId` in its `locals` arena), or a captured field of the

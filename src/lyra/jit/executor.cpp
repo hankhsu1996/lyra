@@ -227,6 +227,7 @@ void DefineRuntimeAbi(llvm::orc::LLJIT& jit) {
   add("lyra_rt_packed_wildcard_equals", &lyra_rt_packed_wildcard_equals);
   add("lyra_rt_packed_casez_equals", &lyra_rt_packed_casez_equals);
   add("lyra_rt_packed_casex_equals", &lyra_rt_packed_casex_equals);
+  add("lyra_rt_packed_merge_conditional", &lyra_rt_packed_merge_conditional);
   add("lyra_rt_packed_reduction_and", &lyra_rt_packed_reduction_and);
   add("lyra_rt_packed_reduction_or", &lyra_rt_packed_reduction_or);
   add("lyra_rt_packed_reduction_xor", &lyra_rt_packed_reduction_xor);

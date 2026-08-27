@@ -91,6 +91,19 @@ struct ConditionalExpr {
   ExprId else_value;
 };
 
+// LRM 11.4.11 over a predicate whose truth is three-valued. A predicate that
+// settles selects one arm and the other is never evaluated, as above; an
+// ambiguous one selects neither, evaluates both, and combines their results bit
+// by bit -- a bit both arms know and agree on survives, every other bit becomes
+// x (Table 11-20), and a non-integral result takes the Table 7-1 default of its
+// type. `condition` is the predicate value itself, not a reduced one, because
+// reducing it to a machine boolean is what discards the third answer.
+struct MergingConditionalExpr {
+  ExprId condition;
+  ExprId then_value;
+  ExprId else_value;
+};
+
 // `compound_op.has_value()` marks the assignment as `target op= value`;
 // `nullopt` is a simple write. `value` is already typed to match `target`.
 //
@@ -731,14 +744,14 @@ struct ValueProjectionExpr {
 using ExprData = std::variant<
     IntegerLiteral, StringLiteral, TimeLiteral, RealLiteral, NullLiteral,
     MachineIntLiteral, LocalRef, UnaryExpr, BinaryExpr, BoolCastExpr,
-    ConditionalExpr, AssignExpr, IncDecExpr, CallExpr, DerefExpr, AddressOfExpr,
-    MachineArrayDataExpr, MoveExpr, PointerCastExpr, FunctionCastExpr,
-    IntCastExpr, FieldAccessExpr, StructConstructExpr, ClosureExpr, ConcatExpr,
-    ReplicationExpr, ArrayLiteralExpr, TupleExpr, VectorExpr, AwaitExpr,
-    TupleGetExpr, VectorGetExpr, UnionExpr, UnionGetExpr, TaggedExpr,
-    TaggedGetExpr, TaggedGetRefExpr, TaggedIsExpr, ValueProjectionExpr,
-    FunctionRef, StaticConstantRef, StaticPropertyRef, ExternalUnitVariableRef,
-    ExternalStaticPropertyRef>;
+    ConditionalExpr, MergingConditionalExpr, AssignExpr, IncDecExpr, CallExpr,
+    DerefExpr, AddressOfExpr, MachineArrayDataExpr, MoveExpr, PointerCastExpr,
+    FunctionCastExpr, IntCastExpr, FieldAccessExpr, StructConstructExpr,
+    ClosureExpr, ConcatExpr, ReplicationExpr, ArrayLiteralExpr, TupleExpr,
+    VectorExpr, AwaitExpr, TupleGetExpr, VectorGetExpr, UnionExpr, UnionGetExpr,
+    TaggedExpr, TaggedGetExpr, TaggedGetRefExpr, TaggedIsExpr,
+    ValueProjectionExpr, FunctionRef, StaticConstantRef, StaticPropertyRef,
+    ExternalUnitVariableRef, ExternalStaticPropertyRef>;
 
 struct Expr {
   ExprData data;

@@ -9,6 +9,7 @@
 #include <vector>
 
 #include "lyra/base/internal_error.hpp"
+#include "lyra/diag/diag_code.hpp"
 #include "lyra/diag/diagnostic.hpp"
 #include "lyra/hir/binary_op.hpp"
 #include "lyra/hir/conversion.hpp"
@@ -507,8 +508,8 @@ auto LowerHirConditionalExpr(
     if (!clause_or) return std::unexpected(std::move(clause_or.error()));
     clauses.push_back(block.exprs.Add(*std::move(clause_or)));
   }
-  const mir::ExprId cond_id = ReduceToCondition(
-      block, BuildMirLogicalAnd(unit, block, bit1_type, clauses), bit1_type);
+  const mir::ExprId predicate_id =
+      BuildMirLogicalAnd(unit, block, bit1_type, clauses);
 
   auto then_or = lowerer.LowerExpr(lowerer.HirExprs().Get(c.then_value), frame);
   if (!then_or) return std::unexpected(std::move(then_or.error()));
@@ -516,10 +517,27 @@ auto LowerHirConditionalExpr(
   auto else_or = lowerer.LowerExpr(lowerer.HirExprs().Get(c.else_value), frame);
   if (!else_or) return std::unexpected(std::move(else_or.error()));
   const mir::ExprId else_id = block.exprs.Add(*std::move(else_or));
+
+  // LRM 11.4.11 reads the predicate's truth as three-valued, but only a
+  // four-state predicate can reach the third answer. Which of the two the
+  // operator is follows from the predicate's type and is settled here, so what
+  // reaches a backend is one selection semantics per node.
+  const mir::Type& predicate_type =
+      unit.types.Get(block.exprs.Get(predicate_id).type);
+  if (predicate_type.IsIntegralPacked() &&
+      predicate_type.AsIntegralPacked().IsFourState()) {
+    return mir::Expr{
+        .data =
+            mir::MergingConditionalExpr{
+                .condition = predicate_id,
+                .then_value = then_id,
+                .else_value = else_id},
+        .type = result_type};
+  }
   return mir::Expr{
       .data =
           mir::ConditionalExpr{
-              .condition = cond_id,
+              .condition = ReduceToCondition(block, predicate_id, bit1_type),
               .then_value = then_id,
               .else_value = else_id},
       .type = result_type};
@@ -612,15 +630,40 @@ template <ExprLowerer Lowerer>
 auto LowerHirConversionExpr(
     Lowerer& lowerer, WalkFrame frame, const hir::ConversionExpr& cv,
     mir::TypeId result_type) -> diag::Result<mir::Expr> {
-  auto operand_or =
-      lowerer.LowerExpr(lowerer.HirExprs().Get(cv.operand), frame);
+  const hir::Expr& operand = lowerer.HirExprs().Get(cv.operand);
+  auto operand_or = lowerer.LowerExpr(operand, frame);
   if (!operand_or) {
     return std::unexpected(std::move(operand_or.error()));
   }
-  const mir::ExprId operand_id =
-      frame.current_block->exprs.Add(*std::move(operand_or));
-  return BuildValueConversion(
-      lowerer.Owner().Unit(), *frame.current_block, operand_id, result_type);
+  const auto& unit = lowerer.Owner().Unit();
+  mir::Block& block = *frame.current_block;
+  const mir::ExprId operand_id = block.exprs.Add(*std::move(operand_or));
+  switch (cv.kind) {
+    case hir::ConversionKind::kPropagated:
+      return BuildPropagatedConversion(unit, block, operand_id, result_type);
+    // An assignment extends its right-hand side by that side's own signedness
+    // (LRM 11.8.3), and a cast converts the operand to the casting type without
+    // restating its signedness first (LRM 6.24.1), so both take the widening
+    // every non-propagated context takes.
+    case hir::ConversionKind::kImplicit:
+    case hir::ConversionKind::kExplicit:
+      return BuildValueConversion(unit, block, operand_id, result_type);
+    // LRM 6.24.3 reinterprets the operand as a bit stream and repacks it into
+    // the casting type, which is a different operation from reshaping one
+    // value's representation into another's -- the operand and the result need
+    // not even be the same kind of value.
+    case hir::ConversionKind::kBitstreamCast:
+      return diag::Fail(
+          operand.span, diag::DiagCode::kUnsupportedConversionForm,
+          "a bitstream cast is not yet supported");
+    // LRM 11.4.14 streaming operators, which slang marks as a conversion when
+    // one feeds an assignment.
+    case hir::ConversionKind::kStreamingConcat:
+      return diag::Fail(
+          operand.span, diag::DiagCode::kUnsupportedConversionForm,
+          "the streaming pack and unpack operators are not yet supported");
+  }
+  throw InternalError("LowerHirConversionExpr: unknown hir::ConversionKind");
 }
 
 // One concrete instantiation per pass class. The handler templates are defined

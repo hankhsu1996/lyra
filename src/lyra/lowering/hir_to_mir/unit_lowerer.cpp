@@ -341,8 +341,7 @@ auto UnitLowerer::RunPackage() -> diag::Result<mir::CompilationUnit> {
     unit_.foreign_surface.push_back(
         mir::ForeignSymbol{
             .linkage = entry.linkage,
-            .signature = entry.signature,
-            .definition = mir::ForeignDefinition::kUnitSymbol});
+            .definition = mir::UnitSymbolDefinition{}});
     unit_.callables.Add(
         mir::CallableDecl{
             .name = entry.linkage.foreign_name,

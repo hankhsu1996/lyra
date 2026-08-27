@@ -52,6 +52,7 @@
 #include "lyra/value/array_case_equal.hpp"       // IWYU pragma: keep
 #include "lyra/value/associative_array.hpp"      // IWYU pragma: keep
 #include "lyra/value/chandle.hpp"                // IWYU pragma: keep
+#include "lyra/value/conditional_select.hpp"     // IWYU pragma: keep
 #include "lyra/value/dpi_canonical.hpp"          // IWYU pragma: keep
 #include "lyra/value/dpi_open_array.hpp"         // IWYU pragma: keep
 #include "lyra/value/dynamic_array.hpp"          // IWYU pragma: keep
