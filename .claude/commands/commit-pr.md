@@ -1,5 +1,5 @@
 ---
-description: Create a commit and PR with auto-merge enabled
+description: Create a commit and open a pull request for review
 allowed-tools: Bash(git status:*), Bash(git branch:*)
 ---
 
@@ -8,8 +8,8 @@ allowed-tools: Bash(git status:*), Bash(git branch:*)
 Do `/commit`, then `/pr`, in that order.
 
 **This file holds nothing that those two hold.** The branch gate, the pre-commit checks and the
-commit message format live in `/commit`; the PR title, description and the push/rebase/auto-merge
-sequence live in `/pr`. Keeping a second copy here means keeping two copies correct, and the copies
+commit message format live in `/commit`; the PR title, description and the push / rebase sequence
+live in `/pr`. Keeping a second copy here means keeping two copies correct, and the copies
 lose. Read the two skills; do not restate them here, and do not answer from memory.
 
 ## Context
@@ -24,8 +24,7 @@ it happen. Both steps are **tool calls, not references**:
 
 1. Call the Skill tool with `commit`. Follow it in full: branch gate, build and test, format, lint
    and policy, staging, commit message. Do not start staging before its text is in context.
-2. Call the Skill tool with `pr`. Follow it in full: rebase, push, PR body, auto-merge, return the
-   URL.
+2. Call the Skill tool with `pr`. Follow it in full: rebase, push, PR body, return the URL.
 
 If you find yourself writing a commit message or a PR body without having invoked both, stop -- you
 are working from memory. This file deliberately carries no fallback copy; an incomplete run is the
