@@ -78,9 +78,9 @@ class DynamicArray {
       : shield_(std::move(element_default)), data_(init.begin(), init.end()) {
   }
 
-  // LRM 10.9.1 `'{count{...}}` replicated pattern: `count` tilings of `unit`.
-  // Built from the repeat unit and a count so the value costs O(unit), not
-  // O(unit * count); mirrors `UnpackedArray`'s tiling ctor.
+  // LRM 10.9.1 `'{count{...}}` pattern: `count` replications of `unit`.
+  // Taking the repeat unit and the count separately keeps the value O(unit)
+  // to build rather than O(unit * count).
   DynamicArray(T element_default, std::span<const T> unit, std::size_t count)
       : shield_(std::move(element_default)) {
     data_.reserve(unit.size() * count);

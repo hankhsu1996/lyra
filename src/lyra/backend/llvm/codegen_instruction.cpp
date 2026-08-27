@@ -337,6 +337,10 @@ auto CodeGenFunction::LowerCall(
             &module_->Unit().types.Get(construct->result).data)) {
       return LowerErasedDynamicArrayConstruct(call, *dynamic_array);
     }
+    if (const auto* unpacked_array = std::get_if<lir::UnpackedArrayType>(
+            &module_->Unit().types.Get(construct->result).data)) {
+      return LowerErasedUnpackedArrayConstruct(call, *unpacked_array);
+    }
     if (llvm::Value* definition = ConstructDefinitionArg(construct->result)) {
       args.push_back(definition);
     }
@@ -483,7 +487,13 @@ auto CodeGenFunction::LowerErasedDynamicArrayConstruct(
     return builder_.CreateCall(
         module_->Runtime().MakeDynamicArrayDefault(), {*prototype});
   }
-  if (args.size() == 3) {
+  // The second argument is either the literal's storage or an element count,
+  // which its own type says: storage is a machine array, a count is not. That
+  // is what tells a replicated pattern (prototype, unit, count) apart from
+  // `new[N](src)` (size, prototype, source), which are both three operands.
+  const bool from_literal = std::holds_alternative<lir::MachineArrayType>(
+      module_->Unit().types.Get(OperandType(args[1])).data);
+  if (args.size() == 3 && !from_literal) {
     auto size = LowerOperand(args[0]);
     if (!size) {
       return std::unexpected(std::move(size.error()));
@@ -500,10 +510,7 @@ auto CodeGenFunction::LowerErasedDynamicArrayConstruct(
         module_->Runtime().MakeDynamicArrayNewCopy(),
         {*size, *prototype, *source});
   }
-  // The second argument is either the literal's storage or an element count,
-  // which its own type says: storage is a machine array, a count is not.
-  if (std::holds_alternative<lir::MachineArrayType>(
-          module_->Unit().types.Get(OperandType(args[1])).data)) {
+  if (from_literal) {
     auto prototype = box(args[0]);
     if (!prototype) {
       return std::unexpected(std::move(prototype.error()));
@@ -514,9 +521,20 @@ auto CodeGenFunction::LowerErasedDynamicArrayConstruct(
     if (!elements) {
       return std::unexpected(std::move(elements.error()));
     }
+    // An enumerated element list omits the count, being the unit repeated
+    // once, so both source forms reach one entry.
+    llvm::Value* count =
+        llvm::ConstantInt::get(llvm::Type::getInt64Ty(module_->Context()), 1);
+    if (args.size() > 2) {
+      auto given = LowerOperand(args[2]);
+      if (!given) {
+        return std::unexpected(std::move(given.error()));
+      }
+      count = *given;
+    }
     return builder_.CreateCall(
         module_->Runtime().MakeDynamicArrayFromLiteral(*element_domain),
-        {*prototype, *elements});
+        {*prototype, *elements, count});
   }
   auto size = LowerOperand(args[0]);
   if (!size) {
@@ -528,6 +546,46 @@ auto CodeGenFunction::LowerErasedDynamicArrayConstruct(
   }
   return builder_.CreateCall(
       module_->Runtime().MakeDynamicArrayNew(), {*size, *prototype});
+}
+
+// A fixed-size array is built from an element default, a repeat unit, and how
+// many times that unit repeats (LRM 10.9.1; LRM Table 7-1 for the all-default
+// form). An enumerated element list omits the count, being the unit repeated
+// once, so the two source forms are the same operation and reach one entry.
+// The declared range is not among the operands -- the coordinate system
+// belongs to the receiver's static type and reaches a select as its own
+// operand, never the payload.
+auto CodeGenFunction::LowerErasedUnpackedArrayConstruct(
+    const lir::CallInstr& call, const lir::UnpackedArrayType& type)
+    -> diag::Result<llvm::Value*> {
+  auto element_domain = DomainOf(type.element_type);
+  if (!element_domain) {
+    return std::unexpected(std::move(element_domain.error()));
+  }
+  auto prototype = LowerOperand(call.args.at(0));
+  if (!prototype) {
+    return std::unexpected(std::move(prototype.error()));
+  }
+  llvm::Value* boxed = builder_.CreateCall(
+      module_->Runtime().ValueBox(*element_domain), {*prototype});
+  // The elements cross as they are; the array erases them itself, and which
+  // domain they are in rides the entry name.
+  auto unit = LowerOperand(call.args.at(1));
+  if (!unit) {
+    return std::unexpected(std::move(unit.error()));
+  }
+  llvm::Value* count =
+      llvm::ConstantInt::get(llvm::Type::getInt64Ty(module_->Context()), 1);
+  if (call.args.size() > 2) {
+    auto given = LowerOperand(call.args[2]);
+    if (!given) {
+      return std::unexpected(std::move(given.error()));
+    }
+    count = *given;
+  }
+  return builder_.CreateCall(
+      module_->Runtime().MakeUnpackedArrayFromLiteral(*element_domain),
+      {boxed, *unit, count});
 }
 
 // A product value is assembled by boxing each component into the erased

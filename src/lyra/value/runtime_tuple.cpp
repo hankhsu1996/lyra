@@ -97,4 +97,21 @@ auto RuntimeTuple::IsUnknown() const -> PackedArray {
   return PackedArray::Bit(HasUnknown());
 }
 
+auto RuntimeTuple::BitstreamWidth() const -> PackedArray {
+  PackedArray total = PackedArray::Int(0);
+  for (const RuntimeValue& component : components_) {
+    total = total + RuntimeValueBitstreamWidth(component);
+  }
+  return total;
+}
+
+auto RuntimeTuple::CountBits(const PackedArray& control_bits) const
+    -> PackedArray {
+  PackedArray total = PackedArray::Int(0);
+  for (const RuntimeValue& component : components_) {
+    total = total + RuntimeValueCountBits(component, control_bits);
+  }
+  return total;
+}
+
 }  // namespace lyra::value

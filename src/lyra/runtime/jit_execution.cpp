@@ -32,6 +32,7 @@
 #include "lyra/value/real.hpp"
 #include "lyra/value/runtime_dynamic_array.hpp"
 #include "lyra/value/runtime_tuple.hpp"
+#include "lyra/value/runtime_unpacked_array.hpp"
 #include "lyra/value/runtime_value.hpp"
 #include "lyra/value/string.hpp"
 
@@ -149,24 +150,83 @@ auto ElementValue<value::Chandle>(void* handle) -> value::RuntimeValue {
   return value::RuntimeValue{value::Chandle{handle}};
 }
 
+// Copies one element out across the opaque-handle boundary as a handle of the
+// element's own domain. A chandle's handle is the pointer it carries rather
+// than a pointer to a runtime object, the same divergence the box family has.
+auto ElementHandle(const value::RuntimeValue& element) -> void* {
+  return std::visit(
+      [](const auto& value) -> void* {
+        using T = std::decay_t<decltype(value)>;
+        if constexpr (std::is_same_v<T, value::Chandle>) {
+          return value.Ptr();
+        } else {
+          return Own(value);
+        }
+      },
+      element.value);
+}
+
+// Erases an incoming element handle into the domain the container's element
+// default names, which is where a container reads the target domain from.
+auto ElementFrom(const value::RuntimeValue& element_default, void* value)
+    -> value::RuntimeValue {
+  return std::visit(
+      [&](const auto& prototype) -> value::RuntimeValue {
+        using T = std::decay_t<decltype(prototype)>;
+        if constexpr (std::is_same_v<T, value::Chandle>) {
+          return value::RuntimeValue{value::Chandle{value}};
+        } else {
+          return value::RuntimeValue{Read<T>(value)};
+        }
+      },
+      element_default.value);
+}
+
 // Collects a literal's element handles into a dynamic array, erasing each into
 // the value domain `T` names. A dynamic array holds its contents erased, so the
 // erasure is the container's own -- the caller hands over a literal's storage
 // without knowing what representation the container keeps inside. The domain
 // rides the entry name, as it does for the box family below, so no enumerator
 // ordinal crosses the generated boundary.
+// A literal's element handles, erased into the value domain `T` names and
+// repeated `count` times (LRM 10.9.1). A container holds its contents erased,
+// so the erasure is the container's own -- the caller hands over a literal's
+// storage without knowing what representation the container keeps inside. The
+// domain rides the entry name, as it does for the box family below, so no
+// enumerator ordinal crosses the generated boundary. An enumerated element list
+// is this with a count of one, which is why a uniform array, a replicated
+// pattern and a plain list all reach one entry.
 template <class T>
-auto DynArrayFromLiteral(const void* prototype, LyraSpan elements) -> void* {
+auto ReplicateLiteral(LyraSpan unit, std::int64_t count)
+    -> std::vector<value::RuntimeValue> {
   std::span<void* const> handles(
-      static_cast<void* const*>(elements.data), elements.count);
+      static_cast<void* const*>(unit.data), unit.count);
   std::vector<value::RuntimeValue> collected;
-  collected.reserve(elements.count);
-  for (void* handle : handles) {
-    collected.push_back(ElementValue<T>(handle));
+  collected.reserve(unit.count * static_cast<std::size_t>(count));
+  for (std::int64_t i = 0; i < count; ++i) {
+    for (void* handle : handles) {
+      collected.push_back(ElementValue<T>(handle));
+    }
   }
+  return collected;
+}
+
+template <class T>
+auto DynArrayFromLiteral(
+    const void* prototype, LyraSpan unit, std::int64_t count) -> void* {
   return Own(
       value::RuntimeDynamicArray(
-          Read<value::RuntimeValue>(prototype), std::move(collected)));
+          Read<value::RuntimeValue>(prototype),
+          ReplicateLiteral<T>(unit, count)));
+}
+
+template <class T>
+auto UnpackedArrayFromLiteral(
+    const void* prototype, LyraSpan unit, std::int64_t count) -> void* {
+  return Own(
+      value::RuntimeUnpackedArray(
+          Read<value::RuntimeValue>(prototype), ReplicateLiteral<T>(unit, 1),
+          static_cast<std::size_t>(count)));
 }
 
 }  // namespace
@@ -203,6 +263,7 @@ using lyra::value::PrintValueItem;
 using lyra::value::Real;
 using lyra::value::RuntimeDynamicArray;
 using lyra::value::RuntimeTuple;
+using lyra::value::RuntimeUnpackedArray;
 using lyra::value::RuntimeValue;
 using lyra::value::ShortReal;
 using lyra::value::String;
@@ -1175,6 +1236,10 @@ auto lyra_rt_value_box_dynarray(const void* value) -> void* {
   return Own(RuntimeValue{Read<RuntimeDynamicArray>(value)});
 }
 
+auto lyra_rt_value_box_unpackedarray(const void* value) -> void* {
+  return Own(RuntimeValue{Read<RuntimeUnpackedArray>(value)});
+}
+
 auto lyra_rt_tuple_make(LyraSpan components) -> void* {
   std::span<RuntimeValue*> handles(
       static_cast<RuntimeValue**>(components.data), components.count);
@@ -1282,63 +1347,59 @@ auto lyra_rt_dynarray_new_copy(
 }
 
 auto lyra_rt_dynarray_from_literal_packed(
-    const void* prototype, LyraSpan elements) -> void* {
+    const void* prototype, LyraSpan unit, std::int64_t count) -> void* {
   return lyra::runtime::DynArrayFromLiteral<lyra::value::PackedArray>(
-      prototype, elements);
+      prototype, unit, count);
 }
 
 auto lyra_rt_dynarray_from_literal_string(
-    const void* prototype, LyraSpan elements) -> void* {
+    const void* prototype, LyraSpan unit, std::int64_t count) -> void* {
   return lyra::runtime::DynArrayFromLiteral<lyra::value::String>(
-      prototype, elements);
+      prototype, unit, count);
 }
 
 auto lyra_rt_dynarray_from_literal_real(
-    const void* prototype, LyraSpan elements) -> void* {
+    const void* prototype, LyraSpan unit, std::int64_t count) -> void* {
   return lyra::runtime::DynArrayFromLiteral<lyra::value::Real>(
-      prototype, elements);
+      prototype, unit, count);
 }
 
 auto lyra_rt_dynarray_from_literal_shortreal(
-    const void* prototype, LyraSpan elements) -> void* {
+    const void* prototype, LyraSpan unit, std::int64_t count) -> void* {
   return lyra::runtime::DynArrayFromLiteral<lyra::value::ShortReal>(
-      prototype, elements);
+      prototype, unit, count);
 }
 
 auto lyra_rt_dynarray_from_literal_chandle(
-    const void* prototype, LyraSpan elements) -> void* {
+    const void* prototype, LyraSpan unit, std::int64_t count) -> void* {
   return lyra::runtime::DynArrayFromLiteral<lyra::value::Chandle>(
-      prototype, elements);
+      prototype, unit, count);
 }
 
 auto lyra_rt_dynarray_from_literal_tuple(
-    const void* prototype, LyraSpan elements) -> void* {
+    const void* prototype, LyraSpan unit, std::int64_t count) -> void* {
   return lyra::runtime::DynArrayFromLiteral<lyra::value::RuntimeTuple>(
-      prototype, elements);
+      prototype, unit, count);
 }
 
 auto lyra_rt_dynarray_from_literal_dynarray(
-    const void* prototype, LyraSpan elements) -> void* {
+    const void* prototype, LyraSpan unit, std::int64_t count) -> void* {
   return lyra::runtime::DynArrayFromLiteral<lyra::value::RuntimeDynamicArray>(
-      prototype, elements);
+      prototype, unit, count);
+}
+
+auto lyra_rt_dynarray_from_literal_unpackedarray(
+    const void* prototype, LyraSpan unit, std::int64_t count) -> void* {
+  return lyra::runtime::DynArrayFromLiteral<lyra::value::RuntimeUnpackedArray>(
+      prototype, unit, count);
 }
 
 // Reads element `index`, copying it out across the opaque-handle boundary as a
 // handle of the element's own domain (a chandle's handle is the pointer it
 // carries). An out-of-range index reads the element default (LRM 7.4.5).
 auto lyra_rt_dynarray_element(const void* array, const void* index) -> void* {
-  const RuntimeValue& element =
-      Read<RuntimeDynamicArray>(array).Element(Read<PackedArray>(index));
-  return std::visit(
-      [](const auto& value) -> void* {
-        using T = std::decay_t<decltype(value)>;
-        if constexpr (std::is_same_v<T, Chandle>) {
-          return value.Ptr();
-        } else {
-          return Own(value);
-        }
-      },
-      element.value);
+  return lyra::runtime::ElementHandle(
+      Read<RuntimeDynamicArray>(array).Element(Read<PackedArray>(index)));
 }
 
 // The functional element write (LRM 7.4.6): yields a new array with element
@@ -1347,17 +1408,9 @@ auto lyra_rt_dynarray_element(const void* array, const void* index) -> void* {
 auto lyra_rt_dynarray_with_element(
     const void* array, const void* index, void* value) -> void* {
   const auto& source = Read<RuntimeDynamicArray>(array);
-  RuntimeValue boxed = std::visit(
-      [&](const auto& prototype) -> RuntimeValue {
-        using T = std::decay_t<decltype(prototype)>;
-        if constexpr (std::is_same_v<T, Chandle>) {
-          return RuntimeValue{Chandle{value}};
-        } else {
-          return RuntimeValue{Read<T>(value)};
-        }
-      },
-      source.ElementDefault().value);
-  return Own(source.WithElement(Read<PackedArray>(index), std::move(boxed)));
+  return Own(source.WithElement(
+      Read<PackedArray>(index),
+      lyra::runtime::ElementFrom(source.ElementDefault(), value)));
 }
 
 auto lyra_rt_dynarray_delete(const void* array) -> void* {
@@ -1409,6 +1462,180 @@ void lyra_rt_activation_frame_store_dynarray(void* cell, const void* value) {
 auto lyra_rt_activation_frame_load_dynarray(const void* cell) -> void* {
   return Own(
       static_cast<const ActivationValueCell<RuntimeDynamicArray>*>(cell)
+          ->Get());
+}
+
+auto lyra_rt_unpackedarray_from_literal_packed(
+    const void* prototype, LyraSpan unit, std::int64_t count) -> void* {
+  return lyra::runtime::UnpackedArrayFromLiteral<lyra::value::PackedArray>(
+      prototype, unit, count);
+}
+
+auto lyra_rt_unpackedarray_from_literal_string(
+    const void* prototype, LyraSpan unit, std::int64_t count) -> void* {
+  return lyra::runtime::UnpackedArrayFromLiteral<lyra::value::String>(
+      prototype, unit, count);
+}
+
+auto lyra_rt_unpackedarray_from_literal_real(
+    const void* prototype, LyraSpan unit, std::int64_t count) -> void* {
+  return lyra::runtime::UnpackedArrayFromLiteral<lyra::value::Real>(
+      prototype, unit, count);
+}
+
+auto lyra_rt_unpackedarray_from_literal_shortreal(
+    const void* prototype, LyraSpan unit, std::int64_t count) -> void* {
+  return lyra::runtime::UnpackedArrayFromLiteral<lyra::value::ShortReal>(
+      prototype, unit, count);
+}
+
+auto lyra_rt_unpackedarray_from_literal_chandle(
+    const void* prototype, LyraSpan unit, std::int64_t count) -> void* {
+  return lyra::runtime::UnpackedArrayFromLiteral<lyra::value::Chandle>(
+      prototype, unit, count);
+}
+
+auto lyra_rt_unpackedarray_from_literal_tuple(
+    const void* prototype, LyraSpan unit, std::int64_t count) -> void* {
+  return lyra::runtime::UnpackedArrayFromLiteral<lyra::value::RuntimeTuple>(
+      prototype, unit, count);
+}
+
+auto lyra_rt_unpackedarray_from_literal_dynarray(
+    const void* prototype, LyraSpan unit, std::int64_t count) -> void* {
+  return lyra::runtime::UnpackedArrayFromLiteral<
+      lyra::value::RuntimeDynamicArray>(prototype, unit, count);
+}
+
+auto lyra_rt_unpackedarray_from_literal_unpackedarray(
+    const void* prototype, LyraSpan unit, std::int64_t count) -> void* {
+  return lyra::runtime::UnpackedArrayFromLiteral<
+      lyra::value::RuntimeUnpackedArray>(prototype, unit, count);
+}
+
+// Reads the element the source index names, resolved against the declared range
+// `[left:right]` the receiver's static type supplies. An index the range does
+// not name reads the element default (LRM 7.4.5).
+auto lyra_rt_unpackedarray_element(
+    const void* array, const void* index, const void* left, const void* right)
+    -> void* {
+  return lyra::runtime::ElementHandle(
+      Read<RuntimeUnpackedArray>(array).Element(
+          Read<PackedArray>(index), Read<PackedArray>(left),
+          Read<PackedArray>(right)));
+}
+
+// The functional element write (LRM 7.4.5): yields a new array with the named
+// element replaced, and the original unchanged when the range does not name it.
+auto lyra_rt_unpackedarray_with_element(
+    const void* array, const void* index, const void* left, const void* right,
+    void* value) -> void* {
+  const auto& source = Read<RuntimeUnpackedArray>(array);
+  return Own(source.WithElement(
+      Read<PackedArray>(index), Read<PackedArray>(left),
+      Read<PackedArray>(right),
+      lyra::runtime::ElementFrom(source.ElementDefault(), value)));
+}
+
+auto lyra_rt_packed_from_string(const void* text, const void* prototype)
+    -> void* {
+  return Own(
+      PackedArray::FromString(
+          Read<String>(text), Read<PackedArray>(prototype)));
+}
+
+auto lyra_rt_unpackedarray_from_string(
+    const void* text, const void* prototype, const void* count) -> void* {
+  return Own(
+      RuntimeUnpackedArray::FromString(
+          Read<String>(text), Read<PackedArray>(prototype),
+          Read<PackedArray>(count)));
+}
+
+auto lyra_rt_unpackedarray_count_bits(
+    const void* value, const void* control_bits) -> void* {
+  return Own(
+      Read<RuntimeUnpackedArray>(value).CountBits(
+          Read<PackedArray>(control_bits)));
+}
+
+auto lyra_rt_tuple_count_bits(const void* value, const void* control_bits)
+    -> void* {
+  return Own(
+      Read<RuntimeTuple>(value).CountBits(Read<PackedArray>(control_bits)));
+}
+
+auto lyra_rt_dynarray_count_bits(const void* value, const void* control_bits)
+    -> void* {
+  return Own(
+      Read<RuntimeDynamicArray>(value).CountBits(
+          Read<PackedArray>(control_bits)));
+}
+
+auto lyra_rt_string_count_bits(const void* value, const void* control_bits)
+    -> void* {
+  return Own(Read<String>(value).CountBits(Read<PackedArray>(control_bits)));
+}
+
+auto lyra_rt_unpackedarray_size(const void* array) -> void* {
+  return Own(Read<RuntimeUnpackedArray>(array).Size());
+}
+
+auto lyra_rt_unpackedarray_slice(
+    const void* array, const void* a, const void* b, const void* form,
+    const void* left, const void* right) -> void* {
+  return Own(
+      Read<RuntimeUnpackedArray>(array).Slice(
+          Read<PackedArray>(a), Read<PackedArray>(b), Read<PackedArray>(form),
+          Read<PackedArray>(left), Read<PackedArray>(right)));
+}
+
+auto lyra_rt_unpackedarray_eq(const void* lhs, const void* rhs) -> void* {
+  return Own(
+      Read<RuntimeUnpackedArray>(lhs) == Read<RuntimeUnpackedArray>(rhs));
+}
+
+auto lyra_rt_unpackedarray_ne(const void* lhs, const void* rhs) -> void* {
+  return Own(
+      Read<RuntimeUnpackedArray>(lhs) != Read<RuntimeUnpackedArray>(rhs));
+}
+
+auto lyra_rt_unpackedarray_case_equal(const void* lhs, const void* rhs)
+    -> void* {
+  return Own(
+      Read<RuntimeUnpackedArray>(lhs).CaseEqual(
+          Read<RuntimeUnpackedArray>(rhs)));
+}
+
+auto lyra_rt_cell_unpackedarray_get(void* cell) -> void* {
+  return Own(static_cast<Var<RuntimeUnpackedArray>*>(cell)->Get());
+}
+
+void lyra_rt_cell_unpackedarray_initialize(void* cell, const void* prototype) {
+  static_cast<Var<RuntimeUnpackedArray>*>(cell)->Initialize(
+      Read<RuntimeUnpackedArray>(prototype));
+}
+
+void lyra_rt_cell_unpackedarray_set(void* cell, const void* value) {
+  static_cast<Var<RuntimeUnpackedArray>*>(cell)->Set(
+      lyra::runtime::current_runtime(), Read<RuntimeUnpackedArray>(value));
+}
+
+auto lyra_rt_activation_frame_alloc_unpackedarray() -> void* {
+  return GeneratedCallScope::Current()
+      .ActivationFrame()
+      .New<ActivationValueCell<RuntimeUnpackedArray>>();
+}
+
+void lyra_rt_activation_frame_store_unpackedarray(
+    void* cell, const void* value) {
+  static_cast<ActivationValueCell<RuntimeUnpackedArray>*>(cell)->Store(
+      Read<RuntimeUnpackedArray>(value));
+}
+
+auto lyra_rt_activation_frame_load_unpackedarray(const void* cell) -> void* {
+  return Own(
+      static_cast<const ActivationValueCell<RuntimeUnpackedArray>*>(cell)
           ->Get());
 }
 }

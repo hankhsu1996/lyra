@@ -402,19 +402,19 @@ auto lyra_rt_dynarray_new(const void* size, const void* prototype) -> void*;
 auto lyra_rt_dynarray_new_copy(
     const void* size, const void* prototype, const void* src) -> void*;
 auto lyra_rt_dynarray_from_literal_packed(
-    const void* prototype, LyraSpan elements) -> void*;
+    const void* prototype, LyraSpan unit, std::int64_t count) -> void*;
 auto lyra_rt_dynarray_from_literal_string(
-    const void* prototype, LyraSpan elements) -> void*;
+    const void* prototype, LyraSpan unit, std::int64_t count) -> void*;
 auto lyra_rt_dynarray_from_literal_real(
-    const void* prototype, LyraSpan elements) -> void*;
+    const void* prototype, LyraSpan unit, std::int64_t count) -> void*;
 auto lyra_rt_dynarray_from_literal_shortreal(
-    const void* prototype, LyraSpan elements) -> void*;
+    const void* prototype, LyraSpan unit, std::int64_t count) -> void*;
 auto lyra_rt_dynarray_from_literal_chandle(
-    const void* prototype, LyraSpan elements) -> void*;
+    const void* prototype, LyraSpan unit, std::int64_t count) -> void*;
 auto lyra_rt_dynarray_from_literal_tuple(
-    const void* prototype, LyraSpan elements) -> void*;
+    const void* prototype, LyraSpan unit, std::int64_t count) -> void*;
 auto lyra_rt_dynarray_from_literal_dynarray(
-    const void* prototype, LyraSpan elements) -> void*;
+    const void* prototype, LyraSpan unit, std::int64_t count) -> void*;
 auto lyra_rt_dynarray_element(const void* array, const void* index) -> void*;
 auto lyra_rt_dynarray_with_element(
     const void* array, const void* index, void* value) -> void*;
@@ -429,6 +429,71 @@ void lyra_rt_cell_dynarray_set(void* cell, const void* value);
 auto lyra_rt_activation_frame_alloc_dynarray() -> void*;
 void lyra_rt_activation_frame_store_dynarray(void* cell, const void* value);
 auto lyra_rt_activation_frame_load_dynarray(const void* cell) -> void*;
+
+// A fixed-size unpacked array (LRM 7.4.2). Its payload is ordinal-only: the
+// declared range is the receiver's static type's, so every coordinate-consuming
+// entry takes it as a `[left:right]` operand pair rather than reading it off
+// the value.
+auto lyra_rt_dynarray_from_literal_unpackedarray(
+    const void* prototype, LyraSpan unit, std::int64_t count) -> void*;
+auto lyra_rt_unpackedarray_from_literal_packed(
+    const void* prototype, LyraSpan unit, std::int64_t count) -> void*;
+auto lyra_rt_unpackedarray_from_literal_string(
+    const void* prototype, LyraSpan unit, std::int64_t count) -> void*;
+auto lyra_rt_unpackedarray_from_literal_real(
+    const void* prototype, LyraSpan unit, std::int64_t count) -> void*;
+auto lyra_rt_unpackedarray_from_literal_shortreal(
+    const void* prototype, LyraSpan unit, std::int64_t count) -> void*;
+auto lyra_rt_unpackedarray_from_literal_chandle(
+    const void* prototype, LyraSpan unit, std::int64_t count) -> void*;
+auto lyra_rt_unpackedarray_from_literal_tuple(
+    const void* prototype, LyraSpan unit, std::int64_t count) -> void*;
+auto lyra_rt_unpackedarray_from_literal_dynarray(
+    const void* prototype, LyraSpan unit, std::int64_t count) -> void*;
+auto lyra_rt_unpackedarray_from_literal_unpackedarray(
+    const void* prototype, LyraSpan unit, std::int64_t count) -> void*;
+auto lyra_rt_unpackedarray_element(
+    const void* array, const void* index, const void* left, const void* right)
+    -> void*;
+auto lyra_rt_unpackedarray_with_element(
+    const void* array, const void* index, const void* left, const void* right,
+    void* value) -> void*;
+auto lyra_rt_unpackedarray_slice(
+    const void* array, const void* a, const void* b, const void* form,
+    const void* left, const void* right) -> void*;
+auto lyra_rt_unpackedarray_size(const void* array) -> void*;
+auto lyra_rt_unpackedarray_eq(const void* lhs, const void* rhs) -> void*;
+auto lyra_rt_unpackedarray_ne(const void* lhs, const void* rhs) -> void*;
+auto lyra_rt_unpackedarray_case_equal(const void* lhs, const void* rhs)
+    -> void*;
+auto lyra_rt_value_box_unpackedarray(const void* value) -> void*;
+auto lyra_rt_cell_unpackedarray_get(void* cell) -> void*;
+void lyra_rt_cell_unpackedarray_initialize(void* cell, const void* prototype);
+void lyra_rt_cell_unpackedarray_set(void* cell, const void* value);
+auto lyra_rt_activation_frame_alloc_unpackedarray() -> void*;
+void lyra_rt_activation_frame_store_unpackedarray(
+    void* cell, const void* value);
+auto lyra_rt_activation_frame_load_unpackedarray(const void* cell) -> void*;
+
+// LRM 21.3.3 / 5.9: text conformed to a destination's declared shape. An
+// integral destination takes it right-justified and an unpacked array of bytes
+// left-justified, which is why only the array form carries an element count.
+auto lyra_rt_packed_from_string(const void* text, const void* prototype)
+    -> void*;
+auto lyra_rt_unpackedarray_from_string(
+    const void* text, const void* prototype, const void* count) -> void*;
+
+// LRM 20.9 `$countbits` over the domains whose value is a bit stream. An
+// aggregate reduces over its parts, so each of these is the same fold seen at a
+// different element type.
+auto lyra_rt_string_count_bits(const void* value, const void* control_bits)
+    -> void*;
+auto lyra_rt_tuple_count_bits(const void* value, const void* control_bits)
+    -> void*;
+auto lyra_rt_dynarray_count_bits(const void* value, const void* control_bits)
+    -> void*;
+auto lyra_rt_unpackedarray_count_bits(
+    const void* value, const void* control_bits) -> void*;
 
 // Builds one conversion's format specification, and the print item that pairs a
 // value with it. Each field arrives as a packed value, as the value model

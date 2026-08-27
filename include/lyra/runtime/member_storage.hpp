@@ -10,6 +10,7 @@
 #include "lyra/value/real.hpp"
 #include "lyra/value/runtime_dynamic_array.hpp"
 #include "lyra/value/runtime_tuple.hpp"
+#include "lyra/value/runtime_unpacked_array.hpp"
 #include "lyra/value/string.hpp"
 
 namespace lyra::runtime {
@@ -47,7 +48,7 @@ class MemberStorage {
       BorrowedHandle, Var<value::PackedArray>, Var<value::String>,
       Var<value::Real>, Var<value::ShortReal>, value::Chandle,
       Var<value::RuntimeTuple>, Var<value::RuntimeDynamicArray>,
-      CancellationSource>
+      Var<value::RuntimeUnpackedArray>, CancellationSource>
       object_;
 };
 

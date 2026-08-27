@@ -235,8 +235,9 @@ class String {
     const auto j = static_cast<std::int32_t>(j_arg.ToInt64());
     const auto n = static_cast<std::int32_t>(impl_.size());
     if (i < 0 || j < i || j >= n) return String{};
-    return String{impl_.substr(
-        static_cast<std::size_t>(i), static_cast<std::size_t>(j - i + 1))};
+    const auto first = static_cast<std::size_t>(i);
+    const auto last = static_cast<std::size_t>(j);
+    return String{impl_.substr(first, last - first + 1)};
   }
 
   // LRM 6.16.9: the ato* family yields an SV integer (4-state). Parse leading
@@ -395,6 +396,9 @@ inline auto String::ElementRef(const PackedArray& i_arg) -> StringCharRef {
 }
 
 static_assert(LyraValue<String>);
+static_assert(CaseEqualComparable<String>);
+static_assert(Ordered<String>);
+static_assert(Defaultable<String>);
 static_assert(Lengthable<String>);
 static_assert(BitstreamSizable<String>);
 static_assert(Indexable<String>);

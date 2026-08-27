@@ -168,4 +168,21 @@ auto RuntimeDynamicArray::IsUnknown() const -> PackedArray {
   return PackedArray::Bit(HasUnknown());
 }
 
+auto RuntimeDynamicArray::BitstreamWidth() const -> PackedArray {
+  PackedArray total = PackedArray::Int(0);
+  for (const RuntimeValue& element : data_) {
+    total = total + RuntimeValueBitstreamWidth(element);
+  }
+  return total;
+}
+
+auto RuntimeDynamicArray::CountBits(const PackedArray& control_bits) const
+    -> PackedArray {
+  PackedArray total = PackedArray::Int(0);
+  for (const RuntimeValue& element : data_) {
+    total = total + RuntimeValueCountBits(element, control_bits);
+  }
+  return total;
+}
+
 }  // namespace lyra::value

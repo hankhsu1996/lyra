@@ -36,6 +36,8 @@ auto ValueDomainName(ValueDomain domain) -> std::string_view {
       return "tuple";
     case ValueDomain::kDynArray:
       return "dynarray";
+    case ValueDomain::kUnpackedArray:
+      return "unpackedarray";
   }
   throw InternalError("llvm codegen: unknown value domain");
 }
@@ -74,6 +76,15 @@ auto ValueDomainOf(const lir::CompilationUnit& unit, lir::TypeId type)
           // handle, like every other value domain.
           [](const lir::DynamicArrayType&) -> Domain {
             return ValueDomain::kDynArray;
+          },
+          // A fixed-size unpacked array (LRM 7.4.2) is MIR's
+          // `UnpackedArrayType`; its runtime realization is a type-erased
+          // container carried behind an opaque handle, like every other value
+          // domain. The declared range is not part of it -- the coordinate
+          // system is the receiver's static type and arrives at a select as an
+          // operand, so the payload is ordinal-only.
+          [](const lir::UnpackedArrayType&) -> Domain {
+            return ValueDomain::kUnpackedArray;
           },
           [](const auto&) -> Domain { return std::nullopt; }},
       unit.types.Get(type).data);
@@ -427,7 +438,20 @@ auto RuntimeAbi::MakeDynamicArrayFromLiteral(ValueDomain domain)
     -> llvm::FunctionCallee {
   return Get(
       std::format("lyra_rt_dynarray_from_literal_{}", ValueDomainName(domain)),
-      types_->Ptr(), {types_->Ptr(), types_->Span()});
+      types_->Ptr(),
+      {types_->Ptr(), types_->Span(), llvm::Type::getInt64Ty(*ctx_)});
+}
+
+// A fixed-size array is built from a repeat unit and a count (LRM 10.9.1 /
+// Table 7-1), so its literal entry takes one more argument than the dynamic
+// array's: the unit's storage, then how many times it is laid down.
+auto RuntimeAbi::MakeUnpackedArrayFromLiteral(ValueDomain domain)
+    -> llvm::FunctionCallee {
+  return Get(
+      std::format(
+          "lyra_rt_unpackedarray_from_literal_{}", ValueDomainName(domain)),
+      types_->Ptr(),
+      {types_->Ptr(), types_->Span(), llvm::Type::getInt64Ty(*ctx_)});
 }
 
 auto RuntimeAbi::MakeFormatSpec(std::size_t field_count)

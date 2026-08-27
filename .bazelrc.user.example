@@ -14,7 +14,8 @@
 
 # A BuildBuddy key, which `--config=ci` and `--config=rbe` need and neither
 # defines. Both configs work only for someone who has an account; the project
-# never requires one.
+# never requires one. A key you reuse across checkouts belongs in `~/.bazelrc`;
+# put it here when this checkout should use its own.
 # build --remote_header=x-buildbuddy-api-key=YOUR_KEY_HERE
 
 # Applies a config to every build without naming it on the command line. Under

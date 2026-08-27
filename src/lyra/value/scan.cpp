@@ -57,6 +57,11 @@ struct ScannedBit {
   return -1;
 }
 
+// The absence of a byte: what a read past the end of the input yields, and
+// what an empty pushback slot holds. One spelling for both, because they are
+// the same fact read at two moments.
+constexpr int kNoByte = -1;
+
 // The byte stream the format walker reads through. The parser looks at most
 // one byte ahead of what it has accepted, so a single-byte pushback slot is
 // the whole rewind capability it needs. Which bytes separate input fields is
@@ -69,23 +74,23 @@ class ScanCursor {
   }
 
   auto Peek() -> int {
-    if (pushback_.has_value()) {
-      return *pushback_;
+    if (pushback_ != kNoByte) {
+      return pushback_;
     }
     if (cursor_ >= buf_.size()) {
-      return -1;
+      return kNoByte;
     }
     return static_cast<unsigned char>(buf_[cursor_]);
   }
 
   auto Consume() -> int {
-    if (pushback_.has_value()) {
-      const int byte = *pushback_;
-      pushback_.reset();
+    if (pushback_ != kNoByte) {
+      const int byte = pushback_;
+      pushback_ = kNoByte;
       return byte;
     }
     if (cursor_ >= buf_.size()) {
-      return -1;
+      return kNoByte;
     }
     const int byte = static_cast<unsigned char>(buf_[cursor_]);
     ++cursor_;
@@ -93,12 +98,12 @@ class ScanCursor {
   }
 
   void Unget(int byte) {
-    if (pushback_.has_value()) {
+    if (pushback_ != kNoByte) {
       throw InternalError(
           "ScanCursor::Unget: pushback slot already holds a byte; scanner "
           "attempted to Unget twice without an intervening Consume");
     }
-    if (byte == -1) {
+    if (byte == kNoByte) {
       return;
     }
     pushback_ = byte;
@@ -120,13 +125,13 @@ class ScanCursor {
   std::string_view buf_;
   detail::NullByte null_byte_;
   std::size_t cursor_ = 0;
-  std::optional<int> pushback_ = std::nullopt;
+  int pushback_ = kNoByte;
 };
 
 void SkipSourceWhitespace(ScanCursor& src) {
   while (true) {
     const int ch = src.Peek();
-    if (ch == -1 || !src.IsWhitespace(ch)) {
+    if (ch == kNoByte || !src.IsWhitespace(ch)) {
       return;
     }
     src.Consume();
@@ -247,7 +252,7 @@ struct DecimalResult {
     -> std::optional<DecimalResult> {
   SkipSourceWhitespace(src);
   int ch = src.Peek();
-  if (ch == -1) return std::nullopt;
+  if (ch == kNoByte) return std::nullopt;
 
   std::size_t consumed = 0;
   auto can_consume = [&]() { return max_width == 0 || consumed < max_width; };
@@ -281,7 +286,7 @@ struct DecimalResult {
 
   std::int64_t acc = 0;
   bool consumed_digit = false;
-  while (ch != -1 && can_consume() && (IsDecDigit(ch) || ch == '_')) {
+  while (ch != kNoByte && can_consume() && (IsDecDigit(ch) || ch == '_')) {
     if (ch != '_') {
       acc = (acc * 10) + (ch - '0');
       consumed_digit = true;
@@ -307,7 +312,7 @@ struct DecimalResult {
       break;
     }
     const int ch = src.Peek();
-    if (ch == -1) {
+    if (ch == kNoByte) {
       break;
     }
     const int hd = HexDigit(ch);
@@ -353,7 +358,7 @@ struct DecimalResult {
       break;
     }
     const int ch = src.Peek();
-    if (ch == -1) {
+    if (ch == kNoByte) {
       break;
     }
     const int od = OctDigit(ch);
@@ -399,7 +404,7 @@ struct DecimalResult {
       break;
     }
     const int ch = src.Peek();
-    if (ch == -1) {
+    if (ch == kNoByte) {
       break;
     }
     if (ch == '0') {
@@ -437,7 +442,7 @@ struct DecimalResult {
       break;
     }
     const int ch = src.Peek();
-    if (ch == -1 || src.IsWhitespace(ch)) {
+    if (ch == kNoByte || src.IsWhitespace(ch)) {
       break;
     }
     buf.push_back(static_cast<char>(ch));
@@ -459,7 +464,7 @@ struct DecimalResult {
         "(needs a string-slot output shape)");
   }
   const int ch = src.Consume();
-  if (ch == -1) return std::nullopt;
+  if (ch == kNoByte) return std::nullopt;
   return static_cast<unsigned char>(ch & 0xFF);
 }
 
@@ -519,7 +524,7 @@ auto BuildIntegralFromChar(unsigned char ch, const value::PackedArray& dest)
 
     if (fc != '%') {
       const int ch = src.Peek();
-      if (ch == -1) {
+      if (ch == kNoByte) {
         return first_conversion ? -1 : items;
       }
       const int fc_byte = static_cast<unsigned char>(fc);
@@ -573,7 +578,7 @@ auto BuildIntegralFromChar(unsigned char ch, const value::PackedArray& dest)
             "suppression or field width modifiers");
       }
       const int ch = src.Peek();
-      if (ch == -1) {
+      if (ch == kNoByte) {
         return first_conversion ? -1 : items;
       }
       if (ch != '%') {
@@ -661,7 +666,7 @@ auto BuildIntegralFromChar(unsigned char ch, const value::PackedArray& dest)
     }
 
     if (!ok) {
-      if (first_conversion && src.Peek() == -1) {
+      if (first_conversion && src.Peek() == kNoByte) {
         return -1;
       }
       return items;

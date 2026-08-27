@@ -63,6 +63,68 @@ struct UnpackedRange {
   }
 };
 
+// LRM 7.4.5: resolve a source-declared index to a storage ordinal against the
+// declared range `[left:right]` of a container holding `size` elements. An
+// X / Z index, or one the range does not name, is an invalid access --
+// `nullopt`, the read-default / write-discard path. Both the monomorphized and
+// the type-erased unpacked array resolve a coordinate through this, so the two
+// cannot drift apart on what an index means.
+[[nodiscard]] inline auto ResolveUnpackedOrdinal(
+    const PackedArray& sv_index, const PackedArray& left,
+    const PackedArray& right, std::size_t size) -> std::optional<std::size_t> {
+  if (sv_index.HasUnknown()) {
+    return std::nullopt;
+  }
+  const UnpackedRange range{.left = left.ToInt64(), .right = right.ToInt64()};
+  const std::int64_t ordinal = range.ToOrdinal(sv_index.ToInt64());
+  if (ordinal < 0 || static_cast<std::uint64_t>(ordinal) >= size) {
+    return std::nullopt;
+  }
+  return static_cast<std::size_t>(ordinal);
+}
+
+// The storage-ordinal window a range selector names.
+struct SliceWindow {
+  std::int64_t base;
+  std::uint32_t count;
+  bool base_known;
+};
+
+// LRM 7.4.5 / 7.4.6: resolve a raw range selector to that window. `(a, b)` are
+// source coordinates -- a constant range's two declared endpoints, or an
+// indexed part-select's base and (constant) width -- and `form` says which. The
+// receiver's declared range `[left:right]` comes from its static type as a
+// select operand. The low ordinal and the count fall out of the two source
+// endpoints rebased against that range; only the base coordinate `a` can carry
+// a runtime X / Z. Shared by the monomorphized and the type-erased unpacked
+// array, so neither can drift on what a range selector names.
+[[nodiscard]] inline auto ResolveSliceWindow(
+    const PackedArray& a, const PackedArray& b, const PackedArray& form,
+    const PackedArray& left, const PackedArray& right) -> SliceWindow {
+  const std::int64_t base_coord = a.ToInt64();
+  const std::int64_t extent = b.ToInt64();
+  std::int64_t other = extent;
+  switch (static_cast<SliceForm>(form.ToInt64())) {
+    case SliceForm::kIndexedUp:
+      other = base_coord + extent - 1;
+      break;
+    case SliceForm::kIndexedDown:
+      other = base_coord - extent + 1;
+      break;
+    case SliceForm::kConstant:
+      break;
+  }
+  const UnpackedRange range{.left = left.ToInt64(), .right = right.ToInt64()};
+  const std::int64_t o1 = range.ToOrdinal(base_coord);
+  const std::int64_t o2 = range.ToOrdinal(other);
+  const std::int64_t lo = o1 < o2 ? o1 : o2;
+  const std::int64_t span = o1 < o2 ? o2 - o1 : o1 - o2;
+  return SliceWindow{
+      .base = lo,
+      .count = static_cast<std::uint32_t>(span + 1),
+      .base_known = !a.HasUnknown()};
+}
+
 // SystemVerilog fixed-size unpacked array (LRM 7.4.2). One C++ container layer
 // per declared unpacked dimension; multi-dim composes as
 // `UnpackedArray<UnpackedArray<...>>`. Mirrors `PackedArray`'s surface for
@@ -105,14 +167,13 @@ class UnpackedArray {
       : shield_(std::move(element_default)), data_(init.begin(), init.end()) {
   }
 
-  // LRM 10.9.1 / Table 7-1: a uniform array value built as `count` tilings of
-  // `unit`. Covers both a fixed array's all-default state (`unit` is one
-  // element default) and an `'{count{...}}` replicated pattern (`unit` is the
-  // replicated items) -- the two arise from the same repeat-unit-plus-count
-  // shape, so they construct through one path. Building from (unit, count)
-  // keeps a uniform array O(unit) to construct where an enumerated element
-  // list would be O(unit * count); the seeded shield is the OOB / discard
-  // source, the payload is `unit` laid down `count` times.
+  // LRM 10.9.1: `count` replications of `unit`, where a replication stands for
+  // an entire dimension. Covers both a fixed array's all-default state (`unit`
+  // is one element default, LRM Table 7-1) and an `'{count{...}}` pattern
+  // (`unit` is the replicated items), which are the same repeat-and-count shape
+  // and so construct through one path. Taking the two separately keeps a
+  // uniform array O(unit) to build where an enumerated element list would be
+  // O(unit * count); the seeded shield is the out-of-range / discard source.
   UnpackedArray(T element_default, std::span<const T> unit, std::size_t count)
       : shield_(std::move(element_default)) {
     data_.reserve(unit.size() * count);
@@ -453,61 +514,10 @@ class UnpackedArray {
            });
   }
 
-  // LRM 7.4.5: resolve a source-declared index to a storage ordinal against the
-  // declared range. An X / Z index, or one outside the range, is an invalid
-  // access -- `nullopt`, the read-default / write-discard path.
   [[nodiscard]] auto ResolveOrdinal(
       const PackedArray& sv_index, const PackedArray& left,
       const PackedArray& right) const -> std::optional<std::size_t> {
-    if (sv_index.HasUnknown()) {
-      return std::nullopt;
-    }
-    const UnpackedRange range{.left = left.ToInt64(), .right = right.ToInt64()};
-    const std::int64_t ordinal = range.ToOrdinal(sv_index.ToInt64());
-    if (ordinal < 0 || static_cast<std::uint64_t>(ordinal) >= data_.size()) {
-      return std::nullopt;
-    }
-    return static_cast<std::size_t>(ordinal);
-  }
-
-  struct SliceWindow {
-    std::int64_t base;
-    std::uint32_t count;
-    bool base_known;
-  };
-
-  // Resolve a raw range selector to the storage-ordinal window. `(a, b)` are
-  // source coordinates -- a constant range's two declared endpoints, or an
-  // indexed part-select's base and (constant) width -- and `form` says which.
-  // The receiver's declared range `[left:right]` comes from its static type as
-  // a select operand. The low ordinal and the count fall out of the two source
-  // endpoints rebased against that range; only the base coordinate `a` can
-  // carry a runtime X / Z.
-  [[nodiscard]] auto ResolveSliceWindow(
-      const PackedArray& a, const PackedArray& b, const PackedArray& form,
-      const PackedArray& left, const PackedArray& right) const -> SliceWindow {
-    const std::int64_t base_coord = a.ToInt64();
-    const std::int64_t extent = b.ToInt64();
-    std::int64_t other = extent;
-    switch (static_cast<SliceForm>(form.ToInt64())) {
-      case SliceForm::kIndexedUp:
-        other = base_coord + extent - 1;
-        break;
-      case SliceForm::kIndexedDown:
-        other = base_coord - extent + 1;
-        break;
-      case SliceForm::kConstant:
-        break;
-    }
-    const UnpackedRange range{.left = left.ToInt64(), .right = right.ToInt64()};
-    const std::int64_t o1 = range.ToOrdinal(base_coord);
-    const std::int64_t o2 = range.ToOrdinal(other);
-    const std::int64_t lo = o1 < o2 ? o1 : o2;
-    const std::int64_t span = o1 < o2 ? o2 - o1 : o1 - o2;
-    return SliceWindow{
-        .base = lo,
-        .count = static_cast<std::uint32_t>(span + 1),
-        .base_known = !a.HasUnknown()};
+    return ResolveUnpackedOrdinal(sv_index, left, right, data_.size());
   }
 
   detail::OobShield<T> shield_;
