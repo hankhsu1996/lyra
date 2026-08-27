@@ -19,6 +19,7 @@
 #include "lyra/runtime/file_table.hpp"
 #include "lyra/runtime/generated_call_scope.hpp"
 #include "lyra/runtime/hierarchy_segment.hpp"
+#include "lyra/runtime/host_command.hpp"
 #include "lyra/runtime/runtime.hpp"
 #include "lyra/runtime/runtime_effects.hpp"
 #include "lyra/runtime/runtime_process.hpp"
@@ -183,6 +184,7 @@ using lyra::runtime::HierarchySegment;
 using lyra::runtime::Observable;
 using lyra::runtime::Own;
 using lyra::runtime::Read;
+using lyra::runtime::RunHostCommand;
 using lyra::runtime::RuntimeEffects;
 using lyra::runtime::Scope;
 using lyra::runtime::ScopeDefinition;
@@ -353,6 +355,15 @@ void lyra_rt_finish(void* runtime, const void* level) {
 void lyra_rt_fatal_finish(void* runtime, const void* level) {
   static_cast<RuntimeEffects*>(runtime)->RequestFinish(
       static_cast<int>(Read<PackedArray>(level).ToInt64()), true);
+}
+
+auto lyra_rt_run_host_command(void* runtime, const void* command) -> void* {
+  return Own(RunHostCommand(
+      *static_cast<RuntimeEffects*>(runtime), Read<String>(command)));
+}
+
+auto lyra_rt_run_null_host_command() -> void* {
+  return Own(RunHostCommand());
 }
 
 void lyra_rt_register_initial(void* self, void* coroutine) {

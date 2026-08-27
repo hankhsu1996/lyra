@@ -82,6 +82,8 @@ auto BuiltinFnCppName(support::BuiltinFn id) -> std::string_view {
       return "TestPlusargs";
     case support::BuiltinFn::kValuePlusargs:
       return "ValuePlusargs";
+    case support::BuiltinFn::kRunHostCommand:
+      return "RunHostCommand";
     case support::BuiltinFn::kReadMem:
       return "ReadMem";
     case support::BuiltinFn::kWriteMem:
@@ -427,6 +429,7 @@ auto BuiltinFnCppNamespace(support::BuiltinFn id) -> std::string_view {
     case support::BuiltinFn::kClaimControlEffect:
     case support::BuiltinFn::kTestPlusargs:
     case support::BuiltinFn::kValuePlusargs:
+    case support::BuiltinFn::kRunHostCommand:
     case support::BuiltinFn::kReadMem:
     case support::BuiltinFn::kWriteMem:
     case support::BuiltinFn::kRunForeignTaskOnFiber:

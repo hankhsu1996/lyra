@@ -189,6 +189,20 @@ auto RuntimeAbi::FatalFinish() -> llvm::FunctionCallee {
       "lyra_rt_fatal_finish", types_->Void(), {types_->Ptr(), types_->Ptr()});
 }
 
+auto RuntimeAbi::RunHostCommand(std::size_t argument_count)
+    -> llvm::FunctionCallee {
+  if (argument_count == 0) {
+    return Get("lyra_rt_run_null_host_command", types_->Ptr(), {});
+  }
+  if (argument_count == 2) {
+    return Get(
+        "lyra_rt_run_host_command", types_->Ptr(),
+        {types_->Ptr(), types_->Ptr()});
+  }
+  throw InternalError(
+      "llvm codegen: a host command call carries a command line or nothing");
+}
+
 auto RuntimeAbi::MakeTrigger() -> llvm::FunctionCallee {
   return Get(
       "lyra_rt_make_trigger", types_->Ptr(),

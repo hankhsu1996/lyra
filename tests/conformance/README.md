@@ -55,7 +55,10 @@ Five rules follow from that shape:
 - **Checks use `if`, case equality, and `$fatal`, and nothing else.** Whatever the corpus leans on
   is something whose defects fail every case, so the foundation stays as small as it can be.
   Immediate assertions are a subject the corpus tests, not a tool it uses.
-- **A case names no backend, no command, and no host tool.**
+- **A case names no backend, no command, and no host tool.** `$system` (LRM 20.17.1) is the one
+  exception the standard itself creates: its meaning is a command the host runs, so a case for it
+  writes a command line, keeps to what a command processor answers for on its own, and asserts only
+  the distinction the standard fixes rather than the encoding a particular host gives it.
 
 ## What else the directory may hold
 

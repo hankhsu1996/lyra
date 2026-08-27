@@ -52,6 +52,12 @@ locate-divergence feedback loop; this one owns the readability of what the loop 
       changes. This is a self-contained print-representation migration sized for its own change set,
       with a wide regression surface across the print tests; `%m` is already unsupported and stays
       out of scope. The intermediate concise-constructor form above is superseded when this lands.
+- [ ] A string literal reads as the text it is. In a string-typed context it is emitted today as the
+      decimal integer its characters spell, wrapped in a conversion to the string type, so the text
+      the source wrote appears nowhere in the emitted unit and a constant known at compile time is
+      rebuilt on every execution. A literal reaching a formatted print already reads as its own
+      text, which is the form the rest should take. The surface is every string literal on both
+      backends, so it is sized for its own change set.
 - [ ] An expression is parenthesized only where operator precedence requires it; an outermost
       expression carries no enclosing parentheses.
 - [ ] The design's top-level entry -- constructing each top-level unit and attaching the assembled

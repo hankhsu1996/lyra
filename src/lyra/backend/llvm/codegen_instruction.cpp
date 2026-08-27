@@ -853,6 +853,8 @@ auto CodeGenFunction::BuiltinCallee(
       return module_->Runtime().Finish();
     case support::BuiltinFn::kFatalFinish:
       return module_->Runtime().FatalFinish();
+    case support::BuiltinFn::kRunHostCommand:
+      return module_->Runtime().RunHostCommand(call.args.size());
     case support::BuiltinFn::kAddOwnedChild:
       return module_->Runtime().AddOwnedChild();
     case support::BuiltinFn::kHierarchicalPath:

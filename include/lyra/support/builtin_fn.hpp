@@ -232,6 +232,11 @@ enum class BuiltinFn : std::uint16_t {
   // return an SV `int` (1 on prefix match, 0 otherwise).
   kTestPlusargs,
   kValuePlusargs,
+  // LRM 20.17.1 $system. A free function on `lyra::runtime` taking the runtime
+  // handle and, in the commanded form, the SV `string` to execute; the
+  // no-argument form omits it and asks whether a command processor exists.
+  // Both return an SV `int` carrying what the host reported.
+  kRunHostCommand,
   // LRM 21.4 $readmemh / $readmemb. A free function on `lyra::runtime` taking
   // the runtime handle, the output memory by reference, the file name, the
   // memory's declared bounds, the digit radix (16 / 2), and the optional start
