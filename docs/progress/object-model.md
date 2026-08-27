@@ -172,6 +172,25 @@ space explored while scoping this deferral surfaced:
   per-safepoint liveness. The trade-off between precision and infrastructure cost has not been
   settled.
 
+## Conformance gaps the corpus records
+
+Behaviour the corpus asks for and does not get. Each is held by a check the corpus keeps rather than
+deletes -- commented out where the rest of its case still runs, and the whole case parked where it
+cannot run at all. Restoring either is manual: nothing detects that the behaviour became right, so
+this list is what remembers.
+
+- [ ] `super` reaches an overridden **method**, but not an overridden **property**. LRM 8.15 states
+      the rule of members generally, and its worked example is a derived class that redeclares the
+      base's variable and reads it back through `super`; reading a shadowed property that way yields
+      the derived class's own instead.
+- [ ] An abstract class with a pure virtual method that a concrete subclass implements is not
+      compiled; elaboration stops reporting that the owning class was not interned before its method
+      was looked up (LRM 8.21).
+- [ ] A constructor chain through more than one level does not survive C++ emission -- the emitted
+      project fails to compile (LRM 8.7).
+- [ ] Storing into an inherited member produces LIR the verifier rejects, so the execution backend
+      cannot run a case that writes one; the C++ path does.
+
 ## Open Questions and Deferred Choices
 
 - [ ] The runtime library still ships three scope subclasses (unit-instance, generate scope, named

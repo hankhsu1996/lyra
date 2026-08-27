@@ -548,14 +548,21 @@ auto RunDumpLir(const CommandContext& ctx) -> int {
 }
 
 auto RunDumpLlvm(const CommandContext& ctx) -> int {
+  const auto print = [&](const lyra::lir::CompilationUnit& unit) -> bool {
+    auto emitted = lyra::backend::llvm_backend::EmitModule(unit);
+    if (!emitted) {
+      (*ctx.report)(std::move(emitted.error()), ctx.mgr);
+      return false;
+    }
+    fmt::print("{}", emitted->Print());
+    return true;
+  };
   for (const auto& unit : ctx.artifacts->LirUnits()) {
-    fmt::print("{}", lyra::backend::llvm_backend::EmitModule(unit).Print());
+    if (!print(unit)) {
+      return 1;
+    }
   }
-  fmt::print(
-      "{}",
-      lyra::backend::llvm_backend::EmitModule(ctx.artifacts->RootLirUnit())
-          .Print());
-  return 0;
+  return print(ctx.artifacts->RootLirUnit()) ? 0 : 1;
 }
 
 // Writes the portable project `emit cpp` produces and `compile` then builds.
@@ -675,10 +682,15 @@ auto RunJitBackend(const CommandContext& ctx) -> int {
   // The design-root unit's construct elaborates the whole design, building the
   // top-level units as its owned children, so the JIT runs the design once from
   // that one entry rather than per top.
-  return lyra::jit::Execute(
+  auto exit_code = lyra::jit::Execute(
       ctx.artifacts->LirUnits(), ctx.artifacts->UnitMetadata(),
       ctx.artifacts->RootLirUnit(), ctx.artifacts->RootMetadata(),
       *dpi_library);
+  if (!exit_code) {
+    (*ctx.report)(std::move(exit_code.error()), ctx.mgr);
+    return 1;
+  }
+  return *exit_code;
 }
 
 auto RunBackend(const CommandContext& ctx) -> int {

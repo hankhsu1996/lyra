@@ -1,6 +1,7 @@
 #include "lyra/lowering/hir_to_mir/cast_lowering.hpp"
 
 #include <cstdint>
+#include <variant>
 
 #include "lyra/lowering/hir_to_mir/default_value.hpp"
 #include "lyra/mir/compilation_unit.hpp"
@@ -272,6 +273,16 @@ auto BuildValueConversion(
                     mir::Direct{.target = support::BuiltinFn::kConformBound},
                 .arguments = {operand_id, bound_id}},
         .type = dst_type};
+  }
+
+  // LRM 8.14: an object of a subclass is also an object of its base class, so a
+  // handle to one is a legal value of a variable declared with the base class.
+  // The object is unchanged; only the handle's declared class differs, which is
+  // what re-typing the reference states.
+  if (std::holds_alternative<mir::ManagedRefType>(src_ty.data) &&
+      std::holds_alternative<mir::ManagedRefType>(dst_ty.data)) {
+    return mir::Expr{
+        .data = mir::PointerCastExpr{.operand = operand_id}, .type = dst_type};
   }
 
   // Identity fallback: the lowering inserted a conversion the type system

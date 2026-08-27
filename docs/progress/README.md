@@ -16,7 +16,7 @@ items. The file is created when work on the feature begins and is deleted when t
 ## What Does Not Belong Here
 
 - Inventories of supported SystemVerilog constructs. The source of truth for "does X work" is
-  `tests/cases/` and the code itself; a parallel inventory rots.
+  `tests/conformance/` and the code itself; a parallel inventory rots.
 - One-shot bug fixes or single-PR changes. Those land directly without a tracking file.
 - Wish lists or roadmaps with no concrete driver and no defined end state.
 - Past decisions and their rationale. Those belong in `../decisions/`.

@@ -32,7 +32,7 @@ class CodeGenModule {
  public:
   explicit CodeGenModule(const lir::CompilationUnit& unit);
 
-  auto Run() -> EmittedModule;
+  auto Run() -> diag::Result<EmittedModule>;
 
   auto Context() -> llvm::LLVMContext& {
     return *context_;

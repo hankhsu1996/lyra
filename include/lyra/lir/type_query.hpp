@@ -1,6 +1,7 @@
 #pragma once
 
 #include <optional>
+#include <string_view>
 
 #include "lyra/base/arena.hpp"
 #include "lyra/lir/type.hpp"
@@ -9,6 +10,11 @@
 namespace lyra::lir {
 
 using TypeArena = base::Arena<Type, TypeId>;
+
+// The name of a type's kind, for a consumer that must say which type it met and
+// could not handle. The kind is the whole answer: an element type or a
+// dimension would lengthen the name without changing what the reader does next.
+auto TypeKindName(const Type& type) -> std::string_view;
 
 // The type a reference-like type refers to; absent when the type refers to
 // nothing. This is the narrow relation of indirection -- storage that lives

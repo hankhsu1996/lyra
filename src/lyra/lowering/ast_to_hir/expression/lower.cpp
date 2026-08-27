@@ -322,8 +322,9 @@ auto LowerExprImpl(
       } else {
         return diag::Fail(
             span, diag::DiagCode::kUnsupportedStructuralExpressionForm,
-            "dynamic-array new[] is not legal in a structural expression; "
-            "LRM 7.5.1 restricts it to blocking assignments");
+            "sizing a dynamic array with new[] outside a procedural "
+            "assignment is not yet supported; size it in an initial or "
+            "always procedure instead");
       }
 
     case slang::ast::ExpressionKind::NewClass:

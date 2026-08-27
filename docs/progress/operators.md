@@ -1,8 +1,9 @@
 # Operators
 
-Tracks the operator surface outside the integral family: set membership, wildcard / case equality,
-selectors (bit-select, part-select, indexed part-select) on both read and write sides,
-concatenation, replication, compound assignment, and the `++` / `--` family.
+Tracks the operator surface. The sub-steps cover what sits outside the integral family: set
+membership, wildcard / case equality, selectors (bit-select, part-select, indexed part-select) on
+both read and write sides, concatenation, replication, compound assignment, and the `++` / `--`
+family. The conformance gaps at the end are about any operator, integral operands included.
 
 Done when:
 
@@ -13,7 +14,8 @@ Done when:
 
 ## Actionable
 
-All items closed; operator surface in scope is complete.
+Every numbered item is closed. What stays open is the forms recorded as rejected under them, and the
+conformance gaps at the end.
 
 ## Sub-Steps
 
@@ -112,6 +114,33 @@ merged node.
       A string character write is a write-back proxy (`String::ElementRef`) and a union member write
       a reference to the active member (`Union::GetRef`); neither is a read-modify-write desugar at
       the lowering.
+
+## Conformance gaps the corpus records
+
+Behaviour the corpus asks for and does not get. Each is held by a disabled check inside a case that
+otherwise runs. Re-enabling that check is manual: nothing detects that the behaviour became right,
+so this list is what remembers.
+
+- [ ] A single-bit operator result does not reach a four-state variable. Storing what `===` / `!==`
+      (LRM 11.4.5) or `inside` (LRM 11.4.13) yields into a `logic` ends the run, reporting that the
+      stored value's representation does not match the cell's declared type. One defect behind two
+      clauses: 11.4.5 fixes the case-equality result as always known, unpacked-structure operands
+      included, and 11.4.13 fixes `inside` as `1'bx` when nothing matches but a comparison is
+      unknown, which is what a four-state target is there to exercise. Both operators answer
+      correctly where an integer target or a conditional predicate takes the result instead.
+- [ ] The conditional operator does not merge its arms when the condition is unknown. LRM 11.4.11
+      and Table 11-20 build the result bit by bit -- a bit the two arms agree on is kept and every
+      other bit becomes x -- so `1010` and `1100` under an unknown condition give `1xx0`. Lyra
+      returns the second arm whole. A known condition selects the right arm and evaluates only that
+      one.
+- [ ] A bitwise operator sign-extends the narrower operand even when the other is unsigned. LRM
+      11.4.8 brings both operands to the wider width first and sign-extends only when both are
+      signed, so `8'b11110000 & 4'sb1010` is `00000000`; Lyra fills ones above the signed operand's
+      sign bit and gives `11110000`. Equal-width operands and the X / Z propagation rules are right.
+- [ ] Zero raised to a negative power gives 0 where LRM Table 11-4 requires x throughout. The rule
+      is on the operand values rather than on the result width, so a 16-bit result and a 128-bit one
+      fail alike. The other entries of Tables 11-4 and 11-5 -- a base of 1 or -1, a zero exponent,
+      an X or Z bit in either operand -- are right.
 
 ## Cross-references
 

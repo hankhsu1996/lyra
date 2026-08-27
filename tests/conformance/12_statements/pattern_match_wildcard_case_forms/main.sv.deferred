@@ -1,0 +1,42 @@
+// Wherever two bits are compared during pattern matching, whether they are tag
+// bits or member bits, the casez form ignores a z bit and the casex form
+// ignores both z and x, so an item whose pattern differs from the value only at
+// a do-not-care position is selected (LRM 12.6.1).
+//
+// Parked: both forms compare a constant pattern exactly and select the default
+// instead, and a case that states only this cannot reach a check that would
+// pass, so it is held here rather than as a defect.
+module Top;
+  typedef union tagged {
+    logic [3:0] Code;
+    void Empty;
+  } coded_t;
+
+  coded_t c;
+  int casez_ignores_z = -1;
+  int casex_ignores_x = -1;
+
+  initial begin
+    c = tagged Code 4'b1010;
+
+    casez_ignores_z = 0;
+    casez (c) matches
+      tagged Code 4'b10zz : casez_ignores_z = 1;
+      default             : casez_ignores_z = -1;
+    endcase
+
+    casex_ignores_x = 0;
+    casex (c) matches
+      tagged Code 4'b10xx : casex_ignores_x = 1;
+      default             : casex_ignores_x = -1;
+    endcase
+  end
+
+  final begin
+    if (casez_ignores_z !== 1)
+      $fatal(1, "casez_ignores_z was %0d, expected 1", casez_ignores_z);
+    if (casex_ignores_x !== 1)
+      $fatal(1, "casex_ignores_x was %0d, expected 1", casex_ignores_x);
+    $display("All checks passed");
+  end
+endmodule

@@ -4,6 +4,8 @@
 #include <optional>
 #include <span>
 
+#include "lyra/diag/diagnostic.hpp"
+
 namespace lyra::lir {
 struct CompilationUnit;
 }  // namespace lyra::lir
@@ -27,11 +29,15 @@ namespace lyra::jit {
 // (LRM 35) are resolved from: a generated foreign call names a symbol this
 // process does not define, and with no link step the execution session is where
 // it must be found. A design with no imports passes none.
+//
+// A design naming a construct the execution backend has no entry for is refused
+// before anything runs, so nothing of the simulation is observed.
 auto Execute(
     std::span<const lir::CompilationUnit> units,
     std::span<const compiler::ElaboratedUnitMetadata> metadata,
     const lir::CompilationUnit& root_unit,
     const compiler::ElaboratedUnitMetadata& root_metadata,
-    const std::optional<std::filesystem::path>& dpi_library) -> int;
+    const std::optional<std::filesystem::path>& dpi_library)
+    -> diag::Result<int>;
 
 }  // namespace lyra::jit

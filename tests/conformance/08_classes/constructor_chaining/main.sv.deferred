@@ -1,0 +1,104 @@
+// Constructing a subclass object runs every constructor in the hierarchy,
+// beginning with the root base class and ending with the class being
+// constructed. The first act of a subclass constructor is the call to its
+// base class constructor: super.new(args) where the code writes one, and a
+// call with no arguments that the tool inserts where it does not -- so a
+// base class property is set even by a subclass that never mentions it.
+// Only after that call returns is this class's own property initialization
+// performed, which is what lets such an initializer read a value the base
+// constructor wrote, and only then does the rest of the subclass
+// constructor's body run (LRM 8.7, 8.15, 8.17).
+module Top;
+  class Base;
+    int b_val;
+
+    function new(int a = 4);
+      b_val = a * 3;
+    endfunction
+  endclass
+
+  class Forwarding extends Base;
+    int copied = b_val;
+    int d_val;
+
+    function new(int a, int b);
+      super.new(a);
+      d_val = b;
+    endfunction
+  endclass
+
+  class Omitting extends Base;
+    int d_val;
+
+    function new();
+      d_val = 99;
+    endfunction
+  endclass
+
+  class NoConstructor extends Base;
+    int e_val = 5;
+  endclass
+
+  class Deeper extends Forwarding;
+    int leaf_val;
+
+    function new();
+      super.new(2, 3);
+      leaf_val = b_val + d_val;
+    endfunction
+  endclass
+
+  int fwd_b;
+  int fwd_copied;
+  int fwd_d;
+  int omit_b;
+  int omit_d;
+  int none_b;
+  int none_e;
+  int deep_b;
+  int deep_copied;
+  int deep_d;
+  int deep_leaf;
+
+  initial begin
+    Forwarding fwd;
+    Omitting omit;
+    NoConstructor none;
+    Deeper deep;
+
+    fwd = new(5, 9);
+    omit = new();
+    none = new;
+    deep = new();
+
+    fwd_b = fwd.b_val;
+    fwd_copied = fwd.copied;
+    fwd_d = fwd.d_val;
+    omit_b = omit.b_val;
+    omit_d = omit.d_val;
+    none_b = none.b_val;
+    none_e = none.e_val;
+    deep_b = deep.b_val;
+    deep_copied = deep.copied;
+    deep_d = deep.d_val;
+    deep_leaf = deep.leaf_val;
+  end
+
+  final begin
+    if (fwd_b !== 15) $fatal(1, "fwd_b was %0d, expected 15", fwd_b);
+    if (fwd_copied !== 15)
+      $fatal(1, "fwd_copied was %0d, expected 15", fwd_copied);
+    if (fwd_d !== 9) $fatal(1, "fwd_d was %0d, expected 9", fwd_d);
+    if (omit_b !== 12) $fatal(1, "omit_b was %0d, expected 12", omit_b);
+    if (omit_d !== 99) $fatal(1, "omit_d was %0d, expected 99", omit_d);
+    if (none_b !== 12) $fatal(1, "none_b was %0d, expected 12", none_b);
+    if (none_e !== 5) $fatal(1, "none_e was %0d, expected 5", none_e);
+    if (deep_b !== 6) $fatal(1, "deep_b was %0d, expected 6", deep_b);
+    if (deep_copied !== 6)
+      $fatal(1, "deep_copied was %0d, expected 6", deep_copied);
+    if (deep_d !== 3) $fatal(1, "deep_d was %0d, expected 3", deep_d);
+    if (deep_leaf !== 9)
+      $fatal(1, "deep_leaf was %0d, expected 9", deep_leaf);
+    $display("All checks passed");
+  end
+endmodule

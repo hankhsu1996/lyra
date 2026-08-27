@@ -1,0 +1,168 @@
+// The inside operator scans the members of its set until one matches and
+// returns 1'b1, or 1'b0 when none does. A member is either a single expression
+// or a [low:high] range whose bounds are both included. Where no member matches
+// but a comparison was unknown the result is 1'bx, so the result is a four-state
+// bit and a four-state variable is what holds it (LRM 11.4.13).
+//
+// Parked: storing the result in a four-state variable aborts the run, reporting
+// that a required conversion was not emitted, so this case cannot reach a check
+// to fail at.
+module Top;
+  int v;
+  int sum_of_results;
+  int ternary_taken;
+  int ternary_not_taken;
+
+  int a;
+  int b;
+  int lo;
+  int hi;
+  logic match_first;
+  logic match_middle;
+  logic match_last;
+  logic no_match_below;
+  logic no_match_between;
+  logic no_match_above;
+  logic single_match;
+  logic single_no_match;
+  logic range_inside;
+  logic range_at_lo;
+  logic range_at_hi;
+  logic range_below;
+  logic range_above;
+  logic mixed_value_item;
+  logic mixed_range_item;
+  logic mixed_none;
+  logic second_range;
+  logic empty_range;
+  logic var_item_match;
+  logic var_item_no_match;
+  logic var_range_match;
+  logic var_range_no_match;
+  logic neg_value;
+  logic neg_range_at_lo;
+  logic neg_range_at_hi;
+  logic pos_outside_neg_range;
+
+  initial begin
+    v = 3;
+    sum_of_results = (v inside {1, 2, 3}) + (v inside {4, 5, 6});
+    v = 5;
+    ternary_taken = (v inside {[1:10]}) ? 100 : 200;
+    v = 50;
+    ternary_not_taken = (v inside {[1:10]}) ? 100 : 200;
+
+    no_match_below = 1'b1;
+    no_match_between = 1'b1;
+    no_match_above = 1'b1;
+    single_no_match = 1'b1;
+    range_below = 1'b1;
+    range_above = 1'b1;
+    mixed_none = 1'b1;
+    empty_range = 1'b1;
+    var_item_no_match = 1'b1;
+    var_range_no_match = 1'b1;
+    pos_outside_neg_range = 1'b1;
+
+    v = 1;  match_first = v inside {1, 5, 9};
+    v = 5;  match_middle = v inside {1, 5, 9};
+    v = 9;  match_last = v inside {1, 5, 9};
+    v = 0;  no_match_below = v inside {1, 5, 9};
+    v = 3;  no_match_between = v inside {1, 5, 9};
+    v = 12; no_match_above = v inside {1, 5, 9};
+    v = 42; single_match = v inside {42};
+    v = 42; single_no_match = v inside {43};
+
+    v = 5;  range_inside = v inside {[1:10]};
+    v = 1;  range_at_lo = v inside {[1:10]};
+    v = 10; range_at_hi = v inside {[1:10]};
+    v = 0;  range_below = v inside {[1:10]};
+    v = 11; range_above = v inside {[1:10]};
+
+    v = 1;  mixed_value_item = v inside {1, [5:10], 20};
+    v = 7;  mixed_range_item = v inside {1, [5:10], 20};
+    v = 30; mixed_none = v inside {1, [5:10], 20};
+    v = 25; second_range = v inside {[1:5], [20:30]};
+    v = 5;  empty_range = v inside {[10:1]};
+
+    a = 5; b = 7;
+    v = 5; var_item_match = v inside {a, b};
+    v = 6; var_item_no_match = v inside {a, b};
+    lo = 10; hi = 20;
+    v = 15; var_range_match = v inside {[lo:hi]};
+    v = 5;  var_range_no_match = v inside {[lo:hi]};
+
+    v = -5;  neg_value = v inside {-1, -5, -9};
+    v = -10; neg_range_at_lo = v inside {[-10:-1]};
+    v = -1;  neg_range_at_hi = v inside {[-10:-1]};
+    v = 1;   pos_outside_neg_range = v inside {[-10:-1]};
+  end
+
+  final begin
+    if (sum_of_results !== 1)
+      $fatal(1, "the two results summed to %0d, expected 1", sum_of_results);
+    if (ternary_taken !== 100)
+      $fatal(1, "a matching inside chose %0d, expected 100", ternary_taken);
+    if (ternary_not_taken !== 200)
+      $fatal(1, "a missing inside chose %0d, expected 200", ternary_not_taken);
+
+    if (match_first !== 1'b1)
+      $fatal(1, "1 inside {1,5,9} was %b, expected 1", match_first);
+    if (match_middle !== 1'b1)
+      $fatal(1, "5 inside {1,5,9} was %b, expected 1", match_middle);
+    if (match_last !== 1'b1)
+      $fatal(1, "9 inside {1,5,9} was %b, expected 1", match_last);
+    if (no_match_below !== 1'b0)
+      $fatal(1, "0 inside {1,5,9} was %b, expected 0", no_match_below);
+    if (no_match_between !== 1'b0)
+      $fatal(1, "3 inside {1,5,9} was %b, expected 0", no_match_between);
+    if (no_match_above !== 1'b0)
+      $fatal(1, "12 inside {1,5,9} was %b, expected 0", no_match_above);
+    if (single_match !== 1'b1)
+      $fatal(1, "42 inside {42} was %b, expected 1", single_match);
+    if (single_no_match !== 1'b0)
+      $fatal(1, "42 inside {43} was %b, expected 0", single_no_match);
+    if (range_inside !== 1'b1)
+      $fatal(1, "5 inside {[1:10]} was %b, expected 1", range_inside);
+    if (range_at_lo !== 1'b1)
+      $fatal(1, "1 inside {[1:10]} was %b, expected 1", range_at_lo);
+    if (range_at_hi !== 1'b1)
+      $fatal(1, "10 inside {[1:10]} was %b, expected 1", range_at_hi);
+    if (range_below !== 1'b0)
+      $fatal(1, "0 inside {[1:10]} was %b, expected 0", range_below);
+    if (range_above !== 1'b0)
+      $fatal(1, "11 inside {[1:10]} was %b, expected 0", range_above);
+    if (mixed_value_item !== 1'b1)
+      $fatal(1, "1 inside {1,[5:10],20} was %b, expected 1", mixed_value_item);
+    if (mixed_range_item !== 1'b1)
+      $fatal(1, "7 inside {1,[5:10],20} was %b, expected 1", mixed_range_item);
+    if (mixed_none !== 1'b0)
+      $fatal(1, "30 inside {1,[5:10],20} was %b, expected 0", mixed_none);
+    if (second_range !== 1'b1)
+      $fatal(1, "25 inside {[1:5],[20:30]} was %b, expected 1", second_range);
+    if (empty_range !== 1'b0)
+      $fatal(1, "5 inside {[10:1]} was %b, expected 0", empty_range);
+    if (var_item_match !== 1'b1)
+      $fatal(1, "a variable item that matches gave %b, expected 1",
+             var_item_match);
+    if (var_item_no_match !== 1'b0)
+      $fatal(1, "a variable item that misses gave %b, expected 0",
+             var_item_no_match);
+    if (var_range_match !== 1'b1)
+      $fatal(1, "variable range bounds that match gave %b, expected 1",
+             var_range_match);
+    if (var_range_no_match !== 1'b0)
+      $fatal(1, "variable range bounds that miss gave %b, expected 0",
+             var_range_no_match);
+    if (neg_value !== 1'b1)
+      $fatal(1, "-5 inside {-1,-5,-9} was %b, expected 1", neg_value);
+    if (neg_range_at_lo !== 1'b1)
+      $fatal(1, "-10 inside {[-10:-1]} was %b, expected 1", neg_range_at_lo);
+    if (neg_range_at_hi !== 1'b1)
+      $fatal(1, "-1 inside {[-10:-1]} was %b, expected 1", neg_range_at_hi);
+    if (pos_outside_neg_range !== 1'b0)
+      $fatal(1, "1 inside {[-10:-1]} was %b, expected 0",
+             pos_outside_neg_range);
+    $display("All checks passed");
+  end
+endmodule

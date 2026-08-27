@@ -69,6 +69,11 @@ D8. A path is defined by the artifact it produces, not by how that artifact is e
     `aot`, and `lli` share one emitted LLVM module and therefore one acceptance surface; they can
     never disagree about which programs are accepted, so they share one list.
 
+D8a. Where a path answers wrongly is recorded too, in a second list beside the first, holding text
+    the failing run produces. The case keeps every check it makes, so the day the answer becomes
+    right the case passes and the run fails until the entry goes. A case is in one list or neither,
+    never both. Coverage is therefore what is absent from both.
+
 D9. A test whose subject is not an IEEE 1800 requirement is not a case. The command line, the
     emitted project's portability, and the harness's own machinery are ordinary tests outside the
     corpus.
@@ -105,6 +110,20 @@ D9. A test whose subject is not an IEEE 1800 requirement is not a case. The comm
 
 - **Deriving expected output by recording a run.** It freezes present behavior, including defects,
   as the specification.
+
+## Where D8a came from
+
+The first cut of this decision gave a wrong answer no home at all: it failed, and stayed failing
+until the case or the implementation was right. That is the stricter rule and it reads well, but
+what it produced in practice was worse than what it forbade. Twenty-two cases met a diagnosed Lyra
+defect during the migration, and every one of them handled it the same way -- comment the check out,
+name the symptom in a `TODO`, write the gap into a progress doc. So the wrong answers were
+normalized anyway, in the one form nothing watches: a commented-out check does not run, and fixing
+the defect produces no signal at all. Prose in a progress doc was the only thing left remembering.
+
+D8a takes the property that makes the refusal record work -- an entry that becomes false fails the
+run -- and gives it to the case a path gets wrong. It costs the strictness of "no home", and it buys
+the thing the strict rule was for: a defect that cannot be quietly forgotten.
 
 ## Consequences
 

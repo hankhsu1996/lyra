@@ -146,12 +146,17 @@ class FunctionLowerer {
   // A receiver-mutating value-container method (`arr.delete()`). The container
   // value cannot be mutated in place through a shared handle, so the method is
   // a functional operation whose result is stored back through the receiver's
-  // owner, the same whole-value read / update / write as an element write.
+  // owner, the same whole-value read / update / write as an element write. That
+  // updated container is the entry's one result, so a method that also states a
+  // result of its own has no realization in this form.
   auto LowerMutatingCall(
-      const mir::Block& block, const mir::CallExpr& call, support::BuiltinFn fn)
-      -> diag::Result<lir::Operand>;
-  // Writes the whole value of a product-write chain's root, so a component
-  // write goes back through the root's own store rather than reaching past it.
+      const mir::Block& block, const mir::CallExpr& call, support::BuiltinFn fn,
+      mir::TypeId type) -> diag::Result<lir::Operand>;
+  // Stores a whole value back through the place that owns it -- the root of a
+  // designator's chain, or a mutating method's receiver -- so the update goes
+  // through that place's own store rather than reaching past it. What it yields
+  // is the write, whose type is void; a caller in expression position states
+  // the value its own expression has.
   auto WriteWholeValue(
       const mir::Block& block, mir::ExprId id, lir::Operand value)
       -> diag::Result<lir::Operand>;
@@ -165,7 +170,7 @@ class FunctionLowerer {
   auto NewPlaceLocal(lir::TypeId type) -> lir::ValueId;
   void BindLocal(mir::LocalId local, lir::TypeId type, lir::Operand init);
   auto Load(lir::Place place, lir::TypeId type) -> lir::Operand;
-  void Store(lir::Place place, lir::Operand value);
+  auto Store(lir::Place place, lir::Operand value) -> lir::Operand;
 
   // Activation-frame value operations, emitted for a value-typed local in a
   // suspending body. `AllocateActivationValue` builds the cell (uninitialized
@@ -177,7 +182,8 @@ class FunctionLowerer {
   auto AllocateActivationValue(lir::TypeId value_type) -> lir::Operand;
   auto LoadActivationValue(lir::Operand handle, lir::TypeId value_type)
       -> lir::Operand;
-  void StoreActivationValue(lir::Operand handle, lir::Operand value);
+  auto StoreActivationValue(lir::Operand handle, lir::Operand value)
+      -> lir::Operand;
   // The activation-frame handle an assignable expression writes through, when
   // it names an activation-frame value local directly; nothing otherwise (a
   // place is written the ordinary way).

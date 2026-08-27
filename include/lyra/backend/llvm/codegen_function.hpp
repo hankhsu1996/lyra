@@ -8,6 +8,7 @@
 #include <llvm/IR/IRBuilder.h>
 
 #include "lyra/backend/llvm/runtime_abi.hpp"
+#include "lyra/diag/diagnostic.hpp"
 #include "lyra/lir/function.hpp"
 #include "lyra/lir/type.hpp"
 #include "lyra/lir/type_id.hpp"
@@ -32,35 +33,42 @@ class CodeGenFunction {
   CodeGenFunction(
       CodeGenModule& module, const lir::Function& fn, llvm::Function* value);
 
-  void Run();
+  auto Run() -> diag::Result<void>;
 
  private:
-  auto LowerInstr(const lir::Instr& instr) -> llvm::Value*;
+  auto LowerInstr(const lir::Instr& instr) -> diag::Result<llvm::Value*>;
   auto LowerCall(const lir::CallInstr& call, lir::TypeId result_type)
-      -> llvm::Value*;
+      -> diag::Result<llvm::Value*>;
   auto ResolveCallee(const lir::CallInstr& call, lir::TypeId result_type)
-      -> llvm::FunctionCallee;
+      -> diag::Result<llvm::FunctionCallee>;
   // A {pointer, length} view over storage this function just filled.
   auto SpanOver(llvm::Value* storage, std::size_t count) -> llvm::Value*;
   auto LowerArray(const lir::ArrayInstr& array, lir::TypeId result_type)
-      -> llvm::Value*;
+      -> diag::Result<llvm::Value*>;
   auto LowerProduct(const lir::ProductInstr& product, lir::TypeId result_type)
-      -> llvm::Value*;
+      -> diag::Result<llvm::Value*>;
   auto LowerErasedDynamicArrayConstruct(
       const lir::CallInstr& call, const lir::DynamicArrayType& type)
-      -> llvm::Value*;
+      -> diag::Result<llvm::Value*>;
   auto LowerAggregateExtract(const lir::AggregateExtractInstr& extract)
-      -> llvm::Value*;
+      -> diag::Result<llvm::Value*>;
   auto LowerAggregateUpdate(const lir::AggregateUpdateInstr& update)
-      -> llvm::Value*;
-  auto LowerBinary(const lir::BinaryInstr& binary) -> llvm::Value*;
-  auto LowerMachineBinary(const lir::BinaryInstr& binary) -> llvm::Value*;
-  auto LowerUnary(const lir::UnaryInstr& unary) -> llvm::Value*;
-  auto LowerMachineUnary(const lir::UnaryInstr& unary) -> llvm::Value*;
-  auto LowerBoolCast(const lir::BoolCastInstr& cast) -> llvm::Value*;
+      -> diag::Result<llvm::Value*>;
+  auto LowerLoad(const lir::LoadInstr& load, lir::TypeId result_type)
+      -> diag::Result<llvm::Value*>;
+  auto LowerStore(const lir::StoreInstr& store) -> diag::Result<llvm::Value*>;
+  auto LowerBinary(const lir::BinaryInstr& binary)
+      -> diag::Result<llvm::Value*>;
+  auto LowerMachineBinary(const lir::BinaryInstr& binary)
+      -> diag::Result<llvm::Value*>;
+  auto LowerUnary(const lir::UnaryInstr& unary) -> diag::Result<llvm::Value*>;
+  auto LowerMachineUnary(const lir::UnaryInstr& unary)
+      -> diag::Result<llvm::Value*>;
+  auto LowerBoolCast(const lir::BoolCastInstr& cast)
+      -> diag::Result<llvm::Value*>;
   auto LowerIntCast(const lir::IntCastInstr& cast, lir::TypeId result_type)
-      -> llvm::Value*;
-  auto LowerOperand(const lir::Operand& operand) -> llvm::Value*;
+      -> diag::Result<llvm::Value*>;
+  auto LowerOperand(const lir::Operand& operand) -> diag::Result<llvm::Value*>;
 
   // Whether this body's call protocol is the coroutine one. Such a body is
   // emitted with LLVM coroutine intrinsics and split into a resumable form by
@@ -81,25 +89,30 @@ class CodeGenFunction {
   // starts from -- a place local's own frame slot, or the referent of a
   // reference value
   // -- and each further step walks one projection.
-  auto ResolvePlaceAddress(const lir::Place& place) -> llvm::Value*;
-  auto LowerIntConst(const lir::IntConst& constant) -> llvm::Value*;
+  auto ResolvePlaceAddress(const lir::Place& place)
+      -> diag::Result<llvm::Value*>;
+  auto LowerIntConst(const lir::IntConst& constant)
+      -> diag::Result<llvm::Value*>;
   auto LowerStrConst(const lir::StrConst& constant) -> llvm::Value*;
-  auto LowerRealConst(const lir::RealConst& constant) -> llvm::Value*;
+  auto LowerRealConst(const lir::RealConst& constant)
+      -> diag::Result<llvm::Value*>;
   auto LowerNullConst(const lir::NullConst& constant) -> llvm::Value*;
-  void LowerTerminator(const lir::Terminator& terminator);
+  auto LowerTerminatorInto(const lir::Terminator& terminator)
+      -> diag::Result<void>;
 
   auto BuiltinCallee(
       const lir::BuiltinTarget& target, const lir::CallInstr& call,
-      lir::TypeId result_type) -> llvm::FunctionCallee;
+      lir::TypeId result_type) -> diag::Result<llvm::FunctionCallee>;
   auto ValueBuiltinCallee(
       const lir::BuiltinTarget& target, const lir::CallInstr& call,
-      lir::TypeId result_type) -> llvm::FunctionCallee;
-  auto ConstructCallee(const lir::CallInstr& call) -> llvm::FunctionCallee;
+      lir::TypeId result_type) -> diag::Result<llvm::FunctionCallee>;
+  auto ConstructCallee(const lir::CallInstr& call)
+      -> diag::Result<llvm::FunctionCallee>;
   auto RealConstructCallee(const lir::CallInstr& call, ValueDomain dst)
-      -> llvm::FunctionCallee;
+      -> diag::Result<llvm::FunctionCallee>;
   auto ForeignCallee(
       const lir::ForeignTarget& target, const lir::CallInstr& call,
-      lir::TypeId result_type) -> llvm::FunctionCallee;
+      lir::TypeId result_type) -> diag::Result<llvm::FunctionCallee>;
 
   // The leading argument a construct call needs beyond its lowered operands: an
   // external-unit construct is prefixed with the child's definition reference;
@@ -109,9 +122,11 @@ class CodeGenFunction {
   // The type of an operand, and the value domain a library entry is chosen by.
   [[nodiscard]] auto OperandType(const lir::Operand& operand) const
       -> lir::TypeId;
-  [[nodiscard]] auto DomainOf(lir::TypeId type) const -> ValueDomain;
+  [[nodiscard]] auto DomainOf(lir::TypeId type) const
+      -> diag::Result<ValueDomain>;
   // The domain of the cell an operand addresses, for a cell operation.
-  [[nodiscard]] auto CellDomain(const lir::Operand& cell) const -> ValueDomain;
+  [[nodiscard]] auto CellDomain(const lir::Operand& cell) const
+      -> diag::Result<ValueDomain>;
   // Place access: the cell a place names the contents of, and the domain that
   // picks its library entries; nothing when the place names ordinary
   // addressable storage. This is the one entry that decides how a load and a
@@ -121,7 +136,7 @@ class CodeGenFunction {
     lir::Place cell;
   };
   [[nodiscard]] auto CellPlaceOf(const lir::Place& place) const
-      -> std::optional<CellPlace>;
+      -> diag::Result<std::optional<CellPlace>>;
 
   CodeGenModule* module_;
   const lir::Function* fn_;

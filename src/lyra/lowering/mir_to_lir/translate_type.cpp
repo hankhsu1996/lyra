@@ -79,68 +79,6 @@ auto TranslateMutability(mir::Mutability m) -> lir::Mutability {
                                          : lir::Mutability::kMutable;
 }
 
-auto TranslateRuntimeLibraryKind(mir::RuntimeLibraryKind k)
-    -> lir::RuntimeLibraryKind {
-  switch (k) {
-    case mir::RuntimeLibraryKind::kPrintItem:
-      return lir::RuntimeLibraryKind::kPrintItem;
-    case mir::RuntimeLibraryKind::kPrintLiteralItem:
-      return lir::RuntimeLibraryKind::kPrintLiteralItem;
-    case mir::RuntimeLibraryKind::kPrintValueItem:
-      return lir::RuntimeLibraryKind::kPrintValueItem;
-    case mir::RuntimeLibraryKind::kFormatSpec:
-      return lir::RuntimeLibraryKind::kFormatSpec;
-    case mir::RuntimeLibraryKind::kFormatArg:
-      return lir::RuntimeLibraryKind::kFormatArg;
-    case mir::RuntimeLibraryKind::kChannelCancellation:
-      return lir::RuntimeLibraryKind::kChannelCancellation;
-    case mir::RuntimeLibraryKind::kTimeFormat:
-      return lir::RuntimeLibraryKind::kTimeFormat;
-    case mir::RuntimeLibraryKind::kHierarchySegment:
-      return lir::RuntimeLibraryKind::kHierarchySegment;
-    case mir::RuntimeLibraryKind::kDpiBitBuffer:
-      return lir::RuntimeLibraryKind::kDpiBitBuffer;
-    case mir::RuntimeLibraryKind::kDpiLogicBuffer:
-      return lir::RuntimeLibraryKind::kDpiLogicBuffer;
-    case mir::RuntimeLibraryKind::kDpiBitChunk:
-      return lir::RuntimeLibraryKind::kDpiBitChunk;
-    case mir::RuntimeLibraryKind::kDpiLogicChunk:
-      return lir::RuntimeLibraryKind::kDpiLogicChunk;
-    case mir::RuntimeLibraryKind::kDpiOpenArray:
-      return lir::RuntimeLibraryKind::kDpiOpenArray;
-    case mir::RuntimeLibraryKind::kDpiOpenArrayHandle:
-      return lir::RuntimeLibraryKind::kDpiOpenArrayHandle;
-    case mir::RuntimeLibraryKind::kTrigger:
-      return lir::RuntimeLibraryKind::kTrigger;
-    case mir::RuntimeLibraryKind::kScopeProgram:
-    case mir::RuntimeLibraryKind::kScopeDefinition:
-    case mir::RuntimeLibraryKind::kScopeMetadata:
-    case mir::RuntimeLibraryKind::kAbiStringRef:
-    case mir::RuntimeLibraryKind::kScopeExport:
-    case mir::RuntimeLibraryKind::kScopeExportTable:
-      throw InternalError(
-          "TranslateRuntimeLibraryKind: a unit-definition record type is a "
-          "compile-time constant consumed by the backend directly and does not "
-          "flow through MIR-to-LIR");
-    case mir::RuntimeLibraryKind::kDpiScopeGuard:
-    case mir::RuntimeLibraryKind::kForeignTaskAwaitable:
-      throw InternalError(
-          "TranslateRuntimeLibraryKind: the DPI context scope guard and the "
-          "foreign-task fiber awaitable are C++-backend marshaling artifacts; "
-          "the execution backend does not consume the DPI context or task "
-          "surface");
-    case mir::RuntimeLibraryKind::kCancellationSource:
-      return lir::RuntimeLibraryKind::kCancellationSource;
-    case mir::RuntimeLibraryKind::kCancellationGuard:
-    case mir::RuntimeLibraryKind::kControlEffect:
-      throw InternalError(
-          "TranslateRuntimeLibraryKind: a cancellation type is realized in the "
-          "C++ backend, not through MIR-to-LIR");
-  }
-  throw InternalError(
-      "TranslateRuntimeLibraryKind: unknown RuntimeLibraryKind");
-}
-
 auto TranslatePackedArray(const mir::PackedArrayType& pa)
     -> lir::PackedArrayType {
   std::vector<lir::PackedRange> dims;
@@ -275,9 +213,8 @@ auto UnitLowerer::TranslateTypeData(const mir::Type& ty) -> lir::TypeData {
           [](const mir::DiagnosticType&) -> lir::TypeData {
             return lir::TypeData{lir::DiagnosticType{}};
           },
-          [](const mir::RuntimeLibraryType& rl) -> lir::TypeData {
-            return lir::TypeData{lir::RuntimeLibraryType{
-                .kind = TranslateRuntimeLibraryKind(rl.kind)}};
+          [&](const mir::RuntimeLibraryType& rl) -> lir::TypeData {
+            return TranslateRuntimeLibrary(rl.kind);
           },
           [&](const mir::CoroutineType& co) -> lir::TypeData {
             return lir::TypeData{
@@ -355,6 +292,68 @@ auto UnitLowerer::TranslateTypeData(const mir::Type& ty) -> lir::TypeData {
             return RecordUnsupportedType("an escaping closure value");
           }},
       ty.data);
+}
+
+auto UnitLowerer::TranslateRuntimeLibrary(mir::RuntimeLibraryKind kind)
+    -> lir::TypeData {
+  const auto mirror = [](lir::RuntimeLibraryKind k) {
+    return lir::TypeData{lir::RuntimeLibraryType{.kind = k}};
+  };
+  switch (kind) {
+    case mir::RuntimeLibraryKind::kPrintItem:
+      return mirror(lir::RuntimeLibraryKind::kPrintItem);
+    case mir::RuntimeLibraryKind::kPrintLiteralItem:
+      return mirror(lir::RuntimeLibraryKind::kPrintLiteralItem);
+    case mir::RuntimeLibraryKind::kPrintValueItem:
+      return mirror(lir::RuntimeLibraryKind::kPrintValueItem);
+    case mir::RuntimeLibraryKind::kFormatSpec:
+      return mirror(lir::RuntimeLibraryKind::kFormatSpec);
+    case mir::RuntimeLibraryKind::kFormatArg:
+      return mirror(lir::RuntimeLibraryKind::kFormatArg);
+    case mir::RuntimeLibraryKind::kChannelCancellation:
+      return mirror(lir::RuntimeLibraryKind::kChannelCancellation);
+    case mir::RuntimeLibraryKind::kTimeFormat:
+      return mirror(lir::RuntimeLibraryKind::kTimeFormat);
+    case mir::RuntimeLibraryKind::kHierarchySegment:
+      return mirror(lir::RuntimeLibraryKind::kHierarchySegment);
+    case mir::RuntimeLibraryKind::kDpiBitBuffer:
+      return mirror(lir::RuntimeLibraryKind::kDpiBitBuffer);
+    case mir::RuntimeLibraryKind::kDpiLogicBuffer:
+      return mirror(lir::RuntimeLibraryKind::kDpiLogicBuffer);
+    case mir::RuntimeLibraryKind::kDpiBitChunk:
+      return mirror(lir::RuntimeLibraryKind::kDpiBitChunk);
+    case mir::RuntimeLibraryKind::kDpiLogicChunk:
+      return mirror(lir::RuntimeLibraryKind::kDpiLogicChunk);
+    case mir::RuntimeLibraryKind::kDpiOpenArray:
+      return mirror(lir::RuntimeLibraryKind::kDpiOpenArray);
+    case mir::RuntimeLibraryKind::kDpiOpenArrayHandle:
+      return mirror(lir::RuntimeLibraryKind::kDpiOpenArrayHandle);
+    case mir::RuntimeLibraryKind::kTrigger:
+      return mirror(lir::RuntimeLibraryKind::kTrigger);
+    case mir::RuntimeLibraryKind::kCancellationSource:
+      return mirror(lir::RuntimeLibraryKind::kCancellationSource);
+    case mir::RuntimeLibraryKind::kDpiScopeGuard:
+      return RecordUnsupportedType(
+          "the scope a DPI-C context import makes current");
+    case mir::RuntimeLibraryKind::kForeignTaskAwaitable:
+      return RecordUnsupportedType("the fiber a DPI-C task import runs on");
+    case mir::RuntimeLibraryKind::kCancellationGuard:
+      return RecordUnsupportedType(
+          "the cancellation region a disable target runs in");
+    case mir::RuntimeLibraryKind::kControlEffect:
+      return RecordUnsupportedType("the control effect a disable raises");
+    case mir::RuntimeLibraryKind::kScopeProgram:
+    case mir::RuntimeLibraryKind::kScopeDefinition:
+    case mir::RuntimeLibraryKind::kScopeMetadata:
+    case mir::RuntimeLibraryKind::kAbiStringRef:
+    case mir::RuntimeLibraryKind::kScopeExport:
+    case mir::RuntimeLibraryKind::kScopeExportTable:
+      throw InternalError(
+          "TranslateRuntimeLibrary: a unit-definition record type is a "
+          "compile-time constant consumed by the backend directly and does not "
+          "flow through MIR-to-LIR");
+  }
+  throw InternalError("TranslateRuntimeLibrary: unknown RuntimeLibraryKind");
 }
 
 auto UnitLowerer::RecordUnsupportedType(std::string_view what)

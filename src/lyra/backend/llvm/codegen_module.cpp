@@ -30,7 +30,7 @@ CodeGenModule::CodeGenModule(const lir::CompilationUnit& unit)
       runtime_abi_(*module_, *context_, types_) {
 }
 
-auto CodeGenModule::Run() -> EmittedModule {
+auto CodeGenModule::Run() -> diag::Result<EmittedModule> {
   // Every function is declared before any body is generated, because a body may
   // call one whose own body is generated later, including itself.
   functions_.reserve(unit_->functions.size());
@@ -38,8 +38,12 @@ auto CodeGenModule::Run() -> EmittedModule {
     functions_.push_back(DeclareCallable(fn));
   }
   for (const lir::FunctionId id : unit_->functions.Ids()) {
-    CodeGenFunction(*this, unit_->functions.Get(id), functions_[id.value])
-        .Run();
+    auto generated =
+        CodeGenFunction(*this, unit_->functions.Get(id), functions_[id.value])
+            .Run();
+    if (!generated) {
+      return std::unexpected(std::move(generated.error()));
+    }
   }
 
   std::string error;
@@ -48,7 +52,7 @@ auto CodeGenModule::Run() -> EmittedModule {
     throw InternalError(
         std::format("llvm codegen: produced an invalid module: {}", os.str()));
   }
-  return {std::move(context_), std::move(module_)};
+  return EmittedModule{std::move(context_), std::move(module_)};
 }
 
 auto CodeGenModule::DeclareCallable(const lir::Function& fn)

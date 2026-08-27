@@ -17,6 +17,7 @@
 #include "lyra/backend/llvm/codegen_module.hpp"
 #include "lyra/base/internal_error.hpp"
 #include "lyra/base/overloaded.hpp"
+#include "lyra/diag/diag_code.hpp"
 #include "lyra/lir/compilation_unit.hpp"
 #include "lyra/lir/type_query.hpp"
 
@@ -31,7 +32,7 @@ auto CodeGenFunction::IsCoroutine() const -> bool {
   return lir::IsCoroutine(module_->Unit().types, fn_->result_type);
 }
 
-void CodeGenFunction::Run() {
+auto CodeGenFunction::Run() -> diag::Result<void> {
   for (std::uint32_t i = 0; i < fn_->params.size(); ++i) {
     values_.emplace(fn_->params[i], value_->getArg(i));
   }
@@ -74,10 +75,18 @@ void CodeGenFunction::Run() {
     builder_.SetInsertPoint(blocks_[i]);
     const lir::BasicBlock& block = fn_->blocks[i];
     for (const lir::Instr& instr : block.instrs) {
-      values_.emplace(instr.result, LowerInstr(instr));
+      auto lowered = LowerInstr(instr);
+      if (!lowered) {
+        return std::unexpected(std::move(lowered.error()));
+      }
+      values_.emplace(instr.result, *lowered);
     }
-    LowerTerminator(block.terminator);
+    auto terminated = LowerTerminatorInto(block.terminator);
+    if (!terminated) {
+      return std::unexpected(std::move(terminated.error()));
+    }
   }
+  return {};
 }
 
 void CodeGenFunction::OpenCoroutine() {
@@ -149,37 +158,53 @@ void CodeGenFunction::EmitCoroutineSuspend(
   arms->addCase(builder_.getInt8(1), coro_cleanup_);
 }
 
-void CodeGenFunction::LowerTerminator(const lir::Terminator& terminator) {
-  std::visit(
+auto CodeGenFunction::LowerTerminatorInto(const lir::Terminator& terminator)
+    -> diag::Result<void> {
+  return std::visit(
       Overloaded{
-          [&](const lir::ReturnTerm& ret) {
+          [&](const lir::ReturnTerm& ret) -> diag::Result<void> {
             if (IsCoroutine()) {
               // A coroutine completes through its final suspension; its owner
               // reads completion from the handle, never from a returned value.
               builder_.CreateBr(coro_final_);
-              return;
+              return {};
             }
             if (value_->getReturnType()->isVoidTy()) {
               builder_.CreateRetVoid();
-              return;
+              return {};
             }
-            builder_.CreateRet(LowerOperand(*ret.value));
+            auto value = LowerOperand(*ret.value);
+            if (!value) {
+              return std::unexpected(std::move(value.error()));
+            }
+            builder_.CreateRet(*value);
+            return {};
           },
-          [&](const lir::BranchTerm& br) {
+          [&](const lir::BranchTerm& br) -> diag::Result<void> {
             builder_.CreateBr(blocks_[br.target.value]);
+            return {};
           },
-          [&](const lir::CondBranchTerm& br) {
+          [&](const lir::CondBranchTerm& br) -> diag::Result<void> {
+            auto condition = LowerOperand(br.condition);
+            if (!condition) {
+              return std::unexpected(std::move(condition.error()));
+            }
             builder_.CreateCondBr(
-                LowerOperand(br.condition), blocks_[br.if_true.value],
+                *condition, blocks_[br.if_true.value],
                 blocks_[br.if_false.value]);
+            return {};
           },
-          [&](const lir::SuspendTerm& s) {
+          [&](const lir::SuspendTerm& s) -> diag::Result<void> {
             // The wakeup source was registered by the calls preceding this
             // terminator; the suspension only hands control back and names
             // where the body resumes.
             EmitCoroutineSuspend(blocks_[s.resume.value], false);
+            return {};
           },
-          [&](const lir::UnreachableTerm&) { builder_.CreateUnreachable(); }},
+          [&](const lir::UnreachableTerm&) -> diag::Result<void> {
+            builder_.CreateUnreachable();
+            return {};
+          }},
       terminator.data);
 }
 
@@ -192,8 +217,19 @@ auto CodeGenFunction::OperandType(const lir::Operand& operand) const
   return *type;
 }
 
-auto CodeGenFunction::DomainOf(lir::TypeId type) const -> ValueDomain {
-  return ValueDomainOf(module_->Unit(), type);
+auto CodeGenFunction::DomainOf(lir::TypeId type) const
+    -> diag::Result<ValueDomain> {
+  const std::optional<ValueDomain> domain =
+      ValueDomainOf(module_->Unit(), type);
+  if (!domain) {
+    return diag::Fail(
+        diag::DiagCode::kUnsupportedTypeKind,
+        std::format(
+            "llvm codegen: a value of type {} has no runtime library "
+            "realization",
+            lir::TypeKindName(module_->Unit().types.Get(type))));
+  }
+  return *domain;
 }
 
 }  // namespace lyra::backend::llvm_backend

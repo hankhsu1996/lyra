@@ -4,6 +4,7 @@
 #include <variant>
 
 #include "lyra/base/internal_error.hpp"
+#include "lyra/value/array_case_equal.hpp"
 #include "lyra/value/packed_array.hpp"
 
 namespace lyra::value {
@@ -41,7 +42,7 @@ auto RuntimeValueCaseEqual(const RuntimeValue& a, const RuntimeValue& b)
               "RuntimeValue::CaseEqual: === is not defined on a real value "
               "(LRM Table 11-1)");
         } else {
-          return lhs.CaseEqual(std::get<T>(b.value));
+          return detail::ArrayCaseEqElement(lhs, std::get<T>(b.value));
         }
       },
       a.value);

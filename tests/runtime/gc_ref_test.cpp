@@ -70,7 +70,10 @@ TEST_F(GcRefTest, NullHandleEquality) {
   EXPECT_EQ(Counted::alive, 0);
 }
 
+// Carries a Counted so that reclaiming a node is observable; a node holding
+// only its own handle type would be reclaimed or leaked with the same result.
 struct Node {
+  Counted marker;
   int value = 0;
   lyra::runtime::GcRef<Node> next;
 };
@@ -82,10 +85,13 @@ TEST_F(GcRefTest, SelfReferentialAcyclicChainReclaims) {
   tail->value = 2;
   head->next = tail;
   EXPECT_EQ(head->next->value, 2);
+  EXPECT_EQ(Counted::alive, 2);
+  // Dropping the head releases the handle it holds, which is the only thing
+  // keeping the tail alive besides the local one.
   head = nullptr;
-  tail = nullptr;
-  auto probe = lyra::runtime::GcNew<Counted>();
   EXPECT_EQ(Counted::alive, 1);
+  tail = nullptr;
+  EXPECT_EQ(Counted::alive, 0);
 }
 
 }  // namespace

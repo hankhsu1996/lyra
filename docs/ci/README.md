@@ -6,21 +6,62 @@ Build and test by asking for the whole graph -- `bazel build //...`, `bazel test
 than naming targets, so a new target is covered the moment it exists and no list has to be kept in
 step with the `BUILD` files.
 
-One split cuts across that, on cost. Three targets spawn the host C++ compiler once per case, which
-dominates their runtime and does not fit a merge-time budget: `cpp_tests`, `cli_tests`, and
-`pch_audit_test`, all tagged `requires-host-cxx`. The merge gate filters them out with
-`--test_tag_filters=-requires-host-cxx`, and `host-cxx-nightly.yml` runs exactly them with the
+One split cuts across that, on cost. Four targets spawn a host compiler once per case, which
+dominates their runtime and does not fit a merge-time budget: `cpp_tests`, `llvm_dpi_tests`,
+`cli_tests`, and `pch_audit_test`, all tagged `requires-host-cxx`. The merge gate filters them out
+with `--test_tag_filters=-requires-host-cxx`, and `host-cxx-nightly.yml` runs exactly them with the
 positive form of the same filter.
 
-The same three carry `no-remote-exec`. A compiler spawned from inside a test is not a Bazel action,
+The same four carry `no-remote-exec`. A compiler spawned from inside a test is not a Bazel action,
 so remote execution cannot provision it, and the tag holds those tests on a machine that has one
 while every other target is free to run remotely.
 
 The two filters are complements, so every test target is covered once and none twice. That is the
 property to preserve: a new target joins whichever side its tag puts it on, and neither list is
-maintained by hand. What it costs is latency rather than coverage. The C++ backend accepts more of
-the language than the execution backend does, and a regression in it surfaces within a day rather
-than at the merge that caused it.
+maintained by hand.
+
+## How the corpus divides into targets
+
+The conformance corpus is one set of cases, and a target is a pair: which path runs the case, and
+what the case needs to run at all. The second half is a property of the case rather than of the path
+-- a case carrying foreign sources builds them with the host C compiler wherever it runs, because a
+path changes how the design is translated and not how a foreign symbol is produced. Keeping the two
+apart is what stops a handful of DPI cases holding the whole corpus to a machine that has a C
+compiler.
+
+| Target           | Runs                           | At merge time |
+| ---------------- | ------------------------------ | ------------- |
+| `llvm_tests`     | the corpus minus foreign cases | yes           |
+| `llvm_dpi_tests` | the foreign cases              | no            |
+| `cpp_tests`      | the whole corpus               | no            |
+
+`llvm_tests` is therefore the gate, and it grows on its own: `tests/paths/llvm.yaml` records what
+that path still refuses, only ever shrinks, and is the measure of how much of the corpus the merge
+gate actually covers.
+
+## Why one way of running the module is enough
+
+The LLVM module can be run by the JIT, compiled ahead of time, or interpreted. One module has one
+meaning, so running it three ways and comparing measures LLVM's execution engines rather than
+anything Lyra decided, and the corpus runs it once.
+
+The exception is not a conformance question. Compiling ahead of time optimizes, and an optimizer is
+free to do anything at all with a module that contains undefined behaviour -- so the one way the two
+can disagree is when the emitted module is already wrong in a way the JIT happens not to expose.
+That, plus linking the runtime as a static library rather than resolving it in process, is what an
+ahead-of-time run is worth testing for, and neither is a statement about IEEE 1800. It belongs in
+the same place the C++ path is heading: a small set of designs, run for the artifact rather than for
+the claim.
+
+Interpreting is not worth running at all while it is not a shipping mode. Where it diverges, it
+diverges because the interpreter is incomplete, which is a fact about that interpreter.
+
+The C++ path is on its way out of this table. Its subject is not what IEEE 1800 requires -- the
+execution backend answers that -- but whether an emitted project still builds and runs under a host
+toolchain, which makes it a tool test rather than a conformance path. When the execution backend
+covers enough of the language, it stops running the corpus and becomes a small, explicitly chosen
+set of designs, sitting beside `cli_tests` rather than beside `llvm_tests`. Nothing in the corpus
+has to change for that, because no case names a path.
 
 ## Gating workflows
 

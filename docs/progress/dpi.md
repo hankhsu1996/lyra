@@ -81,10 +81,12 @@ MIR up on the execution backend, mirroring the C++-backend items one surface at 
       calling scope is: an imported subroutine resolves to a program-global symbol in a name space
       of its own (LRM 35.4), so the declaration's position is a name-resolution fact only and the
       call crosses no unit boundary -- the calling unit holds its own record of the ABI projection
-      and depends on no other unit's artifact. A `context` import declared in such a namespace
-      observes no scope (LRM 35.5.3), a package and `$unit` never being instantiated; a
-      receiver-less export stays directly reachable from it, and any other needs `svSetScope`, which
-      is what the LRM already requires of a caller with no scope of its own.
+      and depends on no other unit's artifact. LRM 35.5.3 gives a `context` import the scope of the
+      instantiated scope its declaration sits in, and says nothing about a declaration in a scope
+      that is never instantiated; Lyra reports no scope there, which is a choice the standard leaves
+      open rather than one it requires. A receiver-less export stays directly reachable from such an
+      import, and any other needs `svSetScope`, which is what the LRM already requires of a caller
+      with no scope of its own.
 
 ### Export: foreign C calls SV
 
@@ -111,11 +113,11 @@ from an external main.
       scope with `svSetScope` (LRM 35.5.3). This is the `mhpmcounter_num` / `mhpmcounter_get` shape
       in the Ibex bring-up; the pure-SV Ibex run never calls them, so this closes the construct, not
       the Ibex external-driver usage.
-- [x] D4d -- An export declared inside a generate block (LRM 27.6): the subroutine belongs to that
-      block's scope object rather than to the module, and the entry point recovers that scope as its
-      receiver the same way D4a recovers an instance. The entry point is a program-global C symbol
-      outside every scope (LRM 35.7), so what this needed was for a generate scope to be nameable
-      from there at all. This is the icache scramble-key shape in the Ibex bring-up.
+- [x] D4d -- An export declared inside a generate block (LRM Annex H.9.2): the subroutine belongs to
+      that block's scope object rather than to the module, and the entry point recovers that scope
+      as its receiver the same way D4a recovers an instance. The entry point is a program-global C
+      symbol outside every scope (LRM 35.7), so what this needed was for a generate scope to be
+      nameable from there at all. This is the icache scramble-key shape in the Ibex bring-up.
 - [x] D4c -- `$unit`-scoped receiver-less export (LRM 35.7): a subroutine at compilation-unit scope
       (LRM 3.12.1) exports exactly as a package function does. The `$unit` scope is an anonymous
       namespace unit, so its export rides the same receiver-less entry as D4a's package export with
@@ -139,14 +141,15 @@ the same protocol, not a separate path. D5 and D6 are the boundary directions; D
 task actually suspend across the C boundary while simulation time advances, and D6c adds the disable
 protocol on top of it.
 
-- [x] D5 -- DPI import task (LRM 35.5.2): SV calls a foreign C task. The call rides the uniform task
-      protocol -- a coroutine the caller awaits -- with the actuals marshaled in and the writeback
-      arguments marshaled back; a task that consumes no time completes within the await.
+- [x] D5 -- DPI import task (LRM 35.2.1, 35.5.4): SV calls a foreign C task. The call rides the
+      uniform task protocol -- a coroutine the caller awaits -- with the actuals marshaled in and
+      the writeback arguments marshaled back; a task that consumes no time completes within the
+      await.
 - [x] D6 -- DPI export task (LRM 35.8): foreign C calls an SV task through its foreign-linkage
       entry. The entry drives the exported task's coroutine body to completion -- the foreign caller
       is not a coroutine and cannot await it -- marshals its writebacks back across the boundary,
       and returns the disable-acknowledgment int.
-- [x] D6b -- Time-consuming foreign task (LRM 35.5.2): a foreign task consumes simulation time by
+- [x] D6b -- Time-consuming foreign task (LRM 35.5.1.1): a foreign task consumes simulation time by
       calling back an exported SV task that suspends on a delay, an event, or a wait. The foreign
       call stack is parked across the boundary while simulation time advances and then resumes, so
       an imported task and the exported task it drives both suspend and continue across the
@@ -183,8 +186,12 @@ protocol on top of it.
       increment, dimension count, reported per dimension from the declared range the call site
       supplied), the addressing surface (whole-array and element addresses, answered where an
       element's canonical form is also how an individual value of its type crosses and with a null
-      where it is not, per Annex H.12.4), and the canonical and scalar element accessors. Element
-      types are the 2- and 4-state scalar and packed ones; the design record is
+      where it is not), and the canonical and scalar element accessors. Annex H.12.4 requires
+      element addresses to be "always supported" and one paragraph earlier makes a packed element's
+      representation implementation dependent, so which of the two governs is unsettled and the null
+      is Lyra's reading rather than the standard's. The corpus therefore holds only the canonical
+      accessors, and the address queries are covered by no conformance case. Element types are the
+      2- and 4-state scalar and packed ones; the design record is
       `../decisions/dpi-open-array-boundary.md`.
   - [ ] An element type Annex H.7.3 puts in C-compatible rather than canonical representation
         (`real`, `shortreal`, `string`, `chandle`, an unpacked struct) is legal SystemVerilog that

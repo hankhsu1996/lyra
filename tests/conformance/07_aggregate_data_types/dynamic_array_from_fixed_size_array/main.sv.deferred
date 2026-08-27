@@ -1,0 +1,37 @@
+// A fixed-size unpacked array is a legal source for an assignment to a dynamic
+// array of a compatible element type: the target is resized to the source's
+// element count and the elements are copied across, so the clause's own example
+// `int A[100:1]; int B[]; B = A;` leaves B with 100 elements (LRM 7.6).
+//
+// Parked: the emitted project does not compile, the assignment reaching no
+// conversion from a fixed-size array, so this case cannot reach a check to fail
+// at.
+module Top;
+  int fixed [3] = '{7, 8, 9};
+  int shrunk [];
+
+  int shrunk_size;
+  int shrunk0 = 77;
+  int shrunk2 = 77;
+
+  initial begin
+    shrunk = new[5];
+    shrunk[0] = 1;
+    shrunk[1] = 2;
+    shrunk[2] = 3;
+    shrunk[3] = 4;
+    shrunk[4] = 5;
+    shrunk = fixed;
+    shrunk_size = shrunk.size();
+    shrunk0 = shrunk[0];
+    shrunk2 = shrunk[2];
+  end
+
+  final begin
+    if (shrunk_size !== 3)
+      $fatal(1, "shrunk_size was %0d, expected 3", shrunk_size);
+    if (shrunk0 !== 7) $fatal(1, "shrunk0 was %0d, expected 7", shrunk0);
+    if (shrunk2 !== 9) $fatal(1, "shrunk2 was %0d, expected 9", shrunk2);
+    $display("All checks passed");
+  end
+endmodule

@@ -34,6 +34,19 @@ auto lyra_rt_packed_const(
     bool is_four_state) -> void*;
 void lyra_rt_writeln(void* files, void* descriptor, void* text);
 void lyra_rt_write(void* files, void* descriptor, void* text);
+
+// The severity-fixed diagnostic channel (LRM 20.10). The dispatcher is reached
+// from the runtime once, then emitted to; `origin` locates the call site and
+// keys its per-site rate limit, and `text` is already formatted. One entry per
+// severity, so the generated module names the severity it means and no severity
+// tag crosses the boundary.
+auto lyra_rt_diagnostic(void* runtime) -> void*;
+void lyra_rt_emit_info(void* dispatcher, const void* origin, const void* text);
+void lyra_rt_emit_warning(
+    void* dispatcher, const void* origin, const void* text);
+void lyra_rt_emit_error(void* dispatcher, const void* origin, const void* text);
+void lyra_rt_emit_fatal(void* dispatcher, const void* origin, const void* text);
+
 // Wraps a generated process body in a runtime-owned coroutine. `ramp` starts
 // the body's own coroutine: called with the receiver it reaches its members
 // through, it runs to the body's first suspension and yields that coroutine's
@@ -69,6 +82,15 @@ auto lyra_rt_make_trigger(
 // up". The wakeup source is the running process itself, read from the runtime;
 // no token crosses the boundary.
 void lyra_rt_wait_any(void* runtime, LyraSpan triggers);
+
+// Records a request to tear the simulation down once the current time slot
+// completes (LRM 20.2); the fatal form (LRM 20.10) additionally makes the run
+// report a non-zero exit code. Neither parks the caller: the generated body
+// suspends on its own after the call, and the recorded request is what keeps
+// the process from ever being dispatched again. The level crosses as an opaque
+// packed value, like every scalar.
+void lyra_rt_finish(void* runtime, const void* level);
+void lyra_rt_fatal_finish(void* runtime, const void* level);
 
 // Builds a scope's structural identity from its base label and per-dimension
 // indices (a span of 32-bit index values, empty for a scalar). The segment is

@@ -2,9 +2,6 @@
 
 Tracks `$display` / `$write` / `$strobe` format-specifier coverage and file-sink support.
 
-The test harness can only probe a variable whose type has an implemented specifier, so the
-format-specifier sub-steps bound what `expect.variables` can assert.
-
 ## Sub-Steps
 
 - [x] DI1 -- `%c` (char): low byte of an integral argument as ASCII (LRM 21.2.1.1 example). The low
@@ -28,9 +25,7 @@ format-specifier sub-steps bound what `expect.variables` can assert.
       sinks, channel reuse on close); `$fopen` / `$fclose` with the full mode-string family (`r` /
       `rb` / `w` / `wb` / `a` / `ab` plus their `+` update variants). Read-mode `$fopen` opens a
       real `FILE*` so the FD shape is genuine even though the read tasks themselves are out of
-      scope. The test framework gained `expect.files` with strict matching (any undeclared file in
-      the per-case sandbox fails the case) and per-case sandbox cwd so `$fopen("foo.txt")` writes
-      inside the sandbox.
+      scope.
 - [x] DI6 -- `$strobe` / `$strobeb` / `$strobeh` / `$strobeo` (LRM 21.2.2). Lowers to a closure
       submitted via the postponed-region builtin; the closure body builds and writes the same print
       items the `$display` family produces. Lambda init-capture snapshots procedural locals by value
@@ -45,10 +40,7 @@ format-specifier sub-steps bound what `expect.variables` can assert.
       forms nest naturally. Singular integral elements follow the LRM "as it would unformatted" rule
       (default `$display` radix, i.e. decimal); singular string elements print quoted. `%0p`
       produces identical text in this scope; LRM 21.2.1.6 allows it. Struct / union / enum /
-      string-typed / real element formats land with their respective type workstreams. Drives the
-      test framework's whole-array `expect.variables` assertion path: sequence-valued YAML entries
-      (`a: [10, 20, 30]`) round-trip through the same aggregate-render path the runtime uses, for
-      either container family.
+      string-typed / real element formats land with their respective type workstreams.
 - [x] DI8 -- `$sscanf` and `$fscanf` over a shared scanner core (LRM 21.3.4.3). Statement-position
       call (bare or blocking assign-RHS); conversions `%d` / `%h` / `%x` / `%b` / `%o` / `%s` / `%c`
       / `%%`; 4-state vocabulary (`x` / `z` / `?` / `_`) inside the integer conversions; single-char
@@ -176,13 +168,39 @@ sanctions; the runtime-parsed path continues silently.
       expression-position support. `$readmemh` / `$readmemb` do not share this gap: they are void
       tasks, so they never appear in expression position.
 
+## Conformance gaps the corpus records
+
+Behaviour the corpus asks for and does not get. Each is held by a disabled check inside a case that
+otherwise runs. Re-enabling that check is manual: nothing detects that the behaviour became right,
+so this list is what remembers.
+
+- [ ] **A conversion with no field width does not pad to the operand's size** (LRM 21.2.1.2). The
+      clause's own worked example fixes `%d` of a 32-bit value in ten right-justified columns and
+      `%3h` of `32'h5` as `005`; Lyra prints `10` and `  5`. Two independent readings of the clause
+      reached the same conclusion. Decimal pads with spaces and the other radices with zeros, so the
+      two halves are separate requirements that happen to fail together.
+- [ ] **Format flags C provides but the standard does not.** `%-4h` (left-justify) and `%05d`
+      (zero-pad a decimal) are accepted and behave as C's `printf` does. 21.2.1.2 admits only a
+      non-negative field width, and fixes decimal padding as leading spaces, so `%05d` of -5 is
+      required to give four leading spaces rather than `-0005`. Whether to reject these or define
+      them is open; today they silently follow C.
+- [ ] **`%p` of an enumeration prints the integer** (LRM 21.2.1.6), where the clause requires the
+      enumeration name.
+- [ ] **`$fflush` with no argument flushes nothing.** LRM 21.3.6 requires that form to flush every
+      open file; output written before such a call is still missing when the file is read back
+      through a second descriptor. The form taking a descriptor flushes that one.
+- [ ] **A seek counted from the current position moves twice the offset** (LRM 21.3.5, operation 1).
+      Operation 0 (from the start of the file), operation 2 (from the end), and `$rewind` all land
+      where the clause puts them.
+
 ## Out of Scope
 
 - Format-string parse diagnostics (trailing `%`, missing specifier, width overflow, unknown
   specifier) -- already implemented, not gaps.
 - `$monitor` / `$fmonitor`. Not modelled today; add an entry when a concrete consumer needs it.
 - File read / positioning tasks (`$fgetc` / `$ungetc` / `$fseek` / `$rewind` / `$ftell` / `$feof` /
-  `$fflush`) are implemented per LRM 21.3.4..21.3.8. The output-argument reads `$fgets` / `$fread` /
-  `$ferror` are implemented in statement position; their expression-position gap is tracked above.
+  `$fflush`) are implemented per LRM 21.3.4..21.3.8, but for the two gaps recorded above. The
+  output-argument reads `$fgets` / `$fread` / `$ferror` are implemented in statement position; their
+  expression-position gap is tracked above.
 - `%u` / `%z` (binary-packed unsigned / signed) and `%v` (strength). Not on the immediate roadmap;
   add entries when concrete consumers appear.

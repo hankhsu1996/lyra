@@ -132,6 +132,49 @@ frontend inserts an implicit conversion when a literal participates in an expres
 - LRM 6.16 (String data type), Table 6-9 (String operators), 6.16.1 -- 6.16.15 (String methods),
   Table 6-7 (Default initial values).
 
+## Conformance gaps the corpus records
+
+Behaviour IEEE 1800 requires and Lyra does not deliver. Most are held by a disabled check inside a
+case that otherwise runs; the rest say so. Re-enabling a disabled check is manual either way --
+nothing detects that the behaviour became right -- so this list is what remembers.
+
+- [ ] A dynamic array cannot be sized by its own declaration assignment. LRM 7.5.1 permits `new[]`
+      "in place of the right-hand side expression of variable declaration assignments and blocking
+      procedural assignments", and gives four declaration examples, so `int data[] = new [2];` is a
+      legal program Lyra refuses. Sizing the array in a procedure is the only spelling that works.
+      No case holds this one, because it is a refusal rather than a wrong answer.
+- [ ] A dynamic array cannot be assigned a fixed-size unpacked array. LRM 7.6 resizes the target to
+      the source's element count and copies the elements across; its example
+      `int A[100:1]; int B[]; B = A;` is legal and leaves B with 100 elements. The program does not
+      build instead, so a design containing one never runs. A dynamic-array source of any size,
+      longer or shorter than the target, is copied correctly.
+- [ ] Comparing two aggregates of different sizes answers with a two-state bit even when the
+      elements are four-state. The result's state class follows the elements, so `===` over a
+      four-state array must yield a four-state result whatever the sizes are; the length-mismatch
+      and both-empty answers are built as two-state regardless. No case holds this one: every
+      comparison the corpus makes reaches an element-by-element path, where the class is right. It
+      is recorded because a wrong answer is worse than a refusal, and this one is silent.
+- [ ] An `unsigned` keyword on an integer type is dropped, so the type keeps its default signedness.
+      LRM 6.11.3 lets the keyword override the default and 11.8.1 makes a comparison with an
+      unsigned operand unsigned, so `int unsigned a = 32'hFFFFFFFF; a > 0` is required to be true
+      and comes out false. `longint unsigned` and `integer unsigned` answer wrongly the same way;
+      `byte unsigned` and `shortint unsigned` lose the keyword too but happen to answer correctly,
+      because a comparison widens them through a conversion that is unsigned in its own right. The
+      associative-array gap below is the same defect reaching a different consumer.
+- [ ] An `int unsigned` associative-array index passed to `first()` or `last()` aborts the run,
+      reporting that a required conversion was not emitted. The unsigned half of LRM 7.8.4 -- where
+      `32'hFFFFFFFF` is the largest index rather than the smallest -- is therefore unexercised.
+- [ ] A product of two `shortreal` operands assigned to a `real` keeps double precision instead of
+      rounding to single. LRM 11.3.1 makes the result type operand-driven, so the product is
+      `shortreal` and narrows before it reaches the wider destination. The front end propagates the
+      assignment's type into the operands, so the narrowing never happens; the defect is upstream of
+      anything Lyra can decide.
+- [ ] A string cast of an integral whose width is not a multiple of 8 drops the low bits. LRM 6.16
+      left-extends such a value with zeros until its width is a multiple of 8, so the clause's own
+      example makes `string'(12'ha41)` the two characters of `16'h0a41`. Lyra builds one character
+      from the top 8 bits and drops the remaining 4. A width that is already a multiple of 8
+      converts correctly, the `"\0"` removal rule included.
+
 ## Chandle
 
 LRM 6.14: `chandle` stores a pointer passed through the DPI. It always initializes to `null`, and

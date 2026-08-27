@@ -1,0 +1,34 @@
+// Each pattern introduces a scope in which its pattern identifiers are
+// implicitly declared, and that scope extends to the optional filter expression
+// beside it as well as to the statement on the right-hand side, so the filter
+// reads what the pattern bound (LRM 12.6.1).
+//
+// Parked: the emitted project does not compile, the filter naming an identifier
+// the emitted scope never declares, so this case cannot reach a check to fail
+// at.
+module Top;
+  typedef union tagged {
+    int Simple;
+    void Empty;
+  } value_t;
+
+  value_t v;
+  int filter_reads_binding = -1;
+
+  initial begin
+    v = tagged Simple 42;
+
+    filter_reads_binding = 0;
+    case (v) matches
+      tagged Simple .n &&& (n > 10) : filter_reads_binding = n * 10;
+      default                       : filter_reads_binding = -1;
+    endcase
+  end
+
+  final begin
+    if (filter_reads_binding !== 420)
+      $fatal(1, "filter_reads_binding was %0d, expected 420",
+             filter_reads_binding);
+    $display("All checks passed");
+  end
+endmodule

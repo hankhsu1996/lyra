@@ -88,6 +88,11 @@ class UnitLowerer {
       -> std::string;
 
   auto TranslateTypeData(const mir::Type& ty) -> lir::TypeData;
+  // The LIR mirror of a runtime-library record type. MIR is written once for
+  // every backend, so a record only the C++ backend realizes reaches here
+  // whenever a program uses the construct behind it, and is recorded as an
+  // unsupported type rather than read as a broken invariant.
+  auto TranslateRuntimeLibrary(mir::RuntimeLibraryKind kind) -> lir::TypeData;
   // Records `what` (a human phrase like "a closure") as the unit's first
   // unmirrored-type error and returns a benign placeholder type; the unit fails
   // at `Run` before the placeholder is observed.

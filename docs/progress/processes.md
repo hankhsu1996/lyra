@@ -124,6 +124,28 @@ machinery owned by other workstreams; see [Blocked](#blocked).
 - [ ] P12 -- Process generate (`generate` / `if generate` / `for generate` containing procedural
       blocks). Largely a frontend elaboration concern; the lowered processes ride on P1..P11.
 
+## Conformance gaps the corpus records
+
+Behaviour the corpus asks for and does not get. Each is held by a disabled check inside a case that
+otherwise runs. Re-enabling that check is manual: nothing detects that the behaviour became right,
+so this list is what remembers.
+
+- [ ] A `wait` whose condition is unknown does not block. LRM 9.4.3 makes the process block while
+      the condition "is not true (as defined in 12.4)", and 12.4 counts x and z as not true, so a
+      four-state condition starting at x must block exactly as a two-state one starting at 0 does.
+      Today the four-state form passes at time zero.
+- [ ] A variable declared inside a fork branch cannot read the enclosing loop's variable. LRM 9.3.2
+      initializes such a declaration when the branch starts running rather than when the fork is
+      reached, so a branch spawned in a loop sees the value the loop variable holds once the loop
+      has already ended. A branch whose own declaration reads it ends the run with a segmentation
+      fault. The same declaration reading an ordinary variable the parent writes after the fork is
+      right, as is the block-item form, which LRM 9.3.2 initializes before any branch is spawned.
+- [ ] A `wait` whose condition reads an event's triggered state is not accepted, so a program
+      containing one never runs. LRM 15.5.3 keeps that state true for the rest of the time step the
+      trigger happened in, which is what lets `wait (e.triggered)` unblock a procedure reaching it
+      in the same time step as the trigger, where `@e` alone would miss it. Reading `.triggered`
+      anywhere but a wait condition is right.
+
 ## Out of Scope
 
 - Scheduler-region behaviour (Active / Inactive / NBA / Observed / Reactive / Postponed). Each
