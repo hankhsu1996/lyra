@@ -80,11 +80,6 @@ auto ConvertIntegralRemainder(std::string_view remainder, int base)
   return value;
 }
 
-auto MakeIntResult(std::int64_t value) -> value::PackedArray {
-  // SV `int` shape: 32-bit signed, 2-state (LRM 6.11.1).
-  return value::PackedArray::FromInt(value, 32, true, false);
-}
-
 }  // namespace
 
 auto PlusArgsSource::MatchPrefix(std::string_view prefix) const
@@ -101,7 +96,7 @@ auto PlusArgsSource::MatchPrefix(std::string_view prefix) const
 auto TestPlusargs(RuntimeEffects& runtime, const value::String& user_string)
     -> value::PackedArray {
   const auto match = runtime.PlusArgs().MatchPrefix(user_string.View());
-  return MakeIntResult(match.has_value() ? 1 : 0);
+  return value::PackedArray::Int(match.has_value() ? 1 : 0);
 }
 
 auto ValuePlusargs(
@@ -111,13 +106,13 @@ auto ValuePlusargs(
   const auto base = BaseForFormat(parsed.format_letter);
   if (!base.has_value()) {
     // %s / %e / %f / %g on an integral target: no match, out untouched.
-    return MakeIntResult(0);
+    return value::PackedArray::Int(0);
   }
   const auto match = runtime.PlusArgs().MatchPrefix(parsed.prefix);
-  if (!match.has_value()) return MakeIntResult(0);
+  if (!match.has_value()) return value::PackedArray::Int(0);
   const std::int64_t converted = ConvertIntegralRemainder(*match, *base);
   out = value::PackedArray::FromInt(converted, out);
-  return MakeIntResult(1);
+  return value::PackedArray::Int(1);
 }
 
 auto ValuePlusargs(
@@ -125,11 +120,11 @@ auto ValuePlusargs(
     value::String& out) -> value::PackedArray {
   const auto parsed = ParseUserString(user_string.View());
   const char letter = parsed.format_letter;
-  if (letter != 's' && letter != 'S') return MakeIntResult(0);
+  if (letter != 's' && letter != 'S') return value::PackedArray::Int(0);
   const auto match = runtime.PlusArgs().MatchPrefix(parsed.prefix);
-  if (!match.has_value()) return MakeIntResult(0);
+  if (!match.has_value()) return value::PackedArray::Int(0);
   out = value::String(std::string(*match));
-  return MakeIntResult(1);
+  return value::PackedArray::Int(1);
 }
 
 }  // namespace lyra::runtime

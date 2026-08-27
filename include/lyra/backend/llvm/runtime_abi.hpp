@@ -115,6 +115,19 @@ class RuntimeAbi {
   auto UrandomSeeded() -> llvm::FunctionCallee;
   auto UrandomRange() -> llvm::FunctionCallee;
 
+  // `$random` with no seed draws from that same generator, read signed (LRM
+  // 20.14.1). The distribution functions do not: their whole state is the seed
+  // they are handed, so no runtime is passed, and each answers with a product
+  // of the value drawn and the seed that draw advanced (LRM 20.14.2).
+  auto Random() -> llvm::FunctionCallee;
+  auto DistUniform() -> llvm::FunctionCallee;
+  auto DistNormal() -> llvm::FunctionCallee;
+  auto DistExponential() -> llvm::FunctionCallee;
+  auto DistPoisson() -> llvm::FunctionCallee;
+  auto DistChiSquare() -> llvm::FunctionCallee;
+  auto DistT() -> llvm::FunctionCallee;
+  auto DistErlang() -> llvm::FunctionCallee;
+
   // Builds one leaf of a wait: the observable cell it watches, the bit
   // projection of that cell it watches, and the edge polarity it watches for.
   auto MakeTrigger() -> llvm::FunctionCallee;

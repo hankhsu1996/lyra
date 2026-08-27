@@ -108,6 +108,26 @@ auto lyra_rt_urandom_seeded(void* runtime, const void* seed) -> void*;
 auto lyra_rt_urandom_range(
     void* runtime, const void* maxval, const void* minval) -> void*;
 
+// `$random` with no seed (LRM 20.14.1): the same process draw, read signed.
+auto lyra_rt_random(void* runtime) -> void*;
+
+// Draws by the algorithm LRM Annex N states (LRM 20.14.2). The seed is the
+// whole state, so no runtime crosses the boundary; each answers with a product
+// of the value drawn and the seed that draw advanced, which the caller stores
+// back into the design's own seed variable.
+auto lyra_rt_dist_uniform(const void* seed, const void* start, const void* end)
+    -> void*;
+auto lyra_rt_dist_normal(
+    const void* seed, const void* mean, const void* standard_deviation)
+    -> void*;
+auto lyra_rt_dist_exponential(const void* seed, const void* mean) -> void*;
+auto lyra_rt_dist_poisson(const void* seed, const void* mean) -> void*;
+auto lyra_rt_dist_chi_square(const void* seed, const void* degrees_of_freedom)
+    -> void*;
+auto lyra_rt_dist_t(const void* seed, const void* degrees_of_freedom) -> void*;
+auto lyra_rt_dist_erlang(const void* seed, const void* stages, const void* mean)
+    -> void*;
+
 // Builds a scope's structural identity from its base label and per-dimension
 // indices (a span of 32-bit index values, empty for a scalar). The segment is
 // a transient runtime value owned by the current call scope.

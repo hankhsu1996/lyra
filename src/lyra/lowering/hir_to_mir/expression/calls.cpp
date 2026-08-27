@@ -367,6 +367,11 @@ auto LowerSystemSubroutineCall(
             return LowerRandomSystemSubroutineCall(
                 lowerer, frame, call, random_info);
           },
+          [&](const support::DistributionSystemSubroutineInfo& distribution)
+              -> diag::Result<mir::Expr> {
+            return LowerDistributionSystemSubroutineCall(
+                lowerer, frame, call, distribution, span);
+          },
           [&](const support::MemFileSystemSubroutineInfo&)
               -> diag::Result<mir::Expr> {
             // A void task (LRM 21.4 / 21.5) has no value, so the frontend

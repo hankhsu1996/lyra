@@ -3,9 +3,10 @@
 Two workstreams share this name, and separating them is the first thing this file does.
 
 **Part one, random number generation**, is a seeded RNG carrying the stability model of LRM 18.14,
-plus the system functions, the array method, and the statements that draw from it. Nothing blocks
-it. It is the first state a system function consumes that is not a pure function of its arguments,
-so it also settles how that state reaches a call site.
+plus the system functions, the array method, and the statements that draw from it. It is the first
+state a system function consumes that is not a pure function of its arguments, so it also settles
+how that state reaches a call site. Only one item is blocked, and on the front end rather than on
+anything here.
 
 **Part two, constraint-based randomization**, is `rand` and `randc` members, constraint blocks, and
 `randomize()`. It needs a constraint solver and it needs the object model finished, so its items
@@ -43,13 +44,25 @@ Done when:
       three methods lands with part two, because until `randomize()` exists nothing draws from an
       object's RNG for a saved state to be about.
 
-- [ ] `$random` and the probabilistic distribution functions -- `$dist_uniform`, `$dist_normal`,
+- [x] The probabilistic distribution functions -- `$dist_uniform`, `$dist_normal`,
       `$dist_exponential`, `$dist_poisson`, `$dist_chi_square`, `$dist_t`, `$dist_erlang` (LRM
-      20.14). These sit outside the stability model above: each carries its seed as an `inout`
+      20.14.2). These sit outside the stability model above: each carries its seed as an `inout`
       argument rather than drawing from a process, and returns the same value whenever it is given
-      the same seed. The standard also fixes their generation algorithm rather than leaving it to
-      the implementation, so a design that seeds one expects the sequence every other simulator
-      produces.
+      the same seed. The standard fixes their generation algorithm rather than leaving it to the
+      implementation -- Annex N states it as C source and is normative -- so a design that seeds one
+      gets the sequence every other simulator produces, and the corpus asserts those values outright
+      instead of asserting an invariance about them. Annex N's `long` is 32 bits wide, and what
+      forces that reading is the branch `$random` takes, whose rescaling lands within 32 signed bits
+      only under it. A mean, degree of freedom, or stage count that is not positive is the design's
+      own failure and ends the simulation rather than answering with a number the distribution
+      cannot produce.
+
+- [ ] `$random`, whose seed the caller owns (LRM 20.14.1). The unseeded form works and draws from
+      the calling process, which the standard leaves open. The seeded form is refused: it is Annex
+      N's uniform draw over the whole signed range (Table N.1), but the front end reads its argument
+      as a value rather than as the variable the draw advances, so the seed to store back into does
+      not reach lowering. `$dist_uniform(seed, -2147483648, 2147483647)` is the same draw and does
+      carry its seed, which is what the refusal points a design at.
 
 - [ ] `shuffle()` on every unpacked container -- dynamic array, queue, and fixed unpacked array (LRM
       7.12.2). The array manipulation family is otherwise complete; this is the one member held
@@ -117,8 +130,10 @@ object lifetime are in place.
   a seed source for it and record the choice.
 
 - LRM 18.14 lists what random stability applies to and does not list `$random` among them, while LRM
-  20.14 gives `$random` an optional seed argument rather than a required one. What an argumentless
-  `$random` draws from is therefore not stated, and part one has to pick something and record it.
+  20.14 gives `$random` an optional seed argument rather than a required one, so what an
+  argumentless `$random` draws from is not stated. It draws from the calling process, the same
+  generator `$urandom` reads, which makes an unseeded draw a signed reading of the same bits and
+  gives it that call's thread locality without introducing a design-wide generator.
 
 ## Cross-References
 

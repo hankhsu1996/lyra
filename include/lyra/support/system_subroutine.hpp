@@ -224,6 +224,30 @@ struct RandomSystemSubroutineInfo {
   RandomKind kind;
 };
 
+// LRM 20.14 probabilistic distribution functions. These carry their own
+// generator state instead of drawing from a process: the seed is an `inout`
+// argument, so a call both reads the design's seed variable and writes the
+// advanced seed back, and the same seed always answers with the same value
+// (LRM 20.14.2). That is what puts them outside the random stability model of
+// LRM 18.14, whose list does not include them. The generation algorithm is
+// itself part of the standard (LRM Annex N), so a seeded stream is the same one
+// on every implementation. `$random` belongs here because Annex N's Table N.1
+// defines it as a uniform draw over the whole signed range; its seed is
+// optional, and a call that omits one has no stream of its own to advance.
+enum class DistributionKind : std::uint8_t {
+  kRandom,
+  kUniform,
+  kNormal,
+  kExponential,
+  kPoisson,
+  kChiSquare,
+  kT,
+  kErlang,
+};
+struct DistributionSystemSubroutineInfo {
+  DistributionKind kind;
+};
+
 using SystemSubroutineSemantic = std::variant<
     PrintSystemSubroutineInfo, TerminationSystemSubroutineInfo,
     DiagnosticSystemSubroutineInfo, FileIOSystemSubroutineInfo,
@@ -231,7 +255,8 @@ using SystemSubroutineSemantic = std::variant<
     TimeSystemSubroutineInfo, TimeFormatSystemSubroutineInfo,
     PrintTimescaleSystemSubroutineInfo, PlusargsSystemSubroutineInfo,
     MemFileSystemSubroutineInfo, BitVectorSystemSubroutineInfo,
-    HostCommandSystemSubroutineInfo, RandomSystemSubroutineInfo>;
+    HostCommandSystemSubroutineInfo, RandomSystemSubroutineInfo,
+    DistributionSystemSubroutineInfo>;
 
 struct SystemSubroutineDesc {
   SystemSubroutineId id;
@@ -1056,6 +1081,90 @@ inline constexpr std::array kSystemSubroutines = {
         .arg_policy = ArgCountPolicy{.min_args = 1, .max_args = 2},
         .semantic =
             RandomSystemSubroutineInfo{.kind = RandomKind::kUrandomRange},
+    },
+    SystemSubroutineDesc{
+        .id = SystemSubroutineId{68},
+        .name = "$random",
+        .origin = SystemSubroutineOrigin::kLanguageBuiltin,
+        .kind = SystemSubroutineKind::kFunction,
+        .result_conv = ReturnConvention::kInt32,
+        .arg_policy = ArgCountPolicy{.min_args = 0, .max_args = 1},
+        .semantic =
+            DistributionSystemSubroutineInfo{.kind = DistributionKind::kRandom},
+    },
+    SystemSubroutineDesc{
+        .id = SystemSubroutineId{69},
+        .name = "$dist_uniform",
+        .origin = SystemSubroutineOrigin::kLanguageBuiltin,
+        .kind = SystemSubroutineKind::kFunction,
+        .result_conv = ReturnConvention::kInt32,
+        .arg_policy = ArgCountPolicy{.min_args = 3, .max_args = 3},
+        .semantic =
+            DistributionSystemSubroutineInfo{
+                .kind = DistributionKind::kUniform},
+    },
+    SystemSubroutineDesc{
+        .id = SystemSubroutineId{70},
+        .name = "$dist_normal",
+        .origin = SystemSubroutineOrigin::kLanguageBuiltin,
+        .kind = SystemSubroutineKind::kFunction,
+        .result_conv = ReturnConvention::kInt32,
+        .arg_policy = ArgCountPolicy{.min_args = 3, .max_args = 3},
+        .semantic =
+            DistributionSystemSubroutineInfo{.kind = DistributionKind::kNormal},
+    },
+    SystemSubroutineDesc{
+        .id = SystemSubroutineId{71},
+        .name = "$dist_exponential",
+        .origin = SystemSubroutineOrigin::kLanguageBuiltin,
+        .kind = SystemSubroutineKind::kFunction,
+        .result_conv = ReturnConvention::kInt32,
+        .arg_policy = ArgCountPolicy{.min_args = 2, .max_args = 2},
+        .semantic =
+            DistributionSystemSubroutineInfo{
+                .kind = DistributionKind::kExponential},
+    },
+    SystemSubroutineDesc{
+        .id = SystemSubroutineId{72},
+        .name = "$dist_poisson",
+        .origin = SystemSubroutineOrigin::kLanguageBuiltin,
+        .kind = SystemSubroutineKind::kFunction,
+        .result_conv = ReturnConvention::kInt32,
+        .arg_policy = ArgCountPolicy{.min_args = 2, .max_args = 2},
+        .semantic =
+            DistributionSystemSubroutineInfo{
+                .kind = DistributionKind::kPoisson},
+    },
+    SystemSubroutineDesc{
+        .id = SystemSubroutineId{73},
+        .name = "$dist_chi_square",
+        .origin = SystemSubroutineOrigin::kLanguageBuiltin,
+        .kind = SystemSubroutineKind::kFunction,
+        .result_conv = ReturnConvention::kInt32,
+        .arg_policy = ArgCountPolicy{.min_args = 2, .max_args = 2},
+        .semantic =
+            DistributionSystemSubroutineInfo{
+                .kind = DistributionKind::kChiSquare},
+    },
+    SystemSubroutineDesc{
+        .id = SystemSubroutineId{74},
+        .name = "$dist_t",
+        .origin = SystemSubroutineOrigin::kLanguageBuiltin,
+        .kind = SystemSubroutineKind::kFunction,
+        .result_conv = ReturnConvention::kInt32,
+        .arg_policy = ArgCountPolicy{.min_args = 2, .max_args = 2},
+        .semantic =
+            DistributionSystemSubroutineInfo{.kind = DistributionKind::kT},
+    },
+    SystemSubroutineDesc{
+        .id = SystemSubroutineId{75},
+        .name = "$dist_erlang",
+        .origin = SystemSubroutineOrigin::kLanguageBuiltin,
+        .kind = SystemSubroutineKind::kFunction,
+        .result_conv = ReturnConvention::kInt32,
+        .arg_policy = ArgCountPolicy{.min_args = 3, .max_args = 3},
+        .semantic =
+            DistributionSystemSubroutineInfo{.kind = DistributionKind::kErlang},
     },
 };
 

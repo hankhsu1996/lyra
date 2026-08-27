@@ -230,6 +230,48 @@ auto RuntimeAbi::UrandomRange() -> llvm::FunctionCallee {
       {types_->Ptr(), types_->Ptr(), types_->Ptr()});
 }
 
+auto RuntimeAbi::Random() -> llvm::FunctionCallee {
+  return Get("lyra_rt_random", types_->Ptr(), {types_->Ptr()});
+}
+
+auto RuntimeAbi::DistUniform() -> llvm::FunctionCallee {
+  return Get(
+      "lyra_rt_dist_uniform", types_->Ptr(),
+      {types_->Ptr(), types_->Ptr(), types_->Ptr()});
+}
+
+auto RuntimeAbi::DistNormal() -> llvm::FunctionCallee {
+  return Get(
+      "lyra_rt_dist_normal", types_->Ptr(),
+      {types_->Ptr(), types_->Ptr(), types_->Ptr()});
+}
+
+auto RuntimeAbi::DistExponential() -> llvm::FunctionCallee {
+  return Get(
+      "lyra_rt_dist_exponential", types_->Ptr(),
+      {types_->Ptr(), types_->Ptr()});
+}
+
+auto RuntimeAbi::DistPoisson() -> llvm::FunctionCallee {
+  return Get(
+      "lyra_rt_dist_poisson", types_->Ptr(), {types_->Ptr(), types_->Ptr()});
+}
+
+auto RuntimeAbi::DistChiSquare() -> llvm::FunctionCallee {
+  return Get(
+      "lyra_rt_dist_chi_square", types_->Ptr(), {types_->Ptr(), types_->Ptr()});
+}
+
+auto RuntimeAbi::DistT() -> llvm::FunctionCallee {
+  return Get("lyra_rt_dist_t", types_->Ptr(), {types_->Ptr(), types_->Ptr()});
+}
+
+auto RuntimeAbi::DistErlang() -> llvm::FunctionCallee {
+  return Get(
+      "lyra_rt_dist_erlang", types_->Ptr(),
+      {types_->Ptr(), types_->Ptr(), types_->Ptr()});
+}
+
 auto RuntimeAbi::MakeTrigger() -> llvm::FunctionCallee {
   return Get(
       "lyra_rt_make_trigger", types_->Ptr(),
