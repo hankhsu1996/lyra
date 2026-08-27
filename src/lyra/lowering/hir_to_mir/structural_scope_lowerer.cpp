@@ -424,13 +424,33 @@ auto AddressTypedLeaf(
 }
 
 // Materializes the leaf reach as the borrowed-pointer value the slot takes:
-// the addressed member access when the leaf is one this artifact declares, or
-// a cast of the untyped address a by-name signal query answers with when it
-// lives in another unit's body, whose layout this one does not know.
+// the addressed member access when the leaf is one this artifact declares or
+// one the target unit published, or a cast of the untyped address a by-name
+// signal query answers with when it reaches past a signature, where nothing
+// was promised for this one to compile against.
 auto MaterializeLeaf(
     UnitLowerer& unit_lowerer, mir::Block& block, const RouteReceiver& receiver,
     const hir::RouteLeaf& leaf, mir::TypeId slot_type) -> mir::ExprId {
   auto& unit = unit_lowerer.Unit();
+
+  // A published member is reached through the target unit's own object, whose
+  // pointer the step before it produced, so the access is typed and the name
+  // resolves against the signature this unit compiled against.
+  if (const auto* member = std::get_if<hir::SignatureMemberLeaf>(&leaf)) {
+    const auto& slot =
+        std::get<mir::PointerType>(unit.types.Get(slot_type).data);
+    const mir::ExprId access = block.exprs.Add(
+        mir::MakeFieldAccessExpr(
+            receiver.expr,
+            mir::ExternalFieldTarget{
+                .unit_name = member->unit_name,
+                .class_name = member->class_name,
+                .field_name = member->member_name},
+            slot.pointee));
+    return block.exprs.Add(
+        mir::Expr{
+            .data = mir::AddressOfExpr{.operand = access}, .type = slot_type});
+  }
 
   if (const auto* opaque = std::get_if<hir::OpaqueLeaf>(&leaf)) {
     const mir::TypeId void_ptr_type = unit.types.PointerTo(

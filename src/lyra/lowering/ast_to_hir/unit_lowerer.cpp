@@ -5,6 +5,7 @@
 #include <expected>
 #include <map>
 #include <optional>
+#include <span>
 #include <string>
 #include <unordered_map>
 #include <unordered_set>
@@ -34,6 +35,7 @@
 #include "lyra/hir/value_ref.hpp"
 #include "lyra/lowering/ast_to_hir/expression/references.hpp"
 #include "lyra/lowering/ast_to_hir/instance_array_shape.hpp"
+#include "lyra/lowering/ast_to_hir/net_type.hpp"
 #include "lyra/lowering/ast_to_hir/sensitivity.hpp"
 #include "lyra/lowering/ast_to_hir/specialization_name.hpp"
 #include "lyra/lowering/ast_to_hir/structural_scope_lowerer.hpp"
@@ -420,16 +422,14 @@ auto TargetNetType(const slang::ast::ValueSymbol& target)
   if (target.kind != slang::ast::SymbolKind::Net) {
     return std::nullopt;
   }
-  switch (target.as<slang::ast::NetSymbol>().netType.netKind) {
-    case slang::ast::NetType::Wire:
-      return hir::NetType::kWire;
-    case slang::ast::NetType::Tri:
-      return hir::NetType::kTri;
-    default:
-      throw InternalError(
-          "TargetNetType: cross-unit reference to an unsupported net type; the "
-          "net's own declaration validates the supported net types");
+  const auto net_type =
+      TranslateNetType(target.as<slang::ast::NetSymbol>().netType);
+  if (!net_type.has_value()) {
+    throw InternalError(
+        "TargetNetType: reference to a net of an unsupported net type; the "
+        "net's own declaration validates the supported net types");
   }
+  return net_type;
 }
 
 // The compilation unit a value is declared directly in when that unit is a
@@ -453,17 +453,14 @@ auto DeclaringUnitOfValue(const slang::ast::ValueSymbol& value)
 
 auto UnitLowerer::MapOrGetRoutedRef(
     const slang::ast::ValueSymbol& target, ScopeFrameId slot_owner_frame,
-    hir::RoutedPathRecipe recipe) -> hir::RoutedRefId {
+    hir::RoutedRefDecl decl) -> hir::RoutedRefId {
   auto& frame_dedup = routed_ref_dedup_[slot_owner_frame];
   if (const auto it = frame_dedup.find(&target); it != frame_dedup.end()) {
     return it->second;
   }
   auto& slots = routed_refs_by_frame_[slot_owner_frame];
   const hir::RoutedRefId id{static_cast<std::uint32_t>(slots.size())};
-  slots.push_back(
-      hir::RoutedRefDecl{
-          .recipe = std::move(recipe),
-          .target_net_type = TargetNetType(target)});
+  slots.push_back(std::move(decl));
   frame_dedup.emplace(&target, id);
   return id;
 }
@@ -481,10 +478,10 @@ auto UnitLowerer::TakeRoutedRefsForFrame(ScopeFrameId slot_owner_frame)
 
 auto UnitLowerer::MakeRoutedMemberRef(
     const slang::ast::ValueSymbol& target, ScopeFrameId slot_owner_frame,
-    hir::RoutedPathRecipe recipe, diag::SourceSpan span) -> hir::Expr {
-  const hir::TypeId type = recipe.type;
+    hir::RoutedRefDecl decl, diag::SourceSpan span) -> hir::Expr {
+  const hir::TypeId type = decl.recipe.type;
   const hir::RoutedRefId slot =
-      MapOrGetRoutedRef(target, slot_owner_frame, std::move(recipe));
+      MapOrGetRoutedRef(target, slot_owner_frame, std::move(decl));
   return hir::Expr{
       .type = type,
       .data = hir::PrimaryExpr{.data = hir::RoutedRef{.id = slot}},
@@ -492,9 +489,88 @@ auto UnitLowerer::MakeRoutedMemberRef(
   };
 }
 
+auto UnitLowerer::PublishedRouteTarget(
+    const slang::ast::ValueSymbol& value, std::span<const hir::PathStep> steps)
+    -> std::optional<RouteTarget> {
+  // Reaching a member of another unit by name needs a pointer to that unit's
+  // own object, which only a step onto a child this unit declares produces. A
+  // step into a generate scope stays inside this unit, and one resolved by
+  // name yields a scope with no declaration behind it.
+  if (steps.empty()) return std::nullopt;
+  const auto* last = std::get_if<hir::OwnedChildStep>(&steps.back());
+  if (last == nullptr ||
+      !std::holds_alternative<hir::InstanceMemberId>(last->child)) {
+    return std::nullopt;
+  }
+
+  const slang::ast::Scope* owner = value.getHierarchicalParent();
+  if (owner == nullptr) return std::nullopt;
+  const auto* body = owner->asSymbol().as_if<slang::ast::InstanceBodySymbol>();
+  if (body == nullptr) return std::nullopt;
+
+  const hir::UnitSignature* signature = SignatureOf(SpecializationName(*body));
+  if (signature == nullptr || !signature->instance_class.has_value()) {
+    return std::nullopt;
+  }
+  const hir::InstanceClassSignature& published = *signature->instance_class;
+  const auto member_id = published.Find(value.name);
+  if (!member_id.has_value()) return std::nullopt;
+
+  const hir::PublishedMember& member = published.members.Get(*member_id);
+  return RouteTarget{
+      .leaf =
+          hir::SignatureMemberLeaf{
+              .unit_name = signature->unit_name,
+              .class_name = published.class_name,
+              .member_name = member.name},
+      .type = ImportSignatureType(*signature, member.type),
+      .net_type = member.net_type};
+}
+
+auto UnitLowerer::ResolveRouteTarget(
+    const slang::ast::ValueSymbol& value, std::span<const hir::PathStep> steps)
+    -> diag::Result<RouteTarget> {
+  // A member the owning unit published is named against the signature this
+  // unit consumed, which also states what storage the name reaches -- so
+  // nothing about it is read off the unit that declared it.
+  if (auto published = PublishedRouteTarget(value, steps)) {
+    return *std::move(published);
+  }
+
+  auto type =
+      InternType(value.getType(), SourceMapper().PointSpanOf(value.location));
+  if (!type) return std::unexpected(std::move(type.error()));
+
+  // This unit's own identity for the target when it declares it -- and for a
+  // static a named block puts on the hierarchical path (LRM 23.9), that
+  // identity also says the blocks between the static and its structural scope
+  // describe where the storage sits rather than steps the route takes.
+  if (const auto data_object = LookupStructuralDataObjectBinding(value)) {
+    return RouteTarget{
+        .leaf = hir::StructuralDataObjectLeaf{.object = data_object->var_id},
+        .type = *type,
+        .net_type = TargetNetType(value)};
+  }
+  if (const auto procedural_static = LookupProceduralStatic(value)) {
+    return RouteTarget{
+        .leaf =
+            hir::ProceduralStaticLeaf{
+                .body = procedural_static->body, .var = procedural_static->var},
+        .type = *type,
+        .net_type = TargetNetType(value)};
+  }
+  // Nothing was published to compile against, so the name is all that crosses
+  // and the runtime answers it during elaboration (LRM 23.6). What storage it
+  // reaches has no statement either, which is why it is read off the frontend.
+  return RouteTarget{
+      .leaf = hir::OpaqueLeaf{.name = std::string{value.name}},
+      .type = *type,
+      .net_type = TargetNetType(value)};
+}
+
 auto UnitLowerer::TranslateReferenceRoute(
     const WalkFrame& frame, const slang::ast::ValueSymbol& value)
-    -> std::optional<hir::ReferenceRoute> {
+    -> diag::Result<std::optional<hir::ReferenceRoute>> {
   // This unit's own identity for the target, if it declares it.
   const auto data_object = LookupStructuralDataObjectBinding(value);
   const auto procedural_static = LookupProceduralStatic(value);
@@ -509,39 +585,32 @@ auto UnitLowerer::TranslateReferenceRoute(
         hir::DirectMemberRef{.var = data_object->var_id}};
   }
 
-  const auto type =
-      InternType(value.getType(), SourceMapper().PointSpanOf(value.location));
-  if (!type) return std::nullopt;
-
-  // What the route ends at. This unit's own identity for the target when it
-  // declares it -- and for a static a named block puts on the hierarchical
-  // path (LRM 23.9), that identity also says the blocks between the static and
-  // its structural scope describe where the storage sits rather than steps the
-  // route takes. A target another unit declares is named, like the opaque
-  // steps that reach it.
-  const hir::RouteLeaf leaf = [&]() -> hir::RouteLeaf {
-    if (data_object) {
-      return hir::StructuralDataObjectLeaf{.object = data_object->var_id};
-    }
-    if (procedural_static) {
-      return hir::ProceduralStaticLeaf{
-          .body = procedural_static->body, .var = procedural_static->var};
-    }
-    return hir::OpaqueLeaf{.name = std::string{value.name}};
-  }();
+  // The reference, once its route is assembled. Where a route ends is what
+  // decides how its target can be named, so the slot is declared only with the
+  // whole route in hand.
+  const auto routed_ref = [&](ScopeFrameId slot_owner, hir::RouteHead head,
+                              std::vector<hir::PathStep> steps)
+      -> diag::Result<std::optional<hir::ReferenceRoute>> {
+    auto target = ResolveRouteTarget(value, steps);
+    if (!target) return std::unexpected(std::move(target.error()));
+    const hir::RoutedRefId id = MapOrGetRoutedRef(
+        value, slot_owner,
+        hir::RoutedRefDecl{
+            .recipe =
+                hir::RoutedPathRecipe{
+                    .head = std::move(head),
+                    .steps = std::move(steps),
+                    .leaf = std::move(target->leaf),
+                    .type = target->type},
+            .target_net_type = target->net_type});
+    return hir::ReferenceRoute{hir::RoutedRef{.id = id}};
+  };
 
   // The target's storage hangs under an ancestor scope of the same unit, so
   // the whole route is a typed climb to it: a routed reference sealed once in
   // the resolve phase rather than re-walked on each access.
   const auto in_unit_route = [&](hir::StructuralHops hops) {
-    return hir::ReferenceRoute{hir::RoutedRef{
-        .id = MapOrGetRoutedRef(
-            value, frame.Current(),
-            hir::RoutedPathRecipe{
-                .head = hir::InUnitHead{.hops = hops},
-                .steps = {},
-                .leaf = leaf,
-                .type = *type})}};
+    return routed_ref(frame.Current(), hir::InUnitHead{.hops = hops}, {});
   };
   if (data_object_hops.has_value()) {
     return in_unit_route(*data_object_hops);
@@ -574,8 +643,11 @@ auto UnitLowerer::TranslateReferenceRoute(
     const slang::ast::Symbol* owned = &scope->asSymbol();
     const slang::ast::Scope* next = owned->getHierarchicalParent();
     std::vector<std::uint32_t> indices;
+    // A target this unit declares reaches its storage through the scope that
+    // owns it, so the named blocks in between are part of where the storage
+    // sits rather than steps of their own.
     if (owned->kind == slang::ast::SymbolKind::StatementBlock &&
-        !std::holds_alternative<hir::OpaqueLeaf>(leaf)) {
+        (data_object || procedural_static)) {
       scope = next;
       continue;
     }
@@ -626,29 +698,17 @@ auto UnitLowerer::TranslateReferenceRoute(
     if (next != nullptr && reader_ancestors.contains(next)) {
       // A head whose owning scope this unit emits stays inside this unit's
       // layout: the climb to that scope is typed, and the head becomes the
-      // route's first typed step. An instance head at hops > 0 is excluded --
-      // crossing an instance body crosses into another compilation unit, so
-      // the climb cannot stay typed and the head is reached by name.
-      const bool head_is_intra_unit =
-          owned->kind == slang::ast::SymbolKind::GenerateBlock ||
-          owned->kind == slang::ast::SymbolKind::GenerateBlockArray;
+      // route's first typed step.
       if (const auto obinding = LookupOwnedChildBinding(*owned)) {
-        if (const auto hops = frame.HopsTo(obinding->home_frame);
-            hops.has_value() && (hops->value == 0 || head_is_intra_unit)) {
+        if (const auto hops = frame.HopsTo(obinding->home_frame)) {
           descent.emplace_back(
               hir::OwnedChildStep{
                   .child = obinding->child, .indices = std::move(indices)});
           std::ranges::reverse(descent);
           const ScopeFrameId slot_owner =
               hops->value == 0 ? obinding->home_frame : frame.Current();
-          const hir::RoutedRefId id = MapOrGetRoutedRef(
-              value, slot_owner,
-              hir::RoutedPathRecipe{
-                  .head = hir::InUnitHead{.hops = *hops},
-                  .steps = std::move(descent),
-                  .leaf = leaf,
-                  .type = *type});
-          return hir::ReferenceRoute{hir::RoutedRef{.id = id}};
+          return routed_ref(
+              slot_owner, hir::InUnitHead{.hops = *hops}, std::move(descent));
         }
       }
       // No owned-child binding: this unit does not declare the head, so it
@@ -659,17 +719,12 @@ auto UnitLowerer::TranslateReferenceRoute(
       // typed branch above always takes it, so reaching here is exactly the
       // cross-unit case and never a silent fallback for a local one.
       std::ranges::reverse(descent);
-      const hir::RoutedRefId id = MapOrGetRoutedRef(
-          value, frame.Current(),
-          hir::RoutedPathRecipe{
-              .head =
-                  hir::VisibleChildHead{
-                      .head_name = std::string{owned->name},
-                      .head_indices = std::move(indices)},
-              .steps = std::move(descent),
-              .leaf = leaf,
-              .type = *type});
-      return hir::ReferenceRoute{hir::RoutedRef{.id = id}};
+      return routed_ref(
+          frame.Current(),
+          hir::VisibleChildHead{
+              .head_name = std::string{owned->name},
+              .head_indices = std::move(indices)},
+          std::move(descent));
     }
 
     // A step this unit declares stays inside its layout and carries the
@@ -716,10 +771,10 @@ auto UnitLowerer::ResolveValueTarget(
         .value_type = *value_type}};
   }
 
-  if (auto route = TranslateReferenceRoute(frame, value)) {
-    return hir::ValueTarget{*std::move(route)};
-  }
-  return std::nullopt;
+  auto route = TranslateReferenceRoute(frame, value);
+  if (!route) return std::unexpected(std::move(route.error()));
+  if (!route->has_value()) return std::nullopt;
+  return hir::ValueTarget{*std::move(*route)};
 }
 
 auto UnitLowerer::TranslateSensitivityReads(

@@ -24,6 +24,7 @@
 #include <slang/ast/types/NetType.h>
 
 #include "lyra/base/internal_error.hpp"
+#include "lyra/diag/diag_code.hpp"
 #include "lyra/diag/diagnostic.hpp"
 #include "lyra/hir/continuous_assign.hpp"
 #include "lyra/hir/expr.hpp"
@@ -32,6 +33,7 @@
 #include "lyra/hir/structural_scope.hpp"
 #include "lyra/hir/subroutine.hpp"
 #include "lyra/lowering/ast_to_hir/instance_array_shape.hpp"
+#include "lyra/lowering/ast_to_hir/net_type.hpp"
 #include "lyra/lowering/ast_to_hir/process_lowerer.hpp"
 #include "lyra/lowering/ast_to_hir/specialization_name.hpp"
 #include "lyra/lowering/ast_to_hir/subroutine_decl.hpp"
@@ -422,25 +424,18 @@ auto StructuralScopeLowerer::PopulateNetMember(
   const auto span = mapper.PointSpanOf(net.location);
   auto type_id_or = owner_->InternType(net.getType(), span);
   if (!type_id_or) return std::unexpected(std::move(type_id_or.error()));
-  hir::NetType net_type{};
-  switch (net.netType.netKind) {
-    case slang::ast::NetType::Wire:
-      net_type = hir::NetType::kWire;
-      break;
-    case slang::ast::NetType::Tri:
-      net_type = hir::NetType::kTri;
-      break;
-    default:
-      return diag::Fail(
-          span, diag::DiagCode::kUnsupportedTypeKind,
-          "this net type is not yet supported");
+  const auto net_type = TranslateNetType(net.netType);
+  if (!net_type.has_value()) {
+    return diag::Fail(
+        span, diag::DiagCode::kUnsupportedTypeKind,
+        "this net type is not yet supported");
   }
   const hir::StructuralDataObjectId local =
       frame.current_structural_scope->structural_data_objects.Add(
           hir::StructuralDataObjectDecl{
               .name = std::string{net.name},
               .type = *type_id_or,
-              .kind = hir::StructuralNetDecl{.net_type = net_type}});
+              .kind = hir::StructuralNetDecl{.net_type = *net_type}});
   owner_->MapStructuralDataObjectBinding(net, frame_, local, *type_id_or);
 
   // A net-declaration assignment (`wire w = expr;`, LRM 6.5) is a single

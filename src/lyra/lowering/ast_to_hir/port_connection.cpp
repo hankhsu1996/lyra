@@ -15,8 +15,6 @@
 #include <slang/ast/symbols/InstanceSymbols.h>
 #include <slang/ast/symbols/PortSymbols.h>
 #include <slang/ast/symbols/ValueSymbol.h>
-#include <slang/ast/symbols/VariableSymbols.h>
-#include <slang/ast/types/NetType.h>
 #include <slang/ast/types/Type.h>
 #include <slang/numeric/ConstantValue.h>
 
@@ -57,6 +55,19 @@ auto InstantiatedUnitSignature(
   return *signature;
 }
 
+// The object an instantiated unit's instances are. A unit whose instances
+// exist roots one, so its absence is a compiler-bug invariant rather than a
+// case a connection handles.
+auto InstantiatedClass(const hir::UnitSignature& signature)
+    -> const hir::InstanceClassSignature& {
+  if (!signature.instance_class.has_value()) {
+    throw InternalError(
+        "ConnectElementPorts: a unit that is instantiated publishes the object "
+        "its instances are");
+  }
+  return *signature.instance_class;
+}
+
 // Records one instance's port connections as HIR. The instance is reached
 // from its owning scope as `child`, with `element_indices` selecting the
 // element when it is an instance array (empty for a scalar); each port is a
@@ -79,6 +90,8 @@ auto ConnectElementPorts(
   // rather than searched: the direction each connection runs in is then the
   // child's own statement of it, at the granularity data actually flows.
   const auto connections = inst.getPortConnections();
+  const hir::InstanceClassSignature& published_class =
+      InstantiatedClass(child_signature);
   auto published_parts = child_signature.ports |
                          std::views::transform(&hir::PortDecl::parts) |
                          std::views::join;
@@ -106,14 +119,30 @@ auto ConnectElementPorts(
       return PortConnectionUnsupported(
           span, "non-variable port connection is not yet supported");
     }
+    if (!data->member.has_value()) {
+      return PortConnectionUnsupported(
+          span,
+          "port not bound to a connectable variable is not yet supported");
+    }
+    // The storage behind the part, as the child states it. Its type may be
+    // wider than the part's: a port expression (LRM 23.2.2.2) connects part of
+    // an internal name, and standing a projection between the connection and
+    // the storage is not something the child's statement carries.
+    const hir::PublishedMember& member =
+        published_class.members.Get(*data->member);
+    if (member.type != data->type) {
+      return PortConnectionUnsupported(
+          span,
+          "port connected to part of an internal name is not yet supported");
+    }
     const auto* internal =
         port->internalSymbol == nullptr
             ? nullptr
             : port->internalSymbol->as_if<slang::ast::ValueSymbol>();
     if (internal == nullptr) {
-      return PortConnectionUnsupported(
-          span,
-          "port not bound to a connectable variable is not yet supported");
+      throw InternalError(
+          "ConnectElementPorts: the child published a member for this part, so "
+          "the declaration behind it exists");
     }
     // What crosses is the type the child published, taken into this unit's own
     // pool -- so the parent's record of the connection rests on the child's
@@ -132,20 +161,6 @@ auto ConnectElementPorts(
       // default initial value (LRM 23.3.3.2); no parent driver is installed.
       continue;
     }
-    // A net port's child member is a resolved-net cell, reached across the
-    // boundary like any cross-unit cell (LRM 6.5, 23.3.3); HIR-to-MIR realizes
-    // the connection as a reactive edge whose net side attaches a driver. Only
-    // the `wire` / `tri` resolution is supported; other net types are rejected.
-    if (port->isNetPort()) {
-      switch (internal->as<slang::ast::NetSymbol>().netType.netKind) {
-        case slang::ast::NetType::Wire:
-        case slang::ast::NetType::Tri:
-          break;
-        default:
-          return PortConnectionUnsupported(
-              span, "this net type is not yet supported");
-      }
-    }
 
     // A `const ref` port shares storage but forbids the child writing through
     // it (LRM 23.3.3.2); the child member is a read-only reference the parent
@@ -156,20 +171,32 @@ auto ConnectElementPorts(
           span, "const ref port connection is not yet supported");
     }
 
+    // The route to the child's own storage: one typed step onto the instance,
+    // then the member the child published. Which cell that member is -- a
+    // variable's observable cell, or the resolved cell of a net whose drivers
+    // the connection joins (LRM 6.5, 23.3.3) -- is the child's own statement of
+    // it, so the parent never reads the child's declaration to find out.
     const auto port_recipe = [&]() -> hir::RoutedPathRecipe {
       return hir::RoutedPathRecipe{
           .head = hir::InUnitHead{.hops = {}},
           .steps = {hir::PathStep{instance_step}},
-          .leaf = hir::OpaqueLeaf{.name = std::string{internal->name}},
+          .leaf =
+              hir::SignatureMemberLeaf{
+                  .unit_name = child_signature.unit_name,
+                  .class_name = published_class.class_name,
+                  .member_name = member.name},
           .type = type_id};
     };
     // An input/output port reads the child cell during simulation, so it holds
     // a persistent routed reference; a `ref` port is bound once in the resolve
-    // phase, so it keeps only the by-name reach.
+    // phase, so it keeps only the reach.
     const auto cell_endpoint = [&]() -> hir::PortEndpoint {
       return hir::PortCellEndpoint{
           .cell = frame.Exprs().Add(unit_lowerer.MakeRoutedMemberRef(
-              *internal, home_frame, port_recipe(), span))};
+              *internal, home_frame,
+              hir::RoutedRefDecl{
+                  .recipe = port_recipe(), .target_net_type = member.net_type},
+              span))};
     };
 
     const hir::PortDirection direction = data->direction;

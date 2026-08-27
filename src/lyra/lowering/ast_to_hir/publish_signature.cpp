@@ -2,6 +2,7 @@
 #include <optional>
 #include <ranges>
 #include <string>
+#include <unordered_map>
 #include <utility>
 #include <vector>
 
@@ -10,13 +11,16 @@
 #include <slang/ast/Symbol.h>
 #include <slang/ast/symbols/InstanceSymbols.h>
 #include <slang/ast/symbols/PortSymbols.h>
+#include <slang/ast/symbols/ValueSymbol.h>
 #include <slang/ast/symbols/VariableSymbols.h>
 
 #include "lyra/base/internal_error.hpp"
+#include "lyra/diag/diag_code.hpp"
 #include "lyra/diag/diagnostic.hpp"
 #include "lyra/hir/type_id.hpp"
 #include "lyra/hir/type_import.hpp"
 #include "lyra/hir/unit_signature.hpp"
+#include "lyra/lowering/ast_to_hir/net_type.hpp"
 #include "lyra/lowering/ast_to_hir/unit_lowerer.hpp"
 
 namespace lyra::lowering::ast_to_hir {
@@ -54,24 +58,74 @@ auto TranslateDirection(
 }  // namespace
 
 auto UnitLowerer::PublishSignature() -> diag::Result<void> {
-  // Only a design element instantiated into the hierarchy has ports; a
-  // namespace unit publishes its declarations by name and has no port list.
+  // Only a design element instantiated into the hierarchy has ports and an
+  // object; a namespace unit publishes its declarations by name and roots
+  // neither.
   const auto* body = scope_->asSymbol().as_if<slang::ast::InstanceBodySymbol>();
   if (body == nullptr) return {};
 
+  auto& instance_class = signature_.instance_class.emplace(
+      hir::InstanceClassSignature{.class_name = unit_.name, .members = {}});
+
   hir::TypeImportMemo published;
+  const auto publish_type = [&](hir::TypeId own) {
+    hir::TypeImporter importer(
+        unit_.types,
+        hir::TypePoolOwner{.unit_name = unit_.name, .classes = &unit_.classes},
+        signature_.types, published);
+    return importer.Import(own);
+  };
+
+  // One member per internal declaration, however many ports reach it: two port
+  // expressions may select disjoint parts of one name (LRM 23.2.2.2), and the
+  // storage they share is one member.
+  std::unordered_map<const slang::ast::ValueSymbol*, hir::PublishedMemberId>
+      member_ids;
+  const auto publish_member = [&](const slang::ast::ValueSymbol& internal)
+      -> diag::Result<hir::PublishedMemberId> {
+    if (const auto it = member_ids.find(&internal); it != member_ids.end()) {
+      return it->second;
+    }
+    const auto span = SourceMapper().PointSpanOf(internal.location);
+    auto interned = InternType(internal.getType(), span);
+    if (!interned) return std::unexpected(std::move(interned.error()));
+    std::optional<hir::NetType> net_type;
+    if (const auto* net = internal.as_if<slang::ast::NetSymbol>()) {
+      net_type = TranslateNetType(net->netType);
+      if (!net_type.has_value()) {
+        return diag::Fail(
+            span, diag::DiagCode::kUnsupportedTypeKind,
+            "this net type is not yet supported");
+      }
+    }
+    const hir::PublishedMemberId id = instance_class.members.Add(
+        hir::PublishedMember{
+            .name = std::string{internal.name},
+            .type = publish_type(*interned),
+            .net_type = net_type});
+    member_ids.emplace(&internal, id);
+    return id;
+  };
+
   const auto publish_part =
       [&](const slang::ast::PortSymbol& port) -> diag::Result<hir::PortPart> {
     const auto span = SourceMapper().PointSpanOf(port.location);
     auto interned = InternType(port.getType(), span);
     if (!interned) return std::unexpected(std::move(interned.error()));
-    hir::TypeImporter importer(
-        unit_.types,
-        hir::TypePoolOwner{.unit_name = unit_.name, .classes = &unit_.classes},
-        signature_.types, published);
+    const auto* internal =
+        port.internalSymbol == nullptr
+            ? nullptr
+            : port.internalSymbol->as_if<slang::ast::ValueSymbol>();
+    std::optional<hir::PublishedMemberId> member;
+    if (internal != nullptr) {
+      auto id = publish_member(*internal);
+      if (!id) return std::unexpected(std::move(id.error()));
+      member = *id;
+    }
     return hir::PortPart{hir::DataPortPart{
         .direction = TranslateDirection(port.direction, port.internalSymbol),
-        .type = importer.Import(*interned)}};
+        .type = publish_type(*interned),
+        .member = member}};
   };
 
   for (const auto* member : body->getPortList()) {

@@ -1115,6 +1115,10 @@ class HirDumper {
                   l.body);
               return std::format(" . {}.ProceduralVar[{}]", body, l.var.value);
             },
+            [](const SignatureMemberLeaf& l) {
+              return std::format(
+                  " . {}::{}::{}", l.unit_name, l.class_name, l.member_name);
+            },
             [](const OpaqueLeaf& l) {
               return std::format(" . \"{}\"", l.name);
             }},
