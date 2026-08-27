@@ -287,7 +287,8 @@ class MirDumper {
             },
             [](const ExternalUnitObjectType& e) -> std::string {
               return std::format(
-                  "ExternalUnitObject(unit=\"{}\")", e.unit_name);
+                  "ExternalUnitObject(unit=\"{}\", class=\"{}\")", e.unit_name,
+                  e.class_name);
             },
             [](const ExternalClassType& e) -> std::string {
               return std::format("ExternalClass(\"{}\")", e.qualified_name);

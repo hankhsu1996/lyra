@@ -89,20 +89,16 @@ auto MakeUniqueObjectPointer(UnitLowerer& unit_lowerer, mir::ClassId class_id)
       object_type, mir::PointerOwnership::kUnique);
 }
 
-auto MakeUniqueExternalUnitPointer(
-    UnitLowerer& unit_lowerer, std::string unit_name) -> mir::TypeId {
+// The pointer type a handle to one of `member`'s objects has. The object is an
+// instance of a class the declaring unit publishes, so the type names that unit
+// and that class; this unit sees none of its layout.
+auto MakeExternalUnitPointer(
+    UnitLowerer& unit_lowerer, const hir::InstanceMemberDecl& member,
+    mir::PointerOwnership ownership) -> mir::TypeId {
   const mir::TypeId object_type = unit_lowerer.Unit().types.Intern(
-      mir::ExternalUnitObjectType{.unit_name = std::move(unit_name)});
-  return unit_lowerer.Unit().types.PointerTo(
-      object_type, mir::PointerOwnership::kUnique);
-}
-
-auto MakeBorrowedExternalUnitPointer(
-    UnitLowerer& unit_lowerer, std::string unit_name) -> mir::TypeId {
-  const mir::TypeId object_type = unit_lowerer.Unit().types.Intern(
-      mir::ExternalUnitObjectType{.unit_name = std::move(unit_name)});
-  return unit_lowerer.Unit().types.PointerTo(
-      object_type, mir::PointerOwnership::kBorrowed);
+      mir::ExternalUnitObjectType{
+          .unit_name = member.unit_name, .class_name = member.class_name});
+  return unit_lowerer.Unit().types.PointerTo(object_type, ownership);
 }
 
 // Builds one object an external-unit instance member declares, at `coords`, and
@@ -179,10 +175,10 @@ void EmitInstanceMemberConstruction(
   const hir::StructuralScope& hir_scope = lowerer.HirScope();
   for (const hir::InstanceMemberId id : hir_scope.instance_members.Ids()) {
     const hir::InstanceMemberDecl& im = hir_scope.instance_members.Get(id);
-    const mir::TypeId owning =
-        MakeUniqueExternalUnitPointer(unit_lowerer, im.target_unit);
-    const mir::TypeId borrowed =
-        MakeBorrowedExternalUnitPointer(unit_lowerer, im.target_unit);
+    const mir::TypeId owning = MakeExternalUnitPointer(
+        unit_lowerer, im, mir::PointerOwnership::kUnique);
+    const mir::TypeId borrowed = MakeExternalUnitPointer(
+        unit_lowerer, im, mir::PointerOwnership::kBorrowed);
     for (const DeclaredInstance& object : lowerer.Instances(id)) {
       const mir::ExprId parent_self = block.exprs.Add(
           MakeSelfRefExpr(frame, frame.current_class->self_pointer_type));
@@ -972,8 +968,8 @@ auto StructuralScopeLowerer::DeclareShape() -> diag::Result<mir::ClassId> {
     std::vector<DeclaredInstances> declared;
     declared.reserve(hir_scope.instance_members.size());
     for (const auto& im : hir_scope.instance_members) {
-      const mir::TypeId handle_type =
-          MakeBorrowedExternalUnitPointer(unit_lowerer, im.target_unit);
+      const mir::TypeId handle_type = MakeExternalUnitPointer(
+          unit_lowerer, im, mir::PointerOwnership::kBorrowed);
       declared.push_back(
           DeclaredInstances::Declare(
               im.array_dims, [&](std::span<const std::uint32_t> coords) {

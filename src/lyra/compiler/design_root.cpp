@@ -12,10 +12,12 @@
 #include <variant>
 #include <vector>
 
+#include "lyra/base/internal_error.hpp"
 #include "lyra/base/overloaded.hpp"
 #include "lyra/compiler/unit_metadata.hpp"
 #include "lyra/hir/compilation_unit.hpp"
 #include "lyra/hir/structural_scope.hpp"
+#include "lyra/hir/unit_signatures.hpp"
 #include "lyra/lir/verify.hpp"
 #include "lyra/lowering/hir_to_mir/callable_bindings.hpp"
 #include "lyra/lowering/hir_to_mir/package_initialization.hpp"
@@ -34,14 +36,18 @@ namespace {
 // carries only this source-faithful structure; running the packages'
 // initializers is a whole-design composition step handled at lowering, not HIR
 // content.
-auto BuildDesignRootHir(std::span<const std::string> top_names)
-    -> hir::CompilationUnit {
+auto BuildDesignRootHir(
+    std::span<const std::string> top_names,
+    const hir::ConsumedSignatures& signatures) -> hir::CompilationUnit {
   hir::CompilationUnit root{std::string{kDesignRootUnitName}};
   for (const auto& name : top_names) {
     root.root_scope.instance_members.Define(
         root.root_scope.instance_members.Declare(),
         hir::InstanceMemberDecl{
-            .instance_name = name, .target_unit = name, .array_dims = {}});
+            .instance_name = name,
+            .unit_name = name,
+            .class_name = signatures.InstantiatedClass(name).class_name,
+            .array_dims = {}});
   }
   return root;
 }
@@ -337,10 +343,12 @@ void DefineExportSymbols(
 
 auto SynthesizeDesignRoot(
     std::span<const mir::CompilationUnit> units,
-    std::span<const std::string> top_names, StopAfter stop_after,
+    std::span<const std::string> top_names,
+    const hir::UnitSignatures& signatures, StopAfter stop_after,
     const diag::SourceManager& source_manager)
     -> diag::Result<DesignRootArtifacts> {
-  const hir::CompilationUnit root_hir = BuildDesignRootHir(top_names);
+  const hir::CompilationUnit root_hir =
+      BuildDesignRootHir(top_names, signatures.Consumed(top_names));
   lowering::hir_to_mir::UnitLowerer root_lowerer(root_hir, source_manager);
   auto root_mir =
       root_lowerer.RunDesignRoot(BuildPackageInitializationPlan(units));

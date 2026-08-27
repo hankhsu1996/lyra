@@ -1,5 +1,6 @@
 #include "lyra/lowering/ast_to_hir/structural_scope_lowerer.hpp"
 
+#include <cstdint>
 #include <expected>
 #include <format>
 #include <optional>
@@ -7,6 +8,7 @@
 #include <string_view>
 #include <utility>
 #include <variant>
+#include <vector>
 
 #include <slang/ast/Compilation.h>
 #include <slang/ast/Scope.h>
@@ -75,6 +77,24 @@ auto ReservedInstanceMember(
     -> hir::InstanceMemberId {
   return ReservedOwnedChild<hir::InstanceMemberId>(
       owner, child, "instance member");
+}
+
+// The declaration of a child object, built from whichever unit `leaf` is an
+// instance of. The class comes off that unit's signature, never from the unit's
+// own name; `dims` carries the element counts of an array, a scalar instance
+// being the empty case rather than a shape of its own.
+auto BuildInstanceMember(
+    const UnitLowerer& owner, std::string_view instance_name,
+    const slang::ast::InstanceSymbol& leaf, std::vector<std::uint32_t> dims)
+    -> hir::InstanceMemberDecl {
+  std::string unit_name = SpecializationName(leaf);
+  std::string class_name =
+      owner.Signatures().InstantiatedClass(unit_name).class_name;
+  return hir::InstanceMemberDecl{
+      .instance_name = std::string{instance_name},
+      .unit_name = std::move(unit_name),
+      .class_name = std::move(class_name),
+      .array_dims = std::move(dims)};
 }
 
 }  // namespace
@@ -568,10 +588,7 @@ auto StructuralScopeLowerer::PopulateInstanceMember(
     -> diag::Result<void> {
   frame.current_structural_scope->instance_members.Define(
       ReservedInstanceMember(*owner_, inst),
-      hir::InstanceMemberDecl{
-          .instance_name = std::string{inst.name},
-          .target_unit = SpecializationName(inst),
-          .array_dims = {}});
+      BuildInstanceMember(*owner_, inst.name, inst, {}));
   return {};
 }
 
@@ -584,10 +601,8 @@ auto StructuralScopeLowerer::PopulateInstanceArrayMember(
   }
   frame.current_structural_scope->instance_members.Define(
       ReservedInstanceMember(*owner_, array),
-      hir::InstanceMemberDecl{
-          .instance_name = std::string{array.name},
-          .target_unit = SpecializationName(*shape->leaf),
-          .array_dims = std::move(shape->dims)});
+      BuildInstanceMember(
+          *owner_, array.name, *shape->leaf, std::move(shape->dims)));
   return {};
 }
 

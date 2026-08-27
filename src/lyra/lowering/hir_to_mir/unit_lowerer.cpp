@@ -21,6 +21,7 @@
 #include "lyra/hir/structural_data_object.hpp"
 #include "lyra/hir/structural_scope.hpp"
 #include "lyra/hir/subroutine.hpp"
+#include "lyra/hir/unit_signature.hpp"
 #include "lyra/lowering/hir_to_mir/callable_bindings.hpp"
 #include "lyra/lowering/hir_to_mir/class_decl_lowerer.hpp"
 #include "lyra/lowering/hir_to_mir/declared_scope.hpp"
@@ -273,7 +274,7 @@ auto UnitLowerer::LowerModuleUnit(PackageInitializationPlan package_init_plan)
   // composed class to the unit. The design root's package initialization plan
   // rides on the root scope's lowering and is empty for a source module.
   StructuralScopeLowerer root(
-      *this, nullptr, hir_->name, hir_->root_scope,
+      *this, nullptr, hir::InstanceClassName(hir_->name), hir_->root_scope,
       std::move(package_init_plan));
   auto top_r = root.DeclareShape();
   if (!top_r) return std::unexpected(std::move(top_r.error()));

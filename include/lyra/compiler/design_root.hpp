@@ -8,6 +8,7 @@
 #include "lyra/compiler/unit_metadata.hpp"
 #include "lyra/diag/diagnostic.hpp"
 #include "lyra/diag/source_manager.hpp"
+#include "lyra/hir/unit_signatures.hpp"
 #include "lyra/lir/compilation_unit.hpp"
 #include "lyra/mir/compilation_unit.hpp"
 
@@ -34,9 +35,14 @@ struct DesignRootArtifacts {
 // what a hand-written top would take from a header: their interfaces (name,
 // root presence, exported callables and variables), never their bodies. Symbol
 // resolution proper still happens where it does for any program, at link time.
+//
+// Instantiating the tops makes this a referrer like any other, so `signatures`
+// is what it reads about them: each states the class its instances are, which
+// is what the root's handle to one is typed by.
 auto SynthesizeDesignRoot(
     std::span<const mir::CompilationUnit> units,
-    std::span<const std::string> top_names, StopAfter stop_after,
+    std::span<const std::string> top_names,
+    const hir::UnitSignatures& signatures, StopAfter stop_after,
     const diag::SourceManager& source_manager)
     -> diag::Result<DesignRootArtifacts>;
 

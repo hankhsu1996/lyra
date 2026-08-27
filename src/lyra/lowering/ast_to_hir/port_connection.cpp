@@ -22,6 +22,7 @@
 #include "lyra/diag/diag_code.hpp"
 #include "lyra/diag/diagnostic.hpp"
 #include "lyra/hir/structural_scope.hpp"
+#include "lyra/hir/unit_signature.hpp"
 #include "lyra/lowering/ast_to_hir/constant_value.hpp"
 #include "lyra/lowering/ast_to_hir/instance_array_shape.hpp"
 #include "lyra/lowering/ast_to_hir/sensitivity.hpp"
@@ -37,35 +38,6 @@ auto PortConnectionUnsupported(diag::SourceSpan span, std::string message)
     -> diag::Result<void> {
   return diag::Fail(
       span, diag::DiagCode::kUnsupportedPortConnectionForm, std::move(message));
-}
-
-// What the unit an instance is built from publishes. Resolved where the
-// dependency on that unit is declared, so the connections under it -- one
-// element or a thousand -- consume one resolution instead of re-deriving the
-// unit's identity per element.
-auto InstantiatedUnitSignature(
-    const UnitLowerer& unit_lowerer, const std::string& unit_name)
-    -> const hir::UnitSignature& {
-  const hir::UnitSignature* signature = unit_lowerer.SignatureOf(unit_name);
-  if (signature == nullptr) {
-    throw InternalError(
-        "PopulatePortConnections: every unit's signature is derived before any "
-        "body lowers, so an instantiated unit always has one");
-  }
-  return *signature;
-}
-
-// The object an instantiated unit's instances are. A unit whose instances
-// exist roots one, so its absence is a compiler-bug invariant rather than a
-// case a connection handles.
-auto InstantiatedClass(const hir::UnitSignature& signature)
-    -> const hir::InstanceClassSignature& {
-  if (!signature.instance_class.has_value()) {
-    throw InternalError(
-        "ConnectElementPorts: a unit that is instantiated publishes the object "
-        "its instances are");
-  }
-  return *signature.instance_class;
 }
 
 // Records one instance's port connections as HIR. The instance is reached
@@ -91,7 +63,7 @@ auto ConnectElementPorts(
   // child's own statement of it, at the granularity data actually flows.
   const auto connections = inst.getPortConnections();
   const hir::InstanceClassSignature& published_class =
-      InstantiatedClass(child_signature);
+      hir::InstanceClassOf(child_signature);
   auto published_parts = child_signature.ports |
                          std::views::transform(&hir::PortDecl::parts) |
                          std::views::join;
@@ -334,7 +306,7 @@ auto StructuralScopeLowerer::PopulatePortConnections(
       const auto& inst = member.as<slang::ast::InstanceSymbol>();
       auto r = ConnectElementPorts(
           *this, *owner_, inst,
-          InstantiatedUnitSignature(*owner_, SpecializationName(inst)),
+          owner_->Signatures().Instantiated(SpecializationName(inst)),
           binding->child, binding->home_frame, {}, frame);
       if (!r) return std::unexpected(std::move(r.error()));
     } else if (member.kind == slang::ast::SymbolKind::InstanceArray) {
@@ -358,7 +330,7 @@ auto StructuralScopeLowerer::PopulatePortConnections(
       }
       auto r = ConnectArrayElements(
           *this, *owner_, array,
-          InstantiatedUnitSignature(*owner_, SpecializationName(*shape->leaf)),
+          owner_->Signatures().Instantiated(SpecializationName(*shape->leaf)),
           binding->child, binding->home_frame, {}, frame);
       if (!r) return std::unexpected(std::move(r.error()));
     }

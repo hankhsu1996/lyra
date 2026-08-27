@@ -65,7 +65,8 @@ auto UnitLowerer::PublishSignature() -> diag::Result<void> {
   if (body == nullptr) return {};
 
   auto& instance_class = signature_.instance_class.emplace(
-      hir::InstanceClassSignature{.class_name = unit_.name, .members = {}});
+      hir::InstanceClassSignature{
+          .class_name = hir::InstanceClassName(unit_.name), .members = {}});
 
   hir::TypeImportMemo published;
   const auto publish_type = [&](hir::TypeId own) {

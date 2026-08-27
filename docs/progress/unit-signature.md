@@ -92,24 +92,28 @@ why nothing a signature states may rest on it.
       so a consumer recovers it by comparing the connection's expression against the declaring
       unit's initializer. Closing that needs the frontend to answer "was this connection written",
       which is the first place this workstream wants something the frontend does not offer.
-- [ ] S6 -- A unit's lowering is handed the signatures of the units it references, not every
+- [x] S6 -- A unit's lowering is handed the signatures of the units it references, not every
       signature in the design. Both are pure, so the purity property holds either way; what only the
       narrowed form gives is that a unit cannot consume a signature it never declared a dependency
-      on. The dependency itself is already recorded -- an instance member names the unit it is built
-      from -- so this narrows what the lowering can reach to what its own declarations already say,
-      rather than introducing a record of it.
-- [ ] S7 -- A signature is organized as the unit's namespace-level declarations beside an entry per
+      on. The set comes from the unit's own declarations rather than from a record kept beside them:
+      the pass that walks them for what a peer may name is the same pass that names the units they
+      are built from, so the two cannot describe different designs. The design root is that shape
+      rather than an exception -- it instantiates the tops, so it reads their signatures and nothing
+      else.
+- [x] S7 -- A signature is organized as the unit's namespace-level declarations beside an entry per
       published class, each carrying its own name and its published members in declaration order.
       Which class a referrer instantiates is stated rather than inferred from a name that matches
       the unit's or from a position in a list.
 
-      The entry for the object an instance of the unit is -- its class's own name, and the members
-      another unit may name on it -- is published, and a reference landing on one of those members
-      takes the class from there. What still infers it is the instantiation: the handle a parent
-      holds to a child is typed by composing the class name from the unit's, and the design root
-      builds its instance members from the top-level names alone, consuming no signature at all.
-      Closing that means handing the design root the signatures of the units it instantiates, which
-      is the same reach S6 narrows, so the two are one piece of work rather than two.
+      The unit names the class its instances are once, and both sides read that name: the signature
+      states it to every referrer, and the unit's own lowering builds the class under it. A referrer
+      takes it from there whether it is naming a member on the class or typing the handle it holds
+      to an instance, so no path composes a class name out of a unit name.
+
+      What a signature carries is settled by what a lowering reads about another unit, so an entry
+      for a kind nothing reads that way is not yet on one: a package's declarations and a class the
+      unit declares are reached by a name resolved at link time, and gain an entry when a lowering
+      reads them through the signature instead.
 
 - [x] S8 -- A reference whose target is on a signature the referrer consumes carries the declaring
       unit, the class, and the member's name, and is a member access on a receiver that names that

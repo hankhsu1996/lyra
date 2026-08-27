@@ -78,9 +78,9 @@ auto Compile(
   // Step 1: lower the whole compilation to a flat set of self-contained HIR
   // units -- every package, then every module body -- each tagged with its
   // kind.
-  auto hir_units = lowering::ast_to_hir::LowerCompilationToHir(facts);
-  if (!hir_units) {
-    sink.Report(std::move(hir_units.error()));
+  auto lowered = lowering::ast_to_hir::LowerCompilationToHir(facts);
+  if (!lowered) {
+    sink.Report(std::move(lowered.error()));
     return result;
   }
 
@@ -94,10 +94,10 @@ auto Compile(
   std::vector<mir::CompilationUnit> mir_units;
   std::vector<lir::CompilationUnit> lir_units;
   std::vector<ElaboratedUnitMetadata> unit_metadata;
-  mir_units.reserve(hir_units->size());
-  lir_units.reserve(hir_units->size());
-  unit_metadata.reserve(hir_units->size());
-  for (const auto& hir_unit : *hir_units) {
+  mir_units.reserve(lowered->units.size());
+  lir_units.reserve(lowered->units.size());
+  unit_metadata.reserve(lowered->units.size());
+  for (const auto& hir_unit : lowered->units) {
     auto unit = LowerUnitPipeline(
         hir_unit, stop_after, result.artifacts.parse->diag_sources);
     if (!unit) {
@@ -124,8 +124,8 @@ auto Compile(
   std::optional<ElaboratedUnitMetadata> root_metadata;
   if (want_mir) {
     auto design_root = SynthesizeDesignRoot(
-        mir_units, result.artifacts.top_unit_names, stop_after,
-        result.artifacts.parse->diag_sources);
+        mir_units, result.artifacts.top_unit_names, lowered->signatures,
+        stop_after, result.artifacts.parse->diag_sources);
     if (!design_root) {
       sink.Report(std::move(design_root.error()));
       return result;
@@ -135,7 +135,7 @@ auto Compile(
     root_metadata = std::move(design_root->metadata);
   }
 
-  result.artifacts.hir_units = std::move(*hir_units);
+  result.artifacts.hir_units = std::move(lowered->units);
   if (want_mir) {
     result.artifacts.mir_units = std::move(mir_units);
     result.artifacts.root_unit = std::move(root_unit);

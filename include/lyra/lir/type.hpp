@@ -142,6 +142,7 @@ struct ObjectType {
 
 struct ExternalUnitObjectType {
   std::string unit_name;
+  std::string class_name;
 };
 
 struct ExternalClassType {

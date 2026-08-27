@@ -66,9 +66,15 @@ auto UnitLowerer::TakeSignature() -> hir::UnitSignature {
   return std::move(signature_);
 }
 
-auto UnitLowerer::LowerBodies(const UnitSignatures& signatures)
+void UnitLowerer::RecordReferencedUnit(std::string unit_name) {
+  if (!std::ranges::contains(referenced_units_, unit_name)) {
+    referenced_units_.push_back(std::move(unit_name));
+  }
+}
+
+auto UnitLowerer::LowerBodies(hir::ConsumedSignatures signatures)
     -> diag::Result<hir::CompilationUnit> {
-  unit_signatures_ = &signatures;
+  consumed_signatures_ = std::move(signatures);
   WalkFrame frame;
   StructuralScopeLowerer root(*this, *scope_);
   auto root_scope_or = root.Run(frame);
@@ -167,13 +173,16 @@ auto UnitLowerer::DeclareStructuralIdentities(const slang::ast::Scope& scope)
         }
       }
     } else if (member.kind == slang::ast::SymbolKind::Instance) {
+      RecordReferencedUnit(
+          SpecializationName(member.as<slang::ast::InstanceSymbol>()));
       MapOwnedChildBinding(member, frame, decls.instance_members.Declare());
     } else if (member.kind == slang::ast::SymbolKind::InstanceArray) {
-      if (!ResolveInstanceArrayShape(
-               member.as<slang::ast::InstanceArraySymbol>())
-               .has_value()) {
+      const auto shape = ResolveInstanceArrayShape(
+          member.as<slang::ast::InstanceArraySymbol>());
+      if (!shape.has_value()) {
         continue;
       }
+      RecordReferencedUnit(SpecializationName(*shape->leaf));
       MapOwnedChildBinding(member, frame, decls.instance_members.Declare());
     } else if (member.kind == slang::ast::SymbolKind::Subroutine) {
       const auto& sub = member.as<slang::ast::SubroutineSymbol>();
@@ -508,7 +517,8 @@ auto UnitLowerer::PublishedRouteTarget(
   const auto* body = owner->asSymbol().as_if<slang::ast::InstanceBodySymbol>();
   if (body == nullptr) return std::nullopt;
 
-  const hir::UnitSignature* signature = SignatureOf(SpecializationName(*body));
+  const hir::UnitSignature* signature =
+      Signatures().Find(SpecializationName(*body));
   if (signature == nullptr || !signature->instance_class.has_value()) {
     return std::nullopt;
   }

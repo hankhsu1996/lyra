@@ -152,11 +152,10 @@ auto RenderTypeAsCpp(const mir::CompilationUnit& unit, mir::TypeId type_id)
             return unit.GetStruct(s.struct_id).name;
           },
           [](const mir::ExternalUnitObjectType& e) -> std::string {
-            // A unit's emitted peer is a namespace, and the object a unit
-            // rooted in a design element builds is the class of the same name
-            // inside it.
-            const std::string unit = ToCppName(e.unit_name);
-            return std::format("{}::{}", unit, unit);
+            // A unit's emitted peer is a namespace, and the class it publishes
+            // its instances as sits inside it.
+            return std::format(
+                "{}::{}", ToCppName(e.unit_name), ToCppName(e.class_name));
           },
           [](const mir::ExternalClassType& e) -> std::string {
             return e.qualified_name;

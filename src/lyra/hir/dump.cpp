@@ -1182,8 +1182,8 @@ class HirDumper {
       }
       Line(
           std::format(
-              "InstanceMember[{}] \"{}\"{} : {}", id.value, im.instance_name,
-              array_suffix, im.target_unit));
+              "InstanceMember[{}] \"{}\"{} : {}::{}", id.value,
+              im.instance_name, array_suffix, im.unit_name, im.class_name));
     }
     for (const RoutedRefId id : s.routed_refs.Ids()) {
       const auto& r = s.routed_refs.Get(id);

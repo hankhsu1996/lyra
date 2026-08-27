@@ -87,6 +87,10 @@ class UnitLowerer {
   [[nodiscard]] auto UnitCallableSymbol(const mir::CallableDecl& callable) const
       -> std::string;
 
+  // The symbol a class of this unit is emitted and linked under, and the
+  // qualifier its bodies take.
+  [[nodiscard]] auto ClassSymbol(const mir::Class& cls) const -> std::string;
+
   auto TranslateTypeData(const mir::Type& ty) -> lir::TypeData;
   // The LIR mirror of a runtime-library record type. MIR is written once for
   // every backend, so a record only the C++ backend realizes reaches here

@@ -292,11 +292,13 @@ struct ObjectType {
   auto operator==(const ObjectType&) const -> bool = default;
 };
 
-// The cross-unit twin of ObjectType: the target is another unit's name,
-// resolved by name at link time, not a scope of this unit -- so its layout is
-// not visible here.
+// The cross-unit twin of ObjectType: an instance of a class another unit
+// publishes, named by that unit and by the class's own name, both resolved at
+// link time -- so its layout is not visible here. Both names are carried
+// because both are statements the publishing unit makes about itself.
 struct ExternalUnitObjectType {
   std::string unit_name;
+  std::string class_name;
 
   auto operator==(const ExternalUnitObjectType&) const -> bool = default;
 };
