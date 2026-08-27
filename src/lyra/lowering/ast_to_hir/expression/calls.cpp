@@ -439,6 +439,48 @@ auto LowerCallExpr(
       };
     }
 
+    // LRM 20.8.2 real mathematics and the LRM 20.5 conversions that read a
+    // real's bits or truncate its value. Both families are operations on the
+    // operand, so they lower to the generic instance builtin call on it; the
+    // result type is slang's, which is what fixes the width a bit pattern
+    // lands in and the precision a pattern is read back as. A constant
+    // argument is folded before lowering sees the call at all.
+    if (info.subroutine != nullptr) {
+      const auto known = info.subroutine->knownNameId;
+      auto real_fn = LowerRealMathName(known);
+      if (!real_fn.has_value()) real_fn = LowerRealConversionName(known);
+      if (real_fn.has_value()) {
+        auto type_id = unit_lowerer.InternType(*call.type, span);
+        if (!type_id) return std::unexpected(std::move(type_id.error()));
+        return hir::Expr{
+            .type = *type_id,
+            .data =
+                hir::CallExpr{
+                    .callee = hir::BuiltinMethodRef{.method = *real_fn},
+                    .arguments = std::move(arg_ids),
+                },
+            .span = span,
+        };
+      }
+    }
+
+    // LRM 20.5 `$itor` asks for the LRM 6.12.1 integral-to-real conversion the
+    // result type already names, so it is a value conversion rather than a
+    // runtime call.
+    if (info.subroutine != nullptr &&
+        info.subroutine->knownNameId == slang::parsing::KnownSystemName::Itor) {
+      auto type_id = unit_lowerer.InternType(*call.type, span);
+      if (!type_id) return std::unexpected(std::move(type_id.error()));
+      return hir::Expr{
+          .type = *type_id,
+          .data =
+              hir::ConversionExpr{
+                  .operand = *arg_ids.front(),
+                  .kind = hir::ConversionKind::kExplicit},
+          .span = span,
+      };
+    }
+
     // LRM 7.12.4 `item.index`: slang dresses the iteration index as a method on
     // the iterator (a SystemSubroutine with `KnownSystemName::Index`) whose
     // receiver value is discarded. It is the index iteration parameter -- a

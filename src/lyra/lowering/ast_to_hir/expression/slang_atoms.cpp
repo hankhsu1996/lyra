@@ -282,6 +282,78 @@ auto LowerAssociativeMethodName(std::string_view name)
   return std::nullopt;
 }
 
+auto LowerRealMathName(slang::parsing::KnownSystemName name)
+    -> std::optional<support::BuiltinFn> {
+  using slang::parsing::KnownSystemName;
+  switch (name) {
+    case KnownSystemName::Ln:
+      return support::BuiltinFn::kLn;
+    case KnownSystemName::Log10:
+      return support::BuiltinFn::kLog10;
+    case KnownSystemName::Exp:
+      return support::BuiltinFn::kExp;
+    case KnownSystemName::Sqrt:
+      return support::BuiltinFn::kSqrt;
+    case KnownSystemName::Floor:
+      return support::BuiltinFn::kFloor;
+    case KnownSystemName::Ceil:
+      return support::BuiltinFn::kCeil;
+    case KnownSystemName::Sin:
+      return support::BuiltinFn::kSin;
+    case KnownSystemName::Cos:
+      return support::BuiltinFn::kCos;
+    case KnownSystemName::Tan:
+      return support::BuiltinFn::kTan;
+    case KnownSystemName::Asin:
+      return support::BuiltinFn::kAsin;
+    case KnownSystemName::Acos:
+      return support::BuiltinFn::kAcos;
+    case KnownSystemName::Atan:
+      return support::BuiltinFn::kAtan;
+    case KnownSystemName::Sinh:
+      return support::BuiltinFn::kSinh;
+    case KnownSystemName::Cosh:
+      return support::BuiltinFn::kCosh;
+    case KnownSystemName::Tanh:
+      return support::BuiltinFn::kTanh;
+    case KnownSystemName::Asinh:
+      return support::BuiltinFn::kAsinh;
+    case KnownSystemName::Acosh:
+      return support::BuiltinFn::kAcosh;
+    case KnownSystemName::Atanh:
+      return support::BuiltinFn::kAtanh;
+    // The two-argument rows. `Pow` is the operation LRM 11.4.3 `**` already
+    // asks for on real operands, so both spellings reach one entry.
+    case KnownSystemName::Pow:
+      return support::BuiltinFn::kPow;
+    case KnownSystemName::Atan2:
+      return support::BuiltinFn::kAtan2;
+    case KnownSystemName::Hypot:
+      return support::BuiltinFn::kHypot;
+    default:
+      return std::nullopt;
+  }
+}
+
+auto LowerRealConversionName(slang::parsing::KnownSystemName name)
+    -> std::optional<support::BuiltinFn> {
+  using slang::parsing::KnownSystemName;
+  switch (name) {
+    case KnownSystemName::Rtoi:
+      return support::BuiltinFn::kTruncate;
+    // Both precisions read out the pattern the same way and differ only in how
+    // wide the result they land in is, which the call's own type carries.
+    case KnownSystemName::RealToBits:
+    case KnownSystemName::ShortrealToBits:
+      return support::BuiltinFn::kToBits;
+    case KnownSystemName::BitsToReal:
+    case KnownSystemName::BitsToShortreal:
+      return support::BuiltinFn::kFromBits;
+    default:
+      return std::nullopt;
+  }
+}
+
 auto BareCompoundUserRhs(const slang::ast::Expression& slang_expanded_rhs)
     -> const slang::ast::Expression& {
   // Slang's `convertAssignment` adds at most one outer Conversion when the

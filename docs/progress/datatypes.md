@@ -60,14 +60,19 @@ LRM 6.12: `real` is IEEE 754 double, `shortreal` is IEEE 754 single, `realtime` 
       continuous assignment, non-blocking writes, and the explicit any-change `@(sig)` event control
       all propagate change events. An edge form (`@(posedge sig)`) stays frontend-rejected per LRM
       9.4.2 (an edge requires an integral LSB).
-- [ ] C6 -- The real math functions (LRM 20.8.2): `$ceil`, `$floor`, `$pow`, `$ln`, `$log10`,
-      `$exp`, `$sqrt`, the trigonometric family, and the integer-returning `$rtoi`. Each is a pure
-      function of its real arguments and maps onto the host's own math library, so what the work
-      needs is the call path for a real-typed result, not new runtime state.
-- [ ] C7 -- Real / bit-vector reinterpretation (LRM 20.5): `$bitstoreal` and `$realtobits`, and the
-      `shortreal` pair. These expose the bits of a real as a packed vector and back, so they need
-      the bit-level correspondence between a real and its representation -- not the numeric
-      conversion C3 covers.
+- [x] C6 -- The real math functions (LRM 20.8.2): the whole of Table 20-4, its eighteen one-argument
+      forms plus `$pow`, `$atan2` and `$hypot`. The standard defines each one's behaviour to be that
+      of the C standard math library function it is cross-listed with, edge cases included, so each
+      delegates rather than deciding anything of its own. A constant argument folds in the front end
+      and never reaches lowering; a computed one is a runtime call.
+- [x] C7 -- The conversions of LRM 20.5: `$rtoi` and `$itor` between a real and an integer, and
+      `$realtobits` / `$bitstoreal` with their `shortreal` pair between a real and the IEEE 754
+      pattern it is stored as. `$rtoi` truncates where an assignment or a cast rounds, which is the
+      distinction the clause draws for it; the bit-pattern pair preserves the bits where C3's
+      conversion preserves the number, so a value carried out and back arrives unchanged whatever
+      its mantissa holds. What `$bitstoreal` answers for a pattern carrying x or z is not fixed by
+      the standard, which scopes its operand to one `$realtobits` produced -- and a real has no
+      unknown bits to produce.
 
 ### Cross-references
 

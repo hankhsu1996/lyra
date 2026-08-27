@@ -244,6 +244,46 @@ auto BuiltinFnName(BuiltinFn id) -> std::string_view {
       return "count_bits";
     case BuiltinFn::kClog2:
       return "clog2";
+    case BuiltinFn::kLn:
+      return "ln";
+    case BuiltinFn::kLog10:
+      return "log10";
+    case BuiltinFn::kExp:
+      return "exp";
+    case BuiltinFn::kSqrt:
+      return "sqrt";
+    case BuiltinFn::kFloor:
+      return "floor";
+    case BuiltinFn::kCeil:
+      return "ceil";
+    case BuiltinFn::kSin:
+      return "sin";
+    case BuiltinFn::kCos:
+      return "cos";
+    case BuiltinFn::kTan:
+      return "tan";
+    case BuiltinFn::kAsin:
+      return "asin";
+    case BuiltinFn::kAcos:
+      return "acos";
+    case BuiltinFn::kAtan:
+      return "atan";
+    case BuiltinFn::kAtan2:
+      return "atan2";
+    case BuiltinFn::kHypot:
+      return "hypot";
+    case BuiltinFn::kSinh:
+      return "sinh";
+    case BuiltinFn::kCosh:
+      return "cosh";
+    case BuiltinFn::kTanh:
+      return "tanh";
+    case BuiltinFn::kAsinh:
+      return "asinh";
+    case BuiltinFn::kAcosh:
+      return "acosh";
+    case BuiltinFn::kAtanh:
+      return "atanh";
     case BuiltinFn::kInitialize:
       return "initialize";
     case BuiltinFn::kAttachDriver:
@@ -400,6 +440,12 @@ auto BuiltinFnName(BuiltinFn id) -> std::string_view {
       return "to_int64";
     case BuiltinFn::kRound:
       return "round";
+    case BuiltinFn::kTruncate:
+      return "truncate";
+    case BuiltinFn::kToBits:
+      return "to_bits";
+    case BuiltinFn::kFromBits:
+      return "from_bits";
     case BuiltinFn::kRealValue:
       return "real_value";
     case BuiltinFn::kStringCStr:

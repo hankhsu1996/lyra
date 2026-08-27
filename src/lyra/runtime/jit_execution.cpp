@@ -1136,6 +1136,98 @@ auto lyra_rt_real_round(const void* value) -> std::int64_t {
   return Read<Real>(value).Round();
 }
 
+auto lyra_rt_real_truncate(const void* value) -> std::int64_t {
+  return Read<Real>(value).Truncate();
+}
+
+auto lyra_rt_real_to_bits(const void* value) -> std::int64_t {
+  return Read<Real>(value).ToBits();
+}
+
+auto lyra_rt_real_from_bits(std::int64_t bits) -> void* {
+  return Own(Real::FromBits(bits));
+}
+
+auto lyra_rt_real_ln(const void* value) -> void* {
+  return Own(Read<Real>(value).Ln());
+}
+
+auto lyra_rt_real_log10(const void* value) -> void* {
+  return Own(Read<Real>(value).Log10());
+}
+
+auto lyra_rt_real_exp(const void* value) -> void* {
+  return Own(Read<Real>(value).Exp());
+}
+
+auto lyra_rt_real_sqrt(const void* value) -> void* {
+  return Own(Read<Real>(value).Sqrt());
+}
+
+auto lyra_rt_real_floor(const void* value) -> void* {
+  return Own(Read<Real>(value).Floor());
+}
+
+auto lyra_rt_real_ceil(const void* value) -> void* {
+  return Own(Read<Real>(value).Ceil());
+}
+
+auto lyra_rt_real_sin(const void* value) -> void* {
+  return Own(Read<Real>(value).Sin());
+}
+
+auto lyra_rt_real_cos(const void* value) -> void* {
+  return Own(Read<Real>(value).Cos());
+}
+
+auto lyra_rt_real_tan(const void* value) -> void* {
+  return Own(Read<Real>(value).Tan());
+}
+
+auto lyra_rt_real_asin(const void* value) -> void* {
+  return Own(Read<Real>(value).Asin());
+}
+
+auto lyra_rt_real_acos(const void* value) -> void* {
+  return Own(Read<Real>(value).Acos());
+}
+
+auto lyra_rt_real_atan(const void* value) -> void* {
+  return Own(Read<Real>(value).Atan());
+}
+
+auto lyra_rt_real_atan2(const void* y, const void* x) -> void* {
+  return Own(Read<Real>(y).Atan2(Read<Real>(x)));
+}
+
+auto lyra_rt_real_hypot(const void* x, const void* y) -> void* {
+  return Own(Read<Real>(x).Hypot(Read<Real>(y)));
+}
+
+auto lyra_rt_real_sinh(const void* value) -> void* {
+  return Own(Read<Real>(value).Sinh());
+}
+
+auto lyra_rt_real_cosh(const void* value) -> void* {
+  return Own(Read<Real>(value).Cosh());
+}
+
+auto lyra_rt_real_tanh(const void* value) -> void* {
+  return Own(Read<Real>(value).Tanh());
+}
+
+auto lyra_rt_real_asinh(const void* value) -> void* {
+  return Own(Read<Real>(value).Asinh());
+}
+
+auto lyra_rt_real_acosh(const void* value) -> void* {
+  return Own(Read<Real>(value).Acosh());
+}
+
+auto lyra_rt_real_atanh(const void* value) -> void* {
+  return Own(Read<Real>(value).Atanh());
+}
+
 auto lyra_rt_real_const(double value) -> void* {
   return Own(Real{value});
 }
@@ -1238,6 +1330,14 @@ auto lyra_rt_shortreal_pow(const void* base, const void* exponent) -> void* {
 
 auto lyra_rt_shortreal_round(const void* value) -> std::int64_t {
   return Read<ShortReal>(value).Round();
+}
+
+auto lyra_rt_shortreal_to_bits(const void* value) -> std::int64_t {
+  return Read<ShortReal>(value).ToBits();
+}
+
+auto lyra_rt_shortreal_from_bits(std::int64_t bits) -> void* {
+  return Own(ShortReal::FromBits(bits));
 }
 
 auto lyra_rt_shortreal_const(float value) -> void* {

@@ -49,6 +49,23 @@ class RealValue {
     return std::llround(v_);
   }
 
+  // LRM 20.5 `$rtoi` drops the fraction instead of rounding it, so a value
+  // moves toward zero rather than toward the nearest integer.
+  [[nodiscard]] auto Truncate() const -> std::int64_t {
+    return static_cast<std::int64_t>(v_);
+  }
+
+  // LRM 20.5 `$realtobits` / `$bitstoreal`: the IEEE 754 pattern the value is
+  // stored as, carried as an integer. This preserves the bits where LRM 6.12.1
+  // conversion preserves the number, so the two are different operations on
+  // the same pair of types and a value carried out and back is unchanged.
+  [[nodiscard]] auto ToBits() const -> std::int64_t {
+    return static_cast<std::int64_t>(std::bit_cast<BitsType>(v_));
+  }
+  [[nodiscard]] static auto FromBits(std::int64_t bits) -> RealValue {
+    return RealValue{std::bit_cast<Host>(static_cast<BitsType>(bits))};
+  }
+
   // LRM 11.3.1 arithmetic on real produces real.
   [[nodiscard]] auto operator+(const RealValue& o) const -> RealValue {
     return RealValue{static_cast<Host>(v_ + o.v_)};
@@ -65,8 +82,75 @@ class RealValue {
   [[nodiscard]] auto operator-() const -> RealValue {
     return RealValue{static_cast<Host>(-v_)};
   }
+  // LRM 11.4.3 `**` on real operands and the LRM 20.8.2 `$pow` row ask for the
+  // same operation, so both spellings arrive here.
   [[nodiscard]] auto Pow(const RealValue& o) const -> RealValue {
     return RealValue{static_cast<Host>(std::pow(v_, o.v_))};
+  }
+
+  // LRM 20.8.2 Table 20-4 cross-lists each of these with one C standard math
+  // library function and defines its behavior to be that function's, edge
+  // cases included, so each one delegates rather than deciding anything of its
+  // own.
+  [[nodiscard]] auto Ln() const -> RealValue {
+    return RealValue{static_cast<Host>(std::log(v_))};
+  }
+  [[nodiscard]] auto Log10() const -> RealValue {
+    return RealValue{static_cast<Host>(std::log10(v_))};
+  }
+  [[nodiscard]] auto Exp() const -> RealValue {
+    return RealValue{static_cast<Host>(std::exp(v_))};
+  }
+  [[nodiscard]] auto Sqrt() const -> RealValue {
+    return RealValue{static_cast<Host>(std::sqrt(v_))};
+  }
+  [[nodiscard]] auto Floor() const -> RealValue {
+    return RealValue{static_cast<Host>(std::floor(v_))};
+  }
+  [[nodiscard]] auto Ceil() const -> RealValue {
+    return RealValue{static_cast<Host>(std::ceil(v_))};
+  }
+  [[nodiscard]] auto Sin() const -> RealValue {
+    return RealValue{static_cast<Host>(std::sin(v_))};
+  }
+  [[nodiscard]] auto Cos() const -> RealValue {
+    return RealValue{static_cast<Host>(std::cos(v_))};
+  }
+  [[nodiscard]] auto Tan() const -> RealValue {
+    return RealValue{static_cast<Host>(std::tan(v_))};
+  }
+  [[nodiscard]] auto Asin() const -> RealValue {
+    return RealValue{static_cast<Host>(std::asin(v_))};
+  }
+  [[nodiscard]] auto Acos() const -> RealValue {
+    return RealValue{static_cast<Host>(std::acos(v_))};
+  }
+  [[nodiscard]] auto Atan() const -> RealValue {
+    return RealValue{static_cast<Host>(std::atan(v_))};
+  }
+  [[nodiscard]] auto Atan2(const RealValue& o) const -> RealValue {
+    return RealValue{static_cast<Host>(std::atan2(v_, o.v_))};
+  }
+  [[nodiscard]] auto Hypot(const RealValue& o) const -> RealValue {
+    return RealValue{static_cast<Host>(std::hypot(v_, o.v_))};
+  }
+  [[nodiscard]] auto Sinh() const -> RealValue {
+    return RealValue{static_cast<Host>(std::sinh(v_))};
+  }
+  [[nodiscard]] auto Cosh() const -> RealValue {
+    return RealValue{static_cast<Host>(std::cosh(v_))};
+  }
+  [[nodiscard]] auto Tanh() const -> RealValue {
+    return RealValue{static_cast<Host>(std::tanh(v_))};
+  }
+  [[nodiscard]] auto Asinh() const -> RealValue {
+    return RealValue{static_cast<Host>(std::asinh(v_))};
+  }
+  [[nodiscard]] auto Acosh() const -> RealValue {
+    return RealValue{static_cast<Host>(std::acosh(v_))};
+  }
+  [[nodiscard]] auto Atanh() const -> RealValue {
+    return RealValue{static_cast<Host>(std::atanh(v_))};
   }
 
   // LRM 11.4.1 Table 11-1: `+= -= *= /=` apply to real operands.
@@ -168,7 +252,6 @@ class RealValue {
 
 using Real = RealValue<double>;
 using ShortReal = RealValue<float>;
-using RealTime = Real;
 
 // LRM 21.2.1 real formatting. Delegates to the host-precision formatter
 // (`Formatter<double>` / `Formatter<float>`); the %f / %e / %g precision comes

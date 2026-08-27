@@ -124,6 +124,32 @@ enum class BuiltinFn : std::uint16_t {
   // LRM 20.8.1. ceil(log2) of the operand read as unsigned; $clog2(0) is 0.
   // A constant argument is folded downstream, never in lowering.
   kClog2,
+  // LRM 20.8.2 Table 20-4: real-valued mathematics, each entry cross-listed
+  // with the C standard math library function whose behavior the standard
+  // defines it to have. Instance methods on the real receiver (`args[0]`),
+  // with the two-argument forms taking the second operand after it. The
+  // table's `$pow` row has no entry of its own: it asks for exactly what LRM
+  // 11.4.3 `**` asks for, and one entry serves both spellings.
+  kLn,
+  kLog10,
+  kExp,
+  kSqrt,
+  kFloor,
+  kCeil,
+  kSin,
+  kCos,
+  kTan,
+  kAsin,
+  kAcos,
+  kAtan,
+  kAtan2,
+  kHypot,
+  kSinh,
+  kCosh,
+  kTanh,
+  kAsinh,
+  kAcosh,
+  kAtanh,
   // Installs a capability wrapper's declared representation once at
   // construction. It acts on the wrapper rather than on the storage the wrapper
   // represents, which is why it is a call at all; reaching that storage is a
@@ -365,21 +391,23 @@ enum class BuiltinFn : std::uint16_t {
   // scope handle (`args[0]`); the coroutine to register is a regular argument.
   kRegisterInitial,
   kRegisterFinal,
-  // Value-layer conversion factories. HIR-to-MIR dispatches on the (src, dst)
-  // type pair and emits a `CallExpr` to the matching factory; the C++ backend
-  // renders each as the corresponding `lyra::value::T::Method(...)` static call
-  // or instance method, with no type-driven branching. `kToInt64` is the
-  // `PackedArray` accessor that yields a machine int64 (used as an inner step
-  // of
-  // the integral-to-real path); `kRound` is the `Real` / `ShortReal` accessor
-  // that rounds to int64 per LRM 6.12.1 (used as an inner step of the
-  // real-to-integral path). `kFromInt` / `kConvertFrom` are the static
-  // `PackedArray` factories that build a target-shape vector from an integer
-  // (rounded real value) or reshape another packed vector. `kFromPackedArray`
-  // / `kFromByteArray` are the static `String` factories that build a string
-  // from packed bits (LRM 6.16) or from a byte unpacked array (LRM 21.3.4.3).
+  // The inner step of a value conversion: reading the source out as a machine
+  // integer. HIR-to-MIR dispatches on the (src, dst) type pair and emits a
+  // `CallExpr` to the matching entry, which the backend renders with no
+  // type-driven branching of its own. `kToInt64` is the `PackedArray` accessor
+  // the integral-to-real path reads through; `kRound` is the `Real` /
+  // `ShortReal` accessor that rounds to int64 per LRM 6.12.1, which the
+  // real-to-integral path reads through.
   kToInt64,
   kRound,
+  // LRM 20.5 real conversions. `kTruncate` is `$rtoi`'s reading of a real as an
+  // integer, which drops the fraction where the LRM 6.12.1 conversion rounds
+  // it. `kToBits` and `kFromBits` carry the IEEE 754 pattern itself rather than
+  // the number it encodes, as `$realtobits` and `$bitstoreal` do; both name the
+  // pattern as a machine int64, whose low half the shortreal pair occupies.
+  kTruncate,
+  kToBits,
+  kFromBits,
   // Machine-value accessors used by DPI-C marshaling (LRM 35.5.6):
   // `kRealValue` reads a `Real` / `ShortReal` out as its machine float;
   // `kStringCStr` borrows a `String` as a NUL-terminated C string valid for the
@@ -441,6 +469,12 @@ enum class BuiltinFn : std::uint16_t {
   // Free functions over the run.
   kCurrentExportScope,
   kFindExportEntry,
+  // The outer step of a value conversion: the static factory that lands a
+  // machine-level result in the destination's declared representation, which
+  // the call site names as the qualifier. `kFromInt` builds a target-shape
+  // vector from a machine integer and `kConvertFrom` reshapes another packed
+  // vector; `kFromPackedArray` and `kFromByteArray` build a string from packed
+  // bits (LRM 6.16) or from a byte unpacked array (LRM 21.3.4.3).
   kFromInt,
   kConvertFrom,
   kFromPackedArray,
@@ -517,7 +551,8 @@ enum class BuiltinFn : std::uint16_t {
 [[nodiscard]] constexpr auto IsStaticBuiltinFn(BuiltinFn id) -> bool {
   return id == BuiltinFn::kFromInt || id == BuiltinFn::kConvertFrom ||
          id == BuiltinFn::kFromPackedArray || id == BuiltinFn::kFromByteArray ||
-         id == BuiltinFn::kFromBool || id == BuiltinFn::kFromString;
+         id == BuiltinFn::kFromBool || id == BuiltinFn::kFromString ||
+         id == BuiltinFn::kFromBits;
 }
 
 // True iff the function modifies its receiver argument's storage in place, so
