@@ -31,9 +31,9 @@
 #include "lyra/hir/structural_scope.hpp"
 #include "lyra/hir/type_import.hpp"
 #include "lyra/hir/unit_signature.hpp"
+#include "lyra/hir/unit_signatures.hpp"
 #include "lyra/hir/value_ref.hpp"
 #include "lyra/lowering/ast_to_hir/sensitivity.hpp"
-#include "lyra/lowering/ast_to_hir/unit_signatures.hpp"
 #include "lyra/lowering/ast_to_hir/walk_frame.hpp"
 #include "lyra/support/event_edge.hpp"
 
@@ -217,9 +217,16 @@ class UnitLowerer {
   // ones it may read.
   [[nodiscard]] auto TakeSignature() -> hir::UnitSignature;
 
+  // The units this one's declarations name, each once. The design narrows the
+  // signatures it hands this unit to these, so a unit's own declarations fix
+  // what its bodies can read about any other.
+  [[nodiscard]] auto ReferencedUnits() const -> std::span<const std::string> {
+    return referenced_units_;
+  }
+
   // The body phase: everything this unit executes, resolved against what the
   // units it references published.
-  auto LowerBodies(const UnitSignatures& signatures)
+  auto LowerBodies(hir::ConsumedSignatures signatures)
       -> diag::Result<hir::CompilationUnit>;
 
   // Read access to the in-progress unit. Handlers reach the unit's type vocab
@@ -384,19 +391,18 @@ class UnitLowerer {
       const -> std::optional<std::string_view> {
     return facts_.ForeignExportName(sub);
   }
-  // What the unit named `unit_name` published, for a lowering that reaches
-  // across the unit boundary. A name with no entry is one no unit in the design
-  // declares.
-  [[nodiscard]] auto SignatureOf(const std::string& unit_name) const
-      -> const hir::UnitSignature* {
-    if (unit_signatures_ == nullptr) {
+  // What the units this one references published, for a lowering that reaches
+  // across the unit boundary. Reachable only once bodies lower: the declaration
+  // phase reads this unit alone, so it has none.
+  [[nodiscard]] auto Signatures() const -> const hir::ConsumedSignatures& {
+    if (!consumed_signatures_.has_value()) {
       throw InternalError(
-          "UnitLowerer::SignatureOf: another unit's signature is reachable "
-          "only while bodies lower; the declaration phase reads this unit "
-          "alone");
+          "UnitLowerer::Signatures: another unit's signature is reachable only "
+          "while bodies lower; the declaration phase reads this unit alone");
     }
-    return unit_signatures_->Find(unit_name);
+    return *consumed_signatures_;
   }
+
   // Whether the design being built contains this procedural block. A concurrent
   // assertion is a process whose whole body is the assertion, so disabling
   // assertions removes it rather than emptying it -- an always block with no
@@ -502,6 +508,11 @@ class UnitLowerer {
   // executable HIR.
   auto DeclareStructuralIdentities(const slang::ast::Scope& scope)
       -> diag::Result<void>;
+
+  // Records that this unit's declarations name `unit_name`. Several instances
+  // may be built from one unit, and the dependency is on the unit rather than
+  // on any one of them, so a repeat contributes nothing.
+  void RecordReferencedUnit(std::string unit_name);
 
   // The frame assigned to `scope` by the declaration pass. Every scope a
   // structural lowerer is built for was assigned one, so absence is a
@@ -646,10 +657,13 @@ class UnitLowerer {
   // What this unit publishes, built by the declaration phase and moved out
   // before any body lowers.
   hir::UnitSignature signature_;
-  // What every unit publishes, for the body phase alone. The declaration phase
-  // has none, which is what makes "a declaration reads only its own unit" a
-  // property of the code rather than a discipline.
-  const UnitSignatures* unit_signatures_ = nullptr;
+  // The units this unit's own declarations name, recorded as the declaration
+  // phase walks them.
+  std::vector<std::string> referenced_units_;
+  // What the units this one references publish, for the body phase alone. The
+  // declaration phase has none, which is what makes "a declaration reads only
+  // its own unit" a property of the code rather than a discipline.
+  std::optional<hir::ConsumedSignatures> consumed_signatures_;
   // What each signature this unit has read out of became in this unit's pool,
   // one entry per signature, so a type published once is taken once however
   // many connections name it.

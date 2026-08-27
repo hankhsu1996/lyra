@@ -8,6 +8,7 @@
 #include "lyra/diag/diagnostic.hpp"
 #include "lyra/frontend/slang_source_mapper.hpp"
 #include "lyra/hir/compilation_unit.hpp"
+#include "lyra/hir/unit_signatures.hpp"
 #include "lyra/lowering/ast_to_hir/sensitivity.hpp"
 
 namespace lyra::lowering::ast_to_hir {
@@ -50,13 +51,23 @@ class LowerCompilationFacts {
   bool disable_assertions_;
 };
 
+// The two artifacts the design's units yield: what each unit is, and what each
+// publishes. They are separate because their readers are: a unit's own code is
+// read by the stage that lowers it further, while its signature is read by the
+// units that reference it, and by nothing else.
+struct HirCompilation {
+  std::vector<hir::CompilationUnit> units;
+  hir::UnitSignatures signatures;
+};
+
 // Lowers the whole compilation to its HIR units: every package the design
 // declares, then every distinct module body reachable from the tops, each
 // tagged with its `UnitKind`. Each unit is lowered independently -- it reads
-// only its own scope and the shared frontend -- so the result is a flat set of
-// self-contained units with no cross-unit HIR references.
+// only its own scope, the shared frontend, and the signatures of the units its
+// own declarations name -- so the result is a flat set of self-contained units
+// with no cross-unit HIR references.
 auto LowerCompilationToHir(const LowerCompilationFacts& facts)
-    -> diag::Result<std::vector<hir::CompilationUnit>>;
+    -> diag::Result<HirCompilation>;
 
 // A top-level block is an auto-promoted, uninstantiated module. These names
 // are a subset of the compiled units: a unit reached only through

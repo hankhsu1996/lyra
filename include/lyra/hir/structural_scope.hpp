@@ -195,14 +195,17 @@ struct RoutedRefDecl {
   std::optional<NetType> target_net_type;
 };
 
-// `target_unit` is a cross-unit reference -- the name of the instantiated unit,
-// resolved by name at link time, a distinct domain from the unit-local id
-// kinds. `array_dims` is empty for a scalar instance and holds one element
-// count per dimension, outermost first, for an instance array (`Child c[2][3]`
-// is `{2, 3}`).
+// A child object built from another compilation unit. `unit_name` and
+// `class_name` are both cross-unit references, resolved by name at link time
+// and a distinct domain from the unit-local id kinds: the unit is what the
+// referrer declared a dependency on, and the class is the object that unit
+// states its instances are, read off the signature it published. `array_dims`
+// is empty for a scalar instance and holds one element count per dimension,
+// outermost first, for an instance array (`Child c[2][3]` is `{2, 3}`).
 struct InstanceMemberDecl {
   std::string instance_name;
-  std::string target_unit;
+  std::string unit_name;
+  std::string class_name;
   std::vector<std::uint32_t> array_dims;
 };
 

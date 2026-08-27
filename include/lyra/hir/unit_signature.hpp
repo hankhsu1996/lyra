@@ -9,6 +9,7 @@
 #include <vector>
 
 #include "lyra/base/arena.hpp"
+#include "lyra/base/internal_error.hpp"
 #include "lyra/hir/port_direction.hpp"
 #include "lyra/hir/structural_data_object.hpp"
 #include "lyra/hir/type_id.hpp"
@@ -117,5 +118,28 @@ struct UnitSignature {
   // roots no object, so nothing reaches it through a receiver.
   std::optional<InstanceClassSignature> instance_class;
 };
+
+// The class an instance of the unit named `unit_name` is. The unit both
+// publishes this on its signature and builds the class under it, so the promise
+// and the code cannot name different classes. Only the publishing unit computes
+// it -- a referrer reads the name the signature carries, which is what keeps a
+// unit's name and its class two facts everywhere but here.
+[[nodiscard]] inline auto InstanceClassName(std::string_view unit_name)
+    -> std::string {
+  return std::string{unit_name};
+}
+
+// The object an instance of the unit `signature` describes is. A unit whose
+// instances exist roots one, so a caller holding the signature of a unit it
+// instantiates reaches it without a case for its absence.
+[[nodiscard]] inline auto InstanceClassOf(const UnitSignature& signature)
+    -> const InstanceClassSignature& {
+  if (!signature.instance_class.has_value()) {
+    throw InternalError(
+        "hir::InstanceClassOf: a unit that is instantiated publishes the "
+        "object its instances are");
+  }
+  return *signature.instance_class;
+}
 
 }  // namespace lyra::hir

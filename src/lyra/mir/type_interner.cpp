@@ -77,6 +77,7 @@ auto SemanticTypeHash::operator()(const TypeData& data) const -> std::size_t {
           HashField(seed, t.class_id.value);
         } else if constexpr (std::is_same_v<T, ExternalUnitObjectType>) {
           HashField(seed, t.unit_name);
+          HashField(seed, t.class_name);
         } else if constexpr (std::is_same_v<T, ExternalClassType>) {
           HashField(seed, t.qualified_name);
         } else if constexpr (std::is_same_v<T, MachineIntType>) {

@@ -12,10 +12,10 @@
 
 #include "lyra/diag/diagnostic.hpp"
 #include "lyra/hir/compilation_unit.hpp"
+#include "lyra/hir/unit_signatures.hpp"
 #include "lyra/lowering/ast_to_hir/lower.hpp"
 #include "lyra/lowering/ast_to_hir/specialization_name.hpp"
 #include "lyra/lowering/ast_to_hir/unit_lowerer.hpp"
-#include "lyra/lowering/ast_to_hir/unit_signatures.hpp"
 
 namespace lyra::lowering::ast_to_hir {
 
@@ -126,7 +126,7 @@ auto CollectCompilationUnits(const LowerCompilationFacts& facts)
 }  // namespace
 
 auto LowerCompilationToHir(const LowerCompilationFacts& facts)
-    -> diag::Result<std::vector<hir::CompilationUnit>> {
+    -> diag::Result<HirCompilation> {
   const auto packages = CollectPackages(facts);
   const auto compilation_units = CollectCompilationUnits(facts);
   const auto bodies = CollectUnitBodies(facts);
@@ -164,7 +164,7 @@ auto LowerCompilationToHir(const LowerCompilationFacts& facts)
   // This is the design-scope reading of the same ordering a single unit already
   // applies to its own declarations. A declaration reads only its own unit, so
   // nothing orders this pass and no cycle among units can arise.
-  UnitSignatures signatures;
+  hir::UnitSignatures signatures;
   for (const auto& lowerer : lowerers) {
     if (auto r = lowerer->Declare(); !r) {
       return std::unexpected(std::move(r.error()));
@@ -172,16 +172,21 @@ auto LowerCompilationToHir(const LowerCompilationFacts& facts)
     signatures.Publish(lowerer->TakeSignature());
   }
 
+  // Each unit's bodies lower against the signatures of the units it named and
+  // no others, so what one unit's emission can depend on is bounded by its own
+  // declarations rather than by what the design happens to contain.
   std::vector<hir::CompilationUnit> units;
   units.reserve(lowerers.size());
   for (const auto& lowerer : lowerers) {
-    auto unit = lowerer->LowerBodies(signatures);
+    auto unit =
+        lowerer->LowerBodies(signatures.Consumed(lowerer->ReferencedUnits()));
     if (!unit) {
       return std::unexpected(std::move(unit.error()));
     }
     units.push_back(*std::move(unit));
   }
-  return units;
+  return HirCompilation{
+      .units = std::move(units), .signatures = std::move(signatures)};
 }
 
 auto TopLevelUnitNames(slang::ast::Compilation& compilation)

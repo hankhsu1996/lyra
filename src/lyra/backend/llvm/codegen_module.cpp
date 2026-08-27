@@ -74,16 +74,17 @@ auto CodeGenModule::UnitFunction(lir::FunctionId function) -> llvm::Function* {
 
 auto CodeGenModule::ScopeDefinitionRef(lir::TypeId object_type)
     -> llvm::Constant* {
-  // A class this unit compiles is named by its own name; a class another unit
-  // publishes is named by that unit's. Both resolve to a record the host built,
-  // so the reference is the same kind of symbol either way.
+  // A class this unit compiles already carries the symbol it was emitted under;
+  // one another unit publishes is composed from the unit and class a signature
+  // named, the same way that unit composed it. Both resolve to a record the
+  // host built, so the reference is the same kind of symbol either way.
   const std::string name = std::visit(
       Overloaded{
           [&](const lir::ObjectType& o) -> std::string {
             return unit_->classes.Get(o.class_id).name;
           },
-          [&](const lir::ExternalUnitObjectType& e) -> std::string {
-            return e.unit_name;
+          [](const lir::ExternalUnitObjectType& e) -> std::string {
+            return std::format("{}.{}", e.unit_name, e.class_name);
           },
           [&](const auto&) -> std::string {
             throw InternalError(

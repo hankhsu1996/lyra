@@ -120,6 +120,14 @@ auto UnitLowerer::UnitCallableSymbol(const mir::CallableDecl& callable) const
   return std::format("{}.{}", mir_->name, callable.name);
 }
 
+auto UnitLowerer::ClassSymbol(const mir::Class& cls) const -> std::string {
+  // A class's name is the declaring unit's own statement and is unique only
+  // there, while the whole program links into one name space, so the unit
+  // qualifies it. A referrer composes the same symbol from the unit and class
+  // its signature named, which is what lets the two agree with no shared table.
+  return std::format("{}.{}", mir_->name, cls.name);
+}
+
 auto UnitLowerer::TakeClassIdentities(const mir::Class& cls)
     -> ClassIdentities {
   // Only a callable this program defines becomes a function of the unit, so a
@@ -143,7 +151,7 @@ auto UnitLowerer::TakeClassIdentities(const mir::Class& cls)
 auto UnitLowerer::LowerClass(mir::ClassId owner, const mir::Class& cls)
     -> diag::Result<lir::Class> {
   lir::Class out;
-  out.name = cls.name;
+  out.name = ClassSymbol(cls);
   if (cls.base.has_value()) {
     out.base = LowerBase(*cls.base);
   }
@@ -154,13 +162,13 @@ auto UnitLowerer::LowerClass(mir::ClassId owner, const mir::Class& cls)
         lir::Member{.name = field.name, .type = TranslateType(field.type)});
   }
 
-  // A class's bodies become functions of the unit, so each takes a name that is
-  // unique across it: the owning class qualifies the body's own name, which is
-  // only unique within that class.
+  // A class's bodies become functions of the program, and a body's own name is
+  // unique only within its class -- so the class symbol qualifies it, being
+  // itself unique program-wide.
   const ClassIdentities& identities = class_identities_.Get(owner);
   auto constructor =
       FunctionLowerer(
-          *this, cls.constructor.code, std::format("{}.constructor", cls.name))
+          *this, cls.constructor.code, std::format("{}.constructor", out.name))
           .Run();
   if (!constructor) {
     return std::unexpected(std::move(constructor.error()));
@@ -177,7 +185,7 @@ auto UnitLowerer::LowerClass(mir::ClassId owner, const mir::Class& cls)
     if (!callable.code.body.has_value()) continue;
     auto fn =
         FunctionLowerer(
-            *this, callable.code, std::format("{}.{}", cls.name, callable.name))
+            *this, callable.code, std::format("{}.{}", out.name, callable.name))
             .Run();
     if (!fn) {
       return std::unexpected(std::move(fn.error()));
