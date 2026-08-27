@@ -15,6 +15,7 @@ module Top;
   longint kept_longint;
   time kept_time;
   int widened_signed_byte;
+  int widened_unsigned_byte;
   int widened_unsigned_vector;
   int widened_signed_shortint;
   int widened_unsigned_logic;
@@ -26,11 +27,13 @@ module Top;
   bit longint_above_zero;
   bit time_above_zero;
   bit time_below_zero;
+  bit time_signed_below_zero;
   bit min_below_max;
   bit max_above_zero;
 
   initial begin
     byte all_ones_byte;
+    byte unsigned all_ones_byte_unsigned;
     bit [7:0] all_ones_vector;
     shortint all_ones_shortint;
     logic [15:0] all_ones_logic;
@@ -39,6 +42,7 @@ module Top;
     int unsigned all_ones_int_unsigned;
     longint all_ones_longint;
     time all_ones_time;
+    time signed all_ones_time_signed;
     int min_int;
     int max_int;
 
@@ -54,9 +58,12 @@ module Top;
     kept_time = 64'hFFFFFFFFFFFFFFFF;
 
     // The same set bits assigned into a wider type from a signed source and
-    // from an unsigned one, so only the extension rule separates the two.
+    // from an unsigned one, so only the extension rule separates the two. The
+    // first pair differ in the keyword alone, the second in the type.
     all_ones_byte = 8'hFF;
     widened_signed_byte = all_ones_byte;
+    all_ones_byte_unsigned = 8'hFF;
+    widened_unsigned_byte = all_ones_byte_unsigned;
     all_ones_vector = 8'hFF;
     widened_unsigned_vector = all_ones_vector;
     all_ones_shortint = 16'hFFFF;
@@ -80,6 +87,8 @@ module Top;
     all_ones_time = 64'hFFFFFFFFFFFFFFFF;
     time_above_zero = (all_ones_time > 0);
     time_below_zero = (all_ones_time < 0);
+    all_ones_time_signed = 64'hFFFFFFFFFFFFFFFF;
+    time_signed_below_zero = (all_ones_time_signed < 0);
 
     min_int = 32'h80000000;
     max_int = 32'h7FFFFFFF;
@@ -105,6 +114,9 @@ module Top;
     if (widened_signed_byte !== -1)
       $fatal(1, "widened_signed_byte was %0d, expected -1",
              widened_signed_byte);
+    if (widened_unsigned_byte !== 255)
+      $fatal(1, "widened_unsigned_byte was %0d, expected 255",
+             widened_unsigned_byte);
     if (widened_unsigned_vector !== 255)
       $fatal(1, "widened_unsigned_vector was %0d, expected 255",
              widened_unsigned_vector);
@@ -130,6 +142,9 @@ module Top;
       $fatal(1, "time_above_zero was %b, expected 1", time_above_zero);
     if (time_below_zero !== 1'b0)
       $fatal(1, "time_below_zero was %b, expected 0", time_below_zero);
+    if (time_signed_below_zero !== 1'b1)
+      $fatal(1, "time_signed_below_zero was %b, expected 1",
+             time_signed_below_zero);
     if (min_below_max !== 1'b1)
       $fatal(1, "min_below_max was %b, expected 1", min_below_max);
     if (max_above_zero !== 1'b1)

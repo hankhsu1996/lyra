@@ -237,10 +237,12 @@ class PackedArray {
   [[nodiscard]] auto ValueWords() const -> std::span<const std::uint64_t>;
   [[nodiscard]] auto UnknownWords() const -> std::span<const std::uint64_t>;
 
-  // View the bit vector as a byte sequence, most significant byte first
-  // (`bit_width / 8` bytes; a byte with any x or z bit yields `0x00`). The
-  // shared producer for the LRM 6.16 string lift and the LRM 21.2.1.7 `%s`
-  // formatter, which post-process the NUL byte differently.
+  // View the bit vector as a byte sequence, most significant byte first. The
+  // value is right-justified -- its least significant bit is the low bit of the
+  // last byte -- and a width that is not a multiple of 8 is zero-filled on the
+  // left. A byte with any x or z bit yields `0x00`. The shared producer for the
+  // LRM 6.16 string lift and the LRM 21.2.1.7 `%s` formatter, which agree on
+  // that layout and differ only in what they do with a NUL byte.
   [[nodiscard]] auto ByteString() const -> std::string;
 
   // Typed view accessors. The state domain selects which

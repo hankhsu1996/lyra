@@ -101,47 +101,36 @@ auto LowerRange(const slang::ConstantRange& r) -> hir::PackedRange {
 
 // A predefined-width integer is a single-dimension packed array over a scalar
 // bit (LRM 7.4.1); `form` records the syntactic origin (`int` vs the equivalent
-// `bit signed [31:0]`).
+// `bit signed [31:0]`). Signedness is the declaration's, not the kind's: a
+// `signed` or `unsigned` keyword overrides the Table 6-8 default (LRM 6.11.3).
 auto LowerPredefinedInteger(
-    const UnitLowerer& unit_lowerer, slang::ast::PredefinedIntegerType::Kind k)
-    -> hir::PackedArrayType {
+    const UnitLowerer& unit_lowerer,
+    const slang::ast::PredefinedIntegerType& type) -> hir::PackedArrayType {
   using SK = slang::ast::PredefinedIntegerType::Kind;
   const auto& builtins = unit_lowerer.Unit().builtins;
   const auto make = [&](hir::TypeId element, std::int64_t msb,
-                        hir::Signedness signedness,
                         hir::PackedArrayForm form) -> hir::PackedArrayType {
     return hir::PackedArrayType{
         .dim = hir::PackedRange{.left = msb, .right = 0},
         .element_type = element,
-        .signedness = signedness,
+        .signedness = type.isSigned ? hir::Signedness::kSigned
+                                    : hir::Signedness::kUnsigned,
         .form = form,
     };
   };
-  switch (k) {
+  switch (type.integerKind) {
     case SK::Byte:
-      return make(
-          builtins.scalar_bit, 7, hir::Signedness::kSigned,
-          hir::PackedArrayForm::kByte);
+      return make(builtins.scalar_bit, 7, hir::PackedArrayForm::kByte);
     case SK::ShortInt:
-      return make(
-          builtins.scalar_bit, 15, hir::Signedness::kSigned,
-          hir::PackedArrayForm::kShortInt);
+      return make(builtins.scalar_bit, 15, hir::PackedArrayForm::kShortInt);
     case SK::Int:
-      return make(
-          builtins.scalar_bit, 31, hir::Signedness::kSigned,
-          hir::PackedArrayForm::kInt);
+      return make(builtins.scalar_bit, 31, hir::PackedArrayForm::kInt);
     case SK::LongInt:
-      return make(
-          builtins.scalar_bit, 63, hir::Signedness::kSigned,
-          hir::PackedArrayForm::kLongInt);
+      return make(builtins.scalar_bit, 63, hir::PackedArrayForm::kLongInt);
     case SK::Integer:
-      return make(
-          builtins.scalar_logic, 31, hir::Signedness::kSigned,
-          hir::PackedArrayForm::kInteger);
+      return make(builtins.scalar_logic, 31, hir::PackedArrayForm::kInteger);
     case SK::Time:
-      return make(
-          builtins.scalar_logic, 63, hir::Signedness::kUnsigned,
-          hir::PackedArrayForm::kTime);
+      return make(builtins.scalar_logic, 63, hir::PackedArrayForm::kTime);
   }
   throw InternalError("LowerPredefinedInteger: unknown integer kind");
 }
@@ -320,9 +309,8 @@ auto TranslateTypeData(
           hir::ScalarBitType{.atom = LowerScalarAtom(scalar.scalarKind)}};
     }
     case slang::ast::SymbolKind::PredefinedIntegerType: {
-      const auto& pi = canonical.as<slang::ast::PredefinedIntegerType>();
-      return hir::TypeData{
-          LowerPredefinedInteger(unit_lowerer, pi.integerKind)};
+      return hir::TypeData{LowerPredefinedInteger(
+          unit_lowerer, canonical.as<slang::ast::PredefinedIntegerType>())};
     }
     case slang::ast::SymbolKind::PackedArrayType: {
       auto pa = LowerExplicitPackedArray(
