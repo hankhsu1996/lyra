@@ -97,11 +97,11 @@ A case names no path. What a path currently refuses is recorded once for the pat
 `tests/paths/<path>.yaml`, and a case that starts passing fails until its entry is dropped, so the
 file only shrinks and is therefore the coverage report.
 
-To iterate on one case, filter by its path with `/` written as `.`, prefixed by the path that ran
-it:
+To iterate on one case, filter by its path under the corpus with `/` written as `.`; the target
+already names the path that runs it:
 
 ```bash
-bazel test //tests:llvm_tests --test_filter='Llvm.12_statements.case_default_item'
+bazel test //tests:llvm_tests --test_filter='12_statements.case_default_item'
 ```
 
 CI's test job passes `--test_tag_filters=-requires-host-cxx`, which excludes everything that spawns

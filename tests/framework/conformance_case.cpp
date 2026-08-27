@@ -88,6 +88,21 @@ auto ReadDirectives(std::string_view source, const std::filesystem::path& path)
   return out;
 }
 
+// A case sits inside the clause directory it tests, so its id names a clause
+// and a subject within it. A case directly under the corpus root names no
+// clause, which leaves it outside the one enumeration coverage is measured
+// against.
+void CheckFiledUnderClause(
+    const std::string& id, const std::filesystem::path& directory) {
+  if (id.find('/') == std::string::npos) {
+    throw std::runtime_error(
+        std::format(
+            "{}: a case sits in the directory of the LRM clause it tests, and "
+            "'{}' names no clause",
+            directory.string(), id));
+  }
+}
+
 void CheckNameAlphabet(
     const std::string& id, const std::filesystem::path& directory) {
   // A reader who has a failing case's name wants the directory it came from,
@@ -138,6 +153,7 @@ auto ParseCase(
   c.directory = directory;
   c.id = directory.lexically_relative(corpus_root).generic_string();
   CheckNameAlphabet(c.id, directory);
+  CheckFiledUnderClause(c.id, directory);
   CollectCompanions(directory, c);
 
   const std::filesystem::path entry = directory / entry_name;
