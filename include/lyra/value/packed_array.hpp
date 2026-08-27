@@ -54,6 +54,11 @@ class PackedArray {
   // to `PackedArray x = PackedArray::Int(5);`.
   [[nodiscard]] static auto Int(std::int32_t value) -> PackedArray;
 
+  // Default `int unsigned` shape (32-bit, unsigned, 2-state) per LRM 6.11
+  // Table 6-8. A system function whose own prototype states this type rather
+  // than leaving it to context answers with it (LRM 18.13.1).
+  [[nodiscard]] static auto IntUnsigned(std::uint32_t value) -> PackedArray;
+
   // Default byte shape (8-bit, signed, 2-state) per LRM 6.11 Table 6-8.
   [[nodiscard]] static auto Byte(std::int8_t value) -> PackedArray;
 

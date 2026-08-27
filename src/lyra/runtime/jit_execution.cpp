@@ -16,6 +16,7 @@
 #include "lyra/runtime/coroutine.hpp"
 #include "lyra/runtime/delay.hpp"
 #include "lyra/runtime/diagnostic.hpp"
+#include "lyra/runtime/distribution.hpp"
 #include "lyra/runtime/file_table.hpp"
 #include "lyra/runtime/generated_call_scope.hpp"
 #include "lyra/runtime/hierarchy_segment.hpp"
@@ -230,6 +231,17 @@ auto UnpackedArrayFromLiteral(
           static_cast<std::size_t>(count)));
 }
 
+// A distribution draw is a product of the value drawn and the advanced seed
+// (LRM 20.14.2), so it crosses the boundary as the type-erased product every
+// other product crosses as.
+auto OwnDraw(const DistributionDraw& draw) -> void* {
+  return Own(
+      value::RuntimeTuple(
+          std::vector<value::RuntimeValue>{
+              value::RuntimeValue{draw.Get<0>()},
+              value::RuntimeValue{draw.Get<1>()}}));
+}
+
 }  // namespace
 
 }  // namespace lyra::runtime
@@ -244,6 +256,7 @@ using lyra::runtime::GeneratedScope;
 using lyra::runtime::HierarchySegment;
 using lyra::runtime::Observable;
 using lyra::runtime::Own;
+using lyra::runtime::OwnDraw;
 using lyra::runtime::Read;
 using lyra::runtime::RunHostCommand;
 using lyra::runtime::RuntimeEffects;
@@ -446,6 +459,60 @@ auto lyra_rt_urandom_range(
           Read<PackedArray>(minval)));
 }
 
+auto lyra_rt_random(void* runtime) -> void* {
+  return Own(lyra::runtime::Random(*static_cast<RuntimeEffects*>(runtime)));
+}
+
+auto lyra_rt_dist_uniform(const void* seed, const void* start, const void* end)
+    -> void* {
+  return OwnDraw(
+      lyra::runtime::DistUniform(
+          Read<PackedArray>(seed), Read<PackedArray>(start),
+          Read<PackedArray>(end)));
+}
+
+auto lyra_rt_dist_normal(
+    const void* seed, const void* mean, const void* standard_deviation)
+    -> void* {
+  return OwnDraw(
+      lyra::runtime::DistNormal(
+          Read<PackedArray>(seed), Read<PackedArray>(mean),
+          Read<PackedArray>(standard_deviation)));
+}
+
+auto lyra_rt_dist_exponential(const void* seed, const void* mean) -> void* {
+  return OwnDraw(
+      lyra::runtime::DistExponential(
+          Read<PackedArray>(seed), Read<PackedArray>(mean)));
+}
+
+auto lyra_rt_dist_poisson(const void* seed, const void* mean) -> void* {
+  return OwnDraw(
+      lyra::runtime::DistPoisson(
+          Read<PackedArray>(seed), Read<PackedArray>(mean)));
+}
+
+auto lyra_rt_dist_chi_square(const void* seed, const void* degrees_of_freedom)
+    -> void* {
+  return OwnDraw(
+      lyra::runtime::DistChiSquare(
+          Read<PackedArray>(seed), Read<PackedArray>(degrees_of_freedom)));
+}
+
+auto lyra_rt_dist_t(const void* seed, const void* degrees_of_freedom) -> void* {
+  return OwnDraw(
+      lyra::runtime::DistT(
+          Read<PackedArray>(seed), Read<PackedArray>(degrees_of_freedom)));
+}
+
+auto lyra_rt_dist_erlang(const void* seed, const void* stages, const void* mean)
+    -> void* {
+  return OwnDraw(
+      lyra::runtime::DistErlang(
+          Read<PackedArray>(seed), Read<PackedArray>(stages),
+          Read<PackedArray>(mean)));
+}
+
 void lyra_rt_register_initial(
     void* self, void* unit_instance, void* coroutine) {
   RegisterInitialProcess(
@@ -465,7 +532,8 @@ auto lyra_rt_make_segment(void* label, LyraSpan indices) -> void* {
   std::vector<PackedArray> resolved;
   resolved.reserve(values.size());
   for (const std::int32_t index : values) {
-    resolved.push_back(PackedArray::FromInt(index, 32, false, false));
+    resolved.push_back(
+        PackedArray::IntUnsigned(static_cast<std::uint32_t>(index)));
   }
   return GeneratedCallScope::Current().Arena().New<HierarchySegment>(
       std::string(static_cast<const char*>(label)), resolved);

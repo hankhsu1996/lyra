@@ -27,16 +27,11 @@ inline auto DrawingProcessRng(RuntimeEffects& runtime) -> ProcessRng& {
   return process->Rng();
 }
 
-inline auto AsUnsignedResult(std::uint32_t value) -> value::PackedArray {
-  return value::PackedArray::FromInt(
-      static_cast<std::int64_t>(value), 32, false, false);
-}
-
 }  // namespace detail
 
 // $urandom (LRM 18.13.1).
 inline auto Urandom(RuntimeEffects& runtime) -> value::PackedArray {
-  return detail::AsUnsignedResult(
+  return value::PackedArray::IntUnsigned(
       detail::DrawingProcessRng(runtime).NextValue());
 }
 
@@ -48,7 +43,7 @@ inline auto UrandomSeeded(
     -> value::PackedArray {
   ProcessRng& rng = detail::DrawingProcessRng(runtime);
   rng.Reseed(RandomSeed{static_cast<std::uint32_t>(seed.ToInt64())});
-  return detail::AsUnsignedResult(rng.NextValue());
+  return value::PackedArray::IntUnsigned(rng.NextValue());
 }
 
 // $urandom_range (LRM 18.13.2): a value in the closed range the two bounds
@@ -64,19 +59,29 @@ inline auto UrandomRange(
   const std::uint32_t upper = std::max(high, low);
   const std::uint64_t span = std::uint64_t{upper} - lower + 1;
   ProcessRng& rng = detail::DrawingProcessRng(runtime);
-  if (span == 0) {
-    return detail::AsUnsignedResult(rng.NextValue());
-  }
   // Rejection rather than a modulo of the raw draw: the low values would
   // otherwise come up more often whenever the span does not divide the
-  // generator's range, which is every span that is not a power of two.
+  // generator's range, which is every span that is not a power of two. A span
+  // covering the whole range divides it exactly, so nothing is ever rejected.
   const std::uint64_t limit = (std::uint64_t{1} << 32U) / span * span;
   std::uint64_t draw = rng.NextValue();
   while (draw >= limit) {
     draw = rng.NextValue();
   }
-  return detail::AsUnsignedResult(
+  return value::PackedArray::IntUnsigned(
       static_cast<std::uint32_t>(lower + (draw % span)));
+}
+
+// $random called with no seed (LRM 20.14.1). The standard gives the seeded form
+// a generator of its own and states no source for the bits when the call
+// carries no seed, and LRM 18.14 does not list `$random` among what random
+// stability covers, so nothing fixes where an unseeded draw comes from. It
+// comes from the calling process, which makes it a signed reading of the same
+// 32 bits `$urandom` answers with, and gives it that call's thread locality.
+inline auto Random(RuntimeEffects& runtime) -> value::PackedArray {
+  return value::PackedArray::Int(
+      static_cast<std::int32_t>(
+          detail::DrawingProcessRng(runtime).NextValue()));
 }
 
 }  // namespace lyra::runtime

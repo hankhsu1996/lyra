@@ -919,6 +919,22 @@ auto CodeGenFunction::BuiltinCallee(
       return module_->Runtime().UrandomSeeded();
     case support::BuiltinFn::kUrandomRange:
       return module_->Runtime().UrandomRange();
+    case support::BuiltinFn::kRandom:
+      return module_->Runtime().Random();
+    case support::BuiltinFn::kDistUniform:
+      return module_->Runtime().DistUniform();
+    case support::BuiltinFn::kDistNormal:
+      return module_->Runtime().DistNormal();
+    case support::BuiltinFn::kDistExponential:
+      return module_->Runtime().DistExponential();
+    case support::BuiltinFn::kDistPoisson:
+      return module_->Runtime().DistPoisson();
+    case support::BuiltinFn::kDistChiSquare:
+      return module_->Runtime().DistChiSquare();
+    case support::BuiltinFn::kDistT:
+      return module_->Runtime().DistT();
+    case support::BuiltinFn::kDistErlang:
+      return module_->Runtime().DistErlang();
     case support::BuiltinFn::kAddOwnedChild:
       return module_->Runtime().AddOwnedChild();
     case support::BuiltinFn::kHierarchicalPath:

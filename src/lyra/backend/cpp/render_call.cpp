@@ -240,6 +240,22 @@ auto BuiltinFnCppName(support::BuiltinFn id) -> std::string_view {
       return "UrandomSeeded";
     case support::BuiltinFn::kUrandomRange:
       return "UrandomRange";
+    case support::BuiltinFn::kRandom:
+      return "Random";
+    case support::BuiltinFn::kDistUniform:
+      return "DistUniform";
+    case support::BuiltinFn::kDistNormal:
+      return "DistNormal";
+    case support::BuiltinFn::kDistExponential:
+      return "DistExponential";
+    case support::BuiltinFn::kDistPoisson:
+      return "DistPoisson";
+    case support::BuiltinFn::kDistChiSquare:
+      return "DistChiSquare";
+    case support::BuiltinFn::kDistT:
+      return "DistT";
+    case support::BuiltinFn::kDistErlang:
+      return "DistErlang";
     case support::BuiltinFn::kFinish:
       return "Finish";
     case support::BuiltinFn::kFatalFinish:
@@ -427,6 +443,14 @@ auto BuiltinFnCppNamespace(support::BuiltinFn id) -> std::string_view {
     case support::BuiltinFn::kUrandom:
     case support::BuiltinFn::kUrandomSeeded:
     case support::BuiltinFn::kUrandomRange:
+    case support::BuiltinFn::kRandom:
+    case support::BuiltinFn::kDistUniform:
+    case support::BuiltinFn::kDistNormal:
+    case support::BuiltinFn::kDistExponential:
+    case support::BuiltinFn::kDistPoisson:
+    case support::BuiltinFn::kDistChiSquare:
+    case support::BuiltinFn::kDistT:
+    case support::BuiltinFn::kDistErlang:
     case support::BuiltinFn::kFinish:
     case support::BuiltinFn::kFatalFinish:
     case support::BuiltinFn::kForkWaitAll:

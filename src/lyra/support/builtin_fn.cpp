@@ -304,6 +304,22 @@ auto BuiltinFnName(BuiltinFn id) -> std::string_view {
       return "urandom_seeded";
     case BuiltinFn::kUrandomRange:
       return "urandom_range";
+    case BuiltinFn::kRandom:
+      return "random";
+    case BuiltinFn::kDistUniform:
+      return "dist_uniform";
+    case BuiltinFn::kDistNormal:
+      return "dist_normal";
+    case BuiltinFn::kDistExponential:
+      return "dist_exponential";
+    case BuiltinFn::kDistPoisson:
+      return "dist_poisson";
+    case BuiltinFn::kDistChiSquare:
+      return "dist_chi_square";
+    case BuiltinFn::kDistT:
+      return "dist_t";
+    case BuiltinFn::kDistErlang:
+      return "dist_erlang";
     case BuiltinFn::kFinish:
       return "finish";
     case BuiltinFn::kFatalFinish:

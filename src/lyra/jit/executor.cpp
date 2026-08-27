@@ -144,6 +144,14 @@ void DefineRuntimeAbi(llvm::orc::LLJIT& jit) {
   add("lyra_rt_urandom", &lyra_rt_urandom);
   add("lyra_rt_urandom_seeded", &lyra_rt_urandom_seeded);
   add("lyra_rt_urandom_range", &lyra_rt_urandom_range);
+  add("lyra_rt_random", &lyra_rt_random);
+  add("lyra_rt_dist_uniform", &lyra_rt_dist_uniform);
+  add("lyra_rt_dist_normal", &lyra_rt_dist_normal);
+  add("lyra_rt_dist_exponential", &lyra_rt_dist_exponential);
+  add("lyra_rt_dist_poisson", &lyra_rt_dist_poisson);
+  add("lyra_rt_dist_chi_square", &lyra_rt_dist_chi_square);
+  add("lyra_rt_dist_t", &lyra_rt_dist_t);
+  add("lyra_rt_dist_erlang", &lyra_rt_dist_erlang);
   add("lyra_rt_make_segment", &lyra_rt_make_segment);
   add("lyra_rt_make_scope", &lyra_rt_make_scope);
   add("lyra_rt_hierarchical_path", &lyra_rt_hierarchical_path);

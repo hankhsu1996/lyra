@@ -106,6 +106,10 @@ auto PackedArray::Int(std::int32_t value) -> PackedArray {
   return FromInt(value, 32U, true, false);
 }
 
+auto PackedArray::IntUnsigned(std::uint32_t value) -> PackedArray {
+  return FromInt(static_cast<std::int64_t>(value), 32U, false, false);
+}
+
 auto PackedArray::Byte(std::int8_t value) -> PackedArray {
   return FromInt(value, 8U, true, false);
 }

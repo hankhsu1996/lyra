@@ -273,14 +273,30 @@ enum class BuiltinFn : std::uint16_t {
   // functions on `lyra::runtime` taking the runtime handle; each draws from the
   // calling process's own generator, which the runtime reads ambiently, so no
   // generator reaches the call as an operand. `$urandom`'s optional seed
-  // re-seeds that generator before the draw, which is a different runtime entry
-  // rather than an optional operand, so which form a call means is settled here
-  // instead of by counting its arguments. `kUrandomRange` always takes both
-  // bounds; an omitted low bound is the zero LRM 18.13.2 defines it to be, and
-  // the lowering supplies it.
+  // re-seeds that generator before the draw, which is a whole different
+  // operation rather than an extra operand, so it is a separate entry and no
+  // consumer of one has to ask whether a seed was written. `kUrandomRange`
+  // always takes both bounds; an omitted low bound is the zero LRM 18.13.2
+  // defines it to be, and the lowering supplies it.
   kUrandom,
   kUrandomSeeded,
   kUrandomRange,
+  // `$random` called with no seed (LRM 20.14.1): the same process draw as
+  // `kUrandom`, read as a signed 32-bit value.
+  kRandom,
+  // LRM 20.14.2 probabilistic distribution functions, generating by the
+  // algorithm LRM Annex N states. Pure functions on `lyra::runtime` reached
+  // with no runtime handle: their whole state is the seed operand. Each answers
+  // with a product of the value drawn and the seed that draw advanced, because
+  // the seed is an `inout` argument and the advanced one goes back to the
+  // design's own variable.
+  kDistUniform,
+  kDistNormal,
+  kDistExponential,
+  kDistPoisson,
+  kDistChiSquare,
+  kDistT,
+  kDistErlang,
   // LRM 20.2 simulation termination. Takes the runtime handle and the LRM
   // diagnostic level (0 / 1 / 2). The call suspends and never resumes; the
   // runtime drops the process at the next dispatch. `kFatalFinish` is the
