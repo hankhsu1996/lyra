@@ -64,6 +64,8 @@ auto ConnectElementPorts(
   const auto connections = inst.getPortConnections();
   const hir::InstanceClassSignature& published_class =
       hir::InstanceClassOf(child_signature);
+  const hir::ExternalUnitObjectId child_object =
+      unit_lowerer.ExternalUnitObjectOf(child_signature.unit_name);
   auto published_parts = child_signature.ports |
                          std::views::transform(&hir::PortDecl::parts) |
                          std::views::join;
@@ -144,19 +146,16 @@ auto ConnectElementPorts(
     }
 
     // The route to the child's own storage: one typed step onto the instance,
-    // then the member the child published. Which cell that member is -- a
-    // variable's observable cell, or the resolved cell of a net whose drivers
-    // the connection joins (LRM 6.5, 23.3.3) -- is the child's own statement of
-    // it, so the parent never reads the child's declaration to find out.
+    // then the member the child published. Which cell that member is, is the
+    // child's own statement of it, so the parent never reads the child's
+    // declaration to find out.
     const auto port_recipe = [&]() -> hir::RoutedPathRecipe {
       return hir::RoutedPathRecipe{
           .head = hir::InUnitHead{.hops = {}},
           .steps = {hir::PathStep{instance_step}},
           .leaf =
               hir::SignatureMemberLeaf{
-                  .unit_name = child_signature.unit_name,
-                  .class_name = published_class.class_name,
-                  .member_name = member.name},
+                  .object = child_object, .member = *data->member},
           .type = type_id};
     };
     // An input/output port reads the child cell during simulation, so it holds
@@ -167,7 +166,7 @@ auto ConnectElementPorts(
           .cell = frame.Exprs().Add(unit_lowerer.MakeRoutedMemberRef(
               *internal, home_frame,
               hir::RoutedRefDecl{
-                  .recipe = port_recipe(), .target_net_type = member.net_type},
+                  .recipe = port_recipe(), .target_storage = member.storage},
               span))};
     };
 

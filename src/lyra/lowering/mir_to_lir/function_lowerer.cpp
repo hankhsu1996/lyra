@@ -60,10 +60,9 @@ auto LocalPlace(lir::ValueId local) -> lir::Place {
 }
 
 // Which member position a field access names, or nothing when the field belongs
-// to a class another unit declares. Such a field is named rather than numbered,
-// and turning that name into a position needs the declaring unit's signature,
-// which this lowering does not consume -- so the position does not exist here
-// rather than being wrong here.
+// to an SV class another unit declares. Such a field is named rather than
+// numbered, and no unit publishes an SV class, so nothing here states where it
+// sits -- the position does not exist rather than being wrong.
 auto FieldSlot(const mir::FieldAccessExpr& field)
     -> std::optional<std::uint32_t> {
   return std::visit(
@@ -929,7 +928,7 @@ auto FunctionLowerer::LowerPlace(const mir::Block& block, mir::ExprId id)
             const std::optional<std::uint32_t> slot = FieldSlot(field);
             if (!slot.has_value()) {
               return Unsupported(
-                  "mir_to_lir: a member of a class another compilation unit "
+                  "mir_to_lir: a property of a class another compilation unit "
                   "declares is not yet reachable on this backend");
             }
             auto receiver = LowerExpr(block, field.receiver);

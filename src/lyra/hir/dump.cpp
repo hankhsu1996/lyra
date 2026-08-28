@@ -36,6 +36,25 @@ namespace lyra::hir {
 
 namespace {
 
+auto NetTypeLabel(NetType net_type) -> std::string_view {
+  return net_type == NetType::kWire ? "wire" : "tri";
+}
+
+auto FormatPublishedStorage(const PublishedStorage& storage) -> std::string {
+  return std::visit(
+      Overloaded{
+          [](const VariableStorage&) { return std::string{}; },
+          [](const NetStorage& net) {
+            return std::format(" net={}", NetTypeLabel(net.net_type));
+          },
+          [](const ReferenceStorage& reference) {
+            return std::string{
+                reference.binding == ReferenceBinding::kConstRef ? " const ref"
+                                                                 : " ref"};
+          }},
+      storage);
+}
+
 auto ForkJoinModeLabel(JoinMode mode) -> std::string_view {
   switch (mode) {
     case JoinMode::kAll:
@@ -1032,6 +1051,27 @@ class HirDumper {
       Dedent();
     }
 
+    if (!u.external_unit_objects.empty()) {
+      Line("ExternalUnitObjects:");
+      Indent();
+      for (const ExternalUnitObjectId id : u.external_unit_objects.Ids()) {
+        const ExternalUnitObject& object = u.external_unit_objects.Get(id);
+        Line(
+            std::format(
+                "[{}] {}::{}", id.value, object.unit_name, object.class_name));
+        Indent();
+        for (const PublishedMemberId member_id : object.members.Ids()) {
+          const PublishedMember& member = object.members.Get(member_id);
+          Line(
+              std::format(
+                  "[{}] \"{}\" : Type[{}]{}", member_id.value, member.name,
+                  member.type.value, FormatPublishedStorage(member.storage)));
+        }
+        Dedent();
+      }
+      Dedent();
+    }
+
     Line("Root:");
     Indent();
     DumpScope(u.root_scope);
@@ -1141,7 +1181,8 @@ class HirDumper {
             },
             [](const SignatureMemberLeaf& l) {
               return std::format(
-                  " . {}::{}::{}", l.unit_name, l.class_name, l.member_name);
+                  " . ExternalUnitObject[{}].member[{}]", l.object.value,
+                  l.member.value);
             },
             [](const OpaqueLeaf& l) {
               return std::format(" . \"{}\"", l.name);
@@ -1156,24 +1197,24 @@ class HirDumper {
     Indent();
     for (const StructuralDataObjectId id : s.structural_data_objects.Ids()) {
       const auto& v = s.structural_data_objects.Get(id);
-      std::string suffix;
-      if (const auto* var = std::get_if<StructuralVariableDecl>(&v.kind)) {
-        if (var->reference.has_value()) {
-          suffix += *var->reference == ReferenceBinding::kConstRef
-                        ? " const ref"
-                        : " ref";
-        }
-        if (var->initializer.has_value()) {
-          suffix += std::format(" init=Expr[{}]", var->initializer->value);
-        }
-      } else {
-        const auto& net = std::get<StructuralNetDecl>(v.kind);
-        suffix += net.net_type == NetType::kWire ? " net=wire" : " net=tri";
+      std::string suffix = FormatPublishedStorage(StorageOf(v));
+      if (const auto* var = std::get_if<StructuralVariableDecl>(&v.kind);
+          var != nullptr && var->initializer.has_value()) {
+        suffix += std::format(" init=Expr[{}]", var->initializer->value);
       }
       Line(
           std::format(
               "StructuralDataObject[{}] \"{}\" : Type[{}]{}", id.value, v.name,
               v.type.value, suffix));
+    }
+    if (!s.published_objects.empty()) {
+      std::string positions;
+      for (const StructuralDataObjectId id : s.published_objects) {
+        positions += std::format(
+            "{}StructuralDataObject[{}]", positions.empty() ? "" : ", ",
+            id.value);
+      }
+      Line(std::format("Published: {}", positions));
     }
     for (const StructuralSubroutineId id : s.structural_subroutines.Ids()) {
       DumpSubroutine(
@@ -1206,20 +1247,15 @@ class HirDumper {
       }
       Line(
           std::format(
-              "InstanceMember[{}] \"{}\"{} : {}::{}", id.value,
-              im.instance_name, array_suffix, im.unit_name, im.class_name));
+              "InstanceMember[{}] \"{}\"{} : ExternalUnitObject[{}]", id.value,
+              im.instance_name, array_suffix, im.object.value));
     }
     for (const RoutedRefId id : s.routed_refs.Ids()) {
       const auto& r = s.routed_refs.Get(id);
-      std::string net_suffix;
-      if (r.target_net_type.has_value()) {
-        net_suffix =
-            *r.target_net_type == NetType::kWire ? " net=wire" : " net=tri";
-      }
       Line(
           std::format(
               "RoutedRef[{}] {}{}", id.value, FormatRoutedPathRecipe(r.recipe),
-              net_suffix));
+              FormatPublishedStorage(r.target_storage)));
     }
     for (const PortConnectionId id : s.port_connections.Ids()) {
       const auto& pc = s.port_connections.Get(id);

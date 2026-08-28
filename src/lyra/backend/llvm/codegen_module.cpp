@@ -83,8 +83,10 @@ auto CodeGenModule::ScopeDefinitionRef(lir::TypeId object_type)
           [&](const lir::ObjectType& o) -> std::string {
             return unit_->classes.Get(o.class_id).name;
           },
-          [](const lir::ExternalUnitObjectType& e) -> std::string {
-            return std::format("{}.{}", e.unit_name, e.class_name);
+          [&](const lir::ExternalUnitObjectType& e) -> std::string {
+            const lir::ExternalUnitObject& object =
+                unit_->external_unit_objects.Get(e.object);
+            return std::format("{}.{}", object.unit_name, object.class_name);
           },
           [&](const auto&) -> std::string {
             throw InternalError(

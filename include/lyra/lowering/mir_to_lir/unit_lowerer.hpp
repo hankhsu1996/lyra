@@ -108,6 +108,8 @@ class UnitLowerer {
   // unmirrored-type error and returns a benign placeholder type; the unit fails
   // at `Run` before the placeholder is observed.
   auto RecordUnsupportedType(std::string_view what) -> lir::TypeData;
+  auto LowerExternalUnitObject(const mir::ExternalUnitObject& object)
+      -> lir::ExternalUnitObject;
   auto LowerClass(mir::ClassId owner, const mir::Class& cls)
       -> diag::Result<lir::Class>;
   auto LowerBase(const mir::ClassRef& base) const -> lir::Base;
@@ -117,6 +119,8 @@ class UnitLowerer {
   std::unordered_map<mir::TypeId, lir::TypeId> type_memo_;
   std::unordered_map<lir::TypeId, lir::TypeId> pointer_memo_;
   base::Translation<mir::ClassId, ClassIdentities> class_identities_;
+  base::Translation<mir::ExternalUnitObjectId, lir::ExternalUnitObjectId>
+      external_unit_object_identities_;
   base::Translation<mir::ClosureId, lir::FunctionId> closure_identities_;
   std::optional<lir::TypeId> machine_bool_type_;
   std::optional<lir::TypeId> void_type_;

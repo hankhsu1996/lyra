@@ -7,6 +7,7 @@
 #include <vector>
 
 #include "lyra/lir/class_id.hpp"
+#include "lyra/lir/external_unit_object_id.hpp"
 #include "lyra/lir/type_id.hpp"
 
 namespace lyra::lir {
@@ -140,9 +141,11 @@ struct ObjectType {
   ClassId class_id;
 };
 
+// An instance of the object another unit defines, named by this unit's record
+// of what that unit published about it. Only the published prefix of its
+// members is reachable through it.
 struct ExternalUnitObjectType {
-  std::string unit_name;
-  std::string class_name;
+  ExternalUnitObjectId object;
 };
 
 struct ExternalClassType {

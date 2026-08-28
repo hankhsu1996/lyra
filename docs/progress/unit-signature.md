@@ -121,12 +121,22 @@ why nothing a signature states may rest on it.
       elaboration. Which of the two a route's leaf takes is settled where the step reaching the
       target's owner is settled, because a route that has already left this unit's layout has no
       declaration to compile either the step or the leaf against.
-- [ ] S9 -- The machine-code backend resolves a signature member's position by translating the
+- [x] S9 -- The machine-code backend resolves a signature member's position by translating the
       signatures of the units it references into its own type graph, so a cross-unit member access
       is an ordinary member step and the layer below it derives the placement. A published member
       sits in a fixed prefix of its object, so producer and consumer derive the same placement
-      independently. Cross-unit member access reports an unsupported diagnostic until this lands,
-      never a compiler-bug failure.
+      independently.
+
+      The referrer records what each signature promised about the object it reaches, where it
+      consumes that signature, and carries the record down like any other declaration -- so no pass
+      below the consuming one reads a signature, and neither backend composes a member's position
+      out of anything but the order the signature states. Both paths now realize a module port
+      connection, which is what the split between them was costing.
+
+      What is not this: a property of an SV class another unit declares is still refused on the
+      machine-code path. No unit publishes an SV class, so nothing states where such a property
+      sits; it gains a position when S7's remaining kinds gain a signature entry.
+
 - [ ] S10 -- The C++ backend emits a unit's signature as a declaration-only artifact distinct from
       the artifact carrying its bodies, and a referrer consumes only the first. The published prefix
       is expressed so the target language guarantees the same placement rule S9 states. A change

@@ -8,6 +8,7 @@
 #include "lyra/base/registry.hpp"
 #include "lyra/hir/class_decl.hpp"
 #include "lyra/hir/class_id.hpp"
+#include "lyra/hir/external_unit_object.hpp"
 #include "lyra/hir/foreign_import.hpp"
 #include "lyra/hir/foreign_import_id.hpp"
 #include "lyra/hir/structural_scope.hpp"
@@ -50,6 +51,9 @@ struct CompilationUnit {
   // A class can be referenced -- as a handle type or a `new` target -- before
   // its body is built, so its identity must exist before its definition.
   base::Registry<ClassDecl, ClassId> classes;
+  // One entry per unit this one reaches an object of, recorded where that
+  // unit's signature was consumed.
+  base::Arena<ExternalUnitObject, ExternalUnitObjectId> external_unit_objects;
   // Every DPI-C import this unit takes part in (LRM 35.4), whether declared
   // inside it or declared elsewhere and called from it. The unit owns them
   // rather than any scope because an import's foreign symbol is program-global,

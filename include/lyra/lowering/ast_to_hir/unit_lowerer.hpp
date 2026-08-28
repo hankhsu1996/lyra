@@ -118,15 +118,13 @@ struct ProceduralStaticBinding {
 using ProceduralStaticBindings =
     std::unordered_map<const slang::ast::Symbol*, ProceduralStaticBinding>;
 
-// What a route ends at, and what storage that is. One question settles both --
-// whether the unit owning the target published its name -- so they are decided
-// together rather than each answering it again: a published member states its
-// own type and its own net-ness on the signature that carries it, and every
-// other target is described the way the reader already knows it.
+// What a route ends at, and what storage that is. A published member states its
+// own type and its own storage on the signature that carries it; every other
+// target is described the way the referrer already knows it.
 struct RouteTarget {
   hir::RouteLeaf leaf;
   hir::TypeId type;
-  std::optional<hir::NetType> net_type;
+  hir::PublishedStorage storage;
 };
 
 // The declarations of one structural scope that a peer may name before the
@@ -263,6 +261,29 @@ class UnitLowerer {
   auto ImportSignatureType(
       const hir::UnitSignature& signature, hir::TypeId published)
       -> hir::TypeId;
+
+  // This unit's record of the object an instance of `unit_name` is, taken from
+  // that unit's signature the first time one is reached and answered with the
+  // same identity every later time. Reaching another unit's object is what
+  // declares the dependency on it, so its signature is in hand here.
+  auto ExternalUnitObjectOf(const std::string& unit_name)
+      -> hir::ExternalUnitObjectId;
+
+  // Which storage the declaration `value` holds. One answer, so what this unit
+  // publishes about a declaration and what a route to it reaches cannot differ.
+  [[nodiscard]] auto DeclarationStorage(
+      const slang::ast::ValueSymbol& value, diag::SourceSpan span) const
+      -> diag::Result<hir::PublishedStorage>;
+
+  // Whether `internal` is the declaration a `ref` / `const ref` port reaches,
+  // and under which binding (LRM 23.3.3.2). The port's direction decides it, so
+  // this is answered where this unit's ports are read.
+  [[nodiscard]] auto ReferenceBindingOf(const slang::ast::Symbol& internal)
+      const -> std::optional<hir::ReferenceBinding> {
+    const auto it = ref_port_internals_.find(&internal);
+    return it == ref_port_internals_.end() ? std::nullopt
+                                           : std::optional{it->second};
+  }
 
   // Mints a class of this unit into the unit's class registry: allocates the
   // `ClassId`, populates the shape, and returns the id. The caller carries the
@@ -687,6 +708,22 @@ class UnitLowerer {
   // many connections name it.
   std::unordered_map<const hir::UnitSignature*, hir::TypeImportMemo>
       signature_type_memos_;
+  // Which record this unit made of each referenced unit's object, so every
+  // reference into one names the same entry.
+  std::unordered_map<std::string, hir::ExternalUnitObjectId>
+      external_unit_objects_;
+  // Which published position this unit gave each of its own declarations,
+  // taken while the signature is derived and read back while bodies lower.
+  std::unordered_map<const slang::ast::ValueSymbol*, hir::PublishedMemberId>
+      published_member_ids_;
+  // The declarations this unit's `ref` ports reach, under the binding each
+  // port's direction states.
+  std::unordered_map<const slang::ast::Symbol*, hir::ReferenceBinding>
+      ref_port_internals_;
+  // The declaration standing at each published position. A slot is filled when
+  // its declaration takes its identity, and every one is filled before the unit
+  // is handed on.
+  std::vector<std::optional<hir::StructuralDataObjectId>> published_objects_;
 
   std::unordered_map<const slang::ast::Type*, hir::TypeId> type_cache_;
   // The classification of every class this unit's lowering has resolved: the

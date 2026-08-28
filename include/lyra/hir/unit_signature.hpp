@@ -1,7 +1,5 @@
 #pragma once
 
-#include <compare>
-#include <cstdint>
 #include <optional>
 #include <string>
 #include <string_view>
@@ -10,31 +8,13 @@
 
 #include "lyra/base/arena.hpp"
 #include "lyra/base/internal_error.hpp"
+#include "lyra/hir/external_unit_object.hpp"
 #include "lyra/hir/port_direction.hpp"
-#include "lyra/hir/structural_data_object.hpp"
+#include "lyra/hir/published_member.hpp"
 #include "lyra/hir/type_id.hpp"
 #include "lyra/hir/type_pool.hpp"
 
 namespace lyra::hir {
-
-struct PublishedMemberId {
-  std::uint32_t value;
-
-  auto operator<=>(const PublishedMemberId&) const
-      -> std::strong_ordering = default;
-};
-
-// One declaration an instance of this unit exposes to another unit by name.
-// `net_type` is present when the storage is a net (LRM 6.7), which fixes how
-// its drivers resolve and what it holds while undriven, and absent when it is
-// a variable -- the pair being what decides the cell a reader reaches. Both
-// stand on the publishing unit's own declaration, so a referrer never reads
-// that declaration to learn them.
-struct PublishedMember {
-  std::string name;
-  TypeId type;
-  std::optional<NetType> net_type;
-};
 
 // A port part carrying data across the boundary: which way it flows, the type
 // of what crosses, and the member of this unit's instance whose storage it
@@ -78,9 +58,9 @@ struct PortDecl {
 // rather than deriving it from the unit it reached through.
 struct InstanceClassSignature {
   std::string class_name;
-  // In declaration order, which is as much a part of the promise as the names
-  // are: a member's position is what fixes where its storage sits, and both
-  // sides of the boundary read that position out of this one order.
+  // The order is as much a part of the promise as the names are: a member's
+  // position is what fixes where its storage sits, and both sides of the
+  // boundary read that position out of this one order.
   base::Arena<PublishedMember, PublishedMemberId> members;
 
   // The member published under `name`, or nothing when the unit published no
@@ -141,5 +121,13 @@ struct UnitSignature {
   }
   return *signature.instance_class;
 }
+
+// The record a referrer keeps of the object `signature` promises, with the
+// member types taken into `into` -- the referrer's own pool, since an identity
+// on a signature indexes storage the signature carries. The whole published
+// list crosses, not the part a referrer happens to name: a member's position is
+// counted out of that list.
+[[nodiscard]] auto ImportExternalUnitObject(
+    const UnitSignature& signature, TypePool& into) -> ExternalUnitObject;
 
 }  // namespace lyra::hir

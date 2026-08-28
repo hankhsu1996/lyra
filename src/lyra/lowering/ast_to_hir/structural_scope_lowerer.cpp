@@ -80,66 +80,21 @@ auto ReservedInstanceMember(
 }
 
 // The declaration of a child object, built from whichever unit `leaf` is an
-// instance of. The class comes off that unit's signature, never from the unit's
-// own name; `dims` carries the element counts of an array, a scalar instance
-// being the empty case rather than a shape of its own.
+// instance of. What the child is comes off this unit's record of that unit's
+// object, never from the unit's own name; `dims` carries the element counts of
+// an array, a scalar instance being the empty case rather than a shape of its
+// own.
 auto BuildInstanceMember(
-    const UnitLowerer& owner, std::string_view instance_name,
+    UnitLowerer& owner, std::string_view instance_name,
     const slang::ast::InstanceSymbol& leaf, std::vector<std::uint32_t> dims)
     -> hir::InstanceMemberDecl {
-  std::string unit_name = SpecializationName(leaf);
-  std::string class_name =
-      owner.Signatures().InstantiatedClass(unit_name).class_name;
   return hir::InstanceMemberDecl{
       .instance_name = std::string{instance_name},
-      .unit_name = std::move(unit_name),
-      .class_name = std::move(class_name),
+      .object = owner.ExternalUnitObjectOf(SpecializationName(leaf)),
       .array_dims = std::move(dims)};
 }
 
 }  // namespace
-
-StructuralScopeLowerer::StructuralScopeLowerer(
-    UnitLowerer& unit_lowerer, const slang::ast::Scope& slang_scope)
-    : owner_(&unit_lowerer),
-      slang_scope_(&slang_scope),
-      frame_(unit_lowerer.LookupScopeFrame(slang_scope)) {
-  // A `ref` / `const ref` port's internal variable aliases the connected
-  // variable rather than owning storage (LRM 23.3.3.2); record which of this
-  // body's variables those are so their members lower to a reference type. Only
-  // a module body declares ports; a generate-block scope has none.
-  const auto* body =
-      slang_scope.asSymbol().as_if<slang::ast::InstanceBodySymbol>();
-  if (body == nullptr) {
-    return;
-  }
-  for (const auto* port_symbol : body->getPortList()) {
-    const auto* port = port_symbol->as_if<slang::ast::PortSymbol>();
-    if (port == nullptr ||
-        port->direction != slang::ast::ArgumentDirection::Ref ||
-        port->internalSymbol == nullptr) {
-      continue;
-    }
-    const auto* internal_var =
-        port->internalSymbol->as_if<slang::ast::VariableSymbol>();
-    const bool is_const =
-        internal_var != nullptr &&
-        internal_var->flags.has(slang::ast::VariableFlags::Const);
-    ref_port_internals_.emplace(
-        port->internalSymbol, is_const ? hir::ReferenceBinding::kConstRef
-                                       : hir::ReferenceBinding::kRef);
-  }
-}
-
-auto StructuralScopeLowerer::ReferenceBindingFor(
-    const slang::ast::VariableSymbol& var) const
-    -> std::optional<hir::ReferenceBinding> {
-  const auto it = ref_port_internals_.find(&var);
-  if (it == ref_port_internals_.end()) {
-    return std::nullopt;
-  }
-  return it->second;
-}
 
 auto StructuralScopeLowerer::Run(WalkFrame parent_frame)
     -> diag::Result<hir::StructuralScope> {
@@ -433,7 +388,7 @@ auto StructuralScopeLowerer::PopulateVariableMember(
               .type = *type_id_or,
               .kind = hir::StructuralVariableDecl{
                   .initializer = initializer_id,
-                  .reference = ReferenceBindingFor(var)}});
+                  .reference = owner_->ReferenceBindingOf(var)}});
   owner_->MapStructuralDataObjectBinding(var, frame_, local, *type_id_or);
   return {};
 }

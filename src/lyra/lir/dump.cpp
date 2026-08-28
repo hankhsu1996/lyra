@@ -25,6 +25,9 @@ class LirDumper {
   auto Dump() -> std::string {
     Line("LirUnit");
     Indent();
+    for (const ExternalUnitObjectId id : unit_->external_unit_objects.Ids()) {
+      DumpExternalUnitObject(id);
+    }
     for (const ClassId id : unit_->classes.Ids()) {
       DumpClass(id);
     }
@@ -36,6 +39,22 @@ class LirDumper {
   }
 
  private:
+  void DumpExternalUnitObject(ExternalUnitObjectId id) {
+    const ExternalUnitObject& object = unit_->external_unit_objects.Get(id);
+    Line(
+        std::format(
+            "ExternalUnitObject \"{}.{}\" (#{})", object.unit_name,
+            object.class_name, id.value));
+    Indent();
+    for (std::size_t i = 0; i < object.members.size(); ++i) {
+      Line(
+          std::format(
+              "member[{}] \"{}\" : {}", i, object.members[i].name,
+              FormatType(object.members[i].type)));
+    }
+    Dedent();
+  }
+
   void DumpClass(ClassId id) {
     const Class& cls = unit_->classes.Get(id);
     Line(std::format("Class \"{}\" (#{})", cls.name, id.value));

@@ -17,6 +17,8 @@
 #include "lyra/mir/closure_decl.hpp"
 #include "lyra/mir/closure_id.hpp"
 #include "lyra/mir/expr.hpp"
+#include "lyra/mir/external_unit_object.hpp"
+#include "lyra/mir/external_unit_object_id.hpp"
 #include "lyra/mir/foreign_linkage.hpp"
 #include "lyra/mir/integral_constant.hpp"
 #include "lyra/mir/static_variable_id.hpp"
@@ -102,6 +104,9 @@ struct CompilationUnit {
   // roots no tree and names none.
   base::Registry<Class, ClassId> classes;
   std::optional<ClassId> root;
+  // One entry per unit this one reaches an object of, with what each promised
+  // taken into this unit's types.
+  base::Arena<ExternalUnitObject, ExternalUnitObjectId> external_unit_objects;
   // Callables the unit's namespace owns directly rather than through one of its
   // classes -- a package's functions and tasks (LRM 26.3), and both directions
   // of the DPI-C boundary (LRM 35.5): the prototype of every import the unit

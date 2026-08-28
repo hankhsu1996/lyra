@@ -7,6 +7,7 @@
 #include "lyra/base/arena.hpp"
 #include "lyra/base/registry.hpp"
 #include "lyra/lir/class_id.hpp"
+#include "lyra/lir/external_unit_object_id.hpp"
 #include "lyra/lir/function.hpp"
 #include "lyra/lir/function_id.hpp"
 #include "lyra/lir/type.hpp"
@@ -51,11 +52,22 @@ struct Class {
   std::vector<FunctionId> methods;
 };
 
-// The LIR of one compilation unit: its own type graph, its classes, every
-// function it compiles, and the class its object tree is rooted at, when it
-// roots one -- a unit that declares only a namespace compiles functions and
-// roots no objects. Self-contained -- it holds no reference to the MIR it was
-// lowered from.
+// The object of a unit this one references, as far as that unit published it:
+// which unit defines it and the class an instance of it is, both resolved at
+// link time, and the members it published at the positions their storage sits
+// in. This unit compiles none of it, which is why it sits apart from the
+// classes above: no walk that emits those can reach it.
+struct ExternalUnitObject {
+  std::string unit_name;
+  std::string class_name;
+  std::vector<Member> members;
+};
+
+// The LIR of one compilation unit: its own type graph, its classes, the objects
+// of other units it compiled against, every function it compiles, and the class
+// its object tree is rooted at, when it roots one -- a unit that declares only
+// a namespace compiles functions and roots no objects. Self-contained -- it
+// holds no reference to the MIR it was lowered from.
 //
 // Every body is a function here, whatever declared it, and its position is the
 // identity a call names. A class reaches its own bodies the same way any other
@@ -63,6 +75,7 @@ struct Class {
 struct CompilationUnit {
   base::Arena<Type, TypeId> types;
   base::Registry<Class, ClassId> classes;
+  base::Arena<ExternalUnitObject, ExternalUnitObjectId> external_unit_objects;
   base::Registry<Function, FunctionId> functions;
   std::optional<ClassId> root;
 };
