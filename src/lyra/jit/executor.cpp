@@ -41,6 +41,7 @@
 #include "lyra/runtime/generated_call_scope.hpp"
 #include "lyra/runtime/hierarchy_segment.hpp"
 #include "lyra/runtime/jit_execution.hpp"
+#include "lyra/runtime/plusargs.hpp"
 #include "lyra/runtime/runtime.hpp"
 #include "lyra/runtime/scope.hpp"
 #include "lyra/runtime/scope_program.hpp"
@@ -120,6 +121,19 @@ void DefineRuntimeAbi(llvm::orc::LLJIT& jit) {
   add("lyra_rt_current_runtime", &lyra_rt_current_runtime);
   add("lyra_rt_files", &lyra_rt_files);
   add("lyra_rt_time_format", &lyra_rt_time_format);
+  add("lyra_rt_set_time_format", &lyra_rt_set_time_format);
+  add("lyra_rt_reset_time_format", &lyra_rt_reset_time_format);
+  add("lyra_rt_file_open", &lyra_rt_file_open);
+  add("lyra_rt_file_open_mode", &lyra_rt_file_open_mode);
+  add("lyra_rt_file_close", &lyra_rt_file_close);
+  add("lyra_rt_file_getc", &lyra_rt_file_getc);
+  add("lyra_rt_file_ungetc", &lyra_rt_file_ungetc);
+  add("lyra_rt_file_seek", &lyra_rt_file_seek);
+  add("lyra_rt_file_rewind", &lyra_rt_file_rewind);
+  add("lyra_rt_file_tell", &lyra_rt_file_tell);
+  add("lyra_rt_file_eof", &lyra_rt_file_eof);
+  add("lyra_rt_file_flush", &lyra_rt_file_flush);
+  add("lyra_rt_file_flush_all", &lyra_rt_file_flush_all);
   add("lyra_rt_make_string", &lyra_rt_make_string);
   add("lyra_rt_make_print_literal_item", &lyra_rt_make_print_literal_item);
   add("lyra_rt_format", &lyra_rt_format);
@@ -137,10 +151,14 @@ void DefineRuntimeAbi(llvm::orc::LLJIT& jit) {
   add("lyra_rt_delay", &lyra_rt_delay);
   add("lyra_rt_make_trigger", &lyra_rt_make_trigger);
   add("lyra_rt_wait_any", &lyra_rt_wait_any);
+  add("lyra_rt_sim_time", &lyra_rt_sim_time);
+  add("lyra_rt_stime", &lyra_rt_stime);
+  add("lyra_rt_realtime", &lyra_rt_realtime);
   add("lyra_rt_finish", &lyra_rt_finish);
   add("lyra_rt_fatal_finish", &lyra_rt_fatal_finish);
   add("lyra_rt_run_host_command", &lyra_rt_run_host_command);
   add("lyra_rt_run_null_host_command", &lyra_rt_run_null_host_command);
+  add("lyra_rt_test_plusargs", &lyra_rt_test_plusargs);
   add("lyra_rt_urandom", &lyra_rt_urandom);
   add("lyra_rt_urandom_seeded", &lyra_rt_urandom_seeded);
   add("lyra_rt_urandom_range", &lyra_rt_urandom_range);
@@ -158,6 +176,9 @@ void DefineRuntimeAbi(llvm::orc::LLJIT& jit) {
   add("lyra_rt_add_owned_child", &lyra_rt_add_owned_child);
   add("lyra_rt_member_addr", &lyra_rt_member_addr);
   add("lyra_rt_register_signal", &lyra_rt_register_signal);
+  add("lyra_rt_get_signal", &lyra_rt_get_signal);
+  add("lyra_rt_resolve_visible_child", &lyra_rt_resolve_visible_child);
+  add("lyra_rt_get_child", &lyra_rt_get_child);
   add("lyra_rt_cell_packed_get", &lyra_rt_cell_packed_get);
   add("lyra_rt_cell_packed_initialize", &lyra_rt_cell_packed_initialize);
   add("lyra_rt_cell_packed_set", &lyra_rt_cell_packed_set);
@@ -670,8 +691,8 @@ auto Execute(
     std::span<const compiler::ElaboratedUnitMetadata> metadata,
     const lir::CompilationUnit& root_unit,
     const compiler::ElaboratedUnitMetadata& root_metadata,
-    const std::optional<std::filesystem::path>& dpi_library)
-    -> diag::Result<int> {
+    const std::optional<std::filesystem::path>& dpi_library,
+    std::span<const std::string> simulation_arguments) -> diag::Result<int> {
   llvm::InitializeNativeTarget();
   llvm::InitializeNativeTargetAsmPrinter();
 
@@ -760,7 +781,9 @@ auto Execute(
         *jit, entry.name, entry.time_precision_power, *entry.definition);
   }
 
-  runtime::Runtime runtime_instance;
+  auto runtime_options = runtime::DefaultRuntimeOptions();
+  runtime_options.plusargs = runtime::PlusargsFrom(simulation_arguments);
+  runtime::Runtime runtime_instance{std::move(runtime_options)};
 
   // The design-root unit's construct elaborates the design: it builds the
   // top-level units through the cross-unit construct ABI, which recurses into

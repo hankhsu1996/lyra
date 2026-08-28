@@ -7,7 +7,6 @@
 #
 # A case may appear in this file or in the defect record, never both.
 08_classes/constructor_argument_directions: "a constructor with an output / inout / ref argument is not yet supported"
-20_utility/simulation_time_functions: "delay durations beyond an integer or time literal are not yet supported"
 23_hierarchy/port_expression_connects_a_part_select: "port connected to part of an internal name is not yet supported"
 35_dpi/concurrent_context_call_chains_keep_scope: "delay durations beyond an integer or time literal are not yet supported"
 35_dpi/imported_task_consumes_simulation_time: "delay durations beyond an integer or time literal are not yet supported"

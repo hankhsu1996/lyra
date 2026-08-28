@@ -141,9 +141,10 @@ struct ParsedArgs {
   // name or path, never flags.
   std::string cxx;
   std::string out_dir;
-  // Forwarded verbatim as the built program's argv, which is where LRM 21.6
-  // plusargs land. Everything after a standalone `--`, so a simulation
-  // argument never has to be told apart from a compiler one by its spelling.
+  // The simulation's own arguments, which is where LRM 21.6 plusargs land: a
+  // built program takes them as its argv and a run in this process reads them
+  // from here. Everything after a standalone `--`, so a simulation argument
+  // never has to be told apart from a compiler one by its spelling.
   std::vector<std::string> child_args;
   // LRM 35 DPI-C link inputs: native source files (`.c` / `.cpp`) providing the
   // foreign symbols an `import "DPI-C"` calls. Compiled and linked into the
@@ -684,8 +685,8 @@ auto RunJitBackend(const CommandContext& ctx) -> int {
   // that one entry rather than per top.
   auto exit_code = lyra::jit::Execute(
       ctx.artifacts->LirUnits(), ctx.artifacts->UnitMetadata(),
-      ctx.artifacts->RootLirUnit(), ctx.artifacts->RootMetadata(),
-      *dpi_library);
+      ctx.artifacts->RootLirUnit(), ctx.artifacts->RootMetadata(), *dpi_library,
+      ctx.args->child_args);
   if (!exit_code) {
     (*ctx.report)(std::move(exit_code.error()), ctx.mgr);
     return 1;

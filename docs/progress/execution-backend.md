@@ -168,6 +168,22 @@ each meets the same lifetime question above; none is lowerable on the execution 
 
 ## Other backend surfaces
 
+- [ ] A runtime service the generated module calls and this backend declares no entry for. A builtin
+      resolves either as a service the backend names outright or through the value domain of its
+      receiver, and one whose receiver is a file table, a scope, or the runtime itself is neither,
+      so the call is refused by name. The services still refused share that one message and nothing
+      else, so each waits on its own thing rather than on this item: a service that assigns to an
+      argument the call names waits on the copy-out shape below; the memory load and store tasks
+      (LRM 21.4) name their destination's type in the entry, which the erased value model has no
+      spelling for; a named event's members have no storage realization; the climb to an enclosing
+      scope waits on the item below it; and an await is a suspension rather than a call.
+- [ ] A runtime service that assigns to an argument the call names. The call site hands it a
+      copy-out temporary and reads the temporary back, which is how a value reaches a caller through
+      an argument at all. Writing through the handle the temporary crosses as does not reach what
+      the caller reads -- confirmed by wiring one and watching every destination come back empty --
+      so the service needs the write to produce a new value stored back through the temporary's
+      owner, the same rule every other apparent mutation on this backend follows. `$fgets`,
+      `$fread`, `$ferror`, `$fscanf`, `$sscanf` and `$value$plusargs` are all this one shape.
 - [ ] Storage reached by name rather than through a receiver: a package or `$unit` variable, a class
       static property, and a class static constant. All three are the same shape -- storage no local
       slot and no receiver chain arrives at -- and lowering has no place to base them on, because a
@@ -187,7 +203,10 @@ each meets the same lifetime question above; none is lowerable on the execution 
 - [ ] An array of owned children. A scalar child scope -- a module instance, a generate block, a
       procedural block scope -- is constructed, reached, and reports its hierarchical name; an array
       of them is not, because the sequence of handles a member of that shape holds has no runtime
-      realization here yet. A design whose only arrays are of children otherwise runs.
+      realization here yet. A design whose only arrays are of children otherwise runs. Reading one
+      back is what a hierarchical reference climbing to an enclosing scope does, so the climb is
+      refused rather than lowered: it is the only path that reaches this storage, and reaching it
+      faults rather than answering, which is a worse failure than the refusal.
 - [ ] Driving a net. A net's value is the resolution of its drivers, so a driver attaches to a
       resolution node and updates a contribution rather than writing a cell; neither reaches the
       runtime from generated code yet, so a net-bearing design does not run here. Rolled up in

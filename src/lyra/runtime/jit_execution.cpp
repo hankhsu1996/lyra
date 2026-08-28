@@ -21,12 +21,14 @@
 #include "lyra/runtime/generated_call_scope.hpp"
 #include "lyra/runtime/hierarchy_segment.hpp"
 #include "lyra/runtime/host_command.hpp"
+#include "lyra/runtime/plusargs.hpp"
 #include "lyra/runtime/random.hpp"
 #include "lyra/runtime/runtime.hpp"
 #include "lyra/runtime/runtime_effects.hpp"
 #include "lyra/runtime/runtime_process.hpp"
 #include "lyra/runtime/scope.hpp"
 #include "lyra/runtime/scope_program.hpp"
+#include "lyra/runtime/sim_time.hpp"
 #include "lyra/runtime/var.hpp"
 #include "lyra/value/chandle.hpp"
 #include "lyra/value/format.hpp"
@@ -232,6 +234,22 @@ auto UnpackedArrayFromLiteral(
           static_cast<std::size_t>(count)));
 }
 
+// The per-axis indices that pick one instance out of an array of them. They
+// are settled while the design elaborates, so they cross as machine integers
+// rather than as handles to runtime-owned values, and the scope tree they are
+// matched against holds them as values.
+auto IndicesOf(LyraSpan indices) -> std::vector<value::PackedArray> {
+  const std::span<const std::int32_t> raw(
+      static_cast<const std::int32_t*>(indices.data), indices.count);
+  std::vector<value::PackedArray> resolved;
+  resolved.reserve(raw.size());
+  for (const std::int32_t index : raw) {
+    resolved.push_back(
+        value::PackedArray::IntUnsigned(static_cast<std::uint32_t>(index)));
+  }
+  return resolved;
+}
+
 // A distribution draw is a product of the value drawn and the advanced seed
 // (LRM 20.14.2), so it crosses the boundary as the type-erased product every
 // other product crosses as.
@@ -255,15 +273,20 @@ using lyra::runtime::FileTable;
 using lyra::runtime::GeneratedCallScope;
 using lyra::runtime::GeneratedScope;
 using lyra::runtime::HierarchySegment;
+using lyra::runtime::IndicesOf;
 using lyra::runtime::Observable;
 using lyra::runtime::Own;
 using lyra::runtime::OwnDraw;
 using lyra::runtime::Read;
+using lyra::runtime::RealTimeInUnit;
 using lyra::runtime::RunHostCommand;
 using lyra::runtime::RuntimeEffects;
 using lyra::runtime::Scope;
 using lyra::runtime::ScopeDefinition;
+using lyra::runtime::SimTimeInUnit;
+using lyra::runtime::STimeInUnit;
 using lyra::runtime::SubscribeValueChange;
+using lyra::runtime::TestPlusargs;
 using lyra::runtime::Trigger;
 using lyra::runtime::Var;
 using lyra::value::Chandle;
@@ -298,6 +321,72 @@ auto lyra_rt_files(void* runtime) -> void* {
 
 auto lyra_rt_time_format(void* runtime) -> const void* {
   return &static_cast<RuntimeEffects*>(runtime)->TimeFormat();
+}
+
+void lyra_rt_set_time_format(
+    void* runtime, const void* units_power, const void* precision,
+    const void* suffix, const void* min_width) {
+  static_cast<RuntimeEffects*>(runtime)->SetTimeFormat(
+      Read<PackedArray>(units_power), Read<PackedArray>(precision),
+      Read<String>(suffix), Read<PackedArray>(min_width));
+}
+
+void lyra_rt_reset_time_format(void* runtime) {
+  static_cast<RuntimeEffects*>(runtime)->ResetTimeFormat();
+}
+
+auto lyra_rt_file_open(void* files, const void* name) -> void* {
+  return Own(static_cast<FileTable*>(files)->Open(Read<String>(name)));
+}
+
+auto lyra_rt_file_open_mode(void* files, const void* name, const void* mode)
+    -> void* {
+  return Own(
+      static_cast<FileTable*>(files)->Open(
+          Read<String>(name), Read<String>(mode)));
+}
+
+void lyra_rt_file_close(void* files, const void* descriptor) {
+  static_cast<FileTable*>(files)->Close(Read<PackedArray>(descriptor));
+}
+
+auto lyra_rt_file_getc(void* files, const void* fd) -> void* {
+  return Own(static_cast<FileTable*>(files)->Getc(Read<PackedArray>(fd)));
+}
+
+auto lyra_rt_file_ungetc(void* files, const void* c, const void* fd) -> void* {
+  return Own(
+      static_cast<FileTable*>(files)->Ungetc(
+          Read<PackedArray>(c), Read<PackedArray>(fd)));
+}
+
+auto lyra_rt_file_seek(
+    void* files, const void* fd, const void* offset, const void* operation)
+    -> void* {
+  return Own(
+      static_cast<FileTable*>(files)->Seek(
+          Read<PackedArray>(fd), Read<PackedArray>(offset),
+          Read<PackedArray>(operation)));
+}
+
+auto lyra_rt_file_rewind(void* files, const void* fd) -> void* {
+  return Own(static_cast<FileTable*>(files)->Rewind(Read<PackedArray>(fd)));
+}
+
+auto lyra_rt_file_tell(void* files, const void* fd) -> void* {
+  return Own(static_cast<FileTable*>(files)->Tell(Read<PackedArray>(fd)));
+}
+
+auto lyra_rt_file_eof(void* files, const void* fd) -> void* {
+  return Own(static_cast<FileTable*>(files)->Eof(Read<PackedArray>(fd)));
+}
+
+void lyra_rt_file_flush(void* files, const void* descriptor) {
+  static_cast<FileTable*>(files)->Flush(Read<PackedArray>(descriptor));
+}
+
+void lyra_rt_file_flush_all(void* files) {
+  static_cast<FileTable*>(files)->Flush();
 }
 
 auto lyra_rt_make_string(void* cstr) -> void* {
@@ -425,6 +514,21 @@ void lyra_rt_wait_any(void* runtime, LyraSpan triggers) {
   SubscribeValueChange(svc.CurrentProcess().TopHandle(), collected);
 }
 
+auto lyra_rt_sim_time(void* runtime, const void* unit_power) -> void* {
+  return Own(SimTimeInUnit(
+      *static_cast<RuntimeEffects*>(runtime), Read<PackedArray>(unit_power)));
+}
+
+auto lyra_rt_stime(void* runtime, const void* unit_power) -> void* {
+  return Own(STimeInUnit(
+      *static_cast<RuntimeEffects*>(runtime), Read<PackedArray>(unit_power)));
+}
+
+auto lyra_rt_realtime(void* runtime, const void* unit_power) -> void* {
+  return Own(RealTimeInUnit(
+      *static_cast<RuntimeEffects*>(runtime), Read<PackedArray>(unit_power)));
+}
+
 void lyra_rt_finish(void* runtime, const void* level) {
   static_cast<RuntimeEffects*>(runtime)->RequestFinish(
       static_cast<int>(Read<PackedArray>(level).ToInt64()));
@@ -442,6 +546,11 @@ auto lyra_rt_run_host_command(void* runtime, const void* command) -> void* {
 
 auto lyra_rt_run_null_host_command() -> void* {
   return Own(RunHostCommand());
+}
+
+auto lyra_rt_test_plusargs(void* runtime, const void* user_string) -> void* {
+  return Own(TestPlusargs(
+      *static_cast<RuntimeEffects*>(runtime), Read<String>(user_string)));
 }
 
 auto lyra_rt_urandom(void* runtime) -> void* {
@@ -530,16 +639,8 @@ void lyra_rt_register_final(void* self, void* unit_instance, void* coroutine) {
 }
 
 auto lyra_rt_make_segment(void* label, LyraSpan indices) -> void* {
-  const std::span<const std::int32_t> values(
-      static_cast<const std::int32_t*>(indices.data), indices.count);
-  std::vector<PackedArray> resolved;
-  resolved.reserve(values.size());
-  for (const std::int32_t index : values) {
-    resolved.push_back(
-        PackedArray::IntUnsigned(static_cast<std::uint32_t>(index)));
-  }
   return GeneratedCallScope::Current().Arena().New<HierarchySegment>(
-      std::string(static_cast<const char*>(label)), resolved);
+      std::string(static_cast<const char*>(label)), IndicesOf(indices));
 }
 
 auto lyra_rt_make_scope(const void* definition, void* parent, void* segment)
@@ -565,6 +666,18 @@ auto lyra_rt_add_owned_child(void* parent, void* child) -> void* {
       std::unique_ptr<Scope>(static_cast<Scope*>(child)));
 }
 
+auto lyra_rt_resolve_visible_child(
+    void* self, const void* head_name, LyraSpan head_indices) -> void* {
+  return static_cast<Scope*>(self)->ResolveVisibleChild(
+      static_cast<const char*>(head_name), IndicesOf(head_indices));
+}
+
+auto lyra_rt_get_child(void* self, const void* name, LyraSpan indices)
+    -> void* {
+  return static_cast<Scope*>(self)->GetChild(
+      static_cast<const char*>(name), IndicesOf(indices));
+}
+
 auto lyra_rt_member_addr(void* self, std::uint32_t index) -> void* {
   return static_cast<GeneratedScope*>(self)->MemberAddress(index);
 }
@@ -572,6 +685,10 @@ auto lyra_rt_member_addr(void* self, std::uint32_t index) -> void* {
 void lyra_rt_register_signal(void* self, const void* name, void* cell) {
   static_cast<Scope*>(self)->RegisterSignal(
       static_cast<const char*>(name), cell);
+}
+
+auto lyra_rt_get_signal(void* self, const void* name) -> void* {
+  return static_cast<Scope*>(self)->GetSignal(static_cast<const char*>(name));
 }
 
 auto lyra_rt_cell_packed_get(void* cell) -> void* {

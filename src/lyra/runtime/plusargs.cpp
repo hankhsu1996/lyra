@@ -3,8 +3,10 @@
 #include <cstddef>
 #include <cstdint>
 #include <optional>
+#include <span>
 #include <string>
 #include <string_view>
+#include <vector>
 
 #include "lyra/runtime/runtime_effects.hpp"
 #include "lyra/value/packed_array.hpp"
@@ -81,6 +83,17 @@ auto ConvertIntegralRemainder(std::string_view remainder, int base)
 }
 
 }  // namespace
+
+auto PlusargsFrom(std::span<const std::string> arguments)
+    -> std::vector<std::string> {
+  std::vector<std::string> plusargs;
+  for (const std::string& argument : arguments) {
+    if (argument.starts_with("+")) {
+      plusargs.emplace_back(argument.substr(1));
+    }
+  }
+  return plusargs;
+}
 
 auto PlusArgsSource::MatchPrefix(std::string_view prefix) const
     -> std::optional<std::string_view> {

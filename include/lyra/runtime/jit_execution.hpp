@@ -16,6 +16,39 @@ struct LyraSpan {
 auto lyra_rt_current_runtime() -> void*;
 auto lyra_rt_files(void* runtime) -> void*;
 auto lyra_rt_time_format(void* runtime) -> const void*;
+
+// Writes the `$timeformat` state a formatted time is rendered against, which is
+// one setting the whole design shares rather than a per-scope one (LRM 20.4.3).
+// The two powers and the minimum width cross as opaque packed values and the
+// suffix as an opaque string, like every scalar. Spelling the arguments and
+// omitting them are different requests -- the second restores the defaults
+// rather than passing them -- so each is its own entry.
+void lyra_rt_set_time_format(
+    void* runtime, const void* units_power, const void* precision,
+    const void* suffix, const void* min_width);
+void lyra_rt_reset_time_format(void* runtime);
+
+// The file operations, reached on the broker the runtime hands out rather than
+// on the runtime itself (LRM 21.3). Every descriptor, byte count and position
+// crosses as an opaque packed value and every name and mode as an opaque
+// string, like every scalar, so no host file handle crosses the boundary. Where
+// the source may spell an argument or leave it out -- a mode on open, a
+// descriptor on flush -- each form is its own entry, because the two are
+// different requests rather than one carrying a default.
+auto lyra_rt_file_open(void* files, const void* name) -> void*;
+auto lyra_rt_file_open_mode(void* files, const void* name, const void* mode)
+    -> void*;
+void lyra_rt_file_close(void* files, const void* descriptor);
+auto lyra_rt_file_getc(void* files, const void* fd) -> void*;
+auto lyra_rt_file_ungetc(void* files, const void* c, const void* fd) -> void*;
+auto lyra_rt_file_seek(
+    void* files, const void* fd, const void* offset, const void* operation)
+    -> void*;
+auto lyra_rt_file_rewind(void* files, const void* fd) -> void*;
+auto lyra_rt_file_tell(void* files, const void* fd) -> void*;
+auto lyra_rt_file_eof(void* files, const void* fd) -> void*;
+void lyra_rt_file_flush(void* files, const void* descriptor);
+void lyra_rt_file_flush_all(void* files);
 auto lyra_rt_make_string(void* cstr) -> void*;
 auto lyra_rt_make_print_literal_item(void* string_value) -> void*;
 auto lyra_rt_format(LyraSpan items, const void* time_format) -> void*;
@@ -83,6 +116,15 @@ auto lyra_rt_make_trigger(
 // no token crosses the boundary.
 void lyra_rt_wait_any(void* runtime, LyraSpan triggers);
 
+// Reads the current simulation time, scaled to the time unit of the design
+// element the call sits in (LRM 20.3). That unit is the caller's property
+// rather than the runtime's, so its power of ten crosses as an opaque packed
+// value, like every scalar, and so do the first two answers; the third is an
+// opaque real, keeping whatever fraction of a unit the instant falls on.
+auto lyra_rt_sim_time(void* runtime, const void* unit_power) -> void*;
+auto lyra_rt_stime(void* runtime, const void* unit_power) -> void*;
+auto lyra_rt_realtime(void* runtime, const void* unit_power) -> void*;
+
 // Records a request to tear the simulation down once the current time slot
 // completes (LRM 20.2); the fatal form (LRM 20.10) additionally makes the run
 // report a non-zero exit code. Neither parks the caller: the generated body
@@ -98,6 +140,11 @@ void lyra_rt_fatal_finish(void* runtime, const void* level);
 // and the answer as an opaque packed value, like every scalar.
 auto lyra_rt_run_host_command(void* runtime, const void* command) -> void*;
 auto lyra_rt_run_null_host_command() -> void*;
+
+// Whether the simulation's own arguments carry a plusarg with the given prefix
+// (LRM 21.6). Those arguments are the runtime's, so only the prefix crosses, as
+// an opaque string; the answer is an opaque packed value, like every scalar.
+auto lyra_rt_test_plusargs(void* runtime, const void* user_string) -> void*;
 
 // Draws from the calling process's generator (LRM 18.13.1 -- 18.13.2). The
 // generator is the running process's, read from the runtime, so none crosses
@@ -134,9 +181,9 @@ auto lyra_rt_dist_erlang(const void* seed, const void* stages, const void* mean)
 auto lyra_rt_make_segment(void* label, LyraSpan indices) -> void*;
 
 // Allocates a generic instance of `definition`, runs its construct entry to
-// build its subtree, and returns the owning handle to the caller (which hands
-// it to `lyra_rt_add_owned_child`). `definition` is an opaque cross-unit
-// reference the generated code never inspects.
+// build its subtree, and returns the owning handle to the caller, which hands
+// it on to be attached. `definition` is an opaque cross-unit reference the
+// generated code never inspects.
 auto lyra_rt_make_scope(const void* definition, void* parent, void* segment)
     -> void*;
 
@@ -148,11 +195,26 @@ auto lyra_rt_hierarchical_path(void* self) -> void*;
 // runtime tree; returns the child as a borrowed scope handle.
 auto lyra_rt_add_owned_child(void* parent, void* child) -> void*;
 
+// Walks the scope tree a hierarchical reference names (LRM 23.6 / 23.8): the
+// nearest enclosing child a name matches, then a descent by name from there. A
+// name crosses as a plain C string, since it is fixed where the reference is
+// compiled, and its per-axis indices as a span of machine integers, since one
+// name may stand for an array of instances. A step matching nothing answers
+// null.
+auto lyra_rt_resolve_visible_child(
+    void* self, const void* head_name, LyraSpan head_indices) -> void*;
+auto lyra_rt_get_child(void* self, const void* name, LyraSpan indices) -> void*;
+
 // The address of a generic instance's member storage, by class-local index.
 auto lyra_rt_member_addr(void* self, std::uint32_t index) -> void*;
 
-// Publishes a member cell under its source-level name for by-name navigation.
+// Publishes a member cell under its source-level name for by-name navigation,
+// and reads one back. The read answers an untyped address because the reader is
+// the artifact a hierarchical reference is written in, which does not know the
+// layout of the body the name lives in (LRM 23.6). Both names cross as a plain
+// C string, since a source-level name is fixed at compile time.
 void lyra_rt_register_signal(void* self, const void* name, void* cell);
+auto lyra_rt_get_signal(void* self, const void* name) -> void*;
 
 // Observable storage cell operations, reached through the cell's address. The
 // entry names the cell's value domain; the runtime never inspects a type tag.

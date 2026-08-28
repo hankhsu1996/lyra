@@ -880,6 +880,28 @@ auto CodeGenFunction::BuiltinCallee(
       return module_->Runtime().Files();
     case support::BuiltinFn::kTimeFormat:
       return module_->Runtime().TimeFormat();
+    case support::BuiltinFn::kSetTimeFormat:
+      return module_->Runtime().SetTimeFormat();
+    case support::BuiltinFn::kResetTimeFormat:
+      return module_->Runtime().ResetTimeFormat();
+    case support::BuiltinFn::kFileOpen:
+      return module_->Runtime().FileOpen(call.args.size());
+    case support::BuiltinFn::kFileClose:
+      return module_->Runtime().FileClose();
+    case support::BuiltinFn::kFileGetc:
+      return module_->Runtime().FileGetc();
+    case support::BuiltinFn::kFileUngetc:
+      return module_->Runtime().FileUngetc();
+    case support::BuiltinFn::kFileSeek:
+      return module_->Runtime().FileSeek();
+    case support::BuiltinFn::kFileRewind:
+      return module_->Runtime().FileRewind();
+    case support::BuiltinFn::kFileTell:
+      return module_->Runtime().FileTell();
+    case support::BuiltinFn::kFileEof:
+      return module_->Runtime().FileEof();
+    case support::BuiltinFn::kFileFlush:
+      return module_->Runtime().FileFlush(call.args.size());
     case support::BuiltinFn::kFormat:
       return module_->Runtime().Format();
     case support::BuiltinFn::kWriteln:
@@ -904,12 +926,20 @@ auto CodeGenFunction::BuiltinCallee(
       return module_->Runtime().Delay();
     case support::BuiltinFn::kWaitAny:
       return module_->Runtime().WaitAny();
+    case support::BuiltinFn::kSimTime:
+      return module_->Runtime().SimTime();
+    case support::BuiltinFn::kSTime:
+      return module_->Runtime().STime();
+    case support::BuiltinFn::kRealTime:
+      return module_->Runtime().RealTime();
     case support::BuiltinFn::kFinish:
       return module_->Runtime().Finish();
     case support::BuiltinFn::kFatalFinish:
       return module_->Runtime().FatalFinish();
     case support::BuiltinFn::kRunHostCommand:
       return module_->Runtime().RunHostCommand(call.args.size());
+    case support::BuiltinFn::kTestPlusargs:
+      return module_->Runtime().TestPlusargs();
     case support::BuiltinFn::kUrandom:
       return module_->Runtime().Urandom();
     case support::BuiltinFn::kUrandomSeeded:
@@ -934,10 +964,16 @@ auto CodeGenFunction::BuiltinCallee(
       return module_->Runtime().DistErlang();
     case support::BuiltinFn::kAddOwnedChild:
       return module_->Runtime().AddOwnedChild();
+    case support::BuiltinFn::kResolveVisibleChild:
+      return module_->Runtime().ResolveVisibleChild();
+    case support::BuiltinFn::kGetChild:
+      return module_->Runtime().GetChild();
     case support::BuiltinFn::kHierarchicalPath:
       return module_->Runtime().HierarchicalPath();
     case support::BuiltinFn::kRegisterSignal:
       return module_->Runtime().RegisterSignal();
+    case support::BuiltinFn::kGetSignal:
+      return module_->Runtime().GetSignal();
     case support::BuiltinFn::kInitialize: {
       auto domain = CellDomain(call.args.at(0));
       if (!domain) {

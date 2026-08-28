@@ -67,6 +67,31 @@ class RuntimeAbi {
   auto Writeln() -> llvm::FunctionCallee;
   auto Write() -> llvm::FunctionCallee;
 
+  // Writes the `$timeformat` state a formatted time is rendered against, which
+  // is one setting the whole design shares rather than a per-scope one (LRM
+  // 20.4.3). Spelling the arguments and omitting them are different requests --
+  // the second restores the defaults rather than passing them -- so each is its
+  // own entry.
+  auto SetTimeFormat() -> llvm::FunctionCallee;
+  auto ResetTimeFormat() -> llvm::FunctionCallee;
+
+  // The file operations, reached on the broker the runtime hands out rather
+  // than on the runtime itself (LRM 21.3). Each descriptor and byte count
+  // crosses as the packed value the source wrote, so nothing here reads a host
+  // file handle. Where the source may spell an argument or leave it out -- a
+  // mode on open, a descriptor on flush -- `argument_count` selects the entry,
+  // as an overload set would, because the two are different requests rather
+  // than one with a default.
+  auto FileOpen(std::size_t argument_count) -> llvm::FunctionCallee;
+  auto FileClose() -> llvm::FunctionCallee;
+  auto FileGetc() -> llvm::FunctionCallee;
+  auto FileUngetc() -> llvm::FunctionCallee;
+  auto FileSeek() -> llvm::FunctionCallee;
+  auto FileRewind() -> llvm::FunctionCallee;
+  auto FileTell() -> llvm::FunctionCallee;
+  auto FileEof() -> llvm::FunctionCallee;
+  auto FileFlush(std::size_t argument_count) -> llvm::FunctionCallee;
+
   // The severity-fixed diagnostic channel (LRM 20.10). The dispatcher is
   // reached from the runtime, and each severity has its own emit entry, so the
   // generated module names the severity it means and no severity tag crosses
@@ -93,6 +118,15 @@ class RuntimeAbi {
   // delay, the wakeup source is the running process, read from the runtime.
   auto WaitAny() -> llvm::FunctionCallee;
 
+  // Reads the current simulation time, scaled to the time unit of the design
+  // element the call sits in (LRM 20.3). That unit is the caller's property
+  // rather than the runtime's, so it crosses as an operand; the three entries
+  // differ only in the answer's form -- a rounded integer, its low 32 bits, and
+  // a real keeping whatever fraction of a unit the instant falls on.
+  auto SimTime() -> llvm::FunctionCallee;
+  auto STime() -> llvm::FunctionCallee;
+  auto RealTime() -> llvm::FunctionCallee;
+
   // Records a request to tear the simulation down once the current time slot
   // completes (LRM 20.2); the fatal form (LRM 20.10) additionally makes the run
   // report a non-zero exit code. Neither parks the caller: the body's own
@@ -106,6 +140,10 @@ class RuntimeAbi {
   // command and reports whether a command processor exists at all (LRM
   // 20.17.1); `argument_count` selects which, as an overload set would.
   auto RunHostCommand(std::size_t argument_count) -> llvm::FunctionCallee;
+
+  // Whether the command line carries a plusarg with the given prefix (LRM
+  // 21.6). The command line is the runtime's, so only the prefix crosses.
+  auto TestPlusargs() -> llvm::FunctionCallee;
 
   // Draws from the calling process's generator (LRM 18.13.1 -- 18.13.2). The
   // generator is the running process's, read from the runtime, so none is
@@ -163,13 +201,20 @@ class RuntimeAbi {
   // inspects.
   auto MakeScope() -> llvm::FunctionCallee;
 
-  // Attaches a freshly built child to its parent's containment edge, returning
-  // the child as a borrowed scope handle.
   // The receiver scope's hierarchical name (LRM 21.2.1.5), returned as a
   // transient string handle.
   auto HierarchicalPath() -> llvm::FunctionCallee;
 
+  // Attaches a freshly built child to its parent's containment edge, returning
+  // the child as a borrowed scope handle.
   auto AddOwnedChild() -> llvm::FunctionCallee;
+
+  // Walks the scope tree a hierarchical reference names (LRM 23.6 / 23.8): the
+  // nearest enclosing child a name matches, then a descent by name from there.
+  // Each name is paired with its per-axis indices, since one name may stand for
+  // an array of instances, and a step matching nothing answers null.
+  auto ResolveVisibleChild() -> llvm::FunctionCallee;
+  auto GetChild() -> llvm::FunctionCallee;
 
   // The address of an instance's member storage, by class-local member index.
   // A member is a logical place; the runtime owns the storage it resolves to.
@@ -193,8 +238,11 @@ class RuntimeAbi {
   auto ActivationFrameLoad(ValueDomain domain) -> llvm::FunctionCallee;
 
   // Publishes a member cell under its source-level name so the scope can be
-  // navigated by name.
+  // navigated by name, and reads one back. The read answers an untyped address
+  // because the reader is the artifact a hierarchical reference is written in,
+  // which does not know the layout of the body the name lives in (LRM 23.6).
   auto RegisterSignal() -> llvm::FunctionCallee;
+  auto GetSignal() -> llvm::FunctionCallee;
 
   // The library realization of an operator over a value domain. The entry's
   // name is the domain and the operator's own spelling, so a new operator or a
