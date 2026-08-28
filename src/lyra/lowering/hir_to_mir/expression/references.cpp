@@ -27,24 +27,6 @@ namespace lyra::lowering::hir_to_mir {
 
 namespace {
 
-auto LowerTimeScale(hir::TimeScale s) -> mir::TimeScale {
-  switch (s) {
-    case hir::TimeScale::kFs:
-      return mir::TimeScale::kFs;
-    case hir::TimeScale::kPs:
-      return mir::TimeScale::kPs;
-    case hir::TimeScale::kNs:
-      return mir::TimeScale::kNs;
-    case hir::TimeScale::kUs:
-      return mir::TimeScale::kUs;
-    case hir::TimeScale::kMs:
-      return mir::TimeScale::kMs;
-    case hir::TimeScale::kS:
-      return mir::TimeScale::kS;
-  }
-  throw InternalError("LowerTimeScale: unknown HIR TimeScale");
-}
-
 auto LowerSignedness(hir::Signedness s) -> mir::Signedness {
   switch (s) {
     case hir::Signedness::kSigned:
@@ -121,12 +103,13 @@ auto LowerHirStringLiteral(
       .type = type};
 }
 
-auto LowerHirTimeLiteral(
-    const UnitLowerer& unit_lowerer, const hir::TimeLiteral& t) -> mir::Expr {
-  return mir::Expr{
-      .data =
-          mir::TimeLiteral{.value = t.value, .scale = LowerTimeScale(t.scale)},
-      .type = unit_lowerer.Unit().builtins.realtime};
+// LRM 5.8: a time literal is a `realtime` value scaled to the current time
+// unit, so `5us` under a 1ns time unit is the number 5000. The front end has
+// already applied that scaling, and the unit it was written in says nothing
+// further -- what is left is a real number.
+auto LowerHirTimeLiteral(const hir::TimeLiteral& t, mir::TypeId type)
+    -> mir::Expr {
+  return mir::Expr{.data = mir::RealLiteral{.value = t.value}, .type = type};
 }
 
 auto LowerHirNullLiteral(mir::TypeId type) -> mir::Expr {
@@ -290,7 +273,7 @@ auto LowerHirPrimaryExprProc(
                 process.Owner(), frame, s, result_type);
           },
           [&](const hir::TimeLiteral& t) -> mir::Expr {
-            return LowerHirTimeLiteral(process.Owner(), t);
+            return LowerHirTimeLiteral(t, result_type);
           },
           [&](const hir::RealLiteral& r) -> mir::Expr {
             return LowerHirRealLiteral(r, result_type);
@@ -349,7 +332,7 @@ auto LowerHirPrimaryExprStructural(
                 lowerer.Owner(), frame, s, result_type);
           },
           [&](const hir::TimeLiteral& t) -> mir::Expr {
-            return LowerHirTimeLiteral(lowerer.Owner(), t);
+            return LowerHirTimeLiteral(t, result_type);
           },
           [&](const hir::RealLiteral& r) -> mir::Expr {
             return LowerHirRealLiteral(r, result_type);

@@ -747,32 +747,15 @@ auto RenderClosureExpr(const ScopeView& view, const mir::ClosureExpr& construct)
       "[{}]({}){}{}", captures_text, params_text, return_clause, body);
 }
 
-auto RenderConcatExpr(
-    const ScopeView& view, const mir::Expr& expr, const mir::ConcatExpr& c)
+auto RenderConcatExpr(const ScopeView& view, const mir::ConcatExpr& c)
     -> std::string {
-  const auto& result_ty = view.Unit().types.Get(expr.type);
-  if (c.operands.empty()) {
-    throw InternalError("RenderConcatExpr: hir lowering produced empty concat");
+  std::string out{"lyra::value::PackedArray::Concat({"};
+  for (std::size_t i = 0; i < c.operands.size(); ++i) {
+    if (i != 0) out += ", ";
+    out += RenderExpr(view, view.Expr(c.operands[i]));
   }
-  const auto join = [&](std::string_view open, std::string_view sep,
-                        std::string_view close) -> std::string {
-    std::string out{open};
-    for (std::size_t i = 0; i < c.operands.size(); ++i) {
-      if (i != 0) out += sep;
-      out += RenderExpr(view, view.Expr(c.operands[i]));
-    }
-    out += close;
-    return out;
-  };
-  if (result_ty.IsIntegralPacked()) {
-    return join("lyra::value::PackedArray::Concat({", ", ", "})");
-  }
-  if (result_ty.Kind() == mir::TypeKind::kString) {
-    // LRM 6.16: string concat joins contents via std::string `operator+`.
-    return join("(", " + ", ")");
-  }
-  throw InternalError(
-      "RenderConcatExpr: result type must be PackedArrayType or string");
+  out += "})";
+  return out;
 }
 
 // The brace form of the aggregate literal's own type, which is always the
@@ -825,28 +808,11 @@ auto RenderVectorExpr(
   return out;
 }
 
-auto RenderReplicationExpr(
-    const ScopeView& view, const mir::Expr& expr, const mir::ReplicationExpr& r)
+auto RenderReplicationExpr(const ScopeView& view, const mir::ReplicationExpr& r)
     -> std::string {
-  std::string count = RenderExpr(view, view.Expr(r.count));
-  std::string concat = RenderExpr(view, view.Expr(r.concat));
-  const auto& count_ty = view.Unit().types.Get(view.Expr(r.count).type);
-  std::string count_text = count_ty.IsIntegralPacked()
-                               ? std::format("({}).ToInt64()", count)
-                               : count;
-  const auto& result_ty = view.Unit().types.Get(expr.type);
-  if (result_ty.IsIntegralPacked()) {
-    return std::format(
-        "lyra::value::PackedArray::Replicate({}, "
-        "static_cast<std::uint64_t>({}))",
-        concat, count_text);
-  }
-  if (result_ty.Kind() == mir::TypeKind::kString) {
-    return std::format(
-        "lyra::value::ReplicateString({}, {})", concat, count_text);
-  }
-  throw InternalError(
-      "RenderReplicationExpr: result type must be PackedArrayType or string");
+  return std::format(
+      "lyra::value::PackedArray::Replicate({}, {}ULL)",
+      RenderExpr(view, view.Expr(r.concat)), r.count);
 }
 
 // Read-side render of a dereference: the value the operand's place stands for.
@@ -900,10 +866,6 @@ auto RenderExpr(const ScopeView& view, const mir::Expr& expr) -> std::string {
           },
           [&](const mir::StringLiteral& s) -> std::string {
             return RenderCStringLiteral(s.value);
-          },
-          [](const mir::TimeLiteral&) -> std::string {
-            throw InternalError(
-                "TimeLiteral is not yet implemented in cpp emit");
           },
           [&](const mir::RealLiteral& r) -> std::string {
             return RenderRealLiteralExpr(view, expr, r);
@@ -1009,10 +971,10 @@ auto RenderExpr(const ScopeView& view, const mir::Expr& expr) -> std::string {
             return RenderClosureExpr(view, cl);
           },
           [&](const mir::ConcatExpr& c) -> std::string {
-            return RenderConcatExpr(view, expr, c);
+            return RenderConcatExpr(view, c);
           },
           [&](const mir::ReplicationExpr& r) -> std::string {
-            return RenderReplicationExpr(view, expr, r);
+            return RenderReplicationExpr(view, r);
           },
           [&](const mir::ArrayLiteralExpr& a) -> std::string {
             return RenderArrayLiteralExpr(view, expr, a);

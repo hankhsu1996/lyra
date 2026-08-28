@@ -501,6 +501,13 @@ enum class BuiltinFn : std::uint16_t {
   // plays is a fact of the program and not of the operand's type. The result
   // is the operand at its own type; only its role differs.
   kSpread,
+  // LRM 11.4.12 concatenation and replication. What the two operators join --
+  // bit planes or characters -- follows the operand's value domain, so one
+  // entry each serves both and the domain names the realization. Each joins
+  // two operands: a longer source-level join folds into a chain, because an
+  // operand list of arbitrary length has no single entry to call.
+  kConcat,
+  kReplicate,
   // Operator realizations on `PackedArray`. HIR-to-MIR lifts the
   // method-style SV operators (LRM 11.4) into `CallExpr` against these
   // entries, so the backend renders every operator mechanically: native
@@ -567,10 +574,6 @@ enum class BuiltinFn : std::uint16_t {
 // following where storage lives passes through such a call rather than stopping
 // at it.
 [[nodiscard]] auto IsPassThroughBuiltinFn(BuiltinFn id) -> bool;
-
-// True iff the call's `args[0]` is the container being indexed or sliced
-// (rather than a value receiver). Used by LHS-chain walkers to reach the
-// root primary.
 
 // True iff the LRM 7.12 method takes a `with`-clause closure as its second
 // argument. The other LRM 7.5 / 7.10 array entries (`size`, `delete`,

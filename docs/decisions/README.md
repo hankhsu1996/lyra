@@ -58,6 +58,8 @@ the detail lives in the entry itself.
   nonblocking assignment bind; the nested-lvalue write encoding is deleted.
 - [queue-operators](queue-operators.md) -- queue access operators lower to built-in method calls;
   read and write are distinct methods chosen at lowering.
+- [concatenation-realization](concatenation-realization.md) -- a join means one operation and
+  carries two or more runs; an N-ary build reaches a fixed-arity ABI as a chain.
 - [array-method-dispatch](array-method-dispatch.md) -- LRM 7.12 array-method runtime semantics;
   per-family dispatch superseded by [builtin-call-identity](builtin-call-identity.md).
 - [array-manipulation-entry-stream](array-manipulation-entry-stream.md) -- LRM 7.12 locator /

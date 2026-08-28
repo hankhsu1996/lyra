@@ -37,6 +37,7 @@
 #include "lyra/value/runtime_unpacked_array.hpp"
 #include "lyra/value/runtime_value.hpp"
 #include "lyra/value/string.hpp"
+#include "lyra/value/string_op.hpp"
 
 namespace lyra::runtime {
 
@@ -266,6 +267,7 @@ using lyra::runtime::SubscribeValueChange;
 using lyra::runtime::Trigger;
 using lyra::runtime::Var;
 using lyra::value::Chandle;
+using lyra::value::Concat;
 using lyra::value::Format;
 using lyra::value::FormatSpec;
 using lyra::value::PackedArray;
@@ -275,6 +277,7 @@ using lyra::value::PrintItem;
 using lyra::value::PrintLiteralItem;
 using lyra::value::PrintValueItem;
 using lyra::value::Real;
+using lyra::value::Replicate;
 using lyra::value::RuntimeDynamicArray;
 using lyra::value::RuntimeTuple;
 using lyra::value::RuntimeUnpackedArray;
@@ -791,6 +794,18 @@ auto lyra_rt_packed_pow(const void* base, const void* exponent) -> void* {
   return Own(Read<PackedArray>(base).Pow(Read<PackedArray>(exponent)));
 }
 
+auto lyra_rt_packed_concat(const void* lhs, const void* rhs) -> void* {
+  return Own(
+      PackedArray::Concat({Read<PackedArray>(lhs), Read<PackedArray>(rhs)}));
+}
+
+auto lyra_rt_packed_replicate(const void* operand, std::int64_t count)
+    -> void* {
+  return Own(
+      PackedArray::Replicate(
+          Read<PackedArray>(operand), static_cast<std::uint64_t>(count)));
+}
+
 auto lyra_rt_packed_shift_left(const void* value, const void* amount) -> void* {
   return Own(Read<PackedArray>(value).ShiftLeft(Read<PackedArray>(amount)));
 }
@@ -954,6 +969,15 @@ auto lyra_rt_string_substr(
   return Own(
       Read<String>(value).Substr(
           Read<PackedArray>(first), Read<PackedArray>(last)));
+}
+
+auto lyra_rt_string_concat(const void* lhs, const void* rhs) -> void* {
+  return Own(Concat(Read<String>(lhs), Read<String>(rhs)));
+}
+
+auto lyra_rt_string_replicate(const void* operand, std::int64_t count)
+    -> void* {
+  return Own(Replicate(Read<String>(operand), count));
 }
 
 auto lyra_rt_string_atoi(const void* value) -> void* {
@@ -1704,6 +1728,13 @@ auto lyra_rt_unpackedarray_from_literal_unpackedarray(
     const void* prototype, LyraSpan unit, std::int64_t count) -> void* {
   return lyra::runtime::UnpackedArrayFromLiteral<
       lyra::value::RuntimeUnpackedArray>(prototype, unit, count);
+}
+
+auto lyra_rt_unpackedarray_merge_conditional(const void* lhs, const void* rhs)
+    -> void* {
+  return Own(
+      Read<RuntimeUnpackedArray>(lhs).MergeConditional(
+          Read<RuntimeUnpackedArray>(rhs)));
 }
 
 // Reads the element the source index names, resolved against the declared range

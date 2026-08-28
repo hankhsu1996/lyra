@@ -116,6 +116,14 @@ class RuntimeUnpackedArray {
   [[nodiscard]] auto CaseEqual(const RuntimeUnpackedArray& other) const
       -> PackedArray;
 
+  // LRM 11.4.11: the two arms of a conditional operator whose condition is
+  // ambiguous, combined element by element -- an element the arms agree on
+  // survives, and one they disagree on, or cannot know, takes the element
+  // default (Table 7-1). Arms of unequal size put no elements in
+  // correspondence, so every element takes that default.
+  [[nodiscard]] auto MergeConditional(const RuntimeUnpackedArray& other) const
+      -> RuntimeUnpackedArray;
+
   // LRM 9.4.2 update-event predicate (engine change-detection hook).
   [[nodiscard]] auto IsBitIdentical(const RuntimeUnpackedArray& other) const
       -> bool;
@@ -142,6 +150,7 @@ class RuntimeUnpackedArray {
 
 static_assert(LyraValue<RuntimeUnpackedArray>);
 static_assert(CaseEqualComparable<RuntimeUnpackedArray>);
+static_assert(ConditionallyMergeable<RuntimeUnpackedArray>);
 static_assert(Sized<RuntimeUnpackedArray>);
 static_assert(BitstreamSizable<RuntimeUnpackedArray>);
 static_assert(RangedSliceable<RuntimeUnpackedArray>);

@@ -277,6 +277,12 @@ implies; the diagnostic for any new forbidden shape is "what identity property d
   source-level shape (e.g., `Inside(lhs, items)`, `CaseMatch(sel, labels)`). Sugar collapses to
   primitives in MIR; readability of generated backend source is not recovered by reintroducing
   intrinsic-style calls downstream.
+- A primitive that stands for more than one operation, leaving a consumer to pick which by reading
+  its result type. One source-level spelling often means different operations over different operand
+  families -- a concatenation composes bits, characters, or elements -- and which one it is follows
+  the operands, so the layer holding them states it. A node that leaves it open makes every backend
+  decide what the program means rather than how to represent it, and the backend that decides
+  differently is a wrong answer no one is positioned to see.
 - A type that names a boundary or a foreign ABI rather than a value's own shape -- a "DPI carrier",
   a "C ABI type" -- carried as a MIR value type. The ABI classification of a foreign call's formal
   is a property of the _signature_, and belongs on the callable's declaration; the value that

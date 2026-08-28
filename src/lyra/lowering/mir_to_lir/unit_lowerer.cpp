@@ -1,6 +1,7 @@
 #include "lyra/lowering/mir_to_lir/unit_lowerer.hpp"
 
 #include <cstddef>
+#include <cstdint>
 #include <format>
 #include <optional>
 #include <string>
@@ -242,6 +243,25 @@ auto UnitLowerer::VoidType() -> lir::TypeId {
     void_type_ = out_.types.Add(lir::Type{.data = lir::VoidType{}});
   }
   return *void_type_;
+}
+
+auto UnitLowerer::FlatPackedType(std::uint64_t width, bool four_state)
+    -> lir::TypeId {
+  const std::pair<std::uint64_t, bool> shape{width, four_state};
+  if (const auto it = flat_packed_memo_.find(shape);
+      it != flat_packed_memo_.end()) {
+    return it->second;
+  }
+  const lir::TypeId id = out_.types.Add(
+      lir::Type{
+          .data = lir::PackedArrayType{
+              .atom = four_state ? lir::BitAtom::kLogic : lir::BitAtom::kBit,
+              .signedness = lir::Signedness::kUnsigned,
+              .dims = {lir::PackedRange{
+                  .left = static_cast<std::int64_t>(width) - 1, .right = 0}},
+              .form = lir::PackedArrayForm::kExplicit}});
+  flat_packed_memo_.emplace(shape, id);
+  return id;
 }
 
 auto UnitLowerer::LowerBase(const mir::ClassRef& base) const -> lir::Base {

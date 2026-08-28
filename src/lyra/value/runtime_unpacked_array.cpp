@@ -145,6 +145,21 @@ auto RuntimeUnpackedArray::CaseEqual(const RuntimeUnpackedArray& other) const
   return result;
 }
 
+auto RuntimeUnpackedArray::MergeConditional(
+    const RuntimeUnpackedArray& other) const -> RuntimeUnpackedArray {
+  const bool paired = data_.size() == other.data_.size();
+  RuntimeUnpackedArray result = *this;
+  for (std::size_t i = 0; i < result.data_.size(); ++i) {
+    const bool agree =
+        paired && RuntimeValueEqual(data_[i], other.data_[i]).Truth() ==
+                      Truthiness::kKnownNonzero;
+    if (!agree) {
+      result.data_[i] = *element_default_;
+    }
+  }
+  return result;
+}
+
 // LRM 9.4.2: a size mismatch is a change. That is how the empty default of a
 // fresh cell is told apart from the first sized write, so the declared-shape
 // initializer raises an update event.

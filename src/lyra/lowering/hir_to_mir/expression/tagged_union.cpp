@@ -13,6 +13,7 @@
 #include "lyra/lowering/hir_to_mir/cast_lowering.hpp"
 #include "lyra/lowering/hir_to_mir/default_value.hpp"
 #include "lyra/lowering/hir_to_mir/flat_packed_type.hpp"
+#include "lyra/lowering/hir_to_mir/packed_concat.hpp"
 #include "lyra/lowering/hir_to_mir/packed_projection.hpp"
 #include "lyra/lowering/hir_to_mir/process_lowerer.hpp"
 #include "lyra/lowering/hir_to_mir/structural_scope_lowerer.hpp"
@@ -66,10 +67,9 @@ auto BuildPackedTaggedValue(
         unit, block, *payload, InternFlatPacked(unit, member_width, atom)));
   }
 
-  const mir::ExprId concat = block.exprs.Add(
-      mir::Expr{
-          .data = mir::ConcatExpr{.operands = std::move(runs)},
-          .type = InternFlatPacked(unit, layout.bit_width, atom)});
+  const mir::ExprId concat = block.exprs.Add(BuildPackedConcat(
+      unit, block, std::move(runs),
+      InternFlatPacked(unit, layout.bit_width, atom)));
   return BuildValueConversion(unit, block, concat, result_type);
 }
 

@@ -494,6 +494,10 @@ auto BuiltinFnName(BuiltinFn id) -> std::string_view {
       return "make_queue_concat";
     case BuiltinFn::kSpread:
       return "spread";
+    case BuiltinFn::kConcat:
+      return "concat";
+    case BuiltinFn::kReplicate:
+      return "replicate";
     case BuiltinFn::kPow:
       return "pow";
     case BuiltinFn::kShiftLeft:
