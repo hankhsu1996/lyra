@@ -1,6 +1,7 @@
 #pragma once
 
 #include <optional>
+#include <span>
 #include <string>
 #include <string_view>
 #include <utility>
@@ -12,6 +13,12 @@
 namespace lyra::runtime {
 
 class RuntimeEffects;
+
+// Which of a simulation's own arguments are plusargs, with the `+` that marks
+// one removed (LRM 21.6). Every way of starting a simulation classifies its
+// arguments through this, so the answer is decided once.
+[[nodiscard]] auto PlusargsFrom(std::span<const std::string> arguments)
+    -> std::vector<std::string>;
 
 // LRM 21.6 command-line plusargs source, held on the engine as design-global
 // state. Stored tokens are the plusarg content (`+` prefix already stripped)

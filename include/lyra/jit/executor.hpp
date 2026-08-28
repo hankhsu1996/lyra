@@ -3,6 +3,7 @@
 #include <filesystem>
 #include <optional>
 #include <span>
+#include <string>
 
 #include "lyra/diag/diagnostic.hpp"
 
@@ -30,6 +31,10 @@ namespace lyra::jit {
 // process does not define, and with no link step the execution session is where
 // it must be found. A design with no imports passes none.
 //
+// `simulation_arguments` are the design's own arguments, the ones a caller
+// keeps apart from the compiler's; the run reads its LRM 21.6 plusargs out of
+// them, as a built program reads them out of its argv.
+//
 // A design naming a construct the execution backend has no entry for is refused
 // before anything runs, so nothing of the simulation is observed.
 auto Execute(
@@ -37,7 +42,7 @@ auto Execute(
     std::span<const compiler::ElaboratedUnitMetadata> metadata,
     const lir::CompilationUnit& root_unit,
     const compiler::ElaboratedUnitMetadata& root_metadata,
-    const std::optional<std::filesystem::path>& dpi_library)
-    -> diag::Result<int>;
+    const std::optional<std::filesystem::path>& dpi_library,
+    std::span<const std::string> simulation_arguments) -> diag::Result<int>;
 
 }  // namespace lyra::jit

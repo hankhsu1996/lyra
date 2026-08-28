@@ -8,7 +8,6 @@
 #include <new>
 #include <span>
 #include <string>
-#include <string_view>
 #include <utility>
 #include <vector>
 
@@ -16,24 +15,22 @@
 #include "lyra/base/simulation_error.hpp"
 #include "lyra/runtime/ambient_run_context.hpp"
 #include "lyra/runtime/design.hpp"
+#include "lyra/runtime/plusargs.hpp"
 #include "lyra/runtime/runtime.hpp"
 #include "lyra/runtime/scope.hpp"
 
 namespace lyra::runtime {
 
 auto RunDesignHost(int argc, char** argv, const RootBuilder& builder) -> int {
-  // LRM 21.6: `+`-prefixed argv entries are plusargs; strip the `+` so a
-  // stored token compares directly against a user-supplied prefix.
+  // A built program's own argv leads with its name, which is not one of the
+  // simulation's arguments.
   const std::span<char*> args{argv, static_cast<std::size_t>(argc)};
-  std::vector<std::string> plusargs;
+  std::vector<std::string> arguments;
   for (std::size_t i = 1; i < args.size(); ++i) {
-    const std::string_view view{args[i]};
-    if (view.starts_with("+")) {
-      plusargs.emplace_back(view.substr(1));
-    }
+    arguments.emplace_back(args[i]);
   }
   auto options = DefaultRuntimeOptions();
-  options.plusargs = std::move(plusargs);
+  options.plusargs = PlusargsFrom(arguments);
   Runtime runtime{std::move(options)};
   auto root = builder();
   Scope* root_scope = root.get();

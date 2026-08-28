@@ -4,7 +4,9 @@
 // it, $stime is the low 32 bits of that same integer, and $realtime is a real
 // and keeps whatever fraction of a time unit the instant falls on
 // (LRM 20.3.1, 20.3.2, 20.3.3). Two elements holding different time units
-// therefore report different numbers for one and the same instant.
+// therefore report different numbers for one and the same instant, and landing
+// on an instant that is a fraction of a unit means writing the delay that
+// reaches it in a finer one (LRM 5.8).
 `timescale 1ps / 1ps
 module Top;
   Slow slow ();
@@ -59,7 +61,7 @@ module Slow;
     coarse_time = $time;
     coarse_stime = $stime;
     coarse_realtime = $realtime;
-    #2.25;
+    #2250ps;
     fraction_time = $time;
     fraction_realtime = $realtime;
   end

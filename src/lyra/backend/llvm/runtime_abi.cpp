@@ -120,6 +120,79 @@ auto RuntimeAbi::TimeFormat() -> llvm::FunctionCallee {
   return Get("lyra_rt_time_format", types_->Ptr(), {types_->Ptr()});
 }
 
+auto RuntimeAbi::SetTimeFormat() -> llvm::FunctionCallee {
+  return Get(
+      "lyra_rt_set_time_format", types_->Void(),
+      {types_->Ptr(), types_->Ptr(), types_->Ptr(), types_->Ptr(),
+       types_->Ptr()});
+}
+
+auto RuntimeAbi::ResetTimeFormat() -> llvm::FunctionCallee {
+  return Get("lyra_rt_reset_time_format", types_->Void(), {types_->Ptr()});
+}
+
+auto RuntimeAbi::FileOpen(std::size_t argument_count) -> llvm::FunctionCallee {
+  if (argument_count == 2) {
+    return Get(
+        "lyra_rt_file_open", types_->Ptr(), {types_->Ptr(), types_->Ptr()});
+  }
+  if (argument_count == 3) {
+    return Get(
+        "lyra_rt_file_open_mode", types_->Ptr(),
+        {types_->Ptr(), types_->Ptr(), types_->Ptr()});
+  }
+  throw InternalError(
+      "llvm codegen: a file open carries a mode or nothing beside its name");
+}
+
+auto RuntimeAbi::FileClose() -> llvm::FunctionCallee {
+  return Get(
+      "lyra_rt_file_close", types_->Void(), {types_->Ptr(), types_->Ptr()});
+}
+
+auto RuntimeAbi::FileGetc() -> llvm::FunctionCallee {
+  return Get(
+      "lyra_rt_file_getc", types_->Ptr(), {types_->Ptr(), types_->Ptr()});
+}
+
+auto RuntimeAbi::FileUngetc() -> llvm::FunctionCallee {
+  return Get(
+      "lyra_rt_file_ungetc", types_->Ptr(),
+      {types_->Ptr(), types_->Ptr(), types_->Ptr()});
+}
+
+auto RuntimeAbi::FileSeek() -> llvm::FunctionCallee {
+  return Get(
+      "lyra_rt_file_seek", types_->Ptr(),
+      {types_->Ptr(), types_->Ptr(), types_->Ptr(), types_->Ptr()});
+}
+
+auto RuntimeAbi::FileRewind() -> llvm::FunctionCallee {
+  return Get(
+      "lyra_rt_file_rewind", types_->Ptr(), {types_->Ptr(), types_->Ptr()});
+}
+
+auto RuntimeAbi::FileTell() -> llvm::FunctionCallee {
+  return Get(
+      "lyra_rt_file_tell", types_->Ptr(), {types_->Ptr(), types_->Ptr()});
+}
+
+auto RuntimeAbi::FileEof() -> llvm::FunctionCallee {
+  return Get("lyra_rt_file_eof", types_->Ptr(), {types_->Ptr(), types_->Ptr()});
+}
+
+auto RuntimeAbi::FileFlush(std::size_t argument_count) -> llvm::FunctionCallee {
+  if (argument_count == 1) {
+    return Get("lyra_rt_file_flush_all", types_->Void(), {types_->Ptr()});
+  }
+  if (argument_count == 2) {
+    return Get(
+        "lyra_rt_file_flush", types_->Void(), {types_->Ptr(), types_->Ptr()});
+  }
+  throw InternalError(
+      "llvm codegen: a file flush carries a descriptor or nothing");
+}
+
 auto RuntimeAbi::Format() -> llvm::FunctionCallee {
   return Get("lyra_rt_format", types_->Ptr(), {types_->Span(), types_->Ptr()});
 }
@@ -190,6 +263,23 @@ auto RuntimeAbi::Delay() -> llvm::FunctionCallee {
 auto RuntimeAbi::WaitAny() -> llvm::FunctionCallee {
   return Get(
       "lyra_rt_wait_any", types_->Void(), {types_->Ptr(), types_->Span()});
+}
+
+auto RuntimeAbi::TestPlusargs() -> llvm::FunctionCallee {
+  return Get(
+      "lyra_rt_test_plusargs", types_->Ptr(), {types_->Ptr(), types_->Ptr()});
+}
+
+auto RuntimeAbi::SimTime() -> llvm::FunctionCallee {
+  return Get("lyra_rt_sim_time", types_->Ptr(), {types_->Ptr(), types_->Ptr()});
+}
+
+auto RuntimeAbi::STime() -> llvm::FunctionCallee {
+  return Get("lyra_rt_stime", types_->Ptr(), {types_->Ptr(), types_->Ptr()});
+}
+
+auto RuntimeAbi::RealTime() -> llvm::FunctionCallee {
+  return Get("lyra_rt_realtime", types_->Ptr(), {types_->Ptr(), types_->Ptr()});
 }
 
 auto RuntimeAbi::Finish() -> llvm::FunctionCallee {
@@ -338,6 +428,18 @@ auto RuntimeAbi::AddOwnedChild() -> llvm::FunctionCallee {
       "lyra_rt_add_owned_child", types_->Ptr(), {types_->Ptr(), types_->Ptr()});
 }
 
+auto RuntimeAbi::ResolveVisibleChild() -> llvm::FunctionCallee {
+  return Get(
+      "lyra_rt_resolve_visible_child", types_->Ptr(),
+      {types_->Ptr(), types_->Ptr(), types_->Span()});
+}
+
+auto RuntimeAbi::GetChild() -> llvm::FunctionCallee {
+  return Get(
+      "lyra_rt_get_child", types_->Ptr(),
+      {types_->Ptr(), types_->Ptr(), types_->Span()});
+}
+
 auto RuntimeAbi::MemberAddress() -> llvm::FunctionCallee {
   return Get(
       "lyra_rt_member_addr", types_->Ptr(),
@@ -387,6 +489,11 @@ auto RuntimeAbi::RegisterSignal() -> llvm::FunctionCallee {
   return Get(
       "lyra_rt_register_signal", types_->Void(),
       {types_->Ptr(), types_->Ptr(), types_->Ptr()});
+}
+
+auto RuntimeAbi::GetSignal() -> llvm::FunctionCallee {
+  return Get(
+      "lyra_rt_get_signal", types_->Ptr(), {types_->Ptr(), types_->Ptr()});
 }
 
 auto RuntimeAbi::Binary(ValueDomain domain, lir::BinaryOp op)
