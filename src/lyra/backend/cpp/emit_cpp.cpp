@@ -2,7 +2,6 @@
 #include <format>
 #include <span>
 #include <string>
-#include <variant>
 #include <vector>
 
 #include "lyra/backend/cpp/api.hpp"
@@ -27,18 +26,16 @@ auto CollectExternalUnitNames(const mir::CompilationUnit& unit)
       names.push_back(name);
     }
   };
-  // A unit an instance is built from names its unit through the child object's
-  // `ExternalUnitObjectType`; a unit whose namespace symbol is reached by name
-  // (a receiver-less callable or a package variable) names its unit in the
-  // reference-dependency list, since such a reference interns no such type;
-  // a unit a class is referenced from -- as a handle, a `new`, a field /
-  // method / static access, or a base extension -- names its unit in the
-  // class-dependency list. All three are external units this unit's artifact
-  // includes.
-  for (const auto& t : unit.types) {
-    if (const auto* ext = std::get_if<mir::ExternalUnitObjectType>(&t.data)) {
-      add(ext->unit_name);
-    }
+  // A unit whose object this one reaches -- an instance it builds, a port it
+  // connects, a published member it names -- has a record of that object here;
+  // a unit whose namespace symbol is reached by name (a receiver-less callable
+  // or a package variable) names its unit in the reference-dependency list,
+  // since such a reference reaches no object; a unit a class is referenced from
+  // -- as a handle, a `new`, a field / method / static access, or a base
+  // extension -- names its unit in the class-dependency list. All three are
+  // external units this unit's artifact includes.
+  for (const mir::ExternalUnitObject& object : unit.external_unit_objects) {
+    add(object.unit_name);
   }
   for (const std::string& name : unit.external_referenced_units) {
     add(name);

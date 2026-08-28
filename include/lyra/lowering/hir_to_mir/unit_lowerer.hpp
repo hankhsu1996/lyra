@@ -102,6 +102,26 @@ class UnitLowerer {
     return class_translations_.Get(hir_id).id;
   }
 
+  [[nodiscard]] auto TranslateExternalUnitObject(
+      hir::ExternalUnitObjectId hir_id) const -> mir::ExternalUnitObjectId {
+    return external_unit_object_translations_.Get(hir_id);
+  }
+
+  // Where a published member sits in the object this unit recorded. The HIR and
+  // MIR records list the same members in the same order, so the position
+  // crosses unchanged.
+  [[nodiscard]] static auto TranslatePublishedMember(hir::PublishedMemberId id)
+      -> mir::FieldId {
+    return mir::FieldId{id.value};
+  }
+
+  // The cell a member of `storage` holds, over a value of `value_type`. A unit
+  // that declares the member and a unit reading its signature both reach it
+  // through here, so they cannot disagree about what a published member holds.
+  [[nodiscard]] auto MemberCellType(
+      mir::TypeId value_type, const hir::PublishedStorage& storage) const
+      -> mir::TypeId;
+
   // The callable identity a class's method was given. Answered from what the
   // declaration pass took, so a class that overrides can state its dispatch
   // role whether or not its base has settled -- no order among declarations.
@@ -241,9 +261,13 @@ class UnitLowerer {
   // declaration, so classes take theirs in any order and none waits on another.
   auto TakeClassIdentities(const hir::ClassDecl& decl) -> ClassTranslation;
 
+  auto BuildExternalUnitObject(const hir::ExternalUnitObject& object) const
+      -> mir::ExternalUnitObject;
+
   // Publishes everything the unit declares before any root-scope body lowers:
-  // every class identity and body, every interned type, and the prototype of
-  // every foreign symbol the unit takes part in. Shared prologue of every unit
+  // every class identity and body, every interned type, this unit's record of
+  // each object it reaches in another unit, and the prototype of every foreign
+  // symbol the unit takes part in. Shared prologue of every unit
   // kind -- a module and a package own the same declaration kinds; they differ
   // only in whether the root scope becomes a top class or a set of namespace
   // callables.
@@ -257,6 +281,8 @@ class UnitLowerer {
   mir::CompilationUnit unit_;
   base::Translation<hir::TypeId, mir::TypeId> type_translations_;
   base::Translation<hir::ClassId, ClassTranslation> class_translations_;
+  base::Translation<hir::ExternalUnitObjectId, mir::ExternalUnitObjectId>
+      external_unit_object_translations_;
   std::uint32_t next_generate_scope_name_ = 0;
   std::uint32_t next_synthesized_site_ = 0;
   // What the declare stage settled about each class, read by every body that

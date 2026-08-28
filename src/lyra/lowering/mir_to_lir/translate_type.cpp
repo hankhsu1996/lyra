@@ -196,9 +196,9 @@ auto UnitLowerer::TranslateTypeData(const mir::Type& ty) -> lir::TypeData {
             return lir::TypeData{lir::ObjectType{
                 .class_id = class_identities_.Get(ob.class_id).lir_class}};
           },
-          [](const mir::ExternalUnitObjectType& eu) -> lir::TypeData {
+          [&](const mir::ExternalUnitObjectType& eu) -> lir::TypeData {
             return lir::TypeData{lir::ExternalUnitObjectType{
-                .unit_name = eu.unit_name, .class_name = eu.class_name}};
+                .object = external_unit_object_identities_.Get(eu.object)}};
           },
           [](const mir::ExternalClassType& e) -> lir::TypeData {
             return lir::TypeData{

@@ -178,7 +178,61 @@ auto PopulatePackageStaticVariables(
   return {};
 }
 
+// The fold a net's declared net type names (LRM 6.6). `wire` and `tri` differ
+// only in source spelling; both resolve under the tri-state truth table.
+auto TranslateNetResolution(hir::NetType net_type) -> mir::NetResolution {
+  switch (net_type) {
+    case hir::NetType::kWire:
+    case hir::NetType::kTri:
+      return mir::NetResolution::kTriState;
+  }
+  throw InternalError("TranslateNetResolution: unknown NetType");
+}
+
 }  // namespace
+
+auto UnitLowerer::MemberCellType(
+    mir::TypeId value_type, const hir::PublishedStorage& storage) const
+    -> mir::TypeId {
+  return std::visit(
+      Overloaded{
+          [&](const hir::VariableStorage&) {
+            return unit_.types.ObservableCellOf(value_type);
+          },
+          [&](const hir::NetStorage& net) {
+            return unit_.types.Intern(
+                mir::ResolvedType{
+                    .value = value_type,
+                    .resolution = TranslateNetResolution(net.net_type)});
+          },
+          [&](const hir::ReferenceStorage& reference) {
+            return unit_.types.Intern(
+                mir::RefType{
+                    .pointee = value_type,
+                    .mutability =
+                        reference.binding == hir::ReferenceBinding::kConstRef
+                            ? mir::Mutability::kReadOnly
+                            : mir::Mutability::kMutable});
+          }},
+      storage);
+}
+
+auto UnitLowerer::BuildExternalUnitObject(
+    const hir::ExternalUnitObject& object) const -> mir::ExternalUnitObject {
+  mir::ExternalUnitObject out{
+      .unit_name = object.unit_name,
+      .class_name = object.class_name,
+      .fields = {}};
+  for (const hir::PublishedMemberId id : object.members.Ids()) {
+    const hir::PublishedMember& member = object.members.Get(id);
+    out.fields.Add(
+        mir::FieldDecl{
+            .name = member.name,
+            .type =
+                MemberCellType(TranslateType(member.type), member.storage)});
+  }
+  return out;
+}
 
 auto UnitLowerer::TakeClassIdentities(const hir::ClassDecl& decl)
     -> ClassTranslation {
@@ -220,6 +274,18 @@ auto UnitLowerer::PublishUnitDeclarations() -> diag::Result<void> {
   for (const hir::TypeId hir_id : hir_->types.Ids()) {
     type_translations_.Append(
         unit_.types.Intern(TranslateTypeData(hir_->types.Get(hir_id).data)));
+  }
+
+  // What each unit this one references promised about its object, in this
+  // unit's terms, taken before any body lowers so a body reaching a child's
+  // member reads the record rather than building one.
+  external_unit_object_translations_ =
+      base::Translation<hir::ExternalUnitObjectId, mir::ExternalUnitObjectId>{
+          hir_->external_unit_objects.size()};
+  for (const hir::ExternalUnitObjectId hir_id :
+       hir_->external_unit_objects.Ids()) {
+    external_unit_object_translations_.Append(unit_.external_unit_objects.Add(
+        BuildExternalUnitObject(hir_->external_unit_objects.Get(hir_id))));
   }
 
   // The prototype of every DPI-C import this unit takes part in (LRM 35.4),

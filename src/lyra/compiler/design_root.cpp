@@ -16,7 +16,9 @@
 #include "lyra/base/overloaded.hpp"
 #include "lyra/compiler/unit_metadata.hpp"
 #include "lyra/hir/compilation_unit.hpp"
+#include "lyra/hir/external_unit_object.hpp"
 #include "lyra/hir/structural_scope.hpp"
+#include "lyra/hir/unit_signature.hpp"
 #include "lyra/hir/unit_signatures.hpp"
 #include "lyra/lir/verify.hpp"
 #include "lyra/lowering/hir_to_mir/callable_bindings.hpp"
@@ -41,13 +43,15 @@ auto BuildDesignRootHir(
     const hir::ConsumedSignatures& signatures) -> hir::CompilationUnit {
   hir::CompilationUnit root{std::string{kDesignRootUnitName}};
   for (const auto& name : top_names) {
+    // The root reaches a top the way any parent reaches a child it builds:
+    // through its own record of the object that unit's signature promised.
+    const hir::ExternalUnitObjectId object = root.external_unit_objects.Add(
+        hir::ImportExternalUnitObject(
+            signatures.Instantiated(name), root.types));
     root.root_scope.instance_members.Define(
         root.root_scope.instance_members.Declare(),
         hir::InstanceMemberDecl{
-            .instance_name = name,
-            .unit_name = name,
-            .class_name = signatures.InstantiatedClass(name).class_name,
-            .array_dims = {}});
+            .instance_name = name, .object = object, .array_dims = {}});
   }
   return root;
 }

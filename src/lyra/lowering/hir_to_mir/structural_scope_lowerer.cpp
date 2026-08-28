@@ -89,15 +89,14 @@ auto MakeUniqueObjectPointer(UnitLowerer& unit_lowerer, mir::ClassId class_id)
       object_type, mir::PointerOwnership::kUnique);
 }
 
-// The pointer type a handle to one of `member`'s objects has. The object is an
-// instance of a class the declaring unit publishes, so the type names that unit
-// and that class; this unit sees none of its layout.
+// The pointer type a handle to one of `member`'s objects has. The object is one
+// the declaring unit publishes, so the type names this unit's record of it.
 auto MakeExternalUnitPointer(
     UnitLowerer& unit_lowerer, const hir::InstanceMemberDecl& member,
     mir::PointerOwnership ownership) -> mir::TypeId {
   const mir::TypeId object_type = unit_lowerer.Unit().types.Intern(
       mir::ExternalUnitObjectType{
-          .unit_name = member.unit_name, .class_name = member.class_name});
+          .object = unit_lowerer.TranslateExternalUnitObject(member.object)});
   return unit_lowerer.Unit().types.PointerTo(object_type, ownership);
 }
 
@@ -199,17 +198,6 @@ void EmitInstanceMemberConstruction(
   }
 }
 
-// The fold a net's declared net type names (LRM 6.6). `wire` and `tri` differ
-// only in source spelling; both resolve under the tri-state truth table.
-auto TranslateNetResolution(hir::NetType net_type) -> mir::NetResolution {
-  switch (net_type) {
-    case hir::NetType::kWire:
-    case hir::NetType::kTri:
-      return mir::NetResolution::kTriState;
-  }
-  throw InternalError("TranslateNetResolution: unknown NetType");
-}
-
 // Allocates one MIR member per cross-unit reference. Every reference -- upward
 // or downward, `$root`-anchored or named -- takes the same borrowed-pointer
 // slot: the pointee matches the producer's actual storage cell so a read or
@@ -227,21 +215,14 @@ auto DeclareRoutedRefSlots(StructuralScopeLowerer& lowerer, ClassShape& shape)
   slots.reserve(hir_scope.routed_refs.size());
   for (const auto& cu : hir_scope.routed_refs) {
     std::string member_name = "ep" + std::to_string(slots.size());
-    if (cu.target_net_type.has_value() &&
+    if (std::holds_alternative<hir::NetStorage>(cu.target_storage) &&
         !std::holds_alternative<hir::InUnitHead>(cu.recipe.head)) {
       throw InternalError(
           "DeclareRoutedRefSlots: an upward routed reference to a net is not "
           "yet supported");
     }
-    const mir::TypeId value = unit_lowerer.TranslateType(cu.recipe.type);
-    const mir::TypeId leaf =
-        cu.target_net_type.has_value()
-            ? unit_lowerer.Unit().types.Intern(
-                  mir::ResolvedType{
-                      .value = value,
-                      .resolution =
-                          TranslateNetResolution(*cu.target_net_type)})
-            : unit_lowerer.Unit().types.ObservableCellOf(value);
+    const mir::TypeId leaf = unit_lowerer.MemberCellType(
+        unit_lowerer.TranslateType(cu.recipe.type), cu.target_storage);
     const mir::TypeId slot_type = unit_lowerer.Unit().types.PointerTo(
         leaf, mir::PointerOwnership::kBorrowed);
     slots.push_back(
@@ -430,18 +411,15 @@ auto MaterializeLeaf(
   auto& unit = unit_lowerer.Unit();
 
   // A published member is reached through the target unit's own object, whose
-  // pointer the step before it produced, so the access is typed and the name
-  // resolves against the signature this unit compiled against.
+  // pointer the step before it produced. The access states only the position:
+  // which object those positions index is already on the receiver's type.
   if (const auto* member = std::get_if<hir::SignatureMemberLeaf>(&leaf)) {
     const auto& slot =
         std::get<mir::PointerType>(unit.types.Get(slot_type).data);
     const mir::ExprId access = block.exprs.Add(
         mir::MakeFieldAccessExpr(
             receiver.expr,
-            mir::ExternalFieldTarget{
-                .unit_name = member->unit_name,
-                .class_name = member->class_name,
-                .field_name = member->member_name},
+            UnitLowerer::TranslatePublishedMember(member->member),
             slot.pointee));
     return block.exprs.Add(
         mir::Expr{
@@ -872,40 +850,27 @@ auto StructuralScopeLowerer::DeclareShape() -> diag::Result<mir::ClassId> {
 
   AttachRuntimeScopeCtorPrefix(unit_lowerer.Unit(), shape);
 
-  std::vector<mir::FieldId> data_object_fields;
-  data_object_fields.reserve(hir_scope.structural_data_objects.size());
+  // A member this unit published sits in a fixed prefix of the object, in the
+  // order its signature states, so a unit reading that signature counts the
+  // same position; what it did not publish follows and can move none of it.
+  std::vector<hir::StructuralDataObjectId> member_order =
+      hir_scope.published_objects;
   for (const hir::StructuralDataObjectId hir_id :
        hir_scope.structural_data_objects.Ids()) {
+    if (!std::ranges::contains(hir_scope.published_objects, hir_id)) {
+      member_order.push_back(hir_id);
+    }
+  }
+
+  std::vector<mir::FieldId> data_object_fields(
+      hir_scope.structural_data_objects.size());
+  for (const hir::StructuralDataObjectId hir_id : member_order) {
     const auto& d = hir_scope.structural_data_objects.Get(hir_id);
-    const mir::TypeId mir_value_type = unit_lowerer.TranslateType(d.type);
-    // A net (LRM 6.5) and a variable are peer kinds: a `ref` / `const ref`
-    // port (LRM 23.3.3.2) member aliases the connected variable (a reference);
-    // a net owns a resolved cell whose value is the resolution of its drivers;
-    // any other variable is an observable cell so writes route through
-    // `Var<T>::Set` and subscribers fire.
-    const auto* var = std::get_if<hir::StructuralVariableDecl>(&d.kind);
-    const bool is_reference = var != nullptr && var->reference.has_value();
-    const mir::TypeId mir_field_type = [&] {
-      if (is_reference) {
-        return unit_lowerer.Unit().types.Intern(
-            mir::RefType{
-                .pointee = mir_value_type,
-                .mutability =
-                    *var->reference == hir::ReferenceBinding::kConstRef
-                        ? mir::Mutability::kReadOnly
-                        : mir::Mutability::kMutable});
-      }
-      if (var == nullptr) {
-        return unit_lowerer.Unit().types.Intern(
-            mir::ResolvedType{
-                .value = mir_value_type,
-                .resolution = TranslateNetResolution(
-                    std::get<hir::StructuralNetDecl>(d.kind).net_type)});
-      }
-      return unit_lowerer.Unit().types.ObservableCellOf(mir_value_type);
-    }();
-    data_object_fields.push_back(shape.fields.Add(
-        mir::FieldDecl{.name = d.name, .type = mir_field_type}));
+    data_object_fields[hir_id.value] = shape.fields.Add(
+        mir::FieldDecl{
+            .name = d.name,
+            .type = unit_lowerer.MemberCellType(
+                unit_lowerer.TranslateType(d.type), hir::StorageOf(d))});
   }
   data_object_fields_ = {
       hir_scope.structural_data_objects.size(), std::move(data_object_fields)};

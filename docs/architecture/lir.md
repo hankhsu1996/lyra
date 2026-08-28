@@ -58,7 +58,9 @@ below LIR, at LIR-to-LLVM.
   runtime coordinate, a fixed-width window. One extract and one update carry every step; the
   selector never says how the step is realized.
 - Logical storage topology: which local, member, element, or referent a place names, and the logical
-  identity of every class member and callable a node refers to.
+  identity of every class member and callable a node refers to. A member step reaches a class this
+  unit compiles or the published prefix of an object another unit defines; both are member-bearing
+  objects of this unit's own graph, and only what the artifact emits distinguishes them.
 - Effect ordering within a block.
 - Low-level operations: arithmetic, comparisons, machine conversions, loads, stores, calls.
 - Foreign symbols: the linkage name of a callable defined outside the program, which a call may

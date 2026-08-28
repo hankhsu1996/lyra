@@ -1,8 +1,5 @@
 #pragma once
 
-#include <optional>
-#include <unordered_map>
-
 #include <slang/ast/Expression.h>
 #include <slang/ast/Scope.h>
 #include <slang/ast/symbols/BlockSymbols.h>
@@ -31,7 +28,11 @@ namespace lyra::lowering::ast_to_hir {
 class StructuralScopeLowerer {
  public:
   StructuralScopeLowerer(
-      UnitLowerer& unit_lowerer, const slang::ast::Scope& slang_scope);
+      UnitLowerer& unit_lowerer, const slang::ast::Scope& slang_scope)
+      : owner_(&unit_lowerer),
+        slang_scope_(&slang_scope),
+        frame_(unit_lowerer.LookupScopeFrame(slang_scope)) {
+  }
 
   // Stack-allocates the output `hir::StructuralScope`, walks every member of
   // `slang_scope_` into it, and returns it. `parent_frame` is the caller's walk
@@ -39,7 +40,6 @@ class StructuralScopeLowerer {
   // dispatching to per-member helpers.
   auto Run(WalkFrame parent_frame) -> diag::Result<hir::StructuralScope>;
 
-  // Accessors for inner Lowerers and helpers.
   [[nodiscard]] auto Owner() -> UnitLowerer& {
     return *owner_;
   }
@@ -58,7 +58,6 @@ class StructuralScopeLowerer {
       -> diag::Result<void>;
 
  private:
-  // Per-member dispatch and per-kind helpers used by Run.
   auto PopulateMember(const slang::ast::Symbol& member, WalkFrame frame)
       -> diag::Result<void>;
   auto PopulateVariableMember(
@@ -66,10 +65,6 @@ class StructuralScopeLowerer {
       -> diag::Result<void>;
   auto PopulateNetMember(const slang::ast::NetSymbol& net, WalkFrame frame)
       -> diag::Result<void>;
-  // The reference binding of `var` if it is the internal variable of a `ref` /
-  // `const ref` port of this module body (LRM 23.3.3.2); nullopt otherwise.
-  [[nodiscard]] auto ReferenceBindingFor(const slang::ast::VariableSymbol& var)
-      const -> std::optional<hir::ReferenceBinding>;
   auto PopulateSubroutineMember(
       const slang::ast::SubroutineSymbol& sym, WalkFrame frame)
       -> diag::Result<void>;
@@ -106,15 +101,9 @@ class StructuralScopeLowerer {
       const slang::ast::GenerateBlockSymbol& block, WalkFrame frame)
       -> diag::Result<hir::Generate>;
 
-  // Facts.
   UnitLowerer* owner_;
   const slang::ast::Scope* slang_scope_;
   ScopeFrameId frame_;
-  // The internal variables of this body's `ref` / `const ref` ports, keyed by
-  // symbol; built once at construction from the module body's port list, empty
-  // for a scope (generate block) that declares no ports.
-  std::unordered_map<const slang::ast::Symbol*, hir::ReferenceBinding>
-      ref_port_internals_;
 };
 
 }  // namespace lyra::lowering::ast_to_hir

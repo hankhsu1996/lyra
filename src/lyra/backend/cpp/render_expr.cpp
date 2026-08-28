@@ -346,28 +346,14 @@ auto ClosureCaptureCppName(const mir::ClosureDecl& decl, mir::FieldId field)
   return std::format("{}_c{}", decl.fields.Get(field).name, field.value);
 }
 
-// The field name for a reference-storage receiver -- a class instance or a
-// promoted scope. Both are reference storage reached through the receiver, so a
-// field access is one shape (`recv->field`); they differ only in which field
-// list the pointee type names.
-auto ReferenceStorageFieldName(
-    const ScopeView& view, mir::TypeId pointee, mir::FieldId field)
-    -> std::string_view {
-  const auto& data = view.Unit().types.Get(pointee).data;
-  if (const auto* s = std::get_if<mir::StructType>(&data)) {
-    return view.Unit().GetStruct(s->struct_id).fields.Get(field).name;
-  }
-  return view.ClassByObjectType(pointee).fields.Get(field).name;
-}
-
 auto ResolveFieldAccess(const ScopeView& view, const mir::FieldAccessExpr& m)
     -> FieldAccess {
   // The receiver reaches its field-bearing value through a borrowed pointer (a
   // class `self`, a closure receiver), a shared handle (a promoted scope), or a
   // managed reference (a class handle). The field target is owner-qualified
   // for a class receiver (owner names the declaring class arena) and a bare
-  // field id otherwise (struct or closure aggregate, whose arena is uniquely
-  // determined by the receiver's type).
+  // field id otherwise (a struct, a closure, or another unit's object, whose
+  // arena is uniquely determined by the receiver's type).
   //
   // A closure captures its fields into a lambda whose captures are in scope,
   // so a read over the closure receiver is the bare capture name, not a
@@ -395,7 +381,7 @@ auto ResolveFieldAccess(const ScopeView& view, const mir::FieldAccessExpr& m)
             } else {
               throw InternalError(
                   "ResolveFieldAccess: bare-field-id access expects a pointer "
-                  "receiver (struct or closure aggregate)");
+                  "receiver (a struct, a closure, or another unit's object)");
             }
             const auto& pointee_data = view.Unit().types.Get(pointee).data;
             if (const auto* c = std::get_if<mir::ClosureType>(&pointee_data)) {
@@ -410,9 +396,18 @@ auto ResolveFieldAccess(const ScopeView& view, const mir::FieldAccessExpr& m)
                       view.Unit().GetStruct(s->struct_id).fields.Get(id).name,
                   .through_receiver = true};
             }
+            if (const auto* e =
+                    std::get_if<mir::ExternalUnitObjectType>(&pointee_data)) {
+              return FieldAccess{
+                  .name = view.Unit()
+                              .external_unit_objects.Get(e->object)
+                              .fields.Get(id)
+                              .name,
+                  .through_receiver = true};
+            }
             throw InternalError(
-                "ResolveFieldAccess: bare-field-id access on a receiver "
-                "that is neither a struct nor a closure");
+                "ResolveFieldAccess: bare-field-id access on a receiver that "
+                "is not a member-bearing aggregate or object");
           }},
       m.field);
 }

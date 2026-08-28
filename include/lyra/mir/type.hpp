@@ -8,6 +8,7 @@
 
 #include "lyra/mir/class_id.hpp"
 #include "lyra/mir/closure_id.hpp"
+#include "lyra/mir/external_unit_object_id.hpp"
 #include "lyra/mir/struct_id.hpp"
 #include "lyra/mir/type_id.hpp"
 
@@ -292,13 +293,12 @@ struct ObjectType {
   auto operator==(const ObjectType&) const -> bool = default;
 };
 
-// The cross-unit twin of ObjectType: an instance of a class another unit
-// publishes, named by that unit and by the class's own name, both resolved at
-// link time -- so its layout is not visible here. Both names are carried
-// because both are statements the publishing unit makes about itself.
+// The cross-unit twin of ObjectType: an instance of the object another unit
+// publishes, named by this unit's record of what that unit promised about it.
+// Only the published prefix of its layout is visible here, which is what a
+// member reached through this type may name.
 struct ExternalUnitObjectType {
-  std::string unit_name;
-  std::string class_name;
+  ExternalUnitObjectId object;
 
   auto operator==(const ExternalUnitObjectType&) const -> bool = default;
 };

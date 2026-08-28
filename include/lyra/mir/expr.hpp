@@ -416,11 +416,10 @@ struct FieldTarget {
   auto operator==(const FieldTarget&) const -> bool = default;
 };
 
-// Identity of a class field on a class declared by another compilation unit.
-// The declaring class carries no unit-local id here, so the field is named by
-// (declaring unit, class canonical name, field name). A backend reads the
-// field name and resolves the access through the target-language member
-// lookup, exactly as it resolves any other cross-unit reference.
+// Identity of a property on an SV class another compilation unit declares. No
+// unit publishes an SV class, so nothing states where such a property sits: it
+// is named by (declaring unit, class canonical name, property name), matched at
+// link time.
 struct ExternalFieldTarget {
   std::string unit_name;
   std::string class_name;
@@ -438,16 +437,16 @@ struct ExternalFieldTarget {
 //   type may not be the field's declaring class (inheritance), so the target
 //   states both.
 //
-// - `ExternalFieldTarget` is used when the receiver's class lives in another
-//   compilation unit -- the declaring unit and class canonical name plus the
-//   field's source name, matched at link time.
+// - `ExternalFieldTarget` is used when the receiver is an instance of an SV
+//   class another compilation unit declares -- that unit and the class's
+//   canonical name plus the property's source name, matched at link time.
 //
-// - Bare `FieldId` is used when the receiver is a struct value or a closure.
-//   These aggregates carry their arena identity in their own type payload
-//   (`StructType.struct_id`, `ClosureType.closure_id`) and never participate
-//   in an inheritance chain, so the arena is uniquely determined by the
-//   receiver's type; stating it again would restate what the structural
-//   context already fixes.
+// - Bare `FieldId` is used when the receiver is a struct value, a closure, or
+//   the object of another unit. Each carries its arena identity in its own type
+//   payload (`StructType.struct_id`, `ClosureType.closure_id`,
+//   `ExternalUnitObjectType.object`) and never participates in an inheritance
+//   chain, so the arena is uniquely determined by the receiver's type; stating
+//   it again would restate what the structural context already fixes.
 using FieldRef = std::variant<FieldTarget, FieldId, ExternalFieldTarget>;
 
 // Field access through an explicit receiver expression. `receiver` evaluates to

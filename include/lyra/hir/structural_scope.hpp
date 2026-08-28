@@ -12,11 +12,13 @@
 #include "lyra/base/time.hpp"
 #include "lyra/hir/continuous_assign.hpp"
 #include "lyra/hir/expr.hpp"
+#include "lyra/hir/external_unit_object.hpp"
 #include "lyra/hir/foreign_export.hpp"
 #include "lyra/hir/pattern.hpp"
 #include "lyra/hir/port_direction.hpp"
 #include "lyra/hir/procedural_scope.hpp"
 #include "lyra/hir/process.hpp"
+#include "lyra/hir/published_member.hpp"
 #include "lyra/hir/structural_data_object.hpp"
 #include "lyra/hir/structural_hops.hpp"
 #include "lyra/hir/subroutine.hpp"
@@ -119,9 +121,9 @@ using RouteHead = std::variant<InUnitHead, RootHead, VisibleChildHead>;
 // land on, or a static-lifetime local of one of that scope's bodies, which a
 // named block puts on the hierarchical path (LRM 23.9) -- the blocks between
 // are part of where the storage sits, not steps of their own, so the leaf
-// identity fixes the whole procedural descent. A leaf in another unit is named
-// instead, against that unit's signature when it published the name and
-// against the runtime when it did not.
+// identity fixes the whole procedural descent. A leaf in another unit takes one
+// of the forms below instead: against that unit's signature when it published
+// the name, and against the runtime when it did not.
 struct StructuralDataObjectLeaf {
   StructuralDataObjectId object;
 
@@ -140,14 +142,12 @@ struct ProceduralStaticLeaf {
   auto operator==(const ProceduralStaticLeaf&) const -> bool = default;
 };
 
-// The route ends at a member another unit published: the declaring unit, the
-// class an instance of it is, and the member's own name. The referrer resolves
-// all three against the signature it consumed, where it compiles, so a renamed
-// member fails there rather than while the design elaborates.
+// The route ends at a member another unit published, at the position that
+// unit's signature gave it. The name was resolved where this unit compiles, so
+// a renamed member fails there rather than while the design elaborates.
 struct SignatureMemberLeaf {
-  std::string unit_name;
-  std::string class_name;
-  std::string member_name;
+  ExternalUnitObjectId object;
+  PublishedMemberId member;
 
   auto operator==(const SignatureMemberLeaf&) const -> bool = default;
 };
@@ -183,29 +183,22 @@ struct RoutedPathRecipe {
 
 // A routed reference that materializes a persistent endpoint slot, resolved
 // once in the resolve phase after the object tree is fully built.
-// `target_net_type` is the target's net type when the target is a net (LRM 6.7:
-// the net type fixes how drivers resolve and the undriven value), or empty when
-// the target is a variable. With the recipe's leaf type it determines the
-// producer's actual cell -- a resolved net of that net type, or a variable's
-// observable cell -- which the realized endpoint must match so a read reaches
-// the right access protocol. The endpoint is read / written / observed through
-// one stored direct reference.
+// The target's storage is stated by the unit declaring it, and with the
+// recipe's leaf type it fixes the producer's actual cell, which the realized
+// endpoint must match so a read reaches the right access protocol. The endpoint
+// is read / written / observed through one stored direct reference.
 struct RoutedRefDecl {
   RoutedPathRecipe recipe;
-  std::optional<NetType> target_net_type;
+  PublishedStorage target_storage;
 };
 
-// A child object built from another compilation unit. `unit_name` and
-// `class_name` are both cross-unit references, resolved by name at link time
-// and a distinct domain from the unit-local id kinds: the unit is what the
-// referrer declared a dependency on, and the class is the object that unit
-// states its instances are, read off the signature it published. `array_dims`
-// is empty for a scalar instance and holds one element count per dimension,
-// outermost first, for an instance array (`Child c[2][3]` is `{2, 3}`).
+// A child built from another compilation unit, standing on this unit's record
+// of the object that unit's instances are. `array_dims` is empty for a scalar
+// instance and holds one element count per dimension, outermost first, for an
+// instance array (`Child c[2][3]` is `{2, 3}`).
 struct InstanceMemberDecl {
   std::string instance_name;
-  std::string unit_name;
-  std::string class_name;
+  ExternalUnitObjectId object;
   std::vector<std::uint32_t> array_dims;
 };
 
@@ -271,6 +264,11 @@ struct StructuralScope {
   TimeResolution time_resolution;
   base::Arena<StructuralDataObjectDecl, StructuralDataObjectId>
       structural_data_objects;
+  // The data objects this unit published, in the order its signature states
+  // them -- which is where their storage sits, since a referrer counts a
+  // published member's position out of that same order. Empty for a scope no
+  // other unit names, which is every scope but the one a unit's instances are.
+  std::vector<StructuralDataObjectId> published_objects;
   base::Arena<Expr, ExprId> exprs;
   base::Arena<Pattern, PatternId> patterns;
   base::Registry<Process, ProcessId> processes;

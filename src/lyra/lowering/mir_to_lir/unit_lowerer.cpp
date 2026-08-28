@@ -52,6 +52,17 @@ auto UnitLowerer::Run() -> diag::Result<lir::CompilationUnit> {
   }
   class_identities_ = {mir_->classes.size(), std::move(classes)};
 
+  // What each unit this one references promised about its object, taken whole
+  // and before any body lowers: a member step names a position counted out of
+  // that whole list.
+  external_unit_object_identities_ =
+      base::Translation<mir::ExternalUnitObjectId, lir::ExternalUnitObjectId>{
+          mir_->external_unit_objects.size()};
+  for (const mir::ExternalUnitObject& object : mir_->external_unit_objects) {
+    external_unit_object_identities_.Append(
+        out_.external_unit_objects.Add(LowerExternalUnitObject(object)));
+  }
+
   std::vector<lir::FunctionId> closures;
   closures.reserve(mir_->closures.size());
   for (std::size_t i = 0; i < mir_->closures.size(); ++i) {
@@ -147,6 +158,20 @@ auto UnitLowerer::TakeClassIdentities(const mir::Class& cls)
   }
   identities.methods = {cls.callables.size(), std::move(methods)};
   return identities;
+}
+
+auto UnitLowerer::LowerExternalUnitObject(const mir::ExternalUnitObject& object)
+    -> lir::ExternalUnitObject {
+  lir::ExternalUnitObject out{
+      .unit_name = object.unit_name,
+      .class_name = object.class_name,
+      .members = {}};
+  out.members.reserve(object.fields.size());
+  for (const mir::FieldDecl& field : object.fields) {
+    out.members.push_back(
+        lir::Member{.name = field.name, .type = TranslateType(field.type)});
+  }
+  return out;
 }
 
 auto UnitLowerer::LowerClass(mir::ClassId owner, const mir::Class& cls)

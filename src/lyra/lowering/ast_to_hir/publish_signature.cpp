@@ -2,7 +2,6 @@
 #include <optional>
 #include <ranges>
 #include <string>
-#include <unordered_map>
 #include <utility>
 #include <vector>
 
@@ -80,31 +79,23 @@ auto UnitLowerer::PublishSignature() -> diag::Result<void> {
   // One member per internal declaration, however many ports reach it: two port
   // expressions may select disjoint parts of one name (LRM 23.2.2.2), and the
   // storage they share is one member.
-  std::unordered_map<const slang::ast::ValueSymbol*, hir::PublishedMemberId>
-      member_ids;
   const auto publish_member = [&](const slang::ast::ValueSymbol& internal)
       -> diag::Result<hir::PublishedMemberId> {
-    if (const auto it = member_ids.find(&internal); it != member_ids.end()) {
+    if (const auto it = published_member_ids_.find(&internal);
+        it != published_member_ids_.end()) {
       return it->second;
     }
     const auto span = SourceMapper().PointSpanOf(internal.location);
     auto interned = InternType(internal.getType(), span);
     if (!interned) return std::unexpected(std::move(interned.error()));
-    std::optional<hir::NetType> net_type;
-    if (const auto* net = internal.as_if<slang::ast::NetSymbol>()) {
-      net_type = TranslateNetType(net->netType);
-      if (!net_type.has_value()) {
-        return diag::Fail(
-            span, diag::DiagCode::kUnsupportedTypeKind,
-            "this net type is not yet supported");
-      }
-    }
+    auto storage = DeclarationStorage(internal, span);
+    if (!storage) return std::unexpected(std::move(storage.error()));
     const hir::PublishedMemberId id = instance_class.members.Add(
         hir::PublishedMember{
             .name = std::string{internal.name},
             .type = publish_type(*interned),
-            .net_type = net_type});
-    member_ids.emplace(&internal, id);
+            .storage = *std::move(storage)});
+    published_member_ids_.emplace(&internal, id);
     return id;
   };
 
@@ -113,18 +104,30 @@ auto UnitLowerer::PublishSignature() -> diag::Result<void> {
     const auto span = SourceMapper().PointSpanOf(port.location);
     auto interned = InternType(port.getType(), span);
     if (!interned) return std::unexpected(std::move(interned.error()));
+    const hir::PortDirection direction =
+        TranslateDirection(port.direction, port.internalSymbol);
     const auto* internal =
         port.internalSymbol == nullptr
             ? nullptr
             : port.internalSymbol->as_if<slang::ast::ValueSymbol>();
     std::optional<hir::PublishedMemberId> member;
     if (internal != nullptr) {
+      // A `ref` port's direction is what makes its declaration a reference
+      // (LRM 23.3.3.2), so the answer is taken here and read back wherever that
+      // declaration is asked what it holds.
+      if (direction == hir::PortDirection::kRef ||
+          direction == hir::PortDirection::kConstRef) {
+        ref_port_internals_.emplace(
+            internal, direction == hir::PortDirection::kConstRef
+                          ? hir::ReferenceBinding::kConstRef
+                          : hir::ReferenceBinding::kRef);
+      }
       auto id = publish_member(*internal);
       if (!id) return std::unexpected(std::move(id.error()));
       member = *id;
     }
     return hir::PortPart{hir::DataPortPart{
-        .direction = TranslateDirection(port.direction, port.internalSymbol),
+        .direction = direction,
         .type = publish_type(*interned),
         .member = member}};
   };
@@ -163,7 +166,30 @@ auto UnitLowerer::PublishSignature() -> diag::Result<void> {
             .name = std::string{member->name},
             .parts = {hir::PortPart{hir::InterfacePortPart{}}}});
   }
+
+  // One slot per member published, for the declarations to fill as this unit's
+  // own walk reaches them.
+  published_objects_.resize(instance_class.members.size());
   return {};
+}
+
+auto UnitLowerer::DeclarationStorage(
+    const slang::ast::ValueSymbol& value, diag::SourceSpan span) const
+    -> diag::Result<hir::PublishedStorage> {
+  if (const auto binding = ReferenceBindingOf(value)) {
+    return hir::PublishedStorage{hir::ReferenceStorage{.binding = *binding}};
+  }
+  const auto* net = value.as_if<slang::ast::NetSymbol>();
+  if (net == nullptr) {
+    return hir::PublishedStorage{hir::VariableStorage{}};
+  }
+  const auto net_type = TranslateNetType(net->netType);
+  if (!net_type.has_value()) {
+    return diag::Fail(
+        span, diag::DiagCode::kUnsupportedTypeKind,
+        "this net type is not yet supported");
+  }
+  return hir::PublishedStorage{hir::NetStorage{.net_type = *net_type}};
 }
 
 auto UnitLowerer::ImportSignatureType(
@@ -172,6 +198,19 @@ auto UnitLowerer::ImportSignatureType(
       signature.types, std::nullopt, unit_.types,
       signature_type_memos_[&signature]);
   return importer.Import(published);
+}
+
+auto UnitLowerer::ExternalUnitObjectOf(const std::string& unit_name)
+    -> hir::ExternalUnitObjectId {
+  if (const auto it = external_unit_objects_.find(unit_name);
+      it != external_unit_objects_.end()) {
+    return it->second;
+  }
+  const hir::ExternalUnitObjectId object_id = unit_.external_unit_objects.Add(
+      hir::ImportExternalUnitObject(
+          Signatures().Instantiated(unit_name), unit_.types));
+  external_unit_objects_.emplace(unit_name, object_id);
+  return object_id;
 }
 
 }  // namespace lyra::lowering::ast_to_hir

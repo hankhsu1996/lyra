@@ -2,11 +2,12 @@
 
 #include <format>
 #include <optional>
+#include <span>
+#include <string_view>
 #include <variant>
 
 #include "lyra/base/internal_error.hpp"
 #include "lyra/base/overloaded.hpp"
-#include "lyra/lir/class_id.hpp"
 #include "lyra/lir/compilation_unit.hpp"
 #include "lyra/lir/function.hpp"
 #include "lyra/lir/type.hpp"
@@ -17,10 +18,33 @@ namespace lyra::lir {
 
 namespace {
 
-auto AsClassId(const CompilationUnit& unit, TypeId type)
-    -> std::optional<ClassId> {
-  const auto* object = std::get_if<ObjectType>(&unit.types.Get(type).data);
-  return object != nullptr ? std::optional{object->class_id} : std::nullopt;
+// The members of whatever object the chain has reached, and what to call it in
+// a message. A member step names a position the same way whether the object is
+// a class this unit compiles or one another unit published.
+struct ObjectMembers {
+  std::string_view name;
+  std::span<const Member> members;
+};
+
+auto MembersOf(const CompilationUnit& unit, TypeId type)
+    -> std::optional<ObjectMembers> {
+  return std::visit(
+      Overloaded{
+          [&](const ObjectType& object) -> std::optional<ObjectMembers> {
+            const Class& cls = unit.classes.Get(object.class_id);
+            return ObjectMembers{.name = cls.name, .members = cls.members};
+          },
+          [&](const ExternalUnitObjectType& external)
+              -> std::optional<ObjectMembers> {
+            const ExternalUnitObject& object =
+                unit.external_unit_objects.Get(external.object);
+            return ObjectMembers{
+                .name = object.class_name, .members = object.members};
+          },
+          [](const auto&) -> std::optional<ObjectMembers> {
+            return std::nullopt;
+          }},
+      unit.types.Get(type).data);
 }
 
 }  // namespace
@@ -59,19 +83,19 @@ auto PlaceType(
               current = *target;
             },
             [&](const MemberProjection& m) {
-              const std::optional<ClassId> class_id = AsClassId(unit, current);
-              if (!class_id) {
+              const std::optional<ObjectMembers> object =
+                  MembersOf(unit, current);
+              if (!object) {
                 throw InternalError(
                     "lir: member projection on a non-object base");
               }
-              const Class& cls = unit.classes.Get(*class_id);
-              if (m.member.value >= cls.members.size()) {
+              if (m.member.value >= object->members.size()) {
                 throw InternalError(
                     std::format(
                         "lir: member index {} out of range on class '{}'",
-                        m.member.value, cls.name));
+                        m.member.value, object->name));
               }
-              current = cls.members[m.member.value].type;
+              current = object->members[m.member.value].type;
             }},
         step);
   }

@@ -35,7 +35,6 @@
 #include "lyra/hir/value_ref.hpp"
 #include "lyra/lowering/ast_to_hir/expression/references.hpp"
 #include "lyra/lowering/ast_to_hir/instance_array_shape.hpp"
-#include "lyra/lowering/ast_to_hir/net_type.hpp"
 #include "lyra/lowering/ast_to_hir/sensitivity.hpp"
 #include "lyra/lowering/ast_to_hir/specialization_name.hpp"
 #include "lyra/lowering/ast_to_hir/structural_scope_lowerer.hpp"
@@ -82,6 +81,15 @@ auto UnitLowerer::LowerBodies(hir::ConsumedSignatures signatures)
     return std::unexpected(std::move(root_scope_or.error()));
   }
   unit_.root_scope = *std::move(root_scope_or);
+  unit_.root_scope.published_objects.reserve(published_objects_.size());
+  for (const auto& object : published_objects_) {
+    if (!object.has_value()) {
+      throw InternalError(
+          "UnitLowerer::LowerBodies: a member this unit published stands on a "
+          "declaration of its own, so the declaration walk reached it");
+    }
+    unit_.root_scope.published_objects.push_back(*object);
+  }
   return std::move(unit_);
 }
 
@@ -283,6 +291,12 @@ void UnitLowerer::MapStructuralDataObjectBinding(
         "UnitLowerer::MapStructuralDataObjectBinding: structural data object "
         "already mapped");
   }
+  // A declaration this unit published takes the position its signature gave it,
+  // so the object the unit builds and the object it promised are one shape.
+  if (const auto it = published_member_ids_.find(&var);
+      it != published_member_ids_.end()) {
+    published_objects_[it->second.value] = local;
+  }
 }
 
 auto UnitLowerer::LookupStructuralDataObjectBinding(
@@ -420,27 +434,6 @@ auto UnitLowerer::LookupProceduralStatic(const slang::ast::Symbol& var) const
 
 namespace {
 
-// The HIR net type of a cross-unit reference's target when the target is a net
-// (LRM 6.7), or empty when it is a variable. The net type, not a plain net
-// flag, is what determines the target's resolved cell -- its resolver and
-// undriven value. Only `wire` / `tri` are supported; other net types are
-// rejected at the net's own declaration, so encountering one here is a lowering
-// invariant violation, not a user-facing case.
-auto TargetNetType(const slang::ast::ValueSymbol& target)
-    -> std::optional<hir::NetType> {
-  if (target.kind != slang::ast::SymbolKind::Net) {
-    return std::nullopt;
-  }
-  const auto net_type =
-      TranslateNetType(target.as<slang::ast::NetSymbol>().netType);
-  if (!net_type.has_value()) {
-    throw InternalError(
-        "TargetNetType: reference to a net of an unsupported net type; the "
-        "net's own declaration validates the supported net types");
-  }
-  return net_type;
-}
-
 // The compilation unit a value is declared directly in when that unit is a
 // namespace -- a package (LRM 26.2) or the anonymous `$unit` scope (LRM
 // 3.12.1) -- or nullptr when the value belongs to an instantiated scope and is
@@ -522,19 +515,20 @@ auto UnitLowerer::PublishedRouteTarget(
   if (signature == nullptr || !signature->instance_class.has_value()) {
     return std::nullopt;
   }
-  const hir::InstanceClassSignature& published = *signature->instance_class;
-  const auto member_id = published.Find(value.name);
+  const auto member_id = signature->instance_class->Find(value.name);
   if (!member_id.has_value()) return std::nullopt;
 
-  const hir::PublishedMember& member = published.members.Get(*member_id);
+  // The name resolved against the signature; from here the route carries the
+  // position, and the member's type is already in this unit's pool because the
+  // record brought it there.
+  const hir::ExternalUnitObjectId object =
+      ExternalUnitObjectOf(signature->unit_name);
+  const hir::PublishedMember& member =
+      unit_.external_unit_objects.Get(object).members.Get(*member_id);
   return RouteTarget{
-      .leaf =
-          hir::SignatureMemberLeaf{
-              .unit_name = signature->unit_name,
-              .class_name = published.class_name,
-              .member_name = member.name},
-      .type = ImportSignatureType(*signature, member.type),
-      .net_type = member.net_type};
+      .leaf = hir::SignatureMemberLeaf{.object = object, .member = *member_id},
+      .type = member.type,
+      .storage = member.storage};
 }
 
 auto UnitLowerer::ResolveRouteTarget(
@@ -551,6 +545,10 @@ auto UnitLowerer::ResolveRouteTarget(
       InternType(value.getType(), SourceMapper().PointSpanOf(value.location));
   if (!type) return std::unexpected(std::move(type.error()));
 
+  auto storage =
+      DeclarationStorage(value, SourceMapper().PointSpanOf(value.location));
+  if (!storage) return std::unexpected(std::move(storage.error()));
+
   // This unit's own identity for the target when it declares it -- and for a
   // static a named block puts on the hierarchical path (LRM 23.9), that
   // identity also says the blocks between the static and its structural scope
@@ -559,7 +557,7 @@ auto UnitLowerer::ResolveRouteTarget(
     return RouteTarget{
         .leaf = hir::StructuralDataObjectLeaf{.object = data_object->var_id},
         .type = *type,
-        .net_type = TargetNetType(value)};
+        .storage = *std::move(storage)};
   }
   if (const auto procedural_static = LookupProceduralStatic(value)) {
     return RouteTarget{
@@ -567,7 +565,7 @@ auto UnitLowerer::ResolveRouteTarget(
             hir::ProceduralStaticLeaf{
                 .body = procedural_static->body, .var = procedural_static->var},
         .type = *type,
-        .net_type = TargetNetType(value)};
+        .storage = *std::move(storage)};
   }
   // Nothing was published to compile against, so the name is all that crosses
   // and the runtime answers it during elaboration (LRM 23.6). What storage it
@@ -575,7 +573,7 @@ auto UnitLowerer::ResolveRouteTarget(
   return RouteTarget{
       .leaf = hir::OpaqueLeaf{.name = std::string{value.name}},
       .type = *type,
-      .net_type = TargetNetType(value)};
+      .storage = *std::move(storage)};
 }
 
 auto UnitLowerer::TranslateReferenceRoute(
@@ -612,7 +610,7 @@ auto UnitLowerer::TranslateReferenceRoute(
                     .steps = std::move(steps),
                     .leaf = std::move(target->leaf),
                     .type = target->type},
-            .target_net_type = target->net_type});
+            .target_storage = target->storage});
     return hir::ReferenceRoute{hir::RoutedRef{.id = id}};
   };
 

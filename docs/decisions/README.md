@@ -238,6 +238,11 @@ the detail lives in the entry itself.
   be complete; a signature member is named where the referrer compiles, a name past a signature
   resolves at elaboration; the signature is an artifact separate from code, and that split decides
   what a change recompiles.
+- [published-member-placement](published-member-placement.md) -- a published member's position is
+  its position in the signature, computed by producer and consumer and carried by neither; the
+  referrer records the object it compiled against in its own IR, in a registry separate from the
+  classes it compiles, so no pass below the one that consumes a signature reads one. Carrying the
+  position on the reference, handing signatures to a lower pass, and a by-name lookup are rejected.
 - [parameter-code-shape-over-approximation](parameter-code-shape-over-approximation.md) -- every
   parameter is treated as code-shape-affecting for now (conservative over-approximation);
   classification and constructor-input threading are deferred.
