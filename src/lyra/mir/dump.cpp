@@ -447,24 +447,6 @@ class MirDumper {
         t.data);
   }
 
-  static auto FormatTimeScale(TimeScale s) -> std::string_view {
-    switch (s) {
-      case TimeScale::kFs:
-        return "fs";
-      case TimeScale::kPs:
-        return "ps";
-      case TimeScale::kNs:
-        return "ns";
-      case TimeScale::kUs:
-        return "us";
-      case TimeScale::kMs:
-        return "ms";
-      case TimeScale::kS:
-        return "s";
-    }
-    throw InternalError("MirDumper::FormatTimeScale: unknown TimeScale");
-  }
-
   static auto FormatUnaryOp(UnaryOp op) -> std::string {
     switch (op) {
       case UnaryOp::kPlus:
@@ -686,11 +668,6 @@ class MirDumper {
             [](const StringLiteral& lit) -> std::string {
               return std::format("StringLiteral(\"{}\")", lit.value);
             },
-            [](const TimeLiteral& lit) -> std::string {
-              return std::format(
-                  "TimeLiteral(value={}, scale={})", lit.value,
-                  FormatTimeScale(lit.scale));
-            },
             [](const RealLiteral& lit) -> std::string {
               return std::format("RealLiteral({})", lit.value);
             },
@@ -858,8 +835,8 @@ class MirDumper {
             },
             [](const ReplicationExpr& r) -> std::string {
               return std::format(
-                  "ReplicationExpr count=Expr[{}] concat=Expr[{}]",
-                  r.count.value, r.concat.value);
+                  "ReplicationExpr count={} concat=Expr[{}]", r.count,
+                  r.concat.value);
             },
             [](const ArrayLiteralExpr& a) -> std::string {
               std::string elements;

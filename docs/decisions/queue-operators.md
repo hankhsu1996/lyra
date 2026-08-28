@@ -6,7 +6,10 @@
 
 ## Status
 
-Accepted
+Accepted; decision 3's packed-and-string half is superseded by
+[concatenation-realization](concatenation-realization.md), which finds that one node realized per
+result type is a decision no consumer should be making. What decision 3 settles about a queue
+concatenation stands.
 
 ## Context
 

@@ -13,6 +13,7 @@
 #include "lyra/lowering/hir_to_mir/cast_lowering.hpp"
 #include "lyra/lowering/hir_to_mir/default_value.hpp"
 #include "lyra/lowering/hir_to_mir/flat_packed_type.hpp"
+#include "lyra/lowering/hir_to_mir/packed_concat.hpp"
 #include "lyra/lowering/hir_to_mir/process_lowerer.hpp"
 #include "lyra/lowering/hir_to_mir/structural_scope_lowerer.hpp"
 #include "lyra/lowering/hir_to_mir/unit_lowerer.hpp"
@@ -26,10 +27,9 @@ namespace lyra::lowering::hir_to_mir {
 
 namespace {
 
-// LRM 10.9.1: the replication count of an assignment pattern is a constant
-// expression; slang has already evaluated it to an integer literal. The array
-// path carries this count into the container's repeat construction, and the
-// packed path folds it into the flat replication width.
+// LRM 10.9.1 and 11.4.12.1 both make a replication count a constant
+// expression, so slang has already evaluated it to an integer literal and the
+// count is a number rather than an operand to evaluate at run time.
 auto ExtractHirLiteralUint64(const hir::Expr& expr) -> std::uint64_t {
   const auto* primary = std::get_if<hir::PrimaryExpr>(&expr.data);
   if (primary == nullptr) {
@@ -63,23 +63,44 @@ auto LowerHirConcatExpr(
     if (!lowered) return std::unexpected(std::move(lowered.error()));
     operand_ids.push_back(block.exprs.Add(*std::move(lowered)));
   }
-  // An unpacked-queue concatenation is a runtime builder call: it carries a
-  // default value of its declared element type (an empty `{}` part list cannot
-  // supply one) and its LRM 7.10.5 bound, built here as ordinary arguments
-  // ahead of the parts. A part whose value is itself an array contributes its
-  // elements in order (LRM 10.10), which is spread, and is marked so here --
-  // the same array value would be one element if the queue's element type were
-  // an array, so the role is the program's fact, not the operand type's. A
-  // packed or string concatenation joins its operands directly and stays a
-  // value-build primitive.
-  const auto& result_ty = lowerer.Owner().Unit().types.Get(result_type);
+  // What the operator joins -- bits, characters, elements -- differs by operand
+  // family, so which operation this is settles here, where the family is known,
+  // rather than at each consumer.
+  mir::CompilationUnit& unit = lowerer.Owner().Unit();
+  const auto& result_ty = unit.types.Get(result_type);
+  // Characters join two at a time, because no entry takes an operand list of
+  // arbitrary length; a source-level join of one is already the string it
+  // names.
+  if (result_ty.Kind() == mir::TypeKind::kString) {
+    if (operand_ids.size() == 1) {
+      return block.exprs.Get(operand_ids.front());
+    }
+    const auto join = [&](mir::ExprId lhs, mir::ExprId rhs) {
+      return mir::Expr{
+          .data =
+              mir::CallExpr{
+                  .callee = mir::Direct{.target = support::BuiltinFn::kConcat},
+                  .arguments = {lhs, rhs}},
+          .type = result_type};
+    };
+    mir::ExprId lhs = operand_ids.front();
+    for (std::size_t i = 1; i + 1 < operand_ids.size(); ++i) {
+      lhs = block.exprs.Add(join(lhs, operand_ids[i]));
+    }
+    return join(lhs, operand_ids.back());
+  }
+  // An unpacked queue needs more than its parts: a default value of its
+  // declared element type (an empty `{}` part list cannot supply one) and its
+  // LRM 7.10.5 bound, built here as ordinary arguments ahead of them. A part
+  // whose value is itself an array contributes its elements in order (LRM
+  // 10.10), which is spread and is marked so -- the same array value would be
+  // one element if the queue's element type were an array, so the role is the
+  // program's fact, not the operand type's.
   if (const auto* q = std::get_if<mir::QueueType>(&result_ty.data)) {
     const mir::TypeId element_type = q->element_type;
     const std::int64_t bound = q->max_bound.has_value()
                                    ? static_cast<std::int64_t>(*q->max_bound)
                                    : -1;
-    const mir::TypeId machine_int =
-        lowerer.Owner().Unit().builtins.machine_int64;
     std::vector<mir::ExprId> args;
     args.reserve(operand_ids.size() + 2);
     args.push_back(block.exprs.Add(
@@ -87,10 +108,10 @@ auto LowerHirConcatExpr(
     args.push_back(block.exprs.Add(
         mir::Expr{
             .data = mir::MachineIntLiteral{.value = bound},
-            .type = machine_int}));
+            .type = unit.builtins.machine_int64}));
     for (const mir::ExprId part : operand_ids) {
       const mir::TypeId part_type = block.exprs.Get(part).type;
-      if (!IsArrayContainerType(lowerer.Owner().Unit().types.Get(part_type))) {
+      if (!IsArrayContainerType(unit.types.Get(part_type))) {
         args.push_back(part);
         continue;
       }
@@ -111,9 +132,7 @@ auto LowerHirConcatExpr(
                 .arguments = std::move(args)},
         .type = result_type};
   }
-  return mir::Expr{
-      .data = mir::ConcatExpr{.operands = std::move(operand_ids)},
-      .type = result_type};
+  return BuildPackedConcat(unit, block, std::move(operand_ids), result_type);
 }
 
 template <ExprLowerer Lowerer>
@@ -121,14 +140,39 @@ auto LowerHirReplicationExpr(
     Lowerer& lowerer, WalkFrame frame, const hir::ReplicationExpr& r,
     mir::TypeId result_type) -> diag::Result<mir::Expr> {
   auto& block = *frame.current_block;
-  auto count_or = lowerer.LowerExpr(lowerer.HirExprs().Get(r.count), frame);
-  if (!count_or) return std::unexpected(std::move(count_or.error()));
-  const mir::ExprId count_id = block.exprs.Add(*std::move(count_or));
   auto concat_or = lowerer.LowerExpr(lowerer.HirExprs().Get(r.concat), frame);
   if (!concat_or) return std::unexpected(std::move(concat_or.error()));
   const mir::ExprId concat_id = block.exprs.Add(*std::move(concat_or));
+  mir::CompilationUnit& unit = lowerer.Owner().Unit();
+  // Repeating characters is the string entry's operation, the same split a
+  // join makes. Its multiplier is an ordinary integral expression the run
+  // evaluates, because LRM 11.4.12.2 allows a non-constant one where 11.4.12.1
+  // requires a constant; reading that value as a machine count is a value
+  // reshape, so it is stated rather than left for a consumer to insert.
+  if (unit.types.Get(result_type).Kind() == mir::TypeKind::kString) {
+    auto count_or = lowerer.LowerExpr(lowerer.HirExprs().Get(r.count), frame);
+    if (!count_or) return std::unexpected(std::move(count_or.error()));
+    const mir::ExprId count_id = block.exprs.Add(*std::move(count_or));
+    const mir::ExprId machine_count_id = block.exprs.Add(
+        mir::Expr{
+            .data =
+                mir::CallExpr{
+                    .callee =
+                        mir::Direct{.target = support::BuiltinFn::kToInt64},
+                    .arguments = {count_id}},
+            .type = unit.builtins.machine_int64});
+    return mir::Expr{
+        .data =
+            mir::CallExpr{
+                .callee = mir::Direct{.target = support::BuiltinFn::kReplicate},
+                .arguments = {concat_id, machine_count_id}},
+        .type = result_type};
+  }
   return mir::Expr{
-      .data = mir::ReplicationExpr{.count = count_id, .concat = concat_id},
+      .data =
+          mir::ReplicationExpr{
+              .count = ExtractHirLiteralUint64(lowerer.HirExprs().Get(r.count)),
+              .concat = concat_id},
       .type = result_type};
 }
 
@@ -136,11 +180,11 @@ auto LowerHirReplicationExpr(
 // runtime shape. Slang has already resolved any named / type-key / `default`
 // keys into a member-ordered positional element list (LRM 10.9.2), so the
 // shapes differ only in how they package those positional elements: a packed
-// target folds into a MIR `ConcatExpr` because its members share one bit plane,
-// an array container (unpacked, dynamic, queue) lands as `ArrayLiteralExpr`
-// slots wrapped by a construction call, and an unpacked struct -- whose members
-// are independent value slots, not a shared bit plane -- folds into a
-// positional `TupleExpr`.
+// target joins them into one bit plane, because its members share one; an
+// array container (unpacked, dynamic, queue) lands as `ArrayLiteralExpr` slots
+// wrapped by a construction call; and an unpacked struct -- whose members are
+// independent value slots, not a shared bit plane -- folds into a positional
+// `TupleExpr`.
 template <ExprLowerer Lowerer>
 auto LowerHirAssignmentPatternExpr(
     Lowerer& lowerer, WalkFrame frame, const hir::AssignmentPatternExpr& a,
@@ -153,7 +197,8 @@ auto LowerHirAssignmentPatternExpr(
     if (!lowered) return std::unexpected(std::move(lowered.error()));
     element_ids.push_back(block.exprs.Add(*std::move(lowered)));
   }
-  const auto& result_ty = lowerer.Owner().Unit().types.Get(result_type);
+  mir::CompilationUnit& unit = lowerer.Owner().Unit();
+  const auto& result_ty = unit.types.Get(result_type);
   if (IsArrayContainerType(result_ty)) {
     return BuildArrayConstructionCall(
         lowerer.Owner(), frame, result_type, std::move(element_ids));
@@ -163,13 +208,10 @@ auto LowerHirAssignmentPatternExpr(
         .data = mir::TupleExpr{.components = std::move(element_ids)},
         .type = result_type};
   }
-  mir::CompilationUnit& unit = lowerer.Owner().Unit();
   const auto& result_pa = result_ty.AsIntegralPacked();
-  const mir::ExprId concat_id = block.exprs.Add(
-      mir::Expr{
-          .data = mir::ConcatExpr{.operands = std::move(element_ids)},
-          .type =
-              InternFlatPacked(unit, result_pa.BitWidth(), result_pa.atom)});
+  const mir::ExprId concat_id = block.exprs.Add(BuildPackedConcat(
+      unit, block, std::move(element_ids),
+      InternFlatPacked(unit, result_pa.BitWidth(), result_pa.atom)));
   return BuildValueConversion(unit, block, concat_id, result_type);
 }
 
@@ -186,12 +228,13 @@ auto LowerHirAssignmentPatternReplicationExpr(
     if (!lowered) return std::unexpected(std::move(lowered.error()));
     item_ids.push_back(block.exprs.Add(*std::move(lowered)));
   }
-  const auto& result_ty = lowerer.Owner().Unit().types.Get(result_type);
+  mir::CompilationUnit& unit = lowerer.Owner().Unit();
+  const auto& result_ty = unit.types.Get(result_type);
+  const std::uint64_t count =
+      ExtractHirLiteralUint64(lowerer.HirExprs().Get(a.count));
   if (IsArrayContainerType(result_ty)) {
-    const std::uint64_t count =
-        ExtractHirLiteralUint64(lowerer.HirExprs().Get(a.count));
     const mir::TypeId element_type =
-        ArrayContainerElementType(lowerer.Owner().Unit(), result_type);
+        ArrayContainerElementType(unit, result_type);
     const mir::ExprId element_default = block.exprs.Add(
         BuildDefaultValueExpr(lowerer.Owner(), frame, element_type));
     return BuildArrayRepeatCall(
@@ -199,8 +242,6 @@ auto LowerHirAssignmentPatternReplicationExpr(
         std::move(item_ids), count);
   }
   if (std::holds_alternative<mir::TupleType>(result_ty.data)) {
-    const std::uint64_t count =
-        ExtractHirLiteralUint64(lowerer.HirExprs().Get(a.count));
     std::vector<mir::ExprId> components;
     components.reserve(item_ids.size() * count);
     for (std::uint64_t i = 0; i < count; ++i) {
@@ -210,24 +251,16 @@ auto LowerHirAssignmentPatternReplicationExpr(
         .data = mir::TupleExpr{.components = std::move(components)},
         .type = result_type};
   }
-  mir::CompilationUnit& unit = lowerer.Owner().Unit();
   const auto& result_pa = result_ty.AsIntegralPacked();
-  const std::uint64_t count =
-      ExtractHirLiteralUint64(lowerer.HirExprs().Get(a.count));
   const std::uint64_t inner_width =
       count == 0 ? 0 : result_pa.BitWidth() / count;
-  const mir::ExprId inner_concat_id = block.exprs.Add(
-      mir::Expr{
-          .data = mir::ConcatExpr{.operands = std::move(item_ids)},
-          .type = InternFlatPacked(unit, inner_width, result_pa.atom)});
-  auto count_or = lowerer.LowerExpr(lowerer.HirExprs().Get(a.count), frame);
-  if (!count_or) return std::unexpected(std::move(count_or.error()));
-  const mir::ExprId count_id = block.exprs.Add(*std::move(count_or));
+  const mir::ExprId inner_concat_id = block.exprs.Add(BuildPackedConcat(
+      unit, block, std::move(item_ids),
+      InternFlatPacked(unit, inner_width, result_pa.atom)));
   const mir::ExprId repl_id = block.exprs.Add(
       mir::Expr{
           .data =
-              mir::ReplicationExpr{
-                  .count = count_id, .concat = inner_concat_id},
+              mir::ReplicationExpr{.count = count, .concat = inner_concat_id},
           .type =
               InternFlatPacked(unit, result_pa.BitWidth(), result_pa.atom)});
   return BuildValueConversion(unit, block, repl_id, result_type);

@@ -27,19 +27,12 @@
 
 namespace lyra::mir {
 
-enum class TimeScale : std::uint8_t { kFs, kPs, kNs, kUs, kMs, kS };
-
 struct IntegerLiteral {
   IntegralConstant value;
 };
 
 struct StringLiteral {
   std::string value;
-};
-
-struct TimeLiteral {
-  double value;
-  TimeScale scale;
 };
 
 struct RealLiteral {
@@ -469,20 +462,26 @@ struct FieldAccessExpr {
   FieldRef field;
 };
 
-// LRM 11.4.12 concatenation of packed or string operands, joined directly into
-// the result value (the result shape is fully carried by `Expr::type`). An
-// unpacked-queue concatenation is not this primitive: it carries an element
-// shape and spread semantics and is a runtime builder call against the queue
-// API, so it lowers to a `CallExpr` whose default-element and bound arguments
-// come from lowering, not a payload on this node.
+// LRM 11.4.12 join of two or more packed operands into one bit plane, most
+// significant first (the result shape is fully carried by `Expr::type`). A
+// join over any other operand family is a different operation and is a
+// `CallExpr` against the entry that performs it: a string join composes
+// contents, and an unpacked-queue join carries an element shape and spread
+// semantics. So this primitive means one thing, and no consumer picks its
+// realization by reading the result type. A source-level join of one operand
+// is that operand at the join's own unsigned type, which is a conversion, so
+// it never reaches here either.
 struct ConcatExpr {
   std::vector<ExprId> operands;
 };
 
-// LRM 11.4.12 / 11.4.12.2: `{multiplier{...}}`. `concat` always points to a
-// ConcatExpr; mirrors the hir::ReplicationExpr shape.
+// LRM 11.4.12.1 `{multiplier{...}}` over packed operands: `count` copies of
+// the value `concat` reaches, laid end to end. The multiplier is a constant
+// expression the standard requires to be non-negative and free of x and z, so
+// it is a count here rather than an operand to evaluate. The string form is a
+// `CallExpr`, for the reason ConcatExpr states.
 struct ReplicationExpr {
-  ExprId count;
+  std::uint64_t count;
   ExprId concat;
 };
 
@@ -742,10 +741,10 @@ struct ValueProjectionExpr {
 };
 
 using ExprData = std::variant<
-    IntegerLiteral, StringLiteral, TimeLiteral, RealLiteral, NullLiteral,
-    MachineIntLiteral, LocalRef, UnaryExpr, BinaryExpr, BoolCastExpr,
-    ConditionalExpr, MergingConditionalExpr, AssignExpr, IncDecExpr, CallExpr,
-    DerefExpr, AddressOfExpr, MachineArrayDataExpr, MoveExpr, PointerCastExpr,
+    IntegerLiteral, StringLiteral, RealLiteral, NullLiteral, MachineIntLiteral,
+    LocalRef, UnaryExpr, BinaryExpr, BoolCastExpr, ConditionalExpr,
+    MergingConditionalExpr, AssignExpr, IncDecExpr, CallExpr, DerefExpr,
+    AddressOfExpr, MachineArrayDataExpr, MoveExpr, PointerCastExpr,
     FunctionCastExpr, IntCastExpr, FieldAccessExpr, StructConstructExpr,
     ClosureExpr, ConcatExpr, ReplicationExpr, ArrayLiteralExpr, TupleExpr,
     VectorExpr, AwaitExpr, TupleGetExpr, VectorGetExpr, UnionExpr, UnionGetExpr,
@@ -785,9 +784,6 @@ struct Expr {
 // passes through such a call, and a consumer naming the call as a place names
 // the place that argument names.
 [[nodiscard]] auto IsPassThroughCallee(const Callee& callee) -> bool;
-
-// Whether the call's `args[0]` is the container being accessed (indexed or
-// sliced). LHS-chain walkers use this to reach the root primary.
 
 // `lyra::runtime::current_runtime()` -- reaches the attached Runtime's
 // capability view through a thread-local pointer the Runtime publishes for

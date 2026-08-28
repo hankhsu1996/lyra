@@ -388,6 +388,10 @@ auto BuiltinFnCppName(support::BuiltinFn id) -> std::string_view {
       return "MakeQueueConcat";
     case support::BuiltinFn::kSpread:
       return "QSpread";
+    case support::BuiltinFn::kConcat:
+      return "Concat";
+    case support::BuiltinFn::kReplicate:
+      return "Replicate";
     case support::BuiltinFn::kPow:
       return "Pow";
     case support::BuiltinFn::kShiftLeft:
@@ -479,6 +483,8 @@ auto BuiltinFnCppNamespace(support::BuiltinFn id) -> std::string_view {
     case support::BuiltinFn::kRequire:
     case support::BuiltinFn::kMakeQueueConcat:
     case support::BuiltinFn::kSpread:
+    case support::BuiltinFn::kConcat:
+    case support::BuiltinFn::kReplicate:
       return "lyra::value";
     case support::BuiltinFn::kCurrentRuntime:
     case support::BuiltinFn::kRegisterInitial:

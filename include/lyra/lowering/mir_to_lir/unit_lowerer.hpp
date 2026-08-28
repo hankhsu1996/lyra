@@ -1,9 +1,12 @@
 #pragma once
 
+#include <cstdint>
+#include <map>
 #include <optional>
 #include <string>
 #include <string_view>
 #include <unordered_map>
+#include <utility>
 
 #include "lyra/base/translation.hpp"
 #include "lyra/diag/diagnostic.hpp"
@@ -46,12 +49,16 @@ class UnitLowerer {
     return out_.types;
   }
 
-  // LIR types the lowering needs that no MIR type maps to: the reference an
-  // address-of yields, and the machine boolean a conditional branch tests. Each
-  // is minted once and reused.
+  // LIR types the lowering needs that no MIR type maps to, each minted once and
+  // reused.
   auto BorrowedPointerTo(lir::TypeId pointee) -> lir::TypeId;
   auto MachineBoolType() -> lir::TypeId;
   auto VoidType() -> lir::TypeId;
+  // A value composed from bits rather than declared: `width` of them in one
+  // dimension, unsigned, and holding x and z when any of the bits it was
+  // composed from can. Lowering a join reaches one at every step but the last,
+  // and no source declaration names it.
+  auto FlatPackedType(std::uint64_t width, bool four_state) -> lir::TypeId;
 
   // The LIR function a class's callable lowers to. Throws if `callable` has no
   // body in `owner` -- a DPI-C import is reached as a foreign symbol and a pure
@@ -113,6 +120,7 @@ class UnitLowerer {
   base::Translation<mir::ClosureId, lir::FunctionId> closure_identities_;
   std::optional<lir::TypeId> machine_bool_type_;
   std::optional<lir::TypeId> void_type_;
+  std::map<std::pair<std::uint64_t, bool>, lir::TypeId> flat_packed_memo_;
   // Set the first time a MIR type with no LIR mirror is reached; surfaced as
   // the unit's failure at `Run`, so translation stays non-throwing and
   // total-shaped while an unmirrored type is still a clean diagnostic, not a

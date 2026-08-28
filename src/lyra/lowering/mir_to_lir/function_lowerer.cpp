@@ -541,6 +541,12 @@ auto FunctionLowerer::Store(lir::Place place, lir::Operand value)
       lir::StoreInstr{.place = std::move(place), .value = std::move(value)});
 }
 
+auto FunctionLowerer::MachineCount(std::uint64_t count) -> lir::Operand {
+  return lir::IntConst{
+      .value = lir::IntegralConstant{.value_words = {count}, .state_words = {}},
+      .type = unit_->TranslateType(unit_->Mir().builtins.machine_int64)};
+}
+
 auto FunctionLowerer::AllocateActivationValue(lir::TypeId value_type)
     -> lir::Operand {
   return Emit(
@@ -970,6 +976,32 @@ auto FunctionLowerer::LowerPlace(const mir::Block& block, mir::ExprId id)
             return lir::Place{
                 .base = *std::move(pointer),
                 .chain = {lir::Projection{lir::DerefProjection{}}}};
+          },
+          // Each of the following does name storage, reached by a name rather
+          // than through a receiver. What it lacks is a base to project from: a
+          // LIR operand names a code symbol and has no data equivalent, so the
+          // refusal says the storage is out of reach rather than that there is
+          // none.
+          [](const mir::StaticConstantRef&) -> diag::Result<lir::Place> {
+            return Unsupported(
+                "mir_to_lir: a class's static constant is not yet reachable on "
+                "this backend");
+          },
+          [](const mir::StaticPropertyRef&) -> diag::Result<lir::Place> {
+            return Unsupported(
+                "mir_to_lir: a class's static property is not yet reachable on "
+                "this backend");
+          },
+          [](const mir::ExternalUnitVariableRef&) -> diag::Result<lir::Place> {
+            return Unsupported(
+                "mir_to_lir: a variable of another compilation unit is not yet "
+                "reachable on this backend");
+          },
+          [](const mir::ExternalStaticPropertyRef&)
+              -> diag::Result<lir::Place> {
+            return Unsupported(
+                "mir_to_lir: a static property of a class another compilation "
+                "unit declares is not yet reachable on this backend");
           },
           [](const auto&) -> diag::Result<lir::Place> {
             return Unsupported("mir_to_lir: expression form names no place");
@@ -1648,6 +1680,51 @@ auto FunctionLowerer::LowerMergingConditional(
   return Load(LocalPlace(slot), result_type);
 }
 
+// A join of N runs reaches the machine as a chain of joins of two, because an
+// operand list of arbitrary length names no entry a call can target. The order
+// is left to right, which is the order the runs were written in: joining is
+// associative over both the bits and the state domain, so the chain and the
+// single N-way join it stands for hold the same value.
+auto FunctionLowerer::LowerConcat(
+    const mir::Block& block, const mir::ConcatExpr& concat, mir::TypeId type)
+    -> diag::Result<lir::Operand> {
+  if (concat.operands.size() < 2) {
+    throw InternalError("mir_to_lir: a join carries two or more runs");
+  }
+  auto joined = LowerExpr(block, concat.operands.front());
+  if (!joined) {
+    return joined;
+  }
+  const auto run = [&](std::size_t i) -> const mir::PackedArrayType& {
+    return unit_->Mir()
+        .types.Get(block.exprs.Get(concat.operands[i]).type)
+        .AsIntegralPacked();
+  };
+  // Every step but the last reaches a width no declaration names, so its type
+  // is built from what the runs joined so far hold.
+  std::uint64_t width = run(0).BitWidth();
+  bool four_state = run(0).atom != mir::BitAtom::kBit;
+  for (std::size_t i = 1; i < concat.operands.size(); ++i) {
+    auto next = LowerExpr(block, concat.operands[i]);
+    if (!next) {
+      return next;
+    }
+    width += run(i).BitWidth();
+    four_state = four_state || run(i).atom != mir::BitAtom::kBit;
+    const bool last = i + 1 == concat.operands.size();
+    joined = Emit(
+        last ? unit_->TranslateType(type)
+             : unit_->FlatPackedType(width, four_state),
+        lir::CallInstr{
+            .target =
+                lir::BuiltinTarget{
+                    .fn = support::BuiltinFn::kConcat,
+                    .qualifier = std::nullopt},
+            .args = {*std::move(joined), *std::move(next)}});
+  }
+  return joined;
+}
+
 auto FunctionLowerer::LowerExpr(const mir::Block& block, mir::ExprId id)
     -> diag::Result<lir::Operand> {
   const mir::Expr& expr = block.exprs.Get(id);
@@ -1992,9 +2069,108 @@ auto FunctionLowerer::LowerExpr(const mir::Block& block, mir::ExprId id)
             SetCurrent(resume);
             return registration;
           },
-          [](const auto&) -> diag::Result<lir::Operand> {
+          [&](const mir::ConcatExpr& concat) -> diag::Result<lir::Operand> {
+            return LowerConcat(block, concat, type);
+          },
+          [&](const mir::ReplicationExpr& repl) -> diag::Result<lir::Operand> {
+            auto operand = LowerExpr(block, repl.concat);
+            if (!operand) {
+              return operand;
+            }
+            return Emit(
+                unit_->TranslateType(type),
+                lir::CallInstr{
+                    .target =
+                        lir::BuiltinTarget{
+                            .fn = support::BuiltinFn::kReplicate,
+                            .qualifier = std::nullopt},
+                    .args = {*std::move(operand), MachineCount(repl.count)}});
+          },
+          [](const mir::StructConstructExpr&) -> diag::Result<lir::Operand> {
             return Unsupported(
-                "mir_to_lir: MIR expression form is not yet lowerable to LIR");
+                "mir_to_lir: building a nominal struct value is not yet "
+                "lowerable to LIR");
+          },
+          [](const mir::UnionExpr&) -> diag::Result<lir::Operand> {
+            return Unsupported(
+                "mir_to_lir: building a union value is not yet lowerable to "
+                "LIR");
+          },
+          [&](const mir::UnionGetExpr& get) -> diag::Result<lir::Operand> {
+            auto union_value = LowerExpr(block, get.union_value);
+            if (!union_value) {
+              return union_value;
+            }
+            return Emit(
+                unit_->TranslateType(type),
+                lir::AggregateExtractInstr{
+                    .aggregate = *std::move(union_value),
+                    .selector = lir::UnionMember{.index = get.index}});
+          },
+          [](const mir::TaggedExpr&) -> diag::Result<lir::Operand> {
+            return Unsupported(
+                "mir_to_lir: building a tagged union value is not yet "
+                "lowerable to LIR");
+          },
+          [](const mir::TaggedGetExpr&) -> diag::Result<lir::Operand> {
+            return Unsupported(
+                "mir_to_lir: reading a tagged union's member is not yet "
+                "lowerable to LIR");
+          },
+          [](const mir::TaggedGetRefExpr&) -> diag::Result<lir::Operand> {
+            return Unsupported(
+                "mir_to_lir: writing a tagged union's member is not yet "
+                "lowerable to LIR");
+          },
+          [](const mir::TaggedIsExpr&) -> diag::Result<lir::Operand> {
+            return Unsupported(
+                "mir_to_lir: testing a tagged union's active tag is not yet "
+                "lowerable to LIR");
+          },
+          // A designator reaches value position where a construct binds the
+          // part rather than writing it. Binding it needs storage for a part a
+          // value aggregate does not independently address, which this layer
+          // does not build; writing through one is the projection update, and
+          // that path does not come here.
+          [](const mir::ValueProjectionExpr&) -> diag::Result<lir::Operand> {
+            return Unsupported(
+                "mir_to_lir: binding part of a value rather than writing it is "
+                "not yet lowerable to LIR");
+          },
+          [](const mir::FunctionCastExpr&) -> diag::Result<lir::Operand> {
+            return Unsupported(
+                "mir_to_lir: naming a code address as another function type is "
+                "not yet lowerable to LIR");
+          },
+          [](const mir::FunctionRef&) -> diag::Result<lir::Operand> {
+            return Unsupported(
+                "mir_to_lir: a code address as a value is not yet lowerable to "
+                "LIR");
+          },
+          // Each of the following names storage rather than reaching it
+          // through a receiver, and a LIR operand names a code symbol with no
+          // data equivalent, so there is no place to read one from.
+          [](const mir::StaticConstantRef&) -> diag::Result<lir::Operand> {
+            return Unsupported(
+                "mir_to_lir: a class's static constant is not yet reachable on "
+                "this backend");
+          },
+          [](const mir::StaticPropertyRef&) -> diag::Result<lir::Operand> {
+            return Unsupported(
+                "mir_to_lir: a class's static property is not yet reachable on "
+                "this backend");
+          },
+          [](const mir::ExternalUnitVariableRef&)
+              -> diag::Result<lir::Operand> {
+            return Unsupported(
+                "mir_to_lir: a variable of another compilation unit is not yet "
+                "reachable on this backend");
+          },
+          [](const mir::ExternalStaticPropertyRef&)
+              -> diag::Result<lir::Operand> {
+            return Unsupported(
+                "mir_to_lir: a static property of a class another compilation "
+                "unit declares is not yet reachable on this backend");
           }},
       expr.data);
 }

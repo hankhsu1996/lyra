@@ -105,6 +105,12 @@ ownership, or native in-frame layout) for every value.
       runtime quantity; the dynamic array established the erased-container and functional-update
       shape they follow, and the unpacked array added the repeat-unit construction and the
       coordinate-resolving select they share.
+- [ ] **The union domains** (LRM 7.3 untagged, 7.3.2 tagged) -- not realized on the execution
+      backend yet, so building one and reading a member both refuse. An untagged union holds one
+      member at a time, so its value is that member plus which one it is, and a member write makes
+      the written member the live one; a tagged union adds a checked tag, so a read whose tag does
+      not match is a run-time error rather than the member's default. The packed spelling of either
+      is a bit plane and needs nothing of its own -- it already runs.
 - [ ] **A managed value (class handle) across a suspension.** A traceable frame and precise
       reclamation, none of which is implemented: the managed reference is realized as a
       reference-counted handle that does not reclaim cycles, and only in the C++ backend. Contract:
