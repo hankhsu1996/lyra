@@ -16,38 +16,30 @@
 
 namespace lyra::lir {
 
-namespace {
-
-// The members of whatever object the chain has reached, and what to call it in
-// a message. A member step names a position the same way whether the object is
-// a class this unit compiles or one another unit published.
-struct ObjectMembers {
-  std::string_view name;
-  std::span<const Member> members;
-};
-
-auto MembersOf(const CompilationUnit& unit, TypeId type)
-    -> std::optional<ObjectMembers> {
+auto DeclaredMembers(const CompilationUnit& unit, TypeId type)
+    -> std::optional<MemberList> {
   return std::visit(
       Overloaded{
-          [&](const ObjectType& object) -> std::optional<ObjectMembers> {
+          [&](const ObjectType& object) -> std::optional<MemberList> {
             const Class& cls = unit.classes.Get(object.class_id);
-            return ObjectMembers{.name = cls.name, .members = cls.members};
+            return MemberList{.members = cls.members, .owner = cls.name};
           },
           [&](const ExternalUnitObjectType& external)
-              -> std::optional<ObjectMembers> {
+              -> std::optional<MemberList> {
             const ExternalUnitObject& object =
                 unit.external_unit_objects.Get(external.object);
-            return ObjectMembers{
-                .name = object.class_name, .members = object.members};
+            return MemberList{
+                .members = object.members, .owner = object.class_name};
           },
-          [](const auto&) -> std::optional<ObjectMembers> {
+          [&](const ClosureType& closure) -> std::optional<MemberList> {
+            const Closure& decl = unit.closures.Get(closure.closure_id);
+            return MemberList{.members = decl.captures, .owner = decl.name};
+          },
+          [](const auto&) -> std::optional<MemberList> {
             return std::nullopt;
           }},
       unit.types.Get(type).data);
 }
-
-}  // namespace
 
 auto IsPlaceLocal(const Function& fn, const Operand& operand) -> bool {
   const auto* use = std::get_if<Use>(&operand);
@@ -83,19 +75,20 @@ auto PlaceType(
               current = *target;
             },
             [&](const MemberProjection& m) {
-              const std::optional<ObjectMembers> object =
-                  MembersOf(unit, current);
-              if (!object) {
+              const std::optional<MemberList> declared =
+                  DeclaredMembers(unit, current);
+              if (!declared) {
                 throw InternalError(
-                    "lir: member projection on a non-object base");
+                    "lir: member projection on a base that declares no "
+                    "members");
               }
-              if (m.member.value >= object->members.size()) {
+              if (m.member.value >= declared->members.size()) {
                 throw InternalError(
                     std::format(
-                        "lir: member index {} out of range on class '{}'",
-                        m.member.value, object->name));
+                        "lir: member index {} out of range on '{}'",
+                        m.member.value, declared->owner));
               }
-              current = object->members[m.member.value].type;
+              current = declared->members[m.member.value].type;
             }},
         step);
   }

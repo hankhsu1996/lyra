@@ -11,6 +11,7 @@
 #include "lyra/base/component_index.hpp"
 #include "lyra/mir/abi_adapter_id.hpp"
 #include "lyra/mir/binary_op.hpp"
+#include "lyra/mir/block_id.hpp"
 #include "lyra/mir/callable_id.hpp"
 #include "lyra/mir/class_id.hpp"
 #include "lyra/mir/closure.hpp"
@@ -82,6 +83,30 @@ struct ConditionalExpr {
   ExprId condition;
   ExprId then_value;
   ExprId else_value;
+};
+
+// A run of statements followed by the value the whole yields. It is the one
+// node that puts a statement sequence in value position, which is how an
+// evaluation of several steps stands where only an expression may: the steps
+// run in order, where the expression is written, and the last one names what it
+// evaluates to. Every statement form becomes value-producing by standing inside
+// one, so this is the only node that lifts statements into value position.
+//
+// `value` names an expression of `scope`, and is always present: a run of steps
+// that settles no value is a statement, which is what a block statement over
+// the same scope says.
+//
+// It sequences and nothing else. It is not a callable boundary, so a local
+// declared among the steps belongs to the enclosing body and a reference out of
+// them needs no capture -- the whole difference from a callable value that
+// happens to be invoked at once. And it has no control-flow effect, so the
+// steps do not return: a construct whose answer depends on a test states that
+// answer as a value the steps settle, never as an exit from the middle. Every
+// consumer may therefore run the steps and take the value with no question of
+// control leaving from among them.
+struct BlockExpr {
+  BlockId scope;
+  ExprId value;
 };
 
 // LRM 11.4.11 over a predicate whose truth is three-valued. A predicate that
@@ -239,13 +264,14 @@ struct Direct {
   std::optional<ScopeQualifier> qualification = std::nullopt;
 };
 
-// A call to a computed callable value -- a closure expression that
-// evaluates to the callable to invoke. The indirect-call shape, the dual
-// of `Direct`. Used for SV expression-position constructs whose
-// evaluation has side effects (e.g., `$sscanf` writing through its output
-// args while yielding the matched count).
+// A call through a code address the program computed -- the indirect-call
+// shape, the dual of `Direct`. `code` evaluates to the address, which is
+// machine data like any other, so nothing about which body runs is known where
+// the call is written. The entry an export publishes reaches its
+// implementation this way (LRM 35.5.4), the address having been resolved by
+// name.
 struct Indirect {
-  ExprId closure;
+  ExprId code;
 };
 
 // Identity of a virtual dispatch slot introduced by a class in this
@@ -742,8 +768,8 @@ struct ValueProjectionExpr {
 using ExprData = std::variant<
     IntegerLiteral, StringLiteral, RealLiteral, NullLiteral, MachineIntLiteral,
     LocalRef, UnaryExpr, BinaryExpr, BoolCastExpr, ConditionalExpr,
-    MergingConditionalExpr, AssignExpr, IncDecExpr, CallExpr, DerefExpr,
-    AddressOfExpr, MachineArrayDataExpr, MoveExpr, PointerCastExpr,
+    MergingConditionalExpr, BlockExpr, AssignExpr, IncDecExpr, CallExpr,
+    DerefExpr, AddressOfExpr, MachineArrayDataExpr, MoveExpr, PointerCastExpr,
     FunctionCastExpr, IntCastExpr, FieldAccessExpr, StructConstructExpr,
     ClosureExpr, ConcatExpr, ReplicationExpr, ArrayLiteralExpr, TupleExpr,
     VectorExpr, AwaitExpr, TupleGetExpr, VectorGetExpr, UnionExpr, UnionGetExpr,

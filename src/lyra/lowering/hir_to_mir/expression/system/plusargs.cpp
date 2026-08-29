@@ -9,9 +9,9 @@
 #include "lyra/base/internal_error.hpp"
 #include "lyra/hir/expr.hpp"
 #include "lyra/hir/expr_id.hpp"
+#include "lyra/lowering/hir_to_mir/block_builder.hpp"
 #include "lyra/lowering/hir_to_mir/call_operands.hpp"
 #include "lyra/lowering/hir_to_mir/cast_lowering.hpp"
-#include "lyra/lowering/hir_to_mir/closure_builder.hpp"
 #include "lyra/lowering/hir_to_mir/condition.hpp"
 #include "lyra/lowering/hir_to_mir/default_value.hpp"
 #include "lyra/lowering/hir_to_mir/lhs_store.hpp"
@@ -70,13 +70,14 @@ auto LowerValuePlusargs(
   const mir::TypeId target_type = unit_lowerer.TranslateType(hir_target.type);
 
   // A match writes the parsed remainder into the caller's lvalue and returns
-  // 1; a no-match leaves the lvalue untouched and returns 0. Both effects
-  // sit in an IIFE so the call fits in expression position (LRM 21.6).
-  ClosureBuilder closure(unit, frame);
-  mir::Block& body = closure.Body();
-  const WalkFrame& closure_frame = closure.Frame();
+  // 1; a no-match leaves the lvalue untouched and returns 0. Both effects are
+  // steps of one block expression, so the call fits in expression position
+  // (LRM 21.6).
+  BlockBuilder steps(frame);
+  mir::Block& body = steps.Body();
+  const WalkFrame& step_frame = steps.Frame();
 
-  auto user_or = lowerer.LowerExpr(hir_exprs.Get(operands[0]), closure_frame);
+  auto user_or = lowerer.LowerExpr(hir_exprs.Get(operands[0]), step_frame);
   if (!user_or) return std::unexpected(std::move(user_or.error()));
   const mir::ExprId raw_user_id = body.exprs.Add(*std::move(user_or));
   // A packed literal / integral variable is a legal user_string here
@@ -86,8 +87,8 @@ auto LowerValuePlusargs(
       ConvertToType(unit, body, raw_user_id, unit.builtins.string);
 
   const mir::ExprId temp_init = body.exprs.Add(
-      BuildDefaultValueExpr(unit_lowerer, closure_frame, target_type));
-  const mir::LocalId temp_var = closure.Bindings().DeclareAnonymous(
+      BuildDefaultValueExpr(unit_lowerer, step_frame, target_type));
+  const mir::LocalId temp_var = steps.Bindings().DeclareAnonymous(
       mir::LocalDecl{.name = "_lyra_plusargs_out", .type = target_type});
   body.AppendStmt(mir::LocalDeclStmt{.target = temp_var, .init = temp_init});
 
@@ -103,7 +104,7 @@ auto LowerValuePlusargs(
                       mir::Direct{.target = support::BuiltinFn::kValuePlusargs},
                   .arguments = {runtime_id, user_id, temp_ref}},
           .type = int_type});
-  const mir::LocalId hit_var = closure.Bindings().DeclareAnonymous(
+  const mir::LocalId hit_var = steps.Bindings().DeclareAnonymous(
       mir::LocalDecl{.name = "_lyra_plusargs_hit", .type = int_type});
   body.AppendStmt(mir::LocalDeclStmt{.target = hit_var, .init = hit_call});
 
@@ -121,7 +122,7 @@ auto LowerValuePlusargs(
           .type = bit_t});
 
   mir::Block then_body;
-  const WalkFrame then_frame = closure_frame.WithBlock(&then_body);
+  const WalkFrame then_frame = step_frame.WithBlock(&then_body);
   auto lvalue_or = lowerer.LowerLhsExpr(hir_exprs.Get(operands[1]), then_frame);
   if (!lvalue_or) return std::unexpected(std::move(lvalue_or.error()));
   const mir::ExprId lvalue_id = then_body.exprs.Add(*std::move(lvalue_or));
@@ -138,8 +139,7 @@ auto LowerValuePlusargs(
 
   const mir::ExprId final_hit =
       body.exprs.Add(mir::MakeLocalRefExpr(hit_var, int_type));
-  return BuildClosureCallExpr(
-      unit, *frame.current_block, closure.Build(final_hit));
+  return steps.Build(final_hit);
 }
 
 }  // namespace

@@ -31,10 +31,9 @@ class FunctionLowerer {
  public:
   FunctionLowerer(
       UnitLowerer& unit, const mir::CallableCode& code, std::string name);
-  // Lowers a closure's invoke. The body reaches its environment through a
-  // receiver, which is realized as the capture parameters leading the
-  // signature: the closure is called where it is built, so its captures outlive
-  // nothing and need no record of their own.
+  // Lowers a closure's invoke. Its signature leads with the receiver naming the
+  // storage the captures live in, and the body reads each of them as a member
+  // of it.
   FunctionLowerer(
       UnitLowerer& unit, const mir::ClosureDecl& closure, std::string name);
 
@@ -65,15 +64,8 @@ class FunctionLowerer {
   struct ActivationValueBinding {
     lir::Operand handle;
   };
-  // A closure invoke's receiver, bound to the capture values the signature
-  // carries. The receiver has no value of its own: reading a capture through it
-  // is reading the corresponding parameter, and any other use would need the
-  // record the captures were passed instead of.
-  struct CaptureBinding {
-    std::vector<lir::Operand> captures;
-  };
-  using LocalBinding = std::variant<
-      PlaceBinding, ValueBinding, ActivationValueBinding, CaptureBinding>;
+  using LocalBinding =
+      std::variant<PlaceBinding, ValueBinding, ActivationValueBinding>;
 
   auto LowerBlockInto(const mir::Block& block) -> diag::Result<void>;
   auto LowerStmtInto(const mir::Block& block, const mir::Stmt& stmt)
@@ -106,10 +98,6 @@ class FunctionLowerer {
 
   auto LowerCall(
       const mir::Block& block, const mir::CallExpr& call, mir::TypeId type)
-      -> diag::Result<lir::Operand>;
-  auto LowerClosureCall(
-      const mir::Block& block, const mir::Indirect& callee,
-      const std::vector<mir::ExprId>& arguments, mir::TypeId type)
       -> diag::Result<lir::Operand>;
   // A reference is the address of the storage it binds; binding one, and
   // reading or writing through one, are the address-of, load, and store over
@@ -211,14 +199,9 @@ class FunctionLowerer {
   void Terminate(lir::TerminatorData data);
   [[nodiscard]] auto Terminated() const -> bool;
 
-  // The capture values a closure receiver reads through, when this body is a
-  // closure's invoke; the receiver's own local id names where they are bound.
-  auto BindCaptureParams(const mir::ClosureDecl& closure, mir::LocalId receiver)
-      -> void;
-  // The capture a field access reads, when its receiver is a closure's own;
-  // nothing when the receiver is an object, whose fields are storage.
-  auto CaptureRead(const mir::Block& block, const mir::FieldAccessExpr& field)
-      -> std::optional<lir::Operand>;
+  // Binds a closure invoke's receiver: the one parameter its signature leads
+  // with, naming the storage its captures live in.
+  void BindCaptureReceiver(mir::LocalId receiver);
 
   UnitLowerer* unit_;
   const mir::CallableCode* code_;

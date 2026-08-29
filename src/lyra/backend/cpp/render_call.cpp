@@ -733,7 +733,7 @@ auto RenderCalleePart(
           [&](const mir::Indirect& i) -> CalleeRender {
             return {
                 .expr =
-                    std::format("({})", RenderExpr(view, view.Expr(i.closure))),
+                    std::format("({})", RenderExpr(view, view.Expr(i.code))),
                 .leading_arg_count = 0};
           },
           [&](const mir::Virtual& v) -> CalleeRender {

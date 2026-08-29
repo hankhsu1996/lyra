@@ -102,6 +102,9 @@ the detail lives in the entry itself.
   is supplied differs per callable form.
 - [unified-callable-model](unified-callable-model.md) -- one callable concept: callable code vs
   callable value (code + bound environment), with no kind tag on the body.
+- [block-expression](block-expression.md) -- several steps in value position are a block expression,
+  the one node that lifts any statement sequence into an expression; it sequences and nothing else,
+  so its steps do not return. A closure invoked where it is built is rejected.
 - [closure-environment-and-activation-frame](closure-environment-and-activation-frame.md) -- a
   closure (`ClosureType`, an anonymous concrete callable value: captures plus one invoke) and a
   promoted automatic scope (`StructType` reached via `Shared<>`, fields only, no invoke) are two
@@ -221,6 +224,12 @@ the detail lives in the entry itself.
   a member as a native field, the execution backend as runtime-owned storage; a cell is only ever
   addressed, never read as a value. Physical in-frame layout is a later optimization, the
   member-storage counterpart of the opaque-handle value baseline.
+- [closure-value-realization](closure-value-realization.md) -- on the execution backend a closure
+  declaration publishes a definition (its body and its capture storage schema) and a closure value
+  is an instance of it, so a capture is member storage, a capture read is a member place, and
+  building the value is where a captured value is copied out of the stretch that made it. The invoke
+  takes its receiver uniformly; a code-address-plus-product environment and an erased callable type
+  are rejected.
 
 ### Foreign-language boundary
 

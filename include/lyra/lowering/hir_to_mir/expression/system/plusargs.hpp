@@ -10,8 +10,8 @@
 namespace lyra::lowering::hir_to_mir {
 
 // LRM 21.6 `$test$plusargs` / `$value$plusargs`. The value form is modelled
-// as an IIFE: the closure body calls the runtime helper against a temp of
-// the output lvalue's shape and conditionally writes the temp back to the
+// as a block expression: its steps call the runtime helper against a temp of
+// the output lvalue's shape and conditionally write the temp back to the
 // original lvalue. The test form has no output and lowers to a direct call
 // against the runtime handle. Both yield the SV `int` return. Neither reads
 // anything a process body owns, so one template serves both pass classes; the

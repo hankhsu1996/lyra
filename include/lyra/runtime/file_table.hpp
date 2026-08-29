@@ -30,6 +30,10 @@ class StreamDispatcher;
 // multichannel descriptor are implicitly cancelled".
 class ChannelCancellation {
  public:
+  // A view over no channels, which nothing can cancel. It is what storage
+  // holding one starts as, before the view it will carry is copied in.
+  ChannelCancellation() = default;
+
   [[nodiscard]] auto IsCancelled() const noexcept -> lyra::value::PackedArray;
 
  private:

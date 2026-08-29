@@ -18,6 +18,7 @@
 #include "lyra/hir/subroutine_ref.hpp"
 #include "lyra/hir/with_clause_id.hpp"
 #include "lyra/lowering/hir_to_mir/binding_origin.hpp"
+#include "lyra/lowering/hir_to_mir/block_builder.hpp"
 #include "lyra/lowering/hir_to_mir/call_operands.hpp"
 #include "lyra/lowering/hir_to_mir/closure_builder.hpp"
 #include "lyra/lowering/hir_to_mir/default_value.hpp"
@@ -74,14 +75,14 @@ auto LowerAssociativeTraversal(
   const mir::TypeId key_type =
       unit_lowerer.TranslateType(hir_exprs.Get(idx_hir).type);
 
-  ClosureBuilder closure(lowerer.Owner().Unit(), frame);
-  mir::Block& body = closure.Body();
-  const WalkFrame& closure_frame = closure.Frame();
+  BlockBuilder steps(frame);
+  mir::Block& body = steps.Body();
+  const WalkFrame& step_frame = steps.Frame();
 
   // probe = idx -- snapshot the current index value into a plain local.
-  auto idx_read_or = lowerer.LowerExpr(hir_exprs.Get(idx_hir), closure_frame);
+  auto idx_read_or = lowerer.LowerExpr(hir_exprs.Get(idx_hir), step_frame);
   if (!idx_read_or) return std::unexpected(std::move(idx_read_or.error()));
-  const mir::LocalId probe_var = closure.Bindings().DeclareAnonymous(
+  const mir::LocalId probe_var = steps.Bindings().DeclareAnonymous(
       mir::LocalDecl{.name = "_lyra_trav_probe", .type = key_type});
   body.AppendStmt(
       mir::LocalDeclStmt{
@@ -89,7 +90,7 @@ auto LowerAssociativeTraversal(
           .init = body.exprs.Add(*std::move(idx_read_or))});
 
   // found = (map).<kind>(probe) -- pure query: mutates probe, yields 1/0.
-  auto map_read_or = lowerer.LowerExpr(hir_exprs.Get(recv_hir), closure_frame);
+  auto map_read_or = lowerer.LowerExpr(hir_exprs.Get(recv_hir), step_frame);
   if (!map_read_or) return std::unexpected(std::move(map_read_or.error()));
   const mir::ExprId map_read_id = body.exprs.Add(*std::move(map_read_or));
   const mir::ExprId probe_read_id =
@@ -101,12 +102,12 @@ auto LowerAssociativeTraversal(
                   .callee = mir::Direct{.target = fn},
                   .arguments = {map_read_id, probe_read_id}},
           .type = result_type});
-  const mir::LocalId found_var = closure.Bindings().DeclareAnonymous(
+  const mir::LocalId found_var = steps.Bindings().DeclareAnonymous(
       mir::LocalDecl{.name = "_lyra_trav_found", .type = result_type});
   body.AppendStmt(mir::LocalDeclStmt{.target = found_var, .init = query_id});
 
   // idx = probe -- observable write-back fires the LRM 4.3 update event.
-  auto idx_lhs_or = lowerer.LowerLhsExpr(hir_exprs.Get(idx_hir), closure_frame);
+  auto idx_lhs_or = lowerer.LowerLhsExpr(hir_exprs.Get(idx_hir), step_frame);
   if (!idx_lhs_or) return std::unexpected(std::move(idx_lhs_or.error()));
   const mir::ExprId idx_lhs_id = body.exprs.Add(*std::move(idx_lhs_or));
   const mir::ExprId probe_writeback_id =
@@ -118,8 +119,7 @@ auto LowerAssociativeTraversal(
 
   const mir::ExprId found_id =
       body.exprs.Add(mir::MakeLocalRefExpr(found_var, result_type));
-  return BuildClosureCallExpr(
-      lowerer.Owner().Unit(), *frame.current_block, closure.Build(found_id));
+  return steps.Build(found_id);
 }
 
 // Translates a HIR builtin-method ref to its MIR `Callee`. The identifier

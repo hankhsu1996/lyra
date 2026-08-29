@@ -36,6 +36,7 @@ auto TypeKindName(const Type& type) -> std::string_view {
           [](const ObjectType&) { return "class object"; },
           [](const ExternalUnitObjectType&) { return "external unit object"; },
           [](const ExternalClassType&) { return "external class"; },
+          [](const ClosureType&) { return "closure"; },
           [](const RuntimeEffectsType&) { return "runtime services"; },
           [](const FilesType&) { return "file table"; },
           [](const DiagnosticType&) { return "diagnostic dispatcher"; },

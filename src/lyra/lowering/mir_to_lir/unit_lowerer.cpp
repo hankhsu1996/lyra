@@ -43,8 +43,8 @@ auto UnitLowerer::Run() -> diag::Result<lir::CompilationUnit> {
 
   // Every identity the unit will hold is taken before any body is lowered,
   // because a body may name a function whose own body is lowered later --
-  // including itself. A closure's invoke is one function and nothing about the
-  // closure decides which, so a closure needs no answer of its own beyond it.
+  // including itself, and a body may build a closure whose own body is lowered
+  // after it.
   std::vector<ClassIdentities> classes;
   classes.reserve(mir_->classes.size());
   for (const mir::ClassId id : mir_->classes.Ids()) {
@@ -63,10 +63,13 @@ auto UnitLowerer::Run() -> diag::Result<lir::CompilationUnit> {
         out_.external_unit_objects.Add(LowerExternalUnitObject(object)));
   }
 
-  std::vector<lir::FunctionId> closures;
+  std::vector<ClosureIdentities> closures;
   closures.reserve(mir_->closures.size());
   for (std::size_t i = 0; i < mir_->closures.size(); ++i) {
-    closures.push_back(out_.functions.Declare());
+    closures.push_back(
+        ClosureIdentities{
+            .declaration = out_.closures.Declare(),
+            .invoke = out_.functions.Declare()});
   }
   closure_identities_ = {mir_->closures.size(), std::move(closures)};
 
@@ -99,17 +102,28 @@ auto UnitLowerer::Run() -> diag::Result<lir::CompilationUnit> {
     out_.root = class_identities_.Get(*mir_->root).lir_class;
   }
 
-  // A closure's invoke is a function like any other body's; the captures its
-  // referencing site supplies arrive as its leading parameters.
+  // A closure's captures are the storage its values own, and its invoke is a
+  // function like any other body's, reading them through the receiver it takes.
   for (const mir::ClosureId id : mir_->closures.Ids()) {
+    const mir::ClosureDecl& decl = mir_->GetClosure(id);
+    lir::Closure closure;
+    closure.name = ClosureSymbol(id);
+    closure.captures.reserve(decl.fields.size());
+    for (const mir::FieldId field : decl.fields.Ids()) {
+      closure.captures.push_back(
+          lir::Member{
+              .name = decl.fields.Get(field).name,
+              .type = TranslateType(decl.fields.Get(field).type)});
+    }
+    closure.invoke = ClosureFunction(id);
     auto fn =
-        FunctionLowerer(
-            *this, mir_->GetClosure(id), std::format("closure_{}", id.value))
+        FunctionLowerer(*this, decl, std::format("{}.invoke", closure.name))
             .Run();
     if (!fn) {
       return std::unexpected(std::move(fn.error()));
     }
-    out_.functions.Define(closure_identities_.Get(id), *std::move(fn));
+    out_.functions.Define(closure.invoke, *std::move(fn));
+    out_.closures.Define(ClosureDeclaration(id), std::move(closure));
   }
 
   // A type reached during lowering had no LIR mirror; surface it now, once the
@@ -138,6 +152,13 @@ auto UnitLowerer::ClassSymbol(const mir::Class& cls) const -> std::string {
   // qualifies it. A referrer composes the same symbol from the unit and class
   // its signature named, which is what lets the two agree with no shared table.
   return std::format("{}.{}", mir_->name, cls.name);
+}
+
+auto UnitLowerer::ClosureSymbol(mir::ClosureId closure) const -> std::string {
+  // A closure's ordinal is counted within its unit while the whole program
+  // links into one name space, so the unit qualifies it -- the same reason a
+  // class and a namespace callable are qualified.
+  return std::format("{}.closure_{}", mir_->name, closure.value);
 }
 
 auto UnitLowerer::TakeClassIdentities(const mir::Class& cls)
@@ -235,7 +256,12 @@ auto UnitLowerer::MethodFunction(
 
 auto UnitLowerer::ClosureFunction(mir::ClosureId closure) const
     -> lir::FunctionId {
-  return closure_identities_.Get(closure);
+  return closure_identities_.Get(closure).invoke;
+}
+
+auto UnitLowerer::ClosureDeclaration(mir::ClosureId closure) const
+    -> lir::ClosureId {
+  return closure_identities_.Get(closure).declaration;
 }
 
 auto UnitLowerer::BorrowedPointerTo(lir::TypeId pointee) -> lir::TypeId {

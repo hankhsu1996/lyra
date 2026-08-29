@@ -870,6 +870,12 @@ auto OneBitResult(bool flag, bool is_four_state) -> PackedArray {
   return PackedArray::FromInt(flag ? 1 : 0, 1U, false, is_four_state);
 }
 
+// The answer of a predicate that cannot be unknown, whatever it compared: it
+// carries no unknown plane, so it is two-state even over four-state operands.
+auto DeterministicBit(bool flag) -> PackedArray {
+  return OneBitResult(flag, false);
+}
+
 // LRM 11.4 X/Z propagation result: a 4-state default ctor leaves the
 // unknown plane all-1, which is the all-X value.
 auto AllX(std::uint64_t bit_width, bool is_signed) -> PackedArray {
@@ -1432,10 +1438,10 @@ auto PackedArray::CasezEquals(const PackedArray& other) const -> PackedArray {
     }
     if (((aw_val ^ bw_val) & cmp_mask) != 0U ||
         ((aw_unk ^ bw_unk) & cmp_mask) != 0U) {
-      return OneBitResult(false, type_.is_four_state);
+      return DeterministicBit(false);
     }
   }
-  return OneBitResult(true, type_.is_four_state);
+  return DeterministicBit(true);
 }
 
 auto PackedArray::CasexEquals(const PackedArray& other) const -> PackedArray {
@@ -1458,10 +1464,10 @@ auto PackedArray::CasexEquals(const PackedArray& other) const -> PackedArray {
       cmp_mask &= top_mask;
     }
     if (((aw_val ^ bw_val) & cmp_mask) != 0U) {
-      return OneBitResult(false, type_.is_four_state);
+      return DeterministicBit(false);
     }
   }
-  return OneBitResult(true, type_.is_four_state);
+  return DeterministicBit(true);
 }
 
 auto PackedArray::MergeConditional(const PackedArray& other) const

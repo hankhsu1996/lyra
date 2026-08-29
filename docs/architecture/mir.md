@@ -80,11 +80,15 @@ what the construct means.
 - Lightweight structured control flow inside a callable body: `if`, loop, sequence, and the region
   that consumes a control effect naming it. No basic blocks at this layer.
 - A primitive expression set: literals, references, unary / binary / conditional operators, calls,
-  conversions, closures, member access through an explicit receiver expression, access primitives
-  for element and range selection, value-build primitives for aggregate construction, and a
-  designator naming a part of a value by the place that owns the whole and the descent that reaches
-  the part. The set is closed under what a generic programming-language AST needs to express; it
-  does not grow to model a particular backend's storage realization or runtime library shape.
+  conversions, closures, the block expression -- a run of statements and the value it ends with,
+  which is how an evaluation of several steps stands where only an expression may, sequencing alone:
+  it is not a callable boundary, so its steps belong to the enclosing body and capture nothing, and
+  it has no control-flow effect, so control never leaves from among its steps -- member access
+  through an explicit receiver expression, access primitives for element and range selection,
+  value-build primitives for aggregate construction, and a designator naming a part of a value by
+  the place that owns the whole and the descent that reaches the part. The set is closed under what
+  a generic programming-language AST needs to express; it does not grow to model a particular
+  backend's storage realization or runtime library shape.
 - Action shapes for constructs that bind behavior to schedule events (always blocks, continuous
   assignments, deferred assertions, concurrent assertions).
 - A textual dumper that serializes MIR for inspection. The dumper is not a backend; its output is
@@ -234,6 +238,13 @@ implies; the diagnostic for any new forbidden shape is "what identity property d
 
 - Basic blocks, successor lists, or phi nodes in MIR nodes. (MIR is not the machine-execution
   model.)
+- A `return` anywhere inside a block expression. A block expression sequences and yields; it has no
+  control-flow effect, so a construct whose answer depends on a test states that answer as a value
+  the steps settle, never as an exit from the middle. A `return` reaches MIR from a source-level
+  return statement, which is a statement of some callable's body and never a step of an expression's
+  evaluation, so permitting one would be surface with no producer. (A block expression is not a
+  callable boundary; a language whose blocks and whose function bodies are one construct has to let
+  `return` pass through them, and MIR, where they are two constructs, does not.)
 - Storage offsets, byte layouts, or alignment data in MIR nodes. (Storage placement belongs to LIR.)
 - A select whose selector is a resolved storage position rather than the source-level coordinate: a
   lowering that rebases a declared index against the container's range (`i - left`, `left - i`, an

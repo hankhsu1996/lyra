@@ -3,6 +3,7 @@
 #include <variant>
 
 #include "lyra/runtime/cancellation.hpp"
+#include "lyra/runtime/file_table.hpp"
 #include "lyra/runtime/scope_program.hpp"
 #include "lyra/runtime/var.hpp"
 #include "lyra/value/chandle.hpp"
@@ -24,14 +25,20 @@ struct BorrowedHandle {
   void* target = nullptr;
 };
 
-// One member's runtime-owned storage, realized from the descriptor its class
-// definition carries. The instance owns this object and a member place resolves
+// One member's runtime-owned storage, realized from the descriptor its
+// declaration carries. The owner owns this object and a member place resolves
 // to its address; what the address means follows the member's storage kind. A
-// borrowed handle is a box holding a pointer the instance does not own, so
-// reading the member reads the box; an observable cell is the storage itself,
-// which library calls reach through its address and never read out as a value;
-// an inline value is a pointer-sized value the instance owns, read and written
-// directly at its address.
+// borrowed handle is a box holding a pointer the owner does not own, so reading
+// the member reads the box; an observable cell is the storage itself, which
+// library calls reach through its address and never read out as a value; an
+// inline value is a value the owner owns, whose address is the handle it
+// crosses as.
+//
+// The same storage serves a closure value's captures, which are members of the
+// declaration whose invoke reads them: a captured pointer or reference is a
+// borrowed handle, and a captured value is an inline one the closure owns for
+// its whole life, so nothing a deferred body reads points into the stretch that
+// built it.
 class MemberStorage {
  public:
   explicit MemberStorage(MemberStorageDescriptor descriptor);
@@ -41,14 +48,29 @@ class MemberStorage {
   auto operator=(MemberStorage&&) -> MemberStorage& = delete;
   ~MemberStorage() = default;
 
+  // Where this storage lives, which is what a member place resolves to.
   [[nodiscard]] auto Address() -> void*;
+
+  // What this storage holds, as the handle it crosses to generated code as.
+  // Nothing is copied out: the storage outlives every read of it, and a value
+  // handle is never written through.
+  [[nodiscard]] auto HeldValue() -> void*;
+
+  // Takes a copy of what `handle` names, which is how a value reaches storage
+  // that outlives the stretch the value was made in. Only storage its owner
+  // fills at construction takes this; a cell is written through its own access,
+  // where the write is an update event.
+  void AdoptFrom(void* handle);
 
  private:
   std::variant<
-      BorrowedHandle, Var<value::PackedArray>, Var<value::String>,
-      Var<value::Real>, Var<value::ShortReal>, value::Chandle,
-      Var<value::RuntimeTuple>, Var<value::RuntimeDynamicArray>,
-      Var<value::RuntimeUnpackedArray>, CancellationSource>
+      BorrowedHandle, CancellationSource, ChannelCancellation,
+      Var<value::PackedArray>, Var<value::String>, Var<value::Real>,
+      Var<value::ShortReal>, Var<value::RuntimeTuple>,
+      Var<value::RuntimeDynamicArray>, Var<value::RuntimeUnpackedArray>,
+      value::Chandle, value::PackedArray, value::String, value::Real,
+      value::ShortReal, value::RuntimeTuple, value::RuntimeDynamicArray,
+      value::RuntimeUnpackedArray>
       object_;
 };
 

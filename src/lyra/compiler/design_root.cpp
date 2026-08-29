@@ -225,7 +225,7 @@ void DefineExportSymbol(
       mir::Expr{
           .data =
               mir::CallExpr{
-                  .callee = mir::Indirect{.closure = restored},
+                  .callee = mir::Indirect{.code = restored},
                   .arguments = std::move(call_args)},
           .type = signature.result});
   // A void entry is called for its effect and returns nothing; any other hands

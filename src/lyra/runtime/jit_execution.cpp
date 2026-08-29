@@ -3,6 +3,7 @@
 #include <coroutine>
 #include <cstddef>
 #include <cstdint>
+#include <functional>
 #include <memory>
 #include <span>
 #include <string>
@@ -13,6 +14,7 @@
 
 #include "lyra/base/time.hpp"
 #include "lyra/runtime/activation_value_cell.hpp"
+#include "lyra/runtime/closure.hpp"
 #include "lyra/runtime/coroutine.hpp"
 #include "lyra/runtime/delay.hpp"
 #include "lyra/runtime/diagnostic.hpp"
@@ -250,6 +252,16 @@ auto IndicesOf(LyraSpan indices) -> std::vector<value::PackedArray> {
   return resolved;
 }
 
+// A submitted closure runs after the stretch that built it has returned, so the
+// region takes the value out of that stretch's scope rather than borrowing it.
+// The region holds what it takes by a shared handle because a region queue
+// holds copyable callables, while a closure value owns its captures and is
+// therefore only movable.
+auto TakeClosure(void* closure) -> std::function<void()> {
+  return [held = std::make_shared<ClosureValue>(std::move(
+              *static_cast<ClosureValue*>(closure)))] { held->Invoke(); };
+}
+
 // A distribution draw is a product of the value drawn and the advanced seed
 // (LRM 20.14.2), so it crosses the boundary as the type-erased product every
 // other product crosses as.
@@ -266,6 +278,9 @@ auto OwnDraw(const DistributionDraw& draw) -> void* {
 }  // namespace lyra::runtime
 
 using lyra::runtime::ActivationValueCell;
+using lyra::runtime::ChannelCancellation;
+using lyra::runtime::ClosureDefinition;
+using lyra::runtime::ClosureValue;
 using lyra::runtime::Coroutine;
 using lyra::runtime::CoroutineHandle;
 using lyra::runtime::DiagnosticDispatcher;
@@ -286,6 +301,7 @@ using lyra::runtime::ScopeDefinition;
 using lyra::runtime::SimTimeInUnit;
 using lyra::runtime::STimeInUnit;
 using lyra::runtime::SubscribeValueChange;
+using lyra::runtime::TakeClosure;
 using lyra::runtime::TestPlusargs;
 using lyra::runtime::Trigger;
 using lyra::runtime::Var;
@@ -389,6 +405,16 @@ void lyra_rt_file_flush_all(void* files) {
   static_cast<FileTable*>(files)->Flush();
 }
 
+auto lyra_rt_cancellation_for(void* files, const void* descriptor) -> void* {
+  return Own(
+      static_cast<FileTable*>(files)->CancellationFor(
+          Read<PackedArray>(descriptor)));
+}
+
+auto lyra_rt_is_cancelled(const void* cancellation) -> void* {
+  return Own(Read<ChannelCancellation>(cancellation).IsCancelled());
+}
+
 auto lyra_rt_make_string(void* cstr) -> void* {
   return GeneratedCallScope::Current().Arena().New<String>(
       static_cast<const char*>(cstr));
@@ -473,6 +499,29 @@ void lyra_rt_emit_fatal(
 auto lyra_rt_make_coroutine(void* (*ramp)(void*), void* env) -> void* {
   return GeneratedCallScope::Current().Arena().New<Coroutine<void>>(
       lyra::runtime::RunGeneratedProcess(ramp, env));
+}
+
+auto lyra_rt_closure_make(const void* definition, LyraSpan captures) -> void* {
+  return GeneratedCallScope::Current().Arena().New<ClosureValue>(
+      static_cast<const ClosureDefinition*>(definition),
+      std::span<void* const>(
+          static_cast<void* const*>(captures.data), captures.count));
+}
+
+auto lyra_rt_closure_capture(void* self, std::uint32_t index) -> void* {
+  return static_cast<ClosureValue*>(self)->Capture(index);
+}
+
+void lyra_rt_submit_nba(void* runtime, void* closure) {
+  static_cast<RuntimeEffects*>(runtime)->SubmitNba(TakeClosure(closure));
+}
+
+void lyra_rt_submit_postponed(void* runtime, void* closure) {
+  static_cast<RuntimeEffects*>(runtime)->SubmitPostponed(TakeClosure(closure));
+}
+
+void lyra_rt_submit_observed(void* runtime, void* closure) {
+  static_cast<RuntimeEffects*>(runtime)->SubmitObserved(TakeClosure(closure));
 }
 
 void lyra_rt_delay(

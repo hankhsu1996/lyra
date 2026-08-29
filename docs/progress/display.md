@@ -69,13 +69,10 @@ should close as the corresponding behaviour lands.
       `integer` return is observable in any expression position; writes to output args are runtime
       side effects routed through `Var::Set` for observable structural lvalues.
 - [x] Complex-lvalue scan output args (bit-select `a[3:0]`, element index `arr[i]`, struct field
-      `s.f`, multi-dim packed element `m[i]`, etc., per LRM 21.3.4.3). The scan call is modelled as
-      a closure invoked immediately (the IIFE pattern): the closure body parses into procedural
-      temps, conditionally writes back to the original output lvalues, and yields the matched count.
-      Lvalue polymorphism is absorbed by the body's writeback assignments through the existing
-      `AssignExpr` path; the runtime sees only plain temp pointers plus per-slot type metadata.
-      Output lvalues that are not reducible to writable expressions (e.g., the result of a
-      non-lvalue function call) remain rejected.
+      `s.f`, multi-dim packed element `m[i]`, etc., per LRM 21.3.4.3). Any lvalue an ordinary
+      assignment can write is a scan output, because the parse lands in a temporary and reaches the
+      lvalue by ordinary assignment. Output lvalues that are not reducible to writable expressions
+      (e.g., the result of a non-lvalue function call) remain rejected.
 - [x] Field width (`%5d`) and assignment suppression (`%*d`) for both scan functions (LRM 21.3.4.3
       Table 21-7). The runtime format parser handles the optional `*` and decimal width modifiers;
       suppressed conversions advance the input but do not bump the matched count or consume an
@@ -97,16 +94,14 @@ should close as the corresponding behaviour lands.
 - [x] `$sscanf` / `$fscanf` integral str / format and the LRM 21.3.4.3 x/z -> EOF (-1) corner.
       Packed bit vectors lift to string via a shared `value::String::FromPackedArray` conversion
       (LRM 5.9 MSB-first byte order), so any integral expression in str or format position now
-      reaches the scanner unchanged. The closure-IIFE body emits an unconditional
-      `if (operand.IsUnknown()) return -1` guard at body entry for source and format; the backend
-      renders the guard as a real `HasUnknown()` query when the operand is a 4-state packed integer
-      and as `Bit(false)` for everything else (string, 2-state packed, byte array), keeping the body
-      shape uniform and dead-code-eliminated where there is no x/z to check. The rule names
-      `$sscanf` literally but the format argument's role is identical under `$fscanf`, so the guard
-      fires on `$fscanf`'s format as well; `$fscanf`'s file descriptor has no string semantics and
-      is exempt. The same conversion path unblocks `$display("%s", x)` on a packed integral operand,
-      which previously built but threw at runtime; x/z bits in that path render as `'\0'` since LRM
-      does not pin `%s` behaviour for 4-state operands.
+      reaches the scanner unchanged. A source or format operand carrying x or z makes the call
+      report EOF without scanning; an operand whose type has no unknown state is known by its type,
+      so the check costs nothing where there is no x/z to find. The rule names `$sscanf` literally
+      but the format argument's role is identical under `$fscanf`, so the guard fires on `$fscanf`'s
+      format as well; `$fscanf`'s file descriptor has no string semantics and is exempt. The same
+      conversion path unblocks `$display("%s", x)` on a packed integral operand, which previously
+      built but threw at runtime; x/z bits in that path render as `'\0'` since LRM does not pin `%s`
+      behaviour for 4-state operands.
 - [x] `$fseek` / `$rewind` cancelling pending `$ungetc` operations (LRM 21.3.5). The Lyra-owned
       per-FD putback slot is cleared whenever the file position is repositioned, so any subsequent
       read consults the underlying stream rather than the stale pushback byte.

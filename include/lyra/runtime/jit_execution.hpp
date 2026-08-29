@@ -49,6 +49,17 @@ auto lyra_rt_file_tell(void* files, const void* fd) -> void*;
 auto lyra_rt_file_eof(void* files, const void* fd) -> void*;
 void lyra_rt_file_flush(void* files, const void* descriptor);
 void lyra_rt_file_flush_all(void* files);
+
+// The joint cancel state of the channels a descriptor names (LRM 21.3.2), as a
+// transient runtime value owned by the current call scope. A deferred write
+// snapshots it so the write short-circuits if any of those channels is closed
+// before the region that performs it runs.
+auto lyra_rt_cancellation_for(void* files, const void* descriptor) -> void*;
+
+// Whether any channel that cancel state covers has been closed since it was
+// taken (LRM 21.3.2), as an opaque packed value like every scalar.
+auto lyra_rt_is_cancelled(const void* cancellation) -> void*;
+
 auto lyra_rt_make_string(void* cstr) -> void*;
 auto lyra_rt_make_print_literal_item(void* string_value) -> void*;
 auto lyra_rt_format(LyraSpan items, const void* time_format) -> void*;
@@ -89,6 +100,28 @@ void lyra_rt_emit_fatal(void* dispatcher, const void* origin, const void* text);
 auto lyra_rt_make_coroutine(void* (*ramp)(void* env), void* env) -> void*;
 void lyra_rt_register_initial(void* self, void* unit_instance, void* coroutine);
 void lyra_rt_register_final(void* self, void* unit_instance, void* coroutine);
+
+// Builds a callable the runtime runs later: `definition` is an opaque
+// cross-artifact reference naming both the body and the storage its captures
+// need, and `captures` supplies one handle per capture in declaration order,
+// each taken into that storage as the schema says -- a pointer held, a value
+// copied. The value is transient, owned by the current call scope until a
+// submit takes it.
+auto lyra_rt_closure_make(const void* definition, LyraSpan captures) -> void*;
+
+// The handle one capture crosses back to the body as, by declaration index. A
+// captured pointer answers the pointer it holds; a captured value answers the
+// storage the closure owns, which outlives every read of it.
+auto lyra_rt_closure_capture(void* self, std::uint32_t index) -> void*;
+
+// Hands a callable to the region that will run it (LRM 4.4): the write a
+// non-blocking assignment defers, the print a `$strobe` postpones, and the
+// report a deferred assertion leaves for the observed region. Each takes
+// ownership of the closure, which is what lets the closure outlive the stretch
+// that built it.
+void lyra_rt_submit_nba(void* runtime, void* closure);
+void lyra_rt_submit_postponed(void* runtime, void* closure);
+void lyra_rt_submit_observed(void* runtime, void* closure);
 
 // Registers the running process to wake after `ticks` steps of its scope's
 // precision (`precision_power`), the registration a delay's suspend edge is

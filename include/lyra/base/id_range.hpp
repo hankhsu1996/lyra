@@ -1,5 +1,6 @@
 #pragma once
 
+#include <cstddef>
 #include <cstdint>
 
 namespace lyra::base {
@@ -23,6 +24,11 @@ class IdRange {
 
   class Iterator {
    public:
+    using difference_type = std::ptrdiff_t;
+    using value_type = Id;
+
+    Iterator() = default;
+
     explicit Iterator(std::uint32_t index) : index_(index) {
     }
 
@@ -35,12 +41,18 @@ class IdRange {
       return *this;
     }
 
+    auto operator++(int) -> Iterator {
+      Iterator before = *this;
+      ++index_;
+      return before;
+    }
+
     auto operator==(const Iterator& other) const -> bool {
       return index_ == other.index_;
     }
 
    private:
-    std::uint32_t index_;
+    std::uint32_t index_ = 0;
   };
 
   [[nodiscard]] auto begin() const -> Iterator {

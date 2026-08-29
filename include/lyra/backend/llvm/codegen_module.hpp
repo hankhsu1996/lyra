@@ -55,13 +55,14 @@ class CodeGenModule {
   // reconstructed symbol name.
   auto UnitFunction(lir::FunctionId function) -> llvm::Function*;
 
-  // The definition-reference projection of an object type: the address of that
-  // class's runtime definition, as an external symbol the host resolves. A
-  // construct that builds an instance of the class passes this opaque reference
-  // to the runtime; the generated code never inspects it. A class of this unit
-  // and a class another unit publishes are named the same way, since the record
-  // the host builds has one shape either way.
-  auto ScopeDefinitionRef(lir::TypeId object_type) -> llvm::Constant*;
+  // The definition-reference projection of a type whose values the runtime
+  // builds -- a scope class, or a closure: the address of that declaration's
+  // runtime definition, as an external symbol the host resolves. A construct
+  // passes this opaque reference to the runtime; the generated code never
+  // inspects it. A declaration of this unit and one another unit publishes are
+  // named the same way, since the record the host builds has one shape either
+  // way.
+  auto DefinitionRef(lir::TypeId type) -> llvm::Constant*;
 
  private:
   auto DeclareCallable(const lir::Function& fn) -> llvm::Function*;

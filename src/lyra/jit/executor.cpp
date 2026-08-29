@@ -37,6 +37,7 @@
 #include "lyra/lir/type.hpp"
 #include "lyra/lir/type_id.hpp"
 #include "lyra/lir/type_query.hpp"
+#include "lyra/runtime/closure.hpp"
 #include "lyra/runtime/design.hpp"
 #include "lyra/runtime/generated_call_scope.hpp"
 #include "lyra/runtime/hierarchy_segment.hpp"
@@ -148,6 +149,13 @@ void DefineRuntimeAbi(llvm::orc::LLJIT& jit) {
   add("lyra_rt_make_coroutine", &lyra_rt_make_coroutine);
   add("lyra_rt_register_initial", &lyra_rt_register_initial);
   add("lyra_rt_register_final", &lyra_rt_register_final);
+  add("lyra_rt_cancellation_for", &lyra_rt_cancellation_for);
+  add("lyra_rt_is_cancelled", &lyra_rt_is_cancelled);
+  add("lyra_rt_closure_make", &lyra_rt_closure_make);
+  add("lyra_rt_closure_capture", &lyra_rt_closure_capture);
+  add("lyra_rt_submit_nba", &lyra_rt_submit_nba);
+  add("lyra_rt_submit_postponed", &lyra_rt_submit_postponed);
+  add("lyra_rt_submit_observed", &lyra_rt_submit_observed);
   add("lyra_rt_delay", &lyra_rt_delay);
   add("lyra_rt_make_trigger", &lyra_rt_make_trigger);
   add("lyra_rt_wait_any", &lyra_rt_wait_any);
@@ -529,13 +537,18 @@ auto AbiDomain(backend::llvm_backend::ValueDomain domain)
   throw InternalError("jit executor: unknown value domain");
 }
 
-// The storage a generic instance realizes for one declared member, projected
-// from the member's LIR type: an observable cell holds a value other processes
-// subscribe to, and a reference-typed member is a box holding a borrowed
-// handle.
+// The storage a generic value realizes for one member its declaration holds,
+// projected from that member's LIR type: an observable cell holds a value other
+// processes subscribe to, a reference-typed member is a box holding a borrowed
+// handle, a runtime record is that record, and anything else the runtime has a
+// value realization for the owner holds inline.
 auto DescribeMember(const lir::CompilationUnit& unit, lir::TypeId type)
     -> runtime::MemberStorageDescriptor {
   const auto& data = unit.types.Get(type).data;
+  const auto without_domain = [](runtime::MemberStorageKind kind) {
+    return runtime::MemberStorageDescriptor{
+        .kind = kind, .domain = runtime::ValueDomain::kNone};
+  };
   if (const auto* observable = std::get_if<lir::ObservableType>(&data)) {
     if (const std::optional<backend::llvm_backend::ValueDomain> domain =
             backend::llvm_backend::ValueDomainOf(unit, observable->value)) {
@@ -544,34 +557,42 @@ auto DescribeMember(const lir::CompilationUnit& unit, lir::TypeId type)
           .domain = AbiDomain(*domain)};
     }
   }
-  if (const auto* library = std::get_if<lir::RuntimeLibraryType>(&data);
-      library != nullptr &&
-      library->kind == lir::RuntimeLibraryKind::kCancellationSource) {
-    return runtime::MemberStorageDescriptor{
-        .kind = runtime::MemberStorageKind::kCancellationSource,
-        .domain = runtime::ValueDomain::kNone};
+  if (const auto* library = std::get_if<lir::RuntimeLibraryType>(&data)) {
+    switch (library->kind) {
+      case lir::RuntimeLibraryKind::kCancellationSource:
+        return without_domain(runtime::MemberStorageKind::kCancellationSource);
+      // The cancel state a deferred file write is guarded by (LRM 21.3.2),
+      // which the closure performing that write owns a copy of.
+      case lir::RuntimeLibraryKind::kChannelCancellation:
+        return without_domain(runtime::MemberStorageKind::kChannelCancellation);
+      default:
+        break;
+    }
   }
   if (lir::Pointee(unit.types, type).has_value()) {
-    return runtime::MemberStorageDescriptor{
-        .kind = runtime::MemberStorageKind::kBorrowedHandle,
-        .domain = runtime::ValueDomain::kNone};
+    return without_domain(runtime::MemberStorageKind::kBorrowedHandle);
   }
-  // A chandle member is a value the instance owns but no process subscribes to
-  // (LRM 6.14), stored inline in its slot rather than behind an observable
-  // cell.
-  if (std::holds_alternative<lir::ChandleType>(data)) {
+  // A value the owner holds but no process subscribes to -- a chandle (LRM
+  // 6.14), and every value a closure snapshots -- lives in its slot rather than
+  // behind an observable cell.
+  if (const std::optional<backend::llvm_backend::ValueDomain> domain =
+          backend::llvm_backend::ValueDomainOf(unit, type)) {
     return runtime::MemberStorageDescriptor{
         .kind = runtime::MemberStorageKind::kInlineValue,
-        .domain = runtime::ValueDomain::kChandle};
+        .domain = AbiDomain(*domain)};
   }
-  throw InternalError("jit executor: member type has no storage realization");
+  throw InternalError(
+      std::format(
+          "jit executor: a member of type {} has no storage realization",
+          lir::TypeKindName(unit.types.Get(type))));
 }
 
-auto DescribeMembers(const lir::CompilationUnit& unit, const lir::Class& cls)
+auto DescribeMembers(
+    const lir::CompilationUnit& unit, std::span<const lir::Member> members)
     -> std::vector<runtime::MemberStorageDescriptor> {
   std::vector<runtime::MemberStorageDescriptor> descriptors;
-  descriptors.reserve(cls.members.size());
-  for (const lir::Member& member : cls.members) {
+  descriptors.reserve(members.size());
+  for (const lir::Member& member : members) {
     descriptors.push_back(DescribeMember(unit, member.type));
   }
   return descriptors;
@@ -667,7 +688,7 @@ auto LoadScopeClasses(
         LoadedScopeClass{
             .name = cls.name,
             .time_precision_power = metadata.time_precision_power,
-            .members = DescribeMembers(unit, cls),
+            .members = DescribeMembers(unit, cls.members),
             .definition = std::make_unique<runtime::ScopeDefinition>()});
     // A member whose type reaches an object of this unit is a child this class
     // owns; one reaching a value reaches storage instead. The type says which,
@@ -680,6 +701,28 @@ auto LoadScopeClasses(
   };
   if (unit.root.has_value()) {
     descend(descend, *unit.root);
+  }
+  return loaded;
+}
+
+// The definition of one closure a unit declares, kept alive for the session
+// beside the schema it names as plain data it does not own.
+struct LoadedClosure {
+  std::string name;
+  std::vector<runtime::MemberStorageDescriptor> captures;
+  std::unique_ptr<runtime::ClosureDefinition> definition;
+};
+
+auto LoadClosures(const lir::CompilationUnit& unit)
+    -> std::vector<LoadedClosure> {
+  std::vector<LoadedClosure> loaded;
+  loaded.reserve(unit.closures.size());
+  for (const lir::Closure& closure : unit.closures) {
+    loaded.push_back(
+        LoadedClosure{
+            .name = closure.name,
+            .captures = DescribeMembers(unit, closure.captures),
+            .definition = std::make_unique<runtime::ClosureDefinition>()});
   }
   return loaded;
 }
@@ -750,35 +793,67 @@ auto Execute(
       loaded.end(), std::make_move_iterator(root_classes.begin()),
       std::make_move_iterator(root_classes.end()));
 
-  // The schema is named only once every class is in place, so no descriptor
-  // vector is reallocated out from under a definition that points at it.
+  std::vector<LoadedClosure> closures;
+  for (const lir::CompilationUnit* unit : loaded_units) {
+    std::vector<LoadedClosure> unit_closures = LoadClosures(*unit);
+    closures.insert(
+        closures.end(), std::make_move_iterator(unit_closures.begin()),
+        std::make_move_iterator(unit_closures.end()));
+  }
+
+  // The schema is named only once every declaration is in place, so no
+  // descriptor vector is reallocated out from under a definition that points at
+  // it.
   for (LoadedScopeClass& entry : loaded) {
     entry.definition->members = runtime::MemberStorageSchema{
         .data = entry.members.data(),
         .size = static_cast<std::uint32_t>(entry.members.size())};
   }
+  for (LoadedClosure& entry : closures) {
+    entry.definition->captures = runtime::MemberStorageSchema{
+        .data = entry.captures.data(),
+        .size = static_cast<std::uint32_t>(entry.captures.size())};
+  }
 
-  // Each scope class publishes its definition as an injected data symbol the
-  // construct that builds an instance of it references. Every definition is
+  // Each declaration the runtime builds values of publishes its definition as
+  // an injected data symbol the construct references. Every definition is
   // filled from its JIT-compiled entries after every address is injected, so a
   // reference resolves regardless of the order the definitions are filled.
   llvm::orc::SymbolMap definition_symbols;
-  for (const LoadedScopeClass& entry : loaded) {
+  const auto publish = [&](std::string_view name, void* definition) {
     const std::string symbol =
-        backend::llvm_backend::ScopeDefinitionSymbolName(entry.name);
+        backend::llvm_backend::DefinitionSymbolName(name);
     definition_symbols[jit->getExecutionSession().intern(symbol)] =
         llvm::orc::ExecutorSymbolDef(
-            llvm::orc::ExecutorAddr::fromPtr(entry.definition.get()),
+            llvm::orc::ExecutorAddr::fromPtr(definition),
             llvm::JITSymbolFlags::Exported);
+  };
+  for (const LoadedScopeClass& entry : loaded) {
+    publish(entry.name, entry.definition.get());
+  }
+  for (const LoadedClosure& entry : closures) {
+    publish(entry.name, entry.definition.get());
   }
   Check(
       jit->getMainJITDylib().define(
           llvm::orc::absoluteSymbols(std::move(definition_symbols))),
-      "define scope definitions");
+      "define runtime definitions");
 
   for (const LoadedScopeClass& entry : loaded) {
     FillDefinition(
         *jit, entry.name, entry.time_precision_power, *entry.definition);
+  }
+  // Every closure has a body, so a name that does not resolve is not an absent
+  // entry but one that could not be brought up.
+  for (const LoadedClosure& entry : closures) {
+    const std::string symbol = entry.name + ".invoke";
+    auto found = jit->lookup(symbol);
+    if (!found) {
+      throw InternalError(
+          "jit executor: the closure body '" + symbol +
+          "' did not resolve: " + llvm::toString(found.takeError()));
+    }
+    entry.definition->invoke = found->toPtr<runtime::ClosureEntry>();
   }
 
   auto runtime_options = runtime::DefaultRuntimeOptions();

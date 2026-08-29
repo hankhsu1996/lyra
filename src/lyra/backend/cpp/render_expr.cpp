@@ -681,6 +681,24 @@ auto FieldInitValue(
       "declares -- please report this as a bug");
 }
 
+// C++ has no block expression, and what stands for one is a lambda invoked
+// where it is written. Capturing by reference is right here for the reason it
+// is wrong for a callable value: this one runs before the statement it sits in
+// finishes, so nothing it borrowed can have gone.
+//
+// The `return` is part of that spelling rather than a statement of the block:
+// it leaves the lambda, which is how the lambda produces the block's value.
+// What makes the spelling sound is that MIR admits no return among the steps,
+// so the only `return` inside is this one and it can only mean the block.
+auto RenderBlockExpr(const ScopeView& view, const mir::BlockExpr& block)
+    -> std::string {
+  const ScopeView body_view =
+      view.WithBlock(view.Block().child_scopes.Get(block.scope));
+  return std::format(
+      "[&] {{\n{}{}return {};\n}}()", RenderBlockStatements(body_view, 1),
+      Indent(1), RenderExpr(body_view, body_view.Expr(block.value)));
+}
+
 auto RenderClosureExpr(const ScopeView& view, const mir::ClosureExpr& construct)
     -> std::string {
   const mir::ClosureDecl& decl = view.Unit().GetClosure(construct.closure);
@@ -888,6 +906,9 @@ auto RenderExpr(const ScopeView& view, const mir::Expr& expr) -> std::string {
           },
           [&](const mir::MergingConditionalExpr& c) -> std::string {
             return RenderMergingConditionalExpr(view, c);
+          },
+          [&](const mir::BlockExpr& b) -> std::string {
+            return RenderBlockExpr(view, b);
           },
           [&](const mir::AssignExpr& a) -> std::string {
             return RenderAssignExpr(view, a);

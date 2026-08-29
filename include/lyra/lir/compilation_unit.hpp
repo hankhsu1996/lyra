@@ -7,6 +7,7 @@
 #include "lyra/base/arena.hpp"
 #include "lyra/base/registry.hpp"
 #include "lyra/lir/class_id.hpp"
+#include "lyra/lir/closure_id.hpp"
 #include "lyra/lir/external_unit_object_id.hpp"
 #include "lyra/lir/function.hpp"
 #include "lyra/lir/function_id.hpp"
@@ -29,10 +30,10 @@ struct ExternalBase {
 
 using Base = std::variant<IntraUnitBase, ExternalBase>;
 
-// A typed member of a class instance -- the storage a member place reaches by a
-// member projection. Its position in this list is its class-local member
-// identity. The C++ backend realizes a member as a native field; a generic
-// runtime instance realizes it as runtime-owned storage.
+// A typed member of whatever declares it -- the storage a member place reaches
+// by a member projection. Its position in the declaring list is its member
+// identity there. The C++ backend realizes a member as a native field; a
+// generic runtime value realizes it as runtime-owned storage.
 struct Member {
   std::string name;
   TypeId type;
@@ -63,11 +64,21 @@ struct ExternalUnitObject {
   std::vector<Member> members;
 };
 
-// The LIR of one compilation unit: its own type graph, its classes, the objects
-// of other units it compiled against, every function it compiles, and the class
-// its object tree is rooted at, when it roots one -- a unit that declares only
-// a namespace compiles functions and roots no objects. Self-contained -- it
-// holds no reference to the MIR it was lowered from.
+// One compiled closure: the captures it holds and the one body that reads them.
+// Its captures are initialized where a value of it is built rather than by a
+// body of its own, and nothing dispatches on it, so it shares the member
+// vocabulary with a class and no part of its interface.
+struct Closure {
+  std::string name;
+  std::vector<Member> captures;
+  FunctionId invoke{};
+};
+
+// The LIR of one compilation unit: its own type graph, its classes, its
+// closures, the objects of other units it compiled against, every function it
+// compiles, and the class its object tree is rooted at, when it roots one -- a
+// unit that declares only a namespace compiles functions and roots no objects.
+// Self-contained -- it holds no reference to the MIR it was lowered from.
 //
 // Every body is a function here, whatever declared it, and its position is the
 // identity a call names. A class reaches its own bodies the same way any other
@@ -75,6 +86,7 @@ struct ExternalUnitObject {
 struct CompilationUnit {
   base::Arena<Type, TypeId> types;
   base::Registry<Class, ClassId> classes;
+  base::Registry<Closure, ClosureId> closures;
   base::Arena<ExternalUnitObject, ExternalUnitObjectId> external_unit_objects;
   base::Registry<Function, FunctionId> functions;
   std::optional<ClassId> root;

@@ -66,11 +66,14 @@ class UnitLowerer {
   [[nodiscard]] auto MethodFunction(
       mir::ClassId owner, mir::CallableId callable) const -> lir::FunctionId;
 
-  // The LIR function a closure's invoke lowers to.
+ private:
+  // The LIR function a closure's invoke lowers to, and the declaration its
+  // captures are members of.
   [[nodiscard]] auto ClosureFunction(mir::ClosureId closure) const
       -> lir::FunctionId;
+  [[nodiscard]] auto ClosureDeclaration(mir::ClosureId closure) const
+      -> lir::ClosureId;
 
- private:
   // The LIR identities taken on behalf of one MIR class: the class itself, its
   // constructor's function, and one per callable that has a body. A callable
   // with no body is no function of this unit and holds none. `lir::Class` holds
@@ -79,6 +82,13 @@ class UnitLowerer {
     lir::ClassId lir_class{};
     lir::FunctionId constructor{};
     base::Translation<mir::CallableId, std::optional<lir::FunctionId>> methods;
+  };
+
+  // The LIR identities taken on behalf of one MIR closure: the declaration its
+  // captures are members of, and the function its invoke becomes.
+  struct ClosureIdentities {
+    lir::ClosureId declaration{};
+    lir::FunctionId invoke{};
   };
 
   // Everything one class can be named by before it is built: its own LIR
@@ -97,6 +107,10 @@ class UnitLowerer {
   // The symbol a class of this unit is emitted and linked under, and the
   // qualifier its bodies take.
   [[nodiscard]] auto ClassSymbol(const mir::Class& cls) const -> std::string;
+
+  // The symbol a closure of this unit is emitted and linked under, and the
+  // qualifier its invoke takes.
+  [[nodiscard]] auto ClosureSymbol(mir::ClosureId closure) const -> std::string;
 
   auto TranslateTypeData(const mir::Type& ty) -> lir::TypeData;
   // The LIR mirror of a runtime-library record type. MIR is written once for
@@ -121,7 +135,7 @@ class UnitLowerer {
   base::Translation<mir::ClassId, ClassIdentities> class_identities_;
   base::Translation<mir::ExternalUnitObjectId, lir::ExternalUnitObjectId>
       external_unit_object_identities_;
-  base::Translation<mir::ClosureId, lir::FunctionId> closure_identities_;
+  base::Translation<mir::ClosureId, ClosureIdentities> closure_identities_;
   std::optional<lir::TypeId> machine_bool_type_;
   std::optional<lir::TypeId> void_type_;
   std::map<std::pair<std::uint64_t, bool>, lir::TypeId> flat_packed_memo_;

@@ -193,6 +193,16 @@ auto RuntimeAbi::FileFlush(std::size_t argument_count) -> llvm::FunctionCallee {
       "llvm codegen: a file flush carries a descriptor or nothing");
 }
 
+auto RuntimeAbi::CancellationFor() -> llvm::FunctionCallee {
+  return Get(
+      "lyra_rt_cancellation_for", types_->Ptr(),
+      {types_->Ptr(), types_->Ptr()});
+}
+
+auto RuntimeAbi::IsCancelled() -> llvm::FunctionCallee {
+  return Get("lyra_rt_is_cancelled", types_->Ptr(), {types_->Ptr()});
+}
+
 auto RuntimeAbi::Format() -> llvm::FunctionCallee {
   return Get("lyra_rt_format", types_->Ptr(), {types_->Span(), types_->Ptr()});
 }
@@ -252,6 +262,34 @@ auto RuntimeAbi::RegisterFinal() -> llvm::FunctionCallee {
 auto RuntimeAbi::MakeCoroutine() -> llvm::FunctionCallee {
   return Get(
       "lyra_rt_make_coroutine", types_->Ptr(), {types_->Ptr(), types_->Ptr()});
+}
+
+auto RuntimeAbi::MakeClosure() -> llvm::FunctionCallee {
+  return Get(
+      "lyra_rt_closure_make", types_->Ptr(), {types_->Ptr(), types_->Span()});
+}
+
+auto RuntimeAbi::ClosureCapture() -> llvm::FunctionCallee {
+  return Get(
+      "lyra_rt_closure_capture", types_->Ptr(),
+      {types_->Ptr(), llvm::Type::getInt32Ty(*ctx_)});
+}
+
+auto RuntimeAbi::SubmitNba() -> llvm::FunctionCallee {
+  return Get(
+      "lyra_rt_submit_nba", types_->Void(), {types_->Ptr(), types_->Ptr()});
+}
+
+auto RuntimeAbi::SubmitPostponed() -> llvm::FunctionCallee {
+  return Get(
+      "lyra_rt_submit_postponed", types_->Void(),
+      {types_->Ptr(), types_->Ptr()});
+}
+
+auto RuntimeAbi::SubmitObserved() -> llvm::FunctionCallee {
+  return Get(
+      "lyra_rt_submit_observed", types_->Void(),
+      {types_->Ptr(), types_->Ptr()});
 }
 
 auto RuntimeAbi::Delay() -> llvm::FunctionCallee {

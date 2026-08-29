@@ -418,11 +418,12 @@ class PackedArray {
       -> PackedArray;
   // LRM 12.5.1 casez per-label compare: Z bits on either operand are
   // wildcards (do-not-care); remaining bits must match exactly on both
-  // planes (X must still match X). Returns a deterministic 1-bit result.
+  // planes (X must still match X). A label either matches or it does not, so
+  // the 1-bit answer is two-state whatever the operands are.
   [[nodiscard]] auto CasezEquals(const PackedArray& other) const -> PackedArray;
   // LRM 12.5.1 casex per-label compare: any unknown bit (X or Z) on either
-  // operand is a wildcard; remaining bits must match on the value plane.
-  // Returns a deterministic 1-bit result.
+  // operand is a wildcard; remaining bits must match on the value plane. Its
+  // answer is two-state for the same reason.
   [[nodiscard]] auto CasexEquals(const PackedArray& other) const -> PackedArray;
   // LRM 11.4.11 Table 11-20: the two arms of a conditional operator whose
   // condition is ambiguous, combined bit by bit -- a bit both arms know and

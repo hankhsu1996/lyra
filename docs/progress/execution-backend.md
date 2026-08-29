@@ -177,6 +177,13 @@ each meets the same lifetime question above; none is lowerable on the execution 
       (LRM 21.4) name their destination's type in the entry, which the erased value model has no
       spelling for; a named event's members have no storage realization; the climb to an enclosing
       scope waits on the item below it; and an await is a suspension rather than a call.
+- [x] **A closure the runtime holds and runs later.** A deferred effect -- a non-blocking
+      assignment, a postponed print, a deferred assertion's action -- is a closure the process hands
+      to a region and keeps running past, so the body runs once the stretch that built it has
+      returned. What it captured survives with it: a captured value is taken by copy where the
+      closure was built, so nothing a deferred body reads points into storage that is already gone.
+      The closure a `fork` branch or a task enable builds is not this -- it starts an activation
+      rather than producing a value -- and is refused by name.
 - [ ] A runtime service that assigns to an argument the call names. The call site hands it a
       copy-out temporary and reads the temporary back, which is how a value reaches a caller through
       an argument at all. Writing through the handle the temporary crosses as does not reach what

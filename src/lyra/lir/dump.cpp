@@ -31,6 +31,9 @@ class LirDumper {
     for (const ClassId id : unit_->classes.Ids()) {
       DumpClass(id);
     }
+    for (const ClosureId id : unit_->closures.Ids()) {
+      DumpClosure(id);
+    }
     for (const Function& fn : unit_->functions) {
       DumpFunction(fn);
     }
@@ -72,6 +75,20 @@ class LirDumper {
     for (const FunctionId method : cls.methods) {
       DumpFunction(unit_->functions.Get(method));
     }
+    Dedent();
+  }
+
+  void DumpClosure(ClosureId id) {
+    const Closure& closure = unit_->closures.Get(id);
+    Line(std::format("Closure \"{}\" (#{})", closure.name, id.value));
+    Indent();
+    for (std::size_t i = 0; i < closure.captures.size(); ++i) {
+      Line(
+          std::format(
+              "capture[{}] \"{}\" : {}", i, closure.captures[i].name,
+              FormatType(closure.captures[i].type)));
+    }
+    DumpFunction(unit_->functions.Get(closure.invoke));
     Dedent();
   }
 

@@ -9,10 +9,10 @@
 #include "lyra/base/component_index.hpp"
 #include "lyra/base/internal_error.hpp"
 #include "lyra/hir/expr_id.hpp"
+#include "lyra/lowering/hir_to_mir/block_builder.hpp"
 #include "lyra/lowering/hir_to_mir/call_operands.hpp"
 #include "lyra/lowering/hir_to_mir/callee_interface.hpp"
 #include "lyra/lowering/hir_to_mir/cast_lowering.hpp"
-#include "lyra/lowering/hir_to_mir/closure_builder.hpp"
 #include "lyra/lowering/hir_to_mir/lhs_store.hpp"
 #include "lyra/lowering/hir_to_mir/process_lowerer.hpp"  // IWYU pragma: keep
 #include "lyra/lowering/hir_to_mir/runtime_call.hpp"
@@ -149,16 +149,16 @@ auto LowerDistributionSystemSubroutineCall(
   }
 
   // Binding the completion, writing the seed back, and yielding the value are
-  // statements, and a call sits in expression position, so they run as a
-  // closure invoked where it is built.
-  ClosureBuilder closure(unit, frame);
-  mir::Block& body = closure.Body();
-  const WalkFrame& closure_frame = closure.Frame();
+  // statements, and a call sits in expression position, so they are the steps
+  // of one block expression.
+  BlockBuilder steps(frame);
+  mir::Block& body = steps.Body();
+  const WalkFrame& step_frame = steps.Frame();
 
   std::vector<mir::ExprId> arguments;
   arguments.reserve(operands.size());
   for (const hir::ExprId operand : operands) {
-    auto lowered = lowerer.LowerExpr(hir_exprs.Get(operand), closure_frame);
+    auto lowered = lowerer.LowerExpr(hir_exprs.Get(operand), step_frame);
     if (!lowered) {
       return std::unexpected(std::move(lowered.error()));
     }
@@ -177,13 +177,13 @@ auto LowerDistributionSystemSubroutineCall(
                   .callee = mir::Direct{.target = DistributionEntry(info.kind)},
                   .arguments = std::move(arguments)},
           .type = payload_type});
-  const mir::LocalId completion = closure.Bindings().DeclareAnonymous(
+  const mir::LocalId completion = steps.Bindings().DeclareAnonymous(
       mir::LocalDecl{.name = "_lyra_draw", .type = payload_type});
   body.AppendStmt(mir::LocalDeclStmt{.target = completion, .init = draw_call});
 
   const hir::Expr& hir_seed = hir_exprs.Get(operands[0]);
   const mir::TypeId seed_type = unit_lowerer.TranslateType(hir_seed.type);
-  auto seed_place_or = lowerer.LowerLhsExpr(hir_seed, closure_frame);
+  auto seed_place_or = lowerer.LowerLhsExpr(hir_seed, step_frame);
   if (!seed_place_or) {
     return std::unexpected(std::move(seed_place_or.error()));
   }
@@ -198,10 +198,8 @@ auto LowerDistributionSystemSubroutineCall(
           .expr = body.exprs.Add(BuildStoreExpr(
               unit, body, seed_place, advanced, std::nullopt, seed_type))});
 
-  return BuildClosureCallExpr(
-      unit, *frame.current_block,
-      closure.Build(ProjectCompletionComponent(
-          body, completion, payload_type, kDrawnValue, int_type)));
+  return steps.Build(ProjectCompletionComponent(
+      body, completion, payload_type, kDrawnValue, int_type));
 }
 
 template auto LowerRandomSystemSubroutineCall(

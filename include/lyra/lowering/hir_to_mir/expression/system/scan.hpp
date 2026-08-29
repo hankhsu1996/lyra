@@ -10,10 +10,10 @@
 
 namespace lyra::lowering::hir_to_mir {
 
-// LRM 21.3.4.3 `$sscanf` / `$fscanf`. The call is modelled as a closure
-// invoked immediately (the IIFE pattern). The closure's body parses into
-// procedural-local temps, conditionally writes back to the original output
-// lvalues, and yields the matched-conversion count. The body's writeback
+// LRM 21.3.4.3 `$sscanf` / `$fscanf`. The call is modelled as a block
+// expression: its steps parse into procedural-local temps, conditionally write
+// back to the original output lvalues, and it yields the matched-conversion
+// count. The writeback
 // assignments use the existing `AssignExpr` path -- lvalue polymorphism
 // stays at the backend; the runtime sees plain temp pointers plus
 // per-slot type metadata.

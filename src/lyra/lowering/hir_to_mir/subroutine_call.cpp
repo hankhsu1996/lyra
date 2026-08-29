@@ -16,6 +16,7 @@
 #include "lyra/hir/expr_id.hpp"
 #include "lyra/hir/subroutine.hpp"
 #include "lyra/hir/subroutine_ref.hpp"
+#include "lyra/lowering/hir_to_mir/block_builder.hpp"
 #include "lyra/lowering/hir_to_mir/call_operands.hpp"
 #include "lyra/lowering/hir_to_mir/callee_interface.hpp"
 #include "lyra/lowering/hir_to_mir/closure_builder.hpp"
@@ -469,24 +470,25 @@ auto EmitSubroutineCall(
       .writebacks = std::move(writebacks)};
 }
 
-// Sequences a call whose completion carries values back to caller places: bind
-// the completion, write each component to its actual, then yield the result.
-// Statements in expression position are a closure invoked where it is built,
-// and the closure states the same protocol its callee does -- a task's
-// completion is awaited inside the body, so the body completes as a coroutine
-// its own caller awaits in turn (LRM 13.3, 13.5).
-template <ExprLowerer Lowerer>
-auto LowerWritingBackCall(
-    Lowerer& lowerer, const WalkFrame& frame, const hir::CallExpr& call,
-    const SubroutineCallee& plan) -> diag::Result<mir::Expr> {
-  auto& unit_lowerer = lowerer.Owner();
-  mir::CompilationUnit& unit = unit_lowerer.Unit();
-  ClosureBuilder closure(unit, frame);
+// Where a written-back call left its completion: the local it is bound to and
+// the payload type to project components out of it by.
+struct BoundCompletion {
+  mir::LocalId completion;
+  mir::TypeId payload_type;
+};
 
-  auto emitted = EmitSubroutineCall(lowerer, closure.Frame(), call, plan);
+// Emits the call, binds its completion, and writes each output component back
+// to its actual, into whichever body `frame` is currently writing.
+template <ExprLowerer Lowerer>
+auto EmitWritingBackSteps(
+    Lowerer& lowerer, const WalkFrame& frame, const hir::CallExpr& call,
+    const SubroutineCallee& plan) -> diag::Result<BoundCompletion> {
+  mir::CompilationUnit& unit = lowerer.Owner().Unit();
+
+  auto emitted = EmitSubroutineCall(lowerer, frame, call, plan);
   if (!emitted) return std::unexpected(std::move(emitted.error()));
 
-  mir::Block& body = closure.Body();
+  mir::Block& body = *frame.current_block;
   const mir::TypeId payload_type = emitted->payload_type;
   const mir::ExprId call_id = body.exprs.Add(std::move(emitted->call));
   const mir::ExprId completion_value =
@@ -496,7 +498,7 @@ auto LowerWritingBackCall(
                     .data = mir::AwaitExpr{.awaitable = call_id},
                     .type = payload_type})
           : call_id;
-  const mir::LocalId completion = closure.Frame().bindings->DeclareAnonymous(
+  const mir::LocalId completion = frame.bindings->DeclareAnonymous(
       mir::LocalDecl{.name = "_lyra_completion", .type = payload_type});
   body.AppendStmt(
       mir::LocalDeclStmt{.target = completion, .init = completion_value});
@@ -508,24 +510,71 @@ auto LowerWritingBackCall(
         BuildStoreExpr(unit, body, wb.place, value_id, std::nullopt, wb.type);
     body.AppendStmt(mir::ExprStmt{.expr = body.exprs.Add(assign_expr)});
   }
+  return BoundCompletion{
+      .completion = completion, .payload_type = payload_type};
+}
+
+template <ExprLowerer Lowerer>
+auto LowerWritingBackCall(
+    Lowerer& lowerer, const WalkFrame& frame, const hir::CallExpr& call,
+    const SubroutineCallee& plan) -> diag::Result<mir::Expr> {
+  mir::CompilationUnit& unit = lowerer.Owner().Unit();
 
   // A task's completion is awaited inside the body, so the body completes as a
   // coroutine and the expression is that coroutine: the enabler awaits it, the
-  // same protocol a bare task enable states.
+  // same protocol a bare task enable states (LRM 13.3, 13.5). The body is a
+  // callable value because its caller drives it, which is what separates it
+  // from the sequencing below.
   if (plan.kind == hir::SubroutineKind::kTask) {
+    ClosureBuilder closure(unit, frame);
+    auto bound = EmitWritingBackSteps(lowerer, closure.Frame(), call, plan);
+    if (!bound) return std::unexpected(std::move(bound.error()));
     return closure.BuildCoroutine();
   }
-  mir::Expr closure_value =
-      plan.result_type.has_value()
-          ? closure.Build(ProjectCompletionComponent(
-                body, completion, payload_type, base::ComponentIndex{},
-                *plan.result_type))
-          : closure.BuildVoid();
-  return BuildClosureCallExpr(
-      unit, *frame.current_block, std::move(closure_value));
+
+  // A function's completion is bound and written back here and now, so the
+  // steps are one block expression and the call stays where it was written.
+  if (!plan.result_type.has_value()) {
+    throw InternalError(
+        "LowerWritingBackCall: a call that settles no value has no expression "
+        "to stand as -- please report this as a bug");
+  }
+  BlockBuilder steps(frame);
+  auto bound = EmitWritingBackSteps(lowerer, steps.Frame(), call, plan);
+  if (!bound) return std::unexpected(std::move(bound.error()));
+  return steps.Build(ProjectCompletionComponent(
+      steps.Body(), bound->completion, bound->payload_type,
+      base::ComponentIndex{}, *plan.result_type));
 }
 
 }  // namespace
+
+auto LowerSubroutineCallStmtForm(
+    ProcessLowerer& lowerer, WalkFrame frame,
+    const std::optional<std::string>& label, const hir::CallExpr& call,
+    mir::TypeId result_type) -> std::optional<diag::Result<mir::Stmt>> {
+  const std::optional<SubroutineCallee> planned =
+      PlanSubroutineCall(lowerer, call, result_type);
+  if (!planned.has_value()) return std::nullopt;
+  const SubroutineCallee& callee = *planned;
+
+  // Only a function that writes back and settles no value of its own. A task
+  // hands its caller a coroutine to await, and a valued function hands it the
+  // component it read, so both are expressions the caller consumes.
+  const bool writes_back_only = WritesBack(callee) &&
+                                callee.kind != hir::SubroutineKind::kTask &&
+                                !callee.result_type.has_value();
+  if (!writes_back_only) return std::nullopt;
+
+  BlockBuilder steps(frame);
+  auto bound = EmitWritingBackSteps(lowerer, steps.Frame(), call, callee);
+  if (!bound) {
+    return diag::Result<mir::Stmt>{std::unexpected(std::move(bound.error()))};
+  }
+  mir::Stmt stmt = steps.BuildStatement();
+  stmt.label = label;
+  return diag::Result<mir::Stmt>{std::move(stmt)};
+}
 
 template <ExprLowerer Lowerer>
 auto LowerSubroutineCall(

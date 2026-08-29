@@ -38,12 +38,13 @@ namespace lyra::lowering::hir_to_mir {
 // body passes the default (every forwarded binding aliases).
 //
 // A closure is a value, and which value follows from that protocol: a
-// synchronous body yields a callable the referencing site invokes, a coroutine
-// body yields the coroutine itself. What the site then does with it -- an
-// immediately-invoked call, a fork spawn, a deferred submit, a with-clause
-// iteration, an await -- is the site's concern, not the builder's. Non-movable:
-// `Frame()` and `Bindings()` hand out references into the owned closure and
-// binding context.
+// synchronous body yields a callable a holder invokes later, a coroutine body
+// yields the coroutine itself. What the site then does with it -- a fork spawn,
+// a deferred submit, a with-clause iteration, an await -- is the site's
+// concern, not the builder's. A body that runs where it is written is no
+// callable value at all and takes the block-expression shape instead.
+// Non-movable: `Frame()` and `Bindings()` hand out references into the owned
+// closure and binding context.
 class ClosureBuilder {
  public:
   ClosureBuilder(
@@ -104,13 +105,5 @@ class ClosureBuilder {
   WalkFrame frame_;
   std::vector<mir::LocalId> invocation_params_;
 };
-
-// Builds the immediately-invoked call of `closure` (the IIFE shape): adds the
-// closure expression to `block` and returns a `CallExpr` over an `Indirect`
-// callee referencing it, with no arguments. The call's result type comes from
-// the closure's invoke. Only a synchronous closure has anything to invoke.
-auto BuildClosureCallExpr(
-    mir::CompilationUnit& unit, mir::Block& block, mir::Expr closure)
-    -> mir::Expr;
 
 }  // namespace lyra::lowering::hir_to_mir
