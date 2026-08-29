@@ -371,17 +371,17 @@ enough to warrant its own focused review.
       the backend. See `decisions/builtin-call-identity.md`.
 
 - [x] R30 -- **Runtime effects as generic calls: the closure-bearing subset** (carve-out of R20,
-      same decision). The `$strobe` family, the scan family (`$sscanf` / `$fscanf`), and the
-      synthesized non-blocking-assignment and deferred-assertion submits each lower to a generic
-      `CallExpr` over a compiler-synthesized closure built through the one closure builder (R31).
+      same decision). The `$strobe` family and the synthesized non-blocking-assignment and
+      deferred-assertion submits each lower to a generic `CallExpr` over a compiler-synthesized
+      closure built through the one closure builder (R31).
 
 - [x] R27 -- **Associative-array traversal output write-back.** `first` / `last` / `next` / `prev`
-      (LRM 7.9.4 -- 7.9.7) lower to an immediately-invoked closure that reads the index into a plain
-      local, runs a pure (engine-free) query that mutates it, and commits `index = temp` through an
-      ordinary observable assignment -- so the LRM 4.3 update event fires in the assignment, not the
-      query. The traversal query is now a plain container member rendered through the generic
-      member-call rule; the backend no longer fabricates the engine handle or a reference wrapper
-      for traversal. Closes R25's traversal carve-out (traversal now fits the generic member rule).
+      (LRM 7.9.4 -- 7.9.7) lower to a block expression that reads the index into a plain local, runs
+      a pure (engine-free) query that mutates it, and commits `index = temp` through an ordinary
+      observable assignment -- so the LRM 4.3 update event fires in the assignment, not the query.
+      The traversal query is now a plain container member rendered through the generic member-call
+      rule; the backend no longer fabricates the engine handle or a reference wrapper for traversal.
+      Closes R25's traversal carve-out (traversal now fits the generic member rule).
 
 - [x] R31 -- **Every closure-construction site now goes through the one closure builder.** The
       builder owns the body scope, the `self` capture (captures[0]), and the capture sink; the
@@ -939,6 +939,20 @@ enough to warrant its own focused review.
   - [ ] The queue and associative-array interior writes connect to the same path once those value
         domains are realized on the execution backend.
 
+- [x] R69 -- An evaluation of several steps standing where only an expression may was a closure
+      invoked where it was built. That is what a language without the construct is forced into, and
+      it is a substitute: it manufactures a callable value nobody holds, spends a function boundary
+      on something that is not a function, and -- because a closure carries coroutine-ness in its
+      result type -- makes every sequencing site structurally indistinguishable from a body that may
+      suspend. The boundary also silently reinterprets a return among the steps, the defect
+      `../decisions/foreach-lowering.md` had already met from the other direction. MIR now has the
+      construct: a block expression, sequencing and nothing else, whose steps do not return. Every
+      site that sequenced -- a call writing back to its actuals, the scan family, the plusargs and
+      randomize families, the foreign-import boundary, associative-array traversal -- builds one,
+      and the closure is left to the bodies that genuinely escape. The reasoning, and why one node
+      reaches further than making each control construct value-producing, is in
+      `../decisions/block-expression.md`.
+
 - [ ] R62 -- Diagnostics reaches its source files through a hand-rolled pool. The source manager
       keeps its files in a plain sequence, mints a file identity from that sequence's running count,
       and reserves zero to mean "no file", so every reader tests the identity for the reserved value
@@ -1008,6 +1022,34 @@ enough to warrant its own focused review.
       homogeneous sequence is a value MIR needs -- the associative literal its type doc names as the
       motivating use is built another way today -- and either give it the producer that use implies
       or drop the vocabulary and the arms that carry it.
+
+- [ ] R70 -- MIR-to-LIR's expression lowering claims every expression yields a value. An operand is
+      an instruction's input, and a void-typed expression has none to give, so the entries that meet
+      one improvise: a void builtin call and a void await each hand back an operand belonging to
+      something else, which is a value nothing put there and no consumer should read. Void is an
+      ordinary type of the language above -- a call to a subroutine that returns nothing is one --
+      so the mis-statement is here: this layer restates MIR in a machine model's vocabulary, and in
+      that vocabulary a computation that produces no value is ordinary rather than exceptional.
+      Target: let expression lowering answer "no value" outright, so the improvised operands go. Not
+      an operand alternative -- an operand is an input, and "no value" never is one; every consumer
+      would grow an arm for something it can never receive.
+
+- [ ] R71 -- MIR's block fuses an expression arena with a statement sequence, and only the sequence
+      half is a block. A callable's bindings are pooled once for the whole callable, because a local
+      declared in a nested sequence is still that callable's local; its expressions are pooled per
+      sequence instead, for no matching reason. Two consequences follow. An expression identity is
+      meaningful only beside the sequence that minted it, so every id numbers from zero in every
+      sequence and reading one against the wrong sequence yields a valid but different expression --
+      a whole class of silent mistake that a callable-wide identity cannot spell. And which sequence
+      an expression will belong to has to be settled before the first operand is lowered, because an
+      expression cannot move afterwards, which is why a lowering that may or may not need a sequence
+      has to predict that from the declaration rather than discover it while building. The fusion
+      shows plainly where a class-level constant, which is an expression tree with no callable and
+      no statements at all, still has to be carried as a sequence: its producer reaches past it to
+      the arena, and its consumer borrows an unrelated callable to read it back. Target: pool
+      expressions where bindings are already pooled, give the constant its own tree, and leave the
+      sequence holding statements alone -- at which point the name it already has is the right one.
+      Wide: every lowering that writes into a sequence, both backends, and the dump.
 
 ## Out of Scope
 

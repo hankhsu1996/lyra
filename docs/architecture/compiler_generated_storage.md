@@ -82,7 +82,7 @@ Stated positively: each fixes one rule, and what is allowed or forbidden follows
 
 4. **Value-versus-reference for a scope is the wrapper, not a bespoke type.** A scope is a plain
    `StructType` reached through a `Shared<>` handle; the reference semantics are the ordinary MIR
-   wrapper. A closure is reached by value / invoked in place. Neither needs a reference-aggregate
+   wrapper. A closure is reached by value and called directly. Neither needs a reference-aggregate
    type category of its own.
 
 5. **A captured field is a snapshot, a live-place alias, or a retained scope -- by its type.** A
@@ -181,9 +181,11 @@ closure   : ClosureType C_k { self: M*, scope: Shared<M__scope0> } + invoke
 invoke    : field_access(closure_receiver, field_of(scope)) then ... -> read scope.x through the handle
 ```
 
-The current C++ backend realizes the scope as `struct M__scope0 {...}` + `shared_ptr` and the
-closure as an anonymous lambda immediately invoked with `(self, scope)`. That is this backend's
-realization, not the MIR definition.
+The current C++ backend realizes the scope as `struct M__scope0 {...}` + `shared_ptr`, and the
+closure as an anonymous lambda holding its captures -- or, where the invoke is a coroutine, as one
+taking them as parameters and called at once to yield the coroutine, because a coroutine lambda's
+captures do not survive its first suspension. That is this backend's realization, not the MIR
+definition.
 
 The three capture forms differ only by field type:
 

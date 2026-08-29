@@ -1,11 +1,13 @@
 #pragma once
 
 #include <optional>
+#include <string>
 
 #include "lyra/diag/diagnostic.hpp"
 #include "lyra/lowering/hir_to_mir/expression/expr_lowerer.hpp"
 #include "lyra/lowering/hir_to_mir/walk_frame.hpp"
 #include "lyra/mir/expr.hpp"
+#include "lyra/mir/stmt.hpp"
 #include "lyra/mir/type_id.hpp"
 
 namespace lyra::hir {
@@ -13,6 +15,8 @@ struct CallExpr;
 }  // namespace lyra::hir
 
 namespace lyra::lowering::hir_to_mir {
+
+class ProcessLowerer;
 
 // Lowers a call to a user subroutine -- an intra-unit structural one, a
 // cross-unit package / `$unit` one (LRM 26.3), or a class method whether it
@@ -26,8 +30,9 @@ namespace lyra::lowering::hir_to_mir {
 // protocol the callee states: a task's completion is a coroutine its caller
 // awaits, a function's is its payload outright. A callee that writes values
 // back needs those writes sequenced after completion, so the call, the writes,
-// and the yield become an immediately-invoked closure; one that writes nothing
-// back has nothing to sequence and is the call itself.
+// and the yield become one block expression -- or, where the callee is a task,
+// a coroutine the enabler awaits. One that writes nothing back has nothing to
+// sequence and is the call itself.
 //
 // Returns nullopt for a callee that is not a user subroutine -- a system,
 // builtin, imported, or foreign one -- each of which has its own boundary.
@@ -38,5 +43,16 @@ template <ExprLowerer Lowerer>
 auto LowerSubroutineCall(
     Lowerer& lowerer, WalkFrame frame, const hir::CallExpr& call,
     mir::TypeId result_type) -> std::optional<diag::Result<mir::Expr>>;
+
+// The one call above that is not an expression: a function that writes back to
+// its actuals and settles no value of its own. The writes are the whole of what
+// it does, so what the source wrote lowers to a run of statements, and there is
+// no value for an enclosing expression to have wanted -- the frontend admits
+// such a call in statement position alone. Returns nullopt for every other
+// call, which the expression form lowers.
+auto LowerSubroutineCallStmtForm(
+    ProcessLowerer& lowerer, WalkFrame frame,
+    const std::optional<std::string>& label, const hir::CallExpr& call,
+    mir::TypeId result_type) -> std::optional<diag::Result<mir::Stmt>>;
 
 }  // namespace lyra::lowering::hir_to_mir

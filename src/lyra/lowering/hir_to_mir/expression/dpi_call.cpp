@@ -17,6 +17,7 @@
 #include "lyra/hir/foreign_export.hpp"
 #include "lyra/hir/subroutine_ref.hpp"
 #include "lyra/lowering/hir_to_mir/binding_origin.hpp"
+#include "lyra/lowering/hir_to_mir/block_builder.hpp"
 #include "lyra/lowering/hir_to_mir/call_operands.hpp"
 #include "lyra/lowering/hir_to_mir/callable_bindings.hpp"
 #include "lyra/lowering/hir_to_mir/callee_interface.hpp"
@@ -476,14 +477,14 @@ auto MakeForeignSymbolCall(
                   : unit.builtins.void_type};
 }
 
-// The all-input function import call: every actual crosses by value, so the
-// call is a plain expression -- no statement sequencing, no boundary temps.
-// Each actual is marshaled to its ABI carrier, the foreign symbol is called
-// over the carriers, and a non-void result is marshaled back to the declared SV
-// type. A task never reaches here; its await needs a coroutine, so it always
-// sequences.
+// The function import call the boundary needs no statements for: every actual
+// crosses by value and no callback has to be arranged, so the call is one
+// expression -- no boundary objects, no scope guard. Each actual is marshaled
+// to its ABI carrier, the foreign symbol is called over the carriers, and a
+// non-void result is marshaled back to the declared SV type. A task never
+// reaches here; its await needs a coroutine.
 template <ExprLowerer Lowerer>
-auto LowerForeignImportInputsOnly(
+auto LowerForeignImportDirect(
     Lowerer& lowerer, WalkFrame frame, const hir::CallExpr& c,
     const hir::ForeignImportDecl& import, mir::TypeId result_type)
     -> diag::Result<mir::Expr> {
@@ -527,15 +528,14 @@ auto LowerForeignImportInputsOnly(
 // finished boundary in.
 template <ExprLowerer Lowerer>
 auto PopulateForeignImportBoundary(
-    Lowerer& lowerer, ClosureBuilder& closure, const hir::CallExpr& c,
+    Lowerer& lowerer, const WalkFrame& cframe, const hir::CallExpr& c,
     const hir::ForeignImportDecl& import)
     -> diag::Result<std::optional<mir::LocalId>> {
   auto& unit_lowerer = lowerer.Owner();
   auto& unit = unit_lowerer.Unit();
   const auto& hir_exprs = lowerer.HirExprs();
 
-  mir::Block& body = closure.Body();
-  const WalkFrame& cframe = closure.Frame();
+  mir::Block& body = *cframe.current_block;
 
   // One output / inout argument, and what its boundary object needs to be read
   // back into the actual once the call returns.
@@ -573,7 +573,7 @@ auto PopulateForeignImportBoundary(
     // the same way. The foreign side reads and writes the object, and the
     // read-back below lands the result in the actual's cell.
     const mir::TypeId carrier_type = CarrierTypeId(unit, carrier);
-    const mir::LocalId temp = closure.Bindings().DeclareAnonymous(
+    const mir::LocalId temp = cframe.bindings->DeclareAnonymous(
         mir::LocalDecl{
             .name = "_lyra_dpi_arg" + std::to_string(i), .type = carrier_type});
     body.AppendStmt(
@@ -609,7 +609,7 @@ auto PopulateForeignImportBoundary(
   // before it is marshaled and returned.
   std::optional<mir::LocalId> ret_temp;
   if (ReturnsValue(import)) {
-    ret_temp = closure.Bindings().DeclareAnonymous(
+    ret_temp = cframe.bindings->DeclareAnonymous(
         mir::LocalDecl{.name = "_lyra_dpi_ret", .type = call_type});
     body.AppendStmt(
         mir::LocalDeclStmt{
@@ -647,20 +647,20 @@ auto PopulateForeignImportBoundary(
 // push still happens, so the call never inherits an enclosing chain entry that
 // is not its declaration's.
 auto BuildDpiScopeGuard(
-    UnitLowerer& unit_lowerer, ClosureBuilder& closure,
+    UnitLowerer& unit_lowerer, const WalkFrame& frame,
     std::optional<hir::StructuralHops> declaring_scope) -> mir::LocalDeclStmt {
   mir::CompilationUnit& unit = unit_lowerer.Unit();
-  mir::Block& body = closure.Body();
+  mir::Block& body = *frame.current_block;
   const mir::TypeId guard_type = unit.types.Intern(
       mir::RuntimeLibraryType{.kind = mir::RuntimeLibraryKind::kDpiScopeGuard});
-  const mir::LocalId guard = closure.Bindings().DeclareAnonymous(
+  const mir::LocalId guard = frame.bindings->DeclareAnonymous(
       mir::LocalDecl{.name = "_lyra_dpi_scope", .type = guard_type});
   const mir::ExprId services_id =
       body.exprs.Add(BuildCurrentRuntimeCallExpr(unit_lowerer));
   const mir::ExprId decl_scope_id =
       declaring_scope.has_value()
           ? BuildEnclosingScopeReceiver(
-                closure.Frame(), unit,
+                frame, unit,
                 mir::EnclosingHops{.value = declaring_scope->value})
           : body.exprs.Add(
                 mir::Expr{
@@ -677,11 +677,25 @@ auto BuildDpiScopeGuard(
               .type = guard_type})};
 }
 
-// The general function import call: at least one actual crosses through a
-// boundary object rather than by value, so the boundary is a statement sequence
-// yielding a value. It lowers to an immediately-invoked closure, uniform for
-// void / valued and statement / expression position. A by-value scalar input in
-// the same call still crosses by value, with no object of its own.
+// Whether crossing the boundary takes statements rather than one expression.
+// Two things ask for them. An actual the foreign side writes through needs an
+// object of its own, declared before the call and read back after it. And a
+// context import (LRM 35.5.3) may call back into SystemVerilog, so the scope
+// the callback resolves against is pushed before the call and popped after.
+// Neither fits in an expression, while a call with no actual and no callback
+// to arrange is one.
+//
+// Settled from the declaration, before the first actual is lowered, because an
+// expression belongs to the block it was lowered into and cannot move after.
+[[nodiscard]] auto BoundaryTakesStatements(const hir::ForeignImportDecl& import)
+    -> bool {
+  return import.is_context ||
+         !std::ranges::all_of(import.params, CrossesByValue);
+}
+
+// The function import call whose boundary takes statements and whose foreign
+// side hands a value back: the steps marshal, call, and marshal the result, and
+// the block expression yields it.
 template <ExprLowerer Lowerer>
 auto LowerForeignImportSequenced(
     Lowerer& lowerer, WalkFrame frame, const hir::CallExpr& c,
@@ -691,20 +705,21 @@ auto LowerForeignImportSequenced(
   auto& unit_lowerer = lowerer.Owner();
   auto& unit = unit_lowerer.Unit();
 
-  ClosureBuilder closure(unit, frame);
+  BlockBuilder steps(frame);
+  const WalkFrame& cframe = steps.Frame();
   if (import.is_context) {
-    closure.Body().AppendStmt(
-        BuildDpiScopeGuard(unit_lowerer, closure, declaring_scope));
+    steps.Body().AppendStmt(
+        BuildDpiScopeGuard(unit_lowerer, cframe, declaring_scope));
   }
-  auto ret_temp = PopulateForeignImportBoundary(lowerer, closure, c, import);
+  auto ret_temp = PopulateForeignImportBoundary(lowerer, cframe, c, import);
   if (!ret_temp) return std::unexpected(std::move(ret_temp.error()));
 
   if (!ret_temp->has_value()) {
-    return BuildClosureCallExpr(
-        unit, *frame.current_block, closure.BuildVoid());
+    throw InternalError(
+        "LowerForeignImportSequenced: a boundary that returns nothing has no "
+        "expression to stand as -- please report this as a bug");
   }
-  mir::Block& body = closure.Body();
-  const WalkFrame& cframe = closure.Frame();
+  mir::Block& body = steps.Body();
   const mir::TypeId call_type =
       CarrierTypeId(unit, support::ScalarCarrier{import.ret_abi});
   const mir::ExprId ret_ref =
@@ -712,15 +727,15 @@ auto LowerForeignImportSequenced(
   const mir::ExprId result_id = body.exprs.Add(MarshalCarrierToSv(
       unit_lowerer, cframe, ret_ref, support::ScalarCarrier{import.ret_abi},
       result_type));
-  return BuildClosureCallExpr(
-      unit, *frame.current_block, closure.Build(result_id));
+  return steps.Build(result_id);
 }
 
 // The task import call (LRM 35.5.2): a task has no SV return, so the call
 // finishes as a coroutine -- the awaitable the caller drives, the same call
 // protocol as a native task enable (LRM 35.8), uniform whether or not the
-// foreign side consumes time. The boundary always sequences through the
-// closure, even all-input, because the await needs a coroutine to drive. The
+// foreign side consumes time. The boundary always crosses inside the closure,
+// even where every actual crosses by value, because the await needs a coroutine
+// to drive rather than a value to read. The
 // closure is returned directly, not called: building a coroutine closure is
 // starting it, which is what its type says, and the statement lowering awaits
 // it.
@@ -744,11 +759,12 @@ auto LowerForeignImportTask(
   ClosureBuilder outer(unit, frame);
   if (import.is_context) {
     outer.Body().AppendStmt(
-        BuildDpiScopeGuard(unit_lowerer, outer, declaring_scope));
+        BuildDpiScopeGuard(unit_lowerer, outer.Frame(), declaring_scope));
   }
 
   ClosureBuilder fiber_body(unit, outer.Frame());
-  auto ret_temp = PopulateForeignImportBoundary(lowerer, fiber_body, c, import);
+  auto ret_temp =
+      PopulateForeignImportBoundary(lowerer, fiber_body.Frame(), c, import);
   if (!ret_temp) return std::unexpected(std::move(ret_temp.error()));
 
   mir::Block& body = outer.Body();
@@ -829,7 +845,11 @@ auto ForeignBoundaryReturnType(
 auto MakeForeignSignature(
     mir::CompilationUnit& unit, std::span<const hir::DpiParamAbi> params,
     support::DpiScalarAbi ret_abi, bool is_task) -> mir::CallableCode {
-  mir::CallableCode code;
+  mir::CallableCode code{
+      .params = {},
+      .result_type = ForeignBoundaryReturnType(unit, ret_abi, is_task),
+      .locals = {},
+      .body = std::nullopt};
   CallableBindings bindings(unit, code);
   code.params.reserve(params.size());
   for (std::size_t i = 0; i < params.size(); ++i) {
@@ -839,7 +859,6 @@ auto MakeForeignSignature(
             .type = ForeignBoundaryType(
                 unit, params[i].carrier, params[i].direction)}));
   }
-  code.result_type = ForeignBoundaryReturnType(unit, ret_abi, is_task);
   return code;
 }
 
@@ -866,16 +885,11 @@ auto LowerForeignImportCall(
     return LowerForeignImportTask(
         lowerer, frame, c, import, ref.declaring_scope);
   }
-  // The boundary needs a statement sequence when anything in it is a scoped
-  // body local: an actual crossing through a boundary object, or a context
-  // import's scope guard, which a plain single-expression call has no room for.
-  const bool sequences =
-      import.is_context || !std::ranges::all_of(import.params, CrossesByValue);
-  if (sequences) {
+  if (BoundaryTakesStatements(import)) {
     return LowerForeignImportSequenced(
         lowerer, frame, c, import, ref.declaring_scope, result_type);
   }
-  return LowerForeignImportInputsOnly(lowerer, frame, c, import, result_type);
+  return LowerForeignImportDirect(lowerer, frame, c, import, result_type);
 }
 
 template auto LowerForeignImportCall(
@@ -886,6 +900,37 @@ template auto LowerForeignImportCall(
     const StructuralScopeLowerer& lowerer, WalkFrame frame,
     const hir::CallExpr& c, const hir::ForeignImportRef& ref,
     mir::TypeId result_type) -> diag::Result<mir::Expr>;
+
+auto LowerForeignImportCallStmtForm(
+    ProcessLowerer& lowerer, WalkFrame frame,
+    const std::optional<std::string>& label, const hir::CallExpr& c,
+    const hir::ForeignImportRef& ref)
+    -> std::optional<diag::Result<mir::Stmt>> {
+  const hir::ForeignImportDecl& import =
+      lowerer.Owner().Hir().foreign_imports.Get(ref.id);
+
+  // A task hands its enabler a coroutine to await, and a returning function
+  // hands it the marshaled result, so both are expressions the caller consumes.
+  // A boundary taking no statements is the foreign call itself.
+  if (import.is_task || ReturnsValue(import) ||
+      !BoundaryTakesStatements(import)) {
+    return std::nullopt;
+  }
+
+  BlockBuilder steps(frame);
+  const WalkFrame& cframe = steps.Frame();
+  if (import.is_context) {
+    steps.Body().AppendStmt(
+        BuildDpiScopeGuard(lowerer.Owner(), cframe, ref.declaring_scope));
+  }
+  auto crossed = PopulateForeignImportBoundary(lowerer, cframe, c, import);
+  if (!crossed) {
+    return diag::Result<mir::Stmt>{std::unexpected(std::move(crossed.error()))};
+  }
+  mir::Stmt stmt = steps.BuildStatement();
+  stmt.label = label;
+  return diag::Result<mir::Stmt>{std::move(stmt)};
+}
 
 auto SynthesizeForeignExportEntry(
     UnitLowerer& module, const WalkFrame& context_frame,
@@ -1172,7 +1217,10 @@ auto SynthesizeForeignExportEntry(
   return ForeignExportEntry{
       .code = std::move(code),
       .linkage = mir::ForeignLinkage{.foreign_name = export_decl.foreign_name},
-      .signature = signature};
+      .definition = through_scope
+                        ? mir::ForeignDefinition{mir::PerScopeEntryDefinition{
+                              .signature = signature}}
+                        : mir::ForeignDefinition{mir::UnitSymbolDefinition{}}};
 }
 
 }  // namespace lyra::lowering::hir_to_mir

@@ -612,7 +612,7 @@ class MirDumper {
                   FormatQualification(d.qualification));
             },
             [](const Indirect& i) -> std::string {
-              return std::format("Indirect[closure=Expr[{}]]", i.closure.value);
+              return std::format("Indirect[code=Expr[{}]]", i.code.value);
             },
             [](const Construct&) -> std::string { return "Construct"; },
             [this](const Virtual& v) -> std::string {
@@ -725,6 +725,11 @@ class MirDumper {
                   "MergingConditionalExpr cond=Expr[{}] then=Expr[{}] "
                   "else=Expr[{}]",
                   c.condition.value, c.then_value.value, c.else_value.value);
+            },
+            [](const BlockExpr& b) -> std::string {
+              return std::format(
+                  "BlockExpr scope=BlockId{{{}}} value=Expr[{}]", b.scope.value,
+                  b.value.value);
             },
             [](const AssignExpr& a) -> std::string {
               const std::string op_str =
@@ -1160,6 +1165,11 @@ class MirDumper {
         if (const auto* cl = std::get_if<ClosureExpr>(&expr.data)) {
           Indent();
           DumpClosureExpr(*cl);
+          Dedent();
+        }
+        if (const auto* be = std::get_if<BlockExpr>(&expr.data)) {
+          Indent();
+          DumpBlock(scope.child_scopes.Get(be->scope));
           Dedent();
         }
       }

@@ -140,11 +140,11 @@ enum class ValueDomain : std::uint8_t {
 };
 
 // How a member's storage is realized. A borrowed handle is a box holding a
-// pointer the instance does not own, the storage behind a reference reaching
+// pointer the owner does not own, the storage behind a reference reaching
 // another scope. An observable cell is the subscribable variable a process
-// reads, writes, and waits on. An inline value is a value the instance owns but
-// no process subscribes to -- a chandle (LRM 6.14), whose pointer-sized value
-// lives in the member slot and is read and written directly.
+// reads, writes, and waits on. An inline value is a value the owner owns but no
+// process subscribes to -- a chandle (LRM 6.14), and every value a closure
+// snapshots into a capture.
 enum class MemberStorageKind : std::uint8_t {
   kBorrowedHandle,
   kObservableCell,
@@ -153,6 +153,10 @@ enum class MemberStorageKind : std::uint8_t {
   // backend realizes the storage; whether a backend can also raise and consume
   // the control effect a `disable` sends through it is a separate question.
   kCancellationSource,
+  // The joint cancel state of the channels a deferred file write targets (LRM
+  // 21.3.2), snapshotted into the closure that will perform that write so the
+  // write short-circuits if a descriptor is closed before its region runs.
+  kChannelCancellation,
 };
 
 struct MemberStorageDescriptor {
@@ -160,12 +164,12 @@ struct MemberStorageDescriptor {
   ValueDomain domain = ValueDomain::kNone;
 };
 
-// A unit's member storage schema, in class-local member order: what a generic
-// instance must realize for each member its class declares. Crosses the
-// generated-runtime boundary as plain data -- a pointer plus a length, not a
-// C++ container -- so a non-C++ backend supplies it without depending on a C++
-// type's layout. The pointed-at descriptors are owned by whoever built the
-// definition and outlive every instance of it.
+// One declaration's member storage schema, in its own member order: what a
+// generic value of it must realize for each member the declaration holds.
+// Crosses the generated-runtime boundary as plain data -- a pointer plus a
+// length, not a C++ container -- so a non-C++ backend supplies it without
+// depending on a C++ type's layout. The pointed-at descriptors are owned by
+// whoever built the definition and outlive every value built from it.
 struct MemberStorageSchema {
   const MemberStorageDescriptor* data = nullptr;
   std::uint32_t size = 0;

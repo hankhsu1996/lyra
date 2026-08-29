@@ -293,9 +293,9 @@ auto LowerCallTarget(
             return lir::CallTarget{lir::ConstructTarget{.result = result}};
           },
           [](const mir::Indirect&) -> diag::Result<lir::CallTarget> {
-            throw InternalError(
-                "mir_to_lir: a closure call carries its receiver, so it is "
-                "resolved before target dispatch");
+            return Unsupported(
+                "mir_to_lir: a call through a computed code address is not yet "
+                "lowerable to LIR");
           },
           [](const mir::Virtual&) -> diag::Result<lir::CallTarget> {
             return Unsupported(
@@ -329,45 +329,16 @@ FunctionLowerer::FunctionLowerer(
       locals_(closure.invoke.locals.size(), std::nullopt) {
 }
 
-auto FunctionLowerer::CaptureRead(
-    const mir::Block& block, const mir::FieldAccessExpr& field)
-    -> std::optional<lir::Operand> {
-  const std::optional<mir::LocalId> local = PlacedLocal(block, field.receiver);
-  if (!local.has_value() || !locals_[local->value].has_value()) {
-    return std::nullopt;
-  }
-  const auto* captures = std::get_if<CaptureBinding>(&*locals_[local->value]);
-  if (captures == nullptr) {
-    return std::nullopt;
-  }
-  // A closure's captures are its own, so a field naming another unit's class is
-  // not one of them and this is not a capture read.
-  const std::optional<std::uint32_t> slot = FieldSlot(field);
-  if (!slot.has_value()) {
-    return std::nullopt;
-  }
-  if (*slot >= captures->captures.size()) {
-    throw InternalError("mir_to_lir: closure capture read is out of range");
-  }
-  return captures->captures[*slot];
-}
-
-void FunctionLowerer::BindCaptureParams(
-    const mir::ClosureDecl& closure, mir::LocalId receiver) {
-  std::vector<lir::Operand> captures;
-  captures.reserve(closure.fields.size());
-  for (const mir::FieldId id : closure.fields.Ids()) {
-    const mir::FieldDecl& field = closure.fields.Get(id);
-    const lir::ValueId value = fn_.values.Add(
-        lir::Local{
-            .name = field.name,
-            .type = unit_->TranslateType(field.type),
-            .kind = lir::LocalKind::kParam});
-    fn_.params.push_back(value);
-    captures.emplace_back(lir::Use{.value = value});
-  }
+void FunctionLowerer::BindCaptureReceiver(mir::LocalId receiver) {
+  const mir::LocalDecl& decl = code_->locals.Get(receiver);
+  const lir::ValueId value = fn_.values.Add(
+      lir::Local{
+          .name = decl.name,
+          .type = unit_->TranslateType(decl.type),
+          .kind = lir::LocalKind::kParam});
+  fn_.params.push_back(value);
   locals_[receiver.value] =
-      LocalBinding{CaptureBinding{.captures = std::move(captures)}};
+      LocalBinding{ValueBinding{.value = lir::Use{.value = value}}};
 }
 
 auto FunctionLowerer::Run() -> diag::Result<lir::Function> {
@@ -402,11 +373,10 @@ auto FunctionLowerer::Run() -> diag::Result<lir::Function> {
   // value itself. The entry block exists first so a spilled parameter's copy
   // into its place lands there, ahead of the body.
   SetCurrent(NewBlock());
-  // A closure invoke's receiver is its environment, which the signature carries
-  // as the capture parameters leading its per-invocation ones rather than as
-  // one value.
+  // A closure invoke's receiver names the storage its captures live in, and
+  // leads the per-invocation parameters in the signature.
   if (closure_ != nullptr) {
-    BindCaptureParams(*closure_, mir::LocalId{0});
+    BindCaptureReceiver(mir::LocalId{0});
   }
   for (const mir::LocalId param : code_->params) {
     const mir::LocalDecl& decl = code_->locals.Get(param);
@@ -920,11 +890,6 @@ auto FunctionLowerer::LowerPlace(const mir::Block& block, mir::ExprId id)
             return LocalPlace(place->slot);
           },
           [&](const mir::FieldAccessExpr& field) -> diag::Result<lir::Place> {
-            if (CaptureRead(block, field).has_value()) {
-              return Unsupported(
-                  "mir_to_lir: a closure capture is read-only and names no "
-                  "storage");
-            }
             const std::optional<std::uint32_t> slot = FieldSlot(field);
             if (!slot.has_value()) {
               return Unsupported(
@@ -1056,56 +1021,6 @@ auto FunctionLowerer::LowerReferenceBind(
       unit_->TranslateType(type), lir::AddrOfInstr{.place = *std::move(place)});
 }
 
-// Calling a closure is a direct call: the callee's type names one closure,
-// whose invoke it is. Nothing is built to call through -- the captures are
-// evaluated and passed ahead of the call's own arguments, in the order the
-// construction lists them, and the receiver the body reads them through is
-// those parameters.
-auto FunctionLowerer::LowerClosureCall(
-    const mir::Block& block, const mir::Indirect& callee,
-    const std::vector<mir::ExprId>& arguments, mir::TypeId type)
-    -> diag::Result<lir::Operand> {
-  const auto* construct =
-      std::get_if<mir::ClosureExpr>(&block.exprs.Get(callee.closure).data);
-  if (construct == nullptr) {
-    return Unsupported(
-        "mir_to_lir: calling a closure that is not built at the call site is "
-        "not yet lowerable to LIR");
-  }
-  if (unit_->Mir().types.IsCoroutine(type)) {
-    return Unsupported(
-        "mir_to_lir: a coroutine closure is not yet lowerable to LIR");
-  }
-
-  const mir::ClosureDecl& decl = unit_->Mir().GetClosure(construct->closure);
-  if (construct->field_inits.size() != decl.fields.size()) {
-    throw InternalError(
-        "mir_to_lir: closure construction does not initialize every capture");
-  }
-  std::vector<lir::Operand> args(decl.fields.size());
-  for (const mir::FieldInit& init : construct->field_inits) {
-    auto value = LowerExpr(block, init.value);
-    if (!value) {
-      return std::unexpected(std::move(value.error()));
-    }
-    args[init.target.value] = *std::move(value);
-  }
-  for (const mir::ExprId arg : arguments) {
-    auto lowered = LowerArgument(block, arg);
-    if (!lowered) {
-      return std::unexpected(std::move(lowered.error()));
-    }
-    args.push_back(*std::move(lowered));
-  }
-  return Emit(
-      unit_->TranslateType(type),
-      lir::CallInstr{
-          .target =
-              lir::FunctionTarget{
-                  .function = unit_->ClosureFunction(construct->closure)},
-          .args = std::move(args)});
-}
-
 auto FunctionLowerer::LowerCall(
     const mir::Block& block, const mir::CallExpr& call, mir::TypeId type)
     -> diag::Result<lir::Operand> {
@@ -1116,10 +1031,6 @@ auto FunctionLowerer::LowerCall(
       fn.has_value() && support::IsMutatingBuiltinFn(*fn) &&
       !call.arguments.empty()) {
     return LowerMutatingCall(block, call, *fn, type);
-  }
-
-  if (const auto* indirect = std::get_if<mir::Indirect>(&call.callee)) {
-    return LowerClosureCall(block, *indirect, call.arguments, type);
   }
 
   // A reference is the address of the storage it binds, and reading or writing
@@ -1774,14 +1685,6 @@ auto FunctionLowerer::LowerExpr(const mir::Block& block, mir::ExprId id)
                         -> diag::Result<lir::Operand> {
                       return LoadActivationValue(
                           cell.handle, unit_->TranslateType(type));
-                    },
-                    [](const CaptureBinding&) -> diag::Result<lir::Operand> {
-                      // The captures were passed instead of a record, so there
-                      // is nothing to hand on; a closure reaching a use other
-                      // than a capture read is one that outlives its call.
-                      return Unsupported(
-                          "mir_to_lir: a closure used as a value is not yet "
-                          "lowerable to LIR");
                     }},
                 *binding);
           },
@@ -1866,12 +1769,12 @@ auto FunctionLowerer::LowerExpr(const mir::Block& block, mir::ExprId id)
                   "mir_to_lir: a coroutine closure, the process a fork branch "
                   "or a task enable starts, is not yet lowerable to LIR");
             }
-            // Constructing a closure builds its capture record, and nothing
-            // else: which body a call runs is already fixed by the type, so no
-            // code identity is stored alongside the captures. Initializers are
-            // evaluated in the order they are listed -- their source-semantic
-            // order -- and each lands at the capture it targets, since the two
-            // orders need not agree.
+            // Constructing a closure builds the storage its captures live in,
+            // and nothing else: which body a call runs is already fixed by the
+            // type, so no code identity is stored alongside them. Initializers
+            // are evaluated in the order they are listed -- their
+            // source-semantic order -- and each lands at the capture it
+            // targets, since the two orders need not agree.
             const mir::ClosureDecl& decl = unit_->Mir().GetClosure(cl.closure);
             if (cl.field_inits.size() != decl.fields.size()) {
               throw InternalError(
@@ -1886,9 +1789,12 @@ auto FunctionLowerer::LowerExpr(const mir::Block& block, mir::ExprId id)
               }
               captures[init.target.value] = *std::move(value);
             }
+            const lir::TypeId closure_type = unit_->TranslateType(type);
             return Emit(
-                unit_->TranslateType(type),
-                lir::ProductInstr{.components = std::move(captures)});
+                closure_type,
+                lir::CallInstr{
+                    .target = lir::ConstructTarget{.result = closure_type},
+                    .args = std::move(captures)});
           },
           [&](const mir::PointerCastExpr& c) -> diag::Result<lir::Operand> {
             auto operand = LowerExpr(block, c.operand);
@@ -1908,10 +1814,7 @@ auto FunctionLowerer::LowerExpr(const mir::Block& block, mir::ExprId id)
                 unit_->TranslateType(type),
                 lir::IntCastInstr{.operand = *std::move(operand)});
           },
-          [&](const mir::FieldAccessExpr& field) -> diag::Result<lir::Operand> {
-            if (auto capture = CaptureRead(block, field)) {
-              return *std::move(capture);
-            }
+          [&](const mir::FieldAccessExpr&) -> diag::Result<lir::Operand> {
             const lir::TypeId field_type = unit_->TranslateType(type);
             if (lir::IsAddressOnly(unit_->Types(), field_type)) {
               return Unsupported(
@@ -2029,6 +1932,17 @@ auto FunctionLowerer::LowerExpr(const mir::Block& block, mir::ExprId id)
           [&](const mir::MergingConditionalExpr& cond)
               -> diag::Result<lir::Operand> {
             return LowerMergingConditional(block, cond, type);
+          },
+          [&](const mir::BlockExpr& be) -> diag::Result<lir::Operand> {
+            // The steps run where they were written, so they lower into the
+            // block being built, and the value the last one names is what the
+            // expression yields.
+            const mir::Block& scope = block.child_scopes.Get(be.scope);
+            auto lowered = LowerBlockInto(scope);
+            if (!lowered) {
+              return std::unexpected(std::move(lowered.error()));
+            }
+            return LowerExpr(scope, be.value);
           },
           [&](const mir::MoveExpr& m) -> diag::Result<lir::Operand> {
             // A move is a last-use transfer marker placed at HIR-to-MIR; it

@@ -231,10 +231,10 @@ struct AggregateUpdateInstr {
   Operand replacement;
 };
 
-// A class-local logical member identity: the member's stable declaration-order
-// slot in its class's member list, carried over from the MIR field it lowers
-// from. It is meaningful only together with the base's class/object type --
-// `member 0` of one class is unrelated to `member 0` of another. Never a
+// A logical member identity local to the declaration that holds it: the
+// member's stable declaration-order slot, carried over from the MIR field it
+// lowers from. It is meaningful only together with the base's own type --
+// `member 0` of one declaration is unrelated to `member 0` of another. Never a
 // physical index or byte offset.
 struct MemberId {
   std::uint32_t value;
@@ -248,7 +248,8 @@ struct MemberId {
 // the chain `deref, member`, never `member` alone.
 struct DerefProjection {};
 
-// Selects a member of the object the projection has reached so far.
+// Selects a member of whatever the projection has reached so far -- an
+// instance's own storage, or the captures a closure value holds.
 struct MemberProjection {
   MemberId member;
 };

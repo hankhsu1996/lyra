@@ -91,6 +91,11 @@ class RuntimeAbi {
   auto FileTell() -> llvm::FunctionCallee;
   auto FileEof() -> llvm::FunctionCallee;
   auto FileFlush(std::size_t argument_count) -> llvm::FunctionCallee;
+  // The joint cancel state of the channels a descriptor names (LRM 21.3.2),
+  // which a deferred write snapshots so it can short-circuit if one of them is
+  // closed before its region runs.
+  auto CancellationFor() -> llvm::FunctionCallee;
+  auto IsCancelled() -> llvm::FunctionCallee;
 
   // The severity-fixed diagnostic channel (LRM 20.10). The dispatcher is
   // reached from the runtime, and each severity has its own emit entry, so the
@@ -107,6 +112,20 @@ class RuntimeAbi {
   // no C++ coroutine frame is built on the generated side.
   auto RegisterInitial() -> llvm::FunctionCallee;
   auto RegisterFinal() -> llvm::FunctionCallee;
+
+  // Builds a callable the runtime runs later. The definition names both the
+  // body and the storage its captures need, and the initializers cross as one
+  // handle per capture in declaration order, which the runtime copies into that
+  // storage; reading one back answers the handle it crosses to the body as.
+  auto MakeClosure() -> llvm::FunctionCallee;
+  auto ClosureCapture() -> llvm::FunctionCallee;
+
+  // Hands a callable to the region that will run it (LRM 4.4). Each region has
+  // its own entry, so the generated module names the region it defers to and no
+  // region tag crosses the boundary.
+  auto SubmitNba() -> llvm::FunctionCallee;
+  auto SubmitPostponed() -> llvm::FunctionCallee;
+  auto SubmitObserved() -> llvm::FunctionCallee;
 
   // Registers the running process to wake after a delay, the runtime call a
   // delay's suspend edge is preceded by. The wakeup source is the running

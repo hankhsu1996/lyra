@@ -72,12 +72,12 @@ auto CodeGenModule::UnitFunction(lir::FunctionId function) -> llvm::Function* {
   return functions_.at(function.value);
 }
 
-auto CodeGenModule::ScopeDefinitionRef(lir::TypeId object_type)
-    -> llvm::Constant* {
-  // A class this unit compiles already carries the symbol it was emitted under;
-  // one another unit publishes is composed from the unit and class a signature
-  // named, the same way that unit composed it. Both resolve to a record the
-  // host built, so the reference is the same kind of symbol either way.
+auto CodeGenModule::DefinitionRef(lir::TypeId type) -> llvm::Constant* {
+  // A declaration this unit compiles already carries the symbol it was emitted
+  // under; a class another unit publishes is composed from the unit and class a
+  // signature named, the same way that unit composed it. Both resolve to a
+  // record the host built, so the reference is the same kind of symbol either
+  // way.
   const std::string name = std::visit(
       Overloaded{
           [&](const lir::ObjectType& o) -> std::string {
@@ -88,17 +88,20 @@ auto CodeGenModule::ScopeDefinitionRef(lir::TypeId object_type)
                 unit_->external_unit_objects.Get(e.object);
             return std::format("{}.{}", object.unit_name, object.class_name);
           },
+          [&](const lir::ClosureType& c) -> std::string {
+            return unit_->closures.Get(c.closure_id).name;
+          },
           [&](const auto&) -> std::string {
             throw InternalError(
-                "llvm codegen: a scope definition reference requires an object "
-                "type");
+                "llvm codegen: a definition reference requires a declaration "
+                "the runtime builds values of");
           }},
-      unit_->types.Get(object_type).data);
+      unit_->types.Get(type).data);
   // The definition is opaque to generated code, which only forwards its
   // address; an i8 placeholder gives the external symbol a type without
   // encoding the runtime struct's layout.
   return module_->getOrInsertGlobal(
-      ScopeDefinitionSymbolName(name), llvm::Type::getInt8Ty(*context_));
+      DefinitionSymbolName(name), llvm::Type::getInt8Ty(*context_));
 }
 
 }  // namespace lyra::backend::llvm_backend

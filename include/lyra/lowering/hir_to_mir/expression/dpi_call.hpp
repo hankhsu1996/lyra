@@ -7,7 +7,9 @@
 // subroutine. Both sides share the carrier-marshaling vocabulary, kept here so
 // the ordinary-call dispatch stays free of the DPI ABI surface.
 
+#include <optional>
 #include <span>
+#include <string>
 
 #include "lyra/diag/diagnostic.hpp"
 #include "lyra/hir/expr.hpp"
@@ -20,12 +22,14 @@
 #include "lyra/mir/callable_code.hpp"
 #include "lyra/mir/expr.hpp"
 #include "lyra/mir/foreign_linkage.hpp"
+#include "lyra/mir/stmt.hpp"
 #include "lyra/mir/type_id.hpp"
 #include "lyra/support/dpi_abi.hpp"
 
 namespace lyra::lowering::hir_to_mir {
 
 class UnitLowerer;
+class ProcessLowerer;
 
 // The signature a DPI-C declaration publishes to the C side (LRM 35.5.6): one
 // binding per formal, typed as the value crosses the boundary, plus the type
@@ -57,18 +61,27 @@ auto LowerForeignImportCall(
     const hir::ForeignImportRef& ref, mir::TypeId result_type)
     -> diag::Result<mir::Expr>;
 
+// The one import call above that is not an expression: a function whose
+// boundary needs body locals and whose foreign side returns nothing. Crossing
+// the boundary is the whole of what it does, so it lowers to a run of
+// statements with no value for an enclosing expression to have wanted. Returns
+// nullopt for every other import call, which the expression form lowers.
+auto LowerForeignImportCallStmtForm(
+    ProcessLowerer& lowerer, WalkFrame frame,
+    const std::optional<std::string>& label, const hir::CallExpr& c,
+    const hir::ForeignImportRef& ref) -> std::optional<diag::Result<mir::Stmt>>;
+
 // The C-ABI adaptation of one exported subroutine (LRM 35.5): the entry's own
-// signature and body, together with the program-global name the foreign side
-// reaches it by, and the machine prototype that name publishes. Kept as those
-// facts rather than a finished declaration because where the entry is published
-// follows the target it dispatches into -- a subroutine of a scope publishes it
-// as an entry the scope holds, a package's as a linked symbol of the package's
-// own namespace -- and the caller that knows the target is the one that knows
-// which.
+// signature and body, the program-global name the foreign side reaches it by,
+// and where that name's definition lives. Kept as those facts rather than a
+// finished declaration because a subroutine of a scope is published as an entry
+// the scope holds and a package's as a linked symbol of the package's own
+// namespace, which is the caller's to place -- but which of the two it is
+// follows the target it dispatches into, which is settled here.
 struct ForeignExportEntry {
   mir::CallableCode code;
   mir::ForeignLinkage linkage;
-  mir::TypeId signature;
+  mir::ForeignDefinition definition;
 };
 
 // Builds that adaptation: C-ABI parameters marshal to the exported subroutine's

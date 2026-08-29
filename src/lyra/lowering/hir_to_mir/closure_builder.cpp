@@ -5,7 +5,6 @@
 #include <utility>
 #include <vector>
 
-#include "lyra/base/internal_error.hpp"
 #include "lyra/lowering/hir_to_mir/callable_bindings.hpp"
 #include "lyra/mir/closure.hpp"
 #include "lyra/mir/closure_decl.hpp"
@@ -84,25 +83,6 @@ auto ClosureBuilder::BuildCoroutine() -> mir::Expr {
 
 auto ClosureBuilder::BuildVoid() -> mir::Expr {
   return Finish(unit_->builtins.void_type);
-}
-
-auto BuildClosureCallExpr(
-    mir::CompilationUnit& unit, mir::Block& block, mir::Expr closure)
-    -> mir::Expr {
-  const auto& construct = std::get<mir::ClosureExpr>(closure.data);
-  const mir::TypeId result_type =
-      unit.GetClosure(construct.closure).invoke.result_type;
-  if (unit.types.IsCoroutine(result_type)) {
-    throw InternalError(
-        "BuildClosureCallExpr: a closure that completes as a coroutine is the "
-        "coroutine, so there is nothing left to invoke");
-  }
-  const mir::ExprId closure_id = block.exprs.Add(std::move(closure));
-  return mir::Expr{
-      .data =
-          mir::CallExpr{
-              .callee = mir::Indirect{.closure = closure_id}, .arguments = {}},
-      .type = result_type};
 }
 
 }  // namespace lyra::lowering::hir_to_mir

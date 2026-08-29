@@ -1744,8 +1744,7 @@ auto StructuralScopeLowerer::PopulateBodies(WalkFrame parent_frame)
     unit_lowerer.Unit().foreign_surface.push_back(
         mir::ForeignSymbol{
             .linkage = entry.linkage,
-            .definition =
-                mir::PerScopeEntryDefinition{.signature = entry.signature}});
+            .definition = std::move(entry.definition)});
     mir_class.abi_adapters.Add(
         mir::AbiAdapter{
             .name = std::format("{}__export", export_decl.foreign_name),

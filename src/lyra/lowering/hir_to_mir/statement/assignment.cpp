@@ -18,6 +18,7 @@
 #include "lyra/lowering/hir_to_mir/cast_lowering.hpp"
 #include "lyra/lowering/hir_to_mir/default_value.hpp"
 #include "lyra/lowering/hir_to_mir/expression/assignment.hpp"
+#include "lyra/lowering/hir_to_mir/expression/dpi_call.hpp"
 #include "lyra/lowering/hir_to_mir/expression/system/file_io.hpp"
 #include "lyra/lowering/hir_to_mir/expression/system/mem_file.hpp"
 #include "lyra/lowering/hir_to_mir/expression/system/sformat.hpp"
@@ -382,13 +383,25 @@ auto LowerExprStmt(
   // the process through a runtime entry hands over nothing. Either way the
   // statement is the discard.
   if (const auto* call = std::get_if<hir::CallExpr>(&inner.data)) {
+    const mir::TypeId inner_type = process.Owner().TranslateType(inner.type);
     if (const auto* sys_ref =
             std::get_if<hir::SystemSubroutineRef>(&call->callee)) {
       if (auto stmt = LowerSystemSubroutineCallStmtForm(
               process, frame, label, *call, *sys_ref, std::nullopt,
-              process.Owner().TranslateType(inner.type))) {
+              inner_type)) {
         return *std::move(stmt);
       }
+    }
+    if (const auto* import_ref =
+            std::get_if<hir::ForeignImportRef>(&call->callee)) {
+      if (auto stmt = LowerForeignImportCallStmtForm(
+              process, frame, label, *call, *import_ref)) {
+        return *std::move(stmt);
+      }
+    }
+    if (auto stmt = LowerSubroutineCallStmtForm(
+            process, frame, label, *call, inner_type)) {
+      return *std::move(stmt);
     }
     auto call_or = process.LowerExpr(inner, frame);
     if (!call_or) return std::unexpected(std::move(call_or.error()));

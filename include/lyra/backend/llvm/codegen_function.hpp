@@ -1,7 +1,7 @@
 #pragma once
 
-#include <cstddef>
 #include <optional>
+#include <span>
 #include <unordered_map>
 #include <vector>
 
@@ -41,8 +41,10 @@ class CodeGenFunction {
       -> diag::Result<llvm::Value*>;
   auto ResolveCallee(const lir::CallInstr& call, lir::TypeId result_type)
       -> diag::Result<llvm::FunctionCallee>;
-  // A {pointer, length} view over storage this function just filled.
-  auto SpanOver(llvm::Value* storage, std::size_t count) -> llvm::Value*;
+  // A {pointer, length} view over a scratch buffer of `element` this function
+  // fills with `values`, for an entry that takes a run of them.
+  auto SpanOver(std::span<llvm::Value* const> values, llvm::Type* element)
+      -> llvm::Value*;
   auto LowerArray(const lir::ArrayInstr& array, lir::TypeId result_type)
       -> diag::Result<llvm::Value*>;
   auto LowerProduct(const lir::ProductInstr& product, lir::TypeId result_type)
@@ -52,6 +54,8 @@ class CodeGenFunction {
       -> diag::Result<llvm::Value*>;
   auto LowerErasedUnpackedArrayConstruct(
       const lir::CallInstr& call, const lir::UnpackedArrayType& type)
+      -> diag::Result<llvm::Value*>;
+  auto LowerClosureConstruct(const lir::CallInstr& call, lir::TypeId result)
       -> diag::Result<llvm::Value*>;
   auto LowerAggregateExtract(const lir::AggregateExtractInstr& extract)
       -> diag::Result<llvm::Value*>;
@@ -140,6 +144,16 @@ class CodeGenFunction {
   };
   [[nodiscard]] auto CellPlaceOf(const lir::Place& place) const
       -> diag::Result<std::optional<CellPlace>>;
+  // A capture read: the closure value whose captures the place reaches, and
+  // which of them it names; nothing when the place reaches an instance's own
+  // members instead. A capture lives in storage the closure owns, so it is
+  // reached on the closure rather than through the instance member entry.
+  struct CapturePlace {
+    lir::Place closure;
+    std::uint32_t index{};
+  };
+  [[nodiscard]] auto CapturePlaceOf(const lir::Place& place) const
+      -> std::optional<CapturePlace>;
 
   CodeGenModule* module_;
   const lir::Function* fn_;

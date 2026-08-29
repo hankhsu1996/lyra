@@ -9,6 +9,7 @@
 #include <vector>
 
 #include "lyra/base/arena.hpp"
+#include "lyra/mir/block_id.hpp"
 #include "lyra/mir/expr.hpp"
 #include "lyra/mir/local.hpp"
 
@@ -31,12 +32,6 @@ struct LoopLabelId {
   std::uint32_t value;
 
   auto operator<=>(const LoopLabelId&) const -> std::strong_ordering = default;
-};
-
-struct BlockId {
-  std::uint32_t value;
-
-  auto operator<=>(const BlockId&) const -> std::strong_ordering = default;
 };
 
 struct EmptyStmt {};

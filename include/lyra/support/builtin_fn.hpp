@@ -590,8 +590,8 @@ enum class BuiltinFn : std::uint16_t {
 [[nodiscard]] auto BuiltinFnTakesResultPrototype(BuiltinFn id) -> bool;
 
 // True iff `id` is an associative-array traversal entry (LRM 7.9.4 -- 7.9.7).
-// The traversal family lowers to an immediately-invoked closure (mutates the
-// index argument and runs the write-back inline).
+// The traversal family lowers to a block expression: it mutates the index
+// argument and runs the write-back among its steps.
 [[nodiscard]] auto IsAssociativeTraversalFn(BuiltinFn id) -> bool;
 
 // True iff the file-IO entry writes through one of its argument slots

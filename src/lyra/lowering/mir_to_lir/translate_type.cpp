@@ -283,13 +283,9 @@ auto UnitLowerer::TranslateTypeData(const mir::Type& ty) -> lir::TypeData {
           [&](const mir::StructType&) -> lir::TypeData {
             return RecordUnsupportedType("a nominal struct");
           },
-          [&](const mir::ClosureType&) -> lir::TypeData {
-            // A closure that is called where it is built needs no value of its
-            // own: its captures reach the invoke as arguments, and its identity
-            // is already the call's static callee. Reaching this means the
-            // closure is used as a value that outlives its construction, which
-            // needs capture storage the runtime owns.
-            return RecordUnsupportedType("an escaping closure value");
+          [&](const mir::ClosureType& c) -> lir::TypeData {
+            return lir::TypeData{lir::ClosureType{
+                .closure_id = ClosureDeclaration(c.closure_id)}};
           }},
       ty.data);
 }

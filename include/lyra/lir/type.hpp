@@ -7,6 +7,7 @@
 #include <vector>
 
 #include "lyra/lir/class_id.hpp"
+#include "lyra/lir/closure_id.hpp"
 #include "lyra/lir/external_unit_object_id.hpp"
 #include "lyra/lir/type_id.hpp"
 
@@ -152,6 +153,13 @@ struct ExternalClassType {
   std::string qualified_name;
 };
 
+// A callable value: an instance of one closure declaration, holding that
+// declaration's captures. A capture is reached by a member projection over the
+// invoke's receiver, the way an object's member is reached over its own.
+struct ClosureType {
+  ClosureId closure_id;
+};
+
 struct RuntimeEffectsType {};
 struct FilesType {};
 struct DiagnosticType {};
@@ -222,10 +230,10 @@ using TypeData = std::variant<
     AssociativeArrayType, WildcardIndexType, StringType, MachineCStringType,
     MachineIntType, MachineFloatType, MachineArrayType, EventType, RealType,
     ShortRealType, RealTimeType, ChandleType, VoidType, EmptyType, ObjectType,
-    ExternalUnitObjectType, ExternalClassType, RuntimeEffectsType, FilesType,
-    DiagnosticType, RuntimeLibraryType, CoroutineType, RefType, PointerType,
-    ManagedRefType, VectorType, TupleType, UnionType, TaggedUnionType,
-    ResolvedType, DriverType, ObservableType>;
+    ExternalUnitObjectType, ExternalClassType, ClosureType, RuntimeEffectsType,
+    FilesType, DiagnosticType, RuntimeLibraryType, CoroutineType, RefType,
+    PointerType, ManagedRefType, VectorType, TupleType, UnionType,
+    TaggedUnionType, ResolvedType, DriverType, ObservableType>;
 
 struct Type {
   TypeData data;

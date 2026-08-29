@@ -15,9 +15,9 @@
 #include "lyra/hir/expr.hpp"
 #include "lyra/hir/expr_id.hpp"
 #include "lyra/hir/procedural_body.hpp"
+#include "lyra/lowering/hir_to_mir/block_builder.hpp"
 #include "lyra/lowering/hir_to_mir/call_operands.hpp"
 #include "lyra/lowering/hir_to_mir/cast_lowering.hpp"
-#include "lyra/lowering/hir_to_mir/closure_builder.hpp"
 #include "lyra/lowering/hir_to_mir/condition.hpp"
 #include "lyra/lowering/hir_to_mir/default_value.hpp"
 #include "lyra/lowering/hir_to_mir/lhs_store.hpp"
@@ -81,30 +81,42 @@ auto LiftStringFormat(
       unit_lowerer.Unit().builtins.string));
 }
 
-// LRM 21.3.4.3: a source or format string that contains x or z makes
-// the call return -1 before any conversion. Emit the guard before the
-// lift to string, because the lift silently drops the unknown bits.
-auto EmitIsUnknownGuard(
-    const UnitLowerer& unit_lowerer, WalkFrame frame, mir::TypeId bit_t,
-    mir::ExprId operand_id) -> void {
-  auto& body = *frame.current_block;
-  const mir::ExprId guard_id = body.exprs.Add(
+// LRM 21.3.4.3: a source or format that contains x or z makes the call answer
+// -1 and convert nothing. The test is on the operand as written, since the lift
+// to string silently drops the unknown bits. A format is always an operand the
+// rule covers; a source is one only where the call names it, which `$fscanf`
+// does not -- its source is the file's buffered text.
+auto EmitScanOperandsKnown(
+    mir::Block& body, mir::TypeId bit_t, std::optional<mir::ExprId> source,
+    mir::ExprId format) -> mir::ExprId {
+  const auto known = [&](mir::ExprId operand) {
+    const mir::ExprId unknown_id = body.exprs.Add(
+        mir::Expr{
+            .data =
+                mir::CallExpr{
+                    .callee =
+                        mir::Direct{.target = support::BuiltinFn::kIsUnknown},
+                    .arguments = {operand}},
+            .type = bit_t});
+    return body.exprs.Add(
+        mir::Expr{
+            .data =
+                mir::UnaryExpr{
+                    .op = mir::UnaryOp::kLogicalNot, .operand = unknown_id},
+            .type = bit_t});
+  };
+  if (!source.has_value()) {
+    return known(format);
+  }
+  const mir::ExprId source_known = known(*source);
+  return body.exprs.Add(
       mir::Expr{
           .data =
-              mir::CallExpr{
-                  .callee =
-                      mir::Direct{.target = support::BuiltinFn::kIsUnknown},
-                  .arguments = {operand_id}},
+              mir::BinaryExpr{
+                  .op = mir::BinaryOp::kLogicalAnd,
+                  .lhs = source_known,
+                  .rhs = known(format)},
           .type = bit_t});
-
-  mir::Block then_body;
-  const mir::ExprId minus_one = then_body.exprs.Add(
-      mir::MakeIntegerLiteral(
-          unit_lowerer.Unit().builtins.integer, static_cast<std::int64_t>(-1)));
-  then_body.AppendStmt(mir::ReturnStmt{.value = minus_one});
-
-  body.AppendIfThen(
-      ReduceToCondition(body, guard_id, bit_t), std::move(then_body));
 }
 
 auto ValidateTargetType(
@@ -158,21 +170,59 @@ auto LowerScanSystemSubroutineCall(
     target_types.push_back(mir_type);
   }
 
-  // LRM 21.3.4.3 returns a matched-conversion count and writes the
-  // parsed values to the call's output lvalues; the lowering encloses
-  // both effects in a synchronous IIFE so the call sits in expression
-  // position.
-  ClosureBuilder closure(unit, frame);
-  mir::Block& body = closure.Body();
-  const WalkFrame& closure_frame = closure.Frame();
+  // LRM 21.3.4.3 returns a matched-conversion count and writes the parsed
+  // values to the call's output lvalues; both effects are steps of one block
+  // expression, so the call sits in expression position.
+  BlockBuilder steps(frame);
+  mir::Block& body = steps.Body();
+  const WalkFrame& step_frame = steps.Frame();
 
+  // Each operand the source wrote is evaluated once, in the order it was
+  // written, and bound -- so the unknown-operand rule and the conversion behind
+  // it both read the value that was evaluated rather than evaluating again.
   auto raw_source_or =
-      process.LowerExpr(hir_proc.exprs.Get(operands[0]), closure_frame);
+      process.LowerExpr(hir_proc.exprs.Get(operands[0]), step_frame);
   if (!raw_source_or) {
     return std::unexpected(std::move(raw_source_or.error()));
   }
   const mir::TypeId raw_source_type = raw_source_or->type;
-  const mir::ExprId raw_source_id = body.exprs.Add(*std::move(raw_source_or));
+  const mir::LocalId source_var = steps.Bindings().DeclareAnonymous(
+      mir::LocalDecl{.name = "_lyra_scan_source", .type = raw_source_type});
+  body.AppendStmt(
+      mir::LocalDeclStmt{
+          .target = source_var,
+          .init = body.exprs.Add(*std::move(raw_source_or))});
+
+  auto format_or =
+      process.LowerExpr(hir_proc.exprs.Get(operands[1]), step_frame);
+  if (!format_or) return std::unexpected(std::move(format_or.error()));
+  const mir::TypeId format_type = format_or->type;
+  const mir::LocalId format_var = steps.Bindings().DeclareAnonymous(
+      mir::LocalDecl{.name = "_lyra_scan_format", .type = format_type});
+  body.AppendStmt(
+      mir::LocalDeclStmt{
+          .target = format_var, .init = body.exprs.Add(*std::move(format_or))});
+
+  // The answer until a conversion settles it (LRM 21.3.4.3).
+  const mir::LocalId count_var = steps.Bindings().DeclareAnonymous(
+      mir::LocalDecl{.name = "_lyra_scan_count", .type = integer_t});
+  body.AppendStmt(
+      mir::LocalDeclStmt{
+          .target = count_var,
+          .init = body.exprs.Add(
+              mir::MakeIntegerLiteral(
+                  integer_t, static_cast<std::int64_t>(-1)))});
+
+  const std::optional<mir::ExprId> rule_source =
+      is_file ? std::nullopt
+              : std::optional{body.exprs.Add(
+                    mir::MakeLocalRefExpr(source_var, raw_source_type))};
+  const mir::ExprId known_id = EmitScanOperandsKnown(
+      body, bit_t, rule_source,
+      body.exprs.Add(mir::MakeLocalRefExpr(format_var, format_type)));
+
+  mir::Block scan_body;
+  const WalkFrame scan_frame = step_frame.WithBlock(&scan_body);
 
   mir::ExprId source_id{};
   mir::ExprId fd_id{};
@@ -181,17 +231,18 @@ auto LowerScanSystemSubroutineCall(
       throw InternalError(
           "LowerScanSystemSubroutineCall: $fscanf fd is not packed-integer");
     }
-    fd_id = raw_source_id;
+    fd_id =
+        scan_body.exprs.Add(mir::MakeLocalRefExpr(source_var, raw_source_type));
     const mir::ExprId runtime_id =
-        body.exprs.Add(BuildCurrentRuntimeCallExpr(process.Owner()));
-    const mir::ExprId files_id = body.exprs.Add(
+        scan_body.exprs.Add(BuildCurrentRuntimeCallExpr(process.Owner()));
+    const mir::ExprId files_id = scan_body.exprs.Add(
         mir::Expr{
             .data =
                 mir::CallExpr{
                     .callee = mir::Direct{.target = support::BuiltinFn::kFiles},
                     .arguments = {runtime_id}},
             .type = unit.builtins.files});
-    source_id = body.exprs.Add(
+    source_id = scan_body.exprs.Add(
         mir::Expr{
             .data =
                 mir::CallExpr{
@@ -201,40 +252,37 @@ auto LowerScanSystemSubroutineCall(
                     .arguments = {files_id, fd_id}},
             .type = string_t});
   } else {
-    EmitIsUnknownGuard(unit_lowerer, closure_frame, bit_t, raw_source_id);
     source_id = LiftStringSource(
-        unit_lowerer, closure_frame, raw_source_type, raw_source_id);
+        unit_lowerer, scan_frame, raw_source_type,
+        scan_body.exprs.Add(
+            mir::MakeLocalRefExpr(source_var, raw_source_type)));
   }
 
-  auto format_or =
-      process.LowerExpr(hir_proc.exprs.Get(operands[1]), closure_frame);
-  if (!format_or) return std::unexpected(std::move(format_or.error()));
-  const mir::TypeId format_type = format_or->type;
-  mir::ExprId format_id = body.exprs.Add(*std::move(format_or));
-  EmitIsUnknownGuard(unit_lowerer, closure_frame, bit_t, format_id);
-  format_id =
-      LiftStringFormat(unit_lowerer, closure_frame, format_type, format_id);
+  const mir::ExprId format_id = LiftStringFormat(
+      unit_lowerer, scan_frame, format_type,
+      scan_body.exprs.Add(mir::MakeLocalRefExpr(format_var, format_type)));
 
   // LRM 21.3.4.3 "the offending input character is left unread in the
   // input stream": the parse returns the byte-count it consumed so the
   // file form can rewind the unconsumed tail before the next read.
   const mir::ExprId consumed_init =
-      body.exprs.Add(mir::MakeIntLiteral(int_type, 0));
-  const mir::LocalId consumed_var = closure.Bindings().DeclareAnonymous(
+      scan_body.exprs.Add(mir::MakeIntLiteral(int_type, 0));
+  const mir::LocalId consumed_var = steps.Bindings().DeclareAnonymous(
       mir::LocalDecl{.name = "_lyra_scan_consumed", .type = int_type});
-  body.AppendStmt(
+  scan_body.AppendStmt(
       mir::LocalDeclStmt{.target = consumed_var, .init = consumed_init});
 
   std::vector<mir::LocalId> temp_ids;
   temp_ids.reserve(target_types.size());
   for (std::size_t k = 0; k < target_types.size(); ++k) {
-    const mir::ExprId init_id = body.exprs.Add(
-        BuildDefaultValueExpr(unit_lowerer, closure_frame, target_types[k]));
-    const mir::LocalId temp_var = closure.Bindings().DeclareAnonymous(
+    const mir::ExprId init_id = scan_body.exprs.Add(
+        BuildDefaultValueExpr(unit_lowerer, scan_frame, target_types[k]));
+    const mir::LocalId temp_var = steps.Bindings().DeclareAnonymous(
         mir::LocalDecl{
             .name = std::format("_lyra_scan_temp_{}", k),
             .type = target_types[k]});
-    body.AppendStmt(mir::LocalDeclStmt{.target = temp_var, .init = init_id});
+    scan_body.AppendStmt(
+        mir::LocalDeclStmt{.target = temp_var, .init = init_id});
     temp_ids.push_back(temp_var);
   }
 
@@ -243,17 +291,17 @@ auto LowerScanSystemSubroutineCall(
   scan_args.push_back(source_id);
   scan_args.push_back(format_id);
   scan_args.push_back(
-      body.exprs.Add(mir::MakeLocalRefExpr(consumed_var, int_type)));
+      scan_body.exprs.Add(mir::MakeLocalRefExpr(consumed_var, int_type)));
   for (std::size_t k = 0; k < target_types.size(); ++k) {
-    scan_args.push_back(
-        body.exprs.Add(mir::MakeLocalRefExpr(temp_ids[k], target_types[k])));
+    scan_args.push_back(scan_body.exprs.Add(
+        mir::MakeLocalRefExpr(temp_ids[k], target_types[k])));
   }
   // LRM 21.3.4.3(a) gives `$sscanf` alone the rule that a null character
   // counts as white space, so which of the two parses runs is fixed by the
   // system function the source names, not by the bytes it receives.
   const support::BuiltinFn parse_fn =
       is_file ? support::BuiltinFn::kScanFile : support::BuiltinFn::kScanString;
-  const mir::ExprId parse_call_id = body.exprs.Add(
+  const mir::ExprId parse_call_id = scan_body.exprs.Add(
       mir::Expr{
           .data =
               mir::CallExpr{
@@ -261,15 +309,21 @@ auto LowerScanSystemSubroutineCall(
                   .arguments = std::move(scan_args)},
           .type = integer_t});
 
-  const mir::LocalId count_var = closure.Bindings().DeclareAnonymous(
-      mir::LocalDecl{.name = "_lyra_scan_count", .type = integer_t});
-  body.AppendStmt(
-      mir::LocalDeclStmt{.target = count_var, .init = parse_call_id});
+  const mir::ExprId count_target =
+      scan_body.exprs.Add(mir::MakeLocalRefExpr(count_var, integer_t));
+  scan_body.AppendStmt(
+      mir::ExprStmt{
+          .expr = scan_body.exprs.Add(
+              mir::Expr{
+                  .data =
+                      mir::AssignExpr{
+                          .target = count_target, .value = parse_call_id},
+                  .type = integer_t})});
 
   if (is_file) {
     const mir::ExprId runtime_after =
-        body.exprs.Add(BuildCurrentRuntimeCallExpr(process.Owner()));
-    const mir::ExprId files_after = body.exprs.Add(
+        scan_body.exprs.Add(BuildCurrentRuntimeCallExpr(process.Owner()));
+    const mir::ExprId files_after = scan_body.exprs.Add(
         mir::Expr{
             .data =
                 mir::CallExpr{
@@ -277,8 +331,8 @@ auto LowerScanSystemSubroutineCall(
                     .arguments = {runtime_after}},
             .type = unit.builtins.files});
     const mir::ExprId consumed_read =
-        body.exprs.Add(mir::MakeLocalRefExpr(consumed_var, int_type));
-    const mir::ExprId advance_call = body.exprs.Add(
+        scan_body.exprs.Add(mir::MakeLocalRefExpr(consumed_var, int_type));
+    const mir::ExprId advance_call = scan_body.exprs.Add(
         mir::Expr{
             .data =
                 mir::CallExpr{
@@ -286,17 +340,17 @@ auto LowerScanSystemSubroutineCall(
                         mir::Direct{.target = support::BuiltinFn::kAdvanceFd},
                     .arguments = {files_after, fd_id, consumed_read}},
             .type = void_t});
-    body.AppendStmt(mir::ExprStmt{.expr = advance_call});
+    scan_body.AppendStmt(mir::ExprStmt{.expr = advance_call});
   }
 
   // LRM 21.3.4.3: the k-th output lvalue is only written when at least
   // k+1 matches were made, so the commit is gated on the matched count.
   for (std::size_t k = 0; k < target_types.size(); ++k) {
     const mir::ExprId count_read_id =
-        body.exprs.Add(mir::MakeLocalRefExpr(count_var, integer_t));
-    const mir::ExprId k_lit_id = body.exprs.Add(
+        scan_body.exprs.Add(mir::MakeLocalRefExpr(count_var, integer_t));
+    const mir::ExprId k_lit_id = scan_body.exprs.Add(
         mir::MakeIntegerLiteral(integer_t, static_cast<std::int64_t>(k + 1)));
-    const mir::ExprId cond_id = body.exprs.Add(
+    const mir::ExprId cond_id = scan_body.exprs.Add(
         mir::Expr{
             .data =
                 mir::BinaryExpr{
@@ -306,7 +360,7 @@ auto LowerScanSystemSubroutineCall(
             .type = bit_t});
 
     mir::Block then_body;
-    const WalkFrame then_frame = closure_frame.WithBlock(&then_body);
+    const WalkFrame then_frame = scan_frame.WithBlock(&then_body);
     auto lvalue_or =
         process.LowerLhsExpr(hir_proc.exprs.Get(operands[k + 2]), then_frame);
     if (!lvalue_or) return std::unexpected(std::move(lvalue_or.error()));
@@ -319,15 +373,17 @@ auto LowerScanSystemSubroutineCall(
     const mir::ExprId assign_id = then_body.exprs.Add(assign_expr);
     then_body.AppendStmt(mir::ExprStmt{.expr = assign_id});
 
-    body.AppendIfThen(
-        ReduceToCondition(body, cond_id, unit.builtins.bit1),
+    scan_body.AppendIfThen(
+        ReduceToCondition(scan_body, cond_id, unit.builtins.bit1),
         std::move(then_body));
   }
 
+  body.AppendIfThen(
+      ReduceToCondition(body, known_id, bit_t), std::move(scan_body));
+
   const mir::ExprId count_id =
       body.exprs.Add(mir::MakeLocalRefExpr(count_var, integer_t));
-  return BuildClosureCallExpr(
-      unit, *frame.current_block, closure.Build(count_id));
+  return steps.Build(count_id);
 }
 
 }  // namespace lyra::lowering::hir_to_mir

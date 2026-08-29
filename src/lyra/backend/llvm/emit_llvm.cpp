@@ -40,8 +40,8 @@ auto EmitModule(const lir::CompilationUnit& unit)
   return CodeGenModule(unit).Run();
 }
 
-auto ScopeDefinitionSymbolName(std::string_view class_name) -> std::string {
-  return std::format("{}.definition", class_name);
+auto DefinitionSymbolName(std::string_view declaration_name) -> std::string {
+  return std::format("{}.definition", declaration_name);
 }
 
 }  // namespace lyra::backend::llvm_backend
