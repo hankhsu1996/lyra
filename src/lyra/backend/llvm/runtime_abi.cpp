@@ -622,19 +622,25 @@ auto RuntimeAbi::TupleUpdate() -> llvm::FunctionCallee {
       {types_->Ptr(), llvm::Type::getInt64Ty(*ctx_), types_->Ptr()});
 }
 
-auto RuntimeAbi::MakeDynamicArrayDefault() -> llvm::FunctionCallee {
-  return Get("lyra_rt_dynarray_default", types_->Ptr(), {types_->Ptr()});
+auto RuntimeAbi::MakeDynamicArrayDefault(ValueDomain domain)
+    -> llvm::FunctionCallee {
+  return Get(
+      std::format("lyra_rt_dynarray_default_{}", ValueDomainName(domain)),
+      types_->Ptr(), {types_->Ptr()});
 }
 
-auto RuntimeAbi::MakeDynamicArrayNew() -> llvm::FunctionCallee {
+auto RuntimeAbi::MakeDynamicArrayNew(ValueDomain domain)
+    -> llvm::FunctionCallee {
   return Get(
-      "lyra_rt_dynarray_new", types_->Ptr(), {types_->Ptr(), types_->Ptr()});
+      std::format("lyra_rt_dynarray_new_{}", ValueDomainName(domain)),
+      types_->Ptr(), {types_->Ptr(), types_->Ptr()});
 }
 
-auto RuntimeAbi::MakeDynamicArrayNewCopy() -> llvm::FunctionCallee {
+auto RuntimeAbi::MakeDynamicArrayNewCopy(ValueDomain domain)
+    -> llvm::FunctionCallee {
   return Get(
-      "lyra_rt_dynarray_new_copy", types_->Ptr(),
-      {types_->Ptr(), types_->Ptr(), types_->Ptr()});
+      std::format("lyra_rt_dynarray_new_copy_{}", ValueDomainName(domain)),
+      types_->Ptr(), {types_->Ptr(), types_->Ptr(), types_->Ptr()});
 }
 
 auto RuntimeAbi::MakeDynamicArrayFromLiteral(ValueDomain domain)

@@ -92,6 +92,13 @@ class FunctionLowerer {
       -> diag::Result<lir::Operand>;
   auto LowerPlace(const mir::Block& block, mir::ExprId id)
       -> diag::Result<lir::Place>;
+  // Reads the value held where an expression names storage, whichever way it
+  // names it. A cell is address-only and holds no value a reader can take out
+  // of it, so an expression whose own type is one is rejected: what such a
+  // reader wants is what the cell holds, which is a dereference and names a
+  // different place.
+  auto ReadPlace(const mir::Block& block, mir::ExprId id, lir::TypeId type)
+      -> diag::Result<lir::Operand>;
   // Reduces an expression to the machine boolean a conditional branch tests.
   auto LowerCondition(const mir::Block& block, mir::ExprId id)
       -> diag::Result<lir::Operand>;

@@ -89,9 +89,24 @@ auto BuildTagTest(
     hir::TypeId subject_type, base::ComponentIndex index) -> mir::Expr {
   const hir::Type& ty = owner.Hir().types.Get(subject_type);
   if (std::holds_alternative<hir::UnpackedUnionType>(ty.data)) {
+    // The tag test answers with a host boolean; re-shaping that answer into a
+    // 1-bit integral is a value conversion, so it is stated here rather than
+    // left for a backend to insert around the test.
+    const mir::TypeId bit1 = owner.Unit().builtins.bit1;
+    const mir::ExprId is_tagged = block.exprs.Add(
+        mir::Expr{
+            .data =
+                mir::TaggedIsExpr{.union_value = subject, .tag_index = index},
+            .type = bit1});
     return mir::Expr{
-        .data = mir::TaggedIsExpr{.union_value = subject, .tag_index = index},
-        .type = owner.Unit().builtins.bit1};
+        .data =
+            mir::CallExpr{
+                .callee =
+                    mir::Direct{
+                        .target = support::BuiltinFn::kFromBool,
+                        .qualification = mir::TypeQualifier{.type = bit1}},
+                .arguments = {is_tagged}},
+        .type = bit1};
   }
   const PackedProjection projection = ProjectPackedAggregate(owner, ty.data);
   return block.exprs.Get(

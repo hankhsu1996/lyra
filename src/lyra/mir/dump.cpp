@@ -792,11 +792,6 @@ class MirDumper {
             [](const DerefExpr& d) -> std::string {
               return std::format("DerefExpr pointer=Expr[{}]", d.pointer.value);
             },
-            [](const StructConstructExpr& sc) -> std::string {
-              return std::format(
-                  "StructConstructExpr struct=Struct[{}] field_inits={}",
-                  sc.struct_id.value, sc.field_inits.size());
-            },
             [](const FunctionRef& fr) -> std::string {
               return std::format(
                   "FunctionRef adapter=AbiAdapter[{}]", fr.adapter.value);
@@ -840,6 +835,10 @@ class MirDumper {
               return std::format(
                   "ReplicationExpr count={} concat=Expr[{}]", r.count,
                   r.concat.value);
+            },
+            [](const ValueCastExpr& v) -> std::string {
+              return std::format(
+                  "ValueCastExpr operand=Expr[{}]", v.operand.value);
             },
             [](const ArrayLiteralExpr& a) -> std::string {
               std::string elements;
@@ -1157,11 +1156,6 @@ class MirDumper {
       for (const ExprId id : scope.exprs.Ids()) {
         Line(std::format("Expr[{}] {}", id.value, FormatExpr(scope, id)));
         const auto& expr = scope.exprs.Get(id);
-        if (const auto* sc = std::get_if<StructConstructExpr>(&expr.data)) {
-          Indent();
-          DumpStructConstructExpr(*sc);
-          Dedent();
-        }
         if (const auto* cl = std::get_if<ClosureExpr>(&expr.data)) {
           Indent();
           DumpClosureExpr(*cl);
@@ -1296,11 +1290,6 @@ class MirDumper {
               "Field[{}] = Expr[{}]", init.target.value, init.value.value));
     }
     Dedent();
-  }
-
-  void DumpStructConstructExpr(const StructConstructExpr& construct) {
-    Line(std::format("struct: Struct[{}]", construct.struct_id.value));
-    DumpFieldInits(construct.field_inits);
   }
 
   void DumpClosureExpr(const ClosureExpr& construct) {

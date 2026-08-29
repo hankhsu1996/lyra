@@ -87,6 +87,14 @@ Rules:
         diagnostic, in front of a user.
         Scope: include/lyra/diag/diag_code.hpp, src/lyra/diag/diag_code.cpp.
 
+  A015  Only type mapping names a runtime library type. A backend renders a
+        type through the one dispatch that owns its spelling; a value-emission
+        entry that writes `lyra::value::T::entry` itself is holding a
+        target-language spelling, and the type's name then lives in two
+        places. A free function of the runtime has no type to map through and
+        is not this rule.
+        Scope: src/lyra/backend/**, the type-mapping entry excepted.
+
 When a rule fires, the printed message includes a fixed reminder that the
 fix is to change the ownership boundary, NOT to rename the function.
 
@@ -99,21 +107,21 @@ import sys
 from pathlib import Path
 
 
-# --- Rule A001 -----------------------------------------------------------
+# Rule A001
 HIR_FORBIDDEN_TERMS = ["Runtime", "Engine"]
 HIR_FORBIDDEN_TERM_PATTERN = re.compile(
     r"\b(" + "|".join(HIR_FORBIDDEN_TERMS) + r")\b"
 )
 
-# --- Rule A002 -----------------------------------------------------------
+# Rule A002
 HIR_FORBIDDEN_INCLUDE_PATTERN = re.compile(r'#\s*include\s*"lyra/mir/')
 
-# --- Rule A003 -----------------------------------------------------------
+# Rule A003
 IR_FORBIDDEN_INCLUDE_PATTERN = re.compile(
     r'#\s*include\s*"lyra/(driver|backend)/'
 )
 
-# --- Rule A004 -----------------------------------------------------------
+# Rule A004
 RAW_EXPECTED_DIAGNOSTIC_PATTERN = re.compile(
     r"std::expected\s*<\s*[^<>]*?,\s*diag::Diagnostic\s*>",
     re.DOTALL,
@@ -122,25 +130,25 @@ RAW_EXPECTED_ALLOWED = frozenset({
     "include/lyra/diag/diagnostic.hpp",
 })
 
-# --- Rule A005 -----------------------------------------------------------
+# Rule A005
 STATE_HOLDS_FACTS_PATTERN = re.compile(
     r"\b(?:const\s+)?[A-Za-z_][A-Za-z0-9_]*Facts\s*[*&]?\s*[A-Za-z_][A-Za-z0-9_]*_;"
 )
 
-# --- Rule A006 -----------------------------------------------------------
+# Rule A006
 SUPPORT_UNSUPPORTED_PATTERN = re.compile(r"\bsupport::Unsupported\b")
 
-# --- Rule A007 -----------------------------------------------------------
+# Rule A007
 RAW_UNEXPECTED_PATTERN = re.compile(
     r"std::unexpected\s*\(\s*(?:lyra::)?diag::Diagnostic\b"
 )
 
-# --- Rule A011 -----------------------------------------------------------
+# Rule A011
 LOWERED_STAGING_STRUCT_PATTERN = re.compile(
     r"\b(?:struct|class)\s+(Lowered[A-Z]\w*)\b"
 )
 
-# --- Rule A012 -----------------------------------------------------------
+# Rule A012
 # Matches Append* function definition shapes used in this repo, both
 # inline and out-of-line:
 #   auto AppendXxx(...) -> Type {
@@ -166,7 +174,7 @@ FORBIDDEN_IN_APPEND = (
      "invariants -- check those at the lowering boundary"),
 )
 
-# --- Rules A008 / A009 / A010 -------------------------------------------
+# Rules A008 / A009 / A010
 LOWER_FN_PATTERN = re.compile(
     r"\bauto\s+(Lower\w*)\s*\(([^;{]*?)\)\s*->\s*([^;{]+?)\s*[;{]",
     re.DOTALL,
@@ -253,8 +261,7 @@ def iter_lyra_files(repo_root: Path):
     yield from iter_files(repo_root, "src/lyra", "include/lyra")
 
 
-# --- Checks --------------------------------------------------------------
-
+# Checks
 def check_a001(repo_root: Path) -> list[str]:
     errors = []
     for path, rel in iter_layer_files(repo_root, "hir"):
@@ -458,7 +465,7 @@ def check_a010(repo_root: Path) -> list[str]:
     return errors
 
 
-# --- Rule A013 -----------------------------------------------------------
+# Rule A013
 MIN_ALTERNATIVES = 3
 ENUM_DECL_PATTERN = re.compile(r"enum class (\w+)[^{;]*\{(.*?)\}", re.S)
 ENUM_BODY_COMMENT_PATTERN = re.compile(r"//[^\n]*|/\*.*?\*/", re.S)
@@ -533,7 +540,7 @@ def check_a013(repo_root: Path) -> list[str]:
     return errors
 
 
-# --- Rule A014 -----------------------------------------------------------
+# Rule A014
 DIAG_CODE_HEADER = "include/lyra/diag/diag_code.hpp"
 DIAG_CODE_SOURCE = "src/lyra/diag/diag_code.cpp"
 DIAG_CODE_ENUM_PATTERN = re.compile(r"enum class DiagCode[^{]*\{(.*?)\n\};", re.S)
@@ -557,8 +564,33 @@ def check_a014(repo_root: Path) -> list[str]:
     ]
 
 
-# --- Self-tests ----------------------------------------------------------
+# Rule A015
+# A runtime library type reached into always spells the type and then a member
+# of it, which is what separates naming a type from naming a free function of
+# the same namespace.
+RUNTIME_TYPE_LITERAL_PATTERN = re.compile(
+    r'"[^"]*\blyra::(?:value|runtime)::[A-Za-z_]\w*::'
+)
+RUNTIME_TYPE_LITERAL_ALLOWED = frozenset({
+    "src/lyra/backend/cpp/render_type.cpp",
+})
 
+
+def check_a015(repo_root: Path) -> list[str]:
+    errors = []
+    for path, rel in iter_files(repo_root, "src/lyra/backend"):
+        if rel in RUNTIME_TYPE_LITERAL_ALLOWED:
+            continue
+        for lineno, line in enumerate(path.read_text().splitlines(), 1):
+            if RUNTIME_TYPE_LITERAL_PATTERN.search(line):
+                errors.append(
+                    f"  {rel}:{lineno}: A015 names a runtime library type; "
+                    f"render it through type mapping"
+                )
+    return errors
+
+
+# Self-tests
 def run_self_tests() -> bool:
     def expect(cond, msg):
         if not cond:
@@ -841,11 +873,32 @@ def run_self_tests() -> bool:
         == ["kHostIoError"],
         "A014 parser reads a registry entry")
 
+    # A015
+    ok &= expect(
+        RUNTIME_TYPE_LITERAL_PATTERN.search(
+            '"lyra::value::PackedArray::Concat({"'),
+        "A015 static factory of a runtime type")
+    ok &= expect(
+        RUNTIME_TYPE_LITERAL_PATTERN.search(
+            'std::format("{}lyra::runtime::NamedEvent::Wait()", pad)'),
+        "A015 type named mid-literal")
+    ok &= expect(
+        not RUNTIME_TYPE_LITERAL_PATTERN.search(
+            '"lyra::value::SelectByCondition({}, {}, {})"'),
+        "A015 free function is not a type")
+    ok &= expect(
+        not RUNTIME_TYPE_LITERAL_PATTERN.search(
+            '"lyra::runtime::current_runtime()"'),
+        "A015 free function false-pos")
+    ok &= expect(
+        not RUNTIME_TYPE_LITERAL_PATTERN.search(
+            "  return RenderTypeAsCpp(unit, id) + \"::Concat\";"),
+        "A015 a mapped type reached into is not a literal")
+
     return ok
 
 
-# --- Main ----------------------------------------------------------------
-
+# Main
 CHECKS = [
     ("A001 HIR forbidden terms", check_a001),
     ("A002 HIR includes MIR headers", check_a002),
@@ -862,6 +915,7 @@ CHECKS = [
     ("A012 Append* body must be thin storage", check_a012),
     ("A013 closed alternative set nothing switches on", check_a013),
     ("A014 DiagCode without a registry entry", check_a014),
+    ("A015 backend names a runtime library type", check_a015),
 ]
 
 

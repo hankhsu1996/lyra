@@ -24,6 +24,15 @@
 
 namespace lyra::lowering::mir_to_lir {
 
+// The symbol a unit's namespace-level storage is linked under. A namespace
+// name is unique only inside the unit that declares it while the whole program
+// links into one name space, so the unit qualifies it. Both ends compose the
+// string here: the unit that defines the storage from its own name, and a unit
+// that reads it from the name its reference carries -- one rule, so the two
+// agree with no shared table.
+auto StaticVariableSymbol(
+    std::string_view unit_name, std::string_view variable_name) -> std::string;
+
 // Per-unit lowerer for the MIR-to-LIR pass. Reads the source MIR, owns the
 // in-progress LIR unit, and memoizes type translation so each distinct MIR type
 // mints one canonical LIR type. After `Run` returns, the produced LIR unit

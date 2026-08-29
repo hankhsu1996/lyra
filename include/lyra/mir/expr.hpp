@@ -21,7 +21,6 @@
 #include "lyra/mir/local_ref.hpp"
 #include "lyra/mir/static_constant_id.hpp"
 #include "lyra/mir/static_property_id.hpp"
-#include "lyra/mir/struct_construct.hpp"
 #include "lyra/mir/unary_op.hpp"
 #include "lyra/support/builtin_fn.hpp"
 #include "lyra/support/imported_runtime_class.hpp"
@@ -316,15 +315,12 @@ struct Virtual {
   VirtualSlot slot;
 };
 
-// Constructs a value of the call's result data type from the positional
-// arguments -- the data type's constructor, which is just a call whose
-// callee is the type itself (Python's `T(args)`, Rust's `T::new(args)`).
-// The backend renders it from the result type; it carries no knowledge of
-// which data type it builds. Distinct from `Direct` because it is not a
-// named-symbol invocation: object/storage creation, ownership attachment,
-// initialization ordering, and (future) heap allocation are the
-// constructor's job, not an ordinary call's. The brace-list aggregate
-// form is `ArrayLiteralExpr`, a value literal, not this.
+// Builds a value of the call's result type from the positional arguments --
+// the library type's own way of coming into existence, which each type has
+// exactly one of, so naming the type names the entry (Python's `T(args)`,
+// Rust's `T::new(args)`). A value that is instead its own parts is a
+// value-build primitive and never reaches here, and a value whose type has
+// more than one way to be built names which one through `Direct`.
 struct Construct {};
 
 // One call site's invocation semantics. The arm is a property of the call
@@ -510,14 +506,24 @@ struct ReplicationExpr {
   ExprId concat;
 };
 
-// LRM 10.9.1 array assignment pattern `'{e1, e2, ...}` element list. Feeds an
-// array container's constructor; renders as `std::array<T, N>{e1, ...}` so it
-// resolves uniformly against the ctor's `std::span<const T>` parameter.
-// `Expr::type` is the parent container type (`UnpackedArrayType` /
-// `DynamicArrayType`); the element type is read off it at render time. A value
-// literal (the brace form), distinct from the constructor call it feeds.
+// LRM 10.9.1 array assignment pattern `'{e1, e2, ...}` element list: a value
+// that is its elements and nothing more, which is what makes it a primitive.
+// `Expr::type` is the list's own type -- contiguous storage of a known element
+// count -- because the list is a value in its own right; a container built over
+// one is a separate construction, so this is the same literal whichever one
+// consumes it.
 struct ArrayLiteralExpr {
   std::vector<ExprId> elements;
+};
+
+// The same value at another type that structures its bits identically --
+// crossing between an enumeration and its base (LRM 6.19.3) is the case this
+// arises for. Nothing is built and nothing moves; what changes is the type the
+// program ascribes to the value, which is why this is a cast and not a
+// construction. A destination whose representation differs is a reshape, which
+// is a library call and reaches this node already reshaped.
+struct ValueCastExpr {
+  ExprId operand;
 };
 
 // A heterogeneous product value built from its component expressions in order
@@ -770,12 +776,12 @@ using ExprData = std::variant<
     LocalRef, UnaryExpr, BinaryExpr, BoolCastExpr, ConditionalExpr,
     MergingConditionalExpr, BlockExpr, AssignExpr, IncDecExpr, CallExpr,
     DerefExpr, AddressOfExpr, MachineArrayDataExpr, MoveExpr, PointerCastExpr,
-    FunctionCastExpr, IntCastExpr, FieldAccessExpr, StructConstructExpr,
-    ClosureExpr, ConcatExpr, ReplicationExpr, ArrayLiteralExpr, TupleExpr,
-    VectorExpr, AwaitExpr, TupleGetExpr, VectorGetExpr, UnionExpr, UnionGetExpr,
-    TaggedExpr, TaggedGetExpr, TaggedGetRefExpr, TaggedIsExpr,
-    ValueProjectionExpr, FunctionRef, StaticConstantRef, StaticPropertyRef,
-    ExternalUnitVariableRef, ExternalStaticPropertyRef>;
+    FunctionCastExpr, IntCastExpr, FieldAccessExpr, ClosureExpr, ConcatExpr,
+    ReplicationExpr, ArrayLiteralExpr, ValueCastExpr, TupleExpr, VectorExpr,
+    AwaitExpr, TupleGetExpr, VectorGetExpr, UnionExpr, UnionGetExpr, TaggedExpr,
+    TaggedGetExpr, TaggedGetRefExpr, TaggedIsExpr, ValueProjectionExpr,
+    FunctionRef, StaticConstantRef, StaticPropertyRef, ExternalUnitVariableRef,
+    ExternalStaticPropertyRef>;
 
 struct Expr {
   ExprData data;

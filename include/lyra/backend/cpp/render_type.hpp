@@ -14,6 +14,13 @@ namespace lyra::backend::cpp {
 [[nodiscard]] auto RenderTypeAsCpp(
     const mir::CompilationUnit& unit, mir::TypeId type_id) -> std::string;
 
+// Renders what names bringing a value of this type into existence, which the
+// argument list is then applied to. It is the type's own answer and not the
+// construction's: a value type spells its own name, while a wrapper that owns
+// what it points at spells the entry that allocates and constructs together.
+[[nodiscard]] auto RenderTypeConstructionAsCpp(
+    const mir::CompilationUnit& unit, mir::TypeId type_id) -> std::string;
+
 // Renders a MIR class reference as the target C++ type expression naming
 // that class. Intra-unit refs go through the unit's class registry; external
 // refs render as their qualified name.

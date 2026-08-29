@@ -19,9 +19,6 @@ namespace lyra::mir {
 // construction so nothing dangles once a spawned branch outlives the site,
 // which makes constructing it inseparable from starting it, so the type is the
 // coroutine and the site awaits or spawns it with no call in between.
-//
-// Distinct from `StructConstructExpr` because a closure is a distinct type
-// category: its declaration carries an invoke body.
 struct ClosureExpr {
   ClosureId closure{};
   std::vector<FieldInit> field_inits;

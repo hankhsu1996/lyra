@@ -95,6 +95,25 @@ void VerifyInstr(
                   "lir verify: integer cast result is not a machine integer");
             }
           },
+          // A value cast names a type; it never reshapes. Both sides must
+          // structure their bits identically, or the reshape that was meant to
+          // precede it is missing and the value silently changes width.
+          [&](const ValueCastInstr& cast) {
+            const std::optional<TypeId> operand_type =
+                OperandType(fn, cast.operand);
+            if (!operand_type || !IsIntegral(unit.types, *operand_type) ||
+                !IsIntegral(unit.types, result_type)) {
+              throw InternalError(
+                  "lir verify: value cast between types that are not both "
+                  "integral");
+            }
+            if (!SameRepresentation(
+                    PackedShape(unit.types, *operand_type),
+                    PackedShape(unit.types, result_type))) {
+              throw InternalError(
+                  "lir verify: value cast changes its value's representation");
+            }
+          },
           [](const CallInstr&) {}, [](const ProductInstr&) {},
           [](const ArrayInstr&) {}, [](const AggregateExtractInstr&) {},
           [](const AggregateUpdateInstr&) {}, [](const BinaryInstr&) {},

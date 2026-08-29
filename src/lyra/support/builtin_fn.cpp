@@ -492,6 +492,12 @@ auto BuiltinFnName(BuiltinFn id) -> std::string_view {
       return "conform_bound";
     case BuiltinFn::kMakeQueueConcat:
       return "make_queue_concat";
+    case BuiltinFn::kMakeDynamicArrayDefault:
+      return "make_dynamic_array_default";
+    case BuiltinFn::kMakeDynamicArrayNew:
+      return "make_dynamic_array_new";
+    case BuiltinFn::kMakeDynamicArrayNewCopy:
+      return "make_dynamic_array_new_copy";
     case BuiltinFn::kSpread:
       return "spread";
     case BuiltinFn::kConcat:

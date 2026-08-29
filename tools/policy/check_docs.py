@@ -78,7 +78,7 @@ SKIP_SUFFIXES = (".local.md",)
 # a fresh clone has none of them.
 UNTRACKED_ROOTS = frozenset({"playground", "obj_dir", "build", "out"})
 
-# --- Rule D002 -----------------------------------------------------------
+# Rule D002
 FENCE_PATTERN = re.compile(r"^```.*?^```", re.MULTILINE | re.DOTALL)
 INLINE_CODE_PATTERN = re.compile(r"`[^`\n]*`")
 LINK_PATTERN = re.compile(r"\[[^\]]*\]\(([^)]+)\)")
@@ -94,10 +94,10 @@ NON_PATH_CHARS = re.compile(r"[\s<>&*(),;]")
 # with an extension.
 PATH_SHAPED = re.compile(r"/|\.[A-Za-z0-9]+$")
 
-# --- Rule D001 -----------------------------------------------------------
+# Rule D001
 CITED_PATH_PATTERN = re.compile(r"`([A-Za-z0-9_.][A-Za-z0-9_./-]*)`")
 
-# --- Rule D003 -----------------------------------------------------------
+# Rule D003
 # "that" is deliberately absent: it reads as a relative pronoun before a
 # verb ("a design that cuts one stage"), which is ordinary prose.
 CADENCE_PATTERN = re.compile(
@@ -107,7 +107,7 @@ CADENCE_PATTERN = re.compile(
 TIMELESS_DIRS = ("docs/architecture/", "docs/glossary/")
 TIMELESS_FILES = ("README.md", "CLAUDE.md")
 
-# --- Rule D004 -----------------------------------------------------------
+# Rule D004
 # (index file, indexed directory). An index not listed here makes no
 # completeness claim -- docs/progress/README.md deliberately lists nothing,
 # because its directory turns over every PR.
@@ -116,7 +116,7 @@ INDEXES = (
     ("docs/architecture/README.md", "docs/architecture"),
 )
 
-# --- Rule D005 -----------------------------------------------------------
+# Rule D005
 READER_FACING = ("README.md", "examples/README.md")
 
 # A standalone integer of two digits or more. The lookarounds keep a digit
@@ -129,7 +129,7 @@ BARE_COUNT_PATTERN = re.compile(r"(?<![A-Za-z0-9+_-])\d{2,}(?![A-Za-z0-9+_-])")
 # needs the naming word to say the same thing.
 DESIGNATION_PATTERN = re.compile(r"\b(?:IEEE|LRM)\s+\d[\d.-]*")
 
-# --- Rule D006 -----------------------------------------------------------
+# Rule D006
 PERMANENT_DIRS = ("docs/architecture/", "docs/decisions/", "docs/glossary/")
 PROGRESS_REFERENCE_PATTERN = re.compile(r"progress/[A-Za-z0-9_.-]+\.md")
 
@@ -163,8 +163,7 @@ def line_of(text: str, offset: int) -> int:
     return text.count("\n", 0, offset) + 1
 
 
-# --- Checks --------------------------------------------------------------
-
+# Checks
 def check_d001(repo_root: Path) -> list[str]:
     tops = repo_top_level_dirs(repo_root)
     errors = []
@@ -285,8 +284,7 @@ def check_d006(repo_root: Path) -> list[str]:
     return errors
 
 
-# --- Self-tests ----------------------------------------------------------
-
+# Self-tests
 def run_self_tests() -> bool:
     def expect(cond, msg):
         if not cond:
@@ -390,8 +388,7 @@ def run_self_tests() -> bool:
     return ok
 
 
-# --- Main ----------------------------------------------------------------
-
+# Main
 CHECKS = [
     ("D001 doc cites a path that does not exist", check_d001),
     ("D002 relative link does not resolve", check_d002),

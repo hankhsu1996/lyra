@@ -10,7 +10,6 @@
 #include "lyra/backend/llvm/runtime_abi.hpp"
 #include "lyra/diag/diagnostic.hpp"
 #include "lyra/lir/function.hpp"
-#include "lyra/lir/type.hpp"
 #include "lyra/lir/type_id.hpp"
 
 namespace llvm {
@@ -48,14 +47,6 @@ class CodeGenFunction {
   auto LowerArray(const lir::ArrayInstr& array, lir::TypeId result_type)
       -> diag::Result<llvm::Value*>;
   auto LowerProduct(const lir::ProductInstr& product, lir::TypeId result_type)
-      -> diag::Result<llvm::Value*>;
-  auto LowerErasedDynamicArrayConstruct(
-      const lir::CallInstr& call, const lir::DynamicArrayType& type)
-      -> diag::Result<llvm::Value*>;
-  auto LowerErasedUnpackedArrayConstruct(
-      const lir::CallInstr& call, const lir::UnpackedArrayType& type)
-      -> diag::Result<llvm::Value*>;
-  auto LowerClosureConstruct(const lir::CallInstr& call, lir::TypeId result)
       -> diag::Result<llvm::Value*>;
   auto LowerAggregateExtract(const lir::AggregateExtractInstr& extract)
       -> diag::Result<llvm::Value*>;
@@ -115,16 +106,24 @@ class CodeGenFunction {
       lir::TypeId result_type) -> diag::Result<llvm::FunctionCallee>;
   auto ConstructCallee(const lir::CallInstr& call)
       -> diag::Result<llvm::FunctionCallee>;
-  auto RealConstructCallee(const lir::CallInstr& call, ValueDomain dst)
-      -> diag::Result<llvm::FunctionCallee>;
   auto ForeignCallee(
       const lir::ForeignTarget& target, const lir::CallInstr& call,
       lir::TypeId result_type) -> diag::Result<llvm::FunctionCallee>;
 
-  // The leading argument a construct call needs beyond its lowered operands: an
-  // external-unit construct is prefixed with the child's definition reference;
-  // every other construct needs none.
-  auto ConstructDefinitionArg(lir::TypeId result) -> llvm::Value*;
+  // What a construct's entry is handed, given the operands the call states: a
+  // leading reference to the definition of what is built where the entry needs
+  // one, and the operands as one span where it takes them that way. Both are
+  // this target's encoding of the call, read from the result type the same way
+  // the entry itself is.
+  auto ConstructArgs(
+      lir::TypeId result, const std::vector<llvm::Value*>& operands)
+      -> std::vector<llvm::Value*>;
+
+  // The representation a container holds its elements in. An entry that has to
+  // erase an element reads that representation from a receiver it already
+  // takes, or is named by it where there is no receiver to read.
+  [[nodiscard]] auto ElementDomainOf(lir::TypeId container) const
+      -> diag::Result<ValueDomain>;
 
   // The type of an operand, and the value domain a library entry is chosen by.
   [[nodiscard]] auto OperandType(const lir::Operand& operand) const

@@ -97,12 +97,24 @@ struct FuncRef {
   FunctionId function;
 };
 
-// An instruction input: a prior value, an inline constant, or a code reference.
-// A constant or code reference is an operand rather than a value of its own
-// because it has no storage and no dataflow origin to name -- it is
+// The address of storage the whole program shares, named by its linkage
+// symbol: a variable of a package (LRM 26.2) or of a compilation-unit scope
+// (LRM 3.12.1), which a referrer reaches by a fully resolved name. The data
+// counterpart of a code reference -- no local slot and no receiver chain
+// arrives at such storage, so a place over one opens at the symbol and
+// dereferences it. `type` is a pointer to what the symbol names; how the name
+// is resolved -- a link line, an execution session -- is below LIR.
+struct StaticRef {
+  std::string symbol;
+  TypeId type;
+};
+
+// An instruction input: a prior value, an inline constant, or a reference to
+// code or to shared storage. A constant or a reference is an operand rather
+// than a value of its own because it has no dataflow origin to name -- it is
 // materialized at the use site.
-using Operand =
-    std::variant<Use, IntConst, StrConst, RealConst, NullConst, FuncRef>;
+using Operand = std::variant<
+    Use, IntConst, StrConst, RealConst, NullConst, FuncRef, StaticRef>;
 
 // A runtime-library entry. A static factory is named by its type namespace as
 // well as its function -- `String::FromPackedArray` and `PackedArray::FromInt`
@@ -123,6 +135,10 @@ struct FunctionTarget {
   FunctionId function;
 };
 
+// The type the call builds a value of, which is the whole identity: a type has
+// one way to come into existence, so naming it names the entry. A wrapper that
+// owns what it points at brings the pointee into existence along with itself,
+// which is the same one way seen from the owner.
 struct ConstructTarget {
   TypeId result;
 };
@@ -320,6 +336,15 @@ struct PointerCastInstr {
   Operand operand;
 };
 
+// Names the result type for a value whose bits the destination structures
+// identically -- crossing between an enumeration and its base is what reaches
+// here. The peer of the pointer cast above on the value side: it moves no bits
+// and computes nothing, and exists because the type a value is held to is part
+// of what a program states.
+struct ValueCastInstr {
+  Operand operand;
+};
+
 // Converts a machine integer to the machine integer the result type names,
 // truncating or extending it. Extension follows the *source* type's signedness,
 // which is what decides whether the added high bits repeat the sign bit or are
@@ -332,7 +357,7 @@ struct IntCastInstr {
 using InstrData = std::variant<
     CallInstr, ProductInstr, ArrayInstr, AggregateExtractInstr,
     AggregateUpdateInstr, LoadInstr, StoreInstr, AddrOfInstr, BinaryInstr,
-    UnaryInstr, BoolCastInstr, PointerCastInstr, IntCastInstr>;
+    UnaryInstr, BoolCastInstr, PointerCastInstr, ValueCastInstr, IntCastInstr>;
 
 // One instruction: it defines `result` (whose type lives on the function's
 // value arena) from `data`.

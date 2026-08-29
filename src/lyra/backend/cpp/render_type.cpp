@@ -323,6 +323,41 @@ auto RenderTypeAsCpp(const mir::CompilationUnit& unit, mir::TypeId type_id)
       unit.types.Get(type_id).data);
 }
 
+auto RenderTypeConstructionAsCpp(
+    const mir::CompilationUnit& unit, mir::TypeId type_id) -> std::string {
+  return std::visit(
+      Overloaded{
+          // A wrapper that owns what it points at brings the pointee into
+          // existence along with itself, so what names its construction is the
+          // entry that allocates and constructs together rather than the
+          // wrapper's own spelling. A borrowed pointer owns nothing and is
+          // bound to storage that already exists, so nothing constructs one.
+          [&](const mir::PointerType& p) -> std::string {
+            const std::string inner = RenderTypeAsCpp(unit, p.pointee);
+            switch (p.ownership) {
+              case mir::PointerOwnership::kUnique:
+                return std::format("std::make_unique<{}>", inner);
+              case mir::PointerOwnership::kShared:
+                return std::format("std::make_shared<{}>", inner);
+              case mir::PointerOwnership::kBorrowed:
+                throw InternalError(
+                    "RenderTypeConstructionAsCpp: a borrowed pointer is bound "
+                    "to storage that already exists, so none is constructed");
+            }
+            throw InternalError(
+                "RenderTypeConstructionAsCpp: unknown PointerOwnership");
+          },
+          [&](const mir::ManagedRefType& m) -> std::string {
+            return std::format(
+                "lyra::runtime::GcNew<{}>", RenderTypeAsCpp(unit, m.pointee));
+          },
+          // Every other type is built by naming itself.
+          [&](const auto&) -> std::string {
+            return RenderTypeAsCpp(unit, type_id);
+          }},
+      unit.types.Get(type_id).data);
+}
+
 auto RenderClassRefAsCpp(
     const mir::CompilationUnit& unit, const mir::ClassRef& ref) -> std::string {
   return std::visit(

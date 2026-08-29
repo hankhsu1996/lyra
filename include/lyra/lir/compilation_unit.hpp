@@ -74,11 +74,23 @@ struct Closure {
   FunctionId invoke{};
 };
 
+// Storage this unit defines that no instance owns: one cell for the whole
+// program, reached by its linkage symbol rather than through a receiver.
+// `type` is the storage's own type, which is what tells whoever realizes it
+// what to build; a reference to it is an operand typed as a pointer to that.
+// The unit that declares the storage lists it, and only that unit does, so
+// every referrer -- this one included -- names it and none defines it twice.
+struct StaticStorage {
+  std::string symbol;
+  TypeId type;
+};
+
 // The LIR of one compilation unit: its own type graph, its classes, its
-// closures, the objects of other units it compiled against, every function it
-// compiles, and the class its object tree is rooted at, when it roots one -- a
-// unit that declares only a namespace compiles functions and roots no objects.
-// Self-contained -- it holds no reference to the MIR it was lowered from.
+// closures, the objects of other units it compiled against, the storage it
+// shares program-wide, every function it compiles, and the class its object
+// tree is rooted at, when it roots one -- a unit that declares only a namespace
+// compiles functions and roots no objects. Self-contained -- it holds no
+// reference to the MIR it was lowered from.
 //
 // Every body is a function here, whatever declared it, and its position is the
 // identity a call names. A class reaches its own bodies the same way any other
@@ -89,6 +101,7 @@ struct CompilationUnit {
   base::Registry<Closure, ClosureId> closures;
   base::Arena<ExternalUnitObject, ExternalUnitObjectId> external_unit_objects;
   base::Registry<Function, FunctionId> functions;
+  std::vector<StaticStorage> static_storage;
   std::optional<ClassId> root;
 };
 

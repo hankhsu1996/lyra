@@ -60,6 +60,8 @@ enum class RuntimeLibraryKind : std::uint8_t {
 struct PackedRange {
   std::int64_t left;
   std::int64_t right;
+
+  auto operator==(const PackedRange&) const -> bool = default;
 };
 
 struct PackedArrayType {
