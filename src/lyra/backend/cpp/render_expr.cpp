@@ -69,8 +69,8 @@ auto RenderWordList(std::span<const std::uint64_t> words, std::size_t n)
 }
 
 auto RenderPackedArrayIntegerLiteral(
-    const mir::PackedArrayType& pa, const mir::IntegralConstant& c)
-    -> std::string {
+    std::string_view packed, const mir::PackedArrayType& pa,
+    const mir::IntegralConstant& c) -> std::string {
   // A literal materializes as a construction of its own value: a narrow 2-state
   // value via Int / FromInt, a wide or X/Z-bearing value via FromWords. The
   // shape -- a 1-D vector or a multi-dimensional stack -- rides in the
@@ -88,12 +88,11 @@ auto RenderPackedArrayIntegerLiteral(
     if (pa.dims.size() == 1U && pa.BitWidth() == 32U &&
         pa.signedness == mir::Signedness::kSigned) {
       return std::format(
-          "lyra::value::PackedArray::{}({})",
+          "{}::{}({})", packed,
           pa.atom == mir::BitAtom::kBit ? "Int" : "Integer", value);
     }
     return std::format(
-        "lyra::value::PackedArray::FromInt({}LL, {})", value,
-        RenderPackedType(pa));
+        "{}::FromInt({}LL, {})", packed, value, RenderPackedType(pa));
   }
 
   const bool is_four_state = pa.atom != mir::BitAtom::kBit;
@@ -114,8 +113,8 @@ auto RenderPackedArrayIntegerLiteral(
                           RenderWordList(c.state_words, n))
                     : std::string{"std::span<const std::uint64_t>{}"};
   return std::format(
-      "lyra::value::PackedArray::FromWords({}, {}, {})", value_init,
-      unknown_init, RenderPackedType(pa));
+      "{}::FromWords({}, {}, {})", packed, value_init, unknown_init,
+      RenderPackedType(pa));
 }
 
 auto RenderIntegerLiteralExpr(
@@ -134,7 +133,9 @@ auto RenderIntegerLiteralExpr(
   }
   // An enum literal is its base integral value -- a bare `PackedArray` at the
   // enum's base shape, no distinct enum type.
-  return RenderPackedArrayIntegerLiteral(ty.AsIntegralPacked(), lit.value);
+  return RenderPackedArrayIntegerLiteral(
+      RenderTypeAsCpp(view.Unit(), expr.type), ty.AsIntegralPacked(),
+      lit.value);
 }
 
 auto RenderRealLiteralExpr(
@@ -161,8 +162,7 @@ auto RenderRealLiteralExpr(
   if (is_short) {
     body += "f";
   }
-  return std::format(
-      "lyra::value::{}{{{}}}", is_short ? "ShortReal" : "Real", body);
+  return std::format("{}{{{}}}", RenderTypeAsCpp(view.Unit(), expr.type), body);
 }
 
 auto LookupLocalName(const ScopeView& view, const mir::LocalRef& ref)
@@ -633,25 +633,6 @@ auto RenderBindingParamDecl(const ScopeView& view, const mir::LocalDecl& bind)
       "{} {}", RenderTypeAsCpp(view.Unit(), bind.type), bind.name);
 }
 
-// A struct value renders as C++ aggregate initialization, one designated
-// initializer per field in the construction's listed evaluation order:
-// `StructName{.x = a, .y = b}`.
-auto RenderStructConstructExpr(
-    const ScopeView& view, const mir::StructConstructExpr& construct)
-    -> std::string {
-  const mir::StructDecl& decl = view.Unit().GetStruct(construct.struct_id);
-  std::string inits;
-  bool first = true;
-  for (const mir::FieldInit& init : construct.field_inits) {
-    if (!first) inits += ", ";
-    inits += std::format(
-        ".{} = {}", decl.fields.Get(init.target).name,
-        RenderExpr(view, view.Expr(init.value)));
-    first = false;
-  }
-  return std::format("{}{{{}}}", decl.name, inits);
-}
-
 // A closure renders as a lambda whose captured fields are the closure's fields,
 // in field order. A captured read in the body resolves to the bare field name
 // (an in-scope lambda binding), so the capture clause and the body agree by
@@ -760,9 +741,11 @@ auto RenderClosureExpr(const ScopeView& view, const mir::ClosureExpr& construct)
       "[{}]({}){}{}", captures_text, params_text, return_clause, body);
 }
 
-auto RenderConcatExpr(const ScopeView& view, const mir::ConcatExpr& c)
+auto RenderConcatExpr(
+    const ScopeView& view, const mir::Expr& expr, const mir::ConcatExpr& c)
     -> std::string {
-  std::string out{"lyra::value::PackedArray::Concat({"};
+  std::string out =
+      std::format("{}::Concat({{", RenderTypeAsCpp(view.Unit(), expr.type));
   for (std::size_t i = 0; i < c.operands.size(); ++i) {
     if (i != 0) out += ", ";
     out += RenderExpr(view, view.Expr(c.operands[i]));
@@ -821,10 +804,11 @@ auto RenderVectorExpr(
   return out;
 }
 
-auto RenderReplicationExpr(const ScopeView& view, const mir::ReplicationExpr& r)
+auto RenderReplicationExpr(
+    const ScopeView& view, const mir::Expr& expr, const mir::ReplicationExpr& r)
     -> std::string {
   return std::format(
-      "lyra::value::PackedArray::Replicate({}, {}ULL)",
+      "{}::Replicate({}, {}ULL)", RenderTypeAsCpp(view.Unit(), expr.type),
       RenderExpr(view, view.Expr(r.concat)), r.count);
 }
 
@@ -953,9 +937,6 @@ auto RenderExpr(const ScopeView& view, const mir::Expr& expr) -> std::string {
             return std::format(
                 "{}->{}", RenderExpr(view, view.Expr(m.receiver)), field.name);
           },
-          [&](const mir::StructConstructExpr& sc) -> std::string {
-            return RenderStructConstructExpr(view, sc);
-          },
           [&](const mir::FunctionRef& fr) -> std::string {
             const mir::Class& cls = view.Class();
             return std::format(
@@ -987,10 +968,16 @@ auto RenderExpr(const ScopeView& view, const mir::Expr& expr) -> std::string {
             return RenderClosureExpr(view, cl);
           },
           [&](const mir::ConcatExpr& c) -> std::string {
-            return RenderConcatExpr(view, c);
+            return RenderConcatExpr(view, expr, c);
           },
           [&](const mir::ReplicationExpr& r) -> std::string {
-            return RenderReplicationExpr(view, r);
+            return RenderReplicationExpr(view, expr, r);
+          },
+          // The value is unchanged and so is its C++ type: an enumeration and
+          // its base share one runtime class, so ascribing the other type to a
+          // value spells nothing here.
+          [&](const mir::ValueCastExpr& v) -> std::string {
+            return RenderExpr(view, view.Expr(v.operand));
           },
           [&](const mir::ArrayLiteralExpr& a) -> std::string {
             return RenderArrayLiteralExpr(view, expr, a);
@@ -1049,7 +1036,7 @@ auto RenderExpr(const ScopeView& view, const mir::Expr& expr) -> std::string {
           },
           [&](const mir::TaggedIsExpr& g) -> std::string {
             return std::format(
-                "lyra::value::PackedArray::Bit(({}).template IsTagged<{}>())",
+                "({}).template IsTagged<{}>()",
                 RenderExpr(view, view.Expr(g.union_value)), g.tag_index.value);
           },
       },

@@ -21,6 +21,12 @@ auto TypeKindName(const Type& type) -> std::string_view;
 // elsewhere -- which is what an address-of yields and a pointer cast retypes.
 auto Pointee(const TypeArena& types, TypeId type) -> std::optional<TypeId>;
 
+// The type of the elements a container holds; absent when the type holds no
+// elements. Every container names one, whichever way it is indexed and however
+// many elements it holds, so a consumer that has to know what a container is
+// made of asks here rather than listing the container kinds itself.
+auto ElementType(const TypeArena& types, TypeId type) -> std::optional<TypeId>;
+
 // The type of the storage a dereference of `type` reaches. That is a
 // reference's referent, and also what a capability wrapper represents -- a
 // wrapper is not an indirection to storage elsewhere, it is storage whose
@@ -43,6 +49,12 @@ auto DerefTarget(const TypeArena& types, TypeId type) -> std::optional<TypeId>;
 // it.
 auto IsAddressOnly(const TypeArena& types, TypeId type) -> bool;
 
+// Whether the type's values are integral: a packed array, or an enumeration
+// whose values its base structures. This is the precondition of asking for a
+// packed shape, so a consumer that does not already know it asks here first
+// rather than listing the integral types itself.
+auto IsIntegral(const TypeArena& types, TypeId type) -> bool;
+
 // The packed shape an integral type's value is structured by: a packed array is
 // its own shape, an enumeration is represented by its base's. Every consumer
 // that must know how an integral value's bits are grouped asks this, so the
@@ -50,6 +62,13 @@ auto IsAddressOnly(const TypeArena& types, TypeId type) -> bool;
 // that is not integral has no such shape and is a caller error, never a width
 // guess.
 auto PackedShape(const TypeArena& types, TypeId type) -> const PackedArrayType&;
+
+// Whether two packed shapes structure their values' bits identically. The
+// spelling a shape was declared under is not part of that -- two values of the
+// same atom, signedness, and dimensions hold the same bits, so either stands
+// where the other does wherever the representation is what is wanted.
+auto SameRepresentation(const PackedArrayType& a, const PackedArrayType& b)
+    -> bool;
 
 // Whether a callable's result type states the coroutine call protocol: the body
 // may hand control back to the scheduler and completes as a coroutine, rather

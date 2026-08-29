@@ -386,6 +386,12 @@ auto BuiltinFnCppName(support::BuiltinFn id) -> std::string_view {
       return "ConformBound";
     case support::BuiltinFn::kMakeQueueConcat:
       return "MakeQueueConcat";
+    case support::BuiltinFn::kMakeDynamicArrayDefault:
+      return "Default";
+    case support::BuiltinFn::kMakeDynamicArrayNew:
+      return "New";
+    case support::BuiltinFn::kMakeDynamicArrayNewCopy:
+      return "NewCopy";
     case support::BuiltinFn::kSpread:
       return "QSpread";
     case support::BuiltinFn::kConcat:
@@ -755,45 +761,12 @@ auto RenderCalleePart(
                     method_name),
                 .leading_arg_count = 0};
           },
+          // A type has one way to come into existence, and what names it is the
+          // type's own answer -- read through type mapping, the way every other
+          // target-language spelling of a type is.
           [&](const mir::Construct&) -> CalleeRender {
-            // The result type names what is being constructed. A
-            // `unique_ptr<T>` constructor is `std::make_unique<T>` -- it
-            // forwards the arguments to T's constructor and heap-allocates --
-            // so which C++ syntax to spell is read off the result type.
-            const auto& result_ty = view.Unit().types.Get(result_type);
-            if (const auto* ptr =
-                    std::get_if<mir::PointerType>(&result_ty.data);
-                ptr != nullptr &&
-                ptr->ownership == mir::PointerOwnership::kUnique) {
-              return {
-                  .expr = std::format(
-                      "std::make_unique<{}>",
-                      RenderTypeAsCpp(view.Unit(), ptr->pointee)),
-                  .leading_arg_count = 0};
-            }
-            if (const auto* ptr =
-                    std::get_if<mir::PointerType>(&result_ty.data);
-                ptr != nullptr &&
-                ptr->ownership == mir::PointerOwnership::kShared) {
-              return {
-                  .expr = std::format(
-                      "std::make_shared<{}>",
-                      RenderTypeAsCpp(view.Unit(), ptr->pointee)),
-                  .leading_arg_count = 0};
-            }
-            // A managed reference result is a class `new`: allocate on the
-            // managed heap and run the object's constructor.
-            if (const auto* managed =
-                    std::get_if<mir::ManagedRefType>(&result_ty.data);
-                managed != nullptr) {
-              return {
-                  .expr = std::format(
-                      "lyra::runtime::GcNew<{}>",
-                      RenderTypeAsCpp(view.Unit(), managed->pointee)),
-                  .leading_arg_count = 0};
-            }
             return {
-                .expr = RenderTypeAsCpp(view.Unit(), result_type),
+                .expr = RenderTypeConstructionAsCpp(view.Unit(), result_type),
                 .leading_arg_count = 0};
           },
       },

@@ -191,10 +191,11 @@ each meets the same lifetime question above; none is lowerable on the execution 
       so the service needs the write to produce a new value stored back through the temporary's
       owner, the same rule every other apparent mutation on this backend follows. `$fgets`,
       `$fread`, `$ferror`, `$fscanf`, `$sscanf` and `$value$plusargs` are all this one shape.
-- [ ] Storage reached by name rather than through a receiver: a package or `$unit` variable, a class
-      static property, and a class static constant. All three are the same shape -- storage no local
-      slot and no receiver chain arrives at -- and lowering has no place to base them on, because a
-      LIR operand names a code symbol but has no data equivalent. One addition serves all three.
+- [ ] Storage reached by name rather than through a receiver, for a class's static property and
+      static constant. A package or `$unit` variable runs: such storage is named by its linkage
+      symbol, a place opens at that symbol and dereferences it, and the execution session resolves
+      the name to the address the design's own storage sits at. A class's statics are the same shape
+      and need the symbol a class mints for them, which nothing publishes yet.
 - [ ] Where a base class's storage sits inside a derived object. A member is reached by its position
       in the owning class's member list, and the runtime builds that list from the class's own
       members alone, so a field declared by a base indexes the derived object's list instead.

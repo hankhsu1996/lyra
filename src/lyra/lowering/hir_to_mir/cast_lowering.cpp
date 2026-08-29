@@ -20,14 +20,20 @@ auto IsRealFamilyKind(mir::TypeKind k) -> bool {
          k == mir::TypeKind::kRealTime;
 }
 
-// `Real(operand)` / `ShortReal(operand)` invokes the explicit `RealValue`
-// converting constructor. Used both for cross-precision real reshape and as
-// the outer step of the integral-to-real bridge (Real(packed.ToInt64())).
-auto MakeRealConstructorCall(mir::ExprId operand_id, mir::TypeId dst_type)
+// The destination real type's own factory, named for which conversion this is:
+// landing a machine integer (LRM 6.12.1) and reshaping across precisions are
+// two operations, and the operand's type is not what tells them apart.
+auto MakeRealFactoryCall(
+    support::BuiltinFn entry, mir::ExprId operand_id, mir::TypeId dst_type)
     -> mir::Expr {
   return mir::Expr{
       .data =
-          mir::CallExpr{.callee = mir::Construct{}, .arguments = {operand_id}},
+          mir::CallExpr{
+              .callee =
+                  mir::Direct{
+                      .target = entry,
+                      .qualification = mir::TypeQualifier{.type = dst_type}},
+              .arguments = {operand_id}},
       .type = dst_type};
 }
 
@@ -130,20 +136,21 @@ auto BuildValueConversion(
   const auto src_kind = src_ty.Kind();
   const auto dst_kind = dst_ty.Kind();
 
-  // Real-family reshape (e.g. `shortreal` <-> `real`): the `RealValue<Other>`
-  // explicit converting ctor handles it; same-precision is identity.
+  // Real-family reshape (LRM 6.12.1): crossing precisions is the destination
+  // type's own conversion, and staying at one is identity.
   if (IsRealFamilyKind(src_kind) && IsRealFamilyKind(dst_kind)) {
     if (src_kind == dst_kind) {
       return operand_expr;
     }
-    return MakeRealConstructorCall(operand_id, dst_type);
+    return MakeRealFactoryCall(
+        support::BuiltinFn::kConvertFrom, operand_id, dst_type);
   }
 
   // Integral -> real: read out the host int64, build the real from it.
   if (src_ty.IsIntegralPacked() && IsRealFamilyKind(dst_kind)) {
     const mir::ExprId int_id =
         block.exprs.Add(MakeToInt64Call(unit, operand_id));
-    return MakeRealConstructorCall(int_id, dst_type);
+    return MakeRealFactoryCall(support::BuiltinFn::kFromInt, int_id, dst_type);
   }
 
   // Real -> integral: round to int64, then `PackedArray::FromInt(...)` lands
@@ -155,12 +162,11 @@ auto BuildValueConversion(
         block, rounded_id, dst_ty.AsIntegralPacked(), dst_type);
   }
 
-  // Integral -> integral: width / signedness / state reshape, with an enum
-  // wrap at either end if the LRM 6.19.3 type axis crosses the enum class
-  // boundary. The shape-change inner step is `PackedArray::ConvertFrom`; the
-  // enum-wrap outer step is a Construct that calls the destination
-  // class's converting ctor (enum class for dst-enum, plain PackedArray for
-  // src-enum slicing).
+  // Integral -> integral: a reshape into the destination's declared
+  // representation. Crossing the enumeration boundary (LRM 6.19.3) changes the
+  // type a value is held to and not the bits it carries, so it is a cast over
+  // the reshaped value -- or over the operand itself, where the two
+  // representations already agree and nothing reshapes.
   if (src_ty.IsIntegralPacked() && dst_ty.IsIntegralPacked()) {
     const auto& src_pa = src_ty.AsIntegralPacked();
     const auto& dst_pa = dst_ty.AsIntegralPacked();
@@ -181,9 +187,7 @@ auto BuildValueConversion(
     }
     if (dst_is_enum || src_is_enum) {
       return mir::Expr{
-          .data =
-              mir::CallExpr{.callee = mir::Construct{}, .arguments = {body_id}},
-          .type = dst_type};
+          .data = mir::ValueCastExpr{.operand = body_id}, .type = dst_type};
     }
     if (same_shape) {
       return operand_expr;

@@ -11,6 +11,26 @@
 
 namespace lyra::lir {
 
+namespace {
+
+// Which types are integral, and what structures their values' bits, answered
+// once: a packed array is its own shape, and an enumeration is represented by
+// its base's. Absent for every other type, which is what makes it not
+// integral.
+auto FindPackedShape(const TypeArena& types, TypeId type)
+    -> const PackedArrayType* {
+  const TypeData& data = types.Get(type).data;
+  if (const auto* packed = std::get_if<PackedArrayType>(&data)) {
+    return packed;
+  }
+  if (const auto* enumeration = std::get_if<EnumType>(&data)) {
+    return &enumeration->base;
+  }
+  return nullptr;
+}
+
+}  // namespace
+
 auto TypeKindName(const Type& type) -> std::string_view {
   return std::visit(
       Overloaded{
@@ -69,6 +89,25 @@ auto Pointee(const TypeArena& types, TypeId type) -> std::optional<TypeId> {
       types.Get(type).data);
 }
 
+auto ElementType(const TypeArena& types, TypeId type) -> std::optional<TypeId> {
+  return std::visit(
+      Overloaded{
+          [](const UnpackedArrayType& u) -> std::optional<TypeId> {
+            return u.element_type;
+          },
+          [](const DynamicArrayType& d) -> std::optional<TypeId> {
+            return d.element_type;
+          },
+          [](const QueueType& q) -> std::optional<TypeId> {
+            return q.element_type;
+          },
+          [](const AssociativeArrayType& a) -> std::optional<TypeId> {
+            return a.element_type;
+          },
+          [](const auto&) -> std::optional<TypeId> { return std::nullopt; }},
+      types.Get(type).data);
+}
+
 auto DerefTarget(const TypeArena& types, TypeId type) -> std::optional<TypeId> {
   return std::visit(
       Overloaded{
@@ -97,16 +136,22 @@ auto IsAddressOnly(const TypeArena& types, TypeId type) -> bool {
       types.Get(type).data);
 }
 
+auto IsIntegral(const TypeArena& types, TypeId type) -> bool {
+  return FindPackedShape(types, type) != nullptr;
+}
+
 auto PackedShape(const TypeArena& types, TypeId type)
     -> const PackedArrayType& {
-  const TypeData& data = types.Get(type).data;
-  if (const auto* packed = std::get_if<PackedArrayType>(&data)) {
-    return *packed;
+  const PackedArrayType* shape = FindPackedShape(types, type);
+  if (shape == nullptr) {
+    throw InternalError("lir: type has no packed shape; it is not integral");
   }
-  if (const auto* enumeration = std::get_if<EnumType>(&data)) {
-    return enumeration->base;
-  }
-  throw InternalError("lir: type has no packed shape; it is not integral");
+  return *shape;
+}
+
+auto SameRepresentation(const PackedArrayType& a, const PackedArrayType& b)
+    -> bool {
+  return a.atom == b.atom && a.signedness == b.signedness && a.dims == b.dims;
 }
 
 auto IsCoroutine(const TypeArena& types, TypeId type) -> bool {

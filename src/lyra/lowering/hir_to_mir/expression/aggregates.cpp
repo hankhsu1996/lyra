@@ -301,10 +301,17 @@ auto LowerHirDynamicArrayNewExprProc(
     if (!init_or) return std::unexpected(std::move(init_or.error()));
     args.push_back(block.exprs.Add(*std::move(init_or)));
   }
+  const support::BuiltinFn form =
+      n.initializer.has_value() ? support::BuiltinFn::kMakeDynamicArrayNewCopy
+                                : support::BuiltinFn::kMakeDynamicArrayNew;
   return mir::Expr{
       .data =
           mir::CallExpr{
-              .callee = mir::Construct{}, .arguments = std::move(args)},
+              .callee =
+                  mir::Direct{
+                      .target = form,
+                      .qualification = mir::TypeQualifier{.type = result_type}},
+              .arguments = std::move(args)},
       .type = result_type};
 }
 

@@ -89,6 +89,27 @@ class DynamicArray {
     }
   }
 
+  // The LRM 7.5.1 run-time-sized forms, each named. Which one a source
+  // construct means is decided where that construct is read, not by the
+  // argument list: `new[N]` and an assignment pattern both carry two operands,
+  // so a target with no overload resolution of its own has nothing to tell them
+  // apart. The assignment pattern stays the constructor, since a container has
+  // one way to be built from an element list.
+  [[nodiscard]] static auto Default(T element_default) -> DynamicArray {
+    return DynamicArray(std::move(element_default));
+  }
+
+  [[nodiscard]] static auto New(const PackedArray& n, T element_default)
+      -> DynamicArray {
+    return DynamicArray(n, std::move(element_default));
+  }
+
+  [[nodiscard]] static auto NewCopy(
+      const PackedArray& n, T element_default, const DynamicArray& src)
+      -> DynamicArray {
+    return DynamicArray(n, std::move(element_default), src);
+  }
+
   DynamicArray(const DynamicArray&) = default;
   DynamicArray(DynamicArray&&) noexcept = default;
   auto operator=(const DynamicArray&) -> DynamicArray& = default;

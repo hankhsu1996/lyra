@@ -60,6 +60,9 @@ the detail lives in the entry itself.
   read and write are distinct methods chosen at lowering.
 - [concatenation-realization](concatenation-realization.md) -- a join means one operation and
   carries two or more runs; an N-ary build reaches a fixed-arity ABI as a chain.
+- [value-construction-forms](value-construction-forms.md) -- a construction says which form it is; a
+  value that is its own parts is a primitive, a container built from one is a call, and what names a
+  call is the type's own answer.
 - [array-method-dispatch](array-method-dispatch.md) -- LRM 7.12 array-method runtime semantics;
   per-family dispatch superseded by [builtin-call-identity](builtin-call-identity.md).
 - [array-manipulation-entry-stream](array-manipulation-entry-stream.md) -- LRM 7.12 locator /

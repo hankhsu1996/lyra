@@ -180,10 +180,14 @@ is never rewritten when the layout is canonicalized.
 - `CallableCode.generated_structs` and its recording helper are removed. Emission nesting is an
   explicit list on the nesting class (`mir::Class.structs`), populated at lowering and iterated by a
   nesting backend -- parallel to the child-class containment list, no body-tree walk.
-- A struct value is built by `StructConstructExpr` (a named-field aggregate literal) and a closure
-  by `ClosureExpr`; both are first-class, id-surfacing nodes over the shared `FieldInit` vocabulary.
-  A scope's `Shared<StructType>` handle is allocated through the generic constructor protocol
-  (`Construct` callee), reference ownership being the wrapper around the value.
+- A closure value is built by `ClosureExpr`, a first-class id-surfacing node over the shared
+  `FieldInit` vocabulary. A scope's `Shared<StructType>` handle is allocated through the generic
+  constructor protocol (`Construct` callee), reference ownership being the wrapper around the value,
+  and the promoted locals it stands in for are written into it as ordinary field assignments -- a
+  scope frame comes into existence empty and is filled, so no aggregate literal over it is built and
+  none is stated. A named-field literal is vocabulary this decision left room for and nothing ever
+  needed; an unpacked struct of the source language is a `TupleType` and its literal is a
+  `TupleExpr`, which is the structural product, not this nominal one.
 - The binding / capture contract (`binding_and_capture.md`) keeps its origin identity and
   forwarding; the materialized capture is a `ClosureDecl` field.
 

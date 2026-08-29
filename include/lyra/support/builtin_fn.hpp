@@ -495,6 +495,17 @@ enum class BuiltinFn : std::uint16_t {
   // 7.10.5 bound; the remaining arguments are the concatenation parts, each
   // contributing itself unless it is marked as spread.
   kMakeQueueConcat,
+  // A dynamic array sized at run time: empty at its declared element shape,
+  // `new[N]`, and `new[N](src)` (LRM 7.5.1). Each is named because the
+  // argument list does not tell them apart -- a sized `new` and an element
+  // list both carry two operands -- so a target that cannot resolve overloads
+  // would have nothing to read. Building one from an element list is not among
+  // them: every container builds from a list the same way, so its own type
+  // names that factory. The array's type qualifies the call, as it does for
+  // any static factory.
+  kMakeDynamicArrayDefault,
+  kMakeDynamicArrayNew,
+  kMakeDynamicArrayNewCopy,
   // Marks an operand as contributing its own elements in order rather than
   // itself -- spread, the same concept a variadic call site spells with `...`
   // or `*`. An array-valued operand is legal in either role, so which one it
@@ -560,7 +571,10 @@ enum class BuiltinFn : std::uint16_t {
   return id == BuiltinFn::kFromInt || id == BuiltinFn::kConvertFrom ||
          id == BuiltinFn::kFromPackedArray || id == BuiltinFn::kFromByteArray ||
          id == BuiltinFn::kFromBool || id == BuiltinFn::kFromString ||
-         id == BuiltinFn::kFromBits;
+         id == BuiltinFn::kFromBits ||
+         id == BuiltinFn::kMakeDynamicArrayDefault ||
+         id == BuiltinFn::kMakeDynamicArrayNew ||
+         id == BuiltinFn::kMakeDynamicArrayNewCopy;
 }
 
 // True iff the function modifies its receiver argument's storage in place, so

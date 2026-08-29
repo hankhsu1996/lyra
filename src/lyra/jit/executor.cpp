@@ -42,6 +42,7 @@
 #include "lyra/runtime/generated_call_scope.hpp"
 #include "lyra/runtime/hierarchy_segment.hpp"
 #include "lyra/runtime/jit_execution.hpp"
+#include "lyra/runtime/member_storage.hpp"
 #include "lyra/runtime/plusargs.hpp"
 #include "lyra/runtime/runtime.hpp"
 #include "lyra/runtime/scope.hpp"
@@ -413,9 +414,36 @@ void DefineRuntimeAbi(llvm::orc::LLJIT& jit) {
       &lyra_rt_activation_frame_store_tuple);
   add("lyra_rt_activation_frame_load_tuple",
       &lyra_rt_activation_frame_load_tuple);
-  add("lyra_rt_dynarray_default", &lyra_rt_dynarray_default);
-  add("lyra_rt_dynarray_new", &lyra_rt_dynarray_new);
-  add("lyra_rt_dynarray_new_copy", &lyra_rt_dynarray_new_copy);
+  add("lyra_rt_dynarray_default_packed", &lyra_rt_dynarray_default_packed);
+  add("lyra_rt_dynarray_default_string", &lyra_rt_dynarray_default_string);
+  add("lyra_rt_dynarray_default_real", &lyra_rt_dynarray_default_real);
+  add("lyra_rt_dynarray_default_shortreal",
+      &lyra_rt_dynarray_default_shortreal);
+  add("lyra_rt_dynarray_default_chandle", &lyra_rt_dynarray_default_chandle);
+  add("lyra_rt_dynarray_default_tuple", &lyra_rt_dynarray_default_tuple);
+  add("lyra_rt_dynarray_default_dynarray", &lyra_rt_dynarray_default_dynarray);
+  add("lyra_rt_dynarray_default_unpackedarray",
+      &lyra_rt_dynarray_default_unpackedarray);
+  add("lyra_rt_dynarray_new_packed", &lyra_rt_dynarray_new_packed);
+  add("lyra_rt_dynarray_new_string", &lyra_rt_dynarray_new_string);
+  add("lyra_rt_dynarray_new_real", &lyra_rt_dynarray_new_real);
+  add("lyra_rt_dynarray_new_shortreal", &lyra_rt_dynarray_new_shortreal);
+  add("lyra_rt_dynarray_new_chandle", &lyra_rt_dynarray_new_chandle);
+  add("lyra_rt_dynarray_new_tuple", &lyra_rt_dynarray_new_tuple);
+  add("lyra_rt_dynarray_new_dynarray", &lyra_rt_dynarray_new_dynarray);
+  add("lyra_rt_dynarray_new_unpackedarray",
+      &lyra_rt_dynarray_new_unpackedarray);
+  add("lyra_rt_dynarray_new_copy_packed", &lyra_rt_dynarray_new_copy_packed);
+  add("lyra_rt_dynarray_new_copy_string", &lyra_rt_dynarray_new_copy_string);
+  add("lyra_rt_dynarray_new_copy_real", &lyra_rt_dynarray_new_copy_real);
+  add("lyra_rt_dynarray_new_copy_shortreal",
+      &lyra_rt_dynarray_new_copy_shortreal);
+  add("lyra_rt_dynarray_new_copy_chandle", &lyra_rt_dynarray_new_copy_chandle);
+  add("lyra_rt_dynarray_new_copy_tuple", &lyra_rt_dynarray_new_copy_tuple);
+  add("lyra_rt_dynarray_new_copy_dynarray",
+      &lyra_rt_dynarray_new_copy_dynarray);
+  add("lyra_rt_dynarray_new_copy_unpackedarray",
+      &lyra_rt_dynarray_new_copy_unpackedarray);
   add("lyra_rt_dynarray_from_literal_packed",
       &lyra_rt_dynarray_from_literal_packed);
   add("lyra_rt_dynarray_from_literal_string",
@@ -657,6 +685,30 @@ struct LoadedScopeClass {
   std::unique_ptr<runtime::ScopeDefinition> definition;
 };
 
+// One cell a unit shares with the whole program, built here because the
+// runtime owns storage and generated code only ever holds its address.
+struct LoadedStaticStorage {
+  std::string symbol;
+  std::unique_ptr<runtime::MemberStorage> storage;
+};
+
+// The cells a unit declares outside any instance. What each needs is read from
+// its type the same way a member's is, since the difference between the two is
+// what reaches the storage and not what the storage is.
+auto LoadStaticStorage(const lir::CompilationUnit& unit)
+    -> std::vector<LoadedStaticStorage> {
+  std::vector<LoadedStaticStorage> loaded;
+  loaded.reserve(unit.static_storage.size());
+  for (const lir::StaticStorage& entry : unit.static_storage) {
+    loaded.push_back(
+        LoadedStaticStorage{
+            .symbol = entry.symbol,
+            .storage = std::make_unique<runtime::MemberStorage>(
+                DescribeMember(unit, entry.type))});
+  }
+  return loaded;
+}
+
 // The class an owned-child member reaches, absent for a member that reaches
 // storage instead.
 auto OwnedChildClass(const lir::CompilationUnit& unit, lir::TypeId type)
@@ -838,6 +890,29 @@ auto Execute(
       jit->getMainJITDylib().define(
           llvm::orc::absoluteSymbols(std::move(definition_symbols))),
       "define runtime definitions");
+
+  // A unit's namespace-level storage is published the same way: the unit that
+  // declares a cell is the only one that lists it, so building from every
+  // unit's list yields each cell exactly once, and every reader -- the
+  // declaring unit included -- reaches it through the symbol.
+  std::vector<LoadedStaticStorage> static_storage;
+  for (const lir::CompilationUnit* unit : loaded_units) {
+    std::vector<LoadedStaticStorage> unit_storage = LoadStaticStorage(*unit);
+    static_storage.insert(
+        static_storage.end(), std::make_move_iterator(unit_storage.begin()),
+        std::make_move_iterator(unit_storage.end()));
+  }
+  llvm::orc::SymbolMap storage_symbols;
+  for (const LoadedStaticStorage& entry : static_storage) {
+    storage_symbols[jit->getExecutionSession().intern(entry.symbol)] =
+        llvm::orc::ExecutorSymbolDef(
+            llvm::orc::ExecutorAddr::fromPtr(entry.storage->Address()),
+            llvm::JITSymbolFlags::Exported);
+  }
+  Check(
+      jit->getMainJITDylib().define(
+          llvm::orc::absoluteSymbols(std::move(storage_symbols))),
+      "define shared storage");
 
   for (const LoadedScopeClass& entry : loaded) {
     FillDefinition(

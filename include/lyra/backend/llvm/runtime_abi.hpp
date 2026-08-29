@@ -306,14 +306,17 @@ class RuntimeAbi {
 
   // The dynamic-array constructors (LRM 7.5.1 / 10.9.1): the empty array, the
   // sized array, the sized-from-source array, and the assignment-pattern array.
-  // Each takes the element default as a boxed prototype, since an element's
-  // default cannot be derived from the array's size alone; the sized forms lead
-  // with that size and the pattern form follows the prototype with the boxed
-  // element span. Element read, functional update, delete, and size are generic
-  // value operations and resolve through that path rather than an entry here.
-  auto MakeDynamicArrayDefault() -> llvm::FunctionCallee;
-  auto MakeDynamicArrayNew() -> llvm::FunctionCallee;
-  auto MakeDynamicArrayNewCopy() -> llvm::FunctionCallee;
+  // Each takes the element default as a prototype, since an element's default
+  // cannot be derived from the array's size alone; the sized forms lead with
+  // that size and the pattern form follows the prototype with the element span.
+  // Every one is named by the element representation it builds over, which is
+  // what lets the prototype and the elements cross alike as values of their own
+  // domain and the entry be what erases them. Element read, functional update,
+  // delete, and size are generic value operations and resolve through that path
+  // rather than an entry here.
+  auto MakeDynamicArrayDefault(ValueDomain domain) -> llvm::FunctionCallee;
+  auto MakeDynamicArrayNew(ValueDomain domain) -> llvm::FunctionCallee;
+  auto MakeDynamicArrayNewCopy(ValueDomain domain) -> llvm::FunctionCallee;
   auto MakeDynamicArrayFromLiteral(ValueDomain domain) -> llvm::FunctionCallee;
   auto MakeUnpackedArrayFromLiteral(ValueDomain domain) -> llvm::FunctionCallee;
 

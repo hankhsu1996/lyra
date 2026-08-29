@@ -21,9 +21,15 @@
 #include "lyra/mir/class.hpp"
 #include "lyra/mir/class_ref.hpp"
 #include "lyra/mir/closure_id.hpp"
+#include "lyra/mir/static_variable_id.hpp"
 #include "lyra/mir/type.hpp"
 
 namespace lyra::lowering::mir_to_lir {
+
+auto StaticVariableSymbol(
+    std::string_view unit_name, std::string_view variable_name) -> std::string {
+  return std::format("{}.{}", unit_name, variable_name);
+}
 
 auto UnitLowerer::Run() -> diag::Result<lir::CompilationUnit> {
   for (const mir::ClassId id : mir_->classes.Ids()) {
@@ -72,6 +78,19 @@ auto UnitLowerer::Run() -> diag::Result<lir::CompilationUnit> {
             .invoke = out_.functions.Declare()});
   }
   closure_identities_ = {mir_->closures.size(), std::move(closures)};
+
+  // A variable the unit's namespace owns -- a package's (LRM 26.2), a
+  // `$unit` scope's (LRM 3.12.1) -- is one cell for the whole program that no
+  // instance holds, so the unit publishes it under a symbol instead. Every
+  // reader reaches it by that name, this unit's own bodies included, since a
+  // namespace has no instance for a receiver to arrive through.
+  for (const mir::StaticVariableId id : mir_->static_variables.Ids()) {
+    const mir::StaticVariableDecl& variable = mir_->static_variables.Get(id);
+    out_.static_storage.push_back(
+        lir::StaticStorage{
+            .symbol = StaticVariableSymbol(mir_->name, variable.name),
+            .type = TranslateType(variable.type)});
+  }
 
   // A callable the unit's namespace owns -- a package's own body (LRM 26.3) --
   // is a body like any other and becomes a function of the unit. Only one this

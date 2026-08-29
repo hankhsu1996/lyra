@@ -941,11 +941,28 @@ auto FunctionLowerer::LowerPlace(const mir::Block& block, mir::ExprId id)
                 .base = *std::move(pointer),
                 .chain = {lir::Projection{lir::DerefProjection{}}}};
           },
+          // A variable of a unit's namespace is one cell for the whole program
+          // that no instance holds, so it is reached by the symbol it links
+          // under rather than through a receiver -- by the unit that declares
+          // it exactly as by any other, since a namespace has no instance. The
+          // symbol names the cell's address, so the place opens there and
+          // dereferences it, the same shape a member place has once its
+          // receiver is resolved.
+          [&](const mir::ExternalUnitVariableRef& ref)
+              -> diag::Result<lir::Place> {
+            return lir::Place{
+                .base =
+                    lir::StaticRef{
+                        .symbol = StaticVariableSymbol(
+                            ref.unit_name, ref.variable_name),
+                        .type = unit_->BorrowedPointerTo(
+                            unit_->TranslateType(expr.type))},
+                .chain = {lir::Projection{lir::DerefProjection{}}}};
+          },
           // Each of the following does name storage, reached by a name rather
-          // than through a receiver. What it lacks is a base to project from: a
-          // LIR operand names a code symbol and has no data equivalent, so the
-          // refusal says the storage is out of reach rather than that there is
-          // none.
+          // than through a receiver, and what it lacks is the storage itself:
+          // nothing yet builds a cell for a class's type-associated
+          // declarations, so no symbol names one.
           [](const mir::StaticConstantRef&) -> diag::Result<lir::Place> {
             return Unsupported(
                 "mir_to_lir: a class's static constant is not yet reachable on "
@@ -955,11 +972,6 @@ auto FunctionLowerer::LowerPlace(const mir::Block& block, mir::ExprId id)
             return Unsupported(
                 "mir_to_lir: a class's static property is not yet reachable on "
                 "this backend");
-          },
-          [](const mir::ExternalUnitVariableRef&) -> diag::Result<lir::Place> {
-            return Unsupported(
-                "mir_to_lir: a variable of another compilation unit is not yet "
-                "reachable on this backend");
           },
           [](const mir::ExternalStaticPropertyRef&)
               -> diag::Result<lir::Place> {
@@ -971,6 +983,21 @@ auto FunctionLowerer::LowerPlace(const mir::Block& block, mir::ExprId id)
             return Unsupported("mir_to_lir: expression form names no place");
           }},
       expr.data);
+}
+
+auto FunctionLowerer::ReadPlace(
+    const mir::Block& block, mir::ExprId id, lir::TypeId type)
+    -> diag::Result<lir::Operand> {
+  if (lir::IsAddressOnly(unit_->Types(), type)) {
+    return Unsupported(
+        "mir_to_lir: a storage cell has no value to read; it is reached "
+        "through its address");
+  }
+  auto place = LowerPlace(block, id);
+  if (!place) {
+    return std::unexpected(std::move(place.error()));
+  }
+  return Load(*std::move(place), type);
 }
 
 auto FunctionLowerer::LowerArgument(const mir::Block& block, mir::ExprId id)
@@ -1691,6 +1718,15 @@ auto FunctionLowerer::LowerExpr(const mir::Block& block, mir::ExprId id)
           [&](const mir::CallExpr& call) -> diag::Result<lir::Operand> {
             return LowerCall(block, call, type);
           },
+          [&](const mir::ValueCastExpr& cast) -> diag::Result<lir::Operand> {
+            auto operand = LowerExpr(block, cast.operand);
+            if (!operand) {
+              return std::unexpected(std::move(operand.error()));
+            }
+            return Emit(
+                unit_->TranslateType(type),
+                lir::ValueCastInstr{.operand = *std::move(operand)});
+          },
           [&](const mir::ArrayLiteralExpr& lit) -> diag::Result<lir::Operand> {
             std::vector<lir::Operand> elements;
             elements.reserve(lit.elements.size());
@@ -1815,17 +1851,7 @@ auto FunctionLowerer::LowerExpr(const mir::Block& block, mir::ExprId id)
                 lir::IntCastInstr{.operand = *std::move(operand)});
           },
           [&](const mir::FieldAccessExpr&) -> diag::Result<lir::Operand> {
-            const lir::TypeId field_type = unit_->TranslateType(type);
-            if (lir::IsAddressOnly(unit_->Types(), field_type)) {
-              return Unsupported(
-                  "mir_to_lir: a storage cell has no value to read; it is "
-                  "reached through its address");
-            }
-            auto place = LowerPlace(block, id);
-            if (!place) {
-              return std::unexpected(std::move(place.error()));
-            }
-            return Load(*std::move(place), field_type);
+            return ReadPlace(block, id, unit_->TranslateType(type));
           },
           [&](const mir::DerefExpr&) -> diag::Result<lir::Operand> {
             auto place = LowerPlace(block, id);
@@ -1999,11 +2025,6 @@ auto FunctionLowerer::LowerExpr(const mir::Block& block, mir::ExprId id)
                             .qualifier = std::nullopt},
                     .args = {*std::move(operand), MachineCount(repl.count)}});
           },
-          [](const mir::StructConstructExpr&) -> diag::Result<lir::Operand> {
-            return Unsupported(
-                "mir_to_lir: building a nominal struct value is not yet "
-                "lowerable to LIR");
-          },
           [](const mir::UnionExpr&) -> diag::Result<lir::Operand> {
             return Unsupported(
                 "mir_to_lir: building a union value is not yet lowerable to "
@@ -2060,9 +2081,14 @@ auto FunctionLowerer::LowerExpr(const mir::Block& block, mir::ExprId id)
                 "mir_to_lir: a code address as a value is not yet lowerable to "
                 "LIR");
           },
+          [&](const mir::ExternalUnitVariableRef&)
+              -> diag::Result<lir::Operand> {
+            return ReadPlace(block, id, unit_->TranslateType(type));
+          },
           // Each of the following names storage rather than reaching it
-          // through a receiver, and a LIR operand names a code symbol with no
-          // data equivalent, so there is no place to read one from.
+          // through a receiver, and nothing yet builds a cell for a class's
+          // type-associated declarations, so there is no place to read one
+          // from.
           [](const mir::StaticConstantRef&) -> diag::Result<lir::Operand> {
             return Unsupported(
                 "mir_to_lir: a class's static constant is not yet reachable on "
@@ -2072,12 +2098,6 @@ auto FunctionLowerer::LowerExpr(const mir::Block& block, mir::ExprId id)
             return Unsupported(
                 "mir_to_lir: a class's static property is not yet reachable on "
                 "this backend");
-          },
-          [](const mir::ExternalUnitVariableRef&)
-              -> diag::Result<lir::Operand> {
-            return Unsupported(
-                "mir_to_lir: a variable of another compilation unit is not yet "
-                "reachable on this backend");
           },
           [](const mir::ExternalStaticPropertyRef&)
               -> diag::Result<lir::Operand> {

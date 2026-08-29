@@ -42,8 +42,16 @@ class RealValue {
   // LRM 6.12.1: integer-to-real keeps the integer value (the caller collapses
   // X/Z bits to 0 before this); real-to-integer rounds to nearest, ties away
   // from zero, which is `std::llround`.
-  [[nodiscard]] static auto FromInt64(std::int64_t i) -> RealValue {
+  [[nodiscard]] static auto FromInt(std::int64_t i) -> RealValue {
     return RealValue{static_cast<Host>(i)};
+  }
+
+  // LRM 6.12.1 cross-precision reshape, named so a conversion states which of
+  // the two it is rather than leaving the operand's type to say.
+  template <typename Other>
+  [[nodiscard]] static auto ConvertFrom(const RealValue<Other>& o)
+      -> RealValue {
+    return RealValue{o};
   }
   [[nodiscard]] auto Round() const -> std::int64_t {
     return std::llround(v_);

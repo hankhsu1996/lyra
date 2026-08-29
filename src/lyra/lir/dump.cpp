@@ -28,6 +28,11 @@ class LirDumper {
     for (const ExternalUnitObjectId id : unit_->external_unit_objects.Ids()) {
       DumpExternalUnitObject(id);
     }
+    for (const StaticStorage& storage : unit_->static_storage) {
+      Line(
+          std::format(
+              "static \"{}\" : {}", storage.symbol, FormatType(storage.type)));
+    }
     for (const ClassId id : unit_->classes.Ids()) {
       DumpClass(id);
     }
@@ -136,6 +141,9 @@ class LirDumper {
             },
             [&](const ArrayInstr& array) -> std::string {
               return std::format("array({})", FormatOperands(array.elements));
+            },
+            [&](const ValueCastInstr& cast) -> std::string {
+              return std::format("valuecast {}", FormatOperand(cast.operand));
             },
             [&](const AggregateExtractInstr& extract) -> std::string {
               return std::format(
@@ -319,6 +327,9 @@ class LirDumper {
             [&](const FuncRef& f) -> std::string {
               return std::format(
                   "funcref {}", unit_->functions.Get(f.function).name);
+            },
+            [](const StaticRef& s) -> std::string {
+              return std::format("staticref {}", s.symbol);
             }},
         op);
   }

@@ -511,10 +511,13 @@ auto lyra_rt_chandle_ne(void* lhs, void* rhs) -> void*;
 auto lyra_rt_chandle_case_equal(void* lhs, void* rhs) -> void*;
 auto lyra_rt_chandle_to_bool(void* operand) -> bool;
 
-// Boxes a value-domain handle into a type-erased `RuntimeValue`, the element of
-// an aggregate value. An aggregate assembles from these boxed elements; the
-// domain rides in the symbol name, as every other domain-parametric entry does,
-// so the generated side never inspects the element's runtime representation.
+// Boxes a value-domain handle into a type-erased `RuntimeValue`, the component
+// of an aggregate value. A product is what these serve: its components each
+// have a domain of their own, so no entry can be named by one of them and the
+// caller is the only side that knows them all. A homogeneous aggregate is named
+// by its single element domain instead and erases its own operands, so it needs
+// none of these. The domain rides in the symbol name, as every other
+// domain-parametric entry does.
 auto lyra_rt_value_box_packed(const void* value) -> void*;
 auto lyra_rt_value_box_string(const void* value) -> void*;
 auto lyra_rt_value_box_real(const void* value) -> void*;
@@ -550,31 +553,63 @@ auto lyra_rt_activation_frame_load_tuple(const void* cell) -> void*;
 // The dynamic-array domain (LRM 7.5), MIR's `DynamicArrayType`. A
 // run-time-sized homogeneous container carried behind an opaque handle, owning
 // its elements by value. `default` / `new` / `new_copy` are the LRM 7.5.1
-// constructors (empty, sized, sized-from-source); `from_literal` collects boxed
-// elements from an assignment pattern. The element default rides every
-// constructor as a boxed prototype -- the shape source for out-of-range reads
-// (LRM 7.4.5) and resize fills. `element` copies an element out; `with_element`
+// constructors (empty, sized, sized-from-source); `from_literal` collects the
+// elements of an assignment pattern. The element default rides every
+// constructor -- the shape source for out-of-range reads (LRM 7.4.5) and resize
+// fills. Every constructor is named by the element domain, so the prototype and
+// the elements cross alike as bare handles of that domain and the entry is what
+// erases them; a caller states values, never the representation they are held
+// in. `element` copies an element out; `with_element`
 // returns a copy of the array with one element replaced (LRM 7.4.6), and
 // `delete` a copy emptied (LRM 7.5.3) -- value operations, never in-place
 // writes, so value semantics hold even when the array is shared.
-auto lyra_rt_dynarray_default(const void* prototype) -> void*;
-auto lyra_rt_dynarray_new(const void* size, const void* prototype) -> void*;
-auto lyra_rt_dynarray_new_copy(
-    const void* size, const void* prototype, const void* src) -> void*;
+auto lyra_rt_dynarray_default_packed(void* prototype) -> void*;
+auto lyra_rt_dynarray_default_string(void* prototype) -> void*;
+auto lyra_rt_dynarray_default_real(void* prototype) -> void*;
+auto lyra_rt_dynarray_default_shortreal(void* prototype) -> void*;
+auto lyra_rt_dynarray_default_chandle(void* prototype) -> void*;
+auto lyra_rt_dynarray_default_tuple(void* prototype) -> void*;
+auto lyra_rt_dynarray_default_dynarray(void* prototype) -> void*;
+auto lyra_rt_dynarray_default_unpackedarray(void* prototype) -> void*;
+auto lyra_rt_dynarray_new_packed(const void* size, void* prototype) -> void*;
+auto lyra_rt_dynarray_new_string(const void* size, void* prototype) -> void*;
+auto lyra_rt_dynarray_new_real(const void* size, void* prototype) -> void*;
+auto lyra_rt_dynarray_new_shortreal(const void* size, void* prototype) -> void*;
+auto lyra_rt_dynarray_new_chandle(const void* size, void* prototype) -> void*;
+auto lyra_rt_dynarray_new_tuple(const void* size, void* prototype) -> void*;
+auto lyra_rt_dynarray_new_dynarray(const void* size, void* prototype) -> void*;
+auto lyra_rt_dynarray_new_unpackedarray(const void* size, void* prototype)
+    -> void*;
+auto lyra_rt_dynarray_new_copy_packed(
+    const void* size, void* prototype, const void* src) -> void*;
+auto lyra_rt_dynarray_new_copy_string(
+    const void* size, void* prototype, const void* src) -> void*;
+auto lyra_rt_dynarray_new_copy_real(
+    const void* size, void* prototype, const void* src) -> void*;
+auto lyra_rt_dynarray_new_copy_shortreal(
+    const void* size, void* prototype, const void* src) -> void*;
+auto lyra_rt_dynarray_new_copy_chandle(
+    const void* size, void* prototype, const void* src) -> void*;
+auto lyra_rt_dynarray_new_copy_tuple(
+    const void* size, void* prototype, const void* src) -> void*;
+auto lyra_rt_dynarray_new_copy_dynarray(
+    const void* size, void* prototype, const void* src) -> void*;
+auto lyra_rt_dynarray_new_copy_unpackedarray(
+    const void* size, void* prototype, const void* src) -> void*;
 auto lyra_rt_dynarray_from_literal_packed(
-    const void* prototype, LyraSpan unit, std::int64_t count) -> void*;
+    void* prototype, LyraSpan unit, std::int64_t count) -> void*;
 auto lyra_rt_dynarray_from_literal_string(
-    const void* prototype, LyraSpan unit, std::int64_t count) -> void*;
+    void* prototype, LyraSpan unit, std::int64_t count) -> void*;
 auto lyra_rt_dynarray_from_literal_real(
-    const void* prototype, LyraSpan unit, std::int64_t count) -> void*;
+    void* prototype, LyraSpan unit, std::int64_t count) -> void*;
 auto lyra_rt_dynarray_from_literal_shortreal(
-    const void* prototype, LyraSpan unit, std::int64_t count) -> void*;
+    void* prototype, LyraSpan unit, std::int64_t count) -> void*;
 auto lyra_rt_dynarray_from_literal_chandle(
-    const void* prototype, LyraSpan unit, std::int64_t count) -> void*;
+    void* prototype, LyraSpan unit, std::int64_t count) -> void*;
 auto lyra_rt_dynarray_from_literal_tuple(
-    const void* prototype, LyraSpan unit, std::int64_t count) -> void*;
+    void* prototype, LyraSpan unit, std::int64_t count) -> void*;
 auto lyra_rt_dynarray_from_literal_dynarray(
-    const void* prototype, LyraSpan unit, std::int64_t count) -> void*;
+    void* prototype, LyraSpan unit, std::int64_t count) -> void*;
 auto lyra_rt_dynarray_element(const void* array, const void* index) -> void*;
 auto lyra_rt_dynarray_with_element(
     const void* array, const void* index, void* value) -> void*;
@@ -595,23 +630,23 @@ auto lyra_rt_activation_frame_load_dynarray(const void* cell) -> void*;
 // entry takes it as a `[left:right]` operand pair rather than reading it off
 // the value.
 auto lyra_rt_dynarray_from_literal_unpackedarray(
-    const void* prototype, LyraSpan unit, std::int64_t count) -> void*;
+    void* prototype, LyraSpan unit, std::int64_t count) -> void*;
 auto lyra_rt_unpackedarray_from_literal_packed(
-    const void* prototype, LyraSpan unit, std::int64_t count) -> void*;
+    void* prototype, LyraSpan unit, std::int64_t count) -> void*;
 auto lyra_rt_unpackedarray_from_literal_string(
-    const void* prototype, LyraSpan unit, std::int64_t count) -> void*;
+    void* prototype, LyraSpan unit, std::int64_t count) -> void*;
 auto lyra_rt_unpackedarray_from_literal_real(
-    const void* prototype, LyraSpan unit, std::int64_t count) -> void*;
+    void* prototype, LyraSpan unit, std::int64_t count) -> void*;
 auto lyra_rt_unpackedarray_from_literal_shortreal(
-    const void* prototype, LyraSpan unit, std::int64_t count) -> void*;
+    void* prototype, LyraSpan unit, std::int64_t count) -> void*;
 auto lyra_rt_unpackedarray_from_literal_chandle(
-    const void* prototype, LyraSpan unit, std::int64_t count) -> void*;
+    void* prototype, LyraSpan unit, std::int64_t count) -> void*;
 auto lyra_rt_unpackedarray_from_literal_tuple(
-    const void* prototype, LyraSpan unit, std::int64_t count) -> void*;
+    void* prototype, LyraSpan unit, std::int64_t count) -> void*;
 auto lyra_rt_unpackedarray_from_literal_dynarray(
-    const void* prototype, LyraSpan unit, std::int64_t count) -> void*;
+    void* prototype, LyraSpan unit, std::int64_t count) -> void*;
 auto lyra_rt_unpackedarray_from_literal_unpackedarray(
-    const void* prototype, LyraSpan unit, std::int64_t count) -> void*;
+    void* prototype, LyraSpan unit, std::int64_t count) -> void*;
 auto lyra_rt_unpackedarray_element(
     const void* array, const void* index, const void* left, const void* right)
     -> void*;

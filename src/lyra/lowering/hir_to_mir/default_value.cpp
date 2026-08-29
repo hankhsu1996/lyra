@@ -54,27 +54,45 @@ auto DefaultIntegralConstant(const mir::PackedArrayType& pa)
 
 namespace {
 
-// LRM 7.10.5: a bounded queue carries its max index as a trailing construction
-// argument so the runtime trims an over-long initializer. Appends it when
-// `array_type` is a bounded queue; a no-op for every other array container.
-auto AppendBoundedQueueMax(
+// The LRM 7.10.5 maximum index a bounded queue enforces, appended as the value
+// the construction is handed so the runtime trims an over-long initializer. A
+// container whose type declares no bound -- which is every container but a
+// bounded queue -- appends nothing.
+void AppendBoundedQueueMax(
     const UnitLowerer& unit_lowerer, mir::Block& block,
-    std::vector<mir::ExprId>& args, mir::TypeId array_type) -> void {
-  const auto& ty = unit_lowerer.Unit().types.Get(array_type);
-  if (const auto* q = std::get_if<mir::QueueType>(&ty.data);
-      q != nullptr && q->max_bound.has_value()) {
-    args.push_back(block.exprs.Add(
-        mir::MakeIntLiteral(
-            unit_lowerer.Unit().builtins.int_type,
-            static_cast<std::int64_t>(*q->max_bound))));
+    std::vector<mir::ExprId>& args, mir::TypeId array_type) {
+  const auto* queue = std::get_if<mir::QueueType>(
+      &unit_lowerer.Unit().types.Get(array_type).data);
+  if (queue == nullptr || !queue->max_bound.has_value()) {
+    return;
   }
+  args.push_back(block.exprs.Add(
+      mir::MakeIntLiteral(
+          unit_lowerer.Unit().builtins.int_type,
+          static_cast<std::int64_t>(*queue->max_bound))));
 }
 
-// Wrap element exprs into an unpacked-array construction: the element type's
-// default prototype (honoring its own member inits) plus the element list.
-// Serves a folded-constant array (LRM 7.2.2), whose elements are materialized
-// individually because a constant fixes each element's own value; a uniform
-// or replicated value builds through `BuildArrayRepeatCall` instead.
+// Builds the container an element list feeds: the element type's default, the
+// list, how many times the list repeats, and a bounded queue's declared bound.
+// The list itself is the value literal; what it feeds is the container's own
+// constructor, which is a call like any other.
+auto BuildContainerFromElements(
+    const UnitLowerer& unit_lowerer, mir::Block& block, mir::TypeId array_type,
+    mir::ExprId element_default, mir::ExprId elements, mir::ExprId count)
+    -> mir::Expr {
+  std::vector<mir::ExprId> args = {element_default, elements, count};
+  AppendBoundedQueueMax(unit_lowerer, block, args, array_type);
+  return mir::Expr{
+      .data =
+          mir::CallExpr{
+              .callee = mir::Construct{}, .arguments = std::move(args)},
+      .type = array_type};
+}
+
+// A folded-constant array (LRM 7.2.2), whose elements are materialized
+// individually because a constant fixes each element's own value. The element
+// type's default carries its own member inits, and the list stands for itself,
+// so it repeats once.
 auto BuildUnpackedArrayValue(
     const UnitLowerer& unit_lowerer, WalkFrame frame, mir::TypeId array_type,
     hir::TypeId element_type, std::vector<mir::ExprId> element_ids)
@@ -88,12 +106,12 @@ auto BuildUnpackedArrayValue(
       mir::Expr{
           .data = mir::ArrayLiteralExpr{.elements = std::move(element_ids)},
           .type = list_type});
-  return mir::Expr{
-      .data =
-          mir::CallExpr{
-              .callee = mir::Construct{},
-              .arguments = {element_default, list_id}},
-      .type = array_type};
+  const mir::ExprId count_id = block.exprs.Add(
+      mir::Expr{
+          .data = mir::MachineIntLiteral{.value = 1},
+          .type = unit_lowerer.Unit().builtins.machine_int64});
+  return BuildContainerFromElements(
+      unit_lowerer, block, array_type, element_default, list_id, count_id);
 }
 
 // Materialize a folded member-default constant (LRM 7.2.2) as a MIR value of
@@ -268,17 +286,20 @@ auto BuildDefaultValueExpr(
           },
           // LRM Table 6-7: a dynamic array's default is the empty array.
           // The wrapper still needs the element type's default supplied at
-          // construction so OOB reads and resize-fills have a shape source.
-          // Emit chain: a construction call on `element_default` -> the
-          // `DynamicArray<T>(...)` ctor that stores the value and leaves
-          // `data_` empty.
+          // construction so OOB reads and resize-fills have a shape source,
+          // which is the one operand the empty form takes.
           [&](const mir::DynamicArrayType& da) -> mir::Expr {
             const mir::ExprId element_default = block.exprs.Add(
                 BuildDefaultValueExpr(unit_lowerer, frame, da.element_type));
             return mir::Expr{
                 .data =
                     mir::CallExpr{
-                        .callee = mir::Construct{},
+                        .callee =
+                            mir::Direct{
+                                .target = support::BuiltinFn::
+                                    kMakeDynamicArrayDefault,
+                                .qualification =
+                                    mir::TypeQualifier{.type = type}},
                         .arguments = {element_default}},
                 .type = type};
           },
@@ -447,13 +468,12 @@ auto BuildArrayConstructionCall(
       mir::Expr{
           .data = mir::ArrayLiteralExpr{.elements = std::move(elements)},
           .type = list_type});
-  std::vector<mir::ExprId> args = {element_default, list_id};
-  AppendBoundedQueueMax(unit_lowerer, block, args, array_type);
-  return mir::Expr{
-      .data =
-          mir::CallExpr{
-              .callee = mir::Construct{}, .arguments = std::move(args)},
-      .type = array_type};
+  const mir::ExprId count_id = block.exprs.Add(
+      mir::Expr{
+          .data = mir::MachineIntLiteral{.value = 1},
+          .type = unit_lowerer.Unit().builtins.machine_int64});
+  return BuildContainerFromElements(
+      unit_lowerer, block, array_type, element_default, list_id, count_id);
 }
 
 auto BuildArrayRepeatCall(
@@ -472,13 +492,8 @@ auto BuildArrayRepeatCall(
           .data =
               mir::MachineIntLiteral{.value = static_cast<std::int64_t>(count)},
           .type = unit_lowerer.Unit().builtins.machine_int64});
-  std::vector<mir::ExprId> args = {element_default, unit_id, count_id};
-  AppendBoundedQueueMax(unit_lowerer, block, args, array_type);
-  return mir::Expr{
-      .data =
-          mir::CallExpr{
-              .callee = mir::Construct{}, .arguments = std::move(args)},
-      .type = array_type};
+  return BuildContainerFromElements(
+      unit_lowerer, block, array_type, element_default, unit_id, count_id);
 }
 
 auto BuildAssociativeConstructionCall(

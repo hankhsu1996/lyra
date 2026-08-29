@@ -25,11 +25,10 @@ struct FieldDecl {
 };
 
 // One field of a construction: which field (`target`, a stable `FieldId`)
-// receives which value (`value`). Shared by every field-bearing construction --
-// a struct aggregate (`StructConstructExpr`) and a closure (`ClosureExpr`). The
-// value is a pure read of an already-materialized source, so the order of these
-// entries is the source-semantic evaluation order, independent of a
-// declaration's field order.
+// receives which value (`value`). The vocabulary every field-bearing
+// construction states its initializers in. The value is a pure read of an
+// already-materialized source, so the order of these entries is the
+// source-semantic evaluation order, independent of a declaration's field order.
 struct FieldInit {
   FieldId target;
   ExprId value;
