@@ -104,7 +104,7 @@ already names the path that runs it:
 bazel test //tests:llvm_tests --test_filter='12_statements.case_default_item'
 ```
 
-CI's test job passes `--test_tag_filters=-requires-host-cxx`, which excludes everything that spawns
+The merge gate passes `--test_tag_filters=-requires-host-cxx`, which excludes everything that spawns
 a host compiler: `cpp_tests`, `llvm_dpi_tests`, `cli_tests`, and `pch_audit_test`. What is left is
 `llvm_tests`, the corpus minus the cases carrying foreign sources, which is the merge gate and the
 one that grows as the execution backend fills in.

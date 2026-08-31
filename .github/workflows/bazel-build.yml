@@ -46,7 +46,7 @@ jobs:
           fi
 
   build:
-    name: Build
+    name: Build and Test
     needs: changes
     if: ${{ needs.changes.outputs.src == 'true' }}
     runs-on: ubuntu-latest
@@ -61,47 +61,39 @@ jobs:
           disk-cache: ${{ github.workflow }}-${{ hashFiles('MODULE.bazel') }}
           repository-cache: true
 
-      - name: Build
+      # Both bazel commands run in one job so that they share a server.
+      # Analysis lives in that server's memory and no cache carries it between
+      # machines, so a second runner repeats the whole of it -- around fifty
+      # seconds, far more than either command spends on actions. Sharing it is
+      # also what makes the step timings mean what they say: the build step
+      # pays for analysis, and the test step then reports what running the
+      # tests costs.
+      #
+      # The remote flags go into the untracked rc layer rather than onto each
+      # command line for that same reason: flags that differ between two
+      # invocations discard the analysis the first one built, and an rc file
+      # cannot drift the way two command lines can.
+      - name: Configure remote execution
         env:
           BUILDBUDDY_API_KEY: ${{ secrets.BUILDBUDDY_API_KEY }}
         run: |
-          RBE_FLAGS=""
           if [[ -n "$BUILDBUDDY_API_KEY" ]]; then
-            RBE_FLAGS="--config=rbe --remote_header=x-buildbuddy-api-key=$BUILDBUDDY_API_KEY"
+            echo "build --config=rbe" >> .bazelrc.user
+            echo "build --remote_header=x-buildbuddy-api-key=$BUILDBUDDY_API_KEY" >> .bazelrc.user
           fi
-          bazel build //... $RBE_FLAGS
 
-  test:
-    name: Test
-    needs: build
-    if: ${{ needs.build.result == 'success' }}
-    runs-on: ubuntu-latest
-    steps:
-      - name: Checkout code
-        uses: actions/checkout@v6
-
-      - name: Setup Bazel
-        uses: bazel-contrib/setup-bazel@0.18.0
-        with:
-          bazelisk-cache: true
-          disk-cache: ${{ github.workflow }}-${{ hashFiles('MODULE.bazel') }}
-          repository-cache: true
+      - name: Build
+        run: bazel build //...
 
       - name: Test
-        env:
-          BUILDBUDDY_API_KEY: ${{ secrets.BUILDBUDDY_API_KEY }}
         run: |
-          RBE_FLAGS=""
-          if [[ -n "$BUILDBUDDY_API_KEY" ]]; then
-            RBE_FLAGS="--config=rbe --remote_header=x-buildbuddy-api-key=$BUILDBUDDY_API_KEY"
-          fi
-          bazel test //... $RBE_FLAGS \
+          bazel test //... \
             --test_tag_filters=-requires-host-cxx \
             --test_output=errors --verbose_failures
 
   build-status:
     name: Build Status
-    needs: [changes, build, test]
+    needs: [changes, build]
     if: always()
     runs-on: ubuntu-latest
     steps:
@@ -111,10 +103,7 @@ jobs:
             echo "No source changes detected, skipping build"
             exit 0
           elif [[ "${{ needs.build.result }}" != "success" ]]; then
-            echo "Build failed"
-            exit 1
-          elif [[ "${{ needs.test.result }}" != "success" ]]; then
-            echo "Tests failed"
+            echo "Build or tests failed"
             exit 1
           else
             echo "All checks passed"

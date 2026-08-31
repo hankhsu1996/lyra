@@ -78,6 +78,14 @@ Each runs on push to `main` and on pull requests.
 | `architecture.yml`     | Layer boundaries between the IRs and the backends              |
 | `docs-policy.yml`      | The doc claims a machine can settle (paths, links, indexes)    |
 
+`bazel-build.yml` runs its two commands as steps of one job rather than as two jobs. The separate
+durations are worth having, but a second runner would not inherit the first's analysis: Bazel holds
+that in its server's memory, no cache moves it between machines, and it is the dominant cost here --
+around fifty seconds against a critical path of one, because both commands find every action already
+cached remotely. One job keeps the two durations honest, since the first pays for analysis once and
+the second then reports what running the tests costs. A compile failure still shows as the build
+step going red.
+
 ## Nightly workflows
 
 Two run on a schedule and on demand rather than per merge, for the same reason and with opposite
@@ -107,19 +115,24 @@ does, these jobs would measure a failure rather than a result.
 
 ## Remote execution
 
-`bazel-build.yml` and the benchmark and smoke flows build their remote flags from the
-`BUILDBUDDY_API_KEY` repository secret:
+Every flow that can run remotely takes its flags from the `BUILDBUDDY_API_KEY` repository secret.
+With the secret unset -- a fork, or a dispatch without secret access -- the same commands run
+locally. Nothing requires an account.
+
+A flow running one bazel command builds them inline:
 
 ```bash
 RBE_FLAGS=""
 if [[ -n "$BUILDBUDDY_API_KEY" ]]; then
   RBE_FLAGS="--config=rbe --remote_header=x-buildbuddy-api-key=$BUILDBUDDY_API_KEY"
 fi
-bazel build //... $RBE_FLAGS
+bazel build -c opt //:lyra $RBE_FLAGS
 ```
 
-With the secret unset -- a fork, or a dispatch without secret access -- the same commands run
-locally. Nothing requires an account.
+`bazel-build.yml` runs two, so it appends them to `.bazelrc.user` instead -- the untracked layer the
+build configuration already reserves for one checkout's own key. Two command lines can drift apart;
+one rc file cannot, and flags that differ between the two invocations would throw away the analysis
+that keeping them in one job exists to share.
 
 Remote execution resolves the toolchain registered for the remote platform, which is that image's
 system GCC rather than the clang a local build picks up. A change can therefore compile in one place
