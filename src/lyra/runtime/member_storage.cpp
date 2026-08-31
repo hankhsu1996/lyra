@@ -5,10 +5,13 @@
 #include "lyra/base/internal_error.hpp"
 #include "lyra/base/overloaded.hpp"
 #include "lyra/runtime/scope_program.hpp"
+#include "lyra/support/value_domain.hpp"
 #include "lyra/value/chandle.hpp"
 #include "lyra/value/packed_array.hpp"
 #include "lyra/value/real.hpp"
+#include "lyra/value/runtime_associative_array.hpp"
 #include "lyra/value/runtime_dynamic_array.hpp"
+#include "lyra/value/runtime_queue.hpp"
 #include "lyra/value/runtime_tuple.hpp"
 #include "lyra/value/runtime_unpacked_array.hpp"
 #include "lyra/value/string.hpp"
@@ -25,80 +28,90 @@ auto Read(const void* handle) -> const T& {
 }  // namespace
 
 MemberStorage::MemberStorage(MemberStorageDescriptor descriptor) {
-  switch (descriptor.kind) {
-    case MemberStorageKind::kBorrowedHandle:
-      object_.emplace<BorrowedHandle>();
-      return;
-    case MemberStorageKind::kCancellationSource:
-      object_.emplace<CancellationSource>();
-      return;
-    case MemberStorageKind::kChannelCancellation:
-      object_.emplace<ChannelCancellation>();
-      return;
-    case MemberStorageKind::kObservableCell:
-      switch (descriptor.domain) {
-        case ValueDomain::kPacked:
-          object_.emplace<Var<value::PackedArray>>();
-          return;
-        case ValueDomain::kString:
-          object_.emplace<Var<value::String>>();
-          return;
-        case ValueDomain::kReal:
-          object_.emplace<Var<value::Real>>();
-          return;
-        case ValueDomain::kShortReal:
-          object_.emplace<Var<value::ShortReal>>();
-          return;
-        case ValueDomain::kTuple:
-          object_.emplace<Var<value::RuntimeTuple>>();
-          return;
-        case ValueDomain::kDynArray:
-          object_.emplace<Var<value::RuntimeDynamicArray>>();
-          return;
-        case ValueDomain::kUnpackedArray:
-          object_.emplace<Var<value::RuntimeUnpackedArray>>();
-          return;
-        case ValueDomain::kChandle:
-          throw InternalError(
-              "MemberStorage: a chandle is not observable storage");
-        case ValueDomain::kNone:
-          throw InternalError(
-              "MemberStorage: an observable cell needs a value domain");
-      }
-      throw InternalError("MemberStorage: unknown value domain");
-    case MemberStorageKind::kInlineValue:
-      switch (descriptor.domain) {
-        case ValueDomain::kChandle:
-          object_.emplace<value::Chandle>();
-          return;
-        case ValueDomain::kPacked:
-          object_.emplace<value::PackedArray>();
-          return;
-        case ValueDomain::kString:
-          object_.emplace<value::String>();
-          return;
-        case ValueDomain::kReal:
-          object_.emplace<value::Real>();
-          return;
-        case ValueDomain::kShortReal:
-          object_.emplace<value::ShortReal>();
-          return;
-        case ValueDomain::kTuple:
-          object_.emplace<value::RuntimeTuple>();
-          return;
-        case ValueDomain::kDynArray:
-          object_.emplace<value::RuntimeDynamicArray>();
-          return;
-        case ValueDomain::kUnpackedArray:
-          object_.emplace<value::RuntimeUnpackedArray>();
-          return;
-        case ValueDomain::kNone:
-          throw InternalError(
-              "MemberStorage: an inline value needs a value domain");
-      }
-      throw InternalError("MemberStorage: unknown value domain");
-  }
-  throw InternalError("MemberStorage: unknown member storage kind");
+  std::visit(
+      Overloaded{
+          [this](const BorrowedHandleStorage&) {
+            object_.emplace<BorrowedHandle>();
+          },
+          [this](const CancellationSourceStorage&) {
+            object_.emplace<CancellationSource>();
+          },
+          [this](const ChannelCancellationStorage&) {
+            object_.emplace<ChannelCancellation>();
+          },
+          [this](const ObservableCellStorage& cell) {
+            switch (cell.domain) {
+              case support::ValueDomain::kPacked:
+                object_.emplace<Var<value::PackedArray>>();
+                return;
+              case support::ValueDomain::kString:
+                object_.emplace<Var<value::String>>();
+                return;
+              case support::ValueDomain::kReal:
+                object_.emplace<Var<value::Real>>();
+                return;
+              case support::ValueDomain::kShortReal:
+                object_.emplace<Var<value::ShortReal>>();
+                return;
+              case support::ValueDomain::kTuple:
+                object_.emplace<Var<value::RuntimeTuple>>();
+                return;
+              case support::ValueDomain::kDynArray:
+                object_.emplace<Var<value::RuntimeDynamicArray>>();
+                return;
+              case support::ValueDomain::kUnpackedArray:
+                object_.emplace<Var<value::RuntimeUnpackedArray>>();
+                return;
+              case support::ValueDomain::kQueue:
+                object_.emplace<Var<value::RuntimeQueue>>();
+                return;
+              case support::ValueDomain::kAssocArray:
+                object_.emplace<Var<value::RuntimeAssociativeArray>>();
+                return;
+              // A chandle is a value its owner holds, never a cell other
+              // processes wait on (LRM 6.14): nothing subscribes to it.
+              case support::ValueDomain::kChandle:
+                throw InternalError(
+                    "MemberStorage: a chandle is not observable storage");
+            }
+            throw InternalError("MemberStorage: unknown value domain");
+          },
+          [this](const InlineValueStorage& inline_value) {
+            switch (inline_value.domain) {
+              case support::ValueDomain::kChandle:
+                object_.emplace<value::Chandle>();
+                return;
+              case support::ValueDomain::kPacked:
+                object_.emplace<value::PackedArray>();
+                return;
+              case support::ValueDomain::kString:
+                object_.emplace<value::String>();
+                return;
+              case support::ValueDomain::kReal:
+                object_.emplace<value::Real>();
+                return;
+              case support::ValueDomain::kShortReal:
+                object_.emplace<value::ShortReal>();
+                return;
+              case support::ValueDomain::kTuple:
+                object_.emplace<value::RuntimeTuple>();
+                return;
+              case support::ValueDomain::kDynArray:
+                object_.emplace<value::RuntimeDynamicArray>();
+                return;
+              case support::ValueDomain::kUnpackedArray:
+                object_.emplace<value::RuntimeUnpackedArray>();
+                return;
+              case support::ValueDomain::kQueue:
+                object_.emplace<value::RuntimeQueue>();
+                return;
+              case support::ValueDomain::kAssocArray:
+                object_.emplace<value::RuntimeAssociativeArray>();
+                return;
+            }
+            throw InternalError("MemberStorage: unknown value domain");
+          }},
+      descriptor);
 }
 
 auto MemberStorage::Address() -> void* {

@@ -33,14 +33,6 @@ auto Unsupported(std::string message) -> std::unexpected<diag::Diagnostic> {
       diag::DiagCode::kUnsupportedExpressionForm, std::move(message));
 }
 
-// A value-domain entry's signature is the call site's own, so the arguments a
-// call passes and the parameter types the entry is declared with are built
-// together.
-struct CallShape {
-  std::vector<llvm::Value*> args;
-  std::vector<llvm::Type*> params;
-};
-
 }  // namespace
 
 auto CodeGenFunction::LowerInstr(const lir::Instr& instr)
@@ -356,19 +348,34 @@ auto CodeGenFunction::LowerCall(
   if (!callee) {
     return std::unexpected(std::move(callee.error()));
   }
-  const auto* construct = std::get_if<lir::ConstructTarget>(&call.target);
-  return builder_.CreateCall(
-      *callee, construct != nullptr ? ConstructArgs(construct->result, operands)
-                                    : operands);
+  auto args = CallArgs(call, std::move(operands));
+  if (!args) {
+    return std::unexpected(std::move(args.error()));
+  }
+  return builder_.CreateCall(*callee, *args);
 }
 
-// What a construct's entry is handed, given the operands the call states. A
-// type comes into existence one way, so which entry that is and what it takes
-// are one answer read from the result type -- the entry may need a leading
-// reference to the definition of what it builds, and it may take an operand
-// list of arbitrary length as one span, since no C ABI names an entry per
-// arity. Both are how this target encodes the call rather than anything the
-// call means, so they are answered here and never upstream.
+auto CodeGenFunction::CallArgs(
+    const lir::CallInstr& call, std::vector<llvm::Value*> operands)
+    -> diag::Result<std::vector<llvm::Value*>> {
+  auto erased = ErasedOperand(call);
+  if (!erased) {
+    return std::unexpected(std::move(erased.error()));
+  }
+  if (const std::optional<ErasedArgument>& argument = *erased) {
+    operands[argument->position] = builder_.CreateCall(
+        module_->Runtime().ValueBox(argument->domain),
+        {operands[argument->position]});
+  }
+  const auto* construct = std::get_if<lir::ConstructTarget>(&call.target);
+  if (construct == nullptr) {
+    return operands;
+  }
+  return ConstructArgs(construct->result, operands);
+}
+
+// A type comes into existence one way, so which entry that is and what it takes
+// are one answer read from the result type.
 auto CodeGenFunction::ConstructArgs(
     lir::TypeId result, const std::vector<llvm::Value*>& operands)
     -> std::vector<llvm::Value*> {
@@ -535,26 +542,61 @@ auto CodeGenFunction::LowerProduct(
       {SpanOver(boxed, module_->Types().Ptr())});
 }
 
+auto CodeGenFunction::CoordinateDomain(lir::TypeId container) const
+    -> diag::Result<std::optional<support::ValueDomain>> {
+  const std::optional<lir::TypeId> index =
+      DeclaredIndexType(module_->Unit(), container);
+  if (!index.has_value()) {
+    return std::nullopt;
+  }
+  auto domain = DomainOf(*index);
+  if (!domain) {
+    return std::unexpected(std::move(domain.error()));
+  }
+  return *domain;
+}
+
+auto CodeGenFunction::SelectorArgs(
+    lir::TypeId container, const std::vector<lir::Operand>& operands,
+    CallShape& shape) -> diag::Result<void> {
+  auto coordinate = CoordinateDomain(container);
+  if (!coordinate) {
+    return std::unexpected(std::move(coordinate.error()));
+  }
+  for (const lir::Operand& operand : operands) {
+    auto lowered = LowerOperand(operand);
+    if (!lowered) {
+      return std::unexpected(std::move(lowered.error()));
+    }
+    if (!coordinate->has_value()) {
+      shape.args.push_back(*lowered);
+      shape.params.push_back(module_->Types().Map(OperandType(operand)));
+      continue;
+    }
+    shape.args.push_back(builder_.CreateCall(
+        module_->Runtime().ValueBox(**coordinate), {*lowered}));
+    shape.params.push_back(module_->Types().Ptr());
+  }
+  return {};
+}
+
 auto CodeGenFunction::LowerAggregateExtract(
     const lir::AggregateExtractInstr& extract) -> diag::Result<llvm::Value*> {
   auto aggregate = LowerOperand(extract.aggregate);
   if (!aggregate) {
     return std::unexpected(std::move(aggregate.error()));
   }
-  auto domain = DomainOf(OperandType(extract.aggregate));
+  const lir::TypeId container = OperandType(extract.aggregate);
+  auto domain = DomainOf(container);
   if (!domain) {
     return std::unexpected(std::move(domain.error()));
   }
   const auto coordinates = [&](const std::vector<lir::Operand>& operands)
       -> diag::Result<CallShape> {
     CallShape shape{.args = {*aggregate}, .params = {module_->Types().Ptr()}};
-    for (const lir::Operand& operand : operands) {
-      auto lowered = LowerOperand(operand);
-      if (!lowered) {
-        return std::unexpected(std::move(lowered.error()));
-      }
-      shape.args.push_back(*lowered);
-      shape.params.push_back(module_->Types().Map(OperandType(operand)));
+    auto filled = SelectorArgs(container, operands, shape);
+    if (!filled) {
+      return std::unexpected(std::move(filled.error()));
     }
     return shape;
   };
@@ -603,20 +645,17 @@ auto CodeGenFunction::LowerAggregateUpdate(
   if (!replacement) {
     return std::unexpected(std::move(replacement.error()));
   }
-  auto domain = DomainOf(OperandType(update.aggregate));
+  const lir::TypeId container = OperandType(update.aggregate);
+  auto domain = DomainOf(container);
   if (!domain) {
     return std::unexpected(std::move(domain.error()));
   }
   const auto coordinates = [&](const std::vector<lir::Operand>& operands)
       -> diag::Result<CallShape> {
     CallShape shape{.args = {*aggregate}, .params = {module_->Types().Ptr()}};
-    for (const lir::Operand& operand : operands) {
-      auto lowered = LowerOperand(operand);
-      if (!lowered) {
-        return std::unexpected(std::move(lowered.error()));
-      }
-      shape.args.push_back(*lowered);
-      shape.params.push_back(module_->Types().Map(OperandType(operand)));
+    auto filled = SelectorArgs(container, operands, shape);
+    if (!filled) {
+      return std::unexpected(std::move(filled.error()));
     }
     shape.args.push_back(*replacement);
     shape.params.push_back(
@@ -775,7 +814,7 @@ auto CodeGenFunction::LowerRealConst(const lir::RealConst& constant)
   if (!domain) {
     return std::unexpected(std::move(domain.error()));
   }
-  llvm::Type* host = *domain == ValueDomain::kShortReal
+  llvm::Type* host = *domain == support::ValueDomain::kShortReal
                          ? llvm::Type::getFloatTy(module_->Context())
                          : llvm::Type::getDoubleTy(module_->Context());
   return builder_.CreateCall(
@@ -906,35 +945,13 @@ auto CodeGenFunction::BuiltinCallee(
       return module_->Runtime().RegisterSignal();
     case support::BuiltinFn::kGetSignal:
       return module_->Runtime().GetSignal();
-    // The run-time-sized dynamic-array constructions (LRM 7.5.1). Each is
-    // named by the element representation it builds over, the same way the
-    // literal construction beside it is: a construction has no receiver whose
-    // type could answer that instead.
+    // The run-time-sized dynamic-array constructions (LRM 7.5.1).
     case support::BuiltinFn::kMakeDynamicArrayDefault:
+      return module_->Runtime().MakeDynamicArrayDefault();
     case support::BuiltinFn::kMakeDynamicArrayNew:
-    case support::BuiltinFn::kMakeDynamicArrayNewCopy: {
-      if (!target.qualifier.has_value()) {
-        throw InternalError(
-            "llvm codegen: a container construction names the container it "
-            "builds");
-      }
-      auto domain = ElementDomainOf(*target.qualifier);
-      if (!domain) {
-        return std::unexpected(std::move(domain.error()));
-      }
-      switch (target.fn) {
-        case support::BuiltinFn::kMakeDynamicArrayDefault:
-          return module_->Runtime().MakeDynamicArrayDefault(*domain);
-        case support::BuiltinFn::kMakeDynamicArrayNew:
-          return module_->Runtime().MakeDynamicArrayNew(*domain);
-        case support::BuiltinFn::kMakeDynamicArrayNewCopy:
-          return module_->Runtime().MakeDynamicArrayNewCopy(*domain);
-        default:
-          break;
-      }
-      throw InternalError(
-          "llvm codegen: not a run-time-sized dynamic-array construction");
-    }
+      return module_->Runtime().MakeDynamicArrayNew();
+    case support::BuiltinFn::kMakeDynamicArrayNewCopy:
+      return module_->Runtime().MakeDynamicArrayNewCopy();
     case support::BuiltinFn::kInitialize: {
       auto domain = CellDomain(call.args.at(0));
       if (!domain) {
@@ -990,6 +1007,31 @@ auto CodeGenFunction::ValueBuiltinCallee(
               "llvm codegen: the {} builtin assigns to the output arguments "
               "the call names and has no entry on this backend",
               support::BuiltinFnName(target.fn)));
+    // An associative traversal (LRM 7.9.4 -- 7.9.7) answers with an index by
+    // writing it into an argument the call names. A value handle is immutable
+    // from the generated side, so an entry here would have to yield the index
+    // as a result the caller stores, which is the shape every other apparent
+    // mutation of a value already takes.
+    case support::BuiltinFn::kAssocFirst:
+    case support::BuiltinFn::kAssocLast:
+    case support::BuiltinFn::kAssocNext:
+    case support::BuiltinFn::kAssocPrev:
+      return Unsupported(
+          std::format(
+              "llvm codegen: the {} builtin answers by writing through an "
+              "argument the call names and has no entry on this backend",
+              support::BuiltinFnName(target.fn)));
+    // An unpacked concatenation (LRM 10.10) takes as many parts as the source
+    // wrote, each contributing either itself or its own elements, and no C ABI
+    // names an entry per arity. Reaching the machine needs the parts folded
+    // into a chain of appends, the way a packed join already is.
+    case support::BuiltinFn::kMakeQueueConcat:
+    case support::BuiltinFn::kSpread:
+      return Unsupported(
+          std::format(
+              "llvm codegen: the {} builtin builds a container from as many "
+              "parts as the source wrote and has no entry on this backend",
+              support::BuiltinFnName(target.fn)));
     // An array manipulation method (LRM 7.12) runs a body the call supplies,
     // once per entry. The value library reaches that body only as a template
     // its own compiler expands, which is a compiler this backend does not have,
@@ -1024,7 +1066,7 @@ auto CodeGenFunction::ValueBuiltinCallee(
   const bool qualified = target.qualifier.has_value();
   const lir::TypeId named =
       qualified ? *target.qualifier : OperandType(call.args.front());
-  const std::optional<ValueDomain> domain =
+  const std::optional<support::ValueDomain> domain =
       ValueDomainOf(module_->Unit(), named);
   // Two different gaps reach here alike -- a service builtin this backend never
   // declared an entry for, and a value type the runtime library does not
@@ -1041,7 +1083,8 @@ auto CodeGenFunction::ValueBuiltinCallee(
   // The real family's two conversions cross precisions rather than reshaping
   // within one, so their entries are named by the pair of domains and not by
   // the destination alone.
-  if (*domain == ValueDomain::kReal || *domain == ValueDomain::kShortReal) {
+  if (*domain == support::ValueDomain::kReal ||
+      *domain == support::ValueDomain::kShortReal) {
     if (target.fn == support::BuiltinFn::kFromInt) {
       return module_->Runtime().RealFromInt(*domain);
     }
@@ -1123,7 +1166,7 @@ auto CodeGenFunction::CapturePlaceOf(const lir::Place& place) const
 }
 
 auto CodeGenFunction::CellDomain(const lir::Operand& cell) const
-    -> diag::Result<ValueDomain> {
+    -> diag::Result<support::ValueDomain> {
   const lir::TypeArena& types = module_->Unit().types;
   const std::optional<lir::TypeId> pointee =
       lir::Pointee(types, OperandType(cell));
@@ -1166,24 +1209,21 @@ auto CodeGenFunction::ConstructCallee(const lir::CallInstr& call)
             return module_->Runtime().MakeClosure();
           },
           // A container is built over an element list laid down a stated number
-          // of times, so what varies between entries is the representation its
-          // elements take -- the same thing an extract or an update of one
-          // varies by.
+          // of times.
           [&](const lir::DynamicArrayType&)
               -> diag::Result<llvm::FunctionCallee> {
-            auto domain = ElementDomainOf(result);
-            if (!domain) {
-              return std::unexpected(std::move(domain.error()));
-            }
-            return module_->Runtime().MakeDynamicArrayFromLiteral(*domain);
+            return module_->Runtime().MakeDynamicArrayFromLiteral();
           },
           [&](const lir::UnpackedArrayType&)
               -> diag::Result<llvm::FunctionCallee> {
-            auto domain = ElementDomainOf(result);
-            if (!domain) {
-              return std::unexpected(std::move(domain.error()));
-            }
-            return module_->Runtime().MakeUnpackedArrayFromLiteral(*domain);
+            return module_->Runtime().MakeUnpackedArrayFromLiteral();
+          },
+          [&](const lir::QueueType&) -> diag::Result<llvm::FunctionCallee> {
+            return module_->Runtime().MakeQueue(call.args.size());
+          },
+          [&](const lir::AssociativeArrayType&)
+              -> diag::Result<llvm::FunctionCallee> {
+            return module_->Runtime().MakeAssociativeArray(call.args.size());
           },
           [&](const lir::RuntimeLibraryType& r)
               -> diag::Result<llvm::FunctionCallee> {
@@ -1245,19 +1285,70 @@ auto CodeGenFunction::ConstructCallee(const lir::CallInstr& call)
       module_->Unit().types.Get(result).data);
 }
 
-// The representation a container holds its elements in. A construction has no
-// receiver to read it from, so its entry is named by it instead, and the answer
-// comes from the container's own type rather than from an operand. A type that
-// holds no elements has no such answer and is a caller error.
-auto CodeGenFunction::ElementDomainOf(lir::TypeId container) const
-    -> diag::Result<ValueDomain> {
-  const std::optional<lir::TypeId> element =
-      lir::ElementType(module_->Unit().types, container);
-  if (!element.has_value()) {
-    throw InternalError(
-        "llvm codegen: an element operation needs a type that holds elements");
+auto CodeGenFunction::ElementPrototypeOperand(const lir::CallInstr& call) const
+    -> std::optional<std::size_t> {
+  if (const auto* construct = std::get_if<lir::ConstructTarget>(&call.target)) {
+    return std::visit(
+        Overloaded{
+            [](const lir::DynamicArrayType&) -> std::optional<std::size_t> {
+              return 0;
+            },
+            [](const lir::UnpackedArrayType&) -> std::optional<std::size_t> {
+              return 0;
+            },
+            [](const lir::QueueType&) -> std::optional<std::size_t> {
+              return 0;
+            },
+            [](const lir::AssociativeArrayType&) -> std::optional<std::size_t> {
+              return 0;
+            },
+            [](const auto&) -> std::optional<std::size_t> {
+              return std::nullopt;
+            }},
+        module_->Unit().types.Get(construct->result).data);
   }
-  return DomainOf(*element);
+  const auto* builtin = std::get_if<lir::BuiltinTarget>(&call.target);
+  if (builtin == nullptr) {
+    return std::nullopt;
+  }
+  switch (builtin->fn) {
+    case support::BuiltinFn::kMakeDynamicArrayDefault:
+      return 0;
+    case support::BuiltinFn::kMakeDynamicArrayNew:
+    case support::BuiltinFn::kMakeDynamicArrayNewCopy:
+      return 1;
+    default:
+      return std::nullopt;
+  }
+}
+
+auto CodeGenFunction::ErasedOperand(const lir::CallInstr& call) const
+    -> diag::Result<std::optional<ErasedArgument>> {
+  if (const std::optional<std::size_t> prototype =
+          ElementPrototypeOperand(call)) {
+    auto domain = DomainOf(OperandType(call.args.at(*prototype)));
+    if (!domain) {
+      return std::unexpected(std::move(domain.error()));
+    }
+    return ErasedArgument{.position = *prototype, .domain = *domain};
+  }
+  const auto* builtin = std::get_if<lir::BuiltinTarget>(&call.target);
+  if (builtin == nullptr) {
+    return std::nullopt;
+  }
+  const std::optional<std::size_t> index =
+      support::ContainerIndexOperand(builtin->fn);
+  if (!index.has_value() || *index >= call.args.size()) {
+    return std::nullopt;
+  }
+  auto coordinate = CoordinateDomain(OperandType(call.args.front()));
+  if (!coordinate) {
+    return std::unexpected(std::move(coordinate.error()));
+  }
+  if (!coordinate->has_value()) {
+    return std::nullopt;
+  }
+  return ErasedArgument{.position = *index, .domain = **coordinate};
 }
 
 }  // namespace lyra::backend::llvm_backend

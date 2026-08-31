@@ -5,7 +5,9 @@
 #include "lyra/value/chandle.hpp"
 #include "lyra/value/packed_array.hpp"
 #include "lyra/value/real.hpp"
+#include "lyra/value/runtime_associative_array.hpp"
 #include "lyra/value/runtime_dynamic_array.hpp"
+#include "lyra/value/runtime_queue.hpp"
 #include "lyra/value/runtime_tuple.hpp"
 #include "lyra/value/runtime_unpacked_array.hpp"
 #include "lyra/value/string.hpp"
@@ -15,13 +17,13 @@ namespace lyra::value {
 // A type-erased runtime value: the payload one opaque JIT handle refers to. The
 // active alternative is the value's current runtime domain. This is a runtime
 // representation, not a compiler-IR value -- it is neither an MIR nor a LIR
-// value type. It closes over the aggregate realizations (`RuntimeTuple`,
-// `RuntimeDynamicArray`, `RuntimeUnpackedArray`), so a struct component or an
-// array element may itself be an aggregate.
+// value type. It closes over the aggregate realizations, so a struct component
+// or a container element may itself be an aggregate.
 struct RuntimeValue {
   std::variant<
       PackedArray, String, Real, ShortReal, Chandle, RuntimeTuple,
-      RuntimeDynamicArray, RuntimeUnpackedArray>
+      RuntimeDynamicArray, RuntimeUnpackedArray, RuntimeQueue,
+      RuntimeAssociativeArray>
       value;
 };
 
@@ -42,6 +44,15 @@ struct RuntimeValue {
 
 // LRM 9.4.2 update-event predicate (engine change-detection hook).
 [[nodiscard]] auto RuntimeValueBitIdentical(
+    const RuntimeValue& a, const RuntimeValue& b) -> bool;
+
+// The order two associative-array indices sit in (LRM 7.8.2 lexicographic for
+// a string index, 7.8.4 numerical for an integral one). It is the index type's
+// own ordering, so it is read off the values rather than supplied beside them,
+// which is what lets a keyed container carry no index prototype. A chandle
+// orders by the pointer it carries, an order LRM 6.14 leaves free to vary
+// between runs.
+[[nodiscard]] auto RuntimeValueIndexBefore(
     const RuntimeValue& a, const RuntimeValue& b) -> bool;
 
 // LRM 20.9: whether the value carries any unknown bit.

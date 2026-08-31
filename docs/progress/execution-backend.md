@@ -100,11 +100,43 @@ ownership, or native in-frame layout) for every value.
       refused rather than lowered, because this layer still gives each declared range its own type
       identity and the two sides therefore arrive as unequal types; closing that means making a LIR
       type's identity its content.
-- [ ] **The remaining collection domains** (queue, associative array) -- not realized on the
-      execution backend yet. Each is a homogeneous or keyed collection whose element count is a
-      runtime quantity; the dynamic array established the erased-container and functional-update
-      shape they follow, and the unpacked array added the repeat-unit construction and the
-      coordinate-resolving select they share.
+- [x] **The queue** (LRM 7.10) -- realized on the execution backend as a run-time-sized ordered
+      container value domain. It defaults to empty, builds from an assignment pattern, copies with
+      value semantics, takes the equality and case-equality families, reports its size and its
+      bit-stream width and count, reads and writes an element (a write at the element after the last
+      appends one, LRM 7.10.1, and every other invalid index discards the write), takes a slice,
+      pushes at either end, inserts, empties, lives in a member slot as a whole-cell observable
+      signal, and crosses a suspension as an activation-frame value. A declared bound (LRM 7.10.5)
+      belongs to the variable rather than to the value written, so it reaches a construction as an
+      operand and a semantic store passes its right-hand side through the bound the destination
+      declares. A pop is not among them, for a reason that is not the domain's: it both updates the
+      queue and yields the element it removed (LRM 7.10.2.4), and one call produces one value here.
+- [x] **The associative array** (LRM 7.8) -- realized on the execution backend as a keyed container
+      value domain, the first container whose coordinates are values rather than ordinals. It
+      defaults to empty, builds from a list of entries with or without the miss value a `default:`
+      states (LRM 7.9.11), copies with value semantics, takes the equality and case-equality
+      families, reports how many entries it holds and its bit-stream width and count, reads an index
+      with no entry as the element default, allocates an entry on a write, reports whether an index
+      has one, empties under `delete`, answers the smallest and largest index it holds, lives in a
+      member slot as a whole-cell observable signal, and crosses a suspension as an activation-frame
+      value. It holds no prototype for an index -- the clause gives it no index bounds and no index
+      default -- so an index crosses in the representation the array's declared index type names and
+      the order two indices sit in is read from the indices themselves. A wildcard index (LRM 7.8.1)
+      is refused: its entry is named by the value the index expression denotes rather than by the
+      expression's own bits, and no conversion states that yet.
+- [ ] **The traversal family** (LRM 7.9.4 -- 7.9.7) -- refused on the execution backend. Each
+      answers with an index by writing it into an argument the call names, and a value handle is
+      immutable there, so an entry would have to yield the index as a result the caller stores --
+      the shape every other apparent mutation of a value already takes. `foreach` over an
+      associative array waits on this, as does every index-ordered check.
+- [ ] **An unpacked concatenation** (LRM 10.10) -- refused on the execution backend, so a queue
+      built from one, and every queue whose declared bound is exercised through one, waits here. Two
+      things it needs, both already shaped by what is settled. No C ABI names an entry per arity, so
+      the parts fold into a chain: the empty container the destination declares, then one append per
+      part, left to right, which is the order the parts were written in and so the order their
+      elements land in. And a part that contributes its own elements may be a container of any kind,
+      whose representation the appending entry has no way to know, so that part crosses erased like
+      every other value that states a representation.
 - [ ] **The union domains** (LRM 7.3 untagged, 7.3.2 tagged) -- not realized on the execution
       backend yet, so building one and reading a member both refuse. An untagged union holds one
       member at a time, so its value is that member plus which one it is, and a member write makes

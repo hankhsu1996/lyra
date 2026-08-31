@@ -4,7 +4,6 @@
 #include <format>
 #include <optional>
 #include <string>
-#include <string_view>
 
 #include <llvm/IR/DerivedTypes.h>
 #include <llvm/IR/LLVMContext.h>
@@ -17,65 +16,54 @@
 #include "lyra/lir/operator.hpp"
 #include "lyra/lir/type.hpp"
 #include "lyra/lir/type_id.hpp"
+#include "lyra/support/value_domain.hpp"
 
 namespace lyra::backend::llvm_backend {
 
-auto ValueDomainName(ValueDomain domain) -> std::string_view {
-  switch (domain) {
-    case ValueDomain::kPacked:
-      return "packed";
-    case ValueDomain::kString:
-      return "string";
-    case ValueDomain::kReal:
-      return "real";
-    case ValueDomain::kShortReal:
-      return "shortreal";
-    case ValueDomain::kChandle:
-      return "chandle";
-    case ValueDomain::kTuple:
-      return "tuple";
-    case ValueDomain::kDynArray:
-      return "dynarray";
-    case ValueDomain::kUnpackedArray:
-      return "unpackedarray";
-  }
-  throw InternalError("llvm codegen: unknown value domain");
-}
-
 auto ValueDomainOf(const lir::CompilationUnit& unit, lir::TypeId type)
-    -> std::optional<ValueDomain> {
-  using Domain = std::optional<ValueDomain>;
+    -> std::optional<support::ValueDomain> {
+  using Domain = std::optional<support::ValueDomain>;
   return std::visit(
       Overloaded{
           [](const lir::PackedArrayType&) -> Domain {
-            return ValueDomain::kPacked;
+            return support::ValueDomain::kPacked;
           },
           // An enumeration is a packed value at runtime; only its own entries,
           // which read its declared members, need more than that.
-          [](const lir::EnumType&) -> Domain { return ValueDomain::kPacked; },
-          [](const lir::StringType&) -> Domain { return ValueDomain::kString; },
+          [](const lir::EnumType&) -> Domain {
+            return support::ValueDomain::kPacked;
+          },
+          [](const lir::StringType&) -> Domain {
+            return support::ValueDomain::kString;
+          },
           // `real` and `realtime` are one host-precision value (LRM 6.12.1);
           // `shortreal` is the single-precision one.
-          [](const lir::RealType&) -> Domain { return ValueDomain::kReal; },
-          [](const lir::RealTimeType&) -> Domain { return ValueDomain::kReal; },
+          [](const lir::RealType&) -> Domain {
+            return support::ValueDomain::kReal;
+          },
+          [](const lir::RealTimeType&) -> Domain {
+            return support::ValueDomain::kReal;
+          },
           [](const lir::ShortRealType&) -> Domain {
-            return ValueDomain::kShortReal;
+            return support::ValueDomain::kShortReal;
           },
           // A chandle (LRM 6.14) is a pointer-sized value carried inline: the
           // domain's handle is the chandle value itself, not a reference to a
           // runtime-owned value object.
           [](const lir::ChandleType&) -> Domain {
-            return ValueDomain::kChandle;
+            return support::ValueDomain::kChandle;
           },
           // An unpacked struct (LRM 7.2) is MIR's product type; its runtime
           // realization is a type-erased product value carried inline behind an
           // opaque handle, like every other value domain.
-          [](const lir::TupleType&) -> Domain { return ValueDomain::kTuple; },
+          [](const lir::TupleType&) -> Domain {
+            return support::ValueDomain::kTuple;
+          },
           // A dynamic array (LRM 7.5) is MIR's `DynamicArrayType`; its runtime
           // realization is a type-erased container carried behind an opaque
           // handle, like every other value domain.
           [](const lir::DynamicArrayType&) -> Domain {
-            return ValueDomain::kDynArray;
+            return support::ValueDomain::kDynArray;
           },
           // A fixed-size unpacked array (LRM 7.4.2) is MIR's
           // `UnpackedArrayType`; its runtime realization is a type-erased
@@ -84,10 +72,37 @@ auto ValueDomainOf(const lir::CompilationUnit& unit, lir::TypeId type)
           // system is the receiver's static type and arrives at a select as an
           // operand, so the payload is ordinal-only.
           [](const lir::UnpackedArrayType&) -> Domain {
-            return ValueDomain::kUnpackedArray;
+            return support::ValueDomain::kUnpackedArray;
+          },
+          // A queue (LRM 7.10) is MIR's `QueueType`; its runtime realization is
+          // a type-erased container carried behind an opaque handle, like every
+          // other value domain. Its declared bound is a fact of the type that
+          // reaches a construction and a store as an operand, so the payload
+          // carries it rather than the domain distinguishing a bounded queue
+          // from an unbounded one.
+          [](const lir::QueueType&) -> Domain {
+            return support::ValueDomain::kQueue;
+          },
+          // An associative array (LRM 7.8) is MIR's `AssociativeArrayType`;
+          // its runtime realization is a type-erased keyed container carried
+          // behind an opaque handle. Its index type is not part of the domain:
+          // an index reaches every operation as a value of its own, and the
+          // order two indices sit in is read from the indices themselves.
+          [](const lir::AssociativeArrayType&) -> Domain {
+            return support::ValueDomain::kAssocArray;
           },
           [](const auto&) -> Domain { return std::nullopt; }},
       unit.types.Get(type).data);
+}
+
+auto DeclaredIndexType(const lir::CompilationUnit& unit, lir::TypeId container)
+    -> std::optional<lir::TypeId> {
+  const auto* associative =
+      std::get_if<lir::AssociativeArrayType>(&unit.types.Get(container).data);
+  if (associative == nullptr) {
+    return std::nullopt;
+  }
+  return associative->key_type;
 }
 
 RuntimeAbi::RuntimeAbi(
@@ -423,26 +438,29 @@ auto RuntimeAbi::PackedConst() -> llvm::FunctionCallee {
        llvm::Type::getInt1Ty(*ctx_)});
 }
 
-auto RuntimeAbi::RealConst(ValueDomain domain) -> llvm::FunctionCallee {
-  llvm::Type* host = domain == ValueDomain::kShortReal
+auto RuntimeAbi::RealConst(support::ValueDomain domain)
+    -> llvm::FunctionCallee {
+  llvm::Type* host = domain == support::ValueDomain::kShortReal
                          ? llvm::Type::getFloatTy(*ctx_)
                          : llvm::Type::getDoubleTy(*ctx_);
   return Get(
-      std::format("lyra_rt_{}_const", ValueDomainName(domain)), types_->Ptr(),
-      {host});
+      std::format("lyra_rt_{}_const", support::ValueDomainName(domain)),
+      types_->Ptr(), {host});
 }
 
-auto RuntimeAbi::RealFromInt(ValueDomain domain) -> llvm::FunctionCallee {
+auto RuntimeAbi::RealFromInt(support::ValueDomain domain)
+    -> llvm::FunctionCallee {
   return Get(
-      std::format("lyra_rt_{}_from_int64", ValueDomainName(domain)),
+      std::format("lyra_rt_{}_from_int64", support::ValueDomainName(domain)),
       types_->Ptr(), {llvm::Type::getInt64Ty(*ctx_)});
 }
 
-auto RuntimeAbi::RealReshape(ValueDomain dst, ValueDomain src)
+auto RuntimeAbi::RealReshape(support::ValueDomain dst, support::ValueDomain src)
     -> llvm::FunctionCallee {
   return Get(
       std::format(
-          "lyra_rt_{}_from_{}", ValueDomainName(dst), ValueDomainName(src)),
+          "lyra_rt_{}_from_{}", support::ValueDomainName(dst),
+          support::ValueDomainName(src)),
       types_->Ptr(), {types_->Ptr()});
 }
 
@@ -484,42 +502,49 @@ auto RuntimeAbi::MemberAddress() -> llvm::FunctionCallee {
       {types_->Ptr(), llvm::Type::getInt32Ty(*ctx_)});
 }
 
-auto RuntimeAbi::CellGet(ValueDomain domain) -> llvm::FunctionCallee {
+auto RuntimeAbi::CellGet(support::ValueDomain domain) -> llvm::FunctionCallee {
   return Get(
-      std::format("lyra_rt_cell_{}_get", ValueDomainName(domain)),
+      std::format("lyra_rt_cell_{}_get", support::ValueDomainName(domain)),
       types_->Ptr(), {types_->Ptr()});
 }
 
-auto RuntimeAbi::CellInitialize(ValueDomain domain) -> llvm::FunctionCallee {
-  return Get(
-      std::format("lyra_rt_cell_{}_initialize", ValueDomainName(domain)),
-      types_->Void(), {types_->Ptr(), types_->Ptr()});
-}
-
-auto RuntimeAbi::CellSet(ValueDomain domain) -> llvm::FunctionCallee {
-  return Get(
-      std::format("lyra_rt_cell_{}_set", ValueDomainName(domain)),
-      types_->Void(), {types_->Ptr(), types_->Ptr()});
-}
-
-auto RuntimeAbi::ActivationFrameAlloc(ValueDomain domain)
+auto RuntimeAbi::CellInitialize(support::ValueDomain domain)
     -> llvm::FunctionCallee {
   return Get(
-      std::format("lyra_rt_activation_frame_alloc_{}", ValueDomainName(domain)),
+      std::format(
+          "lyra_rt_cell_{}_initialize", support::ValueDomainName(domain)),
+      types_->Void(), {types_->Ptr(), types_->Ptr()});
+}
+
+auto RuntimeAbi::CellSet(support::ValueDomain domain) -> llvm::FunctionCallee {
+  return Get(
+      std::format("lyra_rt_cell_{}_set", support::ValueDomainName(domain)),
+      types_->Void(), {types_->Ptr(), types_->Ptr()});
+}
+
+auto RuntimeAbi::ActivationFrameAlloc(support::ValueDomain domain)
+    -> llvm::FunctionCallee {
+  return Get(
+      std::format(
+          "lyra_rt_activation_frame_alloc_{}",
+          support::ValueDomainName(domain)),
       types_->Ptr(), {});
 }
 
-auto RuntimeAbi::ActivationFrameStore(ValueDomain domain)
+auto RuntimeAbi::ActivationFrameStore(support::ValueDomain domain)
     -> llvm::FunctionCallee {
   return Get(
-      std::format("lyra_rt_activation_frame_store_{}", ValueDomainName(domain)),
+      std::format(
+          "lyra_rt_activation_frame_store_{}",
+          support::ValueDomainName(domain)),
       types_->Void(), {types_->Ptr(), types_->Ptr()});
 }
 
-auto RuntimeAbi::ActivationFrameLoad(ValueDomain domain)
+auto RuntimeAbi::ActivationFrameLoad(support::ValueDomain domain)
     -> llvm::FunctionCallee {
   return Get(
-      std::format("lyra_rt_activation_frame_load_{}", ValueDomainName(domain)),
+      std::format(
+          "lyra_rt_activation_frame_load_{}", support::ValueDomainName(domain)),
       types_->Ptr(), {types_->Ptr()});
 }
 
@@ -534,41 +559,44 @@ auto RuntimeAbi::GetSignal() -> llvm::FunctionCallee {
       "lyra_rt_get_signal", types_->Ptr(), {types_->Ptr(), types_->Ptr()});
 }
 
-auto RuntimeAbi::Binary(ValueDomain domain, lir::BinaryOp op)
+auto RuntimeAbi::Binary(support::ValueDomain domain, lir::BinaryOp op)
     -> llvm::FunctionCallee {
   return Get(
       std::format(
-          "lyra_rt_{}_{}", ValueDomainName(domain), lir::BinaryOpName(op)),
+          "lyra_rt_{}_{}", support::ValueDomainName(domain),
+          lir::BinaryOpName(op)),
       types_->Ptr(), {types_->Ptr(), types_->Ptr()});
 }
 
-auto RuntimeAbi::Unary(ValueDomain domain, lir::UnaryOp op)
+auto RuntimeAbi::Unary(support::ValueDomain domain, lir::UnaryOp op)
     -> llvm::FunctionCallee {
   return Get(
       std::format(
-          "lyra_rt_{}_{}", ValueDomainName(domain), lir::UnaryOpName(op)),
+          "lyra_rt_{}_{}", support::ValueDomainName(domain),
+          lir::UnaryOpName(op)),
       types_->Ptr(), {types_->Ptr()});
 }
 
 auto RuntimeAbi::ValueBuiltin(
-    ValueDomain domain, lyra::support::BuiltinFn fn, llvm::Type* result,
-    llvm::ArrayRef<llvm::Type*> params) -> llvm::FunctionCallee {
+    support::ValueDomain domain, lyra::support::BuiltinFn fn,
+    llvm::Type* result, llvm::ArrayRef<llvm::Type*> params)
+    -> llvm::FunctionCallee {
   return Get(
       std::format(
-          "lyra_rt_{}_{}", ValueDomainName(domain),
+          "lyra_rt_{}_{}", support::ValueDomainName(domain),
           lyra::support::BuiltinFnName(fn)),
       result, params);
 }
 
-auto RuntimeAbi::ToBool(ValueDomain domain) -> llvm::FunctionCallee {
+auto RuntimeAbi::ToBool(support::ValueDomain domain) -> llvm::FunctionCallee {
   return Get(
-      std::format("lyra_rt_{}_to_bool", ValueDomainName(domain)),
+      std::format("lyra_rt_{}_to_bool", support::ValueDomainName(domain)),
       llvm::Type::getInt1Ty(*ctx_), {types_->Ptr()});
 }
 
-auto RuntimeAbi::ValueBox(ValueDomain domain) -> llvm::FunctionCallee {
+auto RuntimeAbi::ValueBox(support::ValueDomain domain) -> llvm::FunctionCallee {
   return Get(
-      std::format("lyra_rt_value_box_{}", ValueDomainName(domain)),
+      std::format("lyra_rt_value_box_{}", support::ValueDomainName(domain)),
       types_->Ptr(), {types_->Ptr()});
 }
 
@@ -587,32 +615,32 @@ auto RuntimeAbi::TupleExtract() -> llvm::FunctionCallee {
 // The write halves realize a step's update, so no source-level construct names
 // them and they are not part of the builtin namespace HIR and MIR share.
 auto RuntimeAbi::ElementExtract(
-    ValueDomain domain, llvm::ArrayRef<llvm::Type*> params)
+    support::ValueDomain domain, llvm::ArrayRef<llvm::Type*> params)
     -> llvm::FunctionCallee {
   return ValueBuiltin(
       domain, lyra::support::BuiltinFn::kElement, types_->Ptr(), params);
 }
 
 auto RuntimeAbi::SliceExtract(
-    ValueDomain domain, llvm::ArrayRef<llvm::Type*> params)
+    support::ValueDomain domain, llvm::ArrayRef<llvm::Type*> params)
     -> llvm::FunctionCallee {
   return ValueBuiltin(
       domain, lyra::support::BuiltinFn::kSlice, types_->Ptr(), params);
 }
 
 auto RuntimeAbi::ElementUpdate(
-    ValueDomain domain, llvm::ArrayRef<llvm::Type*> params)
+    support::ValueDomain domain, llvm::ArrayRef<llvm::Type*> params)
     -> llvm::FunctionCallee {
   return Get(
-      std::format("lyra_rt_{}_with_element", ValueDomainName(domain)),
+      std::format("lyra_rt_{}_with_element", support::ValueDomainName(domain)),
       types_->Ptr(), params);
 }
 
 auto RuntimeAbi::SliceUpdate(
-    ValueDomain domain, llvm::ArrayRef<llvm::Type*> params)
+    support::ValueDomain domain, llvm::ArrayRef<llvm::Type*> params)
     -> llvm::FunctionCallee {
   return Get(
-      std::format("lyra_rt_{}_with_slice", ValueDomainName(domain)),
+      std::format("lyra_rt_{}_with_slice", support::ValueDomainName(domain)),
       types_->Ptr(), params);
 }
 
@@ -622,45 +650,79 @@ auto RuntimeAbi::TupleUpdate() -> llvm::FunctionCallee {
       {types_->Ptr(), llvm::Type::getInt64Ty(*ctx_), types_->Ptr()});
 }
 
-auto RuntimeAbi::MakeDynamicArrayDefault(ValueDomain domain)
-    -> llvm::FunctionCallee {
-  return Get(
-      std::format("lyra_rt_dynarray_default_{}", ValueDomainName(domain)),
-      types_->Ptr(), {types_->Ptr()});
+auto RuntimeAbi::MakeDynamicArrayDefault() -> llvm::FunctionCallee {
+  return Get("lyra_rt_dynarray_default", types_->Ptr(), {types_->Ptr()});
 }
 
-auto RuntimeAbi::MakeDynamicArrayNew(ValueDomain domain)
-    -> llvm::FunctionCallee {
+auto RuntimeAbi::MakeDynamicArrayNew() -> llvm::FunctionCallee {
   return Get(
-      std::format("lyra_rt_dynarray_new_{}", ValueDomainName(domain)),
-      types_->Ptr(), {types_->Ptr(), types_->Ptr()});
+      "lyra_rt_dynarray_new", types_->Ptr(), {types_->Ptr(), types_->Ptr()});
 }
 
-auto RuntimeAbi::MakeDynamicArrayNewCopy(ValueDomain domain)
-    -> llvm::FunctionCallee {
+auto RuntimeAbi::MakeDynamicArrayNewCopy() -> llvm::FunctionCallee {
   return Get(
-      std::format("lyra_rt_dynarray_new_copy_{}", ValueDomainName(domain)),
-      types_->Ptr(), {types_->Ptr(), types_->Ptr(), types_->Ptr()});
+      "lyra_rt_dynarray_new_copy", types_->Ptr(),
+      {types_->Ptr(), types_->Ptr(), types_->Ptr()});
 }
 
-auto RuntimeAbi::MakeDynamicArrayFromLiteral(ValueDomain domain)
-    -> llvm::FunctionCallee {
+auto RuntimeAbi::MakeDynamicArrayFromLiteral() -> llvm::FunctionCallee {
   return Get(
-      std::format("lyra_rt_dynarray_from_literal_{}", ValueDomainName(domain)),
-      types_->Ptr(),
+      "lyra_rt_dynarray_from_literal", types_->Ptr(),
       {types_->Ptr(), types_->Span(), llvm::Type::getInt64Ty(*ctx_)});
 }
 
 // A fixed-size array is built from a repeat unit and a count (LRM 10.9.1 /
-// Table 7-1), so its literal entry takes one more argument than the dynamic
-// array's: the unit's storage, then how many times it is laid down.
-auto RuntimeAbi::MakeUnpackedArrayFromLiteral(ValueDomain domain)
-    -> llvm::FunctionCallee {
+// Table 7-1): the unit's storage, then how many times it is laid down.
+auto RuntimeAbi::MakeUnpackedArrayFromLiteral() -> llvm::FunctionCallee {
   return Get(
-      std::format(
-          "lyra_rt_unpackedarray_from_literal_{}", ValueDomainName(domain)),
-      types_->Ptr(),
+      "lyra_rt_unpackedarray_from_literal", types_->Ptr(),
       {types_->Ptr(), types_->Span(), llvm::Type::getInt64Ty(*ctx_)});
+}
+
+auto RuntimeAbi::MakeQueue(std::size_t argument_count) -> llvm::FunctionCallee {
+  llvm::Type* count = llvm::Type::getInt64Ty(*ctx_);
+  switch (argument_count) {
+    case 1:
+      return Get("lyra_rt_queue_default", types_->Ptr(), {types_->Ptr()});
+    case 2:
+      return Get(
+          "lyra_rt_queue_default_bounded", types_->Ptr(),
+          {types_->Ptr(), types_->Ptr()});
+    case 3:
+      return Get(
+          "lyra_rt_queue_from_literal", types_->Ptr(),
+          {types_->Ptr(), types_->Span(), count});
+    case 4:
+      return Get(
+          "lyra_rt_queue_from_literal_bounded", types_->Ptr(),
+          {types_->Ptr(), types_->Span(), count, types_->Ptr()});
+    default:
+      break;
+  }
+  throw InternalError(
+      "llvm codegen: a queue is built empty or over an element list, either "
+      "way with a declared bound or without one");
+}
+
+auto RuntimeAbi::MakeAssociativeArray(std::size_t argument_count)
+    -> llvm::FunctionCallee {
+  switch (argument_count) {
+    case 1:
+      return Get("lyra_rt_assocarray_default", types_->Ptr(), {types_->Ptr()});
+    case 2:
+      return Get(
+          "lyra_rt_assocarray_from_entries", types_->Ptr(),
+          {types_->Ptr(), types_->Span()});
+    case 3:
+      return Get(
+          "lyra_rt_assocarray_from_entries_default", types_->Ptr(),
+          {types_->Ptr(), types_->Span(), types_->Ptr()});
+    default:
+      break;
+  }
+  throw InternalError(
+      "llvm codegen: an associative array is built empty or over a list of "
+      "entries, either way with a stated miss value or without one");
 }
 
 auto RuntimeAbi::MakeFormatSpec(std::size_t field_count)
@@ -680,10 +742,11 @@ auto RuntimeAbi::MakeFormatSpec(std::size_t field_count)
       "field");
 }
 
-auto RuntimeAbi::MakePrintValueItem(ValueDomain domain)
+auto RuntimeAbi::MakePrintValueItem(support::ValueDomain domain)
     -> llvm::FunctionCallee {
   return Get(
-      std::format("lyra_rt_make_print_value_item_{}", ValueDomainName(domain)),
+      std::format(
+          "lyra_rt_make_print_value_item_{}", support::ValueDomainName(domain)),
       types_->Ptr(), {types_->Ptr(), types_->Ptr()});
 }
 

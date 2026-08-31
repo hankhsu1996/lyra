@@ -20,6 +20,7 @@
 #include "lyra/diag/diag_code.hpp"
 #include "lyra/lir/compilation_unit.hpp"
 #include "lyra/lir/type_query.hpp"
+#include "lyra/support/value_domain.hpp"
 
 namespace lyra::backend::llvm_backend {
 
@@ -218,8 +219,8 @@ auto CodeGenFunction::OperandType(const lir::Operand& operand) const
 }
 
 auto CodeGenFunction::DomainOf(lir::TypeId type) const
-    -> diag::Result<ValueDomain> {
-  const std::optional<ValueDomain> domain =
+    -> diag::Result<support::ValueDomain> {
+  const std::optional<support::ValueDomain> domain =
       ValueDomainOf(module_->Unit(), type);
   if (!domain) {
     return diag::Fail(

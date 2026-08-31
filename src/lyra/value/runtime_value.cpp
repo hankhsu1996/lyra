@@ -1,9 +1,11 @@
 #include "lyra/value/runtime_value.hpp"
 
+#include <functional>
 #include <type_traits>
 #include <variant>
 
 #include "lyra/base/internal_error.hpp"
+#include "lyra/base/simulation_error.hpp"
 #include "lyra/value/array_case_equal.hpp"
 #include "lyra/value/packed_array.hpp"
 
@@ -55,6 +57,25 @@ auto RuntimeValueBitIdentical(const RuntimeValue& a, const RuntimeValue& b)
       [&](const auto& lhs) -> bool {
         using T = std::decay_t<decltype(lhs)>;
         return lhs.IsBitIdentical(std::get<T>(b.value));
+      },
+      a.value);
+}
+
+auto RuntimeValueIndexBefore(const RuntimeValue& a, const RuntimeValue& b)
+    -> bool {
+  SameDomain(a, b);
+  return std::visit(
+      [&](const auto& lhs) -> bool {
+        using T = std::decay_t<decltype(lhs)>;
+        if constexpr (std::is_same_v<T, Chandle>) {
+          return std::less<>{}(lhs.Ptr(), std::get<T>(b.value).Ptr());
+        } else if constexpr (requires { lhs < std::get<T>(b.value); }) {
+          return static_cast<bool>(lhs < std::get<T>(b.value));
+        } else {
+          throw SimulationError(
+              "associative array: this index type has no order on this "
+              "backend; please open an issue asking for support");
+        }
       },
       a.value);
 }

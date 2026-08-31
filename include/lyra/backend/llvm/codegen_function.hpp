@@ -1,5 +1,6 @@
 #pragma once
 
+#include <cstddef>
 #include <optional>
 #include <span>
 #include <unordered_map>
@@ -7,10 +8,10 @@
 
 #include <llvm/IR/IRBuilder.h>
 
-#include "lyra/backend/llvm/runtime_abi.hpp"
 #include "lyra/diag/diagnostic.hpp"
 #include "lyra/lir/function.hpp"
 #include "lyra/lir/type_id.hpp"
+#include "lyra/support/value_domain.hpp"
 
 namespace llvm {
 class BasicBlock;
@@ -110,35 +111,68 @@ class CodeGenFunction {
       const lir::ForeignTarget& target, const lir::CallInstr& call,
       lir::TypeId result_type) -> diag::Result<llvm::FunctionCallee>;
 
-  // What a construct's entry is handed, given the operands the call states: a
-  // leading reference to the definition of what is built where the entry needs
-  // one, and the operands as one span where it takes them that way. Both are
-  // this target's encoding of the call, read from the result type the same way
-  // the entry itself is.
+  // What a call's entry is handed, given the operands the call states. Nothing
+  // here is anything the call means; it is this target's encoding of it.
+  auto CallArgs(const lir::CallInstr& call, std::vector<llvm::Value*> operands)
+      -> diag::Result<std::vector<llvm::Value*>>;
+
+  // A leading reference to the definition of what a construct builds where the
+  // entry needs one, and the operands as one span where it takes them that way
+  // -- read from the result type the same way the entry itself is.
   auto ConstructArgs(
       lir::TypeId result, const std::vector<llvm::Value*>& operands)
       -> std::vector<llvm::Value*>;
 
-  // The representation a container holds its elements in. An entry that has to
-  // erase an element reads that representation from a receiver it already
-  // takes, or is named by it where there is no receiver to read.
-  [[nodiscard]] auto ElementDomainOf(lir::TypeId container) const
-      -> diag::Result<ValueDomain>;
+  // Which operand of a construction is the element default it is seeded from,
+  // absent for a call that builds no container. A construction leads with it,
+  // except where a size precedes it: the LRM 7.5.1 run-time-sized forms state
+  // how many elements there are before what each one is.
+  [[nodiscard]] auto ElementPrototypeOperand(const lir::CallInstr& call) const
+      -> std::optional<std::size_t>;
+
+  // Which operand of a call crosses erased, and in which representation. A
+  // value crosses erased where it states a representation the entry has no
+  // other way to know: a construction's element prototype, which states its
+  // own, and the index a keyed container selects by, which states the one that
+  // container's declared index type names.
+  struct ErasedArgument {
+    std::size_t position;
+    support::ValueDomain domain;
+  };
+  [[nodiscard]] auto ErasedOperand(const lir::CallInstr& call) const
+      -> diag::Result<std::optional<ErasedArgument>>;
+
+  // The representation a container's coordinates cross in, absent where they
+  // cross as the bare handles their own types name.
+  [[nodiscard]] auto CoordinateDomain(lir::TypeId container) const
+      -> diag::Result<std::optional<support::ValueDomain>>;
+
+  // A value-domain entry's signature is the call site's own, so the arguments
+  // a call passes and the parameter types the entry is declared with are built
+  // together.
+  struct CallShape {
+    std::vector<llvm::Value*> args;
+    std::vector<llvm::Type*> params;
+  };
+
+  auto SelectorArgs(
+      lir::TypeId container, const std::vector<lir::Operand>& operands,
+      CallShape& shape) -> diag::Result<void>;
 
   // The type of an operand, and the value domain a library entry is chosen by.
   [[nodiscard]] auto OperandType(const lir::Operand& operand) const
       -> lir::TypeId;
   [[nodiscard]] auto DomainOf(lir::TypeId type) const
-      -> diag::Result<ValueDomain>;
+      -> diag::Result<support::ValueDomain>;
   // The domain of the cell an operand addresses, for a cell operation.
   [[nodiscard]] auto CellDomain(const lir::Operand& cell) const
-      -> diag::Result<ValueDomain>;
+      -> diag::Result<support::ValueDomain>;
   // Place access: the cell a place names the contents of, and the domain that
   // picks its library entries; nothing when the place names ordinary
   // addressable storage. This is the one entry that decides how a load and a
   // store through a cell are realized.
   struct CellPlace {
-    ValueDomain domain{};
+    support::ValueDomain domain{};
     lir::Place cell;
   };
   [[nodiscard]] auto CellPlaceOf(const lir::Place& place) const

@@ -21,12 +21,6 @@ auto TypeKindName(const Type& type) -> std::string_view;
 // elsewhere -- which is what an address-of yields and a pointer cast retypes.
 auto Pointee(const TypeArena& types, TypeId type) -> std::optional<TypeId>;
 
-// The type of the elements a container holds; absent when the type holds no
-// elements. Every container names one, whichever way it is indexed and however
-// many elements it holds, so a consumer that has to know what a container is
-// made of asks here rather than listing the container kinds itself.
-auto ElementType(const TypeArena& types, TypeId type) -> std::optional<TypeId>;
-
 // The type of the storage a dereference of `type` reaches. That is a
 // reference's referent, and also what a capability wrapper represents -- a
 // wrapper is not an indirection to storage elsewhere, it is storage whose

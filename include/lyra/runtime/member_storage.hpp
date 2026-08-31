@@ -9,7 +9,9 @@
 #include "lyra/value/chandle.hpp"
 #include "lyra/value/packed_array.hpp"
 #include "lyra/value/real.hpp"
+#include "lyra/value/runtime_associative_array.hpp"
 #include "lyra/value/runtime_dynamic_array.hpp"
+#include "lyra/value/runtime_queue.hpp"
 #include "lyra/value/runtime_tuple.hpp"
 #include "lyra/value/runtime_unpacked_array.hpp"
 #include "lyra/value/string.hpp"
@@ -68,9 +70,11 @@ class MemberStorage {
       Var<value::PackedArray>, Var<value::String>, Var<value::Real>,
       Var<value::ShortReal>, Var<value::RuntimeTuple>,
       Var<value::RuntimeDynamicArray>, Var<value::RuntimeUnpackedArray>,
+      Var<value::RuntimeQueue>, Var<value::RuntimeAssociativeArray>,
       value::Chandle, value::PackedArray, value::String, value::Real,
       value::ShortReal, value::RuntimeTuple, value::RuntimeDynamicArray,
-      value::RuntimeUnpackedArray>
+      value::RuntimeUnpackedArray, value::RuntimeQueue,
+      value::RuntimeAssociativeArray>
       object_;
 };
 

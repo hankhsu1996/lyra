@@ -48,6 +48,7 @@
 #include "lyra/runtime/scope.hpp"
 #include "lyra/runtime/scope_program.hpp"
 #include "lyra/runtime/simulation_entry.hpp"
+#include "lyra/support/value_domain.hpp"
 
 namespace lyra::jit {
 
@@ -414,50 +415,10 @@ void DefineRuntimeAbi(llvm::orc::LLJIT& jit) {
       &lyra_rt_activation_frame_store_tuple);
   add("lyra_rt_activation_frame_load_tuple",
       &lyra_rt_activation_frame_load_tuple);
-  add("lyra_rt_dynarray_default_packed", &lyra_rt_dynarray_default_packed);
-  add("lyra_rt_dynarray_default_string", &lyra_rt_dynarray_default_string);
-  add("lyra_rt_dynarray_default_real", &lyra_rt_dynarray_default_real);
-  add("lyra_rt_dynarray_default_shortreal",
-      &lyra_rt_dynarray_default_shortreal);
-  add("lyra_rt_dynarray_default_chandle", &lyra_rt_dynarray_default_chandle);
-  add("lyra_rt_dynarray_default_tuple", &lyra_rt_dynarray_default_tuple);
-  add("lyra_rt_dynarray_default_dynarray", &lyra_rt_dynarray_default_dynarray);
-  add("lyra_rt_dynarray_default_unpackedarray",
-      &lyra_rt_dynarray_default_unpackedarray);
-  add("lyra_rt_dynarray_new_packed", &lyra_rt_dynarray_new_packed);
-  add("lyra_rt_dynarray_new_string", &lyra_rt_dynarray_new_string);
-  add("lyra_rt_dynarray_new_real", &lyra_rt_dynarray_new_real);
-  add("lyra_rt_dynarray_new_shortreal", &lyra_rt_dynarray_new_shortreal);
-  add("lyra_rt_dynarray_new_chandle", &lyra_rt_dynarray_new_chandle);
-  add("lyra_rt_dynarray_new_tuple", &lyra_rt_dynarray_new_tuple);
-  add("lyra_rt_dynarray_new_dynarray", &lyra_rt_dynarray_new_dynarray);
-  add("lyra_rt_dynarray_new_unpackedarray",
-      &lyra_rt_dynarray_new_unpackedarray);
-  add("lyra_rt_dynarray_new_copy_packed", &lyra_rt_dynarray_new_copy_packed);
-  add("lyra_rt_dynarray_new_copy_string", &lyra_rt_dynarray_new_copy_string);
-  add("lyra_rt_dynarray_new_copy_real", &lyra_rt_dynarray_new_copy_real);
-  add("lyra_rt_dynarray_new_copy_shortreal",
-      &lyra_rt_dynarray_new_copy_shortreal);
-  add("lyra_rt_dynarray_new_copy_chandle", &lyra_rt_dynarray_new_copy_chandle);
-  add("lyra_rt_dynarray_new_copy_tuple", &lyra_rt_dynarray_new_copy_tuple);
-  add("lyra_rt_dynarray_new_copy_dynarray",
-      &lyra_rt_dynarray_new_copy_dynarray);
-  add("lyra_rt_dynarray_new_copy_unpackedarray",
-      &lyra_rt_dynarray_new_copy_unpackedarray);
-  add("lyra_rt_dynarray_from_literal_packed",
-      &lyra_rt_dynarray_from_literal_packed);
-  add("lyra_rt_dynarray_from_literal_string",
-      &lyra_rt_dynarray_from_literal_string);
-  add("lyra_rt_dynarray_from_literal_real",
-      &lyra_rt_dynarray_from_literal_real);
-  add("lyra_rt_dynarray_from_literal_shortreal",
-      &lyra_rt_dynarray_from_literal_shortreal);
-  add("lyra_rt_dynarray_from_literal_chandle",
-      &lyra_rt_dynarray_from_literal_chandle);
-  add("lyra_rt_dynarray_from_literal_tuple",
-      &lyra_rt_dynarray_from_literal_tuple);
-  add("lyra_rt_dynarray_from_literal_dynarray",
-      &lyra_rt_dynarray_from_literal_dynarray);
+  add("lyra_rt_dynarray_default", &lyra_rt_dynarray_default);
+  add("lyra_rt_dynarray_new", &lyra_rt_dynarray_new);
+  add("lyra_rt_dynarray_new_copy", &lyra_rt_dynarray_new_copy);
+  add("lyra_rt_dynarray_from_literal", &lyra_rt_dynarray_from_literal);
   add("lyra_rt_dynarray_element", &lyra_rt_dynarray_element);
   add("lyra_rt_dynarray_with_element", &lyra_rt_dynarray_with_element);
   add("lyra_rt_dynarray_delete", &lyra_rt_dynarray_delete);
@@ -475,26 +436,74 @@ void DefineRuntimeAbi(llvm::orc::LLJIT& jit) {
   add("lyra_rt_activation_frame_load_dynarray",
       &lyra_rt_activation_frame_load_dynarray);
   add("lyra_rt_dynarray_count_bits", &lyra_rt_dynarray_count_bits);
-  add("lyra_rt_dynarray_from_literal_unpackedarray",
-      &lyra_rt_dynarray_from_literal_unpackedarray);
   add("lyra_rt_value_box_unpackedarray", &lyra_rt_value_box_unpackedarray);
-  add("lyra_rt_unpackedarray_from_literal_packed",
-      &lyra_rt_unpackedarray_from_literal_packed);
-  add("lyra_rt_unpackedarray_from_literal_string",
-      &lyra_rt_unpackedarray_from_literal_string);
-  add("lyra_rt_unpackedarray_from_literal_real",
-      &lyra_rt_unpackedarray_from_literal_real);
-  add("lyra_rt_unpackedarray_from_literal_shortreal",
-      &lyra_rt_unpackedarray_from_literal_shortreal);
-  add("lyra_rt_unpackedarray_from_literal_chandle",
-      &lyra_rt_unpackedarray_from_literal_chandle);
-  add("lyra_rt_unpackedarray_from_literal_tuple",
-      &lyra_rt_unpackedarray_from_literal_tuple);
-  add("lyra_rt_unpackedarray_from_literal_dynarray",
-      &lyra_rt_unpackedarray_from_literal_dynarray);
-  add("lyra_rt_unpackedarray_from_literal_unpackedarray",
-      &lyra_rt_unpackedarray_from_literal_unpackedarray);
+  add("lyra_rt_unpackedarray_from_literal",
+      &lyra_rt_unpackedarray_from_literal);
   add("lyra_rt_unpackedarray_from_string", &lyra_rt_unpackedarray_from_string);
+  add("lyra_rt_queue_default", &lyra_rt_queue_default);
+  add("lyra_rt_queue_default_bounded", &lyra_rt_queue_default_bounded);
+  add("lyra_rt_queue_from_literal", &lyra_rt_queue_from_literal);
+  add("lyra_rt_queue_from_literal_bounded",
+      &lyra_rt_queue_from_literal_bounded);
+  add("lyra_rt_queue_conform_bound", &lyra_rt_queue_conform_bound);
+  add("lyra_rt_queue_element", &lyra_rt_queue_element);
+  add("lyra_rt_queue_with_element", &lyra_rt_queue_with_element);
+  add("lyra_rt_queue_slice", &lyra_rt_queue_slice);
+  add("lyra_rt_queue_size", &lyra_rt_queue_size);
+  add("lyra_rt_queue_push_back", &lyra_rt_queue_push_back);
+  add("lyra_rt_queue_push_front", &lyra_rt_queue_push_front);
+  add("lyra_rt_queue_insert", &lyra_rt_queue_insert);
+  add("lyra_rt_queue_delete", &lyra_rt_queue_delete);
+  add("lyra_rt_queue_eq", &lyra_rt_queue_eq);
+  add("lyra_rt_queue_ne", &lyra_rt_queue_ne);
+  add("lyra_rt_queue_case_equal", &lyra_rt_queue_case_equal);
+  add("lyra_rt_queue_bitstream_width", &lyra_rt_queue_bitstream_width);
+  add("lyra_rt_queue_count_bits", &lyra_rt_queue_count_bits);
+  add("lyra_rt_value_box_queue", &lyra_rt_value_box_queue);
+  add("lyra_rt_cell_queue_get", &lyra_rt_cell_queue_get);
+  add("lyra_rt_cell_queue_initialize", &lyra_rt_cell_queue_initialize);
+  add("lyra_rt_cell_queue_set", &lyra_rt_cell_queue_set);
+  add("lyra_rt_activation_frame_alloc_queue",
+      &lyra_rt_activation_frame_alloc_queue);
+  add("lyra_rt_activation_frame_store_queue",
+      &lyra_rt_activation_frame_store_queue);
+  add("lyra_rt_activation_frame_load_queue",
+      &lyra_rt_activation_frame_load_queue);
+  add("lyra_rt_assocarray_default", &lyra_rt_assocarray_default);
+  add("lyra_rt_assocarray_from_entries", &lyra_rt_assocarray_from_entries);
+  add("lyra_rt_assocarray_from_entries_default",
+      &lyra_rt_assocarray_from_entries_default);
+  add("lyra_rt_assocarray_element", &lyra_rt_assocarray_element);
+  add("lyra_rt_assocarray_with_element", &lyra_rt_assocarray_with_element);
+  add("lyra_rt_assocarray_exists", &lyra_rt_assocarray_exists);
+  add("lyra_rt_assocarray_size", &lyra_rt_assocarray_size);
+  add("lyra_rt_assocarray_delete", &lyra_rt_assocarray_delete);
+  add("lyra_rt_assocarray_eq", &lyra_rt_assocarray_eq);
+  add("lyra_rt_assocarray_ne", &lyra_rt_assocarray_ne);
+  add("lyra_rt_assocarray_case_equal", &lyra_rt_assocarray_case_equal);
+  add("lyra_rt_assocarray_bitstream_width",
+      &lyra_rt_assocarray_bitstream_width);
+  add("lyra_rt_assocarray_assoc_min_index",
+      &lyra_rt_assocarray_assoc_min_index);
+  add("lyra_rt_assocarray_assoc_max_index",
+      &lyra_rt_assocarray_assoc_max_index);
+  add("lyra_rt_string_bitstream_width", &lyra_rt_string_bitstream_width);
+  add("lyra_rt_tuple_bitstream_width", &lyra_rt_tuple_bitstream_width);
+  add("lyra_rt_dynarray_bitstream_width", &lyra_rt_dynarray_bitstream_width);
+  add("lyra_rt_unpackedarray_bitstream_width",
+      &lyra_rt_unpackedarray_bitstream_width);
+  add("lyra_rt_assocarray_count_bits", &lyra_rt_assocarray_count_bits);
+  add("lyra_rt_value_box_assocarray", &lyra_rt_value_box_assocarray);
+  add("lyra_rt_cell_assocarray_get", &lyra_rt_cell_assocarray_get);
+  add("lyra_rt_cell_assocarray_initialize",
+      &lyra_rt_cell_assocarray_initialize);
+  add("lyra_rt_cell_assocarray_set", &lyra_rt_cell_assocarray_set);
+  add("lyra_rt_activation_frame_alloc_assocarray",
+      &lyra_rt_activation_frame_alloc_assocarray);
+  add("lyra_rt_activation_frame_store_assocarray",
+      &lyra_rt_activation_frame_store_assocarray);
+  add("lyra_rt_activation_frame_load_assocarray",
+      &lyra_rt_activation_frame_load_assocarray);
   add("lyra_rt_unpackedarray_element", &lyra_rt_unpackedarray_element);
   add("lyra_rt_unpackedarray_with_element",
       &lyra_rt_unpackedarray_with_element);
@@ -537,34 +546,6 @@ void DefineForeignSymbols(
   jit.getMainJITDylib().addGenerator(std::move(*generator));
 }
 
-// The runtime's spelling of a domain the execution backend classified a type
-// into. The two enumerations are the two sides of one ABI -- the backend names
-// the library entry, the runtime realizes the storage -- and only the backend
-// classifies a LIR type, so the entry a call names and the storage a cell owns
-// cannot disagree.
-auto AbiDomain(backend::llvm_backend::ValueDomain domain)
-    -> runtime::ValueDomain {
-  switch (domain) {
-    case backend::llvm_backend::ValueDomain::kPacked:
-      return runtime::ValueDomain::kPacked;
-    case backend::llvm_backend::ValueDomain::kString:
-      return runtime::ValueDomain::kString;
-    case backend::llvm_backend::ValueDomain::kReal:
-      return runtime::ValueDomain::kReal;
-    case backend::llvm_backend::ValueDomain::kShortReal:
-      return runtime::ValueDomain::kShortReal;
-    case backend::llvm_backend::ValueDomain::kChandle:
-      return runtime::ValueDomain::kChandle;
-    case backend::llvm_backend::ValueDomain::kTuple:
-      return runtime::ValueDomain::kTuple;
-    case backend::llvm_backend::ValueDomain::kDynArray:
-      return runtime::ValueDomain::kDynArray;
-    case backend::llvm_backend::ValueDomain::kUnpackedArray:
-      return runtime::ValueDomain::kUnpackedArray;
-  }
-  throw InternalError("jit executor: unknown value domain");
-}
-
 // The storage a generic value realizes for one member its declaration holds,
 // projected from that member's LIR type: an observable cell holds a value other
 // processes subscribe to, a reference-typed member is a box holding a borrowed
@@ -573,41 +554,33 @@ auto AbiDomain(backend::llvm_backend::ValueDomain domain)
 auto DescribeMember(const lir::CompilationUnit& unit, lir::TypeId type)
     -> runtime::MemberStorageDescriptor {
   const auto& data = unit.types.Get(type).data;
-  const auto without_domain = [](runtime::MemberStorageKind kind) {
-    return runtime::MemberStorageDescriptor{
-        .kind = kind, .domain = runtime::ValueDomain::kNone};
-  };
   if (const auto* observable = std::get_if<lir::ObservableType>(&data)) {
-    if (const std::optional<backend::llvm_backend::ValueDomain> domain =
+    if (const std::optional<support::ValueDomain> domain =
             backend::llvm_backend::ValueDomainOf(unit, observable->value)) {
-      return runtime::MemberStorageDescriptor{
-          .kind = runtime::MemberStorageKind::kObservableCell,
-          .domain = AbiDomain(*domain)};
+      return runtime::ObservableCellStorage{.domain = *domain};
     }
   }
   if (const auto* library = std::get_if<lir::RuntimeLibraryType>(&data)) {
     switch (library->kind) {
       case lir::RuntimeLibraryKind::kCancellationSource:
-        return without_domain(runtime::MemberStorageKind::kCancellationSource);
+        return runtime::CancellationSourceStorage{};
       // The cancel state a deferred file write is guarded by (LRM 21.3.2),
       // which the closure performing that write owns a copy of.
       case lir::RuntimeLibraryKind::kChannelCancellation:
-        return without_domain(runtime::MemberStorageKind::kChannelCancellation);
+        return runtime::ChannelCancellationStorage{};
       default:
         break;
     }
   }
   if (lir::Pointee(unit.types, type).has_value()) {
-    return without_domain(runtime::MemberStorageKind::kBorrowedHandle);
+    return runtime::BorrowedHandleStorage{};
   }
   // A value the owner holds but no process subscribes to -- a chandle (LRM
   // 6.14), and every value a closure snapshots -- lives in its slot rather than
   // behind an observable cell.
-  if (const std::optional<backend::llvm_backend::ValueDomain> domain =
+  if (const std::optional<support::ValueDomain> domain =
           backend::llvm_backend::ValueDomainOf(unit, type)) {
-    return runtime::MemberStorageDescriptor{
-        .kind = runtime::MemberStorageKind::kInlineValue,
-        .domain = AbiDomain(*domain)};
+    return runtime::InlineValueStorage{.domain = *domain};
   }
   throw InternalError(
       std::format(
