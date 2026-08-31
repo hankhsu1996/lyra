@@ -6,6 +6,7 @@
 # the record of what this path does not yet cover.
 #
 # A case may appear in this file or in the defect record, never both.
+03_building_blocks/class_declared_in_compilation_unit_scope: "a property of a class another compilation unit declares is not yet reachable on this backend"
 03_building_blocks/compilation_unit_scope_declarations: "an await on a coroutine callee is not yet lowerable to LIR"
 03_building_blocks/compilation_unit_subroutine_arguments: "an await on a coroutine callee is not yet lowerable to LIR"
 06_data_types/aggregate_parameter_member_in_expression: "the parent builtin has no entry on this backend; its receiver type is pointer"
@@ -13,6 +14,7 @@
 06_data_types/net_driven_through_port: "driving a net is not yet lowerable to LIR"
 06_data_types/net_with_unpacked_aggregate_type: "building a union value is not yet lowerable to LIR"
 06_data_types/string_array_element: "a value of type queue has no runtime library realization"
+06_data_types/type_parameter_distinguishes_classes_by_scope: "a cross-unit class method call is not yet lowerable to LIR"
 06_data_types/wire_driver_resolution: "driving a net is not yet lowerable to LIR"
 07_aggregate_data_types/array_mapping_method: "the map builtin runs a body the call supplies once per entry and has no entry on this backend"
 07_aggregate_data_types/array_method_iterator_and_index: "a value of type queue has no runtime library realization"
@@ -155,6 +157,7 @@
 23_hierarchy/ref_port_aliases_connected_variable: "a reference to a runtime cell is not yet lowerable to LIR"
 23_hierarchy/sibling_scope_found_from_parent: "the parent builtin has no entry on this backend; its receiver type is pointer"
 23_hierarchy/upward_name_climbs_to_enclosing_scope: "the parent builtin has no entry on this backend; its receiver type is pointer"
+25_interfaces/interface_port_reaches_a_net: "driving a net is not yet lowerable to LIR"
 26_packages/import_makes_names_directly_visible: "an await on a coroutine callee is not yet lowerable to LIR"
 26_packages/subroutine_argument_directions: "a reference to a runtime cell is not yet lowerable to LIR"
 26_packages/task_enable_by_resolved_name: "an await on a coroutine callee is not yet lowerable to LIR"
@@ -168,9 +171,9 @@
 35_dpi/exported_subroutine_runs_in_current_scope: "the scope a DPI-C context import makes current is not yet lowerable to LIR"
 35_dpi/exported_task_called_from_imported_task: "a region consuming a control effect is not yet lowerable to LIR"
 35_dpi/import_declaration_scope_is_name_resolution: "the scope a DPI-C context import makes current is not yet lowerable to LIR"
-35_dpi/imported_function_argument_directions: "a value of type machine float has no runtime library realization"
+35_dpi/imported_function_argument_directions: "building a real from a host scalar has no entry on this backend"
 35_dpi/imported_function_packed_arguments: "a value of type runtime library value has no construct on this backend"
-35_dpi/imported_function_small_value_types: "a value of type machine float has no runtime library realization"
+35_dpi/imported_function_small_value_types: "building a real from a host scalar has no entry on this backend"
 35_dpi/imported_task_argument_writeback: "an await on a coroutine callee is not yet lowerable to LIR"
 35_dpi/imported_task_consumes_simulation_time: "delay durations beyond an integer or time literal are not yet supported"
 35_dpi/open_array_element_access: "a value of type runtime library value has no construct on this backend"

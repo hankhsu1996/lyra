@@ -204,10 +204,27 @@ class StructuralScopeLowerer {
     }
     if (parent_ == nullptr) {
       throw InternalError(
-          "StructuralScopeLowerer::TranslateStructuralDataObject: hops out "
-          "of scope chain");
+          "StructuralScopeLowerer::TranslateStructuralDataObject: hops walk "
+          "ran past the root scope");
     }
     return parent_->TranslateStructuralDataObject(
+        hir::StructuralHops{hops.value - 1}, hir_id);
+  }
+
+  // The MIR field an interface port became, in the scope `hops` enclosing
+  // edges out from this one.
+  [[nodiscard]] auto TranslateInterfacePort(
+      hir::StructuralHops hops, hir::InterfacePortId hir_id) const
+      -> mir::FieldId {
+    if (hops.value == 0) {
+      return interface_port_fields_.Get(hir_id);
+    }
+    if (parent_ == nullptr) {
+      throw InternalError(
+          "StructuralScopeLowerer::TranslateInterfacePort: hops walk ran past "
+          "the root scope");
+    }
+    return parent_->TranslateInterfacePort(
         hir::StructuralHops{hops.value - 1}, hir_id);
   }
 
@@ -322,6 +339,7 @@ class StructuralScopeLowerer {
   PackageInitializationPlan package_init_plan_;
   base::Translation<hir::StructuralDataObjectId, mir::FieldId>
       data_object_fields_;
+  base::Translation<hir::InterfacePortId, mir::FieldId> interface_port_fields_;
   base::Translation<hir::RoutedRefId, RoutedRefMeta> routed_ref_targets_;
   base::Translation<hir::GenerateId, GenerateBindings> generate_bindings_;
   base::Translation<hir::InstanceMemberId, DeclaredInstances>

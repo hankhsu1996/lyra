@@ -200,13 +200,9 @@ void EmitInstanceMemberConstruction(
 
 // Allocates one MIR member per cross-unit reference. Every reference -- upward
 // or downward, `$root`-anchored or named -- takes the same borrowed-pointer
-// slot: the pointee matches the producer's actual storage cell so a read or
-// drive reaches the right access protocol. A net producer owns a resolved
-// cell (`ResolvedType`); any other value-storage signal is wrapped in
-// `ObservableType` at its declaration so a write fires subscribers. The
-// cross-unit pointer must point at that same cell -- otherwise the C++
-// types mismatch. The route that fills each slot runs in the resolve phase,
-// after the whole object tree exists.
+// slot, and its pointee is the cell the target's own storage says it holds, so
+// a read or a drive reaches the right access protocol. The route that fills
+// each slot runs in the resolve phase, after the whole object tree exists.
 auto DeclareRoutedRefSlots(StructuralScopeLowerer& lowerer, ClassShape& shape)
     -> base::Translation<hir::RoutedRefId, RoutedRefMeta> {
   UnitLowerer& unit_lowerer = lowerer.Owner();
@@ -381,6 +377,33 @@ auto AppendOwnedChildStep(
   return RouteReceiver{.expr = access, .scope = anchor.target_scope};
 }
 
+// Descends one step through an interface port of the receiver's scope: the
+// typed member access that projects the borrowed reference the parent bound
+// there (LRM 25.3). Everything past the step belongs to the unit the port
+// names, which this artifact does not lower, so the receiver stops being one of
+// its own scopes -- the same place an owned child whose body is another unit
+// leaves it.
+auto AppendInterfacePortStep(
+    UnitLowerer& unit_lowerer, mir::Block& block, const RouteReceiver& receiver,
+    const hir::InterfacePortStep& step) -> RouteReceiver {
+  if (receiver.scope == nullptr) {
+    throw InternalError(
+        "AppendInterfacePortStep: the step names a port of a scope this "
+        "artifact lowers, so the route cannot have left the artifact before "
+        "it");
+  }
+  const mir::ClassId receiver_class = receiver.scope->ClassId();
+  const mir::FieldId field =
+      receiver.scope->TranslateInterfacePort(hir::StructuralHops{}, step.port);
+  const mir::TypeId type =
+      unit_lowerer.GetClassShape(receiver_class).fields.Get(field).type;
+  const mir::ExprId access = block.exprs.Add(
+      mir::MakeFieldAccessExpr(
+          receiver.expr,
+          mir::FieldTarget{.owner = receiver_class, .slot = field}, type));
+  return RouteReceiver{.expr = access, .scope = nullptr};
+}
+
 // Projects the borrowed-pointer value the slot takes out of a typed receiver:
 // the field access, addressed. Everything a scope's bodies declare with a
 // lifetime longer than an activation is a field of the scope's own class, so
@@ -424,6 +447,13 @@ auto MaterializeLeaf(
     return block.exprs.Add(
         mir::Expr{
             .data = mir::AddressOfExpr{.operand = access}, .type = slot_type});
+  }
+
+  // A route ending at a scope names the object the steps landed on, and every
+  // step already yields a borrowed pointer to what it reached, so the last one
+  // is the value.
+  if (std::holds_alternative<hir::ScopeLeaf>(leaf)) {
+    return receiver.expr;
   }
 
   if (const auto* opaque = std::get_if<hir::OpaqueLeaf>(&leaf)) {
@@ -482,6 +512,10 @@ auto BuildRouteValue(
         Overloaded{
             [&](const hir::OwnedChildStep& owned) {
               return AppendOwnedChildStep(unit_lowerer, block, receiver, owned);
+            },
+            [&](const hir::InterfacePortStep& port) {
+              return AppendInterfacePortStep(
+                  unit_lowerer, block, receiver, port);
             },
             [&](const hir::OpaqueStep& opaque) {
               return SdkChildOpaque(
@@ -577,6 +611,38 @@ void AppendProcessRegistration(
   block.AppendStmt(mir::ExprStmt{.expr = reg_call});
 }
 
+// Binds a child's interface port to the interface instance the connection
+// names (LRM 25.3), in the resolve phase where the object tree is complete: the
+// route to the child's member yields a pointer to the slot the child holds, the
+// route to the interface yields the object, and one store fills the one with
+// the other. The child owns no storage on either side, so nothing else happens
+// here -- the same shape a `ref` port's alias bind takes, over an object rather
+// than a cell.
+void InstallInterfacePortConnection(
+    StructuralScopeLowerer& lowerer, const WalkFrame& resolve_frame,
+    const hir::InterfacePortConnection& conn) {
+  UnitLowerer& unit_lowerer = lowerer.Owner();
+  mir::Block& block = *resolve_frame.current_block;
+  auto& types = unit_lowerer.Unit().types;
+  const mir::TypeId member_type = types.PointerTo(
+      unit_lowerer.TranslateType(conn.endpoint.type),
+      mir::PointerOwnership::kBorrowed);
+  const mir::TypeId slot_type =
+      types.PointerTo(member_type, mir::PointerOwnership::kBorrowed);
+  const mir::ExprId nav =
+      BuildRouteValue(lowerer, resolve_frame, conn.endpoint, slot_type);
+  const mir::ExprId target = block.exprs.Add(
+      mir::Expr{.data = mir::DerefExpr{.pointer = nav}, .type = member_type});
+  const mir::ExprId peer =
+      BuildRouteValue(lowerer, resolve_frame, conn.peer, member_type);
+  block.AppendStmt(
+      mir::ExprStmt{
+          .expr = block.exprs.Add(
+              mir::Expr{
+                  .data = mir::AssignExpr{.target = target, .value = peer},
+                  .type = member_type})});
+}
+
 // Realizes each port connection (LRM 23.3.3). An input or output port is the
 // implied continuous assignment between the two cells, materialized as the same
 // synthesized process a scope-level `assign` produces, registered as a process;
@@ -594,10 +660,16 @@ auto InstallPortConnections(
   UnitLowerer& unit_lowerer = lowerer.Owner();
   for (const hir::PortConnectionId id : hir_scope.port_connections.Ids()) {
     const hir::PortConnection& pc = hir_scope.port_connections.Get(id);
+    if (const auto* iface =
+            std::get_if<hir::InterfacePortConnection>(&pc.kind)) {
+      InstallInterfacePortConnection(lowerer, resolve_frame, *iface);
+      continue;
+    }
+    const auto& data = std::get<hir::DataPortConnection>(pc.kind);
     // A `ref` port binds once and is done; the two value directions share the
     // reactive edge built below and differ only in which end of it drives
     // (LRM 23.3.3).
-    switch (pc.direction) {
+    switch (data.direction) {
       case hir::PortDirection::kInput:
       case hir::PortDirection::kOutput:
         break;
@@ -614,7 +686,7 @@ auto InstallPortConnections(
         // through the one canonical reference-store primitive. It holds no
         // persistent slot -- a `ref` needs no simulation-time reach, so the
         // member is reached once here in the resolve phase (LRM 23.3.3.2).
-        const auto& recipe = std::get<hir::RoutedPathRecipe>(pc.endpoint);
+        const auto& recipe = std::get<hir::RoutedPathRecipe>(data.endpoint);
         if (!std::holds_alternative<hir::InUnitHead>(recipe.head)) {
           throw InternalError(
               "InstallPortConnections: a ref port reaches its child downward");
@@ -633,7 +705,7 @@ auto InstallPortConnections(
                 .data = mir::DerefExpr{.pointer = nav}, .type = ref_type});
 
         auto peer_or =
-            lowerer.LowerLhsExpr(hir_scope.exprs.Get(pc.peer), resolve_frame);
+            lowerer.LowerLhsExpr(hir_scope.exprs.Get(data.peer), resolve_frame);
         if (!peer_or) return std::unexpected(std::move(peer_or.error()));
         const mir::ExprId peer_cell =
             resolve_block.exprs.Add(*std::move(peer_or));
@@ -644,8 +716,8 @@ auto InstallPortConnections(
         continue;
       }
     }
-    const auto& cell = std::get<hir::PortCellEndpoint>(pc.endpoint);
-    const bool is_input = pc.direction == hir::PortDirection::kInput;
+    const auto& cell = std::get<hir::PortCellEndpoint>(data.endpoint);
+    const bool is_input = data.direction == hir::PortDirection::kInput;
     // A port connection is a reactive edge: the source is read, the sink is
     // driven. An input port's source is the parent expression and its sink is
     // the child cell; an output port's source is the child cell and its sink
@@ -654,9 +726,9 @@ auto InstallPortConnections(
     // picks the write protocol (LRM 23.3.3).
     const hir::ContinuousAssign assign{
         .span = pc.span,
-        .lhs = is_input ? cell.cell : pc.peer,
-        .rhs = is_input ? pc.peer : cell.cell,
-        .sensitivity_list = pc.sensitivity};
+        .lhs = is_input ? cell.cell : data.peer,
+        .rhs = is_input ? data.peer : cell.cell,
+        .sensitivity_list = data.sensitivity};
     auto method_or = LowerContinuousAssign(
         lowerer, frame, resolve_frame, init_frame,
         PortConnectionCallableName(id), assign);
@@ -842,8 +914,8 @@ auto StructuralScopeLowerer::DeclareShape() -> diag::Result<mir::ClassId> {
 
   ClassShape shape;
   shape.name = name_;
-  shape.base = mir::ClassRef{
-      mir::ExternalClassRef{.qualified_name = "lyra::runtime::Scope"}};
+  shape.base =
+      mir::ClassRef{mir::RuntimeClassRef{.symbol = "lyra::runtime::Scope"}};
   shape.is_final = true;
   shape.self_pointer_type = self_pointer_type;
   shape.time_resolution = hir_scope.time_resolution;
@@ -853,27 +925,58 @@ auto StructuralScopeLowerer::DeclareShape() -> diag::Result<mir::ClassId> {
   // A member this unit published sits in a fixed prefix of the object, in the
   // order its signature states, so a unit reading that signature counts the
   // same position; what it did not publish follows and can move none of it.
-  std::vector<hir::StructuralDataObjectId> member_order =
-      hir_scope.published_objects;
-  for (const hir::StructuralDataObjectId hir_id :
-       hir_scope.structural_data_objects.Ids()) {
-    if (!std::ranges::contains(hir_scope.published_objects, hir_id)) {
-      member_order.push_back(hir_id);
+  std::vector<hir::PublishedDecl> member_order = hir_scope.published_members;
+  const auto append_unpublished = [&](const auto& id) {
+    if (!std::ranges::contains(
+            hir_scope.published_members, hir::PublishedDecl{id})) {
+      member_order.emplace_back(id);
     }
+  };
+  for (const hir::StructuralDataObjectId id :
+       hir_scope.structural_data_objects.Ids()) {
+    append_unpublished(id);
+  }
+  for (const hir::InterfacePortId id : hir_scope.interface_ports.Ids()) {
+    append_unpublished(id);
   }
 
   std::vector<mir::FieldId> data_object_fields(
       hir_scope.structural_data_objects.size());
-  for (const hir::StructuralDataObjectId hir_id : member_order) {
-    const auto& d = hir_scope.structural_data_objects.Get(hir_id);
-    data_object_fields[hir_id.value] = shape.fields.Add(
-        mir::FieldDecl{
-            .name = d.name,
-            .type = unit_lowerer.MemberCellType(
-                unit_lowerer.TranslateType(d.type), hir::StorageOf(d))});
+  std::vector<mir::FieldId> interface_port_fields(
+      hir_scope.interface_ports.size());
+  for (const hir::PublishedDecl& decl : member_order) {
+    std::visit(
+        Overloaded{
+            [&](const hir::StructuralDataObjectId& id) {
+              const auto& d = hir_scope.structural_data_objects.Get(id);
+              data_object_fields[id.value] = shape.fields.Add(
+                  mir::FieldDecl{
+                      .name = d.name,
+                      .type = unit_lowerer.MemberCellType(
+                          unit_lowerer.TranslateType(d.type),
+                          hir::StorageOf(d))});
+            },
+            [&](const hir::InterfacePortId& id) {
+              const auto& port = hir_scope.interface_ports.Get(id);
+              // The port stands for an instance of the unit its record names,
+              // so that record is the one source of both the object's type and
+              // the positions a name reached through it is counted out of.
+              const mir::TypeId object_type = unit_lowerer.Unit().types.Intern(
+                  mir::ExternalUnitObjectType{
+                      .object = unit_lowerer.TranslateExternalUnitObject(
+                          port.object)});
+              interface_port_fields[id.value] = shape.fields.Add(
+                  mir::FieldDecl{
+                      .name = port.name,
+                      .type = unit_lowerer.MemberCellType(
+                          object_type, hir::BorrowedObjectStorage{})});
+            }},
+        decl);
   }
   data_object_fields_ = {
       hir_scope.structural_data_objects.size(), std::move(data_object_fields)};
+  interface_port_fields_ = {
+      hir_scope.interface_ports.size(), std::move(interface_port_fields)};
 
   routed_ref_targets_ = DeclareRoutedRefSlots(*this, shape);
 
@@ -977,8 +1080,8 @@ auto StructuralScopeLowerer::DeclareShape() -> diag::Result<mir::ClassId> {
     const mir::ClassId node_class = unit_lowerer.Unit().DeclareClass();
     ClassShape node_shape;
     node_shape.name = std::format("{}__{}", name_, segment);
-    node_shape.base = mir::ClassRef{
-        mir::ExternalClassRef{.qualified_name = "lyra::runtime::Scope"}};
+    node_shape.base =
+        mir::ClassRef{mir::RuntimeClassRef{.symbol = "lyra::runtime::Scope"}};
     node_shape.is_final = true;
     node_shape.self_pointer_type = unit_lowerer.Unit().types.PointerTo(
         unit_lowerer.Unit().types.Intern(
@@ -1409,9 +1512,8 @@ auto StructuralScopeLowerer::PopulateBodies(WalkFrame parent_frame)
         TranslateStructuralDataObject(hir::StructuralHops{0}, hir_id);
     const mir::TypeId mir_field_type = mir_class.fields.Get(mir_id).type;
     const mir::TypeId mir_value_type = unit_lowerer.TranslateType(d.type);
+    const bool is_net = std::holds_alternative<hir::StructuralNetDecl>(d.kind);
     const auto* var = std::get_if<hir::StructuralVariableDecl>(&d.kind);
-    const bool is_net = var == nullptr;
-    const bool is_reference = var != nullptr && var->reference.has_value();
     const mir::TypeKind var_kind =
         unit_lowerer.Unit().types.Get(mir_value_type).Kind();
     // Owned children (pointer / vector / object), cross-instance reference
@@ -1423,7 +1525,7 @@ auto StructuralScopeLowerer::PopulateBodies(WalkFrame parent_frame)
     // receive an LRM 10.5 initialization statement, run in the initialize
     // phase after the tree's references resolve, not in the constructor.
     const bool is_assignable_value =
-        !is_reference && !is_net && var_kind != mir::TypeKind::kPointer &&
+        var != nullptr && var_kind != mir::TypeKind::kPointer &&
         var_kind != mir::TypeKind::kVector &&
         var_kind != mir::TypeKind::kObject &&
         var_kind != mir::TypeKind::kExternalUnitObject &&

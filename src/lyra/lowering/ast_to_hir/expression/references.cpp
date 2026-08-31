@@ -21,6 +21,7 @@
 #include "lyra/base/overloaded.hpp"
 #include "lyra/diag/diag_code.hpp"
 #include "lyra/hir/expr_builders.hpp"
+#include "lyra/hir/structural_scope.hpp"
 #include "lyra/hir/value_ref.hpp"
 #include "lyra/lowering/ast_to_hir/constant_value.hpp"
 #include "lyra/lowering/ast_to_hir/expression/selects.hpp"
@@ -309,6 +310,46 @@ auto LowerValueRef(
   return ValueTargetRefExpr(**target, *type_id, span);
 }
 
+// LRM 25.3: a name reached through an interface port. slang resolves the target
+// to the declaration inside the connected interface, which lives in another
+// compilation unit, so the reader's own position on the object tree says
+// nothing about where it is -- the port is the only reach to it, and any other
+// route to the same declaration would describe a different design. That makes
+// the port the whole descent: one typed step, from which what the route ends at
+// follows the way it does for a step onto an instance.
+auto LowerInterfacePortValue(
+    UnitLowerer& unit_lowerer, WalkFrame frame,
+    const slang::ast::HierarchicalValueExpression& hve, diag::SourceSpan span)
+    -> diag::Result<hir::Expr> {
+  const auto path = hve.ref.path;
+  // The port, then the name on it. A longer path descends further into the
+  // interface, past what a signature promised about the port itself.
+  if (path.size() != 2) {
+    return diag::Fail(
+        span, diag::DiagCode::kUnsupportedExpressionForm,
+        "a nested name reached through an interface port is not yet supported");
+  }
+  const auto binding = unit_lowerer.LookupInterfacePortBinding(*path[0].symbol);
+  if (!binding.has_value()) {
+    throw InternalError(
+        "LowerInterfacePortValue: the path heads at a port of the reader's own "
+        "unit, which the unit's own walk declared");
+  }
+  const auto hops = frame.HopsTo(binding->home_frame);
+  if (!hops.has_value()) {
+    throw InternalError(
+        "LowerInterfacePortValue: an interface port is a member of a scope "
+        "enclosing every reader of it");
+  }
+  auto type_id = unit_lowerer.InternType(*hve.type, span);
+  if (!type_id) return std::unexpected(std::move(type_id.error()));
+  auto route = unit_lowerer.MakeRoutedRef(
+      hve.symbol, frame.Current(), hir::InUnitHead{.hops = *hops},
+      {hir::PathStep{hir::InterfacePortStep{.port = binding->port}}});
+  if (!route) return std::unexpected(std::move(route.error()));
+  return ValueTargetRefExpr(hir::ValueTarget{*route}, *type_id, span);
+}
+
 }  // namespace
 
 auto LowerNamedValueProc(
@@ -369,19 +410,17 @@ auto LowerNamedValueProc(
 // LRM 23.6 hierarchical reference. A reached constant folds to its value; a
 // reached cell is located from the reader's elaborated position and the target
 // symbol, the same way a simple name's is -- the path a reference was written
-// with is provenance, not a routing authority, so slang's resolved `ref.path`
-// is not consulted.
+// with is provenance, not a routing authority. A name that reaches storage
+// through an interface port (LRM 25.3) is the one exception: that storage lives
+// in a unit the reader reaches no other way, so which port it came through is
+// the route and not merely how it was spelled. A constant reached through one
+// still folds to its value, because what the port changes is how the target is
+// reached and not what it is.
 auto LowerHierarchicalValue(
     UnitLowerer& unit_lowerer, WalkFrame frame,
     const slang::ast::HierarchicalValueExpression& hve)
     -> diag::Result<hir::Expr> {
   const auto span = unit_lowerer.SourceMapper().SpanOf(hve.sourceRange);
-
-  if (hve.ref.isViaIfacePort()) {
-    return diag::Fail(
-        span, diag::DiagCode::kUnsupportedExpressionForm,
-        "interface-port hierarchical reference is not yet supported");
-  }
 
   const auto& target = hve.symbol;
   switch (ClassifyReferent(target)) {
@@ -407,6 +446,9 @@ auto LowerHierarchicalValue(
           span);
     case Referent::kVariableStorage:
     case Referent::kNetStorage: {
+      if (hve.ref.isViaIfacePort()) {
+        return LowerInterfacePortValue(unit_lowerer, frame, hve, span);
+      }
       const auto& value = target.as<slang::ast::ValueSymbol>();
       auto type_id = unit_lowerer.InternType(*hve.type, span);
       if (!type_id) return std::unexpected(std::move(type_id.error()));

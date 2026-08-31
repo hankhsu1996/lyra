@@ -22,13 +22,19 @@ struct IntraUnitBase {
   ClassId class_id;
 };
 
-// A base class declared outside this compilation unit, named by its target-
-// language qualified name.
-struct ExternalBase {
-  std::string qualified_name;
+// A base class another compilation unit declares, named by that unit and the
+// class's canonical name.
+struct CrossUnitBase {
+  std::string unit_name;
+  std::string class_name;
 };
 
-using Base = std::variant<IntraUnitBase, ExternalBase>;
+// A base class the runtime library defines, named by the library symbol.
+struct RuntimeBase {
+  std::string symbol;
+};
+
+using Base = std::variant<IntraUnitBase, CrossUnitBase, RuntimeBase>;
 
 // A typed member of whatever declares it -- the storage a member place reaches
 // by a member projection. Its position in the declaring list is its member

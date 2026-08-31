@@ -60,6 +60,9 @@ class StructuralScopeLowerer {
  private:
   auto PopulateMember(const slang::ast::Symbol& member, WalkFrame frame)
       -> diag::Result<void>;
+  auto PopulateInterfacePortMember(
+      const slang::ast::InterfacePortSymbol& port, WalkFrame frame)
+      -> diag::Result<void>;
   auto PopulateVariableMember(
       const slang::ast::VariableSymbol& var, WalkFrame frame)
       -> diag::Result<void>;

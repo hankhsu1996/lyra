@@ -22,17 +22,15 @@ struct StructuralDataObjectId {
 // resolve. `wire` and `tri` share one resolution.
 enum class NetType : std::uint8_t { kWire, kTri };
 
-// A `ref` / `const ref` port's internal variable (LRM 23.3.3.2) aliases the
-// connected variable rather than holding its own cell; the parent binds it
-// during elaboration. Present only on a variable, never a net.
+// Whether writing through a `ref` port's internal name is permitted
+// (LRM 23.3.3.2).
 enum class ReferenceBinding : std::uint8_t { kRef, kConstRef };
 
 // A variable (LRM 6.5): it owns mutable storage written by procedural
-// assignments or a single continuous driver. An optional LRM 10.5 initializer;
-// an optional `ref`-port aliasing marker.
+// assignments or a single continuous driver, with an optional LRM 10.5
+// initializer.
 struct StructuralVariableDecl {
   std::optional<ExprId> initializer;
-  std::optional<ReferenceBinding> reference;
 };
 
 // A net (LRM 6.5): its value is the resolution of its drivers, not a direct
@@ -42,11 +40,19 @@ struct StructuralNetDecl {
   NetType net_type;
 };
 
+// A `ref` / `const ref` port's internal name (LRM 23.3.3.2): it owns no cell,
+// standing for the connected variable, which the parent binds during
+// elaboration.
+struct StructuralReferenceDecl {
+  ReferenceBinding binding;
+};
+
 // A module-scope data object (LRM 6.5: "two main groups of data objects:
-// variables and nets"). Variable and net are peer kinds sharing only identity
-// and value type; each kind carries its own payload.
-using StructuralDataObjectKind =
-    std::variant<StructuralVariableDecl, StructuralNetDecl>;
+// variables and nets"), plus the name a `ref` port introduces for storage the
+// object does not own. Peer kinds sharing only identity and value type; each
+// kind carries its own payload.
+using StructuralDataObjectKind = std::variant<
+    StructuralVariableDecl, StructuralNetDecl, StructuralReferenceDecl>;
 
 struct StructuralDataObjectDecl {
   std::string name;

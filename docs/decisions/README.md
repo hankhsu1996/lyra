@@ -255,6 +255,16 @@ the detail lives in the entry itself.
   referrer records the object it compiled against in its own IR, in a registry separate from the
   classes it compiles, so no pass below the one that consumes a signature reads one. Carrying the
   position on the reference, handing signatures to a lower pass, and a by-name lookup are rejected.
+- [identity-is-not-a-rendering](identity-is-not-a-rendering.md) -- what must distinguish is stored
+  as its parts and composed into a name only by whoever knows the spelling rules; an identity splits
+  exactly where the layer below it splits; naming another unit's object and holding what it
+  published are two facts with two vocabulary items. Mangling at the composition site, tagging one
+  conflated arm, and recording every transitively reachable unit are rejected.
+- [interface-port-binding](interface-port-binding.md) -- an interface port's declared type names the
+  unit whose instance belongs there, by name, so it crosses a signature; the member holds a borrowed
+  reference the parent binds once during elaboration, a fourth published storage kind; an interface
+  publishes every net and variable it declares; and which interface a port carries feeds the
+  module's specialization identity, without which two differently bound modules collide on one name.
 - [parameter-code-shape-over-approximation](parameter-code-shape-over-approximation.md) -- every
   parameter is treated as code-shape-affecting for now (conservative over-approximation);
   classification and constructor-input threading are deferred.

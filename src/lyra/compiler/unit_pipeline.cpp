@@ -20,8 +20,8 @@ auto LowerUnitPipeline(
   }
 
   lowering::hir_to_mir::UnitLowerer lowerer(unit, source_manager);
-  auto mir = unit.kind == hir::UnitKind::kPackage ? lowerer.RunPackage()
-                                                  : lowerer.RunModule();
+  auto mir = unit.role == hir::UnitRole::kNamespace ? lowerer.RunNamespace()
+                                                    : lowerer.RunObjectRoot();
   if (!mir) {
     return std::unexpected(std::move(mir.error()));
   }

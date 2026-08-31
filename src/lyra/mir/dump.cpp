@@ -167,8 +167,12 @@ class MirDumper {
                   "IntraUnit[#{}] \"{}\"", i.class_id.value,
                   unit_->GetClass(i.class_id).name);
             },
-            [](const ExternalClassRef& e) -> std::string {
-              return std::format("External(\"{}\")", e.qualified_name);
+            [](const CrossUnitClassRef& e) -> std::string {
+              return std::format(
+                  "CrossUnit(\"{}::{}\")", e.unit_name, e.class_name);
+            },
+            [](const RuntimeClassRef& e) -> std::string {
+              return std::format("Runtime(\"{}\")", e.symbol);
             }},
         ref);
   }
@@ -288,8 +292,12 @@ class MirDumper {
             [](const ExternalUnitObjectType& e) -> std::string {
               return std::format("ExternalUnitObject(#{})", e.object.value);
             },
-            [](const ExternalClassType& e) -> std::string {
-              return std::format("ExternalClass(\"{}\")", e.qualified_name);
+            [](const CrossUnitClassType& e) -> std::string {
+              return std::format(
+                  "CrossUnitClass(\"{}::{}\")", e.unit_name, e.class_name);
+            },
+            [](const RuntimeClassType& e) -> std::string {
+              return std::format("RuntimeClass(\"{}\")", e.symbol);
             },
             [](const RuntimeEffectsType&) -> std::string {
               return "RuntimeEffects";

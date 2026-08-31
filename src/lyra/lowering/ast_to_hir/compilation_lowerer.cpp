@@ -1,6 +1,6 @@
 #include <memory>
 #include <string>
-#include <unordered_set>
+#include <unordered_map>
 #include <utility>
 #include <vector>
 
@@ -10,11 +10,12 @@
 #include <slang/ast/symbols/InstanceSymbols.h>
 #include <slang/ast/symbols/SubroutineSymbols.h>
 
+#include "lyra/base/internal_error.hpp"
 #include "lyra/diag/diagnostic.hpp"
 #include "lyra/hir/compilation_unit.hpp"
 #include "lyra/hir/unit_signatures.hpp"
 #include "lyra/lowering/ast_to_hir/lower.hpp"
-#include "lyra/lowering/ast_to_hir/specialization_name.hpp"
+#include "lyra/lowering/ast_to_hir/unit_identity.hpp"
 #include "lyra/lowering/ast_to_hir/unit_lowerer.hpp"
 
 namespace lyra::lowering::ast_to_hir {
@@ -27,25 +28,37 @@ namespace {
 // through, so an instance nested in a generate block is reached without this
 // code knowing the container taxonomy.
 //
-// The specialization name keys the dedup, because that is what identifies a
-// unit: a definition and the bindings selected for it, which is what a referrer
-// can compute about the child it constructs. Two instances agreeing on it are
-// one unit however many bodies the frontend chose to build -- it declines to
-// share one when a name inside reaches outward, since the resolution differs
-// per instance, but that resolution is settled per instance at construction and
+// The specialization key decides the dedup, because that is what identifies a
+// unit: a definition and everything fixed for it, which is what a referrer can
+// compute about the child it constructs. Two instances agreeing on it are one
+// unit however many bodies the frontend chose to build -- it declines to share
+// one when a name inside reaches outward, since the resolution differs per
+// instance, but that resolution is settled per instance at construction and
 // never inside the unit, so the unit itself is the same.
+//
+// Two keys reaching one name would silently make two units into one, so the
+// name a unit is known by is checked against the key it came from rather than
+// standing in for it.
 struct UnitCollector
     : slang::ast::ASTVisitor<UnitCollector, slang::ast::VisitFlags::Canonical> {
-  std::unordered_set<std::string> seen;
+  std::unordered_map<std::string, SpecializationKey> seen;
   std::vector<const slang::ast::InstanceBodySymbol*> order;
 
   void handle(const slang::ast::InstanceSymbol& inst) {
     const auto* canonical = inst.getCanonicalBody();
     const auto& body = canonical != nullptr ? *canonical : inst.body;
-    if (seen.insert(SpecializationName(body)).second) {
-      order.push_back(&body);
-      visitDefault(inst);
+    SpecializationKey key = SpecializationKeyOf(body);
+    const auto [entry, fresh] = seen.try_emplace(SpecializationName(key), key);
+    if (!fresh) {
+      if (entry->second != key) {
+        throw InternalError(
+            "UnitCollector: two specializations reached one name, so the name "
+            "no longer tells the units apart");
+      }
+      return;
     }
+    order.push_back(&body);
+    visitDefault(inst);
   }
 };
 
@@ -89,9 +102,13 @@ auto CollectPackages(const LowerCompilationFacts& facts)
 }
 
 // Whether a compilation-unit scope declares a member that becomes namespace
-// content -- a variable, net, subroutine, or type alias. A file whose only
+// content -- storage, a subroutine, a type alias, or a class. A file whose only
 // scope members are design elements (a module or package declaration) and
 // imports manifests no `$unit` unit, so it is not collected.
+//
+// A class declared here is namespace content like any other: whoever names it
+// names it through this scope's unit (LRM 3.12.1), so a scope holding one has
+// to become a unit for that name to reach a definition.
 auto HasUnitScopeContent(const slang::ast::CompilationUnitSymbol& cu) -> bool {
   for (const auto& member : cu.members()) {
     switch (member.kind) {
@@ -99,6 +116,8 @@ auto HasUnitScopeContent(const slang::ast::CompilationUnitSymbol& cu) -> bool {
       case slang::ast::SymbolKind::Net:
       case slang::ast::SymbolKind::Subroutine:
       case slang::ast::SymbolKind::TypeAlias:
+      case slang::ast::SymbolKind::ClassType:
+      case slang::ast::SymbolKind::GenericClassDef:
         return true;
       default:
         break;
@@ -141,7 +160,7 @@ auto LowerCompilationToHir(const LowerCompilationFacts& facts)
     lowerers.push_back(
         std::make_unique<UnitLowerer>(
             unit_facts, *package, std::string{package->name},
-            hir::UnitKind::kPackage));
+            hir::UnitRole::kNamespace));
   }
   for (const auto* cu : compilation_units) {
     // A `$unit` scope is lowered, emitted, and initialized exactly as a package
@@ -150,13 +169,13 @@ auto LowerCompilationToHir(const LowerCompilationFacts& facts)
     lowerers.push_back(
         std::make_unique<UnitLowerer>(
             unit_facts, *cu, CompilationUnitName(*cu),
-            hir::UnitKind::kPackage));
+            hir::UnitRole::kNamespace));
   }
   for (const auto* body : bodies) {
     lowerers.push_back(
         std::make_unique<UnitLowerer>(
             unit_facts, *body, SpecializationName(*body),
-            hir::UnitKind::kModule));
+            hir::UnitRole::kObjectRoot));
   }
 
   // Every unit declares before any unit lowers a body, because a body may

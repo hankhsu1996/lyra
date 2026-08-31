@@ -40,6 +40,7 @@
 namespace slang::ast {
 class Expression;
 class ClassType;
+class InterfacePortSymbol;
 class Scope;
 }  // namespace slang::ast
 
@@ -56,6 +57,15 @@ struct StructuralDataObjectBinding {
 // to the same way.
 using StructuralDataObjectBindings = std::unordered_map<
     const slang::ast::ValueSymbol*, StructuralDataObjectBinding>;
+
+// Where an interface port stands, as its own unit reaches it: the scope that
+// declares it, its identity there, and this unit's record of the object bound
+// to it. A name reached through the port is counted out of that record.
+struct InterfacePortBinding {
+  ScopeFrameId home_frame{};
+  hir::InterfacePortId port{};
+  hir::ExternalUnitObjectId object{};
+};
 
 struct SubroutineBinding {
   ScopeFrameId owner_frame{};
@@ -203,7 +213,7 @@ class UnitLowerer {
  public:
   UnitLowerer(
       const LoweringFacts& facts, const slang::ast::Scope& scope,
-      std::string name, hir::UnitKind kind);
+      std::string name, hir::UnitRole role);
 
   // The declaration phase: everything this unit states about itself, including
   // the signature it publishes. Reads no other unit, so a body that later
@@ -262,6 +272,18 @@ class UnitLowerer {
       const hir::UnitSignature& signature, hir::TypeId published)
       -> hir::TypeId;
 
+  // What the units this one references published, for a lowering that reaches
+  // across the unit boundary. Reachable only once bodies lower: the declaration
+  // phase reads this unit alone, so it has none.
+  [[nodiscard]] auto Signatures() const -> const hir::ConsumedSignatures& {
+    if (!consumed_signatures_.has_value()) {
+      throw InternalError(
+          "UnitLowerer::Signatures: another unit's signature is reachable only "
+          "while bodies lower; the declaration phase reads this unit alone");
+    }
+    return *consumed_signatures_;
+  }
+
   // This unit's record of the object an instance of `unit_name` is, taken from
   // that unit's signature the first time one is reached and answered with the
   // same identity every later time. Reaching another unit's object is what
@@ -274,6 +296,22 @@ class UnitLowerer {
   [[nodiscard]] auto DeclarationStorage(
       const slang::ast::ValueSymbol& value, diag::SourceSpan span) const
       -> diag::Result<hir::PublishedStorage>;
+
+  // Which unit's instances the interface port `port` carries. The connection
+  // decides it and the connection is read where this unit's ports are, so the
+  // answer is taken there and read back here rather than reached for a second
+  // time -- what the unit published about the port and the member it builds for
+  // it then cannot describe different interfaces.
+  [[nodiscard]] auto InterfaceUnitOf(const slang::ast::Symbol& port) const
+      -> const std::string& {
+    const auto it = interface_port_units_.find(&port);
+    if (it == interface_port_units_.end()) {
+      throw InternalError(
+          "UnitLowerer::InterfaceUnitOf: a unit publishes every interface port "
+          "it declares before any of its bodies lower");
+    }
+    return it->second;
+  }
 
   // Whether `internal` is the declaration a `ref` / `const ref` port reaches,
   // and under which binding (LRM 23.3.3.2). The port's direction decides it, so
@@ -430,18 +468,6 @@ class UnitLowerer {
       const -> std::optional<std::string_view> {
     return facts_.ForeignExportName(sub);
   }
-  // What the units this one references published, for a lowering that reaches
-  // across the unit boundary. Reachable only once bodies lower: the declaration
-  // phase reads this unit alone, so it has none.
-  [[nodiscard]] auto Signatures() const -> const hir::ConsumedSignatures& {
-    if (!consumed_signatures_.has_value()) {
-      throw InternalError(
-          "UnitLowerer::Signatures: another unit's signature is reachable only "
-          "while bodies lower; the declaration phase reads this unit alone");
-    }
-    return *consumed_signatures_;
-  }
-
   // Whether the design being built contains this procedural block. A concurrent
   // assertion is a process whose whole body is the assertion, so disabling
   // assertions removes it rather than emptying it -- an always block with no
@@ -463,6 +489,12 @@ class UnitLowerer {
   [[nodiscard]] auto LookupStructuralDataObjectBinding(
       const slang::ast::ValueSymbol& var) const
       -> std::optional<StructuralDataObjectBinding>;
+
+  void MapInterfacePortBinding(
+      const slang::ast::InterfacePortSymbol& port, ScopeFrameId home_frame,
+      hir::InterfacePortId local, hir::ExternalUnitObjectId object);
+  [[nodiscard]] auto LookupInterfacePortBinding(const slang::ast::Symbol& port)
+      const -> std::optional<InterfacePortBinding>;
 
   void MapSubroutineBinding(
       const slang::ast::SubroutineSymbol& sym, ScopeFrameId owner_frame,
@@ -598,7 +630,6 @@ class UnitLowerer {
     return std::nullopt;
   }
 
-  // Frame minting for scope entry.
   [[nodiscard]] auto NextScopeFrameId() -> ScopeFrameId;
 
   // Identity minting for an array-method `with` clause (LRM 7.12). Unique
@@ -621,6 +652,17 @@ class UnitLowerer {
   auto MakeRoutedMemberRef(
       const slang::ast::ValueSymbol& target, ScopeFrameId slot_owner_frame,
       hir::RoutedRefDecl decl, diag::SourceSpan span) -> hir::Expr;
+
+  // The reference to `value` over a route the caller derived: `head` and
+  // `steps` say how the reader reaches it, and what the route ends at follows
+  // from the steps alone. A reader that can locate the target on the object
+  // tree derives the route from there; one reached through an interface port
+  // has no such position to read -- the port is the only reach -- so that step
+  // is derived at the reference site and handed here.
+  [[nodiscard]] auto MakeRoutedRef(
+      const slang::ast::ValueSymbol& value, ScopeFrameId slot_owner,
+      hir::RouteHead head, std::vector<hir::PathStep> steps)
+      -> diag::Result<hir::ReferenceRoute>;
 
   // Where a named value lives, as this unit reaches it. One answer serves
   // every consumer of a reference -- reading it, writing it, and waiting on it
@@ -714,8 +756,11 @@ class UnitLowerer {
       external_unit_objects_;
   // Which published position this unit gave each of its own declarations,
   // taken while the signature is derived and read back while bodies lower.
-  std::unordered_map<const slang::ast::ValueSymbol*, hir::PublishedMemberId>
+  std::unordered_map<const slang::ast::Symbol*, hir::PublishedMemberId>
       published_member_ids_;
+  // Which unit each of this unit's interface ports carries.
+  std::unordered_map<const slang::ast::Symbol*, std::string>
+      interface_port_units_;
   // The declarations this unit's `ref` ports reach, under the binding each
   // port's direction states.
   std::unordered_map<const slang::ast::Symbol*, hir::ReferenceBinding>
@@ -723,7 +768,7 @@ class UnitLowerer {
   // The declaration standing at each published position. A slot is filled when
   // its declaration takes its identity, and every one is filled before the unit
   // is handed on.
-  std::vector<std::optional<hir::StructuralDataObjectId>> published_objects_;
+  std::vector<std::optional<hir::PublishedDecl>> published_members_;
 
   std::unordered_map<const slang::ast::Type*, hir::TypeId> type_cache_;
   // The classification of every class this unit's lowering has resolved: the
@@ -741,6 +786,8 @@ class UnitLowerer {
       const slang::ast::ClassPropertySymbol*, hir::StaticPropertyId>
       class_property_static_ids_;
   StructuralDataObjectBindings structural_data_object_bindings_;
+  std::unordered_map<const slang::ast::Symbol*, InterfacePortBinding>
+      interface_port_bindings_;
   SubroutineBindings subroutine_bindings_;
   ForeignImportBindings foreign_import_bindings_;
   ForeignImportScopes foreign_import_scopes_;

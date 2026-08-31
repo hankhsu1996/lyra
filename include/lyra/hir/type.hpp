@@ -35,6 +35,7 @@ enum class TypeKind {
   kChandle,
   kClassHandle,
   kImportedClassHandle,
+  kUnitObject,
   kNull,
   kVoid,
 };
@@ -271,6 +272,17 @@ struct ImportedClassHandleType {
   auto operator==(const ImportedClassHandleType&) const -> bool = default;
 };
 
+// The object an instance of another compilation unit is -- what an interface
+// port names (LRM 25.3). Named by the declaring unit alone: the object is
+// always another unit's, so there is no local form, and the name is what
+// identifies it from anywhere, which is what lets the type cross a signature
+// unchanged. Only the members that unit published are reachable through it.
+struct UnitObjectType {
+  std::string unit_name;
+
+  auto operator==(const UnitObjectType&) const -> bool = default;
+};
+
 // LRM 8.4: the type slang gives the `null` literal. It is assignment- and
 // comparison-compatible with any class handle; the contextual handle determines
 // the operation, so this type carries no class identity of its own.
@@ -283,7 +295,7 @@ using TypeData = std::variant<
     UnpackedStructType, UnpackedUnionType, UnpackedArrayType, DynamicArrayType,
     QueueType, AssociativeArrayType, WildcardIndexType, StringType, EventType,
     RealType, ShortRealType, RealTimeType, ChandleType, ClassHandleType,
-    ImportedClassHandleType, NullType, VoidType>;
+    ImportedClassHandleType, UnitObjectType, NullType, VoidType>;
 
 struct Type {
   TypeData data;

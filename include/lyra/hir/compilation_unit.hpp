@@ -18,13 +18,15 @@
 
 namespace lyra::hir {
 
-// Which SystemVerilog compilation-unit form a `CompilationUnit` models: a
-// module (LRM 23), whose root scope is an object type composing a top class, or
-// a package (LRM 26), a namespace whose declarations are reached by name and
-// which has no instance root. The distinction is intrinsic to the source
-// construct, so it travels on the unit rather than being re-inferred from its
-// scope shape at each stage that must branch on it.
-enum class UnitKind : std::uint8_t { kModule, kPackage };
+// Whether a compilation unit's instances exist as objects. A module (LRM 23)
+// and an interface (LRM 25) are instantiated into the hierarchy, so each roots
+// an object composing a top class; a package (LRM 26) and the `$unit` file-set
+// scope (LRM 3.12.1) hold declarations reached by name with no receiver, and
+// root none. Which of the four forms a unit was written as is a different
+// question, and not one anything below this asks. The answer is intrinsic to
+// the source construct, so it travels on the unit rather than being re-inferred
+// from its scope shape at each stage that must branch on it.
+enum class UnitRole : std::uint8_t { kObjectRoot, kNamespace };
 
 // Canonical TypeIds for primitives the lowering frequently materializes
 // (literal int type, void result of system tasks, etc.). Populated by
@@ -44,7 +46,7 @@ struct BuiltinHirTypes {
 
 struct CompilationUnit {
   std::string name;
-  UnitKind kind = UnitKind::kModule;
+  UnitRole role = UnitRole::kObjectRoot;
   TypePool types;
   BuiltinHirTypes builtins;
   StructuralScope root_scope;

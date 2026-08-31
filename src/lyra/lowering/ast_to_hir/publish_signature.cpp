@@ -16,10 +16,12 @@
 #include "lyra/base/internal_error.hpp"
 #include "lyra/diag/diag_code.hpp"
 #include "lyra/diag/diagnostic.hpp"
+#include "lyra/hir/type.hpp"
 #include "lyra/hir/type_id.hpp"
 #include "lyra/hir/type_import.hpp"
 #include "lyra/hir/unit_signature.hpp"
 #include "lyra/lowering/ast_to_hir/net_type.hpp"
+#include "lyra/lowering/ast_to_hir/unit_identity.hpp"
 #include "lyra/lowering/ast_to_hir/unit_lowerer.hpp"
 
 namespace lyra::lowering::ast_to_hir {
@@ -99,6 +101,59 @@ auto UnitLowerer::PublishSignature() -> diag::Result<void> {
     return id;
   };
 
+  // An interface port names an instance of another unit that this one neither
+  // owns nor builds (LRM 25.3). What the unit publishes about it is a member
+  // like any other: the position a connection binds, and a type naming the unit
+  // whose instance belongs there -- which is what lets the parent's connection
+  // be checked where the parent compiles rather than while the design
+  // elaborates.
+  const auto publish_interface_port =
+      [&](const slang::ast::InterfacePortSymbol& port)
+      -> diag::Result<hir::PublishedMemberId> {
+    const auto span = SourceMapper().PointSpanOf(port.location);
+    const auto refuse = [&](std::string message) {
+      return diag::Fail(
+          span, diag::DiagCode::kUnsupportedStructuralMember,
+          std::move(message));
+    };
+    if (port.isGeneric) {
+      return refuse("a generic interface port is not yet supported");
+    }
+    const auto range = port.getDeclaredRange();
+    if (!range.has_value() || !range->empty()) {
+      return refuse("an interface array port is not yet supported");
+    }
+    // Which interface the port carries is settled during elaboration, so the
+    // unit reads it here and publishes it; a unit whose ports name different
+    // interfaces is a different specialization and has its own name already.
+    // A modport narrows which members the port reaches and in which direction
+    // (LRM 25.5), so a port carrying one publishes something different from
+    // what is built here; either end of the connection may name it
+    // (LRM 25.5.4), so both are checked.
+    const auto [connected, modport] = port.getConnection();
+    if (!port.modport.empty() || modport != nullptr) {
+      return refuse("a modport-restricted interface port is not yet supported");
+    }
+    const auto* instance = connected == nullptr
+                               ? nullptr
+                               : connected->as_if<slang::ast::InstanceSymbol>();
+    if (instance == nullptr) {
+      return refuse("an unconnected interface port is not yet supported");
+    }
+    std::string interface_unit = SpecializationName(*instance);
+    RecordReferencedUnit(interface_unit);
+    const hir::TypeId own =
+        unit_.types.Intern(hir::UnitObjectType{.unit_name = interface_unit});
+    interface_port_units_.emplace(&port, std::move(interface_unit));
+    const hir::PublishedMemberId id = instance_class.members.Add(
+        hir::PublishedMember{
+            .name = std::string{port.name},
+            .type = publish_type(own),
+            .storage = hir::BorrowedObjectStorage{}});
+    published_member_ids_.emplace(&port, id);
+    return id;
+  };
+
   const auto publish_part =
       [&](const slang::ast::PortSymbol& port) -> diag::Result<hir::PortPart> {
     const auto span = SourceMapper().PointSpanOf(port.location);
@@ -158,18 +213,40 @@ auto UnitLowerer::PublishSignature() -> diag::Result<void> {
               .name = std::string{multi->name}, .parts = std::move(parts)});
       continue;
     }
-    // An interface port names a scope rather than carrying data (LRM 25.3). A
-    // connection reaches it as one point like any other, so it has one part;
-    // what the unit publishes about that part is that nothing crosses it.
+    // A connection reaches an interface port as one point like any other, so it
+    // has one part.
+    auto published =
+        publish_interface_port(member->as<slang::ast::InterfacePortSymbol>());
+    if (!published) return std::unexpected(std::move(published.error()));
     signature_.ports.push_back(
         hir::PortDecl{
             .name = std::string{member->name},
-            .parts = {hir::PortPart{hir::InterfacePortPart{}}}});
+            .parts = {
+                hir::PortPart{hir::InterfacePortPart{.member = *published}}}});
+  }
+
+  // An interface port names the interface's scope rather than a point data
+  // crosses (LRM 25.3), so every name the interface declares is reachable
+  // through one. What a module promises is its ports; what an interface
+  // promises is its whole declared surface, and it promises it here so a
+  // referrer resolves a name on the port where it compiles.
+  if (body->getDefinition().definitionKind ==
+      slang::ast::DefinitionKind::Interface) {
+    for (const auto& member : scope_->members()) {
+      const auto* value = member.as_if<slang::ast::ValueSymbol>();
+      if (value == nullptr ||
+          (member.kind != slang::ast::SymbolKind::Variable &&
+           member.kind != slang::ast::SymbolKind::Net)) {
+        continue;
+      }
+      auto id = publish_member(*value);
+      if (!id) return std::unexpected(std::move(id.error()));
+    }
   }
 
   // One slot per member published, for the declarations to fill as this unit's
   // own walk reaches them.
-  published_objects_.resize(instance_class.members.size());
+  published_members_.resize(instance_class.members.size());
   return {};
 }
 

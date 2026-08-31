@@ -18,22 +18,32 @@ struct IntraUnitClassRef {
   auto operator==(const IntraUnitClassRef&) const -> bool = default;
 };
 
-// A reference to a class declared outside this compilation unit, named by its
-// final target-language qualified name (e.g. `lyra::runtime::Scope`). One arm
-// covers every non-intra-unit class -- a runtime library base and a
-// cross-unit SV class both flow through it, distinguished only by which
-// qualified name the producer supplied. The backend renders it through the
-// same type-mapping dispatch that renders `ExternalClassType`.
-struct ExternalClassRef {
-  std::string qualified_name;
+// A reference to a class another compilation unit declares, named the way every
+// cross-unit name is: by the declaring unit and the class's canonical name. The
+// pair is the identity; how it is spelled belongs to whichever target a backend
+// emits, so nothing here composes one.
+struct CrossUnitClassRef {
+  std::string unit_name;
+  std::string class_name;
 
-  auto operator==(const ExternalClassRef&) const -> bool = default;
+  auto operator==(const CrossUnitClassRef&) const -> bool = default;
 };
 
-// A reference to the class an object extends. Either intra-unit (a class of
-// this unit's registry) or external (any other class, named by its qualified
-// target-language name). A consumer reads each arm directly.
-using ClassRef = std::variant<IntraUnitClassRef, ExternalClassRef>;
+// A reference to a class the runtime library defines, named by the library
+// symbol itself. No compilation unit declares it, so there is no unit to name
+// it through and nothing to resolve: the symbol is the identity.
+struct RuntimeClassRef {
+  std::string symbol;
+
+  auto operator==(const RuntimeClassRef&) const -> bool = default;
+};
+
+// A reference to the class an object extends: one this unit declares, one
+// another unit declares, or one the runtime library provides. The three are
+// reached differently -- a registry lookup, a name resolved against a consumed
+// signature, a library symbol -- so each is its own arm.
+using ClassRef =
+    std::variant<IntraUnitClassRef, CrossUnitClassRef, RuntimeClassRef>;
 
 // A method that introduces a new virtual dispatch slot on the class it
 // declares -- LRM 8.20 `virtual function` first appearance in an inheritance

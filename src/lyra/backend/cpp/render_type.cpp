@@ -160,8 +160,14 @@ auto RenderTypeAsCpp(const mir::CompilationUnit& unit, mir::TypeId type_id)
                 "{}::{}", ToCppName(object.unit_name),
                 ToCppName(object.class_name));
           },
-          [](const mir::ExternalClassType& e) -> std::string {
-            return e.qualified_name;
+          [](const mir::CrossUnitClassType& e) -> std::string {
+            // A unit's emitted peer is a namespace, and the class it declares
+            // sits inside it.
+            return std::format(
+                "{}::{}", ToCppName(e.unit_name), ToCppName(e.class_name));
+          },
+          [](const mir::RuntimeClassType& e) -> std::string {
+            return e.symbol;
           },
           [](const mir::RuntimeEffectsType&) -> std::string {
             return std::string{"lyra::runtime::RuntimeEffects&"};
@@ -365,8 +371,12 @@ auto RenderClassRefAsCpp(
           [&unit](const mir::IntraUnitClassRef& i) -> std::string {
             return ToCppName(unit.GetClass(i.class_id).name);
           },
-          [](const mir::ExternalClassRef& e) -> std::string {
-            return e.qualified_name;
+          [](const mir::CrossUnitClassRef& e) -> std::string {
+            return std::format(
+                "{}::{}", ToCppName(e.unit_name), ToCppName(e.class_name));
+          },
+          [](const mir::RuntimeClassRef& e) -> std::string {
+            return e.symbol;
           }},
       ref);
 }

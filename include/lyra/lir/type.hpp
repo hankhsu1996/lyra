@@ -151,8 +151,18 @@ struct ExternalUnitObjectType {
   ExternalUnitObjectId object;
 };
 
-struct ExternalClassType {
-  std::string qualified_name;
+// A class another compilation unit declares, named by that unit and the class's
+// canonical name. A backend spells the pair in its own target language; nothing
+// here composes one.
+struct CrossUnitClassType {
+  std::string unit_name;
+  std::string class_name;
+};
+
+// A class the runtime library defines, named by the library symbol. It belongs
+// to no compilation unit, so the symbol is the whole identity.
+struct RuntimeClassType {
+  std::string symbol;
 };
 
 // A callable value: an instance of one closure declaration, holding that
@@ -232,10 +242,10 @@ using TypeData = std::variant<
     AssociativeArrayType, WildcardIndexType, StringType, MachineCStringType,
     MachineIntType, MachineFloatType, MachineArrayType, EventType, RealType,
     ShortRealType, RealTimeType, ChandleType, VoidType, EmptyType, ObjectType,
-    ExternalUnitObjectType, ExternalClassType, ClosureType, RuntimeEffectsType,
-    FilesType, DiagnosticType, RuntimeLibraryType, CoroutineType, RefType,
-    PointerType, ManagedRefType, VectorType, TupleType, UnionType,
-    TaggedUnionType, ResolvedType, DriverType, ObservableType>;
+    ExternalUnitObjectType, CrossUnitClassType, RuntimeClassType, ClosureType,
+    RuntimeEffectsType, FilesType, DiagnosticType, RuntimeLibraryType,
+    CoroutineType, RefType, PointerType, ManagedRefType, VectorType, TupleType,
+    UnionType, TaggedUnionType, ResolvedType, DriverType, ObservableType>;
 
 struct Type {
   TypeData data;

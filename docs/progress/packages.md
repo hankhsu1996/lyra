@@ -99,8 +99,9 @@ callable-bearing part of PK4 reuse; PK1 is independent of it.
       derived from its compilation-unit input identity, so the referrer and the emitted definition
       agree with no shared table, whether the file set compiles as one unit (a single `$unit`
       visible across every file) or per file (each file its own `$unit`). A class declared at
-      `$unit` scope rides the class workstream and is out of scope here, as its package-scoped
-      counterpart is.
+      `$unit` scope is reached from a design element the same way, its declaring unit being that
+      scope; what a class is otherwise rides the class workstream, as its package-scoped counterpart
+      does.
 
 ## Blocked
 

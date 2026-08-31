@@ -48,6 +48,19 @@ struct InstanceMemberId {
       -> std::strong_ordering = default;
 };
 
+struct InterfacePortId {
+  std::uint32_t value;
+
+  auto operator<=>(const InterfacePortId&) const
+      -> std::strong_ordering = default;
+};
+
+// A declaration a unit published, named the way the scope that holds it names
+// it. Which arena it lives in is what says how its storage is built: a data
+// object owns a cell the scope installs, an interface port stands for an object
+// the scope neither owns nor builds.
+using PublishedDecl = std::variant<StructuralDataObjectId, InterfacePortId>;
+
 // A generate block (LRM 27) as a child of the scope that declares it: the
 // generate construct it belongs to, plus which of that construct's elaborated
 // blocks it is.
@@ -88,7 +101,18 @@ struct OpaqueStep {
   auto operator==(const OpaqueStep&) const -> bool = default;
 };
 
-using PathStep = std::variant<OwnedChildStep, OpaqueStep>;
+// One navigation step through an interface port of a scope on the path (LRM
+// 25.3). The scope holds a borrowed reference the parent bound during
+// elaboration, so the step is typed member navigation like an owned child's;
+// what differs is that everything past it belongs to the unit the port names,
+// which is why a leaf past this step is counted out of that unit's signature.
+struct InterfacePortStep {
+  InterfacePortId port;
+
+  auto operator==(const InterfacePortStep&) const -> bool = default;
+};
+
+using PathStep = std::variant<OwnedChildStep, InterfacePortStep, OpaqueStep>;
 
 // Where a route starts. `InUnitHead` anchors at a structural scope of this
 // unit, `hops` typed parent edges out from the referrer (0 being the
@@ -152,6 +176,13 @@ struct SignatureMemberLeaf {
   auto operator==(const SignatureMemberLeaf&) const -> bool = default;
 };
 
+// The route ends at the object the steps land on rather than at storage inside
+// it. An interface port names a scope and not a value (LRM 25.3), so what a
+// connection to one reaches is the instance itself.
+struct ScopeLeaf {
+  auto operator==(const ScopeLeaf&) const -> bool = default;
+};
+
 // The route ends past a signature, at a declaration no unit promised. Nothing
 // was published to compile against, so the name is all that crosses and the
 // runtime answers it while the design elaborates (LRM 23.6).
@@ -163,7 +194,7 @@ struct OpaqueLeaf {
 
 using RouteLeaf = std::variant<
     StructuralDataObjectLeaf, ProceduralStaticLeaf, SignatureMemberLeaf,
-    OpaqueLeaf>;
+    ScopeLeaf, OpaqueLeaf>;
 
 // How to navigate from a scope to a target elsewhere on the object tree:
 // `head` is where navigation starts, `steps` carries the descent from there,
@@ -202,6 +233,17 @@ struct InstanceMemberDecl {
   std::vector<std::uint32_t> array_dims;
 };
 
+// An interface port's internal name (LRM 25.3). The scope names an instance of
+// another unit that it neither owns nor builds; the parent binds it during
+// elaboration, the way it binds a `ref` port's internal name to the connected
+// variable. `object` is this unit's record of what that unit published, so a
+// name reached through the port is counted out of the order its signature
+// states.
+struct InterfacePortDecl {
+  std::string name;
+  ExternalUnitObjectId object;
+};
+
 // How the child port is reached, by endpoint capability. An input or output
 // port has its own cell, realized as a reactive edge over it (a variable cell
 // written / read, a net cell driven / read), so it holds a persistent routed
@@ -215,15 +257,6 @@ struct PortCellEndpoint {
 };
 using PortEndpoint = std::variant<PortCellEndpoint, RoutedPathRecipe>;
 
-// A module port connection at an instantiation (LRM 23.3.3). `endpoint` reaches
-// the child's port member; `peer` is the parent-side connected expression;
-// `direction` is the port direction; `sensitivity` is the read set the implied
-// continuous assignment waits on (the peer's reads for an input port, the child
-// port for an output port; empty for a `ref` port). HIR holds the connection
-// verbatim and HIR-to-MIR realizes it: an input or output port as the implied
-// continuous assignment between the two cells (LRM 23.3.3), a `ref` port as an
-// alias bind of the child's reference member to the peer's cell, performed in
-// the resolve phase (LRM 23.3.3.2).
 struct PortConnectionId {
   std::uint32_t value;
 
@@ -231,12 +264,34 @@ struct PortConnectionId {
       -> std::strong_ordering = default;
 };
 
-struct PortConnection {
-  diag::SourceSpan span;
+// A connection carrying data across the boundary (LRM 23.3.3). `endpoint`
+// reaches the child's port member; `peer` is the parent-side connected
+// expression; `sensitivity` is the read set the implied continuous assignment
+// waits on (the peer's reads for an input port, the child port for an output
+// port; empty for a `ref` port). HIR holds it verbatim and HIR-to-MIR realizes
+// it: an input or output port as the implied continuous assignment between the
+// two cells, a `ref` port as an alias bind of the child's reference member to
+// the peer's cell, performed in the resolve phase (LRM 23.3.3.2).
+struct DataPortConnection {
   PortDirection direction;
   PortEndpoint endpoint;
   ExprId peer;
   std::vector<SensitivityEntry> sensitivity;
+};
+
+// A connection binding a child's interface port to an interface instance
+// (LRM 25.3). No value crosses in either direction, so there is nothing to
+// drive and nothing to wait on: `endpoint` reaches the child's port member and
+// `peer` reaches the instance bound there, both resolved once in the resolve
+// phase, the way a `ref` port's alias is.
+struct InterfacePortConnection {
+  RoutedPathRecipe endpoint;
+  RoutedPathRecipe peer;
+};
+
+struct PortConnection {
+  diag::SourceSpan span;
+  std::variant<DataPortConnection, InterfacePortConnection> kind;
 };
 
 // The lowered form of every generate construct (LRM 27): after frontend
@@ -264,17 +319,18 @@ struct StructuralScope {
   TimeResolution time_resolution;
   base::Arena<StructuralDataObjectDecl, StructuralDataObjectId>
       structural_data_objects;
-  // The data objects this unit published, in the order its signature states
+  // The declarations this unit published, in the order its signature states
   // them -- which is where their storage sits, since a referrer counts a
   // published member's position out of that same order. Empty for a scope no
   // other unit names, which is every scope but the one a unit's instances are.
-  std::vector<StructuralDataObjectId> published_objects;
+  std::vector<PublishedDecl> published_members;
   base::Arena<Expr, ExprId> exprs;
   base::Arena<Pattern, PatternId> patterns;
   base::Registry<Process, ProcessId> processes;
   base::Arena<ContinuousAssign, ContinuousAssignId> continuous_assigns;
   base::Registry<Generate, GenerateId> generates;
   base::Registry<InstanceMemberDecl, InstanceMemberId> instance_members;
+  base::Arena<InterfacePortDecl, InterfacePortId> interface_ports;
   base::Arena<PortConnection, PortConnectionId> port_connections;
   base::Arena<RoutedRefDecl, RoutedRefId> routed_refs;
   // Body-bearing SV subroutines only. A bodyless DPI-C import never enters this

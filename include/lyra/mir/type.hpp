@@ -37,7 +37,8 @@ enum class TypeKind {
   kEmpty,
   kObject,
   kExternalUnitObject,
-  kExternalClass,
+  kCrossUnitClass,
+  kRuntimeClass,
   kRuntimeEffects,
   kFiles,
   kDiagnostic,
@@ -303,15 +304,26 @@ struct ExternalUnitObjectType {
   auto operator==(const ExternalUnitObjectType&) const -> bool = default;
 };
 
-// A class declared outside this compilation unit, named by its final
-// target-language qualified name (e.g. `lyra::runtime::Scope`). MIR does not
-// know the class's members; the backend renders the qualified name through
-// its type-mapping dispatch, and inheritance and construction refer to it
-// through the same identity a class value of this type would.
-struct ExternalClassType {
-  std::string qualified_name;
+// The type of an instance of a class another compilation unit declares, named
+// by the declaring unit and the class's canonical name. MIR does not know the
+// class's members: what a referrer may name on it is what that unit published,
+// and reaching a member is a separate act from naming the type. A backend
+// spells the pair in its own target language.
+struct CrossUnitClassType {
+  std::string unit_name;
+  std::string class_name;
 
-  auto operator==(const ExternalClassType&) const -> bool = default;
+  auto operator==(const CrossUnitClassType&) const -> bool = default;
+};
+
+// The type of an instance of a class the runtime library defines, named by the
+// library symbol. MIR does not know its members either; unlike a class of
+// another unit it belongs to no compilation unit, so the symbol is the whole
+// identity and no unit dependency follows from naming it.
+struct RuntimeClassType {
+  std::string symbol;
+
+  auto operator==(const RuntimeClassType&) const -> bool = default;
 };
 
 // The runtime capability surface `lyra::runtime::RuntimeEffects`. Reached
@@ -652,11 +664,11 @@ using TypeData = std::variant<
     AssociativeArrayType, WildcardIndexType, StringType, MachineCStringType,
     MachineIntType, MachineFloatType, MachineArrayType, MachineFunctionType,
     EventType, RealType, ShortRealType, RealTimeType, ChandleType, VoidType,
-    ObjectType, ExternalUnitObjectType, ExternalClassType, RuntimeEffectsType,
-    FilesType, DiagnosticType, RuntimeLibraryType, CoroutineType, RefType,
-    PointerType, ManagedRefType, VectorType, TupleType, UnionType,
-    TaggedUnionType, EmptyType, ObservableType, ResolvedType, DriverType,
-    StructType, ClosureType>;
+    ObjectType, ExternalUnitObjectType, CrossUnitClassType, RuntimeClassType,
+    RuntimeEffectsType, FilesType, DiagnosticType, RuntimeLibraryType,
+    CoroutineType, RefType, PointerType, ManagedRefType, VectorType, TupleType,
+    UnionType, TaggedUnionType, EmptyType, ObservableType, ResolvedType,
+    DriverType, StructType, ClosureType>;
 
 struct Type {
   TypeData data;

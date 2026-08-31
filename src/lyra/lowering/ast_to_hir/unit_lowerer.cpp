@@ -20,6 +20,7 @@
 #include <slang/ast/symbols/ClassSymbols.h>
 #include <slang/ast/symbols/CompilationUnitSymbols.h>
 #include <slang/ast/symbols/InstanceSymbols.h>
+#include <slang/ast/symbols/PortSymbols.h>
 #include <slang/ast/symbols/SubroutineSymbols.h>
 #include <slang/ast/symbols/ValueSymbol.h>
 #include <slang/ast/symbols/VariableSymbols.h>
@@ -36,18 +37,18 @@
 #include "lyra/lowering/ast_to_hir/expression/references.hpp"
 #include "lyra/lowering/ast_to_hir/instance_array_shape.hpp"
 #include "lyra/lowering/ast_to_hir/sensitivity.hpp"
-#include "lyra/lowering/ast_to_hir/specialization_name.hpp"
 #include "lyra/lowering/ast_to_hir/structural_scope_lowerer.hpp"
 #include "lyra/lowering/ast_to_hir/subroutine_decl.hpp"
+#include "lyra/lowering/ast_to_hir/unit_identity.hpp"
 #include "lyra/lowering/ast_to_hir/walk_frame.hpp"
 
 namespace lyra::lowering::ast_to_hir {
 
 UnitLowerer::UnitLowerer(
     const LoweringFacts& facts, const slang::ast::Scope& scope,
-    std::string name, hir::UnitKind kind)
+    std::string name, hir::UnitRole role)
     : facts_(facts), scope_(&scope), unit_{std::move(name)} {
-  unit_.kind = kind;
+  unit_.role = role;
   signature_.unit_name = unit_.name;
 }
 
@@ -81,14 +82,14 @@ auto UnitLowerer::LowerBodies(hir::ConsumedSignatures signatures)
     return std::unexpected(std::move(root_scope_or.error()));
   }
   unit_.root_scope = *std::move(root_scope_or);
-  unit_.root_scope.published_objects.reserve(published_objects_.size());
-  for (const auto& object : published_objects_) {
-    if (!object.has_value()) {
+  unit_.root_scope.published_members.reserve(published_members_.size());
+  for (const auto& decl : published_members_) {
+    if (!decl.has_value()) {
       throw InternalError(
           "UnitLowerer::LowerBodies: a member this unit published stands on a "
           "declaration of its own, so the declaration walk reached it");
     }
-    unit_.root_scope.published_objects.push_back(*object);
+    unit_.root_scope.published_members.push_back(*decl);
   }
   return std::move(unit_);
 }
@@ -295,8 +296,35 @@ void UnitLowerer::MapStructuralDataObjectBinding(
   // so the object the unit builds and the object it promised are one shape.
   if (const auto it = published_member_ids_.find(&var);
       it != published_member_ids_.end()) {
-    published_objects_[it->second.value] = local;
+    published_members_[it->second.value] = local;
   }
+}
+
+void UnitLowerer::MapInterfacePortBinding(
+    const slang::ast::InterfacePortSymbol& port, ScopeFrameId home_frame,
+    hir::InterfacePortId local, hir::ExternalUnitObjectId object) {
+  const auto [_, inserted] = interface_port_bindings_.emplace(
+      &port, InterfacePortBinding{
+                 .home_frame = home_frame, .port = local, .object = object});
+  if (!inserted) {
+    throw InternalError(
+        "UnitLowerer::MapInterfacePortBinding: interface port already mapped");
+  }
+  // A port this unit published takes the position its signature gave it, so the
+  // object the unit builds and the object it promised are one shape.
+  if (const auto it = published_member_ids_.find(&port);
+      it != published_member_ids_.end()) {
+    published_members_[it->second.value] = local;
+  }
+}
+
+auto UnitLowerer::LookupInterfacePortBinding(const slang::ast::Symbol& port)
+    const -> std::optional<InterfacePortBinding> {
+  const auto it = interface_port_bindings_.find(&port);
+  if (it == interface_port_bindings_.end()) {
+    return std::nullopt;
+  }
+  return it->second;
 }
 
 auto UnitLowerer::LookupStructuralDataObjectBinding(
@@ -495,15 +523,21 @@ auto UnitLowerer::PublishedRouteTarget(
     const slang::ast::ValueSymbol& value, std::span<const hir::PathStep> steps)
     -> std::optional<RouteTarget> {
   // Reaching a member of another unit by name needs a pointer to that unit's
-  // own object, which only a step onto a child this unit declares produces. A
-  // step into a generate scope stays inside this unit, and one resolved by
-  // name yields a scope with no declaration behind it.
+  // own object, which two steps produce: onto an instance this unit declares,
+  // and through an interface port, which stands for an instance some other
+  // scope declares (LRM 25.3). A step into a generate scope stays inside this
+  // unit, and one resolved by name yields a scope with no declaration behind
+  // it.
   if (steps.empty()) return std::nullopt;
-  const auto* last = std::get_if<hir::OwnedChildStep>(&steps.back());
-  if (last == nullptr ||
-      !std::holds_alternative<hir::InstanceMemberId>(last->child)) {
-    return std::nullopt;
-  }
+  const bool lands_on_unit_object = std::visit(
+      Overloaded{
+          [](const hir::OwnedChildStep& owned) {
+            return std::holds_alternative<hir::InstanceMemberId>(owned.child);
+          },
+          [](const hir::InterfacePortStep&) { return true; },
+          [](const hir::OpaqueStep&) { return false; }},
+      steps.back());
+  if (!lands_on_unit_object) return std::nullopt;
 
   const slang::ast::Scope* owner = value.getHierarchicalParent();
   if (owner == nullptr) return std::nullopt;
@@ -576,6 +610,25 @@ auto UnitLowerer::ResolveRouteTarget(
       .storage = *std::move(storage)};
 }
 
+auto UnitLowerer::MakeRoutedRef(
+    const slang::ast::ValueSymbol& value, ScopeFrameId slot_owner,
+    hir::RouteHead head, std::vector<hir::PathStep> steps)
+    -> diag::Result<hir::ReferenceRoute> {
+  auto target = ResolveRouteTarget(value, steps);
+  if (!target) return std::unexpected(std::move(target.error()));
+  const hir::RoutedRefId id = MapOrGetRoutedRef(
+      value, slot_owner,
+      hir::RoutedRefDecl{
+          .recipe =
+              hir::RoutedPathRecipe{
+                  .head = std::move(head),
+                  .steps = std::move(steps),
+                  .leaf = std::move(target->leaf),
+                  .type = target->type},
+          .target_storage = target->storage});
+  return hir::ReferenceRoute{hir::RoutedRef{.id = id}};
+}
+
 auto UnitLowerer::TranslateReferenceRoute(
     const WalkFrame& frame, const slang::ast::ValueSymbol& value)
     -> diag::Result<std::optional<hir::ReferenceRoute>> {
@@ -593,25 +646,13 @@ auto UnitLowerer::TranslateReferenceRoute(
         hir::DirectMemberRef{.var = data_object->var_id}};
   }
 
-  // The reference, once its route is assembled. Where a route ends is what
-  // decides how its target can be named, so the slot is declared only with the
-  // whole route in hand.
   const auto routed_ref = [&](ScopeFrameId slot_owner, hir::RouteHead head,
                               std::vector<hir::PathStep> steps)
       -> diag::Result<std::optional<hir::ReferenceRoute>> {
-    auto target = ResolveRouteTarget(value, steps);
-    if (!target) return std::unexpected(std::move(target.error()));
-    const hir::RoutedRefId id = MapOrGetRoutedRef(
-        value, slot_owner,
-        hir::RoutedRefDecl{
-            .recipe =
-                hir::RoutedPathRecipe{
-                    .head = std::move(head),
-                    .steps = std::move(steps),
-                    .leaf = std::move(target->leaf),
-                    .type = target->type},
-            .target_storage = target->storage});
-    return hir::ReferenceRoute{hir::RoutedRef{.id = id}};
+    auto route =
+        MakeRoutedRef(value, slot_owner, std::move(head), std::move(steps));
+    if (!route) return std::unexpected(std::move(route.error()));
+    return *route;
   };
 
   // The target's storage hangs under an ancestor scope of the same unit, so

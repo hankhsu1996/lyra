@@ -5,6 +5,7 @@
 #include <string>
 #include <variant>
 
+#include "lyra/base/overloaded.hpp"
 #include "lyra/hir/structural_data_object.hpp"
 #include "lyra/hir/type_id.hpp"
 
@@ -42,12 +43,20 @@ struct ReferenceStorage {
   auto operator==(const ReferenceStorage&) const -> bool = default;
 };
 
-// Which storage a published member is, and so which cell a reference to it
-// reaches. The publishing unit's own declaration is the only source of this, so
-// the signature states it and a referrer never reads that declaration to learn
-// it -- which is what the external name exists to prevent.
-using PublishedStorage =
-    std::variant<VariableStorage, NetStorage, ReferenceStorage>;
+// A member holding no object of its own: an interface port stands for an
+// instance of another unit that some enclosing scope owns, and the parent binds
+// it during elaboration (LRM 25.3).
+struct BorrowedObjectStorage {
+  auto operator==(const BorrowedObjectStorage&) const -> bool = default;
+};
+
+// Which storage a published member is, and so what the member holds: a cell of
+// its own, a cell another declaration owns, or an object another scope owns.
+// The publishing unit's own declaration is the only source of this, so the
+// signature states it and a referrer never reads that declaration to learn it
+// -- which is what the external name exists to prevent.
+using PublishedStorage = std::variant<
+    VariableStorage, NetStorage, ReferenceStorage, BorrowedObjectStorage>;
 
 // One declaration an instance of a unit exposes to another unit by name.
 struct PublishedMember {
@@ -60,14 +69,18 @@ struct PublishedMember {
 // object from it, so the two cannot describe different storage.
 [[nodiscard]] inline auto StorageOf(const StructuralDataObjectDecl& decl)
     -> PublishedStorage {
-  if (const auto* variable = std::get_if<StructuralVariableDecl>(&decl.kind)) {
-    if (variable->reference.has_value()) {
-      return ReferenceStorage{.binding = *variable->reference};
-    }
-    return VariableStorage{};
-  }
-  return NetStorage{
-      .net_type = std::get<StructuralNetDecl>(decl.kind).net_type};
+  return std::visit(
+      Overloaded{
+          [](const StructuralVariableDecl&) -> PublishedStorage {
+            return VariableStorage{};
+          },
+          [](const StructuralNetDecl& net) -> PublishedStorage {
+            return NetStorage{.net_type = net.net_type};
+          },
+          [](const StructuralReferenceDecl& reference) -> PublishedStorage {
+            return ReferenceStorage{.binding = reference.binding};
+          }},
+      decl.kind);
 }
 
 }  // namespace lyra::hir
