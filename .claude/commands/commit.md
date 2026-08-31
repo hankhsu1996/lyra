@@ -32,10 +32,13 @@ Each tool runs **once**. Formatters run in write mode; running them again in che
 
 ```bash
 bazel build //...
-bazel test //... --test_output=errors
+bazel test //...
 ```
 
-Same target set CI runs. Do not narrow `//...`. Fix failures before staging.
+Same target set the merge gate runs, which is what makes a green run here mean "this lands green".
+Do not narrow `//...`, and do not widen it either: a change that touches what the C++ backend emits
+pays `--config=nightly` on top, because that target is the only thing that compiles emitted text
+and the gate does not run it. Fix failures before staging.
 
 ### Format (write mode, once each)
 

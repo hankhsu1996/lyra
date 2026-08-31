@@ -11,6 +11,7 @@
 #include "lyra/lowering/hir_to_mir/structural_scope_lowerer.hpp"  // IWYU pragma: keep
 #include "lyra/mir/compilation_unit.hpp"
 #include "lyra/mir/expr_id.hpp"
+#include "lyra/mir/packed_type_descriptor.hpp"
 #include "lyra/support/builtin_fn.hpp"
 
 namespace lyra::lowering::hir_to_mir {
@@ -57,7 +58,7 @@ auto LowerRealConversionCall(
 
   // The other direction answers in a machine integer -- the fraction dropped,
   // or the pattern itself -- which the destination's declared representation
-  // then lands into, the prototype carrying that representation.
+  // then lands into, named as the type it is.
   const mir::ExprId read_out = block.exprs.Add(
       mir::Expr{
           .data =
@@ -65,8 +66,8 @@ auto LowerRealConversionCall(
                   .callee = mir::Direct{.target = b.method},
                   .arguments = {operand_id}},
           .type = machine_int});
-  const mir::ExprId prototype =
-      block.exprs.Add(BuildDefaultValueExpr(unit_lowerer, frame, result_type));
+  const mir::ExprId packed_type =
+      mir::BuildPackedTypeRef(unit_lowerer.Unit(), block, result_type);
   return mir::Expr{
       .data =
           mir::CallExpr{
@@ -74,7 +75,7 @@ auto LowerRealConversionCall(
                   mir::Direct{
                       .target = support::BuiltinFn::kFromInt,
                       .qualification = mir::TypeQualifier{.type = result_type}},
-              .arguments = {read_out, prototype}},
+              .arguments = {read_out, packed_type}},
       .type = result_type};
 }
 

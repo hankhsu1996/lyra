@@ -374,6 +374,8 @@ auto BuiltinFnCppName(support::BuiltinFn id) -> std::string_view {
       return "FromSvLogic";
     case support::BuiltinFn::kFromInt:
       return "FromInt";
+    case support::BuiltinFn::kFromWords:
+      return "FromWords";
     case support::BuiltinFn::kConvertFrom:
       return "ConvertFrom";
     case support::BuiltinFn::kFromPackedArray:

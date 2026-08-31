@@ -96,6 +96,8 @@ class CodeGenFunction {
   auto LowerRealConst(const lir::RealConst& constant)
       -> diag::Result<llvm::Value*>;
   auto LowerNullConst(const lir::NullConst& constant) -> llvm::Value*;
+  auto LowerPackedTypeRef(const lir::PackedTypeRef& ref)
+      -> diag::Result<llvm::Value*>;
   auto LowerTerminatorInto(const lir::Terminator& terminator)
       -> diag::Result<void>;
 

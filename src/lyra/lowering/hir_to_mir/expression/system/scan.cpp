@@ -20,6 +20,7 @@
 #include "lyra/lowering/hir_to_mir/cast_lowering.hpp"
 #include "lyra/lowering/hir_to_mir/condition.hpp"
 #include "lyra/lowering/hir_to_mir/default_value.hpp"
+#include "lyra/lowering/hir_to_mir/integral_literal.hpp"
 #include "lyra/lowering/hir_to_mir/lhs_store.hpp"
 #include "lyra/lowering/hir_to_mir/process_lowerer.hpp"
 #include "lyra/lowering/hir_to_mir/runtime_call.hpp"
@@ -209,9 +210,8 @@ auto LowerScanSystemSubroutineCall(
   body.AppendStmt(
       mir::LocalDeclStmt{
           .target = count_var,
-          .init = body.exprs.Add(
-              mir::MakeIntegerLiteral(
-                  integer_t, static_cast<std::int64_t>(-1)))});
+          .init =
+              BuildIntegerLiteral(unit, body, static_cast<std::int64_t>(-1))});
 
   const std::optional<mir::ExprId> rule_source =
       is_file ? std::nullopt
@@ -265,8 +265,7 @@ auto LowerScanSystemSubroutineCall(
   // LRM 21.3.4.3 "the offending input character is left unread in the
   // input stream": the parse returns the byte-count it consumed so the
   // file form can rewind the unconsumed tail before the next read.
-  const mir::ExprId consumed_init =
-      scan_body.exprs.Add(mir::MakeIntLiteral(int_type, 0));
+  const mir::ExprId consumed_init = BuildIntLiteral(unit, scan_body, 0);
   const mir::LocalId consumed_var = steps.Bindings().DeclareAnonymous(
       mir::LocalDecl{.name = "_lyra_scan_consumed", .type = int_type});
   scan_body.AppendStmt(
@@ -348,8 +347,8 @@ auto LowerScanSystemSubroutineCall(
   for (std::size_t k = 0; k < target_types.size(); ++k) {
     const mir::ExprId count_read_id =
         scan_body.exprs.Add(mir::MakeLocalRefExpr(count_var, integer_t));
-    const mir::ExprId k_lit_id = scan_body.exprs.Add(
-        mir::MakeIntegerLiteral(integer_t, static_cast<std::int64_t>(k + 1)));
+    const mir::ExprId k_lit_id =
+        BuildIntegerLiteral(unit, scan_body, static_cast<std::int64_t>(k + 1));
     const mir::ExprId cond_id = scan_body.exprs.Add(
         mir::Expr{
             .data =
@@ -374,12 +373,11 @@ auto LowerScanSystemSubroutineCall(
     then_body.AppendStmt(mir::ExprStmt{.expr = assign_id});
 
     scan_body.AppendIfThen(
-        ReduceToCondition(scan_body, cond_id, unit.builtins.bit1),
-        std::move(then_body));
+        ReduceToCondition(unit, scan_body, cond_id), std::move(then_body));
   }
 
   body.AppendIfThen(
-      ReduceToCondition(body, known_id, bit_t), std::move(scan_body));
+      ReduceToCondition(unit, body, known_id), std::move(scan_body));
 
   const mir::ExprId count_id =
       body.exprs.Add(mir::MakeLocalRefExpr(count_var, integer_t));

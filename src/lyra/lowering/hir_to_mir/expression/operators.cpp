@@ -19,6 +19,7 @@
 #include "lyra/lowering/hir_to_mir/cast_lowering.hpp"
 #include "lyra/lowering/hir_to_mir/condition.hpp"
 #include "lyra/lowering/hir_to_mir/default_value.hpp"
+#include "lyra/lowering/hir_to_mir/integral_literal.hpp"
 #include "lyra/lowering/hir_to_mir/lhs_store.hpp"
 #include "lyra/lowering/hir_to_mir/pattern.hpp"
 #include "lyra/lowering/hir_to_mir/process_lowerer.hpp"
@@ -100,7 +101,7 @@ auto BuildMirLogicalAnd(
     mir::CompilationUnit& unit, mir::Block& block, mir::TypeId bit1_type,
     std::span<const mir::ExprId> tests) -> mir::ExprId {
   if (tests.empty()) {
-    return block.exprs.Add(mir::MakeBit1Literal(bit1_type, true));
+    return BuildBit1Literal(unit, block, true);
   }
   mir::ExprId acc = tests.front();
   for (const mir::ExprId test : tests.subspan(1)) {
@@ -114,7 +115,7 @@ auto BuildMirLogicalOr(
     mir::CompilationUnit& unit, mir::Block& block, mir::TypeId bit1_type,
     std::span<const mir::ExprId> tests) -> mir::ExprId {
   if (tests.empty()) {
-    return block.exprs.Add(mir::MakeBit1Literal(bit1_type, false));
+    return BuildBit1Literal(unit, block, false);
   }
   mir::ExprId acc = tests.front();
   for (const mir::ExprId test : tests.subspan(1)) {
@@ -257,24 +258,24 @@ auto MakeFromBoolCall(mir::ExprId bool_expr_id, mir::TypeId result_type)
       .type = result_type};
 }
 
-// Wraps an operand in `BoolCastExpr` so a host-bool consumer (a native
-// `&&` / `||` / `!`, or `kFromBool`) can take it. The cast's MIR type is
-// the unit's canonical 1-bit packed type because the wrap is observable
-// only after `FromBool` re-shapes it; the bool-ness rides on the node kind,
-// not on the type.
-auto MakeBoolCast(mir::ExprId operand_id, mir::TypeId bit1_type) -> mir::Expr {
+// Wraps an operand in `BoolCastExpr` so a machine-boolean consumer -- a native
+// `&&` / `||` / `!`, or `kFromBool` -- can take it.
+auto MakeBoolCast(const mir::CompilationUnit& unit, mir::ExprId operand_id)
+    -> mir::Expr {
   return mir::Expr{
-      .data = mir::BoolCastExpr{.operand = operand_id}, .type = bit1_type};
+      .data = mir::BoolCastExpr{.operand = operand_id},
+      .type = unit.builtins.machine_bool};
 }
 
 // LRM 11.3.1 logical operator on real / string operands: each operand
 // passes through `bool(...)`, then the host-native logical operator
 // composes them, then `kFromBool` re-shapes to a 1-bit integral.
 auto BuildRealOrStringLogicalLift(
-    mir::Block& block, mir::BinaryOp op, mir::ExprId lhs_id, mir::ExprId rhs_id,
-    mir::TypeId result_type, mir::TypeId bit1_type) -> mir::Expr {
-  const mir::ExprId lhs_bool = block.exprs.Add(MakeBoolCast(lhs_id, bit1_type));
-  const mir::ExprId rhs_bool = block.exprs.Add(MakeBoolCast(rhs_id, bit1_type));
+    const mir::CompilationUnit& unit, mir::Block& block, mir::BinaryOp op,
+    mir::ExprId lhs_id, mir::ExprId rhs_id, mir::TypeId result_type)
+    -> mir::Expr {
+  const mir::ExprId lhs_bool = block.exprs.Add(MakeBoolCast(unit, lhs_id));
+  const mir::ExprId rhs_bool = block.exprs.Add(MakeBoolCast(unit, rhs_id));
   mir::ExprId inner{};
   switch (op) {
     case mir::BinaryOp::kLogicalAnd:
@@ -339,7 +340,7 @@ auto BuildMirUnaryExpr(
       (IsRealFamilyType(operand_ty) ||
        operand_ty.Kind() == mir::TypeKind::kChandle)) {
     const mir::ExprId operand_bool =
-        block.exprs.Add(MakeBoolCast(operand_id, unit.builtins.bit1));
+        block.exprs.Add(MakeBoolCast(unit, operand_id));
     const mir::ExprId not_id = block.exprs.Add(
         mir::Expr{
             .data =
@@ -397,7 +398,7 @@ auto BuildMirBinaryExpr(
       case mir::BinaryOp::kLogicalImplication:
       case mir::BinaryOp::kLogicalEquivalence:
         return BuildRealOrStringLogicalLift(
-            block, op, lhs_id, rhs_id, result_type, unit.builtins.bit1);
+            unit, block, op, lhs_id, rhs_id, result_type);
       default:
         break;
     }
@@ -537,7 +538,7 @@ auto LowerHirConditionalExpr(
   return mir::Expr{
       .data =
           mir::ConditionalExpr{
-              .condition = ReduceToCondition(block, predicate_id, bit1_type),
+              .condition = ReduceToCondition(unit, block, predicate_id),
               .then_value = then_id,
               .else_value = else_id},
       .type = result_type};
@@ -568,8 +569,7 @@ auto LowerHirBindingConditionalExpr(
       mir::LocalDecl{.name = "_lyra_cond_taken", .type = bit1_type});
   block.AppendStmt(
       mir::LocalDeclStmt{
-          .target = taken_flag,
-          .init = block.exprs.Add(mir::MakeBit1Literal(bit1_type, false))});
+          .target = taken_flag, .init = BuildBit1Literal(unit, block, false)});
 
   auto assign_arm = [&](WalkFrame arm_frame,
                         hir::ExprId value) -> diag::Result<void> {
@@ -600,7 +600,8 @@ auto LowerHirBindingConditionalExpr(
   if (!else_or) return std::unexpected(std::move(else_or.error()));
   const mir::BlockId else_scope = block.child_scopes.Add(std::move(else_block));
 
-  block.AppendStmt(BuildChainElseIf(block, taken_flag, bit1_type, else_scope));
+  block.AppendStmt(
+      BuildChainElseIf(unit, block, taken_flag, bit1_type, else_scope));
 
   return mir::Expr{
       .data = mir::LocalRef{.var = result_local}, .type = result_type};

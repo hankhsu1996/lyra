@@ -19,6 +19,7 @@
 #include "lyra/hir/expr.hpp"
 #include "lyra/hir/primary.hpp"
 #include "lyra/lowering/hir_to_mir/cast_lowering.hpp"
+#include "lyra/lowering/hir_to_mir/integral_literal.hpp"
 #include "lyra/lowering/hir_to_mir/process_lowerer.hpp"
 #include "lyra/lowering/hir_to_mir/runtime_call.hpp"
 #include "lyra/lowering/hir_to_mir/self_ref.hpp"
@@ -280,7 +281,7 @@ auto BuildFormatSpecExpr(
     mir::CompilationUnit& unit, mir::Block& block, const mir::FormatSpec& spec,
     std::int64_t time_unit_power) -> mir::Expr {
   const auto int_lit = [&](std::int64_t v) {
-    return block.exprs.Add(mir::MakeIntLiteral(unit.builtins.int_type, v));
+    return BuildIntLiteral(unit, block, v);
   };
   std::vector<mir::ExprId> args;
   args.push_back(int_lit(static_cast<std::int64_t>(spec.kind)));
@@ -468,10 +469,8 @@ auto BuildRuntimeFormatCallExpr(
                       mir::Direct{.target = support::BuiltinFn::kTimeFormat},
                   .arguments = {runtime_id}},
           .type = unit.builtins.time_format});
-  const mir::ExprId time_unit_power = block.exprs.Add(
-      mir::MakeIntLiteral(
-          unit.builtins.int_type,
-          static_cast<std::int64_t>(lowerer.Resolution().unit_power)));
+  const mir::ExprId time_unit_power = BuildIntLiteral(
+      unit, block, static_cast<std::int64_t>(lowerer.Resolution().unit_power));
 
   return mir::Expr{
       .data =

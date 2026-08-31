@@ -28,6 +28,7 @@
 #include "lyra/lowering/hir_to_mir/declared_instances.hpp"
 #include "lyra/lowering/hir_to_mir/default_value.hpp"
 #include "lyra/lowering/hir_to_mir/expression/dpi_call.hpp"
+#include "lyra/lowering/hir_to_mir/integral_literal.hpp"
 #include "lyra/lowering/hir_to_mir/lhs_store.hpp"
 #include "lyra/lowering/hir_to_mir/package_initialization.hpp"
 #include "lyra/lowering/hir_to_mir/process_lowerer.hpp"
@@ -41,6 +42,7 @@
 #include "lyra/mir/expr.hpp"
 #include "lyra/mir/field.hpp"
 #include "lyra/mir/local.hpp"
+#include "lyra/mir/runtime_record.hpp"
 #include "lyra/mir/stmt.hpp"
 #include "lyra/mir/type.hpp"
 #include "lyra/support/builtin_fn.hpp"
@@ -116,9 +118,8 @@ auto BuildOwnedInstance(
   std::vector<mir::ExprId> indices;
   indices.reserve(coords.size());
   for (const std::uint32_t coord : coords) {
-    indices.push_back(block.exprs.Add(
-        mir::MakeIntLiteral(
-            builtins.int_type, static_cast<std::int64_t>(coord))));
+    indices.push_back(BuildIntLiteral(
+        unit_lowerer.Unit(), block, static_cast<std::int64_t>(coord)));
   }
   const mir::TypeId indices_type = unit_lowerer.Unit().types.MachineArrayOf(
       builtins.int_type, indices.size());
@@ -241,9 +242,8 @@ auto BuildIndicesLiteral(
   std::vector<mir::ExprId> ids;
   ids.reserve(indices.size());
   for (const std::uint32_t idx : indices) {
-    ids.push_back(block.exprs.Add(
-        mir::MakeIntLiteral(
-            builtins.int_type, static_cast<std::int64_t>(idx))));
+    ids.push_back(BuildIntLiteral(
+        unit_lowerer.Unit(), block, static_cast<std::int64_t>(idx)));
   }
   const mir::TypeId indices_type = unit_lowerer.Unit().types.MachineArrayOf(
       builtins.int_type, indices.size());
@@ -877,7 +877,6 @@ auto LowerGenerateAsStmt(
     StructuralScopeLowerer& lowerer, WalkFrame frame, const hir::Generate& gen,
     const GenerateBindings& gen_bindings) -> diag::Result<mir::Stmt> {
   mir::Block& block = *frame.current_block;
-  const mir::TypeId int_type = lowerer.Owner().Unit().builtins.int_type;
 
   mir::Block body;
   const WalkFrame body_frame = frame.WithBlock(&body);
@@ -887,7 +886,7 @@ auto LowerGenerateAsStmt(
     std::optional<mir::ExprId> index_id;
     if (child_scope.index.has_value()) {
       index_id =
-          body.exprs.Add(mir::MakeIntLiteral(int_type, *child_scope.index));
+          BuildIntLiteral(lowerer.Owner().Unit(), body, *child_scope.index);
     }
     AppendOwnedChildConstruction(
         lowerer.Owner(), body_frame, std::nullopt, binding.label,
@@ -1168,91 +1167,6 @@ auto StructuralScopeLowerer::DeclareShape() -> diag::Result<mir::ClassId> {
   return class_id_;
 }
 
-// Builds runtime-library records into one static constant's expression arena.
-// Each record is an ordinary constructed value whose type names the runtime
-// type it builds, so a definition is stated in MIR rather than assembled by
-// each backend from the class's parts.
-class RuntimeRecordBuilder {
- public:
-  RuntimeRecordBuilder(
-      mir::CompilationUnit& unit, base::Arena<mir::Expr, mir::ExprId>& exprs)
-      : unit_(&unit), exprs_(&exprs) {
-  }
-
-  [[nodiscard]] auto Type(mir::RuntimeLibraryKind kind) const -> mir::TypeId {
-    return unit_->types.Intern(mir::RuntimeLibraryType{.kind = kind});
-  }
-
-  auto Add(mir::Expr expr) -> mir::ExprId {
-    return exprs_->Add(std::move(expr));
-  }
-
-  [[nodiscard]] auto TypeOf(mir::ExprId expr) const -> mir::TypeId {
-    return exprs_->Get(expr).type;
-  }
-
-  auto Construct(mir::RuntimeLibraryKind kind, std::vector<mir::ExprId> args)
-      -> mir::ExprId {
-    return Add(
-        mir::Expr{
-            .data =
-                mir::CallExpr{
-                    .callee = mir::Construct{}, .arguments = std::move(args)},
-            .type = Type(kind)});
-  }
-
-  auto MachineInt(std::int64_t value) -> mir::ExprId {
-    return Add(
-        mir::Expr{
-            .data = mir::MachineIntLiteral{.value = value},
-            .type = unit_->builtins.machine_int64});
-  }
-
-  // The address of `adapter`, typed as the function it is. A backend that must
-  // name that type -- to erase it, or to restore it -- reads it off the node
-  // rather than off a convention the two sides would have to keep in step.
-  auto FunctionRef(const mir::Class& cls, mir::AbiAdapterId adapter)
-      -> mir::ExprId {
-    const mir::CallableCode& code = cls.abi_adapters.Get(adapter).code;
-    std::vector<mir::TypeId> params;
-    params.reserve(code.params.size());
-    for (const mir::LocalId param : code.params) {
-      params.push_back(code.locals.Get(param).type);
-    }
-    return Add(
-        mir::Expr{
-            .data = mir::FunctionRef{.adapter = adapter},
-            .type = unit_->types.Intern(
-                mir::MachineFunctionType{
-                    .params = std::move(params), .result = code.result_type})});
-  }
-
-  // The adapter's address named as the erased entry type, so entries of
-  // different prototypes share one table. It is restored to the prototype it
-  // was generated with at the one place that calls it.
-  auto ErasedFunctionRef(const mir::Class& cls, mir::AbiAdapterId adapter)
-      -> mir::ExprId {
-    return Add(
-        mir::Expr{
-            .data = mir::FunctionCastExpr{.operand = FunctionRef(cls, adapter)},
-            .type = unit_->types.ErasedFunction()});
-  }
-
-  auto StringRef(const std::string& text) -> mir::ExprId {
-    const mir::ExprId literal =
-        Add(mir::Expr{
-            .data = mir::StringLiteral{.value = text},
-            .type = unit_->builtins.string});
-    return Construct(
-        mir::RuntimeLibraryKind::kAbiStringRef,
-        {literal, MachineInt(static_cast<std::int64_t>(text.size()))});
-  }
-
- private:
-  mir::CompilationUnit* unit_;
-  base::Arena<mir::Expr, mir::ExprId>* exprs_;
-};
-
 // Builds a runtime scope class's definition as an ordinary constructed value
 // and installs it on `cls`: a per-phase ABI adapter that downcasts the generic
 // scope receiver to `cls` and forwards to the phase body (empty when the phase
@@ -1317,7 +1231,7 @@ auto InstallGeneratedDefinition(
   // same construction covers.
   mir::StaticConstantDecl exports_decl;
   exports_decl.name = "kExports";
-  RuntimeRecordBuilder exports(unit, exports_decl.body.exprs);
+  mir::RuntimeRecordBuilder exports(unit, exports_decl.body.exprs);
   std::vector<mir::ExprId> export_records;
   for (const mir::AbiAdapterId adapter_id : cls.abi_adapters.Ids()) {
     const mir::AbiAdapter& adapter = cls.abi_adapters.Get(adapter_id);
@@ -1330,21 +1244,17 @@ auto InstallGeneratedDefinition(
          exports.ErasedFunctionRef(cls, adapter_id)}));
   }
   const auto export_count = static_cast<std::uint32_t>(export_records.size());
-  const mir::TypeId exports_type = unit.types.Intern(
-      mir::MachineArrayType{
-          .element = exports.Type(mir::RuntimeLibraryKind::kScopeExport),
-          .size = export_count});
-  exports_decl.value = exports.Add(
-      mir::Expr{
-          .data = mir::ArrayLiteralExpr{.elements = std::move(export_records)},
-          .type = exports_type});
+  exports_decl.value = exports.MachineArray(
+      exports.Type(mir::RuntimeLibraryKind::kScopeExport),
+      std::move(export_records));
+  const mir::TypeId exports_type = exports.TypeOf(exports_decl.value);
   exports_decl.type = exports_type;
   const mir::StaticConstantId exports_id =
       cls.static_constants.Add(std::move(exports_decl));
 
   mir::StaticConstantDecl def;
   def.name = "kDefinition";
-  RuntimeRecordBuilder definition(unit, def.body.exprs);
+  mir::RuntimeRecordBuilder definition(unit, def.body.exprs);
   const mir::ExprId exports_ref = definition.Add(
       mir::Expr{
           .data = mir::StaticConstantRef{.constant = exports_id},

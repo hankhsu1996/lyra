@@ -95,7 +95,7 @@ class CallableBindings {
  public:
   // A root body (a process / method / subroutine / constructor): it declares
   // every binding it names; it never forwards and captures nothing.
-  CallableBindings(mir::CompilationUnit& unit, mir::CallableCode& code)
+  CallableBindings(const mir::CompilationUnit& unit, mir::CallableCode& code)
       : unit_(&unit), code_(&code) {
   }
 
@@ -106,7 +106,7 @@ class CallableBindings {
   // closure, typed from `closure_id` -- is materialized here as the body's
   // `locals[0]`; a captured read is a field access over it.
   CallableBindings(
-      mir::CompilationUnit& unit, mir::ClosureDecl& decl,
+      const mir::CompilationUnit& unit, mir::ClosureDecl& decl,
       mir::ClosureId closure_id, CallableBindings& parent,
       mir::Block& capture_site, CapturePolicy policy);
 
@@ -161,7 +161,7 @@ class CallableBindings {
     mir::ExprId source{};
   };
 
-  mir::CompilationUnit* unit_;
+  const mir::CompilationUnit* unit_;
   mir::CallableCode* code_;
   mir::ClosureDecl* closure_decl_ = nullptr;
   CallableBindings* parent_ = nullptr;

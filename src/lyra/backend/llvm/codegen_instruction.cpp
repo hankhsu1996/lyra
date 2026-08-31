@@ -211,12 +211,12 @@ auto CodeGenFunction::ResolvePlaceAddress(const lir::Place& place)
 auto CodeGenFunction::LowerBinary(const lir::BinaryInstr& binary)
     -> diag::Result<llvm::Value*> {
   const lir::TypeId operand_type = OperandType(binary.lhs);
-  // Machine-typed operands are native values, not value-domain handles: their
+  // A machine boolean is a native value, not a value-domain handle: its
   // operator is a machine instruction, not a runtime-library call. This is how
   // the reduced predicates a real- or string-family `&&` / `||` / `<->`
-  // composes (machine booleans) are combined before `from_bool` widens the
-  // result back to a 1-bit packed.
-  if (std::holds_alternative<lir::MachineIntType>(
+  // composes are combined before `from_bool` widens the result back to a 1-bit
+  // packed.
+  if (std::holds_alternative<lir::MachineBoolType>(
           module_->Unit().types.Get(operand_type).data)) {
     return LowerMachineBinary(binary);
   }
@@ -246,10 +246,9 @@ auto CodeGenFunction::LowerMachineBinary(const lir::BinaryInstr& binary)
   if (!rhs) {
     return std::unexpected(std::move(rhs.error()));
   }
-  // The only binary operators that reach machine values compose machine
-  // booleans: `&&` and `||` combine two predicates, and `<->` arrives as an
-  // equality of the two predicates. Every other operator acts on a value
-  // domain, never on a machine value.
+  // The only binary operators that reach a machine boolean compose predicates:
+  // `&&` and `||` combine two, and `<->` arrives as an equality of two. Every
+  // other operator acts on a value domain.
   switch (binary.op) {
     case lir::BinaryOp::kLogicalAnd:
       return builder_.CreateAnd(*lhs, *rhs);
@@ -266,11 +265,11 @@ auto CodeGenFunction::LowerMachineBinary(const lir::BinaryInstr& binary)
 auto CodeGenFunction::LowerUnary(const lir::UnaryInstr& unary)
     -> diag::Result<llvm::Value*> {
   const lir::TypeId operand_type = OperandType(unary.operand);
-  // A machine-typed operand is a native value, not a value-domain handle: its
+  // A machine boolean is a native value, not a value-domain handle: its
   // operator is a machine instruction, not a runtime-library call. This is how
-  // the reduced predicate a real- or chandle-family `!` produces (a machine
-  // boolean) is negated before `from_bool` widens it back to a 1-bit packed.
-  if (std::holds_alternative<lir::MachineIntType>(
+  // the reduced predicate a real- or chandle-family `!` produces is negated
+  // before `from_bool` widens it back to a 1-bit packed.
+  if (std::holds_alternative<lir::MachineBoolType>(
           module_->Unit().types.Get(operand_type).data)) {
     return LowerMachineUnary(unary);
   }
@@ -718,6 +717,14 @@ auto CodeGenFunction::LowerOperand(const lir::Operand& operand)
           [&](const lir::NullConst& c) -> diag::Result<llvm::Value*> {
             return LowerNullConst(c);
           },
+          [&](const lir::BoolConst& c) -> diag::Result<llvm::Value*> {
+            return llvm::ConstantInt::get(
+                llvm::Type::getInt1Ty(module_->Context()),
+                static_cast<std::uint64_t>(c.value));
+          },
+          [&](const lir::PackedTypeRef& c) -> diag::Result<llvm::Value*> {
+            return LowerPackedTypeRef(c);
+          },
           [&](const lir::FuncRef& f) -> diag::Result<llvm::Value*> {
             return module_->UnitFunction(f.function);
           },
@@ -733,69 +740,59 @@ auto CodeGenFunction::LowerOperand(const lir::Operand& operand)
       operand);
 }
 
-// A machine integer is a native LLVM constant. A packed value has no native
-// constant form in the opaque value model -- it is a runtime object -- so its
-// constant is materialized by a runtime constructor rather than emitted inline.
-// Its physical layout, which would yield a native aggregate constant, is
-// derived below this layer.
+// An integral constant is a machine integer, a native LLVM constant. A packed
+// value has no native constant form in the opaque value model -- it is a
+// runtime object -- so a constant of one reaches this backend as a call.
 auto CodeGenFunction::LowerIntConst(const lir::IntConst& constant)
     -> diag::Result<llvm::Value*> {
-  if (const auto* machine = std::get_if<lir::MachineIntType>(
-          &module_->Unit().types.Get(constant.type).data)) {
-    return llvm::ConstantInt::get(
-        llvm::IntegerType::get(module_->Context(), machine->bit_width),
-        constant.value.value_words.front(),
-        machine->signedness == lir::Signedness::kSigned);
+  const auto* machine = std::get_if<lir::MachineIntType>(
+      &module_->Unit().types.Get(constant.type).data);
+  if (machine == nullptr) {
+    return Unsupported(
+        std::format(
+            "llvm codegen: a constant of type {} has no native form on this "
+            "backend",
+            lir::TypeKindName(module_->Unit().types.Get(constant.type))));
   }
-  auto* i64_ty = llvm::Type::getInt64Ty(module_->Context());
-  auto* i1_ty = llvm::Type::getInt1Ty(module_->Context());
-  const auto words_global = [&](const std::vector<llvm::Constant*>& entries) {
-    auto* array_ty = llvm::ArrayType::get(i64_ty, entries.size());
-    auto* global = new llvm::GlobalVariable(
-        module_->Module(), array_ty, true, llvm::GlobalValue::PrivateLinkage,
-        llvm::ConstantArray::get(array_ty, entries));
-    global->setUnnamedAddr(llvm::GlobalValue::UnnamedAddr::Global);
-    return global;
-  };
-  const auto plane = [&](const std::vector<std::uint64_t>& words) {
-    std::vector<llvm::Constant*> entries;
-    entries.reserve(words.size());
-    for (const std::uint64_t word : words) {
-      entries.push_back(llvm::ConstantInt::get(i64_ty, word));
-    }
-    return words_global(entries);
-  };
+  return llvm::ConstantInt::get(
+      llvm::IntegerType::get(module_->Context(), machine->bit_width),
+      constant.value.value_words.front(),
+      machine->signedness == lir::Signedness::kSigned);
+}
 
-  // The declared shape travels with the constant: its dimension stack so a
-  // multi-dim packed value keeps its shape into element / slice access, and its
-  // signedness and state-ness so the runtime builds the value the destination
-  // type declares -- the literal is already in that type by here.
-  const lir::PackedArrayType& shape =
-      lir::PackedShape(module_->Unit().types, constant.type);
-  std::vector<llvm::Constant*> bounds;
-  bounds.reserve(shape.dims.size() * 2);
-  for (const lir::PackedRange& range : shape.dims) {
-    bounds.push_back(llvm::ConstantInt::get(i64_ty, range.left));
-    bounds.push_back(llvm::ConstantInt::get(i64_ty, range.right));
+// The descriptor is built by the first use that reaches it; every later use in
+// the run loads the same pointer. It is built once because the type it
+// describes settles it once, and the cell is what gives it an address that
+// outlives the call that built it.
+auto CodeGenFunction::LowerPackedTypeRef(const lir::PackedTypeRef& ref)
+    -> diag::Result<llvm::Value*> {
+  const std::optional<lir::FunctionId>& initializer =
+      module_->Unit().packed_type_initializers.Get(ref.integral);
+  if (!initializer.has_value()) {
+    throw InternalError(
+        "llvm codegen: a described type reached a use with no description");
   }
+  llvm::GlobalVariable* cell = module_->PackedTypeCell(ref.integral);
+  auto* ptr_ty = module_->Types().Ptr();
+  llvm::Value* cached = builder_.CreateLoad(ptr_ty, cell);
 
-  // Both planes cross exactly as the constant holds them, so a width past one
-  // machine word and the X / Z bits of a 4-state literal reach the runtime
-  // intact. Checking them against the width the shape spans is the runtime's:
-  // a concrete size is derived below this layer, never here.
-  return builder_.CreateCall(
-      module_->Runtime().PackedConst(),
-      {plane(constant.value.value_words),
-       llvm::ConstantInt::get(i64_ty, constant.value.value_words.size()),
-       plane(constant.value.state_words),
-       llvm::ConstantInt::get(i64_ty, constant.value.state_words.size()),
-       words_global(bounds),
-       llvm::ConstantInt::get(
-           i64_ty, static_cast<std::uint64_t>(shape.dims.size())),
-       llvm::ConstantInt::get(
-           i1_ty, shape.signedness == lir::Signedness::kSigned ? 1 : 0),
-       llvm::ConstantInt::get(
-           i1_ty, shape.atom != lir::BitAtom::kBit ? 1 : 0)});
+  llvm::Function* fn = builder_.GetInsertBlock()->getParent();
+  auto* build = llvm::BasicBlock::Create(module_->Context(), "", fn);
+  auto* ready = llvm::BasicBlock::Create(module_->Context(), "", fn);
+  llvm::BasicBlock* entry = builder_.GetInsertBlock();
+  builder_.CreateCondBr(builder_.CreateIsNull(cached), build, ready);
+
+  builder_.SetInsertPoint(build);
+  llvm::Value* built =
+      builder_.CreateCall(module_->UnitFunction(*initializer), {});
+  builder_.CreateStore(built, cell);
+  builder_.CreateBr(ready);
+
+  builder_.SetInsertPoint(ready);
+  llvm::PHINode* descriptor = builder_.CreatePHI(ptr_ty, 2);
+  descriptor->addIncoming(cached, entry);
+  descriptor->addIncoming(built, build);
+  return descriptor;
 }
 
 // A string literal materializes as its native constant bytes; the owning
@@ -805,21 +802,24 @@ auto CodeGenFunction::LowerStrConst(const lir::StrConst& constant)
   return builder_.CreateGlobalStringPtr(constant.value);
 }
 
-// A real literal has no native constant form in the opaque value model -- it is
-// a runtime object -- so its constant is a host-precision immediate handed to a
-// runtime constructor, the same shape a packed constant takes.
+// A real constant is a machine float, a native LLVM constant. A real-family
+// value is a runtime object, so a constant of one reaches this backend as a
+// construction over a machine float.
 auto CodeGenFunction::LowerRealConst(const lir::RealConst& constant)
     -> diag::Result<llvm::Value*> {
-  auto domain = DomainOf(constant.type);
-  if (!domain) {
-    return std::unexpected(std::move(domain.error()));
+  const auto* machine = std::get_if<lir::MachineFloatType>(
+      &module_->Unit().types.Get(constant.type).data);
+  if (machine == nullptr) {
+    return Unsupported(
+        std::format(
+            "llvm codegen: a real constant of type {} has no native form on "
+            "this backend",
+            lir::TypeKindName(module_->Unit().types.Get(constant.type))));
   }
-  llvm::Type* host = *domain == support::ValueDomain::kShortReal
-                         ? llvm::Type::getFloatTy(module_->Context())
-                         : llvm::Type::getDoubleTy(module_->Context());
-  return builder_.CreateCall(
-      module_->Runtime().RealConst(*domain),
-      {llvm::ConstantFP::get(host, constant.value)});
+  return llvm::ConstantFP::get(
+      machine->bit_width == 32 ? llvm::Type::getFloatTy(module_->Context())
+                               : llvm::Type::getDoubleTy(module_->Context()),
+      constant.value);
 }
 
 // A null value is the host null pointer, a native LLVM constant. Every
@@ -952,6 +952,11 @@ auto CodeGenFunction::BuiltinCallee(
       return module_->Runtime().MakeDynamicArrayNew();
     case support::BuiltinFn::kMakeDynamicArrayNewCopy:
       return module_->Runtime().MakeDynamicArrayNewCopy();
+    // The word planes cross as spans, which an entry whose signature is minted
+    // from its operands' mapped types cannot state: a machine array maps to the
+    // storage, and what a call passes is a pointer and a length over it.
+    case support::BuiltinFn::kFromWords:
+      return module_->Runtime().PackedFromWords();
     case support::BuiltinFn::kInitialize: {
       auto domain = CellDomain(call.args.at(0));
       if (!domain) {
@@ -1197,6 +1202,18 @@ auto CodeGenFunction::ConstructCallee(const lir::CallInstr& call)
             "this backend",
             lir::TypeKindName(module_->Unit().types.Get(result))));
   };
+  const auto real_from_host = [&]() -> diag::Result<llvm::FunctionCallee> {
+    const lir::TypeData& arg =
+        module_->Unit().types.Get(OperandType(call.args.at(0))).data;
+    if (!std::holds_alternative<lir::MachineFloatType>(arg)) {
+      return no_real_from_host();
+    }
+    auto domain = DomainOf(result);
+    if (!domain) {
+      return std::unexpected(std::move(domain.error()));
+    }
+    return module_->Runtime().RealConst(*domain);
+  };
   return std::visit(
       Overloaded{
           [&](const lir::StringType&) -> diag::Result<llvm::FunctionCallee> {
@@ -1236,6 +1253,10 @@ auto CodeGenFunction::ConstructCallee(const lir::CallInstr& call)
                 return module_->Runtime().MakeTrigger();
               case lir::RuntimeLibraryKind::kFormatSpec:
                 return module_->Runtime().MakeFormatSpec(call.args.size());
+              case lir::RuntimeLibraryKind::kPackedRange:
+                return module_->Runtime().MakePackedRange();
+              case lir::RuntimeLibraryKind::kPackedType:
+                return module_->Runtime().MakePackedType();
               case lir::RuntimeLibraryKind::kPrintValueItem: {
                 auto domain = DomainOf(OperandType(call.args.at(0)));
                 if (!domain) {
@@ -1267,17 +1288,17 @@ auto CodeGenFunction::ConstructCallee(const lir::CallInstr& call)
                 "yet supported on this backend");
           },
           // Landing a machine integer in a real and reshaping across precisions
-          // are named conversions, so what is left for the real family is
-          // building one from the host scalar a foreign boundary hands back --
-          // the one form with no entry here.
+          // are named conversions, so what reaches the real family here is a
+          // build over a host scalar: a constant of the destination's own
+          // precision. Anything else the boundary hands back has no entry.
           [&](const lir::RealType&) -> diag::Result<llvm::FunctionCallee> {
-            return no_real_from_host();
+            return real_from_host();
           },
           [&](const lir::RealTimeType&) -> diag::Result<llvm::FunctionCallee> {
-            return no_real_from_host();
+            return real_from_host();
           },
           [&](const lir::ShortRealType&) -> diag::Result<llvm::FunctionCallee> {
-            return no_real_from_host();
+            return real_from_host();
           },
           [&](const auto&) -> diag::Result<llvm::FunctionCallee> {
             return no_construct();

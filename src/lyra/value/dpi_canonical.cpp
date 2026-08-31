@@ -55,14 +55,12 @@ auto ToSvLogic(const PackedArray& sv) -> unsigned char {
   return static_cast<unsigned char>(v | (u << 1U));
 }
 
-auto FromSvLogic(unsigned char encoded, const PackedArray& prototype)
-    -> PackedArray {
+auto FromSvLogic(unsigned char encoded, const PackedType& type) -> PackedArray {
   const std::vector<std::uint64_t> value = {
       static_cast<std::uint64_t>(encoded & 1U)};
   const std::vector<std::uint64_t> unknown = {
       static_cast<std::uint64_t>((encoded >> 1U) & 1U)};
-  return PackedArray::FromWords(
-      value, unknown, prototype.BitWidth(), prototype.IsSigned(), true);
+  return PackedArray::FromWords(value, unknown, type);
 }
 
 DpiBitBuffer::DpiBitBuffer(const PackedArray& sv)
@@ -83,9 +81,9 @@ auto DpiLogicBuffer::Data() -> svLogicVecVal* {
   return chunks_.data();
 }
 
-auto ReadCanonicalBitVec(const svBitVecVal* src, const PackedArray& prototype)
+auto ReadCanonicalBitVec(const svBitVecVal* src, const PackedType& type)
     -> PackedArray {
-  const std::uint64_t width = prototype.BitWidth();
+  const std::uint64_t width = type.bit_width;
   std::vector<std::uint64_t> value(WordCount(width), 0U);
   const std::size_t chunks = ChunkCount(width);
   const std::span<const svBitVecVal> in{src, chunks};
@@ -94,12 +92,12 @@ auto ReadCanonicalBitVec(const svBitVecVal* src, const PackedArray& prototype)
     value[slot.word] |= static_cast<std::uint64_t>(in[i]) << slot.shift;
   }
   MaskTopWord(value, width);
-  return PackedArray::FromWords(value, {}, width, prototype.IsSigned(), false);
+  return PackedArray::FromWords(value, {}, type);
 }
 
-auto ReadCanonicalLogicVec(
-    const svLogicVecVal* src, const PackedArray& prototype) -> PackedArray {
-  const std::uint64_t width = prototype.BitWidth();
+auto ReadCanonicalLogicVec(const svLogicVecVal* src, const PackedType& type)
+    -> PackedArray {
+  const std::uint64_t width = type.bit_width;
   std::vector<std::uint64_t> value(WordCount(width), 0U);
   std::vector<std::uint64_t> unknown(WordCount(width), 0U);
   const std::size_t chunks = ChunkCount(width);
@@ -111,8 +109,7 @@ auto ReadCanonicalLogicVec(
   }
   MaskTopWord(value, width);
   MaskTopWord(unknown, width);
-  return PackedArray::FromWords(
-      value, unknown, width, prototype.IsSigned(), true);
+  return PackedArray::FromWords(value, unknown, type);
 }
 
 auto WriteCanonicalBitVec(svBitVecVal* dst, const PackedArray& sv) -> void {

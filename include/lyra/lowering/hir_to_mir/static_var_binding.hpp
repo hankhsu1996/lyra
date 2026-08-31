@@ -62,7 +62,7 @@ enum class ObservedStorage : std::uint8_t { kNo, kYes };
 // sibling callables sharing a source identifier, and nested blocks repeating
 // one, stay distinct on the arena they all share.
 auto BindBodyStatics(
-    UnitLowerer& unit_lowerer,
+    const UnitLowerer& unit_lowerer,
     const base::Registry<hir::ProceduralScopeDecl, hir::ProceduralScopeId>&
         scopes,
     base::Arena<mir::FieldDecl, mir::FieldId>& fields, ObservedStorage observed,

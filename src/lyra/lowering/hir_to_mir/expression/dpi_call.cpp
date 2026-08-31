@@ -24,6 +24,7 @@
 #include "lyra/lowering/hir_to_mir/closure_builder.hpp"
 #include "lyra/lowering/hir_to_mir/default_value.hpp"
 #include "lyra/lowering/hir_to_mir/expression/expr_lowerer.hpp"
+#include "lyra/lowering/hir_to_mir/integral_literal.hpp"
 #include "lyra/lowering/hir_to_mir/lhs_store.hpp"
 #include "lyra/lowering/hir_to_mir/process_lowerer.hpp"
 #include "lyra/lowering/hir_to_mir/runtime_call.hpp"
@@ -34,6 +35,7 @@
 #include "lyra/mir/compilation_unit.hpp"
 #include "lyra/mir/enclosing_hops.hpp"
 #include "lyra/mir/expr.hpp"
+#include "lyra/mir/packed_type_descriptor.hpp"
 #include "lyra/mir/type.hpp"
 #include "lyra/support/builtin_fn.hpp"
 #include "lyra/support/dpi_abi.hpp"
@@ -177,8 +179,8 @@ auto MarshalSvToCarrier(
 
 // Foreign ABI carrier -> SV value into a declared SV type's canonical shape. An
 // integral carrier is landed into the type's representation by the packed
-// factory (the prototype carries that shape, so width / signedness / state
-// domain follow the declared type); a real / string / chandle carrier
+// factory, which takes that shape as an operand so width / signedness / state
+// domain follow the declared type; a real / string / chandle carrier
 // constructs the SV value directly. Feeds both a function's marshaled return
 // and the copy-back of an output / inout argument into its actual.
 auto MarshalCarrierToSv(
@@ -206,8 +208,8 @@ auto MarshalCarrierToSv(
           mir::Expr{
               .data = mir::IntCastExpr{.operand = call_id},
               .type = unit_lowerer.Unit().builtins.machine_int64});
-      const mir::ExprId prototype = block.exprs.Add(
-          BuildDefaultValueExpr(unit_lowerer, frame, result_type));
+      const mir::ExprId packed_type =
+          mir::BuildPackedTypeRef(unit_lowerer.Unit(), block, result_type);
       return mir::Expr{
           .data =
               mir::CallExpr{
@@ -216,7 +218,7 @@ auto MarshalCarrierToSv(
                           .target = support::BuiltinFn::kFromInt,
                           .qualification =
                               mir::TypeQualifier{.type = result_type}},
-                  .arguments = {machine_int, prototype}},
+                  .arguments = {machine_int, packed_type}},
           .type = result_type};
     }
     case support::DpiScalarAbi::kReal:
@@ -227,14 +229,14 @@ auto MarshalCarrierToSv(
               mir::CallExpr{.callee = mir::Construct{}, .arguments = {call_id}},
           .type = result_type};
     case support::DpiScalarAbi::kLogicScalar: {
-      const mir::ExprId prototype = block.exprs.Add(
-          BuildDefaultValueExpr(unit_lowerer, frame, result_type));
+      const mir::ExprId packed_type =
+          mir::BuildPackedTypeRef(unit_lowerer.Unit(), block, result_type);
       return mir::Expr{
           .data =
               mir::CallExpr{
                   .callee =
                       mir::Direct{.target = support::BuiltinFn::kFromSvLogic},
-                  .arguments = {call_id, prototype}},
+                  .arguments = {call_id, packed_type}},
           .type = result_type};
     }
     case support::DpiScalarAbi::kVoid:
@@ -315,10 +317,8 @@ auto BuildOpenArrayBounds(
     }
     const support::DpiRange range = declared.value_or(
         support::DpiRange{.left = layer->dim.left, .right = layer->dim.right});
-    bounds.push_back(
-        block.exprs.Add(mir::MakeIntLiteral(int_type, range.left)));
-    bounds.push_back(
-        block.exprs.Add(mir::MakeIntLiteral(int_type, range.right)));
+    bounds.push_back(BuildIntLiteral(unit, block, range.left));
+    bounds.push_back(BuildIntLiteral(unit, block, range.right));
     cursor = layer->element_type;
   }
   const mir::TypeId bounds_type =
@@ -411,25 +411,27 @@ auto BuildBoundaryArgument(
 // that pairs with its build: a scalar marshals its by-value carrier, a vector
 // reads its buffer's canonical chunks, an open array reads its whole image.
 // Each yields one value, so the store into the actual is the ordinary one
-// whatever the carrier. Reading through a prototype of the destination's type
-// is what gives the value its declared width, signedness, and state domain,
-// which no carrier carries.
+// whatever the carrier.
+//
+// What no carrier carries is the destination's declared representation, so each
+// read takes it as a trailing operand. A vector's destination is packed and
+// takes the shape alone; an open array's is a nested container whose element
+// count and element structure the read walks, which only a value of that type
+// states.
 auto BuildBoundaryReadback(
     UnitLowerer& unit_lowerer, WalkFrame frame,
     const support::DpiCarrier& carrier, mir::ExprId object,
     mir::TypeId carrier_type, mir::TypeId sv_type) -> mir::ExprId {
   mir::CompilationUnit& unit = unit_lowerer.Unit();
   mir::Block& block = *frame.current_block;
-  const auto prototype = [&] {
-    return block.exprs.Add(BuildDefaultValueExpr(unit_lowerer, frame, sv_type));
-  };
-  const auto read = [&](support::BuiltinFn target, mir::ExprId source) {
+  const auto read = [&](support::BuiltinFn target, mir::ExprId source,
+                        mir::ExprId destination) {
     return block.exprs.Add(
         mir::Expr{
             .data =
                 mir::CallExpr{
                     .callee = mir::Direct{.target = target},
-                    .arguments = {source, prototype()}},
+                    .arguments = {source, destination}},
             .type = sv_type});
   };
   return std::visit(
@@ -441,10 +443,14 @@ auto BuildBoundaryReadback(
           [&](const support::VectorCarrier& vector) {
             return read(
                 VectorReadBuiltin(vector),
-                BuildBufferDataCall(unit, block, object, carrier_type));
+                BuildBufferDataCall(unit, block, object, carrier_type),
+                mir::BuildPackedTypeRef(unit, block, sv_type));
           },
           [&](const support::OpenArrayCarrier&) {
-            return read(support::BuiltinFn::kDpiOpenArrayValue, object);
+            return read(
+                support::BuiltinFn::kDpiOpenArrayValue, object,
+                block.exprs.Add(
+                    BuildDefaultValueExpr(unit_lowerer, frame, sv_type)));
           }},
       carrier);
 }
@@ -1054,14 +1060,14 @@ auto SynthesizeForeignExportEntry(
     const mir::TypeId sv_type = module.TranslateType(p.sv_type);
     mir::ExprId sv_init{};
     if (const auto* vec = std::get_if<support::VectorCarrier>(&p.carrier)) {
-      const mir::ExprId prototype =
-          body.exprs.Add(BuildDefaultValueExpr(module, body_frame, sv_type));
+      const mir::ExprId packed_type =
+          mir::BuildPackedTypeRef(module.Unit(), body, sv_type);
       sv_init = body.exprs.Add(
           mir::Expr{
               .data =
                   mir::CallExpr{
                       .callee = mir::Direct{.target = VectorReadBuiltin(*vec)},
-                      .arguments = {param_ref(i), prototype}},
+                      .arguments = {param_ref(i), packed_type}},
               .type = sv_type});
     } else {
       const mir::ExprId carrier =

@@ -416,7 +416,7 @@ auto LowerBuiltinMethodCall(
   if (b.method == support::BuiltinFn::kEnumFirst ||
       b.method == support::BuiltinFn::kEnumLast ||
       b.method == support::BuiltinFn::kEnumNum) {
-    return LowerEnumConstantMethod(lowerer, c, b, result_type);
+    return LowerEnumConstantMethod(lowerer, frame, c, b, result_type);
   }
   // LRM 6.19.5 `name` / `next` / `prev` lower to a synthesized per-enum
   // callable.

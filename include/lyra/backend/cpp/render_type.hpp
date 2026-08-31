@@ -27,11 +27,4 @@ namespace lyra::backend::cpp {
 [[nodiscard]] auto RenderClassRefAsCpp(
     const mir::CompilationUnit& unit, const mir::ClassRef& ref) -> std::string;
 
-// Renders the `lyra::value::PackedType` descriptor for a packed array type, in
-// the form `lyra::value::PackedType{{{l0, r0}, ...}, <is_signed>,
-// <is_four_state>}`. This is the single shape carrier every PackedArray
-// construction takes.
-[[nodiscard]] auto RenderPackedType(const mir::PackedArrayType& pa)
-    -> std::string;
-
 }  // namespace lyra::backend::cpp

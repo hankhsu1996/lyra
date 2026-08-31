@@ -15,6 +15,7 @@
 namespace llvm {
 class Constant;
 class Function;
+class GlobalVariable;
 }  // namespace llvm
 
 namespace lyra::lir {
@@ -64,8 +65,15 @@ class CodeGenModule {
   // way.
   auto DefinitionRef(lir::TypeId type) -> llvm::Constant*;
 
+  // The module-level home of one type's descriptor. The description is settled
+  // by the type, so the run builds it once and every later use loads what the
+  // first left here. It starts null, which is the one state a built descriptor
+  // is never in: the runtime hands back the address of storage it owns.
+  auto PackedTypeCell(lir::TypeId integral) -> llvm::GlobalVariable*;
+
  private:
   auto DeclareCallable(const lir::Function& fn) -> llvm::Function*;
+  auto DeclareDescriptorCell() -> llvm::GlobalVariable*;
 
   std::unique_ptr<llvm::LLVMContext> context_;
   std::unique_ptr<llvm::Module> module_;
@@ -73,6 +81,7 @@ class CodeGenModule {
   CodeGenTypes types_;
   RuntimeAbi runtime_abi_;
   std::vector<llvm::Function*> functions_;
+  std::vector<llvm::GlobalVariable*> packed_type_cells_;
 };
 
 }  // namespace lyra::backend::llvm_backend

@@ -17,7 +17,6 @@
 #include "lyra/mir/closure.hpp"
 #include "lyra/mir/expr_id.hpp"
 #include "lyra/mir/inc_dec_op.hpp"
-#include "lyra/mir/integral_constant.hpp"
 #include "lyra/mir/local_ref.hpp"
 #include "lyra/mir/static_constant_id.hpp"
 #include "lyra/mir/static_property_id.hpp"
@@ -27,30 +26,36 @@
 
 namespace lyra::mir {
 
-struct IntegerLiteral {
-  IntegralConstant value;
-};
-
 struct StringLiteral {
   std::string value;
 };
 
-struct RealLiteral {
-  double value;
-};
-
-// The null borrowed-pointer value. Distinct from `IntegerLiteral{0}`: the
+// The null borrowed-pointer value. Distinct from a zero integral value: the
 // type system carries the pointee identity, and C++ rejects the functional-
 // cast construction (`T*()`) that the constructor primitive would otherwise
 // produce for a default-init pointer.
 struct NullLiteral {};
 
+// A machine-boolean literal: a plain scalar, not a simulation value. It is what
+// a runtime entry's signature or record layout takes where it wants a plain
+// two-valued flag rather than an SV-typed value.
+struct MachineBoolLiteral {
+  bool value;
+};
+
 // A machine-integer literal: a plain scalar, not a simulation value. It is what
 // a runtime entry's signature takes where it wants a machine scalar (a bit
-// width, a flag) rather than an SV-typed value, so no runtime value is ever
-// built for it.
+// width, an element count) rather than an SV-typed value, so no runtime value
+// is ever built for it.
 struct MachineIntLiteral {
   std::int64_t value;
+};
+
+// A machine-float literal: a plain scalar, not a simulation value. Its own type
+// carries the precision it is read back at, so a consumer spelling it never
+// asks what it is a constant of.
+struct MachineFloatLiteral {
+  double value;
 };
 
 struct UnaryExpr {
@@ -65,9 +70,9 @@ struct UnaryExpr {
 // operator (`&&` / `||` / `!`), and the inner argument of a re-shape back to a
 // 1-bit packed value. The node kind, not the operand's type, is what tells a
 // backend to emit the reduction, so a condition never leaves the boolean
-// decision to a contextual conversion at the branch site. `Expr::type` carries
-// the 1-bit type by convention; the operand is any value a `bool(...)`
-// conversion accepts.
+// decision to a contextual conversion at the branch site. `Expr::type` is the
+// machine boolean it yields; the operand is any value a `bool(...)` conversion
+// accepts.
 struct BoolCastExpr {
   ExprId operand;
 };
@@ -672,6 +677,15 @@ struct StaticConstantRef {
   StaticConstantId constant;
 };
 
+// An integral type's runtime descriptor, named by the type it describes. The
+// descriptor is settled at compile time and shared by every value of that type,
+// so the unit states it once and a use names which one; the type is the
+// identity, so nothing about where a use appears decides what it reaches.
+// `Expr::type` is the descriptor, not the integral type described.
+struct PackedTypeRef {
+  TypeId integral;
+};
+
 // A place naming a class's static property (`Class::name`, LRM 8.9): the
 // mutable type-associated storage cell counterpart to `StaticConstantRef`.
 // `owner` is the class whose static-property arena declares the cell (a
@@ -772,16 +786,16 @@ struct ValueProjectionExpr {
 };
 
 using ExprData = std::variant<
-    IntegerLiteral, StringLiteral, RealLiteral, NullLiteral, MachineIntLiteral,
-    LocalRef, UnaryExpr, BinaryExpr, BoolCastExpr, ConditionalExpr,
-    MergingConditionalExpr, BlockExpr, AssignExpr, IncDecExpr, CallExpr,
-    DerefExpr, AddressOfExpr, MachineArrayDataExpr, MoveExpr, PointerCastExpr,
-    FunctionCastExpr, IntCastExpr, FieldAccessExpr, ClosureExpr, ConcatExpr,
-    ReplicationExpr, ArrayLiteralExpr, ValueCastExpr, TupleExpr, VectorExpr,
-    AwaitExpr, TupleGetExpr, VectorGetExpr, UnionExpr, UnionGetExpr, TaggedExpr,
-    TaggedGetExpr, TaggedGetRefExpr, TaggedIsExpr, ValueProjectionExpr,
-    FunctionRef, StaticConstantRef, StaticPropertyRef, ExternalUnitVariableRef,
-    ExternalStaticPropertyRef>;
+    StringLiteral, NullLiteral, MachineBoolLiteral, MachineIntLiteral,
+    MachineFloatLiteral, LocalRef, UnaryExpr, BinaryExpr, BoolCastExpr,
+    ConditionalExpr, MergingConditionalExpr, BlockExpr, AssignExpr, IncDecExpr,
+    CallExpr, DerefExpr, AddressOfExpr, MachineArrayDataExpr, MoveExpr,
+    PointerCastExpr, FunctionCastExpr, IntCastExpr, FieldAccessExpr,
+    ClosureExpr, ConcatExpr, ReplicationExpr, ArrayLiteralExpr, ValueCastExpr,
+    TupleExpr, VectorExpr, AwaitExpr, TupleGetExpr, VectorGetExpr, UnionExpr,
+    UnionGetExpr, TaggedExpr, TaggedGetExpr, TaggedGetRefExpr, TaggedIsExpr,
+    ValueProjectionExpr, FunctionRef, StaticConstantRef, PackedTypeRef,
+    StaticPropertyRef, ExternalUnitVariableRef, ExternalStaticPropertyRef>;
 
 struct Expr {
   ExprData data;

@@ -57,7 +57,7 @@ auto EndpointCellExpr(
 }
 
 auto EndpointObservablePtr(
-    mir::Block& block, const WalkFrame& frame, mir::CompilationUnit& unit,
+    mir::Block& block, const WalkFrame& frame, const mir::CompilationUnit& unit,
     const BoundEndpoint& endpoint) -> mir::ExprId {
   const mir::ExprId field_access =
       block.exprs.Add(BuildStructuralFieldAccessExpr(

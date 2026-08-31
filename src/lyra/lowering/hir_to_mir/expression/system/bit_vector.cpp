@@ -17,6 +17,7 @@
 #include "lyra/hir/primary.hpp"
 #include "lyra/lowering/hir_to_mir/call_operands.hpp"
 #include "lyra/lowering/hir_to_mir/flat_packed_type.hpp"
+#include "lyra/lowering/hir_to_mir/integral_literal.hpp"
 #include "lyra/lowering/hir_to_mir/process_lowerer.hpp"  // IWYU pragma: keep
 #include "lyra/lowering/hir_to_mir/structural_scope_lowerer.hpp"  // IWYU pragma: keep
 #include "lyra/mir/binary_op.hpp"
@@ -88,8 +89,9 @@ auto AdmittedByControlArguments(
 // bit-plane encoding gives them. No source declaration names this value -- LRM
 // 20.9 spells the same set as a variable-length argument list, which no single
 // runtime entry can take -- so the lowering builds it.
-auto MakeControlBitsExpr(mir::CompilationUnit& unit, AdmittedBitValues admitted)
-    -> mir::Expr {
+auto MakeControlBitsExpr(
+    const mir::CompilationUnit& unit, mir::Block& block,
+    AdmittedBitValues admitted) -> mir::ExprId {
   std::uint64_t value_word = 0;
   std::uint64_t state_word = 0;
   std::uint32_t width = 0;
@@ -105,17 +107,14 @@ auto MakeControlBitsExpr(mir::CompilationUnit& unit, AdmittedBitValues admitted)
     }
     ++width;
   }
-  return mir::Expr{
-      .data =
-          mir::IntegerLiteral{
-              .value =
-                  mir::IntegralConstant{
-                      .value_words = {value_word},
-                      .state_words = {state_word},
-                      .width = width,
-                      .signedness = mir::Signedness::kUnsigned,
-                      .state_kind = mir::IntegralStateKind::kFourState}},
-      .type = InternFlatPacked(unit, width, mir::BitAtom::kLogic)};
+  return BuildIntegralLiteral(
+      unit, block, InternFlatPacked(unit, width, mir::BitAtom::kLogic),
+      mir::IntegralConstant{
+          .value_words = {value_word},
+          .state_words = {state_word},
+          .width = width,
+          .signedness = mir::Signedness::kUnsigned,
+          .state_kind = mir::IntegralStateKind::kFourState});
 }
 
 auto ReadingComparison(support::BitCountReading reading)
@@ -194,8 +193,7 @@ auto LowerBitVectorSystemSubroutineCall(
     return std::unexpected(std::move(operand_or.error()));
   }
   const mir::ExprId operand_id = body.exprs.Add(*std::move(operand_or));
-  const mir::ExprId control_id =
-      body.exprs.Add(MakeControlBitsExpr(unit, admitted));
+  const mir::ExprId control_id = MakeControlBitsExpr(unit, body, admitted);
   mir::Expr count{
       .data =
           mir::CallExpr{
@@ -212,8 +210,7 @@ auto LowerBitVectorSystemSubroutineCall(
           mir::BinaryExpr{
               .op = *op,
               .lhs = body.exprs.Add(std::move(count)),
-              .rhs = body.exprs.Add(
-                  mir::MakeIntLiteral(unit.builtins.int_type, 1))},
+              .rhs = BuildIntLiteral(unit, body, 1)},
       .type = unit.builtins.bit1};
 }
 

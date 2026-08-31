@@ -2,8 +2,8 @@
 
 #include <cstdint>
 #include <span>
-#include <utility>
-#include <vector>
+
+#include "lyra/base/inlined_vector.hpp"
 
 namespace lyra::value {
 
@@ -35,17 +35,24 @@ struct PackedRange {
 // construction. This is the single packed-type descriptor used everywhere a
 // shape must be named -- the argument to every PackedArray construction, the
 // type each PackedArray owns, and the base type an enum class declares.
-// Generated code constructs one inline (`PackedType{{{3,0},{7,0}}, false,
-// true}`); a selector builds one from runtime-computed dims; either way the
-// shape reaches the runtime as ordinary data, never an `std::initializer_list`
-// parameter.
+// A shape reaches the runtime as ordinary data -- a dimension stack passed as a
+// span, plus the two flags -- so a shape settled while compiling and one
+// computed while running are the same construction. An `std::initializer_list`
+// parameter, the shorter-looking spelling, could only be the first of those: a
+// list is written into the source and nothing builds one from computed dims.
 //
 // An empty dimension stack is the bit-width-0 form an as-yet-uninitialized cell
 // holds before its first store installs a representation; it is not a valid
 // declared type.
 struct PackedType {
-  PackedType(std::vector<PackedRange> dims, bool is_signed, bool is_four_state)
-      : dims(std::move(dims)),
+  // Almost every declared integral is one-dimensional, and this descriptor is
+  // carried by every value and rebuilt at every operation, so the stack is held
+  // inline for the single-dimension case rather than on the heap.
+  using Dims = base::InlinedVector<PackedRange, 1>;
+
+  PackedType(
+      std::span<const PackedRange> dims, bool is_signed, bool is_four_state)
+      : dims(dims.begin(), dims.end()),
         is_signed(is_signed),
         is_four_state(is_four_state),
         bit_width(WidthOf(this->dims)) {
@@ -72,7 +79,7 @@ struct PackedType {
            is_four_state == other.is_four_state;
   }
 
-  std::vector<PackedRange> dims;
+  Dims dims;
   bool is_signed;
   bool is_four_state;
   std::uint64_t bit_width;

@@ -37,6 +37,13 @@ auto CodeGenModule::Run() -> diag::Result<EmittedModule> {
   for (const lir::Function& fn : unit_->functions) {
     functions_.push_back(DeclareCallable(fn));
   }
+  packed_type_cells_.reserve(unit_->types.size());
+  for (const lir::TypeId id : unit_->types.Ids()) {
+    packed_type_cells_.push_back(
+        unit_->packed_type_initializers.Get(id).has_value()
+            ? DeclareDescriptorCell()
+            : nullptr);
+  }
   for (const lir::FunctionId id : unit_->functions.Ids()) {
     auto generated =
         CodeGenFunction(*this, unit_->functions.Get(id), functions_[id.value])
@@ -102,6 +109,20 @@ auto CodeGenModule::DefinitionRef(lir::TypeId type) -> llvm::Constant* {
   // encoding the runtime struct's layout.
   return module_->getOrInsertGlobal(
       DefinitionSymbolName(name), llvm::Type::getInt8Ty(*context_));
+}
+
+auto CodeGenModule::PackedTypeCell(lir::TypeId integral)
+    -> llvm::GlobalVariable* {
+  return packed_type_cells_.at(integral.value);
+}
+
+// Constructing a global appends it to the module, which owns it from then on;
+// what the list keeps is the module's cells, not a second owner of them.
+auto CodeGenModule::DeclareDescriptorCell() -> llvm::GlobalVariable* {
+  auto* ptr_ty = types_.Ptr();
+  return new llvm::GlobalVariable(
+      *module_, ptr_ty, false, llvm::GlobalValue::PrivateLinkage,
+      llvm::ConstantPointerNull::get(ptr_ty));
 }
 
 }  // namespace lyra::backend::llvm_backend

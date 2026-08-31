@@ -1,6 +1,7 @@
 #include "lyra/value/packed_array.hpp"
 
 #include <algorithm>
+#include <array>
 #include <bit>
 #include <cstddef>
 #include <cstdint>
@@ -87,18 +88,17 @@ PackedArray::PackedArray(
     std::uint64_t bit_width, bool is_signed, bool is_four_state)
     : PackedArray(
           PackedType{
-              {PackedRange{
+              std::array{PackedRange{
                   .left = static_cast<std::int64_t>(bit_width) - 1,
                   .right = 0}},
-              is_signed,
-              is_four_state}) {
+              is_signed, is_four_state}) {
 }
 
 PackedArray::PackedArray(
     std::span<const PackedRange> dims, bool is_signed, bool is_four_state)
     : PackedArray(
           PackedType{
-              std::vector<PackedRange>(dims.begin(), dims.end()), is_signed,
+              PackedType::Dims(dims.begin(), dims.end()), is_signed,
               is_four_state}) {
 }
 
@@ -211,15 +211,9 @@ auto PackedArray::FromInt(
   return FromInt(
       value,
       PackedType{
-          {PackedRange{
+          std::array{PackedRange{
               .left = static_cast<std::int64_t>(bit_width) - 1, .right = 0}},
-          is_signed,
-          is_four_state});
-}
-
-auto PackedArray::FromInt(std::int64_t value, const PackedArray& prototype)
-    -> PackedArray {
-  return FromInt(value, prototype.type_);
+          is_signed, is_four_state});
 }
 
 auto PackedArray::FromWords(
@@ -367,6 +361,10 @@ auto PackedArray::FromDigits(
 
 auto PackedArray::BitWidth() const -> std::uint64_t {
   return type_.bit_width;
+}
+
+auto PackedArray::Type() const -> const PackedType& {
+  return type_;
 }
 
 auto PackedArray::IsSigned() const -> bool {
@@ -839,12 +837,12 @@ auto PackedArray::ConvertFrom(
       PackedArray{dst_bit_width, dst_is_signed, dst_is_four_state}, src);
 }
 
-auto PackedArray::ConvertFrom(const PackedArray& src, PackedArray prototype)
+auto PackedArray::ConvertFrom(const PackedArray& src, const PackedType& type)
     -> PackedArray {
-  return ConvertBitsInto(std::move(prototype), src);
+  return ConvertBitsInto(PackedArray{type}, src);
 }
 
-auto PackedArray::FromString(const String& text, const PackedArray& prototype)
+auto PackedArray::FromString(const String& text, const PackedType& type)
     -> PackedArray {
   const std::string_view chars = text.View();
   // An empty string carries no bytes, so it takes one zero byte and conforms to
@@ -855,7 +853,7 @@ auto PackedArray::FromString(const String& text, const PackedArray& prototype)
       FromBytes(
           std::span<const char>{chars.data(), chars.size()}, bit_width, false,
           false),
-      prototype);
+      type);
 }
 
 namespace {
@@ -1848,9 +1846,9 @@ auto ResolveRawRangeSelector(
 // decides how those bits are structured. They span the same bits -- a
 // disagreement means the select and its stated result type were built from
 // different types.
-auto ShapeDimsOf(const PackedArray& shape, std::span<const PackedRange> derived)
+auto ShapeDimsOf(const PackedType& shape, std::span<const PackedRange> derived)
     -> std::vector<PackedRange> {
-  const std::span<const PackedRange> declared = shape.Dims();
+  const std::span<const PackedRange> declared = shape.dims;
   if (PackedType::WidthOf(declared) != PackedType::WidthOf(derived)) {
     throw InternalError(
         "PackedArray::Slice: the stated result shape spans a different bit "
@@ -1880,7 +1878,7 @@ auto PackedArray::WithElement(
 
 auto PackedArray::SliceRef(
     const PackedArray& a, const PackedArray& b, const PackedArray& form,
-    const PackedArray& shape) -> PackedArrayRef {
+    const PackedType& shape) -> PackedArrayRef {
   const auto raw = ResolveRawRangeSelector(type_.dims.front(), a, b, form);
   auto sel = ResolveSlice(
       type_.bit_width, type_.dims, raw.anchor, raw.count, raw.shift);
@@ -1889,7 +1887,7 @@ auto PackedArray::SliceRef(
 
 auto PackedArray::Slice(
     const PackedArray& a, const PackedArray& b, const PackedArray& form,
-    const PackedArray& shape) const -> PackedArray {
+    const PackedType& shape) const -> PackedArray {
   const auto raw = ResolveRawRangeSelector(type_.dims.front(), a, b, form);
   auto sel = ResolveSlice(
       type_.bit_width, type_.dims, raw.anchor, raw.count, raw.shift);
@@ -1898,7 +1896,7 @@ auto PackedArray::Slice(
 
 auto PackedArray::WithSlice(
     const PackedArray& a, const PackedArray& b, const PackedArray& form,
-    const PackedArray& shape, const PackedArray& value) const -> PackedArray {
+    const PackedType& shape, const PackedArray& value) const -> PackedArray {
   PackedArray result{*this};
   result.SliceRef(a, b, form, shape) = value;
   return result;
@@ -1931,7 +1929,7 @@ auto PackedArrayRef::ElementRef(const PackedArray& idx) const
 
 auto PackedArrayRef::SliceRef(
     const PackedArray& a, const PackedArray& b, const PackedArray& form,
-    const PackedArray& shape) const -> PackedArrayRef {
+    const PackedType& shape) const -> PackedArrayRef {
   const auto raw = ResolveRawRangeSelector(dims_.front(), a, b, form);
   auto sel = ResolveSlice(bit_width_, dims_, raw.anchor, raw.count, raw.shift);
   return PackedArrayRef{

@@ -51,7 +51,7 @@ struct BoundEndpoint {
 // subscription surface: the sealed slot as-is, or the address of a directly
 // owned cell. Appends to `block` and returns the pointer's id.
 [[nodiscard]] auto EndpointObservablePtr(
-    mir::Block& block, const WalkFrame& frame, mir::CompilationUnit& unit,
+    mir::Block& block, const WalkFrame& frame, const mir::CompilationUnit& unit,
     const BoundEndpoint& endpoint) -> mir::ExprId;
 
 }  // namespace lyra::lowering::hir_to_mir

@@ -890,6 +890,7 @@ auto DeclaredSubroutineBody(const slang::ast::Symbol& member)
 struct ScopeContribution {
   const slang::ast::Symbol* minted = nullptr;
   const slang::ast::Scope* walked = nullptr;
+  std::span<const slang::ast::StatementBlockSymbol* const> blocks = {};
 };
 
 auto ContributionOf(const slang::ast::Symbol& member, const UnitLowerer& owner)
@@ -899,7 +900,15 @@ auto ContributionOf(const slang::ast::Symbol& member, const UnitLowerer& owner)
   }
   if (member.kind == slang::ast::SymbolKind::ProceduralBlock) {
     const auto& proc = member.as<slang::ast::ProceduralBlockSymbol>();
-    return {.minted = owner.Contains(proc) ? &member : nullptr};
+    // A statement label creates a named block around the statement it labels
+    // (LRM 16.3), and the front end lists that block beside the process rather
+    // than inside it. Whether the design has one is the process's answer, so
+    // the process contributes its blocks and a process the design does not
+    // contain carries them out of reach with it.
+    if (!owner.Contains(proc)) {
+      return {};
+    }
+    return {.minted = &member, .blocks = proc.getBlocks()};
   }
   if (member.kind == slang::ast::SymbolKind::StatementBlock) {
     const auto& block = member.as<slang::ast::StatementBlockSymbol>();
@@ -918,17 +927,39 @@ auto ContributionOf(const slang::ast::Symbol& member, const UnitLowerer& owner)
 void DeclareProceduralScopes(
     const slang::ast::Scope& slang_scope, UnitLowerer& owner,
     base::Registry<hir::ProceduralScopeDecl, hir::ProceduralScopeId>& scopes) {
+  // A process's own blocks are listed beside it here as well, so the pass
+  // gathers them first and then leaves them to the process that answers for
+  // them; reaching one from this loop would mint an identity for a block whose
+  // process the design may not contain, and nothing would go on to fill it.
+  std::unordered_set<const slang::ast::Symbol*> process_blocks;
+  for (const auto& member : slang_scope.members()) {
+    if (member.kind != slang::ast::SymbolKind::ProceduralBlock) {
+      continue;
+    }
+    for (const auto* block :
+         member.as<slang::ast::ProceduralBlockSymbol>().getBlocks()) {
+      process_blocks.insert(block);
+    }
+  }
   for (const auto& member : slang_scope.members()) {
     // Slang lists a base class's members in the derived class's member list
     // too (LRM 8.13 inheritance), and this pass mints for one declaration
     // scope: a member declared elsewhere is that declaration's own to mint,
     // and minting a second identity for it would leave one of them unfilled.
-    if (member.getParentScope() != &slang_scope) {
+    if (member.getParentScope() != &slang_scope ||
+        process_blocks.contains(&member)) {
       continue;
     }
     const ScopeContribution contribution = ContributionOf(member, owner);
     if (contribution.minted != nullptr) {
       owner.DeclareProceduralScope(*contribution.minted, scopes.Declare());
+    }
+    for (const auto* block : contribution.blocks) {
+      const ScopeContribution owned = ContributionOf(*block, owner);
+      if (owned.minted != nullptr) {
+        owner.DeclareProceduralScope(*owned.minted, scopes.Declare());
+      }
+      DeclareProceduralScopes(*block, owner, scopes);
     }
     if (contribution.walked != nullptr) {
       DeclareProceduralScopes(*contribution.walked, owner, scopes);

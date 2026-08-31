@@ -21,8 +21,9 @@ namespace lyra::lowering::hir_to_mir {
 // explicit instantiations live in the implementation file.
 template <ExprLowerer Lowerer>
 auto LowerEnumConstantMethod(
-    Lowerer& lowerer, const hir::CallExpr& c, const hir::BuiltinMethodRef& b,
-    mir::TypeId result_type) -> diag::Result<mir::Expr>;
+    Lowerer& lowerer, WalkFrame frame, const hir::CallExpr& c,
+    const hir::BuiltinMethodRef& b, mir::TypeId result_type)
+    -> diag::Result<mir::Expr>;
 
 // Lowers `name` / `next` / `prev` to a call of a per-enum callable synthesized
 // once per unit (its body is generic MIR primitives -- a case-equality chain

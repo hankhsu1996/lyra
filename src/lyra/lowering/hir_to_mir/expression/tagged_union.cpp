@@ -13,6 +13,7 @@
 #include "lyra/lowering/hir_to_mir/cast_lowering.hpp"
 #include "lyra/lowering/hir_to_mir/default_value.hpp"
 #include "lyra/lowering/hir_to_mir/flat_packed_type.hpp"
+#include "lyra/lowering/hir_to_mir/integral_literal.hpp"
 #include "lyra/lowering/hir_to_mir/packed_concat.hpp"
 #include "lyra/lowering/hir_to_mir/packed_projection.hpp"
 #include "lyra/lowering/hir_to_mir/process_lowerer.hpp"
@@ -51,10 +52,8 @@ auto BuildPackedTaggedValue(
   const mir::BitAtom atom = unit.types.Get(result_type).AsPackedArray().atom;
   std::vector<mir::ExprId> runs;
   if (layout.tag_bits > 0) {
-    const mir::ExprId named = block.exprs.Add(
-        mir::MakeIntLiteral(
-            unit.builtins.int_type,
-            static_cast<std::int64_t>(t.member_index.value)));
+    const mir::ExprId named = BuildIntLiteral(
+        unit, block, static_cast<std::int64_t>(t.member_index.value));
     runs.push_back(ConvertToType(
         unit, block, named, InternFlatPacked(unit, layout.tag_bits, atom)));
   }

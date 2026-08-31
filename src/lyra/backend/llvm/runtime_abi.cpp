@@ -429,12 +429,22 @@ auto RuntimeAbi::MakePrintLiteralItem() -> llvm::FunctionCallee {
   return Get("lyra_rt_make_print_literal_item", types_->Ptr(), {types_->Ptr()});
 }
 
-auto RuntimeAbi::PackedConst() -> llvm::FunctionCallee {
+auto RuntimeAbi::PackedFromWords() -> llvm::FunctionCallee {
   return Get(
-      "lyra_rt_packed_const", types_->Ptr(),
-      {types_->Ptr(), llvm::Type::getInt64Ty(*ctx_), types_->Ptr(),
-       llvm::Type::getInt64Ty(*ctx_), types_->Ptr(),
-       llvm::Type::getInt64Ty(*ctx_), llvm::Type::getInt1Ty(*ctx_),
+      "lyra_rt_packed_from_words", types_->Ptr(),
+      {types_->Span(), types_->Span(), types_->Ptr()});
+}
+
+auto RuntimeAbi::MakePackedRange() -> llvm::FunctionCallee {
+  return Get(
+      "lyra_rt_make_packed_range", types_->Ptr(),
+      {llvm::Type::getInt64Ty(*ctx_), llvm::Type::getInt64Ty(*ctx_)});
+}
+
+auto RuntimeAbi::MakePackedType() -> llvm::FunctionCallee {
+  return Get(
+      "lyra_rt_make_packed_type", types_->Ptr(),
+      {types_->Span(), llvm::Type::getInt1Ty(*ctx_),
        llvm::Type::getInt1Ty(*ctx_)});
 }
 

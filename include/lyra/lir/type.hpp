@@ -39,6 +39,8 @@ enum class PointerOwnership : std::uint8_t { kUnique, kShared, kBorrowed };
 enum class Mutability : std::uint8_t { kMutable, kReadOnly };
 
 enum class RuntimeLibraryKind : std::uint8_t {
+  kPackedType,
+  kPackedRange,
   kPrintItem,
   kPrintLiteralItem,
   kPrintValueItem,
@@ -107,6 +109,11 @@ struct StringType {};
 // A borrowed, NUL-terminated machine string (C `const char*`): raw character
 // storage the value does not own, distinct from the owning `StringType`.
 struct MachineCStringType {};
+
+// A primitive machine boolean (C `_Bool`): the two-valued scalar a predicate
+// yields, distinct from a one-bit integer and from the four-state
+// `PackedArrayType`.
+struct MachineBoolType {};
 
 struct MachineIntType {
   std::uint32_t bit_width;
@@ -240,12 +247,13 @@ struct ObservableType {
 using TypeData = std::variant<
     PackedArrayType, EnumType, UnpackedArrayType, DynamicArrayType, QueueType,
     AssociativeArrayType, WildcardIndexType, StringType, MachineCStringType,
-    MachineIntType, MachineFloatType, MachineArrayType, EventType, RealType,
-    ShortRealType, RealTimeType, ChandleType, VoidType, EmptyType, ObjectType,
-    ExternalUnitObjectType, CrossUnitClassType, RuntimeClassType, ClosureType,
-    RuntimeEffectsType, FilesType, DiagnosticType, RuntimeLibraryType,
-    CoroutineType, RefType, PointerType, ManagedRefType, VectorType, TupleType,
-    UnionType, TaggedUnionType, ResolvedType, DriverType, ObservableType>;
+    MachineBoolType, MachineIntType, MachineFloatType, MachineArrayType,
+    EventType, RealType, ShortRealType, RealTimeType, ChandleType, VoidType,
+    EmptyType, ObjectType, ExternalUnitObjectType, CrossUnitClassType,
+    RuntimeClassType, ClosureType, RuntimeEffectsType, FilesType,
+    DiagnosticType, RuntimeLibraryType, CoroutineType, RefType, PointerType,
+    ManagedRefType, VectorType, TupleType, UnionType, TaggedUnionType,
+    ResolvedType, DriverType, ObservableType>;
 
 struct Type {
   TypeData data;

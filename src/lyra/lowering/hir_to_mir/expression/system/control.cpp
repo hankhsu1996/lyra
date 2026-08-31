@@ -13,6 +13,7 @@
 #include "lyra/hir/integral_constant.hpp"
 #include "lyra/hir/primary.hpp"
 #include "lyra/hir/procedural_body.hpp"
+#include "lyra/lowering/hir_to_mir/integral_literal.hpp"
 #include "lyra/lowering/hir_to_mir/process_lowerer.hpp"
 #include "lyra/lowering/hir_to_mir/runtime_call.hpp"
 #include "lyra/lowering/hir_to_mir/walk_frame.hpp"
@@ -68,8 +69,9 @@ auto LowerFinishSystemSubroutineCall(
   const auto& builtins = process.Owner().Unit().builtins;
   const mir::ExprId runtime_id = frame.current_block->exprs.Add(
       BuildCurrentRuntimeCallExpr(process.Owner()));
-  const mir::ExprId level_id = frame.current_block->exprs.Add(
-      mir::MakeIntLiteral(builtins.int_type, static_cast<std::int64_t>(level)));
+  const mir::ExprId level_id = BuildIntLiteral(
+      process.Owner().Unit(), *frame.current_block,
+      static_cast<std::int64_t>(level));
   return mir::Expr{
       .data =
           mir::CallExpr{

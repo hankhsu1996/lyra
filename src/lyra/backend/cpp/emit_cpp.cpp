@@ -8,9 +8,12 @@
 #include "lyra/backend/cpp/artifact.hpp"
 #include "lyra/backend/cpp/formatting.hpp"
 #include "lyra/backend/cpp/render_decl.hpp"
+#include "lyra/backend/cpp/render_expr.hpp"
 #include "lyra/backend/cpp/render_type.hpp"
+#include "lyra/backend/cpp/scope_view.hpp"
 #include "lyra/mir/class.hpp"
 #include "lyra/mir/compilation_unit.hpp"
+#include "lyra/mir/packed_type_descriptor.hpp"
 #include "lyra/mir/type.hpp"
 #include "lyra/support/runtime_prelude.hpp"
 
@@ -72,6 +75,23 @@ auto RenderUnitIncludes(const mir::CompilationUnit& unit) -> std::string {
   return out;
 }
 
+// What each of the unit's types is described by, one definition per described
+// type, ahead of any code that names one.
+auto RenderPackedTypeDescriptions(const mir::CompilationUnit& unit)
+    -> std::string {
+  std::string out;
+  for (const mir::TypeId id : mir::DescribedPackedTypes(unit)) {
+    const mir::PackedTypeDescription described =
+        mir::DescribePackedType(unit, id);
+    const ScopeView view = ScopeView::ForUnitConstant(unit, described.body);
+    out += NamespaceConstantOf(
+        RenderTypeAsCpp(unit, unit.builtins.packed_type),
+        mir::PackedTypeDescriptionName(id),
+        RenderExpr(view, view.Expr(described.value)));
+  }
+  return out;
+}
+
 // A package variable is one program-global observable cell (LRM 26.2). C++17
 // `inline` gives it a single definition across every translation unit that
 // includes the header, matching the header-only, link-by-name model the
@@ -102,6 +122,7 @@ auto RenderUnitHeaderFile(const mir::CompilationUnit& unit) -> std::string {
   out += "\n";
   out += std::format("namespace {} {{\n", ToCppName(unit.name));
   AppendSection(out, callables.declarations);
+  AppendSection(out, RenderPackedTypeDescriptions(unit));
   AppendSection(out, RenderUnitStaticVariables(unit));
   AppendSection(out, classes.declaration);
   AppendSection(out, classes.definitions);

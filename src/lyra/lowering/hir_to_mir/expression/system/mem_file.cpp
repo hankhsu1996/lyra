@@ -20,6 +20,7 @@
 #include "lyra/lowering/hir_to_mir/cast_lowering.hpp"
 #include "lyra/lowering/hir_to_mir/copy_out_desugar.hpp"
 #include "lyra/lowering/hir_to_mir/default_value.hpp"
+#include "lyra/lowering/hir_to_mir/integral_literal.hpp"
 #include "lyra/lowering/hir_to_mir/process_lowerer.hpp"
 #include "lyra/lowering/hir_to_mir/runtime_call.hpp"
 #include "lyra/mir/compilation_unit.hpp"
@@ -50,7 +51,7 @@ auto DescribeMemory(
   auto& wrapper = *wrapper_frame.current_block;
   const mir::TypeId int_type = unit.Unit().builtins.int_type;
   const auto int_literal = [&](std::int64_t value) {
-    return wrapper.exprs.Add(mir::MakeIntLiteral(int_type, value));
+    return BuildIntLiteral(unit.Unit(), wrapper, value);
   };
   return std::visit(
       Overloaded{
@@ -208,9 +209,8 @@ auto LowerMemFileSystemSubroutineCallStmt(
   for (const mir::ExprId operand : addressing->operands) {
     operands.push_back(operand);
   }
-  operands.push_back(wrapper.exprs.Add(
-      mir::MakeIntLiteral(
-          builtins.int_type, static_cast<std::int64_t>(info.base))));
+  operands.push_back(BuildIntLiteral(
+      unit_lowerer.Unit(), wrapper, static_cast<std::int64_t>(info.base)));
   for (std::size_t i = 2; i < call.arguments.size(); ++i) {
     // Unlike the two above, a bound this lowering cannot realize is the
     // program's shape, not the compiler's, so it earns a diagnostic.

@@ -6,6 +6,7 @@
 
 #include "lyra/base/arena.hpp"
 #include "lyra/base/registry.hpp"
+#include "lyra/base/translation.hpp"
 #include "lyra/lir/class_id.hpp"
 #include "lyra/lir/closure_id.hpp"
 #include "lyra/lir/external_unit_object_id.hpp"
@@ -108,6 +109,11 @@ struct CompilationUnit {
   base::Arena<ExternalUnitObject, ExternalUnitObjectId> external_unit_objects;
   base::Registry<Function, FunctionId> functions;
   std::vector<StaticStorage> static_storage;
+  // The nullary function building each type's runtime descriptor, one answer
+  // per type and present only for a described one. Building a value is an
+  // instruction sequence like any other, so a description is code here, and the
+  // type it describes is what reaches it.
+  base::Translation<TypeId, std::optional<FunctionId>> packed_type_initializers;
   std::optional<ClassId> root;
 };
 

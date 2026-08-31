@@ -497,6 +497,8 @@ auto BuiltinFnName(BuiltinFn id) -> std::string_view {
       return "from_sv_logic";
     case BuiltinFn::kFromInt:
       return "from_int";
+    case BuiltinFn::kFromWords:
+      return "from_words";
     case BuiltinFn::kConvertFrom:
       return "convert_from";
     case BuiltinFn::kFromPackedArray:

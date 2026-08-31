@@ -17,6 +17,19 @@ build --verbose_failures
 
 test --test_output=errors
 
+# The default set is what the merge gate runs, so a local run answers "does this
+# land green" without naming anything. What it leaves out is the one target
+# whose cost no merge-time budget holds; `tests/BUILD.bazel` states which and
+# why.
+#
+# A filtered run reports only the tests it ran and nothing names what was left
+# out, so a result that has to stand as evidence uses `--config=full`. A change
+# to what the C++ backend emits needs it too: that target is the only thing
+# compiling emitted text, and a green default run says nothing about it.
+test --test_tag_filters=-nightly
+test:full --test_tag_filters=
+test:nightly --test_tag_filters=nightly
+
 build:debug --compilation_mode=dbg
 
 build:release --compilation_mode=opt

@@ -77,8 +77,8 @@ type; no `i - left` is synthesized at lowering.
 ## Backend-contract clean
 
 The range operand is materialized at HIR-to-MIR from the receiver's static type and travels as an
-ordinary MIR value -- the prototype/companion-value pattern (`backend_contract.md`: a shape a
-factory needs travels as a MIR value, never composed by render from a node's type). Render emits it
+ordinary MIR value -- the shape-operand pattern (`backend_contract.md`: a shape a factory needs
+travels as a MIR operand, never composed by render from a node's type). Render emits it
 mechanically; it does not read another node's type to synthesize it. This mirrors how construction
 already emits `UnpackedRange{l,r}`. Render stays a fixed function of one node (Inv 1); no
 value-emission entry gains a decision (Inv 2); the Inv-5 LLVM falsifier passes.
@@ -176,8 +176,8 @@ a complexity argument, not a measurement.
   [selector-coordinate-resolution](selector-coordinate-resolution.md) rejected: the coordinate
   system is scattered across call sites rather than owned. The chosen model looks similar at the C++
   call but is not this one -- the range is a MIR operand materialized from the receiver's _static
-  type_ at lowering (the prototype pattern), so the type owns it and no caller computes or threads a
-  runtime coordinate system.
+  type_ at lowering (the shape-operand pattern), so the type owns it and no caller computes or
+  threads a runtime coordinate system.
 
 - **Range on a per-declaration cell wrapper** -- the value holds only payload; a wrapper beside each
   declared variable holds the range; `Var<Payload>` is unchanged. Rejected: it does not land
@@ -202,6 +202,9 @@ a complexity argument, not a measurement.
   cell).
 - [unpacked-array-representation](unpacked-array-representation.md) invariant 2: "the value carries
   its declared range" becomes "the type carries the range; the value carries ordinal payload".
+- [integral-representation](integral-representation.md) decision 1: a packed value's declared
+  representation is its dimension stack with signedness and state domain, not a bare bit width. The
+  carve-out is what makes the two families differ here, so it is named at both ends.
 
 ## Confirmed evidence
 

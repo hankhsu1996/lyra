@@ -16,6 +16,7 @@
 #include "lyra/lowering/hir_to_mir/cast_lowering.hpp"
 #include "lyra/lowering/hir_to_mir/expression/operators.hpp"
 #include "lyra/lowering/hir_to_mir/flat_packed_type.hpp"
+#include "lyra/lowering/hir_to_mir/integral_literal.hpp"
 #include "lyra/lowering/hir_to_mir/packed_projection.hpp"
 #include "lyra/lowering/hir_to_mir/process_lowerer.hpp"
 #include "lyra/lowering/hir_to_mir/structural_scope_lowerer.hpp"
@@ -24,6 +25,7 @@
 #include "lyra/mir/binary_op.hpp"
 #include "lyra/mir/compilation_unit.hpp"
 #include "lyra/mir/expr.hpp"
+#include "lyra/mir/packed_type_descriptor.hpp"
 #include "lyra/mir/type.hpp"
 
 // HIR-to-MIR lowering for the three select families (`a[i]`, `a[hi:lo]`,
@@ -142,11 +144,8 @@ auto AppendReceiverRange(
   }
   const auto& base_ty = unit_lowerer.Unit().types.Get(base_type);
   if (const auto* ua = std::get_if<mir::UnpackedArrayType>(&base_ty.data)) {
-    const mir::TypeId int_type = unit_lowerer.Unit().builtins.int_type;
-    args.push_back(
-        block.exprs.Add(mir::MakeIntLiteral(int_type, ua->dim.left)));
-    args.push_back(
-        block.exprs.Add(mir::MakeIntLiteral(int_type, ua->dim.right)));
+    args.push_back(BuildIntLiteral(unit_lowerer.Unit(), block, ua->dim.left));
+    args.push_back(BuildIntLiteral(unit_lowerer.Unit(), block, ua->dim.right));
   }
 }
 
@@ -162,8 +161,8 @@ auto AppendResultShape(
     std::vector<mir::ExprId>& args) -> void {
   const auto& result_ty = unit_lowerer.Unit().types.Get(result_type);
   if (!result_ty.IsIntegralPacked()) return;
-  args.push_back(BuildPackedShapePrototype(
-      block, result_ty.AsIntegralPacked(), result_type));
+  args.push_back(
+      mir::BuildPackedTypeRef(unit_lowerer.Unit(), block, result_type));
 }
 
 // Extends a write target by one descent step. A target that already designates
@@ -262,9 +261,8 @@ auto UnfoldRangeSelectOperands(
       },
       bounds);
   if (!raw_or) return std::unexpected(std::move(raw_or.error()));
-  const mir::TypeId int_type = unit_lowerer.Unit().builtins.int_type;
   const auto form_id =
-      block.exprs.Add(mir::MakeIntLiteral(int_type, raw_or->form));
+      BuildIntLiteral(unit_lowerer.Unit(), block, raw_or->form);
   std::vector<mir::ExprId> operands = {raw_or->a, raw_or->b, form_id};
   AppendResultShape(unit_lowerer, block, result_type, operands);
   AppendReceiverRange(unit_lowerer, block, base_type, operands);
@@ -315,14 +313,13 @@ auto UnfoldFieldSliceOperands(
     UnitLowerer& unit_lowerer, mir::Block& block, std::uint32_t bit_offset,
     std::uint32_t bit_width, mir::TypeId result_type)
     -> std::vector<mir::ExprId> {
-  const mir::TypeId int_type = unit_lowerer.Unit().builtins.int_type;
-  const auto offset_id = block.exprs.Add(
-      mir::MakeIntLiteral(int_type, static_cast<std::int64_t>(bit_offset)));
-  const auto width_id = block.exprs.Add(
-      mir::MakeIntLiteral(int_type, static_cast<std::int64_t>(bit_width)));
+  const auto offset_id = BuildIntLiteral(
+      unit_lowerer.Unit(), block, static_cast<std::int64_t>(bit_offset));
+  const auto width_id = BuildIntLiteral(
+      unit_lowerer.Unit(), block, static_cast<std::int64_t>(bit_width));
   // A field occupies bits `[offset +: width]` -- a raw indexed-up part-select
   // (`value::SliceForm` `kIndexedUp` == 1); the value resolves the bit window.
-  const auto form_id = block.exprs.Add(mir::MakeIntLiteral(int_type, 1));
+  const auto form_id = BuildIntLiteral(unit_lowerer.Unit(), block, 1);
   std::vector<mir::ExprId> operands = {offset_id, width_id, form_id};
   AppendResultShape(unit_lowerer, block, result_type, operands);
   return operands;
@@ -499,9 +496,8 @@ auto BuildPackedTagTest(
   const mir::ExprId tag = block.exprs.Add(BuildPackedRunRead(
       unit_lowerer, block, base, projection.bit_width - projection.tag_bits,
       projection.tag_bits, tag_type));
-  const mir::ExprId named = block.exprs.Add(
-      mir::MakeIntLiteral(
-          unit.builtins.int_type, static_cast<std::int64_t>(index.value)));
+  const mir::ExprId named =
+      BuildIntLiteral(unit, block, static_cast<std::int64_t>(index.value));
   return block.exprs.Add(BuildMirBinaryExpr(
       unit, block, mir::BinaryOp::kCaseEquality, tag,
       ConvertToType(unit, block, named, tag_type), unit.builtins.bit1));

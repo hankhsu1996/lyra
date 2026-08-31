@@ -6,9 +6,12 @@
 namespace lyra::lowering::hir_to_mir {
 
 auto ReduceToCondition(
-    mir::Block& block, mir::ExprId cond, mir::TypeId bit1_type) -> mir::ExprId {
+    const mir::CompilationUnit& unit, mir::Block& block, mir::ExprId cond)
+    -> mir::ExprId {
   return block.exprs.Add(
-      mir::Expr{.data = mir::BoolCastExpr{.operand = cond}, .type = bit1_type});
+      mir::Expr{
+          .data = mir::BoolCastExpr{.operand = cond},
+          .type = unit.builtins.machine_bool});
 }
 
 }  // namespace lyra::lowering::hir_to_mir

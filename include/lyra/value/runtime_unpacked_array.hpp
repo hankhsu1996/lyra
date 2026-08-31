@@ -54,13 +54,21 @@ class RuntimeUnpackedArray {
 
   // LRM 5.9 / 21.3.3: a string value assigned to an unpacked array of bytes is
   // left-justified -- the first character lands at the array's left bound and
-  // runs toward the right bound, an element past the end of the text takes
-  // zero, and text beyond the array's last element is dropped. The clause
-  // admits this form for an array of bytes alone, so the element prototype is a
-  // packed value rather than one of any domain; it carries the element's
-  // declared representation, and `count` is the destination's element count.
+  // runs toward the right bound, an element past the end of the text keeps the
+  // element type's default, and text beyond the array's last element is
+  // dropped. The clause admits this form for an array of bytes alone, so the
+  // element shape is a packed type rather than a type of any domain, and
+  // `count` is the destination's element count.
   [[nodiscard]] static auto FromString(
-      const String& text, const PackedArray& element_prototype,
+      const String& text, const PackedType& element_type,
+      const PackedArray& count) -> RuntimeUnpackedArray;
+
+  // LRM 5.9: a string literal assigned to an unpacked array of bytes, under the
+  // same left justification. A literal is a packed bit-vector constant, not a
+  // string value, so its bytes arrive whole -- a NUL among them is a byte like
+  // any other, where building a string value would have removed it (LRM 6.16).
+  [[nodiscard]] static auto FromPackedArray(
+      const PackedArray& bits, const PackedType& element_type,
       const PackedArray& count) -> RuntimeUnpackedArray;
 
   RuntimeUnpackedArray(const RuntimeUnpackedArray&);

@@ -71,11 +71,6 @@ auto lyra_rt_format(LyraSpan items, const void* time_format) -> void*;
 // ranges) so a multi-dim packed value keeps its shape into element / slice
 // access. Whether the planes span the width those dimensions describe is
 // checked here, where the width is a concrete size.
-auto lyra_rt_packed_const(
-    const std::uint64_t* value_words, std::int64_t value_word_count,
-    const std::uint64_t* unknown_words, std::int64_t unknown_word_count,
-    const std::int64_t* dims, std::int64_t dims_count, bool is_signed,
-    bool is_four_state) -> void*;
 void lyra_rt_writeln(void* files, void* descriptor, void* text);
 void lyra_rt_write(void* files, void* descriptor, void* text);
 
@@ -457,6 +452,7 @@ auto lyra_rt_real_atanh(const void* value) -> void*;
 // Reading a real out as an integer: LRM 6.12.1 rounds, LRM 20.5 `$rtoi`
 // truncates, and the bit-pattern pair carries the IEEE 754 encoding itself.
 auto lyra_rt_real_round(const void* value) -> std::int64_t;
+auto lyra_rt_real_real_value(const void* value) -> double;
 auto lyra_rt_real_truncate(const void* value) -> std::int64_t;
 auto lyra_rt_real_to_bits(const void* value) -> std::int64_t;
 auto lyra_rt_real_from_bits(std::int64_t bits) -> void*;
@@ -489,6 +485,7 @@ auto lyra_rt_shortreal_ge(const void* lhs, const void* rhs) -> void*;
 auto lyra_rt_shortreal_to_bool(const void* operand) -> bool;
 auto lyra_rt_shortreal_pow(const void* base, const void* exponent) -> void*;
 auto lyra_rt_shortreal_round(const void* value) -> std::int64_t;
+auto lyra_rt_shortreal_real_value(const void* value) -> float;
 auto lyra_rt_shortreal_to_bits(const void* value) -> std::int64_t;
 auto lyra_rt_shortreal_from_bits(std::int64_t bits) -> void*;
 auto lyra_rt_shortreal_const(float value) -> void*;
@@ -708,6 +705,12 @@ auto lyra_rt_activation_frame_load_assocarray(const void* cell) -> void*;
 // LRM 21.3.3 / 5.9: text conformed to a destination's declared shape. An
 // integral destination takes it right-justified and an unpacked array of bytes
 // left-justified, which is why only the array form carries an element count.
+auto lyra_rt_make_packed_range(std::int64_t left, std::int64_t right) -> const
+    void*;
+auto lyra_rt_make_packed_type(LyraSpan dims, bool is_signed, bool is_four_state)
+    -> const void*;
+auto lyra_rt_packed_from_words(
+    LyraSpan value_words, LyraSpan unknown_words, const void* type) -> void*;
 auto lyra_rt_packed_from_string(const void* text, const void* prototype)
     -> void*;
 auto lyra_rt_unpackedarray_from_string(

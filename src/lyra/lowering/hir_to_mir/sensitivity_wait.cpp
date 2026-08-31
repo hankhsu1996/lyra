@@ -9,6 +9,7 @@
 #include "lyra/hir/stmt.hpp"
 #include "lyra/hir/value_ref.hpp"
 #include "lyra/lowering/hir_to_mir/endpoint.hpp"
+#include "lyra/lowering/hir_to_mir/integral_literal.hpp"
 #include "lyra/lowering/hir_to_mir/runtime_call.hpp"
 #include "lyra/lowering/hir_to_mir/structural_scope_lowerer.hpp"
 #include "lyra/lowering/hir_to_mir/unit_lowerer.hpp"
@@ -69,7 +70,7 @@ auto BuildTriggerExpr(
                 entry.footprint->second - entry.footprint->first + 1)
           : 0;
   const auto int_literal = [&](std::int64_t value) {
-    return block.exprs.Add(mir::MakeIntLiteral(unit.builtins.int_type, value));
+    return BuildIntLiteral(unit, block, value);
   };
   return block.exprs.Add(
       mir::Expr{

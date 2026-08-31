@@ -47,7 +47,7 @@ struct PackedProjection {
 };
 
 [[nodiscard]] auto ProjectPackedAggregate(
-    UnitLowerer& unit_lowerer, const hir::TypeData& aggregate)
+    const UnitLowerer& unit_lowerer, const hir::TypeData& aggregate)
     -> PackedProjection;
 
 }  // namespace lyra::lowering::hir_to_mir

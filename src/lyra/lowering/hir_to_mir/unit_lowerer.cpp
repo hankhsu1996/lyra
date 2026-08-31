@@ -192,6 +192,68 @@ auto TranslateNetResolution(hir::NetType net_type) -> mir::NetResolution {
   throw InternalError("TranslateNetResolution: unknown NetType");
 }
 
+// Builds the design's way in: a nullary callable that constructs the root
+// object -- parentless, at the hierarchy's origin -- and returns it as the
+// generic scope. Construction is what a design does at its own root, so it is
+// stated here as ordinary construction rather than left for a host artifact to
+// hand-compose; everything else about starting a run is the same for every
+// design and is the host's.
+void DefineRootFactory(mir::CompilationUnit& unit) {
+  if (!unit.root.has_value()) {
+    throw InternalError("DefineRootFactory: the design root has no root class");
+  }
+  const mir::ClassId root_class = *unit.root;
+  const mir::Class& root = unit.GetClass(root_class);
+  const mir::TypeId owned_scope = unit.types.PointerTo(
+      unit.types.Intern(
+          mir::RuntimeClassType{.symbol = "lyra::runtime::Scope"}),
+      mir::PointerOwnership::kUnique);
+
+  mir::CallableCode code = mir::CallableCode::Defined();
+  code.body.emplace();
+  code.result_type = owned_scope;
+  mir::Block& body = code.Body();
+
+  const mir::ExprId label = body.exprs.Add(
+      mir::Expr{
+          .data = mir::StringLiteral{.value = root.name},
+          .type = unit.builtins.string});
+  const mir::ExprId indices = body.exprs.Add(
+      mir::Expr{
+          .data = mir::ArrayLiteralExpr{.elements = {}},
+          .type = unit.types.MachineArrayOf(unit.builtins.int_type, 0)});
+  const mir::ExprId segment = body.exprs.Add(
+      mir::Expr{
+          .data =
+              mir::CallExpr{
+                  .callee = mir::Construct{}, .arguments = {label, indices}},
+          .type = unit.builtins.hierarchy_segment});
+  const mir::ExprId no_parent = body.exprs.Add(
+      mir::Expr{.data = mir::NullLiteral{}, .type = unit.builtins.scope_ptr});
+  const mir::ExprId built = body.exprs.Add(
+      mir::Expr{
+          .data =
+              mir::CallExpr{
+                  .callee = mir::Construct{},
+                  .arguments = {no_parent, segment}},
+          .type = unit.types.PointerTo(
+              unit.types.Intern(mir::ObjectType{.class_id = root_class}),
+              mir::PointerOwnership::kUnique)});
+  body.AppendStmt(
+      mir::ReturnStmt{
+          .value = body.exprs.Add(
+              mir::Expr{
+                  .data = mir::PointerCastExpr{.operand = built},
+                  .type = owned_scope})});
+
+  unit.root_factory = unit.callables.Add(
+      mir::CallableDecl{
+          .name = "BuildRoot",
+          .code = std::move(code),
+          .foreign = std::nullopt,
+          .virtual_dispatch = std::nullopt});
+}
+
 }  // namespace
 
 auto UnitLowerer::MemberCellType(
@@ -349,16 +411,23 @@ auto UnitLowerer::PublishUnitDeclarations() -> diag::Result<void> {
 }
 
 auto UnitLowerer::RunObjectRoot() -> diag::Result<mir::CompilationUnit> {
-  return LowerModuleUnit({});
+  if (auto root = PopulateModuleRoot({}); !root) {
+    return std::unexpected(std::move(root.error()));
+  }
+  return std::move(unit_);
 }
 
 auto UnitLowerer::RunDesignRoot(PackageInitializationPlan package_init_plan)
     -> diag::Result<mir::CompilationUnit> {
-  return LowerModuleUnit(std::move(package_init_plan));
+  if (auto root = PopulateModuleRoot(std::move(package_init_plan)); !root) {
+    return std::unexpected(std::move(root.error()));
+  }
+  DefineRootFactory(unit_);
+  return std::move(unit_);
 }
 
-auto UnitLowerer::LowerModuleUnit(PackageInitializationPlan package_init_plan)
-    -> diag::Result<mir::CompilationUnit> {
+auto UnitLowerer::PopulateModuleRoot(
+    PackageInitializationPlan package_init_plan) -> diag::Result<void> {
   WalkFrame root_frame;
   if (auto prologue = PublishUnitDeclarations(); !prologue) {
     return std::unexpected(std::move(prologue.error()));
@@ -377,7 +446,7 @@ auto UnitLowerer::LowerModuleUnit(PackageInitializationPlan package_init_plan)
   if (!body_r) return std::unexpected(std::move(body_r.error()));
 
   unit_.root = *top_r;
-  return std::move(unit_);
+  return {};
 }
 
 auto UnitLowerer::RunNamespace() -> diag::Result<mir::CompilationUnit> {

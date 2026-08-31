@@ -19,6 +19,10 @@ auto OperandType(const Function& fn, const Operand& operand)
           [](const StrConst& c) -> std::optional<TypeId> { return c.type; },
           [](const RealConst& c) -> std::optional<TypeId> { return c.type; },
           [](const NullConst& c) -> std::optional<TypeId> { return c.type; },
+          [](const BoolConst& c) -> std::optional<TypeId> { return c.type; },
+          [](const PackedTypeRef& c) -> std::optional<TypeId> {
+            return c.type;
+          },
           [](const FuncRef&) -> std::optional<TypeId> { return std::nullopt; },
           [](const StaticRef& s) -> std::optional<TypeId> { return s.type; }},
       operand);

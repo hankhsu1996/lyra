@@ -18,6 +18,7 @@
 #include "lyra/lowering/hir_to_mir/callable_bindings.hpp"
 #include "lyra/lowering/hir_to_mir/closure_builder.hpp"
 #include "lyra/lowering/hir_to_mir/condition.hpp"
+#include "lyra/lowering/hir_to_mir/integral_literal.hpp"
 #include "lyra/lowering/hir_to_mir/pattern.hpp"
 #include "lyra/lowering/hir_to_mir/print_items.hpp"
 #include "lyra/lowering/hir_to_mir/runtime_call.hpp"
@@ -191,7 +192,6 @@ auto BuildUniqueCheckClosure(
   mir::Block& body = closure.Body();
 
   const mir::TypeId int_type = unit_lowerer.Unit().builtins.int_type;
-  const mir::TypeId bit1_type = unit_lowerer.Unit().builtins.bit1;
 
   std::vector<mir::ExprId> inner_reads;
   inner_reads.reserve(snapshot_vars.size());
@@ -205,20 +205,19 @@ auto BuildUniqueCheckClosure(
       mir::LocalDecl{.name = "_lyra_unique_count", .type = int_type});
 
   const mir::ExprId zero_init_id =
-      body.exprs.Add(mir::MakeIntLiteral(int_type, 0));
+      BuildIntLiteral(unit_lowerer.Unit(), body, 0);
   body.AppendStmt(
       mir::LocalDeclStmt{.target = count_var, .init = zero_init_id});
 
   for (const mir::ExprId bit_read : inner_reads) {
-    const mir::ExprId one_lit =
-        body.exprs.Add(mir::MakeIntLiteral(int_type, 1));
-    const mir::ExprId zero_lit =
-        body.exprs.Add(mir::MakeIntLiteral(int_type, 0));
+    const mir::ExprId one_lit = BuildIntLiteral(unit_lowerer.Unit(), body, 1);
+    const mir::ExprId zero_lit = BuildIntLiteral(unit_lowerer.Unit(), body, 0);
     const mir::ExprId cond_value = body.exprs.Add(
         mir::Expr{
             .data =
                 mir::ConditionalExpr{
-                    .condition = ReduceToCondition(body, bit_read, bit1_type),
+                    .condition =
+                        ReduceToCondition(unit_lowerer.Unit(), body, bit_read),
                     .then_value = one_lit,
                     .else_value = zero_lit},
             .type = int_type});
@@ -245,9 +244,8 @@ auto BuildUniqueCheckClosure(
 
   const mir::ExprId final_count_read =
       body.exprs.Add(mir::MakeLocalRefExpr(count_var, int_type));
-  const mir::ExprId expected_lit = body.exprs.Add(
-      mir::MakeIntLiteral(
-          int_type, static_cast<std::int64_t>(verdict.expected)));
+  const mir::ExprId expected_lit = BuildIntLiteral(
+      unit_lowerer.Unit(), body, static_cast<std::int64_t>(verdict.expected));
   const mir::ExprId predicate_id = body.exprs.Add(
       mir::Expr{
           .data =
@@ -265,7 +263,8 @@ auto BuildUniqueCheckClosure(
 
   body.AppendStmt(
       mir::IfStmt{
-          .condition = ReduceToCondition(body, predicate_id, bit1_type),
+          .condition =
+              ReduceToCondition(unit_lowerer.Unit(), body, predicate_id),
           .then_scope = diag_scope_id,
           .else_scope = std::nullopt});
 
@@ -282,7 +281,6 @@ auto BuildDeferredCheckCascade(
     -> mir::Stmt {
   const mir::TypeId void_type = unit_lowerer.Unit().builtins.void_type;
   const mir::TypeId int_type = unit_lowerer.Unit().builtins.int_type;
-  const mir::TypeId bit1_type = unit_lowerer.Unit().builtins.bit1;
 
   // SnapshotPredicate / BuildDefaultValueExpr append to wrapper, so route
   // through a wrapper-local frame; the cascade levels each derive their own
@@ -335,7 +333,8 @@ auto BuildDeferredCheckCascade(
 
     level_block.AppendStmt(
         mir::IfStmt{
-            .condition = ReduceToCondition(level_block, cond_read, bit1_type),
+            .condition =
+                ReduceToCondition(unit_lowerer.Unit(), level_block, cond_read),
             .then_scope = body_scope_id,
             .else_scope = else_scope_id});
     tail = std::move(level_block);
@@ -354,7 +353,8 @@ auto BuildDeferredCheckCascade(
 
     wrapper.AppendStmt(
         mir::IfStmt{
-            .condition = ReduceToCondition(wrapper, cond_read0, bit1_type),
+            .condition =
+                ReduceToCondition(unit_lowerer.Unit(), wrapper, cond_read0),
             .then_scope = body0_id,
             .else_scope = else0_id});
   }
@@ -387,7 +387,7 @@ auto LowerUniqueIfStmt(
     const mir::LocalId held = wrapper_frame.bindings->DeclareAnonymous(
         mir::LocalDecl{.name = "_lyra_arm_held", .type = bit1_type});
     const mir::ExprId not_held =
-        wrapper.exprs.Add(mir::MakeBit1Literal(bit1_type, false));
+        BuildBit1Literal(process.Owner().Unit(), wrapper, false);
     wrapper.AppendStmt(mir::LocalDeclStmt{.target = held, .init = not_held});
 
     auto chain_or = BuildClauseChainIf(

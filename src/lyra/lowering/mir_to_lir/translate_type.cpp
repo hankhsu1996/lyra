@@ -150,6 +150,9 @@ auto UnitLowerer::TranslateTypeData(const mir::Type& ty) -> lir::TypeData {
           [](const mir::MachineCStringType&) -> lir::TypeData {
             return lir::TypeData{lir::MachineCStringType{}};
           },
+          [](const mir::MachineBoolType&) -> lir::TypeData {
+            return lir::TypeData{lir::MachineBoolType{}};
+          },
           [](const mir::MachineIntType& mi) -> lir::TypeData {
             return lir::TypeData{lir::MachineIntType{
                 .bit_width = mi.bit_width,
@@ -301,6 +304,10 @@ auto UnitLowerer::TranslateRuntimeLibrary(mir::RuntimeLibraryKind kind)
   switch (kind) {
     case mir::RuntimeLibraryKind::kPrintItem:
       return mirror(lir::RuntimeLibraryKind::kPrintItem);
+    case mir::RuntimeLibraryKind::kPackedType:
+      return mirror(lir::RuntimeLibraryKind::kPackedType);
+    case mir::RuntimeLibraryKind::kPackedRange:
+      return mirror(lir::RuntimeLibraryKind::kPackedRange);
     case mir::RuntimeLibraryKind::kPrintLiteralItem:
       return mirror(lir::RuntimeLibraryKind::kPrintLiteralItem);
     case mir::RuntimeLibraryKind::kPrintValueItem:

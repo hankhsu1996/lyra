@@ -1,8 +1,8 @@
 #pragma once
 
-#include <cstdint>
 #include <optional>
 #include <string>
+#include <utility>
 #include <variant>
 #include <vector>
 
@@ -20,7 +20,6 @@
 #include "lyra/mir/external_unit_object.hpp"
 #include "lyra/mir/external_unit_object_id.hpp"
 #include "lyra/mir/foreign_linkage.hpp"
-#include "lyra/mir/integral_constant.hpp"
 #include "lyra/mir/static_variable_id.hpp"
 #include "lyra/mir/struct_decl.hpp"
 #include "lyra/mir/struct_id.hpp"
@@ -59,10 +58,19 @@ struct BuiltinMirTypes {
   TypeId int_unsigned;
   TypeId integer;
   TypeId bit1;
+  TypeId machine_bool;
   // The machine integer a runtime entry hands back as a plain value. It is the
   // widest one, so a narrower machine integer is reached from it by an
   // `IntCastExpr` rather than by an entry of its own.
   TypeId machine_int64;
+  // The machine word a packed value's storage is laid out in. A literal too
+  // wide for one integer carrier states its bits as a run of these, which is
+  // the same word the runtime's own planes are made of.
+  TypeId machine_word;
+  // The two machine floats a real-family value wraps: single precision for a
+  // `shortreal`, double for a `real` or a `realtime` (LRM 6.12).
+  TypeId machine_float32;
+  TypeId machine_float64;
   TypeId string;
   TypeId void_type;
   TypeId realtime;
@@ -75,6 +83,13 @@ struct BuiltinMirTypes {
   TypeId process_object;
   TypeId files;
   TypeId diagnostic;
+  // The descriptor an integral type reaches a factory as. Every such operand
+  // has this one type, whichever integral it describes: which integral it is
+  // is what the operand names, not part of what type the operand is.
+  TypeId packed_type;
+  // One dimension of that descriptor, named so the stack a descriptor is built
+  // from is spelled through the type dispatch like every other type.
+  TypeId packed_range;
   TypeId channel_cancellation;
   TypeId print_item;
   TypeId print_literal_item;
@@ -203,9 +218,15 @@ struct CompilationUnit {
                     .signedness = Signedness::kUnsigned,
                     .dims = {PackedRange{.left = 0, .right = 0}},
                     .form = PackedArrayForm::kExplicit}),
+            .machine_bool = types.Intern(MachineBoolType{}),
             .machine_int64 = types.Intern(
                 MachineIntType{
                     .bit_width = 64, .signedness = Signedness::kSigned}),
+            .machine_word = types.Intern(
+                MachineIntType{
+                    .bit_width = 64, .signedness = Signedness::kUnsigned}),
+            .machine_float32 = types.Intern(MachineFloatType{.bit_width = 32}),
+            .machine_float64 = types.Intern(MachineFloatType{.bit_width = 64}),
             .string = types.Intern(StringType{}),
             .void_type = types.Intern(VoidType{}),
             .realtime = types.Intern(RealTimeType{}),
@@ -224,6 +245,10 @@ struct CompilationUnit {
                 RuntimeClassType{.symbol = "lyra::runtime::RuntimeProcess"}),
             .files = types.Intern(FilesType{}),
             .diagnostic = types.Intern(DiagnosticType{}),
+            .packed_type = types.Intern(
+                RuntimeLibraryType{.kind = RuntimeLibraryKind::kPackedType}),
+            .packed_range = types.Intern(
+                RuntimeLibraryType{.kind = RuntimeLibraryKind::kPackedRange}),
             .channel_cancellation = types.Intern(
                 RuntimeLibraryType{
                     .kind = RuntimeLibraryKind::kChannelCancellation}),
@@ -319,22 +344,6 @@ struct CompilationUnit {
   }
 };
 
-// 2-state signed 32-bit literal, typed `int` (LRM 6.11.1).
-[[nodiscard]] inline auto MakeIntLiteral(TypeId int_type, std::int64_t value)
-    -> Expr {
-  return Expr{
-      .data =
-          IntegerLiteral{
-              .value =
-                  IntegralConstant{
-                      .value_words = {static_cast<std::uint64_t>(value)},
-                      .state_words = {},
-                      .width = 32,
-                      .signedness = Signedness::kSigned,
-                      .state_kind = IntegralStateKind::kTwoState}},
-      .type = int_type};
-}
-
 [[nodiscard]] inline auto MakeStringLiteral(
     TypeId string_type, std::string text) -> Expr {
   return Expr{
@@ -356,42 +365,6 @@ struct CompilationUnit {
     throw InternalError("TaggedComponentType: tag index out of range");
   }
   return tu->elements[tag_index.value];
-}
-
-// 1-bit unsigned 2-state literal. The value a boolean fold yields when it has
-// nothing to fold, and the constant a synthesized flag is seeded with.
-[[nodiscard]] inline auto MakeBit1Literal(TypeId bit1_type, bool value)
-    -> Expr {
-  return Expr{
-      .data =
-          IntegerLiteral{
-              .value =
-                  IntegralConstant{
-                      .value_words = {value ? 1ULL : 0ULL},
-                      .state_words = {},
-                      .width = 1,
-                      .signedness = Signedness::kUnsigned,
-                      .state_kind = IntegralStateKind::kTwoState}},
-      .type = bit1_type};
-}
-
-// 4-state signed 32-bit literal, typed `integer` (LRM 6.11.1). Used by sites
-// that compare against the matched-count return of `$sscanf` / `$fscanf` --
-// those return `integer`, so the operand on the other side must match
-// state-kind.
-[[nodiscard]] inline auto MakeIntegerLiteral(
-    TypeId integer_type, std::int64_t value) -> Expr {
-  return Expr{
-      .data =
-          IntegerLiteral{
-              .value =
-                  IntegralConstant{
-                      .value_words = {static_cast<std::uint64_t>(value)},
-                      .state_words = {},
-                      .width = 32,
-                      .signedness = Signedness::kSigned,
-                      .state_kind = IntegralStateKind::kFourState}},
-      .type = integer_type};
 }
 
 }  // namespace lyra::mir

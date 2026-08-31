@@ -23,7 +23,6 @@
 #include "lyra/mir/binary_op.hpp"
 #include "lyra/mir/expr.hpp"
 #include "lyra/mir/inc_dec_op.hpp"
-#include "lyra/mir/integral_constant.hpp"
 #include "lyra/mir/local.hpp"
 #include "lyra/mir/stmt.hpp"
 #include "lyra/mir/type.hpp"
@@ -77,12 +76,6 @@ auto FieldSlot(const mir::FieldAccessExpr& field)
             return std::nullopt;
           }},
       field.field);
-}
-
-auto TranslateIntegralConstant(const mir::IntegralConstant& c)
-    -> lir::IntegralConstant {
-  return lir::IntegralConstant{
-      .value_words = c.value_words, .state_words = c.state_words};
 }
 
 // Whether this call builds a reference over its one argument. A reference is
@@ -312,6 +305,7 @@ FunctionLowerer::FunctionLowerer(
     : unit_(&unit),
       code_(&code),
       closure_(nullptr),
+      description_(nullptr),
       name_(std::move(name)),
       placed_(code.locals.size(), false),
       activation_value_local_(code.locals.size(), false),
@@ -323,10 +317,21 @@ FunctionLowerer::FunctionLowerer(
     : unit_(&unit),
       code_(&closure.invoke),
       closure_(&closure),
+      description_(nullptr),
       name_(std::move(name)),
       placed_(closure.invoke.locals.size(), false),
       activation_value_local_(closure.invoke.locals.size(), false),
       locals_(closure.invoke.locals.size(), std::nullopt) {
+}
+
+FunctionLowerer::FunctionLowerer(
+    UnitLowerer& unit, const mir::PackedTypeDescription& description,
+    std::string name)
+    : unit_(&unit),
+      code_(nullptr),
+      closure_(nullptr),
+      description_(&description),
+      name_(std::move(name)) {
 }
 
 void FunctionLowerer::BindCaptureReceiver(mir::LocalId receiver) {
@@ -339,6 +344,30 @@ void FunctionLowerer::BindCaptureReceiver(mir::LocalId receiver) {
   fn_.params.push_back(value);
   locals_[receiver.value] =
       LocalBinding{ValueBinding{.value = lir::Use{.value = value}}};
+}
+
+auto FunctionLowerer::LowerDescription(
+    UnitLowerer& unit, const mir::PackedTypeDescription& description,
+    std::string name) -> diag::Result<lir::Function> {
+  return FunctionLowerer(unit, description, std::move(name)).RunDescription();
+}
+
+auto FunctionLowerer::RunDescription() -> diag::Result<lir::Function> {
+  fn_.name = std::move(name_);
+  fn_.result_type = unit_->TranslateType(unit_->Mir().builtins.packed_type);
+  SetCurrent(NewBlock());
+  auto value = LowerExpr(description_->body, description_->value);
+  if (!value) {
+    return std::unexpected(std::move(value.error()));
+  }
+  Terminate(lir::ReturnTerm{.value = *std::move(value)});
+  for (OpenBlock& block : blocks_) {
+    fn_.blocks.push_back(
+        lir::BasicBlock{
+            .instrs = std::move(block.instrs),
+            .terminator = *std::move(block.terminator)});
+  }
+  return std::move(fn_);
 }
 
 auto FunctionLowerer::Run() -> diag::Result<lir::Function> {
@@ -1668,22 +1697,28 @@ auto FunctionLowerer::LowerExpr(const mir::Block& block, mir::ExprId id)
   const mir::TypeId type = expr.type;
   return std::visit(
       Overloaded{
-          [&](const mir::IntegerLiteral& lit) -> diag::Result<lir::Operand> {
-            return lir::Operand{lir::IntConst{
-                .value = TranslateIntegralConstant(lit.value),
-                .type = unit_->TranslateType(type)}};
-          },
           [&](const mir::StringLiteral& lit) -> diag::Result<lir::Operand> {
             return lir::Operand{lir::StrConst{
                 .value = lit.value, .type = unit_->TranslateType(type)}};
           },
-          [&](const mir::RealLiteral& lit) -> diag::Result<lir::Operand> {
+          [&](const mir::MachineFloatLiteral& lit)
+              -> diag::Result<lir::Operand> {
             return lir::Operand{lir::RealConst{
                 .value = lit.value, .type = unit_->TranslateType(type)}};
           },
           [&](const mir::NullLiteral&) -> diag::Result<lir::Operand> {
             return lir::Operand{
                 lir::NullConst{.type = unit_->TranslateType(type)}};
+          },
+          [&](const mir::MachineBoolLiteral& lit)
+              -> diag::Result<lir::Operand> {
+            return lir::Operand{lir::BoolConst{
+                .value = lit.value, .type = unit_->TranslateType(type)}};
+          },
+          [&](const mir::PackedTypeRef& ref) -> diag::Result<lir::Operand> {
+            return lir::Operand{lir::PackedTypeRef{
+                .integral = unit_->TranslateType(ref.integral),
+                .type = unit_->TranslateType(type)}};
           },
           [&](const mir::MachineIntLiteral& lit) -> diag::Result<lir::Operand> {
             return lir::Operand{lir::IntConst{

@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <cstddef>
+#include <format>
 #include <string>
 #include <string_view>
 #include <vector>
@@ -33,6 +34,49 @@ inline void AppendSection(std::string& out, const std::string& section) {
     out.append(part);
   }
   return out;
+}
+
+// The syntactic wrappers a value-emission entry composes around the renders of
+// its parts. Each takes rendered parts and returns one rendered form, so a
+// render entry states which wrapper it wants and never spells the punctuation:
+// how many arguments there are, where the separators go, and whether a brace
+// group belongs to the type or to something inside it stop being a per-site
+// decision. A hand-written format string carries all three at once.
+[[nodiscard]] inline auto CallOf(
+    std::string_view callee, const std::vector<std::string>& args)
+    -> std::string {
+  return std::string{callee} + "(" + JoinCommaSeparated(args) + ")";
+}
+
+// A value settled before any process runs, defined where every reference
+// reaches it by name. `inline` gives it one definition across every translation
+// unit that includes the header, which is the header-only, link-by-name model
+// the emitted callables already use. `const` rather than `constexpr` because an
+// initializer may name a runtime library value or an erased code address, and
+// C++ admits neither in a constant expression; the storage is established
+// before any process runs either way.
+//
+// The two forms differ only in the keyword a class needs to say what a
+// namespace says by having no instances to be per-instance of, so each is
+// named for its scope rather than selected by a flag.
+[[nodiscard]] inline auto NamespaceConstantOf(
+    std::string_view type, std::string_view name, std::string_view init)
+    -> std::string {
+  return std::format("inline const {} {} = {};\n", type, name, init);
+}
+
+[[nodiscard]] inline auto ClassConstantOf(
+    std::string_view type, std::string_view name, std::string_view init)
+    -> std::string {
+  return std::format("inline static const {} {} = {};\n", type, name, init);
+}
+
+// A braced list standing for a sequence the receiving parameter's own type
+// gives meaning to. Distinct from a construction, which names its type: this
+// form is only correct where something else already fixes what is being built.
+[[nodiscard]] inline auto BracedListOf(const std::vector<std::string>& elements)
+    -> std::string {
+  return "{" + JoinCommaSeparated(elements) + "}";
 }
 
 // A unit or class name spelled as a C++ identifier. A source name is already a

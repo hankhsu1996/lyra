@@ -13,7 +13,9 @@
 #include "lyra/hir/value_ref.hpp"
 #include "lyra/lowering/hir_to_mir/callable_bindings.hpp"
 #include "lyra/lowering/hir_to_mir/endpoint.hpp"
+#include "lyra/lowering/hir_to_mir/integral_literal.hpp"
 #include "lyra/lowering/hir_to_mir/process_lowerer.hpp"
+#include "lyra/lowering/hir_to_mir/real_literal.hpp"
 #include "lyra/lowering/hir_to_mir/self_ref.hpp"
 #include "lyra/lowering/hir_to_mir/structural_scope_lowerer.hpp"
 #include "lyra/lowering/hir_to_mir/unit_lowerer.hpp"
@@ -47,11 +49,12 @@ auto LowerStateKind(hir::IntegralStateKind k) -> mir::IntegralStateKind {
   throw InternalError("LowerStateKind: unknown HIR IntegralStateKind");
 }
 
-auto LowerHirIntegerLiteral(const hir::IntegerLiteral& i, mir::TypeId type)
-    -> mir::Expr {
-  return mir::Expr{
-      .data = mir::IntegerLiteral{.value = LowerHirIntegralConstant(i.value)},
-      .type = type};
+auto LowerHirIntegerLiteral(
+    const UnitLowerer& unit_lowerer, const WalkFrame& frame,
+    const hir::IntegerLiteral& i, mir::TypeId type) -> mir::Expr {
+  mir::Block& block = *frame.current_block;
+  return block.exprs.Get(BuildIntegralLiteral(
+      unit_lowerer.Unit(), block, type, LowerHirIntegralConstant(i.value)));
 }
 
 // LRM 5.9: pack a string literal's bytes into the integer constant they denote,
@@ -85,17 +88,15 @@ auto LowerHirStringLiteral(
     const UnitLowerer& unit_lowerer, const WalkFrame& frame,
     const hir::StringLiteral& s, mir::TypeId type) -> mir::Expr {
   const auto& ty = unit_lowerer.Unit().types.Get(type);
+  auto& block = *frame.current_block;
   if (ty.IsIntegralPacked()) {
-    return mir::Expr{
-        .data =
-            mir::IntegerLiteral{
-                .value = StringBytesToConstant(s.value, ty.AsIntegralPacked())},
-        .type = type};
+    return block.exprs.Get(BuildIntegralLiteral(
+        unit_lowerer.Unit(), block, type,
+        StringBytesToConstant(s.value, ty.AsIntegralPacked())));
   }
   // A string-typed literal (e.g. a string parameter's value) builds a
   // `value::String` from the software literal via the constructor, on the
   // block that holds the surrounding expression.
-  auto& block = *frame.current_block;
   const mir::ExprId lit = block.exprs.Add(
       mir::Expr{.data = mir::StringLiteral{.value = s.value}, .type = type});
   return mir::Expr{
@@ -107,18 +108,24 @@ auto LowerHirStringLiteral(
 // unit, so `5us` under a 1ns time unit is the number 5000. The front end has
 // already applied that scaling, and the unit it was written in says nothing
 // further -- what is left is a real number.
-auto LowerHirTimeLiteral(const hir::TimeLiteral& t, mir::TypeId type)
-    -> mir::Expr {
-  return mir::Expr{.data = mir::RealLiteral{.value = t.value}, .type = type};
+auto LowerHirTimeLiteral(
+    const UnitLowerer& unit_lowerer, const WalkFrame& frame,
+    const hir::TimeLiteral& t, mir::TypeId type) -> mir::Expr {
+  mir::Block& block = *frame.current_block;
+  return block.exprs.Get(
+      BuildRealLiteral(unit_lowerer.Unit(), block, type, t.value));
 }
 
 auto LowerHirNullLiteral(mir::TypeId type) -> mir::Expr {
   return mir::Expr{.data = mir::NullLiteral{}, .type = type};
 }
 
-auto LowerHirRealLiteral(const hir::RealLiteral& r, mir::TypeId type)
-    -> mir::Expr {
-  return mir::Expr{.data = mir::RealLiteral{.value = r.value}, .type = type};
+auto LowerHirRealLiteral(
+    const UnitLowerer& unit_lowerer, const WalkFrame& frame,
+    const hir::RealLiteral& r, mir::TypeId type) -> mir::Expr {
+  mir::Block& block = *frame.current_block;
+  return block.exprs.Get(
+      BuildRealLiteral(unit_lowerer.Unit(), block, type, r.value));
 }
 
 // A direct or routed reference reaches its endpoint's observable cell as an
@@ -266,17 +273,18 @@ auto LowerHirPrimaryExprProc(
   return std::visit(
       Overloaded{
           [&](const hir::IntegerLiteral& i) -> mir::Expr {
-            return LowerHirIntegerLiteral(i, result_type);
+            return LowerHirIntegerLiteral(
+                process.Owner(), frame, i, result_type);
           },
           [&](const hir::StringLiteral& s) -> mir::Expr {
             return LowerHirStringLiteral(
                 process.Owner(), frame, s, result_type);
           },
           [&](const hir::TimeLiteral& t) -> mir::Expr {
-            return LowerHirTimeLiteral(t, result_type);
+            return LowerHirTimeLiteral(process.Owner(), frame, t, result_type);
           },
           [&](const hir::RealLiteral& r) -> mir::Expr {
-            return LowerHirRealLiteral(r, result_type);
+            return LowerHirRealLiteral(process.Owner(), frame, r, result_type);
           },
           [&](const hir::NullLiteral&) -> mir::Expr {
             return LowerHirNullLiteral(result_type);
@@ -325,17 +333,18 @@ auto LowerHirPrimaryExprStructural(
   return std::visit(
       Overloaded{
           [&](const hir::IntegerLiteral& i) -> mir::Expr {
-            return LowerHirIntegerLiteral(i, result_type);
+            return LowerHirIntegerLiteral(
+                lowerer.Owner(), frame, i, result_type);
           },
           [&](const hir::StringLiteral& s) -> mir::Expr {
             return LowerHirStringLiteral(
                 lowerer.Owner(), frame, s, result_type);
           },
           [&](const hir::TimeLiteral& t) -> mir::Expr {
-            return LowerHirTimeLiteral(t, result_type);
+            return LowerHirTimeLiteral(lowerer.Owner(), frame, t, result_type);
           },
           [&](const hir::RealLiteral& r) -> mir::Expr {
-            return LowerHirRealLiteral(r, result_type);
+            return LowerHirRealLiteral(lowerer.Owner(), frame, r, result_type);
           },
           [&](const hir::NullLiteral&) -> mir::Expr {
             return LowerHirNullLiteral(result_type);

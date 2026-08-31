@@ -34,18 +34,33 @@ class ScopeView {
   static auto ForRoot(
       const mir::CompilationUnit& unit, const mir::Class& cls,
       const mir::CallableCode& code) -> ScopeView {
-    return ScopeView{unit, &cls, code, code.Body()};
+    return ScopeView{unit, &cls, &code, code.Body()};
   }
 
   // A callable the unit's namespace owns directly, belonging to no class.
   static auto ForNamespace(
       const mir::CompilationUnit& unit, const mir::CallableCode& code)
       -> ScopeView {
-    return ScopeView{unit, nullptr, code, code.Body()};
+    return ScopeView{unit, nullptr, &code, code.Body()};
+  }
+
+  // A constant's initializer: an expression tree with no enclosing callable,
+  // so it names no local. One a class owns still resolves names against that
+  // class, which its initializer may reach; one the unit owns reaches no
+  // class.
+  static auto ForClassConstant(
+      const mir::CompilationUnit& unit, const mir::Class& cls,
+      const mir::Block& block) -> ScopeView {
+    return ScopeView{unit, &cls, nullptr, block};
+  }
+
+  static auto ForUnitConstant(
+      const mir::CompilationUnit& unit, const mir::Block& block) -> ScopeView {
+    return ScopeView{unit, nullptr, nullptr, block};
   }
 
   [[nodiscard]] auto WithBlock(const mir::Block& child) const -> ScopeView {
-    return ScopeView{*unit_, class_, *code_, child};
+    return ScopeView{*unit_, class_, code_, child};
   }
 
   // Enter a closure's own code while staying in the same class context: a
@@ -53,7 +68,7 @@ class ScopeView {
   // local / capture arenas and the body block swap.
   [[nodiscard]] auto WithClosure(const mir::CallableCode& closure_code) const
       -> ScopeView {
-    return ScopeView{*unit_, class_, closure_code, closure_code.Body()};
+    return ScopeView{*unit_, class_, &closure_code, closure_code.Body()};
   }
 
   ScopeView(const ScopeView&) = delete;
@@ -75,6 +90,10 @@ class ScopeView {
   }
 
   [[nodiscard]] auto Code() const -> const mir::CallableCode& {
+    if (code_ == nullptr) {
+      throw InternalError(
+          "ScopeView::Code: a constant initializer has no enclosing callable");
+    }
     return *code_;
   }
 
@@ -86,7 +105,7 @@ class ScopeView {
   // its id in the callable's one `locals` arena.
   [[nodiscard]] auto Local(const mir::LocalRef& ref) const
       -> const mir::LocalDecl& {
-    return code_->locals.Get(ref.var);
+    return Code().locals.Get(ref.var);
   }
 
   // The class a member access reaches, resolved from the receiver's object
@@ -106,8 +125,8 @@ class ScopeView {
  private:
   ScopeView(
       const mir::CompilationUnit& unit, const mir::Class* cls,
-      const mir::CallableCode& code, const mir::Block& block)
-      : unit_(&unit), class_(cls), code_(&code), block_(&block) {
+      const mir::CallableCode* code, const mir::Block& block)
+      : unit_(&unit), class_(cls), code_(code), block_(&block) {
   }
 
   const mir::CompilationUnit* unit_;

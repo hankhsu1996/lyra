@@ -62,7 +62,7 @@ auto BuildStructuralFieldAccessExpr(
 }
 
 auto BuildReferenceArg(
-    mir::CompilationUnit& unit, mir::Block& block, mir::ExprId cell,
+    const mir::CompilationUnit& unit, mir::Block& block, mir::ExprId cell,
     mir::TypeId pointee) -> mir::ExprId {
   const auto& pointee_ty = unit.types.Get(pointee);
   // Referencing a value that is itself a reference seals to the same final
@@ -93,7 +93,7 @@ auto BuildReferenceArg(
 }
 
 auto BindReferenceSlot(
-    mir::CompilationUnit& unit, mir::Block& block, mir::ExprId ref_lvalue,
+    const mir::CompilationUnit& unit, mir::Block& block, mir::ExprId ref_lvalue,
     mir::ExprId source_cell) -> mir::ExprId {
   const mir::TypeId ref_type = block.exprs.Get(ref_lvalue).type;
   const mir::ExprId ref_value = BuildReferenceArg(

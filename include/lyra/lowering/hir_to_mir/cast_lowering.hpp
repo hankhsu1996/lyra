@@ -36,17 +36,6 @@ namespace lyra::lowering::hir_to_mir {
     const mir::CompilationUnit& unit, mir::Block& block, mir::ExprId operand_id,
     mir::TypeId dst_type) -> mir::Expr;
 
-// The declared representation a packed value-layer call lands its result into,
-// carried as an ordinary MIR value of that type -- a default literal -- so the
-// representation reaches the runtime through the argument list, not composed by
-// the backend from type payload. Its contents are ignored; only its type's
-// declared shape matters. A select uses it to state the shape its result takes,
-// which a receiver whose own dimensions differ (an aggregate's flat base) can
-// never supply.
-[[nodiscard]] auto BuildPackedShapePrototype(
-    mir::Block& block, const mir::PackedArrayType& dst_pa, mir::TypeId dst_type)
-    -> mir::ExprId;
-
 // Returns `operand_id` already at `dst_type`: the operand unchanged when its
 // type already matches, otherwise the converted expression interned into
 // `block`. This is the single entry every semantic store routes its right-hand

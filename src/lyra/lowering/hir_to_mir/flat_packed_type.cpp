@@ -9,7 +9,7 @@
 namespace lyra::lowering::hir_to_mir {
 
 auto InternFlatPacked(
-    mir::CompilationUnit& unit, std::uint64_t width, mir::BitAtom atom)
+    const mir::CompilationUnit& unit, std::uint64_t width, mir::BitAtom atom)
     -> mir::TypeId {
   return unit.types.Intern(
       mir::PackedArrayType{

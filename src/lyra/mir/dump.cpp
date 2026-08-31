@@ -22,6 +22,7 @@
 #include "lyra/mir/expr.hpp"
 #include "lyra/mir/field.hpp"
 #include "lyra/mir/local.hpp"
+#include "lyra/mir/packed_type_descriptor.hpp"
 #include "lyra/mir/runtime_print.hpp"
 #include "lyra/mir/stmt.hpp"
 #include "lyra/mir/type.hpp"
@@ -72,6 +73,19 @@ class MirDumper {
       }
       Dedent();
     }
+    // A description is an expression tree with no statements, so what is
+    // dumped under each described type is its expressions and which of them is
+    // the description.
+    Line("PackedTypeDescriptions:");
+    Indent();
+    for (const TypeId id : DescribedPackedTypes(unit)) {
+      const PackedTypeDescription described = DescribePackedType(unit, id);
+      Line(std::format("Type[{}] = Expr[{}]", id.value, described.value.value));
+      Indent();
+      DumpBlock(described.body);
+      Dedent();
+    }
+    Dedent();
     if (unit.root_factory.has_value()) {
       Line(std::format("RootFactory: Callable[{}]", unit.root_factory->value));
     }
@@ -258,6 +272,9 @@ class MirDumper {
             [](const MachineCStringType&) -> std::string {
               return "MachineCStringType";
             },
+            [](const MachineBoolType&) -> std::string {
+              return "MachineBoolType";
+            },
             [](const MachineIntType& m) -> std::string {
               return std::format(
                   "MachineInt(width={}, signed={})", m.bit_width,
@@ -306,6 +323,10 @@ class MirDumper {
             [](const DiagnosticType&) -> std::string { return "Diagnostic"; },
             [](const RuntimeLibraryType& r) -> std::string {
               switch (r.kind) {
+                case RuntimeLibraryKind::kPackedType:
+                  return "RuntimeLibrary(PackedType)";
+                case RuntimeLibraryKind::kPackedRange:
+                  return "RuntimeLibrary(PackedRange)";
                 case RuntimeLibraryKind::kPrintItem:
                   return "RuntimeLibrary(PrintItem)";
                 case RuntimeLibraryKind::kPrintLiteralItem:
@@ -640,44 +661,22 @@ class MirDumper {
     return *scope_stack_[scope_stack_.size() - 1 - hops];
   }
 
-  static auto FormatIntegralConstant(const IntegralConstant& c) -> std::string {
-    std::string out = std::format(
-        "{}'{}", c.width, c.signedness == Signedness::kSigned ? 's' : 'u');
-    if (c.state_kind == IntegralStateKind::kFourState) {
-      out += "(four-state)";
-    }
-    out += "{value=";
-    for (std::size_t i = 0; i < c.value_words.size(); ++i) {
-      if (i != 0) out += ',';
-      out += std::format("0x{:x}", c.value_words[i]);
-    }
-    if (c.state_kind == IntegralStateKind::kFourState) {
-      out += ", state=";
-      for (std::size_t i = 0; i < c.state_words.size(); ++i) {
-        if (i != 0) out += ',';
-        out += std::format("0x{:x}", c.state_words[i]);
-      }
-    }
-    out += "}";
-    return out;
-  }
-
   [[nodiscard]] auto FormatExpr(const Block& scope, ExprId id) const
       -> std::string {
     const auto& e = scope.exprs.Get(id);
     std::string formatted = std::visit(
         Overloaded{
-            [](const IntegerLiteral& lit) -> std::string {
-              return std::format(
-                  "IntegerLiteral({})", FormatIntegralConstant(lit.value));
-            },
             [](const StringLiteral& lit) -> std::string {
               return std::format("StringLiteral(\"{}\")", lit.value);
             },
-            [](const RealLiteral& lit) -> std::string {
-              return std::format("RealLiteral({})", lit.value);
+            [](const MachineFloatLiteral& lit) -> std::string {
+              return std::format("MachineFloatLiteral({})", lit.value);
             },
             [](const NullLiteral&) -> std::string { return "NullLiteral"; },
+            [](const MachineBoolLiteral& lit) -> std::string {
+              return std::format(
+                  "MachineBoolLiteral({})", lit.value ? "true" : "false");
+            },
             [](const MachineIntLiteral& lit) -> std::string {
               return std::format("MachineIntLiteral({})", lit.value);
             },
@@ -808,6 +807,9 @@ class MirDumper {
               return std::format(
                   "StaticConstantRef constant=StaticConstant[{}]",
                   r.constant.value);
+            },
+            [](const PackedTypeRef& r) -> std::string {
+              return std::format("PackedTypeRef Type[{}]", r.integral.value);
             },
             [](const StaticPropertyRef& r) -> std::string {
               return std::format(
@@ -1001,6 +1003,22 @@ class MirDumper {
       DumpCallable(s.callables.Get(id), id.value);
     }
     Dedent();
+
+    if (!s.static_constants.empty()) {
+      Line("StaticConstants:");
+      Indent();
+      for (const StaticConstantId id : s.static_constants.Ids()) {
+        const StaticConstantDecl& c = s.static_constants.Get(id);
+        Line(
+            std::format(
+                R"([{}] "{}" : Type[{}] = Expr[{}])", id.value, c.name,
+                c.type.value, c.value.value));
+        Indent();
+        DumpBlock(c.body);
+        Dedent();
+      }
+      Dedent();
+    }
 
     if (!s.abi_adapters.empty()) {
       Line("AbiAdapters:");

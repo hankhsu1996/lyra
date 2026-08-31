@@ -44,14 +44,16 @@ what the construct means.
 - Objects, members, and member access as first-class entities.
 - A member as a `(name, type)` pair. The type is the sole carrier of the member's storage shape and,
   for a member that owns a child, of its child-scope kind and cardinality.
-- Machine data -- a machine integer, a machine float, a borrowed C string, a raw pointer, the
-  fixed-size contiguous aggregate of them, and a plain code address -- as ordinary types of the
-  language, the way `i64`, `[T; N]`, `*const c_char`, and `fn(A) -> R` are Rust's. The family is
-  closed on three axes: scalar, aggregate, and callable. It is plain machine data, distinct from the
-  simulation value types that a source language's `int`, `real`, or `string` lower to, which are
-  library values reached through a wrapper. Every value a runtime entry returns as a plain scalar,
-  every table a runtime record reads as raw storage, and every value that crosses a foreign-call
-  boundary is one of these.
+- Machine data -- a machine boolean, a machine integer, a machine float, a borrowed C string, a raw
+  pointer, the fixed-size contiguous aggregate of them, and a plain code address -- as ordinary
+  types of the language, the way `bool`, `i64`, `[T; N]`, `*const c_char`, and `fn(A) -> R` are
+  Rust's. The family is closed on three axes: scalar, aggregate, and callable. The boolean is the
+  scalar a predicate reduction yields and a condition consumes; it is not a one-bit integer, and not
+  the source language's own one-bit value. It is plain machine data, distinct from the simulation
+  value types that a source language's `int`, `real`, or `string` lower to, which are library values
+  reached through a wrapper. Every value a runtime entry returns as a plain scalar, every table a
+  runtime record reads as raw storage, and every value that crosses a foreign-call boundary is one
+  of these.
 - The type system: value types (integral, real, string, event, ...); object types in two forms -- an
   intra-unit object (a class of this unit) and an external-unit object (another compilation unit,
   named); two composing wrappers, owning pointer and vector; and four nominal / structural

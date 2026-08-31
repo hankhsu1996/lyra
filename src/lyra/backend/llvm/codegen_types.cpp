@@ -30,6 +30,9 @@ auto CodeGenTypes::Map(lir::TypeId id) -> llvm::Type* {
   llvm::Type* mapped = std::visit(
       Overloaded{
           [&](const lir::VoidType&) -> llvm::Type* { return Void(); },
+          [&](const lir::MachineBoolType&) -> llvm::Type* {
+            return llvm::Type::getInt1Ty(*ctx_);
+          },
           [&](const lir::MachineIntType& m) -> llvm::Type* {
             return llvm::IntegerType::get(*ctx_, m.bit_width);
           },

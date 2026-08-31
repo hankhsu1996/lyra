@@ -328,6 +328,12 @@ class LirDumper {
               return std::format("real:{}", c.value);
             },
             [](const NullConst&) -> std::string { return "null"; },
+            [](const BoolConst& c) -> std::string {
+              return std::format("bool:{}", c.value ? "true" : "false");
+            },
+            [](const PackedTypeRef& c) -> std::string {
+              return std::format("packedtype:t{}", c.integral.value);
+            },
             [&](const FuncRef& f) -> std::string {
               return std::format(
                   "funcref {}", unit_->functions.Get(f.function).name);
