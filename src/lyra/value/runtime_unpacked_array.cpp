@@ -87,22 +87,47 @@ auto RuntimeUnpackedArray::WithElement(
 }
 
 auto RuntimeUnpackedArray::FromString(
-    const String& text, const PackedArray& element_prototype,
+    const String& text, const PackedType& element_type,
     const PackedArray& count) -> RuntimeUnpackedArray {
   const std::string_view chars = text.View();
   const auto element_count = static_cast<std::size_t>(count.ToInt64());
+  const PackedArray element_default{element_type};
   std::vector<RuntimeValue> elements;
   elements.reserve(element_count);
   for (std::size_t i = 0; i < element_count; ++i) {
-    const auto byte =
-        i < chars.size() ? static_cast<unsigned char>(chars[i]) : 0U;
     elements.push_back(
-        RuntimeValue{PackedArray::FromInt(
-            static_cast<std::int64_t>(byte), element_prototype)});
+        RuntimeValue{
+            i < chars.size()
+                ? PackedArray::FromInt(
+                      static_cast<unsigned char>(chars[i]), element_type)
+                : element_default});
   }
   RuntimeUnpackedArray result;
   result.element_default_ =
-      std::make_unique<RuntimeValue>(RuntimeValue{element_prototype});
+      std::make_unique<RuntimeValue>(RuntimeValue{element_default});
+  result.data_ = std::move(elements);
+  return result;
+}
+
+auto RuntimeUnpackedArray::FromPackedArray(
+    const PackedArray& bits, const PackedType& element_type,
+    const PackedArray& count) -> RuntimeUnpackedArray {
+  const std::string bytes = bits.ByteString();
+  const auto element_count = static_cast<std::size_t>(count.ToInt64());
+  const PackedArray element_default{element_type};
+  std::vector<RuntimeValue> elements;
+  elements.reserve(element_count);
+  for (std::size_t i = 0; i < element_count; ++i) {
+    elements.push_back(
+        RuntimeValue{
+            i < bytes.size()
+                ? PackedArray::FromInt(
+                      static_cast<unsigned char>(bytes[i]), element_type)
+                : element_default});
+  }
+  RuntimeUnpackedArray result;
+  result.element_default_ =
+      std::make_unique<RuntimeValue>(RuntimeValue{element_default});
   result.data_ = std::move(elements);
   return result;
 }

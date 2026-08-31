@@ -140,7 +140,6 @@ void DefineRuntimeAbi(llvm::orc::LLJIT& jit) {
   add("lyra_rt_make_string", &lyra_rt_make_string);
   add("lyra_rt_make_print_literal_item", &lyra_rt_make_print_literal_item);
   add("lyra_rt_format", &lyra_rt_format);
-  add("lyra_rt_packed_const", &lyra_rt_packed_const);
   add("lyra_rt_writeln", &lyra_rt_writeln);
   add("lyra_rt_write", &lyra_rt_write);
   add("lyra_rt_diagnostic", &lyra_rt_diagnostic);
@@ -241,6 +240,9 @@ void DefineRuntimeAbi(llvm::orc::LLJIT& jit) {
   add("lyra_rt_packed_to_int64", &lyra_rt_packed_to_int64);
   add("lyra_rt_packed_is_unknown", &lyra_rt_packed_is_unknown);
   add("lyra_rt_packed_count_bits", &lyra_rt_packed_count_bits);
+  add("lyra_rt_make_packed_range", &lyra_rt_make_packed_range);
+  add("lyra_rt_make_packed_type", &lyra_rt_make_packed_type);
+  add("lyra_rt_packed_from_words", &lyra_rt_packed_from_words);
   add("lyra_rt_packed_from_string", &lyra_rt_packed_from_string);
   add("lyra_rt_packed_clog2", &lyra_rt_packed_clog2);
   add("lyra_rt_packed_pow", &lyra_rt_packed_pow);
@@ -323,6 +325,7 @@ void DefineRuntimeAbi(llvm::orc::LLJIT& jit) {
   add("lyra_rt_real_to_bool", &lyra_rt_real_to_bool);
   add("lyra_rt_real_pow", &lyra_rt_real_pow);
   add("lyra_rt_real_round", &lyra_rt_real_round);
+  add("lyra_rt_real_real_value", &lyra_rt_real_real_value);
   add("lyra_rt_real_truncate", &lyra_rt_real_truncate);
   add("lyra_rt_real_to_bits", &lyra_rt_real_to_bits);
   add("lyra_rt_real_from_bits", &lyra_rt_real_from_bits);
@@ -374,6 +377,7 @@ void DefineRuntimeAbi(llvm::orc::LLJIT& jit) {
   add("lyra_rt_shortreal_to_bool", &lyra_rt_shortreal_to_bool);
   add("lyra_rt_shortreal_pow", &lyra_rt_shortreal_pow);
   add("lyra_rt_shortreal_round", &lyra_rt_shortreal_round);
+  add("lyra_rt_shortreal_real_value", &lyra_rt_shortreal_real_value);
   add("lyra_rt_shortreal_to_bits", &lyra_rt_shortreal_to_bits);
   add("lyra_rt_shortreal_from_bits", &lyra_rt_shortreal_from_bits);
   add("lyra_rt_shortreal_const", &lyra_rt_shortreal_const);

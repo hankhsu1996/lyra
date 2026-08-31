@@ -877,19 +877,14 @@ enough to warrant its own focused review.
       inject prologue statements the MIR does not state. `../architecture/backend_contract.md`
       confines every runtime library type literal to the type-mapping dispatch and confines every
       runtime library identifier (wrapper type, helper function, helper struct, method spelling) to
-      "MIR types and MIR calls that map onto them", with a bounded exception only for a leaf literal
-      materializing its own value. The current backend violates this in three related ways -- render
-      composes the identifier as a string, render fabricates the operation the identifier realizes,
-      and render injects a receiver-recovery or initialization statement that the callable body does
-      not carry. The pattern shows up in enough render entries that a fix is not one edit, but the
-      shape is uniform: the runtime library form of every MIR primitive is stated in one central
-      mapping (the peer of the type-mapping dispatch, extended to value forms), and every prologue
-      statement the wrapper needs sits in the MIR body as an ordinary statement the render walks.
-      Concrete sites today:
-  - Aggregate value-build primitives (`ConcatExpr`, `ReplicationExpr`) render as inline
-    `lyra::value::PackedArray::Concat(...)` / `PackedArray::Replicate(...)` / `ReplicateString(...)`
-    string composition in value-emission entries, with the runtime library identifier spelled at the
-    render site rather than derived from a single mapping.
+      "MIR types and MIR calls that map onto them". The current backend violates this in three
+      related ways -- render composes the identifier as a string, render fabricates the operation
+      the identifier realizes, and render injects a receiver-recovery or initialization statement
+      that the callable body does not carry. The pattern shows up in enough render entries that a
+      fix is not one edit, but the shape is uniform: the runtime library form of every MIR primitive
+      is stated in one central mapping (the peer of the type-mapping dispatch, extended to value
+      forms), and every prologue statement the wrapper needs sits in the MIR body as an ordinary
+      statement the render walks. Concrete sites today:
   - The queue-concatenation builder renders as inline `lyra::value::MakeQueueConcat<...>(...)` with
     element spread/append wrapped by `QSpread(...)` / `QElem(...)` at the render site.
   - Class construction of a managed reference renders as inline `lyra::runtime::GcNew<...>` from a
@@ -905,6 +900,13 @@ enough to warrant its own focused review.
   - The instance-method render injects `Self self = this;` before the body -- another prologue the
     MIR body does not state, so every method-form callable's `self` binding is a render-side
     convention rather than a stated MIR fact.
+  - A value-emission entry composes its output as a format string carrying the callee, the
+    punctuation, and the argument grouping together, so how many arguments a call has and which
+    brace group a type owns are decided per site. The grouping half of that has already produced a
+    target-language ambiguity that reached the emitted text. The syntactic wrappers a value-emission
+    entry is meant to compose are now available as combinators over rendered parts; the sites that
+    still hand-write the punctuation should route through them, which also leaves the callee as the
+    one thing a value-form dispatch has to supply.
   - The compilation unit's enum types render through hand-composed
     `class E final : public lyra::value::Enum<E> { ... };` in the header, with the runtime library
     type spelled directly and the class boilerplate structured only by the render text. The enum
@@ -914,9 +916,9 @@ enough to warrant its own focused review.
     exactly once, in a peer value-form dispatch a value-emission entry looks up by MIR primitive
     kind. A prologue statement -- receiver recovery, self binding -- is a MIR statement in the
     callable body a HIR-to-MIR lowering emits, so render walks it like any other statement.
-    **Blocker**: none for individual sites, but the value-form dispatch is a new backend surface
-    that pays off only when several sites route through it; scope the cut so at least the queue /
-    packed / managed-new forms land together with the dispatch table itself.
+    **Blocker**: none. The value-form dispatch exists and a concatenation and a replication reach
+    the target through it, so each site left is an addition to a table that is already there rather
+    than a new backend surface.
 
 - [x] R61 -- A value-aggregate interior write reached MIR as a write onto a nested lvalue
       expression, and each backend recovered the owner and the selectors by walking that expression

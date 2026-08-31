@@ -54,7 +54,7 @@ auto BuildStructuralFieldAccessExpr(
 // resulting reference reads / writes the live cell through it. Used for a
 // `ref` / `const ref` actual and for a by-reference closure capture.
 auto BuildReferenceArg(
-    mir::CompilationUnit& unit, mir::Block& block, mir::ExprId cell,
+    const mir::CompilationUnit& unit, mir::Block& block, mir::ExprId cell,
     mir::TypeId pointee) -> mir::ExprId;
 
 // Binds a cell into a reference-typed lvalue (LRM 23.3.3.2 / 13.5.2): wraps
@@ -67,7 +67,7 @@ auto BuildReferenceArg(
 // reference-to-reference source seals to the final cell during construction.
 // Returns the store expression for the caller to sequence.
 auto BindReferenceSlot(
-    mir::CompilationUnit& unit, mir::Block& block, mir::ExprId ref_lvalue,
+    const mir::CompilationUnit& unit, mir::Block& block, mir::ExprId ref_lvalue,
     mir::ExprId source_cell) -> mir::ExprId;
 
 }  // namespace lyra::lowering::hir_to_mir

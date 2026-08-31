@@ -123,10 +123,10 @@ auto DpiOpenArray::ReadLeaf(
     const PackedArray& prototype, std::size_t position) const -> PackedArray {
   const std::span<const svBitVecVal> bits = GroupsAt<svBitVecVal>(position);
   if (!bits.empty()) {
-    return ReadCanonicalBitVec(bits.data(), prototype);
+    return ReadCanonicalBitVec(bits.data(), prototype.Type());
   }
   return ReadCanonicalLogicVec(
-      GroupsAt<svLogicVecVal>(position).data(), prototype);
+      GroupsAt<svLogicVecVal>(position).data(), prototype.Type());
 }
 
 }  // namespace lyra::value

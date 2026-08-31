@@ -84,12 +84,9 @@ class PackedArray {
 
   // Constructs a narrow PackedArray (bit_width <= 64) from an integer value:
   // bits above the width are masked out and the unknown plane is left at zero.
-  // The result shape comes from a `prototype` value whose type supplies it (a
-  // conversion's destination, the prototype's own contents unused), a
-  // `PackedType` (a literal's declared type), or a single bit width (an
-  // internal caller's computed flat width).
-  [[nodiscard]] static auto FromInt(
-      std::int64_t value, const PackedArray& prototype) -> PackedArray;
+  // The result shape comes from a `PackedType` -- the destination's declared
+  // representation -- or from a single bit width, an internal caller's
+  // computed flat width.
   [[nodiscard]] static auto FromInt(std::int64_t value, const PackedType& type)
       -> PackedArray;
   [[nodiscard]] static auto FromInt(
@@ -129,15 +126,14 @@ class PackedArray {
       std::span<const char> bytes, std::uint64_t bit_width, bool is_signed,
       bool is_four_state) -> PackedArray;
 
-  // Converts `src` to the `prototype`'s declared representation: a fresh value
-  // of the prototype's shape carrying `src`'s bits, sign- or zero-extended when
-  // widening and truncated when narrowing per `src`'s signedness, with the
-  // unknown plane adjusted across the 2-state / 4-state boundary (widening adds
-  // a zero plane, narrowing collapses X/Z to 0). Generated code passes a
-  // prototype value of the destination type (its contents are unused); the
-  // single-bit-width form is an internal shorthand for a computed flat width.
+  // Converts `src` to the declared representation `type` names: a fresh value
+  // of that shape carrying `src`'s bits, sign- or zero-extended when widening
+  // and truncated when narrowing per `src`'s signedness, with the unknown plane
+  // adjusted across the 2-state / 4-state boundary (widening adds a zero plane,
+  // narrowing collapses X/Z to 0). The single-bit-width form is an internal
+  // shorthand for a computed flat width.
   [[nodiscard]] static auto ConvertFrom(
-      const PackedArray& src, PackedArray prototype) -> PackedArray;
+      const PackedArray& src, const PackedType& type) -> PackedArray;
   [[nodiscard]] static auto ConvertFrom(
       const PackedArray& src, std::uint64_t dst_bit_width, bool dst_is_signed,
       bool dst_is_four_state) -> PackedArray;
@@ -146,10 +142,10 @@ class PackedArray {
   // -- a destination wider than the text pads its leftmost bits with zeros, and
   // a narrower one truncates the leftmost characters. The text is first taken
   // at its own width (its first character the most significant byte), so
-  // conforming that value to the prototype's declared representation is what
-  // applies the justification rule. An empty string yields zero.
+  // conforming that value to the representation `type` names is what applies
+  // the justification rule. An empty string yields zero.
   [[nodiscard]] static auto FromString(
-      const String& text, const PackedArray& prototype) -> PackedArray;
+      const String& text, const PackedType& type) -> PackedArray;
 
   // LRM 21.4 memory-load digit parse: builds a value of the given shape from a
   // radix-`base` digit string (base 2 / 8 / 16). Each digit contributes
@@ -180,6 +176,9 @@ class PackedArray {
   [[nodiscard]] static auto Replicate(
       const PackedArray& operand, std::uint64_t count) -> PackedArray;
 
+  // The declared representation this value has, whole -- what a factory asked
+  // to build another value of the same type is handed.
+  [[nodiscard]] auto Type() const -> const PackedType&;
   [[nodiscard]] auto BitWidth() const -> std::uint64_t;
   [[nodiscard]] auto IsSigned() const -> bool;
   // Declared dim stack, outermost first. Storage is flat regardless; this is
@@ -487,10 +486,10 @@ class PackedArray {
   // LRM 11.5.1 range form uses).
   [[nodiscard]] auto SliceRef(
       const PackedArray& a, const PackedArray& b, const PackedArray& form,
-      const PackedArray& shape) -> PackedArrayRef;
+      const PackedType& shape) -> PackedArrayRef;
   [[nodiscard]] auto Slice(
       const PackedArray& a, const PackedArray& b, const PackedArray& form,
-      const PackedArray& shape) const -> PackedArray;
+      const PackedType& shape) const -> PackedArray;
   // The functional counterpart of the in-place part-select write, for a value
   // reached by an opaque handle that cannot be mutated in place: a new value
   // equal to the receiver with the range selected by `a` / `b` / `form`
@@ -498,7 +497,7 @@ class PackedArray {
   // write.
   [[nodiscard]] auto WithSlice(
       const PackedArray& a, const PackedArray& b, const PackedArray& form,
-      const PackedArray& shape, const PackedArray& value) const -> PackedArray;
+      const PackedType& shape, const PackedArray& value) const -> PackedArray;
   [[nodiscard]] auto operator<(const PackedArray& other) const -> PackedArray;
   [[nodiscard]] auto operator<=(const PackedArray& other) const -> PackedArray;
   [[nodiscard]] auto operator>(const PackedArray& other) const -> PackedArray;
@@ -567,8 +566,8 @@ class PackedArray {
   // Copies `src`'s bits into the already-shaped destination `dst`, sign- or
   // zero-extending or truncating per `src`'s signedness and adjusting the
   // unknown plane across the state-domain boundary. The shared core of the
-  // ConvertFrom overloads, which differ only in how they obtain `dst` (a
-  // prebuilt prototype value, or a fresh value of a given bit width).
+  // ConvertFrom overloads, which differ only in how they name the destination
+  // shape -- a whole declared type, or a flat bit width.
   [[nodiscard]] static auto ConvertBitsInto(
       PackedArray dst, const PackedArray& src) -> PackedArray;
 
@@ -699,7 +698,7 @@ class PackedArrayRef {
   [[nodiscard]] auto ElementRef(const PackedArray& idx) const -> PackedArrayRef;
   [[nodiscard]] auto SliceRef(
       const PackedArray& a, const PackedArray& b, const PackedArray& form,
-      const PackedArray& shape) const -> PackedArrayRef;
+      const PackedType& shape) const -> PackedArrayRef;
 
  private:
   PackedArray* root_;

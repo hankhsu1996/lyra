@@ -66,6 +66,7 @@ auto Type::Kind() const -> TypeKind {
           [](const WildcardIndexType&) { return TypeKind::kWildcardIndex; },
           [](const StringType&) { return TypeKind::kString; },
           [](const MachineCStringType&) { return TypeKind::kMachineCString; },
+          [](const MachineBoolType&) { return TypeKind::kMachineBool; },
           [](const MachineIntType&) { return TypeKind::kMachineInt; },
           [](const MachineFloatType&) { return TypeKind::kMachineFloat; },
           [](const MachineArrayType&) { return TypeKind::kMachineArray; },

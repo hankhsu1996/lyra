@@ -24,6 +24,7 @@ enum class TypeKind {
   kWildcardIndex,
   kString,
   kMachineCString,
+  kMachineBool,
   kMachineInt,
   kMachineFloat,
   kMachineArray,
@@ -213,6 +214,15 @@ struct MachineCStringType {
   auto operator==(const MachineCStringType&) const -> bool = default;
 };
 
+// A primitive machine boolean (the generic-language `bool`, C `_Bool`): the
+// two-valued scalar a predicate reduction produces and a condition consumes.
+// Distinct from the SV 1-bit `PackedArrayType`, a four-state simulation value
+// reached through a value wrapper, and not a width of `MachineIntType`, whose
+// values are the integers and admit arithmetic a boolean's two do not.
+struct MachineBoolType {
+  auto operator==(const MachineBoolType&) const -> bool = default;
+};
+
 // A primitive machine integer (the generic-language `iN` / `uN`, C `intN_t`):
 // a fixed-width 2-state scalar, distinct from the 4-state SV `PackedArrayType`.
 // It is plain machine data, not a simulation value, and lowers to a raw target
@@ -354,6 +364,16 @@ struct DiagnosticType {
 // is a different thing -- receiver semantics reason about one -- while these
 // are inert payloads.
 enum class RuntimeLibraryKind : std::uint8_t {
+  // The declared representation of an integral value: its dimension stack,
+  // signedness, and state domain. A factory that builds a value of a type takes
+  // one to say which type, so the shape reaches the runtime as an inert payload
+  // like any other rather than as a value of the type being built, whose
+  // contents would be constructed and then discarded.
+  kPackedType,
+  // One declared dimension of an integral type: a pair of bounds. It is a
+  // payload of that type's descriptor rather than a value any expression has,
+  // so it appears in a type position only.
+  kPackedRange,
   kPrintItem,
   kPrintLiteralItem,
   kPrintValueItem,
@@ -662,13 +682,14 @@ struct DriverType {
 using TypeData = std::variant<
     PackedArrayType, EnumType, UnpackedArrayType, DynamicArrayType, QueueType,
     AssociativeArrayType, WildcardIndexType, StringType, MachineCStringType,
-    MachineIntType, MachineFloatType, MachineArrayType, MachineFunctionType,
-    EventType, RealType, ShortRealType, RealTimeType, ChandleType, VoidType,
-    ObjectType, ExternalUnitObjectType, CrossUnitClassType, RuntimeClassType,
-    RuntimeEffectsType, FilesType, DiagnosticType, RuntimeLibraryType,
-    CoroutineType, RefType, PointerType, ManagedRefType, VectorType, TupleType,
-    UnionType, TaggedUnionType, EmptyType, ObservableType, ResolvedType,
-    DriverType, StructType, ClosureType>;
+    MachineBoolType, MachineIntType, MachineFloatType, MachineArrayType,
+    MachineFunctionType, EventType, RealType, ShortRealType, RealTimeType,
+    ChandleType, VoidType, ObjectType, ExternalUnitObjectType,
+    CrossUnitClassType, RuntimeClassType, RuntimeEffectsType, FilesType,
+    DiagnosticType, RuntimeLibraryType, CoroutineType, RefType, PointerType,
+    ManagedRefType, VectorType, TupleType, UnionType, TaggedUnionType,
+    EmptyType, ObservableType, ResolvedType, DriverType, StructType,
+    ClosureType>;
 
 struct Type {
   TypeData data;

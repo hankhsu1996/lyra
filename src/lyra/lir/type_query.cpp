@@ -43,6 +43,7 @@ auto TypeKindName(const Type& type) -> std::string_view {
           [](const WildcardIndexType&) { return "wildcard index"; },
           [](const StringType&) { return "string"; },
           [](const MachineCStringType&) { return "machine C string"; },
+          [](const MachineBoolType&) { return "machine boolean"; },
           [](const MachineIntType&) { return "machine integer"; },
           [](const MachineFloatType&) { return "machine float"; },
           [](const MachineArrayType&) { return "machine array"; },

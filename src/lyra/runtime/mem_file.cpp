@@ -1,6 +1,7 @@
 #include "lyra/runtime/mem_file.hpp"
 
 #include <algorithm>
+#include <array>
 #include <cstddef>
 #include <cstdint>
 #include <format>
@@ -247,10 +248,10 @@ auto AssocKey(std::int64_t address, const value::PackedArray& key_prototype)
   return value::PackedArray::FromInt(
       address,
       value::PackedType{
-          {{.left = static_cast<std::int64_t>(key_prototype.BitWidth()) - 1,
-            .right = 0}},
-          key_prototype.IsSigned(),
-          key_prototype.IsFourState()});
+          std::array{value::PackedRange{
+              .left = static_cast<std::int64_t>(key_prototype.BitWidth()) - 1,
+              .right = 0}},
+          key_prototype.IsSigned(), key_prototype.IsFourState()});
 }
 
 // LRM 21.4.1 associative load. Addressing is by key: an `@key` sets the cursor,

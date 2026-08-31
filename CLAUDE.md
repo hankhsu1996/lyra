@@ -9,7 +9,8 @@ governs writing them.
 ```bash
 npm ci
 bazel build //...
-bazel test //... --test_output=errors    # same target set CI runs
+bazel test //...                         # the set a remote executor can take
+bazel test //... --config=full           # that set plus the host-compile group
 clang-format -i <files>
 npm run format
 buildifier -r .
@@ -104,10 +105,15 @@ already names the path that runs it:
 bazel test //tests:llvm_tests --test_filter='12_statements.case_default_item'
 ```
 
-The merge gate passes `--test_tag_filters=-requires-host-cxx`, which excludes everything that spawns
-a host compiler: `cpp_tests`, `llvm_dpi_tests`, `cli_tests`, and `pch_audit_test`. What is left is
-`llvm_tests`, the corpus minus the cases carrying foreign sources, which is the merge gate and the
-one that grows as the execution backend fills in.
+`bazel test //...` is the merge gate's own set, so a green run before committing is what says "this
+lands green". Do not widen or narrow it: the answer holds only while the two are the same command.
+
+One target is out of it. `cpp_tests` host-compiles the whole corpus once per case, carries `nightly`
+for that reason, and is reached by `--config=nightly`; `--config=full` is both sets. Run it whenever
+the change touches what the C++ backend emits -- which is not the same as editing `backend/cpp`,
+since the renderer is a function of MIR and LIR node shapes. A filtered run names only the tests it
+ran, so reach for `--config=full` whenever a result has to stand as evidence. `docs/ci/README.md`
+holds the whole strategy: which moment answers which question, and what a change selects.
 
 ## Code style
 

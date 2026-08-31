@@ -15,6 +15,7 @@
 #include "lyra/mir/closure_decl.hpp"
 #include "lyra/mir/expr.hpp"
 #include "lyra/mir/expr_id.hpp"
+#include "lyra/mir/packed_type_description.hpp"
 #include "lyra/mir/stmt.hpp"
 #include "lyra/support/builtin_fn.hpp"
 
@@ -36,10 +37,24 @@ class FunctionLowerer {
   // of it.
   FunctionLowerer(
       UnitLowerer& unit, const mir::ClosureDecl& closure, std::string name);
-
   auto Run() -> diag::Result<lir::Function>;
 
+  // Lowers one type's description. A description is an expression, not a body:
+  // building a value at this layer is an instruction sequence, so what carries
+  // one is a nullary function whose whole content is that expression and a
+  // return. It is a factory rather than a constructor and a `Run` because
+  // nothing else can be done with a description lowerer, and a pairing a caller
+  // could get wrong is not one worth offering.
+  static auto LowerDescription(
+      UnitLowerer& unit, const mir::PackedTypeDescription& description,
+      std::string name) -> diag::Result<lir::Function>;
+
  private:
+  FunctionLowerer(
+      UnitLowerer& unit, const mir::PackedTypeDescription& description,
+      std::string name);
+  auto RunDescription() -> diag::Result<lir::Function>;
+
   // The branch targets a `break` and a `continue` inside one loop transfer to.
   // A labeled loop is also the target of a labeled break from a nested loop.
   struct LoopTargets {
@@ -213,6 +228,7 @@ class FunctionLowerer {
   UnitLowerer* unit_;
   const mir::CallableCode* code_;
   const mir::ClosureDecl* closure_;
+  const mir::PackedTypeDescription* description_;
   std::string name_;
   lir::Function fn_;
   // A block while it is being built, which is before its exit is decided. The

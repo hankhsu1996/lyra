@@ -306,22 +306,16 @@ auto RenderStruct(const mir::CompilationUnit& unit, const mir::StructDecl& decl)
 // is the translated value expression. A runtime scope's generated-behavior
 // record is one such constant; the constructor forwards its address to the
 // base. It stays in the class body because its initializer names the class's
-// own members, which are in scope there.
-//
-// `const` rather than `constexpr`: an initializer may name a code address under
-// an entry type that erases its prototype, which C++ does not admit in a
-// constant expression. The storage is still established before any process
-// runs, and a constant that points into another only ever takes its address,
-// which does not depend on that one's initializer having run.
+// own members, which are in scope there. A constant that points into another
+// only ever takes its address, which does not depend on that one's initializer
+// having run.
 auto RenderStaticConstant(
     const mir::CompilationUnit& unit, const mir::Class& s,
     const mir::StaticConstantDecl& c) -> std::string {
-  const ScopeView view =
-      ScopeView::ForRoot(unit, s, s.constructor.code).WithBlock(c.body);
-  return std::format(
-      "{0}inline static const {1} {2} = {3};\n", Indent(1),
-      RenderTypeAsCpp(unit, c.type), c.name,
-      RenderExpr(view, view.Expr(c.value)));
+  const ScopeView view = ScopeView::ForClassConstant(unit, s, c.body);
+  return Indent(1) + ClassConstantOf(
+                         RenderTypeAsCpp(unit, c.type), c.name,
+                         RenderExpr(view, view.Expr(c.value)));
 }
 
 // Whether the class declared any static property initializer (LRM 8.9 / 10.5).

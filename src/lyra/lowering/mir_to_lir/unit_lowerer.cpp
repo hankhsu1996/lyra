@@ -21,6 +21,7 @@
 #include "lyra/mir/class.hpp"
 #include "lyra/mir/class_ref.hpp"
 #include "lyra/mir/closure_id.hpp"
+#include "lyra/mir/packed_type_descriptor.hpp"
 #include "lyra/mir/static_variable_id.hpp"
 #include "lyra/mir/type.hpp"
 
@@ -144,6 +145,34 @@ auto UnitLowerer::Run() -> diag::Result<lir::CompilationUnit> {
     out_.functions.Define(closure.invoke, *std::move(fn));
     out_.closures.Define(ClosureDeclaration(id), std::move(closure));
   }
+
+  // Descriptions are lowered after the bodies: each one translates types of
+  // its own, and what receives them below is indexed by LIR type, so its
+  // extent is settled only once nothing more will translate. Building a value
+  // is an instruction sequence at this layer, so a description is a function
+  // here, and the type it describes is what reaches it.
+  std::vector<std::pair<lir::TypeId, lir::FunctionId>> described;
+  for (const mir::TypeId id : mir::DescribedPackedTypes(*mir_)) {
+    const mir::PackedTypeDescription description =
+        mir::DescribePackedType(*mir_, id);
+    // A description is unique only within its unit, while the whole program
+    // links into one name space, so the unit qualifies it -- the same reason a
+    // namespace callable is qualified.
+    auto fn = FunctionLowerer::LowerDescription(
+        *this, description,
+        std::format("{}.{}", mir_->name, mir::PackedTypeDescriptionName(id)));
+    if (!fn) {
+      return std::unexpected(std::move(fn.error()));
+    }
+    described.emplace_back(
+        TranslateType(id), out_.functions.Add(*std::move(fn)));
+  }
+  std::vector<std::optional<lir::FunctionId>> initializers(
+      out_.types.size(), std::nullopt);
+  for (const auto& [type, initializer] : described) {
+    initializers[type.value] = initializer;
+  }
+  out_.packed_type_initializers = {out_.types.size(), std::move(initializers)};
 
   // A type reached during lowering had no LIR mirror; surface it now, once the
   // whole unit has been walked, rather than from the non-failing translator.
@@ -299,13 +328,7 @@ auto UnitLowerer::BorrowedPointerTo(lir::TypeId pointee) -> lir::TypeId {
 }
 
 auto UnitLowerer::MachineBoolType() -> lir::TypeId {
-  if (!machine_bool_type_.has_value()) {
-    machine_bool_type_ = out_.types.Add(
-        lir::Type{
-            .data = lir::MachineIntType{
-                .bit_width = 1, .signedness = lir::Signedness::kUnsigned}});
-  }
-  return *machine_bool_type_;
+  return TranslateType(mir_->builtins.machine_bool);
 }
 
 auto UnitLowerer::VoidType() -> lir::TypeId {

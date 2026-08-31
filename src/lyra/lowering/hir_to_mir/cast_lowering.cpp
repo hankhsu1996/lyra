@@ -3,10 +3,10 @@
 #include <cstdint>
 #include <variant>
 
-#include "lyra/lowering/hir_to_mir/default_value.hpp"
-#include "lyra/mir/compilation_unit.hpp"
+#include "lyra/lowering/hir_to_mir/integral_literal.hpp"
 #include "lyra/mir/expr.hpp"
 #include "lyra/mir/expr_id.hpp"
+#include "lyra/mir/packed_type_descriptor.hpp"
 #include "lyra/mir/stmt.hpp"
 #include "lyra/mir/type.hpp"
 #include "lyra/support/builtin_fn.hpp"
@@ -57,14 +57,14 @@ auto MakeRoundCall(const mir::CompilationUnit& unit, mir::ExprId operand_id)
       .type = unit.builtins.machine_int64};
 }
 
-// `PackedArray::FromInt(int_value, prototype)` -- the static factory used by
-// the real-to-integral path: lands `int_value` into the prototype's declared
+// `PackedArray::FromInt(int_value, shape)` -- the static factory used by the
+// real-to-integral path: lands `int_value` into the destination's declared
 // representation.
 auto BuildPackedArrayFromInt(
-    mir::Block& block, mir::ExprId int_value,
-    const mir::PackedArrayType& dst_pa, mir::TypeId dst_type) -> mir::Expr {
-  const mir::ExprId prototype =
-      BuildPackedShapePrototype(block, dst_pa, dst_type);
+    const mir::CompilationUnit& unit, mir::Block& block, mir::ExprId int_value,
+    mir::TypeId dst_type) -> mir::Expr {
+  const mir::ExprId packed_type =
+      mir::BuildPackedTypeRef(unit, block, dst_type);
   return mir::Expr{
       .data =
           mir::CallExpr{
@@ -72,18 +72,18 @@ auto BuildPackedArrayFromInt(
                   mir::Direct{
                       .target = support::BuiltinFn::kFromInt,
                       .qualification = mir::TypeQualifier{.type = dst_type}},
-              .arguments = {int_value, prototype}},
+              .arguments = {int_value, packed_type}},
       .type = dst_type};
 }
 
-// `PackedArray::ConvertFrom(src, prototype)` -- reshape `src` into the
-// prototype's declared representation (width / signedness / state domain /
+// `PackedArray::ConvertFrom(src, shape)` -- reshape `src` into the
+// destination's declared representation (width / signedness / state domain /
 // dimension stack).
 auto BuildPackedArrayConvertFrom(
-    mir::Block& block, mir::ExprId src_id, const mir::PackedArrayType& dst_pa,
+    const mir::CompilationUnit& unit, mir::Block& block, mir::ExprId src_id,
     mir::TypeId dst_type) -> mir::Expr {
-  const mir::ExprId prototype =
-      BuildPackedShapePrototype(block, dst_pa, dst_type);
+  const mir::ExprId packed_type =
+      mir::BuildPackedTypeRef(unit, block, dst_type);
   return mir::Expr{
       .data =
           mir::CallExpr{
@@ -91,7 +91,7 @@ auto BuildPackedArrayConvertFrom(
                   mir::Direct{
                       .target = support::BuiltinFn::kConvertFrom,
                       .qualification = mir::TypeQualifier{.type = dst_type}},
-              .arguments = {src_id, prototype}},
+              .arguments = {src_id, packed_type}},
       .type = dst_type};
 }
 
@@ -113,15 +113,6 @@ auto MakeStringFromFactory(
 }
 
 }  // namespace
-
-auto BuildPackedShapePrototype(
-    mir::Block& block, const mir::PackedArrayType& dst_pa, mir::TypeId dst_type)
-    -> mir::ExprId {
-  return block.exprs.Add(
-      mir::Expr{
-          .data = mir::IntegerLiteral{.value = DefaultIntegralConstant(dst_pa)},
-          .type = dst_type});
-}
 
 auto BuildValueConversion(
     const mir::CompilationUnit& unit, mir::Block& block, mir::ExprId operand_id,
@@ -158,8 +149,7 @@ auto BuildValueConversion(
   if (IsRealFamilyKind(src_kind) && dst_ty.IsIntegralPacked()) {
     const mir::ExprId rounded_id =
         block.exprs.Add(MakeRoundCall(unit, operand_id));
-    return BuildPackedArrayFromInt(
-        block, rounded_id, dst_ty.AsIntegralPacked(), dst_type);
+    return BuildPackedArrayFromInt(unit, block, rounded_id, dst_type);
   }
 
   // Integral -> integral: a reshape into the destination's declared
@@ -183,7 +173,7 @@ auto BuildValueConversion(
     mir::ExprId body_id = operand_id;
     if (!same_shape) {
       body_id = block.exprs.Add(
-          BuildPackedArrayConvertFrom(block, operand_id, dst_pa, dst_type));
+          BuildPackedArrayConvertFrom(unit, block, operand_id, dst_type));
     }
     if (dst_is_enum || src_is_enum) {
       return mir::Expr{
@@ -208,11 +198,11 @@ auto BuildValueConversion(
         unit, operand_id, support::BuiltinFn::kFromPackedArray);
   }
 
-  // String -> integral (LRM 5.9): right-justified into the destination's shape,
-  // which the prototype carries.
+  // String -> integral (LRM 5.9): right-justified into the destination's
+  // declared shape, which the shape operand names.
   if (src_kind == mir::TypeKind::kString && dst_ty.IsIntegralPacked()) {
-    const mir::ExprId prototype =
-        BuildPackedShapePrototype(block, dst_ty.AsIntegralPacked(), dst_type);
+    const mir::ExprId packed_type =
+        mir::BuildPackedTypeRef(unit, block, dst_type);
     return mir::Expr{
         .data =
             mir::CallExpr{
@@ -220,25 +210,22 @@ auto BuildValueConversion(
                     mir::Direct{
                         .target = support::BuiltinFn::kFromString,
                         .qualification = mir::TypeQualifier{.type = dst_type}},
-                .arguments = {operand_id, prototype}},
+                .arguments = {operand_id, packed_type}},
         .type = dst_type};
   }
 
   // String -> unpacked array of byte (LRM 5.9): left-justified from the array's
-  // left bound. The element prototype carries the element representation and
-  // doubles as the default an element past the text keeps. LRM 5.9 defines the
-  // conversion only for a byte element, so an array of anything else is not a
-  // destination this reshapes into.
+  // left bound. The element shape names the representation each element takes,
+  // which is also what an element past the end of the text is left holding. LRM
+  // 5.9 defines the conversion only for a byte element, so an array of anything
+  // else is not a destination this reshapes into.
   if (const auto* dst_arr = std::get_if<mir::UnpackedArrayType>(&dst_ty.data);
       dst_arr != nullptr && src_kind == mir::TypeKind::kString &&
       unit.types.Get(dst_arr->element_type).IsIntegralPacked()) {
-    const auto& elem_ty = unit.types.Get(dst_arr->element_type);
-    const mir::ExprId element_prototype = BuildPackedShapePrototype(
-        block, elem_ty.AsIntegralPacked(), dst_arr->element_type);
-    const mir::ExprId count = block.exprs.Add(
-        mir::MakeIntLiteral(
-            unit.builtins.int_type,
-            static_cast<std::int64_t>(dst_arr->dim.ElementCount())));
+    const mir::ExprId element_type =
+        mir::BuildPackedTypeRef(unit, block, dst_arr->element_type);
+    const mir::ExprId count = BuildIntLiteral(
+        unit, block, static_cast<std::int64_t>(dst_arr->dim.ElementCount()));
     return mir::Expr{
         .data =
             mir::CallExpr{
@@ -246,7 +233,30 @@ auto BuildValueConversion(
                     mir::Direct{
                         .target = support::BuiltinFn::kFromString,
                         .qualification = mir::TypeQualifier{.type = dst_type}},
-                .arguments = {operand_id, element_prototype, count}},
+                .arguments = {operand_id, element_type, count}},
+        .type = dst_type};
+  }
+
+  // Integral -> unpacked array of byte (LRM 5.9): a string literal is a packed
+  // bit-vector constant, so an assignment of one to a byte array arrives here
+  // rather than through the string path. Its bytes left-justify the same way,
+  // and they arrive whole: a NUL among them is a byte like any other, where
+  // routing through a string value would have removed it (LRM 6.16).
+  if (const auto* dst_arr = std::get_if<mir::UnpackedArrayType>(&dst_ty.data);
+      dst_arr != nullptr && src_ty.IsIntegralPacked() &&
+      unit.types.Get(dst_arr->element_type).IsIntegralPacked()) {
+    const mir::ExprId element_type =
+        mir::BuildPackedTypeRef(unit, block, dst_arr->element_type);
+    const mir::ExprId count = BuildIntLiteral(
+        unit, block, static_cast<std::int64_t>(dst_arr->dim.ElementCount()));
+    return mir::Expr{
+        .data =
+            mir::CallExpr{
+                .callee =
+                    mir::Direct{
+                        .target = support::BuiltinFn::kFromPackedArray,
+                        .qualification = mir::TypeQualifier{.type = dst_type}},
+                .arguments = {operand_id, element_type, count}},
         .type = dst_type};
   }
 
@@ -268,8 +278,7 @@ auto BuildValueConversion(
         dst_q->max_bound.has_value()
             ? static_cast<std::int64_t>(*dst_q->max_bound)
             : -1;
-    const mir::ExprId bound_id =
-        block.exprs.Add(mir::MakeIntLiteral(unit.builtins.int_type, bound));
+    const mir::ExprId bound_id = BuildIntLiteral(unit, block, bound);
     return mir::Expr{
         .data =
             mir::CallExpr{

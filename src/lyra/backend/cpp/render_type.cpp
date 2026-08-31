@@ -17,27 +17,6 @@
 
 namespace lyra::backend::cpp {
 
-auto RenderPackedType(const mir::PackedArrayType& pa) -> std::string {
-  const char* signed_lit =
-      pa.signedness == mir::Signedness::kSigned ? "true" : "false";
-  const char* four_state_lit = pa.atom != mir::BitAtom::kBit ? "true" : "false";
-
-  // The shape is one `PackedType` descriptor: the dimension stack plus
-  // signedness and state domain. A one-dimensional type is a one-element stack,
-  // not a scalar special case; the runtime keeps the stack so operator[] /
-  // Slice dispatch on outer-element bit width at any rank.
-  std::string dim_list = "{";
-  for (std::size_t i = 0; i < pa.dims.size(); ++i) {
-    if (i != 0) dim_list += ", ";
-    dim_list +=
-        std::format("{{ {}LL, {}LL }}", pa.dims[i].left, pa.dims[i].right);
-  }
-  dim_list += "}";
-  return std::format(
-      "lyra::value::PackedType{{{}, {}, {}}}", dim_list, signed_lit,
-      four_state_lit);
-}
-
 // The runtime resolver realizing one net resolution (LRM 6.6). The policy is a
 // type parameter of the runtime's net and driver, so each resolution names its
 // own; the tri-state fold is the one `wire` and `tri` share.
@@ -67,6 +46,9 @@ auto RenderTypeAsCpp(const mir::CompilationUnit& unit, mir::TypeId type_id)
           },
           [](const mir::MachineCStringType&) -> std::string {
             return std::string{"const char*"};
+          },
+          [](const mir::MachineBoolType&) -> std::string {
+            return std::string{"bool"};
           },
           [](const mir::MachineIntType& m) -> std::string {
             const std::string_view sign =
@@ -180,6 +162,10 @@ auto RenderTypeAsCpp(const mir::CompilationUnit& unit, mir::TypeId type_id)
           },
           [](const mir::RuntimeLibraryType& r) -> std::string {
             switch (r.kind) {
+              case mir::RuntimeLibraryKind::kPackedType:
+                return std::string{"lyra::value::PackedType"};
+              case mir::RuntimeLibraryKind::kPackedRange:
+                return std::string{"lyra::value::PackedRange"};
               case mir::RuntimeLibraryKind::kPrintItem:
                 return std::string{"lyra::value::PrintItem"};
               case mir::RuntimeLibraryKind::kPrintLiteralItem:

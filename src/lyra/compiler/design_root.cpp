@@ -246,67 +246,6 @@ void DefineExportSymbol(
           .virtual_dispatch = std::nullopt});
 }
 
-// Builds the design's way in: a nullary callable that constructs the root
-// object -- parentless, at the hierarchy's origin -- and returns it as the
-// generic scope. Construction is what a design does at its own root, so it is
-// stated here as ordinary construction rather than left for a host artifact to
-// hand-compose; everything else about starting a run is the same for every
-// design and is the host's.
-void DefineRootFactory(mir::CompilationUnit& root) {
-  if (!root.root.has_value()) {
-    throw InternalError("DefineRootFactory: the design root has no root class");
-  }
-  const mir::Class& root_class = root.GetClass(*root.root);
-  const mir::TypeId owned_scope = root.types.PointerTo(
-      root.types.Intern(
-          mir::RuntimeClassType{.symbol = "lyra::runtime::Scope"}),
-      mir::PointerOwnership::kUnique);
-
-  mir::CallableCode code = mir::CallableCode::Defined();
-  code.body.emplace();
-  code.result_type = owned_scope;
-  mir::Block& body = code.Body();
-
-  const mir::ExprId label = body.exprs.Add(
-      mir::Expr{
-          .data = mir::StringLiteral{.value = root_class.name},
-          .type = root.builtins.string});
-  const mir::ExprId indices = body.exprs.Add(
-      mir::Expr{
-          .data = mir::ArrayLiteralExpr{.elements = {}},
-          .type = root.types.MachineArrayOf(root.builtins.int_type, 0)});
-  const mir::ExprId segment = body.exprs.Add(
-      mir::Expr{
-          .data =
-              mir::CallExpr{
-                  .callee = mir::Construct{}, .arguments = {label, indices}},
-          .type = root.builtins.hierarchy_segment});
-  const mir::ExprId no_parent = body.exprs.Add(
-      mir::Expr{.data = mir::NullLiteral{}, .type = root.builtins.scope_ptr});
-  const mir::ExprId built = body.exprs.Add(
-      mir::Expr{
-          .data =
-              mir::CallExpr{
-                  .callee = mir::Construct{},
-                  .arguments = {no_parent, segment}},
-          .type = root.types.PointerTo(
-              root.types.Intern(mir::ObjectType{.class_id = *root.root}),
-              mir::PointerOwnership::kUnique)});
-  body.AppendStmt(
-      mir::ReturnStmt{
-          .value = body.exprs.Add(
-              mir::Expr{
-                  .data = mir::PointerCastExpr{.operand = built},
-                  .type = owned_scope})});
-
-  root.root_factory = root.callables.Add(
-      mir::CallableDecl{
-          .name = "BuildRoot",
-          .code = std::move(code),
-          .foreign = std::nullopt,
-          .virtual_dispatch = std::nullopt});
-}
-
 // Every exported name the design must define over per-scope entries, defined
 // once. Several scopes may export one C name (LRM 35.4), and each publishes its
 // own entry, but the name is one symbol; LRM 35.5.4 requires their prototypes
@@ -359,7 +298,6 @@ auto SynthesizeDesignRoot(
   if (!root_mir) {
     return std::unexpected(std::move(root_mir.error()));
   }
-  DefineRootFactory(*root_mir);
   DefineExportSymbols(*root_mir, units);
   DesignRootArtifacts artifacts{
       .mir = *std::move(root_mir),

@@ -124,7 +124,7 @@ auto ValuePlusargs(
   const auto match = runtime.PlusArgs().MatchPrefix(parsed.prefix);
   if (!match.has_value()) return value::PackedArray::Int(0);
   const std::int64_t converted = ConvertIntegralRemainder(*match, *base);
-  out = value::PackedArray::FromInt(converted, out);
+  out = value::PackedArray::FromInt(converted, out.Type());
   return value::PackedArray::Int(1);
 }
 

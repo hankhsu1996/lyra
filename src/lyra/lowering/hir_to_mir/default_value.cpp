@@ -14,6 +14,8 @@
 #include "lyra/base/overloaded.hpp"
 #include "lyra/hir/type.hpp"
 #include "lyra/lowering/hir_to_mir/expression/references.hpp"
+#include "lyra/lowering/hir_to_mir/integral_literal.hpp"
+#include "lyra/lowering/hir_to_mir/real_literal.hpp"
 #include "lyra/mir/compilation_unit.hpp"
 #include "lyra/mir/expr.hpp"
 #include "lyra/mir/integral_constant.hpp"
@@ -66,10 +68,9 @@ void AppendBoundedQueueMax(
   if (queue == nullptr || !queue->max_bound.has_value()) {
     return;
   }
-  args.push_back(block.exprs.Add(
-      mir::MakeIntLiteral(
-          unit_lowerer.Unit().builtins.int_type,
-          static_cast<std::int64_t>(*queue->max_bound))));
+  args.push_back(BuildIntLiteral(
+      unit_lowerer.Unit(), block,
+      static_cast<std::int64_t>(*queue->max_bound)));
 }
 
 // Builds the container an element list feeds: the element type's default, the
@@ -127,14 +128,13 @@ auto MaterializeConstant(
   return std::visit(
       Overloaded{
           [&](const hir::IntegralConstant& c) -> mir::Expr {
-            return mir::Expr{
-                .data =
-                    mir::IntegerLiteral{.value = LowerHirIntegralConstant(c)},
-                .type = mir_type};
+            return block.exprs.Get(BuildIntegralLiteral(
+                unit_lowerer.Unit(), block, mir_type,
+                LowerHirIntegralConstant(c)));
           },
           [&](double real) -> mir::Expr {
-            return mir::Expr{
-                .data = mir::RealLiteral{.value = real}, .type = mir_type};
+            return block.exprs.Get(
+                BuildRealLiteral(unit_lowerer.Unit(), block, mir_type, real));
           },
           [&](const std::string& text) -> mir::Expr {
             const mir::ExprId literal = block.exprs.Add(
@@ -192,17 +192,13 @@ auto BuildDefaultValueExpr(
   return std::visit(
       Overloaded{
           [&](const mir::PackedArrayType& pa) -> mir::Expr {
-            return mir::Expr{
-                .data =
-                    mir::IntegerLiteral{.value = DefaultIntegralConstant(pa)},
-                .type = type};
+            return block.exprs.Get(BuildIntegralLiteral(
+                unit_lowerer.Unit(), block, type, DefaultIntegralConstant(pa)));
           },
           [&](const mir::EnumType& e) -> mir::Expr {
-            return mir::Expr{
-                .data =
-                    mir::IntegerLiteral{
-                        .value = DefaultIntegralConstant(e.base)},
-                .type = type};
+            return block.exprs.Get(BuildIntegralLiteral(
+                unit_lowerer.Unit(), block, type,
+                DefaultIntegralConstant(e.base)));
           },
           [&](const mir::StringType&) -> mir::Expr {
             // Software string literal -> `value::String("")` via the
@@ -218,16 +214,16 @@ auto BuildDefaultValueExpr(
                 .type = type};
           },
           [&](const mir::RealType&) -> mir::Expr {
-            return mir::Expr{
-                .data = mir::RealLiteral{.value = 0.0}, .type = type};
+            return block.exprs.Get(
+                BuildRealLiteral(unit_lowerer.Unit(), block, type, 0.0));
           },
           [&](const mir::ShortRealType&) -> mir::Expr {
-            return mir::Expr{
-                .data = mir::RealLiteral{.value = 0.0}, .type = type};
+            return block.exprs.Get(
+                BuildRealLiteral(unit_lowerer.Unit(), block, type, 0.0));
           },
           [&](const mir::RealTimeType&) -> mir::Expr {
-            return mir::Expr{
-                .data = mir::RealLiteral{.value = 0.0}, .type = type};
+            return block.exprs.Get(
+                BuildRealLiteral(unit_lowerer.Unit(), block, type, 0.0));
           },
           // LRM Table 7-1: a fixed unpacked array defaults to every element at
           // the element type's default. That uniform value is the element
@@ -313,10 +309,9 @@ auto BuildDefaultValueExpr(
             // LRM 7.10.5: a bounded queue `int q[$:N]` carries its max index N
             // as a second construction argument so the runtime can enforce it.
             if (q.max_bound.has_value()) {
-              args.push_back(block.exprs.Add(
-                  mir::MakeIntLiteral(
-                      unit_lowerer.Unit().builtins.int_type,
-                      static_cast<std::int64_t>(*q.max_bound))));
+              args.push_back(BuildIntLiteral(
+                  unit_lowerer.Unit(), block,
+                  static_cast<std::int64_t>(*q.max_bound)));
             }
             return mir::Expr{
                 .data =

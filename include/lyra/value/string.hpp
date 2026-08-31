@@ -407,20 +407,21 @@ static_assert(Indexable<String>);
 // the one member that reads a `String`, whose definition depends on the array.
 template <typename T>
 auto UnpackedArray<T>::FromString(
-    const String& text, const T& element_prototype, const PackedArray& count)
-    -> UnpackedArray<T> {
+    const String& text, const PackedType& element_type,
+    const PackedArray& count) -> UnpackedArray<T> {
   const std::string_view chars = text.View();
   const auto element_count = static_cast<std::size_t>(count.ToInt64());
+  const T element_default{element_type};
   std::vector<T> elements;
   elements.reserve(element_count);
   for (std::size_t i = 0; i < element_count; ++i) {
-    const auto byte =
-        i < chars.size() ? static_cast<unsigned char>(chars[i]) : 0U;
     elements.push_back(
-        PackedArray::FromInt(
-            static_cast<std::int64_t>(byte), element_prototype));
+        i < chars.size()
+            ? PackedArray::FromInt(
+                  static_cast<unsigned char>(chars[i]), element_type)
+            : element_default);
   }
-  return UnpackedArray<T>{element_prototype, std::span<const T>{elements}};
+  return UnpackedArray<T>{element_default, std::span<const T>{elements}};
 }
 
 }  // namespace lyra::value

@@ -4,7 +4,6 @@
 #include <cstdint>
 #include <format>
 #include <optional>
-#include <span>
 #include <string>
 #include <string_view>
 #include <variant>
@@ -17,153 +16,18 @@
 #include "lyra/backend/cpp/render_type.hpp"
 #include "lyra/backend/cpp/scope_view.hpp"
 #include "lyra/backend/cpp/string_literal.hpp"
+#include "lyra/backend/cpp/value_form.hpp"
 #include "lyra/base/internal_error.hpp"
 #include "lyra/base/overloaded.hpp"
 #include "lyra/mir/binary_op.hpp"
 #include "lyra/mir/expr.hpp"
-#include "lyra/mir/integral_constant.hpp"
+#include "lyra/mir/packed_type_descriptor.hpp"
 #include "lyra/mir/type.hpp"
 #include "lyra/mir/unary_op.hpp"
 
 namespace lyra::backend::cpp {
 
 namespace {
-
-auto IntegralConstantToInt64(const mir::IntegralConstant& c) -> std::int64_t {
-  if (c.width == 0U) {
-    throw InternalError("IntegralConstantToInt64: zero width");
-  }
-  if (c.width > 64U) {
-    throw InternalError(
-        "IntegralConstantToInt64: width > 64 not yet implemented");
-  }
-  std::uint64_t raw = c.value_words.empty() ? 0U : c.value_words[0];
-  // 4-state X/Z bits collapse to 0 in the numeric int64 form.
-  if (!c.state_words.empty()) {
-    raw &= ~c.state_words[0];
-  }
-  const std::uint64_t mask =
-      c.width >= 64U ? ~std::uint64_t{0} : (std::uint64_t{1} << c.width) - 1U;
-  const std::uint64_t masked = raw & mask;
-  if (c.signedness == mir::Signedness::kSigned && c.width < 64U) {
-    const std::uint64_t sign_bit = std::uint64_t{1} << (c.width - 1U);
-    if ((masked & sign_bit) != 0U) {
-      return static_cast<std::int64_t>(masked | ~mask);
-    }
-  }
-  return static_cast<std::int64_t>(masked);
-}
-
-auto RenderWordList(std::span<const std::uint64_t> words, std::size_t n)
-    -> std::string {
-  std::string out = "{";
-  for (std::size_t i = 0; i < n; ++i) {
-    if (i != 0U) {
-      out += ", ";
-    }
-    const std::uint64_t w = i < words.size() ? words[i] : std::uint64_t{0};
-    out += std::format("0x{:x}ULL", w);
-  }
-  out += "}";
-  return out;
-}
-
-auto RenderPackedArrayIntegerLiteral(
-    std::string_view packed, const mir::PackedArrayType& pa,
-    const mir::IntegralConstant& c) -> std::string {
-  // A literal materializes as a construction of its own value: a narrow 2-state
-  // value via Int / FromInt, a wide or X/Z-bearing value via FromWords. The
-  // shape -- a 1-D vector or a multi-dimensional stack -- rides in the
-  // PackedType, so the same value path serves any rank and always carries the
-  // literal's actual bits.
-  const bool literal_has_xz = !c.state_words.empty() && c.state_words[0] != 0U;
-  const bool needs_word_planes = c.width > 64U || literal_has_xz;
-
-  if (!needs_word_planes) {
-    const auto value = IntegralConstantToInt64(c);
-    // A 1-D 32-bit signed value has the named shorthands Int (2-state) /
-    // Integer (4-state); both read far better than the explicit FromInt for the
-    // ubiquitous `int` / `integer` literal. A multi-dimensional 32-bit type
-    // takes the general path so its dimension stack survives.
-    if (pa.dims.size() == 1U && pa.BitWidth() == 32U &&
-        pa.signedness == mir::Signedness::kSigned) {
-      return std::format(
-          "{}::{}({})", packed,
-          pa.atom == mir::BitAtom::kBit ? "Int" : "Integer", value);
-    }
-    return std::format(
-        "{}::FromInt({}LL, {})", packed, value, RenderPackedType(pa));
-  }
-
-  const bool is_four_state = pa.atom != mir::BitAtom::kBit;
-  if (literal_has_xz && !is_four_state) {
-    throw InternalError(
-        "RenderPackedArrayIntegerLiteral: 2-state PackedArray cannot hold "
-        "X/Z literal");
-  }
-  // Word planes ride as `std::array` spans (a literal that does not fit an
-  // int64 carrier is the rare wide / X-bearing case); the empty unknown plane
-  // of a 2-state value is an empty span.
-  const std::size_t n = (pa.BitWidth() + 63U) / 64U;
-  const std::string value_init = std::format(
-      "std::array<std::uint64_t, {}>{}", n, RenderWordList(c.value_words, n));
-  const std::string unknown_init =
-      is_four_state ? std::format(
-                          "std::array<std::uint64_t, {}>{}", n,
-                          RenderWordList(c.state_words, n))
-                    : std::string{"std::span<const std::uint64_t>{}"};
-  return std::format(
-      "{}::FromWords({}, {}, {})", packed, value_init, unknown_init,
-      RenderPackedType(pa));
-}
-
-auto RenderIntegerLiteralExpr(
-    const ScopeView& view, const mir::Expr& expr,
-    const mir::IntegerLiteral& lit) -> std::string {
-  const auto& ty = view.Unit().types.Get(expr.type);
-  if (std::holds_alternative<mir::MachineIntType>(ty.data)) {
-    // A machine integer is a raw target scalar, so its literal is the bare
-    // numeric value -- no `PackedArray` wrapper.
-    return std::to_string(IntegralConstantToInt64(lit.value));
-  }
-  if (!ty.IsIntegralPacked()) {
-    throw InternalError(
-        "RenderIntegerLiteralExpr: IntegerLiteral not typed as "
-        "PackedArrayType, EnumType, or MachineIntType");
-  }
-  // An enum literal is its base integral value -- a bare `PackedArray` at the
-  // enum's base shape, no distinct enum type.
-  return RenderPackedArrayIntegerLiteral(
-      RenderTypeAsCpp(view.Unit(), expr.type), ty.AsIntegralPacked(),
-      lit.value);
-}
-
-auto RenderRealLiteralExpr(
-    const ScopeView& view, const mir::Expr& expr, const mir::RealLiteral& r)
-    -> std::string {
-  // `std::format` with `{:.{}g}` and precision=17 round-trips a double;
-  // precision=9 round-trips a float (IEEE 754 minimum representable-pair
-  // widths). The trailing 'f' suffix keeps the shortreal body a `float` literal
-  // so the wrapping `ShortReal{...}` constructs from a float, with no
-  // double -> float narrowing.
-  //
-  // `g` strips trailing zeros and the decimal point for whole-number values,
-  // which would produce literals like `0f` or `42e3f` that the C++ lexer
-  // rejects (a digit sequence followed by `f` is not a valid float suffix).
-  // Force a decimal point when the formatted body has neither `.` nor an
-  // exponent, so `0` -> `0.0`, `42` -> `42.0`.
-  const auto& ty = view.Unit().types.Get(expr.type);
-  const bool is_short = ty.Kind() == mir::TypeKind::kShortReal;
-  std::string body = is_short ? std::format("{:.9g}", r.value)
-                              : std::format("{:.17g}", r.value);
-  if (body.find_first_of(".eE") == std::string::npos) {
-    body += ".0";
-  }
-  if (is_short) {
-    body += "f";
-  }
-  return std::format("{}{{{}}}", RenderTypeAsCpp(view.Unit(), expr.type), body);
-}
 
 auto LookupLocalName(const ScopeView& view, const mir::LocalRef& ref)
     -> std::string {
@@ -480,6 +344,9 @@ auto RenderLhsExpr(const ScopeView& view, const mir::Expr& expr)
                 "{}::{}", ToCppName(cls.name),
                 cls.static_constants.Get(r.constant).name);
           },
+          [&](const mir::PackedTypeRef& r) -> std::string {
+            return mir::PackedTypeDescriptionName(r.integral);
+          },
           [&](const mir::StaticPropertyRef& r) -> std::string {
             const mir::Class& owner_cls = view.Unit().GetClass(r.owner);
             return std::format(
@@ -744,14 +611,14 @@ auto RenderClosureExpr(const ScopeView& view, const mir::ClosureExpr& construct)
 auto RenderConcatExpr(
     const ScopeView& view, const mir::Expr& expr, const mir::ConcatExpr& c)
     -> std::string {
-  std::string out =
-      std::format("{}::Concat({{", RenderTypeAsCpp(view.Unit(), expr.type));
-  for (std::size_t i = 0; i < c.operands.size(); ++i) {
-    if (i != 0) out += ", ";
-    out += RenderExpr(view, view.Expr(c.operands[i]));
+  std::vector<std::string> operands;
+  operands.reserve(c.operands.size());
+  for (const mir::ExprId id : c.operands) {
+    operands.push_back(RenderExpr(view, view.Expr(id)));
   }
-  out += "})";
-  return out;
+  return RenderValueForm(
+      ConcatValueForm(view.Unit().types.Get(expr.type)),
+      RenderTypeAsCpp(view.Unit(), expr.type), operands);
 }
 
 // The brace form of the aggregate literal's own type, which is always the
@@ -807,9 +674,10 @@ auto RenderVectorExpr(
 auto RenderReplicationExpr(
     const ScopeView& view, const mir::Expr& expr, const mir::ReplicationExpr& r)
     -> std::string {
-  return std::format(
-      "{}::Replicate({}, {}ULL)", RenderTypeAsCpp(view.Unit(), expr.type),
-      RenderExpr(view, view.Expr(r.concat)), r.count);
+  return RenderValueForm(
+      ReplicationValueForm(view.Unit().types.Get(expr.type)),
+      RenderTypeAsCpp(view.Unit(), expr.type),
+      {RenderExpr(view, view.Expr(r.concat)), std::format("{}ULL", r.count)});
 }
 
 // Read-side render of a dereference: the value the operand's place stands for.
@@ -858,19 +726,43 @@ auto RenderPointerCastExpr(
 auto RenderExpr(const ScopeView& view, const mir::Expr& expr) -> std::string {
   return std::visit(
       Overloaded{
-          [&](const mir::IntegerLiteral& lit) -> std::string {
-            return RenderIntegerLiteralExpr(view, expr, lit);
-          },
           [&](const mir::StringLiteral& s) -> std::string {
             return RenderCStringLiteral(s.value);
-          },
-          [&](const mir::RealLiteral& r) -> std::string {
-            return RenderRealLiteralExpr(view, expr, r);
           },
           [](const mir::NullLiteral&) -> std::string {
             return std::string{"nullptr"};
           },
-          [](const mir::MachineIntLiteral& h) -> std::string {
+          [](const mir::MachineBoolLiteral& b) -> std::string {
+            return std::string{b.value ? "true" : "false"};
+          },
+          [&](const mir::MachineFloatLiteral& f) -> std::string {
+            // A machine float is spelled at the precision its own type is
+            // read back at: 9 significant digits round-trip a `float` and 17 a
+            // `double`, the IEEE 754 minimum representable-pair widths, and a
+            // single-precision literal carries the suffix that keeps it one.
+            // `g` drops a trailing decimal point, which the C++ lexer rejects
+            // before a suffix, so a whole number gets one back.
+            const auto& machine = std::get<mir::MachineFloatType>(
+                view.Unit().types.Get(expr.type).data);
+            const bool single = machine.bit_width == 32;
+            std::string body = std::format("{:.{}g}", f.value, single ? 9 : 17);
+            if (body.find_first_of(".eE") == std::string::npos) {
+              body += ".0";
+            }
+            body += single ? "f" : "";
+            return body;
+          },
+          [&](const mir::MachineIntLiteral& h) -> std::string {
+            // A machine integer is spelled as its own type reads it. An
+            // unsigned one is a bit pattern, so it is written in hex and with
+            // an unsigned suffix; a signed spelling would go negative and
+            // narrow where the value lands in unsigned storage.
+            const auto& machine = std::get<mir::MachineIntType>(
+                view.Unit().types.Get(expr.type).data);
+            if (machine.signedness == mir::Signedness::kUnsigned) {
+              return std::format(
+                  "0x{:x}ULL", static_cast<std::uint64_t>(h.value));
+            }
             return std::format("{}LL", h.value);
           },
           [&](const mir::LocalRef& l) -> std::string {
@@ -948,6 +840,9 @@ auto RenderExpr(const ScopeView& view, const mir::Expr& expr) -> std::string {
             return std::format(
                 "{}::{}", ToCppName(cls.name),
                 cls.static_constants.Get(r.constant).name);
+          },
+          [&](const mir::PackedTypeRef& r) -> std::string {
+            return mir::PackedTypeDescriptionName(r.integral);
           },
           [&](const mir::StaticPropertyRef& r) -> std::string {
             const mir::Class& owner_cls = view.Unit().GetClass(r.owner);

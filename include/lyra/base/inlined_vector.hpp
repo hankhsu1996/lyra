@@ -90,6 +90,13 @@ class InlinedVector {
     return data()[i];
   }
 
+  [[nodiscard]] auto front() -> T& {
+    return data()[0];
+  }
+  [[nodiscard]] auto front() const -> const T& {
+    return data()[0];
+  }
+
   [[nodiscard]] auto back() -> T& {
     return data()[size_ - 1];
   }
@@ -112,6 +119,10 @@ class InlinedVector {
 
   auto pop_back() -> void {
     --size_;
+  }
+
+  [[nodiscard]] auto operator==(const InlinedVector& other) const -> bool {
+    return std::equal(begin(), end(), other.begin(), other.end());
   }
 
  private:

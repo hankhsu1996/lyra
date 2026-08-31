@@ -11,6 +11,7 @@
 #include "lyra/diag/source_span.hpp"
 #include "lyra/hir/expr.hpp"
 #include "lyra/hir/procedural_body.hpp"
+#include "lyra/lowering/hir_to_mir/integral_literal.hpp"
 #include "lyra/lowering/hir_to_mir/process_lowerer.hpp"
 #include "lyra/lowering/hir_to_mir/runtime_call.hpp"
 #include "lyra/mir/compilation_unit.hpp"
@@ -83,8 +84,8 @@ auto LowerPrintTimescaleSystemSubroutineCall(
                   .callee = mir::Construct{}, .arguments = {text_lit}},
           .type = builtins.string});
 
-  const mir::ExprId fd_id = body.exprs.Add(
-      mir::MakeIntLiteral(builtins.int_type, support::kStdoutFd));
+  const mir::ExprId fd_id =
+      BuildIntLiteral(process.Owner().Unit(), body, support::kStdoutFd);
   const mir::ExprId files_id =
       body.exprs.Add(BuildFilesCallExpr(process.Owner(), body));
   return mir::Expr{

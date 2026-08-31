@@ -14,6 +14,7 @@
 #include "lyra/lowering/hir_to_mir/call_operands.hpp"
 #include "lyra/lowering/hir_to_mir/closure_builder.hpp"
 #include "lyra/lowering/hir_to_mir/condition.hpp"
+#include "lyra/lowering/hir_to_mir/integral_literal.hpp"
 #include "lyra/lowering/hir_to_mir/print_items.hpp"
 #include "lyra/lowering/hir_to_mir/process_lowerer.hpp"
 #include "lyra/lowering/hir_to_mir/runtime_call.hpp"
@@ -32,9 +33,9 @@ namespace {
 
 // LRM 21.3.1 stdout pre-bound FD literal, used as the sink for $display /
 // $write / $strobe lowerings that don't carry a user-supplied descriptor.
-auto BuildStdoutFdLiteral(mir::Block& block, mir::TypeId int_type)
+auto BuildStdoutFdLiteral(const mir::CompilationUnit& unit, mir::Block& block)
     -> mir::ExprId {
-  return block.exprs.Add(mir::MakeIntLiteral(int_type, support::kStdoutFd));
+  return BuildIntLiteral(unit, block, support::kStdoutFd);
 }
 
 auto LowerDescriptor(
@@ -83,7 +84,6 @@ auto LowerStrobeCall(
   auto& block = *frame.current_block;
   auto& unit = process.Owner().Unit();
   const mir::TypeId void_type = unit.builtins.void_type;
-  const mir::TypeId int_type = unit.builtins.int_type;
   const std::int64_t time_unit_power =
       static_cast<std::int64_t>(process.Resolution().unit_power);
   const bool is_file_sink = print.sink_kind == support::PrintSinkKind::kFile;
@@ -131,8 +131,7 @@ auto LowerStrobeCall(
     guard.AppendStmt(mir::ReturnStmt{.value = std::nullopt});
     body.AppendStmt(
         mir::IfStmt{
-            .condition =
-                ReduceToCondition(body, is_cancelled, unit.builtins.bit1),
+            .condition = ReduceToCondition(unit, body, is_cancelled),
             .then_scope = body.child_scopes.Add(std::move(guard)),
             .else_scope = std::nullopt});
   }
@@ -148,9 +147,10 @@ auto LowerStrobeCall(
   const mir::ExprId items_array = body.exprs.Add(
       BuildPrintItemsArray(unit, body, *items_or, time_unit_power));
 
-  const mir::ExprId body_fd = body_user_descriptor.has_value()
-                                  ? *body_user_descriptor
-                                  : BuildStdoutFdLiteral(body, int_type);
+  const mir::ExprId body_fd =
+      body_user_descriptor.has_value()
+          ? *body_user_descriptor
+          : BuildStdoutFdLiteral(process.Owner().Unit(), body);
   const mir::ExprId write_call = EmitFormatThenWrite(
       process, body, items_array, body_fd, print.append_newline);
   body.AppendStmt(mir::ExprStmt{.expr = write_call});
@@ -179,7 +179,6 @@ auto LowerPrintSystemSubroutineCall(
 
   auto& block = *frame.current_block;
   auto& unit = process.Owner().Unit();
-  const mir::TypeId int_type = unit.builtins.int_type;
   const bool is_file_sink = print.sink_kind == support::PrintSinkKind::kFile;
 
   std::optional<mir::ExprId> user_descriptor;
@@ -200,9 +199,10 @@ auto LowerPrintSystemSubroutineCall(
   const mir::ExprId items_array = block.exprs.Add(
       BuildPrintItemsArray(unit, block, *items_or, time_unit_power));
 
-  const mir::ExprId fd = user_descriptor.has_value()
-                             ? *user_descriptor
-                             : BuildStdoutFdLiteral(block, int_type);
+  const mir::ExprId fd =
+      user_descriptor.has_value()
+          ? *user_descriptor
+          : BuildStdoutFdLiteral(process.Owner().Unit(), block);
   const mir::ExprId write_call = EmitFormatThenWrite(
       process, block, items_array, fd, print.append_newline);
   return block.exprs.Get(write_call);

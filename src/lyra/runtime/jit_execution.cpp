@@ -1,8 +1,10 @@
 #include "lyra/runtime/jit_execution.hpp"
 
+#include <algorithm>
 #include <coroutine>
 #include <cstddef>
 #include <cstdint>
+#include <deque>
 #include <functional>
 #include <memory>
 #include <span>
@@ -153,6 +155,18 @@ auto ErasedValue(void* handle) -> value::RuntimeValue {
   return std::move(*static_cast<value::RuntimeValue*>(handle));
 }
 
+// Storage for one value the generated program builds once and then holds by
+// address for the rest of the run. Every other value crossing the boundary
+// belongs to the arena of the stretch that made it, which is released when that
+// stretch returns; these cannot, because generated code keeps their addresses
+// across calls. The store only grows, and it grows to what the design declares.
+template <class T>
+auto ProgramLifetime(T value) -> const T* {
+  static std::deque<T> stored;
+  stored.push_back(std::move(value));
+  return &stored.back();
+}
+
 // Copies one element out across the opaque-handle boundary as a handle of the
 // element's own domain. A chandle's handle is the pointer it carries rather
 // than a pointer to a runtime object, the same divergence the box family has.
@@ -277,6 +291,7 @@ using lyra::runtime::IndicesOf;
 using lyra::runtime::Observable;
 using lyra::runtime::Own;
 using lyra::runtime::OwnDraw;
+using lyra::runtime::ProgramLifetime;
 using lyra::runtime::Read;
 using lyra::runtime::RealTimeInUnit;
 using lyra::runtime::RunHostCommand;
@@ -424,26 +439,34 @@ auto lyra_rt_format(LyraSpan items, const void* time_format) -> void* {
       Format(collected, *static_cast<const TimeFormat*>(time_format)));
 }
 
-auto lyra_rt_packed_const(
-    const std::uint64_t* value_words, std::int64_t value_word_count,
-    const std::uint64_t* unknown_words, std::int64_t unknown_word_count,
-    const std::int64_t* dims, std::int64_t dims_count, bool is_signed,
-    bool is_four_state) -> void* {
-  const auto count = static_cast<std::size_t>(dims_count);
-  const std::span<const std::int64_t> bounds{dims, count * 2};
-  std::vector<PackedRange> ranges;
-  ranges.reserve(count);
-  for (std::size_t i = 0; i < count; ++i) {
-    ranges.push_back(
-        PackedRange{.left = bounds[i * 2], .right = bounds[(i * 2) + 1]});
-  }
-  return GeneratedCallScope::Current().Arena().New<PackedArray>(
+auto lyra_rt_packed_from_words(
+    LyraSpan value_words, LyraSpan unknown_words, const void* type) -> void* {
+  return Own(
       PackedArray::FromWords(
           std::span<const std::uint64_t>{
-              value_words, static_cast<std::size_t>(value_word_count)},
+              static_cast<const std::uint64_t*>(value_words.data),
+              value_words.count},
           std::span<const std::uint64_t>{
-              unknown_words, static_cast<std::size_t>(unknown_word_count)},
-          PackedType{std::move(ranges), is_signed, is_four_state}));
+              static_cast<const std::uint64_t*>(unknown_words.data),
+              unknown_words.count},
+          Read<PackedType>(type)));
+}
+
+auto lyra_rt_make_packed_range(std::int64_t left, std::int64_t right) -> const
+    void* {
+  return ProgramLifetime(PackedRange{.left = left, .right = right});
+}
+
+auto lyra_rt_make_packed_type(LyraSpan dims, bool is_signed, bool is_four_state)
+    -> const void* {
+  const std::span<const void* const> entries{
+      static_cast<const void* const*>(dims.data), dims.count};
+  PackedType::Dims ranges(entries.size());
+  std::ranges::transform(entries, ranges.begin(), [](const void* entry) {
+    return *static_cast<const PackedRange*>(entry);
+  });
+  return ProgramLifetime(
+      PackedType{std::move(ranges), is_signed, is_four_state});
 }
 
 void lyra_rt_writeln(void* files, void* descriptor, void* text) {
@@ -909,16 +932,13 @@ auto lyra_rt_packed_to_bool(const void* operand) -> bool {
   return static_cast<bool>(Read<PackedArray>(operand));
 }
 
-auto lyra_rt_packed_convert_from(const void* src, const void* prototype)
-    -> void* {
+auto lyra_rt_packed_convert_from(const void* src, const void* type) -> void* {
   return Own(
-      PackedArray::ConvertFrom(
-          Read<PackedArray>(src), Read<PackedArray>(prototype)));
+      PackedArray::ConvertFrom(Read<PackedArray>(src), Read<PackedType>(type)));
 }
 
-auto lyra_rt_packed_from_int(std::int64_t value, const void* prototype)
-    -> void* {
-  return Own(PackedArray::FromInt(value, Read<PackedArray>(prototype)));
+auto lyra_rt_packed_from_int(std::int64_t value, const void* type) -> void* {
+  return Own(PackedArray::FromInt(value, Read<PackedType>(type)));
 }
 
 auto lyra_rt_packed_from_bool(bool value) -> void* {
@@ -1051,7 +1071,7 @@ auto lyra_rt_packed_slice(
   return Own(
       Read<PackedArray>(value).Slice(
           Read<PackedArray>(a), Read<PackedArray>(b), Read<PackedArray>(form),
-          Read<PackedArray>(shape)));
+          Read<PackedType>(shape)));
 }
 
 auto lyra_rt_packed_with_slice(
@@ -1060,7 +1080,7 @@ auto lyra_rt_packed_with_slice(
   return Own(
       Read<PackedArray>(value).WithSlice(
           Read<PackedArray>(a), Read<PackedArray>(b), Read<PackedArray>(form),
-          Read<PackedArray>(shape), Read<PackedArray>(replacement)));
+          Read<PackedType>(shape), Read<PackedArray>(replacement)));
 }
 
 // Materializes a borrowed packed view (a container element or slice read) into
@@ -1318,6 +1338,10 @@ auto lyra_rt_real_round(const void* value) -> std::int64_t {
   return Read<Real>(value).Round();
 }
 
+auto lyra_rt_real_real_value(const void* value) -> double {
+  return Read<Real>(value).Value();
+}
+
 auto lyra_rt_real_truncate(const void* value) -> std::int64_t {
   return Read<Real>(value).Truncate();
 }
@@ -1512,6 +1536,10 @@ auto lyra_rt_shortreal_pow(const void* base, const void* exponent) -> void* {
 
 auto lyra_rt_shortreal_round(const void* value) -> std::int64_t {
   return Read<ShortReal>(value).Round();
+}
+
+auto lyra_rt_shortreal_real_value(const void* value) -> float {
+  return Read<ShortReal>(value).Value();
 }
 
 auto lyra_rt_shortreal_to_bits(const void* value) -> std::int64_t {
@@ -1839,18 +1867,24 @@ auto lyra_rt_unpackedarray_with_element(
       lyra::runtime::ElementFrom(source.ElementDefault(), value)));
 }
 
-auto lyra_rt_packed_from_string(const void* text, const void* prototype)
-    -> void* {
+auto lyra_rt_packed_from_string(const void* text, const void* type) -> void* {
   return Own(
-      PackedArray::FromString(
-          Read<String>(text), Read<PackedArray>(prototype)));
+      PackedArray::FromString(Read<String>(text), Read<PackedType>(type)));
 }
 
 auto lyra_rt_unpackedarray_from_string(
-    const void* text, const void* prototype, const void* count) -> void* {
+    const void* text, const void* element_type, const void* count) -> void* {
   return Own(
       RuntimeUnpackedArray::FromString(
-          Read<String>(text), Read<PackedArray>(prototype),
+          Read<String>(text), Read<PackedType>(element_type),
+          Read<PackedArray>(count)));
+}
+
+auto lyra_rt_unpackedarray_from_packed_array(
+    const void* bits, const void* element_type, const void* count) -> void* {
+  return Own(
+      RuntimeUnpackedArray::FromPackedArray(
+          Read<PackedArray>(bits), Read<PackedType>(element_type),
           Read<PackedArray>(count)));
 }
 

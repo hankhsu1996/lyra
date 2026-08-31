@@ -185,12 +185,20 @@ class UnpackedArray {
   // LRM 5.9 / 21.3.3: a string value assigned to an unpacked array of bytes is
   // left-justified -- the first character lands at the array's left bound and
   // runs toward the right bound, an element past the end of the text keeps the
-  // element default, and text beyond the array's last element is dropped.
-  // `element_prototype` carries the element's declared representation and
-  // doubles as that default; `count` is the destination's element count.
+  // element type's default, and text beyond the array's last element is
+  // dropped. The clause admits this form for an array of bytes alone, so the
+  // element shape is a packed type; `count` is the destination's element count.
   [[nodiscard]] static auto FromString(
-      const String& text, const T& element_prototype, const PackedArray& count)
-      -> UnpackedArray;
+      const String& text, const PackedType& element_type,
+      const PackedArray& count) -> UnpackedArray;
+
+  // LRM 5.9: a string literal assigned to an unpacked array of bytes, under the
+  // same left justification. A literal is a packed bit-vector constant, not a
+  // string value, so its bytes arrive whole -- a NUL among them is a byte like
+  // any other, where building a string value would have removed it (LRM 6.16).
+  [[nodiscard]] static auto FromPackedArray(
+      const PackedArray& bits, const PackedType& element_type,
+      const PackedArray& count) -> UnpackedArray;
 
   UnpackedArray(const UnpackedArray&) = default;
   UnpackedArray(UnpackedArray&&) noexcept = default;
@@ -614,6 +622,29 @@ struct Formatter<UnpackedArray<T>> {
     return out;
   }
 };
+
+// Left-justifies a byte sequence into `count` elements: the first byte lands at
+// the array's left bound and runs toward the right, an element past the end of
+// the sequence keeps the element type's default, and bytes beyond the last
+// element are dropped.
+template <typename T>
+auto UnpackedArray<T>::FromPackedArray(
+    const PackedArray& bits, const PackedType& element_type,
+    const PackedArray& count) -> UnpackedArray<T> {
+  const std::string bytes = bits.ByteString();
+  const auto element_count = static_cast<std::size_t>(count.ToInt64());
+  const T element_default{element_type};
+  std::vector<T> elements;
+  elements.reserve(element_count);
+  for (std::size_t i = 0; i < element_count; ++i) {
+    elements.push_back(
+        i < bytes.size()
+            ? PackedArray::FromInt(
+                  static_cast<unsigned char>(bytes[i]), element_type)
+            : element_default);
+  }
+  return UnpackedArray<T>{element_default, std::span<const T>{elements}};
+}
 
 static_assert(LyraValue<UnpackedArray<PackedArray>>);
 static_assert(Sized<UnpackedArray<PackedArray>>);

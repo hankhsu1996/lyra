@@ -3,6 +3,7 @@
 #include <cstdint>
 
 #include "lyra/base/internal_error.hpp"
+#include "lyra/lowering/hir_to_mir/integral_literal.hpp"
 #include "lyra/lowering/hir_to_mir/process_lowerer.hpp"
 #include "lyra/lowering/hir_to_mir/runtime_call.hpp"
 #include "lyra/lowering/hir_to_mir/structural_scope_lowerer.hpp"
@@ -46,10 +47,9 @@ auto LowerTimeSystemSubroutineCall(
   auto& body = *frame.current_block;
   const mir::ExprId runtime_id =
       body.exprs.Add(BuildCurrentRuntimeCallExpr(lowerer.Owner()));
-  const mir::ExprId unit_power_id = body.exprs.Add(
-      mir::MakeIntLiteral(
-          builtins.int_type,
-          static_cast<std::int64_t>(lowerer.Resolution().unit_power)));
+  const mir::ExprId unit_power_id = BuildIntLiteral(
+      lowerer.Owner().Unit(), body,
+      static_cast<std::int64_t>(lowerer.Resolution().unit_power));
   return mir::Expr{
       .data =
           mir::CallExpr{

@@ -204,13 +204,15 @@ auto TypeInterner::ObservableCellOf(TypeId value_type) const -> TypeId {
     // reference, vector, chandle), an object (a class instance or an
     // instantiated child), a named event (LRM 15 -- it carries its own
     // subscribe mechanism), a runtime facade (effects, files, diagnostics, a
-    // runtime-library type), a coroutine result, a machine primitive (a machine
-    // int / float / C string used at an ABI boundary), a compiler-generated
+    // runtime-library type), a coroutine result, a machine primitive (a plain
+    // boolean, integer, float, C string, array, or code address), a
+    // compiler-generated
     // promoted scope struct or closure, an internal index, `void`, and the
     // observable / net-cell wrappers themselves, which are already storage
     // cells.
     case TypeKind::kWildcardIndex:
     case TypeKind::kMachineCString:
+    case TypeKind::kMachineBool:
     case TypeKind::kMachineInt:
     case TypeKind::kMachineFloat:
     case TypeKind::kMachineArray:

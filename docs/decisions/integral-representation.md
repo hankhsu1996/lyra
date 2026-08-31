@@ -122,9 +122,9 @@ but it does not leak into MIR or into a hypothetical IR-level API.
 
 `backend::cpp` and `lyra::value` follow these invariants:
 
-1. **One C++ class for every integral type**: `lyra::value::PackedArray`. Constructed from
-   `(bit_width, is_signed, is_four_state)`. No separate `BitValue` / `LogicValue` / native int types
-   appear in emitted code for integral variables.
+1. **One C++ class for every integral type**: `lyra::value::PackedArray`, carrying its own declared
+   representation. No separate `BitValue` / `LogicValue` / native int types appear in emitted code
+   for integral variables.
 2. **MIR dispatch axis is `(atom, bit_width, signedness)`**. `PackedArrayForm` is read only by the
    MIR dump and by diagnostics; cpp emit ignores it.
 3. **Operations live on `PackedArray`**: operator overloads and member functions (or free functions
@@ -154,3 +154,12 @@ but it does not leak into MIR or into a hypothetical IR-level API.
   profiling identifies it as a real cost.
 - A future LLVM backend uses the same MIR with the same dispatch axis; its bucketing to `iN` is its
   own lowering.
+
+## Cross-references
+
+- [unpacked-range-belongs-to-type](unpacked-range-belongs-to-type.md) -- its packed carve-out
+  settles what a packed value's declared representation is: the dimension stack rather than a bare
+  bit width, because the stack's product is the storage width and the whole stack decides whether
+  two values share a representation.
+- [packed-array-representation](packed-array-representation.md) -- the recursive HIR packed type
+  that HIR-to-MIR flattens onto the MIR shape this decision keeps.

@@ -24,6 +24,7 @@
 namespace lyra::value {
 
 class PackedArray;
+struct PackedType;
 
 // C++ storage mechanics every runtime value type must satisfy so it can
 // live in the STL containers the runtime stores it in (`std::vector` /
@@ -252,7 +253,7 @@ concept RangedSliceableRef = requires(
 };
 
 // The packed family states the shape its slice result takes as a trailing
-// prototype operand sourced from the select's static result type. The bounds
+// shape operand sourced from the select's static result type. The bounds
 // decide which bits are selected; the shape decides how they are structured,
 // which the receiver cannot always supply -- a packed aggregate's base is a
 // flat bit run whose member shapes live only in the member types. The element
@@ -260,14 +261,14 @@ concept RangedSliceableRef = requires(
 template <typename T>
 concept ShapedSliceable = requires(
     const T& t, const PackedArray& a, const PackedArray& b,
-    const PackedArray& form, const PackedArray& shape) {
+    const PackedArray& form, const PackedType& shape) {
   { t.Slice(a, b, form, shape) };
 };
 
 template <typename T>
 concept ShapedSliceableRef = requires(
     T& t, const PackedArray& a, const PackedArray& b, const PackedArray& form,
-    const PackedArray& shape) {
+    const PackedType& shape) {
   { t.SliceRef(a, b, form, shape) };
 };
 

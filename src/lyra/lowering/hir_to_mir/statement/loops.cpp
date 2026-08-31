@@ -14,6 +14,7 @@
 #include "lyra/lowering/hir_to_mir/cast_lowering.hpp"
 #include "lyra/lowering/hir_to_mir/condition.hpp"
 #include "lyra/lowering/hir_to_mir/default_value.hpp"
+#include "lyra/lowering/hir_to_mir/integral_literal.hpp"
 #include "lyra/lowering/hir_to_mir/process_lowerer.hpp"
 #include "lyra/lowering/hir_to_mir/statement/blocks.hpp"
 #include "lyra/lowering/hir_to_mir/walk_frame.hpp"
@@ -82,8 +83,7 @@ auto LowerForStmt(
       return std::unexpected(std::move(cond_or.error()));
     }
     cond_id = ReduceToCondition(
-        block, block.exprs.Add(*std::move(cond_or)),
-        process.Owner().Unit().builtins.bit1);
+        process.Owner().Unit(), block, block.exprs.Add(*std::move(cond_or)));
   }
 
   std::vector<mir::ExprId> step_ids;
@@ -127,8 +127,7 @@ auto LowerWhileStmt(
     return std::unexpected(std::move(cond_or.error()));
   }
   const mir::ExprId cond_id = ReduceToCondition(
-      block, block.exprs.Add(*std::move(cond_or)),
-      process.Owner().Unit().builtins.bit1);
+      process.Owner().Unit(), block, block.exprs.Add(*std::move(cond_or)));
 
   auto body_or = LowerStmtIntoChildScope(process, frame, w.body);
   if (!body_or) {
@@ -158,8 +157,7 @@ auto LowerDoWhileStmt(
     return std::unexpected(std::move(cond_or.error()));
   }
   const mir::ExprId cond_id = ReduceToCondition(
-      block, block.exprs.Add(*std::move(cond_or)),
-      process.Owner().Unit().builtins.bit1);
+      process.Owner().Unit(), block, block.exprs.Add(*std::move(cond_or)));
 
   const mir::BlockId body_scope_id =
       frame.current_block->child_scopes.Add(std::move(*body_or));
@@ -197,10 +195,10 @@ auto LowerRepeatStmt(
   const mir::LocalId idx_var = frame.bindings->DeclareAnonymous(
       mir::LocalDecl{.name = "_lyra_repeat_index", .type = int_type});
 
-  const mir::ExprId zero_id = wrapper.exprs.Add(
-      mir::MakeIntLiteral(process.Owner().Unit().builtins.int_type, 0));
-  const mir::ExprId one_id = wrapper.exprs.Add(
-      mir::MakeIntLiteral(process.Owner().Unit().builtins.int_type, 1));
+  const mir::ExprId zero_id =
+      BuildIntLiteral(process.Owner().Unit(), wrapper, 0);
+  const mir::ExprId one_id =
+      BuildIntLiteral(process.Owner().Unit(), wrapper, 1);
 
   const mir::ExprId idx_ref_cond =
       wrapper.exprs.Add(mir::MakeLocalRefExpr(idx_var, int_type));
@@ -214,7 +212,8 @@ auto LowerRepeatStmt(
                   .lhs = idx_ref_cond,
                   .rhs = count_ref_cond},
           .type = bit_type});
-  const mir::ExprId cond_id = ReduceToCondition(wrapper, less_id, bit_type);
+  const mir::ExprId cond_id =
+      ReduceToCondition(process.Owner().Unit(), wrapper, less_id);
 
   const mir::ExprId idx_ref_step =
       wrapper.exprs.Add(mir::MakeLocalRefExpr(idx_var, int_type));

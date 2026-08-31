@@ -11,6 +11,7 @@
 #include "lyra/lowering/hir_to_mir/condition.hpp"
 #include "lyra/lowering/hir_to_mir/unit_lowerer.hpp"
 #include "lyra/lowering/hir_to_mir/walk_frame.hpp"
+#include "lyra/mir/compilation_unit.hpp"
 #include "lyra/mir/local.hpp"
 #include "lyra/mir/stmt.hpp"
 
@@ -60,7 +61,7 @@ template <typename PredicateBuilder>
 auto BuildCaseCascade(
     WalkFrame frame, mir::Block wrapper_block,
     std::optional<std::string> outer_label, std::vector<mir::Block> body_scopes,
-    std::optional<mir::Block> default_scope, mir::TypeId bit1_type,
+    std::optional<mir::Block> default_scope, const mir::CompilationUnit& unit,
     const PredicateBuilder& build_predicate) -> diag::Result<mir::Stmt> {
   const std::size_t item_count = body_scopes.size();
   std::optional<mir::Block> tail = std::move(default_scope);
@@ -82,7 +83,7 @@ auto BuildCaseCascade(
 
     level_block.AppendStmt(
         mir::IfStmt{
-            .condition = ReduceToCondition(level_block, *pred_or, bit1_type),
+            .condition = ReduceToCondition(unit, level_block, *pred_or),
             .then_scope = body_scope_id,
             .else_scope = else_scope_id});
 
@@ -105,7 +106,7 @@ auto BuildCaseCascade(
 
     wrapper_block.AppendStmt(
         mir::IfStmt{
-            .condition = ReduceToCondition(wrapper_block, *pred0_or, bit1_type),
+            .condition = ReduceToCondition(unit, wrapper_block, *pred0_or),
             .then_scope = body0_id,
             .else_scope = else0_id});
   } else if (tail.has_value()) {

@@ -18,6 +18,7 @@
 #include "lyra/hir/procedural_body.hpp"
 #include "lyra/lowering/hir_to_mir/call_operands.hpp"
 #include "lyra/lowering/hir_to_mir/copy_out_desugar.hpp"
+#include "lyra/lowering/hir_to_mir/integral_literal.hpp"
 #include "lyra/lowering/hir_to_mir/process_lowerer.hpp"
 #include "lyra/lowering/hir_to_mir/runtime_call.hpp"
 #include "lyra/mir/compilation_unit.hpp"
@@ -266,10 +267,10 @@ auto LowerFileIOSystemSubroutineCallStmt(
 
       std::vector<mir::ExprId> operands{temp_ref, fd_id};
       if (unpacked != nullptr) {
-        operands.push_back(wrapper.exprs.Add(
-            mir::MakeIntLiteral(builtins.int_type, unpacked->dim.left)));
-        operands.push_back(wrapper.exprs.Add(
-            mir::MakeIntLiteral(builtins.int_type, unpacked->dim.right)));
+        operands.push_back(BuildIntLiteral(
+            process.Owner().Unit(), wrapper, unpacked->dim.left));
+        operands.push_back(BuildIntLiteral(
+            process.Owner().Unit(), wrapper, unpacked->dim.right));
         // start: the SV index, or the lowest declared index when omitted
         // (LRM 21.3.4.4 default). Synthesizing it keeps count the only
         // trailing-optional operand.
@@ -279,10 +280,9 @@ auto LowerFileIOSystemSubroutineCallStmt(
           if (!start_or) return std::unexpected(std::move(start_or.error()));
           operands.push_back(wrapper.exprs.Add(*std::move(start_or)));
         } else {
-          operands.push_back(wrapper.exprs.Add(
-              mir::MakeIntLiteral(
-                  builtins.int_type,
-                  std::min(unpacked->dim.left, unpacked->dim.right))));
+          operands.push_back(BuildIntLiteral(
+              process.Owner().Unit(), wrapper,
+              std::min(unpacked->dim.left, unpacked->dim.right)));
         }
         if (const std::optional<hir::ExprId> count = OptionalOperand(call, 3)) {
           auto count_or =

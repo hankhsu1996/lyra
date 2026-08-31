@@ -15,6 +15,7 @@
 #include "lyra/lowering/hir_to_mir/case_cascade.hpp"
 #include "lyra/lowering/hir_to_mir/condition.hpp"
 #include "lyra/lowering/hir_to_mir/expression/expr_lowerer.hpp"
+#include "lyra/lowering/hir_to_mir/integral_literal.hpp"
 #include "lyra/lowering/hir_to_mir/walk_frame.hpp"
 #include "lyra/mir/expr.hpp"
 #include "lyra/mir/local.hpp"
@@ -51,8 +52,9 @@ void EmitPatternBindings(
 // chain's outermost level, because a clause below the top fails by falling out
 // of an inner `if` that the outermost `else` never sees.
 [[nodiscard]] auto BuildChainElseIf(
-    mir::Block& block, mir::LocalId taken_flag, mir::TypeId bit1_type,
-    mir::BlockId else_scope) -> mir::IfStmt;
+    const mir::CompilationUnit& unit, mir::Block& block,
+    mir::LocalId taken_flag, mir::TypeId bit1_type, mir::BlockId else_scope)
+    -> mir::IfStmt;
 
 // One level of a clause chain: the `if` for `clauses.front()`, recursing for
 // the tail, with the innermost level running `emit_then`. Each clause guards
@@ -111,7 +113,7 @@ auto BuildClauseChainLevel(
       const mir::ExprId flag_ref =
           level_block.exprs.Add(mir::MakeLocalRefExpr(*taken_flag, bit1_type));
       const mir::ExprId one =
-          level_block.exprs.Add(mir::MakeBit1Literal(bit1_type, true));
+          BuildBit1Literal(lowerer.Owner().Unit(), level_block, true);
       level_block.AppendStmt(
           mir::ExprStmt{
               .expr = level_block.exprs.Add(
@@ -132,9 +134,10 @@ auto BuildClauseChainLevel(
   const mir::ExprId predicate_id =
       predicate.has_value()
           ? *predicate
-          : block.exprs.Add(mir::MakeBit1Literal(bit1_type, true));
+          : BuildBit1Literal(lowerer.Owner().Unit(), block, true);
   return mir::IfStmt{
-      .condition = ReduceToCondition(block, predicate_id, bit1_type),
+      .condition =
+          ReduceToCondition(lowerer.Owner().Unit(), block, predicate_id),
       .then_scope = block.child_scopes.Add(std::move(level_block)),
       .else_scope = std::nullopt};
 }

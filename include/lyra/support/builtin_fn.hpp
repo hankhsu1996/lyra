@@ -420,10 +420,11 @@ enum class BuiltinFn : std::uint16_t {
   kChandlePtr,
   // Canonical DPI-C packed and 1-bit-4-state marshaling (LRM Annex H.10.1).
   // `kToSvLogic` reads a 1-bit 4-state value out as its `svLogic` scalar
-  // encoding (`value | unknown << 1`); `kFromSvLogic` builds it back in a
-  // prototype's shape (`args[0]` the byte, `args[1]` the prototype). The
-  // `kReadCanonical*` helpers build an SV value from a canonical buffer in a
-  // prototype's shape (`args[0]` the buffer pointer, `args[1]` the prototype);
+  // encoding (`value | unknown << 1`); `kFromSvLogic` builds it back in the
+  // destination's declared representation (`args[0]` the byte, `args[1]` the
+  // type). The `kReadCanonical*` helpers build an SV value from a canonical
+  // buffer in that representation (`args[0]` the buffer pointer, `args[1]` the
+  // type);
   // the `kWriteCanonical*` helpers are their inverse, writing an SV value out
   // into a canonical buffer (`args[0]` the buffer pointer, `args[1]` the SV
   // value), as an export's C entry point does through the foreign caller's
@@ -478,6 +479,7 @@ enum class BuiltinFn : std::uint16_t {
   // vector; `kFromPackedArray` and `kFromByteArray` build a string from packed
   // bits (LRM 6.16) or from a byte unpacked array (LRM 21.3.4.3).
   kFromInt,
+  kFromWords,
   kConvertFrom,
   kFromPackedArray,
   kFromByteArray,
@@ -485,7 +487,8 @@ enum class BuiltinFn : std::uint16_t {
   // an integral destination takes the text right-justified, an unpacked byte
   // array takes it left-justified. One factory named on whichever destination
   // the call qualifies it with; that destination's declared representation
-  // reaches it as a prototype operand (plus an element count for the array).
+  // reaches it as an operand naming its type (plus an element count for the
+  // array).
   kFromString,
   // Conforms a queue value to a destination's LRM 7.10.5 bound (a negative
   // argument means unbounded): the store boundary brings a differently-bounded
@@ -570,10 +573,10 @@ enum class BuiltinFn : std::uint16_t {
 // site as the `Direct::qualification`. Used by HIR-to-MIR to decide whether to
 // attach a qualification to the call.
 [[nodiscard]] constexpr auto IsStaticBuiltinFn(BuiltinFn id) -> bool {
-  return id == BuiltinFn::kFromInt || id == BuiltinFn::kConvertFrom ||
-         id == BuiltinFn::kFromPackedArray || id == BuiltinFn::kFromByteArray ||
-         id == BuiltinFn::kFromBool || id == BuiltinFn::kFromString ||
-         id == BuiltinFn::kFromBits ||
+  return id == BuiltinFn::kFromInt || id == BuiltinFn::kFromWords ||
+         id == BuiltinFn::kConvertFrom || id == BuiltinFn::kFromPackedArray ||
+         id == BuiltinFn::kFromByteArray || id == BuiltinFn::kFromBool ||
+         id == BuiltinFn::kFromString || id == BuiltinFn::kFromBits ||
          id == BuiltinFn::kMakeDynamicArrayDefault ||
          id == BuiltinFn::kMakeDynamicArrayNew ||
          id == BuiltinFn::kMakeDynamicArrayNewCopy;

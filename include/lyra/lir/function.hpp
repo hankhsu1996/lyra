@@ -90,6 +90,19 @@ struct NullConst {
   TypeId type;
 };
 
+struct BoolConst {
+  bool value;
+  TypeId type;
+};
+
+// An integral type's runtime descriptor, named by the type it describes. Its
+// contents are an instruction sequence and an operand is a leaf, so what the
+// operand carries is which type is described, not how the description is built.
+struct PackedTypeRef {
+  TypeId integral;
+  TypeId type;
+};
+
 // The code address of a function, as a value. A closure is built from a code
 // reference plus its environment, so a function's address is an operand, not a
 // call target.
@@ -114,7 +127,8 @@ struct StaticRef {
 // than a value of its own because it has no dataflow origin to name -- it is
 // materialized at the use site.
 using Operand = std::variant<
-    Use, IntConst, StrConst, RealConst, NullConst, FuncRef, StaticRef>;
+    Use, IntConst, StrConst, RealConst, NullConst, BoolConst, PackedTypeRef,
+    FuncRef, StaticRef>;
 
 // A runtime-library entry. A static factory is named by its type namespace as
 // well as its function -- `String::FromPackedArray` and `PackedArray::FromInt`

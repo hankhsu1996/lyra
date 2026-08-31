@@ -17,6 +17,7 @@
 #include "lyra/lowering/hir_to_mir/deferred_check_cascade.hpp"
 #include "lyra/lowering/hir_to_mir/expression/operators.hpp"
 #include "lyra/lowering/hir_to_mir/inside_predicate.hpp"
+#include "lyra/lowering/hir_to_mir/integral_literal.hpp"
 #include "lyra/lowering/hir_to_mir/pattern.hpp"
 #include "lyra/lowering/hir_to_mir/process_lowerer.hpp"
 #include "lyra/lowering/hir_to_mir/statement/blocks.hpp"
@@ -58,13 +59,13 @@ template <typename PredicateBuilder>
 auto BuildCaseSelection(
     ProcessLowerer& process, WalkFrame frame, mir::Block wrapper,
     std::optional<std::string> label, std::vector<mir::Block> body_scopes,
-    std::optional<mir::Block> default_scope, mir::TypeId bit1_type,
+    std::optional<mir::Block> default_scope,
     std::optional<hir::UniquePriorityCheck> check, diag::SourceSpan span,
     const PredicateBuilder& build_predicate) -> diag::Result<mir::Stmt> {
   if (!check.has_value()) {
     return BuildCaseCascade(
         frame, std::move(wrapper), std::move(label), std::move(body_scopes),
-        std::move(default_scope), bit1_type, build_predicate);
+        std::move(default_scope), process.Owner().Unit(), build_predicate);
   }
 
   const WalkFrame wrapper_frame = frame.WithBlock(&wrapper);
@@ -98,7 +99,7 @@ auto LowerClauseChainIfStmt(
     block.AppendStmt(
         mir::LocalDeclStmt{
             .target = *taken_flag,
-            .init = block.exprs.Add(mir::MakeBit1Literal(bit1_type, false))});
+            .init = BuildBit1Literal(process.Owner().Unit(), block, false)});
   }
 
   auto emit_then = [&](WalkFrame body_frame) -> diag::Result<void> {
@@ -130,7 +131,8 @@ auto LowerClauseChainIfStmt(
   block.AppendStmt(chain);
   return mir::Stmt{
       .label = std::move(label),
-      .data = BuildChainElseIf(block, *taken_flag, bit1_type, else_scope)};
+      .data = BuildChainElseIf(
+          process.Owner().Unit(), block, *taken_flag, bit1_type, else_scope)};
 }
 
 }  // namespace
@@ -225,7 +227,7 @@ auto LowerCaseStmt(
 
   return BuildCaseSelection(
       process, frame, std::move(wrapper), std::move(label),
-      std::move(body_scopes), std::move(default_scope), bit_type, c.check, span,
+      std::move(body_scopes), std::move(default_scope), c.check, span,
       build_item_predicate);
 }
 
@@ -314,8 +316,8 @@ auto LowerPatternCaseStmt(
   // nothing a pattern item cannot supply.
   return BuildCaseSelection(
       process, frame, std::move(wrapper), std::move(label),
-      std::move(body_scopes), std::move(default_scope), bit1_type, c.check,
-      span, build_predicate);
+      std::move(body_scopes), std::move(default_scope), c.check, span,
+      build_predicate);
 }
 
 }  // namespace lyra::lowering::hir_to_mir

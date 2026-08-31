@@ -32,9 +32,21 @@ on the testbench's own software request -- with the program's expected output an
 trace. Sources, includes, and defines are still passed on the command line rather than read from
 `lyra.toml`, which is the one accepted-option gap left between this and the closing condition above.
 
-The run reports `unique` check failures (LRM 12.5.3) from several modules. They are warnings, not
-failures, and the design still executes correctly; whether each is a real violation the design also
-shows on other simulators, or a Lyra evaluation difference, is unexamined.
+**Nothing runs this design automatically**, so that claim is only ever as fresh as the last time
+someone ran it by hand. It has already been false once while standing here unchanged: a lowering
+identity minted for a construct the assertion policy elides aborted seventeen of the design's
+twenty-four modules for three days, and no test in the repository covers the option that reaches it.
+Re-run before trusting this section, and treat a status sentence here as a measurement rather than a
+property.
+
+The run reports `unique` and `priority` violations from most modules, and they are Lyra's error
+rather than the design's. Every one of those statements carries a `default` item or a final `else`,
+and a catch-all suppresses the no-match report: LRM 12.4.2 issues it "if no condition matches unless
+there is an explicit `else`", and LRM 12.5.3 issues it if no `case_item` matches, where `default` is
+one of the `case_item` forms. Lyra counts only the compared arms, so a design that spells its
+catch-all out is warned at on every unmatched pass. The design still executes correctly, so this is
+noise rather than a wrong answer -- but it is noise on nearly every module, and it is what stands at
+the frontier now that the forms below are cleared.
 
 ## Two walls
 
@@ -194,6 +206,12 @@ Independent of whether the feature is supported, each of these should fail clean
       such a body lowers and its violation report fires like any other. The
       `prim_secded_pkg::is_width_valid` nested `unique case` that first surfaced this crash now
       lowers and reports.
+- [x] A labelled concurrent assertion aborted lowering whenever the assertion policy elided it,
+      which took out every module including the vendor assertion macro header -- most of the design.
+      A statement label creates a named block around the statement it labels (LRM 16.3), and the
+      front end lists that block beside the process it belongs to rather than inside it, so the
+      block kept an identity of its own after the process was removed and nothing went on to fill
+      it. Whether the design has such a block is now the owning process's answer.
 
 ## Cross-references
 

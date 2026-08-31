@@ -30,9 +30,9 @@ namespace lyra::value {
 [[nodiscard]] auto ToSvLogic(const PackedArray& sv) -> unsigned char;
 
 // Builds a 1-bit 4-state value from its `svLogic` scalar encoding, in the
-// prototype's shape.
-[[nodiscard]] auto FromSvLogic(
-    unsigned char encoded, const PackedArray& prototype) -> PackedArray;
+// declared shape `type` names.
+[[nodiscard]] auto FromSvLogic(unsigned char encoded, const PackedType& type)
+    -> PackedArray;
 
 // A DPI boundary buffer: a canonical `ceil(width / 32)`-chunk vector the
 // foreign side reads and writes by pointer. It is an ABI temporary, not an SV
@@ -60,13 +60,13 @@ class DpiLogicBuffer {
   std::vector<svLogicVecVal> chunks_;
 };
 
-// Build an SV value from a canonical buffer in the prototype's shape (width,
-// signedness). `Bit` reads a 2-state buffer (unknown plane all zero); `Logic`
-// reads both planes.
+// Build an SV value from a canonical buffer in the declared shape `type` names.
+// `Bit` reads a 2-state buffer (unknown plane all zero); `Logic` reads both
+// planes.
 [[nodiscard]] auto ReadCanonicalBitVec(
-    const svBitVecVal* src, const PackedArray& prototype) -> PackedArray;
+    const svBitVecVal* src, const PackedType& type) -> PackedArray;
 [[nodiscard]] auto ReadCanonicalLogicVec(
-    const svLogicVecVal* src, const PackedArray& prototype) -> PackedArray;
+    const svLogicVecVal* src, const PackedType& type) -> PackedArray;
 
 // Write an SV value's planes into a canonical chunk buffer at `dst`, the write
 // direction that pairs with the read helpers: a plane reshape sized by the SV

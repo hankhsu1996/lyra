@@ -13,6 +13,7 @@
 #include "lyra/lowering/hir_to_mir/call_operands.hpp"
 #include "lyra/lowering/hir_to_mir/callee_interface.hpp"
 #include "lyra/lowering/hir_to_mir/cast_lowering.hpp"
+#include "lyra/lowering/hir_to_mir/integral_literal.hpp"
 #include "lyra/lowering/hir_to_mir/lhs_store.hpp"
 #include "lyra/lowering/hir_to_mir/process_lowerer.hpp"  // IWYU pragma: keep
 #include "lyra/lowering/hir_to_mir/runtime_call.hpp"
@@ -99,8 +100,7 @@ auto LowerRandomSystemSubroutineCall(
   // An omitted low bound is the zero LRM 18.13.2 defines it to be, and the
   // runtime entry always takes both.
   if (info.kind == support::RandomKind::kUrandomRange && operands.size() == 1) {
-    arguments.push_back(
-        body.exprs.Add(mir::MakeIntLiteral(unit.builtins.int_type, 0)));
+    arguments.push_back(BuildIntLiteral(unit, body, 0));
   }
 
   return mir::Expr{

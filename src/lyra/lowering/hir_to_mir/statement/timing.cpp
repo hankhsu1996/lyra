@@ -18,6 +18,7 @@
 #include "lyra/hir/stmt.hpp"
 #include "lyra/lowering/hir_to_mir/condition.hpp"
 #include "lyra/lowering/hir_to_mir/delay_time_resolver.hpp"
+#include "lyra/lowering/hir_to_mir/integral_literal.hpp"
 #include "lyra/lowering/hir_to_mir/process_lowerer.hpp"
 #include "lyra/lowering/hir_to_mir/runtime_call.hpp"
 #include "lyra/lowering/hir_to_mir/sensitivity_wait.hpp"
@@ -209,13 +210,12 @@ auto LowerDelayTimedStmt(
         const auto& builtins = process.Owner().Unit().builtins;
         const mir::ExprId runtime_id =
             child_block.exprs.Add(BuildCurrentRuntimeCallExpr(process.Owner()));
-        const mir::ExprId duration_id = child_block.exprs.Add(
-            mir::MakeIntLiteral(
-                builtins.int_type, static_cast<std::int64_t>(*ticks_or)));
-        const mir::ExprId precision_id = child_block.exprs.Add(
-            mir::MakeIntLiteral(
-                builtins.int_type, static_cast<std::int64_t>(
-                                       process.Resolution().precision_power)));
+        const mir::ExprId duration_id = BuildIntLiteral(
+            process.Owner().Unit(), child_block,
+            static_cast<std::int64_t>(*ticks_or));
+        const mir::ExprId precision_id = BuildIntLiteral(
+            process.Owner().Unit(), child_block,
+            static_cast<std::int64_t>(process.Resolution().precision_power));
         const mir::ExprId call_id = child_block.exprs.Add(
             mir::Expr{
                 .data =
@@ -317,8 +317,8 @@ auto LowerWaitStmt(
 
   wrapper.AppendStmt(
       mir::WhileStmt{
-          .condition = ReduceToCondition(
-              wrapper, not_cond_id, process.Owner().Unit().builtins.bit1),
+          .condition =
+              ReduceToCondition(process.Owner().Unit(), wrapper, not_cond_id),
           .scope = inner_scope_id});
 
   const hir::Stmt& body_hir = hir_proc.stmts.Get(w.body);

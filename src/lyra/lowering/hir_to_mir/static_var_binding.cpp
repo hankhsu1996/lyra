@@ -24,7 +24,7 @@ auto SignatureBoundVars(const hir::SubroutineDecl& decl)
 }
 
 auto BindBodyStatics(
-    UnitLowerer& unit_lowerer,
+    const UnitLowerer& unit_lowerer,
     const base::Registry<hir::ProceduralScopeDecl, hir::ProceduralScopeId>&
         scopes,
     base::Arena<mir::FieldDecl, mir::FieldId>& fields, ObservedStorage observed,

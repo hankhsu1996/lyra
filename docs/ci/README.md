@@ -6,19 +6,23 @@ Build and test by asking for the whole graph -- `bazel build //...`, `bazel test
 than naming targets, so a new target is covered the moment it exists and no list has to be kept in
 step with the `BUILD` files.
 
-One split cuts across that, on cost. Four targets spawn a host compiler once per case, which
-dominates their runtime and does not fit a merge-time budget: `cpp_tests`, `llvm_dpi_tests`,
-`cli_tests`, and `pch_audit_test`, all tagged `requires-host-cxx`. The merge gate filters them out
-with `--test_tag_filters=-requires-host-cxx`, and `host-cxx-nightly.yml` runs exactly them with the
-positive form of the same filter.
+One split cuts across that, on cost, and it is one target wide. `cpp_tests` host-compiles the whole
+corpus once per case, which no per-PR budget holds; it carries `nightly`, `.bazelrc` makes the
+default set its complement, and `host-cxx-nightly.yml` takes `--config=nightly`. `--config=full` is
+both. So a developer running the tests locally runs what the gate runs without naming anything, and
+the expensive target is asked for rather than avoided.
 
-The same four carry `no-remote-exec`. A compiler spawned from inside a test is not a Bazel action,
-so remote execution cannot provision it, and the tag holds those tests on a machine that has one
-while every other target is free to run remotely.
+Needing a host compiler is a separate question from being too expensive to gate on, and four targets
+need one: `cpp_tests`, `llvm_dpi_tests`, `cli_tests`, and `pch_audit_test`. All four carry
+`no-remote-exec`, because a compiler spawned from inside a test is not a Bazel action and remote
+execution cannot provision it. Only the first is excluded from the gate. The other three cost a
+fraction of a minute between them, and a target kept out of the gate should be kept out for its own
+reason -- holding the DPI cases back because they share a compiler with the expensive one is how
+foreign-boundary regressions reach `main` and wait a day to be found.
 
-The two filters are complements, so every test target is covered once and none twice. That is the
-property to preserve: a new target joins whichever side its tag puts it on, and neither list is
-maintained by hand.
+The two sides of `nightly` are complements, so every test target is covered once and none twice.
+That is the property to preserve: a new target joins whichever side its tag puts it on, and neither
+list is maintained by hand.
 
 ## How the corpus divides into targets
 
@@ -29,15 +33,54 @@ path changes how the design is translated and not how a foreign symbol is produc
 apart is what stops a handful of DPI cases holding the whole corpus to a machine that has a C
 compiler.
 
-| Target           | Runs                           | At merge time |
-| ---------------- | ------------------------------ | ------------- |
-| `llvm_tests`     | the corpus minus foreign cases | yes           |
-| `llvm_dpi_tests` | the foreign cases              | no            |
-| `cpp_tests`      | the whole corpus               | no            |
+| Target           | Runs                           | Where  | At merge time |
+| ---------------- | ------------------------------ | ------ | ------------- |
+| `llvm_tests`     | the corpus minus foreign cases | remote | yes           |
+| `llvm_dpi_tests` | the foreign cases              | local  | yes           |
+| `cpp_tests`      | the whole corpus               | local  | no            |
 
 `llvm_tests` is therefore the gate, and it grows on its own: `tests/paths/llvm.yaml` records what
 that path still refuses, only ever shrinks, and is the measure of how much of the corpus the merge
 gate actually covers.
+
+Which column a target sits in has a direction. Remote execution scales out, so what `llvm_tests`
+covers costs the gate almost nothing however far it grows -- every case the LLVM path gains is
+coverage the gate gets for free. `cpp_tests` is local and its cost grows with the corpus. Needing a
+host compiler for the C++ _path_ is therefore transitional and shrinks as that path stops being the
+one under test; needing one for a _case_ that carries foreign sources is permanent, because nothing
+about a path changes how a foreign symbol is produced. The two look alike today and have opposite
+futures, which is why they are not one tag.
+
+## When to run what
+
+Four moments, each answering a different question, and the answers are not interchangeable.
+
+| Moment     | Question                      | Command                                      |
+| ---------- | ----------------------------- | -------------------------------------------- |
+| edit loop  | did that edit do what I meant | one case, or the binary on one file directly |
+| pre-commit | will this land green          | `bazel test //...`                           |
+| merge gate | is `main` still correct       | `bazel test //...`                           |
+| nightly    | is the C++ path still correct | `bazel test //... --config=nightly`          |
+
+Pre-commit and the merge gate are the same command, and that is the whole point: a green run before
+committing means "this lands green" only while the two sets are identical. Any change that makes the
+local command wider or narrower than the gate turns its answer back into a guess.
+
+On top of the default set, what a change touches selects what else to run:
+
+- **What the C++ backend emits** -- `--config=nightly`, the only thing that compiles emitted text.
+  Read this one carefully: it is not "did I edit `backend/cpp`". The renderer is a function of MIR
+  and LIR node shapes, so changing one of those shapes changes the emit without touching the
+  backend, and a green default run says nothing about whether the result compiles. Emitting one case
+  and reading the file catches most of that class in seconds.
+- **The foreign boundary** -- `llvm_dpi_tests`, which the gate already runs.
+- **The driver, the CLI, or the prelude PCH** -- `cli_tests` and `pch_audit_test`, likewise already
+  in the gate.
+- **Anything else** -- HIR, MIR, LIR, the execution backend, the runtime value library -- the
+  default set is the whole answer.
+
+As the LLVM path fills in, this shortens rather than grows: `cpp_tests` stops being the backend
+under test, and what remains is one permanent local target for the cases that carry foreign sources.
 
 ## Why one way of running the module is enough
 
@@ -69,7 +112,7 @@ Each runs on push to `main` and on pull requests.
 
 | Workflow               | What it enforces                                               |
 | ---------------------- | -------------------------------------------------------------- |
-| `bazel-build.yml`      | `bazel build //...`, then the tests minus `requires-host-cxx`  |
+| `bazel-build.yml`      | `bazel build //...`, then the default test set                 |
 | `cpp-style.yml`        | `clang-format` over `src include tests`, plus C++ style policy |
 | `bazel-lint.yml`       | `buildifier` formatting and lint warnings                      |
 | `md-format.yml`        | Prettier over every markdown file                              |
@@ -94,8 +137,8 @@ severity.
 `cpp-tidy.yml` re-analyzes every translation unit from scratch. It **reports rather than gates**, so
 its findings are a backlog to pay down and a red run is not an alarm.
 
-`host-cxx-nightly.yml` runs the three `requires-host-cxx` targets. It **gates its own run**: a
-corpus case that stops passing is a regression, and a red nightly is the thing to act on that day.
+`host-cxx-nightly.yml` runs the `nightly` target. It **gates its own run**: a corpus case that stops
+passing is a regression, and a red nightly is the thing to act on that day.
 
 ## Jobs waiting on the execution backend
 

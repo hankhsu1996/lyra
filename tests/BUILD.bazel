@@ -6,11 +6,21 @@ load("//tools/bazel:copts.bzl", "LYRA_COPTS")
 # the headers under test.
 package(features = ["parse_headers"])
 
-# `requires-host-cxx` marks a test that shells out to the host C++ compiler to
-# build emitted code. That compiler is not a Bazel action, so remote execution
-# cannot provision it, and `no-remote-exec` holds such a test on a machine that
-# has one. The tag also selects the whole group in or out of a run, which is how
-# a cost dominated by compilation is kept off a merge-time budget.
+# Two facts about a test are marked here, and they are independent.
+#
+# `no-remote-exec` says where it can run. A test that shells out to the host C++
+# compiler spawns something that is not a Bazel action, so remote execution
+# cannot provision it and the tag holds the test on a machine that has one.
+#
+# `nightly` says when its cost is paid. Only one target carries it: the C++ path
+# host-compiles the whole corpus, once per case, which no merge-time budget
+# holds. Every other test runs at merge, including the three that need the same
+# compiler and together cost a fraction of a minute -- needing a compiler and
+# being too expensive to gate on are different questions, and a test excluded
+# from the gate should be excluded for its own reason.
+#
+# The two sides of `nightly` are complements, so every target is covered once
+# and none twice, and a new one joins whichever side its tag puts it on.
 
 cc_library(
     name = "framework",
@@ -55,10 +65,7 @@ cc_test(
     copts = LYRA_COPTS,
     data = ["//:lyra"],
     shard_count = 4,
-    tags = [
-        "no-remote-exec",
-        "requires-host-cxx",
-    ],
+    tags = ["no-remote-exec"],
     deps = [
         ":framework",
         "//:support",
@@ -74,10 +81,7 @@ cc_test(
     data = ["//:lyra"],
     # Spawns the host C++ compiler with `-H` to enumerate every header opened
     # while building the prelude PCH.
-    tags = [
-        "no-remote-exec",
-        "requires-host-cxx",
-    ],
+    tags = ["no-remote-exec"],
     deps = [
         "//:driver",
         "//:support",
@@ -119,8 +123,8 @@ cc_test(
     data = CONFORMANCE_DATA,
     shard_count = 16,
     tags = [
+        "nightly",
         "no-remote-exec",
-        "requires-host-cxx",
     ],
     deps = [
         ":framework",
@@ -165,10 +169,7 @@ cc_test(
     ],
     copts = LYRA_COPTS,
     data = CONFORMANCE_DATA,
-    tags = [
-        "no-remote-exec",
-        "requires-host-cxx",
-    ],
+    tags = ["no-remote-exec"],
     deps = [
         ":framework",
         "@bazel_tools//tools/cpp/runfiles",

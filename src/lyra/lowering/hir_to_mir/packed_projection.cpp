@@ -26,7 +26,7 @@ struct MemberFacts {
 // What placing one member needs to know, read from its translated type. A
 // `void` member, which only a tagged union may declare (LRM 7.3.2),
 // contributes nothing: the tag alone says the value is that member.
-auto MemberFactsOf(UnitLowerer& unit_lowerer, hir::TypeId member)
+auto MemberFactsOf(const UnitLowerer& unit_lowerer, hir::TypeId member)
     -> MemberFacts {
   const mir::Type& translated =
       unit_lowerer.Unit().types.Get(unit_lowerer.TranslateType(member));
@@ -51,7 +51,7 @@ auto TagBitsFor(bool tagged, std::size_t member_count) -> std::uint32_t {
 }  // namespace
 
 auto ProjectPackedAggregate(
-    UnitLowerer& unit_lowerer, const hir::TypeData& aggregate)
+    const UnitLowerer& unit_lowerer, const hir::TypeData& aggregate)
     -> PackedProjection {
   const auto* packed_struct = std::get_if<hir::PackedStructType>(&aggregate);
   const auto* packed_union = std::get_if<hir::PackedUnionType>(&aggregate);

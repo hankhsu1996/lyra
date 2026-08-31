@@ -14,12 +14,12 @@
 #include "lyra/lowering/hir_to_mir/cast_lowering.hpp"
 #include "lyra/lowering/hir_to_mir/condition.hpp"
 #include "lyra/lowering/hir_to_mir/default_value.hpp"
+#include "lyra/lowering/hir_to_mir/integral_literal.hpp"
 #include "lyra/lowering/hir_to_mir/lhs_store.hpp"
 #include "lyra/lowering/hir_to_mir/process_lowerer.hpp"  // IWYU pragma: keep
 #include "lyra/lowering/hir_to_mir/runtime_call.hpp"
 #include "lyra/lowering/hir_to_mir/structural_scope_lowerer.hpp"  // IWYU pragma: keep
 #include "lyra/mir/binary_op.hpp"
-#include "lyra/mir/compilation_unit.hpp"
 #include "lyra/mir/expr.hpp"
 #include "lyra/mir/stmt.hpp"
 #include "lyra/support/builtin_fn.hpp"
@@ -110,8 +110,8 @@ auto LowerValuePlusargs(
 
   const mir::ExprId hit_read =
       body.exprs.Add(mir::MakeLocalRefExpr(hit_var, int_type));
-  const mir::ExprId one_lit = body.exprs.Add(
-      mir::MakeIntLiteral(int_type, static_cast<std::int64_t>(1)));
+  const mir::ExprId one_lit =
+      BuildIntLiteral(unit, body, static_cast<std::int64_t>(1));
   const mir::ExprId cond_id = body.exprs.Add(
       mir::Expr{
           .data =
@@ -134,8 +134,7 @@ auto LowerValuePlusargs(
   then_body.AppendStmt(mir::ExprStmt{.expr = assign_id});
 
   body.AppendIfThen(
-      ReduceToCondition(body, cond_id, unit.builtins.bit1),
-      std::move(then_body));
+      ReduceToCondition(unit, body, cond_id), std::move(then_body));
 
   const mir::ExprId final_hit =
       body.exprs.Add(mir::MakeLocalRefExpr(hit_var, int_type));

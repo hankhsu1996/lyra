@@ -179,7 +179,18 @@ class RuntimeAbi {
   auto MakeCoroutine() -> llvm::FunctionCallee;
   auto MakeString() -> llvm::FunctionCallee;
   auto MakePrintLiteralItem() -> llvm::FunctionCallee;
-  auto PackedConst() -> llvm::FunctionCallee;
+
+  // Builds an integral value from the word planes it states its bits as, in
+  // the type a descriptor names: the value plane, the unknown plane a 4-state
+  // value carries (empty otherwise), then the type.
+  auto PackedFromWords() -> llvm::FunctionCallee;
+
+  // Builds the descriptor of an integral type from its dimension stack --
+  // a flat run of bounds, two per dimension -- plus its signedness and state
+  // domain. The runtime owns the resulting descriptor and returns an opaque
+  // handle.
+  auto MakePackedRange() -> llvm::FunctionCallee;
+  auto MakePackedType() -> llvm::FunctionCallee;
 
   // Builds a real-family constant from its host-precision immediate: `double`
   // for `kReal`, `float` for `kShortReal`. The runtime owns the resulting value
