@@ -35,8 +35,8 @@
 #include "lyra/lowering/ast_to_hir/expression/slang_atoms.hpp"
 #include "lyra/lowering/ast_to_hir/integral_constant.hpp"
 #include "lyra/lowering/ast_to_hir/process_lowerer.hpp"
-#include "lyra/lowering/ast_to_hir/specialization_name.hpp"
 #include "lyra/lowering/ast_to_hir/subroutine_decl.hpp"
+#include "lyra/lowering/ast_to_hir/unit_identity.hpp"
 #include "lyra/lowering/ast_to_hir/unit_lowerer.hpp"
 
 namespace lyra::lowering::ast_to_hir {
@@ -798,27 +798,6 @@ auto LowerDefinedClassMethod(
   return method_decl;
 }
 
-// Walks a class's parent-scope chain to find the compilation-unit-level
-// symbol that owns its declaration -- a package (LRM 26), a module body
-// (LRM 23.2), or an interface body (LRM 25). A class nested in another
-// class or in a generate block still hits the enclosing module or package
-// body first, which is the ownership boundary. Returns null when the class
-// has no such ancestor (only expected for imported runtime-library classes,
-// which never reach this helper).
-auto DeclaringCompilationUnit(const slang::ast::ClassType& cls)
-    -> const slang::ast::Symbol* {
-  const slang::ast::Scope* scope = cls.getParentScope();
-  while (scope != nullptr) {
-    const slang::ast::Symbol& owner = scope->asSymbol();
-    if (owner.kind == slang::ast::SymbolKind::Package ||
-        owner.kind == slang::ast::SymbolKind::InstanceBody) {
-      return &owner;
-    }
-    scope = owner.getParentScope();
-  }
-  return nullptr;
-}
-
 }  // namespace
 
 auto UnitLowerer::MakeClassMethodTarget(
@@ -912,16 +891,11 @@ auto UnitLowerer::ResolveClassRef(
   if (const auto it = class_cache_.find(&cls); it != class_cache_.end()) {
     return it->second;
   }
-  const slang::ast::Symbol* decl_unit = DeclaringCompilationUnit(cls);
-  if (decl_unit == nullptr) {
-    throw InternalError(
-        "UnitLowerer::ResolveClassRef: class has no compilation-unit-level "
-        "declaring scope");
-  }
-  if (decl_unit != &scope_->asSymbol()) {
+  const slang::ast::Symbol& decl_unit = DeclaringCompilationUnit(cls);
+  if (&decl_unit != &scope_->asSymbol()) {
     const auto [it, _] = class_cache_.emplace(
         &cls, hir::ClassRef{hir::ExternalClassRef{
-                  .unit_name = CompilationUnitName(*decl_unit),
+                  .unit_name = CompilationUnitName(decl_unit),
                   .class_name = SpecializationName(cls)}});
     return it->second;
   }

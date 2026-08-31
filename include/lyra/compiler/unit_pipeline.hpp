@@ -26,9 +26,10 @@ struct UnitArtifacts {
 // Lowers one HIR unit down its whole vertical (HIR -> MIR -> LIR) as far as
 // `stop_after` asks. It reads only this unit and the shared frontend, never
 // another unit's lowered artifacts, so units may be lowered in any order and in
-// parallel. The unit's `UnitKind` selects the MIR lowering: a module composes a
-// top class and continues to LIR; a package lowers to a namespace of callables
-// and stops at MIR, having no executable body.
+// parallel. Whether the unit's instances exist as objects selects the MIR
+// lowering: a unit that roots one composes a top class and continues to LIR;
+// one that names only declarations lowers to a namespace of callables and stops
+// at MIR, having no executable body.
 auto LowerUnitPipeline(
     const hir::CompilationUnit& unit, StopAfter stop_after,
     const diag::SourceManager& source_manager) -> diag::Result<UnitArtifacts>;

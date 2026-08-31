@@ -105,8 +105,11 @@ struct CompilationUnit {
   base::Registry<Class, ClassId> classes;
   std::optional<ClassId> root;
   // One entry per unit this one reaches an object of, with what each promised
-  // taken into this unit's types.
-  base::Arena<ExternalUnitObject, ExternalUnitObjectId> external_unit_objects;
+  // taken into this unit's types, under the same declare-then-define lifecycle
+  // a class has: a type may name one of these objects -- an interface port's
+  // does -- so the identity exists before the members are filled in.
+  base::Registry<ExternalUnitObject, ExternalUnitObjectId>
+      external_unit_objects;
   // Callables the unit's namespace owns directly rather than through one of its
   // classes -- a package's functions and tasks (LRM 26.3), and both directions
   // of the DPI-C boundary (LRM 35.5): the prototype of every import the unit
@@ -215,12 +218,10 @@ struct CompilationUnit {
             .effects = types.Intern(RuntimeEffectsType{}),
             .scope_ptr = types.PointerTo(
                 types.Intern(
-                    ExternalClassType{
-                        .qualified_name = "lyra::runtime::Scope"}),
+                    RuntimeClassType{.symbol = "lyra::runtime::Scope"}),
                 PointerOwnership::kBorrowed),
             .process_object = types.Intern(
-                ExternalClassType{
-                    .qualified_name = "lyra::runtime::RuntimeProcess"}),
+                RuntimeClassType{.symbol = "lyra::runtime::RuntimeProcess"}),
             .files = types.Intern(FilesType{}),
             .diagnostic = types.Intern(DiagnosticType{}),
             .channel_cancellation = types.Intern(

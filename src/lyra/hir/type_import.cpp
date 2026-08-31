@@ -153,6 +153,7 @@ auto TypeImporter::ImportData(const TypeData& data) -> TypeData {
             return ClassHandleType{.class_ref = ImportClassRef(t.class_ref)};
           },
           [](const ImportedClassHandleType& t) -> TypeData { return t; },
+          [](const UnitObjectType& t) -> TypeData { return t; },
           [](const NullType& t) -> TypeData { return t; },
           [](const VoidType& t) -> TypeData { return t; }},
       data);

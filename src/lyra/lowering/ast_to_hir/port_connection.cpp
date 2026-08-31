@@ -26,8 +26,8 @@
 #include "lyra/lowering/ast_to_hir/constant_value.hpp"
 #include "lyra/lowering/ast_to_hir/instance_array_shape.hpp"
 #include "lyra/lowering/ast_to_hir/sensitivity.hpp"
-#include "lyra/lowering/ast_to_hir/specialization_name.hpp"
 #include "lyra/lowering/ast_to_hir/structural_scope_lowerer.hpp"
+#include "lyra/lowering/ast_to_hir/unit_identity.hpp"
 #include "lyra/lowering/ast_to_hir/unit_lowerer.hpp"
 
 namespace lyra::lowering::ast_to_hir {
@@ -38,6 +38,70 @@ auto PortConnectionUnsupported(diag::SourceSpan span, std::string message)
     -> diag::Result<void> {
   return diag::Fail(
       span, diag::DiagCode::kUnsupportedPortConnectionForm, std::move(message));
+}
+
+// Binds one interface port of a child instance to the interface instance the
+// connection names (LRM 25.3). Both sides are routes resolved once in the
+// resolve phase: the child's port member, reached through the step onto the
+// instance, and the interface object, reached as a child this scope declares.
+// Nothing crosses the boundary as a value, so the connection installs no
+// driver and waits on nothing.
+auto ConnectInterfacePort(
+    UnitLowerer& unit_lowerer, const hir::InterfacePortPart& published,
+    const hir::UnitSignature& child_signature,
+    hir::ExternalUnitObjectId child_object,
+    const hir::OwnedChildStep& instance_step,
+    const slang::ast::PortConnection& conn, diag::SourceSpan span,
+    WalkFrame frame) -> diag::Result<void> {
+  const hir::PublishedMember& member =
+      hir::InstanceClassOf(child_signature).members.Get(published.member);
+  const slang::ast::Symbol* connected = conn.getIfaceConn().first;
+  const auto* instance = connected == nullptr
+                             ? nullptr
+                             : connected->as_if<slang::ast::InstanceSymbol>();
+  if (instance == nullptr) {
+    return PortConnectionUnsupported(
+        span, "this interface port connection form is not yet supported");
+  }
+  // The interface has to be one this scope reaches as a child it declares and
+  // can climb to: an instance further away is named by a path this unit does
+  // not lay out.
+  const auto binding = unit_lowerer.LookupOwnedChildBinding(*instance);
+  const auto peer_hops = binding.has_value()
+                             ? frame.HopsTo(binding->home_frame)
+                             : std::optional<hir::StructuralHops>{};
+  if (!peer_hops.has_value()) {
+    return PortConnectionUnsupported(
+        span,
+        "an interface port connected to an instance outside this scope is not "
+        "yet supported");
+  }
+  // The type of what is bound is the child's own statement of which unit
+  // belongs there, taken into this unit's pool, so the parent's record of the
+  // connection rests on the child's promise rather than on a second reading of
+  // the frontend.
+  const hir::TypeId object_type =
+      unit_lowerer.ImportSignatureType(child_signature, member.type);
+  frame.current_structural_scope->port_connections.Add(
+      hir::PortConnection{
+          .span = span,
+          .kind = hir::InterfacePortConnection{
+              .endpoint =
+                  hir::RoutedPathRecipe{
+                      .head = hir::InUnitHead{.hops = {}},
+                      .steps = {hir::PathStep{instance_step}},
+                      .leaf =
+                          hir::SignatureMemberLeaf{
+                              .object = child_object,
+                              .member = published.member},
+                      .type = object_type},
+              .peer = hir::RoutedPathRecipe{
+                  .head = hir::InUnitHead{.hops = *peer_hops},
+                  .steps = {hir::PathStep{hir::OwnedChildStep{
+                      .child = binding->child, .indices = {}}}},
+                  .leaf = hir::ScopeLeaf{},
+                  .type = object_type}}});
+  return {};
 }
 
 // Records one instance's port connections as HIR. The instance is reached
@@ -81,8 +145,11 @@ auto ConnectElementPorts(
 
     const auto* data = std::get_if<hir::DataPortPart>(&published);
     if (data == nullptr) {
-      return PortConnectionUnsupported(
-          span, "interface port connection is not yet supported");
+      auto r = ConnectInterfacePort(
+          unit_lowerer, std::get<hir::InterfacePortPart>(published),
+          child_signature, child_object, instance_step, *conn, span, frame);
+      if (!r) return std::unexpected(std::move(r.error()));
+      continue;
     }
     if (data->direction == hir::PortDirection::kInOut) {
       return PortConnectionUnsupported(
@@ -245,10 +312,11 @@ auto ConnectElementPorts(
     frame.current_structural_scope->port_connections.Add(
         hir::PortConnection{
             .span = span,
-            .direction = direction,
-            .endpoint = std::move(endpoint),
-            .peer = peer,
-            .sensitivity = std::move(sensitivity)});
+            .kind = hir::DataPortConnection{
+                .direction = direction,
+                .endpoint = std::move(endpoint),
+                .peer = peer,
+                .sensitivity = std::move(sensitivity)}});
   }
   if (index != connections.size()) {
     throw InternalError(

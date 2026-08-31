@@ -40,21 +40,6 @@ auto NetTypeLabel(NetType net_type) -> std::string_view {
   return net_type == NetType::kWire ? "wire" : "tri";
 }
 
-auto FormatPublishedStorage(const PublishedStorage& storage) -> std::string {
-  return std::visit(
-      Overloaded{
-          [](const VariableStorage&) { return std::string{}; },
-          [](const NetStorage& net) {
-            return std::format(" net={}", NetTypeLabel(net.net_type));
-          },
-          [](const ReferenceStorage& reference) {
-            return std::string{
-                reference.binding == ReferenceBinding::kConstRef ? " const ref"
-                                                                 : " ref"};
-          }},
-      storage);
-}
-
 auto ForkJoinModeLabel(JoinMode mode) -> std::string_view {
   switch (mode) {
     case JoinMode::kAll:
@@ -80,6 +65,24 @@ auto ProceduralScopeKindLabel(ProceduralScopeKind kind) -> std::string_view {
   }
   throw InternalError(
       "ProceduralScopeKindLabel: unknown hir::ProceduralScopeKind");
+}
+
+auto FormatPublishedStorage(const PublishedStorage& storage) -> std::string {
+  return std::visit(
+      Overloaded{
+          [](const VariableStorage&) { return std::string{}; },
+          [](const NetStorage& net) {
+            return std::format(" net={}", NetTypeLabel(net.net_type));
+          },
+          [](const ReferenceStorage& reference) {
+            return std::string{
+                reference.binding == ReferenceBinding::kConstRef ? " const ref"
+                                                                 : " ref"};
+          },
+          [](const BorrowedObjectStorage&) {
+            return std::string{" borrowed"};
+          }},
+      storage);
 }
 
 auto FormatClassRef(const ClassRef& ref) -> std::string {
@@ -348,6 +351,9 @@ class HirDumper {
               return std::format(
                   "ImportedClassHandleType(class={})",
                   support::ImportedRuntimeClassName(c.klass));
+            },
+            [](const UnitObjectType& u) -> std::string {
+              return std::format("UnitObjectType(unit={})", u.unit_name);
             },
             [](const NullType&) -> std::string { return "NullType"; },
             [](const VoidType&) -> std::string { return "VoidType"; },
@@ -1155,6 +1161,9 @@ class HirDumper {
                         }},
                     owned.child);
               },
+              [](const InterfacePortStep& port) {
+                return std::format(" . InterfacePort[{}]", port.port.value);
+              },
               [](const OpaqueStep& opaque) {
                 return std::format(
                     " . \"{}\"{}", opaque.name, FormatIndices(opaque.indices));
@@ -1184,6 +1193,7 @@ class HirDumper {
                   " . ExternalUnitObject[{}].member[{}]", l.object.value,
                   l.member.value);
             },
+            [](const ScopeLeaf&) { return std::string{}; },
             [](const OpaqueLeaf& l) {
               return std::format(" . \"{}\"", l.name);
             }},
@@ -1207,12 +1217,26 @@ class HirDumper {
               "StructuralDataObject[{}] \"{}\" : Type[{}]{}", id.value, v.name,
               v.type.value, suffix));
     }
-    if (!s.published_objects.empty()) {
+    for (const InterfacePortId id : s.interface_ports.Ids()) {
+      const auto& port = s.interface_ports.Get(id);
+      Line(
+          std::format(
+              "InterfacePort[{}] \"{}\" : ExternalUnitObject[{}]", id.value,
+              port.name, port.object.value));
+    }
+    if (!s.published_members.empty()) {
       std::string positions;
-      for (const StructuralDataObjectId id : s.published_objects) {
-        positions += std::format(
-            "{}StructuralDataObject[{}]", positions.empty() ? "" : ", ",
-            id.value);
+      for (const PublishedDecl& decl : s.published_members) {
+        if (!positions.empty()) positions += ", ";
+        positions += std::visit(
+            Overloaded{
+                [](const StructuralDataObjectId& id) {
+                  return std::format("StructuralDataObject[{}]", id.value);
+                },
+                [](const InterfacePortId& id) {
+                  return std::format("InterfacePort[{}]", id.value);
+                }},
+            decl);
       }
       Line(std::format("Published: {}", positions));
     }
@@ -1259,37 +1283,48 @@ class HirDumper {
     }
     for (const PortConnectionId id : s.port_connections.Ids()) {
       const auto& pc = s.port_connections.Get(id);
-      std::string_view direction;
-      switch (pc.direction) {
-        case PortDirection::kInput:
-          direction = "input";
-          break;
-        case PortDirection::kOutput:
-          direction = "output";
-          break;
-        case PortDirection::kInOut:
-          direction = "inout";
-          break;
-        case PortDirection::kRef:
-          direction = "ref";
-          break;
-        case PortDirection::kConstRef:
-          direction = "const ref";
-          break;
-      }
-      const std::string endpoint = std::visit(
+      const std::string body = std::visit(
           Overloaded{
-              [](const PortCellEndpoint& c) -> std::string {
-                return std::format("cell=Expr[{}]", c.cell.value);
+              [](const DataPortConnection& d) -> std::string {
+                std::string_view direction;
+                switch (d.direction) {
+                  case PortDirection::kInput:
+                    direction = "input";
+                    break;
+                  case PortDirection::kOutput:
+                    direction = "output";
+                    break;
+                  case PortDirection::kInOut:
+                    direction = "inout";
+                    break;
+                  case PortDirection::kRef:
+                    direction = "ref";
+                    break;
+                  case PortDirection::kConstRef:
+                    direction = "const ref";
+                    break;
+                }
+                const std::string endpoint = std::visit(
+                    Overloaded{
+                        [](const PortCellEndpoint& c) -> std::string {
+                          return std::format("cell=Expr[{}]", c.cell.value);
+                        },
+                        [](const RoutedPathRecipe& r) -> std::string {
+                          return std::format(
+                              "alias_to:{}", FormatRoutedPathRecipe(r));
+                        }},
+                    d.endpoint);
+                return std::format(
+                    "{} {} peer=Expr[{}]", direction, endpoint, d.peer.value);
               },
-              [](const RoutedPathRecipe& r) -> std::string {
-                return std::format("alias_to:{}", FormatRoutedPathRecipe(r));
+              [](const InterfacePortConnection& i) -> std::string {
+                return std::format(
+                    "interface bind_to:{} peer:{}",
+                    FormatRoutedPathRecipe(i.endpoint),
+                    FormatRoutedPathRecipe(i.peer));
               }},
-          pc.endpoint);
-      Line(
-          std::format(
-              "PortConnection[{}] {} {} peer=Expr[{}]", id.value, direction,
-              endpoint, pc.peer.value));
+          pc.kind);
+      Line(std::format("PortConnection[{}] {}", id.value, body));
     }
     Dedent();
     scope_stack_.pop_back();

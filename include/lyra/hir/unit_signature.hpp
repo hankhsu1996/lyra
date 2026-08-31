@@ -29,9 +29,13 @@ struct DataPortPart {
 };
 
 // A port part naming a scope rather than carrying data -- an interface port
-// (LRM 25.3). Nothing flows across it in any direction and no value type
-// crosses, so what the unit publishes about one is that it is one.
-struct InterfacePortPart {};
+// (LRM 25.3). Nothing flows across it in any direction, so it has no direction
+// and no value type; what crosses is which member of this unit's instance the
+// connection binds, and the type of that member says which unit's object it
+// must be bound to.
+struct InterfacePortPart {
+  PublishedMemberId member;
+};
 
 // One point of a port that a connection reaches individually. A port bundling
 // several internal names (LRM 23.2.2.1) carries data separately across each,

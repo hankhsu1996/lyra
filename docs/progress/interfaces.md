@@ -38,6 +38,8 @@ This workstream reasons from these architecture docs and does not restate them:
 - `../decisions/unit-signature.md` -- an interface publishes its members, so reaching one through a
   port is a name resolved where the referrer compiles rather than one the runtime answers while the
   design elaborates.
+- `../decisions/interface-port-binding.md` -- what the port's declared type names, what its member
+  holds, and why the interface a port carries is part of the module's specialization identity.
 
 Stage B onward depends on the workstream tracked in `unit-signature.md` under this directory. An
 interface exists to be written against, so its members are its signature; reaching them through a
@@ -97,21 +99,24 @@ B  The interface port
 
 ### Stage B -- The interface port
 
-- [ ] B1 -- A module port whose type is an interface names an interface instance that lives
+- [x] B1 -- A module port whose type is an interface names an interface instance that lives
       elsewhere in the object tree. The port member is a non-owning handle to that instance's
       runtime scope, bound once during elaboration; it owns no storage of its own and introduces no
       propagation delay. This is the scope-level counterpart of a `ref` port, and it is a scope
       binding rather than a value connection: nothing is copied in either direction, and there is no
       reactive edge to arm.
-- [ ] B2 -- Every member access through the port is one reference whose route begins at that handle:
-      the typed step to the port member, then a by-name step into the interface's body. Reads,
-      writes, and change observation ride that single route, so a process in the module re-triggers
-      when an interface member changes, and a write through the port is immediately the interface's
-      value.
+- [x] B2 -- Every member access through the port is one reference whose route begins at that handle:
+      the typed step to the port member, then the member at the position the interface's signature
+      gave it, so a name the interface does not publish fails where the module compiles rather than
+      while the design elaborates. Reads, writes, and change observation ride that single route, so
+      a process in the module re-triggers when an interface member changes, and a write through the
+      port is immediately the interface's value.
 - [ ] B3 -- The actual on the connection is an interface instance named in the instantiating scope,
       whether that is a local instance, an element of an interface array, or an instance reached by
       hierarchical name. LRM 25.3 forbids the hierarchical form from resolving through an arrayed
-      instance or through a generate block, which the frontend enforces.
+      instance or through a generate block, which the frontend enforces. An instance the
+      instantiating scope declares directly is connected, by position or by name; the array element
+      and the hierarchical form are not yet.
 - [ ] B4 -- A pass-through interface port: a module forwards its own interface port into a deeper
       child, so every port on the chain denotes one interface instance. This is a forwarding chain
       collapsed at sealing, and it is the reason the binding cannot happen while the subtree is
@@ -186,10 +191,12 @@ B  The interface port
 ## Open questions
 
 - The reference model leaves its set of sealed-endpoint target categories open and requires a
-  decision entry per category (`../decisions/hierarchical-reference-routing.md`, D5). Stage B
-  introduces one -- a route whose origin is a bound handle to another unit's runtime scope -- and
-  Stage D introduces a second, a route whose endpoint is a callable rather than a storage cell. Each
-  lands with its entry before the stage it serves.
+  decision entry per category (`../decisions/hierarchical-reference-routing.md`, D5). Stage D
+  introduces one, a route whose endpoint is a callable rather than a storage cell, and it lands with
+  its entry before the stage it serves. Stage B introduced no category: a member reached through a
+  port ends at a member another unit published, which is the endpoint a downward port connection
+  already seals to; what it added is one route step, recorded in
+  `../decisions/interface-port-binding.md`.
 - Stage E's access resolves per access rather than against an endpoint sealed once, because the
   target is chosen at run time. Whether the resolution memoizes per handle and name, and where such
   a cache lives so that it is a cache and not a second authority, is open.

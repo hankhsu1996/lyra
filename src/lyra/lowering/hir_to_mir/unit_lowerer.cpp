@@ -111,6 +111,9 @@ auto PopulatePackageStaticVariables(
        scope.structural_data_objects.Ids()) {
     const hir::StructuralDataObjectDecl& d =
         scope.structural_data_objects.Get(hir_id);
+    // A package declares no ports, so nothing here stands for storage another
+    // scope owns; a net is the only other kind a package-scope declaration
+    // reaches this as.
     const auto* var = std::get_if<hir::StructuralVariableDecl>(&d.kind);
     if (var == nullptr) {
       return diag::Fail(
@@ -213,8 +216,21 @@ auto UnitLowerer::MemberCellType(
                         reference.binding == hir::ReferenceBinding::kConstRef
                             ? mir::Mutability::kReadOnly
                             : mir::Mutability::kMutable});
+          },
+          [&](const hir::BorrowedObjectStorage&) {
+            return unit_.types.PointerTo(
+                value_type, mir::PointerOwnership::kBorrowed);
           }},
       storage);
+}
+
+auto UnitLowerer::UnitObjectNamed(const std::string& unit_name) const
+    -> mir::TypeData {
+  const auto it = external_unit_objects_by_name_.find(unit_name);
+  if (it == external_unit_objects_by_name_.end()) {
+    return mir::VoidType{};
+  }
+  return mir::ExternalUnitObjectType{.object = it->second};
 }
 
 auto UnitLowerer::BuildExternalUnitObject(
@@ -269,6 +285,21 @@ auto UnitLowerer::PublishUnitDeclarations() -> diag::Result<void> {
   // A composite type's translation reads the translations of its components,
   // which HIR minted before it, so the answers land one at a time and each one
   // can see the ones before it.
+  // Every object this unit compiled against gets its identity before any type
+  // translates: a type may name one of them -- an interface port's does (LRM
+  // 25.3) -- and it has to resolve to an identity that already exists.
+  external_unit_object_translations_ =
+      base::Translation<hir::ExternalUnitObjectId, mir::ExternalUnitObjectId>{
+          hir_->external_unit_objects.size()};
+  for (const hir::ExternalUnitObjectId hir_id :
+       hir_->external_unit_objects.Ids()) {
+    const mir::ExternalUnitObjectId mir_id =
+        unit_.external_unit_objects.Declare();
+    external_unit_object_translations_.Append(mir_id);
+    external_unit_objects_by_name_.emplace(
+        hir_->external_unit_objects.Get(hir_id).unit_name, mir_id);
+  }
+
   type_translations_ =
       base::Translation<hir::TypeId, mir::TypeId>{hir_->types.size()};
   for (const hir::TypeId hir_id : hir_->types.Ids()) {
@@ -279,13 +310,11 @@ auto UnitLowerer::PublishUnitDeclarations() -> diag::Result<void> {
   // What each unit this one references promised about its object, in this
   // unit's terms, taken before any body lowers so a body reaching a child's
   // member reads the record rather than building one.
-  external_unit_object_translations_ =
-      base::Translation<hir::ExternalUnitObjectId, mir::ExternalUnitObjectId>{
-          hir_->external_unit_objects.size()};
   for (const hir::ExternalUnitObjectId hir_id :
        hir_->external_unit_objects.Ids()) {
-    external_unit_object_translations_.Append(unit_.external_unit_objects.Add(
-        BuildExternalUnitObject(hir_->external_unit_objects.Get(hir_id))));
+    unit_.external_unit_objects.Define(
+        TranslateExternalUnitObject(hir_id),
+        BuildExternalUnitObject(hir_->external_unit_objects.Get(hir_id)));
   }
 
   // The prototype of every DPI-C import this unit takes part in (LRM 35.4),
@@ -319,7 +348,7 @@ auto UnitLowerer::PublishUnitDeclarations() -> diag::Result<void> {
   return {};
 }
 
-auto UnitLowerer::RunModule() -> diag::Result<mir::CompilationUnit> {
+auto UnitLowerer::RunObjectRoot() -> diag::Result<mir::CompilationUnit> {
   return LowerModuleUnit({});
 }
 
@@ -351,7 +380,7 @@ auto UnitLowerer::LowerModuleUnit(PackageInitializationPlan package_init_plan)
   return std::move(unit_);
 }
 
-auto UnitLowerer::RunPackage() -> diag::Result<mir::CompilationUnit> {
+auto UnitLowerer::RunNamespace() -> diag::Result<mir::CompilationUnit> {
   if (auto prologue = PublishUnitDeclarations(); !prologue) {
     return std::unexpected(std::move(prologue.error()));
   }
@@ -434,16 +463,15 @@ auto UnitLowerer::MakeExternalClassPointee(const hir::ExternalClassRef& ref)
     -> mir::TypeId {
   unit_.AddExternalClassUnit(ref.unit_name);
   return unit_.types.Intern(
-      mir::ExternalClassType{
-          .qualified_name =
-              std::format("{}::{}", ref.unit_name, ref.class_name)});
+      mir::CrossUnitClassType{
+          .unit_name = ref.unit_name, .class_name = ref.class_name});
 }
 
 auto UnitLowerer::MakeExternalClassRef(const hir::ExternalClassRef& ref)
     -> mir::ClassRef {
   unit_.AddExternalClassUnit(ref.unit_name);
-  return mir::ClassRef{mir::ExternalClassRef{
-      .qualified_name = std::format("{}::{}", ref.unit_name, ref.class_name)}};
+  return mir::ClassRef{mir::CrossUnitClassRef{
+      .unit_name = ref.unit_name, .class_name = ref.class_name}};
 }
 
 auto UnitLowerer::TranslateClassRef(const hir::ClassRef& ref) -> mir::ClassRef {

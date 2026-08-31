@@ -504,16 +504,15 @@ class PackedArray {
   [[nodiscard]] auto operator>(const PackedArray& other) const -> PackedArray;
   [[nodiscard]] auto operator>=(const PackedArray& other) const -> PackedArray;
 
-  // Unary operators.
   [[nodiscard]] auto operator-() const -> PackedArray;
   [[nodiscard]] auto operator~() const -> PackedArray;
 
-  // Logical operators. `&&` / `||` lose C++ short-circuit semantics when
-  // overloaded; that is acceptable here because callers (cpp emit, ad-hoc
-  // runtime use) work with already-materialized PackedArray values without
-  // side effects, and any optimizer pass that cares (clang's mem2reg, LLVM)
-  // sees these as plain member calls equivalent to the OR-chain it would
-  // see for `LogicalOr` -- there is no codegen difference.
+  // `&&` / `||` lose C++ short-circuit semantics when overloaded; that is
+  // acceptable here because callers (cpp emit, ad-hoc runtime use) work with
+  // already-materialized PackedArray values without side effects, and any
+  // optimizer pass that cares (clang's mem2reg, LLVM) sees these as plain
+  // member calls equivalent to the OR-chain it would see for `LogicalOr` --
+  // there is no codegen difference.
   [[nodiscard]] auto operator&&(const PackedArray& other) const -> PackedArray;
   [[nodiscard]] auto operator||(const PackedArray& other) const -> PackedArray;
   [[nodiscard]] auto operator!() const -> PackedArray;

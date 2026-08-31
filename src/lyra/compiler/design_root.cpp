@@ -259,7 +259,7 @@ void DefineRootFactory(mir::CompilationUnit& root) {
   const mir::Class& root_class = root.GetClass(*root.root);
   const mir::TypeId owned_scope = root.types.PointerTo(
       root.types.Intern(
-          mir::ExternalClassType{.qualified_name = "lyra::runtime::Scope"}),
+          mir::RuntimeClassType{.symbol = "lyra::runtime::Scope"}),
       mir::PointerOwnership::kUnique);
 
   mir::CallableCode code = mir::CallableCode::Defined();

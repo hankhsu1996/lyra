@@ -252,6 +252,9 @@ auto UnitLowerer::TranslateTypeData(const hir::TypeData& data)
             return mir::ManagedRefType{
                 .pointee = ImportedRuntimeObjectType(src.klass)};
           },
+          [&](const hir::UnitObjectType& src) -> mir::TypeData {
+            return UnitObjectNamed(src.unit_name);
+          },
           [](const hir::NullType&) -> mir::TypeData {
             // The `null` literal carries no class identity; it renders as a
             // null pointer that any handle absorbs, so MIR types it as the

@@ -87,7 +87,6 @@ class ProcessLowerer {
   [[nodiscard]] auto LookupProceduralVar(const slang::ast::VariableSymbol& var)
       const -> std::optional<hir::ProceduralVarId>;
 
-  // Accessors.
   [[nodiscard]] auto Owner() -> UnitLowerer& {
     return *owner_;
   }
@@ -107,7 +106,6 @@ class ProcessLowerer {
     return consumed_body_exprs_;
   }
 
-  // Walker entries used by helper passes inside this layer.
   auto LowerExpr(const slang::ast::Expression& expr, WalkFrame frame)
       -> diag::Result<hir::Expr>;
   auto LowerStmt(const slang::ast::Statement& stmt, WalkFrame frame)
@@ -119,12 +117,10 @@ class ProcessLowerer {
       -> diag::Result<void>;
 
  private:
-  // Facts.
   UnitLowerer* owner_;
   const slang::ast::Symbol* containing_symbol_;
   ConsumedBodyExpressions consumed_body_exprs_;
 
-  // Registry.
   std::unordered_map<const slang::ast::VariableSymbol*, hir::ProceduralVarId>
       procedural_var_bindings_;
   std::unordered_set<const slang::ast::VariableSymbol*> lifetime_extended_;

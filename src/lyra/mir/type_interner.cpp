@@ -77,8 +77,11 @@ auto SemanticTypeHash::operator()(const TypeData& data) const -> std::size_t {
           HashField(seed, t.class_id.value);
         } else if constexpr (std::is_same_v<T, ExternalUnitObjectType>) {
           HashField(seed, t.object.value);
-        } else if constexpr (std::is_same_v<T, ExternalClassType>) {
-          HashField(seed, t.qualified_name);
+        } else if constexpr (std::is_same_v<T, CrossUnitClassType>) {
+          HashField(seed, t.unit_name);
+          HashField(seed, t.class_name);
+        } else if constexpr (std::is_same_v<T, RuntimeClassType>) {
+          HashField(seed, t.symbol);
         } else if constexpr (std::is_same_v<T, MachineIntType>) {
           HashField(seed, t.bit_width);
           HashCombine(seed, std::hash<int>{}(static_cast<int>(t.signedness)));
@@ -217,7 +220,8 @@ auto TypeInterner::ObservableCellOf(TypeId value_type) const -> TypeId {
     case TypeKind::kVoid:
     case TypeKind::kObject:
     case TypeKind::kExternalUnitObject:
-    case TypeKind::kExternalClass:
+    case TypeKind::kCrossUnitClass:
+    case TypeKind::kRuntimeClass:
     case TypeKind::kRuntimeEffects:
     case TypeKind::kFiles:
     case TypeKind::kDiagnostic:

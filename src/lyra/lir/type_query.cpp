@@ -55,7 +55,8 @@ auto TypeKindName(const Type& type) -> std::string_view {
           [](const EmptyType&) { return "empty"; },
           [](const ObjectType&) { return "class object"; },
           [](const ExternalUnitObjectType&) { return "external unit object"; },
-          [](const ExternalClassType&) { return "external class"; },
+          [](const CrossUnitClassType&) { return "cross-unit class"; },
+          [](const RuntimeClassType&) { return "runtime class"; },
           [](const ClosureType&) { return "closure"; },
           [](const RuntimeEffectsType&) { return "runtime services"; },
           [](const FilesType&) { return "file table"; },
@@ -131,7 +132,8 @@ auto IsAddressOnly(const TypeArena& types, TypeId type) -> bool {
           [](const ResolvedType&) { return true; },
           [](const ObjectType&) { return true; },
           [](const ExternalUnitObjectType&) { return true; },
-          [](const ExternalClassType&) { return true; },
+          [](const CrossUnitClassType&) { return true; },
+          [](const RuntimeClassType&) { return true; },
           [](const auto&) { return false; }},
       types.Get(type).data);
 }

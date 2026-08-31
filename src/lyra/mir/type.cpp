@@ -80,7 +80,8 @@ auto Type::Kind() const -> TypeKind {
           [](const ExternalUnitObjectType&) {
             return TypeKind::kExternalUnitObject;
           },
-          [](const ExternalClassType&) { return TypeKind::kExternalClass; },
+          [](const CrossUnitClassType&) { return TypeKind::kCrossUnitClass; },
+          [](const RuntimeClassType&) { return TypeKind::kRuntimeClass; },
           [](const RuntimeEffectsType&) { return TypeKind::kRuntimeEffects; },
           [](const FilesType&) { return TypeKind::kFiles; },
           [](const DiagnosticType&) { return TypeKind::kDiagnostic; },

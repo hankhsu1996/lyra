@@ -53,24 +53,24 @@ class UnitLowerer {
       : hir_(&hir), source_manager_(&source_manager) {
   }
 
-  // Lowers a module unit: a scope whose root is an object type, so its body
-  // (variables, processes, instances, subroutines) composes the unit's top
-  // class.
-  auto RunModule() -> diag::Result<mir::CompilationUnit>;
+  // Lowers a unit whose instances exist as objects: its body (variables,
+  // processes, instances, subroutines) composes the unit's top class.
+  auto RunObjectRoot() -> diag::Result<mir::CompilationUnit>;
 
-  // Lowers the synthetic design-root unit. It is a module in every respect
-  // except that its Initialize phase also installs and initializes the
-  // packages' variables (LRM 26.2 / 10.5). The plan is a whole-design fact the
-  // assembly resolves and passes in; the lowering only realizes it into
+  // Lowers the synthetic design-root unit. It roots an object like any other
+  // such unit, except that its Initialize phase also installs and initializes
+  // the packages' variables (LRM 26.2 / 10.5). The plan is a whole-design fact
+  // the assembly resolves and passes in; the lowering only realizes it into
   // cross-unit calls, so this special input stays at the design-root boundary
   // and never reaches a source unit's lowering.
   auto RunDesignRoot(PackageInitializationPlan package_init_plan)
       -> diag::Result<mir::CompilationUnit>;
 
-  // Lowers a package unit (LRM 26): a namespace whose root is not an object
-  // type. Its functions and tasks lower to receiver-less callables owned by the
-  // unit's namespace, so the produced unit has no root class.
-  auto RunPackage() -> diag::Result<mir::CompilationUnit>;
+  // Lowers a unit that roots no object -- a package (LRM 26) or the `$unit`
+  // file-set scope (LRM 3.12.1). Its functions and tasks lower to
+  // receiver-less callables owned by the unit's namespace, so the produced unit
+  // has no root class.
+  auto RunNamespace() -> diag::Result<mir::CompilationUnit>;
 
   // Access to the in-progress compilation unit. The const overload is the
   // read-only view downstream consumers see once lowering finishes; the mutable
@@ -106,6 +106,17 @@ class UnitLowerer {
       hir::ExternalUnitObjectId hir_id) const -> mir::ExternalUnitObjectId {
     return external_unit_object_translations_.Get(hir_id);
   }
+
+  // What a name of another unit's object stands for here. A unit reaches such
+  // an object by holding what that unit published, and recording that is the
+  // act that declares the dependency. A name this unit never recorded arrived
+  // on a member of some other unit's object -- one this unit holds a pointer to
+  // and never reaches through -- so what it stands for is the pointer's
+  // representation, with the pointee left unspecified. Naming the pointee would
+  // claim a dependency this unit does not have and pull an artifact it never
+  // references.
+  [[nodiscard]] auto UnitObjectNamed(const std::string& unit_name) const
+      -> mir::TypeData;
 
   // Where a published member sits in the object this unit recorded. The HIR and
   // MIR records list the same members in the same order, so the position
@@ -161,11 +172,11 @@ class UnitLowerer {
   auto MakeExternalClassRef(const hir::ExternalClassRef& ref) -> mir::ClassRef;
 
   // Convenience that dispatches a HIR class reference to its MIR peer: an
-  // intra-unit reference translates through the class registry, and a cross-
-  // unit one runs through `MakeExternalClassRef` so the external dependency
-  // is recorded in the same call. A caller that needs to name a class in any
-  // position (base, interface contract, receiver type) reads one entry point
-  // instead of visiting the variant itself.
+  // intra-unit reference translates through the class registry, and a
+  // cross-unit one is recorded as this unit's dependency in the same call. A
+  // caller that needs to name a class in any position (base, interface
+  // contract, receiver type) reads one entry point instead of visiting the
+  // variant itself.
   auto TranslateClassRef(const hir::ClassRef& ref) -> mir::ClassRef;
 
   auto MakeExternalFieldTarget(const hir::ExternalClassPropertyTarget& target)
@@ -283,6 +294,8 @@ class UnitLowerer {
   base::Translation<hir::ClassId, ClassTranslation> class_translations_;
   base::Translation<hir::ExternalUnitObjectId, mir::ExternalUnitObjectId>
       external_unit_object_translations_;
+  std::unordered_map<std::string, mir::ExternalUnitObjectId>
+      external_unit_objects_by_name_;
   std::uint32_t next_generate_scope_name_ = 0;
   std::uint32_t next_synthesized_site_ = 0;
   // What the declare stage settled about each class, read by every body that

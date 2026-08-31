@@ -37,9 +37,9 @@
 #include "lyra/lowering/ast_to_hir/instance_array_shape.hpp"
 #include "lyra/lowering/ast_to_hir/net_type.hpp"
 #include "lyra/lowering/ast_to_hir/process_lowerer.hpp"
-#include "lyra/lowering/ast_to_hir/specialization_name.hpp"
 #include "lyra/lowering/ast_to_hir/subroutine_decl.hpp"
 #include "lyra/lowering/ast_to_hir/time_resolution.hpp"
+#include "lyra/lowering/ast_to_hir/unit_identity.hpp"
 #include "lyra/lowering/ast_to_hir/unit_lowerer.hpp"
 #include "lyra/lowering/ast_to_hir/walk_frame.hpp"
 
@@ -294,11 +294,17 @@ auto StructuralScopeLowerer::PopulateMember(
     case SymbolKind::ElabSystemTask:
       return {};
 
+    // An interface port is its own declaration: no separate internal name
+    // stands behind it the way one stands behind a data port, so the member
+    // the scope holds for it is built here (LRM 25.3).
+    case SymbolKind::InterfacePort:
+      return PopulateInterfacePortMember(
+          member.as<slang::ast::InterfacePortSymbol>(), frame);
+
     // The scope's own boundary and its enclosing containers, reached as
     // members but describing where this scope sits rather than what it does.
     case SymbolKind::Port:
     case SymbolKind::MultiPort:
-    case SymbolKind::InterfacePort:
     case SymbolKind::Modport:
     case SymbolKind::ModportPort:
     case SymbolKind::ModportClocking:
@@ -375,21 +381,35 @@ auto StructuralScopeLowerer::PopulateVariableMember(
         "produced "
         "void type");
   }
-  std::optional<hir::ExprId> initializer_id;
-  if (const auto* init = var.getInitializer(); init != nullptr) {
+  hir::StructuralDataObjectKind kind = hir::StructuralVariableDecl{};
+  if (const auto binding = owner_->ReferenceBindingOf(var)) {
+    kind = hir::StructuralReferenceDecl{.binding = *binding};
+  } else if (const auto* init = var.getInitializer(); init != nullptr) {
     auto init_or = LowerExpr(*init, frame);
     if (!init_or) return std::unexpected(std::move(init_or.error()));
-    initializer_id = frame.Exprs().Add(*std::move(init_or));
+    kind = hir::StructuralVariableDecl{
+        .initializer = frame.Exprs().Add(*std::move(init_or))};
   }
   const hir::StructuralDataObjectId local =
       frame.current_structural_scope->structural_data_objects.Add(
           hir::StructuralDataObjectDecl{
               .name = std::string{var.name},
               .type = *type_id_or,
-              .kind = hir::StructuralVariableDecl{
-                  .initializer = initializer_id,
-                  .reference = owner_->ReferenceBindingOf(var)}});
+              .kind = std::move(kind)});
   owner_->MapStructuralDataObjectBinding(var, frame_, local, *type_id_or);
+  return {};
+}
+
+auto StructuralScopeLowerer::PopulateInterfacePortMember(
+    const slang::ast::InterfacePortSymbol& port, WalkFrame frame)
+    -> diag::Result<void> {
+  const hir::ExternalUnitObjectId object =
+      owner_->ExternalUnitObjectOf(owner_->InterfaceUnitOf(port));
+  const hir::InterfacePortId local =
+      frame.current_structural_scope->interface_ports.Add(
+          hir::InterfacePortDecl{
+              .name = std::string{port.name}, .object = object});
+  owner_->MapInterfacePortBinding(port, frame_, local, object);
   return {};
 }
 

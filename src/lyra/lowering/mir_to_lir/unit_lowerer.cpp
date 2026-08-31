@@ -341,9 +341,12 @@ auto UnitLowerer::LowerBase(const mir::ClassRef& base) const -> lir::Base {
             return lir::Base{lir::IntraUnitBase{
                 .class_id = class_identities_.Get(i.class_id).lir_class}};
           },
-          [](const mir::ExternalClassRef& e) -> lir::Base {
-            return lir::Base{
-                lir::ExternalBase{.qualified_name = e.qualified_name}};
+          [](const mir::CrossUnitClassRef& e) -> lir::Base {
+            return lir::Base{lir::CrossUnitBase{
+                .unit_name = e.unit_name, .class_name = e.class_name}};
+          },
+          [](const mir::RuntimeClassRef& e) -> lir::Base {
+            return lir::Base{lir::RuntimeBase{.symbol = e.symbol}};
           }},
       base);
 }

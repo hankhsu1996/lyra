@@ -60,9 +60,10 @@ struct HirCompilation {
   hir::UnitSignatures signatures;
 };
 
-// Lowers the whole compilation to its HIR units: every package the design
-// declares, then every distinct module body reachable from the tops, each
-// tagged with its `UnitKind`. Each unit is lowered independently -- it reads
+// Lowers the whole compilation to its HIR units: every namespace the design
+// declares, then every distinct design-element body reachable from the tops,
+// each tagged with whether its instances exist as objects. Each unit is lowered
+// independently -- it reads
 // only its own scope, the shared frontend, and the signatures of the units its
 // own declarations name -- so the result is a flat set of self-contained units
 // with no cross-unit HIR references.

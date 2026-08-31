@@ -113,12 +113,15 @@ each stage establishes, not how.
       one type throughout the system -- hold across compilation units, and it applies uniformly to
       non-parameterized and parameterized classes.
 
-- [x] A class's declaration scope reaches its compiled identity. A class declared inside a module or
-      a generate scope (LRM 8.1, 27.6) is a distinct type per declaration scope, and SystemVerilog
-      leans on that scoping for uniqueness: two modules, or two sibling generate scopes of one
-      module, may each declare a class of the same name. A unit holds every class it declares in one
-      flat name space, so the identifier a class carries has to be unique there, and the declaring
-      scope is what makes it so.
+- [x] A class's declaration scope reaches its compiled identity. A class declared inside a module, a
+      generate scope, a package, or the compilation-unit scope (LRM 8.1, 27.6, 26, 3.12.1) is a
+      distinct type per declaration scope, and SystemVerilog leans on that scoping for uniqueness:
+      two modules, two sibling generate scopes of one module, or two packages may each declare a
+      class of the same name. A unit holds every class it declares in one flat name space, so the
+      identifier a class carries has to be unique there, and the declaring scope is what makes it
+      so. Which unit declares a class travels with every reference to it, so a name bound to one and
+      a name bound to another are two bindings wherever a type is chosen, including where a type
+      parameter selects between them.
 
 - [x] Type-associated static storage and static methods (LRM 8.9 / 8.10): a static property is one
       cell owned by the type, distinct from a per-instance field replicated on every object; a

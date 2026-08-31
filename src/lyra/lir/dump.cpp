@@ -222,8 +222,12 @@ class LirDumper {
             [](const IntraUnitBase& i) -> std::string {
               return std::format("Class[{}]", i.class_id.value);
             },
-            [](const ExternalBase& e) -> std::string {
-              return std::format("External(\"{}\")", e.qualified_name);
+            [](const CrossUnitBase& e) -> std::string {
+              return std::format(
+                  "CrossUnit(\"{}::{}\")", e.unit_name, e.class_name);
+            },
+            [](const RuntimeBase& e) -> std::string {
+              return std::format("Runtime(\"{}\")", e.symbol);
             }},
         base);
   }

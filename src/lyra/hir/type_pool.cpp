@@ -103,6 +103,9 @@ auto TypeDataHash::operator()(const TypeData& data) const -> std::size_t {
           [seed](const ClassHandleType& t) {
             return HashClassRef(seed, t.class_ref);
           },
+          [seed](const UnitObjectType& t) {
+            return Combine(seed, std::hash<std::string>{}(t.unit_name));
+          },
           [seed](const ImportedClassHandleType& t) {
             return Combine(seed, static_cast<std::size_t>(t.klass));
           },

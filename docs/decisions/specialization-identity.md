@@ -19,17 +19,22 @@ parameterized instantiation and constrains the deferred specialization-dedup opt
 
 ## Findings that shaped the design
 
-### F1. The identity must be a function of the bindings, not of the body
+### F1. The identity must be a function of what the parent selects, not of the body
 
 A cross-unit reference is resolved by the referrer, which cannot see the target's body: a unit
 compiles against another unit's interface (name and signature), never its body or internal layout
 (`compilation_unit_model.md` inv 8, `reference_resolution.md`). So when a parent constructs a child,
-it must be able to name which specialization it wants from what it has -- the module name plus the
-child's parameter bindings -- without inspecting the child's compiled code.
+it must be able to name which specialization it wants from what it has -- the module name plus what
+it selected at the instantiation site -- without inspecting the child's compiled code.
 
-Consequence: the identity is `f(def name, selected bindings)`, never `f(body)`. Fingerprinting the
-lowered body is ruled out, because the consumer that must compute the same identity has no access to
-it.
+Consequence: the identity is `f(def name, selections)`, never `f(body)`. Fingerprinting the lowered
+body is ruled out, because the consumer that must compute the same identity has no access to it.
+
+Two kinds of selection meet that test today. A parameter binding is one. An interface-port
+connection (LRM 25.3) is the other: the parent names which interface instance the port carries, and
+the module compiles against that interface's types at that interface's published positions, so two
+connections naming different interfaces build different objects. Both are visible at the
+instantiation site and neither requires reading the child.
 
 ### F2. The identity is a name, computed independently by both sides
 
@@ -62,20 +67,31 @@ Rust cannot.
 
 ## The decision
 
-1. **Identity is a deterministic name = module definition name + a content hash of a canonical
-   serialization of the selected parameter bindings.** The producer and the consumer both compute it
-   from the bindings; they match by name.
+1. **The identity is a key: the definition, plus what the parent fixed -- its parameter bindings,
+   and the interface each of its interface ports carries.** The key holds those as its parts, each
+   named and each carrying the identity of what it was fixed to, and two keys are equal when their
+   parts are. Nothing compares keys through a rendering of them.
 
-2. **The serializer canonically encodes the binding structure.** It walks `ConstantValue` on the
-   value side and the data-type structure on the type side, recursively, and excludes arena ids,
-   source names, and source spans. Ordering is normalized so the result does not depend on traversal
-   or enumeration order (`specialization_model.md` inv 6).
+   **The name is derived from the key** -- the definition's name, plus a content hash of the key
+   when anything was fixed. The producer and the consumer both build the same key from the same
+   selections and so reach the same name. Folding to a name happens once, where a bounded identifier
+   is needed, and never while a key is still being composed: hashing is lossy, and a component
+   compressed early takes its collisions up with it, invisibly.
 
-3. **The serializer is subset-agnostic; which bindings feed it is policy.** Functional
+2. **The key's parts hold identities, not renderings.** A value's identity is its constant; a type's
+   is its structure, except a class, which SystemVerilog identifies by its declaration (LRM 8.3) and
+   which therefore carries the unit that declares it; an interface's is the name of the unit it
+   instantiates, which is already how a unit is identified across the boundary. All of it excludes
+   arena ids, source spans, and any name that does not participate in identity. Ordering is
+   normalized so the result does not depend on traversal or enumeration order
+   (`specialization_model.md` inv 6).
+
+3. **The serializer is subset-agnostic; which selections feed it is policy.** Functional
    specialization (the current requirement) feeds all parameters. The deferred dedup optimization
    feeds only code-shape-affecting bindings and demotes value-only parameters to constructor inputs
    resolved at construction. The identity mechanism does not change across that shift; only the
-   input subset does.
+   input subset does. An interface-port connection is not on that axis: what it selects is the set
+   of types and positions the module compiles against, which no constructor input can carry.
 
 4. **The identity is computed at AST-to-HIR and carried by name thereafter.** HIR owns identity and
    frontend ids end there (`hir.md`); the cross-unit reference and the construct carry the name, and
@@ -88,9 +104,11 @@ Rust cannot.
 
 ## Consequences
 
-- Distinct bindings produce distinct names, hence distinct artifacts; the current name-collision
-  collapse is fixed, including value parameters of any type (unpacked aggregates included) and type
-  parameters.
+- Distinct selections produce distinct names, hence distinct artifacts; the current name-collision
+  collapse is fixed, including value parameters of any type (unpacked aggregates included), type
+  parameters, and a module bound to different interfaces through one unparameterized header.
+- Two instances agreeing on every selection share one artifact, which is where the frontend also
+  shares one elaborated body, so the two need no adjustment to agree.
 - The hash's only failure mode is collision; a wide content hash makes it not a practical concern,
   and no global view is needed to guarantee that the producer and consumer agree.
 - The deferred dedup optimization reuses the same serializer with a narrower input subset, so it

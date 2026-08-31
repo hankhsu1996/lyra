@@ -200,9 +200,12 @@ auto UnitLowerer::TranslateTypeData(const mir::Type& ty) -> lir::TypeData {
             return lir::TypeData{lir::ExternalUnitObjectType{
                 .object = external_unit_object_identities_.Get(eu.object)}};
           },
-          [](const mir::ExternalClassType& e) -> lir::TypeData {
-            return lir::TypeData{
-                lir::ExternalClassType{.qualified_name = e.qualified_name}};
+          [](const mir::RuntimeClassType& e) -> lir::TypeData {
+            return lir::TypeData{lir::RuntimeClassType{.symbol = e.symbol}};
+          },
+          [](const mir::CrossUnitClassType& e) -> lir::TypeData {
+            return lir::TypeData{lir::CrossUnitClassType{
+                .unit_name = e.unit_name, .class_name = e.class_name}};
           },
           [](const mir::RuntimeEffectsType&) -> lir::TypeData {
             return lir::TypeData{lir::RuntimeEffectsType{}};
