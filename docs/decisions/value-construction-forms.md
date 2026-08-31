@@ -124,13 +124,35 @@ the program, so bringing one into existence is D2, and the pointee comes into ex
 - A container's declared bound (LRM 7.10.5) is an operand of the construction, because it is a value
   the constructor takes. A fact may live on the result type; a value the target spells has to be
   materialized by the IR, or the backend is composing it.
-- Adding a container is adding a construct entry and the element representation it takes, not a new
-  construction form.
-- How a value is represented stays wholly below the call. A homogeneous construction is named by the
-  representation its elements take, so the entry converts its own operands into that representation
-  and a caller states values rather than the form they are held in. A heterogeneous one -- a
-  product, whose components each have a representation of their own -- is the one place a caller can
-  state it, because no entry can be named by one component's answer.
+- Adding a container is adding one construct entry per form that container is built in, not a new
+  construction form and not an entry per representation its contents might take.
+- A value crosses into an entry in an erased representation exactly where it _states_ one, and as
+  the bare handle of its own domain where it _conforms_ to one the entry already holds. A
+  construction's element prototype states the representation every element beside it is then read
+  in, and nothing on the far side could know it beforehand, so it crosses erased and the entry
+  erases the rest against it. A product's components each state their own, which is why every one of
+  them crosses erased. An index a keyed container selects by states one too, because such a
+  container holds no prototype for an index.
+
+## What naming an entry by a representation got wrong
+
+It read: "A homogeneous construction is named by the representation its elements take, so the entry
+converts its own operands into that representation ... A heterogeneous one -- a product, whose
+components each have a representation of their own -- is the one place a caller can state it,
+**because no entry can be named by one component's answer**."
+
+The test in bold is the right one. What does not follow is that homogeneity is what makes naming
+possible. A construction has no receiver whose type an entry could read a representation from, so
+naming it by one is not something the construction earns -- it is something a single representation
+axis makes cheap enough not to notice. The associative array separates the two readings, and it
+separates them in the direction the test itself points: it is indexed by a value of whatever type
+the program wrote and holds no prototype for one, so no entry can be named by an index's answer
+either, and the second axis multiplies every family that touches an index by the whole domain set.
+
+Naming by a representation also puts a value's domain in the wrong place. A value's domain is a fact
+of that value's own type; an entry named by the representation of something it contains reads one
+value's type to answer for another. Making the crossing form a property of the operand puts that
+fact back on the value it belongs to.
 
 ## Rejected alternatives
 

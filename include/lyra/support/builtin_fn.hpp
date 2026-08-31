@@ -1,6 +1,8 @@
 #pragma once
 
+#include <cstddef>
 #include <cstdint>
+#include <optional>
 #include <string_view>
 
 namespace lyra::support {
@@ -607,6 +609,15 @@ enum class BuiltinFn : std::uint16_t {
 // The traversal family lowers to a block expression: it mutates the index
 // argument and runs the write-back among its steps.
 [[nodiscard]] auto IsAssociativeTraversalFn(BuiltinFn id) -> bool;
+
+// Which operand of a container entry is the index it selects by, absent for an
+// entry that selects nothing. A consumer that must know how an index reaches
+// the entry -- which representation it crosses in, whether it is present at all
+// -- asks here rather than listing the entries itself. An entry that yields an
+// index rather than taking one is not this: that is the traversal family, whose
+// argument is a destination.
+[[nodiscard]] auto ContainerIndexOperand(BuiltinFn id)
+    -> std::optional<std::size_t>;
 
 // True iff the file-IO entry writes through one of its argument slots
 // (LRM 21.3.4: `$fgets` writes its first arg, `$fread` writes its first

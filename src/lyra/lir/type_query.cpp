@@ -90,25 +90,6 @@ auto Pointee(const TypeArena& types, TypeId type) -> std::optional<TypeId> {
       types.Get(type).data);
 }
 
-auto ElementType(const TypeArena& types, TypeId type) -> std::optional<TypeId> {
-  return std::visit(
-      Overloaded{
-          [](const UnpackedArrayType& u) -> std::optional<TypeId> {
-            return u.element_type;
-          },
-          [](const DynamicArrayType& d) -> std::optional<TypeId> {
-            return d.element_type;
-          },
-          [](const QueueType& q) -> std::optional<TypeId> {
-            return q.element_type;
-          },
-          [](const AssociativeArrayType& a) -> std::optional<TypeId> {
-            return a.element_type;
-          },
-          [](const auto&) -> std::optional<TypeId> { return std::nullopt; }},
-      types.Get(type).data);
-}
-
 auto DerefTarget(const TypeArena& types, TypeId type) -> std::optional<TypeId> {
   return std::visit(
       Overloaded{

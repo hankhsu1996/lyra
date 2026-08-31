@@ -511,13 +511,14 @@ auto lyra_rt_chandle_ne(void* lhs, void* rhs) -> void*;
 auto lyra_rt_chandle_case_equal(void* lhs, void* rhs) -> void*;
 auto lyra_rt_chandle_to_bool(void* operand) -> bool;
 
-// Boxes a value-domain handle into a type-erased `RuntimeValue`, the component
-// of an aggregate value. A product is what these serve: its components each
-// have a domain of their own, so no entry can be named by one of them and the
-// caller is the only side that knows them all. A homogeneous aggregate is named
-// by its single element domain instead and erases its own operands, so it needs
-// none of these. The domain rides in the symbol name, as every other
-// domain-parametric entry does.
+// Boxes a value-domain handle into a type-erased `RuntimeValue`, the form in
+// which an aggregate holds its parts. A value crosses this way exactly where it
+// states a representation the entry receiving it has no other way to know: a
+// product's components, each of its own domain, and a container construction's
+// element prototype, which is what every element beside it is then erased
+// against. A value that conforms to a representation its entry already fixes
+// crosses as the bare handle of its own domain instead. The domain rides in the
+// symbol name, as every other domain-parametric entry does.
 auto lyra_rt_value_box_packed(const void* value) -> void*;
 auto lyra_rt_value_box_string(const void* value) -> void*;
 auto lyra_rt_value_box_real(const void* value) -> void*;
@@ -556,59 +557,19 @@ auto lyra_rt_activation_frame_load_tuple(const void* cell) -> void*;
 // constructors (empty, sized, sized-from-source); `from_literal` collects the
 // elements of an assignment pattern. The element default rides every
 // constructor -- the shape source for out-of-range reads (LRM 7.4.5) and resize
-// fills. Every constructor is named by the element domain, so the prototype and
-// the elements cross alike as bare handles of that domain and the entry is what
-// erases them; a caller states values, never the representation they are held
-// in. `element` copies an element out; `with_element`
-// returns a copy of the array with one element replaced (LRM 7.4.6), and
-// `delete` a copy emptied (LRM 7.5.3) -- value operations, never in-place
-// writes, so value semantics hold even when the array is shared.
-auto lyra_rt_dynarray_default_packed(void* prototype) -> void*;
-auto lyra_rt_dynarray_default_string(void* prototype) -> void*;
-auto lyra_rt_dynarray_default_real(void* prototype) -> void*;
-auto lyra_rt_dynarray_default_shortreal(void* prototype) -> void*;
-auto lyra_rt_dynarray_default_chandle(void* prototype) -> void*;
-auto lyra_rt_dynarray_default_tuple(void* prototype) -> void*;
-auto lyra_rt_dynarray_default_dynarray(void* prototype) -> void*;
-auto lyra_rt_dynarray_default_unpackedarray(void* prototype) -> void*;
-auto lyra_rt_dynarray_new_packed(const void* size, void* prototype) -> void*;
-auto lyra_rt_dynarray_new_string(const void* size, void* prototype) -> void*;
-auto lyra_rt_dynarray_new_real(const void* size, void* prototype) -> void*;
-auto lyra_rt_dynarray_new_shortreal(const void* size, void* prototype) -> void*;
-auto lyra_rt_dynarray_new_chandle(const void* size, void* prototype) -> void*;
-auto lyra_rt_dynarray_new_tuple(const void* size, void* prototype) -> void*;
-auto lyra_rt_dynarray_new_dynarray(const void* size, void* prototype) -> void*;
-auto lyra_rt_dynarray_new_unpackedarray(const void* size, void* prototype)
-    -> void*;
-auto lyra_rt_dynarray_new_copy_packed(
+// fills -- and it crosses erased, because it is what states the element's
+// representation and nothing here knows that representation before it arrives.
+// A literal's elements then cross as bare handles: the prototype beside them
+// names their domain, so the entry erases them itself. `element` copies an
+// element out; `with_element` returns a copy of the array with one element
+// replaced (LRM 7.4.6), and `delete` a copy emptied (LRM 7.5.3) -- value
+// operations, never in-place writes, so value semantics hold even when the
+// array is shared.
+auto lyra_rt_dynarray_default(void* prototype) -> void*;
+auto lyra_rt_dynarray_new(const void* size, void* prototype) -> void*;
+auto lyra_rt_dynarray_new_copy(
     const void* size, void* prototype, const void* src) -> void*;
-auto lyra_rt_dynarray_new_copy_string(
-    const void* size, void* prototype, const void* src) -> void*;
-auto lyra_rt_dynarray_new_copy_real(
-    const void* size, void* prototype, const void* src) -> void*;
-auto lyra_rt_dynarray_new_copy_shortreal(
-    const void* size, void* prototype, const void* src) -> void*;
-auto lyra_rt_dynarray_new_copy_chandle(
-    const void* size, void* prototype, const void* src) -> void*;
-auto lyra_rt_dynarray_new_copy_tuple(
-    const void* size, void* prototype, const void* src) -> void*;
-auto lyra_rt_dynarray_new_copy_dynarray(
-    const void* size, void* prototype, const void* src) -> void*;
-auto lyra_rt_dynarray_new_copy_unpackedarray(
-    const void* size, void* prototype, const void* src) -> void*;
-auto lyra_rt_dynarray_from_literal_packed(
-    void* prototype, LyraSpan unit, std::int64_t count) -> void*;
-auto lyra_rt_dynarray_from_literal_string(
-    void* prototype, LyraSpan unit, std::int64_t count) -> void*;
-auto lyra_rt_dynarray_from_literal_real(
-    void* prototype, LyraSpan unit, std::int64_t count) -> void*;
-auto lyra_rt_dynarray_from_literal_shortreal(
-    void* prototype, LyraSpan unit, std::int64_t count) -> void*;
-auto lyra_rt_dynarray_from_literal_chandle(
-    void* prototype, LyraSpan unit, std::int64_t count) -> void*;
-auto lyra_rt_dynarray_from_literal_tuple(
-    void* prototype, LyraSpan unit, std::int64_t count) -> void*;
-auto lyra_rt_dynarray_from_literal_dynarray(
+auto lyra_rt_dynarray_from_literal(
     void* prototype, LyraSpan unit, std::int64_t count) -> void*;
 auto lyra_rt_dynarray_element(const void* array, const void* index) -> void*;
 auto lyra_rt_dynarray_with_element(
@@ -629,23 +590,7 @@ auto lyra_rt_activation_frame_load_dynarray(const void* cell) -> void*;
 // declared range is the receiver's static type's, so every coordinate-consuming
 // entry takes it as a `[left:right]` operand pair rather than reading it off
 // the value.
-auto lyra_rt_dynarray_from_literal_unpackedarray(
-    void* prototype, LyraSpan unit, std::int64_t count) -> void*;
-auto lyra_rt_unpackedarray_from_literal_packed(
-    void* prototype, LyraSpan unit, std::int64_t count) -> void*;
-auto lyra_rt_unpackedarray_from_literal_string(
-    void* prototype, LyraSpan unit, std::int64_t count) -> void*;
-auto lyra_rt_unpackedarray_from_literal_real(
-    void* prototype, LyraSpan unit, std::int64_t count) -> void*;
-auto lyra_rt_unpackedarray_from_literal_shortreal(
-    void* prototype, LyraSpan unit, std::int64_t count) -> void*;
-auto lyra_rt_unpackedarray_from_literal_chandle(
-    void* prototype, LyraSpan unit, std::int64_t count) -> void*;
-auto lyra_rt_unpackedarray_from_literal_tuple(
-    void* prototype, LyraSpan unit, std::int64_t count) -> void*;
-auto lyra_rt_unpackedarray_from_literal_dynarray(
-    void* prototype, LyraSpan unit, std::int64_t count) -> void*;
-auto lyra_rt_unpackedarray_from_literal_unpackedarray(
+auto lyra_rt_unpackedarray_from_literal(
     void* prototype, LyraSpan unit, std::int64_t count) -> void*;
 auto lyra_rt_unpackedarray_element(
     const void* array, const void* index, const void* left, const void* right)
@@ -670,6 +615,96 @@ void lyra_rt_activation_frame_store_unpackedarray(
     void* cell, const void* value);
 auto lyra_rt_activation_frame_load_unpackedarray(const void* cell) -> void*;
 
+// The queue domain (LRM 7.10): a run-time-sized ordered container whose
+// elements are added and removed at either end, carried behind an opaque handle
+// and owning its elements by value. `default` and `from_literal` mirror the
+// dynamic array's constructors, and each has a bounded form because a declared
+// bound (LRM 7.10.5) is a value the constructor takes rather than one it can
+// derive. The bound belongs to the variable, not to the value written, so
+// `conform_bound` is what a semantic store into a bounded queue passes its
+// right-hand side through. An element write appends when its index is the
+// queue's size and is discarded at any other invalid index (LRM 7.10.1); every
+// apparent mutation -- an element write, a push, an insert, a delete -- yields
+// a new queue rather than writing in place, so value semantics hold even when
+// the queue is shared.
+auto lyra_rt_queue_default(void* prototype) -> void*;
+auto lyra_rt_queue_default_bounded(void* prototype, const void* max_bound)
+    -> void*;
+auto lyra_rt_queue_from_literal(
+    void* prototype, LyraSpan unit, std::int64_t count) -> void*;
+auto lyra_rt_queue_from_literal_bounded(
+    void* prototype, LyraSpan unit, std::int64_t count, const void* max_bound)
+    -> void*;
+auto lyra_rt_queue_conform_bound(const void* queue, const void* max_bound)
+    -> void*;
+auto lyra_rt_queue_element(const void* queue, const void* index) -> void*;
+auto lyra_rt_queue_with_element(
+    const void* queue, const void* index, void* value) -> void*;
+auto lyra_rt_queue_slice(
+    const void* queue, const void* anchor, const void* extent, const void* form)
+    -> void*;
+auto lyra_rt_queue_size(const void* queue) -> void*;
+auto lyra_rt_queue_push_back(const void* queue, void* item) -> void*;
+auto lyra_rt_queue_push_front(const void* queue, void* item) -> void*;
+auto lyra_rt_queue_insert(const void* queue, const void* index, void* item)
+    -> void*;
+auto lyra_rt_queue_delete(const void* queue) -> void*;
+auto lyra_rt_queue_eq(const void* lhs, const void* rhs) -> void*;
+auto lyra_rt_queue_ne(const void* lhs, const void* rhs) -> void*;
+auto lyra_rt_queue_case_equal(const void* lhs, const void* rhs) -> void*;
+auto lyra_rt_queue_bitstream_width(const void* queue) -> void*;
+auto lyra_rt_queue_count_bits(const void* queue, const void* control_bits)
+    -> void*;
+auto lyra_rt_value_box_queue(const void* value) -> void*;
+auto lyra_rt_cell_queue_get(void* cell) -> void*;
+void lyra_rt_cell_queue_initialize(void* cell, const void* prototype);
+void lyra_rt_cell_queue_set(void* cell, const void* value);
+auto lyra_rt_activation_frame_alloc_queue() -> void*;
+void lyra_rt_activation_frame_store_queue(void* cell, const void* value);
+auto lyra_rt_activation_frame_load_queue(const void* cell) -> void*;
+
+// The associative-array domain (LRM 7.8): a sparse lookup table allocated entry
+// by entry and held in index order, carried behind an opaque handle. Its
+// element default is what a read of an index with no entry yields (LRM 7.8.6),
+// and it crosses erased at construction like every other container's. An index
+// crosses erased too, and for a reason of its own: the array holds no prototype
+// for one, so nothing here could know the representation the program wrote it
+// in. An element beside an index still crosses bare, since the element default
+// names its domain. Every apparent mutation yields a new array rather than
+// writing in place, so value semantics hold even when the array is shared.
+auto lyra_rt_assocarray_default(void* prototype) -> void*;
+auto lyra_rt_assocarray_from_entries(void* prototype, LyraSpan entries)
+    -> void*;
+auto lyra_rt_assocarray_from_entries_default(
+    void* prototype, LyraSpan entries, void* user_default) -> void*;
+auto lyra_rt_assocarray_element(const void* array, const void* index) -> void*;
+auto lyra_rt_assocarray_with_element(
+    const void* array, const void* index, void* value) -> void*;
+auto lyra_rt_assocarray_exists(const void* array, const void* index) -> void*;
+auto lyra_rt_assocarray_size(const void* array) -> void*;
+auto lyra_rt_assocarray_delete(const void* array) -> void*;
+auto lyra_rt_assocarray_eq(const void* lhs, const void* rhs) -> void*;
+auto lyra_rt_assocarray_ne(const void* lhs, const void* rhs) -> void*;
+auto lyra_rt_assocarray_case_equal(const void* lhs, const void* rhs) -> void*;
+auto lyra_rt_assocarray_bitstream_width(const void* array) -> void*;
+// LRM 20.7 `$low` / `$high` over an associative dimension: the smallest and
+// largest index the array holds. An array with no entries reports the value the
+// call supplied for that case, which is the caller's own handle -- a value
+// handle is immutable, so answering with it aliases nothing observable.
+auto lyra_rt_assocarray_assoc_min_index(const void* array, void* empty)
+    -> void*;
+auto lyra_rt_assocarray_assoc_max_index(const void* array, void* empty)
+    -> void*;
+auto lyra_rt_assocarray_count_bits(const void* array, const void* control_bits)
+    -> void*;
+auto lyra_rt_value_box_assocarray(const void* value) -> void*;
+auto lyra_rt_cell_assocarray_get(void* cell) -> void*;
+void lyra_rt_cell_assocarray_initialize(void* cell, const void* prototype);
+void lyra_rt_cell_assocarray_set(void* cell, const void* value);
+auto lyra_rt_activation_frame_alloc_assocarray() -> void*;
+void lyra_rt_activation_frame_store_assocarray(void* cell, const void* value);
+auto lyra_rt_activation_frame_load_assocarray(const void* cell) -> void*;
+
 // LRM 21.3.3 / 5.9: text conformed to a destination's declared shape. An
 // integral destination takes it right-justified and an unpacked array of bytes
 // left-justified, which is why only the array form carries an element count.
@@ -677,6 +712,15 @@ auto lyra_rt_packed_from_string(const void* text, const void* prototype)
     -> void*;
 auto lyra_rt_unpackedarray_from_string(
     const void* text, const void* prototype, const void* count) -> void*;
+
+// LRM 20.6.2 `$bits` over the domains whose value is a bit stream: how many
+// bits the value currently holds, which for an aggregate is its parts' streams
+// laid end to end. A packed value answers from its own shape and needs no entry
+// here.
+auto lyra_rt_string_bitstream_width(const void* value) -> void*;
+auto lyra_rt_tuple_bitstream_width(const void* value) -> void*;
+auto lyra_rt_dynarray_bitstream_width(const void* value) -> void*;
+auto lyra_rt_unpackedarray_bitstream_width(const void* value) -> void*;
 
 // LRM 20.9 `$countbits` over the domains whose value is a bit stream. An
 // aggregate reduces over its parts, so each of these is the same fold seen at a

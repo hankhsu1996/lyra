@@ -1,5 +1,8 @@
 #include "lyra/support/builtin_fn.hpp"
 
+#include <cstddef>
+#include <optional>
+
 #include "lyra/base/internal_error.hpp"
 
 namespace lyra::support {
@@ -92,6 +95,20 @@ auto IsAssociativeTraversalFn(BuiltinFn id) -> bool {
       return true;
     default:
       return false;
+  }
+}
+
+auto ContainerIndexOperand(BuiltinFn id) -> std::optional<std::size_t> {
+  switch (id) {
+    // The receiver leads, and the index it selects by follows.
+    case BuiltinFn::kElement:
+    case BuiltinFn::kExists:
+    // LRM 7.9.3 / 7.10.2.3: with an index, the entry it names goes; with
+    // none, the whole container empties.
+    case BuiltinFn::kDelete:
+      return 1;
+    default:
+      return std::nullopt;
   }
 }
 

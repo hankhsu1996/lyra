@@ -2,6 +2,9 @@
 
 #include <cstdint>
 #include <span>
+#include <variant>
+
+#include "lyra/support/value_domain.hpp"
 
 namespace lyra::runtime {
 
@@ -121,55 +124,45 @@ struct ScopeProgram {
   }
 };
 
-// The runtime value type a storage cell carries. It enumerates the value types
-// the runtime library has, not the type kinds the source language has: several
-// source types share one domain, and a source type the runtime cannot realize
-// has no domain at all. It grows when the runtime gains a value type, never to
-// mirror the source language. `kNone` is the domain of storage that carries no
-// value of its own, such as a box holding a borrowed handle.
-enum class ValueDomain : std::uint8_t {
-  kNone,
-  kPacked,
-  kString,
-  kReal,
-  kShortReal,
-  kChandle,
-  kTuple,
-  kDynArray,
-  kUnpackedArray,
+// How a member's storage is realized. Each alternative carries exactly what
+// realizing it needs: one that holds a value of its own names the domain that
+// value is realized in, and one that holds none names nothing.
+
+// A box holding a pointer the owner does not own: the storage behind a
+// reference reaching another scope.
+struct BorrowedHandleStorage {};
+
+// The subscribable variable a process reads, writes, and waits on.
+struct ObservableCellStorage {
+  support::ValueDomain domain;
 };
 
-// How a member's storage is realized. A borrowed handle is a box holding a
-// pointer the owner does not own, the storage behind a reference reaching
-// another scope. An observable cell is the subscribable variable a process
-// reads, writes, and waits on. An inline value is a value the owner owns but no
-// process subscribes to -- a chandle (LRM 6.14), and every value a closure
-// snapshots into a capture.
-enum class MemberStorageKind : std::uint8_t {
-  kBorrowedHandle,
-  kObservableCell,
-  kInlineValue,
-  // A scope's cancellation source (LRM 9.6.2). Every scope owns one, so every
-  // backend realizes the storage; whether a backend can also raise and consume
-  // the control effect a `disable` sends through it is a separate question.
-  kCancellationSource,
-  // The joint cancel state of the channels a deferred file write targets (LRM
-  // 21.3.2), snapshotted into the closure that will perform that write so the
-  // write short-circuits if a descriptor is closed before its region runs.
-  kChannelCancellation,
+// A value the owner owns but no process subscribes to -- a chandle (LRM 6.14),
+// and every value a closure snapshots into a capture.
+struct InlineValueStorage {
+  support::ValueDomain domain;
 };
 
-struct MemberStorageDescriptor {
-  MemberStorageKind kind = MemberStorageKind::kBorrowedHandle;
-  ValueDomain domain = ValueDomain::kNone;
-};
+// A scope's cancellation source (LRM 9.6.2). Every scope owns one, so every
+// backend realizes the storage; whether a backend can also raise and consume
+// the control effect a `disable` sends through it is a separate question.
+struct CancellationSourceStorage {};
+
+// The joint cancel state of the channels a deferred file write targets (LRM
+// 21.3.2), snapshotted into the closure that will perform that write so the
+// write short-circuits if a descriptor is closed before its region runs.
+struct ChannelCancellationStorage {};
+
+using MemberStorageDescriptor = std::variant<
+    BorrowedHandleStorage, ObservableCellStorage, InlineValueStorage,
+    CancellationSourceStorage, ChannelCancellationStorage>;
 
 // One declaration's member storage schema, in its own member order: what a
-// generic value of it must realize for each member the declaration holds.
-// Crosses the generated-runtime boundary as plain data -- a pointer plus a
-// length, not a C++ container -- so a non-C++ backend supplies it without
-// depending on a C++ type's layout. The pointed-at descriptors are owned by
-// whoever built the definition and outlive every value built from it.
+// generic value of it must realize for each member the declaration holds. It
+// crosses as a pointer plus a length rather than a C++ container, so a
+// definition can name a schema that outlives whatever built it. The pointed-at
+// descriptors are owned by whoever built the definition and outlive every value
+// built from it.
 struct MemberStorageSchema {
   const MemberStorageDescriptor* data = nullptr;
   std::uint32_t size = 0;

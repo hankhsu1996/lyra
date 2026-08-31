@@ -1,10 +1,8 @@
 #pragma once
 
 #include <cstddef>
-#include <cstdint>
 #include <optional>
 #include <string>
-#include <string_view>
 
 #include <llvm/IR/DerivedTypes.h>
 #include <llvm/IR/Module.h>
@@ -12,6 +10,7 @@
 #include "lyra/lir/operator.hpp"
 #include "lyra/lir/type_id.hpp"
 #include "lyra/support/builtin_fn.hpp"
+#include "lyra/support/value_domain.hpp"
 
 namespace lyra::lir {
 struct CompilationUnit;
@@ -21,34 +20,20 @@ namespace lyra::backend::llvm_backend {
 
 class CodeGenTypes;
 
-// The runtime value type a library entry operates on, and that a storage cell
-// is realized as. Chosen from the LIR type at the site that needs it, never
-// carried as a tag the runtime inspects: the generated module names the entry
-// it means.
-//
-// This enumerates runtime realizations, not source types. Several source types
-// share one domain -- an enumeration and an integral both become a packed value
-// -- and a source type with no runtime realization has no domain at all. It
-// grows only when the runtime library gains a value type, never to mirror the
-// source language's type kinds.
-enum class ValueDomain : std::uint8_t {
-  kPacked,
-  kString,
-  kReal,
-  kShortReal,
-  kChandle,
-  kTuple,
-  kDynArray,
-  kUnpackedArray,
-};
-
-auto ValueDomainName(ValueDomain domain) -> std::string_view;
-
 // The domain a LIR type is realized in, absent for a type the runtime library
 // has no value realization for. The one place a LIR type is classified, so the
 // entry a call names and the storage a cell owns cannot disagree.
 auto ValueDomainOf(const lir::CompilationUnit& unit, lir::TypeId type)
-    -> std::optional<ValueDomain>;
+    -> std::optional<support::ValueDomain>;
+
+// The type a keyed container's declared index is, absent for a container whose
+// coordinates are ordinals its entries already name. An associative array holds
+// no prototype for an index -- LRM 7.8 gives it no index bounds and no index
+// default -- so nothing on the far side could know an index's representation,
+// and the index states it by crossing erased in the representation the
+// container's own declaration names.
+auto DeclaredIndexType(const lir::CompilationUnit& unit, lir::TypeId container)
+    -> std::optional<lir::TypeId>;
 
 // The runtime ABI the generated module calls: each runtime entry point declared
 // once with its canonical signature. The ABI is execution-strategy-neutral --
@@ -199,16 +184,17 @@ class RuntimeAbi {
   // Builds a real-family constant from its host-precision immediate: `double`
   // for `kReal`, `float` for `kShortReal`. The runtime owns the resulting value
   // and returns an opaque handle.
-  auto RealConst(ValueDomain domain) -> llvm::FunctionCallee;
+  auto RealConst(support::ValueDomain domain) -> llvm::FunctionCallee;
 
   // Builds a real-family value from a machine `int64` -- the outer step of the
   // integral-to-real conversion, whose inner step already read the operand out
   // as a host integer.
-  auto RealFromInt(ValueDomain domain) -> llvm::FunctionCallee;
+  auto RealFromInt(support::ValueDomain domain) -> llvm::FunctionCallee;
 
   // Reshapes one real-family precision into another (`shortreal` <-> `real`):
   // `dst` names the result precision, `src` the operand's.
-  auto RealReshape(ValueDomain dst, ValueDomain src) -> llvm::FunctionCallee;
+  auto RealReshape(support::ValueDomain dst, support::ValueDomain src)
+      -> llvm::FunctionCallee;
 
   // Builds a scope's structural identity from its parent-side label and its
   // per-dimension indices; the runtime owns the resulting segment handle.
@@ -242,9 +228,9 @@ class RuntimeAbi {
   // Operations on an observable storage cell, reached through its address.
   // `Initialize` installs the cell's declared representation once; `Set`
   // threads runtime so a change wakes the cell's subscribers.
-  auto CellGet(ValueDomain domain) -> llvm::FunctionCallee;
-  auto CellInitialize(ValueDomain domain) -> llvm::FunctionCallee;
-  auto CellSet(ValueDomain domain) -> llvm::FunctionCallee;
+  auto CellGet(support::ValueDomain domain) -> llvm::FunctionCallee;
+  auto CellInitialize(support::ValueDomain domain) -> llvm::FunctionCallee;
+  auto CellSet(support::ValueDomain domain) -> llvm::FunctionCallee;
 
   // A procedural local whose value crosses a suspension: its storage is a cell
   // in the running activation's frame, reached by a handle the generated frame
@@ -252,9 +238,11 @@ class RuntimeAbi {
   // first store installs its representation); `ActivationFrameStore` overwrites
   // it; `ActivationFrameLoad` copies its value into the current stretch. No
   // runtime thread through: a procedural local is not observable.
-  auto ActivationFrameAlloc(ValueDomain domain) -> llvm::FunctionCallee;
-  auto ActivationFrameStore(ValueDomain domain) -> llvm::FunctionCallee;
-  auto ActivationFrameLoad(ValueDomain domain) -> llvm::FunctionCallee;
+  auto ActivationFrameAlloc(support::ValueDomain domain)
+      -> llvm::FunctionCallee;
+  auto ActivationFrameStore(support::ValueDomain domain)
+      -> llvm::FunctionCallee;
+  auto ActivationFrameLoad(support::ValueDomain domain) -> llvm::FunctionCallee;
 
   // Publishes a member cell under its source-level name so the scope can be
   // navigated by name, and reads one back. The read answers an untyped address
@@ -266,8 +254,10 @@ class RuntimeAbi {
   // The library realization of an operator over a value domain. The entry's
   // name is the domain and the operator's own spelling, so a new operator or a
   // new domain cannot silently resolve to the wrong entry.
-  auto Binary(ValueDomain domain, lir::BinaryOp op) -> llvm::FunctionCallee;
-  auto Unary(ValueDomain domain, lir::UnaryOp op) -> llvm::FunctionCallee;
+  auto Binary(support::ValueDomain domain, lir::BinaryOp op)
+      -> llvm::FunctionCallee;
+  auto Unary(support::ValueDomain domain, lir::UnaryOp op)
+      -> llvm::FunctionCallee;
 
   // The library realization of a value builtin -- an operation the source
   // language spells as a call rather than an operator (a shift, a reduction, a
@@ -276,17 +266,18 @@ class RuntimeAbi {
   // model gives each runtime value one representation, so the operand and
   // result types at the call are the entry's parameter and result types.
   auto ValueBuiltin(
-      ValueDomain domain, lyra::support::BuiltinFn fn, llvm::Type* result,
+      support::ValueDomain domain, support::BuiltinFn fn, llvm::Type* result,
       llvm::ArrayRef<llvm::Type*> params) -> llvm::FunctionCallee;
 
   // Reduces a value to the machine boolean a conditional branch tests.
-  auto ToBool(ValueDomain domain) -> llvm::FunctionCallee;
+  auto ToBool(support::ValueDomain domain) -> llvm::FunctionCallee;
 
-  // Boxes a value-domain handle into a type-erased aggregate element. The
-  // domain rides in the symbol name, as every domain-parametric entry does.
-  // Shared by every aggregate family (a struct component, a dynamic-array
-  // element).
-  auto ValueBox(ValueDomain domain) -> llvm::FunctionCallee;
+  // Boxes a value-domain handle into the erased form an aggregate holds its
+  // parts in. A value crosses this way exactly where it states a representation
+  // the entry receiving it has no other way to know -- a product's components,
+  // each of its own domain, and a container construction's element prototype.
+  // The domain rides in the symbol name, as every domain-parametric entry does.
+  auto ValueBox(support::ValueDomain domain) -> llvm::FunctionCallee;
 
   // The product-value entries. `Make` collects the boxed components; `Extract`
   // and `Update` are value operations: update yields a new product with one
@@ -294,13 +285,17 @@ class RuntimeAbi {
   // when the product is shared.
   auto TupleMake() -> llvm::FunctionCallee;
   auto TupleExtract() -> llvm::FunctionCallee;
-  auto ElementExtract(ValueDomain domain, llvm::ArrayRef<llvm::Type*> params)
+  auto ElementExtract(
+      support::ValueDomain domain, llvm::ArrayRef<llvm::Type*> params)
       -> llvm::FunctionCallee;
-  auto SliceExtract(ValueDomain domain, llvm::ArrayRef<llvm::Type*> params)
+  auto SliceExtract(
+      support::ValueDomain domain, llvm::ArrayRef<llvm::Type*> params)
       -> llvm::FunctionCallee;
-  auto ElementUpdate(ValueDomain domain, llvm::ArrayRef<llvm::Type*> params)
+  auto ElementUpdate(
+      support::ValueDomain domain, llvm::ArrayRef<llvm::Type*> params)
       -> llvm::FunctionCallee;
-  auto SliceUpdate(ValueDomain domain, llvm::ArrayRef<llvm::Type*> params)
+  auto SliceUpdate(
+      support::ValueDomain domain, llvm::ArrayRef<llvm::Type*> params)
       -> llvm::FunctionCallee;
   auto TupleUpdate() -> llvm::FunctionCallee;
 
@@ -309,23 +304,35 @@ class RuntimeAbi {
   // Each takes the element default as a prototype, since an element's default
   // cannot be derived from the array's size alone; the sized forms lead with
   // that size and the pattern form follows the prototype with the element span.
-  // Every one is named by the element representation it builds over, which is
-  // what lets the prototype and the elements cross alike as values of their own
-  // domain and the entry be what erases them. Element read, functional update,
-  // delete, and size are generic value operations and resolve through that path
-  // rather than an entry here.
-  auto MakeDynamicArrayDefault(ValueDomain domain) -> llvm::FunctionCallee;
-  auto MakeDynamicArrayNew(ValueDomain domain) -> llvm::FunctionCallee;
-  auto MakeDynamicArrayNewCopy(ValueDomain domain) -> llvm::FunctionCallee;
-  auto MakeDynamicArrayFromLiteral(ValueDomain domain) -> llvm::FunctionCallee;
-  auto MakeUnpackedArrayFromLiteral(ValueDomain domain) -> llvm::FunctionCallee;
+  // The prototype crosses erased, because it is what states the element's
+  // representation, and the entry erases every element beside it against that
+  // one. Element read, functional update, delete, and size are generic value
+  // operations and resolve through that path rather than an entry here.
+  auto MakeDynamicArrayDefault() -> llvm::FunctionCallee;
+  auto MakeDynamicArrayNew() -> llvm::FunctionCallee;
+  auto MakeDynamicArrayNewCopy() -> llvm::FunctionCallee;
+  auto MakeDynamicArrayFromLiteral() -> llvm::FunctionCallee;
+  auto MakeUnpackedArrayFromLiteral() -> llvm::FunctionCallee;
+
+  // The queue constructors (LRM 7.10 / 7.10.5 / 10.9.1). A queue is built
+  // empty or over an element list, and either form may carry the declared
+  // bound it enforces, so `argument_count` selects among the four as an
+  // overload set would: spelling a bound and leaving it out are different
+  // requests rather than one with a default.
+  auto MakeQueue(std::size_t argument_count) -> llvm::FunctionCallee;
+
+  // The associative-array constructors (LRM 7.8 / 7.9.11 / Table 6-7): the
+  // empty array, one seeded from a list of entries, and either with the miss
+  // value a `default:` states. As with a queue, spelling that value and leaving
+  // it out are different requests, so `argument_count` selects among them.
+  auto MakeAssociativeArray(std::size_t argument_count) -> llvm::FunctionCallee;
 
   // Builds the format specification of one conversion, and the print item that
   // pairs a value with it. A specification is written either as a bare
   // conversion kind, leaving every field at its default, or with every field
   // spelled out; `field_count` selects which, as an overload set would.
   auto MakeFormatSpec(std::size_t field_count) -> llvm::FunctionCallee;
-  auto MakePrintValueItem(ValueDomain domain) -> llvm::FunctionCallee;
+  auto MakePrintValueItem(support::ValueDomain domain) -> llvm::FunctionCallee;
 
  private:
   auto Get(
