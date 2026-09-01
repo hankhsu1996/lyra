@@ -134,8 +134,8 @@ struct Cancelled {
 // an activation cancelled while parked ends: it is released without resuming,
 // so nothing ever settles here.
 //
-// Cancellation and a fault both arrive by unwinding, because a body written in
-// direct style can only be left that way. Which of the two it was is settled
+// Cancellation and a fault both arrive by unwinding, which is how a body this
+// slot is the promise of is left. Which of the two it was is settled
 // where the effect is raised, while its type can still be read, and reaches
 // this slot already answered -- rather than being re-derived later by raising
 // it again to ask, or carried beside the slot in a flag nothing checks against

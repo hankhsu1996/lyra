@@ -70,13 +70,11 @@ auto LowerForkStmt(
   // A fork the source named is a target a `disable` can name (LRM 9.6.2), and
   // what it must end is every process executing the block -- the thread that
   // runs the block items and awaits the join, and each branch, which takes the
-  // target's membership at the spawn. Entering the target here is the fork's
-  // own first act, before any branch spawns, so all of them are inside it.
+  // target's membership at the spawn. The region brackets the whole fork, so
+  // the target is entered before any branch spawns and all of them are inside
+  // it.
   const std::optional<mir::FieldId> cancel_target =
-      process.BodyHasReceiver() ? fork_scope.cancellation_source : std::nullopt;
-  if (cancel_target.has_value()) {
-    EmitCancellationGuard(process, fork_frame, *cancel_target);
-  }
+      process.BodyHasReceiver() ? fork_scope.cancellation_target : std::nullopt;
 
   // A branch snapshots the fork's own block-item declarations by value and
   // aliases any deeper-enclosing variable it reads (LRM 6.21 / 9.3.2). The
@@ -145,17 +143,17 @@ auto LowerForkStmt(
                     .type = builtins.void_type});
   fork_block.AppendStmt(mir::ExprStmt{.expr = stmt_expr_id});
 
-  const mir::BlockId scope_id =
-      frame.current_block->child_scopes.Add(std::move(fork_block));
   // The region that consumes the effect sits where the fork sits, not inside
   // it: an execution the `disable` reached has already left the fork by the
   // time the handler runs, and it resumes after it (LRM 9.6.2).
   if (cancel_target.has_value()) {
     return mir::Stmt{
         .label = std::move(label),
-        .data =
-            BuildCancellableRegion(process, frame, scope_id, *cancel_target)};
+        .data = BuildCancellableRegion(
+            process, frame, std::move(fork_block), *cancel_target)};
   }
+  const mir::BlockId scope_id =
+      frame.current_block->child_scopes.Add(std::move(fork_block));
   return mir::Stmt{
       .label = std::move(label), .data = mir::BlockStmt{.scope = scope_id}};
 }

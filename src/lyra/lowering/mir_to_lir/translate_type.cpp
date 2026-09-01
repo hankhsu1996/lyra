@@ -336,18 +336,15 @@ auto UnitLowerer::TranslateRuntimeLibrary(mir::RuntimeLibraryKind kind)
       return mirror(lir::RuntimeLibraryKind::kDpiOpenArrayHandle);
     case mir::RuntimeLibraryKind::kTrigger:
       return mirror(lir::RuntimeLibraryKind::kTrigger);
-    case mir::RuntimeLibraryKind::kCancellationSource:
-      return mirror(lir::RuntimeLibraryKind::kCancellationSource);
+    case mir::RuntimeLibraryKind::kCancellationTarget:
+      return mirror(lir::RuntimeLibraryKind::kCancellationTarget);
     case mir::RuntimeLibraryKind::kDpiScopeGuard:
       return RecordUnsupportedType(
           "the scope a DPI-C context import makes current");
     case mir::RuntimeLibraryKind::kForeignTaskAwaitable:
       return RecordUnsupportedType("the fiber a DPI-C task import runs on");
-    case mir::RuntimeLibraryKind::kCancellationGuard:
-      return RecordUnsupportedType(
-          "the cancellation region a disable target runs in");
     case mir::RuntimeLibraryKind::kControlEffect:
-      return RecordUnsupportedType("the control effect a disable raises");
+      return mirror(lir::RuntimeLibraryKind::kControlEffect);
     case mir::RuntimeLibraryKind::kScopeProgram:
     case mir::RuntimeLibraryKind::kScopeDefinition:
     case mir::RuntimeLibraryKind::kScopeMetadata:

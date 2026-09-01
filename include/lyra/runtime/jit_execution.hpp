@@ -144,6 +144,31 @@ auto lyra_rt_make_trigger(
 // no token crosses the boundary.
 void lyra_rt_wait_any(void* runtime, LyraSpan triggers);
 
+// LRM 9.6.2 `disable`. A target crosses as its address, and a control effect as
+// the target it names, since that is all one carries.
+//
+// The two brackets record on the running process which targets its execution is
+// inside, and the generation each held on entry; `lyra_rt_disable` advances the
+// named target's generation and wakes the executions blocked inside it, and
+// leaves who lands where to each of them. The two queries answer which target
+// this execution is inside has been disabled since it entered, and whether one
+// has -- each computed by comparing generations, so nothing is stored and
+// nothing has to be cleared. A body asks them where it regains control, because
+// a simulated process cannot be made to run code partway through a statement.
+// `lyra_rt_settle_cancelled` reports that an effect left the body with no
+// region of it claiming the effect, so the activation settles cancelled (LRM
+// 9.7 KILLED) rather than completing normally.
+void lyra_rt_enter_target(void* runtime, void* target);
+void lyra_rt_leave_target(void* runtime, void* target);
+void lyra_rt_disable(void* target, void* runtime);
+auto lyra_rt_effect_names_target(void* effect, void* target) -> void*;
+auto lyra_rt_invalidated_target(void* runtime) -> void*;
+// A machine boolean rather than an opaque simulation value: the answer decides
+// a branch and never reaches the design's own semantics, so it carries no
+// width and no unknown state.
+auto lyra_rt_has_invalidated_target(void* runtime) -> bool;
+void lyra_rt_settle_cancelled(void* effect);
+
 // Reads the current simulation time, scaled to the time unit of the design
 // element the call sits in (LRM 20.3). That unit is the caller's property
 // rather than the runtime's, so its power of ten crosses as an opaque packed

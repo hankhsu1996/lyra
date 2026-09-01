@@ -14,6 +14,7 @@
 #include "lyra/hir/stmt.hpp"
 #include "lyra/lowering/hir_to_mir/binding_origin.hpp"
 #include "lyra/lowering/hir_to_mir/callable_bindings.hpp"
+#include "lyra/lowering/hir_to_mir/condition.hpp"
 #include "lyra/lowering/hir_to_mir/process_lowerer.hpp"
 #include "lyra/lowering/hir_to_mir/runtime_call.hpp"
 #include "lyra/lowering/hir_to_mir/self_ref.hpp"
@@ -106,85 +107,93 @@ void OpenActivationScope(
   }
 }
 
-auto CancellationSourceType(mir::CompilationUnit& unit) -> mir::TypeId {
+auto CancellationTargetType(mir::CompilationUnit& unit) -> mir::TypeId {
   return unit.types.Intern(
       mir::RuntimeLibraryType{
-          .kind = mir::RuntimeLibraryKind::kCancellationSource});
+          .kind = mir::RuntimeLibraryKind::kCancellationTarget});
 }
 
-auto CancellationGuardType(mir::CompilationUnit& unit) -> mir::TypeId {
-  return unit.types.Intern(
-      mir::RuntimeLibraryType{
-          .kind = mir::RuntimeLibraryKind::kCancellationGuard});
-}
-
-// The cancellation source of a block that is a `disable` target (LRM 9.6.2),
-// absent when it is none. A `disable` reaches its target by naming it, so an
-// unnamed block is one no `disable` can reach and it needs no region -- which
-// is what owning no cancellation source says.
+// The target of a block a `disable` can name (LRM 9.6.2), absent when it is
+// none. A `disable` reaches its target by naming it, so an unnamed block is one
+// no `disable` can reach and it needs no region -- which is what owning no
+// target says.
 auto BlockCancellationTarget(
     const ProcessLowerer& process, const hir::BlockStmt& b)
     -> std::optional<mir::FieldId> {
-  // The source is per-instance storage read off the body's own object, so a
-  // body that reaches none can hold no target.
+  // A target is per-instance storage read off the body's own object, so a body
+  // that reaches none can hold none.
   if (!process.BodyHasReceiver()) {
     return std::nullopt;
   }
-  return process.Scopes().Get(b.scope).cancellation_source;
+  return process.Scopes().Get(b.scope).cancellation_target;
 }
 
-// The lvalue reaching a cancellation source: the expression a region names to
-// recognize the control effect it consumes and a `disable` names to invalidate
-// (LRM 9.6.2).
-auto CancellationSourceAccess(
-    const ProcessLowerer& process, const WalkFrame& frame, mir::FieldId source)
+// The expression reaching the target a region claims and a `disable`
+// invalidates (LRM 9.6.2). A target is storage the enclosing instance owns
+// rather than a value, so what every operation on one takes is its address.
+auto CancellationTarget(
+    ProcessLowerer& process, const WalkFrame& frame, mir::FieldId target)
     -> mir::ExprId {
-  return frame.current_block->exprs.Add(BuildStructuralFieldAccessExpr(
-      frame, process.Owner().Unit(), mir::EnclosingHops{}, source));
+  mir::CompilationUnit& unit = process.Owner().Unit();
+  mir::Block& block = *frame.current_block;
+  const mir::ExprId member = block.exprs.Add(BuildStructuralFieldAccessExpr(
+      frame, unit, mir::EnclosingHops{}, target));
+  return block.exprs.Add(
+      mir::Expr{
+          .data = mir::AddressOfExpr{.operand = member},
+          .type = unit.types.PointerTo(
+              CancellationTargetType(unit), mir::PointerOwnership::kBorrowed)});
+}
+
+// Appends one end of a target's extent -- entering it or leaving it -- as a
+// statement of `frame`'s block.
+void EmitTargetBracket(
+    ProcessLowerer& process, const WalkFrame& frame, mir::FieldId target,
+    support::BuiltinFn bracket) {
+  UnitLowerer& unit_lowerer = process.Owner();
+  mir::CompilationUnit& unit = unit_lowerer.Unit();
+  mir::Block& block = *frame.current_block;
+
+  const mir::ExprId reached = CancellationTarget(process, frame, target);
+  const mir::ExprId services =
+      block.exprs.Add(BuildCurrentRuntimeCallExpr(unit_lowerer));
+  const mir::ExprId call = block.exprs.Add(
+      mir::Expr{
+          .data =
+              mir::CallExpr{
+                  .callee = mir::Direct{.target = bracket},
+                  .arguments = {services, reached}},
+          .type = unit.builtins.void_type});
+  block.AppendStmt(mir::ExprStmt{.expr = call});
 }
 
 }  // namespace
 
-auto EmitCancellationGuard(
-    ProcessLowerer& process, const WalkFrame& frame, mir::FieldId source)
-    -> mir::LocalId {
-  UnitLowerer& unit_lowerer = process.Owner();
-  mir::CompilationUnit& unit = unit_lowerer.Unit();
-  mir::Block& block = *frame.current_block;
-
-  const mir::TypeId source_ptr = unit.types.PointerTo(
-      CancellationSourceType(unit), mir::PointerOwnership::kBorrowed);
-  const mir::TypeId guard_type = CancellationGuardType(unit);
-
-  const mir::ExprId member = CancellationSourceAccess(process, frame, source);
-  const mir::ExprId addr = block.exprs.Add(
-      mir::Expr{
-          .data = mir::AddressOfExpr{.operand = member}, .type = source_ptr});
-  const mir::ExprId services =
-      block.exprs.Add(BuildCurrentRuntimeCallExpr(unit_lowerer));
-  const mir::ExprId construct = block.exprs.Add(
-      mir::Expr{
-          .data =
-              mir::CallExpr{
-                  .callee = mir::Construct{}, .arguments = {services, addr}},
-          .type = guard_type});
-
-  const BindingOriginId origin =
-      BindingOriginId::Synthesized(unit_lowerer.NextSynthesizedSite(), 0);
-  const mir::LocalId guard = frame.bindings->Declare(
-      origin, mir::LocalDecl{
-                  .name = "cancel_guard_" + std::to_string(source.value),
-                  .type = guard_type});
-  block.AppendStmt(mir::LocalDeclStmt{.target = guard, .init = construct});
-  return guard;
-}
-
 auto BuildCancellableRegion(
-    ProcessLowerer& process, const WalkFrame& frame, mir::BlockId body,
-    mir::FieldId source) -> mir::TryStmt {
+    ProcessLowerer& process, const WalkFrame& frame, mir::Block&& body,
+    mir::FieldId target) -> mir::TryStmt {
   UnitLowerer& unit_lowerer = process.Owner();
   mir::CompilationUnit& unit = unit_lowerer.Unit();
   mir::Block& block = *frame.current_block;
+
+  // Entering the target is the region's own first act, so an execution inside
+  // it -- including one suspended in a callable the body invoked -- is known to
+  // be inside the target; the cleanup withdraws that however control gets out.
+  mir::Block region_body;
+  const WalkFrame region_frame = frame.WithBlock(&region_body);
+  EmitTargetBracket(
+      process, region_frame, target, support::BuiltinFn::kEnterTarget);
+
+  mir::Block cleanup;
+  const WalkFrame cleanup_frame = frame.WithBlock(&cleanup);
+  EmitTargetBracket(
+      process, cleanup_frame, target, support::BuiltinFn::kLeaveTarget);
+
+  const mir::BlockId body_id = region_body.child_scopes.Add(std::move(body));
+  const mir::BlockId cleanup_id =
+      region_body.child_scopes.Add(std::move(cleanup));
+  region_body.AppendStmt(
+      mir::FinallyStmt{.body = body_id, .cleanup = cleanup_id});
 
   const mir::TypeId effect_type = unit.types.Intern(
       mir::RuntimeLibraryType{.kind = mir::RuntimeLibraryKind::kControlEffect});
@@ -192,22 +201,49 @@ auto BuildCancellableRegion(
       BindingOriginId::Synthesized(unit_lowerer.NextSynthesizedSite(), 0);
   const mir::LocalId caught = frame.bindings->Declare(
       origin, mir::LocalDecl{
-                  .name = "effect_" + std::to_string(source.value),
+                  .name = "effect_" + std::to_string(target.value),
                   .type = effect_type});
 
+  // The handler is a scope of its own, so its test and its raise are lowered
+  // through a frame whose current block is that scope.
+  mir::Block handler;
+  const WalkFrame handler_frame = frame.WithBlock(&handler);
   const mir::ExprId caught_ref =
-      block.exprs.Add(mir::MakeLocalRefExpr(caught, effect_type));
-  const mir::ExprId target = CancellationSourceAccess(process, frame, source);
-  const mir::ExprId handler = block.exprs.Add(
+      handler.exprs.Add(mir::MakeLocalRefExpr(caught, effect_type));
+  const mir::ExprId reached =
+      CancellationTarget(process, handler_frame, target);
+  const mir::ExprId claims = handler.exprs.Add(
       mir::Expr{
           .data =
               mir::CallExpr{
                   .callee =
                       mir::Direct{
-                          .target = support::BuiltinFn::kClaimControlEffect},
-                  .arguments = {caught_ref, target}},
-          .type = unit.builtins.void_type});
-  return mir::TryStmt{.body = body, .caught = caught, .handler = handler};
+                          .target = support::BuiltinFn::kEffectNamesTarget},
+                  .arguments = {caught_ref, reached}},
+          .type = unit.builtins.bit1});
+  const mir::ExprId declined = handler.exprs.Add(
+      mir::Expr{
+          .data =
+              mir::UnaryExpr{
+                  .op = mir::UnaryOp::kLogicalNot, .operand = claims},
+          .type = unit.builtins.bit1});
+
+  mir::Block decline;
+  const mir::ExprId raised =
+      decline.exprs.Add(mir::MakeLocalRefExpr(caught, effect_type));
+  decline.AppendStmt(mir::RaiseStmt{.effect = raised});
+  handler.AppendStmt(
+      mir::IfStmt{
+          .condition = ReduceToCondition(unit, handler, declined),
+          .then_scope = handler.child_scopes.Add(std::move(decline)),
+          .else_scope = std::nullopt});
+
+  const mir::BlockId region_body_id =
+      block.child_scopes.Add(std::move(region_body));
+  return mir::TryStmt{
+      .body = region_body_id,
+      .caught = caught,
+      .handler = block.child_scopes.Add(std::move(handler))};
 }
 
 auto LowerEmptyStmt(std::optional<std::string> label)
@@ -233,12 +269,6 @@ auto LowerBlockStmt(
   // ordinary one and needs nothing.
   const std::optional<mir::FieldId> cancel_target =
       BlockCancellationTarget(process, b);
-  if (cancel_target.has_value()) {
-    // Entering the target is the body's own first act, so an execution inside
-    // the body -- including one suspended in a callable it invoked -- is known
-    // to be inside the target, and leaving the body leaves it.
-    EmitCancellationGuard(process, child_frame, *cancel_target);
-  }
 
   const hir::ProceduralBody& hir_proc = process.HirBody();
   for (const hir::StmtId child_hir_id : b.statements) {
@@ -247,16 +277,16 @@ auto LowerBlockStmt(
     if (!child_or) return std::unexpected(std::move(child_or.error()));
     child_block.AppendStmt(*std::move(child_or));
   }
-  const mir::BlockId scope_id =
-      frame.current_block->child_scopes.Add(std::move(child_block));
   // The handler is built where the region sits, not inside its body: it runs
   // once the body has already been left.
   if (cancel_target.has_value()) {
     return mir::Stmt{
         .label = std::move(label),
-        .data =
-            BuildCancellableRegion(process, frame, scope_id, *cancel_target)};
+        .data = BuildCancellableRegion(
+            process, frame, std::move(child_block), *cancel_target)};
   }
+  const mir::BlockId scope_id =
+      frame.current_block->child_scopes.Add(std::move(child_block));
   return mir::Stmt{
       .label = std::move(label), .data = mir::BlockStmt{.scope = scope_id}};
 }
@@ -268,7 +298,7 @@ auto LowerDisableStmt(
   mir::CompilationUnit& unit = unit_lowerer.Unit();
   mir::Block& block = *frame.current_block;
 
-  // Reaching the target means projecting its per-instance source from the
+  // Reaching a target means projecting its per-instance storage from the
   // disabling body's own object; a body that reaches none -- a package callable
   // (LRM 26.3), a static class method (LRM 8.10) -- cannot name a target.
   if (!process.BodyHasReceiver()) {
@@ -278,13 +308,13 @@ auto LowerDisableStmt(
         "supported");
   }
   const std::optional<mir::FieldId> target =
-      process.Scopes().Get(d.target).cancellation_source;
+      process.Scopes().Get(d.target).cancellation_target;
   if (!target.has_value()) {
     throw InternalError(
-        "LowerDisableStmt: the target scope owns no cancellation source, so no "
+        "LowerDisableStmt: the named scope owns no cancellation target, so no "
         "name could have reached it -- please report this as a bug");
   }
-  const mir::ExprId member = CancellationSourceAccess(process, frame, *target);
+  const mir::ExprId member = CancellationTarget(process, frame, *target);
   const mir::ExprId services =
       block.exprs.Add(BuildCurrentRuntimeCallExpr(unit_lowerer));
   // One call carries the whole statement (LRM 9.6.2): it invalidates the

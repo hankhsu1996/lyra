@@ -143,10 +143,10 @@ struct InlineValueStorage {
   support::ValueDomain domain;
 };
 
-// A scope's cancellation source (LRM 9.6.2). Every scope owns one, so every
+// A scope's cancellation target (LRM 9.6.2). Every scope owns one, so every
 // backend realizes the storage; whether a backend can also raise and consume
 // the control effect a `disable` sends through it is a separate question.
-struct CancellationSourceStorage {};
+struct CancellationTargetStorage {};
 
 // The joint cancel state of the channels a deferred file write targets (LRM
 // 21.3.2), snapshotted into the closure that will perform that write so the
@@ -155,7 +155,7 @@ struct ChannelCancellationStorage {};
 
 using MemberStorageDescriptor = std::variant<
     BorrowedHandleStorage, ObservableCellStorage, InlineValueStorage,
-    CancellationSourceStorage, ChannelCancellationStorage>;
+    CancellationTargetStorage, ChannelCancellationStorage>;
 
 // One declaration's member storage schema, in its own member order: what a
 // generic value of it must realize for each member the declaration holds. It

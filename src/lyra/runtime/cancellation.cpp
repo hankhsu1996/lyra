@@ -5,7 +5,7 @@
 
 namespace lyra::runtime {
 
-void CancellationSource::Invalidate(RuntimeEffects& effects) {
+void CancellationTarget::Invalidate(RuntimeEffects& effects) {
   ++generation_;
   // Releasing the waiters is the same act an event trigger performs on its own:
   // a blocked execution would otherwise never regain control -- a `wait` whose
@@ -18,36 +18,35 @@ void CancellationSource::Invalidate(RuntimeEffects& effects) {
   }
 }
 
-CancellationGuard::CancellationGuard(
-    RuntimeEffects& effects, CancellationSource* source)
-    : process_(&effects.CurrentProcess()), source_(source) {
-  process_->PushEnclosingTarget(source);
+void EnterCancellationTarget(
+    RuntimeEffects& effects, CancellationTarget* target) {
+  effects.CurrentProcess().PushEnclosingTarget(target);
 }
 
-CancellationGuard::~CancellationGuard() {
-  process_->PopEnclosingTarget(source_);
+void LeaveCancellationTarget(
+    RuntimeEffects& effects, CancellationTarget* target) {
+  effects.CurrentProcess().PopEnclosingTarget(target);
 }
 
 void RaiseControlEffectIfDisabled(RuntimeProcess& process) {
-  CancellationSource* target = process.OutermostInvalidatedTarget();
+  CancellationTarget* target = process.OutermostInvalidatedTarget();
   if (target == nullptr) {
     return;
   }
   throw ControlEffect{.target = target};
 }
 
-void ClaimControlEffect(
-    const ControlEffect& effect, CancellationSource& target) {
-  // Returning is what claiming the effect means: the execution resumes past the
-  // target it just left, and whatever outcome it later settles is its own, not
-  // this one.
-  if (effect.target != &target) {
-    throw ControlEffect{effect};
-  }
+auto EffectNamesTarget(const ControlEffect& effect, CancellationTarget* target)
+    -> bool {
+  return effect.target == target;
 }
 
 void RaiseUnclaimableEffect() {
   throw ControlEffect{.target = nullptr};
+}
+
+void RaiseControlEffect(CancellationTarget* target) {
+  throw ControlEffect{.target = target};
 }
 
 auto ClassifyUnwind() -> Unwound {
@@ -62,8 +61,8 @@ auto ClassifyUnwind() -> Unwound {
   }
 }
 
-void Disable(CancellationSource& target, RuntimeEffects& effects) {
-  target.Invalidate(effects);
+void Disable(CancellationTarget* target, RuntimeEffects& effects) {
+  target->Invalidate(effects);
   RaiseControlEffectIfDisabled(effects.CurrentProcess());
 }
 

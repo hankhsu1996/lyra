@@ -131,6 +131,13 @@ auto RunGeneratedProcess(GeneratedRamp ramp, void* env) -> Coroutine<void> {
       generated.Resume();
     }
   }
+  // A body that cannot be unwound through reports a control effect no region of
+  // it claimed as an outcome rather than by leaving; raising it here is what
+  // settles this activation cancelled instead of finished (LRM 9.6.2, 9.7).
+  if (CancellationTarget* target = activation_frame.CancelledBy();
+      target != nullptr) {
+    RaiseControlEffect(target);
+  }
   co_return;
 }
 
@@ -277,17 +284,20 @@ auto OwnDraw(const DistributionDraw& draw) -> void* {
 }  // namespace lyra::runtime
 
 using lyra::runtime::ActivationValueCell;
+using lyra::runtime::CancellationTarget;
 using lyra::runtime::ChannelCancellation;
 using lyra::runtime::ClosureDefinition;
 using lyra::runtime::ClosureValue;
 using lyra::runtime::Coroutine;
 using lyra::runtime::CoroutineHandle;
 using lyra::runtime::DiagnosticDispatcher;
+using lyra::runtime::EnterCancellationTarget;
 using lyra::runtime::FileTable;
 using lyra::runtime::GeneratedCallScope;
 using lyra::runtime::GeneratedScope;
 using lyra::runtime::HierarchySegment;
 using lyra::runtime::IndicesOf;
+using lyra::runtime::LeaveCancellationTarget;
 using lyra::runtime::Observable;
 using lyra::runtime::Own;
 using lyra::runtime::OwnDraw;
@@ -571,6 +581,44 @@ void lyra_rt_wait_any(void* runtime, LyraSpan triggers) {
     collected.push_back(*handle);
   }
   SubscribeValueChange(svc.CurrentProcess().TopHandle(), collected);
+}
+
+void lyra_rt_enter_target(void* runtime, void* target) {
+  EnterCancellationTarget(
+      *static_cast<RuntimeEffects*>(runtime),
+      static_cast<CancellationTarget*>(target));
+}
+
+void lyra_rt_leave_target(void* runtime, void* target) {
+  LeaveCancellationTarget(
+      *static_cast<RuntimeEffects*>(runtime),
+      static_cast<CancellationTarget*>(target));
+}
+
+void lyra_rt_disable(void* target, void* runtime) {
+  static_cast<CancellationTarget*>(target)->Invalidate(
+      *static_cast<RuntimeEffects*>(runtime));
+}
+
+auto lyra_rt_effect_names_target(void* effect, void* target) -> void* {
+  // A control effect crosses as the target it names, since that is all one
+  // carries, so naming a target is comparing the two.
+  return Own(PackedArray::Bit(effect == target));
+}
+
+auto lyra_rt_invalidated_target(void* runtime) -> void* {
+  return static_cast<RuntimeEffects*>(runtime)
+      ->CurrentProcess()
+      .OutermostInvalidatedTarget();
+}
+
+auto lyra_rt_has_invalidated_target(void* runtime) -> bool {
+  return lyra_rt_invalidated_target(runtime) != nullptr;
+}
+
+void lyra_rt_settle_cancelled(void* effect) {
+  GeneratedCallScope::Current().ActivationFrame().SettleCancelled(
+      static_cast<CancellationTarget*>(effect));
 }
 
 auto lyra_rt_sim_time(void* runtime, const void* unit_power) -> void* {

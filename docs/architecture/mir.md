@@ -15,9 +15,10 @@ MIR's vocabulary is what those languages share:
 - A type system covering value types, object types, and composing wrappers (owning pointer, vector).
 - Object-oriented features: classes with members, member access through an explicit receiver
   expression.
-- Structured control flow: `if`, loop, sequence, return, and a region whose body can be left from
+- Structured control flow: `if`, loop, sequence, return; a region whose body can be left from
   anywhere within it -- including from a callable it invoked -- and whose continuation is the
-  statement after it.
+  statement after it, together with the raise that sends an effect the region declines on to the one
+  that does claim it; and a body paired with a cleanup that runs on every way out of it.
 
 SystemVerilog is one source language that flows in through HIR; SV does not shape MIR's vocabulary.
 SV-specific concepts -- signals as observable storage cells, NBA scheduling regions, event-control
@@ -79,8 +80,11 @@ what the construct means.
   parameters and bound environment, never through implicit context. `callable.md` is the canonical
   contract.
 - The identity of each object and member within a compilation unit.
-- Lightweight structured control flow inside a callable body: `if`, loop, sequence, and the region
-  that consumes a control effect naming it. No basic blocks at this layer.
+- Lightweight structured control flow inside a callable body: `if`, loop, sequence, the region that
+  consumes a control effect naming it, the raise that passes one it declines outward, and the body
+  paired with a cleanup that runs on every way out of it -- which is how an extent whose exit is an
+  effect is stated, rather than by relying on a target language to run code at scope exit. No basic
+  blocks at this layer.
 - A primitive expression set: literals, references, unary / binary / conditional operators, calls,
   conversions, closures, the block expression -- a run of statements and the value it ends with,
   which is how an evaluation of several steps stands where only an expression may, sequencing alone:

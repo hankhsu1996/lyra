@@ -218,6 +218,40 @@ auto RuntimeAbi::IsCancelled() -> llvm::FunctionCallee {
   return Get("lyra_rt_is_cancelled", types_->Ptr(), {types_->Ptr()});
 }
 
+auto RuntimeAbi::EnterTarget() -> llvm::FunctionCallee {
+  return Get(
+      "lyra_rt_enter_target", types_->Void(), {types_->Ptr(), types_->Ptr()});
+}
+
+auto RuntimeAbi::LeaveTarget() -> llvm::FunctionCallee {
+  return Get(
+      "lyra_rt_leave_target", types_->Void(), {types_->Ptr(), types_->Ptr()});
+}
+
+auto RuntimeAbi::Disable() -> llvm::FunctionCallee {
+  return Get("lyra_rt_disable", types_->Void(), {types_->Ptr(), types_->Ptr()});
+}
+
+auto RuntimeAbi::EffectNamesTarget() -> llvm::FunctionCallee {
+  return Get(
+      "lyra_rt_effect_names_target", types_->Ptr(),
+      {types_->Ptr(), types_->Ptr()});
+}
+
+auto RuntimeAbi::InvalidatedTarget() -> llvm::FunctionCallee {
+  return Get("lyra_rt_invalidated_target", types_->Ptr(), {types_->Ptr()});
+}
+
+auto RuntimeAbi::HasInvalidatedTarget() -> llvm::FunctionCallee {
+  return Get(
+      "lyra_rt_has_invalidated_target", llvm::Type::getInt1Ty(*ctx_),
+      {types_->Ptr()});
+}
+
+auto RuntimeAbi::SettleCancelled() -> llvm::FunctionCallee {
+  return Get("lyra_rt_settle_cancelled", types_->Void(), {types_->Ptr()});
+}
+
 auto RuntimeAbi::Format() -> llvm::FunctionCallee {
   return Get("lyra_rt_format", types_->Ptr(), {types_->Span(), types_->Ptr()});
 }

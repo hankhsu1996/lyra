@@ -312,21 +312,18 @@ auto ProcessLowerer::Run(const hir::SubroutineDecl& src)
   // through.
   const std::optional<mir::FieldId> cancel_target =
       owner_->Unit().types.IsCoroutine(result_type) && has_receiver
-          ? RootScope().cancellation_source
+          ? RootScope().cancellation_target
           : std::nullopt;
   if (cancel_target.has_value()) {
+    // The region brackets the whole body, so every activation of the task is
+    // inside the target for as long as it runs -- which is what makes one
+    // `disable` reach them all (LRM 9.6.2).
     mir::Block body_block;
     const WalkFrame inner_frame = body_frame.WithBlock(&body_block);
-    // Entering the target is the body's own first act, so every activation of
-    // the task is inside it for as long as it runs -- which is what makes one
-    // `disable` reach them all (LRM 9.6.2).
-    EmitCancellationGuard(*this, inner_frame, *cancel_target);
     auto lowered = LowerStraightLineBodyInto(*this, inner_frame);
     if (!lowered) return std::unexpected(std::move(lowered.error()));
-    const mir::BlockId body_id =
-        code.body->child_scopes.Add(std::move(body_block));
-    code.body->AppendStmt(
-        BuildCancellableRegion(*this, body_frame, body_id, *cancel_target));
+    code.body->AppendStmt(BuildCancellableRegion(
+        *this, body_frame, std::move(body_block), *cancel_target));
   } else {
     auto lowered = LowerStraightLineBodyInto(*this, body_frame);
     if (!lowered) return std::unexpected(std::move(lowered.error()));

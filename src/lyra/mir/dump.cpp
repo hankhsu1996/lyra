@@ -333,10 +333,8 @@ class MirDumper {
                   return "RuntimeLibrary(PrintLiteralItem)";
                 case RuntimeLibraryKind::kPrintValueItem:
                   return "RuntimeLibrary(PrintValueItem)";
-                case RuntimeLibraryKind::kCancellationSource:
-                  return "RuntimeLibrary(CancellationSource)";
-                case RuntimeLibraryKind::kCancellationGuard:
-                  return "RuntimeLibrary(CancellationGuard)";
+                case RuntimeLibraryKind::kCancellationTarget:
+                  return "RuntimeLibrary(CancellationTarget)";
                 case RuntimeLibraryKind::kControlEffect:
                   return "RuntimeLibrary(ControlEffect)";
                 case RuntimeLibraryKind::kFormatSpec:
@@ -1237,6 +1235,8 @@ class MirDumper {
             [&](const ExprStmt& s) { DumpExprStmt(s, enclosing, id); },
             [&](const BlockStmt& s) { DumpBlockStmt(enclosing, s, id); },
             [&](const TryStmt& s) { DumpTryStmt(enclosing, s, id); },
+            [&](const RaiseStmt& s) { DumpRaiseStmt(enclosing, s, id); },
+            [&](const FinallyStmt& s) { DumpFinallyStmt(enclosing, s, id); },
             [&](const IfStmt& s) { DumpIfStmt(enclosing, s, id); },
             [&](const ForStmt& s) { DumpForStmt(enclosing, s, id); },
             [&](const WhileStmt& s) { DumpWhileStmt(enclosing, s, id); },
@@ -1479,13 +1479,34 @@ class MirDumper {
     Line(
         std::format(
             "Stmt[{}] TryStmt body=BlockId{{{}}} caught=Local[{}] "
-            "handler=Expr[{}]",
+            "handler=BlockId{{{}}}",
             id.value, s.body.value, s.caught.value, s.handler.value));
+    Indent();
+    DumpBlock(enclosing.child_scopes.Get(s.body));
+    DumpBlock(enclosing.child_scopes.Get(s.handler));
+    Dedent();
+  }
+
+  void DumpFinallyStmt(
+      const Block& enclosing, const FinallyStmt& s, StmtId id) {
+    Line(
+        std::format(
+            "Stmt[{}] FinallyStmt body=BlockId{{{}}} cleanup=BlockId{{{}}}",
+            id.value, s.body.value, s.cleanup.value));
+    Indent();
+    DumpBlock(enclosing.child_scopes.Get(s.body));
+    DumpBlock(enclosing.child_scopes.Get(s.cleanup));
+    Dedent();
+  }
+
+  void DumpRaiseStmt(const Block& enclosing, const RaiseStmt& s, StmtId id) {
+    Line(
+        std::format(
+            "Stmt[{}] RaiseStmt effect=Expr[{}]", id.value, s.effect.value));
     Indent();
     Line(
         std::format(
-            "Expr[{}] {}", s.handler.value, FormatExpr(enclosing, s.handler)));
-    DumpBlock(enclosing.child_scopes.Get(s.body));
+            "Expr[{}] {}", s.effect.value, FormatExpr(enclosing, s.effect)));
     Dedent();
   }
 

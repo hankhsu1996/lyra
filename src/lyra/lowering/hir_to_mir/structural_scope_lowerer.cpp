@@ -1066,9 +1066,9 @@ auto StructuralScopeLowerer::DeclareShape() -> diag::Result<mir::ClassId> {
   // they nest, so a body reaches its own name node in one step and nothing has
   // to know what stands between. The nodes' own nesting is the HIR scope tree,
   // read where the objects are built.
-  const mir::TypeId cancellation_source_type = unit_lowerer.Unit().types.Intern(
+  const mir::TypeId cancellation_target_type = unit_lowerer.Unit().types.Intern(
       mir::RuntimeLibraryType{
-          .kind = mir::RuntimeLibraryKind::kCancellationSource});
+          .kind = mir::RuntimeLibraryKind::kCancellationTarget});
   std::vector<DeclaredScope> scopes;
   scopes.reserve(hir_scope.procedural_scopes.size());
   for (const hir::ProceduralScopeId scope_id :
@@ -1107,7 +1107,7 @@ auto StructuralScopeLowerer::DeclareShape() -> diag::Result<mir::ClassId> {
                             unit_lowerer.Unit().types.Intern(
                                 mir::ObjectType{.class_id = node_class}),
                             mir::PointerOwnership::kBorrowed)})},
-        .cancellation_source = std::nullopt};
+        .cancellation_target = std::nullopt};
 
     // What a `disable` of this scope invalidates (LRM 9.6.2). Its targets are
     // the blocks and tasks a name reaches, which is the same set a hierarchical
@@ -1116,10 +1116,10 @@ auto StructuralScopeLowerer::DeclareShape() -> diag::Result<mir::ClassId> {
     // scopes some `disable` names. It is one cell per instance shared by every
     // activation of the scope, which is what makes it a field here.
     if (scope.source_name.has_value()) {
-      node.cancellation_source = shape.fields.Add(
+      node.cancellation_target = shape.fields.Add(
           mir::FieldDecl{
               .name = std::format("{}__cancel_{}", segment, scope_id.value),
-              .type = cancellation_source_type});
+              .type = cancellation_target_type});
     }
     scopes.push_back(node);
   }
