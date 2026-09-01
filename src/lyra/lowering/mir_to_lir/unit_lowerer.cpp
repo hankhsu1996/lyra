@@ -59,13 +59,20 @@ auto UnitLowerer::Run() -> diag::Result<lir::CompilationUnit> {
 
   // What each unit this one references promised about its object, taken whole
   // and before any body lowers: a member step names a position counted out of
-  // that whole list.
+  // that whole list. Every identity comes first, because one record's members
+  // may name another of them and have to resolve to an identity that exists,
+  // whichever order the two were reached in.
   external_unit_object_identities_ =
       base::Translation<mir::ExternalUnitObjectId, lir::ExternalUnitObjectId>{
           mir_->external_unit_objects.size()};
-  for (const mir::ExternalUnitObject& object : mir_->external_unit_objects) {
+  for (std::size_t i = 0; i < mir_->external_unit_objects.size(); ++i) {
     external_unit_object_identities_.Append(
-        out_.external_unit_objects.Add(LowerExternalUnitObject(object)));
+        out_.external_unit_objects.Declare());
+  }
+  for (const mir::ExternalUnitObjectId id : mir_->external_unit_objects.Ids()) {
+    out_.external_unit_objects.Define(
+        external_unit_object_identities_.Get(id),
+        LowerExternalUnitObject(mir_->external_unit_objects.Get(id)));
   }
 
   std::vector<ClosureIdentities> closures;

@@ -107,7 +107,12 @@ struct CompilationUnit {
   TypePool types;
   base::Registry<Class, ClassId> classes;
   base::Registry<Closure, ClosureId> closures;
-  base::Arena<ExternalUnitObject, ExternalUnitObjectId> external_unit_objects;
+  // One record per unit this one compiled against, under the same
+  // declare-then-define lifecycle a class has: a member of one record may name
+  // another of them -- an interface port's does (LRM 25.3) -- so a record's
+  // identity exists before its members are filled in.
+  base::Registry<ExternalUnitObject, ExternalUnitObjectId>
+      external_unit_objects;
   base::Registry<Function, FunctionId> functions;
   std::vector<StaticStorage> static_storage;
   // The nullary function building each type's runtime descriptor, one answer

@@ -137,6 +137,15 @@ struct RouteTarget {
   hir::PublishedStorage storage;
 };
 
+// How a reader reaches a scope elsewhere on the elaborated hierarchy: where
+// navigation starts, and the descent from there. What the route ends at is not
+// part of it, so one walk serves both a reference to storage some scope holds
+// and a connection naming the scope itself.
+struct ScopeRoute {
+  hir::RouteHead head;
+  std::vector<hir::PathStep> steps;
+};
+
 // The declarations of one structural scope that a peer may name before the
 // scope is built, minted here and handed to the scope when it is.
 struct ScopeDeclarations {
@@ -676,6 +685,17 @@ class UnitLowerer {
   [[nodiscard]] auto ResolveValueTarget(
       const WalkFrame& frame, const slang::ast::ValueSymbol& value)
       -> diag::Result<std::optional<hir::ValueTarget>>;
+
+  // How this reader reaches `target`, a scope elsewhere on the elaborated
+  // hierarchy: the head it anchors at and the descent from there, with each
+  // step typed where this unit declares what it lands on and by name where it
+  // does not. Empty when no route reaches the scope, which is a target form
+  // this unit cannot yet express rather than a compiler-bug invariant. Port
+  // connections and hierarchical references share this one walk, so neither
+  // reaches across an instance boundary a way the other cannot.
+  [[nodiscard]] auto RouteToScope(
+      const WalkFrame& frame, const slang::ast::Scope& target) const
+      -> std::optional<ScopeRoute>;
 
   // The reads of a dependency set that name a cell, as the entries that wake on
   // it under `edge`. A read of anything else contributes none, so a constant

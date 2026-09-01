@@ -9,9 +9,11 @@
 #include <vector>
 
 #include <slang/ast/Expression.h>
+#include <slang/ast/HierarchicalReference.h>
 #include <slang/ast/Scope.h>
 #include <slang/ast/SemanticFacts.h>
 #include <slang/ast/expressions/AssignmentExpressions.h>
+#include <slang/ast/expressions/MiscExpressions.h>
 #include <slang/ast/symbols/InstanceSymbols.h>
 #include <slang/ast/symbols/PortSymbols.h>
 #include <slang/ast/symbols/ValueSymbol.h>
@@ -35,17 +37,108 @@ namespace lyra::lowering::ast_to_hir {
 namespace {
 
 auto PortConnectionUnsupported(diag::SourceSpan span, std::string message)
-    -> diag::Result<void> {
+    -> std::unexpected<diag::Diagnostic> {
   return diag::Fail(
       span, diag::DiagCode::kUnsupportedPortConnectionForm, std::move(message));
+}
+
+// The route from this scope to a member the child published: one typed step
+// onto the instance, then the position that member sits at in the object its
+// signature describes (LRM 23.3.3). Every connection reaches the child's side
+// this way, whichever kind of port it is.
+auto PublishedMemberRecipe(
+    const hir::OwnedChildStep& instance_step,
+    hir::ExternalUnitObjectId child_object, hir::PublishedMemberId member,
+    hir::TypeId type) -> hir::RoutedPathRecipe {
+  return hir::RoutedPathRecipe{
+      .head = hir::InUnitHead{.hops = {}},
+      .steps = {hir::PathStep{instance_step}},
+      .leaf =
+          hir::SignatureMemberLeaf{.object = child_object, .member = member},
+      .type = type};
+}
+
+// The route to the interface instance a connection names (LRM 25.3). An actual
+// written as an interface port of a scope enclosing the connection makes that
+// port the whole route: the instance behind it belongs to a unit this one
+// reaches no other way, so a route around the port would describe a different
+// design -- which is why the frontend's own resolution of the port to that
+// instance is not what this reads. Every other actual names an instance
+// somewhere on the object tree, reached by the same walk every reference
+// across an instance boundary uses.
+auto InterfaceActualRoute(
+    UnitLowerer& unit_lowerer, const slang::ast::PortConnection& conn,
+    hir::TypeId object_type, diag::SourceSpan span, WalkFrame frame)
+    -> diag::Result<hir::RoutedPathRecipe> {
+  const auto recipe = [&](hir::RouteHead head,
+                          std::vector<hir::PathStep> steps) {
+    return hir::RoutedPathRecipe{
+        .head = std::move(head),
+        .steps = std::move(steps),
+        .leaf = hir::ScopeLeaf{},
+        .type = object_type};
+  };
+
+  const slang::ast::Expression* actual = conn.getExpression();
+  const auto* named =
+      actual == nullptr
+          ? nullptr
+          : actual->as_if<slang::ast::ArbitrarySymbolExpression>();
+
+  if (named != nullptr && named->hierRef.isViaIfacePort()) {
+    const auto path = named->hierRef.path;
+    // The port and nothing after it. A longer path selects something inside the
+    // interface the port carries, which is not that interface.
+    if (path.size() != 1) {
+      return PortConnectionUnsupported(
+          span,
+          "an interface reached through part of another interface port is not "
+          "yet supported");
+    }
+    const auto port = unit_lowerer.LookupInterfacePortBinding(*path[0].symbol);
+    if (!port.has_value()) {
+      throw InternalError(
+          "InterfaceActualRoute: the actual names an interface port of a scope "
+          "enclosing the connection, which this unit's own walk declared");
+    }
+    const auto hops = frame.HopsTo(port->home_frame);
+    if (!hops.has_value()) {
+      throw InternalError(
+          "InterfaceActualRoute: an interface port is a member of a scope "
+          "enclosing every connection that names it");
+    }
+    return recipe(
+        hir::InUnitHead{.hops = *hops},
+        {hir::PathStep{hir::InterfacePortStep{.port = port->port}}});
+  }
+
+  // Which instance an element of an instance array is given is settled while
+  // the design elaborates (LRM 23.3.3.5), so the connection states it; the
+  // actual's own expression names the whole array the elements were cut from.
+  const slang::ast::Symbol* connected = conn.getIfaceConn().first;
+  const auto* instance = connected == nullptr
+                             ? nullptr
+                             : connected->as_if<slang::ast::InstanceSymbol>();
+  if (instance == nullptr) {
+    return PortConnectionUnsupported(
+        span, "this interface port connection form is not yet supported");
+  }
+  auto route = unit_lowerer.RouteToScope(frame, instance->body);
+  if (!route.has_value()) {
+    return PortConnectionUnsupported(
+        span,
+        "an interface port connected to an instance this scope cannot name is "
+        "not yet supported");
+  }
+  return recipe(std::move(route->head), std::move(route->steps));
 }
 
 // Binds one interface port of a child instance to the interface instance the
 // connection names (LRM 25.3). Both sides are routes resolved once in the
 // resolve phase: the child's port member, reached through the step onto the
-// instance, and the interface object, reached as a child this scope declares.
-// Nothing crosses the boundary as a value, so the connection installs no
-// driver and waits on nothing.
+// instance, and the interface object the actual names. Nothing crosses the
+// boundary as a value, so the connection installs no driver and waits on
+// nothing.
 auto ConnectInterfacePort(
     UnitLowerer& unit_lowerer, const hir::InterfacePortPart& published,
     const hir::UnitSignature& child_signature,
@@ -55,52 +148,22 @@ auto ConnectInterfacePort(
     WalkFrame frame) -> diag::Result<void> {
   const hir::PublishedMember& member =
       hir::InstanceClassOf(child_signature).members.Get(published.member);
-  const slang::ast::Symbol* connected = conn.getIfaceConn().first;
-  const auto* instance = connected == nullptr
-                             ? nullptr
-                             : connected->as_if<slang::ast::InstanceSymbol>();
-  if (instance == nullptr) {
-    return PortConnectionUnsupported(
-        span, "this interface port connection form is not yet supported");
-  }
-  // The interface has to be one this scope reaches as a child it declares and
-  // can climb to: an instance further away is named by a path this unit does
-  // not lay out.
-  const auto binding = unit_lowerer.LookupOwnedChildBinding(*instance);
-  const auto peer_hops = binding.has_value()
-                             ? frame.HopsTo(binding->home_frame)
-                             : std::optional<hir::StructuralHops>{};
-  if (!peer_hops.has_value()) {
-    return PortConnectionUnsupported(
-        span,
-        "an interface port connected to an instance outside this scope is not "
-        "yet supported");
-  }
   // The type of what is bound is the child's own statement of which unit
   // belongs there, taken into this unit's pool, so the parent's record of the
   // connection rests on the child's promise rather than on a second reading of
   // the frontend.
   const hir::TypeId object_type =
       unit_lowerer.ImportSignatureType(child_signature, member.type);
+  auto peer =
+      InterfaceActualRoute(unit_lowerer, conn, object_type, span, frame);
+  if (!peer) return std::unexpected(std::move(peer.error()));
   frame.current_structural_scope->port_connections.Add(
       hir::PortConnection{
           .span = span,
           .kind = hir::InterfacePortConnection{
-              .endpoint =
-                  hir::RoutedPathRecipe{
-                      .head = hir::InUnitHead{.hops = {}},
-                      .steps = {hir::PathStep{instance_step}},
-                      .leaf =
-                          hir::SignatureMemberLeaf{
-                              .object = child_object,
-                              .member = published.member},
-                      .type = object_type},
-              .peer = hir::RoutedPathRecipe{
-                  .head = hir::InUnitHead{.hops = *peer_hops},
-                  .steps = {hir::PathStep{hir::OwnedChildStep{
-                      .child = binding->child, .indices = {}}}},
-                  .leaf = hir::ScopeLeaf{},
-                  .type = object_type}}});
+              .endpoint = PublishedMemberRecipe(
+                  instance_step, child_object, published.member, object_type),
+              .peer = *std::move(peer)}});
   return {};
 }
 
@@ -212,19 +275,10 @@ auto ConnectElementPorts(
           span, "const ref port connection is not yet supported");
     }
 
-    // The route to the child's own storage: one typed step onto the instance,
-    // then the member the child published. Which cell that member is, is the
-    // child's own statement of it, so the parent never reads the child's
-    // declaration to find out.
-    const auto port_recipe = [&]() -> hir::RoutedPathRecipe {
-      return hir::RoutedPathRecipe{
-          .head = hir::InUnitHead{.hops = {}},
-          .steps = {hir::PathStep{instance_step}},
-          .leaf =
-              hir::SignatureMemberLeaf{
-                  .object = child_object, .member = *data->member},
-          .type = type_id};
-    };
+    // Which cell that member is, is the child's own statement of it, so the
+    // parent never reads the child's declaration to find out.
+    const hir::RoutedPathRecipe port_recipe = PublishedMemberRecipe(
+        instance_step, child_object, *data->member, type_id);
     // An input/output port reads the child cell during simulation, so it holds
     // a persistent routed reference; a `ref` port is bound once in the resolve
     // phase, so it keeps only the reach.
@@ -233,7 +287,7 @@ auto ConnectElementPorts(
           .cell = frame.Exprs().Add(unit_lowerer.MakeRoutedMemberRef(
               *internal, home_frame,
               hir::RoutedRefDecl{
-                  .recipe = port_recipe(), .target_storage = member.storage},
+                  .recipe = port_recipe, .target_storage = member.storage},
               span))};
     };
 
@@ -296,7 +350,7 @@ auto ConnectElementPorts(
         break;
       }
       case hir::PortDirection::kRef: {
-        endpoint = port_recipe();
+        endpoint = port_recipe;
         auto peer_or = scope.LowerExpr(*expr, frame);
         if (!peer_or) return std::unexpected(std::move(peer_or.error()));
         peer = frame.Exprs().Add(*std::move(peer_or));

@@ -670,6 +670,29 @@ auto UnitLowerer::TranslateReferenceRoute(
     }
   }
 
+  // A target this unit declares reaches its storage through the scope that
+  // owns it, and a leaf naming that declaration already fixes the whole
+  // procedural descent, so the named blocks around it are part of where the
+  // storage sits rather than steps of their own (LRM 23.9). They nest
+  // contiguously under that scope, so dropping them here drops all of them.
+  const slang::ast::Scope* owner = value.getHierarchicalParent();
+  if (data_object || procedural_static) {
+    while (owner != nullptr &&
+           owner->asSymbol().kind == slang::ast::SymbolKind::StatementBlock) {
+      owner = owner->asSymbol().getHierarchicalParent();
+    }
+  }
+  if (owner == nullptr) return std::nullopt;
+
+  auto route = RouteToScope(frame, *owner);
+  if (!route.has_value()) return std::nullopt;
+  return routed_ref(
+      frame.Current(), std::move(route->head), std::move(route->steps));
+}
+
+auto UnitLowerer::RouteToScope(
+    const WalkFrame& frame, const slang::ast::Scope& target) const
+    -> std::optional<ScopeRoute> {
   // The reader's elaborated ancestor scopes, across unit boundaries (slang's
   // `getHierarchicalParent` crosses the boundary at the instance-body
   // transition). The route meets the target at the deepest scope shared with
@@ -687,19 +710,11 @@ auto UnitLowerer::TranslateReferenceRoute(
   // across a unit boundary, the array member for a generate-loop iteration or
   // instance-array element with the elaborated index attached.
   std::vector<hir::PathStep> descent;
-  const slang::ast::Scope* scope = value.getHierarchicalParent();
+  const slang::ast::Scope* scope = &target;
   while (scope != nullptr) {
     const slang::ast::Symbol* owned = &scope->asSymbol();
     const slang::ast::Scope* next = owned->getHierarchicalParent();
     std::vector<std::uint32_t> indices;
-    // A target this unit declares reaches its storage through the scope that
-    // owns it, so the named blocks in between are part of where the storage
-    // sits rather than steps of their own.
-    if (owned->kind == slang::ast::SymbolKind::StatementBlock &&
-        (data_object || procedural_static)) {
-      scope = next;
-      continue;
-    }
     if (owned->kind == slang::ast::SymbolKind::InstanceBody) {
       const auto* inst =
           owned->as<slang::ast::InstanceBodySymbol>().parentInstance;
@@ -754,10 +769,9 @@ auto UnitLowerer::TranslateReferenceRoute(
               hir::OwnedChildStep{
                   .child = obinding->child, .indices = std::move(indices)});
           std::ranges::reverse(descent);
-          const ScopeFrameId slot_owner =
-              hops->value == 0 ? obinding->home_frame : frame.Current();
-          return routed_ref(
-              slot_owner, hir::InUnitHead{.hops = *hops}, std::move(descent));
+          return ScopeRoute{
+              .head = hir::InUnitHead{.hops = *hops},
+              .steps = std::move(descent)};
         }
       }
       // No owned-child binding: this unit does not declare the head, so it
@@ -768,12 +782,12 @@ auto UnitLowerer::TranslateReferenceRoute(
       // typed branch above always takes it, so reaching here is exactly the
       // cross-unit case and never a silent fallback for a local one.
       std::ranges::reverse(descent);
-      return routed_ref(
-          frame.Current(),
-          hir::VisibleChildHead{
-              .head_name = std::string{owned->name},
-              .head_indices = std::move(indices)},
-          std::move(descent));
+      return ScopeRoute{
+          .head =
+              hir::VisibleChildHead{
+                  .head_name = std::string{owned->name},
+                  .head_indices = std::move(indices)},
+          .steps = std::move(descent)};
     }
 
     // A step this unit declares stays inside its layout and carries the

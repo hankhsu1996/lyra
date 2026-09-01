@@ -116,15 +116,13 @@ auto UnitLowerer::PublishSignature() -> diag::Result<void> {
           span, diag::DiagCode::kUnsupportedStructuralMember,
           std::move(message));
     };
-    if (port.isGeneric) {
-      return refuse("a generic interface port is not yet supported");
-    }
     const auto range = port.getDeclaredRange();
     if (!range.has_value() || !range->empty()) {
       return refuse("an interface array port is not yet supported");
     }
     // Which interface the port carries is settled during elaboration, so the
-    // unit reads it here and publishes it; a unit whose ports name different
+    // unit reads it here and publishes it; a header that leaves it unnamed
+    // (LRM 25.3.3) is read the same way. A unit whose ports name different
     // interfaces is a different specialization and has its own name already.
     // A modport narrows which members the port reaches and in which direction
     // (LRM 25.5), so a port carrying one publishes something different from

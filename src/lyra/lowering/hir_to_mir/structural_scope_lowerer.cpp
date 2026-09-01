@@ -456,9 +456,16 @@ auto MaterializeLeaf(
 
   // A route ending at a scope names the object the steps landed on, and every
   // step already yields a borrowed pointer to what it reached, so the last one
-  // is the value.
+  // is the value. A step answered by name yields the scope every object on the
+  // tree is one of, and the route's own type is what says which one.
   if (std::holds_alternative<hir::ScopeLeaf>(leaf)) {
-    return receiver.expr;
+    if (block.exprs.Get(receiver.expr).type != unit.builtins.scope_ptr) {
+      return receiver.expr;
+    }
+    return block.exprs.Add(
+        mir::Expr{
+            .data = mir::PointerCastExpr{.operand = receiver.expr},
+            .type = slot_type});
   }
 
   if (const auto* opaque = std::get_if<hir::OpaqueLeaf>(&leaf)) {
