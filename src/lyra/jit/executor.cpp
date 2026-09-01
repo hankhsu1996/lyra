@@ -129,6 +129,10 @@ void DefineRuntimeAbi(llvm::orc::LLJIT& jit) {
   add("lyra_rt_file_open_mode", &lyra_rt_file_open_mode);
   add("lyra_rt_file_close", &lyra_rt_file_close);
   add("lyra_rt_file_getc", &lyra_rt_file_getc);
+  add("lyra_rt_file_gets", &lyra_rt_file_gets);
+  add("lyra_rt_file_error", &lyra_rt_file_error);
+  add("lyra_rt_file_read", &lyra_rt_file_read);
+  add("lyra_rt_file_read_memory", &lyra_rt_file_read_memory);
   add("lyra_rt_file_ungetc", &lyra_rt_file_ungetc);
   add("lyra_rt_file_seek", &lyra_rt_file_seek);
   add("lyra_rt_file_rewind", &lyra_rt_file_rewind);
@@ -179,6 +183,8 @@ void DefineRuntimeAbi(llvm::orc::LLJIT& jit) {
   add("lyra_rt_run_host_command", &lyra_rt_run_host_command);
   add("lyra_rt_run_null_host_command", &lyra_rt_run_null_host_command);
   add("lyra_rt_test_plusargs", &lyra_rt_test_plusargs);
+  add("lyra_rt_packed_value_plusargs", &lyra_rt_packed_value_plusargs);
+  add("lyra_rt_string_value_plusargs", &lyra_rt_string_value_plusargs);
   add("lyra_rt_urandom", &lyra_rt_urandom);
   add("lyra_rt_urandom_seeded", &lyra_rt_urandom_seeded);
   add("lyra_rt_urandom_range", &lyra_rt_urandom_range);

@@ -69,17 +69,38 @@ the argument vector.
   exist. Runtime free functions (`LyraPrint(RuntimeServices&, ...)`, etc.) stay unchanged.
 - Both backends eat the same generic input; the LLVM optimizer reaches through.
 - Each runtime effect lowers to a generic `CallExpr` whose first argument is `self.Services()` and
-  renders through one generic path with no injection. An entry that takes a write-through
-  destination (a `$fread` / `$fgets`-style output) receives a copy-out temp as an ordinary argument,
-  so the call carries no live-reference or mutate-routing concept; an effect whose SV form omits
-  optional arguments either materializes the default at lowering or selects a shorter runtime
-  overload, so the argument vector is always complete.
+  renders through one generic path with no injection. An entry that answers through a destination
+  the call names completes with a product of the values it settled, and the call site stores each
+  where the source named it, so the call carries no live-reference or mutate-routing concept. An
+  effect whose SV form omits an optional argument materializes the default at lowering, so the
+  argument vector is always complete; where the forms differ by more than a default, each is its own
+  entry.
 - An item-bearing effect (the `$display`, diagnostic, and `$sformat` families) flattens its items
   into a constructed `PrintItem` array -- each item a value-build `ConstructExpr` over a
   runtime-library value type (`PrintItem` / `FormatSpec`) -- and encodes any discrete mode (a
   print's newline discipline, a diagnostic's severity) in the selected runtime entry rather than as
   an argument. An effect that yields a value (`$sformat`) produces it as the call's rvalue for the
   surrounding statement to place.
+
+## What the copy-out temp got wrong
+
+This entry first said that an entry taking a write-through destination "receives a copy-out temp as
+an ordinary argument". The reason it gave is right and still holds: the call must carry no
+live-reference or mutate-routing concept. The mechanism was not. The callable model settled the
+other one -- an `output` is a component of the result's output pack, an `inout` is a value parameter
+plus one, and the call site writes each component to the actual it named -- and the subroutine
+family moved to it while the runtime effects were left behind. Two staters of "how does a call
+answer" then drifted, for as long as nobody wrote a service that needed both.
+
+What made the drift visible is that a temp lent to a callee cannot be written at all where every
+value crosses as a handle the generated side may not mutate: the same source ran on one backend and
+handed back an untouched destination on the other. Stating the answer as the completion removes the
+lending entirely, which is a stronger form of the property this entry wanted rather than a departure
+from it.
+
+"Selects a shorter runtime overload" is superseded the same way. An overload set is told apart by
+arity, and a boundary whose signature comes from the call cannot tell two arities of one symbol
+apart, so a form that differs by more than a materializable default names its own entry.
 
 ## Cross-references
 
@@ -90,3 +111,7 @@ the argument vector.
   item still uses at execution time).
 - `decisions/callable-receiver.md` (`self` binding; `self.Services()` reaches the engine through
   it).
+- `decisions/unified-callable-model.md` (the output pack and the completion payload -- how a call
+  answers through a destination it names, which supersedes the copy-out temp above).
+- `decisions/runtime-entry-naming.md` (a signature taken from the call, which is why an overload set
+  told apart by arity cannot survive at this boundary).

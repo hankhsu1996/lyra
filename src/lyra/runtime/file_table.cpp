@@ -470,19 +470,19 @@ auto FileTable::Ungetc(
   return MakeInt(0);
 }
 
-auto FileTable::Gets(value::String& dest, const value::PackedArray& fd_pa)
-    -> value::PackedArray {
+auto FileTable::Gets(const value::PackedArray& fd_pa) -> TextRead {
+  const auto read_nothing = [] {
+    return TextRead{MakeInt(0), value::String{}};
+  };
   const std::int32_t fd = AsInt32(fd_pa);
   auto* slot = ResolveSlot(fd);
   if (slot == nullptr) {
     SetError(fd, EBADF, "$fgets: not an open file descriptor");
-    dest = value::String{};
-    return MakeInt(0);
+    return read_nothing();
   }
   if (!slot->permits_read) {
     SetError(fd, EBADF, "$fgets: file not open for reading");
-    dest = value::String{};
-    return MakeInt(0);
+    return read_nothing();
   }
   // LRM 21.3.4.2 + 21.3.4.1: byte-by-byte loop so any pending $ungetc byte
   // is the first byte of the line. std::getline would bypass the slot-side
@@ -502,29 +502,29 @@ auto FileTable::Gets(value::String& dest, const value::PackedArray& fd_pa)
   }
   if (line.empty()) {
     SetError(fd, 0, "$fgets: EOF");
-    dest = value::String{};
-    return MakeInt(0);
+    return read_nothing();
   }
-  dest = value::String{line};
-  return MakeInt(static_cast<std::int32_t>(line.size()));
+  return TextRead{
+      MakeInt(static_cast<std::int32_t>(line.size())), value::String{line}};
 }
 
-auto FileTable::Read(value::PackedArray& dest, const value::PackedArray& fd_pa)
-    -> value::PackedArray {
+auto FileTable::Read(value::PackedArray dest, const value::PackedArray& fd_pa)
+    -> PackedRead {
+  const auto unchanged = [&dest] { return PackedRead{MakeInt(0), dest}; };
   const std::int32_t fd = AsInt32(fd_pa);
   auto* slot = ResolveSlot(fd);
   if (slot == nullptr) {
     SetError(fd, EBADF, "$fread: not an open file descriptor");
-    return MakeInt(0);
+    return unchanged();
   }
   if (!slot->permits_read) {
     SetError(fd, EBADF, "$fread: file not open for reading");
-    return MakeInt(0);
+    return unchanged();
   }
   const std::uint64_t width = dest.BitWidth();
   if (width == 0U) {
     SetError(fd, EINVAL, "$fread: destination has zero bit width");
-    return MakeInt(0);
+    return unchanged();
   }
   const auto byte_count = static_cast<std::size_t>((width + 7U) / 8U);
   std::vector<char> buf(byte_count, '\0');
@@ -540,36 +540,37 @@ auto FileTable::Read(value::PackedArray& dest, const value::PackedArray& fd_pa)
   const auto got = pos + static_cast<std::size_t>(slot->file->gcount());
   if (got == 0U) {
     SetError(fd, 0, "$fread: EOF");
-    return MakeInt(0);
+    return unchanged();
   }
   // LRM 21.3.4.4: 2-value, big-endian (first byte fills the MSBs). On a
   // short read, the trailing buffer is already zero from the vector
   // constructor and lands in the destination's LSBs ("as much as
   // available"). PackedArray::FromBytes supports any width; the
   // destination's declared shape (sign / 4-state) is preserved.
-  dest = value::PackedArray::FromBytes(
-      buf, width, dest.IsSigned(), dest.IsFourState());
-  return MakeInt(static_cast<std::int32_t>(got));
+  return PackedRead{
+      MakeInt(static_cast<std::int32_t>(got)),
+      value::PackedArray::FromBytes(
+          buf, width, dest.IsSigned(), dest.IsFourState())};
 }
 
-namespace {
+namespace {}  // namespace
 
-auto ReadUnpackedImpl(
-    FileTable& files, value::UnpackedArray<value::PackedArray>& dest,
-    const value::PackedArray& fd_pa, std::int64_t declared_left,
-    std::int64_t declared_right, std::int64_t start_sv,
-    std::optional<std::int64_t> count) -> value::PackedArray {
+auto ReadMemoryWords(
+    FileTable& files, const value::PackedArray& fd_pa,
+    const value::PackedArray& element_prototype, std::int64_t declared_left,
+    std::int64_t declared_right, std::int64_t start_sv, std::int64_t count,
+    const std::function<void(std::int64_t, value::PackedArray)>& write_word)
+    -> std::int32_t {
   const std::int32_t fd = AsInt32(fd_pa);
   auto* slot = files.ResolveSlot(fd);
   if (slot == nullptr) {
     files.SetError(fd, EBADF, "$fread: not an open file descriptor");
-    return MakeInt(0);
+    return 0;
   }
   if (!slot->permits_read) {
     files.SetError(fd, EBADF, "$fread: file not open for reading");
-    return MakeInt(0);
+    return 0;
   }
-  if (dest.RawSize() == 0U) return MakeInt(0);
 
   const auto lowest_sv = std::min(declared_left, declared_right);
   const auto highest_sv = std::max(declared_left, declared_right);
@@ -577,18 +578,17 @@ auto ReadUnpackedImpl(
   // and return 0 so the user sees the failure rather than a silent no-op.
   if (start_sv < lowest_sv || start_sv > highest_sv) {
     files.SetError(fd, EINVAL, "$fread: start index out of array range");
-    return MakeInt(0);
+    return 0;
   }
   const auto available_elements =
       static_cast<std::size_t>(highest_sv - start_sv + 1);
   const auto target_count =
-      count.has_value()
-          ? std::min(static_cast<std::size_t>(*count), available_elements)
-          : available_elements;
+      std::min(static_cast<std::size_t>(count), available_elements);
 
-  const auto element_width = dest.RawAt(0).BitWidth();
-  const bool elem_signed = dest.RawAt(0).IsSigned();
-  const bool elem_four_state = dest.RawAt(0).IsFourState();
+  const auto element_width = element_prototype.BitWidth();
+  if (element_width == 0U) return 0;
+  const bool elem_signed = element_prototype.IsSigned();
+  const bool elem_four_state = element_prototype.IsFourState();
   const auto bytes_per_elem =
       static_cast<std::size_t>((element_width + 7U) / 8U);
   std::size_t total_bytes = 0;
@@ -610,43 +610,38 @@ auto ReadUnpackedImpl(
     // "shorter input -> trailing zeros" path -- consistent with the packed
     // form's "as much as available" behaviour.
     auto effective = std::span<const char>(buf).first(got_this);
-    auto elem_value = value::PackedArray::FromBytes(
-        effective, element_width, elem_signed, elem_four_state);
-    // Write by source-declared index; the declared range `[left:right]` is the
-    // receiver's static-type coordinate system, passed as select operands.
-    const std::int64_t sv_index = start_sv + static_cast<std::int64_t>(k);
-    dest.ElementRef(
-        value::PackedArray::Int(static_cast<std::int32_t>(sv_index)),
-        value::PackedArray::Int(static_cast<std::int32_t>(declared_left)),
-        value::PackedArray::Int(static_cast<std::int32_t>(declared_right))) =
-        std::move(elem_value);
+    // Written by source-declared index: the declared range is the receiver's
+    // static-type coordinate system, and the holder resolves it.
+    write_word(
+        start_sv + static_cast<std::int64_t>(k),
+        value::PackedArray::FromBytes(
+            effective, element_width, elem_signed, elem_four_state));
     total_bytes += got_this;
     if (got_this < bytes_per_elem) break;
   }
-  return MakeInt(static_cast<std::int32_t>(total_bytes));
-}
-
-}  // namespace
-
-auto FileTable::Read(
-    value::UnpackedArray<value::PackedArray>& dest,
-    const value::PackedArray& fd, const value::PackedArray& declared_left,
-    const value::PackedArray& declared_right,
-    const value::PackedArray& sv_start) -> value::PackedArray {
-  return ReadUnpackedImpl(
-      *this, dest, fd, declared_left.ToInt64(), declared_right.ToInt64(),
-      sv_start.ToInt64(), std::nullopt);
+  return static_cast<std::int32_t>(total_bytes);
 }
 
 auto FileTable::Read(
-    value::UnpackedArray<value::PackedArray>& dest,
-    const value::PackedArray& fd, const value::PackedArray& declared_left,
+    value::UnpackedArray<value::PackedArray> dest, const value::PackedArray& fd,
+    const value::PackedArray& declared_left,
     const value::PackedArray& declared_right,
     const value::PackedArray& sv_start, const value::PackedArray& count)
-    -> value::PackedArray {
-  return ReadUnpackedImpl(
-      *this, dest, fd, declared_left.ToInt64(), declared_right.ToInt64(),
-      sv_start.ToInt64(), count.ToInt64());
+    -> MemoryRead {
+  if (dest.RawSize() == 0U) return MemoryRead{MakeInt(0), std::move(dest)};
+  const std::int64_t left = declared_left.ToInt64();
+  const std::int64_t right = declared_right.ToInt64();
+  const std::int32_t read = ReadMemoryWords(
+      *this, fd, dest.RawAt(0), left, right, sv_start.ToInt64(),
+      count.ToInt64(),
+      [&dest, left, right](std::int64_t sv_index, value::PackedArray word) {
+        dest.ElementRef(
+            value::PackedArray::Int(static_cast<std::int32_t>(sv_index)),
+            value::PackedArray::Int(static_cast<std::int32_t>(left)),
+            value::PackedArray::Int(static_cast<std::int32_t>(right))) =
+            std::move(word);
+      });
+  return MemoryRead{MakeInt(read), std::move(dest)};
 }
 
 auto FileTable::Seek(
@@ -715,17 +710,16 @@ auto FileTable::Eof(const value::PackedArray& fd_pa) -> value::PackedArray {
   return MakeInt(stream->eof() ? 1 : 0);
 }
 
-auto FileTable::Error(const value::PackedArray& fd_pa, value::String& dest)
-    -> value::PackedArray {
+auto FileTable::Error(const value::PackedArray& fd_pa) -> TextRead {
   const std::int32_t fd = AsInt32(fd_pa);
   const int errno_value = LastError(fd);
   if (errno_value == 0) {
-    dest = value::String{};
-    return MakeInt(0);
+    return TextRead{MakeInt(0), value::String{}};
   }
-  dest = value::String{LastErrorMessage(fd)};
+  TextRead completion{
+      MakeInt(errno_value), value::String{LastErrorMessage(fd)}};
   ClearError(fd);
-  return MakeInt(errno_value);
+  return completion;
 }
 
 void FileTable::Flush() {

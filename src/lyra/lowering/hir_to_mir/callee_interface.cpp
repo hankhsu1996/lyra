@@ -2,14 +2,19 @@
 
 #include <cstdint>
 #include <optional>
+#include <span>
+#include <utility>
 #include <vector>
 
 #include "lyra/base/component_index.hpp"
 #include "lyra/base/internal_error.hpp"
 #include "lyra/hir/procedural_var.hpp"
 #include "lyra/hir/subroutine.hpp"
+#include "lyra/lowering/hir_to_mir/callable_bindings.hpp"
+#include "lyra/lowering/hir_to_mir/lhs_store.hpp"
 #include "lyra/lowering/hir_to_mir/unit_lowerer.hpp"
 #include "lyra/mir/expr.hpp"
+#include "lyra/mir/stmt.hpp"
 #include "lyra/mir/type.hpp"
 
 namespace lyra::lowering::hir_to_mir {
@@ -124,6 +129,36 @@ auto ProjectCompletionComponent(
       mir::Expr{
           .data = mir::TupleGetExpr{.tuple = tuple_ref, .index = index},
           .type = component_type});
+}
+
+auto BindCompletion(
+    mir::CompilationUnit& unit, const WalkFrame& frame, mir::Expr call,
+    mir::TypeId payload_type, std::span<const CompletionWriteback> writebacks)
+    -> mir::LocalId {
+  mir::Block& body = *frame.current_block;
+  const mir::ExprId call_id = body.exprs.Add(std::move(call));
+  const mir::ExprId completion_value =
+      unit.types.Get(body.exprs.Get(call_id).type).Is<mir::CoroutineType>()
+          ? body.exprs.Add(
+                mir::Expr{
+                    .data = mir::AwaitExpr{.awaitable = call_id},
+                    .type = payload_type})
+          : call_id;
+  const mir::LocalId completion = frame.bindings->DeclareAnonymous(
+      mir::LocalDecl{.name = "_lyra_completion", .type = payload_type});
+  body.AppendStmt(
+      mir::LocalDeclStmt{.target = completion, .init = completion_value});
+
+  for (const CompletionWriteback& writeback : writebacks) {
+    const mir::ExprId component = ProjectCompletionComponent(
+        body, completion, payload_type, writeback.component, writeback.type);
+    body.AppendStmt(
+        mir::ExprStmt{
+            .expr = body.exprs.Add(BuildStoreExpr(
+                unit, body, writeback.place, component, std::nullopt,
+                writeback.type))});
+  }
+  return completion;
 }
 
 }  // namespace lyra::lowering::hir_to_mir

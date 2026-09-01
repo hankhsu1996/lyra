@@ -12,153 +12,97 @@
 #include "lyra/value/packed_array.hpp"
 #include "lyra/value/queue.hpp"
 #include "lyra/value/string.hpp"
+#include "lyra/value/tuple.hpp"
 #include "lyra/value/unpacked_array.hpp"
 
 namespace lyra::runtime {
 
 class RuntimeEffects;
 
-// LRM 21.4 $readmemh / $readmemb. Loads the memory `dest` from the text file
-// named `filename`: whitespace-separated radix-`base` words (base 16 for
-// $readmemh, 2 for $readmemb), optional `@hex` address directives, `//` and
-// `/* */` comments, and per-digit x / z / ?. `declared_left` / `declared_right`
-// are dest's declared index bounds; each word is written by declared index, so
-// a descending or non-zero-based memory resolves correctly. Words the file does
-// not address keep their prior value. `dest` is the lowering's copy-out temp,
-// committed to the SV memory after the call returns.
+// LRM 21.4 $readmemh / $readmemb. Loads a memory from the text file named
+// `filename`: whitespace-separated radix-`base` words (base 16 for $readmemh, 2
+// for $readmemb), optional `@hex` address directives, `//` and `/* */`
+// comments, and per-digit x / z / ?. Each word is written by declared index, so
+// a descending or non-zero-based memory resolves correctly, and a word the file
+// does not address keeps what it held, which is why the memory crosses in and
+// rides the completion back out.
 //
-// Addressing (LRM 21.4): the no-range form fills from the lowest declared index
-// upward; the `start`-only form fills upward from `start`; the `start`/`finish`
-// form fills from `start` toward `finish`, descending when `start > finish`. An
-// `@address` in the file repositions the write cursor and must fall inside the
-// active range, else the load stops with an error.
-void ReadMem(
-    RuntimeEffects& runtime, value::UnpackedArray<value::PackedArray>& dest,
-    const value::String& filename, const value::PackedArray& declared_left,
-    const value::PackedArray& declared_right, const value::PackedArray& base);
-void ReadMem(
-    RuntimeEffects& runtime, value::UnpackedArray<value::PackedArray>& dest,
-    const value::String& filename, const value::PackedArray& declared_left,
-    const value::PackedArray& declared_right, const value::PackedArray& base,
-    const value::PackedArray& start);
-void ReadMem(
-    RuntimeEffects& runtime, value::UnpackedArray<value::PackedArray>& dest,
-    const value::String& filename, const value::PackedArray& declared_left,
-    const value::PackedArray& declared_right, const value::PackedArray& base,
-    const value::PackedArray& start, const value::PackedArray& finish);
-
-// LRM 21.5 $writememh / $writememb. Dumps the memory `src` to the text file
-// named `filename` in a form `$readmem{h,b}` reads back: one radix-`base` word
-// per line (base 16 for $writememh, 2 for $writememb), each element rendered at
-// full width with per-digit x / z. `declared_left` / `declared_right` are src's
-// declared index bounds. An existing file is overwritten (LRM 21.5, no append).
+// LRM 21.5 $writememh / $writememb dumps the same memory in a form the load
+// reads back: one radix-`base` word per line, each rendered at full width with
+// per-digit x / z. An existing file is overwritten (no append).
 //
-// Addressing (LRM 21.5.3): for an unpacked array no `@address` is written. The
-// no-range form dumps the whole memory from the lowest declared index upward;
-// the `start`-only form dumps upward from `start`; the `start`/`finish` form
-// dumps from `start` toward `finish`, descending when `start > finish`.
-void WriteMem(
-    RuntimeEffects& runtime,
-    const value::UnpackedArray<value::PackedArray>& src,
-    const value::String& filename, const value::PackedArray& declared_left,
-    const value::PackedArray& declared_right, const value::PackedArray& base);
-void WriteMem(
-    RuntimeEffects& runtime,
-    const value::UnpackedArray<value::PackedArray>& src,
-    const value::String& filename, const value::PackedArray& declared_left,
-    const value::PackedArray& declared_right, const value::PackedArray& base,
-    const value::PackedArray& start);
-void WriteMem(
-    RuntimeEffects& runtime,
-    const value::UnpackedArray<value::PackedArray>& src,
-    const value::String& filename, const value::PackedArray& declared_left,
-    const value::PackedArray& declared_right, const value::PackedArray& base,
-    const value::PackedArray& start, const value::PackedArray& finish);
+// Addressing is one of two requests, and the caller says which. The plain form
+// runs upward from `start`, which the caller materializes as the memory's
+// lowest address where the source named none -- the clause's no-address form
+// and its start-only form are the same run. The windowed form names a `finish`
+// as well, which bounds the range an `@address` may reach, lets the run
+// descend, and obliges the file to fill the whole window (LRM 21.4).
+//
+// The memory itself decides what an address means: an unpacked array reads its
+// declared bounds, a dynamic array or queue is the 0-based dense space its
+// current size spans, and an associative array is addressed by key and takes a
+// key prototype so it builds each key at the width an ordinary access uses. The
+// element is a single packed vector in every one of them.
 
-// LRM 21.4.1 / 21.5: a dynamic array or queue memory. It is a 0-based dense
-// space whose address range is `[0, size-1]`; the load does not resize it, so
-// it carries no declared bounds -- the container's current size is the range.
-// The element must still be a single packed vector.
-void ReadMem(
-    RuntimeEffects& runtime, value::DynamicArray<value::PackedArray>& dest,
-    const value::String& filename, const value::PackedArray& base);
-void ReadMem(
-    RuntimeEffects& runtime, value::DynamicArray<value::PackedArray>& dest,
+// What a load completes with: the memory it filled.
+template <typename Memory>
+using MemoryLoad = value::Tuple<Memory>;
+
+using DynamicMemory = value::DynamicArray<value::PackedArray>;
+using QueueMemory = value::Queue<value::PackedArray>;
+using AssociativeMemory =
+    value::AssociativeArray<value::PackedArray, value::PackedArray>;
+
+auto ReadMem(
+    RuntimeEffects& runtime, DynamicMemory dest, const value::String& filename,
+    const value::PackedArray& base, const value::PackedArray& start)
+    -> MemoryLoad<DynamicMemory>;
+auto ReadMemWithin(
+    RuntimeEffects& runtime, DynamicMemory dest, const value::String& filename,
+    const value::PackedArray& base, const value::PackedArray& start,
+    const value::PackedArray& finish) -> MemoryLoad<DynamicMemory>;
+void WriteMem(
+    RuntimeEffects& runtime, const DynamicMemory& src,
     const value::String& filename, const value::PackedArray& base,
     const value::PackedArray& start);
-void ReadMem(
-    RuntimeEffects& runtime, value::DynamicArray<value::PackedArray>& dest,
-    const value::String& filename, const value::PackedArray& base,
-    const value::PackedArray& start, const value::PackedArray& finish);
-void WriteMem(
-    RuntimeEffects& runtime, const value::DynamicArray<value::PackedArray>& src,
-    const value::String& filename, const value::PackedArray& base);
-void WriteMem(
-    RuntimeEffects& runtime, const value::DynamicArray<value::PackedArray>& src,
-    const value::String& filename, const value::PackedArray& base,
-    const value::PackedArray& start);
-void WriteMem(
-    RuntimeEffects& runtime, const value::DynamicArray<value::PackedArray>& src,
+void WriteMemWithin(
+    RuntimeEffects& runtime, const DynamicMemory& src,
     const value::String& filename, const value::PackedArray& base,
     const value::PackedArray& start, const value::PackedArray& finish);
 
-void ReadMem(
-    RuntimeEffects& runtime, value::Queue<value::PackedArray>& dest,
-    const value::String& filename, const value::PackedArray& base);
-void ReadMem(
-    RuntimeEffects& runtime, value::Queue<value::PackedArray>& dest,
+auto ReadMem(
+    RuntimeEffects& runtime, QueueMemory dest, const value::String& filename,
+    const value::PackedArray& base, const value::PackedArray& start)
+    -> MemoryLoad<QueueMemory>;
+auto ReadMemWithin(
+    RuntimeEffects& runtime, QueueMemory dest, const value::String& filename,
+    const value::PackedArray& base, const value::PackedArray& start,
+    const value::PackedArray& finish) -> MemoryLoad<QueueMemory>;
+void WriteMem(
+    RuntimeEffects& runtime, const QueueMemory& src,
     const value::String& filename, const value::PackedArray& base,
     const value::PackedArray& start);
-void ReadMem(
-    RuntimeEffects& runtime, value::Queue<value::PackedArray>& dest,
-    const value::String& filename, const value::PackedArray& base,
-    const value::PackedArray& start, const value::PackedArray& finish);
-void WriteMem(
-    RuntimeEffects& runtime, const value::Queue<value::PackedArray>& src,
-    const value::String& filename, const value::PackedArray& base);
-void WriteMem(
-    RuntimeEffects& runtime, const value::Queue<value::PackedArray>& src,
-    const value::String& filename, const value::PackedArray& base,
-    const value::PackedArray& start);
-void WriteMem(
-    RuntimeEffects& runtime, const value::Queue<value::PackedArray>& src,
+void WriteMemWithin(
+    RuntimeEffects& runtime, const QueueMemory& src,
     const value::String& filename, const value::PackedArray& base,
     const value::PackedArray& start, const value::PackedArray& finish);
 
-// LRM 21.4.1 / 21.5.3: an associative memory with an integral index. It is
-// addressed by key, so it carries no declared range; a load creates the entries
-// the file addresses, and a dump writes one `@key` line per entry in ascending
-// key order. A load takes a `key_prototype` -- a default value of the declared
-// index type -- so it builds each key at the width an ordinary `mem[i]` access
-// uses (the map orders keys of one common width).
-void ReadMem(
-    RuntimeEffects& runtime,
-    value::AssociativeArray<value::PackedArray, value::PackedArray>& dest,
+auto ReadMem(
+    RuntimeEffects& runtime, AssociativeMemory dest,
     const value::String& filename, const value::PackedArray& key_prototype,
-    const value::PackedArray& base);
-void ReadMem(
-    RuntimeEffects& runtime,
-    value::AssociativeArray<value::PackedArray, value::PackedArray>& dest,
-    const value::String& filename, const value::PackedArray& key_prototype,
-    const value::PackedArray& base, const value::PackedArray& start);
-void ReadMem(
-    RuntimeEffects& runtime,
-    value::AssociativeArray<value::PackedArray, value::PackedArray>& dest,
+    const value::PackedArray& base, const value::PackedArray& start)
+    -> MemoryLoad<AssociativeMemory>;
+auto ReadMemWithin(
+    RuntimeEffects& runtime, AssociativeMemory dest,
     const value::String& filename, const value::PackedArray& key_prototype,
     const value::PackedArray& base, const value::PackedArray& start,
-    const value::PackedArray& finish);
+    const value::PackedArray& finish) -> MemoryLoad<AssociativeMemory>;
 void WriteMem(
-    RuntimeEffects& runtime,
-    const value::AssociativeArray<value::PackedArray, value::PackedArray>& src,
-    const value::String& filename, const value::PackedArray& base);
-void WriteMem(
-    RuntimeEffects& runtime,
-    const value::AssociativeArray<value::PackedArray, value::PackedArray>& src,
+    RuntimeEffects& runtime, const AssociativeMemory& src,
     const value::String& filename, const value::PackedArray& base,
     const value::PackedArray& start);
-void WriteMem(
-    RuntimeEffects& runtime,
-    const value::AssociativeArray<value::PackedArray, value::PackedArray>& src,
+void WriteMemWithin(
+    RuntimeEffects& runtime, const AssociativeMemory& src,
     const value::String& filename, const value::PackedArray& base,
     const value::PackedArray& start, const value::PackedArray& finish);
 
@@ -172,10 +116,15 @@ void WriteMem(
 // each highest-dimension word expands to, row-major.
 namespace detail {
 
+// A level of a memory: an array of the level below, or the packed word the
+// nesting bottoms out at. A one-dimensional memory is the depth-one case of
+// the same traversal, so it needs no form of its own.
 template <typename T>
-struct IsNestedArray : std::false_type {};
+struct IsMemoryLevel : std::false_type {};
+template <>
+struct IsMemoryLevel<value::PackedArray> : std::true_type {};
 template <typename U>
-struct IsNestedArray<value::UnpackedArray<U>> : std::true_type {};
+struct IsMemoryLevel<value::UnpackedArray<U>> : std::true_type {};
 
 // Leaf count of one highest-dimension word: the product of the inner dimension
 // sizes. An empty bounds list (the highest dimension is itself the leaf level)
@@ -266,7 +215,7 @@ void WriteMemGridCore(
         leaf_get);
 
 template <typename Inner>
-  requires detail::IsNestedArray<Inner>::value
+  requires detail::IsMemoryLevel<Inner>::value
 void ReadMemMultidim(
     RuntimeEffects& runtime, value::UnpackedArray<Inner>& dest,
     const value::String& filename, std::span<const value::PackedArray> dims,
@@ -289,7 +238,7 @@ void ReadMemMultidim(
 }
 
 template <typename Inner>
-  requires detail::IsNestedArray<Inner>::value
+  requires detail::IsMemoryLevel<Inner>::value
 void WriteMemMultidim(
     RuntimeEffects& runtime, const value::UnpackedArray<Inner>& src,
     const value::String& filename, std::span<const value::PackedArray> dims,
@@ -311,55 +260,39 @@ void WriteMemMultidim(
       });
 }
 
-// A multidimensional memory reaches the backend as an `UnpackedArray` whose
-// element is itself an `UnpackedArray`; these overloads are selected by that
-// nesting and forward to the depth-generic cores above. The dimension bounds
-// arrive as one `std::array` (rendered from a bounds literal) that binds to the
-// `std::span` the cores take.
+// An unpacked memory of any depth. The bounds ride as a
+// `[left0, right0, left1, right1, ...]` array whose first pair is the addressed
+// dimension and whose rest describe the leaves each address expands to, so a
+// one-dimensional memory is the two-element case of the same traversal.
 template <typename Inner>
-  requires detail::IsNestedArray<Inner>::value
-void ReadMem(
-    RuntimeEffects& runtime, value::UnpackedArray<Inner>& dest,
+  requires detail::IsMemoryLevel<Inner>::value
+auto ReadMem(
+    RuntimeEffects& runtime, value::UnpackedArray<Inner> dest,
     const value::String& filename, std::span<const value::PackedArray> dims,
-    const value::PackedArray& base) {
-  ReadMemMultidim(
-      runtime, dest, filename, dims, static_cast<unsigned>(base.ToInt64()),
-      std::nullopt, std::nullopt);
-}
-template <typename Inner>
-  requires detail::IsNestedArray<Inner>::value
-void ReadMem(
-    RuntimeEffects& runtime, value::UnpackedArray<Inner>& dest,
-    const value::String& filename, std::span<const value::PackedArray> dims,
-    const value::PackedArray& base, const value::PackedArray& start) {
+    const value::PackedArray& base, const value::PackedArray& start)
+    -> MemoryLoad<value::UnpackedArray<Inner>> {
   ReadMemMultidim(
       runtime, dest, filename, dims, static_cast<unsigned>(base.ToInt64()),
       start.ToInt64(), std::nullopt);
-}
-template <typename Inner>
-  requires detail::IsNestedArray<Inner>::value
-void ReadMem(
-    RuntimeEffects& runtime, value::UnpackedArray<Inner>& dest,
-    const value::String& filename, std::span<const value::PackedArray> dims,
-    const value::PackedArray& base, const value::PackedArray& start,
-    const value::PackedArray& finish) {
-  ReadMemMultidim(
-      runtime, dest, filename, dims, static_cast<unsigned>(base.ToInt64()),
-      start.ToInt64(), finish.ToInt64());
+  return MemoryLoad<value::UnpackedArray<Inner>>{std::move(dest)};
 }
 
 template <typename Inner>
-  requires detail::IsNestedArray<Inner>::value
-void WriteMem(
-    RuntimeEffects& runtime, const value::UnpackedArray<Inner>& src,
+  requires detail::IsMemoryLevel<Inner>::value
+auto ReadMemWithin(
+    RuntimeEffects& runtime, value::UnpackedArray<Inner> dest,
     const value::String& filename, std::span<const value::PackedArray> dims,
-    const value::PackedArray& base) {
-  WriteMemMultidim(
-      runtime, src, filename, dims, static_cast<unsigned>(base.ToInt64()),
-      std::nullopt, std::nullopt);
+    const value::PackedArray& base, const value::PackedArray& start,
+    const value::PackedArray& finish)
+    -> MemoryLoad<value::UnpackedArray<Inner>> {
+  ReadMemMultidim(
+      runtime, dest, filename, dims, static_cast<unsigned>(base.ToInt64()),
+      start.ToInt64(), finish.ToInt64());
+  return MemoryLoad<value::UnpackedArray<Inner>>{std::move(dest)};
 }
+
 template <typename Inner>
-  requires detail::IsNestedArray<Inner>::value
+  requires detail::IsMemoryLevel<Inner>::value
 void WriteMem(
     RuntimeEffects& runtime, const value::UnpackedArray<Inner>& src,
     const value::String& filename, std::span<const value::PackedArray> dims,
@@ -368,9 +301,10 @@ void WriteMem(
       runtime, src, filename, dims, static_cast<unsigned>(base.ToInt64()),
       start.ToInt64(), std::nullopt);
 }
+
 template <typename Inner>
-  requires detail::IsNestedArray<Inner>::value
-void WriteMem(
+  requires detail::IsMemoryLevel<Inner>::value
+void WriteMemWithin(
     RuntimeEffects& runtime, const value::UnpackedArray<Inner>& src,
     const value::String& filename, std::span<const value::PackedArray> dims,
     const value::PackedArray& base, const value::PackedArray& start,

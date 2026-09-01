@@ -346,12 +346,44 @@ auto OwnVisited(std::optional<value::RuntimeValue> index, const void* probe)
           found ? *std::move(index) : Read<value::RuntimeValue>(probe)});
 }
 
-// The value drawn and the seed the draw advanced (LRM 20.14.2).
-auto OwnDraw(const DistributionDraw& draw) -> void* {
+// The memory a load leaves behind: `words` are what it read, running ascending
+// by declared index from `first_sv`, and every other word keeps what it held
+// (LRM 21.3.4.4, 21.4). Built in one pass over the memory, because a
+// functional write per word would cost a whole-array rebuild each time.
+auto MemoryWithWords(
+    const value::RuntimeUnpackedArray& memory, const value::PackedArray& left,
+    const value::PackedArray& right, std::int64_t first_sv,
+    std::span<const value::PackedArray> words) -> value::RuntimeUnpackedArray {
+  const std::int64_t left_sv = left.ToInt64();
+  const std::int64_t right_sv = right.ToInt64();
+  const std::int64_t step = left_sv <= right_sv ? 1 : -1;
+  const auto written = static_cast<std::int64_t>(words.size());
+  std::vector<value::RuntimeValue> elements;
+  for (std::int64_t sv = left_sv;; sv += step) {
+    const std::int64_t offset = sv - first_sv;
+    elements.push_back(
+        offset >= 0 && offset < written
+            ? value::RuntimeValue{words[static_cast<std::size_t>(offset)]}
+            : memory.Element(
+                  value::PackedArray::Int(static_cast<std::int32_t>(sv)), left,
+                  right));
+    if (sv == right_sv) break;
+  }
+  return value::RuntimeUnpackedArray{
+      memory.ElementDefault(), std::move(elements), 1};
+}
+
+// A completion the runtime already assembled as a pair, boxed into the erased
+// representation component by component. Which two values they are is the
+// entry's own business -- the value drawn and the seed it advanced (LRM
+// 20.14.2), a byte count and the text or memory those bytes filled (LRM
+// 21.3.4.2, 21.3.4.4, 21.3.7).
+template <typename First, typename Second>
+auto OwnBoth(const value::Tuple<First, Second>& completion) -> void* {
   return OwnCompletion(
       std::vector<value::RuntimeValue>{
-          value::RuntimeValue{draw.Get<0>()},
-          value::RuntimeValue{draw.Get<1>()}});
+          value::RuntimeValue{completion.template Get<0>()},
+          value::RuntimeValue{completion.template Get<1>()}});
 }
 
 }  // namespace
@@ -377,7 +409,6 @@ using lyra::runtime::LeaveCancellationTarget;
 using lyra::runtime::NamedEvent;
 using lyra::runtime::Observable;
 using lyra::runtime::Own;
-using lyra::runtime::OwnDraw;
 using lyra::runtime::ProgramLifetime;
 using lyra::runtime::Read;
 using lyra::runtime::RealTimeInUnit;
@@ -455,6 +486,45 @@ void lyra_rt_file_close(void* files, const void* descriptor) {
 
 auto lyra_rt_file_getc(void* files, const void* fd) -> void* {
   return Own(static_cast<FileTable*>(files)->Getc(Read<PackedArray>(fd)));
+}
+
+auto lyra_rt_file_gets(void* files, const void* fd) -> void* {
+  return lyra::runtime::OwnBoth(
+      static_cast<FileTable*>(files)->Gets(Read<PackedArray>(fd)));
+}
+
+auto lyra_rt_file_error(void* files, const void* fd) -> void* {
+  return lyra::runtime::OwnBoth(
+      static_cast<FileTable*>(files)->Error(Read<PackedArray>(fd)));
+}
+
+auto lyra_rt_file_read(void* files, const void* dest, const void* fd) -> void* {
+  return lyra::runtime::OwnBoth(
+      static_cast<FileTable*>(files)->Read(
+          Read<PackedArray>(dest), Read<PackedArray>(fd)));
+}
+
+auto lyra_rt_file_read_memory(
+    void* files, const void* dest, const void* fd, const void* left,
+    const void* right, const void* start, const void* count) -> void* {
+  const auto memory = Read<lyra::value::RuntimeUnpackedArray>(dest);
+  const PackedArray left_bound = Read<PackedArray>(left);
+  const PackedArray right_bound = Read<PackedArray>(right);
+  const std::int64_t first_sv = Read<PackedArray>(start).ToInt64();
+  std::vector<PackedArray> words;
+  const std::int32_t read = lyra::runtime::ReadMemoryWords(
+      *static_cast<FileTable*>(files), Read<PackedArray>(fd),
+      std::get<PackedArray>(memory.ElementDefault().value),
+      left_bound.ToInt64(), right_bound.ToInt64(), first_sv,
+      Read<PackedArray>(count).ToInt64(),
+      [&words](std::int64_t, PackedArray word) {
+        words.push_back(std::move(word));
+      });
+  return lyra::runtime::OwnCompletion(
+      std::vector<lyra::value::RuntimeValue>{
+          lyra::value::RuntimeValue{PackedArray::Int(read)},
+          lyra::value::RuntimeValue{lyra::runtime::MemoryWithWords(
+              memory, left_bound, right_bound, first_sv, words)}});
 }
 
 auto lyra_rt_file_ungetc(void* files, const void* c, const void* fd) -> void* {
@@ -765,6 +835,20 @@ auto lyra_rt_test_plusargs(void* runtime, const void* user_string) -> void* {
       *static_cast<RuntimeEffects*>(runtime), Read<String>(user_string)));
 }
 
+auto lyra_rt_packed_value_plusargs(
+    void* runtime, const void* user_string, const void* destination) -> void* {
+  return lyra::runtime::OwnBoth(ValuePlusargs(
+      *static_cast<RuntimeEffects*>(runtime), Read<String>(user_string),
+      Read<PackedArray>(destination)));
+}
+
+auto lyra_rt_string_value_plusargs(
+    void* runtime, const void* user_string, const void* destination) -> void* {
+  return lyra::runtime::OwnBoth(ValuePlusargs(
+      *static_cast<RuntimeEffects*>(runtime), Read<String>(user_string),
+      Read<String>(destination)));
+}
+
 auto lyra_rt_urandom(void* runtime) -> void* {
   return Own(lyra::runtime::Urandom(*static_cast<RuntimeEffects*>(runtime)));
 }
@@ -789,7 +873,7 @@ auto lyra_rt_random(void* runtime) -> void* {
 
 auto lyra_rt_dist_uniform(const void* seed, const void* start, const void* end)
     -> void* {
-  return OwnDraw(
+  return lyra::runtime::OwnBoth(
       lyra::runtime::DistUniform(
           Read<PackedArray>(seed), Read<PackedArray>(start),
           Read<PackedArray>(end)));
@@ -798,40 +882,40 @@ auto lyra_rt_dist_uniform(const void* seed, const void* start, const void* end)
 auto lyra_rt_dist_normal(
     const void* seed, const void* mean, const void* standard_deviation)
     -> void* {
-  return OwnDraw(
+  return lyra::runtime::OwnBoth(
       lyra::runtime::DistNormal(
           Read<PackedArray>(seed), Read<PackedArray>(mean),
           Read<PackedArray>(standard_deviation)));
 }
 
 auto lyra_rt_dist_exponential(const void* seed, const void* mean) -> void* {
-  return OwnDraw(
+  return lyra::runtime::OwnBoth(
       lyra::runtime::DistExponential(
           Read<PackedArray>(seed), Read<PackedArray>(mean)));
 }
 
 auto lyra_rt_dist_poisson(const void* seed, const void* mean) -> void* {
-  return OwnDraw(
+  return lyra::runtime::OwnBoth(
       lyra::runtime::DistPoisson(
           Read<PackedArray>(seed), Read<PackedArray>(mean)));
 }
 
 auto lyra_rt_dist_chi_square(const void* seed, const void* degrees_of_freedom)
     -> void* {
-  return OwnDraw(
+  return lyra::runtime::OwnBoth(
       lyra::runtime::DistChiSquare(
           Read<PackedArray>(seed), Read<PackedArray>(degrees_of_freedom)));
 }
 
 auto lyra_rt_dist_t(const void* seed, const void* degrees_of_freedom) -> void* {
-  return OwnDraw(
+  return lyra::runtime::OwnBoth(
       lyra::runtime::DistT(
           Read<PackedArray>(seed), Read<PackedArray>(degrees_of_freedom)));
 }
 
 auto lyra_rt_dist_erlang(const void* seed, const void* stages, const void* mean)
     -> void* {
-  return OwnDraw(
+  return lyra::runtime::OwnBoth(
       lyra::runtime::DistErlang(
           Read<PackedArray>(seed), Read<PackedArray>(stages),
           Read<PackedArray>(mean)));

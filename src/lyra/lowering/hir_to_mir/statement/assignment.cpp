@@ -20,7 +20,6 @@
 #include "lyra/lowering/hir_to_mir/expression/assignment.hpp"
 #include "lyra/lowering/hir_to_mir/expression/dpi_call.hpp"
 #include "lyra/lowering/hir_to_mir/expression/selects.hpp"
-#include "lyra/lowering/hir_to_mir/expression/system/file_io.hpp"
 #include "lyra/lowering/hir_to_mir/expression/system/mem_file.hpp"
 #include "lyra/lowering/hir_to_mir/expression/system/sformat.hpp"
 #include "lyra/lowering/hir_to_mir/lhs_store.hpp"
@@ -230,19 +229,14 @@ auto LowerSystemSubroutineCallStmtForm(
     ProcessLowerer& process, WalkFrame frame,
     const std::optional<std::string>& label, const hir::CallExpr& call,
     const hir::SystemSubroutineRef& ref,
-    std::optional<hir::ExprId> assign_target, mir::TypeId result_type)
+    std::optional<hir::ExprId> assign_target)
     -> std::optional<diag::Result<mir::Stmt>> {
   const auto& desc = support::LookupSystemSubroutine(ref.id);
   return std::visit(
       Overloaded{
-          [&](const support::FileIOSystemSubroutineInfo& file_io)
+          [](const support::FileIOSystemSubroutineInfo&)
               -> std::optional<diag::Result<mir::Stmt>> {
-            if (!support::IsFileOutputArgBuiltinFn(file_io.builtin_fn)) {
-              return std::nullopt;
-            }
-            return LowerFileIOSystemSubroutineCallStmt(
-                process, frame, label, call, file_io, assign_target,
-                result_type);
+            return std::nullopt;
           },
           [&](const support::SFormatSystemSubroutineInfo& sformat)
               -> std::optional<diag::Result<mir::Stmt>> {
@@ -351,8 +345,7 @@ auto LowerExprStmt(
     if (const auto* sys_ref =
             std::get_if<hir::SystemSubroutineRef>(&call->callee)) {
       if (auto stmt = LowerSystemSubroutineCallStmtForm(
-              process, frame, label, *call, *sys_ref, std::nullopt,
-              inner_type)) {
+              process, frame, label, *call, *sys_ref, std::nullopt)) {
         return *std::move(stmt);
       }
     }
@@ -391,24 +384,16 @@ auto LowerExprStmt(
         assign->kind == hir::AssignKind::kBlocking) {
       // Peek through an implicit conversion wrapper that slang inserts when
       // the call's return type does not match the LHS type bit-for-bit.
-      hir::ExprId rhs_id = assign->rhs;
-      const hir::Expr* rhs = &hir_proc.exprs.Get(rhs_id);
-      const hir::Expr* call_carrier = rhs;
-      std::optional<hir::TypeId> conv_target_type = std::nullopt;
-      if (const auto* conv = std::get_if<hir::ConversionExpr>(&rhs->data)) {
-        rhs_id = conv->operand;
-        call_carrier = &hir_proc.exprs.Get(rhs_id);
-        conv_target_type = rhs->type;
+      const hir::Expr* call_carrier = &hir_proc.exprs.Get(assign->rhs);
+      if (const auto* conv =
+              std::get_if<hir::ConversionExpr>(&call_carrier->data)) {
+        call_carrier = &hir_proc.exprs.Get(conv->operand);
       }
       if (const auto* call = std::get_if<hir::CallExpr>(&call_carrier->data)) {
         if (const auto* sys_ref =
                 std::get_if<hir::SystemSubroutineRef>(&call->callee)) {
-          const mir::TypeId result_type = process.Owner().TranslateType(
-              conv_target_type.has_value() ? *conv_target_type
-                                           : call_carrier->type);
           if (auto stmt = LowerSystemSubroutineCallStmtForm(
-                  process, frame, label, *call, *sys_ref, assign->lhs,
-                  result_type)) {
+                  process, frame, label, *call, *sys_ref, assign->lhs)) {
             return *std::move(stmt);
           }
         }

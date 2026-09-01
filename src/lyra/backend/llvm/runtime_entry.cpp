@@ -226,18 +226,19 @@ auto EntryNamingOf(support::BuiltinFn fn) -> EntryNaming {
   // generated artifact, not to the value domain its representation shares.
   constexpr std::string_view kReadsDeclaredMembers =
       "reads an enumeration's declared members";
-  // An entry that reports through an argument rather than as a result varies
-  // with how many arguments there are and what each one is, and the value model
-  // gives the generated side no way to lend one: every operand crosses as a
-  // value the runtime owns.
-  constexpr std::string_view kAssignsToAnArgument =
-      "assigns to an argument the call names";
   // An unpacked concatenation (LRM 10.10) takes as many parts as the source
   // wrote, each contributing either itself or its own elements, and no C ABI
   // names an entry per arity. Reaching the machine needs the parts folded into
   // a chain of appends, the way a packed join already is.
   constexpr std::string_view kTakesAsManyPartsAsWritten =
       "builds a container from as many parts as the source wrote";
+  // A memory load or dump walks its container to reach each word, and the
+  // library's walk is compiled against that container's own type -- nesting
+  // depth included, which an erased handle does not carry. Realizing one here
+  // means a walk driven by the value's runtime domain instead.
+  constexpr std::string_view kWalksACompiledContainer =
+      "walks a memory whose container kind and depth its entry is compiled "
+      "against";
 
   switch (fn) {
     case support::BuiltinFn::kElement:
@@ -388,12 +389,16 @@ auto EntryNamingOf(support::BuiltinFn fn) -> EntryNaming {
     case support::BuiltinFn::kSpread:
       return NotRealized{.shape = kTakesAsManyPartsAsWritten};
 
-    case support::BuiltinFn::kFileGets:
-    case support::BuiltinFn::kFileRead:
-    case support::BuiltinFn::kFileError:
+    // The runtime, then the user string, then the destination whose
+    // representation names the entry.
     case support::BuiltinFn::kValuePlusargs:
+      return NamedByValue{.operand = 2};
+
     case support::BuiltinFn::kReadMem:
-      return NotRealized{.shape = kAssignsToAnArgument};
+    case support::BuiltinFn::kReadMemWithin:
+    case support::BuiltinFn::kWriteMem:
+    case support::BuiltinFn::kWriteMemWithin:
+      return NotRealized{.shape = kWalksACompiledContainer};
 
     case support::BuiltinFn::kTrigger:
     case support::BuiltinFn::kAwait:
@@ -424,6 +429,10 @@ auto EntryNamingOf(support::BuiltinFn fn) -> EntryNaming {
     case support::BuiltinFn::kFileOpenMode:
     case support::BuiltinFn::kFileClose:
     case support::BuiltinFn::kFileGetc:
+    case support::BuiltinFn::kFileGets:
+    case support::BuiltinFn::kFileRead:
+    case support::BuiltinFn::kFileReadMemory:
+    case support::BuiltinFn::kFileError:
     case support::BuiltinFn::kFileUngetc:
     case support::BuiltinFn::kFileSeek:
     case support::BuiltinFn::kFileRewind:
@@ -434,7 +443,6 @@ auto EntryNamingOf(support::BuiltinFn fn) -> EntryNaming {
     case support::BuiltinFn::kTestPlusargs:
     case support::BuiltinFn::kRunHostCommand:
     case support::BuiltinFn::kRunNullHostCommand:
-    case support::BuiltinFn::kWriteMem:
     case support::BuiltinFn::kDelay:
     case support::BuiltinFn::kWaitAny:
     case support::BuiltinFn::kSimTime:

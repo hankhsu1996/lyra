@@ -152,15 +152,14 @@ sanctions; the runtime-parsed path continues silently.
 
 ## File read family follow-ups
 
-- [ ] Expression-position use of the output-argument reads `$fgets` / `$fread` / `$ferror` (LRM
-      21.3.4). Each returns a value that LRM permits in any expression position
-      (`if ($fgets(s, fd))`, a blocking-assign condition), but Lyra supports them only in statement
-      position (a bare call or the right-hand side of a blocking assignment), where the LRM 13.5
-      output-argument copy-out has a statement boundary to desugar into; a nested-expression call is
-      rejected with a diagnostic. Closing this needs the copy-out to run inside an
-      immediately-invoked closure, the same shape the scan family already uses for its
-      expression-position support. `$readmemh` / `$readmemb` do not share this gap: they are void
-      tasks, so they never appear in expression position.
+- [x] Expression-position use of the output-argument reads `$fgets` / `$fread` / `$ferror` (LRM
+      21.3.4). Each returns a value the standard permits in any expression position
+      (`if ($fgets(s, fd))`, a blocking-assign condition), and each stands there now. What made the
+      position special was the destination being written through an argument, which needed a
+      statement boundary to write back at; the call completes with what it settled and the caller
+      stores it where the source named it, so no position needs a path of its own. `$readmemh` /
+      `$readmemb` never shared this: they are void tasks, so they do not appear in expression
+      position at all.
 
 ## Conformance gaps the corpus records
 

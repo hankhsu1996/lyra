@@ -4,6 +4,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <fstream>
+#include <functional>
 #include <memory>
 #include <optional>
 #include <stop_token>
@@ -13,6 +14,7 @@
 
 #include "lyra/value/packed_array.hpp"
 #include "lyra/value/string.hpp"
+#include "lyra/value/tuple.hpp"
 #include "lyra/value/unpacked_array.hpp"
 
 namespace lyra::runtime {
@@ -41,6 +43,22 @@ class ChannelCancellation {
   explicit ChannelCancellation(std::vector<std::stop_token> tokens);
   std::vector<std::stop_token> tokens_;
 };
+
+// What a read that delivers text completes with: how many bytes it read, and
+// the text those bytes make (LRM 21.3.4.2, 21.3.7).
+using TextRead =
+    lyra::value::Tuple<lyra::value::PackedArray, lyra::value::String>;
+
+// What a read of binary data completes with: how many bytes it read, and the
+// destination those bytes filled (LRM 21.3.4.4). The destination crosses in
+// as well, because its own shape decides how much is read -- a nine-bit word
+// takes two bytes where an eight-bit one takes one -- and what the file does
+// not reach keeps what it held.
+using PackedRead =
+    lyra::value::Tuple<lyra::value::PackedArray, lyra::value::PackedArray>;
+using MemoryRead = lyra::value::Tuple<
+    lyra::value::PackedArray,
+    lyra::value::UnpackedArray<lyra::value::PackedArray>>;
 
 // Owns file handles opened by `$fopen` (LRM 21.3.1). Two descriptor shapes
 // share the same int32 namespace:
@@ -209,41 +227,31 @@ class FileTable {
       const lyra::value::PackedArray& c, const lyra::value::PackedArray& fd)
       -> lyra::value::PackedArray;
 
-  // LRM 21.3.4.2 $fgets. Reads bytes into `dest` up to and including the
-  // next newline, or until EOF. Returns the number of bytes written, or 0
-  // on error.
-  auto Gets(lyra::value::String& dest, const lyra::value::PackedArray& fd)
-      -> lyra::value::PackedArray;
+  // LRM 21.3.4.2 $fgets. Reads bytes up to and including the next newline, or
+  // until EOF, and completes with how many it read -- zero on error -- and the
+  // line they make.
+  auto Gets(const lyra::value::PackedArray& fd) -> TextRead;
 
   // LRM 21.3.4.4 $fread into a packed destination. Reads (BitWidth+7)/8
-  // bytes big-endian (first byte fills MSBs); the destination's existing
-  // shape drives the result's width / sign / 4-state. Returns byte count,
-  // 0 on error.
-  auto Read(lyra::value::PackedArray& dest, const lyra::value::PackedArray& fd)
-      -> lyra::value::PackedArray;
+  // bytes big-endian (first byte fills MSBs); the destination's shape drives
+  // the result's width / sign / 4-state.
+  auto Read(lyra::value::PackedArray dest, const lyra::value::PackedArray& fd)
+      -> PackedRead;
 
-  // LRM 21.3.4.4 $fread into an unpacked destination. Iterates `dest`
-  // elements from SV index `sv_start` toward the highest declared SV
-  // index, reading until EOF or the highest declared index.
-  // `declared_left` / `declared_right` are the destination's declared
-  // bounds; the caller always supplies `sv_start` (the lowest declared
-  // index when the SV call omits it).
+  // LRM 21.3.4.4 $fread into a memory. Iterates `dest` from SV index
+  // `sv_start` toward the highest declared SV index, reading until EOF or
+  // `count` elements. `declared_left` / `declared_right` are the
+  // destination's declared bounds. The caller always supplies `sv_start` and
+  // `count`, materializing the lowest declared index and the whole remaining
+  // range where the SV call leaves them out, so one entry serves every form
+  // the source may write.
   auto Read(
-      lyra::value::UnpackedArray<lyra::value::PackedArray>& dest,
-      const lyra::value::PackedArray& fd,
-      const lyra::value::PackedArray& declared_left,
-      const lyra::value::PackedArray& declared_right,
-      const lyra::value::PackedArray& sv_start) -> lyra::value::PackedArray;
-
-  // As above, loading at most `count` elements (LRM 21.3.4.4 explicit
-  // count).
-  auto Read(
-      lyra::value::UnpackedArray<lyra::value::PackedArray>& dest,
+      lyra::value::UnpackedArray<lyra::value::PackedArray> dest,
       const lyra::value::PackedArray& fd,
       const lyra::value::PackedArray& declared_left,
       const lyra::value::PackedArray& declared_right,
       const lyra::value::PackedArray& sv_start,
-      const lyra::value::PackedArray& count) -> lyra::value::PackedArray;
+      const lyra::value::PackedArray& count) -> MemoryRead;
 
   // LRM 21.3.5 $fseek. `operation` is 0/1/2 for SEEK_SET / SEEK_CUR /
   // SEEK_END. Returns 0 on success or -1 on error. Per LRM, any pending
@@ -263,11 +271,9 @@ class FileTable {
   // observed on `fd`, zero otherwise.
   auto Eof(const lyra::value::PackedArray& fd) -> lyra::value::PackedArray;
 
-  // LRM 21.3.7 $ferror. Returns the most recent errno stamped on `fd`
-  // and writes the textual message into `dest`. The slot's error state is
-  // cleared after the read.
-  auto Error(const lyra::value::PackedArray& fd, lyra::value::String& dest)
-      -> lyra::value::PackedArray;
+  // LRM 21.3.7 $ferror. Completes with the most recent errno stamped on `fd`
+  // and its textual message. The slot's error state is cleared after the read.
+  auto Error(const lyra::value::PackedArray& fd) -> TextRead;
 
   // LRM 21.3.6 $fflush. No-arg form flushes every open file; the
   // addressed form flushes a single FD or every set-bit MCD channel.
@@ -290,5 +296,25 @@ class FileTable {
   std::array<McdSlot, kMcdSlotCount> mcd_slots_{};
   std::vector<FdSlot> fd_pool_{kFdReservedSlots};
 };
+
+// LRM 21.3.4.4 memory load, over whatever holds the words. Reads from
+// `start_sv` toward the highest declared index, stopping at end of file or
+// after `count` words, and hands each word to `write_word` by its
+// source-declared index -- the coordinate system the declared bounds state,
+// which the holder resolves. `element_prototype` states the shape a word
+// takes, which is what decides how many bytes one costs. Answers with the byte
+// count, zero where nothing was read.
+//
+// The holder is a parameter because a memory reached through a monomorphized
+// container and one reached through an erased handle are the same load; a
+// second copy of the addressing and the partial-word rule would be two
+// readings of one clause.
+auto ReadMemoryWords(
+    FileTable& files, const lyra::value::PackedArray& fd,
+    const lyra::value::PackedArray& element_prototype,
+    std::int64_t declared_left, std::int64_t declared_right,
+    std::int64_t start_sv, std::int64_t count,
+    const std::function<void(std::int64_t, lyra::value::PackedArray)>&
+        write_word) -> std::int32_t;
 
 }  // namespace lyra::runtime
