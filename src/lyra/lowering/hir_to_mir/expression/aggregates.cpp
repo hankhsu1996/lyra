@@ -30,9 +30,10 @@ namespace lyra::lowering::hir_to_mir {
 
 namespace {
 
-// LRM 10.9.1 and 11.4.12.1 both make a replication count a constant
-// expression, so slang has already evaluated it to an integer literal and the
-// count is a number rather than an operand to evaluate at run time.
+// Reads a number the LRM makes a constant expression -- a replication's
+// multiplier (LRM 11.4.12.1) and an array pattern's index key (LRM 10.9.1) are
+// both one. The front end has already folded it to an integer literal, so it is
+// a number this layer reads rather than an operand to evaluate at run time.
 auto ExtractHirLiteralUint64(const hir::Expr& expr) -> std::uint64_t {
   const auto* primary = std::get_if<hir::PrimaryExpr>(&expr.data);
   if (primary == nullptr) {
