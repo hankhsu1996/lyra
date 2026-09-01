@@ -30,7 +30,7 @@ namespace {
 // the branches under that mode's wait condition, and whether the process that
 // ran the fork waits for the condition at all -- every branch for `join`, the
 // first of them for `join_any`, nothing for `join_none`. Both follow from the
-// mode alone, so both are answered here rather than derived twice.
+// mode alone.
 struct JoinDispatch {
   support::BuiltinFn callee;
   bool parent_waits;
@@ -56,10 +56,10 @@ auto DispatchForJoinMode(hir::JoinMode mode) -> JoinDispatch {
 // spawns. The fork lowers as a plain `BlockStmt` (the block_item_declarations
 // become ordinary `LocalDeclStmt`s) whose last statement is the mode's dispatch
 // call. The branches cross as one machine array after the runtime handle, the
-// way every run of same-typed operands crosses: a target that spells a call
-// variadically expands the array, and one that names a length-and-address pair
-// reads it as that pair, so neither spelling is stated here. Every mode's call
-// yields nothing, so the modes differ only in whether the parent awaits it.
+// way every run of same-typed operands crosses; each target reads that array in
+// its own spelling -- a fixed-length value on one, a length-and-address pair on
+// the other -- so neither spelling is stated here. Every mode's call yields
+// nothing, so the modes differ only in whether the parent awaits it.
 auto LowerForkStmt(
     ProcessLowerer& process, WalkFrame frame, std::optional<std::string> label,
     const hir::ForkStmt& f) -> diag::Result<mir::Stmt> {
@@ -128,13 +128,12 @@ auto LowerForkStmt(
     branches.push_back(fork_block.exprs.Add(closure.BuildCoroutine()));
   }
 
-  const std::size_t branch_count = branches.size();
+  const mir::TypeId branches_type = mir::MachineArrayOf(
+      process.Owner().Unit().types, builtins.coroutine_void, branches.size());
   const mir::ExprId branches_id = fork_block.exprs.Add(
       mir::Expr{
           .data = mir::ArrayLiteralExpr{.elements = std::move(branches)},
-          .type = mir::MachineArrayOf(
-              process.Owner().Unit().types, builtins.coroutine_void,
-              branch_count)});
+          .type = branches_type});
 
   const JoinDispatch dispatch = DispatchForJoinMode(f.mode);
   const mir::ExprId call_id = fork_block.exprs.Add(

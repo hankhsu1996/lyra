@@ -113,23 +113,23 @@ void lyra_rt_emit_warning(
 void lyra_rt_emit_error(void* dispatcher, const void* origin, const void* text);
 void lyra_rt_emit_fatal(void* dispatcher, const void* origin, const void* text);
 
-// Wraps a generated process body in a runtime-owned coroutine. `ramp` starts
-// the body's own coroutine: called with the receiver it reaches its members
-// through, it runs to the body's first suspension and yields that coroutine's
-// handle. The runtime owns the coroutine the engine schedules and drives the
-// generated one through its handle; the generated body never owns the
-// scheduler's coroutine.
-auto lyra_rt_make_coroutine(void* (*ramp)(void* env), void* env) -> void*;
+// Enters a generated body as a runtime-owned coroutine, having run it to its
+// first suspension. The runtime owns the coroutine the engine schedules and
+// drives the generated one through its handle; the generated body never owns
+// the scheduler's coroutine.
+//
+// The two differ only in how long the environment the body reads outlives it,
+// never in what construct it came from. A receiver is borrowed: `ramp` starts
+// the body's own coroutine when called with the receiver it reaches its members
+// through, and that receiver outlives every execution reading it. A closure is
+// taken, supplying both the entry and the captures, because the body runs after
+// the stretch that built them has returned (LRM 9.3.2).
+auto lyra_rt_enter_coroutine_borrowed_environment(
+    void* (*ramp)(void* env), void* env) -> void*;
+auto lyra_rt_enter_coroutine_owned_environment(void* closure) -> void*;
+
 void lyra_rt_register_initial(void* self, void* unit_instance, void* coroutine);
 void lyra_rt_register_final(void* self, void* unit_instance, void* coroutine);
-
-// The same wrapping for a body whose environment is the closure it was built
-// with rather than a receiver: the closure supplies both the entry and the
-// captures the body reads, and it is taken rather than borrowed, because the
-// body runs after the stretch that built it has returned (LRM 9.3.2). Which
-// of the two forms a body takes is how long its environment outlives it, not
-// what kind of construct it came from.
-auto lyra_rt_coroutine_from_closure(void* closure) -> void*;
 
 // LRM 9.3.2 Table 9-1. Each takes the branches one `fork` spawned, in source
 // order, and hands them to the engine, which does not run any of them until the

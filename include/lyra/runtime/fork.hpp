@@ -113,15 +113,18 @@ class JoinAwaitable : public PendingWait {
 
 namespace detail {
 
-// Reports each branch's completion to the group and hands it to the engine.
+// Hands every branch to the engine with its completion reported to one join
+// condition.
 template <class Branches>
-void SpawnEach(
-    RuntimeEffects& runtime, const std::shared_ptr<ForkGroup>& group,
-    Branches& branches) {
+auto SpawnUnderGroup(
+    RuntimeEffects& runtime, Branches& branches,
+    std::int64_t completions_needed) -> std::shared_ptr<ForkGroup> {
+  auto group = std::make_shared<ForkGroup>(runtime, completions_needed);
   for (auto& branch : branches) {
     branch.Handle().promise().on_complete = [group] { group->OnBranchDone(); };
     runtime.Spawn(std::move(branch));
   }
+  return group;
 }
 
 // How many completions each join mode waits for (LRM 9.3.2 Table 9-1): every
@@ -141,8 +144,8 @@ constexpr auto CompletionsForFirst(std::size_t branches) -> std::int64_t {
 inline auto SpawnAndPark(
     RuntimeEffects& runtime, std::vector<Coroutine<void>> branches,
     std::int64_t completions_needed) -> bool {
-  auto group = std::make_shared<ForkGroup>(runtime, completions_needed);
-  SpawnEach(runtime, group, branches);
+  const std::shared_ptr<ForkGroup> group =
+      SpawnUnderGroup(runtime, branches, completions_needed);
   if (!group->NeedsPark()) {
     return false;
   }
@@ -164,20 +167,16 @@ template <std::size_t N>
 auto ForkWaitAll(
     RuntimeEffects& runtime, std::array<Coroutine<void>, N> branches)
     -> JoinAwaitable {
-  auto group =
-      std::make_shared<ForkGroup>(runtime, detail::CompletionsForAll(N));
-  detail::SpawnEach(runtime, group, branches);
-  return JoinAwaitable{group};
+  return JoinAwaitable{
+      detail::SpawnUnderGroup(runtime, branches, detail::CompletionsForAll(N))};
 }
 
 template <std::size_t N>
 auto ForkWaitFirst(
     RuntimeEffects& runtime, std::array<Coroutine<void>, N> branches)
     -> JoinAwaitable {
-  auto group =
-      std::make_shared<ForkGroup>(runtime, detail::CompletionsForFirst(N));
-  detail::SpawnEach(runtime, group, branches);
-  return JoinAwaitable{group};
+  return JoinAwaitable{detail::SpawnUnderGroup(
+      runtime, branches, detail::CompletionsForFirst(N))};
 }
 
 template <std::size_t N>

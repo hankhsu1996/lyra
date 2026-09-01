@@ -5,6 +5,7 @@
 #include <format>
 #include <optional>
 #include <ranges>
+#include <span>
 #include <string>
 #include <utility>
 #include <variant>
@@ -1289,6 +1290,21 @@ auto FunctionLowerer::LowerArgument(const mir::Block& block, mir::ExprId id)
       lir::AddrOfInstr{.place = *std::move(place)});
 }
 
+auto FunctionLowerer::LowerArguments(
+    const mir::Block& block, std::span<const mir::ExprId> arguments)
+    -> diag::Result<std::vector<lir::Operand>> {
+  std::vector<lir::Operand> args;
+  args.reserve(arguments.size());
+  for (const mir::ExprId argument : arguments) {
+    auto lowered = LowerArgument(block, argument);
+    if (!lowered) {
+      return std::unexpected(std::move(lowered.error()));
+    }
+    args.push_back(*std::move(lowered));
+  }
+  return args;
+}
+
 auto FunctionLowerer::LowerReferenceBind(
     const mir::Block& block, const mir::CallExpr& call, mir::TypeId type)
     -> diag::Result<lir::Operand> {
@@ -1348,14 +1364,9 @@ auto FunctionLowerer::LowerCall(
   if (BindsReference(unit_->Mir().types, call, type)) {
     return LowerReferenceBind(block, call, type);
   }
-  std::vector<lir::Operand> args;
-  args.reserve(call.arguments.size());
-  for (const mir::ExprId arg : call.arguments) {
-    auto lowered = LowerArgument(block, arg);
-    if (!lowered) {
-      return std::unexpected(std::move(lowered.error()));
-    }
-    args.push_back(*std::move(lowered));
+  auto args = LowerArguments(block, call.arguments);
+  if (!args) {
+    return std::unexpected(std::move(args.error()));
   }
   const lir::TypeId result_type = unit_->TranslateType(type);
 
@@ -1375,12 +1386,12 @@ auto FunctionLowerer::LowerCall(
           "lowerable to LIR");
     }
     std::vector<lir::Operand> entry_args;
-    entry_args.reserve(args.size() + 1);
+    entry_args.reserve(args->size() + 1);
     entry_args.emplace_back(
         lir::FuncRef{
             .function =
                 unit_->MethodFunction(callable->owner, callable->slot)});
-    for (lir::Operand& arg : args) {
+    for (lir::Operand& arg : *args) {
       entry_args.emplace_back(std::move(arg));
     }
     return Emit(
@@ -1392,7 +1403,7 @@ auto FunctionLowerer::LowerCall(
             .args = std::move(entry_args)});
   }
 
-  return EmitCall(call, std::move(args), result_type);
+  return EmitCall(call, *std::move(args), result_type);
 }
 
 auto FunctionLowerer::EmitCall(
@@ -1422,16 +1433,11 @@ auto FunctionLowerer::EmitCall(
 auto FunctionLowerer::LowerRegistration(
     const mir::Block& block, const mir::CallExpr& call)
     -> diag::Result<lir::Operand> {
-  std::vector<lir::Operand> args;
-  args.reserve(call.arguments.size());
-  for (const mir::ExprId arg : call.arguments) {
-    auto lowered = LowerArgument(block, arg);
-    if (!lowered) {
-      return std::unexpected(std::move(lowered.error()));
-    }
-    args.push_back(*std::move(lowered));
+  auto args = LowerArguments(block, call.arguments);
+  if (!args) {
+    return std::unexpected(std::move(args.error()));
   }
-  return EmitCall(call, std::move(args), unit_->MachineBoolType());
+  return EmitCall(call, *std::move(args), unit_->MachineBoolType());
 }
 
 auto FunctionLowerer::LowerAssign(

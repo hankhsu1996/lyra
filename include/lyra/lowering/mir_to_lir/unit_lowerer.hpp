@@ -101,15 +101,10 @@ class UnitLowerer {
   };
 
   // The LIR identities taken on behalf of one MIR closure: the declaration its
-  // captures are members of, the function its invoke becomes, and the type its
-  // values carry. The type is minted here rather than on demand so one
-  // declaration's values are named by one type however they are reached --
-  // through a MIR closure type, or through a closure expression whose own type
-  // states the coroutine protocol instead.
+  // captures are members of, and the function its invoke becomes.
   struct ClosureIdentities {
     lir::ClosureId declaration{};
     lir::FunctionId invoke{};
-    lir::TypeId value_type{};
   };
 
   // Everything one class can be named by before it is built: its own LIR

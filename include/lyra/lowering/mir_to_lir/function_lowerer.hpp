@@ -2,6 +2,7 @@
 
 #include <functional>
 #include <optional>
+#include <span>
 #include <string>
 #include <variant>
 #include <vector>
@@ -156,6 +157,9 @@ class FunctionLowerer {
   // without an explicit address-of in the source IR.
   auto LowerArgument(const mir::Block& block, mir::ExprId id)
       -> diag::Result<lir::Operand>;
+  auto LowerArguments(
+      const mir::Block& block, std::span<const mir::ExprId> arguments)
+      -> diag::Result<std::vector<lir::Operand>>;
   auto LowerPlace(const mir::Block& block, mir::ExprId id)
       -> diag::Result<lir::Place>;
   // Reads the value held where an expression names storage, whichever way it

@@ -46,8 +46,7 @@ class ClosureValue {
   // The handle capture `index` crosses back to the body as.
   [[nodiscard]] auto Capture(std::uint32_t index) -> void*;
 
-  // Runs an ordinary body to completion. A body whose protocol is the
-  // coroutine one is entered through `Start` instead.
+  // Runs an ordinary body to completion.
   void Invoke();
 
   // Enters a coroutine body and answers the handle it yielded, having run to

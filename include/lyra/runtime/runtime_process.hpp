@@ -177,13 +177,14 @@ class RuntimeProcess : public std::enable_shared_from_this<RuntimeProcess> {
     EnrolInEnclosingTargets(leaf);
   }
 
-  // Hands this process's active leaf to whatever will wake it. Every wakeup a
-  // backend whose suspension is a control edge registers goes through here, so
-  // no new way of registering one can forget to enrol in the enclosing disable
-  // targets; the backend whose waits are objects enrols where it blocks the
-  // leaf instead, for the same reason. A construct that registers no wakeup at
-  // all -- `$finish`, which parks and is never dispatched again -- reaches
-  // neither.
+  // Hands the frame that parks to whatever will wake it, and enrols it in the
+  // disable targets it is inside. A body whose suspension is a control edge
+  // nests no frame of its own, so the frame that parks is this process's top
+  // one. Every wakeup such a body registers goes through here, so no new way of
+  // registering one can forget the enrolment; a body that can be unwound
+  // through enrols where it blocks its innermost frame instead, for the same
+  // reason. A construct that registers no wakeup at all -- `$finish`, which
+  // parks and is never dispatched again -- reaches neither.
   template <class Park>
   void RegisterWakeup(Park park) {
     const CoroutineHandle leaf = TopHandle();

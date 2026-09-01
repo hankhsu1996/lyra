@@ -88,8 +88,10 @@ D6. A closure's linkage name is qualified by its declaring unit. Its ordinal is 
   established consumption of a handle that must outlive the call it was built in
   ([jit-value-realization](jit-value-realization.md) invariant 2). The engine's own surface is
   unchanged; it still holds one callable per submitted effect.
-- A closure whose body suspends is untouched by this. Building one starts a frame the scheduler
-  owns, which is an activation rather than a value, and it is refused on this backend by name.
+- A closure whose body completes as a coroutine takes all of this and differs only in what becomes
+  of the value it builds: entering it as a coroutine owns the captures from there, because the
+  execution outlives the stretch that built them and nothing else holds them. The schema, the
+  instance, and the read through a receiver are the same either way.
 
 ## Rejected alternatives
 
@@ -142,7 +144,7 @@ D6. A closure's linkage name is qualified by its declaring unit. Its ordinal is 
   transient store, and the consumption of a handle that must outlive its call.
 - [activation-frame-and-transient-scope](activation-frame-and-transient-scope.md) -- the escape
   invariant D4 satisfies, which names a closure capture and a deferred effect outright.
-- [jit-process-suspension](jit-process-suspension.md) -- the coroutine closure this entry does not
-  cover, and why it is a separate foundation.
+- [jit-process-suspension](jit-process-suspension.md) -- the coroutine protocol a closure's invoke
+  may state, and the runtime-owned coroutine entering one yields.
 - [block-expression](block-expression.md) -- the node a body invoked where it is built became, which
   is what leaves every remaining closure an escaping one and its invoke signature uniform.

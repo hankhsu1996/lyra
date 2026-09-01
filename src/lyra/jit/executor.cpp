@@ -153,8 +153,10 @@ void DefineRuntimeAbi(llvm::orc::LLJIT& jit) {
   add("lyra_rt_emit_warning", &lyra_rt_emit_warning);
   add("lyra_rt_emit_error", &lyra_rt_emit_error);
   add("lyra_rt_emit_fatal", &lyra_rt_emit_fatal);
-  add("lyra_rt_make_coroutine", &lyra_rt_make_coroutine);
-  add("lyra_rt_coroutine_from_closure", &lyra_rt_coroutine_from_closure);
+  add("lyra_rt_enter_coroutine_borrowed_environment",
+      &lyra_rt_enter_coroutine_borrowed_environment);
+  add("lyra_rt_enter_coroutine_owned_environment",
+      &lyra_rt_enter_coroutine_owned_environment);
   add("lyra_rt_register_initial", &lyra_rt_register_initial);
   add("lyra_rt_register_final", &lyra_rt_register_final);
   add("lyra_rt_spawn_all", &lyra_rt_spawn_all);

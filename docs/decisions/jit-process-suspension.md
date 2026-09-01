@@ -126,14 +126,13 @@ adapter drives the body; that the scheduler's token is runtime-owned is the inva
   suspend edge. A level wait lowers to a re-check loop -- evaluate, continue if true, else register
   and suspend, then re-evaluate on resume -- so invariant 2 holds on each iteration.
 
-- **A value that must outlive a suspension is still open.** The coroutine passes persist a body's
-  slots across a suspension, but a value in this backend is an opaque handle into storage the
-  runtime owns for the duration of one stretch of generated code. Persisting the slot does not
-  persist the object it names. Closing this needs the value's storage to outlive the stretch that
-  made it -- the activation-frame question [jit-value-realization](jit-value-realization.md) leaves
-  open -- not more coroutine machinery. It is what a loop-carried value around a suspension needs,
-  so a body as ordinary as a clock generator (`repeat (n) begin #d; clk = ~clk; end`) is blocked on
-  it, and a design that must run today spells the clock out.
+- **A value that must outlive a suspension is not a coroutine question.** The coroutine passes
+  persist a body's slots across a suspension, but a value on this backend is an opaque handle into
+  storage the runtime owns for the duration of one stretch of generated code, so persisting the slot
+  does not persist the object it names. What a loop-carried value around a suspension needs -- a
+  clock generator, `repeat (n) begin #d; clk = ~clk; end`, is the smallest one -- is storage that
+  outlives the stretch that made it, which is a lifetime decision rather than more coroutine
+  machinery. Answered in [cross-suspension-value-storage](cross-suspension-value-storage.md).
 
 - Deferred, each its own foundation: non-blocking assignment (a deferred closure submit); timed task
   enables (a nested activation with a typed completion, `activation.md`); cancellation and

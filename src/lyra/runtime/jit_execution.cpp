@@ -102,19 +102,18 @@ class GeneratedCoroutine {
 // a spawned branch are each a callable value, registered or spawned by a site
 // that does not supply the environment per invocation.
 //
-// Which alternative one takes is decided by how long the environment outlives
-// the body, which is the only thing that decides it. A process reaches its
-// members through a receiver that outlives every activation reading it, so a
-// pointer to it is borrowed; a branch reads captures copied where the `fork`
-// ran, which outlive nothing on their own, so they are owned here and die with
-// this frame.
+// Which alternative one takes is how long the environment outlives the body,
+// never what construct it came from. A process reaches its members through a
+// receiver that outlives every activation reading it, so a pointer to it is
+// borrowed; a branch reads captures copied where the `fork` ran, which outlive
+// nothing on their own, so they are owned here and die with this frame.
 class GeneratedEnvironment {
  public:
   static auto Borrowing(GeneratedRamp ramp, void* env) -> GeneratedEnvironment {
     return GeneratedEnvironment{Receiver{.ramp = ramp, .env = env}};
   }
-  static auto Owning(ClosureValue captures) -> GeneratedEnvironment {
-    return GeneratedEnvironment{std::move(captures)};
+  static auto Owning(ClosureValue closure) -> GeneratedEnvironment {
+    return GeneratedEnvironment{std::move(closure)};
   }
 
   // Enters the body and answers the handle it yielded, having run to its first
@@ -735,13 +734,14 @@ void lyra_rt_emit_fatal(
       ->EmitFatal(Read<String>(origin), Read<String>(text));
 }
 
-auto lyra_rt_make_coroutine(void* (*ramp)(void*), void* env) -> void* {
+auto lyra_rt_enter_coroutine_borrowed_environment(
+    void* (*ramp)(void*), void* env) -> void* {
   return GeneratedCallScope::Current().Arena().New<Coroutine<void>>(
       lyra::runtime::RunGeneratedProcess(
           lyra::runtime::GeneratedEnvironment::Borrowing(ramp, env)));
 }
 
-auto lyra_rt_coroutine_from_closure(void* closure) -> void* {
+auto lyra_rt_enter_coroutine_owned_environment(void* closure) -> void* {
   return GeneratedCallScope::Current().Arena().New<Coroutine<void>>(
       lyra::runtime::RunGeneratedProcess(
           lyra::runtime::GeneratedEnvironment::Owning(
@@ -2268,10 +2268,10 @@ auto lyra_rt_packed_from_string(const void* text, const void* type) -> void* {
 }
 
 auto lyra_rt_unpackedarray_from_string(
-    const void* text, const void* prototype, const void* count) -> void* {
+    const void* text, const void* element_type, const void* count) -> void* {
   return Own(
       RuntimeUnpackedArray::FromString(
-          Read<String>(text), Read<PackedType>(prototype),
+          Read<String>(text), Read<PackedType>(element_type),
           Read<PackedArray>(count)));
 }
 
