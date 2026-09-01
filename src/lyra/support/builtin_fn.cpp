@@ -118,17 +118,6 @@ auto ContainerIndexOperand(BuiltinFn id) -> std::optional<std::size_t> {
   }
 }
 
-auto IsFileOutputArgBuiltinFn(BuiltinFn id) -> bool {
-  switch (id) {
-    case BuiltinFn::kFileGets:
-    case BuiltinFn::kFileRead:
-    case BuiltinFn::kFileError:
-      return true;
-    default:
-      return false;
-  }
-}
-
 auto BuiltinFnName(BuiltinFn id) -> std::string_view {
   switch (id) {
     case BuiltinFn::kElement:
@@ -351,6 +340,10 @@ auto BuiltinFnName(BuiltinFn id) -> std::string_view {
       return "run_host_command";
     case BuiltinFn::kRunNullHostCommand:
       return "run_null_host_command";
+    case BuiltinFn::kReadMemWithin:
+      return "read_mem_within";
+    case BuiltinFn::kWriteMemWithin:
+      return "write_mem_within";
     case BuiltinFn::kReadMem:
       return "read_mem";
     case BuiltinFn::kWriteMem:
@@ -441,6 +434,8 @@ auto BuiltinFnName(BuiltinFn id) -> std::string_view {
       return "file_gets";
     case BuiltinFn::kFileRead:
       return "file_read";
+    case BuiltinFn::kFileReadMemory:
+      return "file_read_memory";
     case BuiltinFn::kFileSeek:
       return "file_seek";
     case BuiltinFn::kFileRewind:

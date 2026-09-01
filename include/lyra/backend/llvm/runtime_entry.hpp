@@ -1,5 +1,6 @@
 #pragma once
 
+#include <cstddef>
 #include <cstdint>
 #include <optional>
 #include <string>
@@ -76,11 +77,15 @@ enum class RuntimeOp : std::uint8_t {
 // a scope, a process -- has a single realization.
 struct NamedAlone {};
 
-// The library realizes the operation once per representation of the value it
-// acts on, because `size` on a string and `size` on a dynamic array are
-// different code. The value is the one the call qualifies itself with, or its
-// first operand where it qualifies itself with nothing.
-struct NamedByValue {};
+// The library realizes the operation once per representation of one of the
+// values the call carries, because `size` on a string and `size` on a dynamic
+// array are different code. That value is the one the call qualifies itself
+// with; where it qualifies itself with nothing, `operand` says which argument
+// carries it -- the receiver for an operation on a value, and the destination
+// for one that answers through an argument the call names.
+struct NamedByValue {
+  std::size_t operand = 0;
+};
 
 // The operation reaches through a storage cell rather than acting on a value it
 // is handed, so the representation that names it is the one the cell's contents

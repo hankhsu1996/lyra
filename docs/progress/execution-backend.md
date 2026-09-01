@@ -215,10 +215,16 @@ each meets the same lifetime question above.
       does not realize is stated the same way, naming which shape it has no entry for. An entry now
       exists as a prototype, a definition, and a binding held to each other by a check, so one
       written without the others fails the build instead of failing to resolve at run time. What is
-      still refused no longer shares one message: a service that reports through an argument the
-      call names waits on the copy-out shape below, the memory load and store tasks (LRM 21.4) name
-      their destination's type in the entry, which the erased value model has no spelling for, and a
-      named event's members have no storage realization.
+      still refused no longer shares one message: the memory load and dump tasks walk their memory
+      through the container kind and depth their entry is compiled against, which an erased handle
+      does not carry, and a named event's members have no storage realization.
+- [ ] **A memory load or dump (LRM 21.4, 21.5).** Every form the source may write reaches the
+      backend now -- an unpacked memory of any depth, a dynamic array, a queue, an associative
+      array, each either running upward from an address or bounded by a window -- and every one of
+      them refuses, because the library reaches a memory's words by walking the container type its
+      entry was compiled against, and an erased handle carries neither that kind nor its nesting
+      depth. Realizing them means a walk driven by the value's runtime domain, and a load then
+      answers through its completion like every other service that reports through an argument.
 - [x] **A closure the runtime holds and runs later.** A deferred effect -- a non-blocking
       assignment, a postponed print, a deferred assertion's action -- is a closure the process hands
       to a region and keeps running past, so the body runs once the stretch that built it has
@@ -226,14 +232,23 @@ each meets the same lifetime question above.
       closure was built, so nothing a deferred body reads points into storage that is already gone.
       The closure a `fork` branch or a task enable builds is not this -- it starts an activation
       rather than producing a value -- and is refused by name.
-- [ ] A runtime service that answers through an argument the call names, for `$fgets`, `$fread`,
-      `$ferror` and `$value$plusargs`. Writing through the handle such an argument crosses as does
-      not reach what the caller reads -- a value handle is immutable from the generated side --
-      confirmed by wiring one and watching every destination come back empty. The answer is the one
-      a user subroutine already gives: the call completes with a product of the values it settled,
+- [x] **A runtime service answers through its completion, never through storage the caller lends.**
+      Every service that reports through an argument the call names -- `$fgets`, `$ferror`,
+      `$fread`, `$value$plusargs`, `$readmem` -- completes with a product of the values it settled,
       its own result first and then one per argument it answers through, and the call site stores
-      each where the source named it. `$sscanf` and the associative traversal run that way; the four
-      above wait on the entries their receivers need rather than on the shape.
+      each where the source named it. Whether the destination's current value also crosses in is the
+      formal's direction: a read that replaces its destination outright passes nothing in, while one
+      whose answer is shaped by what the destination already holds passes it, which is what keeps
+      the words a file does not address and the variable an unmatched plusarg names. It is the same
+      rule and the same machinery a user subroutine's `output` and `inout` have always used, so
+      nothing about these services is special to the call site any more -- including the position
+      they may stand in, since a call that answers this way is an ordinary expression.
+
+      What this replaced could not work here at all: a destination lent as an ordinary argument
+      crosses as a handle the generated side may not mutate, so the callee's write reached nothing
+      the caller could read. The two backends therefore disagreed on the same source, which is the
+      one difference between them the agreement contract does not allow.
+
 - [ ] Storage reached by name rather than through a receiver, for a class's static property and
       static constant. A package or `$unit` variable runs: such storage is named by its linkage
       symbol, a place opens at that symbol and dereferences it, and the execution session resolves
@@ -290,11 +305,14 @@ each meets the same lifetime question above.
       of the three places below it now do as well -- a builtin the library has no entry of the shape
       for, and a member type with no storage realization, both of which used to tell the reader to
       file a bug for a gap nobody had filled. What is left is a name the generated module calls that
-      nothing defines, which still surfaces as the module failing to link. That gap is narrower than
-      it was, since which entry a builtin resolves to is now stated per builtin and a prototype, a
-      definition, and a binding are held to each other, but a name minted for an entry nobody ever
-      wrote is still checked only by the corpus reaching it. Closing it means admitting a module
-      against what the runtime realizes before the session materializes it.
+      nothing defines, which still surfaces as the module failing to link. The memory dump task was
+      one such name and now refuses instead, but it was found by asking rather than by anything
+      failing: no case reached it, because a case that dumps a memory reads it back and was stopped
+      by the load first. So the gap is narrower -- which entry a builtin resolves to is stated per
+      builtin, and a prototype, a definition, and a binding are held to each other -- while a name
+      minted for an entry nobody ever wrote is still checked only by the corpus reaching it. Closing
+      it means admitting a module against what the runtime realizes before the session materializes
+      it.
 - [x] **End-to-end coverage is the corpus, not a handful of cases.** What this path refuses is
       recorded once for the path rather than on any case, and a case that starts running fails until
       its entry is dropped. So the record only ever shrinks, and dropping entries is what landing a

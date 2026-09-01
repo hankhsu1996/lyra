@@ -16,11 +16,9 @@
 #include "lyra/runtime/diagnostic.hpp"
 #include "lyra/runtime/runtime_effects.hpp"
 #include "lyra/value/associative_array.hpp"
-#include "lyra/value/dynamic_array.hpp"
 #include "lyra/value/format.hpp"
 #include "lyra/value/packed_array.hpp"
 #include "lyra/value/packed_type.hpp"
-#include "lyra/value/queue.hpp"
 #include "lyra/value/string.hpp"
 #include "lyra/value/unpacked_array.hpp"
 
@@ -166,43 +164,6 @@ auto RenderWord(const value::PackedArray& elem, unsigned base) -> std::string {
   value::FormatSpec spec;
   spec.kind = base == 2U ? value::FormatKind::kBinary : value::FormatKind::kHex;
   return value::Formatter<value::PackedArray>::Format(spec, elem, {});
-}
-
-void ReadMemUnpacked(
-    RuntimeEffects& runtime, value::UnpackedArray<value::PackedArray>& dest,
-    const value::String& filename, std::int64_t declared_left,
-    std::int64_t declared_right, unsigned base,
-    std::optional<std::int64_t> start, std::optional<std::int64_t> finish) {
-  const value::PackedArray left =
-      value::PackedArray::Int(static_cast<std::int32_t>(declared_left));
-  const value::PackedArray right =
-      value::PackedArray::Int(static_cast<std::int32_t>(declared_right));
-  ReadMemGridCore(
-      runtime, filename, base, std::min(declared_left, declared_right),
-      std::max(declared_left, declared_right), 1, start, finish,
-      [&](std::int64_t a, std::size_t) -> value::PackedArray& {
-        return dest.ElementRef(
-            value::PackedArray::Int(static_cast<std::int32_t>(a)), left, right);
-      });
-}
-
-void WriteMemUnpacked(
-    RuntimeEffects& runtime,
-    const value::UnpackedArray<value::PackedArray>& src,
-    const value::String& filename, std::int64_t declared_left,
-    std::int64_t declared_right, unsigned base,
-    std::optional<std::int64_t> start, std::optional<std::int64_t> finish) {
-  const value::PackedArray left =
-      value::PackedArray::Int(static_cast<std::int32_t>(declared_left));
-  const value::PackedArray right =
-      value::PackedArray::Int(static_cast<std::int32_t>(declared_right));
-  WriteMemGridCore(
-      runtime, filename, base, std::min(declared_left, declared_right),
-      std::max(declared_left, declared_right), 1, start, finish,
-      [&](std::int64_t a, std::size_t) -> const value::PackedArray& {
-        return src.Element(
-            value::PackedArray::Int(static_cast<std::int32_t>(a)), left, right);
-      });
 }
 
 // A dynamic array or queue is a 0-based memory whose address range is
@@ -423,106 +384,28 @@ void WriteMemGridCore(
   }
 }
 
-void ReadMem(
-    RuntimeEffects& runtime, value::UnpackedArray<value::PackedArray>& dest,
-    const value::String& filename, const value::PackedArray& declared_left,
-    const value::PackedArray& declared_right, const value::PackedArray& base) {
-  ReadMemUnpacked(
-      runtime, dest, filename, declared_left.ToInt64(),
-      declared_right.ToInt64(), static_cast<unsigned>(base.ToInt64()),
-      std::nullopt, std::nullopt);
-}
-
-void ReadMem(
-    RuntimeEffects& runtime, value::UnpackedArray<value::PackedArray>& dest,
-    const value::String& filename, const value::PackedArray& declared_left,
-    const value::PackedArray& declared_right, const value::PackedArray& base,
-    const value::PackedArray& start) {
-  ReadMemUnpacked(
-      runtime, dest, filename, declared_left.ToInt64(),
-      declared_right.ToInt64(), static_cast<unsigned>(base.ToInt64()),
-      start.ToInt64(), std::nullopt);
-}
-
-void ReadMem(
-    RuntimeEffects& runtime, value::UnpackedArray<value::PackedArray>& dest,
-    const value::String& filename, const value::PackedArray& declared_left,
-    const value::PackedArray& declared_right, const value::PackedArray& base,
-    const value::PackedArray& start, const value::PackedArray& finish) {
-  ReadMemUnpacked(
-      runtime, dest, filename, declared_left.ToInt64(),
-      declared_right.ToInt64(), static_cast<unsigned>(base.ToInt64()),
-      start.ToInt64(), finish.ToInt64());
-}
-
-void WriteMem(
-    RuntimeEffects& runtime,
-    const value::UnpackedArray<value::PackedArray>& src,
-    const value::String& filename, const value::PackedArray& declared_left,
-    const value::PackedArray& declared_right, const value::PackedArray& base) {
-  WriteMemUnpacked(
-      runtime, src, filename, declared_left.ToInt64(), declared_right.ToInt64(),
-      static_cast<unsigned>(base.ToInt64()), std::nullopt, std::nullopt);
-}
-
-void WriteMem(
-    RuntimeEffects& runtime,
-    const value::UnpackedArray<value::PackedArray>& src,
-    const value::String& filename, const value::PackedArray& declared_left,
-    const value::PackedArray& declared_right, const value::PackedArray& base,
-    const value::PackedArray& start) {
-  WriteMemUnpacked(
-      runtime, src, filename, declared_left.ToInt64(), declared_right.ToInt64(),
-      static_cast<unsigned>(base.ToInt64()), start.ToInt64(), std::nullopt);
-}
-
-void WriteMem(
-    RuntimeEffects& runtime,
-    const value::UnpackedArray<value::PackedArray>& src,
-    const value::String& filename, const value::PackedArray& declared_left,
-    const value::PackedArray& declared_right, const value::PackedArray& base,
-    const value::PackedArray& start, const value::PackedArray& finish) {
-  WriteMemUnpacked(
-      runtime, src, filename, declared_left.ToInt64(), declared_right.ToInt64(),
-      static_cast<unsigned>(base.ToInt64()), start.ToInt64(), finish.ToInt64());
-}
-
-void ReadMem(
-    RuntimeEffects& runtime, value::DynamicArray<value::PackedArray>& dest,
-    const value::String& filename, const value::PackedArray& base) {
-  ReadMemZeroBased(
-      runtime, dest, filename, static_cast<unsigned>(base.ToInt64()),
-      std::nullopt, std::nullopt);
-}
-
-void ReadMem(
-    RuntimeEffects& runtime, value::DynamicArray<value::PackedArray>& dest,
-    const value::String& filename, const value::PackedArray& base,
-    const value::PackedArray& start) {
+auto ReadMem(
+    RuntimeEffects& runtime, DynamicMemory dest, const value::String& filename,
+    const value::PackedArray& base, const value::PackedArray& start)
+    -> MemoryLoad<DynamicMemory> {
   ReadMemZeroBased(
       runtime, dest, filename, static_cast<unsigned>(base.ToInt64()),
       start.ToInt64(), std::nullopt);
+  return MemoryLoad<DynamicMemory>{std::move(dest)};
 }
 
-void ReadMem(
-    RuntimeEffects& runtime, value::DynamicArray<value::PackedArray>& dest,
-    const value::String& filename, const value::PackedArray& base,
-    const value::PackedArray& start, const value::PackedArray& finish) {
+auto ReadMemWithin(
+    RuntimeEffects& runtime, DynamicMemory dest, const value::String& filename,
+    const value::PackedArray& base, const value::PackedArray& start,
+    const value::PackedArray& finish) -> MemoryLoad<DynamicMemory> {
   ReadMemZeroBased(
       runtime, dest, filename, static_cast<unsigned>(base.ToInt64()),
       start.ToInt64(), finish.ToInt64());
+  return MemoryLoad<DynamicMemory>{std::move(dest)};
 }
 
 void WriteMem(
-    RuntimeEffects& runtime, const value::DynamicArray<value::PackedArray>& src,
-    const value::String& filename, const value::PackedArray& base) {
-  WriteMemZeroBased(
-      runtime, src, filename, static_cast<unsigned>(base.ToInt64()),
-      std::nullopt, std::nullopt);
-}
-
-void WriteMem(
-    RuntimeEffects& runtime, const value::DynamicArray<value::PackedArray>& src,
+    RuntimeEffects& runtime, const DynamicMemory& src,
     const value::String& filename, const value::PackedArray& base,
     const value::PackedArray& start) {
   WriteMemZeroBased(
@@ -530,8 +413,8 @@ void WriteMem(
       start.ToInt64(), std::nullopt);
 }
 
-void WriteMem(
-    RuntimeEffects& runtime, const value::DynamicArray<value::PackedArray>& src,
+void WriteMemWithin(
+    RuntimeEffects& runtime, const DynamicMemory& src,
     const value::String& filename, const value::PackedArray& base,
     const value::PackedArray& start, const value::PackedArray& finish) {
   WriteMemZeroBased(
@@ -539,42 +422,28 @@ void WriteMem(
       start.ToInt64(), finish.ToInt64());
 }
 
-void ReadMem(
-    RuntimeEffects& runtime, value::Queue<value::PackedArray>& dest,
-    const value::String& filename, const value::PackedArray& base) {
-  ReadMemZeroBased(
-      runtime, dest, filename, static_cast<unsigned>(base.ToInt64()),
-      std::nullopt, std::nullopt);
-}
-
-void ReadMem(
-    RuntimeEffects& runtime, value::Queue<value::PackedArray>& dest,
-    const value::String& filename, const value::PackedArray& base,
-    const value::PackedArray& start) {
+auto ReadMem(
+    RuntimeEffects& runtime, QueueMemory dest, const value::String& filename,
+    const value::PackedArray& base, const value::PackedArray& start)
+    -> MemoryLoad<QueueMemory> {
   ReadMemZeroBased(
       runtime, dest, filename, static_cast<unsigned>(base.ToInt64()),
       start.ToInt64(), std::nullopt);
+  return MemoryLoad<QueueMemory>{std::move(dest)};
 }
 
-void ReadMem(
-    RuntimeEffects& runtime, value::Queue<value::PackedArray>& dest,
-    const value::String& filename, const value::PackedArray& base,
-    const value::PackedArray& start, const value::PackedArray& finish) {
+auto ReadMemWithin(
+    RuntimeEffects& runtime, QueueMemory dest, const value::String& filename,
+    const value::PackedArray& base, const value::PackedArray& start,
+    const value::PackedArray& finish) -> MemoryLoad<QueueMemory> {
   ReadMemZeroBased(
       runtime, dest, filename, static_cast<unsigned>(base.ToInt64()),
       start.ToInt64(), finish.ToInt64());
+  return MemoryLoad<QueueMemory>{std::move(dest)};
 }
 
 void WriteMem(
-    RuntimeEffects& runtime, const value::Queue<value::PackedArray>& src,
-    const value::String& filename, const value::PackedArray& base) {
-  WriteMemZeroBased(
-      runtime, src, filename, static_cast<unsigned>(base.ToInt64()),
-      std::nullopt, std::nullopt);
-}
-
-void WriteMem(
-    RuntimeEffects& runtime, const value::Queue<value::PackedArray>& src,
+    RuntimeEffects& runtime, const QueueMemory& src,
     const value::String& filename, const value::PackedArray& base,
     const value::PackedArray& start) {
   WriteMemZeroBased(
@@ -582,8 +451,8 @@ void WriteMem(
       start.ToInt64(), std::nullopt);
 }
 
-void WriteMem(
-    RuntimeEffects& runtime, const value::Queue<value::PackedArray>& src,
+void WriteMemWithin(
+    RuntimeEffects& runtime, const QueueMemory& src,
     const value::String& filename, const value::PackedArray& base,
     const value::PackedArray& start, const value::PackedArray& finish) {
   WriteMemZeroBased(
@@ -591,49 +460,30 @@ void WriteMem(
       start.ToInt64(), finish.ToInt64());
 }
 
-void ReadMem(
-    RuntimeEffects& runtime,
-    value::AssociativeArray<value::PackedArray, value::PackedArray>& dest,
+auto ReadMem(
+    RuntimeEffects& runtime, AssociativeMemory dest,
     const value::String& filename, const value::PackedArray& key_prototype,
-    const value::PackedArray& base) {
-  ReadMemAssoc(
-      runtime, dest, filename, key_prototype,
-      static_cast<unsigned>(base.ToInt64()), std::nullopt, std::nullopt);
-}
-
-void ReadMem(
-    RuntimeEffects& runtime,
-    value::AssociativeArray<value::PackedArray, value::PackedArray>& dest,
-    const value::String& filename, const value::PackedArray& key_prototype,
-    const value::PackedArray& base, const value::PackedArray& start) {
+    const value::PackedArray& base, const value::PackedArray& start)
+    -> MemoryLoad<AssociativeMemory> {
   ReadMemAssoc(
       runtime, dest, filename, key_prototype,
       static_cast<unsigned>(base.ToInt64()), start.ToInt64(), std::nullopt);
+  return MemoryLoad<AssociativeMemory>{std::move(dest)};
 }
 
-void ReadMem(
-    RuntimeEffects& runtime,
-    value::AssociativeArray<value::PackedArray, value::PackedArray>& dest,
+auto ReadMemWithin(
+    RuntimeEffects& runtime, AssociativeMemory dest,
     const value::String& filename, const value::PackedArray& key_prototype,
     const value::PackedArray& base, const value::PackedArray& start,
-    const value::PackedArray& finish) {
+    const value::PackedArray& finish) -> MemoryLoad<AssociativeMemory> {
   ReadMemAssoc(
       runtime, dest, filename, key_prototype,
       static_cast<unsigned>(base.ToInt64()), start.ToInt64(), finish.ToInt64());
+  return MemoryLoad<AssociativeMemory>{std::move(dest)};
 }
 
 void WriteMem(
-    RuntimeEffects& runtime,
-    const value::AssociativeArray<value::PackedArray, value::PackedArray>& src,
-    const value::String& filename, const value::PackedArray& base) {
-  WriteMemAssoc(
-      runtime, src, filename, static_cast<unsigned>(base.ToInt64()),
-      std::nullopt, std::nullopt);
-}
-
-void WriteMem(
-    RuntimeEffects& runtime,
-    const value::AssociativeArray<value::PackedArray, value::PackedArray>& src,
+    RuntimeEffects& runtime, const AssociativeMemory& src,
     const value::String& filename, const value::PackedArray& base,
     const value::PackedArray& start) {
   WriteMemAssoc(
@@ -641,9 +491,8 @@ void WriteMem(
       start.ToInt64(), std::nullopt);
 }
 
-void WriteMem(
-    RuntimeEffects& runtime,
-    const value::AssociativeArray<value::PackedArray, value::PackedArray>& src,
+void WriteMemWithin(
+    RuntimeEffects& runtime, const AssociativeMemory& src,
     const value::String& filename, const value::PackedArray& base,
     const value::PackedArray& start, const value::PackedArray& finish) {
   WriteMemAssoc(

@@ -9,6 +9,7 @@
 
 #include "lyra/value/packed_array.hpp"
 #include "lyra/value/string.hpp"
+#include "lyra/value/tuple.hpp"
 
 namespace lyra::runtime {
 
@@ -46,16 +47,20 @@ auto TestPlusargs(RuntimeEffects& runtime, const value::String& user_string)
     -> value::PackedArray;
 
 // LRM 21.6 $value$plusargs. `user_string` is `"plusarg_prefix format_spec"`;
-// on prefix match, converts the remainder per the format specifier and
-// writes it to `out`, returning 1. On no match returns 0 and leaves `out`
-// untouched. Legal format specifiers: %d %o %h %x %b %s (uppercase and
-// leading 0 permitted). Real-valued conversions (%e %f %g) are not yet
-// supported; a call with one of them returns 0 without writing.
+// on a prefix match the remainder is converted per the format specifier and
+// completes beside a 1. Legal format specifiers: %d %o %h %x %b %s (uppercase
+// and leading 0 permitted). Real-valued conversions (%e %f %g) are not yet
+// supported; a call with one of them completes with 0.
+//
+// The destination crosses in and comes back, because the clause leaves the
+// variable a miss did not match exactly as it was, and its size is what
+// decides whether a converted value is zero-padded or truncated.
 auto ValuePlusargs(
     RuntimeEffects& runtime, const value::String& user_string,
-    value::PackedArray& out) -> value::PackedArray;
+    value::PackedArray out)
+    -> value::Tuple<value::PackedArray, value::PackedArray>;
 auto ValuePlusargs(
     RuntimeEffects& runtime, const value::String& user_string,
-    value::String& out) -> value::PackedArray;
+    value::String out) -> value::Tuple<value::PackedArray, value::String>;
 
 }  // namespace lyra::runtime

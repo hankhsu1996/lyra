@@ -1,7 +1,5 @@
 #pragma once
 
-#include <optional>
-#include <string>
 #include <string_view>
 
 #include "lyra/diag/diagnostic.hpp"
@@ -10,34 +8,19 @@
 #include "lyra/lowering/hir_to_mir/process_lowerer.hpp"
 #include "lyra/lowering/hir_to_mir/walk_frame.hpp"
 #include "lyra/mir/expr.hpp"
-#include "lyra/mir/stmt.hpp"
 #include "lyra/support/system_subroutine.hpp"
 
 namespace lyra::lowering::hir_to_mir {
 
-// Lower a file IO system subroutine call ($fopen / $fclose / $fgetc /
-// $ungetc / $fseek / $rewind / $ftell / $feof / $fflush) into a generic
-// mir::CallExpr whose receiver is the `files` broker (runtime.Files())
-// and whose remaining arguments are the task operands. Output-arg tasks
-// ($fgets / $fread / $ferror) reach this path only when nested inside a
-// larger expression and return an unsupported diagnostic -- the
-// statement-position desugaring runs upstream via
-// LowerFileIOSystemSubroutineCallStmt.
+// Lower a file IO system subroutine call into a generic mir::CallExpr whose
+// receiver is the `files` broker (runtime.Files()) and whose remaining
+// arguments are the task operands. One that answers through an argument the
+// call names ($fgets / $fread / $ferror) becomes the steps that call it and
+// store what it settled, which is an expression like any other and so stands
+// wherever the source wrote it.
 auto LowerFileIOSystemSubroutineCall(
     ProcessLowerer& process, WalkFrame frame, const hir::CallExpr& call,
     std::string_view name, const support::FileIOSystemSubroutineInfo& info,
     diag::SourceSpan span) -> diag::Result<mir::Expr>;
-
-// LRM 13.5 copy-out at the statement boundary for the three file IO tasks
-// that write through an output argument: a temp local of the destination's
-// type takes the output slot, and the user's actual lvalue is assigned from it
-// once the call returns. The optional `assign_target` carries the LHS for the
-// `lhs = $fgets(...)` shape; nullopt means a bare-call statement. The
-// result_type is the call's int32 return slot.
-auto LowerFileIOSystemSubroutineCallStmt(
-    ProcessLowerer& process, WalkFrame frame, std::optional<std::string> label,
-    const hir::CallExpr& call, const support::FileIOSystemSubroutineInfo& info,
-    std::optional<hir::ExprId> assign_target, mir::TypeId result_type)
-    -> diag::Result<mir::Stmt>;
 
 }  // namespace lyra::lowering::hir_to_mir

@@ -263,14 +263,6 @@ auto WritesBack(const SubroutineCallee& plan) -> bool {
       });
 }
 
-// One value the completion payload carries back to a caller place: the actual
-// lvalue to write and which payload component supplies it.
-struct CompletionWriteback {
-  mir::ExprId place{};
-  base::ComponentIndex component_index{};
-  mir::TypeId type{};
-};
-
 // The call itself, still unowned, alongside what a caller needs to consume its
 // completion: the payload's shape and the actual places its written-back
 // components land in.
@@ -429,7 +421,7 @@ auto EmitSubroutineCall(
         }
         writebacks.push_back(
             {.place = place,
-             .component_index = *formal.component,
+             .component = *formal.component,
              .type = formal.type});
         break;
       }
@@ -487,35 +479,15 @@ template <ExprLowerer Lowerer>
 auto EmitWritingBackSteps(
     Lowerer& lowerer, const WalkFrame& frame, const hir::CallExpr& call,
     const SubroutineCallee& plan) -> diag::Result<BoundCompletion> {
-  mir::CompilationUnit& unit = lowerer.Owner().Unit();
-
   auto emitted = EmitSubroutineCall(lowerer, frame, call, plan);
   if (!emitted) return std::unexpected(std::move(emitted.error()));
 
-  mir::Block& body = *frame.current_block;
   const mir::TypeId payload_type = emitted->payload_type;
-  const mir::ExprId call_id = body.exprs.Add(std::move(emitted->call));
-  const mir::ExprId completion_value =
-      unit.types.Get(body.exprs.Get(call_id).type).Is<mir::CoroutineType>()
-          ? body.exprs.Add(
-                mir::Expr{
-                    .data = mir::AwaitExpr{.awaitable = call_id},
-                    .type = payload_type})
-          : call_id;
-  const mir::LocalId completion = frame.bindings->DeclareAnonymous(
-      mir::LocalDecl{.name = "_lyra_completion", .type = payload_type});
-  body.AppendStmt(
-      mir::LocalDeclStmt{.target = completion, .init = completion_value});
-
-  for (const CompletionWriteback& wb : emitted->writebacks) {
-    const mir::ExprId value_id = ProjectCompletionComponent(
-        body, completion, payload_type, wb.component_index, wb.type);
-    const mir::Expr assign_expr =
-        BuildStoreExpr(unit, body, wb.place, value_id, std::nullopt, wb.type);
-    body.AppendStmt(mir::ExprStmt{.expr = body.exprs.Add(assign_expr)});
-  }
   return BoundCompletion{
-      .completion = completion, .payload_type = payload_type};
+      .completion = BindCompletion(
+          lowerer.Owner().Unit(), frame, std::move(emitted->call), payload_type,
+          emitted->writebacks),
+      .payload_type = payload_type};
 }
 
 template <ExprLowerer Lowerer>

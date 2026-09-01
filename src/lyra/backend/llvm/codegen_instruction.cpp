@@ -934,19 +934,19 @@ auto CodeGenFunction::BuiltinCallee(
     const lir::BuiltinTarget& target, const lir::CallInstr& call,
     lir::TypeId result_type, std::span<llvm::Value* const> args)
     -> diag::Result<llvm::FunctionCallee> {
-  // The value an operation acts on is the one the call qualifies itself with,
-  // or its first operand where it qualifies itself with nothing -- an instance
-  // method's receiver.
-  const auto acted_on = [&]() -> lir::TypeId {
+  // The value that names an entry is the one the call qualifies itself with,
+  // or the argument at the position the builtin states where it qualifies
+  // itself with nothing.
+  const auto acted_on = [&](std::size_t operand) -> lir::TypeId {
     if (target.qualifier.has_value()) {
       return *target.qualifier;
     }
-    if (call.args.empty()) {
+    if (operand >= call.args.size()) {
       throw InternalError(
-          "llvm codegen: an operation on a value names that value through a "
-          "qualifier or a receiver, and this call has neither");
+          "llvm codegen: an entry named by a value names it through a "
+          "qualifier or an argument, and this call has neither");
     }
-    return OperandType(call.args.front());
+    return OperandType(call.args.at(operand));
   };
   const auto over = [&](diag::Result<support::ValueDomain> domain)
       -> diag::Result<llvm::FunctionCallee> {
@@ -960,8 +960,8 @@ auto CodeGenFunction::BuiltinCallee(
           [&](const NamedAlone&) -> diag::Result<llvm::FunctionCallee> {
             return Entry(RuntimeSymbol(target.fn), result_type, args);
           },
-          [&](const NamedByValue&) -> diag::Result<llvm::FunctionCallee> {
-            return over(DomainOf(acted_on()));
+          [&](const NamedByValue& named) -> diag::Result<llvm::FunctionCallee> {
+            return over(DomainOf(acted_on(named.operand)));
           },
           [&](const NamedByCellValue&) -> diag::Result<llvm::FunctionCallee> {
             auto domain = CellDomain(OperandType(call.args.at(0)));
@@ -973,7 +973,7 @@ auto CodeGenFunction::BuiltinCallee(
                 args);
           },
           [&](const NamedByConversion&) -> diag::Result<llvm::FunctionCallee> {
-            auto destination = DomainOf(acted_on());
+            auto destination = DomainOf(acted_on(0));
             if (!destination) {
               return std::unexpected(std::move(destination.error()));
             }

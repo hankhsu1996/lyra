@@ -41,6 +41,19 @@ auto lyra_rt_file_open_mode(void* files, const void* name, const void* mode)
 void lyra_rt_file_close(void* files, const void* descriptor);
 auto lyra_rt_file_getc(void* files, const void* fd) -> void*;
 auto lyra_rt_file_ungetc(void* files, const void* c, const void* fd) -> void*;
+// A read that answers through an argument the call names completes with how
+// many bytes it read and the destination those bytes filled (LRM 21.3.4.2,
+// 21.3.4.4, 21.3.7). A binary read is handed the destination as well, because
+// its shape decides how much is read and what the file does not reach keeps
+// what it held; reading into a packed variable and reading into a memory are
+// two requests, and a memory's bounds and window reach the second as operands
+// of their own.
+auto lyra_rt_file_gets(void* files, const void* fd) -> void*;
+auto lyra_rt_file_error(void* files, const void* fd) -> void*;
+auto lyra_rt_file_read(void* files, const void* dest, const void* fd) -> void*;
+auto lyra_rt_file_read_memory(
+    void* files, const void* dest, const void* fd, const void* left,
+    const void* right, const void* start, const void* count) -> void*;
 auto lyra_rt_file_seek(
     void* files, const void* fd, const void* offset, const void* operation)
     -> void*;
@@ -215,6 +228,16 @@ auto lyra_rt_run_null_host_command() -> void*;
 // (LRM 21.6). Those arguments are the runtime's, so only the prefix crosses, as
 // an opaque string; the answer is an opaque packed value, like every scalar.
 auto lyra_rt_test_plusargs(void* runtime, const void* user_string) -> void*;
+
+// The value a plusarg carries, converted as the user string's format specifier
+// asks (LRM 21.6). It completes with whether one matched and the value the
+// destination now holds; the destination crosses in because a miss leaves it as
+// it was and its size decides how a match is fitted, and the entry is named by
+// the representation that destination takes.
+auto lyra_rt_packed_value_plusargs(
+    void* runtime, const void* user_string, const void* destination) -> void*;
+auto lyra_rt_string_value_plusargs(
+    void* runtime, const void* user_string, const void* destination) -> void*;
 
 // Draws from the calling process's generator (LRM 18.13.1 -- 18.13.2). The
 // generator is the running process's, read from the runtime, so none crosses
@@ -831,7 +854,7 @@ auto lyra_rt_packed_from_words(
 auto lyra_rt_packed_from_string(const void* text, const void* prototype)
     -> void*;
 auto lyra_rt_unpackedarray_from_string(
-    const void* text, const void* prototype, const void* count) -> void*;
+    const void* text, const void* element_type, const void* count) -> void*;
 
 // LRM 20.6.2 `$bits` over the domains whose value is a bit stream: how many
 // bits the value currently holds, which for an aggregate is its parts' streams

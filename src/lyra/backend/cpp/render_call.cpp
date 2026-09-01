@@ -88,6 +88,10 @@ auto BuiltinFnCppName(support::BuiltinFn id) -> std::string_view {
       return "RunHostCommand";
     case support::BuiltinFn::kReadMem:
       return "ReadMem";
+    case support::BuiltinFn::kReadMemWithin:
+      return "ReadMemWithin";
+    case support::BuiltinFn::kWriteMemWithin:
+      return "WriteMemWithin";
     case support::BuiltinFn::kWriteMem:
       return "WriteMem";
     case support::BuiltinFn::kTrigger:
@@ -459,6 +463,7 @@ auto BuiltinFnCppName(support::BuiltinFn id) -> std::string_view {
     case support::BuiltinFn::kFileGets:
       return "Gets";
     case support::BuiltinFn::kFileRead:
+    case support::BuiltinFn::kFileReadMemory:
       return "Read";
     case support::BuiltinFn::kFileSeek:
       return "Seek";
@@ -538,7 +543,9 @@ auto BuiltinFnCppNamespace(support::BuiltinFn id) -> std::string_view {
     case support::BuiltinFn::kRunHostCommand:
     case support::BuiltinFn::kRunNullHostCommand:
     case support::BuiltinFn::kReadMem:
+    case support::BuiltinFn::kReadMemWithin:
     case support::BuiltinFn::kWriteMem:
+    case support::BuiltinFn::kWriteMemWithin:
     case support::BuiltinFn::kRunForeignTaskOnFiber:
     case support::BuiltinFn::kRunExportedTaskToCompletion:
     case support::BuiltinFn::kCurrentExportScope:

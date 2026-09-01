@@ -114,30 +114,38 @@ auto TestPlusargs(RuntimeEffects& runtime, const value::String& user_string)
 
 auto ValuePlusargs(
     RuntimeEffects& runtime, const value::String& user_string,
-    value::PackedArray& out) -> value::PackedArray {
+    value::PackedArray out)
+    -> value::Tuple<value::PackedArray, value::PackedArray> {
+  using Completion = value::Tuple<value::PackedArray, value::PackedArray>;
+  const auto missed = [&out] {
+    return Completion{value::PackedArray::Int(0), out};
+  };
   const auto parsed = ParseUserString(user_string.View());
   const auto base = BaseForFormat(parsed.format_letter);
-  if (!base.has_value()) {
-    // %s / %e / %f / %g on an integral target: no match, out untouched.
-    return value::PackedArray::Int(0);
-  }
+  // %s / %e / %f / %g on an integral target converts nothing.
+  if (!base.has_value()) return missed();
   const auto match = runtime.PlusArgs().MatchPrefix(parsed.prefix);
-  if (!match.has_value()) return value::PackedArray::Int(0);
+  if (!match.has_value()) return missed();
   const std::int64_t converted = ConvertIntegralRemainder(*match, *base);
-  out = value::PackedArray::FromInt(converted, out.Type());
-  return value::PackedArray::Int(1);
+  return Completion{
+      value::PackedArray::Int(1),
+      value::PackedArray::FromInt(converted, out.Type())};
 }
 
 auto ValuePlusargs(
     RuntimeEffects& runtime, const value::String& user_string,
-    value::String& out) -> value::PackedArray {
+    value::String out) -> value::Tuple<value::PackedArray, value::String> {
+  using Completion = value::Tuple<value::PackedArray, value::String>;
+  const auto missed = [&out] {
+    return Completion{value::PackedArray::Int(0), out};
+  };
   const auto parsed = ParseUserString(user_string.View());
   const char letter = parsed.format_letter;
-  if (letter != 's' && letter != 'S') return value::PackedArray::Int(0);
+  if (letter != 's' && letter != 'S') return missed();
   const auto match = runtime.PlusArgs().MatchPrefix(parsed.prefix);
-  if (!match.has_value()) return value::PackedArray::Int(0);
-  out = value::String(std::string(*match));
-  return value::PackedArray::Int(1);
+  if (!match.has_value()) return missed();
+  return Completion{
+      value::PackedArray::Int(1), value::String(std::string(*match))};
 }
 
 }  // namespace lyra::runtime

@@ -248,9 +248,12 @@ enum class BuiltinFn : std::uint16_t {
   //
   // Opening without a mode yields a multichannel descriptor and opening with
   // one yields a file descriptor (LRM 21.3.1); flushing an addressed channel
-  // and flushing every open one (LRM 21.3.6) are likewise two requests. Each
-  // form is its own entry, so which one a call means is settled here rather
-  // than by counting its arguments.
+  // and flushing every open one (LRM 21.3.6) are likewise two requests; and
+  // reading binary data into a packed variable is a different request from
+  // reading it into a memory, which LRM 21.3.4.4 states as two variants and
+  // gives different addressing. Each form is its own entry, so which one a
+  // call means is settled here rather than by counting its arguments or by
+  // reading the type of one of them.
   kFileOpen,
   kFileOpenMode,
   kFileClose,
@@ -258,6 +261,7 @@ enum class BuiltinFn : std::uint16_t {
   kFileUngetc,
   kFileGets,
   kFileRead,
+  kFileReadMemory,
   kFileSeek,
   kFileRewind,
   kFileTell,
@@ -280,18 +284,22 @@ enum class BuiltinFn : std::uint16_t {
   // it was given. Both return an SV `int` carrying what the host reported.
   kRunHostCommand,
   kRunNullHostCommand,
-  // LRM 21.4 $readmemh / $readmemb. A free function on `lyra::runtime` taking
-  // the runtime handle, the output memory by reference, the file name, the
-  // memory's declared bounds, the digit radix (16 / 2), and the optional start
-  // / finish addresses. It opens and parses the named text file and fills the
-  // memory in place; the SV task's void result means the caller never awaits
-  // it.
+  // LRM 21.4 $readmemh / $readmemb and LRM 21.5 $writememh / $writememb. Free
+  // functions on `lyra::runtime` taking the runtime handle, the memory, the
+  // file name, whatever addressing that memory's own kind states, the digit
+  // radix (16 / 2), and the address the run starts from. A load completes with
+  // the memory it filled, since a word the file does not address keeps what it
+  // held.
+  //
+  // Running upward from a start and running within a start-and-finish window
+  // are two requests: the window bounds the addresses the file may name, lets
+  // the run descend, and obliges the file to fill the whole of it. Each is its
+  // own entry, so which one a call means is settled here rather than by
+  // counting arguments.
   kReadMem,
-  // LRM 21.5 $writememh / $writememb. The dump counterpart of kReadMem: same
-  // operand shape but the memory is read, not written, so it passes by const
-  // reference. It opens the named file (overwriting) and writes one radix word
-  // per element over the addressed range.
+  kReadMemWithin,
   kWriteMem,
+  kWriteMemWithin,
   // LRM 9.4.1 `#N`. The runtime free function the scheduler suspends on.
   // The call takes the runtime handle, the duration in the calling scope's
   // precision steps, and the calling scope's precision power; the runtime
@@ -642,12 +650,6 @@ enum class BuiltinFn : std::uint16_t {
 // way.
 [[nodiscard]] auto ContainerIndexOperand(BuiltinFn id)
     -> std::optional<std::size_t>;
-
-// True iff the file-IO entry writes through one of its argument slots
-// (LRM 21.3.4: `$fgets` writes its first arg, `$fread` writes its first
-// arg, `$ferror` writes its second arg). The lowering routes such calls
-// through a copy-out wrapper at statement position.
-[[nodiscard]] auto IsFileOutputArgBuiltinFn(BuiltinFn id) -> bool;
 
 // The id's stable spelling. It aligns with the SV method spelling where one
 // exists (LRM 6.16 / 7.9 / 7.12 / 6.19.5) and is descriptive where there is no
