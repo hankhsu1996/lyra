@@ -478,9 +478,7 @@ auto CodeGenFunction::ConstructArgs(
             args.insert(args.end(), operands.begin(), operands.end());
             return args;
           },
-          [&](const auto&) -> std::vector<llvm::Value*> {
-            return operands;
-          }});
+          [&](const auto&) -> std::vector<llvm::Value*> { return operands; }});
 }
 
 // Every call is a symbol invoked with arguments; the target kinds differ only
@@ -1216,23 +1214,23 @@ auto CodeGenFunction::ConstructCallee(
 auto CodeGenFunction::ElementPrototypeOperand(const lir::CallInstr& call) const
     -> std::optional<std::size_t> {
   if (const auto* construct = std::get_if<lir::ConstructTarget>(&call.target)) {
-    return module_->Unit().types.Get(construct->result).Visit(
-        Overloaded{
-            [](const lir::DynamicArrayType&) -> std::optional<std::size_t> {
-              return 0;
-            },
-            [](const lir::UnpackedArrayType&) -> std::optional<std::size_t> {
-              return 0;
-            },
-            [](const lir::QueueType&) -> std::optional<std::size_t> {
-              return 0;
-            },
-            [](const lir::AssociativeArrayType&) -> std::optional<std::size_t> {
-              return 0;
-            },
-            [](const auto&) -> std::optional<std::size_t> {
-              return std::nullopt;
-            }});
+    return module_->Unit()
+        .types.Get(construct->result)
+        .Visit(
+            Overloaded{
+                [](const lir::DynamicArrayType&) -> std::optional<std::size_t> {
+                  return 0;
+                },
+                [](const lir::UnpackedArrayType&)
+                    -> std::optional<std::size_t> { return 0; },
+                [](const lir::QueueType&) -> std::optional<std::size_t> {
+                  return 0;
+                },
+                [](const lir::AssociativeArrayType&)
+                    -> std::optional<std::size_t> { return 0; },
+                [](const auto&) -> std::optional<std::size_t> {
+                  return std::nullopt;
+                }});
   }
   const auto* builtin = std::get_if<lir::BuiltinTarget>(&call.target);
   if (builtin == nullptr) {

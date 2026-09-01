@@ -95,7 +95,7 @@ Rules:
         is not this rule.
         Scope: src/lyra/backend/**, the type-mapping entry excepted.
 
-  A017  Every MIR expression and statement alternative is read by both of
+  A016  Every MIR expression and statement alternative is read by both of
         MIR's consumers -- the C++ backend and the MIR-to-LIR lowering. A
         node kind only one of them names is one of two defects, and the
         suite catches neither: it carries one target's spelling, so the
@@ -602,7 +602,7 @@ def check_a015(repo_root: Path) -> list[str]:
     return errors
 
 
-# Rule A017
+# Rule A016
 MIR_EXPR_HEADER = "include/lyra/mir/expr.hpp"
 MIR_STMT_HEADER = "include/lyra/mir/stmt.hpp"
 MIR_CONSUMERS = (
@@ -634,7 +634,7 @@ def consumer_text(repo_root: Path, roots: tuple[str, ...]) -> str:
     return "\n".join(parts)
 
 
-def check_a017(repo_root: Path) -> list[str]:
+def check_a016(repo_root: Path) -> list[str]:
     texts = {
         label: consumer_text(repo_root, roots) for label, roots in MIR_CONSUMERS
     }
@@ -654,7 +654,7 @@ def check_a017(repo_root: Path) -> list[str]:
             if not missing:
                 continue
             errors.append(
-                f"  {header}: A017 '{name}' is not read by "
+                f"  {header}: A016 '{name}' is not read by "
                 f"{' and '.join(missing)}; a node kind one consumer never "
                 f"names carries that consumer's spelling, or the other one "
                 f"drops what it means"
@@ -967,17 +967,17 @@ def run_self_tests() -> bool:
             "  return RenderTypeAsCpp(unit, id) + \"::Concat\";"),
         "A015 a mapped type reached into is not a literal")
 
-    # A017
+    # A016
     ok &= expect(
         variant_alternatives(
             "using ExprData = std::variant<\n    UnaryExpr, BinaryExpr,\n"
             "    CallExpr>;\n",
             "ExprData") == ["UnaryExpr", "BinaryExpr", "CallExpr"],
-        "A017 parser reads the alternative list")
+        "A016 parser reads the alternative list")
     ok &= expect(
         not variant_alternatives("using Callee = std::variant<Direct>;\n",
                                  "ExprData"),
-        "A017 parser reads only the named alias")
+        "A016 parser reads only the named alias")
 
     return ok
 
@@ -1000,7 +1000,7 @@ CHECKS = [
     ("A013 closed alternative set nothing switches on", check_a013),
     ("A014 DiagCode without a registry entry", check_a014),
     ("A015 backend names a runtime library type", check_a015),
-    ("A017 MIR node kind only one consumer reads", check_a017),
+    ("A016 MIR node kind only one consumer reads", check_a016),
 ]
 
 

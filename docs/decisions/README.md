@@ -58,8 +58,9 @@ the detail lives in the entry itself.
   nonblocking assignment bind; the nested-lvalue write encoding is deleted.
 - [queue-operators](queue-operators.md) -- queue access operators lower to built-in method calls;
   read and write are distinct methods chosen at lowering.
-- [concatenation-realization](concatenation-realization.md) -- a join means one operation and
-  carries two or more runs; an N-ary build reaches a fixed-arity ABI as a chain.
+- [concatenation-realization](concatenation-realization.md) -- a join is a call rather than a node
+  of its own, over every operand family, and reaches MIR already folded to the two operands every
+  entry that performs it takes.
 - [value-construction-forms](value-construction-forms.md) -- a construction says which form it is; a
   value that is its own parts is a primitive, a container built from one is a call, and what names a
   call is the type's own answer.

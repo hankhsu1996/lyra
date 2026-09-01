@@ -65,7 +65,6 @@ class UnitLowerer {
   // than one value, which no source-level type names.
   auto ProductOf(std::vector<lir::TypeId> components) -> lir::TypeId;
 
-
   // The LIR function a class's callable lowers to. Throws if `callable` has no
   // body in `owner` -- a DPI-C import is reached as a foreign symbol and a pure
   // virtual has no implementation here, so neither is a function of this unit.
