@@ -17,6 +17,7 @@
 
 #include "lyra/backend/llvm/codegen_function.hpp"
 #include "lyra/backend/llvm/codegen_module.hpp"
+#include "lyra/backend/llvm/runtime_entry.hpp"
 #include "lyra/base/internal_error.hpp"
 #include "lyra/base/overloaded.hpp"
 #include "lyra/diag/diag_code.hpp"
@@ -36,12 +37,13 @@ auto Unsupported(std::string message) -> std::unexpected<diag::Diagnostic> {
       diag::DiagCode::kUnsupportedExpressionForm, std::move(message));
 }
 
-// Which form a container construction is. A queue is built empty or over an
-// element list, and either way with or without the LRM 7.10.5 bound it was
-// declared with; an associative array is built empty, over its entries, or
-// over its entries and a default. The call does not say which -- these read it
-// back from how many operands arrived, which is what a construction stating
-// its own form would settle instead.
+// Which form a construction is. A queue is built empty or over an element list,
+// and either way with or without the LRM 7.10.5 bound it was declared with; an
+// associative array is built empty, over its entries, or over its entries and a
+// default; a format specification is built from a conversion kind alone or from
+// that kind and the fields written with it. The call does not say which --
+// these read it back from how many operands arrived, which is what a
+// construction stating its own form would settle instead.
 auto QueueConstruction(std::size_t argument_count) -> RuntimeOp {
   switch (argument_count) {
     case 1:
@@ -64,6 +66,11 @@ auto AssociativeConstruction(std::size_t argument_count) -> RuntimeOp {
     default:
       return RuntimeOp::kFromEntriesDefault;
   }
+}
+
+auto FormatSpecConstruction(std::size_t argument_count) -> RuntimeOp {
+  return argument_count == 1 ? RuntimeOp::kMakeFormatSpecOfKind
+                             : RuntimeOp::kMakeFormatSpec;
 }
 
 }  // namespace
@@ -1144,9 +1151,8 @@ auto CodeGenFunction::ConstructCallee(
               case lir::RuntimeLibraryKind::kTrigger:
                 return entry(RuntimeSymbol(RuntimeOp::kMakeTrigger));
               case lir::RuntimeLibraryKind::kFormatSpec:
-                return entry(RuntimeSymbol(
-                    call.args.size() == 1 ? RuntimeOp::kMakeFormatSpecOfKind
-                                          : RuntimeOp::kMakeFormatSpec));
+                return entry(
+                    RuntimeSymbol(FormatSpecConstruction(call.args.size())));
               case lir::RuntimeLibraryKind::kPackedRange:
                 return entry(RuntimeSymbol(RuntimeOp::kMakePackedRange));
               case lir::RuntimeLibraryKind::kPackedType:

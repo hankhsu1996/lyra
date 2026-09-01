@@ -566,16 +566,6 @@ void DefineRuntimeAbi(llvm::orc::LLJIT& jit) {
       &lyra_rt_unpackedarray_merge_conditional);
   add("lyra_rt_unpackedarray_from_packed_array",
       &lyra_rt_unpackedarray_from_packed_array);
-  add("lyra_rt_unpackedarray_cell_get", &lyra_rt_unpackedarray_cell_get);
-  add("lyra_rt_unpackedarray_cell_initialize",
-      &lyra_rt_unpackedarray_cell_initialize);
-  add("lyra_rt_unpackedarray_cell_set", &lyra_rt_unpackedarray_cell_set);
-  add("lyra_rt_unpackedarray_activation_frame_alloc",
-      &lyra_rt_unpackedarray_activation_frame_alloc);
-  add("lyra_rt_unpackedarray_activation_frame_store",
-      &lyra_rt_unpackedarray_activation_frame_store);
-  add("lyra_rt_unpackedarray_activation_frame_load",
-      &lyra_rt_unpackedarray_activation_frame_load);
   Check(
       jit.getMainJITDylib().define(
           llvm::orc::absoluteSymbols(std::move(symbols))),
@@ -769,13 +759,13 @@ auto LoadScopeClasses(
   const auto descend = [&](const auto& self_ref,
                            lir::ClassId id) -> diag::Result<void> {
     const lir::Class& cls = unit.classes.Get(id);
-    // Every scope of a unit runs at the unit's precision: a scope inside a unit
-    // has no timescale declaration of its own and takes the enclosing one (LRM
-    // 3.14.2.3).
     auto members = DescribeMembers(unit, cls.members);
     if (!members) {
       return std::unexpected(std::move(members.error()));
     }
+    // Every scope of a unit runs at the unit's precision: a scope inside a unit
+    // has no timescale declaration of its own and takes the enclosing one (LRM
+    // 3.14.2.3).
     loaded.push_back(
         LoadedScopeClass{
             .name = cls.name,

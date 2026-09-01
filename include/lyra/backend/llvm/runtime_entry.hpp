@@ -34,11 +34,9 @@ auto DeclaredIndexType(const lir::CompilationUnit& unit, lir::TypeId container)
     -> std::optional<lir::TypeId>;
 
 // An operation the execution model performs that the source language does not
-// spell as a call. `support::BuiltinFn` names the ones it does spell; this
-// names the rest -- reaching the storage a capability wrapper stands for,
-// erasing a value into an aggregate, and building a value or a runtime record.
-// They are listed together because they share exactly that: the program never
-// writes them, so nothing upstream carries a name for them.
+// spell as a call. The builtin set names the ones it does spell; these are the
+// rest, listed together because the program never writes them, so nothing
+// upstream carries a name for them.
 enum class RuntimeOp : std::uint8_t {
   kCellInitialize,
   kCellGet,
@@ -71,10 +69,6 @@ enum class RuntimeOp : std::uint8_t {
   kMakeFormatSpec,
   kMakeFormatSpecOfKind,
 };
-// The operation's stable spelling. This is an interface contract, not a display
-// string: it is the operation half of the runtime-library symbol a generated
-// module calls, so changing it renames a linked symbol.
-auto RuntimeOpName(RuntimeOp op) -> std::string_view;
 
 // The library realizes an operation once, whatever it is applied to: the
 // runtime performs the work and what it acts on -- the engine, the file broker,

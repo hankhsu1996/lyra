@@ -1,14 +1,15 @@
 #pragma once
 
 #include <cstddef>
+#include <cstdint>
 #include <optional>
 #include <span>
+#include <string_view>
 #include <unordered_map>
 #include <vector>
 
 #include <llvm/IR/IRBuilder.h>
 
-#include "lyra/backend/llvm/runtime_entry.hpp"
 #include "lyra/diag/diagnostic.hpp"
 #include "lyra/lir/function.hpp"
 #include "lyra/lir/type_id.hpp"
@@ -27,8 +28,9 @@ class CodeGenModule;
 
 // Per-function code generation: lowers one LIR callable body into its LLVM
 // function. Each LIR value becomes one LLVM value; reads resolve through the
-// per-function value map. Shared context -- types, the runtime ABI, method
-// resolution -- are reached through the owning module-level code generation.
+// per-function value map. Everything shared across the module's functions is
+// reached through the owning module-level code generation and never held here,
+// so a body carries no state that outlives it.
 class CodeGenFunction {
  public:
   CodeGenFunction(
@@ -97,9 +99,8 @@ class CodeGenFunction {
   void EmitCoroutineSuspend(llvm::BasicBlock* resume, bool is_final);
 
   // The address a place names. The base contributes the storage the chain
-  // starts from -- a place local's own frame slot, or the referent of a
-  // reference value
-  // -- and each further step walks one projection.
+  // starts from, either a place local's own frame slot or the referent of a
+  // reference value, and each further step walks one projection.
   auto ResolvePlaceAddress(const lir::Place& place)
       -> diag::Result<llvm::Value*>;
   auto LowerIntConst(const lir::IntConst& constant)

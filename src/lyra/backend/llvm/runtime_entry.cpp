@@ -29,18 +29,9 @@ auto Symbol(support::ValueDomain domain, std::string_view operation)
       "lyra_rt_{}_{}", support::ValueDomainName(domain), operation);
 }
 
-}  // namespace
-
-auto DeclaredIndexType(const lir::CompilationUnit& unit, lir::TypeId container)
-    -> std::optional<lir::TypeId> {
-  const auto* associative =
-      std::get_if<lir::AssociativeArrayType>(&unit.types.Get(container).data);
-  if (associative == nullptr) {
-    return std::nullopt;
-  }
-  return associative->key_type;
-}
-
+// The operation's stable spelling. This is an interface contract, not a display
+// string: it is the operation half of the runtime-library symbol a generated
+// module calls, so changing it renames a linked symbol.
 auto RuntimeOpName(RuntimeOp op) -> std::string_view {
   switch (op) {
     case RuntimeOp::kCellInitialize:
@@ -107,6 +98,18 @@ auto RuntimeOpName(RuntimeOp op) -> std::string_view {
   throw InternalError("llvm codegen: unknown runtime operation");
 }
 
+}  // namespace
+
+auto DeclaredIndexType(const lir::CompilationUnit& unit, lir::TypeId container)
+    -> std::optional<lir::TypeId> {
+  const auto* associative =
+      std::get_if<lir::AssociativeArrayType>(&unit.types.Get(container).data);
+  if (associative == nullptr) {
+    return std::nullopt;
+  }
+  return associative->key_type;
+}
+
 auto ValueDomainOf(const lir::CompilationUnit& unit, lir::TypeId type)
     -> std::optional<support::ValueDomain> {
   using Domain = std::optional<support::ValueDomain>;
@@ -140,41 +143,23 @@ auto ValueDomainOf(const lir::CompilationUnit& unit, lir::TypeId type)
           [](const lir::ChandleType&) -> Domain {
             return support::ValueDomain::kChandle;
           },
-          // An unpacked struct (LRM 7.2) is MIR's product type; its runtime
-          // realization is a type-erased product value carried inline behind an
-          // opaque handle, like every other value domain.
           [](const lir::TupleType&) -> Domain {
             return support::ValueDomain::kTuple;
           },
-          // A dynamic array (LRM 7.5) is MIR's `DynamicArrayType`; its runtime
-          // realization is a type-erased container carried behind an opaque
-          // handle, like every other value domain.
           [](const lir::DynamicArrayType&) -> Domain {
             return support::ValueDomain::kDynArray;
           },
-          // A fixed-size unpacked array (LRM 7.4.2) is MIR's
-          // `UnpackedArrayType`; its runtime realization is a type-erased
-          // container carried behind an opaque handle, like every other value
-          // domain. The declared range is not part of it -- the coordinate
-          // system is the receiver's static type and arrives at a select as an
-          // operand, so the payload is ordinal-only.
+          // A container's domain names how its elements are held and nothing
+          // its declaration says: an unpacked array's range (LRM 7.4.2), a
+          // queue's bound (LRM 7.10), and an associative array's index type
+          // (LRM 7.8) each reach an operation as an operand of their own, so
+          // one realization per domain serves every declared shape.
           [](const lir::UnpackedArrayType&) -> Domain {
             return support::ValueDomain::kUnpackedArray;
           },
-          // A queue (LRM 7.10) is MIR's `QueueType`; its runtime realization is
-          // a type-erased container carried behind an opaque handle, like every
-          // other value domain. Its declared bound is a fact of the type that
-          // reaches a construction and a store as an operand, so the payload
-          // carries it rather than the domain distinguishing a bounded queue
-          // from an unbounded one.
           [](const lir::QueueType&) -> Domain {
             return support::ValueDomain::kQueue;
           },
-          // An associative array (LRM 7.8) is MIR's `AssociativeArrayType`;
-          // its runtime realization is a type-erased keyed container carried
-          // behind an opaque handle. Its index type is not part of the domain:
-          // an index reaches every operation as a value of its own, and the
-          // order two indices sit in is read from the indices themselves.
           [](const lir::AssociativeArrayType&) -> Domain {
             return support::ValueDomain::kAssocArray;
           },

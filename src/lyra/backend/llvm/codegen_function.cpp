@@ -15,6 +15,7 @@
 #include <llvm/IR/Type.h>
 
 #include "lyra/backend/llvm/codegen_module.hpp"
+#include "lyra/backend/llvm/runtime_entry.hpp"
 #include "lyra/base/internal_error.hpp"
 #include "lyra/base/overloaded.hpp"
 #include "lyra/diag/diag_code.hpp"

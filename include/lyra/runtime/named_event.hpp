@@ -86,9 +86,9 @@ class NamedEvent {
     return EventAwaitable{event_};
   }
 
-  // Parks `waiter` for the next trigger. A target whose suspension is not a
-  // language-level await enrols here directly, and leaves the event holding the
-  // same waiter set a suspending frame would.
+  // LRM 15.5.2 for a caller that states registration and suspension as two
+  // steps: enrols `waiter` without suspending it, leaving the event holding the
+  // same waiter set the awaitable form would.
   void AddWaiter(CoroutineHandle waiter) {
     event_.AddWaiter(waiter);
   }

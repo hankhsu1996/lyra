@@ -9,26 +9,27 @@ symbol and calls it, and the runtime defines that symbol. Two facts have to agre
 -- which entry is meant, and what crosses to it -- and both were being written down twice.
 
 The backend held a class of one method per entry, each hand-writing that entry's symbol and its LLVM
-signature: 95 methods and 96 signatures. A builtin reached one of them through a switch of 61 arms,
-and a builtin not listed there fell to a `default:` that re-read the call as an operation on a value
-and refused it naming the receiver's type.
+signature: 104 of them. A builtin reached one of them through a switch of 64 cases, and a builtin
+not listed there fell to a `default:` that re-read the call as an operation on a value and refused
+it naming the receiver's type.
 
 Three things follow from that shape, and all three were observed.
 
 **The refusal named the wrong thing.** `parent` -- a scope's enclosing scope -- was refused for
-having a pointer receiver, when the fact was that nobody had added the arm. Twenty-eight builtins
-sat in the value path that are not operations on values; ten of them were reachable, and every one
-of those reported a receiver type as though the type were the obstacle.
+having a pointer receiver, when the fact was that nobody had added the arm. Those 64 cases named a
+fraction of the builtin set, and everything they did not name reached that `default:` and reported a
+receiver type as though the type were the obstacle -- whether or not the operation was one on a
+value at all.
 
 **The signature was a restatement.** Every runtime value crosses this ABI as an opaque handle, so
-all 96 hand-written signatures were runs of pointer, void, span, and machine scalars -- exactly what
-mapping the call's own operand types yields. Writing them again bought no checking: a declaration is
-held to the call's arguments by LLVM, never to the runtime's definition, so a hand-written signature
-that disagreed with the definition was undefined behaviour at run time.
+all of those hand-written signatures were runs of pointer, void, span, and machine scalars --
+exactly what mapping the call's own operand types yields. Writing them again bought no checking: a
+declaration is held to the call's arguments by LLVM, never to the runtime's definition, so a
+hand-written signature that disagreed with the definition was undefined behaviour at run time.
 
 **The symbol had no author.** It was composed at about twenty sites with the value representation in
 three different positions -- `lyra_rt_packed_add`, `lyra_rt_cell_packed_get`,
-`lyra_rt_activation_frame_alloc_packed`. Five entries were defined in the runtime and reachable from
+`lyra_rt_activation_frame_alloc_packed`. Six entries were defined in the runtime and reachable from
 nothing, because the header did not declare them and the execution session did not bind them; a call
 to one resolved to no address.
 
@@ -69,14 +70,15 @@ Neither fact is written down a second time.**
 - **The three lists are held together by a check.** An entry exists as a prototype in the ABI
   header, a definition beside the runtime it wraps, and a binding that gives the session its
   address. The host compiler holds the definition to the prototype; a policy check holds the binding
-  to both, and every prototype to a binding.
+  to both, every prototype to a binding, and every binding to a single occurrence -- a name bound
+  twice keeps whichever binding ran last without saying so.
 
 ## Rejected
 
-- **Adding the missing arms.** The ten reachable builtins could each have got a method and a switch
-  case, leaving the shape intact. Rejected because the shape is what produced them: the next builtin
-  added anywhere in the pipeline lands in the same `default:` and is refused for the same wrong
-  reason. Whatever a fallback arm cannot name, some producer knew and did not write down.
+- **Adding the missing arms.** Every builtin that had been refused could have got a method and a
+  switch case, leaving the shape intact. Rejected because the shape is what produced them: the next
+  builtin added anywhere in the pipeline lands in the same `default:` and is refused for the same
+  wrong reason. Whatever a fallback arm cannot name, some producer knew and did not write down.
 
 - **Keeping the position of the value representation as each family had it, and checking the
   result.** A check finds a name nothing defines after it is written; one position means there is
@@ -100,7 +102,7 @@ Neither fact is written down a second time.**
   -- the same way the C++ backend's own name table already behaves, so the two backends are
   symmetric under a new builtin.
 - An entry that is declared, defined, or bound without the other two fails a policy check rather
-  than an unresolved symbol at run time.
+  than an unresolved symbol at run time, as does one bound more than once.
 - A refusal names the operation and the shape the library has no entry for, so the reason a case is
   refused is the reason it is refused.
 

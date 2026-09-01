@@ -895,7 +895,6 @@ def run_self_tests() -> bool:
             "  return RenderTypeAsCpp(unit, id) + \"::Concat\";"),
         "A015 a mapped type reached into is not a literal")
 
-
     return ok
 
 
