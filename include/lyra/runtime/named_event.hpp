@@ -86,6 +86,13 @@ class NamedEvent {
     return EventAwaitable{event_};
   }
 
+  // LRM 15.5.2 for a caller that states registration and suspension as two
+  // steps: enrols `waiter` without suspending it, leaving the event holding the
+  // same waiter set the awaitable form would.
+  void AddWaiter(CoroutineHandle waiter) {
+    event_.AddWaiter(waiter);
+  }
+
   // LRM 15.5.3: `e.triggered` is true iff the most recent trigger happened
   // in the current simulation time step. No mutation, no clearing -- the
   // answer is a timestamp comparison.

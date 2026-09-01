@@ -245,7 +245,14 @@ enum class BuiltinFn : std::uint16_t {
   // descriptor value (LRM 21.3.1); the read family yields byte counts;
   // `Close` / `Flush` are void. The `kFile` prefix disambiguates from
   // string's `kGetc` (LRM 6.16) which targets a different receiver.
+  //
+  // Opening without a mode yields a multichannel descriptor and opening with
+  // one yields a file descriptor (LRM 21.3.1); flushing an addressed channel
+  // and flushing every open one (LRM 21.3.6) are likewise two requests. Each
+  // form is its own entry, so which one a call means is settled here rather
+  // than by counting its arguments.
   kFileOpen,
+  kFileOpenMode,
   kFileClose,
   kFileGetc,
   kFileUngetc,
@@ -257,6 +264,7 @@ enum class BuiltinFn : std::uint16_t {
   kFileEof,
   kFileError,
   kFileFlush,
+  kFileFlushAll,
   // LRM 21.6 command-line plusargs. Free functions on `lyra::runtime` that
   // take the runtime handle plus SV `string` operands; the value form also
   // takes the output lvalue by reference (a `PackedArray` or `String`,
@@ -264,11 +272,14 @@ enum class BuiltinFn : std::uint16_t {
   // return an SV `int` (1 on prefix match, 0 otherwise).
   kTestPlusargs,
   kValuePlusargs,
-  // LRM 20.17.1 $system. A free function on `lyra::runtime` taking the runtime
-  // handle and, in the commanded form, the SV `string` to execute; the
-  // no-argument form omits it and asks whether a command processor exists.
-  // Both return an SV `int` carrying what the host reported.
+  // LRM 20.17.1 $system. Free functions on `lyra::runtime` taking the runtime
+  // handle; the commanded form additionally takes the SV `string` to execute,
+  // while the null form asks whether a command processor exists at all. Running
+  // a command and asking after the processor are different requests, so each is
+  // its own entry rather than one whose meaning depends on how many arguments
+  // it was given. Both return an SV `int` carrying what the host reported.
   kRunHostCommand,
+  kRunNullHostCommand,
   // LRM 21.4 $readmemh / $readmemb. A free function on `lyra::runtime` taking
   // the runtime handle, the output memory by reference, the file name, the
   // memory's declared bounds, the digit radix (16 / 2), and the optional start

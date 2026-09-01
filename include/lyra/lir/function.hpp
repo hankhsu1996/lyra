@@ -6,6 +6,7 @@
 #include <functional>
 #include <optional>
 #include <string>
+#include <string_view>
 #include <variant>
 #include <vector>
 
@@ -199,6 +200,14 @@ struct ControlEffectTarget {
   };
   Op op;
 };
+
+// The operation's stable spelling. This is an interface contract, not a display
+// string: it names the operation in a dump, and it is the operation half of the
+// runtime-library symbol a generated module calls, so changing it renames a
+// linked symbol. Change it only to correct the operation's identity, never to
+// improve how a dump reads.
+auto ActivationFrameOpName(ActivationFrameTarget::Op op) -> std::string_view;
+auto ControlEffectOpName(ControlEffectTarget::Op op) -> std::string_view;
 
 // The target of a call: a runtime builtin, a function of this unit, a value
 // constructor named by the call's result type, a foreign symbol the host

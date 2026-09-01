@@ -30,9 +30,10 @@
 #include <llvm/Transforms/Coroutines/CoroSplit.h>
 
 #include "lyra/backend/llvm/emit.hpp"
-#include "lyra/backend/llvm/runtime_abi.hpp"
+#include "lyra/backend/llvm/runtime_entry.hpp"
 #include "lyra/base/internal_error.hpp"
 #include "lyra/compiler/unit_metadata.hpp"
+#include "lyra/diag/diag_code.hpp"
 #include "lyra/lir/compilation_unit.hpp"
 #include "lyra/lir/type.hpp"
 #include "lyra/lir/type_id.hpp"
@@ -137,7 +138,9 @@ void DefineRuntimeAbi(llvm::orc::LLJIT& jit) {
   add("lyra_rt_file_eof", &lyra_rt_file_eof);
   add("lyra_rt_file_flush", &lyra_rt_file_flush);
   add("lyra_rt_file_flush_all", &lyra_rt_file_flush_all);
-  add("lyra_rt_make_string", &lyra_rt_make_string);
+  add("lyra_rt_peek_buffered", &lyra_rt_peek_buffered);
+  add("lyra_rt_advance_fd", &lyra_rt_advance_fd);
+  add("lyra_rt_string_make", &lyra_rt_string_make);
   add("lyra_rt_make_print_literal_item", &lyra_rt_make_print_literal_item);
   add("lyra_rt_format", &lyra_rt_format);
   add("lyra_rt_writeln", &lyra_rt_writeln);
@@ -160,6 +163,9 @@ void DefineRuntimeAbi(llvm::orc::LLJIT& jit) {
   add("lyra_rt_delay", &lyra_rt_delay);
   add("lyra_rt_make_trigger", &lyra_rt_make_trigger);
   add("lyra_rt_wait_any", &lyra_rt_wait_any);
+  add("lyra_rt_triggered", &lyra_rt_triggered);
+  add("lyra_rt_trigger", &lyra_rt_trigger);
+  add("lyra_rt_await", &lyra_rt_await);
   add("lyra_rt_enter_target", &lyra_rt_enter_target);
   add("lyra_rt_leave_target", &lyra_rt_leave_target);
   add("lyra_rt_disable", &lyra_rt_disable);
@@ -189,37 +195,40 @@ void DefineRuntimeAbi(llvm::orc::LLJIT& jit) {
   add("lyra_rt_make_segment", &lyra_rt_make_segment);
   add("lyra_rt_make_scope", &lyra_rt_make_scope);
   add("lyra_rt_hierarchical_path", &lyra_rt_hierarchical_path);
+  add("lyra_rt_parent", &lyra_rt_parent);
   add("lyra_rt_add_owned_child", &lyra_rt_add_owned_child);
   add("lyra_rt_member_addr", &lyra_rt_member_addr);
   add("lyra_rt_register_signal", &lyra_rt_register_signal);
   add("lyra_rt_get_signal", &lyra_rt_get_signal);
   add("lyra_rt_resolve_visible_child", &lyra_rt_resolve_visible_child);
   add("lyra_rt_get_child", &lyra_rt_get_child);
-  add("lyra_rt_cell_packed_get", &lyra_rt_cell_packed_get);
-  add("lyra_rt_cell_packed_initialize", &lyra_rt_cell_packed_initialize);
-  add("lyra_rt_cell_packed_set", &lyra_rt_cell_packed_set);
-  add("lyra_rt_cell_string_get", &lyra_rt_cell_string_get);
-  add("lyra_rt_cell_string_initialize", &lyra_rt_cell_string_initialize);
-  add("lyra_rt_cell_string_set", &lyra_rt_cell_string_set);
-  add("lyra_rt_cell_real_get", &lyra_rt_cell_real_get);
-  add("lyra_rt_cell_real_initialize", &lyra_rt_cell_real_initialize);
-  add("lyra_rt_cell_real_set", &lyra_rt_cell_real_set);
-  add("lyra_rt_cell_shortreal_get", &lyra_rt_cell_shortreal_get);
-  add("lyra_rt_cell_shortreal_initialize", &lyra_rt_cell_shortreal_initialize);
-  add("lyra_rt_cell_shortreal_set", &lyra_rt_cell_shortreal_set);
-  add("lyra_rt_activation_frame_alloc_packed",
-      &lyra_rt_activation_frame_alloc_packed);
-  add("lyra_rt_activation_frame_alloc_string",
-      &lyra_rt_activation_frame_alloc_string);
-  add("lyra_rt_activation_frame_store_packed",
-      &lyra_rt_activation_frame_store_packed);
-  add("lyra_rt_activation_frame_store_string",
-      &lyra_rt_activation_frame_store_string);
-  add("lyra_rt_activation_frame_load_packed",
-      &lyra_rt_activation_frame_load_packed);
-  add("lyra_rt_activation_frame_load_string",
-      &lyra_rt_activation_frame_load_string);
+  add("lyra_rt_packed_cell_get", &lyra_rt_packed_cell_get);
+  add("lyra_rt_packed_cell_initialize", &lyra_rt_packed_cell_initialize);
+  add("lyra_rt_packed_cell_set", &lyra_rt_packed_cell_set);
+  add("lyra_rt_string_cell_get", &lyra_rt_string_cell_get);
+  add("lyra_rt_string_cell_initialize", &lyra_rt_string_cell_initialize);
+  add("lyra_rt_string_cell_set", &lyra_rt_string_cell_set);
+  add("lyra_rt_real_cell_get", &lyra_rt_real_cell_get);
+  add("lyra_rt_real_cell_initialize", &lyra_rt_real_cell_initialize);
+  add("lyra_rt_real_cell_set", &lyra_rt_real_cell_set);
+  add("lyra_rt_shortreal_cell_get", &lyra_rt_shortreal_cell_get);
+  add("lyra_rt_shortreal_cell_initialize", &lyra_rt_shortreal_cell_initialize);
+  add("lyra_rt_shortreal_cell_set", &lyra_rt_shortreal_cell_set);
+  add("lyra_rt_packed_activation_frame_alloc",
+      &lyra_rt_packed_activation_frame_alloc);
+  add("lyra_rt_string_activation_frame_alloc",
+      &lyra_rt_string_activation_frame_alloc);
+  add("lyra_rt_packed_activation_frame_store",
+      &lyra_rt_packed_activation_frame_store);
+  add("lyra_rt_string_activation_frame_store",
+      &lyra_rt_string_activation_frame_store);
+  add("lyra_rt_packed_activation_frame_load",
+      &lyra_rt_packed_activation_frame_load);
+  add("lyra_rt_string_activation_frame_load",
+      &lyra_rt_string_activation_frame_load);
   add("lyra_rt_packed_add", &lyra_rt_packed_add);
+  add("lyra_rt_packed_replicate", &lyra_rt_packed_replicate);
+  add("lyra_rt_packed_concat", &lyra_rt_packed_concat);
   add("lyra_rt_packed_sub", &lyra_rt_packed_sub);
   add("lyra_rt_packed_mul", &lyra_rt_packed_mul);
   add("lyra_rt_packed_div", &lyra_rt_packed_div);
@@ -241,7 +250,8 @@ void DefineRuntimeAbi(llvm::orc::LLJIT& jit) {
   add("lyra_rt_packed_inc", &lyra_rt_packed_inc);
   add("lyra_rt_packed_dec", &lyra_rt_packed_dec);
   add("lyra_rt_packed_to_bool", &lyra_rt_packed_to_bool);
-  add("lyra_rt_packed_convert_from", &lyra_rt_packed_convert_from);
+  add("lyra_rt_packed_convert_from_packed",
+      &lyra_rt_packed_convert_from_packed);
   add("lyra_rt_packed_from_bool", &lyra_rt_packed_from_bool);
   add("lyra_rt_packed_from_int", &lyra_rt_packed_from_int);
   add("lyra_rt_packed_to_int64", &lyra_rt_packed_to_int64);
@@ -306,6 +316,8 @@ void DefineRuntimeAbi(llvm::orc::LLJIT& jit) {
   add("lyra_rt_string_scan_string", &lyra_rt_string_scan_string);
   add("lyra_rt_string_scan_file", &lyra_rt_string_scan_file);
   add("lyra_rt_string_add", &lyra_rt_string_add);
+  add("lyra_rt_string_replicate", &lyra_rt_string_replicate);
+  add("lyra_rt_string_concat", &lyra_rt_string_concat);
   add("lyra_rt_string_eq", &lyra_rt_string_eq);
   add("lyra_rt_string_case_equal", &lyra_rt_string_case_equal);
   add("lyra_rt_string_ne", &lyra_rt_string_ne);
@@ -315,10 +327,10 @@ void DefineRuntimeAbi(llvm::orc::LLJIT& jit) {
   add("lyra_rt_string_ge", &lyra_rt_string_ge);
   add("lyra_rt_make_format_spec_of_kind", &lyra_rt_make_format_spec_of_kind);
   add("lyra_rt_make_format_spec", &lyra_rt_make_format_spec);
-  add("lyra_rt_make_print_value_item_packed",
-      &lyra_rt_make_print_value_item_packed);
-  add("lyra_rt_make_print_value_item_string",
-      &lyra_rt_make_print_value_item_string);
+  add("lyra_rt_packed_make_print_value_item",
+      &lyra_rt_packed_make_print_value_item);
+  add("lyra_rt_string_make_print_value_item",
+      &lyra_rt_string_make_print_value_item);
   add("lyra_rt_real_add", &lyra_rt_real_add);
   add("lyra_rt_real_sub", &lyra_rt_real_sub);
   add("lyra_rt_real_mul", &lyra_rt_real_mul);
@@ -360,17 +372,18 @@ void DefineRuntimeAbi(llvm::orc::LLJIT& jit) {
   add("lyra_rt_real_acosh", &lyra_rt_real_acosh);
   add("lyra_rt_real_atanh", &lyra_rt_real_atanh);
   add("lyra_rt_real_const", &lyra_rt_real_const);
-  add("lyra_rt_real_from_int64", &lyra_rt_real_from_int64);
-  add("lyra_rt_real_from_shortreal", &lyra_rt_real_from_shortreal);
-  add("lyra_rt_real_from_real", &lyra_rt_real_from_real);
-  add("lyra_rt_activation_frame_alloc_real",
-      &lyra_rt_activation_frame_alloc_real);
-  add("lyra_rt_activation_frame_store_real",
-      &lyra_rt_activation_frame_store_real);
-  add("lyra_rt_activation_frame_load_real",
-      &lyra_rt_activation_frame_load_real);
-  add("lyra_rt_make_print_value_item_real",
-      &lyra_rt_make_print_value_item_real);
+  add("lyra_rt_real_from_int", &lyra_rt_real_from_int);
+  add("lyra_rt_real_convert_from_shortreal",
+      &lyra_rt_real_convert_from_shortreal);
+  add("lyra_rt_real_convert_from_real", &lyra_rt_real_convert_from_real);
+  add("lyra_rt_real_activation_frame_alloc",
+      &lyra_rt_real_activation_frame_alloc);
+  add("lyra_rt_real_activation_frame_store",
+      &lyra_rt_real_activation_frame_store);
+  add("lyra_rt_real_activation_frame_load",
+      &lyra_rt_real_activation_frame_load);
+  add("lyra_rt_real_make_print_value_item",
+      &lyra_rt_real_make_print_value_item);
   add("lyra_rt_shortreal_add", &lyra_rt_shortreal_add);
   add("lyra_rt_shortreal_sub", &lyra_rt_shortreal_sub);
   add("lyra_rt_shortreal_mul", &lyra_rt_shortreal_mul);
@@ -391,27 +404,28 @@ void DefineRuntimeAbi(llvm::orc::LLJIT& jit) {
   add("lyra_rt_shortreal_to_bits", &lyra_rt_shortreal_to_bits);
   add("lyra_rt_shortreal_from_bits", &lyra_rt_shortreal_from_bits);
   add("lyra_rt_shortreal_const", &lyra_rt_shortreal_const);
-  add("lyra_rt_shortreal_from_int64", &lyra_rt_shortreal_from_int64);
-  add("lyra_rt_shortreal_from_real", &lyra_rt_shortreal_from_real);
-  add("lyra_rt_activation_frame_alloc_shortreal",
-      &lyra_rt_activation_frame_alloc_shortreal);
-  add("lyra_rt_activation_frame_store_shortreal",
-      &lyra_rt_activation_frame_store_shortreal);
-  add("lyra_rt_activation_frame_load_shortreal",
-      &lyra_rt_activation_frame_load_shortreal);
-  add("lyra_rt_make_print_value_item_shortreal",
-      &lyra_rt_make_print_value_item_shortreal);
+  add("lyra_rt_shortreal_from_int", &lyra_rt_shortreal_from_int);
+  add("lyra_rt_shortreal_convert_from_real",
+      &lyra_rt_shortreal_convert_from_real);
+  add("lyra_rt_shortreal_activation_frame_alloc",
+      &lyra_rt_shortreal_activation_frame_alloc);
+  add("lyra_rt_shortreal_activation_frame_store",
+      &lyra_rt_shortreal_activation_frame_store);
+  add("lyra_rt_shortreal_activation_frame_load",
+      &lyra_rt_shortreal_activation_frame_load);
+  add("lyra_rt_shortreal_make_print_value_item",
+      &lyra_rt_shortreal_make_print_value_item);
   add("lyra_rt_chandle_eq", &lyra_rt_chandle_eq);
   add("lyra_rt_chandle_ne", &lyra_rt_chandle_ne);
   add("lyra_rt_chandle_case_equal", &lyra_rt_chandle_case_equal);
   add("lyra_rt_chandle_to_bool", &lyra_rt_chandle_to_bool);
-  add("lyra_rt_value_box_packed", &lyra_rt_value_box_packed);
-  add("lyra_rt_value_box_string", &lyra_rt_value_box_string);
-  add("lyra_rt_value_box_real", &lyra_rt_value_box_real);
-  add("lyra_rt_value_box_shortreal", &lyra_rt_value_box_shortreal);
-  add("lyra_rt_value_box_chandle", &lyra_rt_value_box_chandle);
-  add("lyra_rt_value_box_tuple", &lyra_rt_value_box_tuple);
-  add("lyra_rt_value_box_dynarray", &lyra_rt_value_box_dynarray);
+  add("lyra_rt_packed_value_box", &lyra_rt_packed_value_box);
+  add("lyra_rt_string_value_box", &lyra_rt_string_value_box);
+  add("lyra_rt_real_value_box", &lyra_rt_real_value_box);
+  add("lyra_rt_shortreal_value_box", &lyra_rt_shortreal_value_box);
+  add("lyra_rt_chandle_value_box", &lyra_rt_chandle_value_box);
+  add("lyra_rt_tuple_value_box", &lyra_rt_tuple_value_box);
+  add("lyra_rt_dynarray_value_box", &lyra_rt_dynarray_value_box);
   add("lyra_rt_tuple_make", &lyra_rt_tuple_make);
   add("lyra_rt_tuple_extract", &lyra_rt_tuple_extract);
   add("lyra_rt_tuple_count_bits", &lyra_rt_tuple_count_bits);
@@ -420,18 +434,20 @@ void DefineRuntimeAbi(llvm::orc::LLJIT& jit) {
   add("lyra_rt_tuple_ne", &lyra_rt_tuple_ne);
   add("lyra_rt_tuple_case_equal", &lyra_rt_tuple_case_equal);
   add("lyra_rt_tuple_is_unknown", &lyra_rt_tuple_is_unknown);
-  add("lyra_rt_cell_tuple_get", &lyra_rt_cell_tuple_get);
-  add("lyra_rt_cell_tuple_initialize", &lyra_rt_cell_tuple_initialize);
-  add("lyra_rt_cell_tuple_set", &lyra_rt_cell_tuple_set);
-  add("lyra_rt_activation_frame_alloc_tuple",
-      &lyra_rt_activation_frame_alloc_tuple);
-  add("lyra_rt_activation_frame_store_tuple",
-      &lyra_rt_activation_frame_store_tuple);
-  add("lyra_rt_activation_frame_load_tuple",
-      &lyra_rt_activation_frame_load_tuple);
-  add("lyra_rt_dynarray_default", &lyra_rt_dynarray_default);
-  add("lyra_rt_dynarray_new", &lyra_rt_dynarray_new);
-  add("lyra_rt_dynarray_new_copy", &lyra_rt_dynarray_new_copy);
+  add("lyra_rt_tuple_cell_get", &lyra_rt_tuple_cell_get);
+  add("lyra_rt_tuple_cell_initialize", &lyra_rt_tuple_cell_initialize);
+  add("lyra_rt_tuple_cell_set", &lyra_rt_tuple_cell_set);
+  add("lyra_rt_tuple_activation_frame_alloc",
+      &lyra_rt_tuple_activation_frame_alloc);
+  add("lyra_rt_tuple_activation_frame_store",
+      &lyra_rt_tuple_activation_frame_store);
+  add("lyra_rt_tuple_activation_frame_load",
+      &lyra_rt_tuple_activation_frame_load);
+  add("lyra_rt_make_dynamic_array_default",
+      &lyra_rt_make_dynamic_array_default);
+  add("lyra_rt_make_dynamic_array_new", &lyra_rt_make_dynamic_array_new);
+  add("lyra_rt_make_dynamic_array_new_copy",
+      &lyra_rt_make_dynamic_array_new_copy);
   add("lyra_rt_dynarray_from_literal", &lyra_rt_dynarray_from_literal);
   add("lyra_rt_dynarray_element", &lyra_rt_dynarray_element);
   add("lyra_rt_dynarray_with_element", &lyra_rt_dynarray_with_element);
@@ -440,17 +456,17 @@ void DefineRuntimeAbi(llvm::orc::LLJIT& jit) {
   add("lyra_rt_dynarray_eq", &lyra_rt_dynarray_eq);
   add("lyra_rt_dynarray_ne", &lyra_rt_dynarray_ne);
   add("lyra_rt_dynarray_case_equal", &lyra_rt_dynarray_case_equal);
-  add("lyra_rt_cell_dynarray_get", &lyra_rt_cell_dynarray_get);
-  add("lyra_rt_cell_dynarray_initialize", &lyra_rt_cell_dynarray_initialize);
-  add("lyra_rt_cell_dynarray_set", &lyra_rt_cell_dynarray_set);
-  add("lyra_rt_activation_frame_alloc_dynarray",
-      &lyra_rt_activation_frame_alloc_dynarray);
-  add("lyra_rt_activation_frame_store_dynarray",
-      &lyra_rt_activation_frame_store_dynarray);
-  add("lyra_rt_activation_frame_load_dynarray",
-      &lyra_rt_activation_frame_load_dynarray);
+  add("lyra_rt_dynarray_cell_get", &lyra_rt_dynarray_cell_get);
+  add("lyra_rt_dynarray_cell_initialize", &lyra_rt_dynarray_cell_initialize);
+  add("lyra_rt_dynarray_cell_set", &lyra_rt_dynarray_cell_set);
+  add("lyra_rt_dynarray_activation_frame_alloc",
+      &lyra_rt_dynarray_activation_frame_alloc);
+  add("lyra_rt_dynarray_activation_frame_store",
+      &lyra_rt_dynarray_activation_frame_store);
+  add("lyra_rt_dynarray_activation_frame_load",
+      &lyra_rt_dynarray_activation_frame_load);
   add("lyra_rt_dynarray_count_bits", &lyra_rt_dynarray_count_bits);
-  add("lyra_rt_value_box_unpackedarray", &lyra_rt_value_box_unpackedarray);
+  add("lyra_rt_unpackedarray_value_box", &lyra_rt_unpackedarray_value_box);
   add("lyra_rt_unpackedarray_from_literal",
       &lyra_rt_unpackedarray_from_literal);
   add("lyra_rt_unpackedarray_from_string", &lyra_rt_unpackedarray_from_string);
@@ -476,16 +492,16 @@ void DefineRuntimeAbi(llvm::orc::LLJIT& jit) {
   add("lyra_rt_queue_case_equal", &lyra_rt_queue_case_equal);
   add("lyra_rt_queue_bitstream_width", &lyra_rt_queue_bitstream_width);
   add("lyra_rt_queue_count_bits", &lyra_rt_queue_count_bits);
-  add("lyra_rt_value_box_queue", &lyra_rt_value_box_queue);
-  add("lyra_rt_cell_queue_get", &lyra_rt_cell_queue_get);
-  add("lyra_rt_cell_queue_initialize", &lyra_rt_cell_queue_initialize);
-  add("lyra_rt_cell_queue_set", &lyra_rt_cell_queue_set);
-  add("lyra_rt_activation_frame_alloc_queue",
-      &lyra_rt_activation_frame_alloc_queue);
-  add("lyra_rt_activation_frame_store_queue",
-      &lyra_rt_activation_frame_store_queue);
-  add("lyra_rt_activation_frame_load_queue",
-      &lyra_rt_activation_frame_load_queue);
+  add("lyra_rt_queue_value_box", &lyra_rt_queue_value_box);
+  add("lyra_rt_queue_cell_get", &lyra_rt_queue_cell_get);
+  add("lyra_rt_queue_cell_initialize", &lyra_rt_queue_cell_initialize);
+  add("lyra_rt_queue_cell_set", &lyra_rt_queue_cell_set);
+  add("lyra_rt_queue_activation_frame_alloc",
+      &lyra_rt_queue_activation_frame_alloc);
+  add("lyra_rt_queue_activation_frame_store",
+      &lyra_rt_queue_activation_frame_store);
+  add("lyra_rt_queue_activation_frame_load",
+      &lyra_rt_queue_activation_frame_load);
   add("lyra_rt_assocarray_default", &lyra_rt_assocarray_default);
   add("lyra_rt_assocarray_from_entries", &lyra_rt_assocarray_from_entries);
   add("lyra_rt_assocarray_from_entries_default",
@@ -515,17 +531,17 @@ void DefineRuntimeAbi(llvm::orc::LLJIT& jit) {
   add("lyra_rt_unpackedarray_bitstream_width",
       &lyra_rt_unpackedarray_bitstream_width);
   add("lyra_rt_assocarray_count_bits", &lyra_rt_assocarray_count_bits);
-  add("lyra_rt_value_box_assocarray", &lyra_rt_value_box_assocarray);
-  add("lyra_rt_cell_assocarray_get", &lyra_rt_cell_assocarray_get);
-  add("lyra_rt_cell_assocarray_initialize",
-      &lyra_rt_cell_assocarray_initialize);
-  add("lyra_rt_cell_assocarray_set", &lyra_rt_cell_assocarray_set);
-  add("lyra_rt_activation_frame_alloc_assocarray",
-      &lyra_rt_activation_frame_alloc_assocarray);
-  add("lyra_rt_activation_frame_store_assocarray",
-      &lyra_rt_activation_frame_store_assocarray);
-  add("lyra_rt_activation_frame_load_assocarray",
-      &lyra_rt_activation_frame_load_assocarray);
+  add("lyra_rt_assocarray_value_box", &lyra_rt_assocarray_value_box);
+  add("lyra_rt_assocarray_cell_get", &lyra_rt_assocarray_cell_get);
+  add("lyra_rt_assocarray_cell_initialize",
+      &lyra_rt_assocarray_cell_initialize);
+  add("lyra_rt_assocarray_cell_set", &lyra_rt_assocarray_cell_set);
+  add("lyra_rt_assocarray_activation_frame_alloc",
+      &lyra_rt_assocarray_activation_frame_alloc);
+  add("lyra_rt_assocarray_activation_frame_store",
+      &lyra_rt_assocarray_activation_frame_store);
+  add("lyra_rt_assocarray_activation_frame_load",
+      &lyra_rt_assocarray_activation_frame_load);
   add("lyra_rt_unpackedarray_element", &lyra_rt_unpackedarray_element);
   add("lyra_rt_unpackedarray_with_element",
       &lyra_rt_unpackedarray_with_element);
@@ -536,16 +552,20 @@ void DefineRuntimeAbi(llvm::orc::LLJIT& jit) {
   add("lyra_rt_unpackedarray_ne", &lyra_rt_unpackedarray_ne);
   add("lyra_rt_unpackedarray_case_equal", &lyra_rt_unpackedarray_case_equal);
   add("lyra_rt_unpackedarray_is_unknown", &lyra_rt_unpackedarray_is_unknown);
-  add("lyra_rt_cell_unpackedarray_get", &lyra_rt_cell_unpackedarray_get);
-  add("lyra_rt_cell_unpackedarray_initialize",
-      &lyra_rt_cell_unpackedarray_initialize);
-  add("lyra_rt_cell_unpackedarray_set", &lyra_rt_cell_unpackedarray_set);
-  add("lyra_rt_activation_frame_alloc_unpackedarray",
-      &lyra_rt_activation_frame_alloc_unpackedarray);
-  add("lyra_rt_activation_frame_store_unpackedarray",
-      &lyra_rt_activation_frame_store_unpackedarray);
-  add("lyra_rt_activation_frame_load_unpackedarray",
-      &lyra_rt_activation_frame_load_unpackedarray);
+  add("lyra_rt_unpackedarray_cell_get", &lyra_rt_unpackedarray_cell_get);
+  add("lyra_rt_unpackedarray_cell_initialize",
+      &lyra_rt_unpackedarray_cell_initialize);
+  add("lyra_rt_unpackedarray_cell_set", &lyra_rt_unpackedarray_cell_set);
+  add("lyra_rt_unpackedarray_activation_frame_alloc",
+      &lyra_rt_unpackedarray_activation_frame_alloc);
+  add("lyra_rt_unpackedarray_activation_frame_store",
+      &lyra_rt_unpackedarray_activation_frame_store);
+  add("lyra_rt_unpackedarray_activation_frame_load",
+      &lyra_rt_unpackedarray_activation_frame_load);
+  add("lyra_rt_unpackedarray_merge_conditional",
+      &lyra_rt_unpackedarray_merge_conditional);
+  add("lyra_rt_unpackedarray_from_packed_array",
+      &lyra_rt_unpackedarray_from_packed_array);
   Check(
       jit.getMainJITDylib().define(
           llvm::orc::absoluteSymbols(std::move(symbols))),
@@ -575,7 +595,7 @@ void DefineForeignSymbols(
 // handle, a runtime record is that record, and anything else the runtime has a
 // value realization for the owner holds inline.
 auto DescribeMember(const lir::CompilationUnit& unit, lir::TypeId type)
-    -> runtime::MemberStorageDescriptor {
+    -> diag::Result<runtime::MemberStorageDescriptor> {
   const auto& data = unit.types.Get(type).data;
   if (const auto* observable = std::get_if<lir::ObservableType>(&data)) {
     if (const std::optional<support::ValueDomain> domain =
@@ -605,19 +625,25 @@ auto DescribeMember(const lir::CompilationUnit& unit, lir::TypeId type)
           backend::llvm_backend::ValueDomainOf(unit, type)) {
     return runtime::InlineValueStorage{.domain = *domain};
   }
-  throw InternalError(
+  return diag::Fail(
+      diag::DiagCode::kUnsupportedTypeKind,
       std::format(
-          "jit executor: a member of type {} has no storage realization",
+          "jit executor: a member of type {} has no storage realization on "
+          "this backend",
           lir::TypeKindName(unit.types.Get(type))));
 }
 
 auto DescribeMembers(
     const lir::CompilationUnit& unit, std::span<const lir::Member> members)
-    -> std::vector<runtime::MemberStorageDescriptor> {
+    -> diag::Result<std::vector<runtime::MemberStorageDescriptor>> {
   std::vector<runtime::MemberStorageDescriptor> descriptors;
   descriptors.reserve(members.size());
   for (const lir::Member& member : members) {
-    descriptors.push_back(DescribeMember(unit, member.type));
+    auto described = DescribeMember(unit, member.type);
+    if (!described) {
+      return std::unexpected(std::move(described.error()));
+    }
+    descriptors.push_back(*described);
   }
   return descriptors;
 }
@@ -692,15 +718,18 @@ struct LoadedStaticStorage {
 // its type the same way a member's is, since the difference between the two is
 // what reaches the storage and not what the storage is.
 auto LoadStaticStorage(const lir::CompilationUnit& unit)
-    -> std::vector<LoadedStaticStorage> {
+    -> diag::Result<std::vector<LoadedStaticStorage>> {
   std::vector<LoadedStaticStorage> loaded;
   loaded.reserve(unit.static_storage.size());
   for (const lir::StaticStorage& entry : unit.static_storage) {
+    auto described = DescribeMember(unit, entry.type);
+    if (!described) {
+      return std::unexpected(std::move(described.error()));
+    }
     loaded.push_back(
         LoadedStaticStorage{
             .symbol = entry.symbol,
-            .storage = std::make_unique<runtime::MemberStorage>(
-                DescribeMember(unit, entry.type))});
+            .storage = std::make_unique<runtime::MemberStorage>(*described)});
   }
   return loaded;
 }
@@ -725,10 +754,15 @@ auto OwnedChildClass(const lir::CompilationUnit& unit, lir::TypeId type)
 auto LoadScopeClasses(
     const lir::CompilationUnit& unit,
     const compiler::ElaboratedUnitMetadata& metadata)
-    -> std::vector<LoadedScopeClass> {
+    -> diag::Result<std::vector<LoadedScopeClass>> {
   std::vector<LoadedScopeClass> loaded;
-  const auto descend = [&](const auto& self_ref, lir::ClassId id) -> void {
+  const auto descend = [&](const auto& self_ref,
+                           lir::ClassId id) -> diag::Result<void> {
     const lir::Class& cls = unit.classes.Get(id);
+    auto members = DescribeMembers(unit, cls.members);
+    if (!members) {
+      return std::unexpected(std::move(members.error()));
+    }
     // Every scope of a unit runs at the unit's precision: a scope inside a unit
     // has no timescale declaration of its own and takes the enclosing one (LRM
     // 3.14.2.3).
@@ -736,19 +770,26 @@ auto LoadScopeClasses(
         LoadedScopeClass{
             .name = cls.name,
             .time_precision_power = metadata.time_precision_power,
-            .members = DescribeMembers(unit, cls.members),
+            .members = *std::move(members),
             .definition = std::make_unique<runtime::ScopeDefinition>()});
     // A member whose type reaches an object of this unit is a child this class
     // owns; one reaching a value reaches storage instead. The type says which,
     // so descending it needs nothing beside the members already declared.
     for (const lir::Member& member : cls.members) {
       if (const auto child = OwnedChildClass(unit, member.type)) {
-        self_ref(self_ref, *child);
+        auto descended = self_ref(self_ref, *child);
+        if (!descended) {
+          return std::unexpected(std::move(descended.error()));
+        }
       }
     }
+    return {};
   };
   if (unit.root.has_value()) {
-    descend(descend, *unit.root);
+    auto descended = descend(descend, *unit.root);
+    if (!descended) {
+      return std::unexpected(std::move(descended.error()));
+    }
   }
   return loaded;
 }
@@ -762,14 +803,18 @@ struct LoadedClosure {
 };
 
 auto LoadClosures(const lir::CompilationUnit& unit)
-    -> std::vector<LoadedClosure> {
+    -> diag::Result<std::vector<LoadedClosure>> {
   std::vector<LoadedClosure> loaded;
   loaded.reserve(unit.closures.size());
   for (const lir::Closure& closure : unit.closures) {
+    auto captures = DescribeMembers(unit, closure.captures);
+    if (!captures) {
+      return std::unexpected(std::move(captures.error()));
+    }
     loaded.push_back(
         LoadedClosure{
             .name = closure.name,
-            .captures = DescribeMembers(unit, closure.captures),
+            .captures = *std::move(captures),
             .definition = std::make_unique<runtime::ClosureDefinition>()});
   }
   return loaded;
@@ -824,29 +869,36 @@ auto Execute(
   // pointers into it.
   std::vector<LoadedScopeClass> loaded;
   for (std::size_t i = 0; i < units.size(); ++i) {
-    std::vector<LoadedScopeClass> unit_classes =
-        LoadScopeClasses(units[i], metadata[i]);
+    auto unit_classes = LoadScopeClasses(units[i], metadata[i]);
+    if (!unit_classes) {
+      return std::unexpected(std::move(unit_classes.error()));
+    }
     loaded.insert(
-        loaded.end(), std::make_move_iterator(unit_classes.begin()),
-        std::make_move_iterator(unit_classes.end()));
+        loaded.end(), std::make_move_iterator(unit_classes->begin()),
+        std::make_move_iterator(unit_classes->end()));
   }
   if (!root_unit.root.has_value()) {
     throw InternalError("jit executor: the design root roots no object tree");
   }
   const std::string root_class_name =
       root_unit.classes.Get(*root_unit.root).name;
-  std::vector<LoadedScopeClass> root_classes =
-      LoadScopeClasses(root_unit, root_metadata);
+  auto root_classes = LoadScopeClasses(root_unit, root_metadata);
+  if (!root_classes) {
+    return std::unexpected(std::move(root_classes.error()));
+  }
   loaded.insert(
-      loaded.end(), std::make_move_iterator(root_classes.begin()),
-      std::make_move_iterator(root_classes.end()));
+      loaded.end(), std::make_move_iterator(root_classes->begin()),
+      std::make_move_iterator(root_classes->end()));
 
   std::vector<LoadedClosure> closures;
   for (const lir::CompilationUnit* unit : loaded_units) {
-    std::vector<LoadedClosure> unit_closures = LoadClosures(*unit);
+    auto unit_closures = LoadClosures(*unit);
+    if (!unit_closures) {
+      return std::unexpected(std::move(unit_closures.error()));
+    }
     closures.insert(
-        closures.end(), std::make_move_iterator(unit_closures.begin()),
-        std::make_move_iterator(unit_closures.end()));
+        closures.end(), std::make_move_iterator(unit_closures->begin()),
+        std::make_move_iterator(unit_closures->end()));
   }
 
   // The schema is named only once every declaration is in place, so no
@@ -893,10 +945,13 @@ auto Execute(
   // declaring unit included -- reaches it through the symbol.
   std::vector<LoadedStaticStorage> static_storage;
   for (const lir::CompilationUnit* unit : loaded_units) {
-    std::vector<LoadedStaticStorage> unit_storage = LoadStaticStorage(*unit);
+    auto unit_storage = LoadStaticStorage(*unit);
+    if (!unit_storage) {
+      return std::unexpected(std::move(unit_storage.error()));
+    }
     static_storage.insert(
-        static_storage.end(), std::make_move_iterator(unit_storage.begin()),
-        std::make_move_iterator(unit_storage.end()));
+        static_storage.end(), std::make_move_iterator(unit_storage->begin()),
+        std::make_move_iterator(unit_storage->end()));
   }
   llvm::orc::SymbolMap storage_symbols;
   for (const LoadedStaticStorage& entry : static_storage) {

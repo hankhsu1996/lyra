@@ -57,6 +57,7 @@ python3 tools/policy/check_ascii.py --diff-base origin/main
 python3 tools/policy/check_cpp_style.py
 python3 tools/policy/check_docs.py
 python3 tools/policy/check_exceptions.py --diff-base origin/main
+python3 tools/policy/check_runtime_abi.py
 ```
 
 Fix violations before committing. Do not stage / commit through known violations.

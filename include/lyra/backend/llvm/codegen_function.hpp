@@ -1,8 +1,10 @@
 #pragma once
 
 #include <cstddef>
+#include <cstdint>
 #include <optional>
 #include <span>
+#include <string_view>
 #include <unordered_map>
 #include <vector>
 
@@ -26,8 +28,9 @@ class CodeGenModule;
 
 // Per-function code generation: lowers one LIR callable body into its LLVM
 // function. Each LIR value becomes one LLVM value; reads resolve through the
-// per-function value map. Shared context -- types, the runtime ABI, method
-// resolution -- are reached through the owning module-level code generation.
+// per-function value map. Everything shared across the module's functions is
+// reached through the owning module-level code generation and never held here,
+// so a body carries no state that outlives it.
 class CodeGenFunction {
  public:
   CodeGenFunction(
@@ -39,8 +42,18 @@ class CodeGenFunction {
   auto LowerInstr(const lir::Instr& instr) -> diag::Result<llvm::Value*>;
   auto LowerCall(const lir::CallInstr& call, lir::TypeId result_type)
       -> diag::Result<llvm::Value*>;
-  auto ResolveCallee(const lir::CallInstr& call, lir::TypeId result_type)
-      -> diag::Result<llvm::FunctionCallee>;
+  auto ResolveCallee(
+      const lir::CallInstr& call, lir::TypeId result_type,
+      std::span<llvm::Value* const> args) -> diag::Result<llvm::FunctionCallee>;
+  // An entry the runtime publishes, declared with the types of the values
+  // crossing to it: the call is where an entry's signature comes from, so the
+  // two cannot disagree about what is passed.
+  auto Entry(
+      std::string_view symbol, llvm::Type* result,
+      std::span<llvm::Value* const> args) -> llvm::FunctionCallee;
+  auto Entry(
+      std::string_view symbol, lir::TypeId result,
+      std::span<llvm::Value* const> args) -> llvm::FunctionCallee;
   // A {pointer, length} view over a scratch buffer of `element` this function
   // fills with `values`, for an entry that takes a run of them.
   auto SpanOver(std::span<llvm::Value* const> values, llvm::Type* element)
@@ -56,14 +69,15 @@ class CodeGenFunction {
   auto LowerLoad(const lir::LoadInstr& load, lir::TypeId result_type)
       -> diag::Result<llvm::Value*>;
   auto LowerStore(const lir::StoreInstr& store) -> diag::Result<llvm::Value*>;
-  auto LowerBinary(const lir::BinaryInstr& binary)
+  auto LowerBinary(const lir::BinaryInstr& binary, lir::TypeId result_type)
       -> diag::Result<llvm::Value*>;
   auto LowerMachineBinary(const lir::BinaryInstr& binary)
       -> diag::Result<llvm::Value*>;
-  auto LowerUnary(const lir::UnaryInstr& unary) -> diag::Result<llvm::Value*>;
+  auto LowerUnary(const lir::UnaryInstr& unary, lir::TypeId result_type)
+      -> diag::Result<llvm::Value*>;
   auto LowerMachineUnary(const lir::UnaryInstr& unary)
       -> diag::Result<llvm::Value*>;
-  auto LowerBoolCast(const lir::BoolCastInstr& cast)
+  auto LowerBoolCast(const lir::BoolCastInstr& cast, lir::TypeId result_type)
       -> diag::Result<llvm::Value*>;
   auto LowerIntCast(const lir::IntCastInstr& cast, lir::TypeId result_type)
       -> diag::Result<llvm::Value*>;
@@ -85,9 +99,8 @@ class CodeGenFunction {
   void EmitCoroutineSuspend(llvm::BasicBlock* resume, bool is_final);
 
   // The address a place names. The base contributes the storage the chain
-  // starts from -- a place local's own frame slot, or the referent of a
-  // reference value
-  // -- and each further step walks one projection.
+  // starts from, either a place local's own frame slot or the referent of a
+  // reference value, and each further step walks one projection.
   auto ResolvePlaceAddress(const lir::Place& place)
       -> diag::Result<llvm::Value*>;
   auto LowerIntConst(const lir::IntConst& constant)
@@ -103,15 +116,11 @@ class CodeGenFunction {
 
   auto BuiltinCallee(
       const lir::BuiltinTarget& target, const lir::CallInstr& call,
-      lir::TypeId result_type) -> diag::Result<llvm::FunctionCallee>;
-  auto ValueBuiltinCallee(
-      const lir::BuiltinTarget& target, const lir::CallInstr& call,
-      lir::TypeId result_type) -> diag::Result<llvm::FunctionCallee>;
-  auto ConstructCallee(const lir::CallInstr& call)
+      lir::TypeId result_type, std::span<llvm::Value* const> args)
       -> diag::Result<llvm::FunctionCallee>;
-  auto ForeignCallee(
-      const lir::ForeignTarget& target, const lir::CallInstr& call,
-      lir::TypeId result_type) -> diag::Result<llvm::FunctionCallee>;
+  auto ConstructCallee(
+      const lir::CallInstr& call, lir::TypeId result,
+      std::span<llvm::Value* const> args) -> diag::Result<llvm::FunctionCallee>;
 
   // What a call's entry is handed, given the operands the call states. Nothing
   // here is anything the call means; it is this target's encoding of it.
@@ -149,17 +158,9 @@ class CodeGenFunction {
   [[nodiscard]] auto CoordinateDomain(lir::TypeId container) const
       -> diag::Result<std::optional<support::ValueDomain>>;
 
-  // A value-domain entry's signature is the call site's own, so the arguments
-  // a call passes and the parameter types the entry is declared with are built
-  // together.
-  struct CallShape {
-    std::vector<llvm::Value*> args;
-    std::vector<llvm::Type*> params;
-  };
-
   auto SelectorArgs(
       lir::TypeId container, const std::vector<lir::Operand>& operands,
-      CallShape& shape) -> diag::Result<void>;
+      std::vector<llvm::Value*>& shape) -> diag::Result<void>;
 
   // The type of an operand, and the value domain a library entry is chosen by.
   [[nodiscard]] auto OperandType(const lir::Operand& operand) const

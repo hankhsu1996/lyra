@@ -25,8 +25,9 @@ auto LowerHostCommandSystemSubroutineCall(
   auto& unit = process.Owner().Unit();
   auto& block = *frame.current_block;
 
+  const std::optional<hir::ExprId> command = OptionalOperand(call, 0);
   std::vector<mir::ExprId> args;
-  if (const std::optional<hir::ExprId> command = OptionalOperand(call, 0)) {
+  if (command) {
     auto lowered =
         process.LowerExpr(process.HirBody().exprs.Get(*command), frame);
     if (!lowered) return std::unexpected(std::move(lowered.error()));
@@ -47,7 +48,10 @@ auto LowerHostCommandSystemSubroutineCall(
       .data =
           mir::CallExpr{
               .callee =
-                  mir::Direct{.target = support::BuiltinFn::kRunHostCommand},
+                  mir::Direct{
+                      .target = command
+                                    ? support::BuiltinFn::kRunHostCommand
+                                    : support::BuiltinFn::kRunNullHostCommand},
               .arguments = std::move(args)},
       .type = unit.builtins.int_type};
 }

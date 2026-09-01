@@ -202,14 +202,17 @@ each meets the same lifetime question above; none is lowerable on the execution 
 
 ## Other backend surfaces
 
-- [ ] A runtime service the generated module calls and this backend declares no entry for. A builtin
-      resolves either as a service the backend names outright or through the value domain of its
-      receiver, and one whose receiver is a file table, a scope, or the runtime itself is neither,
-      so the call is refused by name. The services still refused share that one message and nothing
-      else, so each waits on its own thing rather than on this item: the memory load and store tasks
-      (LRM 21.4) name their destination's type in the entry, which the erased value model has no
-      spelling for; a named event's members have no storage realization; the climb to an enclosing
-      scope waits on the item below it; and an await is a suspension rather than a call.
+- [x] **A runtime entry is named by its operation and typed by its call.** An entry's symbol comes
+      from the operation, and its signature from the values the call passes, so neither is written
+      down beside the other where the two could drift. Which entry a builtin resolves to is stated
+      per builtin rather than inferred from what its operands happen to be, and what the library
+      does not realize is stated the same way, naming which shape it has no entry for. An entry now
+      exists as a prototype, a definition, and a binding held to each other by a check, so one
+      written without the others fails the build instead of failing to resolve at run time. What is
+      still refused no longer shares one message: a service that reports through an argument the
+      call names waits on the copy-out shape below, the memory load and store tasks (LRM 21.4) name
+      their destination's type in the entry, which the erased value model has no spelling for, and a
+      named event's members have no storage realization.
 - [x] **A closure the runtime holds and runs later.** A deferred effect -- a non-blocking
       assignment, a postponed print, a deferred assertion's action -- is a closure the process hands
       to a region and keeps running past, so the body runs once the stretch that built it has
@@ -242,13 +245,13 @@ each meets the same lifetime question above; none is lowerable on the execution 
 - [ ] `dump llvm`, and `run` / `compile` end to end against this backend, so a design goes from
       source to a running program without the C++ backend.
 - [ ] The smoke, benchmark, and AOT CI jobs, which are disabled until a design runs end to end here.
-- [ ] An array of owned children. A scalar child scope -- a module instance, a generate block, a
-      procedural block scope -- is constructed, reached, and reports its hierarchical name; an array
-      of them is not, because the sequence of handles a member of that shape holds has no runtime
-      realization here yet. A design whose only arrays are of children otherwise runs. Reading one
-      back is what a hierarchical reference climbing to an enclosing scope does, so the climb is
-      refused rather than lowered: it is the only path that reaches this storage, and reaching it
-      faults rather than answering, which is a worse failure than the refusal.
+- [x] **An array of owned children.** A child scope -- a module instance, a generate block, a
+      procedural block scope -- is constructed, reached by name and per-axis index, and reports its
+      hierarchical name, whether it stands alone or is one of an array. The array is not a sequence
+      a member holds: each element is its own child, told apart by the index its hierarchy segment
+      carries, which is what a lookup by index matches against and what `%m` renders in brackets. An
+      index is an ordinary value of the design and reaches the runtime as the handle every value
+      reaches it as.
 - [ ] Driving a net. A net's value is the resolution of its drivers, so a driver attaches to a
       resolution node and updates a contribution rather than writing a cell; neither reaches the
       runtime from generated code yet, so a net-bearing design does not run here. Rolled up in
@@ -273,14 +276,15 @@ each meets the same lifetime question above; none is lowerable on the execution 
       collection domains' item above seen from the formatting side.
 - [ ] **Below LIR, an unrealized construct reports itself as a compiler bug rather than as a
       diagnostic.** The contract above says the difference between the two backends is a diagnostic,
-      and the lowering into LIR honors it: a construct with no LIR shape answers `unsupported`. What
-      lies below has no such channel -- codegen runs through the LLVM builder returning `void`, and
-      a library entry the runtime does not define surfaces only when the module fails to link -- so
-      both arrive as an internal error telling the reader to file a bug. Naming the missing piece is
-      honest and the failure is loud, but it is the wrong message for a gap nobody has filled yet.
-      Closing this means admitting a module against what the runtime realizes before codegen runs,
-      or threading `diag::Result` through codegen; a hand-kept list in the lowering is not it, since
-      the lowering is the wrong layer to know which library entries exist.
+      and the lowering into LIR honors it: a construct with no LIR shape answers `unsupported`. Two
+      of the three places below it now do as well -- a builtin the library has no entry of the shape
+      for, and a member type with no storage realization, both of which used to tell the reader to
+      file a bug for a gap nobody had filled. What is left is a name the generated module calls that
+      nothing defines, which still surfaces as the module failing to link. That gap is narrower than
+      it was, since which entry a builtin resolves to is now stated per builtin and a prototype, a
+      definition, and a binding are held to each other, but a name minted for an entry nobody ever
+      wrote is still checked only by the corpus reaching it. Closing it means admitting a module
+      against what the runtime realizes before the session materializes it.
 - [x] **End-to-end coverage is the corpus, not a handful of cases.** What this path refuses is
       recorded once for the path rather than on any case, and a case that starts running fails until
       its entry is dropped. So the record only ever shrinks, and dropping entries is what landing a

@@ -349,6 +349,8 @@ auto BuiltinFnName(BuiltinFn id) -> std::string_view {
       return "value_plusargs";
     case BuiltinFn::kRunHostCommand:
       return "run_host_command";
+    case BuiltinFn::kRunNullHostCommand:
+      return "run_null_host_command";
     case BuiltinFn::kReadMem:
       return "read_mem";
     case BuiltinFn::kWriteMem:
@@ -427,6 +429,8 @@ auto BuiltinFnName(BuiltinFn id) -> std::string_view {
       return "parent";
     case BuiltinFn::kFileOpen:
       return "file_open";
+    case BuiltinFn::kFileOpenMode:
+      return "file_open_mode";
     case BuiltinFn::kFileClose:
       return "file_close";
     case BuiltinFn::kFileGetc:
@@ -449,6 +453,8 @@ auto BuiltinFnName(BuiltinFn id) -> std::string_view {
       return "file_error";
     case BuiltinFn::kFileFlush:
       return "file_flush";
+    case BuiltinFn::kFileFlushAll:
+      return "file_flush_all";
     case BuiltinFn::kDiagnostic:
       return "diagnostic";
     case BuiltinFn::kEmitInfo:

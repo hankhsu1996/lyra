@@ -78,8 +78,10 @@ auto LowerFixedOperandCall(
       process, frame, builtin_fn, std::move(lowered), result_type);
 }
 
-// LRM 21.3.1: the one-argument MCD form and the two-argument FD form select
-// the runtime overload by argument count alone.
+// Opening with a mode yields a file descriptor and opening without one yields a
+// multichannel descriptor (LRM 21.3.1). Which was written is known here, so the
+// call names the form it means and nothing downstream recovers it by counting
+// operands.
 auto LowerFileOpenCall(
     ProcessLowerer& process, WalkFrame frame, const hir::CallExpr& call)
     -> diag::Result<mir::Expr> {
@@ -88,30 +90,34 @@ auto LowerFileOpenCall(
   auto name_or = LowerOperand(process, frame, head[0]);
   if (!name_or) return std::unexpected(std::move(name_or.error()));
   std::vector<mir::ExprId> operands{block.exprs.Add(*std::move(name_or))};
-  if (const std::optional<hir::ExprId> mode = OptionalOperand(call, 1)) {
+  const std::optional<hir::ExprId> mode = OptionalOperand(call, 1);
+  if (mode) {
     auto mode_or = LowerOperand(process, frame, *mode);
     if (!mode_or) return std::unexpected(std::move(mode_or.error()));
     operands.push_back(block.exprs.Add(*std::move(mode_or)));
   }
   return BuildFileIoCall(
-      process, frame, support::BuiltinFn::kFileOpen, std::move(operands),
-      process.Owner().Unit().builtins.int_type);
+      process, frame,
+      mode ? support::BuiltinFn::kFileOpenMode : support::BuiltinFn::kFileOpen,
+      std::move(operands), process.Owner().Unit().builtins.int_type);
 }
 
-// LRM 21.3.6: the no-argument flush-all form and the addressed form select
-// the runtime overload by argument count alone.
+// Flushing an addressed channel and flushing every open one (LRM 21.3.6) are
+// two requests, told apart here by which the source wrote.
 auto LowerFileFlushCall(
     ProcessLowerer& process, WalkFrame frame, const hir::CallExpr& call)
     -> diag::Result<mir::Expr> {
   std::vector<mir::ExprId> operands;
-  if (const std::optional<hir::ExprId> fd = OptionalOperand(call, 0)) {
+  const std::optional<hir::ExprId> fd = OptionalOperand(call, 0);
+  if (fd) {
     auto fd_or = LowerOperand(process, frame, *fd);
     if (!fd_or) return std::unexpected(std::move(fd_or.error()));
     operands.push_back(frame.current_block->exprs.Add(*std::move(fd_or)));
   }
   return BuildFileIoCall(
-      process, frame, support::BuiltinFn::kFileFlush, std::move(operands),
-      process.Owner().Unit().builtins.void_type);
+      process, frame,
+      fd ? support::BuiltinFn::kFileFlush : support::BuiltinFn::kFileFlushAll,
+      std::move(operands), process.Owner().Unit().builtins.void_type);
 }
 
 // LRM 13.5: $fgets / $fread / $ferror write into an actual lvalue argument

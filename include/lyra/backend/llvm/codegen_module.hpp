@@ -8,7 +8,6 @@
 
 #include "lyra/backend/llvm/codegen_types.hpp"
 #include "lyra/backend/llvm/emit.hpp"
-#include "lyra/backend/llvm/runtime_abi.hpp"
 #include "lyra/lir/function_id.hpp"
 #include "lyra/lir/type_id.hpp"
 
@@ -44,9 +43,6 @@ class CodeGenModule {
   auto Types() -> CodeGenTypes& {
     return types_;
   }
-  auto Runtime() -> RuntimeAbi& {
-    return runtime_abi_;
-  }
   auto Unit() const -> const lir::CompilationUnit& {
     return *unit_;
   }
@@ -79,7 +75,6 @@ class CodeGenModule {
   std::unique_ptr<llvm::Module> module_;
   const lir::CompilationUnit* unit_;
   CodeGenTypes types_;
-  RuntimeAbi runtime_abi_;
   std::vector<llvm::Function*> functions_;
   std::vector<llvm::GlobalVariable*> packed_type_cells_;
 };

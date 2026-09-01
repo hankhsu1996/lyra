@@ -251,26 +251,10 @@ class LirDumper {
               return std::format("extern {}", f.symbol);
             },
             [](const ActivationFrameTarget& f) -> std::string {
-              switch (f.op) {
-                case ActivationFrameTarget::Op::kAllocate:
-                  return "activation_frame_alloc";
-                case ActivationFrameTarget::Op::kLoad:
-                  return "activation_frame_load";
-                case ActivationFrameTarget::Op::kStore:
-                  return "activation_frame_store";
-              }
-              return "activation_frame_alloc";
+              return std::string{ActivationFrameOpName(f.op)};
             },
             [](const ControlEffectTarget& c) -> std::string {
-              switch (c.op) {
-                case ControlEffectTarget::Op::kHasInvalidatedTarget:
-                  return "has_invalidated_target";
-                case ControlEffectTarget::Op::kInvalidatedTarget:
-                  return "invalidated_target";
-                case ControlEffectTarget::Op::kSettleCancelled:
-                  return "settle_cancelled";
-              }
-              return "invalidated_target";
+              return std::string{ControlEffectOpName(c.op)};
             }},
         target);
   }

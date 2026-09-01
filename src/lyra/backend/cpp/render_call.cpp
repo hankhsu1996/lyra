@@ -83,6 +83,7 @@ auto BuiltinFnCppName(support::BuiltinFn id) -> std::string_view {
     case support::BuiltinFn::kValuePlusargs:
       return "ValuePlusargs";
     case support::BuiltinFn::kRunHostCommand:
+    case support::BuiltinFn::kRunNullHostCommand:
       return "RunHostCommand";
     case support::BuiltinFn::kReadMem:
       return "ReadMem";
@@ -446,6 +447,7 @@ auto BuiltinFnCppName(support::BuiltinFn id) -> std::string_view {
     case support::BuiltinFn::kFromBool:
       return "FromBool";
     case support::BuiltinFn::kFileOpen:
+    case support::BuiltinFn::kFileOpenMode:
       return "Open";
     case support::BuiltinFn::kFileClose:
       return "Close";
@@ -468,6 +470,7 @@ auto BuiltinFnCppName(support::BuiltinFn id) -> std::string_view {
     case support::BuiltinFn::kFileError:
       return "Error";
     case support::BuiltinFn::kFileFlush:
+    case support::BuiltinFn::kFileFlushAll:
       return "Flush";
     case support::BuiltinFn::kHierarchicalPath:
       return "HierarchicalPath";
@@ -534,6 +537,7 @@ auto BuiltinFnCppNamespace(support::BuiltinFn id) -> std::string_view {
     case support::BuiltinFn::kTestPlusargs:
     case support::BuiltinFn::kValuePlusargs:
     case support::BuiltinFn::kRunHostCommand:
+    case support::BuiltinFn::kRunNullHostCommand:
     case support::BuiltinFn::kReadMem:
     case support::BuiltinFn::kWriteMem:
     case support::BuiltinFn::kRunForeignTaskOnFiber:
