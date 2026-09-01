@@ -686,12 +686,10 @@ namespace detail {
 
 auto ScanImpl(
     const value::String& input, const value::String& format, NullByte null_byte,
-    value::PackedArray& consumed, std::initializer_list<ScanTarget> targets)
+    value::PackedArray& consumed, std::span<const ScanTarget> targets)
     -> value::PackedArray {
   ScanCursor src(input.View(), null_byte);
-  const std::int32_t items = ScanFromSource(
-      src, format.View(),
-      std::span<const ScanTarget>{targets.begin(), targets.size()});
+  const std::int32_t items = ScanFromSource(src, format.View(), targets);
   consumed = value::PackedArray::Int(static_cast<std::int32_t>(src.Position()));
   return value::PackedArray::Integer(items);
 }

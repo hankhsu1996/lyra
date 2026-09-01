@@ -257,11 +257,19 @@ auto LowerArrayMethodName(std::string_view name)
   return std::nullopt;
 }
 
-auto LowerQueueMethodName(std::string_view name)
+// LRM 7.9.3 / 7.10.2.3: an index names the one entry that goes; with none, the
+// whole container empties. Both families that admit the two forms read the
+// spelling the same way.
+auto DeleteForm(std::size_t argument_count) -> support::BuiltinFn {
+  return argument_count == 0 ? support::BuiltinFn::kDelete
+                             : support::BuiltinFn::kDeleteIndex;
+}
+
+auto LowerQueueMethodName(std::string_view name, std::size_t argument_count)
     -> std::optional<support::BuiltinFn> {
   if (name == "size") return support::BuiltinFn::kSize;
   if (name == "insert") return support::BuiltinFn::kInsert;
-  if (name == "delete") return support::BuiltinFn::kDelete;
+  if (name == "delete") return DeleteForm(argument_count);
   if (name == "pop_front") return support::BuiltinFn::kPopFront;
   if (name == "pop_back") return support::BuiltinFn::kPopBack;
   if (name == "push_front") return support::BuiltinFn::kPushFront;
@@ -269,12 +277,13 @@ auto LowerQueueMethodName(std::string_view name)
   return std::nullopt;
 }
 
-auto LowerAssociativeMethodName(std::string_view name)
+auto LowerAssociativeMethodName(
+    std::string_view name, std::size_t argument_count)
     -> std::optional<support::BuiltinFn> {
   // LRM 7.9 `num` is an alias of LRM 7.4.3 `size`; both flatten onto kSize.
   if (name == "num" || name == "size") return support::BuiltinFn::kSize;
   if (name == "exists") return support::BuiltinFn::kExists;
-  if (name == "delete") return support::BuiltinFn::kDelete;
+  if (name == "delete") return DeleteForm(argument_count);
   if (name == "first") return support::BuiltinFn::kAssocFirst;
   if (name == "last") return support::BuiltinFn::kAssocLast;
   if (name == "next") return support::BuiltinFn::kAssocNext;

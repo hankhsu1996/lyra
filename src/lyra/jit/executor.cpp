@@ -280,6 +280,7 @@ void DefineRuntimeAbi(llvm::orc::LLJIT& jit) {
   add("lyra_rt_packed_slice", &lyra_rt_packed_slice);
   add("lyra_rt_packed_with_slice", &lyra_rt_packed_with_slice);
   add("lyra_rt_string_from_packed_array", &lyra_rt_string_from_packed_array);
+  add("lyra_rt_string_from_byte_array", &lyra_rt_string_from_byte_array);
   add("lyra_rt_string_count_bits", &lyra_rt_string_count_bits);
   add("lyra_rt_string_string_cstr", &lyra_rt_string_string_cstr);
   add("lyra_rt_string_len", &lyra_rt_string_len);
@@ -302,6 +303,8 @@ void DefineRuntimeAbi(llvm::orc::LLJIT& jit) {
   add("lyra_rt_string_octtoa", &lyra_rt_string_octtoa);
   add("lyra_rt_string_bintoa", &lyra_rt_string_bintoa);
   add("lyra_rt_string_realtoa", &lyra_rt_string_realtoa);
+  add("lyra_rt_string_scan_string", &lyra_rt_string_scan_string);
+  add("lyra_rt_string_scan_file", &lyra_rt_string_scan_file);
   add("lyra_rt_string_add", &lyra_rt_string_add);
   add("lyra_rt_string_eq", &lyra_rt_string_eq);
   add("lyra_rt_string_case_equal", &lyra_rt_string_case_equal);
@@ -464,7 +467,10 @@ void DefineRuntimeAbi(llvm::orc::LLJIT& jit) {
   add("lyra_rt_queue_push_back", &lyra_rt_queue_push_back);
   add("lyra_rt_queue_push_front", &lyra_rt_queue_push_front);
   add("lyra_rt_queue_insert", &lyra_rt_queue_insert);
+  add("lyra_rt_queue_pop_front", &lyra_rt_queue_pop_front);
+  add("lyra_rt_queue_pop_back", &lyra_rt_queue_pop_back);
   add("lyra_rt_queue_delete", &lyra_rt_queue_delete);
+  add("lyra_rt_queue_delete_index", &lyra_rt_queue_delete_index);
   add("lyra_rt_queue_eq", &lyra_rt_queue_eq);
   add("lyra_rt_queue_ne", &lyra_rt_queue_ne);
   add("lyra_rt_queue_case_equal", &lyra_rt_queue_case_equal);
@@ -489,6 +495,7 @@ void DefineRuntimeAbi(llvm::orc::LLJIT& jit) {
   add("lyra_rt_assocarray_exists", &lyra_rt_assocarray_exists);
   add("lyra_rt_assocarray_size", &lyra_rt_assocarray_size);
   add("lyra_rt_assocarray_delete", &lyra_rt_assocarray_delete);
+  add("lyra_rt_assocarray_delete_index", &lyra_rt_assocarray_delete_index);
   add("lyra_rt_assocarray_eq", &lyra_rt_assocarray_eq);
   add("lyra_rt_assocarray_ne", &lyra_rt_assocarray_ne);
   add("lyra_rt_assocarray_case_equal", &lyra_rt_assocarray_case_equal);
@@ -498,6 +505,10 @@ void DefineRuntimeAbi(llvm::orc::LLJIT& jit) {
       &lyra_rt_assocarray_assoc_min_index);
   add("lyra_rt_assocarray_assoc_max_index",
       &lyra_rt_assocarray_assoc_max_index);
+  add("lyra_rt_assocarray_assoc_first", &lyra_rt_assocarray_assoc_first);
+  add("lyra_rt_assocarray_assoc_last", &lyra_rt_assocarray_assoc_last);
+  add("lyra_rt_assocarray_assoc_next", &lyra_rt_assocarray_assoc_next);
+  add("lyra_rt_assocarray_assoc_prev", &lyra_rt_assocarray_assoc_prev);
   add("lyra_rt_string_bitstream_width", &lyra_rt_string_bitstream_width);
   add("lyra_rt_tuple_bitstream_width", &lyra_rt_tuple_bitstream_width);
   add("lyra_rt_dynarray_bitstream_width", &lyra_rt_dynarray_bitstream_width);
@@ -524,6 +535,7 @@ void DefineRuntimeAbi(llvm::orc::LLJIT& jit) {
   add("lyra_rt_unpackedarray_eq", &lyra_rt_unpackedarray_eq);
   add("lyra_rt_unpackedarray_ne", &lyra_rt_unpackedarray_ne);
   add("lyra_rt_unpackedarray_case_equal", &lyra_rt_unpackedarray_case_equal);
+  add("lyra_rt_unpackedarray_is_unknown", &lyra_rt_unpackedarray_is_unknown);
   add("lyra_rt_cell_unpackedarray_get", &lyra_rt_cell_unpackedarray_get);
   add("lyra_rt_cell_unpackedarray_initialize",
       &lyra_rt_cell_unpackedarray_initialize);

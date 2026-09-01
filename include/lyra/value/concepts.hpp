@@ -299,16 +299,18 @@ concept Sortable = requires(T& t) {
   { t.Reverse() };
 };
 
-// KeyTraversal: associative-array ordered-key navigation (LRM 7.9.4 --
-// 7.9.7). Each call returns the next/previous key relative to the probe
-// (or the first/last with no probe), or nullopt on an empty receiver or
-// end-of-traversal.
-template <typename T, typename K>
-concept KeyTraversal = requires(const T& t, const K& probe) {
-  { t.FirstKey() } -> std::same_as<std::optional<K>>;
-  { t.LastKey() } -> std::same_as<std::optional<K>>;
-  { t.NextKey(probe) } -> std::same_as<std::optional<K>>;
-  { t.PrevKey(probe) } -> std::same_as<std::optional<K>>;
+// IndexTraversal: associative-array ordered-index navigation (LRM 7.9.4 --
+// 7.9.7). Each call returns the next / previous index relative to the probe
+// (or the smallest / largest with no probe), or nullopt on an empty receiver
+// or end-of-traversal. The two realizations of the domain -- one C++ type per
+// index and element type, and one type-erased -- both claim it, which is what
+// keeps them answering the same question under the same name.
+template <typename T, typename Index>
+concept IndexTraversal = requires(const T& t, const Index& probe) {
+  { t.FirstIndex() } -> std::same_as<std::optional<Index>>;
+  { t.LastIndex() } -> std::same_as<std::optional<Index>>;
+  { t.NextIndex(probe) } -> std::same_as<std::optional<Index>>;
+  { t.PrevIndex(probe) } -> std::same_as<std::optional<Index>>;
 };
 
 // Reducible and Searchable are documented for completeness but not exposed

@@ -105,30 +105,32 @@ ownership, or native in-frame layout) for every value.
       value semantics, takes the equality and case-equality families, reports its size and its
       bit-stream width and count, reads and writes an element (a write at the element after the last
       appends one, LRM 7.10.1, and every other invalid index discards the write), takes a slice,
-      pushes at either end, inserts, empties, lives in a member slot as a whole-cell observable
-      signal, and crosses a suspension as an activation-frame value. A declared bound (LRM 7.10.5)
-      belongs to the variable rather than to the value written, so it reaches a construction as an
-      operand and a semantic store passes its right-hand side through the bound the destination
-      declares. A pop is not among them, for a reason that is not the domain's: it both updates the
-      queue and yields the element it removed (LRM 7.10.2.4), and one call produces one value here.
+      pushes at either end, inserts, drops the entry an index names or empties entirely (LRM
+      7.10.2.3), lives in a member slot as a whole-cell observable signal, and crosses a suspension
+      as an activation-frame value. A declared bound (LRM 7.10.5) belongs to the variable rather
+      than to the value written, so it reaches a construction as an operand and a semantic store
+      passes its right-hand side through the bound the destination declares. A pop both updates the
+      queue and yields the element it removed (LRM 7.10.2.4), so the entry completes with the two of
+      them and the call site stores the queue back and takes the element as the call's value.
 - [x] **The associative array** (LRM 7.8) -- realized on the execution backend as a keyed container
       value domain, the first container whose coordinates are values rather than ordinals. It
       defaults to empty, builds from a list of entries with or without the miss value a `default:`
       states (LRM 7.9.11), copies with value semantics, takes the equality and case-equality
       families, reports how many entries it holds and its bit-stream width and count, reads an index
       with no entry as the element default, allocates an entry on a write, reports whether an index
-      has one, empties under `delete`, answers the smallest and largest index it holds, lives in a
-      member slot as a whole-cell observable signal, and crosses a suspension as an activation-frame
-      value. It holds no prototype for an index -- the clause gives it no index bounds and no index
-      default -- so an index crosses in the representation the array's declared index type names and
-      the order two indices sit in is read from the indices themselves. A wildcard index (LRM 7.8.1)
-      is refused: its entry is named by the value the index expression denotes rather than by the
-      expression's own bits, and no conversion states that yet.
-- [ ] **The traversal family** (LRM 7.9.4 -- 7.9.7) -- refused on the execution backend. Each
-      answers with an index by writing it into an argument the call names, and a value handle is
-      immutable there, so an entry would have to yield the index as a result the caller stores --
-      the shape every other apparent mutation of a value already takes. `foreach` over an
-      associative array waits on this, as does every index-ordered check.
+      has one, drops the entry an index names or empties entirely (LRM 7.9.3), answers the smallest
+      and largest index it holds, lives in a member slot as a whole-cell observable signal, and
+      crosses a suspension as an activation-frame value. It holds no prototype for an index -- the
+      clause gives it no index bounds and no index default -- so an index crosses in the
+      representation the array's declared index type names and the order two indices sit in is read
+      from the indices themselves. A wildcard index (LRM 7.8.1) is refused: its entry is named by
+      the value the index expression denotes rather than by the expression's own bits, and no
+      conversion states that yet.
+- [x] **The traversal family** (LRM 7.9.4 -- 7.9.7) -- realized on the execution backend. Each
+      answers with the SV int the method reports and the index it visited, which is the probe
+      unchanged where the array holds no such neighbour, and the call site stores that index into
+      the variable the source named -- so the variable's own write path runs and its update event
+      fires. `foreach` over an associative array and the index-ordered checks run through this.
 - [ ] **An unpacked concatenation** (LRM 10.10) -- refused on the execution backend, so a queue
       built from one, and every queue whose declared bound is exercised through one, waits here. Two
       things it needs, both already shaped by what is settled. No C ABI names an entry per arity, so
@@ -204,8 +206,7 @@ each meets the same lifetime question above; none is lowerable on the execution 
       resolves either as a service the backend names outright or through the value domain of its
       receiver, and one whose receiver is a file table, a scope, or the runtime itself is neither,
       so the call is refused by name. The services still refused share that one message and nothing
-      else, so each waits on its own thing rather than on this item: a service that assigns to an
-      argument the call names waits on the copy-out shape below; the memory load and store tasks
+      else, so each waits on its own thing rather than on this item: the memory load and store tasks
       (LRM 21.4) name their destination's type in the entry, which the erased value model has no
       spelling for; a named event's members have no storage realization; the climb to an enclosing
       scope waits on the item below it; and an await is a suspension rather than a call.
@@ -216,13 +217,14 @@ each meets the same lifetime question above; none is lowerable on the execution 
       closure was built, so nothing a deferred body reads points into storage that is already gone.
       The closure a `fork` branch or a task enable builds is not this -- it starts an activation
       rather than producing a value -- and is refused by name.
-- [ ] A runtime service that assigns to an argument the call names. The call site hands it a
-      copy-out temporary and reads the temporary back, which is how a value reaches a caller through
-      an argument at all. Writing through the handle the temporary crosses as does not reach what
-      the caller reads -- confirmed by wiring one and watching every destination come back empty --
-      so the service needs the write to produce a new value stored back through the temporary's
-      owner, the same rule every other apparent mutation on this backend follows. `$fgets`,
-      `$fread`, `$ferror`, `$fscanf`, `$sscanf` and `$value$plusargs` are all this one shape.
+- [ ] A runtime service that answers through an argument the call names, for `$fgets`, `$fread`,
+      `$ferror` and `$value$plusargs`. Writing through the handle such an argument crosses as does
+      not reach what the caller reads -- a value handle is immutable from the generated side --
+      confirmed by wiring one and watching every destination come back empty. The answer is the one
+      a user subroutine already gives: the call completes with a product of the values it settled,
+      its own result first and then one per argument it answers through, and the call site stores
+      each where the source named it. `$sscanf` and the associative traversal run that way; the four
+      above wait on the entries their receivers need rather than on the shape.
 - [ ] Storage reached by name rather than through a receiver, for a class's static property and
       static constant. A package or `$unit` variable runs: such storage is named by its linkage
       symbol, a place opens at that symbol and dereferences it, and the execution session resolves

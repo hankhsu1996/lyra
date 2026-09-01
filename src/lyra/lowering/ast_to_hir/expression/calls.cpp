@@ -320,7 +320,31 @@ auto LowerCallExpr(
       // remaining arguments. These methods take no `with` clause and are tried
       // before the array-manipulation family so `size` / `delete` resolve to
       // the queue-native form rather than the LRM 7.12 one.
-      if (auto kind = LowerQueueMethodName(name); kind.has_value()) {
+      if (auto kind = LowerQueueMethodName(name, arg_ids.size() - 1);
+          kind.has_value()) {
+        auto type_id = unit_lowerer.InternType(*call.type, span);
+        if (!type_id) return std::unexpected(std::move(type_id.error()));
+        return hir::Expr{
+            .type = *type_id,
+            .data =
+                hir::CallExpr{
+                    .callee = hir::BuiltinMethodRef{.method = *kind},
+                    .arguments = std::move(arg_ids),
+                },
+            .span = span,
+        };
+      }
+    }
+
+    // LRM 7.9 associative-array native methods. The receiver is arguments[0];
+    // the index (`exists`, the delete that names one entry) follows as the next
+    // argument. Like the queue's, these are tried before the LRM 7.12 family so
+    // a name both define resolves to the one the receiver's own clause states.
+    if (receiver_type.has_value() &&
+        std::holds_alternative<hir::AssociativeArrayType>(
+            unit_lowerer.Unit().types.Get(*receiver_type).data)) {
+      if (auto kind = LowerAssociativeMethodName(name, arg_ids.size() - 1);
+          kind.has_value()) {
         auto type_id = unit_lowerer.InternType(*call.type, span);
         if (!type_id) return std::unexpected(std::move(type_id.error()));
         return hir::Expr{
@@ -340,10 +364,9 @@ auto LowerCallExpr(
     // array"), a dynamic array, a queue (LRM 7.10.1 gives it the same
     // operations as an unpacked array), and an associative array (LRM 7.12.1 /
     // 7.12.3 / 7.12.5 reduction / locator / map; the ordering family is
-    // rejected on it by slang). For dynamic array and queue the LRM 7.5.2 /
-    // 7.5.3 / 7.10.2 `size` / `delete` are resolved earlier as native methods,
-    // and the associative-array LRM 7.9 methods (`exists` / traversal / `num`)
-    // resolve in the block below; only the 7.12 names reach this dispatch. The
+    // rejected on it by slang). A receiver whose own clause names a method --
+    // the queue's LRM 7.10.2 set, the associative array's LRM 7.9 set --
+    // resolved it above, so only the 7.12 names reach this dispatch. The
     // no-`with` form takes only the receiver; the `with` form (LRM 7.12.4)
     // binds an iterator and a body expression carried as the optional
     // `WithClause`, which HIR -> MIR turns into a closure argument.
@@ -390,27 +413,6 @@ auto LowerCallExpr(
                     .callee = hir::BuiltinMethodRef{.method = *kind},
                     .arguments = std::move(arg_ids),
                     .with_clause = std::move(with_clause),
-                },
-            .span = span,
-        };
-      }
-    }
-
-    if (receiver_type.has_value() &&
-        std::holds_alternative<hir::AssociativeArrayType>(
-            unit_lowerer.Unit().types.Get(*receiver_type).data)) {
-      if (auto kind = LowerAssociativeMethodName(name); kind.has_value()) {
-        // LRM 7.9 associative-array methods. The receiver is arguments[0]; the
-        // key (exists / delete-by-index) follows as the next argument. The
-        // no-argument `delete` clears the array.
-        auto type_id = unit_lowerer.InternType(*call.type, span);
-        if (!type_id) return std::unexpected(std::move(type_id.error()));
-        return hir::Expr{
-            .type = *type_id,
-            .data =
-                hir::CallExpr{
-                    .callee = hir::BuiltinMethodRef{.method = *kind},
-                    .arguments = std::move(arg_ids),
                 },
             .span = span,
         };

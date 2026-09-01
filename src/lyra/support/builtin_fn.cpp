@@ -16,6 +16,7 @@ auto IsMutatingBuiltinFn(BuiltinFn id) -> bool {
     case BuiltinFn::kBintoa:
     case BuiltinFn::kRealtoa:
     case BuiltinFn::kDelete:
+    case BuiltinFn::kDeleteIndex:
     case BuiltinFn::kReverse:
     case BuiltinFn::kSort:
     case BuiltinFn::kRsort:
@@ -103,9 +104,14 @@ auto ContainerIndexOperand(BuiltinFn id) -> std::optional<std::size_t> {
     // The receiver leads, and the index it selects by follows.
     case BuiltinFn::kElement:
     case BuiltinFn::kExists:
-    // LRM 7.9.3 / 7.10.2.3: with an index, the entry it names goes; with
-    // none, the whole container empties.
-    case BuiltinFn::kDelete:
+    // LRM 7.9.3 / 7.10.2.3: the index naming the one entry that goes.
+    case BuiltinFn::kDeleteIndex:
+    // LRM 7.9.4 -- 7.9.7: the index the traversal starts from, which it also
+    // answers with when there is no neighbour to move to.
+    case BuiltinFn::kAssocFirst:
+    case BuiltinFn::kAssocLast:
+    case BuiltinFn::kAssocNext:
+    case BuiltinFn::kAssocPrev:
       return 1;
     default:
       return std::nullopt;
@@ -141,6 +147,8 @@ auto BuiltinFnName(BuiltinFn id) -> std::string_view {
       return "to_owned";
     case BuiltinFn::kDelete:
       return "delete";
+    case BuiltinFn::kDeleteIndex:
+      return "delete_index";
     case BuiltinFn::kReverse:
       return "reverse";
     case BuiltinFn::kSort:

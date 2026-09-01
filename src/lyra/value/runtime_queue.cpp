@@ -199,6 +199,30 @@ auto RuntimeQueue::PushBack(RuntimeValue item) const -> RuntimeQueue {
   return result;
 }
 
+auto RuntimeQueue::Front() const -> const RuntimeValue& {
+  return data_.empty() ? *element_default_ : data_.front();
+}
+
+auto RuntimeQueue::Back() const -> const RuntimeValue& {
+  return data_.empty() ? *element_default_ : data_.back();
+}
+
+auto RuntimeQueue::PopFront() const -> RuntimeQueue {
+  RuntimeQueue result(*this);
+  if (!result.data_.empty()) {
+    result.data_.pop_front();
+  }
+  return result;
+}
+
+auto RuntimeQueue::PopBack() const -> RuntimeQueue {
+  RuntimeQueue result(*this);
+  if (!result.data_.empty()) {
+    result.data_.pop_back();
+  }
+  return result;
+}
+
 auto RuntimeQueue::Insert(const PackedArray& index, RuntimeValue item) const
     -> RuntimeQueue {
   RuntimeQueue result(*this);

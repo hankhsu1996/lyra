@@ -1023,30 +1023,6 @@ auto CodeGenFunction::ValueBuiltinCallee(
               "llvm codegen: the {} builtin reads an enumeration's declared "
               "members and has no entry on this backend",
               support::BuiltinFnName(target.fn)));
-    // A scan assigns what it parses to the arguments that follow its format
-    // (LRM 21.3.4.3), so its entry varies with both how many there are and
-    // what each one is; the value library holds no entry of that shape.
-    case support::BuiltinFn::kScanString:
-    case support::BuiltinFn::kScanFile:
-      return Unsupported(
-          std::format(
-              "llvm codegen: the {} builtin assigns to the output arguments "
-              "the call names and has no entry on this backend",
-              support::BuiltinFnName(target.fn)));
-    // An associative traversal (LRM 7.9.4 -- 7.9.7) answers with an index by
-    // writing it into an argument the call names. A value handle is immutable
-    // from the generated side, so an entry here would have to yield the index
-    // as a result the caller stores, which is the shape every other apparent
-    // mutation of a value already takes.
-    case support::BuiltinFn::kAssocFirst:
-    case support::BuiltinFn::kAssocLast:
-    case support::BuiltinFn::kAssocNext:
-    case support::BuiltinFn::kAssocPrev:
-      return Unsupported(
-          std::format(
-              "llvm codegen: the {} builtin answers by writing through an "
-              "argument the call names and has no entry on this backend",
-              support::BuiltinFnName(target.fn)));
     // An unpacked concatenation (LRM 10.10) takes as many parts as the source
     // wrote, each contributing either itself or its own elements, and no C ABI
     // names an entry per arity. Reaching the machine needs the parts folded

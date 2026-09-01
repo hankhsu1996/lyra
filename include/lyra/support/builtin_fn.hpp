@@ -35,9 +35,13 @@ enum class BuiltinFn : std::uint16_t {
   // itself dynamically sized contributes its current width. The fixed-size case
   // folds at elaboration and never reaches this entry.
   kBitstreamWidth,
-  // LRM 7.12 / 7.5 / 7.10 container ops.
+  // LRM 7.12 / 7.5 / 7.10 container ops. Emptying a container and dropping
+  // the one entry an index names are two operations the source spells with one
+  // word (LRM 7.9.3 / 7.10.2.3), so each takes its own identity here and the
+  // spelling is resolved where the source is read.
   kToOwned,
   kDelete,
+  kDeleteIndex,
   // LRM 7.12 ordering. `Sort` / `Rsort` take a `with`-clause closure as
   // the second argument.
   kReverse,
@@ -586,9 +590,10 @@ enum class BuiltinFn : std::uint16_t {
          id == BuiltinFn::kMakeDynamicArrayNewCopy;
 }
 
-// True iff the function modifies its receiver argument's storage in place, so
-// the receiver names a place rather than a value -- which is what makes a
-// receiver reaching through a capability wrapper reach its write access.
+// True iff the function updates its receiver, so the receiver names a place
+// rather than a value -- which is what makes a receiver reaching through a
+// capability wrapper reach its write access. Where the update lands and how it
+// gets there is each target's own answer.
 [[nodiscard]] auto IsMutatingBuiltinFn(BuiltinFn id) -> bool;
 
 // True iff the function hands its first argument back unchanged, so a call to
@@ -613,16 +618,17 @@ enum class BuiltinFn : std::uint16_t {
 [[nodiscard]] auto BuiltinFnTakesResultPrototype(BuiltinFn id) -> bool;
 
 // True iff `id` is an associative-array traversal entry (LRM 7.9.4 -- 7.9.7).
-// The traversal family lowers to a block expression: it mutates the index
-// argument and runs the write-back among its steps.
+// The family lowers to a block expression, because the index it answers with
+// reaches the variable the source named through that variable's own write, and
+// binding the answer and writing it back are steps rather than expressions.
 [[nodiscard]] auto IsAssociativeTraversalFn(BuiltinFn id) -> bool;
 
-// Which operand of a container entry is the index it selects by, absent for an
-// entry that selects nothing. A consumer that must know how an index reaches
-// the entry -- which representation it crosses in, whether it is present at all
-// -- asks here rather than listing the entries itself. An entry that yields an
-// index rather than taking one is not this: that is the traversal family, whose
-// argument is a destination.
+// Which operand of a container entry is an index, absent for an entry that
+// names none. A consumer that must know how an index reaches the entry -- which
+// representation it crosses in, whether it is present at all -- asks here
+// rather than listing the entries itself. It covers the index a traversal
+// searches from as well as the one a select names, since both cross the same
+// way.
 [[nodiscard]] auto ContainerIndexOperand(BuiltinFn id)
     -> std::optional<std::size_t>;
 

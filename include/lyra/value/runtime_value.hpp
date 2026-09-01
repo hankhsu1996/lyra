@@ -3,6 +3,7 @@
 #include <variant>
 
 #include "lyra/value/chandle.hpp"
+#include "lyra/value/concepts.hpp"
 #include "lyra/value/packed_array.hpp"
 #include "lyra/value/real.hpp"
 #include "lyra/value/runtime_associative_array.hpp"
@@ -68,5 +69,13 @@ struct RuntimeValue {
 // end.
 [[nodiscard]] auto RuntimeValueCountBits(
     const RuntimeValue& value, const PackedArray& control_bits) -> PackedArray;
+
+// A keyed container's contract is over the pair of the container and the type
+// its indices are, and the erased container's index type is the erased value
+// itself -- which closes over that container, so the pair is only nameable
+// here. Claiming it beside the monomorphized realization's claim is what makes
+// one contract cover both, so the two cannot answer the same question under
+// different names.
+static_assert(IndexTraversal<RuntimeAssociativeArray, RuntimeValue>);
 
 }  // namespace lyra::value

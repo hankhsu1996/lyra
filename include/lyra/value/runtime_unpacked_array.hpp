@@ -77,6 +77,12 @@ class RuntimeUnpackedArray {
   auto operator=(RuntimeUnpackedArray&&) noexcept -> RuntimeUnpackedArray&;
   ~RuntimeUnpackedArray();
 
+  // LRM 21.3.4.3: the array read as a contiguous character sequence in element
+  // order, the low byte of each element becoming one character and embedded
+  // NULs included -- what a scan takes as its input text. The inverse of the
+  // string construction above, under the same clause's byte order.
+  [[nodiscard]] auto ToByteString() const -> String;
+
   // LRM 7.4.2: the element count as an SV `int`. Fixed for the value's life.
   [[nodiscard]] auto Size() const -> PackedArray;
 

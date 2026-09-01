@@ -107,6 +107,14 @@ class RuntimeQueue {
   [[nodiscard]] auto PushFront(RuntimeValue item) const -> RuntimeQueue;
   [[nodiscard]] auto PushBack(RuntimeValue item) const -> RuntimeQueue;
 
+  // LRM 7.10.2.4 / 7.10.2.5 pop, as its two halves: the element at the front
+  // or the back, and the queue left once it is gone. An empty queue has none
+  // to remove, so it reads the element default and stays as it is.
+  [[nodiscard]] auto Front() const -> const RuntimeValue&;
+  [[nodiscard]] auto Back() const -> const RuntimeValue&;
+  [[nodiscard]] auto PopFront() const -> RuntimeQueue;
+  [[nodiscard]] auto PopBack() const -> RuntimeQueue;
+
   // LRM 7.10.2.2: a copy with `item` inserted before `index`, where
   // `index == size` appends. An x or z, negative, or beyond-size index leaves
   // the queue unchanged.

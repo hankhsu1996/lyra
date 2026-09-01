@@ -44,11 +44,10 @@ Tracks `$display` / `$write` / `$strobe` format-specifier coverage and file-sink
 - [x] DI8 -- `$sscanf` and `$fscanf` over a shared scanner core (LRM 21.3.4.3). Statement-position
       call (bare or blocking assign-RHS); conversions `%d` / `%h` / `%x` / `%b` / `%o` / `%s` / `%c`
       / `%%`; 4-state vocabulary (`x` / `z` / `?` / `_`) inside the integer conversions; single-char
-      `x`/`z`/`?` fill for `%d`. Output-arg copy-out uses LRM 13.5 with copy-in initialization so
-      unmatched slots preserve the actual's prior value (LRM 21.3.4.3 only writes successfully
-      matched outputs). `$sscanf` takes a string or string-literal input; `$fscanf` takes an int FD,
-      honours "offending input character is left unread" via the underlying FD's putback buffer, and
-      stamps `$ferror` on invalid / closed descriptors.
+      `x`/`z`/`?` fill for `%d`. An output the parse never reached keeps its prior value, since LRM
+      21.3.4.3 writes only successfully matched outputs. `$sscanf` takes a string or string-literal
+      input; `$fscanf` takes an int FD, honours "offending input character is left unread" via the
+      underlying FD's putback buffer, and stamps `$ferror` on invalid / closed descriptors.
 - [x] DI9 -- `$sformat` / `$sformatf` / `$swrite` family (LRM 21.3.3). Six subroutines: `$swrite` /
       `$swriteb` / `$swriteh` / `$swriteo` with auto-format (per-task default radix per LRM
       21.2.1.1), `$sformat` with explicit literal format, and `$sformatf` returning the formatted
