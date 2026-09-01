@@ -14,6 +14,7 @@
 #include <variant>
 #include <vector>
 
+#include "lyra/base/internal_error.hpp"
 #include "lyra/base/time.hpp"
 #include "lyra/runtime/activation_value_cell.hpp"
 #include "lyra/runtime/closure.hpp"
@@ -44,6 +45,7 @@
 #include "lyra/value/runtime_tuple.hpp"
 #include "lyra/value/runtime_unpacked_array.hpp"
 #include "lyra/value/runtime_value.hpp"
+#include "lyra/value/scan.hpp"
 #include "lyra/value/string.hpp"
 #include "lyra/value/string_op.hpp"
 
@@ -268,15 +270,89 @@ auto TakeClosure(void* closure) -> std::function<void()> {
               *static_cast<ClosureValue*>(closure)))] { held->Invoke(); };
 }
 
-// A distribution draw is a product of the value drawn and the advanced seed
-// (LRM 20.14.2), so it crosses the boundary as the type-erased product every
-// other product crosses as.
+// A call that answers with more than one value completes with the product of
+// them, which crosses the boundary type-erased like every other product. Stated
+// once here, so each entry below says only what its own components are.
+auto OwnCompletion(std::vector<value::RuntimeValue> components) -> void* {
+  return Own(value::RuntimeTuple(std::move(components)));
+}
+
+// Where one conversion parses to. A scan destination is an integral or a
+// string (LRM 21.3.4.3) and lowering rejects anything else, so a value of any
+// other domain reaching here is a compiler bug.
+auto ScanTargetOf(value::RuntimeValue& value) -> value::ScanTarget {
+  if (auto* packed = std::get_if<value::PackedArray>(&value.value)) {
+    return value::ScanTarget{packed};
+  }
+  if (auto* text = std::get_if<value::String>(&value.value)) {
+    return value::ScanTarget{text};
+  }
+  throw InternalError(
+      "a scan parses into an integral or a string (LRM 21.3.4.3)");
+}
+
+// The matched-conversion count, how far the parse advanced, and one value per
+// conversion (LRM 21.3.4.3). Each value starts as the prototype the call
+// supplied and is parsed in place, so a conversion that never ran carries its
+// prototype back and the caller's own destination stays as it was.
+auto OwnScan(
+    const value::String& input, const value::String& format,
+    value::detail::NullByte null_byte, const value::RuntimeTuple& prototypes)
+    -> void* {
+  const std::size_t arity = prototypes.RawSize();
+  std::vector<value::RuntimeValue> parsed;
+  parsed.reserve(arity);
+  for (std::size_t i = 0; i < arity; ++i) {
+    parsed.push_back(prototypes.Component(i));
+  }
+  std::vector<value::ScanTarget> targets;
+  targets.reserve(arity);
+  for (value::RuntimeValue& value : parsed) {
+    targets.push_back(ScanTargetOf(value));
+  }
+
+  value::PackedArray consumed = value::PackedArray::Int(0);
+  value::PackedArray matched =
+      value::detail::ScanImpl(input, format, null_byte, consumed, targets);
+
+  std::vector<value::RuntimeValue> components;
+  components.reserve(arity + 2);
+  components.push_back(value::RuntimeValue{std::move(matched)});
+  components.push_back(value::RuntimeValue{std::move(consumed)});
+  for (value::RuntimeValue& value : parsed) {
+    components.push_back(std::move(value));
+  }
+  return OwnCompletion(std::move(components));
+}
+
+// The queue left once the element goes, and the element itself (LRM 7.10.2.4 /
+// 7.10.2.5).
+auto OwnPopped(
+    value::RuntimeQueue remaining, const value::RuntimeValue& element)
+    -> void* {
+  return OwnCompletion(
+      std::vector<value::RuntimeValue>{
+          value::RuntimeValue{std::move(remaining)}, element});
+}
+
+// The SV int a traversal answers with and the index it visited (LRM 7.9.4 --
+// 7.9.7), the visited index being the probe itself where the array holds no
+// such neighbour.
+auto OwnVisited(std::optional<value::RuntimeValue> index, const void* probe)
+    -> void* {
+  const bool found = index.has_value();
+  return OwnCompletion(
+      std::vector<value::RuntimeValue>{
+          value::RuntimeValue{value::PackedArray::Int(found ? 1 : 0)},
+          found ? *std::move(index) : Read<value::RuntimeValue>(probe)});
+}
+
+// The value drawn and the seed the draw advanced (LRM 20.14.2).
 auto OwnDraw(const DistributionDraw& draw) -> void* {
-  return Own(
-      value::RuntimeTuple(
-          std::vector<value::RuntimeValue>{
-              value::RuntimeValue{draw.Get<0>()},
-              value::RuntimeValue{draw.Get<1>()}}));
+  return OwnCompletion(
+      std::vector<value::RuntimeValue>{
+          value::RuntimeValue{draw.Get<0>()},
+          value::RuntimeValue{draw.Get<1>()}});
 }
 
 }  // namespace
@@ -1143,6 +1219,10 @@ auto lyra_rt_string_from_packed_array(const void* bits) -> void* {
   return Own(String::FromPackedArray(Read<PackedArray>(bits)));
 }
 
+auto lyra_rt_string_from_byte_array(const void* bytes) -> void* {
+  return Own(Read<RuntimeUnpackedArray>(bytes).ToByteString());
+}
+
 auto lyra_rt_string_string_cstr(const void* value) -> const char* {
   return Read<String>(value).CStr();
 }
@@ -1258,6 +1338,22 @@ auto lyra_rt_string_realtoa(const void* value, const void* number) -> void* {
   String result = Read<String>(value);
   result.Realtoa(Read<Real>(number));
   return Own(std::move(result));
+}
+
+auto lyra_rt_string_scan_string(
+    const void* input, const void* format, const void* prototypes) -> void* {
+  return lyra::runtime::OwnScan(
+      Read<String>(input), Read<String>(format),
+      lyra::value::detail::NullByte::kWhiteSpace,
+      Read<lyra::value::RuntimeTuple>(prototypes));
+}
+
+auto lyra_rt_string_scan_file(
+    const void* input, const void* format, const void* prototypes) -> void* {
+  return lyra::runtime::OwnScan(
+      Read<String>(input), Read<String>(format),
+      lyra::value::detail::NullByte::kOrdinary,
+      Read<lyra::value::RuntimeTuple>(prototypes));
 }
 
 auto lyra_rt_string_add(const void* lhs, const void* rhs) -> void* {
@@ -2007,6 +2103,10 @@ auto lyra_rt_unpackedarray_case_equal(const void* lhs, const void* rhs)
           Read<RuntimeUnpackedArray>(rhs)));
 }
 
+auto lyra_rt_unpackedarray_is_unknown(const void* value) -> void* {
+  return Own(Read<RuntimeUnpackedArray>(value).IsUnknown());
+}
+
 auto lyra_rt_cell_unpackedarray_get(void* cell) -> void* {
   return Own(static_cast<Var<RuntimeUnpackedArray>*>(cell)->Get());
 }
@@ -2120,8 +2220,22 @@ auto lyra_rt_queue_insert(const void* queue, const void* index, void* item)
       lyra::runtime::ElementFrom(source.ElementDefault(), item)));
 }
 
+auto lyra_rt_queue_pop_front(const void* queue) -> void* {
+  const auto& source = Read<RuntimeQueue>(queue);
+  return lyra::runtime::OwnPopped(source.PopFront(), source.Front());
+}
+
+auto lyra_rt_queue_pop_back(const void* queue) -> void* {
+  const auto& source = Read<RuntimeQueue>(queue);
+  return lyra::runtime::OwnPopped(source.PopBack(), source.Back());
+}
+
 auto lyra_rt_queue_delete(const void* queue) -> void* {
   return Own(Read<RuntimeQueue>(queue).Delete());
+}
+
+auto lyra_rt_queue_delete_index(const void* queue, const void* index) -> void* {
+  return Own(Read<RuntimeQueue>(queue).Delete(Read<PackedArray>(index)));
 }
 
 auto lyra_rt_queue_eq(const void* lhs, const void* rhs) -> void* {
@@ -2232,6 +2346,12 @@ auto lyra_rt_assocarray_delete(const void* array) -> void* {
   return Own(Read<RuntimeAssociativeArray>(array).Delete());
 }
 
+auto lyra_rt_assocarray_delete_index(const void* array, const void* index)
+    -> void* {
+  return Own(
+      Read<RuntimeAssociativeArray>(array).Delete(Read<RuntimeValue>(index)));
+}
+
 auto lyra_rt_assocarray_eq(const void* lhs, const void* rhs) -> void* {
   return Own(
       Read<RuntimeAssociativeArray>(lhs) == Read<RuntimeAssociativeArray>(rhs));
@@ -2264,6 +2384,28 @@ auto lyra_rt_assocarray_assoc_max_index(const void* array, void* empty)
   const std::optional<RuntimeValue> index =
       Read<RuntimeAssociativeArray>(array).LastIndex();
   return index.has_value() ? lyra::runtime::ElementHandle(*index) : empty;
+}
+
+auto lyra_rt_assocarray_assoc_first(const void* array, void* probe) -> void* {
+  return lyra::runtime::OwnVisited(
+      Read<RuntimeAssociativeArray>(array).FirstIndex(), probe);
+}
+
+auto lyra_rt_assocarray_assoc_last(const void* array, void* probe) -> void* {
+  return lyra::runtime::OwnVisited(
+      Read<RuntimeAssociativeArray>(array).LastIndex(), probe);
+}
+
+auto lyra_rt_assocarray_assoc_next(const void* array, void* probe) -> void* {
+  return lyra::runtime::OwnVisited(
+      Read<RuntimeAssociativeArray>(array).NextIndex(Read<RuntimeValue>(probe)),
+      probe);
+}
+
+auto lyra_rt_assocarray_assoc_prev(const void* array, void* probe) -> void* {
+  return lyra::runtime::OwnVisited(
+      Read<RuntimeAssociativeArray>(array).PrevIndex(Read<RuntimeValue>(probe)),
+      probe);
 }
 
 auto lyra_rt_assocarray_count_bits(const void* array, const void* control_bits)

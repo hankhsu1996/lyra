@@ -200,7 +200,10 @@ auto BuiltinFnCppName(support::BuiltinFn id) -> std::string_view {
       return "BitstreamWidth";
     case support::BuiltinFn::kToOwned:
       return "ToOwned";
+    // Both forms name the target language's one overload set; which member it
+    // resolves to follows from the arguments the call already carries.
     case support::BuiltinFn::kDelete:
+    case support::BuiltinFn::kDeleteIndex:
       return "Delete";
     case support::BuiltinFn::kReverse:
       return "Reverse";

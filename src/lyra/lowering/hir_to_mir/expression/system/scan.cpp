@@ -9,6 +9,7 @@
 #include <utility>
 #include <vector>
 
+#include "lyra/base/component_index.hpp"
 #include "lyra/base/internal_error.hpp"
 #include "lyra/diag/diag_code.hpp"
 #include "lyra/diag/diagnostic.hpp"
@@ -17,6 +18,7 @@
 #include "lyra/hir/procedural_body.hpp"
 #include "lyra/lowering/hir_to_mir/block_builder.hpp"
 #include "lyra/lowering/hir_to_mir/call_operands.hpp"
+#include "lyra/lowering/hir_to_mir/callee_interface.hpp"
 #include "lyra/lowering/hir_to_mir/cast_lowering.hpp"
 #include "lyra/lowering/hir_to_mir/condition.hpp"
 #include "lyra/lowering/hir_to_mir/default_value.hpp"
@@ -35,6 +37,30 @@
 namespace lyra::lowering::hir_to_mir {
 
 namespace {
+
+// A scan completes with the matched-conversion count, how far the parse
+// advanced, then one value per conversion in the order the call named them
+// (LRM 21.3.4.3). The positions and the type the call carries are stated
+// together here, so a step reading a component and the type declaring it
+// cannot come to disagree.
+constexpr base::ComponentIndex kScanMatched{0};
+constexpr base::ComponentIndex kScanConsumed{1};
+
+auto ScanParsedValue(std::size_t conversion) -> base::ComponentIndex {
+  return base::ComponentIndex{
+      kScanConsumed.value + 1 + static_cast<std::uint32_t>(conversion)};
+}
+
+auto ScanCompletionComponents(
+    mir::TypeId matched, mir::TypeId consumed,
+    const std::vector<mir::TypeId>& parsed) -> std::vector<mir::TypeId> {
+  std::vector<mir::TypeId> components;
+  components.reserve(parsed.size() + 2);
+  components.push_back(matched);
+  components.push_back(consumed);
+  components.insert(components.end(), parsed.begin(), parsed.end());
+  return components;
+}
 
 // LRM 21.3.4.3 permits string, integral, or unpacked-array-of-byte as
 // the `$sscanf` source; the latter two are lifted to string here so the
@@ -262,51 +288,38 @@ auto LowerScanSystemSubroutineCall(
       unit_lowerer, scan_frame, format_type,
       scan_body.exprs.Add(mir::MakeLocalRefExpr(format_var, format_type)));
 
-  // LRM 21.3.4.3 "the offending input character is left unread in the
-  // input stream": the parse returns the byte-count it consumed so the
-  // file form can rewind the unconsumed tail before the next read.
-  const mir::ExprId consumed_init = BuildIntLiteral(unit, scan_body, 0);
-  const mir::LocalId consumed_var = steps.Bindings().DeclareAnonymous(
-      mir::LocalDecl{.name = "_lyra_scan_consumed", .type = int_type});
-  scan_body.AppendStmt(
-      mir::LocalDeclStmt{.target = consumed_var, .init = consumed_init});
-
-  std::vector<mir::LocalId> temp_ids;
-  temp_ids.reserve(target_types.size());
-  for (std::size_t k = 0; k < target_types.size(); ++k) {
-    const mir::ExprId init_id = scan_body.exprs.Add(
-        BuildDefaultValueExpr(unit_lowerer, scan_frame, target_types[k]));
-    const mir::LocalId temp_var = steps.Bindings().DeclareAnonymous(
-        mir::LocalDecl{
-            .name = std::format("_lyra_scan_temp_{}", k),
-            .type = target_types[k]});
-    scan_body.AppendStmt(
-        mir::LocalDeclStmt{.target = temp_var, .init = init_id});
-    temp_ids.push_back(temp_var);
+  // One prototype per conversion. It states the shape that conversion parses
+  // into, which nothing else on the call states, and it is what the completion
+  // carries back where no conversion reached it.
+  std::vector<mir::ExprId> prototypes;
+  prototypes.reserve(target_types.size());
+  for (const mir::TypeId target_type : target_types) {
+    prototypes.push_back(scan_body.exprs.Add(
+        BuildDefaultValueExpr(unit_lowerer, scan_frame, target_type)));
   }
+  const mir::ExprId prototypes_id = scan_body.exprs.Add(
+      mir::Expr{
+          .data = mir::TupleExpr{.components = std::move(prototypes)},
+          .type = unit.types.Intern(mir::TupleType{.elements = target_types})});
 
-  std::vector<mir::ExprId> scan_args;
-  scan_args.reserve(3 + target_types.size());
-  scan_args.push_back(source_id);
-  scan_args.push_back(format_id);
-  scan_args.push_back(
-      scan_body.exprs.Add(mir::MakeLocalRefExpr(consumed_var, int_type)));
-  for (std::size_t k = 0; k < target_types.size(); ++k) {
-    scan_args.push_back(scan_body.exprs.Add(
-        mir::MakeLocalRefExpr(temp_ids[k], target_types[k])));
-  }
   // LRM 21.3.4.3(a) gives `$sscanf` alone the rule that a null character
   // counts as white space, so which of the two parses runs is fixed by the
   // system function the source names, not by the bytes it receives.
   const support::BuiltinFn parse_fn =
       is_file ? support::BuiltinFn::kScanFile : support::BuiltinFn::kScanString;
+  const mir::TypeId payload_type = CompletionPayloadType(
+      unit, ScanCompletionComponents(integer_t, int_type, target_types));
   const mir::ExprId parse_call_id = scan_body.exprs.Add(
       mir::Expr{
           .data =
               mir::CallExpr{
                   .callee = mir::Direct{.target = parse_fn},
-                  .arguments = std::move(scan_args)},
-          .type = integer_t});
+                  .arguments = {source_id, format_id, prototypes_id}},
+          .type = payload_type});
+  const mir::LocalId completion = steps.Bindings().DeclareAnonymous(
+      mir::LocalDecl{.name = "_lyra_scan", .type = payload_type});
+  scan_body.AppendStmt(
+      mir::LocalDeclStmt{.target = completion, .init = parse_call_id});
 
   const mir::ExprId count_target =
       scan_body.exprs.Add(mir::MakeLocalRefExpr(count_var, integer_t));
@@ -316,7 +329,10 @@ auto LowerScanSystemSubroutineCall(
               mir::Expr{
                   .data =
                       mir::AssignExpr{
-                          .target = count_target, .value = parse_call_id},
+                          .target = count_target,
+                          .value = ProjectCompletionComponent(
+                              scan_body, completion, payload_type, kScanMatched,
+                              integer_t)},
                   .type = integer_t})});
 
   if (is_file) {
@@ -329,8 +345,11 @@ auto LowerScanSystemSubroutineCall(
                     .callee = mir::Direct{.target = support::BuiltinFn::kFiles},
                     .arguments = {runtime_after}},
             .type = unit.builtins.files});
-    const mir::ExprId consumed_read =
-        scan_body.exprs.Add(mir::MakeLocalRefExpr(consumed_var, int_type));
+    // LRM 21.3.4.3 "the offending input character is left unread in the input
+    // stream": how far the parse advanced is what lets the file form rewind
+    // the unconsumed tail before the next read.
+    const mir::ExprId consumed_read = ProjectCompletionComponent(
+        scan_body, completion, payload_type, kScanConsumed, int_type);
     const mir::ExprId advance_call = scan_body.exprs.Add(
         mir::Expr{
             .data =
@@ -364,11 +383,11 @@ auto LowerScanSystemSubroutineCall(
         process.LowerLhsExpr(hir_proc.exprs.Get(operands[k + 2]), then_frame);
     if (!lvalue_or) return std::unexpected(std::move(lvalue_or.error()));
     const mir::ExprId lvalue_id = then_body.exprs.Add(*std::move(lvalue_or));
-    const mir::ExprId temp_read_id = then_body.exprs.Add(
-        mir::MakeLocalRefExpr(temp_ids[k], target_types[k]));
-    const mir::Expr assign_expr = BuildStoreExpr(
-        unit, then_body, lvalue_id, temp_read_id, std::nullopt,
+    const mir::ExprId parsed_id = ProjectCompletionComponent(
+        then_body, completion, payload_type, ScanParsedValue(k),
         target_types[k]);
+    const mir::Expr assign_expr = BuildStoreExpr(
+        unit, then_body, lvalue_id, parsed_id, std::nullopt, target_types[k]);
     const mir::ExprId assign_id = then_body.exprs.Add(assign_expr);
     then_body.AppendStmt(mir::ExprStmt{.expr = assign_id});
 

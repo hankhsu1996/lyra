@@ -376,12 +376,12 @@ enough to warrant its own focused review.
       closure built through the one closure builder (R31).
 
 - [x] R27 -- **Associative-array traversal output write-back.** `first` / `last` / `next` / `prev`
-      (LRM 7.9.4 -- 7.9.7) lower to a block expression that reads the index into a plain local, runs
-      a pure (engine-free) query that mutates it, and commits `index = temp` through an ordinary
-      observable assignment -- so the LRM 4.3 update event fires in the assignment, not the query.
-      The traversal query is now a plain container member rendered through the generic member-call
-      rule; the backend no longer fabricates the engine handle or a reference wrapper for traversal.
-      Closes R25's traversal carve-out (traversal now fits the generic member rule).
+      (LRM 7.9.4 -- 7.9.7) lower to a block expression that runs a pure (engine-free) query and
+      commits the index it answers with through an ordinary observable assignment -- so the LRM 4.3
+      update event fires in the assignment, not the query. The traversal query is a plain container
+      member rendered through the generic member-call rule; the backend fabricates no engine handle
+      and no reference wrapper for traversal. Closes R25's traversal carve-out (traversal fits the
+      generic member rule).
 
 - [x] R31 -- **Every closure-construction site now goes through the one closure builder.** The
       builder owns the body scope, the `self` capture (captures[0]), and the capture sink; the
@@ -480,9 +480,9 @@ enough to warrant its own focused review.
 
   Sub-items, by family:
   - Pure value-layer (no receiver, render as `lyra::value::Name(...)`):
-    - [x] `$sscanf` / `$fscanf`: pure `value::Scan(input, format, targets...)` + `files`-side
-          `PeekBuffered` / `AdvanceFd` primitives for the file form. The MIR shape of the two SV
-          system tasks differs by primitive composition, not by an enum tag on a unified call.
+    - [x] `$sscanf` / `$fscanf`: a pure value-layer scan plus `files`-side `PeekBuffered` /
+          `AdvanceFd` primitives for the file form. The MIR shape of the two SV system tasks differs
+          by primitive composition, not by an enum tag on a unified call.
     - [x] `$sformat` / `$sformatf` / `$swrite[bho]?`: route to the existing `Format` method (the one
           print already uses) returning a string; for `$sformat` the call result is assigned to the
           output lvalue. The dedicated `LyraSFormat` runtime entry retires.

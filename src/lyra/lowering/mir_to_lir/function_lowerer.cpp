@@ -10,6 +10,7 @@
 #include <variant>
 #include <vector>
 
+#include "lyra/base/component_index.hpp"
 #include "lyra/base/internal_error.hpp"
 #include "lyra/base/overloaded.hpp"
 #include "lyra/diag/diag_code.hpp"
@@ -32,6 +33,11 @@
 namespace lyra::lowering::mir_to_lir {
 
 namespace {
+
+// Where a mutating call's completion components sit when the method states a
+// result of its own: the receiver as the operation left it, then that result.
+constexpr base::ComponentIndex kUpdatedReceiver{0};
+constexpr base::ComponentIndex kMutatingCallResult{1};
 
 auto Unsupported(std::string message) -> std::unexpected<diag::Diagnostic> {
   return diag::Fail(
@@ -1599,23 +1605,23 @@ auto FunctionLowerer::LowerProjectionAssign(
   return *assigned;
 }
 
+// A value handle is immutable from the generated side, so a method that
+// appears to mutate its receiver is realized as a functional operation whose
+// result is stored back through the receiver's owner. Where the method also
+// states a result of its own -- a queue pop yields the element it removed (LRM
+// 7.10.2.4) -- the entry completes with both, the updated receiver first, and
+// each is projected out of that product.
 auto FunctionLowerer::LowerMutatingCall(
     const mir::Block& block, const mir::CallExpr& call, support::BuiltinFn fn,
     mir::TypeId type) -> diag::Result<lir::Operand> {
-  // The entry yields the receiver's updated whole value, which is the call's
-  // one result, so a builtin that also states a result of its own -- a queue
-  // pop yields the element it removed (LRM 7.10.2.4) -- would need the call to
-  // produce two values.
-  if (type != unit_->Mir().builtins.void_type) {
-    return Unsupported(
-        std::format(
-            "mir_to_lir: the {} builtin updates its receiver and yields a "
-            "result of its own, which is not yet lowerable to LIR",
-            support::BuiltinFnName(fn)));
-  }
   const mir::ExprId receiver = call.arguments[0];
   const lir::TypeId container_type =
       unit_->TranslateType(block.exprs.Get(receiver).type);
+  const bool yields_result = type != unit_->Mir().builtins.void_type;
+  const lir::TypeId call_type =
+      yields_result
+          ? unit_->ProductOf({container_type, unit_->TranslateType(type)})
+          : container_type;
 
   auto value = LowerExpr(block, receiver);
   if (!value) {
@@ -1632,12 +1638,29 @@ auto FunctionLowerer::LowerMutatingCall(
     args.push_back(*std::move(arg));
   }
 
-  lir::Operand updated = Emit(
-      container_type,
+  lir::Operand completion = Emit(
+      call_type,
       lir::CallInstr{
           .target = lir::BuiltinTarget{.fn = fn, .qualifier = std::nullopt},
           .args = std::move(args)});
-  return WriteWholeValue(block, receiver, std::move(updated));
+  if (!yields_result) {
+    return WriteWholeValue(block, receiver, std::move(completion));
+  }
+
+  lir::Operand updated = Emit(
+      container_type,
+      lir::AggregateExtractInstr{
+          .aggregate = completion,
+          .selector = lir::TupleElement{.index = kUpdatedReceiver}});
+  auto stored = WriteWholeValue(block, receiver, std::move(updated));
+  if (!stored) {
+    return std::unexpected(std::move(stored.error()));
+  }
+  return Emit(
+      unit_->TranslateType(type),
+      lir::AggregateExtractInstr{
+          .aggregate = std::move(completion),
+          .selector = lir::TupleElement{.index = kMutatingCallResult}});
 }
 
 auto FunctionLowerer::LowerIncDec(

@@ -7,6 +7,7 @@
 #include <string_view>
 #include <unordered_map>
 #include <utility>
+#include <vector>
 
 #include "lyra/base/translation.hpp"
 #include "lyra/diag/diagnostic.hpp"
@@ -68,6 +69,10 @@ class UnitLowerer {
   // composed from can. Lowering a join reaches one at every step but the last,
   // and no source declaration names it.
   auto FlatPackedType(std::uint64_t width, bool four_state) -> lir::TypeId;
+
+  // The product a call completes with where the operation answers with more
+  // than one value, which no source-level type names.
+  auto ProductOf(std::vector<lir::TypeId> components) -> lir::TypeId;
 
   // The LIR function a class's callable lowers to. Throws if `callable` has no
   // body in `owner` -- a DPI-C import is reached as a foreign symbol and a pure
@@ -148,6 +153,7 @@ class UnitLowerer {
   std::optional<lir::TypeId> machine_bool_type_;
   std::optional<lir::TypeId> void_type_;
   std::map<std::pair<std::uint64_t, bool>, lir::TypeId> flat_packed_memo_;
+  std::map<std::vector<lir::TypeId>, lir::TypeId> product_memo_;
   // Set the first time a MIR type with no LIR mirror is reached; surfaced as
   // the unit's failure at `Run`, so translation stays non-throwing and
   // total-shaped while an unmirrored type is still a clean diagnostic, not a

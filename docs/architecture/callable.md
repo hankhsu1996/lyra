@@ -5,9 +5,9 @@
 A callable is MIR's one shape for "a body with a signature, run when invoked." There is a single
 callable concept; the apparent variety of SystemVerilog forms -- function, task, process,
 constructor, and the compiler-synthesized closures (a fork-join branch, a non-blocking assignment, a
-postponed `$strobe`, a `$sscanf` write-back, a with-clause iterator, a deferred assertion action) --
-are all this one concept, distinguished only by their signature, how they bind their environment,
-and how a referencing site uses them. None is a distinct kind of callable.
+postponed `$strobe`, a with-clause iterator, a deferred assertion action) -- are all this one
+concept, distinguished only by their signature, how they bind their environment, and how a
+referencing site uses them. None is a distinct kind of callable.
 
 The concept has two structural levels:
 

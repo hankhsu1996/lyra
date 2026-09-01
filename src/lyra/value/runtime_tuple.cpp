@@ -22,6 +22,10 @@ auto RuntimeTuple::operator=(RuntimeTuple&&) noexcept
     -> RuntimeTuple& = default;
 RuntimeTuple::~RuntimeTuple() = default;
 
+auto RuntimeTuple::RawSize() const -> std::size_t {
+  return components_.size();
+}
+
 auto RuntimeTuple::Component(std::size_t index) const -> const RuntimeValue& {
   if (index >= components_.size()) {
     throw InternalError("RuntimeTuple::Component: index out of range");

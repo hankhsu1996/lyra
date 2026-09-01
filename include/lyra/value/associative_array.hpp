@@ -271,15 +271,15 @@ class AssociativeArray {
     }
   }
 
-  // LRM 7.9.4 / 7.9.5: the smallest / largest stored key, or absent when the
+  // LRM 7.9.4 / 7.9.5: the smallest / largest stored index, or absent when the
   // array is empty.
-  [[nodiscard]] auto FirstKey() const -> std::optional<K> {
+  [[nodiscard]] auto FirstIndex() const -> std::optional<K> {
     if (data_.empty()) {
       return std::nullopt;
     }
     return data_.begin()->first;
   }
-  [[nodiscard]] auto LastKey() const -> std::optional<K> {
+  [[nodiscard]] auto LastIndex() const -> std::optional<K> {
     if (data_.empty()) {
       return std::nullopt;
     }
@@ -291,24 +291,24 @@ class AssociativeArray {
   // index to report and the query reads `unallocated` -- the index type's
   // default, which is `'x` for a 4-state index type, as LRM 20.7 requires.
   [[nodiscard]] auto MinIndex(const K& unallocated) const -> K {
-    return FirstKey().value_or(unallocated);
+    return FirstIndex().value_or(unallocated);
   }
   [[nodiscard]] auto MaxIndex(const K& unallocated) const -> K {
-    return LastKey().value_or(unallocated);
+    return LastIndex().value_or(unallocated);
   }
 
-  // LRM 7.9.6 / 7.9.7: the smallest stored key strictly greater than `probe`
+  // LRM 7.9.6 / 7.9.7: the smallest stored index strictly greater than `probe`
   // (next) or the largest strictly less (prev), or absent when none exists.
-  // `probe` shares the stored keys' index type, so the bound lookup runs
-  // directly in key space.
-  [[nodiscard]] auto NextKey(const K& probe) const -> std::optional<K> {
+  // `probe` shares the stored indices' type, so the bound lookup runs directly
+  // in index space.
+  [[nodiscard]] auto NextIndex(const K& probe) const -> std::optional<K> {
     auto it = data_.upper_bound(probe);
     if (it == data_.end()) {
       return std::nullopt;
     }
     return it->first;
   }
-  [[nodiscard]] auto PrevKey(const K& probe) const -> std::optional<K> {
+  [[nodiscard]] auto PrevIndex(const K& probe) const -> std::optional<K> {
     auto it = data_.lower_bound(probe);
     if (it == data_.begin()) {
       return std::nullopt;
@@ -316,23 +316,25 @@ class AssociativeArray {
     return std::prev(it)->first;
   }
 
-  // LRM 7.9.4 -- 7.9.7 traversal: write the visited key into `probe` and return
-  // SV int 1, or return 0 and leave `probe` unchanged when there is no such key
-  // (empty array, or no next / prev). `First` / `Last` ignore `probe`'s input;
+  // LRM 7.9.4 -- 7.9.7 traversal: the SV int answer paired with the index
+  // visited, which is `probe` unchanged when there is no such index (empty
+  // array, or no next / prev). `First` / `Last` ignore `probe`'s value;
   // `Next` / `Prev` read it as the search bound. These are pure value queries
   // -- firing the index variable's LRM 4.3 update event is the caller's
   // separate write-back assignment, not this query's concern.
-  auto First(K& probe) const -> PackedArray {
-    return WriteVisited(probe, FirstKey());
+  [[nodiscard]] auto First(K probe) const -> Tuple<PackedArray, K> {
+    return Visited(std::move(probe), FirstIndex());
   }
-  auto Last(K& probe) const -> PackedArray {
-    return WriteVisited(probe, LastKey());
+  [[nodiscard]] auto Last(K probe) const -> Tuple<PackedArray, K> {
+    return Visited(std::move(probe), LastIndex());
   }
-  auto Next(K& probe) const -> PackedArray {
-    return WriteVisited(probe, NextKey(probe));
+  [[nodiscard]] auto Next(K probe) const -> Tuple<PackedArray, K> {
+    auto visited = NextIndex(probe);
+    return Visited(std::move(probe), std::move(visited));
   }
-  auto Prev(K& probe) const -> PackedArray {
-    return WriteVisited(probe, PrevKey(probe));
+  [[nodiscard]] auto Prev(K probe) const -> Tuple<PackedArray, K> {
+    auto visited = PrevIndex(probe);
+    return Visited(std::move(probe), std::move(visited));
   }
 
   // LRM 7.12.3 reduction over the entry stream. LRM 7.12.3 permits reduction on
@@ -559,13 +561,12 @@ class AssociativeArray {
     }
   }
 
-  static auto WriteVisited(K& probe, const std::optional<K>& key)
-      -> PackedArray {
-    if (!key.has_value()) {
-      return PackedArray::Int(0);
+  static auto Visited(K probe, std::optional<K> visited)
+      -> Tuple<PackedArray, K> {
+    if (!visited.has_value()) {
+      return Tuple<PackedArray, K>{PackedArray::Int(0), std::move(probe)};
     }
-    probe = *key;
-    return PackedArray::Int(1);
+    return Tuple<PackedArray, K>{PackedArray::Int(1), *std::move(visited)};
   }
 
   // The value a read of an absent or invalid key yields (LRM 7.8.6 / 7.9.11):
@@ -621,8 +622,8 @@ static_assert(Sized<AssociativeArray<String, PackedArray>>);
 static_assert(BitstreamSizable<AssociativeArray<String, PackedArray>>);
 static_assert(AssocIndexable<AssociativeArray<String, PackedArray>, String>);
 static_assert(Defaultable<AssociativeArray<String, PackedArray>>);
-static_assert(KeyTraversal<AssociativeArray<String, PackedArray>, String>);
+static_assert(IndexTraversal<AssociativeArray<String, PackedArray>, String>);
 static_assert(
-    KeyTraversal<AssociativeArray<PackedArray, PackedArray>, PackedArray>);
+    IndexTraversal<AssociativeArray<PackedArray, PackedArray>, PackedArray>);
 
 }  // namespace lyra::value

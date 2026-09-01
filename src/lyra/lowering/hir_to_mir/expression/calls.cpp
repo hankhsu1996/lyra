@@ -9,6 +9,7 @@
 #include <variant>
 #include <vector>
 
+#include "lyra/base/component_index.hpp"
 #include "lyra/base/internal_error.hpp"
 #include "lyra/base/overloaded.hpp"
 #include "lyra/diag/diag_code.hpp"
@@ -20,6 +21,7 @@
 #include "lyra/lowering/hir_to_mir/binding_origin.hpp"
 #include "lyra/lowering/hir_to_mir/block_builder.hpp"
 #include "lyra/lowering/hir_to_mir/call_operands.hpp"
+#include "lyra/lowering/hir_to_mir/callee_interface.hpp"
 #include "lyra/lowering/hir_to_mir/closure_builder.hpp"
 #include "lyra/lowering/hir_to_mir/default_value.hpp"
 #include "lyra/lowering/hir_to_mir/expression/dpi_call.hpp"
@@ -54,21 +56,27 @@ namespace lyra::lowering::hir_to_mir {
 
 namespace {
 
+// Where a traversal's completion components sit: the SV int the method answers
+// with, then the index it visited (LRM 7.9.4 -- 7.9.7).
+constexpr base::ComponentIndex kTraversalFound{0};
+constexpr base::ComponentIndex kTraversalVisitedIndex{1};
+
 // LRM 7.9.4 -- 7.9.7 associative traversal (`m.first(idx)` / `last` / `next` /
-// `prev`). The method writes the visited key into `idx` and returns SV int
-// 1 / 0. The call sits in expression position (the canonical
-// `do ... while (m.next(idx))` idiom) yet must run a statement sequence -- read
-// the probe, query, then write the index back so its LRM 4.3 update event
-// fires -- so it lowers to an immediately-invoked closure. The query is a pure
-// value member that mutates a plain body-local probe; the event-firing lives in
-// the ordinary observable write-back assignment, not in the query.
+// `prev`). The query answers with the SV int 1 / 0 and the index it visited,
+// so it completes with the two of them and the index reaches the variable the
+// source named through that variable's own write -- which is what fires its
+// LRM 4.3 update event. Binding the completion and writing the index back are
+// statements while the call sits in expression position (the canonical
+// `do ... while (m.next(idx))` idiom), so they are the steps of one block
+// expression.
 template <ExprLowerer Lowerer>
 auto LowerAssociativeTraversal(
     Lowerer& lowerer, WalkFrame frame, const hir::CallExpr& c,
     support::BuiltinFn fn, mir::TypeId result_type) -> diag::Result<mir::Expr> {
   // The receiver, then the index whose neighbour is asked for (LRM 7.9.4).
   const std::vector<hir::ExprId> operands = RequiredOperands(c, 2);
-  const auto& unit_lowerer = lowerer.Owner();
+  auto& unit_lowerer = lowerer.Owner();
+  auto& unit = unit_lowerer.Unit();
   const auto& hir_exprs = lowerer.HirExprs();
   const hir::ExprId recv_hir = operands[0];
   const hir::ExprId idx_hir = operands[1];
@@ -79,47 +87,40 @@ auto LowerAssociativeTraversal(
   mir::Block& body = steps.Body();
   const WalkFrame& step_frame = steps.Frame();
 
-  // probe = idx -- snapshot the current index value into a plain local.
-  auto idx_read_or = lowerer.LowerExpr(hir_exprs.Get(idx_hir), step_frame);
-  if (!idx_read_or) return std::unexpected(std::move(idx_read_or.error()));
-  const mir::LocalId probe_var = steps.Bindings().DeclareAnonymous(
-      mir::LocalDecl{.name = "_lyra_trav_probe", .type = key_type});
-  body.AppendStmt(
-      mir::LocalDeclStmt{
-          .target = probe_var,
-          .init = body.exprs.Add(*std::move(idx_read_or))});
-
-  // found = (map).<kind>(probe) -- pure query: mutates probe, yields 1/0.
   auto map_read_or = lowerer.LowerExpr(hir_exprs.Get(recv_hir), step_frame);
   if (!map_read_or) return std::unexpected(std::move(map_read_or.error()));
   const mir::ExprId map_read_id = body.exprs.Add(*std::move(map_read_or));
-  const mir::ExprId probe_read_id =
-      body.exprs.Add(mir::MakeLocalRefExpr(probe_var, key_type));
+  // `first` / `last` ignore the index's current value and `next` / `prev` read
+  // it as the search bound, so every form takes it as an ordinary operand.
+  auto idx_read_or = lowerer.LowerExpr(hir_exprs.Get(idx_hir), step_frame);
+  if (!idx_read_or) return std::unexpected(std::move(idx_read_or.error()));
+  const mir::ExprId idx_read_id = body.exprs.Add(*std::move(idx_read_or));
+
+  const mir::TypeId payload_type =
+      CompletionPayloadType(unit, {result_type, key_type});
   const mir::ExprId query_id = body.exprs.Add(
       mir::Expr{
           .data =
               mir::CallExpr{
                   .callee = mir::Direct{.target = fn},
-                  .arguments = {map_read_id, probe_read_id}},
-          .type = result_type});
-  const mir::LocalId found_var = steps.Bindings().DeclareAnonymous(
-      mir::LocalDecl{.name = "_lyra_trav_found", .type = result_type});
-  body.AppendStmt(mir::LocalDeclStmt{.target = found_var, .init = query_id});
+                  .arguments = {map_read_id, idx_read_id}},
+          .type = payload_type});
+  const mir::LocalId completion = steps.Bindings().DeclareAnonymous(
+      mir::LocalDecl{.name = "_lyra_trav", .type = payload_type});
+  body.AppendStmt(mir::LocalDeclStmt{.target = completion, .init = query_id});
 
-  // idx = probe -- observable write-back fires the LRM 4.3 update event.
   auto idx_lhs_or = lowerer.LowerLhsExpr(hir_exprs.Get(idx_hir), step_frame);
   if (!idx_lhs_or) return std::unexpected(std::move(idx_lhs_or.error()));
   const mir::ExprId idx_lhs_id = body.exprs.Add(*std::move(idx_lhs_or));
-  const mir::ExprId probe_writeback_id =
-      body.exprs.Add(mir::MakeLocalRefExpr(probe_var, key_type));
-  const mir::Expr assign_expr = BuildStoreExpr(
-      unit_lowerer.Unit(), body, idx_lhs_id, probe_writeback_id, std::nullopt,
-      key_type);
-  body.AppendStmt(mir::ExprStmt{.expr = body.exprs.Add(assign_expr)});
+  const mir::ExprId visited_id = ProjectCompletionComponent(
+      body, completion, payload_type, kTraversalVisitedIndex, key_type);
+  body.AppendStmt(
+      mir::ExprStmt{
+          .expr = body.exprs.Add(BuildStoreExpr(
+              unit, body, idx_lhs_id, visited_id, std::nullopt, key_type))});
 
-  const mir::ExprId found_id =
-      body.exprs.Add(mir::MakeLocalRefExpr(found_var, result_type));
-  return steps.Build(found_id);
+  return steps.Build(ProjectCompletionComponent(
+      body, completion, payload_type, kTraversalFound, result_type));
 }
 
 // Translates a HIR builtin-method ref to its MIR `Callee`. The identifier
@@ -404,10 +405,9 @@ auto LowerBuiltinMethodCall(
     throw InternalError(
         "BuiltinMethodRef receiver / type-bearer unexpectedly elided");
   }
-  // LRM 7.9.4 -- 7.9.7 traversal lowers to an immediately-invoked closure:
-  // it writes the index back through an observable assign and runs in
-  // expression position. The other associative methods are plain member
-  // calls handled by the generic path below.
+  // LRM 7.9.4 -- 7.9.7 traversal answers with two values and has to place one
+  // of them, so it is not the plain member call the generic path below builds
+  // for every other associative method.
   if (support::IsAssociativeTraversalFn(b.method)) {
     return LowerAssociativeTraversal(lowerer, frame, c, b.method, result_type);
   }

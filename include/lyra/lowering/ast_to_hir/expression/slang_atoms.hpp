@@ -56,10 +56,17 @@ auto LowerStringMethodName(std::string_view name)
 auto LowerArrayMethodName(std::string_view name)
     -> std::optional<support::BuiltinFn>;
 
-auto LowerQueueMethodName(std::string_view name)
+// The two families whose `delete` has both an empty-the-container form and a
+// drop-one-entry form (LRM 7.9.3 / 7.10.2.3) read `argument_count` -- how many
+// arguments the source wrote after the receiver -- to say which one it named.
+// The source distinguishes them by nothing else, and this is the layer holding
+// the source, so every layer below names the operation by its identity rather
+// than counting operands itself.
+auto LowerQueueMethodName(std::string_view name, std::size_t argument_count)
     -> std::optional<support::BuiltinFn>;
 
-auto LowerAssociativeMethodName(std::string_view name)
+auto LowerAssociativeMethodName(
+    std::string_view name, std::size_t argument_count)
     -> std::optional<support::BuiltinFn>;
 
 // LRM 20.8.2 Table 20-4. The standard cross-lists every row with a C standard

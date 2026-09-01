@@ -10,13 +10,12 @@
 
 namespace lyra::lowering::hir_to_mir {
 
-// LRM 21.3.4.3 `$sscanf` / `$fscanf`. The call is modelled as a block
-// expression: its steps parse into procedural-local temps, conditionally write
-// back to the original output lvalues, and it yields the matched-conversion
-// count. The writeback
-// assignments use the existing `AssignExpr` path -- lvalue polymorphism
-// stays at the backend; the runtime sees plain temp pointers plus
-// per-slot type metadata.
+// LRM 21.3.4.3 `$sscanf` / `$fscanf`. The parse completes with the
+// matched-conversion count, how far it advanced, and one value per conversion;
+// the call is modelled as a block expression whose steps bind that completion,
+// store each parsed value into the lvalue the source named for it, and yield
+// the count. Each conversion hands the parse a prototype of the shape it reads
+// into, which nothing else on the call states.
 auto LowerScanSystemSubroutineCall(
     ProcessLowerer& process, WalkFrame frame, const hir::CallExpr& call,
     const support::ScanSystemSubroutineInfo& info, diag::SourceSpan span)

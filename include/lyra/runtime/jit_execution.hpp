@@ -383,6 +383,8 @@ auto lyra_rt_packed_with_slice(
     const void* shape, const void* replacement) -> void*;
 
 auto lyra_rt_string_from_packed_array(const void* bits) -> void*;
+// LRM 21.3.4.3: an unpacked array of byte read as text, in element order.
+auto lyra_rt_string_from_byte_array(const void* bytes) -> void*;
 // The C string a `string` crosses the DPI-C boundary as (LRM 35.5.6). It points
 // into the SV value, which outlives the call, so the foreign side may read it
 // for the call's duration.
@@ -417,6 +419,15 @@ auto lyra_rt_string_hextoa(const void* value, const void* number) -> void*;
 auto lyra_rt_string_octtoa(const void* value, const void* number) -> void*;
 auto lyra_rt_string_bintoa(const void* value, const void* number) -> void*;
 auto lyra_rt_string_realtoa(const void* value, const void* number) -> void*;
+
+// LRM 21.3.4.3 `$sscanf` / `$fscanf`, resolved through the domain of the text
+// they read. `prototypes` is the product of one value per conversion, stating
+// the shape each parses into; the completion leads with the matched-conversion
+// count and how far the parse advanced, then carries one value per prototype.
+auto lyra_rt_string_scan_string(
+    const void* input, const void* format, const void* prototypes) -> void*;
+auto lyra_rt_string_scan_file(
+    const void* input, const void* format, const void* prototypes) -> void*;
 
 auto lyra_rt_string_add(const void* lhs, const void* rhs) -> void*;
 auto lyra_rt_string_eq(const void* lhs, const void* rhs) -> void*;
@@ -628,6 +639,7 @@ auto lyra_rt_unpackedarray_eq(const void* lhs, const void* rhs) -> void*;
 auto lyra_rt_unpackedarray_ne(const void* lhs, const void* rhs) -> void*;
 auto lyra_rt_unpackedarray_case_equal(const void* lhs, const void* rhs)
     -> void*;
+auto lyra_rt_unpackedarray_is_unknown(const void* value) -> void*;
 auto lyra_rt_value_box_unpackedarray(const void* value) -> void*;
 auto lyra_rt_cell_unpackedarray_get(void* cell) -> void*;
 void lyra_rt_cell_unpackedarray_initialize(void* cell, const void* prototype);
@@ -670,7 +682,15 @@ auto lyra_rt_queue_push_back(const void* queue, void* item) -> void*;
 auto lyra_rt_queue_push_front(const void* queue, void* item) -> void*;
 auto lyra_rt_queue_insert(const void* queue, const void* index, void* item)
     -> void*;
+// LRM 7.10.2.4 / 7.10.2.5 pop. Each completes with the queue left once the
+// element goes and the element itself, because the two are one call's two
+// answers.
+auto lyra_rt_queue_pop_front(const void* queue) -> void*;
+auto lyra_rt_queue_pop_back(const void* queue) -> void*;
+// LRM 7.10.2.3 `delete`: with no index the whole queue empties, with one only
+// the entry it names goes, so the two spellings are two entries.
 auto lyra_rt_queue_delete(const void* queue) -> void*;
+auto lyra_rt_queue_delete_index(const void* queue, const void* index) -> void*;
 auto lyra_rt_queue_eq(const void* lhs, const void* rhs) -> void*;
 auto lyra_rt_queue_ne(const void* lhs, const void* rhs) -> void*;
 auto lyra_rt_queue_case_equal(const void* lhs, const void* rhs) -> void*;
@@ -704,7 +724,11 @@ auto lyra_rt_assocarray_with_element(
     const void* array, const void* index, void* value) -> void*;
 auto lyra_rt_assocarray_exists(const void* array, const void* index) -> void*;
 auto lyra_rt_assocarray_size(const void* array) -> void*;
+// LRM 7.9.3 `delete`: with no index the whole array empties, with one only the
+// entry it names goes, so the two spellings are two entries.
 auto lyra_rt_assocarray_delete(const void* array) -> void*;
+auto lyra_rt_assocarray_delete_index(const void* array, const void* index)
+    -> void*;
 auto lyra_rt_assocarray_eq(const void* lhs, const void* rhs) -> void*;
 auto lyra_rt_assocarray_ne(const void* lhs, const void* rhs) -> void*;
 auto lyra_rt_assocarray_case_equal(const void* lhs, const void* rhs) -> void*;
@@ -717,6 +741,14 @@ auto lyra_rt_assocarray_assoc_min_index(const void* array, void* empty)
     -> void*;
 auto lyra_rt_assocarray_assoc_max_index(const void* array, void* empty)
     -> void*;
+// LRM 7.9.4 -- 7.9.7 traversal. Each completes with the SV int it answers with
+// and the index it visited, which is the probe unchanged when there is no such
+// index; the probe crosses erased because an index states its own
+// representation.
+auto lyra_rt_assocarray_assoc_first(const void* array, void* probe) -> void*;
+auto lyra_rt_assocarray_assoc_last(const void* array, void* probe) -> void*;
+auto lyra_rt_assocarray_assoc_next(const void* array, void* probe) -> void*;
+auto lyra_rt_assocarray_assoc_prev(const void* array, void* probe) -> void*;
 auto lyra_rt_assocarray_count_bits(const void* array, const void* control_bits)
     -> void*;
 auto lyra_rt_value_box_assocarray(const void* value) -> void*;

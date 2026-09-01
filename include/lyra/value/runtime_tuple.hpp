@@ -34,6 +34,10 @@ class RuntimeTuple {
   auto operator=(RuntimeTuple&&) noexcept -> RuntimeTuple&;
   ~RuntimeTuple();
 
+  // How many components the product holds, fixed at construction. A product
+  // has no SV size query of its own, so this is the host count alone.
+  [[nodiscard]] auto RawSize() const -> std::size_t;
+
   // Reads component `index` by reference. The caller copies it out across the
   // opaque-handle boundary rather than aliasing it.
   [[nodiscard]] auto Component(std::size_t index) const -> const RuntimeValue&;

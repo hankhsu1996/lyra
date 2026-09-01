@@ -5,10 +5,13 @@
 #include <cstdint>
 #include <memory>
 #include <optional>
+#include <string>
 #include <string_view>
 #include <utility>
+#include <variant>
 #include <vector>
 
+#include "lyra/base/internal_error.hpp"
 #include "lyra/value/array_manipulation.hpp"
 #include "lyra/value/packed_array.hpp"
 #include "lyra/value/runtime_value.hpp"
@@ -130,6 +133,21 @@ auto RuntimeUnpackedArray::FromPackedArray(
       std::make_unique<RuntimeValue>(RuntimeValue{element_default});
   result.data_ = std::move(elements);
   return result;
+}
+
+auto RuntimeUnpackedArray::ToByteString() const -> String {
+  std::string out;
+  out.reserve(data_.size());
+  for (const RuntimeValue& element : data_) {
+    const auto* byte = std::get_if<PackedArray>(&element.value);
+    if (byte == nullptr) {
+      throw InternalError(
+          "RuntimeUnpackedArray::ToByteString: a byte array holds packed "
+          "elements");
+    }
+    out.push_back(static_cast<char>(byte->ToInt64() & 0xFF));
+  }
+  return String{std::move(out)};
 }
 
 auto RuntimeUnpackedArray::Slice(
