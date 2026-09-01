@@ -18,6 +18,7 @@
 #include "lyra/base/internal_error.hpp"
 #include "lyra/diag/diag_code.hpp"
 #include "lyra/hir/conversion.hpp"
+#include "lyra/lowering/ast_to_hir/expression/references.hpp"
 #include "lyra/lowering/ast_to_hir/expression/slang_atoms.hpp"
 #include "lyra/lowering/ast_to_hir/process_lowerer.hpp"
 
@@ -184,7 +185,9 @@ auto ValidateAssignableImpl(
     }
     case EK::HierarchicalValue: {
       const auto& hv = expr.as<slang::ast::HierarchicalValueExpression>();
-      if (hv.symbol.kind != slang::ast::SymbolKind::Variable) {
+      auto declaration = ResolveNamedDeclaration(hv.symbol, span);
+      if (!declaration) return std::unexpected(std::move(declaration.error()));
+      if ((*declaration)->kind != slang::ast::SymbolKind::Variable) {
         return reject("assignment target must be a variable reference");
       }
       if (!procedural_context) {

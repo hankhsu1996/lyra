@@ -124,14 +124,11 @@ auto UnitLowerer::PublishSignature() -> diag::Result<void> {
     // unit reads it here and publishes it; a header that leaves it unnamed
     // (LRM 25.3.3) is read the same way. A unit whose ports name different
     // interfaces is a different specialization and has its own name already.
-    // A modport narrows which members the port reaches and in which direction
-    // (LRM 25.5), so a port carrying one publishes something different from
-    // what is built here; either end of the connection may name it
-    // (LRM 25.5.4), so both are checked.
-    const auto [connected, modport] = port.getConnection();
-    if (!port.modport.empty() || modport != nullptr) {
-      return refuse("a modport-restricted interface port is not yet supported");
-    }
+    // A modport restricts which members a referrer may name and in which
+    // direction (LRM 25.5), which is settled where that referrer compiles; what
+    // a connection binds is the whole interface instance under any of its
+    // views, so the port publishes the same member whichever one names it.
+    const slang::ast::Symbol* connected = port.getConnection().first;
     const auto* instance = connected == nullptr
                                ? nullptr
                                : connected->as_if<slang::ast::InstanceSymbol>();

@@ -733,10 +733,16 @@ auto LowerCallExpr(
   }
 
   const auto binding = unit_lowerer.LookupSubroutineBinding(*sym);
+  // What is left is a subroutine some other instance declares -- one an
+  // interface offers across a port (LRM 25.7), or one a hierarchical name
+  // enables (LRM 23.6). Neither is reached by naming a unit: the caller holds a
+  // route to an object, and the callable sits on the far end of it, which is a
+  // route endpoint the reference model does not yet carry.
   if (!binding.has_value()) {
-    throw InternalError(
-        "AST->HIR call: resolved user subroutine has no registered HIR "
-        "binding");
+    return diag::Fail(
+        span, diag::DiagCode::kUnsupportedExpressionForm,
+        "a subroutine reached across an instance boundary is not yet "
+        "supported");
   }
   const auto hops = frame.HopsTo(binding->owner_frame);
   if (!hops.has_value()) {

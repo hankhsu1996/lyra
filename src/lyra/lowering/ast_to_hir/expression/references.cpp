@@ -12,6 +12,7 @@
 #include <slang/ast/Symbol.h>
 #include <slang/ast/expressions/MiscExpressions.h>
 #include <slang/ast/symbols/ClassSymbols.h>
+#include <slang/ast/symbols/MemberSymbols.h>
 #include <slang/ast/symbols/ParameterSymbols.h>
 #include <slang/ast/symbols/VariableSymbols.h>
 #include <slang/ast/types/AllTypes.h>
@@ -315,7 +316,8 @@ auto LowerValueRef(
 // follows the way it does for a step onto an instance.
 auto LowerInterfacePortValue(
     UnitLowerer& unit_lowerer, WalkFrame frame,
-    const slang::ast::HierarchicalValueExpression& hve, diag::SourceSpan span)
+    const slang::ast::HierarchicalValueExpression& hve,
+    const slang::ast::ValueSymbol& declaration, diag::SourceSpan span)
     -> diag::Result<hir::Expr> {
   const auto path = hve.ref.path;
   // The port, then the name on it. A longer path descends further into the
@@ -329,13 +331,36 @@ auto LowerInterfacePortValue(
   if (!type_id) return std::unexpected(std::move(type_id.error()));
   auto through = unit_lowerer.RouteThroughInterfacePort(frame, *path[0].symbol);
   auto route = unit_lowerer.MakeRoutedRef(
-      hve.symbol, frame.Current(), std::move(through.head),
+      declaration, frame.Current(), std::move(through.head),
       std::move(through.steps));
   if (!route) return std::unexpected(std::move(route.error()));
   return ValueTargetRefExpr(hir::ValueTarget{*route}, *type_id, span);
 }
 
 }  // namespace
+
+auto ResolveNamedDeclaration(
+    const slang::ast::ValueSymbol& value, diag::SourceSpan span)
+    -> diag::Result<const slang::ast::ValueSymbol*> {
+  const auto* port = value.as_if<slang::ast::ModportPortSymbol>();
+  if (port == nullptr) return &value;
+  if (port->explicitConnection != nullptr) {
+    return diag::Fail(
+        span, diag::DiagCode::kUnsupportedExpressionForm,
+        "a modport expression is not yet supported");
+  }
+  const auto* item =
+      port->internalSymbol == nullptr
+          ? nullptr
+          : port->internalSymbol->as_if<slang::ast::ValueSymbol>();
+  if (item == nullptr) {
+    return diag::Fail(
+        span, diag::DiagCode::kUnsupportedExpressionForm,
+        "a modport port connected to nothing inside its interface is not yet "
+        "supported");
+  }
+  return item;
+}
 
 auto LowerNamedValueProc(
     ProcessLowerer& proc, WalkFrame frame,
@@ -407,7 +432,9 @@ auto LowerHierarchicalValue(
     -> diag::Result<hir::Expr> {
   const auto span = unit_lowerer.SourceMapper().SpanOf(hve.sourceRange);
 
-  const auto& target = hve.symbol;
+  auto declaration = ResolveNamedDeclaration(hve.symbol, span);
+  if (!declaration) return std::unexpected(std::move(declaration.error()));
+  const slang::ast::ValueSymbol& target = **declaration;
   switch (ClassifyReferent(target)) {
     // A hierarchically reached constant folds to its value; the path is not
     // navigated because the value is fixed at elaboration.
@@ -432,12 +459,11 @@ auto LowerHierarchicalValue(
     case Referent::kVariableStorage:
     case Referent::kNetStorage: {
       if (hve.ref.isViaIfacePort()) {
-        return LowerInterfacePortValue(unit_lowerer, frame, hve, span);
+        return LowerInterfacePortValue(unit_lowerer, frame, hve, target, span);
       }
-      const auto& value = target.as<slang::ast::ValueSymbol>();
       auto type_id = unit_lowerer.InternType(*hve.type, span);
       if (!type_id) return std::unexpected(std::move(type_id.error()));
-      auto reached = unit_lowerer.ResolveValueTarget(frame, value);
+      auto reached = unit_lowerer.ResolveValueTarget(frame, target);
       if (!reached) return std::unexpected(std::move(reached.error()));
       // A path this unit cannot yet express reaches a real cell the user
       // named, so it is a lowering gap rather than a compiler-bug invariant.
