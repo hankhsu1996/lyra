@@ -526,6 +526,10 @@ auto CodeGenFunction::ResolveCallee(
           [&](const lir::ControlEffectTarget& t)
               -> diag::Result<llvm::FunctionCallee> {
             return Entry(RuntimeSymbol(t.op), result_type, args);
+          },
+          [&](const lir::EnterCoroutineTarget& t)
+              -> diag::Result<llvm::FunctionCallee> {
+            return Entry(RuntimeSymbol(t.op), result_type, args);
           }},
       call.target);
 }
@@ -1116,9 +1120,6 @@ auto CodeGenFunction::ConstructCallee(
               return std::unexpected(std::move(domain.error()));
             }
             return entry(RuntimeSymbol(*domain, RuntimeOp::kCellAlloc));
-          },
-          [&](const lir::CoroutineType&) -> diag::Result<llvm::FunctionCallee> {
-            return entry(RuntimeSymbol(RuntimeOp::kMakeCoroutine));
           },
           [&](const lir::ClosureType&) -> diag::Result<llvm::FunctionCallee> {
             return entry(RuntimeSymbol(RuntimeOp::kClosureMake));

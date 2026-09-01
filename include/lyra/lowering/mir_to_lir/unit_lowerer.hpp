@@ -65,6 +65,17 @@ class UnitLowerer {
   // than one value, which no source-level type names.
   auto ProductOf(std::vector<lir::TypeId> components) -> lir::TypeId;
 
+  // A control effect crossing to or from the runtime. Its shape does not
+  // depend on which region catches it -- an effect is the target it names --
+  // so a point that asks the runtime for one names the type directly.
+  auto ControlEffectType() -> lir::TypeId;
+
+  // The type of the values one closure declaration builds. A closure whose
+  // invoke completes as a coroutine states that protocol as its own type, so
+  // its captures are still storage of this type but no MIR type names it; the
+  // declaration is what does.
+  auto ClosureValueType(mir::ClosureId closure) -> lir::TypeId;
+
   // The LIR function a class's callable lowers to. Throws if `callable` has no
   // body in `owner` -- a DPI-C import is reached as a foreign symbol and a pure
   // virtual has no implementation here, so neither is a function of this unit.
@@ -72,12 +83,12 @@ class UnitLowerer {
       mir::ClassId owner, mir::CallableId callable) const -> lir::FunctionId;
 
  private:
-  // The LIR function a closure's invoke lowers to, and the declaration its
-  // captures are members of.
-  [[nodiscard]] auto ClosureFunction(mir::ClosureId closure) const
-      -> lir::FunctionId;
+  // The declaration a closure's captures are members of, and the function its
+  // invoke lowers to.
   [[nodiscard]] auto ClosureDeclaration(mir::ClosureId closure) const
       -> lir::ClosureId;
+  [[nodiscard]] auto ClosureFunction(mir::ClosureId closure) const
+      -> lir::FunctionId;
 
   // The LIR identities taken on behalf of one MIR class: the class itself, its
   // constructor's function, and one per callable that has a body. A callable
@@ -90,10 +101,15 @@ class UnitLowerer {
   };
 
   // The LIR identities taken on behalf of one MIR closure: the declaration its
-  // captures are members of, and the function its invoke becomes.
+  // captures are members of, the function its invoke becomes, and the type its
+  // values carry. The type is minted here rather than on demand so one
+  // declaration's values are named by one type however they are reached --
+  // through a MIR closure type, or through a closure expression whose own type
+  // states the coroutine protocol instead.
   struct ClosureIdentities {
     lir::ClosureId declaration{};
     lir::FunctionId invoke{};
+    lir::TypeId value_type{};
   };
 
   // Everything one class can be named by before it is built: its own LIR

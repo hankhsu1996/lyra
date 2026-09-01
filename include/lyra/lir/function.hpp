@@ -201,6 +201,19 @@ struct ControlEffectTarget {
   Op op;
 };
 
+// Entering a body as a coroutine, yielding the execution the engine drives.
+// The two differ in what becomes of the environment the body reads, which is
+// decided by how long that environment outlives the execution: a receiver
+// outlives every execution reaching its members, so entering borrows it; the
+// captures of a callable value outlive nothing on their own, so entering owns
+// them from there. A LIR-only target with no MIR twin: a target that can enter
+// the body where the call sits does so with an ordinary call, and the operation
+// exists only where the runtime enters it later on the program's behalf.
+struct EnterCoroutineTarget {
+  enum class Op : std::uint8_t { kBorrowedEnvironment, kOwnedEnvironment };
+  Op op;
+};
+
 // The operation's stable spelling. This is an interface contract, not a display
 // string: it names the operation in a dump, and it is the operation half of the
 // runtime-library symbol a generated module calls, so changing it renames a
@@ -208,13 +221,15 @@ struct ControlEffectTarget {
 // improve how a dump reads.
 auto ActivationFrameOpName(ActivationFrameTarget::Op op) -> std::string_view;
 auto ControlEffectOpName(ControlEffectTarget::Op op) -> std::string_view;
+auto EnterCoroutineOpName(EnterCoroutineTarget::Op op) -> std::string_view;
 
 // The target of a call: a runtime builtin, a function of this unit, a value
 // constructor named by the call's result type, a foreign symbol the host
-// resolves, an activation-frame value operation, or a control-effect operation.
+// resolves, an activation-frame value operation, a control-effect operation,
+// or entering a body as a coroutine.
 using CallTarget = std::variant<
     BuiltinTarget, FunctionTarget, ConstructTarget, ForeignTarget,
-    ActivationFrameTarget, ControlEffectTarget>;
+    ActivationFrameTarget, ControlEffectTarget, EnterCoroutineTarget>;
 
 struct CallInstr {
   CallTarget target;

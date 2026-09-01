@@ -78,10 +78,13 @@ auto UnitLowerer::Run() -> diag::Result<lir::CompilationUnit> {
   std::vector<ClosureIdentities> closures;
   closures.reserve(mir_->closures.size());
   for (std::size_t i = 0; i < mir_->closures.size(); ++i) {
+    const lir::ClosureId declaration = out_.closures.Declare();
     closures.push_back(
         ClosureIdentities{
-            .declaration = out_.closures.Declare(),
-            .invoke = out_.functions.Declare()});
+            .declaration = declaration,
+            .invoke = out_.functions.Declare(),
+            .value_type = out_.types.Intern(
+                lir::Type{lir::ClosureType{.closure_id = declaration}})});
   }
   closure_identities_ = {mir_->closures.size(), std::move(closures)};
 
@@ -319,6 +322,10 @@ auto UnitLowerer::ClosureDeclaration(mir::ClosureId closure) const
 
 auto UnitLowerer::MachineBoolType() -> lir::TypeId {
   return TranslateType(mir_->builtins.machine_bool);
+}
+
+auto UnitLowerer::ClosureValueType(mir::ClosureId closure) -> lir::TypeId {
+  return closure_identities_.Get(closure).value_type;
 }
 
 auto UnitLowerer::ProductOf(std::vector<lir::TypeId> components)

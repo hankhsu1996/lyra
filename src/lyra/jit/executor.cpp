@@ -31,6 +31,7 @@
 #include "lyra/backend/llvm/emit.hpp"
 #include "lyra/backend/llvm/runtime_entry.hpp"
 #include "lyra/base/internal_error.hpp"
+#include "lyra/base/overloaded.hpp"
 #include "lyra/compiler/unit_metadata.hpp"
 #include "lyra/diag/diag_code.hpp"
 #include "lyra/lir/compilation_unit.hpp"
@@ -153,8 +154,14 @@ void DefineRuntimeAbi(llvm::orc::LLJIT& jit) {
   add("lyra_rt_emit_error", &lyra_rt_emit_error);
   add("lyra_rt_emit_fatal", &lyra_rt_emit_fatal);
   add("lyra_rt_make_coroutine", &lyra_rt_make_coroutine);
+  add("lyra_rt_coroutine_from_closure", &lyra_rt_coroutine_from_closure);
   add("lyra_rt_register_initial", &lyra_rt_register_initial);
   add("lyra_rt_register_final", &lyra_rt_register_final);
+  add("lyra_rt_spawn_all", &lyra_rt_spawn_all);
+  add("lyra_rt_fork_wait_all", &lyra_rt_fork_wait_all);
+  add("lyra_rt_fork_wait_first", &lyra_rt_fork_wait_first);
+  add("lyra_rt_wait_fork", &lyra_rt_wait_fork);
+  add("lyra_rt_disable_fork", &lyra_rt_disable_fork);
   add("lyra_rt_cancellation_for", &lyra_rt_cancellation_for);
   add("lyra_rt_is_cancelled", &lyra_rt_is_cancelled);
   add("lyra_rt_closure_make", &lyra_rt_closure_make);
@@ -814,10 +821,13 @@ auto LoadScopeClasses(
 }
 
 // The definition of one closure a unit declares, kept alive for the session
-// beside the schema it names as plain data it does not own.
+// beside the schema it names as plain data it does not own. `protocol` carries
+// which alternative the body is, decided by the invoke's result type and
+// selected before the symbol it holds is known.
 struct LoadedClosure {
   std::string name;
   std::vector<runtime::MemberStorageDescriptor> captures;
+  runtime::ClosureBody protocol;
   std::unique_ptr<runtime::ClosureDefinition> definition;
 };
 
@@ -830,10 +840,14 @@ auto LoadClosures(const lir::CompilationUnit& unit)
     if (!captures) {
       return std::unexpected(std::move(captures.error()));
     }
+    const lir::TypeId result = unit.functions.Get(closure.invoke).result_type;
     loaded.push_back(
         LoadedClosure{
             .name = closure.name,
             .captures = *std::move(captures),
+            .protocol = unit.types.Get(result).Is<lir::CoroutineType>()
+                            ? runtime::ClosureBody{runtime::CoroutineBody{}}
+                            : runtime::ClosureBody{runtime::SynchronousBody{}},
             .definition = std::make_unique<runtime::ClosureDefinition>()});
   }
   return loaded;
@@ -998,7 +1012,19 @@ auto Execute(
           "jit executor: the closure body '" + symbol +
           "' did not resolve: " + llvm::toString(found.takeError()));
     }
-    entry.definition->invoke = found->toPtr<runtime::ClosureEntry>();
+    // The signature the address is held under is the one the invoke's result
+    // type states, decided where the unit was loaded and carried here.
+    entry.definition->body = std::visit(
+        Overloaded{
+            [&](const runtime::SynchronousBody&) -> runtime::ClosureBody {
+              return runtime::SynchronousBody{
+                  .run = found->toPtr<void(void*)>()};
+            },
+            [&](const runtime::CoroutineBody&) -> runtime::ClosureBody {
+              return runtime::CoroutineBody{
+                  .start = found->toPtr<void*(void*)>()};
+            }},
+        entry.protocol);
   }
 
   auto runtime_options = runtime::DefaultRuntimeOptions();

@@ -1006,9 +1006,6 @@ auto FunctionLowerer::LeaveCarrying(lir::Operand effect) -> diag::Result<void> {
 }
 
 auto FunctionLowerer::CheckDisabledTarget() -> diag::Result<void> {
-  if (regions_.empty()) {
-    return {};
-  }
   const lir::Operand condition = Emit(
       unit_->MachineBoolType(),
       lir::CallInstr{
@@ -1026,7 +1023,7 @@ auto FunctionLowerer::CheckDisabledTarget() -> diag::Result<void> {
 
   SetCurrent(leaving_id);
   const lir::Operand effect = Emit(
-      fn_.values.Get(regions_.back().caught).type,
+      unit_->ControlEffectType(),
       lir::CallInstr{
           .target =
               lir::ControlEffectTarget{
@@ -1362,11 +1359,11 @@ auto FunctionLowerer::LowerCall(
   }
   const lir::TypeId result_type = unit_->TranslateType(type);
 
-  // A coroutine is a runtime value like any other: the runtime builds it from
-  // an entry code reference and its environment (the receiver), and it is
-  // reached as an opaque handle. It is constructed through the same Construct
-  // path as any other runtime value; the coroutine call protocol stays the
-  // result type.
+  // Calling a body whose result type states the coroutine protocol enters it
+  // rather than running it: what the call yields is the execution the engine
+  // drives, reached as an opaque handle. The environment the body reads is the
+  // receiver, which outlives every execution reaching its members, so entering
+  // borrows it rather than taking it.
   if (unit_->Mir().types.Get(type).Is<mir::CoroutineType>()) {
     const auto* direct = std::get_if<mir::Direct>(&call.callee);
     const auto* callable =
@@ -1377,21 +1374,30 @@ auto FunctionLowerer::LowerCall(
           "mir_to_lir: a coroutine value from a non-method callee is not yet "
           "lowerable to LIR");
     }
-    std::vector<lir::Operand> ctor_args;
-    ctor_args.reserve(args.size() + 1);
-    ctor_args.emplace_back(
+    std::vector<lir::Operand> entry_args;
+    entry_args.reserve(args.size() + 1);
+    entry_args.emplace_back(
         lir::FuncRef{
             .function =
                 unit_->MethodFunction(callable->owner, callable->slot)});
     for (lir::Operand& arg : args) {
-      ctor_args.emplace_back(std::move(arg));
+      entry_args.emplace_back(std::move(arg));
     }
     return Emit(
-        result_type, lir::CallInstr{
-                         .target = lir::ConstructTarget{.result = result_type},
-                         .args = std::move(ctor_args)});
+        result_type,
+        lir::CallInstr{
+            .target =
+                lir::EnterCoroutineTarget{
+                    .op = lir::EnterCoroutineTarget::Op::kBorrowedEnvironment},
+            .args = std::move(entry_args)});
   }
 
+  return EmitCall(call, std::move(args), result_type);
+}
+
+auto FunctionLowerer::EmitCall(
+    const mir::CallExpr& call, std::vector<lir::Operand> args,
+    lir::TypeId result_type) -> diag::Result<lir::Operand> {
   auto target = LowerCallTarget(*unit_, call.callee, result_type);
   if (!target) {
     return std::unexpected(std::move(target.error()));
@@ -1411,6 +1417,21 @@ auto FunctionLowerer::LowerCall(
     }
   }
   return result;
+}
+
+auto FunctionLowerer::LowerRegistration(
+    const mir::Block& block, const mir::CallExpr& call)
+    -> diag::Result<lir::Operand> {
+  std::vector<lir::Operand> args;
+  args.reserve(call.arguments.size());
+  for (const mir::ExprId arg : call.arguments) {
+    auto lowered = LowerArgument(block, arg);
+    if (!lowered) {
+      return std::unexpected(std::move(lowered.error()));
+    }
+    args.push_back(*std::move(lowered));
+  }
+  return EmitCall(call, std::move(args), unit_->MachineBoolType());
 }
 
 auto FunctionLowerer::LowerAssign(
@@ -1977,14 +1998,6 @@ auto FunctionLowerer::LowerExpr(const mir::Block& block, mir::ExprId id)
                     .selector = lir::TupleElement{.index = get.index}});
           },
           [&](const mir::ClosureExpr& cl) -> diag::Result<lir::Operand> {
-            // A closure that completes as a coroutine is that coroutine:
-            // building it starts a frame the scheduler owns, which a record of
-            // captures carrying no code identity cannot stand for.
-            if (unit_->Mir().types.Get(type).Is<mir::CoroutineType>()) {
-              return Unsupported(
-                  "mir_to_lir: a coroutine closure, the process a fork branch "
-                  "or a task enable starts, is not yet lowerable to LIR");
-            }
             // Constructing a closure builds the storage its captures live in,
             // and nothing else: which body a call runs is already fixed by the
             // type, so no code identity is stored alongside them. Initializers
@@ -2005,12 +2018,30 @@ auto FunctionLowerer::LowerExpr(const mir::Block& block, mir::ExprId id)
               }
               captures[init.target.value] = *std::move(value);
             }
-            const lir::TypeId closure_type = unit_->TranslateType(type);
-            return Emit(
+            const lir::TypeId closure_type =
+                unit_->ClosureValueType(cl.closure);
+            const lir::Operand value = Emit(
                 closure_type,
                 lir::CallInstr{
                     .target = lir::ConstructTarget{.result = closure_type},
                     .args = std::move(captures)});
+            if (!unit_->Mir().types.Get(type).Is<mir::CoroutineType>()) {
+              return value;
+            }
+            // A closure whose invoke completes as a coroutine is entered
+            // through that protocol, so what the expression yields is the
+            // coroutine rather than the callable value. The captures stay the
+            // environment it reads, and entering takes them, because they
+            // outlive nothing on their own and the body runs after the stretch
+            // that built them has returned (LRM 9.3.2).
+            return Emit(
+                unit_->TranslateType(type),
+                lir::CallInstr{
+                    .target =
+                        lir::EnterCoroutineTarget{
+                            .op = lir::EnterCoroutineTarget::Op::
+                                kOwnedEnvironment},
+                    .args = {value}});
           },
           [&](const mir::PointerCastExpr& c) -> diag::Result<lir::Operand> {
             auto operand = LowerExpr(block, c.operand);
@@ -2154,18 +2185,19 @@ auto FunctionLowerer::LowerExpr(const mir::Block& block, mir::ExprId id)
             return LowerExpr(block, m.operand);
           },
           [&](const mir::AwaitExpr& await) -> diag::Result<lir::Operand> {
-            // An await is two facts: the awaitable's effect -- registering the
-            // wakeup source through an ordinary runtime call -- and the suspend
-            // itself, a control edge back to the scheduler that resumes at the
-            // next block. The registration runs first, so a delay, an event
-            // control, and a level wait differ only in the awaitable's call.
+            // An awaitable arranges this execution's resumption through an
+            // ordinary runtime call and answers whether it must park; where it
+            // must, a control edge hands control back to the scheduler, which
+            // resumes at the next block. A delay, an event control, and a join
+            // differ only in that call.
             //
             // An awaitable whose type is a coroutine is the other protocol: it
             // registers nothing, because its completion is the awaited body's
             // to signal, so a bare suspend edge would park the awaiting body
             // with nothing arranged to resume it.
+            const mir::Expr& awaitable = block.exprs.Get(await.awaitable);
             if (unit_->Mir()
-                    .types.Get(block.exprs.Get(await.awaitable).type)
+                    .types.Get(awaitable.type)
                     .Is<mir::CoroutineType>()) {
               return Unsupported(
                   "mir_to_lir: an await on a coroutine callee is not yet "
@@ -2176,11 +2208,23 @@ auto FunctionLowerer::LowerExpr(const mir::Block& block, mir::ExprId id)
                   "mir_to_lir: a value-carrying await is not yet lowerable to "
                   "LIR");
             }
-            auto registration = LowerExpr(block, await.awaitable);
-            if (!registration) {
-              return registration;
+            const auto* registration =
+                std::get_if<mir::CallExpr>(&awaitable.data);
+            if (registration == nullptr) {
+              return Unsupported(
+                  "mir_to_lir: an awaitable that is not a registration call is "
+                  "not yet lowerable to LIR");
             }
+            auto park = LowerRegistration(block, *registration);
+            if (!park) {
+              return std::unexpected(std::move(park.error()));
+            }
+            const lir::BlockId parked = NewBlock();
             const lir::BlockId resume = NewBlock();
+            Terminate(
+                lir::CondBranchTerm{
+                    .condition = *park, .if_true = parked, .if_false = resume});
+            SetCurrent(parked);
             Terminate(lir::SuspendTerm{.resume = resume});
             SetCurrent(resume);
             // Resuming is a point where this execution regains control, so a
@@ -2189,7 +2233,9 @@ auto FunctionLowerer::LowerExpr(const mir::Block& block, mir::ExprId id)
             if (!checked) {
               return std::unexpected(std::move(checked.error()));
             }
-            return registration;
+            // An await of nothing yields nothing, so what stands here is never
+            // read.
+            return *park;
           },
           [](const mir::UnionExpr&) -> diag::Result<lir::Operand> {
             return Unsupported(

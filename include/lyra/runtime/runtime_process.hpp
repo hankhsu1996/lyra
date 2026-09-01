@@ -174,14 +174,23 @@ class RuntimeProcess : public std::enable_shared_from_this<RuntimeProcess> {
     // the registration), because resume runs from another process's context
     // where the ambient vehicle is that caller's, not this leaf's.
     resume_target_ = current_foreign_execution_;
-    // Blocking inside a disable target is also waiting on that target (LRM
-    // 9.6.2), so the leaf enrols in each the same way it enrols in the event or
-    // delay it blocks on. Any one of them releases the wait, and releasing it
-    // revokes the rest.
-    for (const EnclosingTarget& enclosing : enclosing_targets_) {
-      leaf->Park(enclosing.target->CancelWaiters());
-    }
+    EnrolInEnclosingTargets(leaf);
   }
+
+  // Hands this process's active leaf to whatever will wake it. Every wakeup a
+  // backend whose suspension is a control edge registers goes through here, so
+  // no new way of registering one can forget to enrol in the enclosing disable
+  // targets; the backend whose waits are objects enrols where it blocks the
+  // leaf instead, for the same reason. A construct that registers no wakeup at
+  // all -- `$finish`, which parks and is never dispatched again -- reaches
+  // neither.
+  template <class Park>
+  void RegisterWakeup(Park park) {
+    const CoroutineHandle leaf = TopHandle();
+    EnrolInEnclosingTargets(leaf);
+    park(leaf);
+  }
+
   [[nodiscard]] auto CurrentLeaf() const -> CoroutineHandle {
     return current_leaf_;
   }
@@ -370,6 +379,16 @@ class RuntimeProcess : public std::enable_shared_from_this<RuntimeProcess> {
   // The guard is the sole writer of the ambient foreign-execution vehicle,
   // which it sets and restores around a foreign call.
   friend class ForeignExecutionGuard;
+
+  // Blocking inside a disable target is also waiting on that target (LRM
+  // 9.6.2), so the leaf enrols in each the same way it enrols in the event or
+  // delay it blocks on. Any one of them releases the wait, and releasing it
+  // revokes the rest.
+  void EnrolInEnclosingTargets(CoroutineHandle leaf) {
+    for (const EnclosingTarget& enclosing : enclosing_targets_) {
+      leaf->Park(enclosing.target->CancelWaiters());
+    }
+  }
 
   // Drives `fe` for one stretch -- into its next suspension or its return --
   // with the foreign-execution context installed for its duration, so an inner
