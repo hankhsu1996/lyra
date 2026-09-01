@@ -25,16 +25,6 @@ auto PackedRange::Contains(std::int64_t index) const -> bool {
   return index >= lo && index <= hi;
 }
 
-auto PackedRange::LinearOffset(std::int64_t index) const -> std::uint64_t {
-  if (!Contains(index)) {
-    throw InternalError("PackedRange::LinearOffset: index out of range");
-  }
-  if (left >= right) {
-    return static_cast<std::uint64_t>(left - index);
-  }
-  return static_cast<std::uint64_t>(index - left);
-}
-
 auto PackedArrayType::BitWidth() const -> std::uint64_t {
   if (dims.empty()) {
     return 1U;

@@ -6,6 +6,12 @@ load("//tools/bazel:copts.bzl", "LYRA_COPTS")
 # the headers under test.
 package(features = ["parse_headers"])
 
+# `benchmark/` holds a corpus and deliberately no target. It answers how fast
+# rather than whether, and a duration needs a machine that is running nothing
+# else, where a build system runs its tests in parallel and returns a cached
+# result from whatever machine state produced it. It is driven by
+# `tools/bench/run_benchmarks.py` instead.
+
 # Two facts about a test are marked here, and they are independent.
 #
 # `no-remote-exec` says where it can run. A test that shells out to the host C++

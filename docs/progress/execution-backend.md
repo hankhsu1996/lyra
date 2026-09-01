@@ -158,6 +158,14 @@ ownership, or native in-frame layout) for every value.
       is a member owning its value rather than a cell holding it, and a part of a value aggregate is
       no independent storage at all. An `output` / `inout` argument is not subject to this -- it
       copies out through the actual's own write path.
+- [ ] **Writing into a local that holds a value rather than storage.** A local carrying an ordinary
+      value is an SSA value here, and an interior write names the storage its whole value lives in,
+      so the two do not meet: a value has no address to rebuild through. It costs the case that
+      gives an array a value at some positions and a default at the rest, which builds the array and
+      then writes the named positions over it. The C++ path takes the same shape, so this is a
+      storage-model gap on this path rather than anything about the construct. Whichever answer the
+      reference work above settles on -- a local that can be addressed, or an interior write that
+      does not need one -- covers this too.
 
 ## Value realization: two tracks today, one native model deferred
 
@@ -286,7 +294,10 @@ each meets the same lifetime question above.
       Unreachable end to end today, since constructing an object is itself refused here.
 - [ ] `dump llvm`, and `run` / `compile` end to end against this backend, so a design goes from
       source to a running program without the C++ backend.
-- [ ] The smoke, benchmark, and AOT CI jobs, which are disabled until a design runs end to end here.
+- [ ] An AOT CI job, waiting on a design that survives this path. Neither the smoke job nor the
+      benchmark waits on it any longer: both run against the C++ path, per merge and nightly
+      respectively. Measuring this path beside them needs an artifact that can be timed on its own,
+      which the run modes do not produce.
 - [x] **An array of owned children.** A child scope -- a module instance, a generate block, a
       procedural block scope -- is constructed, reached by name and per-axis index, and reports its
       hierarchical name, whether it stands alone or is one of an array. The array is not a sequence

@@ -28,6 +28,23 @@ locate-divergence feedback loop; this one owns the readability of what the loop 
       addresses layout only; the structural items below stand on their own.
 - [x] A generated scope carries only the behavior it actually has -- a scope with no processes, or
       no children, emits no empty placeholder for them.
+- [x] An aggregate whose elements all take one value is described by that value and a count, not by
+      writing the value out once per element. Giving a 32768-element array a uniform value used to
+      reach the target language as a single four-megabyte expression, which no host compiler
+      accepts, so a design doing what a memory reset does could not be built at all. The general
+      form is worth holding on to as more aggregate kinds arrive: a uniform aggregate must not cost
+      its own length to describe.
+- [x] The same, for an aggregate that is uniform apart from a few named positions. Describing it
+      takes a construction followed by writes to those positions rather than one expression, which
+      is what the steps-yielding-a-value form is for. The execution backend refuses that shape today
+      for a reason of its own -- an interior write names storage, and a local there holds a value --
+      so the case is recorded against that path and returns when its storage model does.
+- [x] The same again where the aggregate is packed. A packed value's own repeat form describes a
+      uniform one in constant size, and a run of elements taking the default between two named ones
+      is one such repeat however long it is, so the aggregate costs its named positions to describe
+      rather than its length. Both execution paths take this shape: a packed value is a single
+      value, so it is built as one expression with nothing written into afterwards, and the storage
+      question that holds the unpacked case back does not arise.
 - [x] A scope's children are linked implicitly at construction; the traversal the scheduler walks is
       not spelled out again in every emitted class.
 - [x] A generated class reads top-down: nested scopes, then construction, then behavior, then state.

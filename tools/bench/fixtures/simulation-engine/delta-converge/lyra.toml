@@ -1,6 +1,0 @@
-[package]
-name = "delta-converge"
-top = "Top"
-
-[sources]
-files = ["top.sv"]

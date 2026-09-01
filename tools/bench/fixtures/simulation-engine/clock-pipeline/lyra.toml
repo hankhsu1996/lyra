@@ -1,6 +1,0 @@
-[package]
-name = "clock-pipeline"
-top = "Top"
-
-[sources]
-files = ["top.sv"]

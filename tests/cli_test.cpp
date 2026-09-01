@@ -93,8 +93,7 @@ TEST(LyraCompile, ProducesPortableBuildableProject) {
   const auto out_dir = *tmp_or / "out";
 
   const std::vector<std::string> args = {
-      "compile", "--no-project",   "--top",     "Test",
-      "-o",      out_dir.string(), src.string()};
+      "compile", "--top", "Test", "-o", out_dir.string(), src.string()};
   const auto compile = RunChildProcess(lyra, args, 120s);
   ASSERT_EQ(compile.termination, TerminationKind::kExitedNormally)
       << compile.stdout_text << compile.stderr_text;
@@ -161,7 +160,7 @@ TEST(LyraCompile, RebuildsAfterSwitchingOptimization) {
       "-c", "cd '" + out_dir.string() + "' && sh build.sh"};
 
   for (const std::string_view mode : {"", "--release"}) {
-    std::vector<std::string> args = {"emit", "cpp", "--no-project",  "--top",
+    std::vector<std::string> args = {"emit", "cpp", "--top",
                                      "Test", "-o",  out_dir.string()};
     if (!mode.empty()) args.emplace_back(mode);
     args.push_back(src.string());
@@ -191,9 +190,8 @@ TEST(LyraEmit, PortableProjectBuildsItsDpiSources) {
   const auto out_dir = *tmp_or / "out";
 
   const std::vector<std::string> args = {
-      "emit",           "cpp",       "--no-project",   "--top",
-      "Test",           "-o",        out_dir.string(), "--dpi-link",
-      foreign.string(), src.string()};
+      "emit",           "cpp",        "--top",          "Test",      "-o",
+      out_dir.string(), "--dpi-link", foreign.string(), src.string()};
   const auto emit = RunChildProcess(lyra, args, 60s);
   ASSERT_EQ(emit.termination, TerminationKind::kExitedNormally)
       << emit.stdout_text << emit.stderr_text;
@@ -233,8 +231,7 @@ TEST(LyraEmit, ReEmitIntoSameDirectorySucceeds) {
   const auto out_dir = *tmp_or / "out";
 
   const std::vector<std::string> args = {
-      "emit", "cpp", "--no-project",   "--top",
-      "Test", "-o",  out_dir.string(), src.string()};
+      "emit", "cpp", "--top", "Test", "-o", out_dir.string(), src.string()};
   // The bundled runtime is copied from a read-only source; emitting twice into
   // the same directory must still succeed (the copy is made writable).
   for (int i = 0; i < 2; ++i) {

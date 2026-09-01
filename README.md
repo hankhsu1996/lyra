@@ -32,7 +32,7 @@ a C++23 compiler. Lyra builds under both Clang and GCC.
 
 ```bash
 bazel build //:lyra
-./bazel-bin/lyra run --no-project --top Top examples/hello/hello.sv
+./bazel-bin/lyra run --top Top examples/hello/hello.sv
 ```
 
 Alongside `run` there is `check` for diagnostics alone, `dump` for reading any stage of the
@@ -40,8 +40,8 @@ pipeline, and `emit` and `compile` for producing a standalone C++ project. Every
 command word is one command line shared with the slang driver, so slang's front-end options reach
 Lyra unchanged, and `lyra --help` is authoritative on all of it.
 
-`--no-project` names the sources on the command line, which every invocation needs today because
-reading them from a `lyra.toml` manifest is not implemented.
+A design is named by its sources on the command line. Naming one by a manifest instead is not
+implemented.
 
 ## Architecture
 

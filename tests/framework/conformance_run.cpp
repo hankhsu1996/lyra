@@ -68,7 +68,6 @@ auto BuildArgv(const ConformancePath& path, const ConformanceCase& test_case)
   for (const std::string& arg : path.selector) {
     argv.push_back(arg);
   }
-  argv.emplace_back("--no-project");
   // A refusal is matched against recorded text, and read by whoever the match
   // failed for. Both want the diagnostic as it was written rather than wrapped
   // in the escape sequences that colour it for a terminal.
@@ -193,7 +192,7 @@ auto CaseRecord::SharedIds(const CaseRecord& other) const
 auto CheckParkedCase(
     const std::filesystem::path& lyra_exe, const ConformanceCase& test_case)
     -> std::optional<std::string> {
-  std::vector<std::string> argv{"check", "--no-project", "--no-color"};
+  std::vector<std::string> argv{"check", "--no-color"};
   for (const std::string& top : test_case.tops) {
     argv.emplace_back("--top");
     argv.push_back(top);

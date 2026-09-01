@@ -163,13 +163,16 @@ struct ReplicationExpr {
   ExprId concat;
 };
 
-// LRM 10.9 assignment pattern (positional / named / type-key / index-key /
-// default forms). Slang has normalised all four forms into a flat per-element
-// expression list in target declaration order (= packed MSB-first), with each
-// item already wrapped in a ConversionExpression to the field / element's
-// declared type. The shape covers packed targets (struct / union / packed
-// array), fixed-size unpacked arrays, and dynamic arrays; HIR-to-MIR
+// LRM 10.9 assignment pattern in the form that states every element by
+// position: the list is in target declaration order -- most significant first
+// where the target is packed -- with each item already converted to the field
+// or element's declared type. The shape covers packed targets (struct / union /
+// packed array), fixed-size unpacked arrays, and dynamic arrays; HIR-to-MIR
 // dispatches to the right primitive based on the resolved target type.
+//
+// A pattern written with keys over an array keeps its keys instead, because a
+// key names an element while this list names positions, and the two orders
+// disagree for a descending dimension.
 struct AssignmentPatternExpr {
   std::vector<ExprId> elements;
 };
@@ -178,9 +181,10 @@ struct AssignmentPatternExpr {
 // slang-validated as a constant positive integer. `items` is the per-
 // iteration expression list -- slang stores only one iteration's items with
 // that iteration's per-field casts and requires the target's per-iter type
-// chunks to repeat. The lowered MIR shape is `Replication(count,
-// Concat(items))` for packed targets and a `Construct(canonical_default,
-// ArrayLiteral{items repeated count times})` for unpacked / dynamic targets.
+// chunks to repeat. A packed target lowers to a replication over the items'
+// concatenation; an unpacked or dynamic one to a construction taking the items
+// once beside the count, so what it costs to describe does not grow with how
+// many times they repeat.
 struct AssignmentPatternReplicationExpr {
   ExprId count;
   std::vector<ExprId> items;
@@ -209,12 +213,6 @@ struct ClassNewExpr {
   std::vector<ExprId> arguments;
 };
 
-// LRM 7.9.11 associative-array literal `'{index: value, ..., default: d}`. Each
-// entry pairs a key expression with a value expression; the optional default is
-// the persistent fallback a read of an absent key returns (LRM 7.8.6). Slang
-// keeps this distinct from the positional pattern, so the key structure is
-// retained here rather than flattened into an element list. HIR-to-MIR builds
-// the associative value from a vector of (key, value) tuples plus the default.
 // LRM 11.9 tagged union expression `tagged Member primary`. `member_index` is
 // the declaration-order position of the tagged member inside the union type
 // (names are dropped, position is the tag). `payload` is absent when the
@@ -224,9 +222,41 @@ struct TaggedUnionExpr {
   std::optional<ExprId> payload;
 };
 
+// LRM 7.9.11 associative-array literal `'{index: value, ..., default: d}`. Each
+// entry pairs a key expression with a value expression; the optional default is
+// the persistent fallback a read of an absent key returns (LRM 7.8.6), so it
+// outlives the build rather than being spent filling elements. The keys are
+// arbitrary values with no positional meaning, which is why the key structure
+// is retained here rather than flattened into an element list.
 struct AssociativeAssignmentPatternExpr {
   struct Entry {
     ExprId key;
+    ExprId value;
+  };
+  std::vector<Entry> entries;
+  std::optional<ExprId> default_value;
+};
+
+// LRM 10.9.1 `'{index: value, ..., default: value}` over an array. An
+// `array_pattern_key` is either an index naming one element or the `default`
+// key standing for every element no index named; the source may write either
+// kind, and LRM 10.9.1 admits at most one `default`.
+//
+// The elements the default stands for are not written out. How many there are
+// belongs to the target's type and appears nowhere in the source, so no count
+// is carried: naming one would invent a number the source does not contain,
+// and listing the elements instead would make a mostly-uniform aggregate cost
+// its own length to describe -- a 32768-element array reaches the target
+// language as a four-megabyte expression that no compiler will accept.
+//
+// An index is kept as the index it was written as, not as a position, because
+// the two orders differ: positions run from the dimension's left end, which is
+// the most significant element of a packed array, while indices run whichever
+// way the dimension was declared. Resolving one to the other is the target
+// type's own arithmetic and belongs wherever that type is in hand.
+struct AssignmentPatternKeyedExpr {
+  struct Entry {
+    ExprId index;
     ExprId value;
   };
   std::vector<Entry> entries;
@@ -239,7 +269,7 @@ using ExprData = std::variant<
     RangeSelectExpr, MemberAccessExpr, ClassPropertyAccessExpr, ConcatExpr,
     ReplicationExpr, AssignmentPatternExpr, AssignmentPatternReplicationExpr,
     DynamicArrayNewExpr, ClassNewExpr, AssociativeAssignmentPatternExpr,
-    TaggedUnionExpr>;
+    AssignmentPatternKeyedExpr, TaggedUnionExpr>;
 
 struct Expr {
   TypeId type;

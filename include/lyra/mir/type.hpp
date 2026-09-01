@@ -37,7 +37,6 @@ struct PackedRange {
   [[nodiscard]] auto ElementCount() const -> std::uint64_t;
   [[nodiscard]] auto IsAscending() const -> bool;
   [[nodiscard]] auto Contains(std::int64_t index) const -> bool;
-  [[nodiscard]] auto LinearOffset(std::int64_t index) const -> std::uint64_t;
 
   auto operator==(const PackedRange&) const -> bool = default;
 };
@@ -96,6 +95,13 @@ struct UnpackedRange {
   }
   [[nodiscard]] auto IsAscending() const -> bool {
     return left <= right;
+  }
+
+  // The storage ordinal a source index resolves to: the element the dimension
+  // names first is ordinal zero however the range was declared.
+  [[nodiscard]] auto LinearOffset(std::int64_t index) const -> std::uint64_t {
+    return static_cast<std::uint64_t>(
+        left <= right ? index - left : left - index);
   }
 
   // The declared range of a compiler-internal zero-based array of `count`

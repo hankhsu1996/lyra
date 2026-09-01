@@ -142,11 +142,6 @@ constexpr std::array kEntries{
         DiagCodeInfo{
             .kind = DiagKind::kHostError, .name = "host_invalid_cli_args"}},
     std::pair{
-        DiagCode::kHostProjectModeUnimplemented,
-        DiagCodeInfo{
-            .kind = DiagKind::kHostError,
-            .name = "host_project_mode_unimplemented"}},
-    std::pair{
         DiagCode::kHostNoInputFiles,
         DiagCodeInfo{
             .kind = DiagKind::kHostError, .name = "host_no_input_files"}},

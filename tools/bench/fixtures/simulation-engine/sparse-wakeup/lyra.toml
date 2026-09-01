@@ -1,6 +1,0 @@
-[package]
-name = "sparse-wakeup"
-top = "Top"
-
-[sources]
-files = ["top.sv"]

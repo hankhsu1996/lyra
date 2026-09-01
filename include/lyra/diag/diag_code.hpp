@@ -44,7 +44,6 @@ enum class DiagCode : std::uint32_t {
   kErrorDisplayMissingArg,
 
   kHostInvalidCliArgs,
-  kHostProjectModeUnimplemented,
   kHostNoInputFiles,
   kHostIoError,
   kHostBuildFailed,

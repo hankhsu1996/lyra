@@ -1,930 +1,641 @@
 #!/usr/bin/env python3
-"""Lyra performance benchmark runner.
+"""Lyra benchmark runner.
 
-Discovers benchmark fixtures via bench.toml manifests, runs lyra (and
-optionally Verilator) against each fixture, collects compile-time and
-simulation-time metrics, and prints a Markdown report sorted by category.
+Runs every case under tests/benchmark/ against Lyra and a reference simulator,
+choosing how much work each one does so that every measurement lands in the
+same duration, and reports the rate each tool sustained.
 
 Usage:
-    python3 tools/bench/run_benchmarks.py [--json PATH] [--trials N]
-           [--tier pr|nightly] [--ci]
+    python3 tools/bench/run_benchmarks.py [--json PATH] [--filter SUBSTRING]
+                                          [--seconds N]
 """
 
 import argparse
 import json
 import os
-import re
-import resource
-import signal
 import shutil
 import subprocess
 import sys
 import tempfile
+import threading
 import time
-from dataclasses import dataclass, field
+from collections.abc import Callable
+from dataclasses import dataclass
 from pathlib import Path
 
-try:
-    import tomllib
-except ModuleNotFoundError:
-    import tomli as tomllib  # type: ignore[no-redef]
-
-
-TIMEOUT_SECONDS = 120
-
 REPO_ROOT = Path(__file__).resolve().parent.parent.parent
-FIXTURES_ROOT = REPO_ROOT / "tools" / "bench" / "fixtures"
-CONFIG_PATH = REPO_ROOT / "tools" / "bench" / "config.toml"
+CORPUS_ROOT = REPO_ROOT / "tests" / "benchmark"
 
-BACKENDS = ["aot", "aot-two-state", "jit", "verilator"]
+CASE_ENTRY = "main.sv"
 
-# Directory for crash artifacts (executable, runtime .a, stderr).
-# Created on first SIGILL; uploaded by CI as artifact.
-CRASH_ARTIFACT_DIR = REPO_ROOT / "crash-artifacts"
+# The top-level module every case elaborates, and the name it takes its work
+# count under. Both are fixed rather than declared, so a case says only what a
+# reader could not guess.
+#
+# A case that times a simulation reads the count from a plusarg, so one build
+# serves every amount. A case that times a build has no such option -- its
+# work is the design -- and takes the count as a top-level parameter override,
+# which says it in the language rather than in the preprocessor and leaves the
+# default written once, on the parameter itself.
+CASE_TOP = "Top"
+WORK_PARAM = "WORK"
 
+# Long enough that process startup and timer resolution are a rounding error
+# against a measurement, short enough that reaching it a few times per case is
+# not what a run costs. A case whose single unit already overshoots it costs
+# what that unit costs, whatever this says.
+DEFAULT_TARGET_SECONDS = 1.0
 
-def _is_signal_death(returncode: int, sig: int) -> bool:
-    """True if subprocess died from the given signal."""
-    return returncode == -sig
+# A build is far slower than a run, and most of a small one is the compiler
+# starting rather than the design. The target has to clear that fixed part by
+# enough that what varies with the design is the bulk of the reading.
+BUILD_TARGET_SECONDS = 20.0
 
+TIMEOUT_SECONDS = 900
 
-def preserve_crash_artifacts(
-    fixture_name: str, backend: str,
-    binary_path: str | None,
-    output_dir: str | None,
-    stderr_text: str,
-) -> None:
-    """Copy crash-relevant files to CRASH_ARTIFACT_DIR for CI upload."""
-    dest = CRASH_ARTIFACT_DIR / f"{fixture_name}_{backend}"
-    dest.mkdir(parents=True, exist_ok=True)
+# Below this, a duration is startup and scheduling rather than the work, so
+# nothing can be extrapolated from it.
+MIN_USEFUL_SECONDS = 0.002
 
-    if binary_path and Path(binary_path).exists():
-        shutil.copy2(binary_path, dest / Path(binary_path).name)
+# One probe may not multiply the amount by more than this. A first probe that
+# lands near zero would otherwise ask for an amount that never finishes.
+MAX_GROWTH = 1000
 
-    # Copy the runtime static library used for linking.
-    runtime_a = REPO_ROOT / "bazel-bin" / "liblyra_runtime_static.a"
-    if runtime_a.exists():
-        shutil.copy2(runtime_a, dest / runtime_a.name)
+MAX_PROBES = 6
 
-    # Copy emitted .o files from output dir if available.
-    if output_dir:
-        for obj in Path(output_dir).glob("*.o"):
-            shutil.copy2(obj, dest / obj.name)
+BINARY_NAME = "program"
 
-    if stderr_text:
-        (dest / "stderr.txt").write_text(stderr_text)
+UNSUPPORTED_MARKER = "lyra: unsupported:"
 
-    print(
-        f"  crash artifacts saved to {dest.relative_to(REPO_ROOT)}",
-        file=sys.stderr)
+STATUS_OK = "ok"
+STATUS_UNSUPPORTED = "unsupported"
+STATUS_ERROR = "error"
+
+MEASURE_BUILD = "build"
+MEASURE_RUN = "run"
+
+_DIRECTIVES = {"measure", "work"}
 
 
 @dataclass(frozen=True)
-class TierConfig:
-    profile: str
-    trials: int
-
-
-@dataclass(frozen=True)
-class Fixture:
+class Case:
+    family: str
     name: str
-    category: str
-    subcategory: str | None
-    intent: str
-    focus: str
-    primary: str
-    secondary: tuple[str, ...]
-    path: Path
-    scale: dict[str, dict[str, str | int | float | bool]]
+    measure: str
+    work_unit: str
+    sources: tuple[Path, ...]
+
+    @property
+    def path(self) -> str:
+        return f"{self.family}/{self.name}"
 
 
 @dataclass
-class BenchResult:
-    fixture: str = ""
-    category: str = ""
-    subcategory: str | None = None
-    intent: str = ""
-    focus: str = ""
-    primary: str = ""
-    secondary: tuple[str, ...] = ()
-    backend: str = ""
-    compile_s: float = 0.0
-    sim_s: float = 0.0
-    wall_s: float = 0.0
-    llvm_insts: int = 0
-    mir_stmts: int = 0
+class Result:
+    case: str = ""
+    family: str = ""
+    measure: str = ""
+    work_unit: str = ""
+    tool: str = ""
+    status: str = STATUS_OK
+    work: int = 0
+    seconds: float = 0.0
+    rate: float = 0.0
+    build_s: float = 0.0
     binary_kb: int = 0
-    rss_max_mb: float = 0.0
-    params: dict = field(default_factory=dict)
-    phases: dict = field(default_factory=dict)
-    counters: dict = field(default_factory=dict)
-    error: str = ""
+    probes: int = 0
+    detail: str = ""
 
 
-# Manifest schema: maps field name -> (type, required, non_empty).
-# This is the single definition of the bench.toml [benchmark] shape.
-_BENCHMARK_SCHEMA: dict[str, tuple[type, bool, bool]] = {
-    "name":        (str,  True,  True),
-    "category":    (str,  True,  True),
-    "subcategory": (str,  False, False),
-    "intent":      (str,  True,  True),
-    "focus":       (str,  True,  True),
-    "primary":     (str,  True,  True),
-    "secondary":   (list, True,  False),
-}
-
-_ALLOWED_SECTIONS = {"benchmark", "scale"}
+@dataclass
+class ProcessRun:
+    """One subprocess and what running it cost."""
+    elapsed_s: float
+    returncode: int
+    stdout: str
+    stderr: str
+    timed_out: bool
 
 
-def load_config() -> dict[str, TierConfig]:
-    """Load central tier configuration from config.toml."""
-    if not CONFIG_PATH.exists():
-        print(f"Error: config not found at {CONFIG_PATH}", file=sys.stderr)
-        sys.exit(1)
-
-    with open(CONFIG_PATH, "rb") as f:
-        data = tomllib.load(f)
-
-    tiers_data = data.get("tiers")
-    if not tiers_data:
-        print("Error: config.toml missing [tiers] section", file=sys.stderr)
-        sys.exit(1)
-
-    tier_configs: dict[str, TierConfig] = {}
-    for tier_name, tier_data in tiers_data.items():
-        if "profile" not in tier_data or "trials" not in tier_data:
-            print(
-                f"Error: config.toml [tiers.{tier_name}] missing "
-                f"'profile' or 'trials'", file=sys.stderr)
-            sys.exit(1)
-        tier_configs[tier_name] = TierConfig(
-            profile=tier_data["profile"],
-            trials=tier_data["trials"],
-        )
-
-    return tier_configs
-
-
-def parse_fixture_manifest(
-    manifest_path: Path, fixtures_root: Path,
-) -> Fixture:
-    """Parse a bench.toml into a Fixture, or raise ValueError."""
-    with open(manifest_path, "rb") as f:
-        data = tomllib.load(f)
-
-    ctx = str(manifest_path)
-
-    # Reject unknown top-level sections
-    unexpected = set(data.keys()) - _ALLOWED_SECTIONS
-    if unexpected:
-        raise ValueError(f"{ctx}: unexpected sections: {unexpected}")
-
-    bench = data.get("benchmark")
-    if not bench:
-        raise ValueError(f"{ctx}: missing [benchmark] section")
-
-    # Reject unknown benchmark fields
-    unexpected_fields = set(bench.keys()) - set(_BENCHMARK_SCHEMA.keys())
-    if unexpected_fields:
-        raise ValueError(
-            f"{ctx}: unexpected benchmark fields: {unexpected_fields}")
-
-    # Validate each field against the schema
-    for field_name, (expected_type, required, non_empty) in (
-        _BENCHMARK_SCHEMA.items()
+def run_process(
+    cmd: list[str], cwd: str | None = None, env: dict | None = None,
+) -> ProcessRun:
+    """Run one command to completion and time it."""
+    with (
+        tempfile.TemporaryFile(mode="w+") as out,
+        tempfile.TemporaryFile(mode="w+") as err,
     ):
-        if field_name not in bench:
-            if required:
-                raise ValueError(f"{ctx}: missing benchmark.{field_name}")
-            continue
-        val = bench[field_name]
-        if not isinstance(val, expected_type):
-            raise ValueError(
-                f"{ctx}: benchmark.{field_name} must be "
-                f"{expected_type.__name__}, got {type(val).__name__}")
-        if non_empty and isinstance(val, str) and not val.strip():
-            raise ValueError(
-                f"{ctx}: benchmark.{field_name} must not be empty")
+        start = time.monotonic()
+        proc = subprocess.Popen(
+            cmd, stdout=out, stderr=err, cwd=cwd, env=env, text=True)
 
-    # secondary items must be strings
-    for i, item in enumerate(bench["secondary"]):
-        if not isinstance(item, str):
-            raise ValueError(
-                f"{ctx}: benchmark.secondary[{i}] must be a string, "
-                f"got {type(item).__name__}")
+        killed: list[bool] = []
 
-    # Parse [scale] profiles
-    scale_raw = data.get("scale")
-    if not scale_raw:
-        raise ValueError(f"{ctx}: missing [scale] section")
+        def on_timeout() -> None:
+            killed.append(True)
+            proc.kill()
 
-    scale: dict[str, dict[str, str | int | float | bool]] = {}
-    for profile_name, profile_params in scale_raw.items():
-        if not isinstance(profile_params, dict) or not profile_params:
-            raise ValueError(
-                f"{ctx}: scale.{profile_name} must be a non-empty table")
-        for k, v in profile_params.items():
-            if not isinstance(v, (str, int, float, bool)):
-                raise ValueError(
-                    f"{ctx}: scale.{profile_name}.{k} must be a scalar, "
-                    f"got {type(v).__name__}")
-        scale[profile_name] = dict(profile_params)
+        watchdog = threading.Timer(TIMEOUT_SECONDS, on_timeout)
+        watchdog.start()
+        proc.wait()
+        elapsed = time.monotonic() - start
+        watchdog.cancel()
 
-    # Directory path must match category[/subcategory]/name
-    name = bench["name"]
-    category = bench["category"]
-    subcategory = bench.get("subcategory")
-
-    try:
-        rel = (
-            manifest_path.parent.resolve()
-            .relative_to(fixtures_root.resolve())
+        out.seek(0)
+        err.seek(0)
+        return ProcessRun(
+            elapsed_s=elapsed,
+            returncode=proc.returncode,
+            stdout=out.read(),
+            stderr=err.read(),
+            timed_out=bool(killed),
         )
-    except ValueError:
-        raise ValueError(f"{ctx}: fixture not under {fixtures_root}")
 
-    if subcategory:
-        expected = (category, subcategory, name)
-    else:
-        expected = (category, name)
 
-    if rel.parts != expected:
+def parse_directives(entry: Path) -> dict[str, str]:
+    """Read the `// @key: value` lines that open a case's entry file.
+
+    An unrecognized key is an error rather than a line quietly ignored, so a
+    misspelled directive cannot look like a case that simply declares nothing.
+    """
+    directives: dict[str, str] = {}
+    for line in entry.read_text().splitlines():
+        stripped = line.strip()
+        if not stripped.startswith("//"):
+            break
+        body = stripped[2:].strip()
+        if not body.startswith("@"):
+            break
+        key, sep, value = body[1:].partition(":")
+        if not sep:
+            raise ValueError(f"{entry}: directive '{body}' has no value")
+        key = key.strip()
+        if key not in _DIRECTIVES:
+            raise ValueError(
+                f"{entry}: unknown directive '@{key}'; known are "
+                f"{sorted(_DIRECTIVES)}")
+        directives[key] = value.strip()
+    return directives
+
+
+def read_case(entry: Path, corpus_root: Path) -> Case:
+    """Build a Case from its entry file, or raise ValueError saying why not."""
+    directives = parse_directives(entry)
+
+    measure = directives.get("measure")
+    if measure not in (MEASURE_BUILD, MEASURE_RUN):
         raise ValueError(
-            f"{ctx}: directory path '{'/'.join(rel.parts)}' does not match "
-            f"manifest '{'/'.join(expected)}'")
+            f"{entry}: @measure must be '{MEASURE_BUILD}' or '{MEASURE_RUN}'")
 
-    return Fixture(
+    work_unit = directives.get("work")
+    if not work_unit:
+        raise ValueError(
+            f"{entry}: @work must name what one unit of this case's work is "
+            f"called, so its duration can be read as a rate")
+
+    relative = entry.parent.resolve().relative_to(corpus_root.resolve())
+    if len(relative.parts) != 2:
+        raise ValueError(
+            f"{entry}: a case sits at <family>/<name>, not "
+            f"'{'/'.join(relative.parts)}'")
+    family, name = relative.parts
+
+    # Companions are compiled before the entry, in name order, because a
+    # reference reaches only what a compilation unit declared before it
+    # (LRM 3.12.1).
+    companions = sorted(
+        p for p in entry.parent.glob("*.sv") if p.name != CASE_ENTRY)
+
+    return Case(
+        family=family,
         name=name,
-        category=category,
-        subcategory=subcategory,
-        intent=bench["intent"],
-        focus=bench["focus"],
-        primary=bench["primary"],
-        secondary=tuple(bench["secondary"]),
-        path=manifest_path.parent,
-        scale=scale,
+        measure=measure,
+        work_unit=work_unit,
+        sources=(*companions, entry),
     )
 
 
-def discover_fixtures(fixtures_root: Path) -> list[Fixture]:
-    """Discover, parse, and return fixtures sorted by (category, name)."""
-    fixtures: list[Fixture] = []
-    seen_names: dict[str, Path] = {}
-
-    for manifest_path in sorted(fixtures_root.rglob("bench.toml")):
-        fixture = parse_fixture_manifest(manifest_path, fixtures_root)
-
-        if fixture.name in seen_names:
+def discover_cases(corpus_root: Path) -> list[Case]:
+    cases = [
+        read_case(entry, corpus_root)
+        for entry in sorted(corpus_root.rglob(CASE_ENTRY))
+    ]
+    seen: dict[str, str] = {}
+    for case in cases:
+        if case.name in seen:
             raise ValueError(
-                f"Duplicate fixture name '{fixture.name}': "
-                f"{manifest_path} and {seen_names[fixture.name]}")
-        seen_names[fixture.name] = manifest_path
-        fixtures.append(fixture)
-
-    fixtures.sort(key=lambda f: (f.category, f.subcategory or "", f.name))
-    return fixtures
+                f"duplicate case name '{case.name}': "
+                f"{case.path} and {seen[case.name]}")
+        seen[case.name] = case.path
+    cases.sort(key=lambda c: (c.family, c.name))
+    return cases
 
 
-def resolve_fixture_params(
-    fixture: Fixture, profile: str,
-) -> dict[str, str | int | float | bool] | None:
-    """Resolve parameters for a fixture given a scale profile.
+def next_amount(
+    history: list[tuple[int, float]], target: float,
+) -> int:
+    """The amount to probe next, from what the previous probes cost.
 
-    Returns None if the fixture does not have the requested profile.
+    A measurement is a fixed cost plus a cost per unit of work, and the two
+    readings furthest apart separate them. Assuming proportionality instead
+    would undershoot badly wherever the fixed part is large, which is every
+    case that measures a build: the compiler's own startup is seconds before
+    any of the design is read.
+
+    One reading cannot separate them, so the first step scales proportionally
+    and is corrected by the second. Every step is capped, because a reading at
+    the resolution floor says nothing about how far the target is.
     """
-    params = fixture.scale.get(profile)
-    if params is None:
-        return None
-    return dict(params)
+    amount, elapsed = history[-1]
+    if len(history) >= 2:
+        first_amount, first_elapsed = history[0]
+        per_unit = (elapsed - first_elapsed) / (amount - first_amount)
+        fixed = elapsed - per_unit * amount
+        if per_unit > 0.0 and target > fixed:
+            grown = (target - fixed) / per_unit
+            return max(amount + 1, min(int(grown), amount * MAX_GROWTH))
+    grown = amount * target / max(elapsed, MIN_USEFUL_SECONDS)
+    return max(amount + 1, min(int(grown), amount * MAX_GROWTH))
 
 
-def read_stats_json(path: str) -> dict:
-    try:
-        with open(path) as f:
-            return json.load(f)
-    except (OSError, json.JSONDecodeError):
-        return {}
+def converge(
+    measure_at: Callable[[int], ProcessRun], target: float,
+) -> tuple[int, ProcessRun, list[tuple[int, float]]]:
+    """Raise the amount of work until one measurement reaches the target.
 
-
-def populate_from_stats(result: BenchResult, stats: dict) -> None:
-    """Populate phases, llvm_insts, and mir_stmts from stats JSON.
-
-    Does NOT set compile_s -- callers set that explicitly because the source
-    differs by backend: JIT derives it from phase timings, AOT uses wall time
-    of the compile subprocess.
+    Returns the amount that produced the final reading, that reading, and every
+    (amount, duration) pair taken along the way -- those pairs are what separate
+    what a measurement costs before any work from what it costs per unit. A case
+    too slow to reach the target even at one unit stops there and reports what
+    one unit cost, which is a rate like any other.
     """
-    phases = stats.get("phases", {})
-    result.phases = dict(phases)
-
-    llvm = stats.get("llvm", {})
-    result.llvm_insts = llvm.get("instructions", 0)
-
-    mir = stats.get("mir", {})
-    result.mir_stmts = mir.get("mir_stmts", 0)
-
-
-def sum_compile_phases(stats: dict) -> float:
-    """Sum all phase timings except 'sim' to get compile time."""
-    total = 0.0
-    for key, val in stats.get("phases", {}).items():
-        if key == "sim":
-            continue
-        total += val
-    return total
-
-
-def get_rss_children_kb() -> int:
-    ru = resource.getrusage(resource.RUSAGE_CHILDREN)
-    return int(ru.ru_maxrss)
+    amount = 1
+    run = measure_at(amount)
+    history = [(amount, run.elapsed_s)]
+    while (
+        run.returncode == 0
+        and not run.timed_out
+        # A second reading is taken even when the first already reached the
+        # target, because one reading cannot say which part of it was the work
+        # and which was there before any: a case that has to fill an array
+        # before reading it pays for the fill once, and charging that to the
+        # single pass that followed reports the fill instead of the read.
+        and (run.elapsed_s < target or len(history) < 2)
+        and len(history) < MAX_PROBES
+    ):
+        candidate = next_amount(history, target)
+        if candidate == amount:
+            break
+        amount = candidate
+        run = measure_at(amount)
+        history.append((amount, run.elapsed_s))
+    return amount, run, history
 
 
-def find_binary(output_dir: str) -> str | None:
-    out = Path(output_dir)
-    if not out.exists():
-        return None
-    regular_files = [
-        f for f in out.iterdir()
-        if f.is_file() and not f.is_symlink() and os.access(f, os.X_OK)
-    ]
-    if len(regular_files) != 1:
-        return None
-    return str(regular_files[0])
+def marginal_rate(history: list[tuple[int, float]]) -> float:
+    """Units of work per second, with what a run costs before any of it removed.
+
+    The fixed part is whatever a measurement pays regardless of how much work
+    it covers -- a process starting, a compiler reading its prelude. It is a
+    rounding error against a simulation and it is most of a small build, so
+    leaving it in would make a build case's number move whenever the prelude
+    cache did. Two readings separate it; with only one, there is nothing to
+    separate and the whole duration is charged to the work.
+    """
+    amount, elapsed = history[-1]
+    if len(history) >= 2:
+        first_amount, first_elapsed = history[0]
+        per_unit = (elapsed - first_elapsed) / (amount - first_amount)
+        if per_unit > 0.0:
+            return 1.0 / per_unit
+    return amount / elapsed if elapsed > 0.0 else 0.0
 
 
-def time_binary(
-    binary_path: str,
-) -> tuple[float, str, str, int]:
-    """Run binary; return (elapsed, error_msg, stderr_text, returncode)."""
-    t0 = time.monotonic()
-    proc = subprocess.run(
-        [binary_path], capture_output=True, text=True, timeout=TIMEOUT_SECONDS,
-    )
-    elapsed = time.monotonic() - t0
-    if proc.returncode != 0:
-        err = _first_error(proc.stderr) or f"sim exit code {proc.returncode}"
-        return elapsed, err, proc.stderr, proc.returncode
-    return elapsed, "", proc.stderr, 0
-
-
-def build_define_args(
-    params: dict[str, str | int | float | bool],
+def lyra_build_command(
+    lyra: str, case: Case, out_dir: str, amount: int | None,
 ) -> list[str]:
-    """Build -D arguments for Lyra CLI from resolved params."""
-    args = []
-    for key, val in params.items():
-        args.extend(["-D", f"{key}={val}"])
-    return args
+    cmd = [lyra, "compile"]
+    # A simulation is timed on the code a user would ship, so its translation
+    # unit is optimized. A build is timed the way an edit loop builds, since
+    # that is the cost it exists to protect and optimizing it would measure the
+    # host compiler's optimizer instead.
+    if case.measure == MEASURE_RUN:
+        cmd.append("--release")
+    cmd.extend(["--top", CASE_TOP])
+    cmd.extend(["-o", out_dir])
+    if amount is not None:
+        cmd.extend(["-G", f"{WORK_PARAM}={amount}"])
+    cmd.extend(str(s) for s in case.sources)
+    return cmd
 
 
-def build_verilator_define_args(
-    params: dict[str, str | int | float | bool],
+def verilator_build_command(
+    verilator: str, case: Case, amount: int | None,
 ) -> list[str]:
-    """Build -D arguments for Verilator from resolved params."""
-    args = []
-    for key, val in params.items():
-        args.extend([f"-D{key}={val}"])
-    return args
-
-
-def make_result(fixture: Fixture, backend: str, params: dict) -> BenchResult:
-    """Create a BenchResult pre-populated with fixture metadata."""
-    return BenchResult(
-        fixture=fixture.name,
-        category=fixture.category,
-        subcategory=fixture.subcategory,
-        intent=fixture.intent,
-        focus=fixture.focus,
-        primary=fixture.primary,
-        secondary=fixture.secondary,
-        backend=backend,
-        params=dict(params),
-    )
-
-
-def run_lyra_jit(
-    lyra: str, fixture: Fixture, params: dict,
-    stats_path: str,
-) -> BenchResult:
-    result = make_result(fixture, "jit", params)
     cmd = [
-        lyra, "-C", str(fixture.path), "run",
-        "--backend=jit",
-        "--stats-out", stats_path,
+        verilator, "--binary", "--top-module", CASE_TOP,
+        # Style opinions about a benchmark case are not what is being
+        # measured, and listing the ones to silence is a list that grows
+        # every time a case gets bigger. Errors still stop the build.
+        "-Wno-fatal",
+        # A case whose work is its own size is grown until building it takes
+        # the target duration, and the faster tool is therefore handed the
+        # larger design. Its default ceiling on unrolling a generate loop is
+        # reached long before that, which would report the ceiling rather
+        # than the speed.
+        "--unroll-limit", "1000000",
     ]
-    cmd.extend(build_define_args(params))
-    try:
-        t0 = time.monotonic()
-        proc = subprocess.run(
-            cmd, capture_output=True, text=True, timeout=TIMEOUT_SECONDS,
-        )
-        result.wall_s = time.monotonic() - t0
-        result.rss_max_mb = round(get_rss_children_kb() / 1024, 1)
-
-        if proc.returncode != 0:
-            result.error = (
-                _first_error(proc.stderr)
-                or f"exit code {proc.returncode}")
-            return result
-
-        stats = read_stats_json(stats_path)
-        if not stats:
-            result.error = "missing/invalid stats-out JSON"
-            return result
-
-        populate_from_stats(result, stats)
-        result.compile_s = sum_compile_phases(stats)
-        result.sim_s = max(0.0, result.wall_s - result.compile_s)
-
-    except subprocess.TimeoutExpired:
-        result.error = "TIMEOUT"
-    except Exception as e:
-        result.error = str(e)
-
-    return result
+    if amount is not None:
+        cmd.append(f"-G{WORK_PARAM}={amount}")
+    cmd.extend(str(s) for s in case.sources)
+    return cmd
 
 
-def run_lyra_aot(
-    lyra: str, fixture: Fixture, params: dict,
-    stats_path: str, output_dir: str, two_state: bool = False,
-) -> BenchResult:
-    backend_name = "aot-two-state" if two_state else "aot"
-    result = make_result(fixture, backend_name, params)
-
-    cmd = [
-        lyra, "-C", str(fixture.path), "compile",
-        "--stats-out", stats_path,
-        "-o", output_dir,
-    ]
-    cmd.extend(build_define_args(params))
-    if two_state:
-        cmd.append("--two-state")
-    try:
-        t0 = time.monotonic()
-        proc = subprocess.run(
-            cmd, capture_output=True, text=True, timeout=TIMEOUT_SECONDS,
-        )
-        compile_wall = time.monotonic() - t0
-        result.rss_max_mb = round(get_rss_children_kb() / 1024, 1)
-
-        if proc.returncode != 0:
-            result.error = (
-                _first_error(proc.stderr)
-                or f"exit code {proc.returncode}")
-            return result
-
-        stats = read_stats_json(stats_path)
-        if not stats:
-            result.error = "missing/invalid stats-out JSON"
-            return result
-
-        populate_from_stats(result, stats)
-        result.compile_s = compile_wall
-
-        binary = find_binary(output_dir)
-        if not binary:
-            result.error = f"binary not found in {output_dir}"
-            return result
-
-        result.binary_kb = round(Path(binary).stat().st_size / 1024)
-
-        sim_time, sim_err, sim_stderr, sim_rc = time_binary(binary)
-        result.sim_s = sim_time
-        if sim_err:
-            result.error = sim_err
-
-        # Preserve artifacts on SIGILL for post-mortem analysis.
-        if _is_signal_death(sim_rc, signal.SIGILL):
-            print(
-                f"  SIGILL detected for {fixture.name}/{backend_name}",
-                file=sys.stderr)
-            preserve_crash_artifacts(
-                fixture.name, backend_name, binary, output_dir,
-                sim_stderr)
-
-        result.wall_s = result.compile_s + result.sim_s
-
-    except subprocess.TimeoutExpired:
-        result.error = "TIMEOUT"
-    except Exception as e:
-        result.error = str(e)
-
-    return result
+@dataclass(frozen=True)
+class Tool:
+    """One simulator, and how to build a case with it and find what it made."""
+    name: str
+    build: Callable[[Case, str, int | None], list[str]]
+    binary: Callable[[str], Path]
+    env: dict | None = None
+    unsupported_marker: str = ""
 
 
-def parse_lyra_toml(project_dir: str) -> tuple[str, list[str]]:
-    toml_path = Path(project_dir) / "lyra.toml"
-    if not toml_path.exists():
-        return "", []
+def measure_run_case(
+    case: Case, tool: Tool, result: Result, root: str, target: float,
+) -> Result:
+    """Build once, then raise the work count until a run reaches the target."""
+    work = os.path.join(root, "build")
+    os.makedirs(work, exist_ok=True)
+    build = run_process(tool.build(case, work, None), cwd=work, env=tool.env)
+    result.build_s = build.elapsed_s
 
-    content = toml_path.read_text()
-    top = ""
-    files = []
-
-    top_match = re.search(r'top\s*=\s*"([^"]+)"', content)
-    if top_match:
-        top = top_match.group(1)
-
-    files_match = re.search(r'files\s*=\s*\[(.*?)\]', content, re.DOTALL)
-    if files_match:
-        files = re.findall(r'"([^"]+)"', files_match.group(1))
-
-    return top, files
-
-
-def run_verilator(
-    fixture: Fixture, params: dict, work_dir: str,
-) -> BenchResult:
-    result = make_result(fixture, "verilator", params)
-
-    verilator = shutil.which("verilator")
-    if not verilator:
-        result.error = "verilator not found"
+    if not record_build_failure(result, build, tool):
         return result
 
-    top, files = parse_lyra_toml(str(fixture.path))
-    if not top or not files:
-        result.error = "cannot parse lyra.toml"
+    binary = tool.binary(work)
+    if not binary.is_file():
+        result.status = STATUS_ERROR
+        result.detail = f"the build produced no {binary.name}"
         return result
+    result.binary_kb = round(binary.stat().st_size / 1024)
 
-    sv_paths = [str(fixture.path / f) for f in files]
-
-    build_cmd = [
-        verilator, "--binary",
-        "--top-module", top,
-        "-Wno-WIDTHEXPAND", "-Wno-WIDTHTRUNC",
-        "-Wno-UNUSEDSIGNAL", "-Wno-UNDRIVEN",
-        "-Wno-UNUSEDPARAM", "-Wno-PINMISSING",
-        "-Wno-CASEINCOMPLETE", "-Wno-IMPORTSTAR",
-        "-Wno-ALWCOMBORDER", "-Wno-UNOPTFLAT",
-        "-Wno-MULTIDRIVEN", "-Wno-WIDTHCONCAT",
-    ]
-    build_cmd.extend(build_verilator_define_args(params))
-    build_cmd.extend(sv_paths)
-
-    try:
-        env = os.environ.copy()
-        env["CCACHE_DISABLE"] = "1"
-
-        t0 = time.monotonic()
-        proc = subprocess.run(
-            build_cmd, capture_output=True, text=True,
-            timeout=TIMEOUT_SECONDS, cwd=work_dir, env=env,
-        )
-        result.compile_s = time.monotonic() - t0
-
-        if proc.returncode != 0:
-            result.error = "verilator build failed"
-            return result
-
-        binary = os.path.join(work_dir, "obj_dir", f"V{top}")
-        if not os.path.isfile(binary):
-            result.error = f"binary not found: {binary}"
-            return result
-
-        result.binary_kb = round(Path(binary).stat().st_size / 1024)
-        sim_time, sim_err, _, _ = time_binary(binary)
-        result.sim_s = sim_time
-        if sim_err:
-            result.error = sim_err
-        result.wall_s = result.compile_s + result.sim_s
-        result.rss_max_mb = round(get_rss_children_kb() / 1024, 1)
-
-    except subprocess.TimeoutExpired:
-        result.error = "TIMEOUT"
-    except Exception as e:
-        result.error = str(e)
-
+    amount, run, history = converge(
+        lambda n: run_process([str(binary), f"+work={n}"]), target)
+    record_measurement(result, amount, run, history)
     return result
 
 
-def _first_error(stderr: str | None) -> str:
-    for line in (stderr or "").splitlines():
-        if "error" in line.lower():
-            return line.strip()
+def measure_build_case(
+    case: Case, tool: Tool, result: Result, root: str, target: float,
+) -> Result:
+    """Raise the design's size until building it reaches the target.
+
+    A case whose subject is the build has no runtime amount to vary: its work
+    is the design, so the amount is a parameter the design is elaborated with
+    and every probe is a fresh build in a directory nothing has built in.
+    """
+    builds: list[str] = []
+
+    def build_at(amount: int) -> ProcessRun:
+        work = os.path.join(root, f"build-{len(builds)}")
+        os.makedirs(work, exist_ok=True)
+        builds.append(work)
+        return run_process(
+            tool.build(case, work, amount), cwd=work, env=tool.env)
+
+    amount, build, history = converge(build_at, target)
+    result.build_s = build.elapsed_s
+
+    if not record_build_failure(result, build, tool):
+        return result
+
+    binary = tool.binary(builds[-1])
+    if not binary.is_file():
+        result.status = STATUS_ERROR
+        result.detail = f"the build produced no {binary.name}"
+        return result
+    result.binary_kb = round(binary.stat().st_size / 1024)
+
+    # The artifact is run once, not timed: a build case earns its number from
+    # the build, and running it is what says the build produced something real.
+    proof = run_process([str(binary), "+work=1"])
+    if proof.returncode != 0:
+        result.status = STATUS_ERROR
+        result.detail = (
+            first_error_line(proof) or f"exit code {proof.returncode}")
+        return result
+
+    record_measurement(result, amount, build, history)
+    return result
+
+
+def record_build_failure(
+    result: Result, build: ProcessRun, tool: Tool,
+) -> bool:
+    """Record why a build failed. Returns True when it did not."""
+    if build.timed_out:
+        result.status = STATUS_ERROR
+        result.detail = f"build timed out after {TIMEOUT_SECONDS}s"
+        return False
+    if build.returncode != 0:
+        refused = (
+            tool.unsupported_marker != ""
+            and tool.unsupported_marker in build.stderr)
+        result.status = STATUS_UNSUPPORTED if refused else STATUS_ERROR
+        result.detail = (
+            first_error_line(build) or f"build exit code {build.returncode}")
+        return False
+    return True
+
+
+def record_measurement(
+    result: Result, amount: int, run: ProcessRun,
+    history: list[tuple[int, float]],
+) -> None:
+    result.probes = len(history)
+    if run.timed_out:
+        result.status = STATUS_ERROR
+        result.detail = f"timed out after {TIMEOUT_SECONDS}s"
+        return
+    if run.returncode != 0:
+        result.status = STATUS_ERROR
+        result.detail = first_error_line(run) or f"exit code {run.returncode}"
+        return
+    result.work = amount
+    result.seconds = run.elapsed_s
+    result.rate = marginal_rate(history)
+
+
+def first_error_line(run: ProcessRun) -> str:
+    for text in (run.stderr, run.stdout):
+        for line in text.splitlines():
+            if "error" in line.lower() or "unsupported" in line.lower():
+                return line.strip()
     return ""
 
 
-def run_one_trial(
-    lyra: str, fixture: Fixture, params: dict,
-    backend: str, tmpdir: str, trial_idx: int,
-) -> BenchResult:
-    tag = f"{fixture.name}-{backend}-{trial_idx}"
-    stats_path = os.path.join(tmpdir, f"{tag}.json")
-
-    if backend == "jit":
-        return run_lyra_jit(lyra, fixture, params, stats_path)
-    elif backend in ("aot", "aot-two-state"):
-        two_state = backend == "aot-two-state"
-        aot_out = os.path.join(tmpdir, tag)
-        os.makedirs(aot_out, exist_ok=True)
-        return run_lyra_aot(
-            lyra, fixture, params, stats_path, aot_out, two_state)
-    elif backend == "verilator":
-        ver_dir = os.path.join(tmpdir, tag)
-        os.makedirs(ver_dir, exist_ok=True)
-        return run_verilator(fixture, params, ver_dir)
-    else:
-        result = make_result(fixture, backend, params)
-        result.error = f"unknown backend: {backend}"
-        return result
+def lyra_tool(lyra: str) -> Tool:
+    return Tool(
+        name="lyra",
+        build=lambda case, out, amount: lyra_build_command(
+            lyra, case, out, amount),
+        binary=lambda out: Path(out) / BINARY_NAME,
+        unsupported_marker=UNSUPPORTED_MARKER,
+    )
 
 
-def pick_median_trial(trials: list[BenchResult]) -> BenchResult:
-    valid = [t for t in trials if not t.error]
-    if not valid:
-        return trials[0]
-    valid.sort(key=lambda t: t.wall_s)
-    return valid[len(valid) // 2]
+def verilator_tool(verilator: str) -> Tool:
+    # Verilator's own build is what is being timed, so the compiler cache is
+    # kept out of it.
+    env = os.environ.copy()
+    env["CCACHE_DISABLE"] = "1"
+    return Tool(
+        name="verilator",
+        build=lambda case, out, amount: verilator_build_command(
+            verilator, case, amount),
+        binary=lambda out: Path(out) / "obj_dir" / f"V{CASE_TOP}",
+        env=env,
+    )
 
 
-def run_fixture_backend(
-    lyra: str, fixture: Fixture, params: dict,
-    backend: str, num_trials: int, tmpdir: str,
-) -> BenchResult:
-    trials = []
-    for trial_idx in range(num_trials):
-        r = run_one_trial(
-            lyra, fixture, params, backend, tmpdir, trial_idx)
-        trials.append(r)
-        if r.error:
-            break
-    return pick_median_trial(trials)
+def measure(case: Case, tool: Tool, tmpdir: str, target: float) -> Result:
+    result = Result(
+        case=case.name,
+        family=case.family,
+        measure=case.measure,
+        work_unit=case.work_unit,
+        tool=tool.name,
+    )
+    root = os.path.join(tmpdir, f"{case.name}-{tool.name}")
+    os.makedirs(root, exist_ok=True)
+
+    if case.measure == MEASURE_BUILD:
+        return measure_build_case(
+            case, tool, result, root, BUILD_TARGET_SECONDS)
+    return measure_run_case(case, tool, result, root, target)
+
+
+def fmt_rate(rate: float) -> str:
+    if rate <= 0.0:
+        return "-"
+    if rate < 10.0:
+        return f"{rate:.3g}"
+    return f"{round(rate):,}"
+
+
+def fmt_factor(factor: float) -> str:
+    if factor >= 10.0:
+        return f"{round(factor):,}x"
+    return f"{factor:.1f}x"
+
+
+def fmt_comparison(lyra_rate: float, other_rate: float) -> str:
+    if lyra_rate <= 0.0 or other_rate <= 0.0:
+        return "-"
+    if lyra_rate >= other_rate * 1.2:
+        return f"{fmt_factor(lyra_rate / other_rate)} faster"
+    if other_rate >= lyra_rate * 1.2:
+        return f"{fmt_factor(other_rate / lyra_rate)} slower"
+    return "~1x"
 
 
 def get_git_sha() -> str:
     try:
         return subprocess.run(
             ["git", "rev-parse", "--short", "HEAD"],
-            capture_output=True, text=True,
+            capture_output=True, text=True, cwd=REPO_ROOT,
         ).stdout.strip()
-    except Exception:
+    except OSError:
         return "unknown"
 
 
-def fmt_time(val: float) -> str:
-    if val == 0.0:
-        return "-"
-    return f"{int(round(val * 1000)):,}"
-
-
-def fmt_int(val: int) -> str:
-    if val == 0:
-        return "-"
-    return f"{val:,}"
-
-
-def _fmt_factor(factor: float) -> str:
-    """Format a ratio factor: one decimal below 10, integer at 10+."""
-    if factor >= 10.0:
-        return f"{round(factor)}x"
-    return f"{factor:.1f}x"
-
-
-def fmt_ratio(lyra_s: float, ver_s: float) -> str:
-    """Format a Lyra-vs-Verilator ratio as a human-readable string."""
-    if lyra_s <= 0.0 or ver_s <= 0.0:
-        return "-"
-    ratio = lyra_s / ver_s
-    if ratio <= 1.0 / 1.2:
-        factor = ver_s / lyra_s
-        return f"{_fmt_factor(factor)} faster"
-    if ratio >= 1.2:
-        return f"{_fmt_factor(ratio)} slower"
-    return "~1x"
-
-
-def group_fixture_backends(
-    results: list[BenchResult],
-) -> dict[str, dict[str, BenchResult]]:
-    """Group results into {fixture: {backend: result}}."""
-    grouped: dict[str, dict[str, BenchResult]] = {}
+def print_report(results: list[Result], target: float) -> None:
+    by_case: dict[str, dict[str, Result]] = {}
+    order: list[tuple[str, str]] = []
     for r in results:
-        grouped.setdefault(r.fixture, {})[r.backend] = r
-    return grouped
-
-
-def print_runtime_table(
-    fixture_names: list[str],
-    by_fixture: dict[str, dict[str, BenchResult]],
-) -> None:
-    """Print a runtime sim_s table for a group of fixtures."""
-    print(
-        "| Fixture | Lyra 4s (ms) "
-        "| Lyra 2s (ms) | Verilator (ms) "
-        "| vs Verilator |")
-    print(
-        "|---------|-------------:"
-        "|-------------:|---------------:"
-        "|:-------------|")
-
-    for name in fixture_names:
-        backends = by_fixture.get(name, {})
-        aot = backends.get("aot")
-        aot_2s = backends.get("aot-two-state")
-        ver = backends.get("verilator")
-
-        aot_sim = (
-            fmt_time(aot.sim_s) if aot and not aot.error
-            else "FAIL" if aot else "-")
-        aot_2s_sim = (
-            fmt_time(aot_2s.sim_s) if aot_2s and not aot_2s.error
-            else "FAIL" if aot_2s else "-")
-        ver_sim = (
-            fmt_time(ver.sim_s) if ver and not ver.error
-            else "FAIL" if ver else "-")
-
-        lyra_2s_s = (
-            aot_2s.sim_s if aot_2s and not aot_2s.error else 0.0)
-        ver_s = ver.sim_s if ver and not ver.error else 0.0
-        ratio = fmt_ratio(lyra_2s_s, ver_s)
-
-        print(
-            f"| {name} | {aot_sim} | {aot_2s_sim} "
-            f"| {ver_sim} | {ratio} |")
-
-
-def print_compile_table(
-    fixture_names: list[str],
-    by_fixture: dict[str, dict[str, BenchResult]],
-) -> None:
-    """Print a compile-focused table for a group of fixtures."""
-    print(
-        "| Fixture | AOT (ms) "
-        "| JIT (ms) | Verilator (ms) "
-        "| vs Verilator "
-        "| LLVM insts | Binary (KB) |")
-    print(
-        "|---------|--------:"
-        "|--------:|---------------:"
-        "|:-------------|"
-        "-----------:|------------:|")
-
-    for name in fixture_names:
-        backends = by_fixture.get(name, {})
-        aot = backends.get("aot")
-        jit = backends.get("jit")
-        ver = backends.get("verilator")
-
-        aot_c = (
-            fmt_time(aot.compile_s) if aot and not aot.error
-            else "FAIL" if aot else "-")
-        jit_c = (
-            fmt_time(jit.compile_s) if jit and not jit.error
-            else "FAIL" if jit else "-")
-        ver_c = (
-            fmt_time(ver.compile_s) if ver and not ver.error
-            else "FAIL" if ver else "-")
-
-        aot_s = aot.compile_s if aot and not aot.error else 0.0
-        ver_s = ver.compile_s if ver and not ver.error else 0.0
-        ratio = fmt_ratio(aot_s, ver_s)
-
-        llvm = (
-            fmt_int(aot.llvm_insts) if aot and not aot.error
-            else "-")
-        binary = (
-            fmt_int(aot.binary_kb) if aot and not aot.error
-            else "-")
-
-        print(
-            f"| {name} | {aot_c} | {jit_c} | {ver_c} "
-            f"| {ratio} | {llvm} | {binary} |")
-
-
-def build_grouped_fixtures(
-    results: list[BenchResult],
-) -> dict[tuple[str, str | None], list[str]]:
-    """Group fixture names by (category, subcategory) in stable order."""
-    groups: dict[tuple[str, str | None], list[str]] = {}
-    seen: set[str] = set()
-    for r in sorted(
-        results,
-        key=lambda r: (r.category, r.subcategory or "", r.fixture),
-    ):
-        if r.fixture in seen:
-            continue
-        seen.add(r.fixture)
-        key = (r.category, r.subcategory)
-        groups.setdefault(key, []).append(r.fixture)
-    return groups
-
-
-def print_markdown(
-    results: list[BenchResult], num_trials: int, tier: str, profile: str,
-    num_discovered: int, num_runnable: int,
-    skipped: list[tuple[str, str]],
-) -> None:
-    trial_note = f"{num_trials} (median)" if num_trials > 1 else "1"
-    by_fixture = group_fixture_backends(results)
-
-    _KNOWN_FOCUS = {"runtime", "compile"}
-    unknown_focus = {r.focus for r in results} - _KNOWN_FOCUS
-    if unknown_focus:
-        print(
-            f"ERROR: unknown focus values: {unknown_focus}",
-            file=sys.stderr,
-        )
-        sys.exit(1)
-
-    runtime_results = [r for r in results if r.focus == "runtime"]
-    compile_results = [r for r in results if r.focus == "compile"]
+        if r.case not in by_case:
+            order.append((r.family, r.case))
+        by_case.setdefault(r.case, {})[r.tool] = r
 
     print()
     print("## Lyra Benchmark Report")
     print()
+    print(f"> git: `{get_git_sha()}` | target: {target:g}s per measurement")
     print(
-        f"> git: `{get_git_sha()}` | tier: {tier} | "
-        f"profile: {profile} | trials: {trial_note}")
-    print(
-        f"> discovered: {num_discovered} | "
-        f"runnable: {num_runnable} | "
-        f"skipped: ", end="")
-    if skipped:
-        skip_items = [f"{name} ({reason})" for name, reason in skipped]
-        print(", ".join(skip_items))
-    else:
-        print("none")
+        "> Each tool is given the amount of work it needs to reach that "
+        "target, so a rate is comparable across tools, machines, and runs.")
 
-    if runtime_results:
+    families: dict[str, list[str]] = {}
+    for family, case in sorted(order):
+        families.setdefault(family, []).append(case)
+
+    for family, cases in families.items():
         print()
-        print("# Runtime Benchmarks")
-
-        runtime_groups = build_grouped_fixtures(runtime_results)
-
-        # Collect all fixtures per category into a flat list.
-        cat_fixtures: dict[str, list[str]] = {}
-        for (category, _subcategory), fixtures in runtime_groups.items():
-            cat_fixtures.setdefault(category, []).extend(fixtures)
-
-        for category in cat_fixtures:
-            print()
-            print(f"## {category}")
-            print()
-            print_runtime_table(cat_fixtures[category], by_fixture)
-
-    if compile_results:
+        print(f"## {family}")
         print()
-        print("# Compile Benchmarks")
+        print(
+            "| Case | Unit | Lyra /s | Verilator /s | vs Verilator "
+            "| Lyra work | Binary (KB) |")
+        print(
+            "|------|------|--------:|-------------:|:-------------"
+            "|----------:|------------:|")
+        for name in cases:
+            tools = by_case[name]
+            lyra = tools.get("lyra")
+            ver = tools.get("verilator")
+            lyra_ok = lyra is not None and lyra.status == STATUS_OK
+            ver_ok = ver is not None and ver.status == STATUS_OK
+            lyra_rate = lyra.rate if lyra_ok else 0.0
+            ver_rate = ver.rate if ver_ok else 0.0
+            unit = lyra.work_unit if lyra else ""
+            work = f"{lyra.work:,}" if lyra_ok else "-"
+            binary = f"{lyra.binary_kb:,}" if lyra_ok else "-"
+            print(
+                f"| {name} | {unit} | {fmt_rate(lyra_rate)} "
+                f"| {fmt_rate(ver_rate)} "
+                f"| {fmt_comparison(lyra_rate, ver_rate)} "
+                f"| {work} | {binary} |")
 
-        compile_groups = build_grouped_fixtures(compile_results)
-        current_category = ""
-
-        for (category, subcategory), fixtures in compile_groups.items():
-            if category != current_category:
-                print()
-                print(f"## {category}")
-                current_category = category
-
-            if subcategory:
-                print()
-                print(f"### {subcategory}")
-
-            print()
-            print_compile_table(fixtures, by_fixture)
-
-    errors = [r for r in results if r.error and r.error != "verilator not found"]
-    if errors:
+    for status, heading in (
+        (STATUS_UNSUPPORTED, "Not measured"),
+        (STATUS_ERROR, "Errors"),
+    ):
+        rows = [r for r in results if r.status == status]
+        if not rows:
+            continue
         print()
-        print("### Errors")
+        print(f"### {heading}")
         print()
-        for r in errors:
-            print(f"- **{r.fixture}/{r.backend}**: {r.error}")
+        for r in rows:
+            print(f"- **{r.case}/{r.tool}**: {r.detail}")
 
     print()
 
 
-def result_to_dict(r: BenchResult) -> dict:
+def result_to_dict(r: Result) -> dict:
     return {
-        "fixture": r.fixture,
-        "category": r.category,
-        "subcategory": r.subcategory,
-        "intent": r.intent,
-        "focus": r.focus,
-        "primary": r.primary,
-        "secondary": list(r.secondary),
-        "backend": r.backend,
-        "compile_s": r.compile_s,
-        "sim_s": r.sim_s,
-        "wall_s": r.wall_s,
-        "llvm_insts": r.llvm_insts,
-        "mir_stmts": r.mir_stmts,
+        "case": r.case,
+        "family": r.family,
+        "measure": r.measure,
+        "work_unit": r.work_unit,
+        "tool": r.tool,
+        "status": r.status,
+        "work": r.work,
+        "seconds": r.seconds,
+        "rate": r.rate,
+        "build_s": r.build_s,
         "binary_kb": r.binary_kb,
-        "rss_max_mb": r.rss_max_mb,
-        "params": r.params,
-        "phases": r.phases,
-        "counters": r.counters,
-        "error": r.error,
+        "probes": r.probes,
+        "detail": r.detail,
     }
 
 
-def write_json(
-    results: list[BenchResult], path: str, tier: str, profile: str,
-) -> None:
+def write_json(results: list[Result], path: str, target: float) -> None:
     data = {
-        "schema_version": 3,
+        "schema_version": 5,
         "git": get_git_sha(),
-        "tier": tier,
-        "profile": profile,
+        "target_seconds": target,
         "timestamp": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
         "results": [result_to_dict(r) for r in results],
     }
@@ -934,92 +645,54 @@ def write_json(
 
 
 def main() -> None:
-    tier_configs = load_config()
-
-    parser = argparse.ArgumentParser(description="Lyra performance benchmarks")
+    parser = argparse.ArgumentParser(description="Lyra benchmarks")
+    parser.add_argument("--json", default=None, help="Write results here")
     parser.add_argument(
-        "--json", default=None, help="Write JSON results to this path")
+        "--filter", default=None,
+        help="Run only cases whose name contains this substring")
     parser.add_argument(
-        "--trials", type=int, default=None, help="Override number of trials")
-    parser.add_argument(
-        "--tier", choices=sorted(tier_configs.keys()), default="nightly",
-        help="Benchmark tier (default: nightly)")
-    parser.add_argument(
-        "--ci", action="store_true",
-        help="CI mode: print results to GitHub step summary")
+        "--seconds", type=float, default=DEFAULT_TARGET_SECONDS,
+        help="Target duration of one measurement")
     args = parser.parse_args()
 
     lyra = str(REPO_ROOT / "bazel-bin" / "lyra")
-
     if not os.path.isfile(lyra):
         print(f"Error: lyra binary not found at {lyra}", file=sys.stderr)
         sys.exit(1)
 
-    # Discover fixtures
-    all_fixtures = discover_fixtures(FIXTURES_ROOT)
-    if not all_fixtures:
-        print("Error: no fixtures found", file=sys.stderr)
+    cases = discover_cases(CORPUS_ROOT)
+    if args.filter:
+        cases = [c for c in cases if args.filter in c.name]
+    if not cases:
+        print("Error: no cases found", file=sys.stderr)
         sys.exit(1)
 
-    # Resolve tier config
-    tier_name = args.tier
-    tier_cfg = tier_configs[tier_name]
-    profile = tier_cfg.profile
-    num_trials = (
-        args.trials if args.trials is not None
-        else tier_cfg.trials)
+    tools = [lyra_tool(lyra)]
+    verilator = shutil.which("verilator")
+    if verilator:
+        tools.append(verilator_tool(verilator))
+    else:
+        print("verilator not on PATH; Lyra only", file=sys.stderr)
 
-    # Filter fixtures by profile availability
-    runnable: list[tuple[Fixture, dict]] = []
-    skipped: list[tuple[str, str]] = []
+    print(f"Running {len(cases)} cases", file=sys.stderr)
 
-    for fixture in all_fixtures:
-        params = resolve_fixture_params(fixture, profile)
-        if params is not None:
-            runnable.append((fixture, params))
-        else:
-            skipped.append((fixture.name, f"no '{profile}' profile"))
-
-    num_discovered = len(all_fixtures)
-    num_runnable = len(runnable)
-
-    if not runnable:
-        print(
-            f"Error: no fixtures runnable for tier '{tier_name}' "
-            f"(profile: {profile})", file=sys.stderr)
-        sys.exit(1)
-
-    # Print discovery summary
-    print(
-        f"Discovered {num_discovered} fixtures, "
-        f"{num_runnable} runnable for tier '{tier_name}' "
-        f"(profile: {profile})", file=sys.stderr)
-    if skipped:
-        skip_items = [f"{name} ({reason})" for name, reason in skipped]
-        print(f"  Skipped: {', '.join(skip_items)}", file=sys.stderr)
-
-    all_results: list[BenchResult] = []
-    has_failure = False
-
+    results: list[Result] = []
     with tempfile.TemporaryDirectory(prefix="lyra-bench-") as tmpdir:
-        for fixture, params in runnable:
-            for backend in BACKENDS:
-                r = run_fixture_backend(
-                    lyra, fixture, params,
-                    backend, num_trials, tmpdir)
-                all_results.append(r)
-                if r.error and r.error != "verilator not found":
-                    has_failure = True
+        for case in cases:
+            for tool in tools:
+                print(f"  {case.path}/{tool.name}", end="", flush=True,
+                      file=sys.stderr)
+                r = measure(case, tool, tmpdir, args.seconds)
+                results.append(r)
+                print(f" -> {r.status}", file=sys.stderr)
 
-    print_markdown(
-        all_results, num_trials, tier_name, profile,
-        num_discovered, num_runnable, skipped)
+    print_report(results, args.seconds)
 
     if args.json:
-        write_json(all_results, args.json, tier_name, profile)
+        write_json(results, args.json, args.seconds)
         print(f"JSON written to {args.json}", file=sys.stderr)
 
-    if has_failure:
+    if any(r.status == STATUS_ERROR for r in results):
         sys.exit(1)
 
 
