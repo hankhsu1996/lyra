@@ -86,6 +86,13 @@ class NamedEvent {
     return EventAwaitable{event_};
   }
 
+  // Parks `waiter` for the next trigger. A target whose suspension is not a
+  // language-level await enrols here directly, and leaves the event holding the
+  // same waiter set a suspending frame would.
+  void AddWaiter(CoroutineHandle waiter) {
+    event_.AddWaiter(waiter);
+  }
+
   // LRM 15.5.3: `e.triggered` is true iff the most recent trigger happened
   // in the current simulation time step. No mutation, no clearing -- the
   // answer is a timestamp comparison.

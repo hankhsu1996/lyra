@@ -42,9 +42,11 @@ enum class UnaryOp : std::uint8_t {
   kDecrement,
 };
 
-// The operator's stable spelling. It names the operator in a dump and forms the
-// suffix of the runtime-library entry a value domain realizes it with, so the
-// two can never drift apart.
+// The operator's stable spelling. This is an interface contract, not a display
+// string: it names the operator in a dump, and it is the operation half of the
+// runtime-library symbol a generated module calls, so changing it renames a
+// linked symbol. Change it only to correct the operator's identity, never to
+// improve how a dump reads.
 auto BinaryOpName(BinaryOp op) -> std::string_view;
 auto UnaryOpName(UnaryOp op) -> std::string_view;
 

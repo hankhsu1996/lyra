@@ -26,8 +26,7 @@ CodeGenModule::CodeGenModule(const lir::CompilationUnit& unit)
     : context_(std::make_unique<llvm::LLVMContext>()),
       module_(std::make_unique<llvm::Module>("lyra", *context_)),
       unit_(&unit),
-      types_(*context_, unit),
-      runtime_abi_(*module_, *context_, types_) {
+      types_(*context_, unit) {
 }
 
 auto CodeGenModule::Run() -> diag::Result<EmittedModule> {

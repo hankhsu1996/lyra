@@ -95,17 +95,6 @@ Rules:
         is not this rule.
         Scope: src/lyra/backend/**, the type-mapping entry excepted.
 
-  A016  Every runtime ABI entry is declared, defined, and bound into the
-        execution session, and the compiler checks only the first two against
-        each other. An entry the session never binds still resolves while the
-        program runs inside this process, because the session falls back to
-        the host process's own exported symbols -- so the omission is
-        invisible until a backend runs the module somewhere else. This rule
-        is the third side: the declared set and the bound set must match
-        exactly.
-        Scope: include/lyra/runtime/jit_execution.hpp,
-               src/lyra/jit/executor.cpp.
-
 When a rule fires, the printed message includes a fixed reminder that the
 fix is to change the ownership boundary, NOT to rename the function.
 
@@ -601,32 +590,6 @@ def check_a015(repo_root: Path) -> list[str]:
     return errors
 
 
-# Rule A016
-ABI_HEADER = "include/lyra/runtime/jit_execution.hpp"
-ABI_BINDER = "src/lyra/jit/executor.cpp"
-ABI_DECLARATION_PATTERN = re.compile(
-    r"^(?:auto|void)\s+(lyra_rt_[a-z0-9_]+)\s*\(", re.M
-)
-ABI_BINDING_PATTERN = re.compile(r'add\(\s*"(lyra_rt_[a-z0-9_]+)"')
-
-
-def check_a016(repo_root: Path) -> list[str]:
-    declared = set(
-        ABI_DECLARATION_PATTERN.findall((repo_root / ABI_HEADER).read_text())
-    )
-    bound = set(
-        ABI_BINDING_PATTERN.findall((repo_root / ABI_BINDER).read_text())
-    )
-    return [
-        f"  {ABI_BINDER}: A016 '{name}' is declared but never bound; the "
-        f"session resolves it only by falling back to this process"
-        for name in sorted(declared - bound)
-    ] + [
-        f"  {ABI_HEADER}: A016 '{name}' is bound but declared nowhere here"
-        for name in sorted(bound - declared)
-    ]
-
-
 # Self-tests
 def run_self_tests() -> bool:
     def expect(cond, msg):
@@ -932,29 +895,6 @@ def run_self_tests() -> bool:
             "  return RenderTypeAsCpp(unit, id) + \"::Concat\";"),
         "A015 a mapped type reached into is not a literal")
 
-    # A016
-    ok &= expect(
-        ABI_DECLARATION_PATTERN.findall(
-            "auto lyra_rt_dynarray_new(const void* size) -> void*;") ==
-        ["lyra_rt_dynarray_new"],
-        "A016 declaration")
-    ok &= expect(
-        ABI_DECLARATION_PATTERN.findall(
-            "void lyra_rt_cell_packed_set(void* cell);") ==
-        ["lyra_rt_cell_packed_set"],
-        "A016 void declaration")
-    ok &= expect(
-        not ABI_DECLARATION_PATTERN.findall("  const void* size, void* p)"),
-        "A016 a continuation line declares nothing")
-    ok &= expect(
-        ABI_BINDING_PATTERN.findall(
-            '  add("lyra_rt_dynarray_new", &lyra_rt_dynarray_new);') ==
-        ["lyra_rt_dynarray_new"],
-        "A016 binding")
-    ok &= expect(
-        not ABI_BINDING_PATTERN.findall(
-            "  auto lyra_rt_dynarray_new(void* p) -> void*;"),
-        "A016 a declaration is not a binding")
 
     return ok
 
@@ -977,7 +917,6 @@ CHECKS = [
     ("A013 closed alternative set nothing switches on", check_a013),
     ("A014 DiagCode without a registry entry", check_a014),
     ("A015 backend names a runtime library type", check_a015),
-    ("A016 runtime ABI entry declared but not bound", check_a016),
 ]
 
 

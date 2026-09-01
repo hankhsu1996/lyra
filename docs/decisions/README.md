@@ -198,6 +198,11 @@ the detail lives in the entry itself.
   the transient values one generated entry creates -- the JIT counterpart of C++ stack/RAII.
   Physical-layout / in-frame value lowering is a later optimization, not a correctness prerequisite;
   cross-suspension and managed-value lifetime is out of scope for the call scope.
+- [runtime-entry-naming](runtime-entry-naming.md) -- a runtime entry is named by the operation it
+  performs and typed by the call that reaches it, so neither its symbol nor its signature is written
+  down a second time; the symbol has one form, what the library does not realize is stated per
+  builtin rather than inferred from a call, an overload set is two identities rather than one arity,
+  and a check holds the prototype, the definition, and the binding to each other.
 - [jit-process-suspension](jit-process-suspension.md) -- coroutine-ness is the callable's result
   type, a suspension is a generic LIR control edge whose wakeup is registered by preceding runtime
   calls, and the LLVM backend states where a body suspends while LLVM's coroutine passes derive the

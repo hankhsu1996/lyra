@@ -1,0 +1,501 @@
+#include "lyra/backend/llvm/runtime_entry.hpp"
+
+#include <format>
+#include <optional>
+#include <string>
+#include <string_view>
+#include <variant>
+
+#include "lyra/base/internal_error.hpp"
+#include "lyra/base/overloaded.hpp"
+#include "lyra/lir/compilation_unit.hpp"
+#include "lyra/lir/operator.hpp"
+#include "lyra/lir/type.hpp"
+#include "lyra/lir/type_id.hpp"
+#include "lyra/support/builtin_fn.hpp"
+#include "lyra/support/value_domain.hpp"
+
+namespace lyra::backend::llvm_backend {
+
+namespace {
+
+auto Symbol(std::string_view operation) -> std::string {
+  return std::format("lyra_rt_{}", operation);
+}
+
+auto Symbol(support::ValueDomain domain, std::string_view operation)
+    -> std::string {
+  return std::format(
+      "lyra_rt_{}_{}", support::ValueDomainName(domain), operation);
+}
+
+}  // namespace
+
+auto DeclaredIndexType(const lir::CompilationUnit& unit, lir::TypeId container)
+    -> std::optional<lir::TypeId> {
+  const auto* associative =
+      std::get_if<lir::AssociativeArrayType>(&unit.types.Get(container).data);
+  if (associative == nullptr) {
+    return std::nullopt;
+  }
+  return associative->key_type;
+}
+
+auto RuntimeOpName(RuntimeOp op) -> std::string_view {
+  switch (op) {
+    case RuntimeOp::kCellInitialize:
+      return "cell_initialize";
+    case RuntimeOp::kCellGet:
+      return "cell_get";
+    case RuntimeOp::kCellSet:
+      return "cell_set";
+    case RuntimeOp::kMemberAddress:
+      return "member_addr";
+    case RuntimeOp::kClosureMake:
+      return "closure_make";
+    case RuntimeOp::kClosureCapture:
+      return "closure_capture";
+    case RuntimeOp::kConst:
+      return "const";
+    case RuntimeOp::kToBool:
+      return "to_bool";
+    case RuntimeOp::kValueBox:
+      return "value_box";
+    case RuntimeOp::kMake:
+      return "make";
+    case RuntimeOp::kExtract:
+      return "extract";
+    case RuntimeOp::kUpdate:
+      return "update";
+    case RuntimeOp::kWithElement:
+      return "with_element";
+    case RuntimeOp::kWithSlice:
+      return "with_slice";
+    case RuntimeOp::kDefault:
+      return "default";
+    case RuntimeOp::kDefaultBounded:
+      return "default_bounded";
+    case RuntimeOp::kFromLiteral:
+      return "from_literal";
+    case RuntimeOp::kFromLiteralBounded:
+      return "from_literal_bounded";
+    case RuntimeOp::kFromEntries:
+      return "from_entries";
+    case RuntimeOp::kFromEntriesDefault:
+      return "from_entries_default";
+    case RuntimeOp::kMakeCoroutine:
+      return "make_coroutine";
+    case RuntimeOp::kMakeScope:
+      return "make_scope";
+    case RuntimeOp::kMakeSegment:
+      return "make_segment";
+    case RuntimeOp::kMakeTrigger:
+      return "make_trigger";
+    case RuntimeOp::kMakePackedRange:
+      return "make_packed_range";
+    case RuntimeOp::kMakePackedType:
+      return "make_packed_type";
+    case RuntimeOp::kMakePrintLiteralItem:
+      return "make_print_literal_item";
+    case RuntimeOp::kMakePrintValueItem:
+      return "make_print_value_item";
+    case RuntimeOp::kMakeFormatSpec:
+      return "make_format_spec";
+    case RuntimeOp::kMakeFormatSpecOfKind:
+      return "make_format_spec_of_kind";
+  }
+  throw InternalError("llvm codegen: unknown runtime operation");
+}
+
+auto ValueDomainOf(const lir::CompilationUnit& unit, lir::TypeId type)
+    -> std::optional<support::ValueDomain> {
+  using Domain = std::optional<support::ValueDomain>;
+  return std::visit(
+      Overloaded{
+          [](const lir::PackedArrayType&) -> Domain {
+            return support::ValueDomain::kPacked;
+          },
+          // An enumeration is a packed value at runtime; only its own entries,
+          // which read its declared members, need more than that.
+          [](const lir::EnumType&) -> Domain {
+            return support::ValueDomain::kPacked;
+          },
+          [](const lir::StringType&) -> Domain {
+            return support::ValueDomain::kString;
+          },
+          // `real` and `realtime` are one host-precision value (LRM 6.12.1);
+          // `shortreal` is the single-precision one.
+          [](const lir::RealType&) -> Domain {
+            return support::ValueDomain::kReal;
+          },
+          [](const lir::RealTimeType&) -> Domain {
+            return support::ValueDomain::kReal;
+          },
+          [](const lir::ShortRealType&) -> Domain {
+            return support::ValueDomain::kShortReal;
+          },
+          // A chandle (LRM 6.14) is a pointer-sized value carried inline: the
+          // domain's handle is the chandle value itself, not a reference to a
+          // runtime-owned value object.
+          [](const lir::ChandleType&) -> Domain {
+            return support::ValueDomain::kChandle;
+          },
+          // An unpacked struct (LRM 7.2) is MIR's product type; its runtime
+          // realization is a type-erased product value carried inline behind an
+          // opaque handle, like every other value domain.
+          [](const lir::TupleType&) -> Domain {
+            return support::ValueDomain::kTuple;
+          },
+          // A dynamic array (LRM 7.5) is MIR's `DynamicArrayType`; its runtime
+          // realization is a type-erased container carried behind an opaque
+          // handle, like every other value domain.
+          [](const lir::DynamicArrayType&) -> Domain {
+            return support::ValueDomain::kDynArray;
+          },
+          // A fixed-size unpacked array (LRM 7.4.2) is MIR's
+          // `UnpackedArrayType`; its runtime realization is a type-erased
+          // container carried behind an opaque handle, like every other value
+          // domain. The declared range is not part of it -- the coordinate
+          // system is the receiver's static type and arrives at a select as an
+          // operand, so the payload is ordinal-only.
+          [](const lir::UnpackedArrayType&) -> Domain {
+            return support::ValueDomain::kUnpackedArray;
+          },
+          // A queue (LRM 7.10) is MIR's `QueueType`; its runtime realization is
+          // a type-erased container carried behind an opaque handle, like every
+          // other value domain. Its declared bound is a fact of the type that
+          // reaches a construction and a store as an operand, so the payload
+          // carries it rather than the domain distinguishing a bounded queue
+          // from an unbounded one.
+          [](const lir::QueueType&) -> Domain {
+            return support::ValueDomain::kQueue;
+          },
+          // An associative array (LRM 7.8) is MIR's `AssociativeArrayType`;
+          // its runtime realization is a type-erased keyed container carried
+          // behind an opaque handle. Its index type is not part of the domain:
+          // an index reaches every operation as a value of its own, and the
+          // order two indices sit in is read from the indices themselves.
+          [](const lir::AssociativeArrayType&) -> Domain {
+            return support::ValueDomain::kAssocArray;
+          },
+          [](const auto&) -> Domain { return std::nullopt; }},
+      unit.types.Get(type).data);
+}
+
+auto RuntimeSymbol(RuntimeOp op) -> std::string {
+  return Symbol(RuntimeOpName(op));
+}
+
+auto RuntimeSymbol(support::ValueDomain domain, RuntimeOp op) -> std::string {
+  return Symbol(domain, RuntimeOpName(op));
+}
+
+auto RuntimeSymbol(support::ValueDomain domain, lir::BinaryOp op)
+    -> std::string {
+  return Symbol(domain, lir::BinaryOpName(op));
+}
+
+auto RuntimeSymbol(support::ValueDomain domain, lir::UnaryOp op)
+    -> std::string {
+  return Symbol(domain, lir::UnaryOpName(op));
+}
+
+auto RuntimeSymbol(lir::ControlEffectTarget::Op op) -> std::string {
+  return Symbol(lir::ControlEffectOpName(op));
+}
+
+auto RuntimeSymbol(
+    support::ValueDomain domain, lir::ActivationFrameTarget::Op op)
+    -> std::string {
+  return Symbol(domain, lir::ActivationFrameOpName(op));
+}
+
+auto RuntimeSymbol(support::BuiltinFn fn) -> std::string {
+  return Symbol(support::BuiltinFnName(fn));
+}
+
+auto RuntimeSymbol(support::ValueDomain domain, support::BuiltinFn fn)
+    -> std::string {
+  return Symbol(domain, support::BuiltinFnName(fn));
+}
+
+auto RuntimeSymbol(
+    support::ValueDomain destination, support::BuiltinFn fn,
+    support::ValueDomain source) -> std::string {
+  return Symbol(
+      destination, std::format(
+                       "{}_{}", support::BuiltinFnName(fn),
+                       support::ValueDomainName(source)));
+}
+
+auto EntryNamingOf(support::BuiltinFn fn) -> EntryNaming {
+  // An array manipulation method (LRM 7.12) runs a body the call supplies, once
+  // per entry. The value library reaches that body only as a template its own
+  // compiler expands, so the whole family waits on an entry taking the body as
+  // a value.
+  constexpr std::string_view kRunsASuppliedBody =
+      "runs a body the call supplies once per entry";
+  // An enumeration's own entries read its declared members, which no library
+  // over the packed representation can answer. They belong to the enumeration's
+  // generated artifact, not to the value domain its representation shares.
+  constexpr std::string_view kReadsDeclaredMembers =
+      "reads an enumeration's declared members";
+  // An entry that reports through an argument rather than as a result varies
+  // with how many arguments there are and what each one is, and the value model
+  // gives the generated side no way to lend one: every operand crosses as a
+  // value the runtime owns.
+  constexpr std::string_view kAssignsToAnArgument =
+      "assigns to an argument the call names";
+  // An unpacked concatenation (LRM 10.10) takes as many parts as the source
+  // wrote, each contributing either itself or its own elements, and no C ABI
+  // names an entry per arity. Reaching the machine needs the parts folded into
+  // a chain of appends, the way a packed join already is.
+  constexpr std::string_view kTakesAsManyPartsAsWritten =
+      "builds a container from as many parts as the source wrote";
+
+  switch (fn) {
+    case support::BuiltinFn::kElement:
+    case support::BuiltinFn::kSlice:
+    case support::BuiltinFn::kRequire:
+    case support::BuiltinFn::kSize:
+    case support::BuiltinFn::kLen:
+    case support::BuiltinFn::kBitstreamWidth:
+    case support::BuiltinFn::kToOwned:
+    case support::BuiltinFn::kDelete:
+    case support::BuiltinFn::kDeleteIndex:
+    case support::BuiltinFn::kAssocFirst:
+    case support::BuiltinFn::kAssocLast:
+    case support::BuiltinFn::kAssocNext:
+    case support::BuiltinFn::kAssocPrev:
+    case support::BuiltinFn::kScanString:
+    case support::BuiltinFn::kScanFile:
+    case support::BuiltinFn::kInsert:
+    case support::BuiltinFn::kPopFront:
+    case support::BuiltinFn::kPopBack:
+    case support::BuiltinFn::kPushFront:
+    case support::BuiltinFn::kPushBack:
+    case support::BuiltinFn::kExists:
+    case support::BuiltinFn::kAssocMinIndex:
+    case support::BuiltinFn::kAssocMaxIndex:
+    case support::BuiltinFn::kGetc:
+    case support::BuiltinFn::kPutc:
+    case support::BuiltinFn::kToupper:
+    case support::BuiltinFn::kTolower:
+    case support::BuiltinFn::kCompare:
+    case support::BuiltinFn::kIcompare:
+    case support::BuiltinFn::kSubstr:
+    case support::BuiltinFn::kAtoi:
+    case support::BuiltinFn::kAtohex:
+    case support::BuiltinFn::kAtooct:
+    case support::BuiltinFn::kAtobin:
+    case support::BuiltinFn::kAtoreal:
+    case support::BuiltinFn::kItoa:
+    case support::BuiltinFn::kHextoa:
+    case support::BuiltinFn::kOcttoa:
+    case support::BuiltinFn::kBintoa:
+    case support::BuiltinFn::kRealtoa:
+    case support::BuiltinFn::kEnumNext:
+    case support::BuiltinFn::kEnumPrev:
+    case support::BuiltinFn::kIsUnknown:
+    case support::BuiltinFn::kCountBits:
+    case support::BuiltinFn::kClog2:
+    case support::BuiltinFn::kLn:
+    case support::BuiltinFn::kLog10:
+    case support::BuiltinFn::kExp:
+    case support::BuiltinFn::kSqrt:
+    case support::BuiltinFn::kFloor:
+    case support::BuiltinFn::kCeil:
+    case support::BuiltinFn::kSin:
+    case support::BuiltinFn::kCos:
+    case support::BuiltinFn::kTan:
+    case support::BuiltinFn::kAsin:
+    case support::BuiltinFn::kAcos:
+    case support::BuiltinFn::kAtan:
+    case support::BuiltinFn::kAtan2:
+    case support::BuiltinFn::kHypot:
+    case support::BuiltinFn::kSinh:
+    case support::BuiltinFn::kCosh:
+    case support::BuiltinFn::kTanh:
+    case support::BuiltinFn::kAsinh:
+    case support::BuiltinFn::kAcosh:
+    case support::BuiltinFn::kAtanh:
+    case support::BuiltinFn::kToInt64:
+    case support::BuiltinFn::kRound:
+    case support::BuiltinFn::kTruncate:
+    case support::BuiltinFn::kToBits:
+    case support::BuiltinFn::kFromBits:
+    case support::BuiltinFn::kRealValue:
+    case support::BuiltinFn::kStringCStr:
+    case support::BuiltinFn::kChandlePtr:
+    case support::BuiltinFn::kToSvLogic:
+    case support::BuiltinFn::kFromSvLogic:
+    case support::BuiltinFn::kReadCanonicalBitVec:
+    case support::BuiltinFn::kReadCanonicalLogicVec:
+    case support::BuiltinFn::kWriteCanonicalBitVec:
+    case support::BuiltinFn::kWriteCanonicalLogicVec:
+    case support::BuiltinFn::kDpiBufferData:
+    case support::BuiltinFn::kDpiOpenArrayHandle:
+    case support::BuiltinFn::kDpiOpenArrayValue:
+    case support::BuiltinFn::kFromInt:
+    case support::BuiltinFn::kFromPackedArray:
+    case support::BuiltinFn::kFromByteArray:
+    case support::BuiltinFn::kFromString:
+    case support::BuiltinFn::kConformBound:
+    case support::BuiltinFn::kConcat:
+    case support::BuiltinFn::kReplicate:
+    case support::BuiltinFn::kPow:
+    case support::BuiltinFn::kShiftLeft:
+    case support::BuiltinFn::kLogicalShiftRight:
+    case support::BuiltinFn::kArithmeticShiftRight:
+    case support::BuiltinFn::kBitwiseXnor:
+    case support::BuiltinFn::kLogicalImplication:
+    case support::BuiltinFn::kLogicalEquivalence:
+    case support::BuiltinFn::kWildcardEquals:
+    case support::BuiltinFn::kCaseEqual:
+    case support::BuiltinFn::kCasezEquals:
+    case support::BuiltinFn::kCasexEquals:
+    case support::BuiltinFn::kMergeConditional:
+    case support::BuiltinFn::kReductionAnd:
+    case support::BuiltinFn::kReductionOr:
+    case support::BuiltinFn::kReductionXor:
+    case support::BuiltinFn::kReductionNand:
+    case support::BuiltinFn::kReductionNor:
+    case support::BuiltinFn::kReductionXnor:
+    case support::BuiltinFn::kFromBool:
+    case support::BuiltinFn::kFromWords:
+      return NamedByValue{};
+
+    case support::BuiltinFn::kConvertFrom:
+      return NamedByConversion{};
+
+    case support::BuiltinFn::kInitialize:
+      return NamedByCellValue{};
+
+    case support::BuiltinFn::kReverse:
+    case support::BuiltinFn::kSort:
+    case support::BuiltinFn::kRsort:
+    case support::BuiltinFn::kSum:
+    case support::BuiltinFn::kProduct:
+    case support::BuiltinFn::kAnd:
+    case support::BuiltinFn::kOr:
+    case support::BuiltinFn::kXor:
+    case support::BuiltinFn::kFind:
+    case support::BuiltinFn::kFindIndex:
+    case support::BuiltinFn::kFindFirst:
+    case support::BuiltinFn::kFindFirstIndex:
+    case support::BuiltinFn::kFindLast:
+    case support::BuiltinFn::kFindLastIndex:
+    case support::BuiltinFn::kMin:
+    case support::BuiltinFn::kMax:
+    case support::BuiltinFn::kUnique:
+    case support::BuiltinFn::kUniqueIndex:
+    case support::BuiltinFn::kMap:
+      return NotRealized{.shape = kRunsASuppliedBody};
+
+    case support::BuiltinFn::kEnumFirst:
+    case support::BuiltinFn::kEnumLast:
+    case support::BuiltinFn::kEnumNum:
+    case support::BuiltinFn::kEnumName:
+      return NotRealized{.shape = kReadsDeclaredMembers};
+
+    case support::BuiltinFn::kMakeQueueConcat:
+    case support::BuiltinFn::kSpread:
+      return NotRealized{.shape = kTakesAsManyPartsAsWritten};
+
+    case support::BuiltinFn::kFileGets:
+    case support::BuiltinFn::kFileRead:
+    case support::BuiltinFn::kFileError:
+    case support::BuiltinFn::kValuePlusargs:
+    case support::BuiltinFn::kReadMem:
+      return NotRealized{.shape = kAssignsToAnArgument};
+
+    case support::BuiltinFn::kTrigger:
+    case support::BuiltinFn::kAwait:
+    case support::BuiltinFn::kTriggered:
+    case support::BuiltinFn::kAttachDriver:
+    case support::BuiltinFn::kCurrentRuntime:
+    case support::BuiltinFn::kSubmitNba:
+    case support::BuiltinFn::kSubmitPostponed:
+    case support::BuiltinFn::kSubmitObserved:
+    case support::BuiltinFn::kFiles:
+    case support::BuiltinFn::kCancellationFor:
+    case support::BuiltinFn::kIsCancelled:
+    case support::BuiltinFn::kFormat:
+    case support::BuiltinFn::kFormatRuntime:
+    case support::BuiltinFn::kWrite:
+    case support::BuiltinFn::kWriteln:
+    case support::BuiltinFn::kDiagnostic:
+    case support::BuiltinFn::kEmitInfo:
+    case support::BuiltinFn::kEmitWarning:
+    case support::BuiltinFn::kEmitError:
+    case support::BuiltinFn::kEmitFatal:
+    case support::BuiltinFn::kTimeFormat:
+    case support::BuiltinFn::kSetTimeFormat:
+    case support::BuiltinFn::kResetTimeFormat:
+    case support::BuiltinFn::kPeekBuffered:
+    case support::BuiltinFn::kAdvanceFd:
+    case support::BuiltinFn::kFileOpen:
+    case support::BuiltinFn::kFileOpenMode:
+    case support::BuiltinFn::kFileClose:
+    case support::BuiltinFn::kFileGetc:
+    case support::BuiltinFn::kFileUngetc:
+    case support::BuiltinFn::kFileSeek:
+    case support::BuiltinFn::kFileRewind:
+    case support::BuiltinFn::kFileTell:
+    case support::BuiltinFn::kFileEof:
+    case support::BuiltinFn::kFileFlush:
+    case support::BuiltinFn::kFileFlushAll:
+    case support::BuiltinFn::kTestPlusargs:
+    case support::BuiltinFn::kRunHostCommand:
+    case support::BuiltinFn::kRunNullHostCommand:
+    case support::BuiltinFn::kWriteMem:
+    case support::BuiltinFn::kDelay:
+    case support::BuiltinFn::kWaitAny:
+    case support::BuiltinFn::kSimTime:
+    case support::BuiltinFn::kSTime:
+    case support::BuiltinFn::kRealTime:
+    case support::BuiltinFn::kUrandom:
+    case support::BuiltinFn::kUrandomSeeded:
+    case support::BuiltinFn::kUrandomRange:
+    case support::BuiltinFn::kRandom:
+    case support::BuiltinFn::kDistUniform:
+    case support::BuiltinFn::kDistNormal:
+    case support::BuiltinFn::kDistExponential:
+    case support::BuiltinFn::kDistPoisson:
+    case support::BuiltinFn::kDistChiSquare:
+    case support::BuiltinFn::kDistT:
+    case support::BuiltinFn::kDistErlang:
+    case support::BuiltinFn::kFinish:
+    case support::BuiltinFn::kFatalFinish:
+    case support::BuiltinFn::kResolveRoot:
+    case support::BuiltinFn::kResolveVisibleChild:
+    case support::BuiltinFn::kRegisterSignal:
+    case support::BuiltinFn::kAddOwnedChild:
+    case support::BuiltinFn::kGetSignal:
+    case support::BuiltinFn::kGetChild:
+    case support::BuiltinFn::kForkWaitAll:
+    case support::BuiltinFn::kForkWaitFirst:
+    case support::BuiltinFn::kSpawnAll:
+    case support::BuiltinFn::kWaitFork:
+    case support::BuiltinFn::kDisableFork:
+    case support::BuiltinFn::kDisable:
+    case support::BuiltinFn::kRegisterInitial:
+    case support::BuiltinFn::kRegisterFinal:
+    case support::BuiltinFn::kRunForeignTaskOnFiber:
+    case support::BuiltinFn::kRunExportedTaskToCompletion:
+    case support::BuiltinFn::kCurrentExportScope:
+    case support::BuiltinFn::kFindExportEntry:
+    case support::BuiltinFn::kMakeDynamicArrayDefault:
+    case support::BuiltinFn::kMakeDynamicArrayNew:
+    case support::BuiltinFn::kMakeDynamicArrayNewCopy:
+    case support::BuiltinFn::kEnterTarget:
+    case support::BuiltinFn::kLeaveTarget:
+    case support::BuiltinFn::kEffectNamesTarget:
+    case support::BuiltinFn::kParent:
+    case support::BuiltinFn::kHierarchicalPath:
+      return NamedAlone{};
+  }
+  throw InternalError("llvm codegen: unknown builtin");
+}
+
+}  // namespace lyra::backend::llvm_backend
