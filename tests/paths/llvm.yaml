@@ -93,6 +93,8 @@
 23_hierarchy/ref_port_aliases_connected_variable: "mir_to_lir: storage of this kind is not yet lendable by reference"
 25_interfaces/interface_array_port_binds_each_element: "an interface array port is not yet supported"
 25_interfaces/interface_port_reaches_a_net: "driving a net is not yet lowerable to LIR"
+25_interfaces/modport_expression_names_part_of_a_member: "a modport expression is not yet supported"
+25_interfaces/modport_imports_a_subroutine: "a subroutine reached across an instance boundary is not yet supported"
 26_packages/import_makes_names_directly_visible: "an await on a coroutine callee is not yet lowerable to LIR"
 26_packages/subroutine_argument_directions: "mir_to_lir: an await on a coroutine callee is not yet lowerable to LIR"
 26_packages/task_enable_by_resolved_name: "an await on a coroutine callee is not yet lowerable to LIR"

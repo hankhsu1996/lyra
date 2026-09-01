@@ -142,7 +142,7 @@ B  The interface port
 
 ### Stage C -- Modports
 
-- [ ] C1 -- A modport names a directional view of an interface, declared with the directions seen
+- [x] C1 -- A modport names a directional view of an interface, declared with the directions seen
       from the module that uses it (LRM 25.5). Selecting one -- in the module header, in the port
       connection, or in both, where the two names must agree -- changes which of the interface's
       members the port may reach and in which direction, and changes nothing about how a member is
@@ -156,6 +156,14 @@ B  The interface port
       expression connects to nothing internal and is legal.
 
 ### Stage D -- Subroutines across the boundary
+
+A call on a port with no modport selected belongs to this stage as much as an imported one does: LRM
+25.7 makes every subroutine an interface declares callable through a plain port, and the `import`
+form states which of them a restricted view offers. Both refuse today, under one reason that is not
+about interfaces at all -- the caller holds a route to an object and the subroutine sits at the far
+end of it, which is a route endpoint the reference model does not yet carry. A subroutine a
+hierarchical name enables (LRM 23.6) refuses for the same reason, so what closes this stage closes
+that too.
 
 - [ ] D1 -- A modport `import` makes an interface subroutine callable through the port, so a call on
       the port identifier enables that task or function on the bound interface instance (LRM 25.7).
@@ -211,10 +219,14 @@ B  The interface port
 - Stage E's access resolves per access rather than against an endpoint sealed once, because the
   target is chosen at run time. Whether the resolution memoizes per handle and name, and where such
   a cache lives so that it is a cache and not a second authority, is open.
-- A modport expression (C2) states a projection at the interface rather than at the referrer.
-  Whether the projection travels as part of the route's leaf or is resolved into the reference at
-  the frontend boundary is open, and the answer decides whether the module's artifact ever names a
-  shape the interface declared.
+- A modport expression (C2) states a projection at the interface rather than at the referrer, and
+  that is what separates it from the rest of Stage C. A modport port written as a plain name is the
+  interface item's own name used twice, so a referrer resolves it against what the interface
+  published and needs to know nothing about the modport. One written as an expression renames a
+  shape instead, and that name is on no signature, so the interface has to publish its modports for
+  a referrer to resolve it at all. What such a view carries per port -- a published member, a
+  projection of one, a concatenation, a constant, or nothing -- is open, and the answer decides
+  whether a signature ever carries an expression across the unit boundary.
 
 ## Out of scope
 

@@ -867,7 +867,10 @@ auto UnitLowerer::TranslateSensitivityReads(
   std::vector<hir::SensitivityEntry> out;
   out.reserve(reads.size());
   for (const auto& read : reads) {
-    auto target = ResolveValueTarget(frame, *read.symbol);
+    auto declaration = ResolveNamedDeclaration(
+        *read.symbol, SourceMapper().PointSpanOf(read.symbol->location));
+    if (!declaration) return std::unexpected(std::move(declaration.error()));
+    auto target = ResolveValueTarget(frame, **declaration);
     if (!target) return std::unexpected(std::move(target.error()));
     if (!target->has_value()) continue;
     // A footprint is meaningful only for a signal the runtime bit-addresses: a
@@ -876,7 +879,7 @@ auto UnitLowerer::TranslateSensitivityReads(
     // runtime observes the whole signal on any change, so the read carries no
     // footprint regardless of the flat-bit view the DFA computed over its own
     // encoding.
-    const auto& read_type = read.symbol->getType();
+    const auto& read_type = (*declaration)->getType();
     out.push_back(
         hir::SensitivityEntry{
             .ref = *std::move(*target),
