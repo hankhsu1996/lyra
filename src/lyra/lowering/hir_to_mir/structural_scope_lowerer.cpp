@@ -266,26 +266,46 @@ auto BuildStringLiteral(
       mir::MakeStringLiteral(unit_lowerer.Unit().builtins.string, s));
 }
 
-// A route runs from its origin (the referrer's `self`) to the referenced leaf.
-// Its receiver at each step is either **typed** -- layout-visible, known to
-// point at a class this artifact owns, so the step takes a typed
-// `FieldAccessExpr` on the receiver's class shape -- or **opaque**, a runtime
-// `Scope*` reached through the SDK by name (a step crossing into another
-// unit's body). An indexed hop on a layout-visible step uses the SDK
-// `GetChild(name, indices)` fallback but downcasts back to typed, since MIR
-// carries no typed vector-index primitive.
+// A route runs from its origin (the referrer's `self`) to the referenced leaf,
+// and each step reaches through whatever the step before it landed on. What
+// that is decides how the next one may reach: a scope this artifact lowers
+// admits a typed member access onto anything it declares, an object another
+// unit defines is a typed pointer whose names resolve against the signature
+// that unit published, and the base every object on the tree is one of admits
+// only a name the runtime answers.
+struct OwnScope {
+  const StructuralScopeLowerer* scope;
+};
+struct ExternalObject {};
+struct ScopeBase {};
+
+using ReceiverTarget = std::variant<OwnScope, ExternalObject, ScopeBase>;
+
 struct RouteReceiver {
   mir::ExprId expr{};
-  // The scope the receiver points at, when the receiver is a typed pointer to
-  // a class this artifact owns; whatever the route names next resolves against
-  // it. Null when the receiver is a runtime `Scope*` and every following step
-  // is opaque.
-  const StructuralScopeLowerer* scope = nullptr;
+  ReceiverTarget target;
 };
+
+// The scope a step or leaf naming one of this artifact's own declarations is
+// standing on. Reaching one is only possible while the route is still inside
+// the artifact, so a receiver that has left it is a route built against a
+// different design than the one it reached.
+auto OwnScopeOf(const RouteReceiver& receiver, std::string_view site)
+    -> const StructuralScopeLowerer& {
+  const auto* own = std::get_if<OwnScope>(&receiver.target);
+  if (own == nullptr) {
+    throw InternalError(
+        std::format(
+            "{}: the route names a declaration of a scope this artifact "
+            "lowers, so it cannot have left the artifact before reaching it",
+            site));
+  }
+  return *own->scope;
+}
 
 // Reaches a child by name+indices as an opaque `Scope*` -- the realization of
 // an opaque step (one crossing into another unit's body).
-auto SdkChildOpaque(
+auto StepToChildByName(
     UnitLowerer& unit_lowerer, mir::Block& block, mir::ExprId receiver,
     const std::string& name, std::span<const std::uint32_t> indices)
     -> RouteReceiver {
@@ -299,7 +319,7 @@ auto SdkChildOpaque(
                       {receiver, BuildStringLiteral(unit_lowerer, block, name),
                        BuildIndicesLiteral(unit_lowerer, block, indices)}},
           .type = unit_lowerer.Unit().builtins.scope_ptr});
-  return RouteReceiver{.expr = step, .scope = nullptr};
+  return RouteReceiver{.expr = step, .target = ScopeBase{}};
 }
 
 // Establishes the route's starting receiver from the head. An in-unit head
@@ -318,7 +338,7 @@ auto BuildRouteAnchor(
     return RouteReceiver{
         .expr = BuildEnclosingScopeReceiver(
             frame, unit, mir::EnclosingHops{.value = ih->hops.value}),
-        .scope = &lowerer.EnclosingScopeAtHops(ih->hops)};
+        .target = OwnScope{&lowerer.EnclosingScopeAtHops(ih->hops)}};
   }
 
   const mir::ExprId self_ref = block.exprs.Add(
@@ -333,7 +353,7 @@ auto BuildRouteAnchor(
                         mir::Direct{.target = support::BuiltinFn::kResolveRoot},
                     .arguments = {self_ref}},
             .type = scope_ptr_type});
-    return RouteReceiver{.expr = root, .scope = nullptr};
+    return RouteReceiver{.expr = root, .target = ScopeBase{}};
   }
 
   // The visible-child climb walks the parent chain by name (LRM 23.8).
@@ -351,7 +371,7 @@ auto BuildRouteAnchor(
                        BuildIndicesLiteral(
                            unit_lowerer, block, vc.head_indices)}},
           .type = scope_ptr_type});
-  return RouteReceiver{.expr = matched, .scope = nullptr};
+  return RouteReceiver{.expr = matched, .target = ScopeBase{}};
 }
 
 // Descends one step into a child the receiver's scope declares: the typed
@@ -359,18 +379,17 @@ auto BuildRouteAnchor(
 // coordinates are settled during elaboration, so they name one of the objects
 // the child declares rather than indexing anything here; a child with no
 // declared dimensions is the one-object case and carries none. A child whose
-// body is another compilation unit leaves the receiver opaque from there.
-auto AppendOwnedChildStep(
+// body is another compilation unit is still reached by a typed pointer, but
+// what it declares is that unit's to state, so the route stops resolving names
+// against a scope of this one.
+auto StepToOwnedChild(
     UnitLowerer& unit_lowerer, mir::Block& block, const RouteReceiver& receiver,
     const hir::OwnedChildStep& step) -> RouteReceiver {
-  if (receiver.scope == nullptr) {
-    throw InternalError(
-        "AppendOwnedChildStep: the step names a child of a scope this artifact "
-        "lowers, so the route cannot have left the artifact before it");
-  }
-  const OwnedChildAnchor anchor = receiver.scope->TranslateOwnedChild(
+  const StructuralScopeLowerer& scope =
+      OwnScopeOf(receiver, "StepToOwnedChild");
+  const OwnedChildAnchor anchor = scope.TranslateOwnedChild(
       hir::StructuralHops{}, step.child, step.indices);
-  const mir::ClassId receiver_class = receiver.scope->ClassId();
+  const mir::ClassId receiver_class = scope.ClassId();
   const mir::TypeId type = unit_lowerer.GetClassShape(receiver_class)
                                .fields.Get(anchor.borrowed_handle)
                                .type;
@@ -380,7 +399,13 @@ auto AppendOwnedChildStep(
           mir::FieldTarget{
               .owner = receiver_class, .slot = anchor.borrowed_handle},
           type));
-  return RouteReceiver{.expr = access, .scope = anchor.target_scope};
+  // A child whose body is another compilation unit leaves the artifact here;
+  // one this artifact lowers keeps the route inside it.
+  return RouteReceiver{
+      .expr = access,
+      .target = anchor.target_scope == nullptr
+                    ? ReceiverTarget{ExternalObject{}}
+                    : ReceiverTarget{OwnScope{anchor.target_scope}}};
 }
 
 // Descends one step through an interface port of the receiver's scope: the
@@ -389,25 +414,21 @@ auto AppendOwnedChildStep(
 // names, which this artifact does not lower, so the receiver stops being one of
 // its own scopes -- the same place an owned child whose body is another unit
 // leaves it.
-auto AppendInterfacePortStep(
+auto StepThroughInterfacePort(
     UnitLowerer& unit_lowerer, mir::Block& block, const RouteReceiver& receiver,
     const hir::InterfacePortStep& step) -> RouteReceiver {
-  if (receiver.scope == nullptr) {
-    throw InternalError(
-        "AppendInterfacePortStep: the step names a port of a scope this "
-        "artifact lowers, so the route cannot have left the artifact before "
-        "it");
-  }
-  const mir::ClassId receiver_class = receiver.scope->ClassId();
+  const StructuralScopeLowerer& scope =
+      OwnScopeOf(receiver, "StepThroughInterfacePort");
+  const mir::ClassId receiver_class = scope.ClassId();
   const mir::FieldId field =
-      receiver.scope->TranslateInterfacePort(hir::StructuralHops{}, step.port);
+      scope.TranslateInterfacePort(hir::StructuralHops{}, step.port);
   const mir::TypeId type =
       unit_lowerer.GetClassShape(receiver_class).fields.Get(field).type;
   const mir::ExprId access = block.exprs.Add(
       mir::MakeFieldAccessExpr(
           receiver.expr,
           mir::FieldTarget{.owner = receiver_class, .slot = field}, type));
-  return RouteReceiver{.expr = access, .scope = nullptr};
+  return RouteReceiver{.expr = access, .target = ExternalObject{}};
 }
 
 // Projects the borrowed-pointer value the slot takes out of a typed receiver:
@@ -456,9 +477,16 @@ auto MaterializeLeaf(
 
   // A route ending at a scope names the object the steps landed on, and every
   // step already yields a borrowed pointer to what it reached, so the last one
-  // is the value.
+  // is the value. A step answered by name yields the base instead, and the
+  // route's own type is what says which object that base is.
   if (std::holds_alternative<hir::ScopeLeaf>(leaf)) {
-    return receiver.expr;
+    if (!std::holds_alternative<ScopeBase>(receiver.target)) {
+      return receiver.expr;
+    }
+    return block.exprs.Add(
+        mir::Expr{
+            .data = mir::PointerCastExpr{.operand = receiver.expr},
+            .type = slot_type});
   }
 
   if (const auto* opaque = std::get_if<hir::OpaqueLeaf>(&leaf)) {
@@ -482,25 +510,20 @@ auto MaterializeLeaf(
             .data = mir::PointerCastExpr{.operand = raw}, .type = slot_type});
   }
 
-  if (receiver.scope == nullptr) {
-    throw InternalError(
-        "MaterializeLeaf: the leaf names a declaration of a scope this "
-        "artifact lowers, so the route cannot have left the artifact");
-  }
+  const StructuralScopeLowerer& scope = OwnScopeOf(receiver, "MaterializeLeaf");
 
   if (const auto* object = std::get_if<hir::StructuralDataObjectLeaf>(&leaf)) {
     return AddressTypedLeaf(
-        unit_lowerer, block, receiver, receiver.scope->ClassId(),
-        receiver.scope->TranslateStructuralDataObject(
+        unit_lowerer, block, receiver, scope.ClassId(),
+        scope.TranslateStructuralDataObject(
             hir::StructuralHops{}, object->object),
         slot_type);
   }
 
   const auto& static_leaf = std::get<hir::ProceduralStaticLeaf>(leaf);
   return AddressTypedLeaf(
-      unit_lowerer, block, receiver, receiver.scope->ClassId(),
-      receiver.scope->ProceduralStaticBinding(static_leaf.body, static_leaf.var)
-          .field,
+      unit_lowerer, block, receiver, scope.ClassId(),
+      scope.ProceduralStaticBinding(static_leaf.body, static_leaf.var).field,
       slot_type);
 }
 
@@ -518,14 +541,14 @@ auto BuildRouteValue(
     receiver = std::visit(
         Overloaded{
             [&](const hir::OwnedChildStep& owned) {
-              return AppendOwnedChildStep(unit_lowerer, block, receiver, owned);
+              return StepToOwnedChild(unit_lowerer, block, receiver, owned);
             },
             [&](const hir::InterfacePortStep& port) {
-              return AppendInterfacePortStep(
+              return StepThroughInterfacePort(
                   unit_lowerer, block, receiver, port);
             },
             [&](const hir::OpaqueStep& opaque) {
-              return SdkChildOpaque(
+              return StepToChildByName(
                   unit_lowerer, block, receiver.expr, opaque.name,
                   opaque.indices);
             }},

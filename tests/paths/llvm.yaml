@@ -109,6 +109,7 @@
 23_hierarchy/downward_name_reads_and_writes: "driving a net is not yet lowerable to LIR"
 23_hierarchy/port_expression_connects_a_part_select: "port connected to part of an internal name is not yet supported"
 23_hierarchy/ref_port_aliases_connected_variable: "mir_to_lir: storage of this kind is not yet lendable by reference"
+25_interfaces/interface_array_port_binds_each_element: "an interface array port is not yet supported"
 25_interfaces/interface_port_reaches_a_net: "driving a net is not yet lowerable to LIR"
 26_packages/import_makes_names_directly_visible: "an await on a coroutine callee is not yet lowerable to LIR"
 26_packages/subroutine_argument_directions: "mir_to_lir: an await on a coroutine callee is not yet lowerable to LIR"

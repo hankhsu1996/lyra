@@ -53,7 +53,7 @@ Rules:
   A012  Append* function bodies in the lowering layer must be thin
         storage. They may not call `Lower*(`, inspect `.kind`, downcast
         `.as<`, emit `diag::Fail`/`diag::Make`, or throw
-        `support::InternalError`. Pure semantic lowering happens before
+        `InternalError`. Pure semantic lowering happens before
         Append; Append only stores already-lowered objects.
         Scope: src/lyra/lowering/**, include/lyra/lowering/**.
         Matches inline (`auto AppendXxx(...) -> Type {` /
@@ -181,8 +181,8 @@ FORBIDDEN_IN_APPEND = (
      "downcasts via .as<>; Append must store already-lowered objects"),
     (re.compile(r"\bdiag::(?:Fail|Make)\b"),
      "emits diag::Fail|Make; Append must not error"),
-    (re.compile(r"\bthrow\s+support::InternalError\b"),
-     "throws support::InternalError; Append must not enforce semantic "
+    (re.compile(r"\bthrow\s+(?:lyra::)?InternalError\b"),
+     "throws InternalError; Append must not enforce semantic "
      "invariants -- check those at the lowering boundary"),
 )
 
@@ -845,8 +845,16 @@ def run_self_tests() -> bool:
         "A012 detects diag::Make")
     ok &= expect(
         FORBIDDEN_IN_APPEND[4][0].search(
-            "throw support::InternalError(\"oops\");") is not None,
-        "A012 detects throw support::InternalError")
+            "throw InternalError(\"oops\");") is not None,
+        "A012 detects throw InternalError")
+    ok &= expect(
+        FORBIDDEN_IN_APPEND[4][0].search(
+            "throw lyra::InternalError(\"oops\");") is not None,
+        "A012 detects throw lyra::InternalError")
+    ok &= expect(
+        FORBIDDEN_IN_APPEND[4][0].search(
+            "return MakeInternalErrorReport();") is None,
+        "A012 does not fire on a name merely containing InternalError")
 
     # A012 -- thin body must pass
     thin_append = (
@@ -861,6 +869,25 @@ def run_self_tests() -> bool:
     ok &= expect(
         not any(p.search(body) for p, _ in FORBIDDEN_IN_APPEND),
         "A012 thin Append body has no violations")
+
+    # A012 -- a fat body must fail, parsed and scanned the way a file is. A
+    # pattern proven on a hand-written string and a parser proven on a
+    # hand-written signature still leave the pair untested against each other,
+    # which is how a pattern that matched nothing in the tree survived.
+    fat_append = (
+        "auto AppendThing(hir::Expr expr) -> hir::ExprId {\n"
+        "  if (expr.kind == hir::ExprKind::kBad) {\n"
+        "    throw InternalError(\"oops\");\n"
+        "  }\n"
+        "  return scope_->AppendExpr(std::move(expr));\n"
+        "}\n"
+    )
+    fm = APPEND_FN_DEF_PATTERN.search(fat_append)
+    ok &= expect(fm is not None, "A012 parser sees fat AppendThing definition")
+    fat_body = fat_append[fm.end() - 1:]
+    ok &= expect(
+        sum(1 for p, _ in FORBIDDEN_IN_APPEND if p.search(fat_body)) == 2,
+        "A012 fat Append body reports its .kind and its throw")
 
     # A012 -- out-of-line shape (auto + trailing return)
     out_of_line_auto = (

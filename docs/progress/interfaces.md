@@ -12,8 +12,9 @@ directions; and a virtual interface carries an instance through procedural code 
 properties.
 
 The stage IDs (A1, B1, ...) are stable references. Stage letters **do** imply dependency order: a
-later stage may not begin until the stages it depends on are settled. Within a stage the items are
-not ordered.
+later stage may not begin until what it depends on is settled, and the section below says which
+items that is, since a stage rarely waits on all of another. Within a stage the items are not
+ordered.
 
 ## Contracts
 
@@ -40,6 +41,9 @@ This workstream reasons from these architecture docs and does not restate them:
   design elaborates.
 - `../decisions/interface-port-binding.md` -- what the port's declared type names, what its member
   holds, and why the interface a port carries is part of the module's specialization identity.
+- `../decisions/published-member-placement.md` -- a published member sits at the position its
+  signature states, derived independently by the declaring unit and by every referrer, so how many
+  positions one member occupies is settled there rather than here.
 
 Stage B onward depends on the workstream tracked in `unit-signature.md` under this directory. An
 interface exists to be written against, so its members are its signature; reaching them through a
@@ -64,7 +68,9 @@ B  The interface port
   ports, members, and processes, there is nothing for a port to bind to.
 - B gates C, D, and E. All three reach an interface instance the module does not own, which is what
   the port's handle establishes; a modport is a view over that handle, an imported subroutine is a
-  call through it, and a virtual interface is the same handle held in a variable.
+  call through it, and a virtual interface is the same handle held in a variable. What they wait on
+  is that handle and the route through it, which B1 and B2 settle; how many instances one port names
+  is a separate question, so B7 blocks none of the three.
 - C and E are independent of each other.
 - D depends on the cross-unit subroutine endpoint, which is not interface-specific and is tracked in
   `hierarchy.md` (D9); the modport `import` and `export` forms are that endpoint reached through a
@@ -111,23 +117,28 @@ B  The interface port
       while the design elaborates. Reads, writes, and change observation ride that single route, so
       a process in the module re-triggers when an interface member changes, and a write through the
       port is immediately the interface's value.
-- [ ] B3 -- The actual on the connection is an interface instance named in the instantiating scope,
+- [x] B3 -- The actual on the connection is an interface instance named in the instantiating scope,
       whether that is a local instance, an element of an interface array, or an instance reached by
       hierarchical name. LRM 25.3 forbids the hierarchical form from resolving through an arrayed
-      instance or through a generate block, which the frontend enforces. An instance the
-      instantiating scope declares directly is connected, by position or by name; the array element
-      and the hierarchical form are not yet.
-- [ ] B4 -- A pass-through interface port: a module forwards its own interface port into a deeper
+      instance or through a generate block, which the frontend enforces.
+- [x] B4 -- A pass-through interface port: a module forwards its own interface port into a deeper
       child, so every port on the chain denotes one interface instance. This is a forwarding chain
       collapsed at sealing, and it is the reason the binding cannot happen while the subtree is
       being constructed.
-- [ ] B5 -- A generic interface port (LRM 25.3.3) leaves the interface unnamed in the module header
+- [x] B5 -- A generic interface port (LRM 25.3.3) leaves the interface unnamed in the module header
       and selects it at the instantiation site. It is the same handle reached by the same route;
       only the declaration is untyped. The LRM admits it in ANSI-style headers only and requires a
       named port connection to reach it, so an implicit connection is rejected.
-- [ ] B6 -- An interface port connection on an instance array binds each element's own handle (LRM
+- [x] B6 -- An interface port connection on an instance array binds each element's own handle (LRM
       23.3.3.5), whether one interface instance is replicated to every element or an interface array
       is mapped element to element.
+- [ ] B7 -- An interface reference in a module header carries a range, so one port names as many
+      interface instances as the range has elements, the connection supplies an array of interfaces
+      of that size, and selecting an element of the port reaches that one instance (LRM 25.3,
+      23.2.2). What this needs is a published member standing for more than one object: a referrer
+      counts a member's position out of the order its signature states, so how many positions such a
+      member occupies is part of the placement rule rather than of this stage. It lands with that
+      answer, not before it.
 
 ### Stage C -- Modports
 
