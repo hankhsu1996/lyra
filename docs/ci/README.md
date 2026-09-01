@@ -120,6 +120,13 @@ Each runs on push to `main` and on pull requests.
 | `exception-policy.yml` | The thrown-type policy, on the same diff                       |
 | `architecture.yml`     | Layer boundaries between the IRs and the backends              |
 | `docs-policy.yml`      | The doc claims a machine can settle (paths, links, indexes)    |
+| `smoke-test.yml`       | A handful of whole designs compiled and run through the driver |
+
+`smoke-test.yml` is the only thing at merge time that builds an emitted C++ project, since the
+target that compiles the corpus is nightly. That is worth a minute of every pull request: a change
+to what the renderer produces can leave every emitted file uncompilable while the default test set
+stays green, because that set never compiles emitted text. It runs whole designs rather than corpus
+cases, which is also the only place a multi-file project is exercised end to end.
 
 `bazel-build.yml` runs its two commands as steps of one job rather than as two jobs. The separate
 durations are worth having, but a second runner would not inherit the first's analysis: Bazel holds
@@ -131,30 +138,46 @@ step going red.
 
 ## Nightly workflows
 
-Two run on a schedule and on demand rather than per merge, for the same reason and with opposite
-severity.
+These run on a schedule and on demand rather than per merge, and they do not agree on severity. Each
+carries `-nightly` in its file name and `(Nightly)` in its title, so a listing of the directory
+separates them from everything that runs per change without opening any of them. The suffix states a
+property rather than distinguishing a variant, and that is the whole of the convention: there is
+deliberately no non-nightly sibling of any of them. One that gained a sibling would be the same
+subject at two cadences, which is a reason to reconsider the split rather than to name around it.
 
-`cpp-tidy.yml` re-analyzes every translation unit from scratch. It **reports rather than gates**, so
-its findings are a backlog to pay down and a red run is not an alarm.
+`cpp-tidy-nightly.yml` re-analyzes every translation unit from scratch. It **reports rather than
+gates**, so its findings are a backlog to pay down and a red run is not an alarm.
 
 `host-cxx-nightly.yml` runs the `nightly` target. It **gates its own run**: a corpus case that stops
 passing is a regression, and a red nightly is the thing to act on that day.
 
-## Jobs waiting on the execution backend
+`benchmark-nightly.yml` builds every case under `tests/benchmark/` and times it beside Verilator on
+the same sources, giving each tool the amount of work it needs to reach the same duration. It gates
+its own run on a narrower claim than a timing: a case that fails to build, fails to run, or outlives
+the time limit is red, while the rates themselves are printed for a reader. Failing a run on a rate
+would be reporting on the machine that ran it.
 
-These carry `if: false`. Their triggers and setup steps are intact so each returns by deleting that
-one line.
+The comparison it prints needs no stored history, which is what makes it worth running unattended:
+both tools are measured on one machine in one run, so the ratio between them survives a slow runner
+and a change of runner in a way an absolute time does not. A per-pull-request benchmark would answer
+a different question -- whether _this change_ regressed -- and that one does need a baseline, which
+is why there is no such job.
 
-| Workflow                | Job         | Waiting on                                           |
-| ----------------------- | ----------- | ---------------------------------------------------- |
-| `smoke-test.yml`        | `smoke`     | A design running end to end on the execution backend |
-| `benchmark.yml`         | `benchmark` | The same, plus a stable number to compare against    |
-| `benchmark-nightly.yml` | `benchmark` | The same                                             |
-| `sigill-diagnosis.yml`  | `diagnose`  | The LLVM path it diagnoses                           |
+## What is deliberately absent
 
-What they need is not a CLI surface -- `run`, `compile`, and `dump llvm` all exist, and the runtime
-ships as a static library -- but a design that survives the whole execution-backend path. Until it
-does, these jobs would measure a failure rather than a result.
+**A per-pull-request benchmark.** A timing carries a regression only once something compares it to
+the same case on `main`, and a job that prints absolute times without that comparison spends a full
+optimized build on every pull request to say nothing. The comparison is what has to exist first, and
+the job that wants it will not look like a copy of the nightly one, because fetching a baseline and
+choosing a threshold are most of it.
+
+**A standing diagnosis job.** One lived here, comparing a cached compiler's artifacts against a
+freshly built one to chase a specific incident: a build that selected AVX-512 and produced a binary
+that died on a machine without it. Every fact it rested on -- an environment variable, a marker
+string, a library name, the emitted binary's name -- had since stopped being true, and it had been
+disabled long enough that nobody noticed. A diagnosis job is written against the failure in front of
+you, and keeping a disabled one costs more than writing the next one, because a stale one has to be
+disbelieved before it can be replaced.
 
 ## Remote execution
 

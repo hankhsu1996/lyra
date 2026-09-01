@@ -8,7 +8,6 @@ on:
 jobs:
   benchmark:
     name: Nightly Benchmarks
-    if: false  # waits on the execution backend running a design end to end
     runs-on: ubuntu-latest
     steps:
       - name: Checkout code
@@ -50,7 +49,7 @@ jobs:
       - name: Run benchmarks
         run: |
           set -o pipefail
-          python3 tools/bench/run_benchmarks.py --tier=nightly --ci --json bench.json | tee -a "$GITHUB_STEP_SUMMARY"
+          python3 tools/bench/run_benchmarks.py --json bench.json | tee -a "$GITHUB_STEP_SUMMARY"
 
       - name: Upload benchmark results
         if: always()
@@ -58,12 +57,4 @@ jobs:
         with:
           name: benchmark-results
           path: bench.json
-          if-no-files-found: ignore
-
-      - name: Upload crash artifacts
-        if: failure()
-        uses: actions/upload-artifact@v7
-        with:
-          name: benchmark-crash-artifacts
-          path: crash-artifacts/
           if-no-files-found: ignore

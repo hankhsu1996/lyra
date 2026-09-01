@@ -317,6 +317,12 @@ the detail lives in the entry itself.
   program indexed by LRM clause; it names no path, states no expected variable, and carries no
   manifest, and what a path cannot do is recorded once per path.
 
+### Measurement
+
+- [benchmark-case-shape](benchmark-case-shape.md) -- a case fixes the shape of its work and takes
+  the amount as a runtime argument, so the harness picks the amount and reports a rate; no iteration
+  count is written down anywhere.
+
 ## File Naming
 
 `kebab-case.md`. The name describes the decision, not when it was made; the date lives inside the

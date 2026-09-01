@@ -32,6 +32,17 @@ auto LowerHirAssignmentPatternReplicationExpr(
     Lowerer& lowerer, WalkFrame frame,
     const hir::AssignmentPatternReplicationExpr& a, mir::TypeId result_type)
     -> diag::Result<mir::Expr>;
+// A keyed pattern is the one aggregate build whose shape is not readable from
+// the lowered type: an index names an element, so resolving it to an offset
+// takes the dimension, and a default stands for however many elements are
+// left, which takes the element count. A packed array's type carries neither
+// once it is the flat bit plane MIR gives it, so the unflattened type comes
+// along for exactly that.
+template <ExprLowerer Lowerer>
+auto LowerHirAssignmentPatternKeyedExpr(
+    Lowerer& lowerer, WalkFrame frame, const hir::AssignmentPatternKeyedExpr& k,
+    hir::TypeId hir_result_type, mir::TypeId result_type)
+    -> diag::Result<mir::Expr>;
 template <ExprLowerer Lowerer>
 auto LowerHirAssociativeAssignmentPatternExpr(
     Lowerer& lowerer, WalkFrame frame,

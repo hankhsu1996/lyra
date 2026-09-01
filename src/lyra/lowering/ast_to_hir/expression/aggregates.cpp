@@ -1,5 +1,6 @@
 #include "lyra/lowering/ast_to_hir/expression/aggregates.hpp"
 
+#include <cstdint>
 #include <expected>
 #include <optional>
 #include <utility>
@@ -20,6 +21,39 @@
 #include "lyra/lowering/ast_to_hir/unit_lowerer.hpp"
 
 namespace lyra::lowering::ast_to_hir {
+
+namespace {
+
+// LRM 5.7.1: an unbased unsized literal sets every bit of what it is assigned
+// to, so what it carries is a bit pattern to repeat rather than a number to
+// widen. Slang sizes one at its target wherever the LRM makes the context
+// assignment-like, which is why this is spelled out nowhere else.
+auto RepeatBitPattern(
+    const hir::IntegralConstant& bit, std::uint32_t width, bool four_state,
+    bool is_signed) -> hir::IntegralConstant {
+  const bool value_bit = (bit.value_words[0] & 1U) != 0;
+  const bool state_bit =
+      !bit.state_words.empty() && (bit.state_words[0] & 1U) != 0;
+  const std::size_t words = (static_cast<std::size_t>(width) + 63U) / 64U;
+  const std::uint64_t top_mask = width % 64U == 0
+                                     ? ~std::uint64_t{0}
+                                     : (std::uint64_t{1} << (width % 64U)) - 1U;
+
+  hir::IntegralConstant filled;
+  filled.width = width;
+  filled.signedness =
+      is_signed ? hir::Signedness::kSigned : hir::Signedness::kUnsigned;
+  filled.value_words.assign(words, value_bit ? ~std::uint64_t{0} : 0U);
+  filled.value_words.back() &= top_mask;
+  if (four_state) {
+    filled.state_kind = hir::IntegralStateKind::kFourState;
+    filled.state_words.assign(words, state_bit ? ~std::uint64_t{0} : 0U);
+    filled.state_words.back() &= top_mask;
+  }
+  return filled;
+}
+
+}  // namespace
 
 template <ExprLowerer Lowerer>
 auto LowerConcatExpr(
@@ -161,20 +195,113 @@ auto LowerSimpleAssignmentPattern(
   return LowerAssignmentPatternFromElements(lowerer, frame, ap, span);
 }
 
+// LRM 10.8 excludes a default correspondence from the assignment-like
+// contexts, so the expression is self-determined and arrives at whatever width
+// it was written -- an unsized literal at its own. LRM 10.9.1 still has it
+// reach every unmatched element as an assignment to that element, so the
+// sizing the frontend performed for each keyed value has to be stated here for
+// the one value that stands for all the rest.
+template <ExprLowerer Lowerer>
+auto LowerDefaultKeyValue(
+    Lowerer& lowerer, WalkFrame frame,
+    const slang::ast::StructuredAssignmentPatternExpression& ap,
+    diag::SourceSpan span) -> diag::Result<hir::Expr> {
+  const slang::ast::Type& element_type =
+      *ap.type->getCanonicalType().getArrayElementType();
+  auto element_type_id = lowerer.Owner().InternType(element_type, span);
+  if (!element_type_id) {
+    return std::unexpected(std::move(element_type_id.error()));
+  }
+  auto lowered = lowerer.LowerExpr(*ap.defaultSetter, frame);
+  if (!lowered) return std::unexpected(std::move(lowered.error()));
+  hir::Expr value = *std::move(lowered);
+
+  const auto* primary = std::get_if<hir::PrimaryExpr>(&value.data);
+  const auto* literal = primary != nullptr
+                            ? std::get_if<hir::IntegerLiteral>(&primary->data)
+                            : nullptr;
+  if (literal != nullptr &&
+      literal->base == hir::IntegerLiteralBase::kUnbased &&
+      element_type.isIntegral()) {
+    return hir::Expr{
+        .type = *element_type_id,
+        .data =
+            hir::PrimaryExpr{
+                .data =
+                    hir::IntegerLiteral{
+                        .value = RepeatBitPattern(
+                            literal->value, element_type.getBitWidth(),
+                            element_type.isFourState(),
+                            element_type.isSigned()),
+                        .base = hir::IntegerLiteralBase::kUnbased,
+                        .declared_unsized = true}},
+        .span = span};
+  }
+  return hir::Expr{
+      .type = *element_type_id,
+      .data =
+          hir::ConversionExpr{
+              .operand = frame.Exprs().Add(std::move(value)),
+              .kind = hir::ConversionKind::kImplicit},
+      .span = span};
+}
+
 template <ExprLowerer Lowerer>
 auto LowerStructuredAssignmentPattern(
     Lowerer& lowerer, WalkFrame frame,
     const slang::ast::StructuredAssignmentPatternExpression& ap,
     diag::SourceSpan span) -> diag::Result<hir::Expr> {
   // LRM 10.9.1 structured assignment pattern `'{key: value, ...}`. An
-  // associative literal keeps its keyed pairs and optional default (LRM 7.9.11)
-  // because its keys are arbitrary values with no positional meaning. For every
-  // other target the keys name element positions, which the frontend has
-  // already resolved into the element list, so the pattern lowers from those
-  // elements exactly as the positional form does.
+  // associative literal keeps its keyed pairs and its own optional default
+  // (LRM 7.9.11): its keys are arbitrary values with no positional meaning, and
+  // its default outlives the build, because a read of an absent key returns it.
   const auto target_kind = ap.type->getCanonicalType().kind;
   if (target_kind == slang::ast::SymbolKind::AssociativeArrayType) {
     return LowerAssociativeAssignmentPattern(lowerer, frame, ap, span);
+  }
+  // An array target keeps its keys. Its elements share one type, so what a
+  // default fills them with repeats and stays one expression however many
+  // elements there are -- written out instead, a 32768-element array reaches
+  // the target language as a four-megabyte expression that no compiler will
+  // accept. A struct's members do not share a type, so its defaulted members
+  // are as many distinct values as there are members and an element list is
+  // what they are.
+  //
+  // Whether the array is packed decides how a key resolves to a position and
+  // how the repeat is spelled, neither of which is what the pattern says, so
+  // that question belongs to HIR-to-MIR.
+  const bool keyed_array =
+      (target_kind == slang::ast::SymbolKind::FixedSizeUnpackedArrayType ||
+       target_kind == slang::ast::SymbolKind::PackedArrayType) &&
+      ap.memberSetters.empty() && ap.typeSetters.empty() &&
+      (ap.defaultSetter != nullptr || !ap.indexSetters.empty());
+  if (keyed_array) {
+    auto type_id = lowerer.Owner().InternType(*ap.type, span);
+    if (!type_id) return std::unexpected(std::move(type_id.error()));
+    std::optional<hir::ExprId> default_id;
+    if (ap.defaultSetter != nullptr) {
+      auto sized = LowerDefaultKeyValue(lowerer, frame, ap, span);
+      if (!sized) return std::unexpected(std::move(sized.error()));
+      default_id = frame.Exprs().Add(*std::move(sized));
+    }
+    std::vector<hir::AssignmentPatternKeyedExpr::Entry> entries;
+    entries.reserve(ap.indexSetters.size());
+    for (const auto& setter : ap.indexSetters) {
+      auto index = lowerer.LowerExpr(*setter.index, frame);
+      if (!index) return std::unexpected(std::move(index.error()));
+      auto value = lowerer.LowerExpr(*setter.expr, frame);
+      if (!value) return std::unexpected(std::move(value.error()));
+      entries.push_back(
+          {.index = frame.Exprs().Add(*std::move(index)),
+           .value = frame.Exprs().Add(*std::move(value))});
+    }
+    return hir::Expr{
+        .type = *type_id,
+        .data =
+            hir::AssignmentPatternKeyedExpr{
+                .entries = std::move(entries), .default_value = default_id},
+        .span = span,
+    };
   }
   return LowerAssignmentPatternFromElements(lowerer, frame, ap, span);
 }

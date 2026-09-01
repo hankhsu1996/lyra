@@ -61,6 +61,7 @@
 09_processes/process_status_reports_how_it_ended: "an imported runtime-library method call is not yet lowerable to LIR"
 09_processes/process_suspend_desensitizes_while_suspended: "an imported runtime-library method call is not yet lowerable to LIR"
 09_processes/wait_fork_waits_for_immediate_children: "an await on a coroutine callee is not yet lowerable to LIR"
+10_assignments/array_assignment_pattern: "local is not addressable storage"
 10_assignments/continuous_assignment_in_generate_scope: "driving a net is not yet lowerable to LIR"
 10_assignments/net_declaration_assignment: "driving a net is not yet lowerable to LIR"
 11_operators/compound_assign_operators: "compound assignment operator has no direct realization"

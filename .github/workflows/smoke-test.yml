@@ -35,7 +35,7 @@ jobs:
   smoke:
     name: Smoke Test
     needs: changes
-    if: false  # waits on the execution backend running a design end to end
+    if: needs.changes.outputs.src == 'true'
     runs-on: ubuntu-latest
     steps:
       - name: Checkout code

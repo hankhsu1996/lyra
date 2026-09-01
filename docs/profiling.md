@@ -30,16 +30,24 @@ Ubuntu's `linux-tools-*` packages, so it is not part of the standard workflow he
 
 ```bash
 bazel build //:lyra
-./bazel-bin/lyra compile --no-project --top Top --release -o out design.sv
+./bazel-bin/lyra compile --top Top --release -o out design.sv
 ```
 
-The fixtures under `tools/bench/fixtures/` are the designs to measure: `simulation-engine/` for
-scheduler pressure, `scheduling/` and `process-kernel/` for narrower engine behavior, and `compile/`
-for compile-time rather than run-time cost. Keep to one fixture across a before/after pair --
-changing it invalidates the comparison.
+The cases under `tests/benchmark/` are the designs to measure, each isolating one cost family:
+`scheduling/` for the pressure a clocked design puts on the engine, `memory/` and `arithmetic/` and
+`control-flow/` for narrower generated-code behavior, and `compile/` for compile-time rather than
+run-time cost. Keep to one case across a before/after pair -- changing it invalidates the
+comparison.
 
-Pick a cycle count that finishes in well under a second natively. Callgrind costs 20-50x, so a
-workload that runs for a second natively takes a minute under it.
+A case that times a simulation takes its amount of work from a plusarg, so one build profiles at any
+size:
+
+```bash
+out/program +work=2000
+```
+
+Pick an amount that finishes in well under a second natively. Callgrind costs 20-50x, so a workload
+that runs for a second natively takes a minute under it.
 
 ## Running it
 
@@ -79,7 +87,7 @@ wants a different algorithm.
 
 ## Comparing before and after
 
-Reprofile the same fixture at the same cycle count and compare both the total and the ranking. A
+Reprofile the same case at the same amount of work and compare both the total and the ranking. A
 lower total does not mean the bottleneck moved -- it may have shrunk proportionally and still be
 first. If the top entries are in the same order, the shape of the cost did not change.
 

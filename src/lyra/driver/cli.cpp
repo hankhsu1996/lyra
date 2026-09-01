@@ -131,7 +131,6 @@ struct ParsedArgs {
   ColorPreference color = ColorPreference::kAuto;
   Backend backend = Backend::kCpp;
   lyra::compiler::LoweringPolicy lowering;
-  bool no_project = false;
   bool format = false;
   bool no_pch = false;
   lyra::driver::Optimization optimization =
@@ -156,7 +155,6 @@ struct ParsedArgs {
 // because that is how the parser says "not given", which is a different fact
 // from the default Lyra then chooses.
 struct CliOptions {
-  std::optional<bool> no_project;
   std::optional<bool> color;
   std::optional<bool> no_color;
   std::optional<bool> format;
@@ -174,9 +172,6 @@ struct CliOptions {
 // a build that already knows how to describe a design to slang describes it to
 // Lyra the same way, and one help text covers both.
 void RegisterCliOptions(slang::CommandLine& cmd, CliOptions& opts) {
-  cmd.add(
-      "--no-project", opts.no_project,
-      "operate in direct file mode (no lyra.toml lookup)");
   cmd.add(
       "--color", opts.color,
       "force ANSI color in diagnostics, overriding TTY detection");
@@ -330,7 +325,6 @@ auto ResolveCliOptions(
   ParsedArgs out;
   out.cmd = cmd;
   out.child_args = std::move(child_args);
-  out.no_project = opts.no_project.value_or(false);
   out.format = opts.format.value_or(false);
   out.no_pch = opts.no_pch.value_or(false);
   out.optimization = opts.release.value_or(false)
@@ -861,14 +855,6 @@ auto main(int argc, char** argv) -> int {
       return 0;
     }
 
-    if (!args.no_project) {
-      report(
-          lyra::diag::Make(
-              lyra::diag::DiagCode::kHostProjectModeUnimplemented,
-              "project mode is not implemented yet; pass --no-project to "
-              "run in direct file mode"));
-      return 1;
-    }
     if (!driver.sourceLoader.hasFiles()) {
       report(
           lyra::diag::Make(

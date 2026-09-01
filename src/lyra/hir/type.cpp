@@ -29,6 +29,11 @@ auto PackedRange::Contains(std::int64_t index) const -> bool {
   return index >= lo && index <= hi;
 }
 
+// A packed array's elements read most significant first from the dimension's
+// left end (LRM 7.4.1), so the element the dimension names first is offset
+// zero however the range was declared -- which is the order a concatenation of
+// those elements takes them in, and the reverse of index order whenever the
+// dimension descends.
 auto PackedRange::LinearOffset(std::int64_t index) const -> std::uint64_t {
   if (!Contains(index)) {
     throw InternalError("PackedRange::LinearOffset: index out of range");

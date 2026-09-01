@@ -942,6 +942,24 @@ class HirDumper {
                   "AssignmentPatternReplicationExpr count=Expr[{}] items=[{}]",
                   a.count.value, items);
             },
+            [](const AssignmentPatternKeyedExpr& k) -> std::string {
+              std::string entries;
+              for (std::size_t i = 0; i < k.entries.size(); ++i) {
+                if (i != 0) {
+                  entries += ", ";
+                }
+                entries += std::format(
+                    "Expr[{}]: Expr[{}]", k.entries[i].index.value,
+                    k.entries[i].value.value);
+              }
+              const std::string fill =
+                  k.default_value.has_value()
+                      ? std::format("Expr[{}]", k.default_value->value)
+                      : "none";
+              return std::format(
+                  "AssignmentPatternKeyedExpr entries=[{}] default={}", entries,
+                  fill);
+            },
             [](const DynamicArrayNewExpr& n) -> std::string {
               if (n.initializer.has_value()) {
                 return std::format(

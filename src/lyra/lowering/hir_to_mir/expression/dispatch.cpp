@@ -141,6 +141,11 @@ auto LowerExprImpl(L& lowerer, const hir::Expr& expr, WalkFrame frame)
             return LowerHirAssignmentPatternReplicationExpr(
                 lowerer, frame, a, result_type);
           },
+          [&](const hir::AssignmentPatternKeyedExpr& k)
+              -> diag::Result<mir::Expr> {
+            return LowerHirAssignmentPatternKeyedExpr(
+                lowerer, frame, k, expr.type, result_type);
+          },
           [&](const hir::DynamicArrayNewExpr& n) -> diag::Result<mir::Expr> {
             if constexpr (kProcedural) {
               return LowerHirDynamicArrayNewExprProc(
