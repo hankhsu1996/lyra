@@ -305,7 +305,7 @@ auto OwnScopeOf(const RouteReceiver& receiver, std::string_view site)
 
 // Reaches a child by name+indices as an opaque `Scope*` -- the realization of
 // an opaque step (one crossing into another unit's body).
-auto SdkChildOpaque(
+auto StepToChildByName(
     UnitLowerer& unit_lowerer, mir::Block& block, mir::ExprId receiver,
     const std::string& name, std::span<const std::uint32_t> indices)
     -> RouteReceiver {
@@ -379,12 +379,14 @@ auto BuildRouteAnchor(
 // coordinates are settled during elaboration, so they name one of the objects
 // the child declares rather than indexing anything here; a child with no
 // declared dimensions is the one-object case and carries none. A child whose
-// body is another compilation unit leaves the receiver opaque from there.
-auto AppendOwnedChildStep(
+// body is another compilation unit is still reached by a typed pointer, but
+// what it declares is that unit's to state, so the route stops resolving names
+// against a scope of this one.
+auto StepToOwnedChild(
     UnitLowerer& unit_lowerer, mir::Block& block, const RouteReceiver& receiver,
     const hir::OwnedChildStep& step) -> RouteReceiver {
   const StructuralScopeLowerer& scope =
-      OwnScopeOf(receiver, "AppendOwnedChildStep");
+      OwnScopeOf(receiver, "StepToOwnedChild");
   const OwnedChildAnchor anchor = scope.TranslateOwnedChild(
       hir::StructuralHops{}, step.child, step.indices);
   const mir::ClassId receiver_class = scope.ClassId();
@@ -412,11 +414,11 @@ auto AppendOwnedChildStep(
 // names, which this artifact does not lower, so the receiver stops being one of
 // its own scopes -- the same place an owned child whose body is another unit
 // leaves it.
-auto AppendInterfacePortStep(
+auto StepThroughInterfacePort(
     UnitLowerer& unit_lowerer, mir::Block& block, const RouteReceiver& receiver,
     const hir::InterfacePortStep& step) -> RouteReceiver {
   const StructuralScopeLowerer& scope =
-      OwnScopeOf(receiver, "AppendInterfacePortStep");
+      OwnScopeOf(receiver, "StepThroughInterfacePort");
   const mir::ClassId receiver_class = scope.ClassId();
   const mir::FieldId field =
       scope.TranslateInterfacePort(hir::StructuralHops{}, step.port);
@@ -539,14 +541,14 @@ auto BuildRouteValue(
     receiver = std::visit(
         Overloaded{
             [&](const hir::OwnedChildStep& owned) {
-              return AppendOwnedChildStep(unit_lowerer, block, receiver, owned);
+              return StepToOwnedChild(unit_lowerer, block, receiver, owned);
             },
             [&](const hir::InterfacePortStep& port) {
-              return AppendInterfacePortStep(
+              return StepThroughInterfacePort(
                   unit_lowerer, block, receiver, port);
             },
             [&](const hir::OpaqueStep& opaque) {
-              return SdkChildOpaque(
+              return StepToChildByName(
                   unit_lowerer, block, receiver.expr, opaque.name,
                   opaque.indices);
             }},
