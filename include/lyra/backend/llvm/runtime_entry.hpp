@@ -38,6 +38,7 @@ auto DeclaredIndexType(const lir::CompilationUnit& unit, lir::TypeId container)
 // rest, listed together because the program never writes them, so nothing
 // upstream carries a name for them.
 enum class RuntimeOp : std::uint8_t {
+  kCellAlloc,
   kCellInitialize,
   kCellGet,
   kCellSet,

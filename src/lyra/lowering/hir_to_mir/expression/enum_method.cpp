@@ -39,16 +39,13 @@ namespace {
 auto MemberValueConstant(const mir::PackedArrayType& base, std::int64_t v)
     -> mir::IntegralConstant {
   const auto width = static_cast<std::uint32_t>(base.BitWidth());
-  const bool four_state = base.IsFourState();
+  const bool four_state = base.state_kind == mir::IntegralStateKind::kFourState;
   const std::size_t word_count = (width + 63U) / 64U;
   mir::IntegralConstant c{
       .value_words = std::vector<std::uint64_t>(word_count, 0U),
       .state_words = four_state ? std::vector<std::uint64_t>(word_count, 0U)
                                 : std::vector<std::uint64_t>{},
-      .width = width,
-      .signedness = base.signedness,
-      .state_kind = four_state ? mir::IntegralStateKind::kFourState
-                               : mir::IntegralStateKind::kTwoState};
+  };
   const std::uint64_t high_word =
       (base.signedness == mir::Signedness::kSigned && v < 0) ? ~std::uint64_t{0}
                                                              : 0U;
@@ -318,7 +315,8 @@ auto LowerEnumConstantMethod(
   }
   const mir::TypeId enum_tid =
       unit_lowerer.TranslateType(hir_exprs.Get(*c.arguments.front()).type);
-  const auto& enum_ty = std::get<mir::EnumType>(unit.types.Get(enum_tid).data);
+  const mir::Type& enum_type = unit.types.Get(enum_tid);
+  const mir::EnumType& enum_ty = enum_type.Get<mir::EnumType>();
   if (enum_ty.members.empty()) {
     throw InternalError("LowerEnumConstantMethod: enum has no members");
   }
@@ -366,10 +364,10 @@ auto LowerEnumMethodCall(
 
   // Copy the shape and member table before lowering the receiver below, which
   // may intern new types and invalidate a reference into the type pool.
-  const mir::PackedArrayType base =
-      std::get<mir::EnumType>(unit.types.Get(enum_tid).data).base;
+  const mir::Type& enum_type = unit.types.Get(enum_tid);
+  const mir::PackedArrayType base = enum_type.Get<mir::EnumType>().base;
   const std::vector<mir::EnumMember> members =
-      std::get<mir::EnumType>(unit.types.Get(enum_tid).data).members;
+      enum_type.Get<mir::EnumType>().members;
   if (members.empty()) {
     throw InternalError("LowerEnumMethodCall: enum has no members");
   }

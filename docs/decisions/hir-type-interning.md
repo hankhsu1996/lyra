@@ -79,7 +79,7 @@ with the same identity, whichever route asked.
 ## Consequences
 
 - A type published by one unit and read by another lands on the entry the reader already had.
-- Each `TypeData` variant states which of its fields determine identity, by the same key rules MIR's
+- Each type alternative states which of its fields determine identity, by the same key rules MIR's
   pool follows.
 - The pool holds one extra copy of each type's data as its key. The types one unit names number in
   the hundreds, so this is not on any axis that matters; a heavier key would be.

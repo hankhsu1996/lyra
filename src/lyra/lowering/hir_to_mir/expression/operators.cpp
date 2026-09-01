@@ -5,7 +5,6 @@
 #include <optional>
 #include <span>
 #include <utility>
-#include <variant>
 #include <vector>
 
 #include "lyra/base/internal_error.hpp"
@@ -167,18 +166,8 @@ auto LowerIncDecOp(hir::IncDecOp op) -> mir::IncDecOp {
   throw InternalError("LowerIncDecOp: unknown HIR IncDecOp");
 }
 
-auto IsRealFamilyTypeKind(mir::TypeKind k) -> bool {
-  return k == mir::TypeKind::kReal || k == mir::TypeKind::kShortReal ||
-         k == mir::TypeKind::kRealTime;
-}
-
-auto IsRealFamilyType(const mir::Type& ty) -> bool {
-  return IsRealFamilyTypeKind(ty.Kind());
-}
-
 auto IsArrayContainerType(const mir::Type& ty) -> bool {
-  return std::holds_alternative<mir::UnpackedArrayType>(ty.data) ||
-         std::holds_alternative<mir::DynamicArrayType>(ty.data);
+  return ty.Is<mir::UnpackedArrayType>() || ty.Is<mir::DynamicArrayType>();
 }
 
 // Maps the method-style MIR binary ops to their `BuiltinFn` realization on
@@ -337,8 +326,7 @@ auto BuildMirUnaryExpr(
   // integral the SV semantic prescribes. A chandle's boolean value is 0 when it
   // is null and 1 otherwise.
   if (op == mir::UnaryOp::kLogicalNot &&
-      (IsRealFamilyType(operand_ty) ||
-       operand_ty.Kind() == mir::TypeKind::kChandle)) {
+      (operand_ty.IsRealFamily() || operand_ty.Is<mir::ChandleType>())) {
     const mir::ExprId operand_bool =
         block.exprs.Add(MakeBoolCast(unit, operand_id));
     const mir::ExprId not_id = block.exprs.Add(
@@ -361,10 +349,10 @@ auto BuildMirBinaryExpr(
     -> mir::Expr {
   const auto& lhs_ty = unit.types.Get(block.exprs.Get(lhs_id).type);
   const auto& rhs_ty = unit.types.Get(block.exprs.Get(rhs_id).type);
-  const bool real_lhs = IsRealFamilyType(lhs_ty);
-  const bool real_rhs = IsRealFamilyType(rhs_ty);
-  const bool string_lhs = lhs_ty.Kind() == mir::TypeKind::kString;
-  const bool string_rhs = rhs_ty.Kind() == mir::TypeKind::kString;
+  const bool real_lhs = lhs_ty.IsRealFamily();
+  const bool real_rhs = rhs_ty.IsRealFamily();
+  const bool string_lhs = lhs_ty.Is<mir::StringType>();
+  const bool string_rhs = rhs_ty.Is<mir::StringType>();
 
   // LRM 8.4: class-handle equality compares object identity and yields a 1-bit
   // value. A class handle's `==` / `!=` produces a host bool, reshaped to the
@@ -373,7 +361,7 @@ auto BuildMirBinaryExpr(
   // value type whose `==` already yields the 1-bit integral directly, like a
   // string or a real, so it renders as a plain binary operator.
   const auto is_handle = [](const mir::Type& ty) {
-    return ty.Kind() == mir::TypeKind::kManagedRef;
+    return ty.Is<mir::ManagedRefType>();
   };
   if ((is_handle(lhs_ty) || is_handle(rhs_ty)) &&
       (op == mir::BinaryOp::kEquality || op == mir::BinaryOp::kInequality)) {
@@ -526,7 +514,8 @@ auto LowerHirConditionalExpr(
   const mir::Type& predicate_type =
       unit.types.Get(block.exprs.Get(predicate_id).type);
   if (predicate_type.IsIntegralPacked() &&
-      predicate_type.AsIntegralPacked().IsFourState()) {
+      predicate_type.PackedShape().state_kind ==
+          mir::IntegralStateKind::kFourState) {
     return mir::Expr{
         .data =
             mir::MergingConditionalExpr{

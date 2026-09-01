@@ -16,10 +16,10 @@ namespace lyra::lowering::hir_to_mir {
 // into that declaration afterwards.
 //
 // No source declaration names this type, which is why the lowering has to make
-// one. Composing bits does not say whether those bits can hold x or z, so
-// `atom` is passed in rather than derived from the composition.
+// one. Composing bits does not say whether those bits can hold x or z, so how
+// many states they have is passed in rather than derived from the composition.
 [[nodiscard]] auto InternFlatPacked(
-    const mir::CompilationUnit& unit, std::uint64_t width, mir::BitAtom atom)
-    -> mir::TypeId;
+    const mir::CompilationUnit& unit, std::uint64_t width,
+    mir::IntegralStateKind state_kind) -> mir::TypeId;
 
 }  // namespace lyra::lowering::hir_to_mir

@@ -311,7 +311,8 @@ auto ProcessLowerer::Run(const hir::SubroutineDecl& src)
   // no region, and neither does a body with no object to reach the target
   // through.
   const std::optional<mir::FieldId> cancel_target =
-      owner_->Unit().types.IsCoroutine(result_type) && has_receiver
+      owner_->Unit().types.Get(result_type).Is<mir::CoroutineType>() &&
+              has_receiver
           ? RootScope().cancellation_target
           : std::nullopt;
   if (cancel_target.has_value()) {
@@ -368,10 +369,11 @@ auto ProcessLowerer::LowerConstructorBodyInto(const WalkFrame& frame)
 auto ProcessLowerer::BuildReturnPayload(
     mir::Block& block, std::optional<mir::ExprId> explicit_value)
     -> std::optional<mir::ExprId> {
-  const mir::TypeInterner& types = owner_->Unit().types;
-  const mir::TypeId payload_type = types.IsCoroutine(result_type_)
-                                       ? types.CoroutinePayload(result_type_)
-                                       : result_type_;
+  const mir::Type& result_ty = owner_->Unit().types.Get(result_type_);
+  const mir::TypeId payload_type =
+      result_ty.Is<mir::CoroutineType>()
+          ? result_ty.Get<mir::CoroutineType>().payload
+          : result_type_;
   if (payload_type == owner_->Unit().builtins.void_type) return std::nullopt;
 
   std::vector<mir::ExprId> components;

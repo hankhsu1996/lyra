@@ -9,15 +9,14 @@
 namespace lyra::lowering::hir_to_mir {
 
 auto InternFlatPacked(
-    const mir::CompilationUnit& unit, std::uint64_t width, mir::BitAtom atom)
-    -> mir::TypeId {
+    const mir::CompilationUnit& unit, std::uint64_t width,
+    mir::IntegralStateKind state_kind) -> mir::TypeId {
   return unit.types.Intern(
-      mir::PackedArrayType{
-          .atom = atom,
+      mir::Type{mir::PackedArrayType{
+          .state_kind = state_kind,
           .signedness = mir::Signedness::kUnsigned,
           .dims = {mir::PackedRange{
-              .left = static_cast<std::int64_t>(width) - 1, .right = 0}},
-          .form = mir::PackedArrayForm::kExplicit});
+              .left = static_cast<std::int64_t>(width) - 1, .right = 0}}}});
 }
 
 }  // namespace lyra::lowering::hir_to_mir

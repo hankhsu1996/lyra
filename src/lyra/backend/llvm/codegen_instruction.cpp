@@ -25,7 +25,6 @@
 #include "lyra/lir/integral_constant.hpp"
 #include "lyra/lir/place_query.hpp"
 #include "lyra/lir/type.hpp"
-#include "lyra/lir/type_query.hpp"
 #include "lyra/support/builtin_fn.hpp"
 
 namespace lyra::backend::llvm_backend {
@@ -271,8 +270,7 @@ auto CodeGenFunction::LowerBinary(
   // the reduced predicates a real- or string-family `&&` / `||` / `<->`
   // composes are combined before `from_bool` widens the result back to a 1-bit
   // packed.
-  if (std::holds_alternative<lir::MachineBoolType>(
-          module_->Unit().types.Get(operand_type).data)) {
+  if (module_->Unit().types.Get(operand_type).Is<lir::MachineBoolType>()) {
     return LowerMachineBinary(binary);
   }
   auto domain = DomainOf(operand_type);
@@ -326,8 +324,7 @@ auto CodeGenFunction::LowerUnary(
   // operator is a machine instruction, not a runtime-library call. This is how
   // the reduced predicate a real- or chandle-family `!` produces is negated
   // before `from_bool` widens it back to a 1-bit packed.
-  if (std::holds_alternative<lir::MachineBoolType>(
-          module_->Unit().types.Get(operand_type).data)) {
+  if (module_->Unit().types.Get(operand_type).Is<lir::MachineBoolType>()) {
     return LowerMachineUnary(unary);
   }
   auto domain = DomainOf(operand_type);
@@ -382,8 +379,9 @@ auto CodeGenFunction::LowerBoolCast(
 auto CodeGenFunction::LowerIntCast(
     const lir::IntCastInstr& cast, lir::TypeId result_type)
     -> diag::Result<llvm::Value*> {
-  const auto& source = std::get<lir::MachineIntType>(
-      module_->Unit().types.Get(OperandType(cast.operand)).data);
+  const auto& source = module_->Unit()
+                           .types.Get(OperandType(cast.operand))
+                           .Get<lir::MachineIntType>();
   auto operand = LowerOperand(cast.operand);
   if (!operand) {
     return std::unexpected(std::move(operand.error()));
@@ -468,7 +466,7 @@ auto CodeGenFunction::CallArgs(
 auto CodeGenFunction::ConstructArgs(
     lir::TypeId result, const std::vector<llvm::Value*>& operands)
     -> std::vector<llvm::Value*> {
-  return std::visit(
+  return module_->Unit().types.Get(result).Visit(
       Overloaded{
           [&](const lir::ClosureType&) -> std::vector<llvm::Value*> {
             return {
@@ -480,8 +478,9 @@ auto CodeGenFunction::ConstructArgs(
             args.insert(args.end(), operands.begin(), operands.end());
             return args;
           },
-          [&](const auto&) -> std::vector<llvm::Value*> { return operands; }},
-      module_->Unit().types.Get(result).data);
+          [&](const auto&) -> std::vector<llvm::Value*> {
+            return operands;
+          }});
 }
 
 // Every call is a symbol invoked with arguments; the target kinds differ only
@@ -560,8 +559,8 @@ auto CodeGenFunction::SpanOver(
 auto CodeGenFunction::LowerArray(
     const lir::ArrayInstr& array, lir::TypeId result_type)
     -> diag::Result<llvm::Value*> {
-  const auto& machine_array = std::get<lir::MachineArrayType>(
-      module_->Unit().types.Get(result_type).data);
+  const auto& machine_array =
+      module_->Unit().types.Get(result_type).Get<lir::MachineArrayType>();
   std::vector<llvm::Value*> elements;
   elements.reserve(array.elements.size());
   for (const lir::Operand& element : array.elements) {
@@ -588,7 +587,7 @@ auto CodeGenFunction::LowerProduct(
     const lir::ProductInstr& product, lir::TypeId result_type)
     -> diag::Result<llvm::Value*> {
   const auto* tuple =
-      std::get_if<lir::TupleType>(&module_->Unit().types.Get(result_type).data);
+      module_->Unit().types.Get(result_type).As<lir::TupleType>();
   if (tuple == nullptr || tuple->elements.size() != product.components.size()) {
     throw InternalError(
         "llvm codegen: a product's result type does not describe the "
@@ -843,14 +842,14 @@ auto CodeGenFunction::LowerOperand(const lir::Operand& operand)
 // runtime object -- so a constant of one reaches this backend as a call.
 auto CodeGenFunction::LowerIntConst(const lir::IntConst& constant)
     -> diag::Result<llvm::Value*> {
-  const auto* machine = std::get_if<lir::MachineIntType>(
-      &module_->Unit().types.Get(constant.type).data);
+  const auto* machine =
+      module_->Unit().types.Get(constant.type).As<lir::MachineIntType>();
   if (machine == nullptr) {
     return Unsupported(
         std::format(
             "llvm codegen: a constant of type {} has no native form on this "
             "backend",
-            lir::TypeKindName(module_->Unit().types.Get(constant.type))));
+            module_->Unit().types.Get(constant.type).KindName()));
   }
   return llvm::ConstantInt::get(
       llvm::IntegerType::get(module_->Context(), machine->bit_width),
@@ -905,14 +904,14 @@ auto CodeGenFunction::LowerStrConst(const lir::StrConst& constant)
 // construction over a machine float.
 auto CodeGenFunction::LowerRealConst(const lir::RealConst& constant)
     -> diag::Result<llvm::Value*> {
-  const auto* machine = std::get_if<lir::MachineFloatType>(
-      &module_->Unit().types.Get(constant.type).data);
+  const auto* machine =
+      module_->Unit().types.Get(constant.type).As<lir::MachineFloatType>();
   if (machine == nullptr) {
     return Unsupported(
         std::format(
             "llvm codegen: a real constant of type {} has no native form on "
             "this backend",
-            lir::TypeKindName(module_->Unit().types.Get(constant.type))));
+            module_->Unit().types.Get(constant.type).KindName()));
   }
   return llvm::ConstantFP::get(
       machine->bit_width == 32 ? llvm::Type::getFloatTy(module_->Context())
@@ -967,7 +966,7 @@ auto CodeGenFunction::BuiltinCallee(
             return over(DomainOf(acted_on()));
           },
           [&](const NamedByCellValue&) -> diag::Result<llvm::FunctionCallee> {
-            auto domain = CellDomain(call.args.at(0));
+            auto domain = CellDomain(OperandType(call.args.at(0)));
             if (!domain) {
               return std::unexpected(std::move(domain.error()));
             }
@@ -1020,7 +1019,7 @@ auto CodeGenFunction::CellPlaceOf(const lir::Place& place) const
                                  ? OperandType(cell.base)
                                  : lir::PlaceType(module_->Unit(), *fn_, cell);
   const auto* observable =
-      std::get_if<lir::ObservableType>(&module_->Unit().types.Get(opened).data);
+      module_->Unit().types.Get(opened).As<lir::ObservableType>();
   if (observable == nullptr) {
     return std::nullopt;
   }
@@ -1051,24 +1050,21 @@ auto CodeGenFunction::CapturePlaceOf(const lir::Place& place) const
   const lir::TypeId reached =
       holder.chain.empty() ? OperandType(holder.base)
                            : lir::PlaceType(module_->Unit(), *fn_, holder);
-  if (!std::holds_alternative<lir::ClosureType>(
-          module_->Unit().types.Get(reached).data)) {
+  if (!module_->Unit().types.Get(reached).Is<lir::ClosureType>()) {
     return std::nullopt;
   }
   return CapturePlace{
       .closure = std::move(holder), .index = member->member.value};
 }
 
-auto CodeGenFunction::CellDomain(const lir::Operand& cell) const
+auto CodeGenFunction::CellDomain(lir::TypeId reference) const
     -> diag::Result<support::ValueDomain> {
-  const lir::TypeArena& types = module_->Unit().types;
-  const std::optional<lir::TypeId> pointee =
-      lir::Pointee(types, OperandType(cell));
+  const lir::TypePool& types = module_->Unit().types;
+  const std::optional<lir::TypeId> pointee = types.Get(reference).Pointee();
   if (!pointee) {
     throw InternalError("llvm codegen: a cell operation needs a cell address");
   }
-  const auto* observable =
-      std::get_if<lir::ObservableType>(&types.Get(*pointee).data);
+  const auto* observable = types.Get(*pointee).As<lir::ObservableType>();
   if (observable == nullptr) {
     throw InternalError("llvm codegen: a cell operation needs an observable");
   }
@@ -1085,19 +1081,19 @@ auto CodeGenFunction::ConstructCallee(
     return Unsupported(
         std::format(
             "llvm codegen: a value of type {} has no construct on this backend",
-            lir::TypeKindName(module_->Unit().types.Get(result))));
+            module_->Unit().types.Get(result).KindName()));
   };
   const auto no_real_from_host = [&]() -> std::unexpected<diag::Diagnostic> {
     return Unsupported(
         std::format(
             "llvm codegen: building a {} from a host scalar has no entry on "
             "this backend",
-            lir::TypeKindName(module_->Unit().types.Get(result))));
+            module_->Unit().types.Get(result).KindName()));
   };
   const auto real_from_host = [&]() -> diag::Result<llvm::FunctionCallee> {
-    const lir::TypeData& arg =
-        module_->Unit().types.Get(OperandType(call.args.at(0))).data;
-    if (!std::holds_alternative<lir::MachineFloatType>(arg)) {
+    const lir::Type& arg =
+        module_->Unit().types.Get(OperandType(call.args.at(0)));
+    if (!arg.Is<lir::MachineFloatType>()) {
       return no_real_from_host();
     }
     auto domain = DomainOf(result);
@@ -1106,11 +1102,22 @@ auto CodeGenFunction::ConstructCallee(
     }
     return entry(RuntimeSymbol(*domain, RuntimeOp::kConst));
   };
-  return std::visit(
+  return module_->Unit().types.Get(result).Visit(
       Overloaded{
           [&](const lir::StringType&) -> diag::Result<llvm::FunctionCallee> {
             return entry(
                 RuntimeSymbol(support::ValueDomain::kString, RuntimeOp::kMake));
+          },
+          // A reference comes into existence as the cell it binds, since that
+          // is the one storage it can name. The cell is empty until its
+          // initializer installs a representation, so the entry takes nothing
+          // but the domain it is chosen by.
+          [&](const lir::RefType&) -> diag::Result<llvm::FunctionCallee> {
+            auto domain = CellDomain(result);
+            if (!domain) {
+              return std::unexpected(std::move(domain.error()));
+            }
+            return entry(RuntimeSymbol(*domain, RuntimeOp::kCellAlloc));
           },
           [&](const lir::CoroutineType&) -> diag::Result<llvm::FunctionCallee> {
             return entry(RuntimeSymbol(RuntimeOp::kMakeCoroutine));
@@ -1203,14 +1210,13 @@ auto CodeGenFunction::ConstructCallee(
           },
           [&](const auto&) -> diag::Result<llvm::FunctionCallee> {
             return no_construct();
-          }},
-      module_->Unit().types.Get(result).data);
+          }});
 }
 
 auto CodeGenFunction::ElementPrototypeOperand(const lir::CallInstr& call) const
     -> std::optional<std::size_t> {
   if (const auto* construct = std::get_if<lir::ConstructTarget>(&call.target)) {
-    return std::visit(
+    return module_->Unit().types.Get(construct->result).Visit(
         Overloaded{
             [](const lir::DynamicArrayType&) -> std::optional<std::size_t> {
               return 0;
@@ -1226,8 +1232,7 @@ auto CodeGenFunction::ElementPrototypeOperand(const lir::CallInstr& call) const
             },
             [](const auto&) -> std::optional<std::size_t> {
               return std::nullopt;
-            }},
-        module_->Unit().types.Get(construct->result).data);
+            }});
   }
   const auto* builtin = std::get_if<lir::BuiltinTarget>(&call.target);
   if (builtin == nullptr) {

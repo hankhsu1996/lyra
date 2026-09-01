@@ -312,30 +312,8 @@ auto UnitLowerer::ClosureDeclaration(mir::ClosureId closure) const
   return closure_identities_.Get(closure).declaration;
 }
 
-auto UnitLowerer::BorrowedPointerTo(lir::TypeId pointee) -> lir::TypeId {
-  const auto it = pointer_memo_.find(pointee);
-  if (it != pointer_memo_.end()) {
-    return it->second;
-  }
-  const lir::TypeId id = out_.types.Add(
-      lir::Type{
-          .data = lir::PointerType{
-              .pointee = pointee,
-              .ownership = lir::PointerOwnership::kBorrowed,
-              .mutability = lir::Mutability::kMutable}});
-  pointer_memo_.emplace(pointee, id);
-  return id;
-}
-
 auto UnitLowerer::MachineBoolType() -> lir::TypeId {
   return TranslateType(mir_->builtins.machine_bool);
-}
-
-auto UnitLowerer::VoidType() -> lir::TypeId {
-  if (!void_type_.has_value()) {
-    void_type_ = out_.types.Add(lir::Type{.data = lir::VoidType{}});
-  }
-  return *void_type_;
 }
 
 auto UnitLowerer::FlatPackedType(std::uint64_t width, bool four_state)
@@ -345,14 +323,13 @@ auto UnitLowerer::FlatPackedType(std::uint64_t width, bool four_state)
       it != flat_packed_memo_.end()) {
     return it->second;
   }
-  const lir::TypeId id = out_.types.Add(
-      lir::Type{
-          .data = lir::PackedArrayType{
-              .atom = four_state ? lir::BitAtom::kLogic : lir::BitAtom::kBit,
-              .signedness = lir::Signedness::kUnsigned,
-              .dims = {lir::PackedRange{
-                  .left = static_cast<std::int64_t>(width) - 1, .right = 0}},
-              .form = lir::PackedArrayForm::kExplicit}});
+  const lir::TypeId id = out_.types.Intern(
+      lir::Type{lir::PackedArrayType{
+          .state_kind = four_state ? lir::IntegralStateKind::kFourState
+                                   : lir::IntegralStateKind::kTwoState,
+          .signedness = lir::Signedness::kUnsigned,
+          .dims = {lir::PackedRange{
+              .left = static_cast<std::int64_t>(width) - 1, .right = 0}}}});
   flat_packed_memo_.emplace(shape, id);
   return id;
 }
@@ -364,7 +341,7 @@ auto UnitLowerer::ProductOf(std::vector<lir::TypeId> components)
     return it->second;
   }
   const lir::TypeId id =
-      out_.types.Add(lir::Type{.data = lir::TupleType{.elements = components}});
+      out_.types.Intern(lir::Type{lir::TupleType{.elements = components}});
   product_memo_.emplace(std::move(components), id);
   return id;
 }

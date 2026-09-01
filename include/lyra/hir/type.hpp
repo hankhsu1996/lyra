@@ -1,11 +1,15 @@
 #pragma once
 
+#include <cstddef>
 #include <cstdint>
 #include <optional>
 #include <string>
+#include <utility>
 #include <variant>
 #include <vector>
 
+#include "lyra/base/internal_error.hpp"
+#include "lyra/base/interner.hpp"
 #include "lyra/hir/class_ref.hpp"
 #include "lyra/hir/constant_value.hpp"
 #include "lyra/hir/integral_constant.hpp"
@@ -14,46 +18,12 @@
 
 namespace lyra::hir {
 
-enum class TypeKind {
-  kScalarBit,
-  kPackedArray,
-  kPackedStruct,
-  kPackedUnion,
-  kEnum,
-  kUnpackedStruct,
-  kUnpackedUnion,
-  kUnpackedArray,
-  kDynamicArray,
-  kQueue,
-  kAssociativeArray,
-  kWildcardIndex,
-  kString,
-  kEvent,
-  kReal,
-  kShortReal,
-  kRealTime,
-  kChandle,
-  kClassHandle,
-  kImportedClassHandle,
-  kUnitObject,
-  kNull,
-  kVoid,
-};
-
+// The two single-bit types. LRM 6.11.2 gives `logic` and `reg` as names for
+// one 4-state type and prefers `logic`, so a source that says `reg` reaches
+// the same type a source saying `logic` does.
 enum class BitAtom {
   kBit,
   kLogic,
-  kReg,
-};
-
-enum class PackedArrayForm {
-  kExplicit,
-  kByte,
-  kShortInt,
-  kInt,
-  kLongInt,
-  kInteger,
-  kTime,
 };
 
 struct PackedRange {
@@ -88,7 +58,6 @@ struct PackedArrayType {
   PackedRange dim;
   TypeId element_type;
   Signedness signedness;
-  PackedArrayForm form;
 
   auto operator==(const PackedArrayType&) const -> bool = default;
 };
@@ -290,35 +259,90 @@ struct NullType {
   auto operator==(const NullType&) const -> bool = default;
 };
 
-using TypeData = std::variant<
-    ScalarBitType, PackedArrayType, PackedStructType, PackedUnionType, EnumType,
-    UnpackedStructType, UnpackedUnionType, UnpackedArrayType, DynamicArrayType,
-    QueueType, AssociativeArrayType, WildcardIndexType, StringType, EventType,
-    RealType, ShortRealType, RealTimeType, ChandleType, ClassHandleType,
-    ImportedClassHandleType, UnitObjectType, NullType, VoidType>;
+// A type one HIR compilation unit names, and the vocabulary for asking what it
+// is. The alternatives are a closed set, consumed by visiting them: a visitor
+// that names each one rather than defaulting is what makes an alternative added
+// here fail to compile until every consumer says what the new one means.
+//
+// A question belongs to the type when its answer spans several alternatives or
+// states a rule over them. Testing for one alternative, or reaching into it,
+// stays at the call site; a question about how a later stage will treat a type
+// belongs to that stage.
+class Type {
+ private:
+  using Data = std::variant<
+      ScalarBitType, PackedArrayType, PackedStructType, PackedUnionType,
+      EnumType, UnpackedStructType, UnpackedUnionType, UnpackedArrayType,
+      DynamicArrayType, QueueType, AssociativeArrayType, WildcardIndexType,
+      StringType, EventType, RealType, ShortRealType, RealTimeType, ChandleType,
+      ClassHandleType, ImportedClassHandleType, UnitObjectType, NullType,
+      VoidType>;
 
-struct Type {
-  TypeData data;
-
-  [[nodiscard]] auto Kind() const -> TypeKind;
-  [[nodiscard]] auto IsScalarBit() const -> bool;
-  [[nodiscard]] auto AsScalarBit() const -> const ScalarBitType&;
-  [[nodiscard]] auto IsPackedArray() const -> bool;
-  [[nodiscard]] auto AsPackedArray() const -> const PackedArrayType&;
+ public:
+  explicit Type(Data data) : data_(std::move(data)) {
+  }
 
   // A single bit or a packed array of bits -- the integral operands an edge
   // event, a bit / part select, and an unpacked-array element read accept.
   [[nodiscard]] auto IsBitVector() const -> bool;
-  [[nodiscard]] auto IsPackedStruct() const -> bool;
-  [[nodiscard]] auto AsPackedStruct() const -> const PackedStructType&;
-  [[nodiscard]] auto IsPackedUnion() const -> bool;
-  [[nodiscard]] auto AsPackedUnion() const -> const PackedUnionType&;
-  [[nodiscard]] auto IsEnum() const -> bool;
-  [[nodiscard]] auto AsEnum() const -> const EnumType&;
 
   // True for the value types -- those a value-change event can react to (LRM
   // 9.4.2). A handle / event / void is not a value and drives no such event.
   [[nodiscard]] auto IsValueChangeObservable() const -> bool;
+
+  template <typename T>
+  [[nodiscard]] auto Is() const -> bool {
+    return std::holds_alternative<T>(data_);
+  }
+
+  // Null where the type is a different alternative, for a caller whose next
+  // step depends on which one it met.
+  template <typename T>
+  [[nodiscard]] auto As() const -> const T* {
+    return std::get_if<T>(&data_);
+  }
+
+  // For a caller that has already established which alternative this is, so
+  // meeting another one is that caller's own invariant broken.
+  template <typename T>
+  [[nodiscard]] auto Get() const -> const T& {
+    const T* arm = std::get_if<T>(&data_);
+    if (arm == nullptr) {
+      throw InternalError(
+          "hir::Type::Get: type is not the alternative asked for");
+    }
+    return *arm;
+  }
+
+  template <typename Visitor>
+  auto Visit(Visitor&& visitor) const -> decltype(auto) {
+    return std::visit(std::forward<Visitor>(visitor), data_);
+  }
+
+  auto operator==(const Type&) const -> bool = default;
+
+  // How a pool spreads the types it holds. It reads the type's alternative and
+  // the identities that alternative names rather than walking a member list,
+  // because equality decides the answer and a hash only has to separate the
+  // types one unit actually holds.
+  struct Hash {
+    auto operator()(const Type& type) const -> std::size_t;
+  };
+
+ private:
+  Data data_;
 };
+
+// The types one compilation unit names. A type's identity here is its
+// structure, so two declarations spelling the same type are one entry however
+// each was reached -- read off the frontend, composed by the lowering, or taken
+// out of another unit's signature. That is what makes a `TypeId` mean a type
+// rather than a place where one happened to be written, and it is what keeps a
+// type arriving from outside from becoming a second copy of one already here.
+//
+// Identity is structural and not the frontend's: a pool outlives the frontend
+// object that fed it and belongs to one unit alone, so nothing in it may rest
+// on a table shared with another unit.
+using TypePool = base::Interner<Type, TypeId, Type::Hash>;
 
 }  // namespace lyra::hir

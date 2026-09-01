@@ -303,20 +303,24 @@ auto BuildReceiverPointer(
     return block.exprs.Add(
         MakeSelfRefExpr(frame, frame.current_class->self_pointer_type));
   }
-  auto& types = lowerer.Owner().Unit().types;
+  const mir::TypePool& types = lowerer.Owner().Unit().types;
   auto handle_or =
       lowerer.LowerExpr(lowerer.HirExprs().Get(handle->expr), frame);
   if (!handle_or) return std::unexpected(std::move(handle_or.error()));
+  const mir::TypeId handle_type = handle_or->type;
   const mir::TypeId object_type =
-      std::get<mir::ManagedRefType>(types.Get(handle_or->type).data).pointee;
+      types.Get(handle_type).Get<mir::ManagedRefType>().pointee;
   const mir::ExprId handle_id = block.exprs.Add(*std::move(handle_or));
   const mir::ExprId object_id = block.exprs.Add(
       mir::Expr{
           .data = mir::DerefExpr{.pointer = handle_id}, .type = object_type});
   return block.exprs.Add(
       mir::MakeAddressOfExpr(
-          object_id,
-          types.PointerTo(object_type, mir::PointerOwnership::kBorrowed)));
+          object_id, types.Intern(
+                         mir::Type{mir::PointerType{
+                             .pointee = object_type,
+                             .ownership = mir::PointerOwnership::kBorrowed,
+                             .mutability = mir::Mutability::kMutable}})));
 }
 
 // Evaluates the ambient handle a callee's first parameter binds, in the block
@@ -492,7 +496,7 @@ auto EmitWritingBackSteps(
   const mir::TypeId payload_type = emitted->payload_type;
   const mir::ExprId call_id = body.exprs.Add(std::move(emitted->call));
   const mir::ExprId completion_value =
-      unit.types.IsCoroutine(body.exprs.Get(call_id).type)
+      unit.types.Get(body.exprs.Get(call_id).type).Is<mir::CoroutineType>()
           ? body.exprs.Add(
                 mir::Expr{
                     .data = mir::AwaitExpr{.awaitable = call_id},

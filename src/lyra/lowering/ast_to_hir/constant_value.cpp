@@ -50,8 +50,8 @@ auto MaterializeConstantExpr(
           [&](const std::vector<hir::ConstantValue>& components)
               -> diag::Result<hir::Expr> {
             const auto& ty = unit.types.Get(type);
-            const auto* arr = std::get_if<hir::UnpackedArrayType>(&ty.data);
-            const auto* st = std::get_if<hir::UnpackedStructType>(&ty.data);
+            const auto* arr = ty.As<hir::UnpackedArrayType>();
+            const auto* st = ty.As<hir::UnpackedStructType>();
             if (arr == nullptr && st == nullptr) {
               return diag::Fail(
                   span, diag::DiagCode::kUnsupportedExpressionForm,

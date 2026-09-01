@@ -142,8 +142,8 @@ auto UnitLowerer::PublishSignature() -> diag::Result<void> {
     }
     std::string interface_unit = SpecializationName(*instance);
     RecordReferencedUnit(interface_unit);
-    const hir::TypeId own =
-        unit_.types.Intern(hir::UnitObjectType{.unit_name = interface_unit});
+    const hir::TypeId own = unit_.types.Intern(
+        hir::Type{hir::UnitObjectType{.unit_name = interface_unit}});
     interface_port_units_.emplace(&port, std::move(interface_unit));
     const hir::PublishedMemberId id = instance_class.members.Add(
         hir::PublishedMember{

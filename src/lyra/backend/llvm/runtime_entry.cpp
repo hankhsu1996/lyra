@@ -34,6 +34,8 @@ auto Symbol(support::ValueDomain domain, std::string_view operation)
 // module calls, so changing it renames a linked symbol.
 auto RuntimeOpName(RuntimeOp op) -> std::string_view {
   switch (op) {
+    case RuntimeOp::kCellAlloc:
+      return "cell_alloc";
     case RuntimeOp::kCellInitialize:
       return "cell_initialize";
     case RuntimeOp::kCellGet:
@@ -103,7 +105,7 @@ auto RuntimeOpName(RuntimeOp op) -> std::string_view {
 auto DeclaredIndexType(const lir::CompilationUnit& unit, lir::TypeId container)
     -> std::optional<lir::TypeId> {
   const auto* associative =
-      std::get_if<lir::AssociativeArrayType>(&unit.types.Get(container).data);
+      unit.types.Get(container).As<lir::AssociativeArrayType>();
   if (associative == nullptr) {
     return std::nullopt;
   }
@@ -113,7 +115,7 @@ auto DeclaredIndexType(const lir::CompilationUnit& unit, lir::TypeId container)
 auto ValueDomainOf(const lir::CompilationUnit& unit, lir::TypeId type)
     -> std::optional<support::ValueDomain> {
   using Domain = std::optional<support::ValueDomain>;
-  return std::visit(
+  return unit.types.Get(type).Visit(
       Overloaded{
           [](const lir::PackedArrayType&) -> Domain {
             return support::ValueDomain::kPacked;
@@ -163,8 +165,7 @@ auto ValueDomainOf(const lir::CompilationUnit& unit, lir::TypeId type)
           [](const lir::AssociativeArrayType&) -> Domain {
             return support::ValueDomain::kAssocArray;
           },
-          [](const auto&) -> Domain { return std::nullopt; }},
-      unit.types.Get(type).data);
+          [](const auto&) -> Domain { return std::nullopt; }});
 }
 
 auto RuntimeSymbol(RuntimeOp op) -> std::string {

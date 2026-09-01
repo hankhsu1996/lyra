@@ -147,8 +147,11 @@ auto ClassDeclLowerer::DeclareShape() -> diag::Result<void> {
   UnitLowerer& unit_lowerer = *owner_;
   const hir::ClassDecl& hir_class = *hir_class_;
 
-  const mir::TypeId self_pointer_type = unit_lowerer.Unit().types.PointerTo(
-      object_type_, mir::PointerOwnership::kBorrowed);
+  const mir::TypeId self_pointer_type = unit_lowerer.Unit().types.Intern(
+      mir::Type{mir::PointerType{
+          .pointee = object_type_,
+          .ownership = mir::PointerOwnership::kBorrowed,
+          .mutability = mir::Mutability::kMutable}});
 
   std::optional<mir::ClassRef> base_ref;
   if (hir_class.base.has_value()) {

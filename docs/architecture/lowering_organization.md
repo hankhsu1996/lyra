@@ -352,16 +352,29 @@ that need it.
 
 ## Pool Selection
 
-Four containers carry the entities a pass produces. Which one is a function of two questions, and
-reaching for a bare `std::vector` where one of them fits is how an unnamed pool with hand-written
-bounds checks appears.
+Five containers carry the entities a pass produces, and which one is a function of three questions
+asked in order. Reaching for a bare `std::vector` where one of them fits is how an unnamed pool with
+hand-written bounds checks appears.
 
-| Does this pass mint the identity? | Is there a window where the identity exists without its value? | Container           |
-| --------------------------------- | -------------------------------------------------------------- | ------------------- |
-| Yes                               | No                                                             | `base::Arena`       |
-| Yes                               | Yes -- a peer names it before its content exists               | `base::Registry`    |
-| No -- another pool minted it      | No -- answered in the source pool's own order                  | `base::Translation` |
-| No -- another pool minted it      | Yes -- answered in an order the writer does not choose         | `base::SymbolTable` |
+| Does this pass own the identity? | Is the identity conferred or derived? | Is there a window where the identity exists without its value? | Container           |
+| -------------------------------- | ------------------------------------- | -------------------------------------------------------------- | ------------------- |
+| Yes                              | Derived from the entity's content     | Not askable -- see below                                       | `base::Interner`    |
+| Yes                              | Conferred on the entity               | No                                                             | `base::Arena`       |
+| Yes                              | Conferred on the entity               | Yes -- a peer names it before its content exists               | `base::Registry`    |
+| No -- another pool owns it       | Not askable -- this pool confers none | No -- answered in the source pool's own order                  | `base::Translation` |
+| No -- another pool owns it       | Not askable -- this pool confers none | Yes -- answered in an order the writer does not choose         | `base::SymbolTable` |
+
+The questions are ordered rather than independent, and the two cells the table cannot fill are the
+reason. A pool that owns no identity confers nothing, so the second question has no subject. And a
+derived identity cannot precede its value, because there is no content to derive it from until the
+content exists -- which is not a limitation of the container but what "derived" means. A structure
+that refers to itself reaches the cycle through a nominal entity, whose conferred identity exists
+before its body, and that is what lets an interner need no reserve-then-fill step.
+
+The first two questions are the same distinction the section above draws between conferred and
+derived identity, asked at the moment a container is chosen. Asking only "does this pass mint?"
+answers `base::Arena` for a structural pool, because an interner mints too -- it just mints once per
+content rather than once per request. That is how a type pool ends up an arena by mistake.
 
 A bare `std::vector` is right for a list nothing names from a distance: the components of one
 construct, consumed whole. It is wrong the moment something holds an index into it, because the
@@ -377,6 +390,8 @@ A pass is a class, but not everything around it is. A free function is correct w
 impossible or would invert a dependency:
 
 - The type is a variant alias or belongs to a foreign library, so it has no member surface to join.
+  A layer's own type sum is not this case: it is a class over its alternatives precisely so the
+  vocabulary for asking what a type is can be members of it.
 - The operation belongs to a higher layer than the type it reads. A lowering concern must not become
   a member of the IR type it consumes; that would make the lower layer know the higher one.
 - It is one of the pass shapes defined above -- a per-kind handler, a node builder, a fold.

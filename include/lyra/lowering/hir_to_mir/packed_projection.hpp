@@ -43,11 +43,11 @@ struct PackedProjection {
   std::vector<ProjectedMember> members;
   std::uint64_t bit_width = 0;
   std::uint32_t tag_bits = 0;
-  bool four_state = false;
+  mir::IntegralStateKind state_kind = mir::IntegralStateKind::kTwoState;
 };
 
 [[nodiscard]] auto ProjectPackedAggregate(
-    const UnitLowerer& unit_lowerer, const hir::TypeData& aggregate)
+    const UnitLowerer& unit_lowerer, const hir::Type& aggregate)
     -> PackedProjection;
 
 }  // namespace lyra::lowering::hir_to_mir

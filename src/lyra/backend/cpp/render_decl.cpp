@@ -16,7 +16,6 @@
 #include "lyra/mir/class_ref.hpp"
 #include "lyra/mir/compilation_unit.hpp"
 #include "lyra/mir/field.hpp"
-#include "lyra/mir/type.hpp"
 
 namespace lyra::backend::cpp {
 

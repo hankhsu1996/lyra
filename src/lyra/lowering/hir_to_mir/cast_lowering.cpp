@@ -15,11 +15,6 @@ namespace lyra::lowering::hir_to_mir {
 
 namespace {
 
-auto IsRealFamilyKind(mir::TypeKind k) -> bool {
-  return k == mir::TypeKind::kReal || k == mir::TypeKind::kShortReal ||
-         k == mir::TypeKind::kRealTime;
-}
-
 // The destination real type's own factory, named for which conversion this is:
 // landing a machine integer (LRM 6.12.1) and reshaping across precisions are
 // two operations, and the operand's type is not what tells them apart.
@@ -124,21 +119,17 @@ auto BuildValueConversion(
   }
   const auto& src_ty = unit.types.Get(src_type);
   const auto& dst_ty = unit.types.Get(dst_type);
-  const auto src_kind = src_ty.Kind();
-  const auto dst_kind = dst_ty.Kind();
 
   // Real-family reshape (LRM 6.12.1): crossing precisions is the destination
-  // type's own conversion, and staying at one is identity.
-  if (IsRealFamilyKind(src_kind) && IsRealFamilyKind(dst_kind)) {
-    if (src_kind == dst_kind) {
-      return operand_expr;
-    }
+  // type's own conversion. Staying at one precision cannot reach here, since
+  // two real-family types that are the same type are the same id.
+  if (src_ty.IsRealFamily() && dst_ty.IsRealFamily()) {
     return MakeRealFactoryCall(
         support::BuiltinFn::kConvertFrom, operand_id, dst_type);
   }
 
   // Integral -> real: read out the host int64, build the real from it.
-  if (src_ty.IsIntegralPacked() && IsRealFamilyKind(dst_kind)) {
+  if (src_ty.IsIntegralPacked() && dst_ty.IsRealFamily()) {
     const mir::ExprId int_id =
         block.exprs.Add(MakeToInt64Call(unit, operand_id));
     return MakeRealFactoryCall(support::BuiltinFn::kFromInt, int_id, dst_type);
@@ -146,7 +137,7 @@ auto BuildValueConversion(
 
   // Real -> integral: round to int64, then `PackedArray::FromInt(...)` lands
   // the rounded value into the destination shape.
-  if (IsRealFamilyKind(src_kind) && dst_ty.IsIntegralPacked()) {
+  if (src_ty.IsRealFamily() && dst_ty.IsIntegralPacked()) {
     const mir::ExprId rounded_id =
         block.exprs.Add(MakeRoundCall(unit, operand_id));
     return BuildPackedArrayFromInt(unit, block, rounded_id, dst_type);
@@ -158,18 +149,18 @@ auto BuildValueConversion(
   // the reshaped value -- or over the operand itself, where the two
   // representations already agree and nothing reshapes.
   if (src_ty.IsIntegralPacked() && dst_ty.IsIntegralPacked()) {
-    const auto& src_pa = src_ty.AsIntegralPacked();
-    const auto& dst_pa = dst_ty.AsIntegralPacked();
+    const auto& src_pa = src_ty.PackedShape();
+    const auto& dst_pa = dst_ty.PackedShape();
     // Representation equality across every axis the value carries -- width,
     // signedness, state domain, and the dimension stack. A same-width
     // dims-only difference (a flat vector reaching a packed-of-packed
     // destination) is a real reshape the front end draws no conversion for, so
     // it must reshape here.
     const bool same_shape = src_pa.signedness == dst_pa.signedness &&
-                            src_pa.atom == dst_pa.atom &&
+                            src_pa.state_kind == dst_pa.state_kind &&
                             src_pa.dims == dst_pa.dims;
-    const bool src_is_enum = src_ty.IsEnum();
-    const bool dst_is_enum = dst_ty.IsEnum();
+    const bool src_is_enum = src_ty.Is<mir::EnumType>();
+    const bool dst_is_enum = dst_ty.Is<mir::EnumType>();
     mir::ExprId body_id = operand_id;
     if (!same_shape) {
       body_id = block.exprs.Add(
@@ -186,21 +177,20 @@ auto BuildValueConversion(
   }
 
   // Unpacked-array-of-byte -> string (LRM 21.3.4.3 $sscanf source lift).
-  if (src_kind == mir::TypeKind::kUnpackedArray &&
-      dst_kind == mir::TypeKind::kString) {
+  if (src_ty.Is<mir::UnpackedArrayType>() && dst_ty.Is<mir::StringType>()) {
     return MakeStringFromFactory(
         unit, operand_id, support::BuiltinFn::kFromByteArray);
   }
 
   // Integral -> string (LRM 6.16 bit pattern -> string value).
-  if (src_ty.IsIntegralPacked() && dst_kind == mir::TypeKind::kString) {
+  if (src_ty.IsIntegralPacked() && dst_ty.Is<mir::StringType>()) {
     return MakeStringFromFactory(
         unit, operand_id, support::BuiltinFn::kFromPackedArray);
   }
 
   // String -> integral (LRM 5.9): right-justified into the destination's
   // declared shape, which the shape operand names.
-  if (src_kind == mir::TypeKind::kString && dst_ty.IsIntegralPacked()) {
+  if (src_ty.Is<mir::StringType>() && dst_ty.IsIntegralPacked()) {
     const mir::ExprId packed_type =
         mir::BuildPackedTypeRef(unit, block, dst_type);
     return mir::Expr{
@@ -219,8 +209,8 @@ auto BuildValueConversion(
   // which is also what an element past the end of the text is left holding. LRM
   // 5.9 defines the conversion only for a byte element, so an array of anything
   // else is not a destination this reshapes into.
-  if (const auto* dst_arr = std::get_if<mir::UnpackedArrayType>(&dst_ty.data);
-      dst_arr != nullptr && src_kind == mir::TypeKind::kString &&
+  if (const auto* dst_arr = dst_ty.As<mir::UnpackedArrayType>();
+      dst_arr != nullptr && src_ty.Is<mir::StringType>() &&
       unit.types.Get(dst_arr->element_type).IsIntegralPacked()) {
     const mir::ExprId element_type =
         mir::BuildPackedTypeRef(unit, block, dst_arr->element_type);
@@ -242,7 +232,7 @@ auto BuildValueConversion(
   // rather than through the string path. Its bytes left-justify the same way,
   // and they arrive whole: a NUL among them is a byte like any other, where
   // routing through a string value would have removed it (LRM 6.16).
-  if (const auto* dst_arr = std::get_if<mir::UnpackedArrayType>(&dst_ty.data);
+  if (const auto* dst_arr = dst_ty.As<mir::UnpackedArrayType>();
       dst_arr != nullptr && src_ty.IsIntegralPacked() &&
       unit.types.Get(dst_arr->element_type).IsIntegralPacked()) {
     const mir::ExprId element_type =
@@ -272,8 +262,8 @@ auto BuildValueConversion(
   // can differ. Conform the source's contents to the destination's bound, which
   // a pure whole-value adopt would otherwise drop -- the bound is a declared
   // property of the destination variable.
-  if (const auto* dst_q = std::get_if<mir::QueueType>(&dst_ty.data);
-      dst_q != nullptr && std::holds_alternative<mir::QueueType>(src_ty.data)) {
+  if (const auto* dst_q = dst_ty.As<mir::QueueType>();
+      dst_q != nullptr && src_ty.Is<mir::QueueType>()) {
     const std::int64_t bound =
         dst_q->max_bound.has_value()
             ? static_cast<std::int64_t>(*dst_q->max_bound)
@@ -292,8 +282,7 @@ auto BuildValueConversion(
   // handle to one is a legal value of a variable declared with the base class.
   // The object is unchanged; only the handle's declared class differs, which is
   // what re-typing the reference states.
-  if (std::holds_alternative<mir::ManagedRefType>(src_ty.data) &&
-      std::holds_alternative<mir::ManagedRefType>(dst_ty.data)) {
+  if (src_ty.Is<mir::ManagedRefType>() && dst_ty.Is<mir::ManagedRefType>()) {
     return mir::Expr{
         .data = mir::PointerCastExpr{.operand = operand_id}, .type = dst_type};
   }
@@ -309,15 +298,16 @@ auto BuildPropagatedConversion(
   const auto& src_ty = unit.types.Get(block.exprs.Get(operand_id).type);
   const auto& dst_ty = unit.types.Get(dst_type);
   if (src_ty.IsIntegralPacked() && dst_ty.IsIntegralPacked()) {
-    const mir::Signedness propagated = dst_ty.AsIntegralPacked().signedness;
-    if (src_ty.AsIntegralPacked().signedness != propagated) {
+    const mir::Signedness propagated = dst_ty.PackedShape().signedness;
+    if (src_ty.PackedShape().signedness != propagated) {
       // Restating the operand's own representation under the propagated
       // signedness is what leaves the ordinary widening behind it: the fill
       // then follows the signedness the value carries, as everywhere else.
-      mir::PackedArrayType restated = src_ty.AsIntegralPacked();
+      mir::PackedArrayType restated = src_ty.PackedShape();
       restated.signedness = propagated;
-      operand_id =
-          ConvertToType(unit, block, operand_id, unit.types.Intern(restated));
+      operand_id = ConvertToType(
+          unit, block, operand_id,
+          unit.types.Intern(mir::Type{std::move(restated)}));
     }
   }
   return BuildValueConversion(unit, block, operand_id, dst_type);

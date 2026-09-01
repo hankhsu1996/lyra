@@ -45,6 +45,7 @@
 #include "lyra/mir/runtime_record.hpp"
 #include "lyra/mir/stmt.hpp"
 #include "lyra/mir/type.hpp"
+#include "lyra/mir/type_builders.hpp"
 #include "lyra/support/builtin_fn.hpp"
 
 namespace lyra::lowering::hir_to_mir {
@@ -85,10 +86,12 @@ auto PortConnectionCallableName(hir::PortConnectionId id) -> std::string {
 
 auto MakeUniqueObjectPointer(UnitLowerer& unit_lowerer, mir::ClassId class_id)
     -> mir::TypeId {
-  const mir::TypeId object_type =
-      unit_lowerer.Unit().types.Intern(mir::ObjectType{.class_id = class_id});
-  return unit_lowerer.Unit().types.PointerTo(
-      object_type, mir::PointerOwnership::kUnique);
+  const mir::TypeId object_type = unit_lowerer.Unit().types.Intern(
+      mir::Type{mir::ObjectType{.class_id = class_id}});
+  return unit_lowerer.Unit().types.Intern(
+      mir::Type{mir::PointerType{
+          .pointee = object_type,
+          .ownership = mir::PointerOwnership::kUnique}});
 }
 
 // The pointer type a handle to one of `member`'s objects has. The object is one
@@ -97,9 +100,11 @@ auto MakeExternalUnitPointer(
     UnitLowerer& unit_lowerer, const hir::InstanceMemberDecl& member,
     mir::PointerOwnership ownership) -> mir::TypeId {
   const mir::TypeId object_type = unit_lowerer.Unit().types.Intern(
-      mir::ExternalUnitObjectType{
-          .object = unit_lowerer.TranslateExternalUnitObject(member.object)});
-  return unit_lowerer.Unit().types.PointerTo(object_type, ownership);
+      mir::Type{mir::ExternalUnitObjectType{
+          .object = unit_lowerer.TranslateExternalUnitObject(member.object)}});
+  return unit_lowerer.Unit().types.Intern(
+      mir::Type{
+          mir::PointerType{.pointee = object_type, .ownership = ownership}});
 }
 
 // Builds one object an external-unit instance member declares, at `coords`, and
@@ -121,8 +126,8 @@ auto BuildOwnedInstance(
     indices.push_back(BuildIntLiteral(
         unit_lowerer.Unit(), block, static_cast<std::int64_t>(coord)));
   }
-  const mir::TypeId indices_type = unit_lowerer.Unit().types.MachineArrayOf(
-      builtins.int_type, indices.size());
+  const mir::TypeId indices_type = mir::MachineArrayOf(
+      unit_lowerer.Unit().types, builtins.int_type, indices.size());
   const mir::ExprId indices_id = block.exprs.Add(
       mir::Expr{
           .data = mir::ArrayLiteralExpr{.elements = std::move(indices)},
@@ -220,8 +225,9 @@ auto DeclareRoutedRefSlots(StructuralScopeLowerer& lowerer, ClassShape& shape)
     }
     const mir::TypeId leaf = unit_lowerer.MemberCellType(
         unit_lowerer.TranslateType(cu.recipe.type), cu.target_storage);
-    const mir::TypeId slot_type = unit_lowerer.Unit().types.PointerTo(
-        leaf, mir::PointerOwnership::kBorrowed);
+    const mir::TypeId slot_type = unit_lowerer.Unit().types.Intern(
+        mir::Type{mir::PointerType{
+            .pointee = leaf, .ownership = mir::PointerOwnership::kBorrowed}});
     slots.push_back(
         RoutedRefMeta{
             .target = shape.fields.Add(
@@ -245,8 +251,8 @@ auto BuildIndicesLiteral(
     ids.push_back(BuildIntLiteral(
         unit_lowerer.Unit(), block, static_cast<std::int64_t>(idx)));
   }
-  const mir::TypeId indices_type = unit_lowerer.Unit().types.MachineArrayOf(
-      builtins.int_type, indices.size());
+  const mir::TypeId indices_type = mir::MachineArrayOf(
+      unit_lowerer.Unit().types, builtins.int_type, indices.size());
   return block.exprs.Add(
       mir::Expr{
           .data = mir::ArrayLiteralExpr{.elements = std::move(ids)},
@@ -437,8 +443,7 @@ auto MaterializeLeaf(
   // pointer the step before it produced. The access states only the position:
   // which object those positions index is already on the receiver's type.
   if (const auto* member = std::get_if<hir::SignatureMemberLeaf>(&leaf)) {
-    const auto& slot =
-        std::get<mir::PointerType>(unit.types.Get(slot_type).data);
+    const auto& slot = unit.types.Get(slot_type).Get<mir::PointerType>();
     const mir::ExprId access = block.exprs.Add(
         mir::MakeFieldAccessExpr(
             receiver.expr,
@@ -457,8 +462,10 @@ auto MaterializeLeaf(
   }
 
   if (const auto* opaque = std::get_if<hir::OpaqueLeaf>(&leaf)) {
-    const mir::TypeId void_ptr_type = unit.types.PointerTo(
-        unit.builtins.void_type, mir::PointerOwnership::kBorrowed);
+    const mir::TypeId void_ptr_type = unit.types.Intern(
+        mir::Type{mir::PointerType{
+            .pointee = unit.builtins.void_type,
+            .ownership = mir::PointerOwnership::kBorrowed}});
     const mir::ExprId raw = block.exprs.Add(
         mir::Expr{
             .data =
@@ -624,11 +631,14 @@ void InstallInterfacePortConnection(
   UnitLowerer& unit_lowerer = lowerer.Owner();
   mir::Block& block = *resolve_frame.current_block;
   auto& types = unit_lowerer.Unit().types;
-  const mir::TypeId member_type = types.PointerTo(
-      unit_lowerer.TranslateType(conn.endpoint.type),
-      mir::PointerOwnership::kBorrowed);
-  const mir::TypeId slot_type =
-      types.PointerTo(member_type, mir::PointerOwnership::kBorrowed);
+  const mir::TypeId member_type = types.Intern(
+      mir::Type{mir::PointerType{
+          .pointee = unit_lowerer.TranslateType(conn.endpoint.type),
+          .ownership = mir::PointerOwnership::kBorrowed}});
+  const mir::TypeId slot_type = types.Intern(
+      mir::Type{mir::PointerType{
+          .pointee = member_type,
+          .ownership = mir::PointerOwnership::kBorrowed}});
   const mir::ExprId nav =
       BuildRouteValue(lowerer, resolve_frame, conn.endpoint, slot_type);
   const mir::ExprId target = block.exprs.Add(
@@ -693,11 +703,13 @@ auto InstallPortConnections(
         }
         const mir::TypeId value_type = unit_lowerer.TranslateType(recipe.type);
         const mir::TypeId ref_type = unit_lowerer.Unit().types.Intern(
-            mir::RefType{
+            mir::Type{mir::RefType{
                 .pointee = value_type,
-                .mutability = mir::Mutability::kMutable});
-        const mir::TypeId slot_type = unit_lowerer.Unit().types.PointerTo(
-            ref_type, mir::PointerOwnership::kBorrowed);
+                .mutability = mir::Mutability::kMutable}});
+        const mir::TypeId slot_type = unit_lowerer.Unit().types.Intern(
+            mir::Type{mir::PointerType{
+                .pointee = ref_type,
+                .ownership = mir::PointerOwnership::kBorrowed}});
         const mir::ExprId nav =
             BuildRouteValue(lowerer, resolve_frame, recipe, slot_type);
         const mir::ExprId target = resolve_block.exprs.Add(
@@ -812,8 +824,8 @@ void AppendOwnedChildConstruction(
   if (array_index.has_value()) {
     index_elems.push_back(*array_index);
   }
-  const mir::TypeId indices_type = unit_lowerer.Unit().types.MachineArrayOf(
-      builtins.int_type, index_elems.size());
+  const mir::TypeId indices_type = mir::MachineArrayOf(
+      unit_lowerer.Unit().types, builtins.int_type, index_elems.size());
   const mir::ExprId indices_id = arm_block.exprs.Add(
       mir::Expr{
           .data = mir::ArrayLiteralExpr{.elements = std::move(index_elems)},
@@ -906,10 +918,12 @@ auto StructuralScopeLowerer::DeclareShape() -> diag::Result<mir::ClassId> {
   // The identity is minted before the shape is populated so the class's own
   // `self_pointer_type` can name it.
   class_id_ = unit_lowerer.Unit().DeclareClass();
-  const mir::TypeId self_object_type =
-      unit_lowerer.Unit().types.Intern(mir::ObjectType{.class_id = class_id_});
-  const mir::TypeId self_pointer_type = unit_lowerer.Unit().types.PointerTo(
-      self_object_type, mir::PointerOwnership::kBorrowed);
+  const mir::TypeId self_object_type = unit_lowerer.Unit().types.Intern(
+      mir::Type{mir::ObjectType{.class_id = class_id_}});
+  const mir::TypeId self_pointer_type = unit_lowerer.Unit().types.Intern(
+      mir::Type{mir::PointerType{
+          .pointee = self_object_type,
+          .ownership = mir::PointerOwnership::kBorrowed}});
 
   ClassShape shape;
   shape.name = name_;
@@ -961,9 +975,9 @@ auto StructuralScopeLowerer::DeclareShape() -> diag::Result<mir::ClassId> {
               // so that record is the one source of both the object's type and
               // the positions a name reached through it is counted out of.
               const mir::TypeId object_type = unit_lowerer.Unit().types.Intern(
-                  mir::ExternalUnitObjectType{
+                  mir::Type{mir::ExternalUnitObjectType{
                       .object = unit_lowerer.TranslateExternalUnitObject(
-                          port.object)});
+                          port.object)}});
               interface_port_fields[id.value] = shape.fields.Add(
                   mir::FieldDecl{
                       .name = port.name,
@@ -1008,10 +1022,11 @@ auto StructuralScopeLowerer::DeclareShape() -> diag::Result<mir::ClassId> {
       // is an if/case arm or one iteration of a loop, so each keeps its own
       // borrowed typed handle for a layout-visible route step to project
       // through.
-      const mir::TypeId handle_type = unit_lowerer.Unit().types.PointerTo(
-          unit_lowerer.Unit().types.Intern(
-              mir::ObjectType{.class_id = child_id}),
-          mir::PointerOwnership::kBorrowed);
+      const mir::TypeId handle_type = unit_lowerer.Unit().types.Intern(
+          mir::Type{mir::PointerType{
+              .pointee = unit_lowerer.Unit().types.Intern(
+                  mir::Type{mir::ObjectType{.class_id = child_id}}),
+              .ownership = mir::PointerOwnership::kBorrowed}});
       const mir::FieldId borrowed_handle = shape.fields.Add(
           mir::FieldDecl{.name = std::move(handle_name), .type = handle_type});
       gen_bindings.push_back(
@@ -1067,8 +1082,8 @@ auto StructuralScopeLowerer::DeclareShape() -> diag::Result<mir::ClassId> {
   // to know what stands between. The nodes' own nesting is the HIR scope tree,
   // read where the objects are built.
   const mir::TypeId cancellation_target_type = unit_lowerer.Unit().types.Intern(
-      mir::RuntimeLibraryType{
-          .kind = mir::RuntimeLibraryKind::kCancellationTarget});
+      mir::Type{mir::RuntimeLibraryType{
+          .kind = mir::RuntimeLibraryKind::kCancellationTarget}});
   std::vector<DeclaredScope> scopes;
   scopes.reserve(hir_scope.procedural_scopes.size());
   for (const hir::ProceduralScopeId scope_id :
@@ -1082,10 +1097,11 @@ auto StructuralScopeLowerer::DeclareShape() -> diag::Result<mir::ClassId> {
     node_shape.base =
         mir::ClassRef{mir::RuntimeClassRef{.symbol = "lyra::runtime::Scope"}};
     node_shape.is_final = true;
-    node_shape.self_pointer_type = unit_lowerer.Unit().types.PointerTo(
-        unit_lowerer.Unit().types.Intern(
-            mir::ObjectType{.class_id = node_class}),
-        mir::PointerOwnership::kBorrowed);
+    node_shape.self_pointer_type = unit_lowerer.Unit().types.Intern(
+        mir::Type{mir::PointerType{
+            .pointee = unit_lowerer.Unit().types.Intern(
+                mir::Type{mir::ObjectType{.class_id = node_class}}),
+            .ownership = mir::PointerOwnership::kBorrowed}});
     node_shape.time_resolution = hir_scope.time_resolution;
     AttachRuntimeScopeCtorPrefix(unit_lowerer.Unit(), node_shape);
     unit_lowerer.DefineClassShape(node_class, std::move(node_shape));
@@ -1103,10 +1119,13 @@ auto StructuralScopeLowerer::DeclareShape() -> diag::Result<mir::ClassId> {
                 .borrowed_handle = shape.fields.Add(
                     mir::FieldDecl{
                         .name = std::format("{}_borrowed_handle", segment),
-                        .type = unit_lowerer.Unit().types.PointerTo(
-                            unit_lowerer.Unit().types.Intern(
-                                mir::ObjectType{.class_id = node_class}),
-                            mir::PointerOwnership::kBorrowed)})},
+                        .type = unit_lowerer.Unit().types.Intern(
+                            mir::Type{mir::PointerType{
+                                .pointee = unit_lowerer.Unit().types.Intern(
+                                    mir::Type{mir::ObjectType{
+                                        .class_id = node_class}}),
+                                .ownership =
+                                    mir::PointerOwnership::kBorrowed}})})},
         .cancellation_target = std::nullopt};
 
     // What a `disable` of this scope invalidates (LRM 9.6.2). Its targets are
@@ -1263,11 +1282,11 @@ auto InstallGeneratedDefinition(
       mir::Expr{
           .data = mir::MachineArrayDataExpr{.array = exports_ref},
           .type = unit.types.Intern(
-              mir::PointerType{
+              mir::Type{mir::PointerType{
                   .pointee =
                       definition.Type(mir::RuntimeLibraryKind::kScopeExport),
                   .ownership = mir::PointerOwnership::kBorrowed,
-                  .mutability = mir::Mutability::kReadOnly})});
+                  .mutability = mir::Mutability::kReadOnly}})});
   const mir::ExprId export_table = definition.Construct(
       mir::RuntimeLibraryKind::kScopeExportTable,
       {exports_data, definition.MachineInt(export_count)});
@@ -1299,8 +1318,10 @@ auto InstallGeneratedDefinition(
   const mir::ExprId addr = cex.Add(
       mir::Expr{
           .data = mir::AddressOfExpr{.operand = ref},
-          .type = unit.types.PointerTo(
-              const_type, mir::PointerOwnership::kBorrowed)});
+          .type = unit.types.Intern(
+              mir::Type{mir::PointerType{
+                  .pointee = const_type,
+                  .ownership = mir::PointerOwnership::kBorrowed}})});
   return {addr};
 }
 
@@ -1424,8 +1445,7 @@ auto StructuralScopeLowerer::PopulateBodies(WalkFrame parent_frame)
     const mir::TypeId mir_value_type = unit_lowerer.TranslateType(d.type);
     const bool is_net = std::holds_alternative<hir::StructuralNetDecl>(d.kind);
     const auto* var = std::get_if<hir::StructuralVariableDecl>(&d.kind);
-    const mir::TypeKind var_kind =
-        unit_lowerer.Unit().types.Get(mir_value_type).Kind();
+    const mir::Type& var_type = unit_lowerer.Unit().types.Get(mir_value_type);
     // Owned children (pointer / vector / object), cross-instance reference
     // slots (borrowed pointers filled in the resolve phase), and named events
     // have no "value assignment" -- their declaration shape itself fixes the
@@ -1435,11 +1455,10 @@ auto StructuralScopeLowerer::PopulateBodies(WalkFrame parent_frame)
     // receive an LRM 10.5 initialization statement, run in the initialize
     // phase after the tree's references resolve, not in the constructor.
     const bool is_assignable_value =
-        var != nullptr && var_kind != mir::TypeKind::kPointer &&
-        var_kind != mir::TypeKind::kVector &&
-        var_kind != mir::TypeKind::kObject &&
-        var_kind != mir::TypeKind::kExternalUnitObject &&
-        var_kind != mir::TypeKind::kEvent;
+        var != nullptr && !var_type.Is<mir::PointerType>() &&
+        !var_type.Is<mir::VectorType>() && !var_type.Is<mir::ObjectType>() &&
+        !var_type.Is<mir::ExternalUnitObjectType>() &&
+        !var_type.Is<mir::EventType>();
     if (is_assignable_value) {
       const mir::ExprId init_target = initialize_block.exprs.Add(
           mir::MakeFieldAccessExpr(
@@ -1519,17 +1538,19 @@ auto StructuralScopeLowerer::PopulateBodies(WalkFrame parent_frame)
     // cross-unit referrer resolves it by name at construction. The excluded
     // members -- owned children and cross-unit reference slots -- are not
     // signals.
-    const bool is_signal = var_kind != mir::TypeKind::kPointer &&
-                           var_kind != mir::TypeKind::kVector &&
-                           var_kind != mir::TypeKind::kObject &&
-                           var_kind != mir::TypeKind::kExternalUnitObject;
+    const bool is_signal = !var_type.Is<mir::PointerType>() &&
+                           !var_type.Is<mir::VectorType>() &&
+                           !var_type.Is<mir::ObjectType>() &&
+                           !var_type.Is<mir::ExternalUnitObjectType>();
     if (is_signal) {
       const mir::ExprId var_ref = ctor_block.exprs.Add(
           mir::MakeFieldAccessExpr(
               self_read(), mir::FieldTarget{.owner = class_id_, .slot = mir_id},
               mir_field_type));
-      const mir::TypeId var_ptr_type = unit_lowerer.Unit().types.PointerTo(
-          mir_field_type, mir::PointerOwnership::kBorrowed);
+      const mir::TypeId var_ptr_type = unit_lowerer.Unit().types.Intern(
+          mir::Type{mir::PointerType{
+              .pointee = mir_field_type,
+              .ownership = mir::PointerOwnership::kBorrowed}});
       const mir::ExprId addr_id =
           ctor_block.exprs.Add(mir::MakeAddressOfExpr(var_ref, var_ptr_type));
       const mir::ExprId name_id = ctor_block.exprs.Add(
@@ -1667,8 +1688,10 @@ auto StructuralScopeLowerer::PopulateBodies(WalkFrame parent_frame)
               cell_type));
       const mir::ExprId addr = ctor_block.exprs.Add(
           mir::MakeAddressOfExpr(
-              cell, unit_lowerer.Unit().types.PointerTo(
-                        cell_type, mir::PointerOwnership::kBorrowed)));
+              cell, unit_lowerer.Unit().types.Intern(
+                        mir::Type{mir::PointerType{
+                            .pointee = cell_type,
+                            .ownership = mir::PointerOwnership::kBorrowed}})));
       const mir::FieldId borrowed_handle =
           scopes_.Get(binding.scope).name_node->borrowed_handle;
       const mir::ExprId node = ctor_block.exprs.Add(

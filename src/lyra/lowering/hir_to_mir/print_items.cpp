@@ -29,6 +29,7 @@
 #include "lyra/mir/runtime_print.hpp"
 #include "lyra/mir/stmt.hpp"
 #include "lyra/mir/type.hpp"
+#include "lyra/mir/type_builders.hpp"
 #include "lyra/support/builtin_fn.hpp"
 #include "lyra/value/format_parse.hpp"
 
@@ -44,7 +45,7 @@ namespace {
 // host pointer.
 auto TypeContainsChandle(const mir::CompilationUnit& unit, mir::TypeId type)
     -> bool {
-  return std::visit(
+  return unit.types.Get(type).Visit(
       Overloaded{
           [](const mir::ChandleType&) { return true; },
           [&](const mir::UnpackedArrayType& t) {
@@ -75,8 +76,7 @@ auto TypeContainsChandle(const mir::CompilationUnit& unit, mir::TypeId type)
               return TypeContainsChandle(unit, e);
             });
           },
-          [](const auto&) { return false; }},
-      unit.types.Get(type).data);
+          [](const auto&) { return false; }});
 }
 
 auto ToMirFormatModifiers(const value::FormatModifiers& m)
@@ -135,10 +135,9 @@ auto BuildPrintValueItem(
   // each format directly, without building a string value. Only an unpacked
   // byte array is not directly formattable, so it lifts to a string value
   // here.
-  const auto& value_type = lowerer.Owner().Unit().types.Get(lowered.type);
+  const mir::Type& value_type = lowerer.Owner().Unit().types.Get(lowered.type);
   if (spec.kind == value::FormatKind::kString &&
-      value_type.Kind() != mir::TypeKind::kString &&
-      !value_type.IsIntegralPacked()) {
+      !value_type.Is<mir::StringType>() && !value_type.IsIntegralPacked()) {
     const mir::ExprId inner = block.exprs.Add(std::move(lowered));
     lowered = BuildValueConversion(
         lowerer.Owner().Unit(), block, inner,
@@ -447,8 +446,8 @@ auto BuildRuntimeFormatCallExpr(
                 mir::CallExpr{.callee = mir::Construct{}, .arguments = {value}},
             .type = unit.builtins.format_arg}));
   }
-  const mir::TypeId operands_type =
-      unit.types.MachineArrayOf(unit.builtins.format_arg, operands.size());
+  const mir::TypeId operands_type = mir::MachineArrayOf(
+      unit.types, unit.builtins.format_arg, operands.size());
   const mir::ExprId operands_array = block.exprs.Add(
       mir::Expr{
           .data = mir::ArrayLiteralExpr{.elements = std::move(operands)},
@@ -494,7 +493,7 @@ auto BuildPrintItemsArray(
         BuildPrintItemExpr(unit, block, item, time_unit_power)));
   }
   const mir::TypeId array_type =
-      unit.types.MachineArrayOf(unit.builtins.print_item, items.size());
+      mir::MachineArrayOf(unit.types, unit.builtins.print_item, items.size());
   return mir::Expr{
       .data = mir::ArrayLiteralExpr{.elements = std::move(elements)},
       .type = array_type};

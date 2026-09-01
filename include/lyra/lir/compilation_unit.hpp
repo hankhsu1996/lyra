@@ -2,9 +2,9 @@
 
 #include <optional>
 #include <string>
+#include <variant>
 #include <vector>
 
-#include "lyra/base/arena.hpp"
 #include "lyra/base/registry.hpp"
 #include "lyra/base/translation.hpp"
 #include "lyra/lir/class_id.hpp"
@@ -13,6 +13,7 @@
 #include "lyra/lir/function.hpp"
 #include "lyra/lir/function_id.hpp"
 #include "lyra/lir/type.hpp"
+#include "lyra/lir/type_id.hpp"
 
 namespace lyra::lir {
 
@@ -103,7 +104,7 @@ struct StaticStorage {
 // identity a call names. A class reaches its own bodies the same way any other
 // caller does.
 struct CompilationUnit {
-  base::Arena<Type, TypeId> types;
+  TypePool types;
   base::Registry<Class, ClassId> classes;
   base::Registry<Closure, ClosureId> closures;
   base::Arena<ExternalUnitObject, ExternalUnitObjectId> external_unit_objects;

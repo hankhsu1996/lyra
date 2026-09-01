@@ -634,9 +634,7 @@ auto RenderDirectBuiltinCall(
   }
   const mir::Expr& receiver = view.Expr(call.arguments[0]);
   const std::string_view sep =
-      view.Unit().types.Get(receiver.type).Kind() == mir::TypeKind::kPointer
-          ? "->"
-          : ".";
+      view.Unit().types.Get(receiver.type).Is<mir::PointerType>() ? "->" : ".";
   // A mutating built-in writes through its receiver, so the receiver names a
   // place -- the same distinction an assignment target draws, and the reason a
   // receiver reaching through a capability wrapper reaches its write protocol
@@ -681,8 +679,9 @@ auto RenderDirectExternalUnitClassMethodCall(
     const mir::ExternalUnitClassMethodTarget& target) -> CalleeRender {
   const bool has_receiver_arg =
       !call.arguments.empty() &&
-      std::holds_alternative<mir::PointerType>(
-          view.Unit().types.Get(view.Expr(call.arguments[0]).type).data);
+      view.Unit()
+          .types.Get(view.Expr(call.arguments[0]).type)
+          .Is<mir::PointerType>();
   if (!has_receiver_arg) {
     return {
         .expr = std::format(

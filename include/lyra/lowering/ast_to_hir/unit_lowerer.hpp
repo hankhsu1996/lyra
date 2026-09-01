@@ -262,7 +262,7 @@ class UnitLowerer {
   // frontend -- the array of a type's per-dimension query results that an LRM
   // 20.7 query selects from when its dimension is named at run time. There is
   // no frontend type to take the shortcut on, so it goes straight to the pool.
-  auto AddComposedType(hir::TypeData data) -> hir::TypeId;
+  auto AddComposedType(hir::Type type) const -> hir::TypeId;
 
   // Takes a type another unit published into this unit's own pool, and answers
   // with the identity this unit knows it by. The published pool's identities

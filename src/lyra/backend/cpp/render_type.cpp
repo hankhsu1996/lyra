@@ -30,7 +30,7 @@ auto NetResolverCppName(mir::NetResolution resolution) -> std::string_view {
 
 auto RenderTypeAsCpp(const mir::CompilationUnit& unit, mir::TypeId type_id)
     -> std::string {
-  return std::visit(
+  return unit.types.Get(type_id).Visit(
       Overloaded{
           [](const mir::PackedArrayType&) -> std::string {
             return std::string{"lyra::value::PackedArray"};
@@ -309,13 +309,12 @@ auto RenderTypeAsCpp(const mir::CompilationUnit& unit, mir::TypeId type_id)
                 "RenderTypeAsCpp: MIR type not yet supported in the C++ "
                 "backend");
           },
-      },
-      unit.types.Get(type_id).data);
+      });
 }
 
 auto RenderTypeConstructionAsCpp(
     const mir::CompilationUnit& unit, mir::TypeId type_id) -> std::string {
-  return std::visit(
+  return unit.types.Get(type_id).Visit(
       Overloaded{
           // A wrapper that owns what it points at brings the pointee into
           // existence along with itself, so what names its construction is the
@@ -344,8 +343,7 @@ auto RenderTypeConstructionAsCpp(
           // Every other type is built by naming itself.
           [&](const auto&) -> std::string {
             return RenderTypeAsCpp(unit, type_id);
-          }},
-      unit.types.Get(type_id).data);
+          }});
 }
 
 auto RenderClassRefAsCpp(

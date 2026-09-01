@@ -1,7 +1,5 @@
 #include "lyra/backend/llvm/codegen_types.hpp"
 
-#include <variant>
-
 #include <llvm/IR/LLVMContext.h>
 
 #include "lyra/base/overloaded.hpp"
@@ -27,7 +25,7 @@ auto CodeGenTypes::Map(lir::TypeId id) -> llvm::Type* {
   if (auto it = cache_.find(id); it != cache_.end()) {
     return it->second;
   }
-  llvm::Type* mapped = std::visit(
+  llvm::Type* mapped = unit_->types.Get(id).Visit(
       Overloaded{
           [&](const lir::VoidType&) -> llvm::Type* { return Void(); },
           [&](const lir::MachineBoolType&) -> llvm::Type* {
@@ -43,8 +41,7 @@ auto CodeGenTypes::Map(lir::TypeId id) -> llvm::Type* {
           [&](const lir::MachineArrayType& m) -> llvm::Type* {
             return llvm::ArrayType::get(Map(m.element), m.size);
           },
-          [&](const auto&) -> llvm::Type* { return ptr_ty_; }},
-      unit_->types.Get(id).data);
+          [&](const auto&) -> llvm::Type* { return ptr_ty_; }});
   cache_.emplace(id, mapped);
   return mapped;
 }

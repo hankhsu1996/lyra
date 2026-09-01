@@ -5,7 +5,6 @@
 #include <optional>
 #include <string>
 #include <utility>
-#include <variant>
 
 #include "lyra/hir/continuous_assign.hpp"
 #include "lyra/hir/expr.hpp"
@@ -106,10 +105,11 @@ auto LowerContinuousAssign(
     if (!named_or) return std::unexpected(std::move(named_or.error()));
     const mir::ExprId named = resolve_block.exprs.Add(*std::move(named_or));
     const mir::ExprId cell = FindLhsRootId(unit, resolve_block, named);
-    if (const auto* net = std::get_if<mir::ResolvedType>(
-            &unit.types.Get(resolve_block.exprs.Get(cell).type).data)) {
+    if (const auto* net = unit.types.Get(resolve_block.exprs.Get(cell).type)
+                              .As<mir::ResolvedType>()) {
       const mir::TypeId driver_type = unit.types.Intern(
-          mir::DriverType{.value = net->value, .resolution = net->resolution});
+          mir::Type{mir::DriverType{
+              .value = net->value, .resolution = net->resolution}});
       mir::Class& mir_class = *resolve_frame.current_class;
       driver = AttachedDriver{
           .field = mir_class.fields.Add(

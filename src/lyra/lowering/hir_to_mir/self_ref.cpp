@@ -1,7 +1,6 @@
 #include "lyra/lowering/hir_to_mir/self_ref.hpp"
 
 #include <cstdint>
-#include <variant>
 
 #include "lyra/lowering/hir_to_mir/callable_bindings.hpp"
 #include "lyra/mir/class.hpp"
@@ -69,7 +68,7 @@ auto BuildReferenceArg(
   // cell: a `Ref<T>` taken over a `Ref<T>` aliases what that reference aliases,
   // never nesting into `Ref<Ref<T>>` (LRM 23.3.3.2). The argument is the
   // existing reference, copied to share its pointee.
-  if (std::holds_alternative<mir::RefType>(pointee_ty.data)) {
+  if (pointee_ty.Is<mir::RefType>()) {
     return block.exprs.Add(
         mir::Expr{
             .data =
@@ -79,12 +78,12 @@ auto BuildReferenceArg(
   // The reference aliases the cell's value, not its storage wrapper: a `Ref<T>`
   // over an observable cell binds the underlying `Var<T>`, so the pointee is
   // the value type, not the `ObservableType`.
-  if (std::holds_alternative<mir::ObservableType>(pointee_ty.data)) {
-    pointee = std::get<mir::ObservableType>(pointee_ty.data).value;
+  if (pointee_ty.Is<mir::ObservableType>()) {
+    pointee = pointee_ty.Get<mir::ObservableType>().value;
   }
   const mir::TypeId ref_type = unit.types.Intern(
-      mir::RefType{
-          .pointee = pointee, .mutability = mir::Mutability::kMutable});
+      mir::Type{mir::RefType{
+          .pointee = pointee, .mutability = mir::Mutability::kMutable}});
   return block.exprs.Add(
       mir::Expr{
           .data =

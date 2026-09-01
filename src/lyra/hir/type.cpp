@@ -1,11 +1,16 @@
 #include "lyra/hir/type.hpp"
 
 #include <algorithm>
+#include <cstddef>
 #include <cstdint>
+#include <functional>
 #include <variant>
+#include <vector>
 
 #include "lyra/base/internal_error.hpp"
 #include "lyra/base/overloaded.hpp"
+#include "lyra/hir/class_ref.hpp"
+#include "lyra/hir/type_id.hpp"
 
 namespace lyra::hir {
 
@@ -34,128 +39,146 @@ auto PackedRange::LinearOffset(std::int64_t index) const -> std::uint64_t {
   return static_cast<std::uint64_t>(index - left);
 }
 
-auto Type::Kind() const -> TypeKind {
+namespace {
+
+template <typename T>
+auto Combine(std::size_t seed, const T& value) -> std::size_t {
+  // The mixing constant and shifts are Boost's `hash_combine`, which spreads
+  // the low-entropy inputs here -- small ids, enum tags, container sizes --
+  // across the whole word.
+  return seed ^
+         (std::hash<T>{}(value) + 0x9e3779b9 + (seed << 6) + (seed >> 2));
+}
+
+auto HashTypeId(std::size_t seed, TypeId id) -> std::size_t {
+  return Combine(seed, id.value);
+}
+
+auto HashClassRef(std::size_t seed, const ClassRef& ref) -> std::size_t {
   return std::visit(
       Overloaded{
-          [](const ScalarBitType&) { return TypeKind::kScalarBit; },
-          [](const PackedArrayType&) { return TypeKind::kPackedArray; },
-          [](const PackedStructType&) { return TypeKind::kPackedStruct; },
-          [](const PackedUnionType&) { return TypeKind::kPackedUnion; },
-          [](const EnumType&) { return TypeKind::kEnum; },
-          [](const UnpackedStructType&) { return TypeKind::kUnpackedStruct; },
-          [](const UnpackedUnionType&) { return TypeKind::kUnpackedUnion; },
-          [](const UnpackedArrayType&) { return TypeKind::kUnpackedArray; },
-          [](const DynamicArrayType&) { return TypeKind::kDynamicArray; },
-          [](const QueueType&) { return TypeKind::kQueue; },
-          [](const AssociativeArrayType&) {
-            return TypeKind::kAssociativeArray;
+          [seed](const LocalClassRef& local) {
+            return Combine(seed, local.class_id.value);
           },
-          [](const WildcardIndexType&) { return TypeKind::kWildcardIndex; },
-          [](const StringType&) { return TypeKind::kString; },
-          [](const EventType&) { return TypeKind::kEvent; },
-          [](const RealType&) { return TypeKind::kReal; },
-          [](const ShortRealType&) { return TypeKind::kShortReal; },
-          [](const RealTimeType&) { return TypeKind::kRealTime; },
-          [](const ChandleType&) { return TypeKind::kChandle; },
-          [](const ClassHandleType&) { return TypeKind::kClassHandle; },
-          [](const UnitObjectType&) { return TypeKind::kUnitObject; },
-          [](const ImportedClassHandleType&) {
-            return TypeKind::kImportedClassHandle;
+          [seed](const ExternalClassRef& external) {
+            return Combine(
+                Combine(seed, external.unit_name), external.class_name);
+          }},
+      ref);
+}
+
+// The identities a field list names. Field names are left to equality: two
+// aggregates whose members have the same types in the same order are rare
+// enough that separating them by name buys nothing.
+template <typename Field>
+auto HashFields(std::size_t seed, const std::vector<Field>& fields)
+    -> std::size_t {
+  std::size_t hash = Combine(seed, fields.size());
+  for (const Field& field : fields) {
+    hash = HashTypeId(hash, field.type);
+  }
+  return hash;
+}
+
+}  // namespace
+
+auto Type::Hash::operator()(const Type& type) const -> std::size_t {
+  const std::size_t seed = Combine(std::size_t{0}, type.data_.index());
+  return type.Visit(
+      Overloaded{
+          [seed](const ScalarBitType& t) {
+            return Combine(seed, static_cast<std::size_t>(t.atom));
           },
-          [](const NullType&) { return TypeKind::kNull; },
-          [](const VoidType&) { return TypeKind::kVoid; },
-      },
-      data);
-}
-
-auto Type::IsScalarBit() const -> bool {
-  return std::holds_alternative<ScalarBitType>(data);
-}
-
-auto Type::AsScalarBit() const -> const ScalarBitType& {
-  if (const auto* s = std::get_if<ScalarBitType>(&data)) {
-    return *s;
-  }
-  throw InternalError("Type::AsScalarBit called on non-scalar-bit type");
-}
-
-auto Type::IsPackedArray() const -> bool {
-  return std::holds_alternative<PackedArrayType>(data);
-}
-
-auto Type::AsPackedArray() const -> const PackedArrayType& {
-  if (const auto* p = std::get_if<PackedArrayType>(&data)) {
-    return *p;
-  }
-  throw InternalError("Type::AsPackedArray called on non-packed-array type");
+          [seed](const PackedArrayType& t) {
+            return Combine(
+                Combine(HashTypeId(seed, t.element_type), t.dim.left),
+                t.dim.right);
+          },
+          [seed](const PackedStructType& t) {
+            return HashFields(seed, t.fields);
+          },
+          [seed](const PackedUnionType& t) {
+            return HashFields(seed, t.fields);
+          },
+          [seed](const EnumType& t) {
+            return Combine(HashTypeId(seed, t.base_type), t.members.size());
+          },
+          [seed](const UnpackedStructType& t) {
+            return HashFields(seed, t.fields);
+          },
+          [seed](const UnpackedUnionType& t) {
+            return HashFields(seed, t.fields);
+          },
+          [seed](const UnpackedArrayType& t) {
+            return Combine(
+                Combine(HashTypeId(seed, t.element_type), t.dim.left),
+                t.dim.right);
+          },
+          [seed](const DynamicArrayType& t) {
+            return HashTypeId(seed, t.element_type);
+          },
+          [seed](const QueueType& t) {
+            return Combine(
+                HashTypeId(seed, t.element_type), t.max_bound.value_or(0));
+          },
+          [seed](const AssociativeArrayType& t) {
+            return HashTypeId(HashTypeId(seed, t.element_type), t.key_type);
+          },
+          [seed](const ClassHandleType& t) {
+            return HashClassRef(seed, t.class_ref);
+          },
+          [seed](const ImportedClassHandleType& t) {
+            return Combine(seed, static_cast<std::size_t>(t.klass));
+          },
+          [seed](const UnitObjectType& t) {
+            return Combine(seed, t.unit_name);
+          },
+          // A type carrying nothing beyond being itself is separated by its arm
+          // alone, which the seed already holds.
+          [seed](const WildcardIndexType&) { return seed; },
+          [seed](const StringType&) { return seed; },
+          [seed](const EventType&) { return seed; },
+          [seed](const RealType&) { return seed; },
+          [seed](const ShortRealType&) { return seed; },
+          [seed](const RealTimeType&) { return seed; },
+          [seed](const ChandleType&) { return seed; },
+          [seed](const NullType&) { return seed; },
+          [seed](const VoidType&) { return seed; }});
 }
 
 auto Type::IsBitVector() const -> bool {
-  return IsScalarBit() || IsPackedArray();
-}
-
-auto Type::IsPackedStruct() const -> bool {
-  return std::holds_alternative<PackedStructType>(data);
-}
-
-auto Type::AsPackedStruct() const -> const PackedStructType& {
-  if (const auto* s = std::get_if<PackedStructType>(&data)) {
-    return *s;
-  }
-  throw InternalError("Type::AsPackedStruct called on non-packed-struct type");
-}
-
-auto Type::IsPackedUnion() const -> bool {
-  return std::holds_alternative<PackedUnionType>(data);
-}
-
-auto Type::AsPackedUnion() const -> const PackedUnionType& {
-  if (const auto* u = std::get_if<PackedUnionType>(&data)) {
-    return *u;
-  }
-  throw InternalError("Type::AsPackedUnion called on non-packed-union type");
+  return Is<ScalarBitType>() || Is<PackedArrayType>();
 }
 
 auto Type::IsValueChangeObservable() const -> bool {
-  switch (Kind()) {
-    case TypeKind::kScalarBit:
-    case TypeKind::kPackedArray:
-    case TypeKind::kPackedStruct:
-    case TypeKind::kPackedUnion:
-    case TypeKind::kEnum:
-    case TypeKind::kUnpackedStruct:
-    case TypeKind::kUnpackedUnion:
-    case TypeKind::kUnpackedArray:
-    case TypeKind::kDynamicArray:
-    case TypeKind::kQueue:
-    case TypeKind::kAssociativeArray:
-    case TypeKind::kString:
-    case TypeKind::kReal:
-    case TypeKind::kShortReal:
-    case TypeKind::kRealTime:
-      return true;
-    case TypeKind::kWildcardIndex:
-    case TypeKind::kEvent:
-    case TypeKind::kChandle:
-    case TypeKind::kClassHandle:
-    case TypeKind::kImportedClassHandle:
-    case TypeKind::kUnitObject:
-    case TypeKind::kNull:
-    case TypeKind::kVoid:
-      return false;
-  }
-  return false;
-}
-
-auto Type::IsEnum() const -> bool {
-  return std::holds_alternative<EnumType>(data);
-}
-
-auto Type::AsEnum() const -> const EnumType& {
-  if (const auto* e = std::get_if<EnumType>(&data)) {
-    return *e;
-  }
-  throw InternalError("Type::AsEnum called on non-enum type");
+  // One arm per HIR type and no catch-all, so a type added later fails to
+  // compile here until it says which side it is on.
+  return Visit(
+      Overloaded{
+          [](const ScalarBitType&) { return true; },
+          [](const PackedArrayType&) { return true; },
+          [](const PackedStructType&) { return true; },
+          [](const PackedUnionType&) { return true; },
+          [](const EnumType&) { return true; },
+          [](const UnpackedStructType&) { return true; },
+          [](const UnpackedUnionType&) { return true; },
+          [](const UnpackedArrayType&) { return true; },
+          [](const DynamicArrayType&) { return true; },
+          [](const QueueType&) { return true; },
+          [](const AssociativeArrayType&) { return true; },
+          [](const StringType&) { return true; },
+          [](const RealType&) { return true; },
+          [](const ShortRealType&) { return true; },
+          [](const RealTimeType&) { return true; },
+          [](const WildcardIndexType&) { return false; },
+          [](const EventType&) { return false; },
+          [](const ChandleType&) { return false; },
+          [](const ClassHandleType&) { return false; },
+          [](const ImportedClassHandleType&) { return false; },
+          [](const UnitObjectType&) { return false; },
+          [](const NullType&) { return false; },
+          [](const VoidType&) { return false; },
+      });
 }
 
 }  // namespace lyra::hir

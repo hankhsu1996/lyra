@@ -238,30 +238,30 @@ auto ResolveFieldAccess(const ScopeView& view, const mir::FieldAccessExpr& m)
           },
           [&](const mir::FieldId& id) -> FieldAccess {
             const mir::TypeId recv_type = view.Expr(m.receiver).type;
-            const auto& recv_data = view.Unit().types.Get(recv_type).data;
+            const auto& recv_data = view.Unit().types.Get(recv_type);
             mir::TypeId pointee{};
-            if (const auto* ptr = std::get_if<mir::PointerType>(&recv_data)) {
+            if (const auto* ptr = recv_data.As<mir::PointerType>()) {
               pointee = ptr->pointee;
             } else {
               throw InternalError(
                   "ResolveFieldAccess: bare-field-id access expects a pointer "
                   "receiver (a struct, a closure, or another unit's object)");
             }
-            const auto& pointee_data = view.Unit().types.Get(pointee).data;
-            if (const auto* c = std::get_if<mir::ClosureType>(&pointee_data)) {
+            const auto& pointee_data = view.Unit().types.Get(pointee);
+            if (const auto* c = pointee_data.As<mir::ClosureType>()) {
               return FieldAccess{
                   .name = ClosureCaptureCppName(
                       view.Unit().GetClosure(c->closure_id), id),
                   .through_receiver = false};
             }
-            if (const auto* s = std::get_if<mir::StructType>(&pointee_data)) {
+            if (const auto* s = pointee_data.As<mir::StructType>()) {
               return FieldAccess{
                   .name =
                       view.Unit().GetStruct(s->struct_id).fields.Get(id).name,
                   .through_receiver = true};
             }
             if (const auto* e =
-                    std::get_if<mir::ExternalUnitObjectType>(&pointee_data)) {
+                    pointee_data.As<mir::ExternalUnitObjectType>()) {
               return FieldAccess{
                   .name = view.Unit()
                               .external_unit_objects.Get(e->object)
@@ -559,8 +559,7 @@ auto RenderClosureExpr(const ScopeView& view, const mir::ClosureExpr& construct)
   const std::string body =
       std::format(" {{\n{}}}", RenderBlockStatements(body_view, 1));
 
-  if (std::holds_alternative<mir::CoroutineType>(
-          view.Unit().types.Get(code.result_type).data)) {
+  if (view.Unit().types.Get(code.result_type).Is<mir::CoroutineType>()) {
     if (!code.params.empty()) {
       throw InternalError(
           "RenderClosureExpr: coroutine closure has per-invocation parameters");
@@ -703,8 +702,7 @@ auto RenderAddressOfExpr(const ScopeView& view, const mir::AddressOfExpr& a)
   const mir::Expr& operand_expr = view.Expr(a.operand);
   if (const auto* deref = std::get_if<mir::DerefExpr>(&operand_expr.data)) {
     const mir::Expr& inner = view.Expr(deref->pointer);
-    if (std::holds_alternative<mir::PointerType>(
-            view.Unit().types.Get(inner.type).data)) {
+    if (view.Unit().types.Get(inner.type).Is<mir::PointerType>()) {
       return RenderExpr(view, inner);
     }
   }
@@ -742,8 +740,8 @@ auto RenderExpr(const ScopeView& view, const mir::Expr& expr) -> std::string {
             // single-precision literal carries the suffix that keeps it one.
             // `g` drops a trailing decimal point, which the C++ lexer rejects
             // before a suffix, so a whole number gets one back.
-            const auto& machine = std::get<mir::MachineFloatType>(
-                view.Unit().types.Get(expr.type).data);
+            const auto& machine =
+                view.Unit().types.Get(expr.type).Get<mir::MachineFloatType>();
             const bool single = machine.bit_width == 32;
             std::string body = std::format("{:.{}g}", f.value, single ? 9 : 17);
             if (body.find_first_of(".eE") == std::string::npos) {
@@ -757,8 +755,8 @@ auto RenderExpr(const ScopeView& view, const mir::Expr& expr) -> std::string {
             // unsigned one is a bit pattern, so it is written in hex and with
             // an unsigned suffix; a signed spelling would go negative and
             // narrow where the value lands in unsigned storage.
-            const auto& machine = std::get<mir::MachineIntType>(
-                view.Unit().types.Get(expr.type).data);
+            const auto& machine =
+                view.Unit().types.Get(expr.type).Get<mir::MachineIntType>();
             if (machine.signedness == mir::Signedness::kUnsigned) {
               return std::format(
                   "0x{:x}ULL", static_cast<std::uint64_t>(h.value));

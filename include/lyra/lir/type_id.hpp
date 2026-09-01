@@ -5,10 +5,12 @@
 #include <cstdint>
 #include <functional>
 
+#include "lyra/base/pool_id.hpp"
+
 namespace lyra::lir {
 
 struct TypeId {
-  std::uint32_t value;
+  std::uint32_t value = base::kUnassignedId;
 
   auto operator<=>(const TypeId&) const -> std::strong_ordering = default;
 };

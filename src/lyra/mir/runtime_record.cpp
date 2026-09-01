@@ -22,8 +22,8 @@ auto RuntimeRecordBuilder::FunctionRef(const Class& cls, AbiAdapterId adapter)
       Expr{
           .data = lyra::mir::FunctionRef{.adapter = adapter},
           .type = unit_->types.Intern(
-              MachineFunctionType{
-                  .params = std::move(params), .result = code.result_type})});
+              mir::Type{MachineFunctionType{
+                  .params = std::move(params), .result = code.result_type}})});
 }
 
 auto RuntimeRecordBuilder::ErasedFunctionRef(
@@ -31,7 +31,7 @@ auto RuntimeRecordBuilder::ErasedFunctionRef(
   return Add(
       Expr{
           .data = FunctionCastExpr{.operand = FunctionRef(cls, adapter)},
-          .type = unit_->types.ErasedFunction()});
+          .type = mir::ErasedFunction(unit_->types)});
 }
 
 auto RuntimeRecordBuilder::StringRef(const std::string& text) -> ExprId {

@@ -297,15 +297,26 @@ auto lyra_rt_get_signal(void* self, const void* name) -> void*;
 // A read yields a value of its own rather than a view of the cell's contents,
 // so it stays valid across a later write to that cell -- generated code holds
 // what it loaded, and nothing tells it when a store invalidates a view.
+//
+// `alloc` builds a cell for a local whose storage is lent by reference: a
+// reference reaches storage through a cell and through nothing else, and it is
+// this cell kind because a cell's address crosses as one `void*` every entry
+// here reads alike. The cell is owned by the current generated call, which
+// outlives the declaration that built it; nothing subscribes to a procedural
+// local, so the update event a write raises wakes no one.
+auto lyra_rt_packed_cell_alloc() -> void*;
 auto lyra_rt_packed_cell_get(void* cell) -> void*;
 void lyra_rt_packed_cell_initialize(void* cell, const void* prototype);
 void lyra_rt_packed_cell_set(void* cell, const void* value);
+auto lyra_rt_string_cell_alloc() -> void*;
 auto lyra_rt_string_cell_get(void* cell) -> void*;
 void lyra_rt_string_cell_initialize(void* cell, const void* prototype);
 void lyra_rt_string_cell_set(void* cell, const void* value);
+auto lyra_rt_real_cell_alloc() -> void*;
 auto lyra_rt_real_cell_get(void* cell) -> void*;
 void lyra_rt_real_cell_initialize(void* cell, const void* prototype);
 void lyra_rt_real_cell_set(void* cell, const void* value);
+auto lyra_rt_shortreal_cell_alloc() -> void*;
 auto lyra_rt_shortreal_cell_get(void* cell) -> void*;
 void lyra_rt_shortreal_cell_initialize(void* cell, const void* prototype);
 void lyra_rt_shortreal_cell_set(void* cell, const void* value);
@@ -609,6 +620,7 @@ auto lyra_rt_tuple_eq(const void* lhs, const void* rhs) -> void*;
 auto lyra_rt_tuple_ne(const void* lhs, const void* rhs) -> void*;
 auto lyra_rt_tuple_case_equal(const void* lhs, const void* rhs) -> void*;
 auto lyra_rt_tuple_is_unknown(const void* value) -> void*;
+auto lyra_rt_tuple_cell_alloc() -> void*;
 auto lyra_rt_tuple_cell_get(void* cell) -> void*;
 void lyra_rt_tuple_cell_initialize(void* cell, const void* prototype);
 void lyra_rt_tuple_cell_set(void* cell, const void* value);
@@ -644,6 +656,7 @@ auto lyra_rt_dynarray_size(const void* array) -> void*;
 auto lyra_rt_dynarray_eq(const void* lhs, const void* rhs) -> void*;
 auto lyra_rt_dynarray_ne(const void* lhs, const void* rhs) -> void*;
 auto lyra_rt_dynarray_case_equal(const void* lhs, const void* rhs) -> void*;
+auto lyra_rt_dynarray_cell_alloc() -> void*;
 auto lyra_rt_dynarray_cell_get(void* cell) -> void*;
 void lyra_rt_dynarray_cell_initialize(void* cell, const void* prototype);
 void lyra_rt_dynarray_cell_set(void* cell, const void* value);
@@ -666,6 +679,9 @@ auto lyra_rt_unpackedarray_with_element(
 auto lyra_rt_unpackedarray_slice(
     const void* array, const void* a, const void* b, const void* form,
     const void* left, const void* right) -> void*;
+auto lyra_rt_unpackedarray_with_slice(
+    const void* array, const void* a, const void* b, const void* form,
+    const void* left, const void* right, const void* replacement) -> void*;
 auto lyra_rt_unpackedarray_size(const void* array) -> void*;
 auto lyra_rt_unpackedarray_eq(const void* lhs, const void* rhs) -> void*;
 auto lyra_rt_unpackedarray_ne(const void* lhs, const void* rhs) -> void*;
@@ -682,6 +698,7 @@ auto lyra_rt_unpackedarray_merge_conditional(const void* lhs, const void* rhs)
 auto lyra_rt_unpackedarray_from_packed_array(
     const void* bits, const void* element_type, const void* count) -> void*;
 auto lyra_rt_unpackedarray_value_box(const void* value) -> void*;
+auto lyra_rt_unpackedarray_cell_alloc() -> void*;
 auto lyra_rt_unpackedarray_cell_get(void* cell) -> void*;
 void lyra_rt_unpackedarray_cell_initialize(void* cell, const void* prototype);
 void lyra_rt_unpackedarray_cell_set(void* cell, const void* value);
@@ -739,6 +756,7 @@ auto lyra_rt_queue_bitstream_width(const void* queue) -> void*;
 auto lyra_rt_queue_count_bits(const void* queue, const void* control_bits)
     -> void*;
 auto lyra_rt_queue_value_box(const void* value) -> void*;
+auto lyra_rt_queue_cell_alloc() -> void*;
 auto lyra_rt_queue_cell_get(void* cell) -> void*;
 void lyra_rt_queue_cell_initialize(void* cell, const void* prototype);
 void lyra_rt_queue_cell_set(void* cell, const void* value);
@@ -793,6 +811,7 @@ auto lyra_rt_assocarray_assoc_prev(const void* array, void* probe) -> void*;
 auto lyra_rt_assocarray_count_bits(const void* array, const void* control_bits)
     -> void*;
 auto lyra_rt_assocarray_value_box(const void* value) -> void*;
+auto lyra_rt_assocarray_cell_alloc() -> void*;
 auto lyra_rt_assocarray_cell_get(void* cell) -> void*;
 void lyra_rt_assocarray_cell_initialize(void* cell, const void* prototype);
 void lyra_rt_assocarray_cell_set(void* cell, const void* value);

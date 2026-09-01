@@ -86,9 +86,8 @@ auto LowerScalarAtom(slang::ast::ScalarType::Kind k) -> hir::BitAtom {
     case slang::ast::ScalarType::Bit:
       return hir::BitAtom::kBit;
     case slang::ast::ScalarType::Logic:
-      return hir::BitAtom::kLogic;
     case slang::ast::ScalarType::Reg:
-      return hir::BitAtom::kReg;
+      return hir::BitAtom::kLogic;
   }
   throw InternalError("LowerScalarAtom: unknown scalar kind");
 }
@@ -109,29 +108,28 @@ auto LowerPredefinedInteger(
     const slang::ast::PredefinedIntegerType& type) -> hir::PackedArrayType {
   using SK = slang::ast::PredefinedIntegerType::Kind;
   const auto& builtins = unit_lowerer.Unit().builtins;
-  const auto make = [&](hir::TypeId element, std::int64_t msb,
-                        hir::PackedArrayForm form) -> hir::PackedArrayType {
+  const auto make = [&](hir::TypeId element,
+                        std::int64_t msb) -> hir::PackedArrayType {
     return hir::PackedArrayType{
         .dim = hir::PackedRange{.left = msb, .right = 0},
         .element_type = element,
         .signedness = type.isSigned ? hir::Signedness::kSigned
                                     : hir::Signedness::kUnsigned,
-        .form = form,
     };
   };
   switch (type.integerKind) {
     case SK::Byte:
-      return make(builtins.scalar_bit, 7, hir::PackedArrayForm::kByte);
+      return make(builtins.scalar_bit, 7);
     case SK::ShortInt:
-      return make(builtins.scalar_bit, 15, hir::PackedArrayForm::kShortInt);
+      return make(builtins.scalar_bit, 15);
     case SK::Int:
-      return make(builtins.scalar_bit, 31, hir::PackedArrayForm::kInt);
+      return make(builtins.scalar_bit, 31);
     case SK::LongInt:
-      return make(builtins.scalar_bit, 63, hir::PackedArrayForm::kLongInt);
+      return make(builtins.scalar_bit, 63);
     case SK::Integer:
-      return make(builtins.scalar_logic, 31, hir::PackedArrayForm::kInteger);
+      return make(builtins.scalar_logic, 31);
     case SK::Time:
-      return make(builtins.scalar_logic, 63, hir::PackedArrayForm::kTime);
+      return make(builtins.scalar_logic, 63);
   }
   throw InternalError("LowerPredefinedInteger: unknown integer kind");
 }
@@ -151,7 +149,6 @@ auto LowerExplicitPackedArray(
       .element_type = *element,
       .signedness =
           outer_signed ? hir::Signedness::kSigned : hir::Signedness::kUnsigned,
-      .form = hir::PackedArrayForm::kExplicit,
   };
 }
 
@@ -298,19 +295,19 @@ auto LowerEnum(
   };
 }
 
-auto TranslateTypeData(
+auto TranslateType(
     UnitLowerer& unit_lowerer, const slang::ast::Type& type,
-    diag::SourceSpan decl_span) -> diag::Result<hir::TypeData> {
+    diag::SourceSpan decl_span) -> diag::Result<hir::Type> {
   const auto& canonical = type.getCanonicalType();
 
   switch (canonical.kind) {
     case slang::ast::SymbolKind::ScalarType: {
       const auto& scalar = canonical.as<slang::ast::ScalarType>();
-      return hir::TypeData{
+      return hir::Type{
           hir::ScalarBitType{.atom = LowerScalarAtom(scalar.scalarKind)}};
     }
     case slang::ast::SymbolKind::PredefinedIntegerType: {
-      return hir::TypeData{LowerPredefinedInteger(
+      return hir::Type{LowerPredefinedInteger(
           unit_lowerer, canonical.as<slang::ast::PredefinedIntegerType>())};
     }
     case slang::ast::SymbolKind::PackedArrayType: {
@@ -320,53 +317,53 @@ auto TranslateTypeData(
       if (!pa.has_value()) {
         return std::unexpected(std::move(pa.error()));
       }
-      return hir::TypeData{*std::move(pa)};
+      return hir::Type{*std::move(pa)};
     }
     case slang::ast::SymbolKind::EnumType: {
       const auto& enum_type = canonical.as<slang::ast::EnumType>();
       if (EnumBelongsToImportedRuntimeClass(enum_type)) {
-        return TranslateTypeData(unit_lowerer, enum_type.baseType, decl_span);
+        return TranslateType(unit_lowerer, enum_type.baseType, decl_span);
       }
       auto e = LowerEnum(enum_type, decl_span, unit_lowerer);
       if (!e.has_value()) {
         return std::unexpected(std::move(e.error()));
       }
-      return hir::TypeData{*std::move(e)};
+      return hir::Type{*std::move(e)};
     }
     case slang::ast::SymbolKind::FloatingType: {
       const auto& f = canonical.as<slang::ast::FloatingType>();
       switch (f.floatKind) {
         case slang::ast::FloatingType::Real:
-          return hir::TypeData{hir::RealType{}};
+          return hir::Type{hir::RealType{}};
         case slang::ast::FloatingType::ShortReal:
-          return hir::TypeData{hir::ShortRealType{}};
+          return hir::Type{hir::ShortRealType{}};
         case slang::ast::FloatingType::RealTime:
-          return hir::TypeData{hir::RealTimeType{}};
+          return hir::Type{hir::RealTimeType{}};
       }
-      throw InternalError("TranslateTypeData: unknown FloatingType kind");
+      throw InternalError("TranslateType: unknown FloatingType kind");
     }
     case slang::ast::SymbolKind::StringType:
-      return hir::TypeData{hir::StringType{}};
+      return hir::Type{hir::StringType{}};
     case slang::ast::SymbolKind::EventType:
-      return hir::TypeData{hir::EventType{}};
+      return hir::Type{hir::EventType{}};
     case slang::ast::SymbolKind::CHandleType:
-      return hir::TypeData{hir::ChandleType{}};
+      return hir::Type{hir::ChandleType{}};
     case slang::ast::SymbolKind::NullType:
-      return hir::TypeData{hir::NullType{}};
+      return hir::Type{hir::NullType{}};
     case slang::ast::SymbolKind::ClassType: {
       const auto& class_type = canonical.as<slang::ast::ClassType>();
       if (const auto imported = DetectImportedRuntimeClass(class_type)) {
-        return hir::TypeData{hir::ImportedClassHandleType{.klass = *imported}};
+        return hir::Type{hir::ImportedClassHandleType{.klass = *imported}};
       }
       auto class_ref_or = unit_lowerer.ResolveClassRef(class_type, decl_span);
       if (!class_ref_or) {
         return std::unexpected(std::move(class_ref_or.error()));
       }
-      return hir::TypeData{
+      return hir::Type{
           hir::ClassHandleType{.class_ref = *std::move(class_ref_or)}};
     }
     case slang::ast::SymbolKind::VoidType:
-      return hir::TypeData{hir::VoidType{}};
+      return hir::Type{hir::VoidType{}};
     case slang::ast::SymbolKind::PackedStructType: {
       auto s = LowerPackedStruct(
           canonical.as<slang::ast::PackedStructType>(), decl_span,
@@ -374,7 +371,7 @@ auto TranslateTypeData(
       if (!s.has_value()) {
         return std::unexpected(std::move(s.error()));
       }
-      return hir::TypeData{*std::move(s)};
+      return hir::Type{*std::move(s)};
     }
     case slang::ast::SymbolKind::PackedUnionType: {
       auto u = LowerPackedUnion(
@@ -382,7 +379,7 @@ auto TranslateTypeData(
       if (!u.has_value()) {
         return std::unexpected(std::move(u.error()));
       }
-      return hir::TypeData{*std::move(u)};
+      return hir::Type{*std::move(u)};
     }
     case slang::ast::SymbolKind::FixedSizeUnpackedArrayType: {
       const auto& fa = canonical.as<slang::ast::FixedSizeUnpackedArrayType>();
@@ -390,7 +387,7 @@ auto TranslateTypeData(
       if (!elem_id_or) {
         return std::unexpected(std::move(elem_id_or.error()));
       }
-      return hir::TypeData{hir::UnpackedArrayType{
+      return hir::Type{hir::UnpackedArrayType{
           .element_type = *elem_id_or,
           .dim =
               hir::UnpackedRange{
@@ -404,7 +401,7 @@ auto TranslateTypeData(
       if (!elem_id_or) {
         return std::unexpected(std::move(elem_id_or.error()));
       }
-      return hir::TypeData{hir::DynamicArrayType{.element_type = *elem_id_or}};
+      return hir::Type{hir::DynamicArrayType{.element_type = *elem_id_or}};
     }
     case slang::ast::SymbolKind::QueueType: {
       const auto& q = canonical.as<slang::ast::QueueType>();
@@ -414,7 +411,7 @@ auto TranslateTypeData(
       }
       // slang encodes the unbounded queue (`[$]`) as maxBound == 0; a bounded
       // queue (`[$:N]`) carries the bound (LRM 7.10.4).
-      return hir::TypeData{hir::QueueType{
+      return hir::Type{hir::QueueType{
           .element_type = *elem_id_or,
           .max_bound = q.maxBound == 0
                            ? std::nullopt
@@ -431,7 +428,7 @@ auto TranslateTypeData(
       // integral value identified by its magnitude, carried by the dedicated
       // wildcard-index key type.
       if (aa.indexType == nullptr) {
-        return hir::TypeData{hir::AssociativeArrayType{
+        return hir::Type{hir::AssociativeArrayType{
             .element_type = *elem_id_or,
             .key_type = unit_lowerer.Unit().builtins.wildcard_index,
         }};
@@ -451,7 +448,7 @@ auto TranslateTypeData(
       if (!key_id_or) {
         return std::unexpected(std::move(key_id_or.error()));
       }
-      return hir::TypeData{hir::AssociativeArrayType{
+      return hir::Type{hir::AssociativeArrayType{
           .element_type = *elem_id_or,
           .key_type = *key_id_or,
       }};
@@ -461,14 +458,14 @@ auto TranslateTypeData(
           canonical.as<slang::ast::UnpackedStructType>(), decl_span,
           unit_lowerer);
       if (!s) return std::unexpected(std::move(s.error()));
-      return hir::TypeData{*std::move(s)};
+      return hir::Type{*std::move(s)};
     }
     case slang::ast::SymbolKind::UnpackedUnionType: {
       auto u = LowerUnpackedUnion(
           canonical.as<slang::ast::UnpackedUnionType>(), decl_span,
           unit_lowerer);
       if (!u) return std::unexpected(std::move(u.error()));
-      return hir::TypeData{*std::move(u)};
+      return hir::Type{*std::move(u)};
     }
     default:
       return diag::Fail(
@@ -1179,8 +1176,8 @@ auto UnitLowerer::InternLocalClass(
   return id;
 }
 
-auto UnitLowerer::AddComposedType(hir::TypeData data) -> hir::TypeId {
-  return unit_.types.Intern(std::move(data));
+auto UnitLowerer::AddComposedType(hir::Type type) const -> hir::TypeId {
+  return unit_.types.Intern(std::move(type));
 }
 
 auto UnitLowerer::InternType(
@@ -1190,9 +1187,9 @@ auto UnitLowerer::InternType(
   if (const auto it = type_cache_.find(canonical); it != type_cache_.end()) {
     return it->second;
   }
-  auto data_or = TranslateTypeData(*this, type, span);
-  if (!data_or) return std::unexpected(std::move(data_or.error()));
-  const hir::TypeId id = unit_.types.Intern(*std::move(data_or));
+  auto type_or = TranslateType(*this, type, span);
+  if (!type_or) return std::unexpected(std::move(type_or.error()));
+  const hir::TypeId id = unit_.types.Intern(*std::move(type_or));
   type_cache_.emplace(canonical, id);
   return id;
 }

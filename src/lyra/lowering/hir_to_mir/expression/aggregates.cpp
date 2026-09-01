@@ -44,9 +44,8 @@ auto ExtractHirLiteralUint64(const hir::Expr& expr) -> std::uint64_t {
 }
 
 auto IsArrayContainerType(const mir::Type& ty) -> bool {
-  return std::holds_alternative<mir::UnpackedArrayType>(ty.data) ||
-         std::holds_alternative<mir::DynamicArrayType>(ty.data) ||
-         std::holds_alternative<mir::QueueType>(ty.data);
+  return ty.Is<mir::UnpackedArrayType>() || ty.Is<mir::DynamicArrayType>() ||
+         ty.Is<mir::QueueType>();
 }
 
 }  // namespace
@@ -71,7 +70,7 @@ auto LowerHirConcatExpr(
   // Characters join two at a time, because no entry takes an operand list of
   // arbitrary length; a source-level join of one is already the string it
   // names.
-  if (result_ty.Kind() == mir::TypeKind::kString) {
+  if (result_ty.Is<mir::StringType>()) {
     if (operand_ids.size() == 1) {
       return block.exprs.Get(operand_ids.front());
     }
@@ -96,7 +95,7 @@ auto LowerHirConcatExpr(
   // 10.10), which is spread and is marked so -- the same array value would be
   // one element if the queue's element type were an array, so the role is the
   // program's fact, not the operand type's.
-  if (const auto* q = std::get_if<mir::QueueType>(&result_ty.data)) {
+  if (const auto* q = result_ty.As<mir::QueueType>()) {
     const mir::TypeId element_type = q->element_type;
     const std::int64_t bound = q->max_bound.has_value()
                                    ? static_cast<std::int64_t>(*q->max_bound)
@@ -149,7 +148,7 @@ auto LowerHirReplicationExpr(
   // evaluates, because LRM 11.4.12.2 allows a non-constant one where 11.4.12.1
   // requires a constant; reading that value as a machine count is a value
   // reshape, so it is stated rather than left for a consumer to insert.
-  if (unit.types.Get(result_type).Kind() == mir::TypeKind::kString) {
+  if (unit.types.Get(result_type).Is<mir::StringType>()) {
     auto count_or = lowerer.LowerExpr(lowerer.HirExprs().Get(r.count), frame);
     if (!count_or) return std::unexpected(std::move(count_or.error()));
     const mir::ExprId count_id = block.exprs.Add(*std::move(count_or));
@@ -203,15 +202,15 @@ auto LowerHirAssignmentPatternExpr(
     return BuildArrayConstructionCall(
         lowerer.Owner(), frame, result_type, std::move(element_ids));
   }
-  if (std::holds_alternative<mir::TupleType>(result_ty.data)) {
+  if (result_ty.Is<mir::TupleType>()) {
     return mir::Expr{
         .data = mir::TupleExpr{.components = std::move(element_ids)},
         .type = result_type};
   }
-  const auto& result_pa = result_ty.AsIntegralPacked();
+  const auto& result_pa = result_ty.PackedShape();
   const mir::ExprId concat_id = block.exprs.Add(BuildPackedConcat(
       unit, block, std::move(element_ids),
-      InternFlatPacked(unit, result_pa.BitWidth(), result_pa.atom)));
+      InternFlatPacked(unit, result_pa.BitWidth(), result_pa.state_kind)));
   return BuildValueConversion(unit, block, concat_id, result_type);
 }
 
@@ -241,7 +240,7 @@ auto LowerHirAssignmentPatternReplicationExpr(
         lowerer.Owner(), frame, result_type, element_default,
         std::move(item_ids), count);
   }
-  if (std::holds_alternative<mir::TupleType>(result_ty.data)) {
+  if (result_ty.Is<mir::TupleType>()) {
     std::vector<mir::ExprId> components;
     components.reserve(item_ids.size() * count);
     for (std::uint64_t i = 0; i < count; ++i) {
@@ -251,18 +250,18 @@ auto LowerHirAssignmentPatternReplicationExpr(
         .data = mir::TupleExpr{.components = std::move(components)},
         .type = result_type};
   }
-  const auto& result_pa = result_ty.AsIntegralPacked();
+  const auto& result_pa = result_ty.PackedShape();
   const std::uint64_t inner_width =
       count == 0 ? 0 : result_pa.BitWidth() / count;
   const mir::ExprId inner_concat_id = block.exprs.Add(BuildPackedConcat(
       unit, block, std::move(item_ids),
-      InternFlatPacked(unit, inner_width, result_pa.atom)));
+      InternFlatPacked(unit, inner_width, result_pa.state_kind)));
   const mir::ExprId repl_id = block.exprs.Add(
       mir::Expr{
           .data =
               mir::ReplicationExpr{.count = count, .concat = inner_concat_id},
-          .type =
-              InternFlatPacked(unit, result_pa.BitWidth(), result_pa.atom)});
+          .type = InternFlatPacked(
+              unit, result_pa.BitWidth(), result_pa.state_kind)});
   return BuildValueConversion(unit, block, repl_id, result_type);
 }
 
@@ -283,7 +282,7 @@ auto LowerHirDynamicArrayNewExprProc(
   const mir::ExprId size_id = block.exprs.Add(*std::move(size_or));
 
   const auto& hir_result_ty = process.Owner().Hir().types.Get(hir_result_type);
-  const auto* hir_da = std::get_if<hir::DynamicArrayType>(&hir_result_ty.data);
+  const auto* hir_da = hir_result_ty.As<hir::DynamicArrayType>();
   if (hir_da == nullptr) {
     throw InternalError(
         "LowerHirDynamicArrayNewExprProc: result type is not DynamicArrayType");

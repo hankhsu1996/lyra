@@ -9,7 +9,6 @@
 #include "lyra/lowering/hir_to_mir/default_value.hpp"
 #include "lyra/lowering/hir_to_mir/process_lowerer.hpp"  // IWYU pragma: keep
 #include "lyra/lowering/hir_to_mir/structural_scope_lowerer.hpp"  // IWYU pragma: keep
-#include "lyra/mir/compilation_unit.hpp"
 #include "lyra/mir/expr_id.hpp"
 #include "lyra/mir/packed_type_descriptor.hpp"
 #include "lyra/support/builtin_fn.hpp"

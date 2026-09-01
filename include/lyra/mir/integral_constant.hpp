@@ -3,27 +3,22 @@
 #include <cstdint>
 #include <vector>
 
-#include "lyra/mir/type.hpp"
-
 namespace lyra::mir {
 
-enum class IntegralStateKind : std::uint8_t {
-  kTwoState,
-  kFourState,
-};
-
-// Word layout is LSB-first; top word's unused high bits are zero-masked.
-// `width` is at least one bit and `value_words` holds exactly one word per 64
-// bits of it, rounded up, so a constant always carries its whole value and a
-// consumer never sizes the planes itself. state_words is empty for 2-state,
-// otherwise same length as value_words.
+// The bits of an integral constant, and nothing else. How wide the value is,
+// whether it is signed, and whether it has an unknown plane at all are the
+// type's to state, and every expression carries one -- so a consumer reads them
+// there and the two can never disagree.
+//
+// Word layout is LSB-first; the top word's unused high bits are zero-masked.
+// `value_words` holds one word per 64 bits of the type's width, rounded up, so
+// the constant carries its whole value and a consumer never sizes the planes
+// itself. `state_words` is empty for a two-state value, otherwise the same
+// length as `value_words`.
 // 4-state encoding: (v=0,s=0)=0, (v=1,s=0)=1, (v=0,s=1)=Z, (v=1,s=1)=X.
 struct IntegralConstant {
   std::vector<std::uint64_t> value_words;
   std::vector<std::uint64_t> state_words;
-  std::uint32_t width = 0;
-  Signedness signedness = Signedness::kUnsigned;
-  IntegralStateKind state_kind = IntegralStateKind::kTwoState;
 };
 
 }  // namespace lyra::mir

@@ -59,18 +59,18 @@ auto SubjectComponent(
             .data = std::move(access),
             .type = owner.TranslateType(fields[index.value].type)});
   };
-  if (const auto* s = std::get_if<hir::UnpackedStructType>(&ty.data)) {
+  if (const auto* s = ty.As<hir::UnpackedStructType>()) {
     return unpacked_component(
         s->fields, mir::TupleGetExpr{.tuple = subject, .index = index});
   }
   // Only a tagged union is destructured by a pattern (LRM 12.6): an untagged
   // one has no tag to name the component a pattern would ask for.
-  if (const auto* u = std::get_if<hir::UnpackedUnionType>(&ty.data)) {
+  if (const auto* u = ty.As<hir::UnpackedUnionType>()) {
     return unpacked_component(
         u->fields,
         mir::TaggedGetExpr{.union_value = subject, .tag_index = index});
   }
-  const PackedProjection projection = ProjectPackedAggregate(owner, ty.data);
+  const PackedProjection projection = ProjectPackedAggregate(owner, ty);
   if (index.value >= projection.members.size()) {
     throw InternalError("SubjectComponent: component index out of range");
   }
@@ -88,7 +88,7 @@ auto BuildTagTest(
     UnitLowerer& owner, mir::Block& block, mir::ExprId subject,
     hir::TypeId subject_type, base::ComponentIndex index) -> mir::Expr {
   const hir::Type& ty = owner.Hir().types.Get(subject_type);
-  if (std::holds_alternative<hir::UnpackedUnionType>(ty.data)) {
+  if (ty.Is<hir::UnpackedUnionType>()) {
     // The tag test answers with a host boolean; re-shaping that answer into a
     // 1-bit integral is a value conversion, so it is stated here rather than
     // left for a backend to insert around the test.
@@ -108,7 +108,7 @@ auto BuildTagTest(
                 .arguments = {is_tagged}},
         .type = bit1};
   }
-  const PackedProjection projection = ProjectPackedAggregate(owner, ty.data);
+  const PackedProjection projection = ProjectPackedAggregate(owner, ty);
   return block.exprs.Get(
       BuildPackedTagTest(owner, block, subject, projection, index));
 }

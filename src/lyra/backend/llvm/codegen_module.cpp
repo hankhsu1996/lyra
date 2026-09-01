@@ -26,26 +26,27 @@ CodeGenModule::CodeGenModule(const lir::CompilationUnit& unit)
     : context_(std::make_unique<llvm::LLVMContext>()),
       module_(std::make_unique<llvm::Module>("lyra", *context_)),
       unit_(&unit),
-      types_(*context_, unit) {
+      types_(*context_, unit),
+      functions_(unit.functions.size()) {
 }
 
 auto CodeGenModule::Run() -> diag::Result<EmittedModule> {
   // Every function is declared before any body is generated, because a body may
   // call one whose own body is generated later, including itself.
-  functions_.reserve(unit_->functions.size());
   for (const lir::Function& fn : unit_->functions) {
-    functions_.push_back(DeclareCallable(fn));
+    functions_.Append(DeclareCallable(fn));
   }
-  packed_type_cells_.reserve(unit_->types.size());
+  packed_type_cells_ = base::Translation<lir::TypeId, llvm::GlobalVariable*>(
+      unit_->types.size());
   for (const lir::TypeId id : unit_->types.Ids()) {
-    packed_type_cells_.push_back(
+    packed_type_cells_.Append(
         unit_->packed_type_initializers.Get(id).has_value()
             ? DeclareDescriptorCell()
             : nullptr);
   }
   for (const lir::FunctionId id : unit_->functions.Ids()) {
     auto generated =
-        CodeGenFunction(*this, unit_->functions.Get(id), functions_[id.value])
+        CodeGenFunction(*this, unit_->functions.Get(id), functions_.Get(id))
             .Run();
     if (!generated) {
       return std::unexpected(std::move(generated.error()));
@@ -75,7 +76,7 @@ auto CodeGenModule::DeclareCallable(const lir::Function& fn)
 }
 
 auto CodeGenModule::UnitFunction(lir::FunctionId function) -> llvm::Function* {
-  return functions_.at(function.value);
+  return functions_.Get(function);
 }
 
 auto CodeGenModule::DefinitionRef(lir::TypeId type) -> llvm::Constant* {
@@ -84,7 +85,7 @@ auto CodeGenModule::DefinitionRef(lir::TypeId type) -> llvm::Constant* {
   // signature named, the same way that unit composed it. Both resolve to a
   // record the host built, so the reference is the same kind of symbol either
   // way.
-  const std::string name = std::visit(
+  const std::string name = unit_->types.Get(type).Visit(
       Overloaded{
           [&](const lir::ObjectType& o) -> std::string {
             return unit_->classes.Get(o.class_id).name;
@@ -101,8 +102,7 @@ auto CodeGenModule::DefinitionRef(lir::TypeId type) -> llvm::Constant* {
             throw InternalError(
                 "llvm codegen: a definition reference requires a declaration "
                 "the runtime builds values of");
-          }},
-      unit_->types.Get(type).data);
+          }});
   // The definition is opaque to generated code, which only forwards its
   // address; an i8 placeholder gives the external symbol a type without
   // encoding the runtime struct's layout.
@@ -112,7 +112,7 @@ auto CodeGenModule::DefinitionRef(lir::TypeId type) -> llvm::Constant* {
 
 auto CodeGenModule::PackedTypeCell(lir::TypeId integral)
     -> llvm::GlobalVariable* {
-  return packed_type_cells_.at(integral.value);
+  return packed_type_cells_.Get(integral);
 }
 
 // Constructing a global appends it to the module, which owns it from then on;

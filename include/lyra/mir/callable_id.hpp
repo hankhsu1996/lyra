@@ -5,6 +5,8 @@
 #include <cstdint>
 #include <functional>
 
+#include "lyra/base/pool_id.hpp"
+
 namespace lyra::mir {
 
 // Identity of a callable a namespace owns -- a class's instance method, a
@@ -12,7 +14,7 @@ namespace lyra::mir {
 // identity for the one callable concept, scoped to the class or unit that
 // declares it.
 struct CallableId {
-  std::uint32_t value;
+  std::uint32_t value = base::kUnassignedId;
 
   auto operator<=>(const CallableId&) const -> std::strong_ordering = default;
 };

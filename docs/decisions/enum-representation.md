@@ -17,15 +17,15 @@ packed array" branch, because an `Enum<Derived>` is a _foreign_ C++ type there. 
 A codebase audit established the true shape of the enum in Lyra today:
 
 - `mir::EnumType { base, members }` and `lir::EnumType { base, members }` are distinct type variants
-  that persist HIR -> MIR -> LIR -> backend, by design (`hir_to_mir/translate_type.cpp`: "Enum is
-  kept as a distinct mir::EnumType ... value-level operations unwrap via `AsIntegralPacked()`").
+  that persist HIR -> MIR -> LIR -> backend, by design: an enumeration keeps a type of its own, and
+  a value operation reads it through its base's packed shape.
 - Lyra's general type-system rule (`mir-type-interning.md`) is that **nominal semantic types retain
   identity even when two types share a runtime representation**; struct (`struct_id`) and class
   (`class_id`) already follow it, and enum is keyed on its enumerator set as its declaration
   identity (LRM 6.19).
 - Every _value_ operation -- assignment, cast, comparison, `case`, `$display`, DPI, function
-  argument/return, observable wrapping -- already runs on the base integral via
-  `AsIntegralPacked()`. The enum type identity is consumed downstream of HIR-to-MIR by exactly one
+  argument/return, observable wrapping -- already runs on the base integral, reached through the
+  packed-shape query. The enum type identity is consumed downstream of HIR-to-MIR by exactly one
   thing: the six LRM 6.19.5 methods (`first/last/num/name/next/prev`), which read the member table.
 
 So the mistake was never "MIR keeps `EnumType`." The mistake was the false implication

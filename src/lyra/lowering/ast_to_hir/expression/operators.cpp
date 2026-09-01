@@ -1,9 +1,7 @@
 #include "lyra/lowering/ast_to_hir/expression/operators.hpp"
 
 #include <algorithm>
-#include <cstddef>
 #include <expected>
-#include <span>
 #include <utility>
 
 #include <slang/ast/Compilation.h>

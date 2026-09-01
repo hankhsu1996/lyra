@@ -162,6 +162,18 @@ auto RuntimeUnpackedArray::Slice(
   return result;
 }
 
+auto RuntimeUnpackedArray::WithSlice(
+    const PackedArray& a, const PackedArray& b, const PackedArray& form,
+    const PackedArray& left, const PackedArray& right,
+    const RuntimeUnpackedArray& replacement) const -> RuntimeUnpackedArray {
+  const SliceWindow window = ResolveSliceWindow(a, b, form, left, right);
+  RuntimeUnpackedArray result(*this);
+  detail::ArraySliceScatter(
+      result.data_, window.base, window.count, replacement.data_,
+      window.base_known);
+  return result;
+}
+
 // A declared range is never empty, so the fold below always runs at least once
 // for a value a source program can spell; seeding it with the identity keeps
 // the compiler-internal empty array from indexing storage that is not there.

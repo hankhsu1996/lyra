@@ -5,6 +5,8 @@
 #include <cstdint>
 #include <functional>
 
+#include "lyra/base/pool_id.hpp"
+
 namespace lyra::hir {
 
 // The declaration-order position of a class's static property (LRM 8.9)
@@ -13,7 +15,7 @@ namespace lyra::hir {
 // distinct from `ClassDecl.fields`, and a `StaticPropertyId` never crosses
 // from one to the other.
 struct StaticPropertyId {
-  std::uint32_t value;
+  std::uint32_t value = base::kUnassignedId;
 
   auto operator<=>(const StaticPropertyId&) const
       -> std::strong_ordering = default;

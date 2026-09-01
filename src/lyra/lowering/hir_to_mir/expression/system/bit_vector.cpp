@@ -108,13 +108,10 @@ auto MakeControlBitsExpr(
     ++width;
   }
   return BuildIntegralLiteral(
-      unit, block, InternFlatPacked(unit, width, mir::BitAtom::kLogic),
+      unit, block,
+      InternFlatPacked(unit, width, mir::IntegralStateKind::kFourState),
       mir::IntegralConstant{
-          .value_words = {value_word},
-          .state_words = {state_word},
-          .width = width,
-          .signedness = mir::Signedness::kUnsigned,
-          .state_kind = mir::IntegralStateKind::kFourState});
+          .value_words = {value_word}, .state_words = {state_word}});
 }
 
 auto ReadingComparison(support::BitCountReading reading)

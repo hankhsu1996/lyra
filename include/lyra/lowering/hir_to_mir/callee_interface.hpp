@@ -86,25 +86,25 @@ auto BuildCompletionLayout(
 // sole statement of which formals are parameters, so a definition and the
 // prototype it implements cannot declare different parameter lists.
 auto ParamTypeOf(
-    UnitLowerer& unit, hir::TypeId value_type, hir::ParamDirection direction)
-    -> std::optional<mir::TypeId>;
+    UnitLowerer& unit_lowerer, hir::TypeId value_type,
+    hir::ParamDirection direction) -> std::optional<mir::TypeId>;
 
 // A subroutine declaration's formals, read into the shape a completion derives
 // from.
-auto CalleeFormalsOf(UnitLowerer& unit, const hir::SubroutineDecl& decl)
+auto CalleeFormalsOf(UnitLowerer& unit_lowerer, const hir::SubroutineDecl& decl)
     -> std::vector<CalleeFormal>;
 
 // The same, for a callee this unit has no declaration of, read off the
 // interface a call recomputed for it.
 auto CalleeFormalsOf(
-    UnitLowerer& unit, const hir::ExternalCalleeInterface& interface)
+    UnitLowerer& unit_lowerer, const hir::ExternalCalleeInterface& interface)
     -> std::vector<CalleeFormal>;
 
 // The type a call to `decl` yields: its completion under the protocol its kind
 // states. This is the one reading of a declaration every consumer of its
 // interface goes through, so a definition, the prototype it implements, and
 // every call site cannot state different interfaces.
-auto SubroutineCallTypeOf(UnitLowerer& unit, const hir::SubroutineDecl& decl)
-    -> mir::TypeId;
+auto SubroutineCallTypeOf(
+    UnitLowerer& unit_lowerer, const hir::SubroutineDecl& decl) -> mir::TypeId;
 
 }  // namespace lyra::lowering::hir_to_mir

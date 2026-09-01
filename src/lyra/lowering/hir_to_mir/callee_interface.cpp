@@ -18,14 +18,15 @@ auto SubroutineCallType(
     mir::CompilationUnit& unit, hir::SubroutineKind kind,
     mir::TypeId result_type) -> mir::TypeId {
   return kind == hir::SubroutineKind::kTask
-             ? unit.types.CoroutineOf(result_type)
+             ? unit.types.Intern(
+                   mir::Type{mir::CoroutineType{.payload = result_type}})
              : result_type;
 }
 
 auto CompletionPayloadType(
     mir::CompilationUnit& unit, const std::vector<mir::TypeId>& components)
     -> mir::TypeId {
-  return unit.types.Intern(mir::TupleType{.elements = components});
+  return unit.types.Intern(mir::Type{mir::TupleType{.elements = components}});
 }
 
 auto BuildCompletionLayout(
@@ -52,9 +53,9 @@ auto BuildCompletionLayout(
 }
 
 auto ParamTypeOf(
-    UnitLowerer& unit, hir::TypeId value_type, hir::ParamDirection direction)
-    -> std::optional<mir::TypeId> {
-  const mir::TypeId mir_value = unit.TranslateType(value_type);
+    UnitLowerer& unit_lowerer, hir::TypeId value_type,
+    hir::ParamDirection direction) -> std::optional<mir::TypeId> {
+  const mir::TypeId mir_value = unit_lowerer.TranslateType(value_type);
   switch (direction) {
     case hir::ParamDirection::kOutput:
       return std::nullopt;
@@ -63,17 +64,17 @@ auto ParamTypeOf(
       return mir_value;
     case hir::ParamDirection::kRef:
     case hir::ParamDirection::kConstRef:
-      return unit.Unit().types.Intern(
-          mir::RefType{
+      return unit_lowerer.Unit().types.Intern(
+          mir::Type{mir::RefType{
               .pointee = mir_value,
               .mutability = direction == hir::ParamDirection::kConstRef
                                 ? mir::Mutability::kReadOnly
-                                : mir::Mutability::kMutable});
+                                : mir::Mutability::kMutable}});
   }
   throw InternalError("ParamTypeOf: unknown parameter direction");
 }
 
-auto CalleeFormalsOf(UnitLowerer& unit, const hir::SubroutineDecl& decl)
+auto CalleeFormalsOf(UnitLowerer& unit_lowerer, const hir::SubroutineDecl& decl)
     -> std::vector<CalleeFormal> {
   std::vector<CalleeFormal> formals;
   formals.reserve(decl.params.size());
@@ -81,14 +82,14 @@ auto CalleeFormalsOf(UnitLowerer& unit, const hir::SubroutineDecl& decl)
     formals.push_back(
         CalleeFormal{
             .direction = param.direction,
-            .type = unit.TranslateType(
+            .type = unit_lowerer.TranslateType(
                 decl.body.procedural_vars.Get(param.var).type)});
   }
   return formals;
 }
 
 auto CalleeFormalsOf(
-    UnitLowerer& unit, const hir::ExternalCalleeInterface& interface)
+    UnitLowerer& unit_lowerer, const hir::ExternalCalleeInterface& interface)
     -> std::vector<CalleeFormal> {
   std::vector<CalleeFormal> formals;
   formals.reserve(interface.params.size());
@@ -96,21 +97,22 @@ auto CalleeFormalsOf(
     formals.push_back(
         CalleeFormal{
             .direction = param.direction,
-            .type = unit.TranslateType(param.type)});
+            .type = unit_lowerer.TranslateType(param.type)});
   }
   return formals;
 }
 
-auto SubroutineCallTypeOf(UnitLowerer& unit, const hir::SubroutineDecl& decl)
-    -> mir::TypeId {
-  const mir::TypeId result = unit.TranslateType(decl.result_type);
+auto SubroutineCallTypeOf(
+    UnitLowerer& unit_lowerer, const hir::SubroutineDecl& decl) -> mir::TypeId {
+  const mir::TypeId result = unit_lowerer.TranslateType(decl.result_type);
   const CompletionLayout layout = BuildCompletionLayout(
-      CalleeFormalsOf(unit, decl), result == unit.Unit().builtins.void_type
-                                       ? std::nullopt
-                                       : std::optional<mir::TypeId>{result});
+      CalleeFormalsOf(unit_lowerer, decl),
+      result == unit_lowerer.Unit().builtins.void_type
+          ? std::nullopt
+          : std::optional<mir::TypeId>{result});
   return SubroutineCallType(
-      unit.Unit(), decl.kind,
-      CompletionPayloadType(unit.Unit(), layout.components));
+      unit_lowerer.Unit(), decl.kind,
+      CompletionPayloadType(unit_lowerer.Unit(), layout.components));
 }
 
 auto ProjectCompletionComponent(

@@ -108,7 +108,7 @@ auto StoragePlaceOf(
   // destination (LRM 6.5) nor a legal `ref` actual (LRM 13.5.2). A producer
   // hands this the driver in the cell's place; arriving with the cell means it
   // did not.
-  if (std::holds_alternative<mir::ResolvedType>(root_ty.data)) {
+  if (root_ty.Is<mir::ResolvedType>()) {
     throw InternalError(
         "StoragePlaceOf: a net's cell holds no storage a write or a reference "
         "may reach; the destination is one of its drivers");

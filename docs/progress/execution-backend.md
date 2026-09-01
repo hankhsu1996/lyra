@@ -92,14 +92,14 @@ ownership, or native in-frame layout) for every value.
       fixed-arity container value domain. It default-constructs member-wise, builds from an
       enumerated element list and from a replicated pattern through one repeat-unit-and-count path,
       copies with value semantics, takes the equality and case-equality families, reports its size
-      and its bit-stream width and count, reads and writes an element, takes a contiguous range
+      and its bit-stream width and count, reads and writes an element, reads a contiguous range
       select, lives in a member slot as a whole-cell observable signal, and crosses a suspension as
       an activation-frame value. Its payload is ordinal-only: the declared range is the receiver's
       static type's and arrives at a select as its own operand, so a whole-value store copies
-      positions and relabels nothing. A store between two arrays whose declared ranges differ is
-      refused rather than lowered, because this layer still gives each declared range its own type
-      identity and the two sides therefore arrive as unequal types; closing that means making a LIR
-      type's identity its content.
+      positions and relabels nothing -- and a store between two arrays whose declared ranges differ
+      lowers, because the range is gone by this layer, both sides are one type, and a type pool
+      keyed by content says so. Writing a range is refused: it rebuilds the whole value with that
+      window replaced, which no container here offers yet.
 - [x] **The queue** (LRM 7.10) -- realized on the execution backend as a run-time-sized ordered
       container value domain. It defaults to empty, builds from an assignment pattern, copies with
       value semantics, takes the equality and case-equality families, reports its size and its

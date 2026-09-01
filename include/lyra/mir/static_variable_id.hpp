@@ -3,6 +3,8 @@
 #include <compare>
 #include <cstdint>
 
+#include "lyra/base/pool_id.hpp"
+
 namespace lyra::mir {
 
 // Identity of a unit-level static variable -- a named, mutable value the unit's
@@ -13,7 +15,7 @@ namespace lyra::mir {
 // reference reaches the cell by name (`unit::name`), so it is never carried in
 // a reference expression.
 struct StaticVariableId {
-  std::uint32_t value;
+  std::uint32_t value = base::kUnassignedId;
 
   auto operator<=>(const StaticVariableId&) const
       -> std::strong_ordering = default;

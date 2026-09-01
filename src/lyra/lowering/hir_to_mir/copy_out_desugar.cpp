@@ -62,7 +62,7 @@ auto BuildCopyOutBlock(
         unit, wrapper, *assign_target_id, value_id, std::nullopt, result_type);
     const mir::ExprId assign_id = wrapper.exprs.Add(assign_expr);
     wrapper.AppendStmt(mir::ExprStmt{.expr = assign_id});
-  } else if (unit.types.IsCoroutine(call_type)) {
+  } else if (unit.types.Get(call_type).Is<mir::CoroutineType>()) {
     const mir::ExprId await_id = wrapper.exprs.Add(
         mir::Expr{
             .data = mir::AwaitExpr{.awaitable = call_id}, .type = void_type});

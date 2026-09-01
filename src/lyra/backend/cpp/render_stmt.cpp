@@ -252,7 +252,9 @@ auto RenderStmt(
             // statement. A value rides the result either way (LRM 13.3 /
             // 13.4.1).
             const std::string keyword =
-                view.Unit().types.IsCoroutine(view.Code().result_type)
+                view.Unit()
+                        .types.Get(view.Code().result_type)
+                        .Is<mir::CoroutineType>()
                     ? "co_return"
                     : "return";
             if (!s.value.has_value()) {

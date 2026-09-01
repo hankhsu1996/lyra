@@ -20,7 +20,7 @@ namespace {
 
 struct MemberFacts {
   std::uint64_t bit_width = 0;
-  bool four_state = false;
+  mir::IntegralStateKind state_kind = mir::IntegralStateKind::kTwoState;
 };
 
 // What placing one member needs to know, read from its translated type. A
@@ -30,14 +30,14 @@ auto MemberFactsOf(const UnitLowerer& unit_lowerer, hir::TypeId member)
     -> MemberFacts {
   const mir::Type& translated =
       unit_lowerer.Unit().types.Get(unit_lowerer.TranslateType(member));
-  if (translated.Kind() == mir::TypeKind::kVoid) return MemberFacts{};
+  if (translated.Is<mir::VoidType>()) return MemberFacts{};
   if (!translated.IsIntegralPacked()) {
     throw InternalError(
         "ProjectPackedAggregate: a packed aggregate member is not integral");
   }
-  const mir::PackedArrayType& packed = translated.AsIntegralPacked();
+  const mir::PackedArrayType& packed = translated.PackedShape();
   return MemberFacts{
-      .bit_width = packed.BitWidth(), .four_state = packed.IsFourState()};
+      .bit_width = packed.BitWidth(), .state_kind = packed.state_kind};
 }
 
 // LRM 7.3.2: the tag names one of the members, so it is as wide as it takes to
@@ -51,10 +51,10 @@ auto TagBitsFor(bool tagged, std::size_t member_count) -> std::uint32_t {
 }  // namespace
 
 auto ProjectPackedAggregate(
-    const UnitLowerer& unit_lowerer, const hir::TypeData& aggregate)
+    const UnitLowerer& unit_lowerer, const hir::Type& aggregate)
     -> PackedProjection {
-  const auto* packed_struct = std::get_if<hir::PackedStructType>(&aggregate);
-  const auto* packed_union = std::get_if<hir::PackedUnionType>(&aggregate);
+  const auto* packed_struct = aggregate.As<hir::PackedStructType>();
+  const auto* packed_union = aggregate.As<hir::PackedUnionType>();
   if (packed_struct == nullptr && packed_union == nullptr) {
     throw InternalError(
         "ProjectPackedAggregate: type is not a packed struct or union");
@@ -72,7 +72,9 @@ auto ProjectPackedAggregate(
     // LRM 7.2.1 / 7.3.1: an aggregate is 4-state as a whole as soon as one
     // member is, and the mixed-state member conversion happens against that
     // whole-aggregate domain.
-    projection.four_state = projection.four_state || facts.four_state;
+    if (facts.state_kind == mir::IntegralStateKind::kFourState) {
+      projection.state_kind = mir::IntegralStateKind::kFourState;
+    }
   }
 
   if (packed_struct != nullptr) {

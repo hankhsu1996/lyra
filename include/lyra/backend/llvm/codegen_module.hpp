@@ -1,13 +1,13 @@
 #pragma once
 
 #include <memory>
-#include <vector>
 
 #include <llvm/IR/LLVMContext.h>
 #include <llvm/IR/Module.h>
 
 #include "lyra/backend/llvm/codegen_types.hpp"
 #include "lyra/backend/llvm/emit.hpp"
+#include "lyra/base/translation.hpp"
 #include "lyra/lir/function_id.hpp"
 #include "lyra/lir/type_id.hpp"
 
@@ -75,8 +75,8 @@ class CodeGenModule {
   std::unique_ptr<llvm::Module> module_;
   const lir::CompilationUnit* unit_;
   CodeGenTypes types_;
-  std::vector<llvm::Function*> functions_;
-  std::vector<llvm::GlobalVariable*> packed_type_cells_;
+  base::Translation<lir::FunctionId, llvm::Function*> functions_;
+  base::Translation<lir::TypeId, llvm::GlobalVariable*> packed_type_cells_;
 };
 
 }  // namespace lyra::backend::llvm_backend

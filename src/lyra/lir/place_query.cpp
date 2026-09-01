@@ -11,14 +11,14 @@
 #include "lyra/lir/compilation_unit.hpp"
 #include "lyra/lir/function.hpp"
 #include "lyra/lir/type.hpp"
+#include "lyra/lir/type_builders.hpp"
 #include "lyra/lir/type_id.hpp"
-#include "lyra/lir/type_query.hpp"
 
 namespace lyra::lir {
 
 auto DeclaredMembers(const CompilationUnit& unit, TypeId type)
     -> std::optional<MemberList> {
-  return std::visit(
+  return unit.types.Get(type).Visit(
       Overloaded{
           [&](const ObjectType& object) -> std::optional<MemberList> {
             const Class& cls = unit.classes.Get(object.class_id);
@@ -37,8 +37,7 @@ auto DeclaredMembers(const CompilationUnit& unit, TypeId type)
           },
           [](const auto&) -> std::optional<MemberList> {
             return std::nullopt;
-          }},
-      unit.types.Get(type).data);
+          }});
 }
 
 auto IsPlaceLocal(const Function& fn, const Operand& operand) -> bool {
@@ -67,7 +66,7 @@ auto PlaceType(
         Overloaded{
             [&](const DerefProjection&) {
               const std::optional<TypeId> target =
-                  DerefTarget(unit.types, current);
+                  unit.types.Get(current).DerefTarget();
               if (!target) {
                 throw InternalError(
                     "lir: dereference of a type that stands for no storage");

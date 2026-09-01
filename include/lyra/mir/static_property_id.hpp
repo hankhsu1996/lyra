@@ -3,6 +3,8 @@
 #include <compare>
 #include <cstdint>
 
+#include "lyra/base/pool_id.hpp"
+
 namespace lyra::mir {
 
 // Identity of a class static property (LRM 8.9) -- a named, mutable
@@ -14,7 +16,7 @@ namespace lyra::mir {
 // method); a static property is a run-time cell writable through ordinary
 // assignment (LRM 8.9).
 struct StaticPropertyId {
-  std::uint32_t value;
+  std::uint32_t value = base::kUnassignedId;
 
   auto operator<=>(const StaticPropertyId&) const
       -> std::strong_ordering = default;

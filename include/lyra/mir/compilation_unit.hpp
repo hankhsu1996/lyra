@@ -25,7 +25,6 @@
 #include "lyra/mir/struct_id.hpp"
 #include "lyra/mir/type.hpp"
 #include "lyra/mir/type_id.hpp"
-#include "lyra/mir/type_interner.hpp"
 
 namespace lyra::mir {
 
@@ -109,7 +108,7 @@ struct CompilationUnit {
   // namespace rather than a class (a package) still has a stable identity
   // independent of any member.
   std::string name;
-  TypeInterner types;
+  TypePool types;
   BuiltinMirTypes builtins;
   // Every class declaration of this unit, owned here exactly once and reached
   // by its identity, with a declare-then-define lifecycle so a class can be
@@ -195,84 +194,90 @@ struct CompilationUnit {
   CompilationUnit()
       : builtins{
             .int_type = types.Intern(
-                PackedArrayType{
-                    .atom = BitAtom::kBit,
+                Type{PackedArrayType{
+                    .state_kind = IntegralStateKind::kTwoState,
                     .signedness = Signedness::kSigned,
-                    .dims = {PackedRange{.left = 31, .right = 0}},
-                    .form = PackedArrayForm::kInt}),
+                    .dims = {PackedRange{.left = 31, .right = 0}}}}),
             .int_unsigned = types.Intern(
-                PackedArrayType{
-                    .atom = BitAtom::kBit,
+                Type{PackedArrayType{
+                    .state_kind = IntegralStateKind::kTwoState,
                     .signedness = Signedness::kUnsigned,
-                    .dims = {PackedRange{.left = 31, .right = 0}},
-                    .form = PackedArrayForm::kInt}),
+                    .dims = {PackedRange{.left = 31, .right = 0}}}}),
             .integer = types.Intern(
-                PackedArrayType{
-                    .atom = BitAtom::kLogic,
+                Type{PackedArrayType{
+                    .state_kind = IntegralStateKind::kFourState,
                     .signedness = Signedness::kSigned,
-                    .dims = {PackedRange{.left = 31, .right = 0}},
-                    .form = PackedArrayForm::kInteger}),
+                    .dims = {PackedRange{.left = 31, .right = 0}}}}),
             .bit1 = types.Intern(
-                PackedArrayType{
-                    .atom = BitAtom::kBit,
+                Type{PackedArrayType{
+                    .state_kind = IntegralStateKind::kTwoState,
                     .signedness = Signedness::kUnsigned,
-                    .dims = {PackedRange{.left = 0, .right = 0}},
-                    .form = PackedArrayForm::kExplicit}),
-            .machine_bool = types.Intern(MachineBoolType{}),
+                    .dims = {PackedRange{.left = 0, .right = 0}}}}),
+            .machine_bool = types.Intern(Type{MachineBoolType{}}),
             .machine_int64 = types.Intern(
-                MachineIntType{
-                    .bit_width = 64, .signedness = Signedness::kSigned}),
+                Type{MachineIntType{
+                    .bit_width = 64, .signedness = Signedness::kSigned}}),
             .machine_word = types.Intern(
-                MachineIntType{
-                    .bit_width = 64, .signedness = Signedness::kUnsigned}),
-            .machine_float32 = types.Intern(MachineFloatType{.bit_width = 32}),
-            .machine_float64 = types.Intern(MachineFloatType{.bit_width = 64}),
-            .string = types.Intern(StringType{}),
-            .void_type = types.Intern(VoidType{}),
-            .realtime = types.Intern(RealTimeType{}),
+                Type{MachineIntType{
+                    .bit_width = 64, .signedness = Signedness::kUnsigned}}),
+            .machine_float32 =
+                types.Intern(Type{MachineFloatType{.bit_width = 32}}),
+            .machine_float64 =
+                types.Intern(Type{MachineFloatType{.bit_width = 64}}),
+            .string = types.Intern(Type{StringType{}}),
+            .void_type = types.Intern(Type{VoidType{}}),
+            .realtime = types.Intern(Type{RealTimeType{}}),
             .time = types.Intern(
-                PackedArrayType{
-                    .atom = BitAtom::kLogic,
+                Type{PackedArrayType{
+                    .state_kind = IntegralStateKind::kFourState,
                     .signedness = Signedness::kUnsigned,
-                    .dims = {PackedRange{.left = 63, .right = 0}},
-                    .form = PackedArrayForm::kTime}),
-            .effects = types.Intern(RuntimeEffectsType{}),
-            .scope_ptr = types.PointerTo(
-                types.Intern(
-                    RuntimeClassType{.symbol = "lyra::runtime::Scope"}),
-                PointerOwnership::kBorrowed),
+                    .dims = {PackedRange{.left = 63, .right = 0}}}}),
+            .effects = types.Intern(Type{RuntimeEffectsType{}}),
+            .scope_ptr = types.Intern(
+                Type{PointerType{
+                    types.Intern(
+                        Type{RuntimeClassType{
+                            .symbol = "lyra::runtime::Scope"}}),
+                    PointerOwnership::kBorrowed}}),
             .process_object = types.Intern(
-                RuntimeClassType{.symbol = "lyra::runtime::RuntimeProcess"}),
-            .files = types.Intern(FilesType{}),
-            .diagnostic = types.Intern(DiagnosticType{}),
+                Type{RuntimeClassType{
+                    .symbol = "lyra::runtime::RuntimeProcess"}}),
+            .files = types.Intern(Type{FilesType{}}),
+            .diagnostic = types.Intern(Type{DiagnosticType{}}),
             .packed_type = types.Intern(
-                RuntimeLibraryType{.kind = RuntimeLibraryKind::kPackedType}),
+                Type{RuntimeLibraryType{
+                    .kind = RuntimeLibraryKind::kPackedType}}),
             .packed_range = types.Intern(
-                RuntimeLibraryType{.kind = RuntimeLibraryKind::kPackedRange}),
+                Type{RuntimeLibraryType{
+                    .kind = RuntimeLibraryKind::kPackedRange}}),
             .channel_cancellation = types.Intern(
-                RuntimeLibraryType{
-                    .kind = RuntimeLibraryKind::kChannelCancellation}),
+                Type{RuntimeLibraryType{
+                    .kind = RuntimeLibraryKind::kChannelCancellation}}),
             .print_item = types.Intern(
-                RuntimeLibraryType{.kind = RuntimeLibraryKind::kPrintItem}),
+                Type{RuntimeLibraryType{
+                    .kind = RuntimeLibraryKind::kPrintItem}}),
             .print_literal_item = types.Intern(
-                RuntimeLibraryType{
-                    .kind = RuntimeLibraryKind::kPrintLiteralItem}),
+                Type{RuntimeLibraryType{
+                    .kind = RuntimeLibraryKind::kPrintLiteralItem}}),
             .print_value_item = types.Intern(
-                RuntimeLibraryType{
-                    .kind = RuntimeLibraryKind::kPrintValueItem}),
+                Type{RuntimeLibraryType{
+                    .kind = RuntimeLibraryKind::kPrintValueItem}}),
             .format_spec = types.Intern(
-                RuntimeLibraryType{.kind = RuntimeLibraryKind::kFormatSpec}),
+                Type{RuntimeLibraryType{
+                    .kind = RuntimeLibraryKind::kFormatSpec}}),
             .format_arg = types.Intern(
-                RuntimeLibraryType{.kind = RuntimeLibraryKind::kFormatArg}),
+                Type{RuntimeLibraryType{
+                    .kind = RuntimeLibraryKind::kFormatArg}}),
             .time_format = types.Intern(
-                RuntimeLibraryType{.kind = RuntimeLibraryKind::kTimeFormat}),
+                Type{RuntimeLibraryType{
+                    .kind = RuntimeLibraryKind::kTimeFormat}}),
             .hierarchy_segment = types.Intern(
-                RuntimeLibraryType{
-                    .kind = RuntimeLibraryKind::kHierarchySegment}),
+                Type{RuntimeLibraryType{
+                    .kind = RuntimeLibraryKind::kHierarchySegment}}),
             .trigger = types.Intern(
-                RuntimeLibraryType{.kind = RuntimeLibraryKind::kTrigger}),
+                Type{RuntimeLibraryType{.kind = RuntimeLibraryKind::kTrigger}}),
             .coroutine_void = TypeId{},
-            .wildcard_index = types.Intern(WildcardIndexType{}),
+            .wildcard_index = types.Intern(Type{WildcardIndexType{}}),
         } {
     // `Coroutine<void>` is the completion type of a process or void task. It is
     // built in the constructor body because it reads back the already-interned
@@ -280,7 +285,8 @@ struct CompilationUnit {
     // overwritten here. The field is a convenience alias for the canonical
     // instance, not a deduplication mechanism -- interning `Coroutine<void>`
     // anywhere returns this same id.
-    builtins.coroutine_void = types.CoroutineOf(builtins.void_type);
+    builtins.coroutine_void = types.Intern(
+        mir::Type{mir::CoroutineType{.payload = builtins.void_type}});
   }
 
   [[nodiscard]] auto GetClass(ClassId id) const -> const Class& {
@@ -356,8 +362,7 @@ struct CompilationUnit {
 [[nodiscard]] inline auto TaggedComponentType(
     const CompilationUnit& unit, TypeId tagged_union,
     base::ComponentIndex tag_index) -> TypeId {
-  const auto* tu =
-      std::get_if<TaggedUnionType>(&unit.types.Get(tagged_union).data);
+  const auto* tu = unit.types.Get(tagged_union).As<TaggedUnionType>();
   if (tu == nullptr) {
     throw InternalError("TaggedComponentType: type is not a tagged union");
   }

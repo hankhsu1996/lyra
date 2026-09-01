@@ -167,8 +167,10 @@ class CodeGenFunction {
       -> lir::TypeId;
   [[nodiscard]] auto DomainOf(lir::TypeId type) const
       -> diag::Result<support::ValueDomain>;
-  // The domain of the cell an operand addresses, for a cell operation.
-  [[nodiscard]] auto CellDomain(const lir::Operand& cell) const
+  // The domain of the cell a reference addresses, for a cell operation. The
+  // reference is named by its type, since a cell is allocated before there is
+  // an operand holding it.
+  [[nodiscard]] auto CellDomain(lir::TypeId reference) const
       -> diag::Result<support::ValueDomain>;
   // Place access: the cell a place names the contents of, and the domain that
   // picks its library entries; nothing when the place names ordinary

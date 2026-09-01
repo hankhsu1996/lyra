@@ -200,9 +200,9 @@ auto BuildElementCountExpr(
   if (!operand_or) {
     return std::unexpected(std::move(operand_or.error()));
   }
+  const hir::TypeId operand_type = operand_or->type;
   const bool is_string =
-      unit_lowerer.Unit().types.Get(operand_or->type).Kind() ==
-      hir::TypeKind::kString;
+      unit_lowerer.Unit().types.Get(operand_type).Is<hir::StringType>();
   const hir::ExprId operand_id = frame.Exprs().Add(*std::move(operand_or));
 
   auto result_type = unit_lowerer.InternType(*call.type, span);
@@ -501,9 +501,9 @@ auto LowerComposedDimensionQuery(
     return std::unexpected(std::move(element_type.error()));
   }
   const hir::TypeId table_type = unit_lowerer.AddComposedType(
-      hir::UnpackedArrayType{
+      hir::Type{hir::UnpackedArrayType{
           .element_type = *element_type,
-          .dim = hir::UnpackedRange{.left = 1, .right = dimension_count}});
+          .dim = hir::UnpackedRange{.left = 1, .right = dimension_count}}});
   const hir::ExprId table_id = frame.Exprs().Add(
       hir::Expr{
           .type = table_type,

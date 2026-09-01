@@ -24,30 +24,11 @@
 #include "lyra/mir/expr.hpp"
 #include "lyra/mir/integral_constant.hpp"
 #include "lyra/mir/type.hpp"
+#include "lyra/mir/type_builders.hpp"
 
 namespace lyra::lowering::hir_to_mir {
 
 namespace {
-
-auto LowerSignedness(hir::Signedness s) -> mir::Signedness {
-  switch (s) {
-    case hir::Signedness::kSigned:
-      return mir::Signedness::kSigned;
-    case hir::Signedness::kUnsigned:
-      return mir::Signedness::kUnsigned;
-  }
-  throw InternalError("LowerSignedness: unknown HIR Signedness");
-}
-
-auto LowerStateKind(hir::IntegralStateKind k) -> mir::IntegralStateKind {
-  switch (k) {
-    case hir::IntegralStateKind::kTwoState:
-      return mir::IntegralStateKind::kTwoState;
-    case hir::IntegralStateKind::kFourState:
-      return mir::IntegralStateKind::kFourState;
-  }
-  throw InternalError("LowerStateKind: unknown HIR IntegralStateKind");
-}
 
 auto LowerHirIntegerLiteral(
     const UnitLowerer& unit_lowerer, const WalkFrame& frame,
@@ -72,12 +53,7 @@ auto StringBytesToConstant(
         << (bit_offset % 64U);
   }
   return mir::IntegralConstant{
-      .value_words = std::move(value_words),
-      .state_words = {},
-      .width = width,
-      .signedness = pa.signedness,
-      .state_kind = mir::IntegralStateKind::kTwoState,
-  };
+      .value_words = std::move(value_words), .state_words = {}};
 }
 
 // An SV string literal is a packed bit-vector constant (LRM 5.9), so MIR
@@ -92,7 +68,7 @@ auto LowerHirStringLiteral(
   if (ty.IsIntegralPacked()) {
     return block.exprs.Get(BuildIntegralLiteral(
         unit_lowerer.Unit(), block, type,
-        StringBytesToConstant(s.value, ty.AsIntegralPacked())));
+        StringBytesToConstant(s.value, ty.PackedShape())));
   }
   // A string-typed literal (e.g. a string parameter's value) builds a
   // `value::String` from the software literal via the constructor, on the
@@ -156,7 +132,7 @@ auto LowerExternalUnitValueRefExpr(
       .data =
           mir::ExternalUnitVariableRef{
               .unit_name = r.unit_name, .variable_name = r.variable_name},
-      .type = unit.types.ObservableCellOf(value_type)};
+      .type = mir::ObservableCellOf(unit.types, value_type)};
 }
 
 // The pattern that declares the identifier is its binding origin, so the read
@@ -232,12 +208,7 @@ auto LowerIterationBindingRefExpr(
 auto LowerHirIntegralConstant(const hir::IntegralConstant& c)
     -> mir::IntegralConstant {
   return mir::IntegralConstant{
-      .value_words = c.value_words,
-      .state_words = c.state_words,
-      .width = c.width,
-      .signedness = LowerSignedness(c.signedness),
-      .state_kind = LowerStateKind(c.state_kind),
-  };
+      .value_words = c.value_words, .state_words = c.state_words};
 }
 
 // A static property (LRM 8.9) is one cell owned by the class, reached without a

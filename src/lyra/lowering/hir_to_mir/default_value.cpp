@@ -21,6 +21,7 @@
 #include "lyra/mir/integral_constant.hpp"
 #include "lyra/mir/stmt.hpp"
 #include "lyra/mir/type.hpp"
+#include "lyra/mir/type_builders.hpp"
 
 namespace lyra::lowering::hir_to_mir {
 
@@ -31,15 +32,11 @@ namespace lyra::lowering::hir_to_mir {
 auto DefaultIntegralConstant(const mir::PackedArrayType& pa)
     -> mir::IntegralConstant {
   const auto width = static_cast<std::uint32_t>(pa.BitWidth());
-  const bool four_state = pa.IsFourState();
+  const bool four_state = pa.state_kind == mir::IntegralStateKind::kFourState;
   const std::size_t word_count = (width + 63U) / 64U;
   mir::IntegralConstant c{
       .value_words = std::vector<std::uint64_t>(word_count, 0U),
-      .state_words = {},
-      .width = width,
-      .signedness = pa.signedness,
-      .state_kind = four_state ? mir::IntegralStateKind::kFourState
-                               : mir::IntegralStateKind::kTwoState};
+      .state_words = {}};
   if (!four_state) {
     return c;
   }
@@ -63,8 +60,8 @@ namespace {
 void AppendBoundedQueueMax(
     const UnitLowerer& unit_lowerer, mir::Block& block,
     std::vector<mir::ExprId>& args, mir::TypeId array_type) {
-  const auto* queue = std::get_if<mir::QueueType>(
-      &unit_lowerer.Unit().types.Get(array_type).data);
+  const auto* queue =
+      unit_lowerer.Unit().types.Get(array_type).As<mir::QueueType>();
   if (queue == nullptr || !queue->max_bound.has_value()) {
     return;
   }
@@ -101,8 +98,9 @@ auto BuildUnpackedArrayValue(
   auto& block = *frame.current_block;
   const mir::ExprId element_default = block.exprs.Add(
       BuildDefaultValueFromHir(unit_lowerer, frame, element_type));
-  const mir::TypeId list_type = unit_lowerer.Unit().types.MachineArrayOf(
-      unit_lowerer.TranslateType(element_type), element_ids.size());
+  const mir::TypeId list_type = mir::MachineArrayOf(
+      unit_lowerer.Unit().types, unit_lowerer.TranslateType(element_type),
+      element_ids.size());
   const mir::ExprId list_id = block.exprs.Add(
       mir::Expr{
           .data = mir::ArrayLiteralExpr{.elements = std::move(element_ids)},
@@ -149,8 +147,7 @@ auto MaterializeConstant(
           },
           [&](const std::vector<hir::ConstantValue>& components) -> mir::Expr {
             const auto& hir_ty = unit_lowerer.Hir().types.Get(hir_type);
-            if (const auto* st =
-                    std::get_if<hir::UnpackedStructType>(&hir_ty.data)) {
+            if (const auto* st = hir_ty.As<hir::UnpackedStructType>()) {
               std::vector<mir::ExprId> component_ids;
               component_ids.reserve(components.size());
               for (std::size_t i = 0; i < components.size(); ++i) {
@@ -162,8 +159,7 @@ auto MaterializeConstant(
                       mir::TupleExpr{.components = std::move(component_ids)},
                   .type = mir_type};
             }
-            if (const auto* ua =
-                    std::get_if<hir::UnpackedArrayType>(&hir_ty.data)) {
+            if (const auto* ua = hir_ty.As<hir::UnpackedArrayType>()) {
               std::vector<mir::ExprId> element_ids;
               element_ids.reserve(components.size());
               for (const auto& component : components) {
@@ -189,7 +185,7 @@ auto BuildDefaultValueExpr(
     -> mir::Expr {
   auto& block = *frame.current_block;
   const auto& ty = unit_lowerer.Unit().types.Get(type);
-  return std::visit(
+  return ty.Visit(
       Overloaded{
           [&](const mir::PackedArrayType& pa) -> mir::Expr {
             return block.exprs.Get(BuildIntegralLiteral(
@@ -382,8 +378,7 @@ auto BuildDefaultValueExpr(
                 "BuildDefaultValueExpr: type kind has no default-value "
                 "representation");
           },
-      },
-      ty.data);
+      });
 }
 
 // LRM 7.2.2 / Table 7-1: default-construct a value from its source (HIR) type
@@ -399,7 +394,7 @@ auto BuildDefaultValueFromHir(
   const auto& hir_ty = unit_lowerer.Hir().types.Get(hir_type);
   const mir::TypeId mir_type = unit_lowerer.TranslateType(hir_type);
 
-  if (const auto* st = std::get_if<hir::UnpackedStructType>(&hir_ty.data)) {
+  if (const auto* st = hir_ty.As<hir::UnpackedStructType>()) {
     std::vector<mir::ExprId> components;
     components.reserve(st->fields.size());
     for (const auto& field : st->fields) {
@@ -416,7 +411,7 @@ auto BuildDefaultValueFromHir(
         .type = mir_type};
   }
 
-  if (const auto* ua = std::get_if<hir::UnpackedArrayType>(&hir_ty.data)) {
+  if (const auto* ua = hir_ty.As<hir::UnpackedArrayType>()) {
     const std::int64_t span = (ua->dim.left >= ua->dim.right)
                                   ? (ua->dim.left - ua->dim.right)
                                   : (ua->dim.right - ua->dim.left);
@@ -433,20 +428,18 @@ auto BuildDefaultValueFromHir(
 
 auto ArrayContainerElementType(
     const mir::CompilationUnit& unit, mir::TypeId array_type) -> mir::TypeId {
-  return std::visit(
-      [](const auto& t) -> mir::TypeId {
-        using TyT = std::decay_t<decltype(t)>;
-        if constexpr (
-            std::same_as<TyT, mir::UnpackedArrayType> ||
-            std::same_as<TyT, mir::DynamicArrayType> ||
-            std::same_as<TyT, mir::QueueType>) {
-          return t.element_type;
-        } else {
-          throw InternalError(
-              "ArrayContainerElementType: type is not an array container");
-        }
-      },
-      unit.types.Get(array_type).data);
+  return unit.types.Get(array_type).Visit([](const auto& t) -> mir::TypeId {
+    using TyT = std::decay_t<decltype(t)>;
+    if constexpr (
+        std::same_as<TyT, mir::UnpackedArrayType> ||
+        std::same_as<TyT, mir::DynamicArrayType> ||
+        std::same_as<TyT, mir::QueueType>) {
+      return t.element_type;
+    } else {
+      throw InternalError(
+          "ArrayContainerElementType: type is not an array container");
+    }
+  });
 }
 
 auto BuildArrayConstructionCall(
@@ -457,8 +450,8 @@ auto BuildArrayConstructionCall(
       ArrayContainerElementType(unit_lowerer.Unit(), array_type);
   const mir::ExprId element_default =
       block.exprs.Add(BuildDefaultValueExpr(unit_lowerer, frame, element_type));
-  const mir::TypeId list_type =
-      unit_lowerer.Unit().types.MachineArrayOf(element_type, elements.size());
+  const mir::TypeId list_type = mir::MachineArrayOf(
+      unit_lowerer.Unit().types, element_type, elements.size());
   const mir::ExprId list_id = block.exprs.Add(
       mir::Expr{
           .data = mir::ArrayLiteralExpr{.elements = std::move(elements)},
@@ -476,7 +469,8 @@ auto BuildArrayRepeatCall(
     mir::ExprId element_default, std::vector<mir::ExprId> unit,
     std::uint64_t count) -> mir::Expr {
   auto& block = *frame.current_block;
-  const mir::TypeId unit_type = unit_lowerer.Unit().types.MachineArrayOf(
+  const mir::TypeId unit_type = mir::MachineArrayOf(
+      unit_lowerer.Unit().types,
       ArrayContainerElementType(unit_lowerer.Unit(), array_type), unit.size());
   const mir::ExprId unit_id = block.exprs.Add(
       mir::Expr{
@@ -496,8 +490,8 @@ auto BuildAssociativeConstructionCall(
     std::vector<std::pair<mir::ExprId, mir::ExprId>> entries,
     std::optional<mir::ExprId> user_default) -> mir::Expr {
   auto& block = *frame.current_block;
-  const auto* assoc = std::get_if<mir::AssociativeArrayType>(
-      &unit_lowerer.Unit().types.Get(assoc_type).data);
+  const auto* assoc =
+      unit_lowerer.Unit().types.Get(assoc_type).As<mir::AssociativeArrayType>();
   if (assoc == nullptr) {
     throw InternalError(
         "BuildAssociativeConstructionCall: result type is not "
@@ -507,7 +501,7 @@ auto BuildAssociativeConstructionCall(
   const mir::TypeId element_type = assoc->element_type;
 
   const mir::TypeId tuple_type = unit_lowerer.Unit().types.Intern(
-      mir::TupleType{.elements = {key_type, element_type}});
+      mir::Type{mir::TupleType{.elements = {key_type, element_type}}});
   std::vector<mir::ExprId> tuple_ids;
   tuple_ids.reserve(entries.size());
   for (const auto& [key_id, value_id] : entries) {
@@ -516,8 +510,8 @@ auto BuildAssociativeConstructionCall(
             .data = mir::TupleExpr{.components = {key_id, value_id}},
             .type = tuple_type}));
   }
-  const mir::TypeId entries_type =
-      unit_lowerer.Unit().types.MachineArrayOf(tuple_type, tuple_ids.size());
+  const mir::TypeId entries_type = mir::MachineArrayOf(
+      unit_lowerer.Unit().types, tuple_type, tuple_ids.size());
   const mir::ExprId entries_id = block.exprs.Add(
       mir::Expr{
           .data = mir::ArrayLiteralExpr{.elements = std::move(tuple_ids)},

@@ -14,8 +14,8 @@
 #include "lyra/lir/compilation_unit.hpp"
 #include "lyra/lir/function_id.hpp"
 #include "lyra/lir/type.hpp"
+#include "lyra/lir/type_builders.hpp"
 #include "lyra/lir/type_id.hpp"
-#include "lyra/lir/type_query.hpp"
 #include "lyra/mir/class.hpp"
 #include "lyra/mir/class_ref.hpp"
 #include "lyra/mir/closure_id.hpp"
@@ -55,19 +55,19 @@ class UnitLowerer {
   // error read at `Run`; it never silently mistranslates.
   auto TranslateType(mir::TypeId id) -> lir::TypeId;
 
-  [[nodiscard]] auto Types() const -> const lir::TypeArena& {
+  [[nodiscard]] auto Types() const -> const lir::TypePool& {
     return out_.types;
   }
 
-  // LIR types the lowering needs that no MIR type maps to, each minted once and
-  // reused.
-  auto BorrowedPointerTo(lir::TypeId pointee) -> lir::TypeId;
+  // The scalar a conditional branch tests. It is MIR's own machine boolean
+  // translated, not a LIR type minted here, so the two layers cannot disagree
+  // about what a predicate reduces to.
   auto MachineBoolType() -> lir::TypeId;
-  auto VoidType() -> lir::TypeId;
+
   // A value composed from bits rather than declared: `width` of them in one
   // dimension, unsigned, and holding x and z when any of the bits it was
   // composed from can. Lowering a join reaches one at every step but the last,
-  // and no source declaration names it.
+  // and no source declaration names it, so the lowering mints it.
   auto FlatPackedType(std::uint64_t width, bool four_state) -> lir::TypeId;
 
   // The product a call completes with where the operation answers with more
@@ -126,16 +126,16 @@ class UnitLowerer {
   // qualifier its invoke takes.
   [[nodiscard]] auto ClosureSymbol(mir::ClosureId closure) const -> std::string;
 
-  auto TranslateTypeData(const mir::Type& ty) -> lir::TypeData;
+  auto TranslateType(const mir::Type& ty) -> lir::Type;
   // The LIR mirror of a runtime-library record type. MIR is written once for
   // every backend, so a record only the C++ backend realizes reaches here
   // whenever a program uses the construct behind it, and is recorded as an
   // unsupported type rather than read as a broken invariant.
-  auto TranslateRuntimeLibrary(mir::RuntimeLibraryKind kind) -> lir::TypeData;
+  auto TranslateRuntimeLibrary(mir::RuntimeLibraryKind kind) -> lir::Type;
   // Records `what` (a human phrase like "a closure") as the unit's first
   // unmirrored-type error and returns a benign placeholder type; the unit fails
   // at `Run` before the placeholder is observed.
-  auto RecordUnsupportedType(std::string_view what) -> lir::TypeData;
+  auto RecordUnsupportedType(std::string_view what) -> lir::Type;
   auto LowerExternalUnitObject(const mir::ExternalUnitObject& object)
       -> lir::ExternalUnitObject;
   auto LowerClass(mir::ClassId owner, const mir::Class& cls)
@@ -145,13 +145,10 @@ class UnitLowerer {
   const mir::CompilationUnit* mir_;
   lir::CompilationUnit out_;
   std::unordered_map<mir::TypeId, lir::TypeId> type_memo_;
-  std::unordered_map<lir::TypeId, lir::TypeId> pointer_memo_;
   base::Translation<mir::ClassId, ClassIdentities> class_identities_;
   base::Translation<mir::ExternalUnitObjectId, lir::ExternalUnitObjectId>
       external_unit_object_identities_;
   base::Translation<mir::ClosureId, ClosureIdentities> closure_identities_;
-  std::optional<lir::TypeId> machine_bool_type_;
-  std::optional<lir::TypeId> void_type_;
   std::map<std::pair<std::uint64_t, bool>, lir::TypeId> flat_packed_memo_;
   std::map<std::vector<lir::TypeId>, lir::TypeId> product_memo_;
   // Set the first time a MIR type with no LIR mirror is reached; surfaced as

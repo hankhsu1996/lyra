@@ -11,8 +11,8 @@ Accepted
 ## Why this decision matters
 
 HIR represented a packed array as a flat node: a scalar `atom` (bit / logic / reg) plus a vector of
-dimensions (`PackedArrayType { atom, signedness, dims, form }`). A bare scalar was the degenerate
-case -- a packed array with a single `[0:0]` dimension. This shape has three faults:
+dimensions (`PackedArrayType { atom, signedness, dims }`). A bare scalar was the degenerate case --
+a packed array with a single `[0:0]` dimension. This shape has three faults:
 
 - It cannot represent a packed array whose element is a packed aggregate. `byte_t [1:0]` (an array
   of an 8-bit packed struct) has no scalar atom; the flat node can only fake it by treating the
@@ -75,7 +75,7 @@ identity.
 
 `integral-representation.md` fixes the runtime / `backend::cpp` value as one flat
 `lyra::value::PackedArray` constructed from `(bit_width, is_signed, is_four_state)`, and keeps MIR's
-`PackedArrayType` as the flat `(atom, signedness, dims, form)` dispatch axis. That decision is about
+`PackedArrayType` as the flat `(state_kind, signedness, dims)` dispatch axis. That decision is about
 the value and MIR layers and stays unchanged. The flat shape is produced by flattening the recursive
 HIR type at HIR-to-MIR.
 
@@ -90,22 +90,24 @@ recursive.
 Packed-type representation follows these invariants:
 
 1. **HIR has a scalar bit leaf type.** A single bit is `ScalarBitType { atom }`, interned with its
-   own `TypeId`. A bare scalar (`logic`, `bit`, `reg`) is this leaf; so is the terminal of any
+   own `TypeId`. A bare scalar is this leaf, under either of the two single-bit types LRM 6.11.2
+   defines -- 2-state `bit`, and the 4-state one written `logic` or `reg`; so is the terminal of any
    packed array. The scalar is a first-class type entity, not an inline payload.
 
 2. **HIR represents a packed array with a single dim per node, element by `TypeId`.**
 
    ```text
    hir::ScalarBitType  { atom: BitAtom }
-   hir::PackedArrayType { dim: PackedRange, element_type: TypeId, signedness, form }
+   hir::PackedArrayType { dim: PackedRange, element_type: TypeId, signedness }
    ```
 
    `logic [3:0]` is a `PackedArrayType` whose `element_type` is the interned `logic` scalar.
    `logic [3:0][7:0]` is an outer node whose element resolves to an inner `PackedArrayType`.
    `byte_t [1:0]` is a node whose `element_type` is the `byte_t` packed struct. A predefined-width
-   integer (`int`, `byte`) is a single-dim packed array over the scalar bit, with `form` recording
-   the syntactic origin. AST-to-HIR consumes slang's nested type 1:1 by recursing through
-   `InternType` on the element; there is no dimension-flattening walk.
+   integer (`int`, `byte`) is a single-dim packed array over the scalar bit; LRM 6.11.1 makes the
+   keyword and the equivalent packed array one type, so the spelling is not recorded and the two
+   reach one identity. AST-to-HIR consumes slang's nested type 1:1 by recursing through `InternType`
+   on the element; there is no dimension-flattening walk.
 
 3. **Derived integral properties are computed against the type pool, not stored.** Bit width and
    4-state-ness of a packed array resolve `element_type` through the pool (one bit for a scalar
@@ -113,7 +115,7 @@ Packed-type representation follows these invariants:
    the node. Signedness is a per-node field; the outermost node is authoritative (LRM 7.4.1:
    elements are unsigned unless of a named signed type).
 
-4. **MIR stays flat; HIR-to-MIR flattens.** `mir::PackedArrayType { atom, signedness, dims, form }`
+4. **MIR stays flat; HIR-to-MIR flattens.** `mir::PackedArrayType { state_kind, signedness, dims }`
    is unchanged (`integral-representation.md`). HIR-to-MIR projects the recursive HIR type onto it:
    a scalar leaf becomes a one-bit flat vector; a packed array becomes the element's flat projection
    with this node's dim prepended; a packed aggregate element becomes its single-vector projection.

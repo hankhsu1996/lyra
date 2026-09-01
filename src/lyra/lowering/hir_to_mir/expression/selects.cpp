@@ -70,8 +70,7 @@ auto ProjectedMemberAt(
 auto WrapPackedAsOwned(
     const mir::CompilationUnit& unit, mir::Block& block, mir::Expr access_call,
     mir::TypeId result_type) -> mir::Expr {
-  if (!std::holds_alternative<mir::PackedArrayType>(
-          unit.types.Get(result_type).data)) {
+  if (!unit.types.Get(result_type).Is<mir::PackedArrayType>()) {
     return access_call;
   }
   const mir::ExprId access_id = block.exprs.Add(std::move(access_call));
@@ -97,12 +96,13 @@ auto PartSelectNaturalType(
     -> mir::TypeId {
   const auto& source = unit.types.Get(source_type);
   const auto& field = unit.types.Get(field_type);
-  if (!source.IsPackedArray() || !field.IsPackedArray()) return field_type;
-  auto natural = field.AsPackedArray();
+  if (!source.Is<mir::PackedArrayType>() || !field.Is<mir::PackedArrayType>()) {
+    return field_type;
+  }
+  auto natural = field.Get<mir::PackedArrayType>();
   natural.signedness = mir::Signedness::kUnsigned;
-  natural.atom = source.AsPackedArray().atom;
-  natural.form = mir::PackedArrayForm::kExplicit;
-  return unit.types.Intern(std::move(natural));
+  natural.state_kind = source.Get<mir::PackedArrayType>().state_kind;
+  return unit.types.Intern(mir::Type{std::move(natural)});
 }
 
 // Reconciles a field read materialised at its part-select natural type to the
@@ -136,14 +136,14 @@ auto AppendReceiverRange(
     const auto& ty = unit_lowerer.Unit().types.Get(base_type);
     if (ty.IsCapabilityWrapper()) {
       base_type = ty.WrappedValueType();
-    } else if (const auto* ptr = std::get_if<mir::PointerType>(&ty.data)) {
+    } else if (const auto* ptr = ty.As<mir::PointerType>()) {
       base_type = ptr->pointee;
     } else {
       break;
     }
   }
   const auto& base_ty = unit_lowerer.Unit().types.Get(base_type);
-  if (const auto* ua = std::get_if<mir::UnpackedArrayType>(&base_ty.data)) {
+  if (const auto* ua = base_ty.As<mir::UnpackedArrayType>()) {
     args.push_back(BuildIntLiteral(unit_lowerer.Unit(), block, ua->dim.left));
     args.push_back(BuildIntLiteral(unit_lowerer.Unit(), block, ua->dim.right));
   }
@@ -232,7 +232,7 @@ auto UnfoldRangeSelectOperands(
   struct RawSelector {
     mir::ExprId a;
     mir::ExprId b;
-    std::int64_t form;
+    std::int64_t form = 0;
   };
   auto raw_or = std::visit(
       Overloaded{
@@ -490,9 +490,8 @@ auto BuildPackedTagTest(
   // The tag is a run of the aggregate's own vector, so it is read in the
   // aggregate's state domain -- which the projection states, and the base
   // expression may not (a write-side base is still the storage cell).
-  const mir::TypeId tag_type = InternFlatPacked(
-      unit, projection.tag_bits,
-      projection.four_state ? mir::BitAtom::kLogic : mir::BitAtom::kBit);
+  const mir::TypeId tag_type =
+      InternFlatPacked(unit, projection.tag_bits, projection.state_kind);
   const mir::ExprId tag = block.exprs.Add(BuildPackedRunRead(
       unit_lowerer, block, base, projection.bit_width - projection.tag_bits,
       projection.tag_bits, tag_type));
@@ -507,7 +506,7 @@ template <ExprLowerer Lowerer>
 auto LowerHirElementSelectExpr(
     Lowerer& lowerer, WalkFrame frame, const hir::ElementSelectExpr& sel,
     mir::TypeId result_type) -> diag::Result<mir::Expr> {
-  auto& unit_lowerer = lowerer.Owner();
+  UnitLowerer& unit_lowerer = lowerer.Owner();
   const auto& exprs = lowerer.HirExprs();
   auto& block = *frame.current_block;
 
@@ -521,12 +520,12 @@ auto LowerHirElementSelectExpr(
   if (!idx_or) return std::unexpected(std::move(idx_or.error()));
   const mir::ExprId idx_id = block.exprs.Add(*std::move(idx_or));
 
-  const auto& hir_base_ty = unit_lowerer.Hir().types.Get(hir_base.type);
+  const hir::Type& hir_base_ty = unit_lowerer.Hir().types.Get(hir_base.type);
   // LRM 6.16: indexed character read `s[i]` is the element-value access, the
   // read-side dual of the element-reference write. It joins the generic
   // element-access path (the explicit `getc` / `putc` methods are a separate
   // lowering); the value-vs-reference pair mirrors a packed array element.
-  if (hir_base_ty.Kind() == hir::TypeKind::kString) {
+  if (hir_base_ty.Is<hir::StringType>()) {
     return mir::Expr{
         .data =
             mir::CallExpr{
@@ -542,7 +541,7 @@ template <ExprLowerer Lowerer>
 auto LowerHirRangeSelectExpr(
     Lowerer& lowerer, WalkFrame frame, const hir::RangeSelectExpr& sel,
     mir::TypeId result_type) -> diag::Result<mir::Expr> {
-  auto& unit_lowerer = lowerer.Owner();
+  UnitLowerer& unit_lowerer = lowerer.Owner();
   const auto& exprs = lowerer.HirExprs();
   auto& block = *frame.current_block;
 
@@ -569,12 +568,12 @@ template <ExprLowerer Lowerer>
 auto LowerHirMemberAccessExpr(
     Lowerer& lowerer, WalkFrame frame, const hir::MemberAccessExpr& sel,
     mir::TypeId result_type) -> diag::Result<mir::Expr> {
-  auto& unit_lowerer = lowerer.Owner();
+  UnitLowerer& unit_lowerer = lowerer.Owner();
   const auto& exprs = lowerer.HirExprs();
   auto& block = *frame.current_block;
   const auto& base_hir_expr = exprs.Get(sel.base_value);
-  if (unit_lowerer.Hir().types.Get(base_hir_expr.type).Kind() ==
-      hir::TypeKind::kUnpackedStruct) {
+  const hir::Type& base_ty = unit_lowerer.Hir().types.Get(base_hir_expr.type);
+  if (base_ty.Is<hir::UnpackedStructType>()) {
     auto base_or = lowerer.LowerExpr(base_hir_expr, frame);
     if (!base_or) return std::unexpected(std::move(base_or.error()));
     const mir::ExprId base_id = block.exprs.Add(*std::move(base_or));
@@ -582,15 +581,13 @@ auto LowerHirMemberAccessExpr(
         .data = mir::TupleGetExpr{.tuple = base_id, .index = sel.field_index},
         .type = result_type};
   }
-  if (unit_lowerer.Hir().types.Get(base_hir_expr.type).Kind() ==
-      hir::TypeKind::kUnpackedUnion) {
+  if (base_ty.Is<hir::UnpackedUnionType>()) {
     auto base_or = lowerer.LowerExpr(base_hir_expr, frame);
     if (!base_or) return std::unexpected(std::move(base_or.error()));
     const mir::ExprId base_id = block.exprs.Add(*std::move(base_or));
     // LRM 11.9: a tagged-union dot-access is a run-time-checked read; the
     // untagged form is the type-loophole read. Route by the source-level tag.
-    const auto& union_ty = std::get<hir::UnpackedUnionType>(
-        unit_lowerer.Hir().types.Get(base_hir_expr.type).data);
+    const auto& union_ty = base_ty.Get<hir::UnpackedUnionType>();
     if (union_ty.tagged) {
       return mir::Expr{
           .data =
@@ -604,7 +601,7 @@ auto LowerHirMemberAccessExpr(
         .type = result_type};
   }
   const PackedProjection projection = ProjectPackedAggregate(
-      unit_lowerer, unit_lowerer.Hir().types.Get(base_hir_expr.type).data);
+      unit_lowerer, unit_lowerer.Hir().types.Get(base_hir_expr.type));
   auto base_or = lowerer.LowerExpr(base_hir_expr, frame);
   if (!base_or) return std::unexpected(std::move(base_or.error()));
   const mir::ExprId base_id = block.exprs.Add(*std::move(base_or));
@@ -621,7 +618,7 @@ template <ExprLowerer Lowerer>
 auto LowerHirClassPropertyAccessExpr(
     Lowerer& lowerer, WalkFrame frame, const hir::ClassPropertyAccessExpr& sel,
     mir::TypeId result_type) -> diag::Result<mir::Expr> {
-  auto& unit_lowerer = lowerer.Owner();
+  UnitLowerer& unit_lowerer = lowerer.Owner();
   auto& block = *frame.current_block;
   const auto& base_hir_expr = lowerer.HirExprs().Get(sel.base_value);
   auto base_or = lowerer.LowerExpr(base_hir_expr, frame);
@@ -636,7 +633,7 @@ template <ExprLowerer Lowerer>
 auto LowerHirElementSelectExprLhs(
     Lowerer& lowerer, WalkFrame frame, const hir::ElementSelectExpr& sel,
     mir::TypeId result_type) -> diag::Result<mir::Expr> {
-  auto& unit_lowerer = lowerer.Owner();
+  UnitLowerer& unit_lowerer = lowerer.Owner();
   const auto& exprs = lowerer.HirExprs();
   auto& block = *frame.current_block;
 
@@ -657,7 +654,7 @@ template <ExprLowerer Lowerer>
 auto LowerHirRangeSelectExprLhs(
     Lowerer& lowerer, WalkFrame frame, const hir::RangeSelectExpr& sel,
     mir::TypeId result_type) -> diag::Result<mir::Expr> {
-  auto& unit_lowerer = lowerer.Owner();
+  UnitLowerer& unit_lowerer = lowerer.Owner();
   const auto& exprs = lowerer.HirExprs();
   auto& block = *frame.current_block;
 
@@ -679,15 +676,15 @@ template <ExprLowerer Lowerer>
 auto LowerHirMemberAccessExprLhs(
     Lowerer& lowerer, WalkFrame frame, const hir::MemberAccessExpr& sel,
     mir::TypeId result_type) -> diag::Result<mir::Expr> {
-  auto& unit_lowerer = lowerer.Owner();
+  UnitLowerer& unit_lowerer = lowerer.Owner();
   const auto& exprs = lowerer.HirExprs();
   auto& block = *frame.current_block;
   const auto& base_hir_expr = exprs.Get(sel.base_value);
+  const hir::Type& base_ty = unit_lowerer.Hir().types.Get(base_hir_expr.type);
   // LRM 7.2: an unpacked-struct member write is a positional projection by
   // index over the base place. The observable root's write routes through the
   // cell's mutate path later, so the place is just the projection here.
-  if (unit_lowerer.Hir().types.Get(base_hir_expr.type).Kind() ==
-      hir::TypeKind::kUnpackedStruct) {
+  if (base_ty.Is<hir::UnpackedStructType>()) {
     auto base_or = lowerer.LowerLhsExpr(base_hir_expr, frame);
     if (!base_or) return std::unexpected(std::move(base_or.error()));
     return ProjectOnto(
@@ -701,12 +698,10 @@ auto LowerHirMemberAccessExprLhs(
   // the designator; a tagged one instead requires the member to already be the
   // current tag (LRM 11.9), which is its own node. The observable root routes
   // through the cell's mutate path later.
-  if (unit_lowerer.Hir().types.Get(base_hir_expr.type).Kind() ==
-      hir::TypeKind::kUnpackedUnion) {
+  if (base_ty.Is<hir::UnpackedUnionType>()) {
     auto base_or = lowerer.LowerLhsExpr(base_hir_expr, frame);
     if (!base_or) return std::unexpected(std::move(base_or.error()));
-    const auto& union_ty = std::get<hir::UnpackedUnionType>(
-        unit_lowerer.Hir().types.Get(base_hir_expr.type).data);
+    const auto& union_ty = base_ty.Get<hir::UnpackedUnionType>();
     if (union_ty.tagged) {
       const mir::ExprId base_id = block.exprs.Add(*std::move(base_or));
       return mir::Expr{
@@ -722,7 +717,7 @@ auto LowerHirMemberAccessExprLhs(
         result_type);
   }
   const PackedProjection projection = ProjectPackedAggregate(
-      unit_lowerer, unit_lowerer.Hir().types.Get(base_hir_expr.type).data);
+      unit_lowerer, unit_lowerer.Hir().types.Get(base_hir_expr.type));
   auto base_or = lowerer.LowerLhsExpr(base_hir_expr, frame);
   if (!base_or) return std::unexpected(std::move(base_or.error()));
   const ProjectedMember& member =
@@ -753,7 +748,7 @@ template <ExprLowerer Lowerer>
 auto LowerHirClassPropertyAccessExprLhs(
     Lowerer& lowerer, WalkFrame frame, const hir::ClassPropertyAccessExpr& sel,
     mir::TypeId result_type) -> diag::Result<mir::Expr> {
-  auto& unit_lowerer = lowerer.Owner();
+  UnitLowerer& unit_lowerer = lowerer.Owner();
   auto& block = *frame.current_block;
   const auto& base_hir_expr = lowerer.HirExprs().Get(sel.base_value);
   auto base_or = lowerer.LowerExpr(base_hir_expr, frame);

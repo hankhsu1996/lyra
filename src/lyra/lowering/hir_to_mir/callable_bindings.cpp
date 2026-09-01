@@ -32,10 +32,12 @@ CallableBindings::CallableBindings(
   // of the closure. A captured read is a field access over it, resolved through
   // the closure id so the pointee names this closure's field set.
   const mir::TypeId closure_value =
-      unit.types.Intern(mir::ClosureType{.closure_id = closure_id});
-  self_ptr_type_ = unit.types.PointerTo(
-      closure_value, mir::PointerOwnership::kBorrowed,
-      mir::Mutability::kReadOnly);
+      unit.types.Intern(mir::Type{mir::ClosureType{.closure_id = closure_id}});
+  self_ptr_type_ = unit.types.Intern(
+      mir::Type{mir::PointerType{
+          .pointee = closure_value,
+          .ownership = mir::PointerOwnership::kBorrowed,
+          .mutability = mir::Mutability::kReadOnly}});
   self_local_ =
       code_->locals.Add(mir::LocalDecl{.name = "self", .type = self_ptr_type_});
 }

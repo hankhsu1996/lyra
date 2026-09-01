@@ -24,7 +24,6 @@
 #include "lyra/mir/compilation_unit.hpp"
 #include "lyra/mir/expr.hpp"
 #include "lyra/mir/stmt.hpp"
-#include "lyra/mir/type.hpp"
 #include "lyra/support/builtin_fn.hpp"
 #include "lyra/support/system_subroutine.hpp"
 
@@ -231,8 +230,7 @@ auto LowerFileIOSystemSubroutineCallStmt(
       const auto& dest_hir = hir_proc.exprs.Get(head[0]);
       const auto& dest_hir_ty = unit_lowerer.Hir().types.Get(dest_hir.type);
       const auto& builtins = process.Owner().Unit().builtins;
-      const auto* unpacked =
-          std::get_if<hir::UnpackedArrayType>(&dest_hir_ty.data);
+      const auto* unpacked = dest_hir_ty.As<hir::UnpackedArrayType>();
 
       if (unpacked == nullptr) {
         // Integral form. LRM "start and count are ignored if $fread is

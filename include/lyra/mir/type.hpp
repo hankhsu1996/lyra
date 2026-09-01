@@ -1,11 +1,14 @@
 #pragma once
 
+#include <cstddef>
 #include <cstdint>
 #include <optional>
 #include <string>
 #include <variant>
 #include <vector>
 
+#include "lyra/base/internal_error.hpp"
+#include "lyra/base/interner.hpp"
 #include "lyra/mir/class_id.hpp"
 #include "lyra/mir/closure_id.hpp"
 #include "lyra/mir/external_unit_object_id.hpp"
@@ -14,70 +17,17 @@
 
 namespace lyra::mir {
 
-enum class TypeKind {
-  kPackedArray,
-  kEnum,
-  kUnpackedArray,
-  kDynamicArray,
-  kQueue,
-  kAssociativeArray,
-  kWildcardIndex,
-  kString,
-  kMachineCString,
-  kMachineBool,
-  kMachineInt,
-  kMachineFloat,
-  kMachineArray,
-  kMachineFunction,
-  kEvent,
-  kReal,
-  kShortReal,
-  kRealTime,
-  kChandle,
-  kVoid,
-  kEmpty,
-  kObject,
-  kExternalUnitObject,
-  kCrossUnitClass,
-  kRuntimeClass,
-  kRuntimeEffects,
-  kFiles,
-  kDiagnostic,
-  kRuntimeLibrary,
-  kCoroutine,
-  kReference,
-  kPointer,
-  kManagedRef,
-  kVector,
-  kTuple,
-  kUnion,
-  kTaggedUnion,
-  kObservable,
-  kResolved,
-  kDriver,
-  kStruct,
-  kClosure,
-};
-
-enum class BitAtom {
-  kBit,
-  kLogic,
-  kReg,
+// How many values a bit of an integral value can take (LRM 6.11.2). A source
+// keyword chooses it -- `bit` two, `logic` four -- but the keyword does not
+// reach this layer; what a consumer needs to know is the count.
+enum class IntegralStateKind : std::uint8_t {
+  kTwoState,
+  kFourState,
 };
 
 enum class Signedness {
   kSigned,
   kUnsigned,
-};
-
-enum class PackedArrayForm {
-  kExplicit,
-  kByte,
-  kShortInt,
-  kInt,
-  kLongInt,
-  kInteger,
-  kTime,
 };
 
 struct PackedRange {
@@ -93,13 +43,13 @@ struct PackedRange {
 };
 
 struct PackedArrayType {
-  BitAtom atom;
+  IntegralStateKind state_kind;
   Signedness signedness;
   std::vector<PackedRange> dims;
-  PackedArrayForm form;
 
   [[nodiscard]] auto BitWidth() const -> std::uint64_t;
-  [[nodiscard]] auto IsFourState() const -> bool;
+
+  auto operator==(const PackedArrayType&) const -> bool = default;
 };
 
 struct EnumMember {
@@ -112,6 +62,8 @@ struct EnumMember {
 struct EnumType {
   PackedArrayType base;
   std::vector<EnumMember> members;
+
+  auto operator==(const EnumType&) const -> bool = default;
 };
 
 // LRM 7.2.1 / 7.3.1 packed struct and packed union have no MIR-level
@@ -539,7 +491,7 @@ enum class Mutability : std::uint8_t {
 // not a backend-synthesized wrap.
 struct RefType {
   TypeId pointee;
-  Mutability mutability = Mutability::kMutable;
+  Mutability mutability;
 
   auto operator==(const RefType&) const -> bool = default;
 };
@@ -559,6 +511,8 @@ enum class PointerOwnership {
 struct PointerType {
   TypeId pointee;
   PointerOwnership ownership;
+  // A pointer reaches storage the holder may write unless the declaration that
+  // built it says otherwise, so read-only is the case that has to be stated.
   Mutability mutability = Mutability::kMutable;
 
   auto operator==(const PointerType&) const -> bool = default;
@@ -676,61 +630,111 @@ struct DriverType {
   auto operator==(const DriverType&) const -> bool = default;
 };
 
-using TypeData = std::variant<
-    PackedArrayType, EnumType, UnpackedArrayType, DynamicArrayType, QueueType,
-    AssociativeArrayType, WildcardIndexType, StringType, MachineCStringType,
-    MachineBoolType, MachineIntType, MachineFloatType, MachineArrayType,
-    MachineFunctionType, EventType, RealType, ShortRealType, RealTimeType,
-    ChandleType, VoidType, ObjectType, ExternalUnitObjectType,
-    CrossUnitClassType, RuntimeClassType, RuntimeEffectsType, FilesType,
-    DiagnosticType, RuntimeLibraryType, CoroutineType, RefType, PointerType,
-    ManagedRefType, VectorType, TupleType, UnionType, TaggedUnionType,
-    EmptyType, ObservableType, ResolvedType, DriverType, StructType,
-    ClosureType>;
+// A type one MIR compilation unit names, and the vocabulary for asking what it
+// is. The alternatives are a closed set, consumed by visiting them: a visitor
+// that names each one rather than defaulting is what makes an alternative added
+// here fail to compile until every consumer says what the new one means.
+//
+// A question belongs to the type when its answer spans several alternatives or
+// states a rule over them. Testing for one alternative, or reaching into it,
+// stays at the call site; a question about how a later stage will treat a type
+// belongs to that stage.
+class Type {
+ private:
+  using Data = std::variant<
+      PackedArrayType, EnumType, UnpackedArrayType, DynamicArrayType, QueueType,
+      AssociativeArrayType, WildcardIndexType, StringType, MachineCStringType,
+      MachineBoolType, MachineIntType, MachineFloatType, MachineArrayType,
+      MachineFunctionType, EventType, RealType, ShortRealType, RealTimeType,
+      ChandleType, VoidType, ObjectType, ExternalUnitObjectType,
+      CrossUnitClassType, RuntimeClassType, RuntimeEffectsType, FilesType,
+      DiagnosticType, RuntimeLibraryType, CoroutineType, RefType, PointerType,
+      ManagedRefType, VectorType, TupleType, UnionType, TaggedUnionType,
+      EmptyType, ObservableType, ResolvedType, DriverType, StructType,
+      ClosureType>;
 
-struct Type {
-  TypeData data;
+ public:
+  explicit Type(Data data) : data_(std::move(data)) {
+  }
 
-  [[nodiscard]] auto Kind() const -> TypeKind;
-  [[nodiscard]] auto IsPackedArray() const -> bool;
-  [[nodiscard]] auto AsPackedArray() const -> const PackedArrayType&;
-  [[nodiscard]] auto IsEnum() const -> bool;
-  [[nodiscard]] auto AsEnum() const -> const EnumType&;
-  // True for any type whose value-level shape is a single packed vector:
-  // PackedArrayType or EnumType (base). Sites that treat the type as its
-  // integral representation use this predicate; sites that need to
-  // distinguish should match on the variant directly.
+  // True for any type whose value-level shape is a single packed vector: a
+  // packed array, or an enumeration through its base. A site that treats the
+  // type as its integral representation asks this; one that must tell the two
+  // apart matches on the alternatives directly.
   [[nodiscard]] auto IsIntegralPacked() const -> bool;
-  [[nodiscard]] auto AsIntegralPacked() const -> const PackedArrayType&;
+
+  // The packed shape an integral type's value is structured by. A type that is
+  // not integral has no such shape and is a caller error, never a width guess.
+  [[nodiscard]] auto PackedShape() const -> const PackedArrayType&;
+
+  // True for the three SV floating-point types (LRM 6.12), which share one
+  // value representation and one set of conversions -- the axis a cast or an
+  // operator decides on is the family, not which of the three.
+  [[nodiscard]] auto IsRealFamily() const -> bool;
+
   // True for a stable runtime facade the backend realizes as a live reference
-  // rather than a movable value -- the runtime handle, the file
-  // table handle, the diagnostic dispatcher handle. Lowering sites that
-  // decide whether an operand may be transferred consult this: an alias
-  // handle carries no ownership to move.
+  // rather than a movable value -- the runtime handle, the file table handle,
+  // the diagnostic dispatcher handle. A lowering site deciding whether an
+  // operand may be transferred consults this: an alias handle carries no
+  // ownership to move.
   [[nodiscard]] auto IsAliasHandle() const -> bool;
+
   // True for a wrapper that grants an access capability over a value it holds
   // rather than being that value: the observable cell, a procedural reference,
-  // a net's resolved cell, a net driver's handle. `WrappedValueType` is the
-  // value it wraps, and throws where there is none.
+  // a net's resolved cell, a net driver's handle.
   [[nodiscard]] auto IsCapabilityWrapper() const -> bool;
+
+  // The value a capability wrapper wraps; throws where there is none.
   [[nodiscard]] auto WrappedValueType() const -> TypeId;
+
+  template <typename T>
+  [[nodiscard]] auto Is() const -> bool {
+    return std::holds_alternative<T>(data_);
+  }
+
+  // Null where the type is a different alternative, for a caller whose next
+  // step depends on which one it met.
+  template <typename T>
+  [[nodiscard]] auto As() const -> const T* {
+    return std::get_if<T>(&data_);
+  }
+
+  // For a caller that has already established which alternative this is, so
+  // meeting another one is that caller's own invariant broken.
+  template <typename T>
+  [[nodiscard]] auto Get() const -> const T& {
+    const T* arm = std::get_if<T>(&data_);
+    if (arm == nullptr) {
+      throw InternalError(
+          "mir::Type::Get: type is not the alternative asked for");
+    }
+    return *arm;
+  }
+
+  template <typename Visitor>
+  auto Visit(Visitor&& visitor) const -> decltype(auto) {
+    return std::visit(std::forward<Visitor>(visitor), data_);
+  }
+
+  auto operator==(const Type&) const -> bool = default;
+
+  // How a pool spreads the types it holds. It reads the type's alternative and
+  // the identities that alternative names rather than walking a member list,
+  // because equality decides the answer and a hash only has to separate the
+  // types one unit actually holds.
+  struct Hash {
+    auto operator()(const Type& type) const -> std::size_t;
+  };
+
+ private:
+  Data data_;
 };
 
-class CompilationUnit;
+// The types one compilation unit names. Interning canonicalizes: within one
+// unit a semantic type maps to one `TypeId`, so equal types share an id and a
+// `TypeId` comparison is a semantic-type comparison. A class type reaches
+// itself through its own declaration identity, which is what lets a recursive
+// type graph be built out of complete requests alone.
+using TypePool = base::Interner<Type, TypeId, Type::Hash>;
 
-// A child-scope member, classified by the leaf object type after stripping any
-// vector layers: an intra-unit object is a generate scope (carrying its target
-// scope's class name), an external-unit object is a module instance.
-struct GenerateScopeChild {
-  std::string name;
-};
-struct ModuleInstanceChild {};
-using ChildScope = std::variant<GenerateScopeChild, ModuleInstanceChild>;
-
-[[nodiscard]] auto GetChildScope(const CompilationUnit& unit, TypeId type)
-    -> std::optional<ChildScope>;
-
-// True for a capability wrapper: a type that represents a storage place rather
-// than being a value, so the value it stands for is named one dereference
-// further and the protocol realizing that access comes from this type. The
 }  // namespace lyra::mir

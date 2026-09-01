@@ -45,11 +45,16 @@ jobs:
       - name: Run clang-tidy
         id: tidy
         run: |
-          CPP_FILES=$(find src -name '*.cpp' | tr '\n' ' ')
+          # `-system-headers` is what makes this see our own headers at all:
+          # the generated database reaches them through `-isystem include`, so
+          # without it every diagnostic in include/lyra/** is dropped as system
+          # code whatever `-header-filter` says. `run-clang-tidy` does not
+          # forward the flag, so clang-tidy is driven directly.
           set +e
-          run-clang-tidy -p . -j "$(nproc)" -quiet \
-            -header-filter='^.*(src|include)/lyra/.*' \
-            $CPP_FILES > tidy.log 2>&1
+          find src -name '*.cpp' -print0 \
+            | xargs -0 -P "$(nproc)" -n 1 clang-tidy -p . -quiet \
+                -header-filter='^.*(src|include)/lyra/.*' \
+                -system-headers > tidy.log 2>&1
           echo "status=$?" >> "$GITHUB_OUTPUT"
           set -e
 

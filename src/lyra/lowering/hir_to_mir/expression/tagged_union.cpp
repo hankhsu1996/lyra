@@ -49,26 +49,29 @@ auto BuildPackedTaggedValue(
   // Every run is carried in the union's own state domain, so the runs compose
   // into exactly the union's vector and only its signedness is left to
   // reconcile.
-  const mir::BitAtom atom = unit.types.Get(result_type).AsPackedArray().atom;
+  const mir::IntegralStateKind state_kind =
+      unit.types.Get(result_type).PackedShape().state_kind;
   std::vector<mir::ExprId> runs;
   if (layout.tag_bits > 0) {
     const mir::ExprId named = BuildIntLiteral(
         unit, block, static_cast<std::int64_t>(t.member_index.value));
     runs.push_back(ConvertToType(
-        unit, block, named, InternFlatPacked(unit, layout.tag_bits, atom)));
+        unit, block, named,
+        InternFlatPacked(unit, layout.tag_bits, state_kind)));
   }
   if (gap_width > 0) {
     runs.push_back(block.exprs.Add(BuildDefaultValueExpr(
-        owner, frame, InternFlatPacked(unit, gap_width, atom))));
+        owner, frame, InternFlatPacked(unit, gap_width, state_kind))));
   }
   if (payload.has_value()) {
     runs.push_back(ConvertToType(
-        unit, block, *payload, InternFlatPacked(unit, member_width, atom)));
+        unit, block, *payload,
+        InternFlatPacked(unit, member_width, state_kind)));
   }
 
   const mir::ExprId concat = block.exprs.Add(BuildPackedConcat(
       unit, block, std::move(runs),
-      InternFlatPacked(unit, layout.bit_width, atom)));
+      InternFlatPacked(unit, layout.bit_width, state_kind)));
   return BuildValueConversion(unit, block, concat, result_type);
 }
 
@@ -90,10 +93,10 @@ auto LowerHirTaggedUnionExpr(
     payload = block.exprs.Add(*std::move(payload_or));
   }
 
-  if (std::holds_alternative<hir::PackedUnionType>(hir_type.data)) {
+  if (hir_type.Is<hir::PackedUnionType>()) {
     return BuildPackedTaggedValue(
-        lowerer, frame, ProjectPackedAggregate(lowerer.Owner(), hir_type.data),
-        t, payload, result_type);
+        lowerer, frame, ProjectPackedAggregate(lowerer.Owner(), hir_type), t,
+        payload, result_type);
   }
 
   // LRM 11.9: `tagged Member` without an operand names a `void` member, whose

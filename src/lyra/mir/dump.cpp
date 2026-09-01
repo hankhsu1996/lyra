@@ -125,40 +125,19 @@ class MirDumper {
     --indent_;
   }
 
-  static auto FormatBitAtom(BitAtom a) -> std::string_view {
-    switch (a) {
-      case BitAtom::kBit:
-        return "bit";
-      case BitAtom::kLogic:
-        return "logic";
-      case BitAtom::kReg:
-        return "reg";
+  static auto FormatStateKind(IntegralStateKind s) -> std::string_view {
+    switch (s) {
+      case IntegralStateKind::kTwoState:
+        return "2";
+      case IntegralStateKind::kFourState:
+        return "4";
     }
-    throw InternalError("MirDumper::FormatBitAtom: unknown BitAtom");
+    throw InternalError(
+        "MirDumper::FormatStateKind: unknown IntegralStateKind");
   }
 
   static auto FormatSignedness(Signedness s) -> std::string_view {
     return s == Signedness::kSigned ? "signed" : "unsigned";
-  }
-
-  static auto FormatPackedForm(PackedArrayForm f) -> std::string_view {
-    switch (f) {
-      case PackedArrayForm::kExplicit:
-        return "explicit";
-      case PackedArrayForm::kByte:
-        return "byte";
-      case PackedArrayForm::kShortInt:
-        return "shortint";
-      case PackedArrayForm::kInt:
-        return "int";
-      case PackedArrayForm::kLongInt:
-        return "longint";
-      case PackedArrayForm::kInteger:
-        return "integer";
-      case PackedArrayForm::kTime:
-        return "time";
-    }
-    throw InternalError("MirDumper::FormatPackedForm: unknown PackedArrayForm");
   }
 
   static auto FormatPackedDims(const std::vector<PackedRange>& dims)
@@ -220,13 +199,13 @@ class MirDumper {
   }
 
   static auto FormatType(const Type& t) -> std::string {
-    return std::visit(
+    return t.Visit(
         Overloaded{
             [](const PackedArrayType& p) -> std::string {
               return std::format(
-                  "PackedArray(atom={}, signed={}, dims={}, form={})",
-                  FormatBitAtom(p.atom), FormatSignedness(p.signedness),
-                  FormatPackedDims(p.dims), FormatPackedForm(p.form));
+                  "PackedArray(state={}, signed={}, dims={})",
+                  FormatStateKind(p.state_kind), FormatSignedness(p.signedness),
+                  FormatPackedDims(p.dims));
             },
             [](const EnumType& e) -> std::string {
               std::string members;
@@ -236,12 +215,11 @@ class MirDumper {
                     std::format("{}={}", e.members[i].name, e.members[i].value);
               }
               return std::format(
-                  "Enum(base=PackedArray(atom={}, signed={}, dims={}, "
-                  "form={}), members=[{}])",
-                  FormatBitAtom(e.base.atom),
+                  "Enum(base=PackedArray(state={}, signed={}, dims={}), "
+                  "members=[{}])",
+                  FormatStateKind(e.base.state_kind),
                   FormatSignedness(e.base.signedness),
-                  FormatPackedDims(e.base.dims), FormatPackedForm(e.base.form),
-                  members);
+                  FormatPackedDims(e.base.dims), members);
             },
             [](const UnpackedArrayType& u) -> std::string {
               return std::format(
@@ -468,8 +446,7 @@ class MirDumper {
                   "Driver(value=Type[{}], resolution={})", d.value.value,
                   FormatNetResolution(d.resolution));
             },
-        },
-        t.data);
+        });
   }
 
   static auto FormatUnaryOp(UnaryOp op) -> std::string {
