@@ -702,12 +702,6 @@ class MirDumper {
                   "ConditionalExpr cond=Expr[{}] then=Expr[{}] else=Expr[{}]",
                   c.condition.value, c.then_value.value, c.else_value.value);
             },
-            [](const MergingConditionalExpr& c) -> std::string {
-              return std::format(
-                  "MergingConditionalExpr cond=Expr[{}] then=Expr[{}] "
-                  "else=Expr[{}]",
-                  c.condition.value, c.then_value.value, c.else_value.value);
-            },
             [](const BlockExpr& b) -> std::string {
               return std::format(
                   "BlockExpr scope=BlockId{{{}}} value=Expr[{}]", b.scope.value,
@@ -805,21 +799,6 @@ class MirDumper {
               return std::format(
                   "ClosureExpr closure=Closure[{}] field_inits={}",
                   cl.closure.value, cl.field_inits.size());
-            },
-            [](const ConcatExpr& c) -> std::string {
-              std::string operands;
-              for (std::size_t i = 0; i < c.operands.size(); ++i) {
-                if (i != 0) {
-                  operands += ", ";
-                }
-                operands += std::format("Expr[{}]", c.operands[i].value);
-              }
-              return std::format("ConcatExpr operands=[{}]", operands);
-            },
-            [](const ReplicationExpr& r) -> std::string {
-              return std::format(
-                  "ReplicationExpr count={} concat=Expr[{}]", r.count,
-                  r.concat.value);
             },
             [](const ValueCastExpr& v) -> std::string {
               return std::format(
@@ -1014,18 +993,6 @@ class MirDumper {
             std::format(
                 "[{}] arg=Expr[{}]", i,
                 s.constructor.base_init->args[i].value));
-      }
-      Dedent();
-    }
-    if (!s.constructor.member_inits.empty()) {
-      Line("MemberInits:");
-      Indent();
-      for (std::size_t i = 0; i < s.constructor.member_inits.size(); ++i) {
-        const auto& mi = s.constructor.member_inits[i];
-        Line(
-            std::format(
-                "[{}] field=Field[{}] value=Expr[{}]", i, mi.target.value,
-                mi.value.value));
       }
       Dedent();
     }

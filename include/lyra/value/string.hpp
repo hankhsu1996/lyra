@@ -115,8 +115,29 @@ class String {
     return PackedArray::FromInt(impl_ >= o.impl_ ? 1 : 0, 1, false, false);
   }
 
-  [[nodiscard]] auto operator+(const String& o) const -> String {
+  // LRM 11.4.12 over string operands, Table 6-9: the parts join contents in the
+  // order written, and the result grows to hold them rather than truncating.
+  [[nodiscard]] auto Concat(const String& o) const -> String {
     return String{impl_ + o.impl_};
+  }
+
+  [[nodiscard]] auto operator+(const String& o) const -> String {
+    return Concat(o);
+  }
+
+  // LRM 11.4.12.2: when at least one inner operand is string-typed or the
+  // multiplier is non-constant, `{count{*this}}` yields count concatenated
+  // copies. The multiplier is unsigned in SystemVerilog and may be computed at
+  // run time here, so a count that is not positive yields the empty string
+  // rather than reporting a bug the program did not commit.
+  [[nodiscard]] auto Replicate(std::int64_t count) const -> String {
+    if (count <= 0) return {};
+    std::string out;
+    out.reserve(impl_.size() * static_cast<std::size_t>(count));
+    for (std::int64_t i = 0; i < count; ++i) {
+      out.append(impl_);
+    }
+    return String{std::move(out)};
   }
 
   // LRM 6.16.1: len() yields an SV int.

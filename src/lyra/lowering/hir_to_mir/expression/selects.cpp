@@ -15,7 +15,6 @@
 #include "lyra/hir/type.hpp"
 #include "lyra/lowering/hir_to_mir/cast_lowering.hpp"
 #include "lyra/lowering/hir_to_mir/expression/operators.hpp"
-#include "lyra/lowering/hir_to_mir/flat_packed_type.hpp"
 #include "lyra/lowering/hir_to_mir/integral_literal.hpp"
 #include "lyra/lowering/hir_to_mir/packed_projection.hpp"
 #include "lyra/lowering/hir_to_mir/process_lowerer.hpp"
@@ -27,6 +26,8 @@
 #include "lyra/mir/expr.hpp"
 #include "lyra/mir/packed_type_descriptor.hpp"
 #include "lyra/mir/type.hpp"
+#include "lyra/mir/type_builders.hpp"
+#include "lyra/value/slice_selector.hpp"
 
 // HIR-to-MIR lowering for the three select families (`a[i]`, `a[hi:lo]`,
 // `s.field`). Each family has a read-side and a write-side entry point; a
@@ -165,6 +166,15 @@ auto AppendResultShape(
       mir::BuildPackedTypeRef(unit_lowerer.Unit(), block, result_type));
 }
 
+// A selector's shape crosses to the selected value as the raw integer that
+// value reads it back as, so the enum naming the shapes is the one place the
+// mapping is stated.
+auto BuildSliceFormLiteral(
+    mir::CompilationUnit& unit, mir::Block& block, value::SliceForm form)
+    -> mir::ExprId {
+  return BuildIntLiteral(unit, block, static_cast<std::int64_t>(form));
+}
+
 // Extends a write target by one descent step. A target that already designates
 // a part of some owner's value gains another selector; a target that is still a
 // place becomes the owner of a new designation. The place boundary therefore
@@ -219,10 +229,9 @@ auto ProjectElement(
 // `arr[hi:lo]` / `arr[base+:w]` / `arr[base-:w]` range select, lowered to a raw
 // selector `(a, b, form)`: a constant range passes its two source endpoints; an
 // indexed part-select passes its base and (constant) width, with the direction
-// in `form` (0 constant, 1 indexed-up, 2 indexed-down -- the runtime
-// `value::SliceForm`). No count, offset, endpoint ordering, or rebase is
-// computed here; the selected value resolves the ordinal window against its own
-// declared range.
+// in `form`. No count, offset, endpoint ordering, or rebase is computed here;
+// the selected value resolves the ordinal window against its own declared
+// range.
 template <typename LowerOne>
 auto UnfoldRangeSelectOperands(
     UnitLowerer& unit_lowerer, mir::Block& block,
@@ -232,7 +241,7 @@ auto UnfoldRangeSelectOperands(
   struct RawSelector {
     mir::ExprId a;
     mir::ExprId b;
-    std::int64_t form = 0;
+    value::SliceForm form = value::SliceForm::kConstant;
   };
   auto raw_or = std::visit(
       Overloaded{
@@ -241,14 +250,16 @@ auto UnfoldRangeSelectOperands(
             if (!l) return std::unexpected(std::move(l.error()));
             auto r = lower_one(c.right_bound);
             if (!r) return std::unexpected(std::move(r.error()));
-            return RawSelector{.a = *l, .b = *r, .form = 0};
+            return RawSelector{
+                .a = *l, .b = *r, .form = value::SliceForm::kConstant};
           },
           [&](const hir::RangeIndexedUpBounds& c) -> diag::Result<RawSelector> {
             auto base = lower_one(c.base_index);
             if (!base) return std::unexpected(std::move(base.error()));
             auto w = lower_one(c.width);
             if (!w) return std::unexpected(std::move(w.error()));
-            return RawSelector{.a = *base, .b = *w, .form = 1};
+            return RawSelector{
+                .a = *base, .b = *w, .form = value::SliceForm::kIndexedUp};
           },
           [&](const hir::RangeIndexedDownBounds& c)
               -> diag::Result<RawSelector> {
@@ -256,13 +267,14 @@ auto UnfoldRangeSelectOperands(
             if (!base) return std::unexpected(std::move(base.error()));
             auto w = lower_one(c.width);
             if (!w) return std::unexpected(std::move(w.error()));
-            return RawSelector{.a = *base, .b = *w, .form = 2};
+            return RawSelector{
+                .a = *base, .b = *w, .form = value::SliceForm::kIndexedDown};
           },
       },
       bounds);
   if (!raw_or) return std::unexpected(std::move(raw_or.error()));
   const auto form_id =
-      BuildIntLiteral(unit_lowerer.Unit(), block, raw_or->form);
+      BuildSliceFormLiteral(unit_lowerer.Unit(), block, raw_or->form);
   std::vector<mir::ExprId> operands = {raw_or->a, raw_or->b, form_id};
   AppendResultShape(unit_lowerer, block, result_type, operands);
   AppendReceiverRange(unit_lowerer, block, base_type, operands);
@@ -317,9 +329,10 @@ auto UnfoldFieldSliceOperands(
       unit_lowerer.Unit(), block, static_cast<std::int64_t>(bit_offset));
   const auto width_id = BuildIntLiteral(
       unit_lowerer.Unit(), block, static_cast<std::int64_t>(bit_width));
-  // A field occupies bits `[offset +: width]` -- a raw indexed-up part-select
-  // (`value::SliceForm` `kIndexedUp` == 1); the value resolves the bit window.
-  const auto form_id = BuildIntLiteral(unit_lowerer.Unit(), block, 1);
+  // A field occupies bits `[offset +: width]`, so it crosses as the indexed-up
+  // part-select it is; the value resolves the bit window.
+  const auto form_id = BuildSliceFormLiteral(
+      unit_lowerer.Unit(), block, value::SliceForm::kIndexedUp);
   std::vector<mir::ExprId> operands = {offset_id, width_id, form_id};
   AppendResultShape(unit_lowerer, block, result_type, operands);
   return operands;
@@ -490,8 +503,8 @@ auto BuildPackedTagTest(
   // The tag is a run of the aggregate's own vector, so it is read in the
   // aggregate's state domain -- which the projection states, and the base
   // expression may not (a write-side base is still the storage cell).
-  const mir::TypeId tag_type =
-      InternFlatPacked(unit, projection.tag_bits, projection.state_kind);
+  const mir::TypeId tag_type = mir::PackedVectorOf(
+      unit.types, projection.tag_bits, projection.state_kind);
   const mir::ExprId tag = block.exprs.Add(BuildPackedRunRead(
       unit_lowerer, block, base, projection.bit_width - projection.tag_bits,
       projection.tag_bits, tag_type));

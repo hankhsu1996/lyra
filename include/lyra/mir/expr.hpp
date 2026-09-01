@@ -113,25 +113,12 @@ struct BlockExpr {
   ExprId value;
 };
 
-// LRM 11.4.11 over a predicate whose truth is three-valued. A predicate that
-// settles selects one arm and the other is never evaluated, as above; an
-// ambiguous one selects neither, evaluates both, and combines their results bit
-// by bit -- a bit both arms know and agree on survives, every other bit becomes
-// x (Table 11-20), and a non-integral result takes the Table 7-1 default of its
-// type. `condition` is the predicate value itself, not a reduced one, because
-// reducing it to a machine boolean is what discards the third answer.
-struct MergingConditionalExpr {
-  ExprId condition;
-  ExprId then_value;
-  ExprId else_value;
-};
-
 // `compound_op.has_value()` marks the assignment as `target op= value`;
 // `nullopt` is a simple write. `value` is already typed to match `target`.
 //
 // `target` is either a place, whose write is a store, or a
 // `ValueProjectionExpr`, whose write is a functional whole-value update through
-// the designated part's owner. The ConcatExpr-as-target form (LRM 11.4.12
+// the designated part's owner. A join in target position (LRM 11.4.12
 // destructuring LHS) is desugared upstream into a snapshot + per-part
 // assignment sequence, so render does not encounter it.
 struct AssignExpr {
@@ -142,7 +129,7 @@ struct AssignExpr {
 
 // LRM 11.4.2: `++a`, `a++`, `--a`, `a--`. Mirrors hir::IncDecExpr. `target`
 // takes the same two forms an assignment target does, a place or a designated
-// part; ConcatExpr-as-target is illegal per slang.
+// part; a join in target position is illegal per slang.
 struct IncDecExpr {
   IncDecOp op;
   ExprId target;
@@ -488,29 +475,6 @@ struct FieldAccessExpr {
   FieldRef field;
 };
 
-// LRM 11.4.12 join of two or more packed operands into one bit plane, most
-// significant first (the result shape is fully carried by `Expr::type`). A
-// join over any other operand family is a different operation and is a
-// `CallExpr` against the entry that performs it: a string join composes
-// contents, and an unpacked-queue join carries an element shape and spread
-// semantics. So this primitive means one thing, and no consumer picks its
-// realization by reading the result type. A source-level join of one operand
-// is that operand at the join's own unsigned type, which is a conversion, so
-// it never reaches here either.
-struct ConcatExpr {
-  std::vector<ExprId> operands;
-};
-
-// LRM 11.4.12.1 `{multiplier{...}}` over packed operands: `count` copies of
-// the value `concat` reaches, laid end to end. The multiplier is a constant
-// expression the standard requires to be non-negative and free of x and z, so
-// it is a count here rather than an operand to evaluate. The string form is a
-// `CallExpr`, for the reason ConcatExpr states.
-struct ReplicationExpr {
-  std::uint64_t count;
-  ExprId concat;
-};
-
 // LRM 10.9.1 array assignment pattern `'{e1, e2, ...}` element list: a value
 // that is its elements and nothing more, which is what makes it a primitive.
 // `Expr::type` is the list's own type -- contiguous storage of a known element
@@ -788,14 +752,14 @@ struct ValueProjectionExpr {
 using ExprData = std::variant<
     StringLiteral, NullLiteral, MachineBoolLiteral, MachineIntLiteral,
     MachineFloatLiteral, LocalRef, UnaryExpr, BinaryExpr, BoolCastExpr,
-    ConditionalExpr, MergingConditionalExpr, BlockExpr, AssignExpr, IncDecExpr,
-    CallExpr, DerefExpr, AddressOfExpr, MachineArrayDataExpr, MoveExpr,
-    PointerCastExpr, FunctionCastExpr, IntCastExpr, FieldAccessExpr,
-    ClosureExpr, ConcatExpr, ReplicationExpr, ArrayLiteralExpr, ValueCastExpr,
-    TupleExpr, VectorExpr, AwaitExpr, TupleGetExpr, VectorGetExpr, UnionExpr,
-    UnionGetExpr, TaggedExpr, TaggedGetExpr, TaggedGetRefExpr, TaggedIsExpr,
-    ValueProjectionExpr, FunctionRef, StaticConstantRef, PackedTypeRef,
-    StaticPropertyRef, ExternalUnitVariableRef, ExternalStaticPropertyRef>;
+    ConditionalExpr, BlockExpr, AssignExpr, IncDecExpr, CallExpr, DerefExpr,
+    AddressOfExpr, MachineArrayDataExpr, MoveExpr, PointerCastExpr,
+    FunctionCastExpr, IntCastExpr, FieldAccessExpr, ClosureExpr,
+    ArrayLiteralExpr, ValueCastExpr, TupleExpr, VectorExpr, AwaitExpr,
+    TupleGetExpr, VectorGetExpr, UnionExpr, UnionGetExpr, TaggedExpr,
+    TaggedGetExpr, TaggedGetRefExpr, TaggedIsExpr, ValueProjectionExpr,
+    FunctionRef, StaticConstantRef, PackedTypeRef, StaticPropertyRef,
+    ExternalUnitVariableRef, ExternalStaticPropertyRef>;
 
 struct Expr {
   ExprData data;
@@ -804,6 +768,19 @@ struct Expr {
 
 [[nodiscard]] inline auto MakeLocalRefExpr(LocalId var, TypeId type) -> Expr {
   return Expr{.data = LocalRef{.var = var}, .type = type};
+}
+
+// The library entry a call names outright, if it names one. A call whose callee
+// is a callable, an indirect value, or another unit's symbol names none, so a
+// consumer asking which operation this is gets nothing rather than a guess.
+[[nodiscard]] inline auto DirectBuiltinFn(const CallExpr& call)
+    -> std::optional<support::BuiltinFn> {
+  const auto* direct = std::get_if<Direct>(&call.callee);
+  if (direct == nullptr) {
+    return std::nullopt;
+  }
+  const auto* fn = std::get_if<support::BuiltinFn>(&direct->target);
+  return fn != nullptr ? std::optional{*fn} : std::nullopt;
 }
 
 [[nodiscard]] inline auto MakeFieldAccessExpr(

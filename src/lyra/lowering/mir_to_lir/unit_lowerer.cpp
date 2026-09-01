@@ -1,7 +1,6 @@
 #include "lyra/lowering/mir_to_lir/unit_lowerer.hpp"
 
 #include <cstddef>
-#include <cstdint>
 #include <format>
 #include <optional>
 #include <string>
@@ -23,7 +22,6 @@
 #include "lyra/mir/closure_id.hpp"
 #include "lyra/mir/packed_type_descriptor.hpp"
 #include "lyra/mir/static_variable_id.hpp"
-#include "lyra/mir/type.hpp"
 
 namespace lyra::lowering::mir_to_lir {
 
@@ -314,24 +312,6 @@ auto UnitLowerer::ClosureDeclaration(mir::ClosureId closure) const
 
 auto UnitLowerer::MachineBoolType() -> lir::TypeId {
   return TranslateType(mir_->builtins.machine_bool);
-}
-
-auto UnitLowerer::FlatPackedType(std::uint64_t width, bool four_state)
-    -> lir::TypeId {
-  const std::pair<std::uint64_t, bool> shape{width, four_state};
-  if (const auto it = flat_packed_memo_.find(shape);
-      it != flat_packed_memo_.end()) {
-    return it->second;
-  }
-  const lir::TypeId id = out_.types.Intern(
-      lir::Type{lir::PackedArrayType{
-          .state_kind = four_state ? lir::IntegralStateKind::kFourState
-                                   : lir::IntegralStateKind::kTwoState,
-          .signedness = lir::Signedness::kUnsigned,
-          .dims = {lir::PackedRange{
-              .left = static_cast<std::int64_t>(width) - 1, .right = 0}}}});
-  flat_packed_memo_.emplace(shape, id);
-  return id;
 }
 
 auto UnitLowerer::ProductOf(std::vector<lir::TypeId> components)

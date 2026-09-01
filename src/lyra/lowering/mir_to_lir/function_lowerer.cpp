@@ -44,20 +44,6 @@ auto Unsupported(std::string message) -> std::unexpected<diag::Diagnostic> {
       diag::DiagCode::kUnsupportedExpressionForm, std::move(message));
 }
 
-// The builtin entry a call names directly, if any.
-auto DirectBuiltinFn(const mir::CallExpr& call)
-    -> std::optional<support::BuiltinFn> {
-  const auto* direct = std::get_if<mir::Direct>(&call.callee);
-  if (direct == nullptr) {
-    return std::nullopt;
-  }
-  const auto* fn = std::get_if<support::BuiltinFn>(&direct->target);
-  if (fn == nullptr) {
-    return std::nullopt;
-  }
-  return *fn;
-}
-
 // The place a place local names: its own storage, with nothing projected off
 // it.
 auto LocalPlace(lir::ValueId local) -> lir::Place {
@@ -576,12 +562,6 @@ auto FunctionLowerer::Store(lir::Place place, lir::Operand value)
       lir::StoreInstr{.place = std::move(place), .value = std::move(value)});
 }
 
-auto FunctionLowerer::MachineCount(std::uint64_t count) -> lir::Operand {
-  return lir::IntConst{
-      .value = lir::IntegralConstant{.value_words = {count}, .state_words = {}},
-      .type = unit_->TranslateType(unit_->Mir().builtins.machine_int64)};
-}
-
 auto FunctionLowerer::AllocateActivationValue(lir::TypeId value_type)
     -> lir::Operand {
   return Emit(
@@ -614,8 +594,8 @@ auto FunctionLowerer::StoreActivationValue(
 }
 
 auto FunctionLowerer::AllocateCell(lir::TypeId value_type) -> lir::Operand {
-  const lir::TypeId reference =
-      lir::ReferenceToCellOf(unit_->Types(), value_type);
+  const lir::TypeId reference = lir::ReferenceToCellOf(
+      unit_->Types(), value_type, lir::Mutability::kMutable);
   return Emit(
       reference,
       lir::CallInstr{
@@ -1358,7 +1338,7 @@ auto FunctionLowerer::LowerCall(
   // A receiver-mutating method on a value is not an in-place call: value
   // semantics forbid changing what a copy of the receiver would share, so it is
   // a functional operation whose result is stored back through the owner.
-  if (const auto fn = DirectBuiltinFn(call);
+  if (const auto fn = mir::DirectBuiltinFn(call);
       fn.has_value() && support::IsMutatingBuiltinFn(*fn) &&
       !call.arguments.empty()) {
     return LowerMutatingCall(block, call, *fn, type);
@@ -1851,150 +1831,6 @@ auto FunctionLowerer::LowerConditional(
   return Load(LocalPlace(slot), result_type);
 }
 
-auto FunctionLowerer::LowerMergingConditional(
-    const mir::Block& block, const mir::MergingConditionalExpr& cond,
-    mir::TypeId type) -> diag::Result<lir::Operand> {
-  auto predicate = LowerExpr(block, cond.condition);
-  if (!predicate) {
-    return std::unexpected(std::move(predicate.error()));
-  }
-  const lir::TypeId result_type = unit_->TranslateType(type);
-  const lir::Operand selects_then =
-      Emit(unit_->MachineBoolType(), lir::BoolCastInstr{.operand = *predicate});
-  // LRM 11.4.7: negating an ambiguous truth value is ambiguous again, so a
-  // predicate that neither reduces to true nor negates to true is the
-  // ambiguous one, and no separate ambiguity query is needed.
-  const lir::Operand negated = Emit(
-      unit_->TranslateType(block.exprs.Get(cond.condition).type),
-      lir::UnaryInstr{
-          .op = lir::UnaryOp::kLogicalNot, .operand = *std::move(predicate)});
-  const lir::Operand selects_else =
-      Emit(unit_->MachineBoolType(), lir::BoolCastInstr{.operand = negated});
-
-  // Each arm is evaluated once, under the guard that names every outcome
-  // needing it: the arm the predicate selects, and both when it selects
-  // neither.
-  const lir::ValueId then_slot = NewPlaceLocal(result_type);
-  const lir::ValueId else_slot = NewPlaceLocal(result_type);
-  auto evaluate_arm = [&](mir::ExprId arm, lir::Operand skip_when,
-                          lir::ValueId slot) -> diag::Result<std::monostate> {
-    const lir::BlockId evaluate_id = NewBlock();
-    const lir::BlockId after_id = NewBlock();
-    Terminate(
-        lir::CondBranchTerm{
-            .condition = std::move(skip_when),
-            .if_true = after_id,
-            .if_false = evaluate_id});
-    SetCurrent(evaluate_id);
-    auto value = LowerExpr(block, arm);
-    if (!value) {
-      return std::unexpected(std::move(value.error()));
-    }
-    Store(LocalPlace(slot), *std::move(value));
-    Terminate(lir::BranchTerm{.target = after_id});
-    SetCurrent(after_id);
-    return std::monostate{};
-  };
-  if (auto done = evaluate_arm(cond.then_value, selects_else, then_slot);
-      !done) {
-    return std::unexpected(std::move(done.error()));
-  }
-  if (auto done = evaluate_arm(cond.else_value, selects_then, else_slot);
-      !done) {
-    return std::unexpected(std::move(done.error()));
-  }
-
-  const lir::ValueId slot = NewPlaceLocal(result_type);
-  const lir::BlockId then_id = NewBlock();
-  const lir::BlockId not_then_id = NewBlock();
-  const lir::BlockId else_id = NewBlock();
-  const lir::BlockId combine_id = NewBlock();
-  const lir::BlockId merge_id = NewBlock();
-  Terminate(
-      lir::CondBranchTerm{
-          .condition = selects_then,
-          .if_true = then_id,
-          .if_false = not_then_id});
-
-  SetCurrent(then_id);
-  Store(LocalPlace(slot), Load(LocalPlace(then_slot), result_type));
-  Terminate(lir::BranchTerm{.target = merge_id});
-
-  SetCurrent(not_then_id);
-  Terminate(
-      lir::CondBranchTerm{
-          .condition = selects_else,
-          .if_true = else_id,
-          .if_false = combine_id});
-
-  SetCurrent(else_id);
-  Store(LocalPlace(slot), Load(LocalPlace(else_slot), result_type));
-  Terminate(lir::BranchTerm{.target = merge_id});
-
-  SetCurrent(combine_id);
-  Store(
-      LocalPlace(slot),
-      Emit(
-          result_type, lir::CallInstr{
-                           .target =
-                               lir::BuiltinTarget{
-                                   .fn = support::BuiltinFn::kMergeConditional,
-                                   .qualifier = std::nullopt},
-                           .args = {
-                               Load(LocalPlace(then_slot), result_type),
-                               Load(LocalPlace(else_slot), result_type)}}));
-  Terminate(lir::BranchTerm{.target = merge_id});
-
-  SetCurrent(merge_id);
-  return Load(LocalPlace(slot), result_type);
-}
-
-// A join of N runs reaches the machine as a chain of joins of two, because an
-// operand list of arbitrary length names no entry a call can target. The order
-// is left to right, which is the order the runs were written in: joining is
-// associative over both the bits and the state domain, so the chain and the
-// single N-way join it stands for hold the same value.
-auto FunctionLowerer::LowerConcat(
-    const mir::Block& block, const mir::ConcatExpr& concat, mir::TypeId type)
-    -> diag::Result<lir::Operand> {
-  if (concat.operands.size() < 2) {
-    throw InternalError("mir_to_lir: a join carries two or more runs");
-  }
-  auto joined = LowerExpr(block, concat.operands.front());
-  if (!joined) {
-    return joined;
-  }
-  const auto run = [&](std::size_t i) -> const mir::PackedArrayType& {
-    return unit_->Mir()
-        .types.Get(block.exprs.Get(concat.operands[i]).type)
-        .PackedShape();
-  };
-  // Every step but the last reaches a width no declaration names, so its type
-  // is built from what the runs joined so far hold.
-  std::uint64_t width = run(0).BitWidth();
-  bool four_state = run(0).state_kind == mir::IntegralStateKind::kFourState;
-  for (std::size_t i = 1; i < concat.operands.size(); ++i) {
-    auto next = LowerExpr(block, concat.operands[i]);
-    if (!next) {
-      return next;
-    }
-    width += run(i).BitWidth();
-    four_state =
-        four_state || run(i).state_kind == mir::IntegralStateKind::kFourState;
-    const bool last = i + 1 == concat.operands.size();
-    joined = Emit(
-        last ? unit_->TranslateType(type)
-             : unit_->FlatPackedType(width, four_state),
-        lir::CallInstr{
-            .target =
-                lir::BuiltinTarget{
-                    .fn = support::BuiltinFn::kConcat,
-                    .qualifier = std::nullopt},
-            .args = {*std::move(joined), *std::move(next)}});
-  }
-  return joined;
-}
-
 auto FunctionLowerer::LowerExpr(const mir::Block& block, mir::ExprId id)
     -> diag::Result<lir::Operand> {
   const mir::Expr& expr = block.exprs.Get(id);
@@ -2299,10 +2135,6 @@ auto FunctionLowerer::LowerExpr(const mir::Block& block, mir::ExprId id)
           [&](const mir::ConditionalExpr& cond) -> diag::Result<lir::Operand> {
             return LowerConditional(block, cond, type);
           },
-          [&](const mir::MergingConditionalExpr& cond)
-              -> diag::Result<lir::Operand> {
-            return LowerMergingConditional(block, cond, type);
-          },
           [&](const mir::BlockExpr& be) -> diag::Result<lir::Operand> {
             // The steps run where they were written, so they lower into the
             // block being built, and the value the last one names is what the
@@ -2358,23 +2190,6 @@ auto FunctionLowerer::LowerExpr(const mir::Block& block, mir::ExprId id)
               return std::unexpected(std::move(checked.error()));
             }
             return registration;
-          },
-          [&](const mir::ConcatExpr& concat) -> diag::Result<lir::Operand> {
-            return LowerConcat(block, concat, type);
-          },
-          [&](const mir::ReplicationExpr& repl) -> diag::Result<lir::Operand> {
-            auto operand = LowerExpr(block, repl.concat);
-            if (!operand) {
-              return operand;
-            }
-            return Emit(
-                unit_->TranslateType(type),
-                lir::CallInstr{
-                    .target =
-                        lir::BuiltinTarget{
-                            .fn = support::BuiltinFn::kReplicate,
-                            .qualifier = std::nullopt},
-                    .args = {*std::move(operand), MachineCount(repl.count)}});
           },
           [](const mir::UnionExpr&) -> diag::Result<lir::Operand> {
             return Unsupported(

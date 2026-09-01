@@ -1,12 +1,10 @@
 #pragma once
 
-#include <cstdint>
 #include <map>
 #include <optional>
 #include <string>
 #include <string_view>
 #include <unordered_map>
-#include <utility>
 #include <vector>
 
 #include "lyra/base/translation.hpp"
@@ -14,7 +12,6 @@
 #include "lyra/lir/compilation_unit.hpp"
 #include "lyra/lir/function_id.hpp"
 #include "lyra/lir/type.hpp"
-#include "lyra/lir/type_builders.hpp"
 #include "lyra/lir/type_id.hpp"
 #include "lyra/mir/class.hpp"
 #include "lyra/mir/class_ref.hpp"
@@ -59,20 +56,15 @@ class UnitLowerer {
     return out_.types;
   }
 
-  // The scalar a conditional branch tests. It is MIR's own machine boolean
-  // translated, not a LIR type minted here, so the two layers cannot disagree
-  // about what a predicate reduces to.
+  // The scalar a conditional branch tests: MIR's own machine boolean
+  // translated, so the two layers cannot disagree about what a predicate
+  // reduces to.
   auto MachineBoolType() -> lir::TypeId;
-
-  // A value composed from bits rather than declared: `width` of them in one
-  // dimension, unsigned, and holding x and z when any of the bits it was
-  // composed from can. Lowering a join reaches one at every step but the last,
-  // and no source declaration names it, so the lowering mints it.
-  auto FlatPackedType(std::uint64_t width, bool four_state) -> lir::TypeId;
 
   // The product a call completes with where the operation answers with more
   // than one value, which no source-level type names.
   auto ProductOf(std::vector<lir::TypeId> components) -> lir::TypeId;
+
 
   // The LIR function a class's callable lowers to. Throws if `callable` has no
   // body in `owner` -- a DPI-C import is reached as a foreign symbol and a pure
@@ -149,7 +141,6 @@ class UnitLowerer {
   base::Translation<mir::ExternalUnitObjectId, lir::ExternalUnitObjectId>
       external_unit_object_identities_;
   base::Translation<mir::ClosureId, ClosureIdentities> closure_identities_;
-  std::map<std::pair<std::uint64_t, bool>, lir::TypeId> flat_packed_memo_;
   std::map<std::vector<lir::TypeId>, lir::TypeId> product_memo_;
   // Set the first time a MIR type with no LIR mirror is reached; surfaced as
   // the unit's failure at `Run`, so translation stays non-throwing and

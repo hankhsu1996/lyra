@@ -8,7 +8,6 @@
 #include <string>
 #include <string_view>
 #include <utility>
-#include <variant>
 #include <vector>
 
 #include <llvm/Analysis/CGSCCPassManager.h>
@@ -36,7 +35,6 @@
 #include "lyra/diag/diag_code.hpp"
 #include "lyra/lir/compilation_unit.hpp"
 #include "lyra/lir/type.hpp"
-#include "lyra/lir/type_builders.hpp"
 #include "lyra/lir/type_id.hpp"
 #include "lyra/runtime/closure.hpp"
 #include "lyra/runtime/design.hpp"

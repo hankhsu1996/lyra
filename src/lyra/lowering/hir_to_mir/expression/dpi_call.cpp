@@ -21,6 +21,7 @@
 #include "lyra/lowering/hir_to_mir/call_operands.hpp"
 #include "lyra/lowering/hir_to_mir/callable_bindings.hpp"
 #include "lyra/lowering/hir_to_mir/callee_interface.hpp"
+#include "lyra/lowering/hir_to_mir/cast_lowering.hpp"
 #include "lyra/lowering/hir_to_mir/closure_builder.hpp"
 #include "lyra/lowering/hir_to_mir/default_value.hpp"
 #include "lyra/lowering/hir_to_mir/expression/expr_lowerer.hpp"
@@ -121,14 +122,8 @@ auto MarshalSvToCarrier(
     case support::DpiScalarAbi::kShortInt:
     case support::DpiScalarAbi::kInt:
     case support::DpiScalarAbi::kLongInt: {
-      const mir::ExprId machine_int = block.exprs.Add(
-          mir::Expr{
-              .data =
-                  mir::CallExpr{
-                      .callee =
-                          mir::Direct{.target = support::BuiltinFn::kToInt64},
-                      .arguments = {sv_id}},
-              .type = unit.builtins.machine_int64});
+      const mir::ExprId machine_int =
+          block.exprs.Add(MakeToInt64Call(unit, sv_id));
       return block.exprs.Add(
           mir::Expr{
               .data = mir::IntCastExpr{.operand = machine_int},

@@ -6,7 +6,7 @@
 
 #include "lyra/hir/expr_id.hpp"
 #include "lyra/lowering/hir_to_mir/call_operands.hpp"
-#include "lyra/lowering/hir_to_mir/default_value.hpp"
+#include "lyra/lowering/hir_to_mir/cast_lowering.hpp"
 #include "lyra/lowering/hir_to_mir/process_lowerer.hpp"  // IWYU pragma: keep
 #include "lyra/lowering/hir_to_mir/structural_scope_lowerer.hpp"  // IWYU pragma: keep
 #include "lyra/mir/expr_id.hpp"
@@ -35,14 +35,8 @@ auto LowerRealConversionCall(
   // integral operand yields the bits it spells, and the factory reinterprets
   // them rather than converting the number they would otherwise stand for.
   if (b.method == support::BuiltinFn::kFromBits) {
-    const mir::ExprId bits = block.exprs.Add(
-        mir::Expr{
-            .data =
-                mir::CallExpr{
-                    .callee =
-                        mir::Direct{.target = support::BuiltinFn::kToInt64},
-                    .arguments = {operand_id}},
-            .type = machine_int});
+    const mir::ExprId bits =
+        block.exprs.Add(MakeToInt64Call(unit_lowerer.Unit(), operand_id));
     return mir::Expr{
         .data =
             mir::CallExpr{

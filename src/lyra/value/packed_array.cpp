@@ -6,7 +6,6 @@
 #include <cstddef>
 #include <cstdint>
 #include <optional>
-#include <ranges>
 #include <span>
 #include <string>
 #include <string_view>
@@ -727,17 +726,9 @@ auto BlitBits(
 
 }  // namespace
 
-auto PackedArray::Concat(std::initializer_list<PackedArray> operands)
-    -> PackedArray {
-  if (operands.size() == 0) {
-    throw InternalError("PackedArray::Concat: empty operand list");
-  }
-  std::uint64_t total = 0;
-  bool any_four_state = false;
-  for (const auto& op : operands) {
-    total += op.BitWidth();
-    any_four_state = any_four_state || op.IsFourState();
-  }
+auto PackedArray::Concat(const PackedArray& rhs) const -> PackedArray {
+  const std::uint64_t total = BitWidth() + rhs.BitWidth();
+  const bool any_four_state = IsFourState() || rhs.IsFourState();
   if (total == 0U) {
     throw InternalError("PackedArray::Concat: total bit width is zero");
   }
@@ -759,44 +750,44 @@ auto PackedArray::Concat(std::initializer_list<PackedArray> operands)
     std::ranges::fill(dst_unknown, std::uint64_t{0});
   }
   std::uint64_t cursor = 0;
-  for (const auto& op : operands | std::views::reverse) {
-    BlitBits(dst_value, cursor, op.ValueWords(), op.BitWidth());
-    if (any_four_state && op.IsFourState()) {
-      BlitBits(dst_unknown, cursor, op.UnknownWords(), op.BitWidth());
+  for (const PackedArray* op : {&rhs, this}) {
+    BlitBits(dst_value, cursor, op->ValueWords(), op->BitWidth());
+    if (any_four_state && op->IsFourState()) {
+      BlitBits(dst_unknown, cursor, op->UnknownWords(), op->BitWidth());
     }
-    cursor += op.BitWidth();
+    cursor += op->BitWidth();
   }
   return result;
 }
 
-auto PackedArray::Replicate(const PackedArray& operand, std::uint64_t count)
-    -> PackedArray {
-  const std::uint64_t total = operand.BitWidth() * count;
-  if (total == 0U) {
+auto PackedArray::Replicate(std::int64_t count) const -> PackedArray {
+  if (count <= 0) {
     throw InternalError(
-        "PackedArray::Replicate: zero-width result (count == 0 is only legal "
-        "inside an outer concat with positive-sized siblings)");
+        "PackedArray::Replicate: a packed multiplier is a constant expression "
+        "the front end has already checked, so a count that is not positive "
+        "here would name a zero-width result");
   }
-  PackedArray result{total, false, operand.IsFourState()};
+  const auto repeats = static_cast<std::uint64_t>(count);
+  PackedArray result{BitWidth() * repeats, false, IsFourState()};
   auto dst_value = std::visit(
       [](auto& v) { return detail::PackedAccess::ValueWords(v.View()); },
       result.storage_);
   std::span<std::uint64_t> dst_unknown;
-  if (operand.IsFourState()) {
+  if (IsFourState()) {
     auto& lv = std::get<LogicValue>(result.storage_);
     dst_unknown = detail::PackedAccess::UnknownWords(lv.View());
   }
   // Same stale-X concern as `Concat`: zero both planes before BlitBits ORs in
   // the operand bits.
   std::ranges::fill(dst_value, std::uint64_t{0});
-  if (operand.IsFourState()) {
+  if (IsFourState()) {
     std::ranges::fill(dst_unknown, std::uint64_t{0});
   }
-  for (std::uint64_t i = 0; i < count; ++i) {
-    const std::uint64_t cursor = i * operand.BitWidth();
-    BlitBits(dst_value, cursor, operand.ValueWords(), operand.BitWidth());
-    if (operand.IsFourState()) {
-      BlitBits(dst_unknown, cursor, operand.UnknownWords(), operand.BitWidth());
+  for (std::uint64_t i = 0; i < repeats; ++i) {
+    const std::uint64_t cursor = i * BitWidth();
+    BlitBits(dst_value, cursor, ValueWords(), BitWidth());
+    if (IsFourState()) {
+      BlitBits(dst_unknown, cursor, UnknownWords(), BitWidth());
     }
   }
   return result;

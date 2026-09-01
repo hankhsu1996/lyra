@@ -4,7 +4,6 @@
 #include <bit>
 #include <cstddef>
 #include <cstdint>
-#include <variant>
 #include <vector>
 
 #include "lyra/base/internal_error.hpp"

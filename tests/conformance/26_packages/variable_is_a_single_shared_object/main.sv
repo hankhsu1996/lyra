@@ -5,7 +5,11 @@
 // always procedure is started (LRM 26.2), so the first read from another scope
 // already sees the initialized value; and because it is an ordinary variable, a
 // write to it is a value change a procedure elsewhere can synchronize on (LRM
-// 9.4.2).
+// 9.4.2). Being ordinary also means every assignment form reaches it: a
+// nonblocking write to it defers exactly as it would to any other variable, so
+// a read taken after the statement in the same time step still sees the old
+// value and the assigned one appears only once the update region has run (LRM
+// 10.4.2).
 package pkg;
   int cnt = 5;
 
@@ -34,6 +38,8 @@ module Top;
   int after_bump;
   int after_add;
   int after_sibling;
+  int nba_same_step;
+  int nba_next_step;
   int mirror = 0;
 
   always @(pkg::cnt) mirror = pkg::cnt;
@@ -49,7 +55,10 @@ module Top;
     after_add = pkg::cnt;
     pkg::bump_twice();
     after_sibling = pkg::cnt;
+    pkg::cnt <= 20;
+    nba_same_step = pkg::cnt;
     #1;
+    nba_next_step = pkg::cnt;
   end
 
   final begin
@@ -63,7 +72,11 @@ module Top;
       $fatal(1, "after_add was %0d, expected 12", after_add);
     if (after_sibling !== 14)
       $fatal(1, "after_sibling was %0d, expected 14", after_sibling);
-    if (mirror !== 14) $fatal(1, "mirror was %0d, expected 14", mirror);
+    if (nba_same_step !== 14)
+      $fatal(1, "nba_same_step was %0d, expected 14", nba_same_step);
+    if (nba_next_step !== 20)
+      $fatal(1, "nba_next_step was %0d, expected 20", nba_next_step);
+    if (mirror !== 20) $fatal(1, "mirror was %0d, expected 20", mirror);
     $display("All checks passed");
   end
 endmodule

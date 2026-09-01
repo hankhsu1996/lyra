@@ -9,6 +9,17 @@
 
 namespace lyra::mir {
 
+auto PackedVectorOf(
+    const TypePool& types, std::uint64_t width, IntegralStateKind state_kind)
+    -> TypeId {
+  return types.Intern(
+      Type{PackedArrayType{
+          .state_kind = state_kind,
+          .signedness = Signedness::kUnsigned,
+          .dims = {PackedRange{
+              .left = static_cast<std::int64_t>(width) - 1, .right = 0}}}});
+}
+
 auto MachineArrayOf(const TypePool& types, TypeId element, std::size_t size)
     -> TypeId {
   return types.Intern(
@@ -59,9 +70,8 @@ auto ObservableCellOf(const TypePool& types, TypeId value_type) -> TypeId {
           // diagnostics, a runtime-library type), a coroutine result, a machine
           // primitive (a plain boolean, integer, float, C string, array, or
           // code address), a compiler-generated promoted scope struct or
-          // closure,
-          // an internal index, `void`, and the observable / net-cell wrappers
-          // themselves, which are already storage cells.
+          // closure, an internal index, `void`, and the observable / net-cell
+          // wrappers themselves, which are already storage cells.
           [&](const WildcardIndexType&) { return bare(); },
           [&](const MachineCStringType&) { return bare(); },
           [&](const MachineBoolType&) { return bare(); },

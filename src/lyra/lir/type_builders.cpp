@@ -5,11 +5,12 @@
 
 namespace lyra::lir {
 
-auto ReferenceToCellOf(const TypePool& types, TypeId value_type) -> TypeId {
+auto ReferenceToCellOf(
+    const TypePool& types, TypeId value_type, Mutability mutability) -> TypeId {
   return types.Intern(
       Type{RefType{
           .pointee = types.Intern(Type{ObservableType{.value = value_type}}),
-          .mutability = Mutability::kMutable}});
+          .mutability = mutability}});
 }
 
 }  // namespace lyra::lir

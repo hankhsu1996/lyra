@@ -48,7 +48,6 @@
 #include "lyra/value/runtime_value.hpp"
 #include "lyra/value/scan.hpp"
 #include "lyra/value/string.hpp"
-#include "lyra/value/string_op.hpp"
 
 namespace lyra::runtime {
 
@@ -394,7 +393,6 @@ using lyra::runtime::TestPlusargs;
 using lyra::runtime::Trigger;
 using lyra::runtime::Var;
 using lyra::value::Chandle;
-using lyra::value::Concat;
 using lyra::value::Format;
 using lyra::value::FormatSpec;
 using lyra::value::PackedArray;
@@ -404,7 +402,6 @@ using lyra::value::PrintItem;
 using lyra::value::PrintLiteralItem;
 using lyra::value::PrintValueItem;
 using lyra::value::Real;
-using lyra::value::Replicate;
 using lyra::value::RuntimeAssociativeArray;
 using lyra::value::RuntimeDynamicArray;
 using lyra::value::RuntimeQueue;
@@ -1145,15 +1142,12 @@ auto lyra_rt_packed_pow(const void* base, const void* exponent) -> void* {
 }
 
 auto lyra_rt_packed_concat(const void* lhs, const void* rhs) -> void* {
-  return Own(
-      PackedArray::Concat({Read<PackedArray>(lhs), Read<PackedArray>(rhs)}));
+  return Own(Read<PackedArray>(lhs).Concat(Read<PackedArray>(rhs)));
 }
 
 auto lyra_rt_packed_replicate(const void* operand, std::int64_t count)
     -> void* {
-  return Own(
-      PackedArray::Replicate(
-          Read<PackedArray>(operand), static_cast<std::uint64_t>(count)));
+  return Own(Read<PackedArray>(operand).Replicate(count));
 }
 
 auto lyra_rt_packed_shift_left(const void* value, const void* amount) -> void* {
@@ -1326,12 +1320,12 @@ auto lyra_rt_string_substr(
 }
 
 auto lyra_rt_string_concat(const void* lhs, const void* rhs) -> void* {
-  return Own(Concat(Read<String>(lhs), Read<String>(rhs)));
+  return Own(Read<String>(lhs).Concat(Read<String>(rhs)));
 }
 
 auto lyra_rt_string_replicate(const void* operand, std::int64_t count)
     -> void* {
-  return Own(Replicate(Read<String>(operand), count));
+  return Own(Read<String>(operand).Replicate(count));
 }
 
 auto lyra_rt_string_atoi(const void* value) -> void* {

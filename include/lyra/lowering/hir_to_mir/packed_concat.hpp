@@ -1,27 +1,27 @@
 #pragma once
 
-#include <vector>
+#include <span>
 
 #include "lyra/mir/compilation_unit.hpp"
-#include "lyra/mir/expr.hpp"
 #include "lyra/mir/expr_id.hpp"
 #include "lyra/mir/stmt.hpp"
-#include "lyra/mir/type_id.hpp"
 
 namespace lyra::lowering::hir_to_mir {
 
-// Builds the value a source-level packed join denotes (LRM 11.4.12), given the
-// runs it joins in most-significant-first order and the type it lands in.
+// Builds the value `runs` join into, given in most-significant-first order:
+// their bits laid end to end, at the width and state domain they add up to.
+// What that value is then held to -- a declared type, or the unsigned vector
+// LRM 11.8.1 makes of a source-level join -- is the caller's, reached by
+// converting the result.
 //
-// One run is not a join: the value is that run seen at the join's own type,
-// which LRM 11.8.1 fixes as unsigned however the run was declared. Saying so
-// here is what lets the join primitive mean a join, so every consumer of it
-// reads two or more operands and none carries the degenerate case.
+// One run is not a join, and the value is that run itself. Saying so here is
+// what lets the join primitive mean a join, so every consumer of it reads two
+// operands and none carries the degenerate case.
 //
 // `block` is the destination scope for any intermediate expression this
 // interns.
 [[nodiscard]] auto BuildPackedConcat(
     mir::CompilationUnit& unit, mir::Block& block,
-    std::vector<mir::ExprId> runs, mir::TypeId result_type) -> mir::Expr;
+    std::span<const mir::ExprId> runs) -> mir::ExprId;
 
 }  // namespace lyra::lowering::hir_to_mir

@@ -6,6 +6,7 @@
 #include <string>
 #include <string_view>
 #include <variant>
+#include <vector>
 
 #include "lyra/backend/cpp/formatting.hpp"
 #include "lyra/backend/cpp/render_expr.hpp"
@@ -501,8 +502,6 @@ auto BuiltinFnCppNamespace(support::BuiltinFn id) -> std::string_view {
     case support::BuiltinFn::kRequire:
     case support::BuiltinFn::kMakeQueueConcat:
     case support::BuiltinFn::kSpread:
-    case support::BuiltinFn::kConcat:
-    case support::BuiltinFn::kReplicate:
       return "lyra::value";
     case support::BuiltinFn::kCurrentRuntime:
     case support::BuiltinFn::kRegisterInitial:
@@ -787,23 +786,19 @@ auto RenderCalleePart(
       call.callee);
 }
 
-}  // namespace
-
-namespace {
-
 auto RenderCall(
     const ScopeView& view, const mir::CallExpr& call, mir::TypeId result_type,
     std::optional<std::size_t> place_argument) -> std::string {
   const CalleeRender callee = RenderCalleePart(view, call, result_type);
-  std::string args;
+  std::vector<std::string> args;
+  args.reserve(call.arguments.size() - callee.leading_arg_count);
   for (std::size_t i = callee.leading_arg_count; i < call.arguments.size();
        ++i) {
-    if (i != callee.leading_arg_count) args += ", ";
     const mir::Expr& arg = view.Expr(call.arguments[i]);
-    args +=
-        place_argument == i ? RenderLhsExpr(view, arg) : RenderExpr(view, arg);
+    args.push_back(
+        place_argument == i ? RenderLhsExpr(view, arg) : RenderExpr(view, arg));
   }
-  return std::format("{}({})", callee.expr, args);
+  return CallOf(callee.expr, args);
 }
 
 }  // namespace

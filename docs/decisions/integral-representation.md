@@ -149,8 +149,8 @@ but it does not leak into MIR or into a hypothetical IR-level API.
 - Narrow runtime variables (e.g., `int x;`) carry a `PackedArray`-sized object (~24-32 bytes)
   instead of a 4-byte `int32_t`. This is accepted as a clean-design trade and reconsidered only if
   profiling identifies it as a real cost.
-- A future LLVM backend uses the same MIR with the same dispatch axis; its bucketing to `iN` is its
-  own lowering.
+- The LLVM backend reads the same MIR on the same dispatch axis; its bucketing to `iN` is its own
+  lowering.
 
 ## Cross-references
 

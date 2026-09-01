@@ -1356,9 +1356,7 @@ void FinalizeConstructor(
     base_init_opt = mir::BaseInit{.args = std::move(base_args)};
   }
   cls.constructor = mir::ConstructorDecl{
-      .code = std::move(ctor_code),
-      .base_init = std::move(base_init_opt),
-      .member_inits = {}};
+      .code = std::move(ctor_code), .base_init = std::move(base_init_opt)};
 }
 
 auto StructuralScopeLowerer::PopulateBodies(WalkFrame parent_frame)

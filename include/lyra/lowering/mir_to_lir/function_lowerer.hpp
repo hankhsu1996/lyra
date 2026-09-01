@@ -1,6 +1,5 @@
 #pragma once
 
-#include <cstdint>
 #include <functional>
 #include <optional>
 #include <string>
@@ -227,27 +226,12 @@ class FunctionLowerer {
   auto LowerConditional(
       const mir::Block& block, const mir::ConditionalExpr& cond,
       mir::TypeId type) -> diag::Result<lir::Operand>;
-  // The conditional operator over a three-valued predicate, which a two-way
-  // branch cannot express: a predicate that is neither definitely true nor
-  // definitely false evaluates both arms and combines them, so each arm is
-  // evaluated under its own guard and the three outcomes meet at one result.
-  auto LowerMergingConditional(
-      const mir::Block& block, const mir::MergingConditionalExpr& cond,
-      mir::TypeId type) -> diag::Result<lir::Operand>;
-  // A join of packed runs, which reaches the machine as a chain of two-run
-  // joins because no entry takes an operand list of arbitrary length.
-  auto LowerConcat(
-      const mir::Block& block, const mir::ConcatExpr& concat, mir::TypeId type)
-      -> diag::Result<lir::Operand>;
 
   auto Emit(lir::TypeId type, lir::InstrData data) -> lir::Operand;
   auto NewPlaceLocal(lir::TypeId type) -> lir::ValueId;
   void BindLocal(mir::LocalId local, lir::TypeId type, lir::Operand init);
   auto Load(lir::Place place, lir::TypeId type) -> lir::Operand;
   auto Store(lir::Place place, lir::Operand value) -> lir::Operand;
-  // A count an entry takes as a plain machine scalar rather than as a
-  // simulation value.
-  auto MachineCount(std::uint64_t count) -> lir::Operand;
 
   // Activation-frame value operations, emitted for a value-typed local in a
   // suspending body. `AllocateActivationValue` builds the slot (uninitialized

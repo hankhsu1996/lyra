@@ -33,15 +33,25 @@ namespace lyra::lowering::hir_to_mir {
 
 namespace {
 
-// Walks the LHS expression to determine whether its addressable root is a
-// structural var (vs procedural local). NBA assignment requires a structural
-// target; procedural-local NBA is a known gap.
-auto IsExprRootedAtStructuralDataObject(
-    const mir::Block& block, mir::ExprId expr_id) -> bool {
+// Whether a deferred update may hold a reference to what this target names
+// until the update region runs (LRM 10.4.2). The storage a place descends from
+// decides it: a member of an object, a type-associated cell, and another
+// unit's namespace variable all outlive the stretch that submits the update,
+// while a procedural local's does not. Every descent step is transparent -- it
+// reaches part of the same storage -- so the answer is the root's.
+//
+// Every form a target can take answers for itself. A form that is not a place
+// cannot be one, so reaching the fallback means the target lowering produced
+// something that is not an assignment target at all.
+auto TargetOutlivesDeferredUpdate(const mir::Block& block, mir::ExprId expr_id)
+    -> bool {
   const auto& expr = block.exprs.Get(expr_id);
   return std::visit(
       Overloaded{
           [](const mir::FieldAccessExpr&) { return true; },
+          [](const mir::StaticPropertyRef&) { return true; },
+          [](const mir::ExternalStaticPropertyRef&) { return true; },
+          [](const mir::ExternalUnitVariableRef&) { return true; },
           [](const mir::LocalRef&) { return false; },
           // A sealed endpoint reaches a structural cell through a borrowed
           // pointer stored on this object: a routed reference (an enclosing,
@@ -50,20 +60,36 @@ auto IsExprRootedAtStructuralDataObject(
           // a `ref` formal, whose pointer roots at a local, stays non-
           // structural.
           [&](const mir::DerefExpr& d) {
-            return IsExprRootedAtStructuralDataObject(block, d.pointer);
+            return TargetOutlivesDeferredUpdate(block, d.pointer);
           },
           [&](const mir::ValueProjectionExpr& p) {
-            return IsExprRootedAtStructuralDataObject(block, p.owner);
+            return TargetOutlivesDeferredUpdate(block, p.owner);
           },
           [&](const mir::TaggedGetRefExpr& g) {
-            return IsExprRootedAtStructuralDataObject(block, g.union_value);
+            return TargetOutlivesDeferredUpdate(block, g.union_value);
           },
-          [&](const mir::ConcatExpr& c) {
-            return std::ranges::all_of(c.operands, [&](mir::ExprId op) {
-              return IsExprRootedAtStructuralDataObject(block, op);
-            });
+          [&](const mir::TupleGetExpr& g) {
+            return TargetOutlivesDeferredUpdate(block, g.tuple);
           },
-          [](const auto&) { return false; },
+          // A join stands for the destructuring LHS it came from, which writes
+          // each run through that run's own root, so the whole outlives the
+          // update exactly when every run does. Any other call in target
+          // position names a place through its receiver, its first argument.
+          [&](const mir::CallExpr& c) {
+            if (mir::DirectBuiltinFn(c) == support::BuiltinFn::kConcat) {
+              return std::ranges::all_of(c.arguments, [&](mir::ExprId op) {
+                return TargetOutlivesDeferredUpdate(block, op);
+              });
+            }
+            return !c.arguments.empty() &&
+                   TargetOutlivesDeferredUpdate(block, c.arguments[0]);
+          },
+          [](const auto&) -> bool {
+            throw InternalError(
+                "TargetOutlivesDeferredUpdate: the assignment target is not a "
+                "place; the target lowering should have produced one -- please "
+                "report this as a bug");
+          },
       },
       expr.data);
 }
@@ -204,10 +230,13 @@ auto ApplyAssignEffect(
   if (kind == hir::AssignKind::kBlocking) {
     return effect_fn(block, target_in_outer, operands_in_outer);
   }
-  if (!IsExprRootedAtStructuralDataObject(block, target_in_outer)) {
+  // The update runs after the stretch that submitted it returns, so it may only
+  // name storage that outlives the stretch.
+  if (!TargetOutlivesDeferredUpdate(block, target_in_outer)) {
     return diag::Fail(
         span, diag::DiagCode::kUnsupportedAssignmentTarget,
-        "non-blocking assignment to procedural local is not supported yet");
+        "a non-blocking assignment whose destination is a procedural local is "
+        "not supported yet");
   }
   mir::Expr closure = BuildDeferredAssignClosure(
       process.Owner(), frame, target_in_outer, operands_in_outer, effect_fn);

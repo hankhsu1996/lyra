@@ -44,11 +44,12 @@ it is that for every referent.
    Nothing subscribes to a procedural local -- no lowering registers one as a signal -- so the
    update event a write to it raises wakes nobody.
 
-4. **The cell type is built two ways and must be one type.** A reference gets its cell type by
-   translating a MIR observable type at one site and by the lowering building it at another, for the
-   local whose storage is lent, and a reference built either way has to be the type the formal was
-   declared with. That is what a type pool keyed by content answers, and
-   [lir-type-interning](lir-type-interning.md) is where it is settled.
+4. **The cell type is reached from two places and must be one type.** A reference's type is built
+   where a declared `ref` is translated, and again where the lowering gives a lent local a cell, and
+   a reference built either way has to be the type the formal was declared with. Both spell it
+   through one builder, so the shape is decided once; that the two results are one identity is what
+   a type pool keyed by content answers, and [lir-type-interning](lir-type-interning.md) is where it
+   is settled.
 
 ## Invariants
 
@@ -94,8 +95,8 @@ it is that for every referent.
 
 - A `ref` / `const ref` formal reaches a signal, so a write through it lands in the caller's
   variable and wakes a process sensitive to it. A nonblocking assignment's destination, an increment
-  of a signal, and a strobe's captured destination are the same bind, and each is now waiting on the
-  closure that carries it rather than on the bind itself.
+  of a signal, and a strobe's captured destination are all the same bind: the first two run, and the
+  strobe waits on the file service that renders it rather than on anything about references.
 
 - A local lent by reference costs a cell for the enclosing generated call. That is the same
   accumulation any transient in a loop already has under the opaque-handle value model, not a new
@@ -117,5 +118,5 @@ it is that for every referent.
   the rejection this decision bounds rather than reverses.
 - [jit-value-realization](jit-value-realization.md) -- the opaque-handle baseline that makes a
   cell's address one `void*` with one meaning.
-- [lir-type-interning](lir-type-interning.md) -- why a cell type built two ways is one type, which
-  this decision needs and does not itself settle.
+- [lir-type-interning](lir-type-interning.md) -- why a cell type reached from two places is one
+  type, which this decision needs and does not itself settle.

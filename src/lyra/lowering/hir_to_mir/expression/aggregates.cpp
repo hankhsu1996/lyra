@@ -12,7 +12,6 @@
 #include "lyra/hir/type.hpp"
 #include "lyra/lowering/hir_to_mir/cast_lowering.hpp"
 #include "lyra/lowering/hir_to_mir/default_value.hpp"
-#include "lyra/lowering/hir_to_mir/flat_packed_type.hpp"
 #include "lyra/lowering/hir_to_mir/packed_concat.hpp"
 #include "lyra/lowering/hir_to_mir/process_lowerer.hpp"
 #include "lyra/lowering/hir_to_mir/structural_scope_lowerer.hpp"
@@ -21,6 +20,7 @@
 #include "lyra/mir/compilation_unit.hpp"
 #include "lyra/mir/expr.hpp"
 #include "lyra/mir/type.hpp"
+#include "lyra/mir/type_builders.hpp"
 #include "lyra/support/builtin_fn.hpp"
 
 namespace lyra::lowering::hir_to_mir {
@@ -131,7 +131,8 @@ auto LowerHirConcatExpr(
                 .arguments = std::move(args)},
         .type = result_type};
   }
-  return BuildPackedConcat(unit, block, std::move(operand_ids), result_type);
+  return BuildValueConversion(
+      unit, block, BuildPackedConcat(unit, block, operand_ids), result_type);
 }
 
 template <ExprLowerer Lowerer>
@@ -143,35 +144,32 @@ auto LowerHirReplicationExpr(
   if (!concat_or) return std::unexpected(std::move(concat_or.error()));
   const mir::ExprId concat_id = block.exprs.Add(*std::move(concat_or));
   mir::CompilationUnit& unit = lowerer.Owner().Unit();
-  // Repeating characters is the string entry's operation, the same split a
-  // join makes. Its multiplier is an ordinary integral expression the run
-  // evaluates, because LRM 11.4.12.2 allows a non-constant one where 11.4.12.1
-  // requires a constant; reading that value as a machine count is a value
-  // reshape, so it is stated rather than left for a consumer to insert.
+  // The multiplier reaches the entry as a machine count either way, and where
+  // it comes from is the one difference the two forms have. LRM 11.4.12.2
+  // allows a non-constant multiplier over a string, so that form evaluates an
+  // integral expression and reshapes the result; LRM 11.4.12.1 requires a
+  // constant over packed operands, so the front end has already folded it and
+  // the count is a literal.
+  mir::ExprId count_id;
   if (unit.types.Get(result_type).Is<mir::StringType>()) {
-    auto count_or = lowerer.LowerExpr(lowerer.HirExprs().Get(r.count), frame);
-    if (!count_or) return std::unexpected(std::move(count_or.error()));
-    const mir::ExprId count_id = block.exprs.Add(*std::move(count_or));
-    const mir::ExprId machine_count_id = block.exprs.Add(
+    auto evaluated = lowerer.LowerExpr(lowerer.HirExprs().Get(r.count), frame);
+    if (!evaluated) return std::unexpected(std::move(evaluated.error()));
+    const mir::ExprId value_id = block.exprs.Add(*std::move(evaluated));
+    count_id = block.exprs.Add(MakeToInt64Call(unit, value_id));
+  } else {
+    count_id = block.exprs.Add(
         mir::Expr{
             .data =
-                mir::CallExpr{
-                    .callee =
-                        mir::Direct{.target = support::BuiltinFn::kToInt64},
-                    .arguments = {count_id}},
+                mir::MachineIntLiteral{
+                    .value = static_cast<std::int64_t>(ExtractHirLiteralUint64(
+                        lowerer.HirExprs().Get(r.count)))},
             .type = unit.builtins.machine_int64});
-    return mir::Expr{
-        .data =
-            mir::CallExpr{
-                .callee = mir::Direct{.target = support::BuiltinFn::kReplicate},
-                .arguments = {concat_id, machine_count_id}},
-        .type = result_type};
   }
   return mir::Expr{
       .data =
-          mir::ReplicationExpr{
-              .count = ExtractHirLiteralUint64(lowerer.HirExprs().Get(r.count)),
-              .concat = concat_id},
+          mir::CallExpr{
+              .callee = mir::Direct{.target = support::BuiltinFn::kReplicate},
+              .arguments = {concat_id, count_id}},
       .type = result_type};
 }
 
@@ -207,11 +205,8 @@ auto LowerHirAssignmentPatternExpr(
         .data = mir::TupleExpr{.components = std::move(element_ids)},
         .type = result_type};
   }
-  const auto& result_pa = result_ty.PackedShape();
-  const mir::ExprId concat_id = block.exprs.Add(BuildPackedConcat(
-      unit, block, std::move(element_ids),
-      InternFlatPacked(unit, result_pa.BitWidth(), result_pa.state_kind)));
-  return BuildValueConversion(unit, block, concat_id, result_type);
+  return BuildValueConversion(
+      unit, block, BuildPackedConcat(unit, block, element_ids), result_type);
 }
 
 template <ExprLowerer Lowerer>
@@ -250,18 +245,25 @@ auto LowerHirAssignmentPatternReplicationExpr(
         .data = mir::TupleExpr{.components = std::move(components)},
         .type = result_type};
   }
-  const auto& result_pa = result_ty.PackedShape();
-  const std::uint64_t inner_width =
-      count == 0 ? 0 : result_pa.BitWidth() / count;
-  const mir::ExprId inner_concat_id = block.exprs.Add(BuildPackedConcat(
-      unit, block, std::move(item_ids),
-      InternFlatPacked(unit, inner_width, result_pa.state_kind)));
+  const mir::ExprId inner_id = BuildPackedConcat(unit, block, item_ids);
+  const mir::PackedArrayType& inner_pa =
+      unit.types.Get(block.exprs.Get(inner_id).type).PackedShape();
+  const std::uint64_t inner_width = inner_pa.BitWidth();
+  const mir::IntegralStateKind inner_state = inner_pa.state_kind;
+  const mir::ExprId count_id = block.exprs.Add(
+      mir::Expr{
+          .data =
+              mir::MachineIntLiteral{.value = static_cast<std::int64_t>(count)},
+          .type = unit.builtins.machine_int64});
   const mir::ExprId repl_id = block.exprs.Add(
       mir::Expr{
           .data =
-              mir::ReplicationExpr{.count = count, .concat = inner_concat_id},
-          .type = InternFlatPacked(
-              unit, result_pa.BitWidth(), result_pa.state_kind)});
+              mir::CallExpr{
+                  .callee =
+                      mir::Direct{.target = support::BuiltinFn::kReplicate},
+                  .arguments = {inner_id, count_id}},
+          .type = mir::PackedVectorOf(
+              unit.types, inner_width * count, inner_state)});
   return BuildValueConversion(unit, block, repl_id, result_type);
 }
 

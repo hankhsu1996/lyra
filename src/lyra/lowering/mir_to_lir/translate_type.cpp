@@ -1,3 +1,4 @@
+#include <cstdint>
 #include <format>
 #include <string_view>
 #include <utility>
@@ -7,6 +8,7 @@
 #include "lyra/base/overloaded.hpp"
 #include "lyra/diag/diag_code.hpp"
 #include "lyra/lir/type.hpp"
+#include "lyra/lir/type_builders.hpp"
 #include "lyra/lir/type_id.hpp"
 #include "lyra/lowering/mir_to_lir/unit_lowerer.hpp"
 #include "lyra/mir/type.hpp"
@@ -203,16 +205,10 @@ auto UnitLowerer::TranslateType(const mir::Type& ty) -> lir::Type {
                 lir::CoroutineType{.payload = TranslateType(co.payload)}};
           },
           [&](const mir::RefType& r) -> lir::Type {
-            // A reference names the cell its referent lives in, never the
-            // referent's own value: what reading and writing mean is the cell's
-            // to decide, and an address of the value alone could not raise the
-            // destination's update event. One answer for every reference, since
-            // a callee's formal cannot vary with the storage its caller lends.
-            return lir::Type{lir::RefType{
-                .pointee = out_.types.Intern(
-                    lir::Type{lir::ObservableType{
-                        .value = TranslateType(r.pointee)}}),
-                .mutability = TranslateMutability(r.mutability)}};
+            return out_.types.Get(
+                lir::ReferenceToCellOf(
+                    out_.types, TranslateType(r.pointee),
+                    TranslateMutability(r.mutability)));
           },
           [&](const mir::PointerType& pt) -> lir::Type {
             return lir::Type{lir::PointerType{

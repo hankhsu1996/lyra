@@ -1,7 +1,6 @@
 #include "lyra/lowering/hir_to_mir/cast_lowering.hpp"
 
 #include <cstdint>
-#include <variant>
 
 #include "lyra/lowering/hir_to_mir/integral_literal.hpp"
 #include "lyra/mir/expr.hpp"
@@ -30,16 +29,6 @@ auto MakeRealFactoryCall(
                       .qualification = mir::TypeQualifier{.type = dst_type}},
               .arguments = {operand_id}},
       .type = dst_type};
-}
-
-auto MakeToInt64Call(const mir::CompilationUnit& unit, mir::ExprId operand_id)
-    -> mir::Expr {
-  return mir::Expr{
-      .data =
-          mir::CallExpr{
-              .callee = mir::Direct{.target = support::BuiltinFn::kToInt64},
-              .arguments = {operand_id}},
-      .type = unit.builtins.machine_int64};
 }
 
 auto MakeRoundCall(const mir::CompilationUnit& unit, mir::ExprId operand_id)
@@ -108,6 +97,16 @@ auto MakeStringFromFactory(
 }
 
 }  // namespace
+
+auto MakeToInt64Call(const mir::CompilationUnit& unit, mir::ExprId operand_id)
+    -> mir::Expr {
+  return mir::Expr{
+      .data =
+          mir::CallExpr{
+              .callee = mir::Direct{.target = support::BuiltinFn::kToInt64},
+              .arguments = {operand_id}},
+      .type = unit.builtins.machine_int64};
+}
 
 auto BuildValueConversion(
     const mir::CompilationUnit& unit, mir::Block& block, mir::ExprId operand_id,

@@ -16,7 +16,6 @@
 #include "lyra/backend/cpp/render_type.hpp"
 #include "lyra/backend/cpp/scope_view.hpp"
 #include "lyra/backend/cpp/string_literal.hpp"
-#include "lyra/backend/cpp/value_form.hpp"
 #include "lyra/base/internal_error.hpp"
 #include "lyra/base/overloaded.hpp"
 #include "lyra/mir/binary_op.hpp"
@@ -35,10 +34,6 @@ auto LookupLocalName(const ScopeView& view, const mir::LocalRef& ref)
   // seeds from `this` -- renders as its declared name.
   return view.Local(ref).name;
 }
-
-}  // namespace
-
-namespace {
 
 // The C++ operator token for the SV binary ops that render natively. The
 // method-style ops (shifts, power, xnor, wildcard / case / implication /
@@ -154,19 +149,6 @@ auto RenderConditionalExpr(const ScopeView& view, const mir::ConditionalExpr& c)
     -> std::string {
   return std::format(
       "({} ? {} : {})", RenderExpr(view, view.Expr(c.condition)),
-      RenderExpr(view, view.Expr(c.then_value)),
-      RenderExpr(view, view.Expr(c.else_value)));
-}
-
-// An arm reaches the entry as a callable, so the entry still evaluates only the
-// arm the predicate selects, and evaluates both only where it selects neither.
-auto RenderMergingConditionalExpr(
-    const ScopeView& view, const mir::MergingConditionalExpr& c)
-    -> std::string {
-  return std::format(
-      "lyra::value::SelectByCondition({}, [&] {{ return {}; }}, [&] {{ "
-      "return {}; }})",
-      RenderExpr(view, view.Expr(c.condition)),
       RenderExpr(view, view.Expr(c.then_value)),
       RenderExpr(view, view.Expr(c.else_value)));
 }
@@ -500,20 +482,6 @@ auto RenderBindingParamDecl(const ScopeView& view, const mir::LocalDecl& bind)
       "{} {}", RenderTypeAsCpp(view.Unit(), bind.type), bind.name);
 }
 
-// A closure renders as a lambda whose captured fields are the closure's fields,
-// in field order. A captured read in the body resolves to the bare field name
-// (an in-scope lambda binding), so the capture clause and the body agree by
-// construction. The capture list is derived solely from the closure's fields
-// and field order and this construction's field initializers -- never
-// re-inferred from the body. A synchronous closure captures each field by value
-// (`[name = init]`) and renders the closure's per-invocation `params` as lambda
-// parameters. A coroutine closure (result
-// type `Coroutine`) is a stateless lambda whose captured fields pass as
-// frame-copied parameters supplied by an immediate call -- a capturing
-// coroutine lambda would dangle once the spawned branch outlives the
-// referencing site. The clause never contains `[this]`, `[=]`, or `[&]`: each
-// entry is a by-value field, and an alias field is a `Ref<T>`, not a hidden C++
-// reference.
 // The value a construction supplies for one field. A field init names its
 // target, because the entries are in the source's evaluation order and that is
 // not the order the fields were declared in -- so the entry for a field is the
@@ -547,6 +515,19 @@ auto RenderBlockExpr(const ScopeView& view, const mir::BlockExpr& block)
       Indent(1), RenderExpr(body_view, body_view.Expr(block.value)));
 }
 
+// A closure renders as a lambda whose captured fields are the closure's fields,
+// in field order. A captured read in the body resolves to the bare field name
+// (an in-scope lambda binding), so the capture clause and the body agree by
+// construction. The capture list is derived solely from the closure's fields
+// and field order and this construction's field initializers -- never
+// re-inferred from the body. A synchronous closure captures each field by value
+// (`[name = init]`) and renders the closure's per-invocation `params` as lambda
+// parameters. A coroutine closure (result type `Coroutine`) is a stateless
+// lambda whose captured fields pass as frame-copied parameters supplied by an
+// immediate call -- a capturing coroutine lambda would dangle once the spawned
+// branch outlives the referencing site. The clause never contains `[this]`,
+// `[=]`, or `[&]`: each entry is a by-value field, and an alias field is a
+// `Ref<T>`, not a hidden C++ reference.
 auto RenderClosureExpr(const ScopeView& view, const mir::ClosureExpr& construct)
     -> std::string {
   const mir::ClosureDecl& decl = view.Unit().GetClosure(construct.closure);
@@ -607,19 +588,6 @@ auto RenderClosureExpr(const ScopeView& view, const mir::ClosureExpr& construct)
       "[{}]({}){}{}", captures_text, params_text, return_clause, body);
 }
 
-auto RenderConcatExpr(
-    const ScopeView& view, const mir::Expr& expr, const mir::ConcatExpr& c)
-    -> std::string {
-  std::vector<std::string> operands;
-  operands.reserve(c.operands.size());
-  for (const mir::ExprId id : c.operands) {
-    operands.push_back(RenderExpr(view, view.Expr(id)));
-  }
-  return RenderValueForm(
-      ConcatValueForm(view.Unit().types.Get(expr.type)),
-      RenderTypeAsCpp(view.Unit(), expr.type), operands);
-}
-
 // The brace form of the aggregate literal's own type, which is always the
 // plain-data array of its elements -- a simulation container is what some
 // enclosing construction builds from the literal, never what the literal is.
@@ -668,15 +636,6 @@ auto RenderVectorExpr(
   }
   out += "}";
   return out;
-}
-
-auto RenderReplicationExpr(
-    const ScopeView& view, const mir::Expr& expr, const mir::ReplicationExpr& r)
-    -> std::string {
-  return RenderValueForm(
-      ReplicationValueForm(view.Unit().types.Get(expr.type)),
-      RenderTypeAsCpp(view.Unit(), expr.type),
-      {RenderExpr(view, view.Expr(r.concat)), std::format("{}ULL", r.count)});
 }
 
 // Read-side render of a dereference: the value the operand's place stands for.
@@ -778,9 +737,6 @@ auto RenderExpr(const ScopeView& view, const mir::Expr& expr) -> std::string {
           [&](const mir::ConditionalExpr& c) -> std::string {
             return RenderConditionalExpr(view, c);
           },
-          [&](const mir::MergingConditionalExpr& c) -> std::string {
-            return RenderMergingConditionalExpr(view, c);
-          },
           [&](const mir::BlockExpr& b) -> std::string {
             return RenderBlockExpr(view, b);
           },
@@ -859,12 +815,6 @@ auto RenderExpr(const ScopeView& view, const mir::Expr& expr) -> std::string {
           },
           [&](const mir::ClosureExpr& cl) -> std::string {
             return RenderClosureExpr(view, cl);
-          },
-          [&](const mir::ConcatExpr& c) -> std::string {
-            return RenderConcatExpr(view, expr, c);
-          },
-          [&](const mir::ReplicationExpr& r) -> std::string {
-            return RenderReplicationExpr(view, expr, r);
           },
           // The value is unchanged and so is its C++ type: an enumeration and
           // its base share one runtime class, so ascribing the other type to a
