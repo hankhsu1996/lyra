@@ -893,10 +893,10 @@ enough to warrant its own focused review.
     because a capturing coroutine lambda would dangle once a spawned branch outlives the
     construction site. The MIR node states those captures as fields, so the render site converts one
     into the other and the two closure kinds stop looking alike: a synchronous closure is a value
-    that is invoked, a coroutine one is a value that already is its coroutine. Stating a coroutine
-    closure's captures as its body's leading parameters would make both kinds one shape --
-    construct, then invoke -- and would remove the reason the execution backend cannot lower a
-    coroutine closure at all.
+    that is invoked, a coroutine one is a value that already is its coroutine. Construct-then-enter
+    is what the execution backend does with both, so the divergence is this render site's alone: a
+    capturing coroutine lambda would dangle in the target language, which is why the captures become
+    an argument list here.
   - The instance-method render injects `Self self = this;` before the body -- another prologue the
     MIR body does not state, so every method-form callable's `self` binding is a render-side
     convention rather than a stated MIR fact.

@@ -60,7 +60,6 @@ enum class RuntimeOp : std::uint8_t {
   kFromLiteralBounded,
   kFromEntries,
   kFromEntriesDefault,
-  kMakeCoroutine,
   kMakeScope,
   kMakeSegment,
   kMakeTrigger,
@@ -125,6 +124,7 @@ auto RuntimeSymbol(support::ValueDomain domain, lir::BinaryOp op)
     -> std::string;
 auto RuntimeSymbol(support::ValueDomain domain, lir::UnaryOp op) -> std::string;
 auto RuntimeSymbol(lir::ControlEffectTarget::Op op) -> std::string;
+auto RuntimeSymbol(lir::EnterCoroutineTarget::Op op) -> std::string;
 auto RuntimeSymbol(
     support::ValueDomain domain, lir::ActivationFrameTarget::Op op)
     -> std::string;

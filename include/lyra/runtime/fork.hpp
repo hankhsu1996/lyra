@@ -1,6 +1,8 @@
 #pragma once
 
+#include <array>
 #include <coroutine>
+#include <cstddef>
 #include <cstdint>
 #include <memory>
 #include <utility>
@@ -111,21 +113,45 @@ class JoinAwaitable : public PendingWait {
 
 namespace detail {
 
-inline void SpawnEach(
-    RuntimeEffects& runtime, std::shared_ptr<ForkGroup> group,
-    std::vector<Coroutine<void>> branches) {
+// Hands every branch to the engine with its completion reported to one join
+// condition.
+template <class Branches>
+auto SpawnUnderGroup(
+    RuntimeEffects& runtime, Branches& branches,
+    std::int64_t completions_needed) -> std::shared_ptr<ForkGroup> {
+  auto group = std::make_shared<ForkGroup>(runtime, completions_needed);
   for (auto& branch : branches) {
     branch.Handle().promise().on_complete = [group] { group->OnBranchDone(); };
     runtime.Spawn(std::move(branch));
   }
+  return group;
 }
 
-template <class... Branches>
-auto Collect(Branches&&... branches) -> std::vector<Coroutine<void>> {
-  std::vector<Coroutine<void>> out;
-  out.reserve(sizeof...(Branches));
-  (out.push_back(std::forward<Branches>(branches)), ...);
-  return out;
+// How many completions each join mode waits for (LRM 9.3.2 Table 9-1): every
+// branch, or the first of however many there are.
+constexpr auto CompletionsForAll(std::size_t branches) -> std::int64_t {
+  return static_cast<std::int64_t>(branches);
+}
+constexpr auto CompletionsForFirst(std::size_t branches) -> std::int64_t {
+  return branches == 0 ? 0 : 1;
+}
+
+// Spawns the branches under one join condition and parks the executing process
+// on it, answering whether that process must suspend at all. A caller holding a
+// frame the condition can live in awaits instead; this is for one whose body is
+// generated code, where the suspension is a control edge and the answer has to
+// cross as a value.
+inline auto SpawnAndPark(
+    RuntimeEffects& runtime, std::vector<Coroutine<void>> branches,
+    std::int64_t completions_needed) -> bool {
+  const std::shared_ptr<ForkGroup> group =
+      SpawnUnderGroup(runtime, branches, completions_needed);
+  if (!group->NeedsPark()) {
+    return false;
+  }
+  runtime.CurrentProcess().RegisterWakeup(
+      [&group](CoroutineHandle parent) { group->ParkParent(parent); });
+  return true;
 }
 
 }  // namespace detail
@@ -137,27 +163,44 @@ auto Collect(Branches&&... branches) -> std::vector<Coroutine<void>> {
 // enqueued while the parent runs is reached only on the next drain pass,
 // after the parent has parked (for `ForkWaitAll` / `ForkWaitFirst`) or moved
 // on (for `SpawnAll`).
-template <class... Branches>
-auto ForkWaitAll(RuntimeEffects& runtime, Branches... branches)
+template <std::size_t N>
+auto ForkWaitAll(
+    RuntimeEffects& runtime, std::array<Coroutine<void>, N> branches)
     -> JoinAwaitable {
-  auto group = std::make_shared<ForkGroup>(
-      runtime, static_cast<std::int64_t>(sizeof...(Branches)));
-  detail::SpawnEach(runtime, group, detail::Collect(std::move(branches)...));
-  return JoinAwaitable{group};
+  return JoinAwaitable{
+      detail::SpawnUnderGroup(runtime, branches, detail::CompletionsForAll(N))};
 }
 
-template <class... Branches>
-auto ForkWaitFirst(RuntimeEffects& runtime, Branches... branches)
+template <std::size_t N>
+auto ForkWaitFirst(
+    RuntimeEffects& runtime, std::array<Coroutine<void>, N> branches)
     -> JoinAwaitable {
-  auto group =
-      std::make_shared<ForkGroup>(runtime, sizeof...(Branches) == 0 ? 0 : 1);
-  detail::SpawnEach(runtime, group, detail::Collect(std::move(branches)...));
-  return JoinAwaitable{group};
+  return JoinAwaitable{detail::SpawnUnderGroup(
+      runtime, branches, detail::CompletionsForFirst(N))};
 }
 
-template <class... Branches>
-void SpawnAll(RuntimeEffects& runtime, Branches... branches) {
-  (runtime.Spawn(std::move(branches)), ...);
+template <std::size_t N>
+void SpawnAll(
+    RuntimeEffects& runtime, std::array<Coroutine<void>, N> branches) {
+  for (auto& branch : branches) {
+    runtime.Spawn(std::move(branch));
+  }
+}
+
+// The two joins again, for a caller whose body is generated code: each answers
+// whether the process must suspend, since the suspension there is a control
+// edge the answer decides rather than an awaitable that decides for itself.
+// `join_none` needs no such form, having nothing to wait for.
+inline auto ForkWaitAllMustPark(
+    RuntimeEffects& runtime, std::vector<Coroutine<void>> branches) -> bool {
+  const std::int64_t needed = detail::CompletionsForAll(branches.size());
+  return detail::SpawnAndPark(runtime, std::move(branches), needed);
+}
+
+inline auto ForkWaitFirstMustPark(
+    RuntimeEffects& runtime, std::vector<Coroutine<void>> branches) -> bool {
+  const std::int64_t needed = detail::CompletionsForFirst(branches.size());
+  return detail::SpawnAndPark(runtime, std::move(branches), needed);
 }
 
 // LRM 9.6.1 `wait fork`: block the executing process until every immediate

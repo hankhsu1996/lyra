@@ -2,6 +2,7 @@
 
 #include <functional>
 #include <optional>
+#include <span>
 #include <string>
 #include <variant>
 #include <vector>
@@ -134,11 +135,16 @@ class FunctionLowerer {
   // where no region encloses this point, settles the activation cancelled and
   // returns. Either way the cleanups the departure passes run first.
   auto LeaveCarrying(lir::Operand effect) -> diag::Result<void>;
-  // Where an execution regains control inside a region: asks the runtime
-  // whether a target it is inside was disabled while it was away, and leaves
-  // carrying that effect when one was. The generation comparison is the
-  // runtime's; what crosses is its answer, because a simulated process cannot
-  // be made to run code partway through a statement of the design.
+  // Where an execution regains control: asks the runtime whether a target it
+  // is inside was disabled while it was away, and leaves carrying that effect
+  // when one was. The generation comparison is the runtime's; what crosses is
+  // its answer, because a simulated process cannot be made to run code partway
+  // through a statement of the design.
+  //
+  // Which targets an execution is inside is the execution's own state, not the
+  // body's: an activity spawned or enabled inside a target is enclosed by it
+  // (LRM 9.6.2) while its body may state no region at all, so the question is
+  // asked wherever control returns rather than only where a body nests one.
   auto CheckDisabledTarget() -> diag::Result<void>;
   auto CurrentRuntime() -> lir::Operand;
 
@@ -151,6 +157,9 @@ class FunctionLowerer {
   // without an explicit address-of in the source IR.
   auto LowerArgument(const mir::Block& block, mir::ExprId id)
       -> diag::Result<lir::Operand>;
+  auto LowerArguments(
+      const mir::Block& block, std::span<const mir::ExprId> arguments)
+      -> diag::Result<std::vector<lir::Operand>>;
   auto LowerPlace(const mir::Block& block, mir::ExprId id)
       -> diag::Result<lir::Place>;
   // Reads the value held where an expression names storage, whichever way it
@@ -166,6 +175,23 @@ class FunctionLowerer {
 
   auto LowerCall(
       const mir::Block& block, const mir::CallExpr& call, mir::TypeId type)
+      -> diag::Result<lir::Operand>;
+  // Resolves the callee and emits the call over arguments already lowered.
+  // The result type is stated rather than read off the MIR expression, because
+  // an awaitable's is not what MIR gave it.
+  auto EmitCall(
+      const mir::CallExpr& call, std::vector<lir::Operand> args,
+      lir::TypeId result_type) -> diag::Result<lir::Operand>;
+  // Lowers the call an await is over, which arranges this execution's
+  // resumption and answers whether it must park at all: a delay and a
+  // value-change wait always must, a join whose condition is already met and a
+  // `wait fork` whose children have all terminated must not (LRM 9.3.2,
+  // 9.6.1). The answer is a machine predicate the suspend edge branches on --
+  // it decides control and never reaches the design's own semantics, so it
+  // carries no width and no unknown state. Only a target whose suspension is
+  // an explicit edge has to ask it out loud, which is why the value is stated
+  // here rather than upstream.
+  auto LowerRegistration(const mir::Block& block, const mir::CallExpr& call)
       -> diag::Result<lir::Operand>;
   // A reference is the address of the cell its referent lives in.
   auto LowerReferenceBind(

@@ -15,6 +15,7 @@
 #include <vector>
 
 #include "lyra/base/internal_error.hpp"
+#include "lyra/base/overloaded.hpp"
 #include "lyra/base/time.hpp"
 #include "lyra/runtime/activation_value_cell.hpp"
 #include "lyra/runtime/closure.hpp"
@@ -23,6 +24,7 @@
 #include "lyra/runtime/diagnostic.hpp"
 #include "lyra/runtime/distribution.hpp"
 #include "lyra/runtime/file_table.hpp"
+#include "lyra/runtime/fork.hpp"
 #include "lyra/runtime/generated_call_scope.hpp"
 #include "lyra/runtime/hierarchy_segment.hpp"
 #include "lyra/runtime/host_command.hpp"
@@ -95,6 +97,48 @@ class GeneratedCoroutine {
   std::coroutine_handle<> handle_;
 };
 
+// The environment a callable value binds, held for as long as the body it was
+// bound for can read it. Both alternatives are that one concept: a process and
+// a spawned branch are each a callable value, registered or spawned by a site
+// that does not supply the environment per invocation.
+//
+// Which alternative one takes is how long the environment outlives the body,
+// never what construct it came from. A process reaches its members through a
+// receiver that outlives every activation reading it, so a pointer to it is
+// borrowed; a branch reads captures copied where the `fork` ran, which outlive
+// nothing on their own, so they are owned here and die with this frame.
+class GeneratedEnvironment {
+ public:
+  static auto Borrowing(GeneratedRamp ramp, void* env) -> GeneratedEnvironment {
+    return GeneratedEnvironment{Receiver{.ramp = ramp, .env = env}};
+  }
+  static auto Owning(ClosureValue closure) -> GeneratedEnvironment {
+    return GeneratedEnvironment{std::move(closure)};
+  }
+
+  // Enters the body and answers the handle it yielded, having run to its first
+  // suspension.
+  auto Start() -> void* {
+    return std::visit(
+        Overloaded{
+            [](Receiver& r) { return r.ramp(r.env); },
+            [](ClosureValue& c) { return c.Start(); }},
+        held_);
+  }
+
+ private:
+  struct Receiver {
+    GeneratedRamp ramp = nullptr;
+    void* env = nullptr;
+  };
+  using Held = std::variant<Receiver, ClosureValue>;
+
+  explicit GeneratedEnvironment(Held held) : held_(std::move(held)) {
+  }
+
+  Held held_;
+};
+
 // The runtime-owned coroutine that is the process the engine schedules, and
 // which drives the generated body's own coroutine.
 //
@@ -109,22 +153,23 @@ class GeneratedCoroutine {
 // own wakeup; the adapter then parks, and resumes it when the engine runs the
 // adapter again.
 //
-// This adapter frame realizes the activation. It owns two lifetimes the
+// This adapter frame realizes the activation. It owns the lifetimes the
 // generated body needs but cannot hold itself. The `activation_frame` holds
 // every value whose lifetime crosses a suspension -- a procedural local a
 // suspending body reads after it resumes -- so a handle the generated frame
 // carries across a suspension points here, not into a per-stretch scope that is
-// released when the stretch returns. And `generated` RAII-owns the body's own
-// coroutine, so both are destroyed together, on every path the adapter leaves.
-// Each stretch of generated code runs in its own generated-call scope naming
-// this frame; a transient the stretch materializes still lives in that scope
-// and is released when the stretch returns.
-auto RunGeneratedProcess(GeneratedRamp ramp, void* env) -> Coroutine<void> {
+// released when the stretch returns. `generated` RAII-owns the body's own
+// coroutine, and `environment` whatever state the body was entered on, so all
+// are destroyed together, on every path the adapter leaves. Each stretch of
+// generated code runs in its own generated-call scope naming this frame; a
+// transient the stretch materializes still lives in that scope and is released
+// when the stretch returns.
+auto RunGeneratedProcess(GeneratedEnvironment environment) -> Coroutine<void> {
   ActivationFrameStorage activation_frame;
   GeneratedCoroutine generated;
   {
     GeneratedCallScope scope(&activation_frame);
-    generated = GeneratedCoroutine{ramp(env)};
+    generated = GeneratedCoroutine{environment.Start()};
   }
   while (!generated.Done()) {
     co_await std::suspend_always{};
@@ -141,6 +186,21 @@ auto RunGeneratedProcess(GeneratedRamp ramp, void* env) -> Coroutine<void> {
     RaiseControlEffect(target);
   }
   co_return;
+}
+
+// The branches one `fork` spawned, taken out of the stretch that built them.
+// Each crosses as a handle to a coroutine the building stretch owns; the engine
+// outlives that stretch, so it takes rather than borrows, exactly as a region
+// takes a submitted closure.
+auto TakeBranches(LyraSpan branches) -> std::vector<Coroutine<void>> {
+  const std::span<Coroutine<void>* const> handles(
+      static_cast<Coroutine<void>* const*>(branches.data), branches.count);
+  std::vector<Coroutine<void>> taken;
+  taken.reserve(handles.size());
+  for (Coroutine<void>* handle : handles) {
+    taken.push_back(std::move(*handle));
+  }
+  return taken;
 }
 
 // A value crossing the boundary is an opaque handle to a runtime object. These
@@ -401,6 +461,8 @@ using lyra::runtime::current_runtime;
 using lyra::runtime::DiagnosticDispatcher;
 using lyra::runtime::EnterCancellationTarget;
 using lyra::runtime::FileTable;
+using lyra::runtime::ForkWaitAllMustPark;
+using lyra::runtime::ForkWaitFirstMustPark;
 using lyra::runtime::GeneratedCallScope;
 using lyra::runtime::GeneratedScope;
 using lyra::runtime::HierarchySegment;
@@ -419,6 +481,7 @@ using lyra::runtime::ScopeDefinition;
 using lyra::runtime::SimTimeInUnit;
 using lyra::runtime::STimeInUnit;
 using lyra::runtime::SubscribeValueChange;
+using lyra::runtime::TakeBranches;
 using lyra::runtime::TakeClosure;
 using lyra::runtime::TestPlusargs;
 using lyra::runtime::Trigger;
@@ -671,9 +734,50 @@ void lyra_rt_emit_fatal(
       ->EmitFatal(Read<String>(origin), Read<String>(text));
 }
 
-auto lyra_rt_make_coroutine(void* (*ramp)(void*), void* env) -> void* {
+auto lyra_rt_enter_coroutine_borrowed_environment(
+    void* (*ramp)(void*), void* env) -> void* {
   return GeneratedCallScope::Current().Arena().New<Coroutine<void>>(
-      lyra::runtime::RunGeneratedProcess(ramp, env));
+      lyra::runtime::RunGeneratedProcess(
+          lyra::runtime::GeneratedEnvironment::Borrowing(ramp, env)));
+}
+
+auto lyra_rt_enter_coroutine_owned_environment(void* closure) -> void* {
+  return GeneratedCallScope::Current().Arena().New<Coroutine<void>>(
+      lyra::runtime::RunGeneratedProcess(
+          lyra::runtime::GeneratedEnvironment::Owning(
+              std::move(*static_cast<ClosureValue*>(closure)))));
+}
+
+void lyra_rt_spawn_all(void* runtime, LyraSpan branches) {
+  auto& svc = *static_cast<RuntimeEffects*>(runtime);
+  for (Coroutine<void>& branch : TakeBranches(branches)) {
+    svc.Spawn(std::move(branch));
+  }
+}
+
+auto lyra_rt_fork_wait_all(void* runtime, LyraSpan branches) -> bool {
+  auto& svc = *static_cast<RuntimeEffects*>(runtime);
+  return ForkWaitAllMustPark(svc, TakeBranches(branches));
+}
+
+auto lyra_rt_fork_wait_first(void* runtime, LyraSpan branches) -> bool {
+  auto& svc = *static_cast<RuntimeEffects*>(runtime);
+  return ForkWaitFirstMustPark(svc, TakeBranches(branches));
+}
+
+auto lyra_rt_wait_fork(void* runtime) -> bool {
+  auto& svc = *static_cast<RuntimeEffects*>(runtime);
+  lyra::runtime::RuntimeProcess& process = svc.CurrentProcess();
+  if (process.HasNoLiveChild()) {
+    return false;
+  }
+  process.RegisterWakeup(
+      [&process](CoroutineHandle waiter) { process.ArmWaitFork(waiter); });
+  return true;
+}
+
+void lyra_rt_disable_fork(void* runtime) {
+  lyra::runtime::DisableFork(*static_cast<RuntimeEffects*>(runtime));
 }
 
 auto lyra_rt_closure_make(const void* definition, LyraSpan captures) -> void* {
@@ -699,20 +803,22 @@ void lyra_rt_submit_observed(void* runtime, void* closure) {
   static_cast<RuntimeEffects*>(runtime)->SubmitObserved(TakeClosure(closure));
 }
 
-void lyra_rt_delay(
-    void* runtime, const void* ticks, const void* precision_power) {
+auto lyra_rt_delay(
+    void* runtime, const void* ticks, const void* precision_power) -> bool {
   auto& svc = *static_cast<RuntimeEffects*>(runtime);
-  const CoroutineHandle token = svc.CurrentProcess().TopHandle();
   const std::int64_t tick_count = Read<PackedArray>(ticks).ToInt64();
-  if (tick_count == 0) {
-    svc.ScheduleInactive(token);
-    return;
-  }
-  const lyra::SimDuration global = lyra::runtime::ScaleToGlobalTicks(
-      static_cast<lyra::SimDuration>(tick_count),
-      static_cast<std::int8_t>(Read<PackedArray>(precision_power).ToInt64()),
-      svc.GlobalPrecisionPower());
-  svc.ScheduleAtTime(svc.Now() + global, token);
+  svc.CurrentProcess().RegisterWakeup([&](CoroutineHandle token) {
+    if (tick_count == 0) {
+      svc.ScheduleInactive(token);
+      return;
+    }
+    const lyra::SimDuration global = lyra::runtime::ScaleToGlobalTicks(
+        static_cast<lyra::SimDuration>(tick_count),
+        static_cast<std::int8_t>(Read<PackedArray>(precision_power).ToInt64()),
+        svc.GlobalPrecisionPower());
+    svc.ScheduleAtTime(svc.Now() + global, token);
+  });
+  return true;
 }
 
 auto lyra_rt_make_trigger(
@@ -726,7 +832,7 @@ auto lyra_rt_make_trigger(
 // The generated frame the process suspends is not a frame the engine ever sees
 // -- it resumes the runtime-owned coroutine that drives it -- so the process to
 // wake is the running one, read from the runtime.
-void lyra_rt_wait_any(void* runtime, LyraSpan triggers) {
+auto lyra_rt_wait_any(void* runtime, LyraSpan triggers) -> bool {
   auto& svc = *static_cast<RuntimeEffects*>(runtime);
   const std::span<Trigger* const> handles(
       static_cast<Trigger* const*>(triggers.data), triggers.count);
@@ -735,7 +841,10 @@ void lyra_rt_wait_any(void* runtime, LyraSpan triggers) {
   for (const Trigger* handle : handles) {
     collected.push_back(*handle);
   }
-  SubscribeValueChange(svc.CurrentProcess().TopHandle(), collected);
+  svc.CurrentProcess().RegisterWakeup([&collected](CoroutineHandle token) {
+    SubscribeValueChange(token, collected);
+  });
+  return true;
 }
 
 void lyra_rt_trigger(void* event, void* runtime) {
@@ -811,14 +920,16 @@ auto lyra_rt_realtime(void* runtime, const void* unit_power) -> void* {
       *static_cast<RuntimeEffects*>(runtime), Read<PackedArray>(unit_power)));
 }
 
-void lyra_rt_finish(void* runtime, const void* level) {
+auto lyra_rt_finish(void* runtime, const void* level) -> bool {
   static_cast<RuntimeEffects*>(runtime)->RequestFinish(
       static_cast<int>(Read<PackedArray>(level).ToInt64()));
+  return true;
 }
 
-void lyra_rt_fatal_finish(void* runtime, const void* level) {
+auto lyra_rt_fatal_finish(void* runtime, const void* level) -> bool {
   static_cast<RuntimeEffects*>(runtime)->RequestFinish(
       static_cast<int>(Read<PackedArray>(level).ToInt64()), true);
+  return true;
 }
 
 auto lyra_rt_run_host_command(void* runtime, const void* command) -> void* {

@@ -321,6 +321,11 @@ auto UnitLowerer::MachineBoolType() -> lir::TypeId {
   return TranslateType(mir_->builtins.machine_bool);
 }
 
+auto UnitLowerer::ClosureValueType(mir::ClosureId closure) -> lir::TypeId {
+  return out_.types.Intern(
+      lir::Type{lir::ClosureType{.closure_id = ClosureDeclaration(closure)}});
+}
+
 auto UnitLowerer::ProductOf(std::vector<lir::TypeId> components)
     -> lir::TypeId {
   if (const auto it = product_memo_.find(components);

@@ -4,6 +4,13 @@
 
 // The execution-strategy-neutral ABI the generated module calls. Every runtime
 // value crosses as an opaque pointer; the runtime owns its type and lifetime.
+//
+// A `bool` is never one of those values. It is a machine predicate the
+// generated code branches on -- a condition read off a value, a question about
+// the running execution, or whether that execution must park before its suspend
+// edge -- so it carries no width and no unknown state. Every other answer is a
+// handle or nothing at all.
+//
 // Definitions wrap the runtime; a host resolves these symbols when it loads a
 // generated module (JIT-compiled, AOT-linked, or interpreted).
 extern "C" {
@@ -106,22 +113,47 @@ void lyra_rt_emit_warning(
 void lyra_rt_emit_error(void* dispatcher, const void* origin, const void* text);
 void lyra_rt_emit_fatal(void* dispatcher, const void* origin, const void* text);
 
-// Wraps a generated process body in a runtime-owned coroutine. `ramp` starts
-// the body's own coroutine: called with the receiver it reaches its members
-// through, it runs to the body's first suspension and yields that coroutine's
-// handle. The runtime owns the coroutine the engine schedules and drives the
-// generated one through its handle; the generated body never owns the
-// scheduler's coroutine.
-auto lyra_rt_make_coroutine(void* (*ramp)(void* env), void* env) -> void*;
+// Enters a generated body as a runtime-owned coroutine, having run it to its
+// first suspension. The runtime owns the coroutine the engine schedules and
+// drives the generated one through its handle; the generated body never owns
+// the scheduler's coroutine.
+//
+// The two differ only in how long the environment the body reads outlives it,
+// never in what construct it came from. A receiver is borrowed: `ramp` starts
+// the body's own coroutine when called with the receiver it reaches its members
+// through, and that receiver outlives every execution reading it. A closure is
+// taken, supplying both the entry and the captures, because the body runs after
+// the stretch that built them has returned (LRM 9.3.2).
+auto lyra_rt_enter_coroutine_borrowed_environment(
+    void* (*ramp)(void* env), void* env) -> void*;
+auto lyra_rt_enter_coroutine_owned_environment(void* closure) -> void*;
+
 void lyra_rt_register_initial(void* self, void* unit_instance, void* coroutine);
 void lyra_rt_register_final(void* self, void* unit_instance, void* coroutine);
+
+// LRM 9.3.2 Table 9-1. Each takes the branches one `fork` spawned, in source
+// order, and hands them to the engine, which does not run any of them until the
+// spawning process blocks or terminates. `spawn_all` is `join_none`, whose
+// parent never waits and so answers nothing; the other two park the parent
+// unless the fork spawned no branch at all.
+void lyra_rt_spawn_all(void* runtime, LyraSpan branches);
+auto lyra_rt_fork_wait_all(void* runtime, LyraSpan branches) -> bool;
+auto lyra_rt_fork_wait_first(void* runtime, LyraSpan branches) -> bool;
+
+// LRM 9.6.1 `wait fork` and 9.6.3 `disable fork`. Both read the executing
+// process, so neither names the children it reaches. `wait fork` parks the
+// caller unless every immediate child has already terminated; `disable fork`
+// never blocks.
+auto lyra_rt_wait_fork(void* runtime) -> bool;
+void lyra_rt_disable_fork(void* runtime);
 
 // Builds a callable the runtime runs later: `definition` is an opaque
 // cross-artifact reference naming both the body and the storage its captures
 // need, and `captures` supplies one handle per capture in declaration order,
 // each taken into that storage as the schema says -- a pointer held, a value
-// copied. The value is transient, owned by the current call scope until a
-// submit takes it.
+// copied. The value is transient, owned by the current call scope until
+// something that outlives the stretch takes it: a region a deferred effect is
+// submitted to, or the coroutine a spawned branch is entered as.
 auto lyra_rt_closure_make(const void* definition, LyraSpan captures) -> void*;
 
 // The handle one capture crosses back to the body as, by declaration index. A
@@ -144,9 +176,9 @@ void lyra_rt_submit_observed(void* runtime, void* closure);
 // inactive region; a positive one scales to the engine's global tick. The
 // counts cross as opaque packed values, like every scalar. The wakeup source is
 // the running process itself, read from the runtime; no token crosses the
-// boundary.
-void lyra_rt_delay(
-    void* runtime, const void* ticks, const void* precision_power);
+// boundary. A delay always parks.
+auto lyra_rt_delay(
+    void* runtime, const void* ticks, const void* precision_power) -> bool;
 
 // Builds one leaf of a value-change wait: the observable cell it watches, the
 // bit projection of that cell's packed encoding it watches as a
@@ -161,8 +193,8 @@ auto lyra_rt_make_trigger(
 // its edge demands, the registration a value-change wait's suspend edge is
 // preceded by (LRM 9.4.2 / 9.4.2.2 / 9.4.3). An empty span means "never wake
 // up". The wakeup source is the running process itself, read from the runtime;
-// no token crosses the boundary.
-void lyra_rt_wait_any(void* runtime, LyraSpan triggers);
+// no token crosses the boundary. A value-change wait always parks.
+auto lyra_rt_wait_any(void* runtime, LyraSpan triggers) -> bool;
 
 // A named event (LRM 15.5). Triggering records the instant and releases every
 // process parked on the event at once, since the event carries no per-waiter
@@ -193,9 +225,6 @@ void lyra_rt_leave_target(void* runtime, void* target);
 void lyra_rt_disable(void* target, void* runtime);
 auto lyra_rt_effect_names_target(void* effect, void* target) -> void*;
 auto lyra_rt_invalidated_target(void* runtime) -> void*;
-// A machine boolean rather than an opaque simulation value: the answer decides
-// a branch and never reaches the design's own semantics, so it carries no
-// width and no unknown state.
 auto lyra_rt_has_invalidated_target(void* runtime) -> bool;
 void lyra_rt_settle_cancelled(void* effect);
 
@@ -210,12 +239,12 @@ auto lyra_rt_realtime(void* runtime, const void* unit_power) -> void*;
 
 // Records a request to tear the simulation down once the current time slot
 // completes (LRM 20.2); the fatal form (LRM 20.10) additionally makes the run
-// report a non-zero exit code. Neither parks the caller: the generated body
-// suspends on its own after the call, and the recorded request is what keeps
-// the process from ever being dispatched again. The level crosses as an opaque
-// packed value, like every scalar.
-void lyra_rt_finish(void* runtime, const void* level);
-void lyra_rt_fatal_finish(void* runtime, const void* level);
+// report a non-zero exit code. Each arranges no resumption at all, so each
+// parks, and the recorded request is what keeps the process from ever being
+// dispatched again. The level crosses as an opaque packed value, like every
+// scalar.
+auto lyra_rt_finish(void* runtime, const void* level) -> bool;
+auto lyra_rt_fatal_finish(void* runtime, const void* level) -> bool;
 
 // Runs a command line through the host's command processor and yields what it
 // answered; the null form runs nothing and yields whether a command processor

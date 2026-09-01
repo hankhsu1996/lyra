@@ -76,8 +76,6 @@ auto RuntimeOpName(RuntimeOp op) -> std::string_view {
       return "from_entries";
     case RuntimeOp::kFromEntriesDefault:
       return "from_entries_default";
-    case RuntimeOp::kMakeCoroutine:
-      return "make_coroutine";
     case RuntimeOp::kMakeScope:
       return "make_scope";
     case RuntimeOp::kMakeSegment:
@@ -188,6 +186,10 @@ auto RuntimeSymbol(support::ValueDomain domain, lir::UnaryOp op)
 
 auto RuntimeSymbol(lir::ControlEffectTarget::Op op) -> std::string {
   return Symbol(lir::ControlEffectOpName(op));
+}
+
+auto RuntimeSymbol(lir::EnterCoroutineTarget::Op op) -> std::string {
+  return Symbol(lir::EnterCoroutineOpName(op));
 }
 
 auto RuntimeSymbol(

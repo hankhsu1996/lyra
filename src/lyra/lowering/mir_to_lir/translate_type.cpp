@@ -272,6 +272,11 @@ auto UnitLowerer::TranslateType(const mir::Type& ty) -> lir::Type {
           }});
 }
 
+auto UnitLowerer::ControlEffectType() -> lir::TypeId {
+  return out_.types.Intern(
+      TranslateRuntimeLibrary(mir::RuntimeLibraryKind::kControlEffect));
+}
+
 auto UnitLowerer::TranslateRuntimeLibrary(mir::RuntimeLibraryKind kind)
     -> lir::Type {
   const auto mirror = [](lir::RuntimeLibraryKind k) {

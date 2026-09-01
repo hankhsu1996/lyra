@@ -19,25 +19,34 @@
 #include "lyra/lowering/hir_to_mir/statement/blocks.hpp"
 #include "lyra/lowering/hir_to_mir/walk_frame.hpp"
 #include "lyra/mir/stmt.hpp"
+#include "lyra/mir/type_builders.hpp"
 #include "lyra/support/builtin_fn.hpp"
 
 namespace lyra::lowering::hir_to_mir {
 
 namespace {
 
-// Maps a fork-join join mode to the runtime entry that realizes its wait
-// behavior. `kAll` resumes after every branch finishes; `kAny` after the first;
-// `kNone` returns void so the parent never awaits at all.
-auto JoinModeToCallee(hir::JoinMode mode) -> support::BuiltinFn {
+// What a join mode dispatches to (LRM 9.3.2, Table 9-1): the entry that spawns
+// the branches under that mode's wait condition, and whether the process that
+// ran the fork waits for the condition at all -- every branch for `join`, the
+// first of them for `join_any`, nothing for `join_none`. Both follow from the
+// mode alone.
+struct JoinDispatch {
+  support::BuiltinFn callee;
+  bool parent_waits;
+};
+
+auto DispatchForJoinMode(hir::JoinMode mode) -> JoinDispatch {
   switch (mode) {
     case hir::JoinMode::kAll:
-      return support::BuiltinFn::kForkWaitAll;
+      return {.callee = support::BuiltinFn::kForkWaitAll, .parent_waits = true};
     case hir::JoinMode::kAny:
-      return support::BuiltinFn::kForkWaitFirst;
+      return {
+          .callee = support::BuiltinFn::kForkWaitFirst, .parent_waits = true};
     case hir::JoinMode::kNone:
-      return support::BuiltinFn::kSpawnAll;
+      return {.callee = support::BuiltinFn::kSpawnAll, .parent_waits = false};
   }
-  throw InternalError("JoinModeToCallee: unknown hir::JoinMode");
+  throw InternalError("DispatchForJoinMode: unknown hir::JoinMode");
 }
 
 }  // namespace
@@ -45,13 +54,12 @@ auto JoinModeToCallee(hir::JoinMode mode) -> support::BuiltinFn {
 // LRM 9.3.2: a fork is a block whose block_item_declarations lower into that
 // block and initialize at block entry -- in the parent, before any branch
 // spawns. The fork lowers as a plain `BlockStmt` (the block_item_declarations
-// become ordinary `LocalDeclStmt`s) whose last statement is the dispatch call:
-// `ForkWaitAll` / `ForkWaitFirst` (awaited) for `join` / `join_any`, or
-// `SpawnAll` (no await) for `join_none`. The runtime entry is variadic over
-// branches; MIR carries them as ordinary call arguments after the runtime
-// handle. The result type is `void` for every dispatch -- the awaitable's
-// `await_resume` is void, and `SpawnAll` returns void directly -- so the
-// `AwaitExpr` / `ExprStmt` shape is the same regardless of mode.
+// become ordinary `LocalDeclStmt`s) whose last statement is the mode's dispatch
+// call. The branches cross as one machine array after the runtime handle, the
+// way every run of same-typed operands crosses; each target reads that array in
+// its own spelling -- a fixed-length value on one, a length-and-address pair on
+// the other -- so neither spelling is stated here. Every mode's call yields
+// nothing, so the modes differ only in whether the parent awaits it.
 auto LowerForkStmt(
     ProcessLowerer& process, WalkFrame frame, std::optional<std::string> label,
     const hir::ForkStmt& f) -> diag::Result<mir::Stmt> {
@@ -102,9 +110,8 @@ auto LowerForkStmt(
   const mir::ExprId runtime_id =
       fork_block.exprs.Add(BuildCurrentRuntimeCallExpr(process.Owner()));
 
-  std::vector<mir::ExprId> call_args;
-  call_args.reserve(1 + f.branches.size());
-  call_args.push_back(runtime_id);
+  std::vector<mir::ExprId> branches;
+  branches.reserve(f.branches.size());
   for (const hir::StmtId branch_hir_id : f.branches) {
     const hir::Stmt& branch = hir_proc.stmts.Get(branch_hir_id);
     // LRM 9.3.2: a branch is a concurrent thread whose body may suspend on
@@ -118,29 +125,32 @@ auto LowerForkStmt(
       return std::unexpected(std::move(lowered.error()));
     }
     closure.Body().AppendStmt(*std::move(lowered));
-    call_args.push_back(fork_block.exprs.Add(closure.BuildCoroutine()));
+    branches.push_back(fork_block.exprs.Add(closure.BuildCoroutine()));
   }
 
-  const support::BuiltinFn callee_id = JoinModeToCallee(f.mode);
+  const mir::TypeId branches_type = mir::MachineArrayOf(
+      process.Owner().Unit().types, builtins.coroutine_void, branches.size());
+  const mir::ExprId branches_id = fork_block.exprs.Add(
+      mir::Expr{
+          .data = mir::ArrayLiteralExpr{.elements = std::move(branches)},
+          .type = branches_type});
+
+  const JoinDispatch dispatch = DispatchForJoinMode(f.mode);
   const mir::ExprId call_id = fork_block.exprs.Add(
       mir::Expr{
           .data =
               mir::CallExpr{
-                  .callee = mir::Direct{.target = callee_id},
-                  .arguments = std::move(call_args)},
+                  .callee = mir::Direct{.target = dispatch.callee},
+                  .arguments = {runtime_id, branches_id}},
           .type = builtins.void_type});
 
-  // `join_none` returns void; `join` / `join_any` return a runtime
-  // `JoinAwaitable` whose `await_resume` is void -- either way the call's
-  // result type is `void` and the dispatch shape only differs in whether the
-  // parent suspends.
   const mir::ExprId stmt_expr_id =
-      f.mode == hir::JoinMode::kNone
-          ? call_id
-          : fork_block.exprs.Add(
+      dispatch.parent_waits
+          ? fork_block.exprs.Add(
                 mir::Expr{
                     .data = mir::AwaitExpr{.awaitable = call_id},
-                    .type = builtins.void_type});
+                    .type = builtins.void_type})
+          : call_id;
   fork_block.AppendStmt(mir::ExprStmt{.expr = stmt_expr_id});
 
   // The region that consumes the effect sits where the fork sits, not inside

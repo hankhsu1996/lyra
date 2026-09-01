@@ -203,7 +203,23 @@ each meets the same lifetime question above.
       update region has run. Every destination form takes it: a whole variable, an element, a range,
       a structure member, and a concatenation left-hand side. A destination that is an
       automatic-lifetime local is still rejected. Rolled up in `processes.md` (P4).
-- [ ] Fork / join and the closures a spawned branch carries.
+- [x] **Fork / join, and the branches a `fork` spawns.** A branch is a callable value whose body
+      completes as a coroutine: its captures are copied where the `fork` ran and the execution that
+      runs the branch owns them, so nothing the branch reads points into a stretch that has already
+      returned. The three join modes differ only in what the spawning process then waits for --
+      every branch, the first of them, or nothing (LRM 9.3.2) -- and no branch starts until that
+      process blocks or terminates. `wait fork` and `disable fork` read the executing process, so
+      neither names a child.
+
+      Two things this settled reach wider than `fork`. An entry that arranges an execution's
+      resumption also answers whether it must park at all, because a join whose condition already
+      holds and a `wait fork` whose children have all terminated leave nothing to wait for; a
+      suspension that always parked would hang on either. And which disable targets an execution is
+      inside is the execution's own state rather than its body's, so a spawned branch is enclosed by
+      the targets its spawner was inside even though its own body states no region -- which is what
+      lets `disable` of a named `fork` reach a branch parked on a delay, and what a task enabled
+      inside a target will need for the same reason.
+
 - [ ] Named events across a suspension. Rolled up in `processes.md` (P9).
 
 ## Other backend surfaces
@@ -230,8 +246,9 @@ each meets the same lifetime question above.
       to a region and keeps running past, so the body runs once the stretch that built it has
       returned. What it captured survives with it: a captured value is taken by copy where the
       closure was built, so nothing a deferred body reads points into storage that is already gone.
-      The closure a `fork` branch or a task enable builds is not this -- it starts an activation
-      rather than producing a value -- and is refused by name.
+      The closure a `fork` branch builds shares that storage and differs in what becomes of it:
+      entering the branch takes the captures rather than borrowing them, since the execution
+      outlives the stretch that built them and nothing else owns them.
 - [x] **A runtime service answers through its completion, never through storage the caller lends.**
       Every service that reports through an argument the call names -- `$fgets`, `$ferror`,
       `$fread`, `$value$plusargs`, `$readmem` -- completes with a product of the values it settled,
@@ -291,10 +308,12 @@ each meets the same lifetime question above.
       execution regains control inside a region it asks the runtime whether a target it is inside
       was disabled while it was away, and the generation comparison behind that answer stays in the
       runtime. An effect no region claims settles the activation cancelled through the completion
-      outcome rather than by unwinding. What a `disable` case still waits on is starting another
-      activation: a task enable's await and a fork branch's coroutine closure -- every corpus case
-      that writes a `disable` also enables a task or forks, so what holds this behaviour here is the
-      backend-agreement requirement rather than a case of its own, until that lands.
+      outcome rather than by unwinding. Disabling a named `fork` exercises all of it: the branches
+      it spawned are enclosed by the target even though their bodies state no region, so the
+      `disable` wakes one parked on a delay, that branch settles cancelled where it regains control,
+      and the process that entered the block resumes after it in the same time step. What still
+      waits on starting another activation is the `disable` of a task, whose enable is an await on a
+      coroutine callee.
 - [ ] The transient-escape rule is held by construction and naming, not by a checker.
 - [ ] Displaying an aggregate. A print item is named by the operand's value domain, and the erased
       container this backend realizes exposes no per-element walk for a formatter to use. It is the
