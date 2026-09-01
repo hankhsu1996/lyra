@@ -71,14 +71,40 @@ auto RenderTryStmt(
     -> std::string {
   const auto& body = view.Block().child_scopes.Get(s.body);
   const auto& caught = view.Code().locals.Get(s.caught);
-  const auto& handler = view.Block().exprs.Get(s.handler);
+  const auto& handler = view.Block().child_scopes.Get(s.handler);
   std::string result = std::format("{}try {{\n", Indent(indent));
   result += RenderNestedBlock(view, body, indent + 1);
   result += std::format(
       "{}}} catch ({}& {}) {{\n", Indent(indent),
       RenderTypeAsCpp(view.Unit(), caught.type), caught.name);
-  result +=
-      std::format("{}{};\n", Indent(indent + 1), RenderExpr(view, handler));
+  result += RenderNestedBlock(view, handler, indent + 1);
+  result += std::format("{}}}\n", Indent(indent));
+  return result;
+}
+
+auto RenderRaiseStmt(
+    const ScopeView& view, const mir::RaiseStmt& s, std::size_t indent)
+    -> std::string {
+  const auto& effect = view.Block().exprs.Get(s.effect);
+  return std::format("{}throw {};\n", Indent(indent), RenderExpr(view, effect));
+}
+
+// C++ states an extent's exit through a destructor rather than through a
+// construct of its own, so the cleanup becomes a scope-exit object declared
+// ahead of the body: it runs however control leaves, including a `return` or a
+// `break` a trailing copy of the cleanup would miss.
+auto RenderFinallyStmt(
+    const ScopeView& view, const mir::FinallyStmt& s, std::size_t indent)
+    -> std::string {
+  const auto& body = view.Block().child_scopes.Get(s.body);
+  const auto& cleanup = view.Block().child_scopes.Get(s.cleanup);
+  std::string result = std::format("{}{{\n", Indent(indent));
+  result += std::format(
+      "{}lyra::runtime::ScopeExit __lyra_finally_{}([&]() {{\n",
+      Indent(indent + 1), s.cleanup.value);
+  result += RenderNestedBlock(view, cleanup, indent + 2);
+  result += std::format("{}}});\n", Indent(indent + 1));
+  result += RenderNestedBlock(view, body, indent + 1);
   result += std::format("{}}}\n", Indent(indent));
   return result;
 }
@@ -190,6 +216,12 @@ auto RenderStmt(
           },
           [&](const mir::TryStmt& s) -> std::string {
             return RenderTryStmt(view, s, indent);
+          },
+          [&](const mir::RaiseStmt& s) -> std::string {
+            return RenderRaiseStmt(view, s, indent);
+          },
+          [&](const mir::FinallyStmt& s) -> std::string {
+            return RenderFinallyStmt(view, s, indent);
           },
           [&](const mir::IfStmt& s) -> std::string {
             return RenderIfStmt(view, s, indent);

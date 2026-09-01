@@ -56,7 +56,8 @@ enum class RuntimeLibraryKind : std::uint8_t {
   kDpiOpenArray,
   kDpiOpenArrayHandle,
   kTrigger,
-  kCancellationSource,
+  kCancellationTarget,
+  kControlEffect,
 };
 
 struct PackedRange {

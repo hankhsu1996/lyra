@@ -33,8 +33,8 @@ MemberStorage::MemberStorage(MemberStorageDescriptor descriptor) {
           [this](const BorrowedHandleStorage&) {
             object_.emplace<BorrowedHandle>();
           },
-          [this](const CancellationSourceStorage&) {
-            object_.emplace<CancellationSource>();
+          [this](const CancellationTargetStorage&) {
+            object_.emplace<CancellationTarget>();
           },
           [this](const ChannelCancellationStorage&) {
             object_.emplace<ChannelCancellation>();
@@ -134,7 +134,7 @@ void MemberStorage::AdoptFrom(void* handle) {
           // to read out.
           [&](BorrowedHandle& box) { box.target = handle; },
           [&](value::Chandle& chandle) { chandle = value::Chandle{handle}; },
-          [](CancellationSource&) {
+          [](CancellationTarget&) {
             throw InternalError(
                 "MemberStorage: a cancellation source is created by the scope "
                 "that owns it, never copied into storage");

@@ -160,6 +160,13 @@ void DefineRuntimeAbi(llvm::orc::LLJIT& jit) {
   add("lyra_rt_delay", &lyra_rt_delay);
   add("lyra_rt_make_trigger", &lyra_rt_make_trigger);
   add("lyra_rt_wait_any", &lyra_rt_wait_any);
+  add("lyra_rt_enter_target", &lyra_rt_enter_target);
+  add("lyra_rt_leave_target", &lyra_rt_leave_target);
+  add("lyra_rt_disable", &lyra_rt_disable);
+  add("lyra_rt_effect_names_target", &lyra_rt_effect_names_target);
+  add("lyra_rt_invalidated_target", &lyra_rt_invalidated_target);
+  add("lyra_rt_has_invalidated_target", &lyra_rt_has_invalidated_target);
+  add("lyra_rt_settle_cancelled", &lyra_rt_settle_cancelled);
   add("lyra_rt_sim_time", &lyra_rt_sim_time);
   add("lyra_rt_stime", &lyra_rt_stime);
   add("lyra_rt_realtime", &lyra_rt_realtime);
@@ -566,8 +573,8 @@ auto DescribeMember(const lir::CompilationUnit& unit, lir::TypeId type)
   }
   if (const auto* library = std::get_if<lir::RuntimeLibraryType>(&data)) {
     switch (library->kind) {
-      case lir::RuntimeLibraryKind::kCancellationSource:
-        return runtime::CancellationSourceStorage{};
+      case lir::RuntimeLibraryKind::kCancellationTarget:
+        return runtime::CancellationTargetStorage{};
       // The cancel state a deferred file write is guarded by (LRM 21.3.2),
       // which the closure performing that write owns a copy of.
       case lir::RuntimeLibraryKind::kChannelCancellation:

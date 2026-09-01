@@ -252,12 +252,19 @@ each meets the same lifetime question above; none is lowerable on the execution 
       runtime from generated code yet, so a net-bearing design does not run here. Rolled up in
       `nets.md`.
 - [ ] By-pointer DPI-C marshaling (the by-value scalar surface runs; see `dpi.md`).
-- [ ] A region that consumes a control effect -- what `disable` of a named block or task needs (LRM
-      9.6.2). `mir_to_lir` refuses it by name, so every `disable` corpus case is claimed by the C++
-      backend alone. The C++ backend realizes the region as a `catch`; LIR has no such construct and
-      does not need one, because an activation now settles cancellation as a completion outcome
-      rather than only as an unwind -- the shape a landing can be lowered against without exception
-      handling.
+- [x] **A region that consumes a control effect** -- what a named block, a named fork, and a task
+      need so that `disable` of one resumes execution after it (LRM 9.6.2). A named procedural block
+      runs here whether or not anything disables it, a self-`disable` leaves its own region, and an
+      effect naming an enclosing target passes outward through the regions that decline it. The
+      region's extent is bracketed by two ordinary calls under a cleanup that runs on every way out
+      of the body, so no backend has to run code at scope exit to hold the membership; where an
+      execution regains control inside a region it asks the runtime whether a target it is inside
+      was disabled while it was away, and the generation comparison behind that answer stays in the
+      runtime. An effect no region claims settles the activation cancelled through the completion
+      outcome rather than by unwinding. What a `disable` case still waits on is starting another
+      activation: a task enable's await and a fork branch's coroutine closure -- every corpus case
+      that writes a `disable` also enables a task or forks, so what holds this behaviour here is the
+      backend-agreement requirement rather than a case of its own, until that lands.
 - [ ] The transient-escape rule is held by construction and naming, not by a checker.
 - [ ] Displaying an aggregate. A print item is named by the operand's value domain, and the erased
       container this backend realizes exposes no per-element walk for a formatter to use. It is the

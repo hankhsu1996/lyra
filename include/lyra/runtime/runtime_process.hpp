@@ -179,7 +179,7 @@ class RuntimeProcess : public std::enable_shared_from_this<RuntimeProcess> {
     // delay it blocks on. Any one of them releases the wait, and releasing it
     // revokes the rest.
     for (const EnclosingTarget& enclosing : enclosing_targets_) {
-      leaf->Park(enclosing.source->CancelWaiters());
+      leaf->Park(enclosing.target->CancelWaiters());
     }
   }
   [[nodiscard]] auto CurrentLeaf() const -> CoroutineHandle {
@@ -228,18 +228,18 @@ class RuntimeProcess : public std::enable_shared_from_this<RuntimeProcess> {
   // Enter (LRM 9.6.2) a disable target: until the target is left, a `disable`
   // of it reaches this execution, and a check finds it among the targets this
   // execution is inside.
-  void PushEnclosingTarget(CancellationSource* target) {
+  void PushEnclosingTarget(CancellationTarget* target) {
     enclosing_targets_.push_back(
         EnclosingTarget{
-            .source = target, .captured_generation = target->Generation()});
+            .target = target, .captured_generation = target->Generation()});
   }
 
-  // Leave a target. Reached on every exit path including an effect unwinding
-  // through the frame, so it never raises: it runs during unwinding, where
-  // raising would end the program instead of reporting anything.
-  void PopEnclosingTarget(CancellationSource* target) noexcept {
+  // Leave a target. Reached on every exit path an execution can take out of
+  // it, including one already leaving under an effect, so it never raises:
+  // raising from there would end the program rather than report anything.
+  void PopEnclosingTarget(CancellationTarget* target) noexcept {
     if (!enclosing_targets_.empty() &&
-        enclosing_targets_.back().source == target) {
+        enclosing_targets_.back().target == target) {
       enclosing_targets_.pop_back();
     }
   }
@@ -247,10 +247,10 @@ class RuntimeProcess : public std::enable_shared_from_this<RuntimeProcess> {
   // The outermost target this execution is inside that has been disabled since
   // it entered (LRM 9.6.2), or null when none has. Outermost wins because
   // leaving a target also leaves every target nested within it.
-  [[nodiscard]] auto OutermostInvalidatedTarget() const -> CancellationSource* {
+  [[nodiscard]] auto OutermostInvalidatedTarget() const -> CancellationTarget* {
     for (const EnclosingTarget& enclosing : enclosing_targets_) {
-      if (enclosing.source->Generation() != enclosing.captured_generation) {
-        return enclosing.source;
+      if (enclosing.target->Generation() != enclosing.captured_generation) {
+        return enclosing.target;
       }
     }
     return nullptr;
@@ -430,7 +430,7 @@ class RuntimeProcess : public std::enable_shared_from_this<RuntimeProcess> {
   // current generation says whether the target died while this execution was
   // inside it, without the frame knowing which target it is.
   struct EnclosingTarget {
-    CancellationSource* source;
+    CancellationTarget* target;
     std::uint64_t captured_generation;
   };
   // The disable targets enclosing this execution, outermost first: those

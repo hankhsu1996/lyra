@@ -55,7 +55,7 @@ struct ScopeNameNode {
 // the enclosing object's own name.
 struct DeclaredScope {
   std::optional<ScopeNameNode> name_node;
-  std::optional<mir::FieldId> cancellation_source;
+  std::optional<mir::FieldId> cancellation_target;
 
   // The handle a body reads off its `self` to reach this scope's name node.
   [[nodiscard]] auto NameBorrowedHandle() const -> std::optional<mir::FieldId> {

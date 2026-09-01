@@ -440,6 +440,19 @@ auto CodeGenFunction::ResolveCallee(
             }
             throw InternalError(
                 "llvm codegen: unknown activation-frame operation");
+          },
+          [&](const lir::ControlEffectTarget& t)
+              -> diag::Result<llvm::FunctionCallee> {
+            switch (t.op) {
+              case lir::ControlEffectTarget::Op::kHasInvalidatedTarget:
+                return module_->Runtime().HasInvalidatedTarget();
+              case lir::ControlEffectTarget::Op::kInvalidatedTarget:
+                return module_->Runtime().InvalidatedTarget();
+              case lir::ControlEffectTarget::Op::kSettleCancelled:
+                return module_->Runtime().SettleCancelled();
+            }
+            throw InternalError(
+                "llvm codegen: unknown control-effect operation");
           }},
       call.target);
 }
@@ -897,6 +910,14 @@ auto CodeGenFunction::BuiltinCallee(
       return module_->Runtime().Delay();
     case support::BuiltinFn::kWaitAny:
       return module_->Runtime().WaitAny();
+    case support::BuiltinFn::kEnterTarget:
+      return module_->Runtime().EnterTarget();
+    case support::BuiltinFn::kLeaveTarget:
+      return module_->Runtime().LeaveTarget();
+    case support::BuiltinFn::kDisable:
+      return module_->Runtime().Disable();
+    case support::BuiltinFn::kEffectNamesTarget:
+      return module_->Runtime().EffectNamesTarget();
     case support::BuiltinFn::kSimTime:
       return module_->Runtime().SimTime();
     case support::BuiltinFn::kSTime:

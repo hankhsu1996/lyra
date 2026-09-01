@@ -122,6 +122,30 @@ class RuntimeAbi {
   // delay, the wakeup source is the running process, read from the runtime.
   auto WaitAny() -> llvm::FunctionCallee;
 
+  // The `disable` family (LRM 9.6.2): the runtime's cancellation operations,
+  // declared here because generated code reaches the runtime only through
+  // named symbols. A target is a named block or task an execution can be
+  // inside and a `disable` can name, and an effect crosses as the target it
+  // names, since naming one is all an effect does.
+  //
+  // The two brackets record which targets the running execution is inside; the
+  // statement invalidates one and wakes what is blocked inside it. The two
+  // queries are what a body asks where it regains control -- whether a target
+  // it is inside was disabled while it was away, and which one -- and each is
+  // answered by comparing the generation captured on entry against the
+  // target's current one, so nothing is stored and nothing has to be cleared.
+  // A landing asks whether the effect in hand names the target it owns, and
+  // the settle reports an effect no landing claimed as this activation's
+  // outcome, which is how a body that cannot be unwound through ends
+  // cancelled.
+  auto EnterTarget() -> llvm::FunctionCallee;
+  auto LeaveTarget() -> llvm::FunctionCallee;
+  auto Disable() -> llvm::FunctionCallee;
+  auto EffectNamesTarget() -> llvm::FunctionCallee;
+  auto InvalidatedTarget() -> llvm::FunctionCallee;
+  auto HasInvalidatedTarget() -> llvm::FunctionCallee;
+  auto SettleCancelled() -> llvm::FunctionCallee;
+
   // Reads the current simulation time, scaled to the time unit of the design
   // element the call sits in (LRM 20.3). That unit is the caller's property
   // rather than the runtime's, so it crosses as an operand; the three entries

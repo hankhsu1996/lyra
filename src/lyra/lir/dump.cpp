@@ -260,6 +260,17 @@ class LirDumper {
                   return "activation_frame_store";
               }
               return "activation_frame_alloc";
+            },
+            [](const ControlEffectTarget& c) -> std::string {
+              switch (c.op) {
+                case ControlEffectTarget::Op::kHasInvalidatedTarget:
+                  return "has_invalidated_target";
+                case ControlEffectTarget::Op::kInvalidatedTarget:
+                  return "invalidated_target";
+                case ControlEffectTarget::Op::kSettleCancelled:
+                  return "settle_cancelled";
+              }
+              return "invalidated_target";
             }},
         target);
   }

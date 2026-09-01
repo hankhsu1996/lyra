@@ -1,7 +1,9 @@
 # `disable` invalidates a target's generation, and leaving it is one control effect the naming region consumes
 
-Date: 2026-07-18. Status: accepted; realized in the C++ backend for a named block and a task,
-including nested scopes, tasks called from within a scope, and activities spawned within one.
+Date: 2026-07-18. Status: accepted; realized in both backends for a named block, a named fork, and a
+task, including nested scopes, tasks called from within a scope, and activities spawned within one.
+On the execution backend the cases reaching it are those needing no second activation, since a task
+enable and a fork branch are not lowerable there yet.
 
 ## Why this decision matters
 
@@ -53,8 +55,8 @@ D3. The check is generation mismatch alone. There is no resume-reason and no pen
 the captured generation versus the target's current generation is the whole signal, asked before the
 next user statement. This is the construct-neutral, monotonic-state re-check the runtime already
 uses (activation-disposition.md D3). It is asked in the runtime, at the points where an execution
-regains control -- a wait resuming, and the `disable` statement itself -- so no lowering emits it
-and no body carries it.
+regains control -- a wait resuming, and the `disable` statement itself -- so no comparison is
+emitted and no body holds a generation of its own.
 
 D3a. Membership in a target is a property of the running process, not of a body's lexical position.
 The process carries the targets its execution is inside, each with the generation captured when it
@@ -87,12 +89,15 @@ registration substrate every wait target already uses, and membership -- which t
 is inside, and the generation it captured entering each -- is state of the running execution.
 
 D6. Only the region that consumes the effect is expressed in the compiled program. A suspend, a
-call, and a `disable` lower the same whether or not any target encloses them -- the check and the
-outward travel are the runtime's. What a body does carry is the region itself: a scope that can be
-left from anywhere within it, including from a callable it invoked, and whose continuation is the
-statement after it. That is a generic control construct, not a cancellation mechanism, and each
-backend realizes it in its own terms; the effect's origin, its outward travel, and which region
-consumes it are fixed here and re-decided by neither.
+call, and a `disable` are the same program whether or not any target encloses them -- the generation
+check and the outward travel are the runtime's, never statements a body states for itself. What a
+body does carry is the region itself: a scope that can be left from anywhere within it, including
+from a callable it invoked, and whose continuation is the statement after it. That is a generic
+control construct, not a cancellation mechanism, and each backend realizes it in its own terms: one
+whose bodies can be unwound through reaches an execution inside a region that way, and one whose
+bodies cannot asks the runtime, at the points where such an execution regains control, whether a
+target it is inside has been disabled. Either way the effect's origin, its outward travel, and which
+region consumes it are fixed here and re-decided by neither.
 
 ## Consequences
 
@@ -106,8 +111,19 @@ consumes it are fixed here and re-decided by neither.
 - An activation that enters the scope after the `disable` captures the new generation and is
   unaffected.
 - The gate is an integer compare, the same in every backend. The region is not: realizing it needs a
-  way to leave a scope from anywhere within it, which the C++ backend has and the execution backend
-  does not yet, so a design containing a named block runs only on the former.
+  way to leave a scope from anywhere within it, which a backend either has or must build. Both have
+  it now. A backend that unwinds gets it from the target language and touches nothing inside the
+  region. A backend that cannot be unwound through builds it from the region's own structure: the
+  ways out of a body are enumerable in a control-flow graph, so the extent's membership is bracketed
+  by an entry and a cleanup that runs on each of them, and at the points inside the region where an
+  execution regains control the body asks the runtime for the gate's answer. The check is still the
+  runtime's -- what crosses is what it decided, not a comparison the body makes.
+
+- The extent's two ends have to be stated, not implied. Marking membership with a value whose
+  lifetime is the body's asks the target language to run code at scope exit, which is a facility
+  only some have; the region states an entry and a cleanup instead, and each backend realizes the
+  cleanup its own way. This also covers the ways out that are easy to forget: a `return` or a
+  `break` leaving a named block leaves its target too.
 
 ## Rejected alternatives
 
@@ -132,6 +148,14 @@ consumes it are fixed here and re-decided by neither.
   and because the outward travel had to be re-threaded at every callable and spawn boundary the
   effect crossed. The check belongs where control is regained, which is the runtime, and the outward
   travel is what a nested call's ordinary result path already does.
+
+  A backend that cannot be unwound through does ask at those points, and the difference from what is
+  rejected here is what makes it not this shape. It asks only inside a region, so a body enclosing
+  no target is untouched; it asks for an answer the runtime computed rather than comparing
+  generations itself; and it threads nothing across a callable or spawn boundary, because an effect
+  no region of a body claims is that activation's completion outcome and the boundary carries it as
+  such. What was rejected was making the gate and the travel the mechanism; what a region realizes
+  is the landing alone.
 
 - **An explicit resume-reason or a pending-control state on the activation.** A single "disabled"
   signal cannot name which scope or how far to unwind, which recursion and nesting require; the

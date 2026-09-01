@@ -172,10 +172,8 @@ auto RenderTypeAsCpp(const mir::CompilationUnit& unit, mir::TypeId type_id)
                 return std::string{"lyra::value::PrintLiteralItem"};
               case mir::RuntimeLibraryKind::kPrintValueItem:
                 return std::string{"lyra::value::PrintValueItem"};
-              case mir::RuntimeLibraryKind::kCancellationSource:
-                return std::string{"lyra::runtime::CancellationSource"};
-              case mir::RuntimeLibraryKind::kCancellationGuard:
-                return std::string{"lyra::runtime::CancellationGuard"};
+              case mir::RuntimeLibraryKind::kCancellationTarget:
+                return std::string{"lyra::runtime::CancellationTarget"};
               case mir::RuntimeLibraryKind::kControlEffect:
                 return std::string{"lyra::runtime::ControlEffect"};
               case mir::RuntimeLibraryKind::kFormatSpec:

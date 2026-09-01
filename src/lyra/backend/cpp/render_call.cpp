@@ -328,8 +328,12 @@ auto BuiltinFnCppName(support::BuiltinFn id) -> std::string_view {
       return "DisableFork";
     case support::BuiltinFn::kDisable:
       return "Disable";
-    case support::BuiltinFn::kClaimControlEffect:
-      return "ClaimControlEffect";
+    case support::BuiltinFn::kEnterTarget:
+      return "EnterCancellationTarget";
+    case support::BuiltinFn::kLeaveTarget:
+      return "LeaveCancellationTarget";
+    case support::BuiltinFn::kEffectNamesTarget:
+      return "EffectNamesTarget";
     case support::BuiltinFn::kToInt64:
       return "ToInt64";
     case support::BuiltinFn::kRound:
@@ -521,7 +525,9 @@ auto BuiltinFnCppNamespace(support::BuiltinFn id) -> std::string_view {
     case support::BuiltinFn::kWaitFork:
     case support::BuiltinFn::kDisableFork:
     case support::BuiltinFn::kDisable:
-    case support::BuiltinFn::kClaimControlEffect:
+    case support::BuiltinFn::kEnterTarget:
+    case support::BuiltinFn::kLeaveTarget:
+    case support::BuiltinFn::kEffectNamesTarget:
     case support::BuiltinFn::kTestPlusargs:
     case support::BuiltinFn::kValuePlusargs:
     case support::BuiltinFn::kRunHostCommand:

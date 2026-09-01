@@ -405,8 +405,12 @@ auto BuiltinFnName(BuiltinFn id) -> std::string_view {
       return "disable_fork";
     case BuiltinFn::kDisable:
       return "disable";
-    case BuiltinFn::kClaimControlEffect:
-      return "claim_control_effect";
+    case BuiltinFn::kEnterTarget:
+      return "enter_target";
+    case BuiltinFn::kLeaveTarget:
+      return "leave_target";
+    case BuiltinFn::kEffectNamesTarget:
+      return "effect_names_target";
     case BuiltinFn::kRegisterInitial:
       return "register_initial";
     case BuiltinFn::kRegisterFinal:

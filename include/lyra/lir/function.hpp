@@ -180,12 +180,32 @@ struct ActivationFrameTarget {
   Op op;
 };
 
+// An operation on the control effect that leaves a disabled target (LRM
+// 9.6.2). `kHasInvalidatedTarget` and `kInvalidatedTarget` ask whether a target
+// this execution is inside was disabled while it was away, and which one; both
+// are asked where an execution regains control, and each is answered by
+// comparing generations in the runtime rather than by reading a flag anyone
+// set. The effect crosses as that target, since naming one is all an effect
+// does. `kSettleCancelled` reports an effect that left the body with no region
+// of it claiming the effect, which is this activation's outcome rather than a
+// value it returns. A LIR-only target with no MIR twin: a target that can be
+// unwound through reaches all of this by unwinding instead, so what a body
+// carries is the region alone.
+struct ControlEffectTarget {
+  enum class Op : std::uint8_t {
+    kHasInvalidatedTarget,
+    kInvalidatedTarget,
+    kSettleCancelled
+  };
+  Op op;
+};
+
 // The target of a call: a runtime builtin, a function of this unit, a value
 // constructor named by the call's result type, a foreign symbol the host
-// resolves, or an activation-frame value operation.
+// resolves, an activation-frame value operation, or a control-effect operation.
 using CallTarget = std::variant<
     BuiltinTarget, FunctionTarget, ConstructTarget, ForeignTarget,
-    ActivationFrameTarget>;
+    ActivationFrameTarget, ControlEffectTarget>;
 
 struct CallInstr {
   CallTarget target;

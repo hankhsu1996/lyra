@@ -57,10 +57,30 @@ class FunctionLowerer {
 
   // The branch targets a `break` and a `continue` inside one loop transfer to.
   // A labeled loop is also the target of a labeled break from a nested loop.
+  // `cleanup_depth` is how many cleanups were owed where the loop began, so a
+  // branch out of it runs exactly the ones it leaves.
   struct LoopTargets {
     std::optional<mir::LoopLabelId> label;
     lir::BlockId continue_target{};
     lir::BlockId break_target{};
+    std::size_t cleanup_depth{};
+  };
+
+  // A cleanup owed on every way out of the body it guards, and the block whose
+  // child scopes hold it. It is lowered afresh at each way out, because a CFG
+  // reaches an extent's end by as many edges as there are ways to leave it.
+  struct PendingCleanup {
+    const mir::Block* owner;
+    mir::BlockId cleanup;
+  };
+
+  // Where a control effect leaving a region's body lands: the block that runs
+  // the region's handler, the storage the effect is bound to for it to read,
+  // and how many cleanups were owed where the region began.
+  struct RegionTargets {
+    lir::BlockId handler{};
+    lir::ValueId caught{};
+    std::size_t cleanup_depth{};
   };
 
   // What a source local resolves to. A local is frame storage exactly when the
@@ -95,6 +115,28 @@ class FunctionLowerer {
       -> diag::Result<void>;
   auto LowerBreakInto(const mir::BreakStmt& stmt) -> diag::Result<void>;
   auto LowerContinueInto() -> diag::Result<void>;
+  auto LowerTryInto(const mir::Block& block, const mir::TryStmt& stmt)
+      -> diag::Result<void>;
+  auto LowerFinallyInto(const mir::Block& block, const mir::FinallyStmt& stmt)
+      -> diag::Result<void>;
+  auto LowerRaiseInto(const mir::Block& block, const mir::RaiseStmt& stmt)
+      -> diag::Result<void>;
+
+  // Runs every cleanup owed between here and `depth`, innermost first. A way
+  // out of a guarded body runs the cleanups it leaves and no others, so the
+  // depth a loop or a region recorded is what bounds it.
+  auto RunCleanupsDownTo(std::size_t depth) -> diag::Result<void>;
+  // Leaves through the innermost region of this frame carrying `effect`, or,
+  // where no region encloses this point, settles the activation cancelled and
+  // returns. Either way the cleanups the departure passes run first.
+  auto LeaveCarrying(lir::Operand effect) -> diag::Result<void>;
+  // Where an execution regains control inside a region: asks the runtime
+  // whether a target it is inside was disabled while it was away, and leaves
+  // carrying that effect when one was. The generation comparison is the
+  // runtime's; what crosses is its answer, because a simulated process cannot
+  // be made to run code partway through a statement of the design.
+  auto CheckDisabledTarget() -> diag::Result<void>;
+  auto CurrentRuntime() -> lir::Operand;
 
   // Reads a value out of an expression. An expression naming storage that has
   // no value of its own -- a cell -- has no reading, and is rejected here.
@@ -244,6 +286,8 @@ class FunctionLowerer {
   std::vector<OpenBlock> blocks_;
   lir::BlockId current_{};
   std::vector<LoopTargets> loops_;
+  std::vector<PendingCleanup> cleanups_;
+  std::vector<RegionTargets> regions_;
   // Which locals the body writes through or addresses, which are
   // activation-frame values (a value-typed local in a suspending body), and
   // what each local has resolved to so far.

@@ -29,27 +29,29 @@ Read top to bottom on first pass:
 12. `lir.md` -- execution-oriented IR (CFG, basic blocks, storage)
 13. `activation.md` -- the runtime execution instance; completion slot; ownership / continuation /
     cancellation relations
-14. `scheduling.md` -- stratified event scheduler, regions, suspension protocol
-15. `hierarchy_and_generate.md` -- hierarchy and generate ownership
-16. `reference_resolution.md` -- references as routes from origin to typed endpoint; per-segment
+14. `nonlocal_control_flow.md` -- leaving a scope from anywhere within it; region, raise, cleanup;
+    the language layer under a cancellation library
+15. `scheduling.md` -- stratified event scheduler, regions, suspension protocol
+16. `hierarchy_and_generate.md` -- hierarchy and generate ownership
+17. `reference_resolution.md` -- references as routes from origin to typed endpoint; per-segment
     classification by layout visibility; sealed endpoint on the hot path
-17. `net_resolution.md` -- a net's value as the resolution of its driver contributions; net vs
+18. `net_resolution.md` -- a net's value as the resolution of its driver contributions; net vs
     variable; drivers attached along the reference route
-18. `binding_and_capture.md` -- the lexical reference axis: logical binding identity, per-body
+19. `binding_and_capture.md` -- the lexical reference axis: logical binding identity, per-body
     materialization, closure capture forwarding, carrier vs view
-19. `compiler_generated_storage.md` -- compiler-generated storage as two nominal categories sharing
+20. `compiler_generated_storage.md` -- compiler-generated storage as two nominal categories sharing
     one field substrate: the closure (`ClosureType`, a concrete callable value) and the promoted
     scope (`StructType` reached via `Shared<>`), capture forms
-20. `emission_model.md` -- how a backend emits independent per-unit artifacts and realizes each
+21. `emission_model.md` -- how a backend emits independent per-unit artifacts and realizes each
     route segment by visibility (typed for layout-owned, SDK for opaque)
-21. `backend_contract.md` -- per-node within-artifact realization rules; type mapping vs value
+22. `backend_contract.md` -- per-node within-artifact realization rules; type mapping vs value
     emission; what a backend may and may not name in render
-22. `identity_and_ownership.md` -- identity rules and forbidden shapes
-23. `lowering_boundaries.md` -- what each lowering may and may not do
-24. `lowering_organization.md` -- how lowering passes organize their internal objects (facts,
+23. `identity_and_ownership.md` -- identity rules and forbidden shapes
+24. `lowering_boundaries.md` -- what each lowering may and may not do
+25. `lowering_organization.md` -- how lowering passes organize their internal objects (facts,
     registries, builders, walk frame)
-25. `incremental_build.md` -- query-based incremental compilation and caching
-26. `testing_strategy.md` -- test categories and structure
+26. `incremental_build.md` -- query-based incremental compilation and caching
+27. `testing_strategy.md` -- test categories and structure
 
 ## Concept Index
 
@@ -83,6 +85,7 @@ If you are looking for a concept, this table points to the canonical doc.
 | Object lifetime; managed reclamation; tracing GC; activation frames                        | `object_lifetime.md`            |
 | LIR shape (CFG, basic blocks, storage)                                                     | `lir.md`                        |
 | Activation; execution instance; completion slot; cancellation domain                       | `activation.md`                 |
+| Leaving a scope from anywhere within it; region, raise, cleanup; landing                   | `nonlocal_control_flow.md`      |
 | Stratified scheduler; regions; suspension protocol; NBA / closure submit                   | `scheduling.md`                 |
 | Incremental compilation; query-based caching                                               | `incremental_build.md`          |
 | Locating/bundling the C++ runtime; the foreign-language ABI surface; run output contract   | `runtime_distribution.md`       |

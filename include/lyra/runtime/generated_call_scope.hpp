@@ -6,6 +6,8 @@
 
 namespace lyra::runtime {
 
+class CancellationTarget;
+
 // A stack-scoped region owning the runtime values a single runtime-to-generated
 // call materializes. The generated side sees only opaque handles; their storage
 // and destruction belong to the runtime, released together when the call
@@ -46,8 +48,20 @@ class ActivationFrameStorage {
     return arena_.New<T>(std::forward<Args>(args)...);
   }
 
+  // LRM 9.6.2: the target of a control effect that left the body with no region
+  // of the body claiming it, so the activation settles cancelled instead of
+  // completing normally. A body that cannot be unwound through reports its
+  // outcome by writing it here; null until one leaves that way.
+  void SettleCancelled(CancellationTarget* target) {
+    cancelled_by_ = target;
+  }
+  [[nodiscard]] auto CancelledBy() const -> CancellationTarget* {
+    return cancelled_by_;
+  }
+
  private:
   GeneratedCallArena arena_;
+  CancellationTarget* cancelled_by_ = nullptr;
 };
 
 // The ambient context wrapping every runtime-to-generated call boundary: the

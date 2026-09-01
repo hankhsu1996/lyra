@@ -618,12 +618,14 @@ auto FunctionLowerer::LowerStmtInto(
           [&](const mir::BlockStmt& s) -> diag::Result<void> {
             return LowerBlockInto(block.child_scopes.Get(s.scope));
           },
-          [](const mir::TryStmt&) -> diag::Result<void> {
-            // A region that consumes a control effect needs an exceptional
-            // edge out of its body, which this layer does not yet build.
-            return Unsupported(
-                "mir_to_lir: a region consuming a control effect is not yet "
-                "lowerable to LIR");
+          [&](const mir::TryStmt& s) -> diag::Result<void> {
+            return LowerTryInto(block, s);
+          },
+          [&](const mir::RaiseStmt& s) -> diag::Result<void> {
+            return LowerRaiseInto(block, s);
+          },
+          [&](const mir::FinallyStmt& s) -> diag::Result<void> {
+            return LowerFinallyInto(block, s);
           },
           [&](const mir::LocalDeclStmt& s) -> diag::Result<void> {
             auto init = LowerExpr(block, s.init);
@@ -662,6 +664,13 @@ auto FunctionLowerer::LowerStmtInto(
                 return std::unexpected(std::move(lowered.error()));
               }
               value = *std::move(lowered);
+            }
+            // Returning leaves every guarded body between here and the frame's
+            // edge, so each of their cleanups runs -- after the returned value
+            // is settled, which a cleanup must not change.
+            auto cleaned = RunCleanupsDownTo(0);
+            if (!cleaned) {
+              return std::unexpected(std::move(cleaned.error()));
             }
             Terminate(lir::ReturnTerm{.value = std::move(value)});
             return {};
@@ -732,7 +741,8 @@ auto FunctionLowerer::LowerWhileInto(
       LoopTargets{
           .label = std::nullopt,
           .continue_target = header_id,
-          .break_target = exit_id});
+          .break_target = exit_id,
+          .cleanup_depth = cleanups_.size()});
   auto body = LowerBlockInto(block.child_scopes.Get(stmt.scope));
   loops_.pop_back();
   if (!body) {
@@ -759,7 +769,8 @@ auto FunctionLowerer::LowerDoWhileInto(
       LoopTargets{
           .label = std::nullopt,
           .continue_target = latch_id,
-          .break_target = exit_id});
+          .break_target = exit_id,
+          .cleanup_depth = cleanups_.size()});
   auto body = LowerBlockInto(block.child_scopes.Get(stmt.scope));
   loops_.pop_back();
   if (!body) {
@@ -840,7 +851,8 @@ auto FunctionLowerer::LowerForInto(
       LoopTargets{
           .label = stmt.break_label,
           .continue_target = step_id,
-          .break_target = exit_id});
+          .break_target = exit_id,
+          .cleanup_depth = cleanups_.size()});
   auto body = LowerBlockInto(block.child_scopes.Get(stmt.scope));
   loops_.pop_back();
   if (!body) {
@@ -869,6 +881,10 @@ auto FunctionLowerer::LowerBreakInto(const mir::BreakStmt& stmt)
   // loop that carries the label, however many loops it is nested inside.
   for (const LoopTargets& loop : std::views::reverse(loops_)) {
     if (!stmt.target.has_value() || loop.label == stmt.target) {
+      auto cleaned = RunCleanupsDownTo(loop.cleanup_depth);
+      if (!cleaned) {
+        return std::unexpected(std::move(cleaned.error()));
+      }
       Terminate(lir::BranchTerm{.target = loop.break_target});
       return {};
     }
@@ -880,8 +896,167 @@ auto FunctionLowerer::LowerContinueInto() -> diag::Result<void> {
   if (loops_.empty()) {
     throw InternalError("mir_to_lir: continue outside of any loop");
   }
+  auto cleaned = RunCleanupsDownTo(loops_.back().cleanup_depth);
+  if (!cleaned) {
+    return std::unexpected(std::move(cleaned.error()));
+  }
   Terminate(lir::BranchTerm{.target = loops_.back().continue_target});
   return {};
+}
+
+auto FunctionLowerer::CurrentRuntime() -> lir::Operand {
+  return Emit(
+      unit_->TranslateType(unit_->Mir().builtins.effects),
+      lir::CallInstr{
+          .target =
+              lir::BuiltinTarget{
+                  .fn = support::BuiltinFn::kCurrentRuntime,
+                  .qualifier = std::nullopt},
+          .args = {}});
+}
+
+auto FunctionLowerer::RunCleanupsDownTo(std::size_t depth)
+    -> diag::Result<void> {
+  for (std::size_t i = cleanups_.size(); i > depth; --i) {
+    const PendingCleanup pending = cleanups_[i - 1];
+    auto lowered =
+        LowerBlockInto(pending.owner->child_scopes.Get(pending.cleanup));
+    if (!lowered) {
+      return std::unexpected(std::move(lowered.error()));
+    }
+  }
+  return {};
+}
+
+auto FunctionLowerer::LeaveCarrying(lir::Operand effect) -> diag::Result<void> {
+  if (!regions_.empty()) {
+    const RegionTargets region = regions_.back();
+    auto cleaned = RunCleanupsDownTo(region.cleanup_depth);
+    if (!cleaned) {
+      return std::unexpected(std::move(cleaned.error()));
+    }
+    Store(
+        lir::Place{.base = lir::Use{.value = region.caught}, .chain = {}},
+        std::move(effect));
+    Terminate(lir::BranchTerm{.target = region.handler});
+    return {};
+  }
+  auto cleaned = RunCleanupsDownTo(0);
+  if (!cleaned) {
+    return std::unexpected(std::move(cleaned.error()));
+  }
+  Emit(
+      unit_->TranslateType(unit_->Mir().builtins.void_type),
+      lir::CallInstr{
+          .target =
+              lir::ControlEffectTarget{
+                  .op = lir::ControlEffectTarget::Op::kSettleCancelled},
+          .args = {std::move(effect)}});
+  Terminate(lir::ReturnTerm{.value = std::nullopt});
+  return {};
+}
+
+auto FunctionLowerer::CheckDisabledTarget() -> diag::Result<void> {
+  if (regions_.empty()) {
+    return {};
+  }
+  const lir::Operand condition = Emit(
+      unit_->MachineBoolType(),
+      lir::CallInstr{
+          .target =
+              lir::ControlEffectTarget{
+                  .op = lir::ControlEffectTarget::Op::kHasInvalidatedTarget},
+          .args = {CurrentRuntime()}});
+  const lir::BlockId leaving_id = NewBlock();
+  const lir::BlockId continue_id = NewBlock();
+  Terminate(
+      lir::CondBranchTerm{
+          .condition = condition,
+          .if_true = leaving_id,
+          .if_false = continue_id});
+
+  SetCurrent(leaving_id);
+  const lir::Operand effect = Emit(
+      fn_.values.Get(regions_.back().caught).type,
+      lir::CallInstr{
+          .target =
+              lir::ControlEffectTarget{
+                  .op = lir::ControlEffectTarget::Op::kInvalidatedTarget},
+          .args = {CurrentRuntime()}});
+  auto left = LeaveCarrying(effect);
+  if (!left) {
+    return std::unexpected(std::move(left.error()));
+  }
+
+  SetCurrent(continue_id);
+  return {};
+}
+
+auto FunctionLowerer::LowerFinallyInto(
+    const mir::Block& block, const mir::FinallyStmt& stmt)
+    -> diag::Result<void> {
+  cleanups_.push_back(PendingCleanup{.owner = &block, .cleanup = stmt.cleanup});
+  auto body = LowerBlockInto(block.child_scopes.Get(stmt.body));
+  cleanups_.pop_back();
+  if (!body) {
+    return std::unexpected(std::move(body.error()));
+  }
+  // Falling off the body's end is the one way out the body does not state
+  // itself, so it is the one the region states here.
+  if (Terminated()) {
+    return {};
+  }
+  return LowerBlockInto(block.child_scopes.Get(stmt.cleanup));
+}
+
+auto FunctionLowerer::LowerTryInto(
+    const mir::Block& block, const mir::TryStmt& stmt) -> diag::Result<void> {
+  const lir::BlockId handler_id = NewBlock();
+  const lir::BlockId merge_id = NewBlock();
+
+  // The effect is written where control leaves the body and read where the
+  // handler runs, which are different blocks, so it is frame storage rather
+  // than a value in flight.
+  const lir::ValueId caught =
+      NewPlaceLocal(unit_->TranslateType(code_->locals.Get(stmt.caught).type));
+  locals_[stmt.caught.value] = PlaceBinding{.slot = caught};
+
+  regions_.push_back(
+      RegionTargets{
+          .handler = handler_id,
+          .caught = caught,
+          .cleanup_depth = cleanups_.size()});
+  auto body = LowerBlockInto(block.child_scopes.Get(stmt.body));
+  regions_.pop_back();
+  if (!body) {
+    return std::unexpected(std::move(body.error()));
+  }
+  if (!Terminated()) {
+    Terminate(lir::BranchTerm{.target = merge_id});
+  }
+
+  SetCurrent(handler_id);
+  auto handler = LowerBlockInto(block.child_scopes.Get(stmt.handler));
+  if (!handler) {
+    return std::unexpected(std::move(handler.error()));
+  }
+  // Reaching the handler's end is what claiming the effect amounts to:
+  // execution resumes past the region (LRM 9.6.2).
+  if (!Terminated()) {
+    Terminate(lir::BranchTerm{.target = merge_id});
+  }
+
+  SetCurrent(merge_id);
+  return {};
+}
+
+auto FunctionLowerer::LowerRaiseInto(
+    const mir::Block& block, const mir::RaiseStmt& stmt) -> diag::Result<void> {
+  auto effect = LowerExpr(block, stmt.effect);
+  if (!effect) {
+    return std::unexpected(std::move(effect.error()));
+  }
+  return LeaveCarrying(*std::move(effect));
 }
 
 auto FunctionLowerer::LowerCondition(const mir::Block& block, mir::ExprId id)
@@ -1142,9 +1317,21 @@ auto FunctionLowerer::LowerCall(
   if (!target) {
     return std::unexpected(std::move(target.error()));
   }
-  return Emit(
+  const lir::Operand result = Emit(
       result_type,
       lir::CallInstr{.target = *std::move(target), .args = std::move(args)});
+
+  // Disabling a target the disabling execution is itself inside leaves it (LRM
+  // 9.6.2), and the statement is where that execution next has control, so it
+  // is one of the points a region's body asks at.
+  if (const auto fn = DirectBuiltinFn(call);
+      fn.has_value() && *fn == support::BuiltinFn::kDisable) {
+    auto checked = CheckDisabledTarget();
+    if (!checked) {
+      return std::unexpected(std::move(checked.error()));
+    }
+  }
+  return result;
 }
 
 auto FunctionLowerer::LowerAssign(
@@ -2041,6 +2228,12 @@ auto FunctionLowerer::LowerExpr(const mir::Block& block, mir::ExprId id)
             const lir::BlockId resume = NewBlock();
             Terminate(lir::SuspendTerm{.resume = resume});
             SetCurrent(resume);
+            // Resuming is a point where this execution regains control, so a
+            // target it is inside may have been disabled while it was away.
+            auto checked = CheckDisabledTarget();
+            if (!checked) {
+              return std::unexpected(std::move(checked.error()));
+            }
             return registration;
           },
           [&](const mir::ConcatExpr& concat) -> diag::Result<lir::Operand> {

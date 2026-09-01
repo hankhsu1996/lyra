@@ -13,7 +13,6 @@
 #include "lyra/lowering/hir_to_mir/process_lowerer.hpp"
 #include "lyra/lowering/hir_to_mir/walk_frame.hpp"
 #include "lyra/mir/field.hpp"
-#include "lyra/mir/local.hpp"
 #include "lyra/mir/stmt.hpp"
 
 namespace lyra::lowering::hir_to_mir {
@@ -21,24 +20,17 @@ namespace lyra::lowering::hir_to_mir {
 auto LowerEmptyStmt(std::optional<std::string> label)
     -> diag::Result<mir::Stmt>;
 
-// Declares a target's entry guard (LRM 9.6.2): a local that marks the executing
-// process as inside the target for the guard's lifetime, so a `disable` of the
-// target reaches this execution and a check finds the target among the ones it
-// is inside. A named block and a task install one alike, as the first act of
-// the body the target names. `source` is the target's cancellation source, a
-// field of the class enclosing this body.
-auto EmitCancellationGuard(
-    ProcessLowerer& process, const WalkFrame& frame, mir::FieldId source)
-    -> mir::LocalId;
-
-// Builds the region that consumes a `disable` of the target owning `source`
-// (LRM 9.6.2) around an already-lowered `body`: it binds the effect leaving the
-// body and hands it to the consume, which either ends the effect here -- so
-// execution continues past the region -- or re-raises it for the region that
-// does name its target.
+// Builds the region that consumes a `disable` of `target` (LRM 9.6.2) around an
+// already-lowered `body`. The region brackets the body with the target's extent
+// -- so a `disable` reaches every execution inside it, and a check finds the
+// target among the ones that execution is inside -- and binds the effect
+// leaving the body, ending it here when it names this target, so execution
+// continues past the region, and raising it again for the region that does name
+// its target. `target` is a field of the class enclosing this body; a named
+// block, a named fork, and a task each build one alike.
 auto BuildCancellableRegion(
-    ProcessLowerer& process, const WalkFrame& frame, mir::BlockId body,
-    mir::FieldId source) -> mir::TryStmt;
+    ProcessLowerer& process, const WalkFrame& frame, mir::Block&& body,
+    mir::FieldId target) -> mir::TryStmt;
 
 auto LowerBlockStmt(
     ProcessLowerer& process, WalkFrame frame, std::optional<std::string> label,

@@ -51,9 +51,9 @@ struct BlockStmt {
 
 // A region whose body can be left by a control effect, and whose normal
 // continuation is the statement after it. An effect leaving the body binds to
-// `caught` and runs `handler`, which either consumes it -- so execution
-// continues past the region -- or re-raises it, so it reaches the region that
-// does consume it.
+// `caught` and runs `handler`; falling off the end of the handler consumes the
+// effect, so execution continues past the region, and raising it again sends
+// it on to the region that does consume it.
 //
 // This is how a program says "this scope can be left from anywhere within it,
 // including from a callable it invoked, and execution continues here" -- the
@@ -65,7 +65,27 @@ struct TryStmt {
   // Binds the effect for the handler, the way a loop binds its induction
   // variable: the handler reads it as an ordinary local.
   LocalId caught;
-  ExprId handler;
+  BlockId handler;
+};
+
+// Leaves the enclosing region carrying a control effect, which then travels
+// outward until a region consumes it. The effect is one already in hand: an
+// effect arises where an execution regains control, so no statement a program
+// can write creates one, and the only statement that carries one is a handler
+// passing on an effect it declined.
+struct RaiseStmt {
+  ExprId effect;
+};
+
+// A body paired with a cleanup that runs on every way out of it -- falling off
+// its end, a return, a break or continue leaving it, or a control effect
+// passing through. It is how a program states an extent whose entry and exit
+// are both effects, rather than leaving the exit to a target language that
+// destroys a value at scope exit; a language without that facility can still
+// realize the extent, because the ways out of a body are enumerable.
+struct FinallyStmt {
+  BlockId body;
+  BlockId cleanup;
 };
 
 struct IfStmt {
@@ -119,8 +139,9 @@ struct ReturnStmt {
 };
 
 using StmtData = std::variant<
-    EmptyStmt, LocalDeclStmt, ExprStmt, BlockStmt, TryStmt, IfStmt, ForStmt,
-    WhileStmt, DoWhileStmt, BreakStmt, ContinueStmt, ReturnStmt>;
+    EmptyStmt, LocalDeclStmt, ExprStmt, BlockStmt, TryStmt, RaiseStmt,
+    FinallyStmt, IfStmt, ForStmt, WhileStmt, DoWhileStmt, BreakStmt,
+    ContinueStmt, ReturnStmt>;
 
 struct Stmt {
   std::optional<std::string> label;

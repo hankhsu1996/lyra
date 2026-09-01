@@ -66,7 +66,7 @@ class MemberStorage {
 
  private:
   std::variant<
-      BorrowedHandle, CancellationSource, ChannelCancellation,
+      BorrowedHandle, CancellationTarget, ChannelCancellation,
       Var<value::PackedArray>, Var<value::String>, Var<value::Real>,
       Var<value::ShortReal>, Var<value::RuntimeTuple>,
       Var<value::RuntimeDynamicArray>, Var<value::RuntimeUnpackedArray>,
