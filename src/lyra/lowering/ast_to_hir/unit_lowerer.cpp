@@ -690,6 +690,26 @@ auto UnitLowerer::TranslateReferenceRoute(
       frame.Current(), std::move(route->head), std::move(route->steps));
 }
 
+auto UnitLowerer::RouteThroughInterfacePort(
+    const WalkFrame& frame, const slang::ast::Symbol& port) const
+    -> ScopeRoute {
+  const auto binding = LookupInterfacePortBinding(port);
+  if (!binding.has_value()) {
+    throw InternalError(
+        "UnitLowerer::RouteThroughInterfacePort: the path heads at a port of "
+        "this unit, which the unit's own walk declared");
+  }
+  const auto hops = frame.HopsTo(binding->home_frame);
+  if (!hops.has_value()) {
+    throw InternalError(
+        "UnitLowerer::RouteThroughInterfacePort: an interface port is a member "
+        "of a scope enclosing every reader of it");
+  }
+  return ScopeRoute{
+      .head = hir::InUnitHead{.hops = *hops},
+      .steps = {hir::PathStep{hir::InterfacePortStep{.port = binding->port}}}};
+}
+
 auto UnitLowerer::RouteToScope(
     const WalkFrame& frame, const slang::ast::Scope& target) const
     -> std::optional<ScopeRoute> {

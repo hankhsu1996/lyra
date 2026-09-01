@@ -276,11 +276,16 @@ auto BuildStringLiteral(
 // carries no typed vector-index primitive.
 struct RouteReceiver {
   mir::ExprId expr{};
-  // The scope the receiver points at, when the receiver is a typed pointer to
-  // a class this artifact owns; whatever the route names next resolves against
-  // it. Null when the receiver is a runtime `Scope*` and every following step
-  // is opaque.
+  // The scope the receiver points at, when the receiver is a typed pointer to a
+  // class this artifact owns; whatever the route names next resolves against
+  // it. Null once the route reaches an object this artifact does not lower,
+  // whose names resolve against the signature its unit published instead.
   const StructuralScopeLowerer* scope = nullptr;
+  // Whether the receiver is the base every object on the tree is one of, which
+  // is what a step answered by name yields. A typed step instead yields a
+  // pointer to the object it reached, and the two are told apart by the step
+  // that produced them rather than by reading a type back off the expression.
+  bool is_scope_base = false;
 };
 
 // Reaches a child by name+indices as an opaque `Scope*` -- the realization of
@@ -299,7 +304,7 @@ auto SdkChildOpaque(
                       {receiver, BuildStringLiteral(unit_lowerer, block, name),
                        BuildIndicesLiteral(unit_lowerer, block, indices)}},
           .type = unit_lowerer.Unit().builtins.scope_ptr});
-  return RouteReceiver{.expr = step, .scope = nullptr};
+  return RouteReceiver{.expr = step, .scope = nullptr, .is_scope_base = true};
 }
 
 // Establishes the route's starting receiver from the head. An in-unit head
@@ -333,7 +338,7 @@ auto BuildRouteAnchor(
                         mir::Direct{.target = support::BuiltinFn::kResolveRoot},
                     .arguments = {self_ref}},
             .type = scope_ptr_type});
-    return RouteReceiver{.expr = root, .scope = nullptr};
+    return RouteReceiver{.expr = root, .scope = nullptr, .is_scope_base = true};
   }
 
   // The visible-child climb walks the parent chain by name (LRM 23.8).
@@ -351,7 +356,8 @@ auto BuildRouteAnchor(
                        BuildIndicesLiteral(
                            unit_lowerer, block, vc.head_indices)}},
           .type = scope_ptr_type});
-  return RouteReceiver{.expr = matched, .scope = nullptr};
+  return RouteReceiver{
+      .expr = matched, .scope = nullptr, .is_scope_base = true};
 }
 
 // Descends one step into a child the receiver's scope declares: the typed
@@ -456,10 +462,10 @@ auto MaterializeLeaf(
 
   // A route ending at a scope names the object the steps landed on, and every
   // step already yields a borrowed pointer to what it reached, so the last one
-  // is the value. A step answered by name yields the scope every object on the
-  // tree is one of, and the route's own type is what says which one.
+  // is the value. A step answered by name yields the base instead, and the
+  // route's own type is what says which object that base is.
   if (std::holds_alternative<hir::ScopeLeaf>(leaf)) {
-    if (block.exprs.Get(receiver.expr).type != unit.builtins.scope_ptr) {
+    if (!receiver.is_scope_base) {
       return receiver.expr;
     }
     return block.exprs.Add(

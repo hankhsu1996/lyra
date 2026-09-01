@@ -697,6 +697,17 @@ class UnitLowerer {
       const WalkFrame& frame, const slang::ast::Scope& target) const
       -> std::optional<ScopeRoute>;
 
+  // How this reader reaches the interface an enclosing scope's `port` carries
+  // (LRM 25.3). The port is the whole route: what stands behind it belongs to a
+  // unit this one reaches no other way, so any other route to the same object
+  // would describe a different design -- which is why the frontend's own
+  // resolution of the port to that object is not what this reads. What the
+  // route ends at is the caller's, so one derivation serves a name read through
+  // the port and a connection handing the port's interface on.
+  [[nodiscard]] auto RouteThroughInterfacePort(
+      const WalkFrame& frame, const slang::ast::Symbol& port) const
+      -> ScopeRoute;
+
   // The reads of a dependency set that name a cell, as the entries that wake on
   // it under `edge`. A read of anything else contributes none, so a constant
   // read alongside a signal leaves only the signal subscribed (LRM 9.2.2.2.1).

@@ -59,13 +59,10 @@ auto PublishedMemberRecipe(
 }
 
 // The route to the interface instance a connection names (LRM 25.3). An actual
-// written as an interface port of a scope enclosing the connection makes that
-// port the whole route: the instance behind it belongs to a unit this one
-// reaches no other way, so a route around the port would describe a different
-// design -- which is why the frontend's own resolution of the port to that
-// instance is not what this reads. Every other actual names an instance
-// somewhere on the object tree, reached by the same walk every reference
-// across an instance boundary uses.
+// written as an interface port of a scope enclosing the connection is the
+// port's own route; every other actual names an instance somewhere on the
+// object tree, reached by the same walk every reference across an instance
+// boundary uses.
 auto InterfaceActualRoute(
     UnitLowerer& unit_lowerer, const slang::ast::PortConnection& conn,
     hir::TypeId object_type, diag::SourceSpan span, WalkFrame frame)
@@ -95,21 +92,9 @@ auto InterfaceActualRoute(
           "an interface reached through part of another interface port is not "
           "yet supported");
     }
-    const auto port = unit_lowerer.LookupInterfacePortBinding(*path[0].symbol);
-    if (!port.has_value()) {
-      throw InternalError(
-          "InterfaceActualRoute: the actual names an interface port of a scope "
-          "enclosing the connection, which this unit's own walk declared");
-    }
-    const auto hops = frame.HopsTo(port->home_frame);
-    if (!hops.has_value()) {
-      throw InternalError(
-          "InterfaceActualRoute: an interface port is a member of a scope "
-          "enclosing every connection that names it");
-    }
-    return recipe(
-        hir::InUnitHead{.hops = *hops},
-        {hir::PathStep{hir::InterfacePortStep{.port = port->port}}});
+    auto through =
+        unit_lowerer.RouteThroughInterfacePort(frame, *path[0].symbol);
+    return recipe(std::move(through.head), std::move(through.steps));
   }
 
   // Which instance an element of an instance array is given is settled while

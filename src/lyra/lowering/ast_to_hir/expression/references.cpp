@@ -310,12 +310,8 @@ auto LowerValueRef(
   return ValueTargetRefExpr(**target, *type_id, span);
 }
 
-// LRM 25.3: a name reached through an interface port. slang resolves the target
-// to the declaration inside the connected interface, which lives in another
-// compilation unit, so the reader's own position on the object tree says
-// nothing about where it is -- the port is the only reach to it, and any other
-// route to the same declaration would describe a different design. That makes
-// the port the whole descent: one typed step, from which what the route ends at
+// LRM 25.3: a name reached through an interface port, which is the port's whole
+// route plus the name the interface published, and what the route ends at
 // follows the way it does for a step onto an instance.
 auto LowerInterfacePortValue(
     UnitLowerer& unit_lowerer, WalkFrame frame,
@@ -329,23 +325,12 @@ auto LowerInterfacePortValue(
         span, diag::DiagCode::kUnsupportedExpressionForm,
         "a nested name reached through an interface port is not yet supported");
   }
-  const auto binding = unit_lowerer.LookupInterfacePortBinding(*path[0].symbol);
-  if (!binding.has_value()) {
-    throw InternalError(
-        "LowerInterfacePortValue: the path heads at a port of the reader's own "
-        "unit, which the unit's own walk declared");
-  }
-  const auto hops = frame.HopsTo(binding->home_frame);
-  if (!hops.has_value()) {
-    throw InternalError(
-        "LowerInterfacePortValue: an interface port is a member of a scope "
-        "enclosing every reader of it");
-  }
   auto type_id = unit_lowerer.InternType(*hve.type, span);
   if (!type_id) return std::unexpected(std::move(type_id.error()));
+  auto through = unit_lowerer.RouteThroughInterfacePort(frame, *path[0].symbol);
   auto route = unit_lowerer.MakeRoutedRef(
-      hve.symbol, frame.Current(), hir::InUnitHead{.hops = *hops},
-      {hir::PathStep{hir::InterfacePortStep{.port = binding->port}}});
+      hve.symbol, frame.Current(), std::move(through.head),
+      std::move(through.steps));
   if (!route) return std::unexpected(std::move(route.error()));
   return ValueTargetRefExpr(hir::ValueTarget{*route}, *type_id, span);
 }
