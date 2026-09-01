@@ -57,9 +57,10 @@ auto ClosureBuilder::Finish(mir::TypeId result_type) -> mir::Expr {
   // frame-copied when it is built, so nothing dangles once a spawned branch
   // outlives the site, and building it is inseparable from starting it.
   const mir::TypeId value_type =
-      unit_->types.IsCoroutine(result_type)
+      unit_->types.Get(result_type).Is<mir::CoroutineType>()
           ? result_type
-          : unit_->types.Intern(mir::ClosureType{.closure_id = closure_id_});
+          : unit_->types.Intern(
+                mir::Type{mir::ClosureType{.closure_id = closure_id_}});
   unit_->DefineClosure(closure_id_, std::move(closure_decl_));
   return mir::Expr{
       .data =

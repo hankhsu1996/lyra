@@ -11,8 +11,8 @@
 #include "lyra/hir/external_unit_object.hpp"
 #include "lyra/hir/port_direction.hpp"
 #include "lyra/hir/published_member.hpp"
+#include "lyra/hir/type.hpp"
 #include "lyra/hir/type_id.hpp"
-#include "lyra/hir/type_pool.hpp"
 
 namespace lyra::hir {
 

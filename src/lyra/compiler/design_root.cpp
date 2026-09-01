@@ -26,6 +26,7 @@
 #include "lyra/lowering/hir_to_mir/unit_lowerer.hpp"
 #include "lyra/lowering/mir_to_lir/lower.hpp"
 #include "lyra/mir/compilation_unit.hpp"
+#include "lyra/mir/type_builders.hpp"
 
 namespace lyra::compiler {
 
@@ -129,17 +130,17 @@ auto BuildPackageInitializationPlan(std::span<const mir::CompilationUnit> units)
 auto ReinternForeignType(
     mir::CompilationUnit& root, const mir::CompilationUnit& unit,
     mir::TypeId id) -> mir::TypeId {
-  const mir::TypeData& data = unit.types.Get(id).data;
-  if (const auto* pointer = std::get_if<mir::PointerType>(&data)) {
-    return root.types.PointerTo(
-        ReinternForeignType(root, unit, pointer->pointee), pointer->ownership,
-        pointer->mutability);
+  const mir::Type& data = unit.types.Get(id);
+  if (const auto* pointer = data.As<mir::PointerType>()) {
+    return root.types.Intern(
+        mir::Type{mir::PointerType{
+            .pointee = ReinternForeignType(root, unit, pointer->pointee),
+            .ownership = pointer->ownership,
+            .mutability = pointer->mutability}});
   }
-  if (std::holds_alternative<mir::VoidType>(data) ||
-      std::holds_alternative<mir::MachineIntType>(data) ||
-      std::holds_alternative<mir::MachineFloatType>(data) ||
-      std::holds_alternative<mir::MachineCStringType>(data) ||
-      std::holds_alternative<mir::RuntimeLibraryType>(data)) {
+  if (data.Is<mir::VoidType>() || data.Is<mir::MachineIntType>() ||
+      data.Is<mir::MachineFloatType>() || data.Is<mir::MachineCStringType>() ||
+      data.Is<mir::RuntimeLibraryType>()) {
     return root.types.Intern(data);
   }
   throw InternalError(
@@ -195,7 +196,7 @@ void DefineExportSymbol(
   const mir::ExprId name = body.exprs.Add(
       mir::Expr{
           .data = mir::StringLiteral{.value = linkage.foreign_name},
-          .type = root.types.Intern(mir::MachineCStringType{})});
+          .type = root.types.Intern(mir::Type{mir::MachineCStringType{}})});
   const mir::ExprId entry = body.exprs.Add(
       mir::Expr{
           .data =
@@ -204,15 +205,15 @@ void DefineExportSymbol(
                       mir::Direct{
                           .target = support::BuiltinFn::kFindExportEntry},
                   .arguments = {scope_ref, name}},
-          .type = root.types.ErasedFunction()});
+          .type = mir::ErasedFunction(root.types)});
 
   const mir::ExprId restored = body.exprs.Add(
       mir::Expr{
           .data = mir::FunctionCastExpr{.operand = entry},
           .type = root.types.Intern(
-              mir::MachineFunctionType{
+              mir::Type{mir::MachineFunctionType{
                   .params = std::move(entry_params),
-                  .result = signature.result})});
+                  .result = signature.result}})});
   std::vector<mir::ExprId> call_args;
   call_args.reserve(code.params.size() + 1);
   call_args.push_back(
@@ -230,8 +231,7 @@ void DefineExportSymbol(
           .type = signature.result});
   // A void entry is called for its effect and returns nothing; any other hands
   // its result straight back.
-  if (std::holds_alternative<mir::VoidType>(
-          root.types.Get(signature.result).data)) {
+  if (root.types.Get(signature.result).Is<mir::VoidType>()) {
     body.AppendStmt(mir::ExprStmt{.expr = call});
     body.AppendStmt(mir::ReturnStmt{.value = std::nullopt});
   } else {
@@ -264,8 +264,8 @@ void DefineExportSymbols(
                 if (!defined.insert(symbol.linkage.foreign_name).second) {
                   return;
                 }
-                const auto& signature = std::get<mir::MachineFunctionType>(
-                    unit.types.Get(per_scope.signature).data);
+                const auto& signature = unit.types.Get(per_scope.signature)
+                                            .Get<mir::MachineFunctionType>();
                 std::vector<mir::TypeId> params;
                 params.reserve(signature.params.size());
                 for (const mir::TypeId param : signature.params) {

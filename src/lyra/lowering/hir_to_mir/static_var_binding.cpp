@@ -6,6 +6,7 @@
 
 #include "lyra/hir/procedural_var.hpp"
 #include "lyra/lowering/hir_to_mir/unit_lowerer.hpp"
+#include "lyra/mir/type_builders.hpp"
 #include "lyra/mir/type_id.hpp"
 
 namespace lyra::lowering::hir_to_mir {
@@ -44,7 +45,7 @@ auto BindBodyStatics(
       const mir::TypeId value_type = unit_lowerer.TranslateType(var.type);
       const mir::TypeId storage_type =
           observed == ObservedStorage::kYes
-              ? unit_lowerer.Unit().types.ObservableCellOf(value_type)
+              ? mir::ObservableCellOf(unit_lowerer.Unit().types, value_type)
               : value_type;
       bindings.push_back(
           StaticVarBinding{

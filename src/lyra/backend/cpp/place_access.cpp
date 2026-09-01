@@ -3,7 +3,6 @@
 #include <format>
 #include <string>
 #include <string_view>
-#include <variant>
 
 #include "lyra/base/internal_error.hpp"
 #include "lyra/mir/type.hpp"
@@ -39,7 +38,7 @@ auto RenderLoadThrough(const mir::Type& wrapper_type, std::string_view wrapper)
   // A driver carries one contribution to a net's resolution, and SystemVerilog
   // gives no way to name it: a design reads the net, whose value is the fold of
   // every driver (LRM 6.5).
-  if (std::holds_alternative<mir::DriverType>(wrapper_type.data)) {
+  if (wrapper_type.Is<mir::DriverType>()) {
     throw InternalError(
         "RenderLoadThrough: a net driver's contribution is not readable; a "
         "read of the net reads its resolved value");
@@ -53,7 +52,7 @@ auto RenderLendThrough(const mir::Type& wrapper_type, std::string_view wrapper)
   // A net's resolved value is the fold of its drivers, so nothing writes it or
   // holds it by reference; a value reaches a net only through one of those
   // drivers (LRM 6.5).
-  if (std::holds_alternative<mir::ResolvedType>(wrapper_type.data)) {
+  if (wrapper_type.Is<mir::ResolvedType>()) {
     throw InternalError(
         "RenderLendThrough: a net's resolved value takes no store; the "
         "destination is one of its drivers");

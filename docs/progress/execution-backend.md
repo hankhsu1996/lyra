@@ -92,14 +92,14 @@ ownership, or native in-frame layout) for every value.
       fixed-arity container value domain. It default-constructs member-wise, builds from an
       enumerated element list and from a replicated pattern through one repeat-unit-and-count path,
       copies with value semantics, takes the equality and case-equality families, reports its size
-      and its bit-stream width and count, reads and writes an element, takes a contiguous range
+      and its bit-stream width and count, reads and writes an element, reads a contiguous range
       select, lives in a member slot as a whole-cell observable signal, and crosses a suspension as
       an activation-frame value. Its payload is ordinal-only: the declared range is the receiver's
       static type's and arrives at a select as its own operand, so a whole-value store copies
-      positions and relabels nothing. A store between two arrays whose declared ranges differ is
-      refused rather than lowered, because this layer still gives each declared range its own type
-      identity and the two sides therefore arrive as unequal types; closing that means making a LIR
-      type's identity its content.
+      positions and relabels nothing -- and a store between two arrays whose declared ranges differ
+      lowers, because the range is gone by this layer, both sides are one type, and a type pool
+      keyed by content says so. Writing a range is refused: it rebuilds the whole value with that
+      window replaced, which no container here offers yet.
 - [x] **The queue** (LRM 7.10) -- realized on the execution backend as a run-time-sized ordered
       container value domain. It defaults to empty, builds from an assignment pattern, copies with
       value semantics, takes the equality and case-equality families, reports its size and its
@@ -149,13 +149,15 @@ ownership, or native in-frame layout) for every value.
       reclamation, none of which is implemented: the managed reference is realized as a
       reference-counted handle that does not reclaim cycles, and only in the C++ backend. Contract:
       `../architecture/object_lifetime.md`.
-- [ ] **A reference argument aliasing anything but a plain local.** A reference binds the storage it
-      aliases and reaches it by address, which two referents do not offer: a signal, whose storage
-      is a cell that must raise its update event when written rather than be stored into, and a
-      suspending body's value local, whose value lives in the activation frame reached by a handle.
-      Aliasing a plain local of an ordinary body is lowered. An `output` / `inout` argument is not
-      subject to this -- it copies out through the actual's own write path, so it reaches a signal
-      like any other assignment does.
+- [ ] **A reference argument aliasing storage that is not a cell.** A reference binds the cell its
+      referent lives in, so a signal is lent by taking the address of the cell it already is, and a
+      write through the reference raises the update event a write to that signal owes its
+      subscribers. A plain local is lent the same way, since a local whose storage is lent is given
+      a cell where it is declared. What is left refuses because the referent's value lives somewhere
+      no address reaches: a suspending body's local lives in the activation frame, a class property
+      is a member owning its value rather than a cell holding it, and a part of a value aggregate is
+      no independent storage at all. An `output` / `inout` argument is not subject to this -- it
+      copies out through the actual's own write path.
 
 ## Value realization: two tracks today, one native model deferred
 
@@ -191,12 +193,16 @@ value-domain breadth can be filled first, and the C++ backend is transitional.
 ## Deferred effects and concurrency
 
 Each defers a value, or hands control to another activation, past the end of the current stretch, so
-each meets the same lifetime question above; none is lowerable on the execution backend yet.
+each meets the same lifetime question above.
 
 - [ ] A task enable. Control returns to the enabler only once the task completes (LRM 13.3), so the
       enabler suspends on another activation's completion rather than on a wakeup source it
       registered itself -- the one suspension whose resumption is a second body's to signal.
-- [ ] Non-blocking assignment (a deferred closure submit). Rolled up in `processes.md` (P4).
+- [x] **Non-blocking assignment** (LRM 10.4.2). A read taken after the statement in the same time
+      step still sees the value the destination had, and the assigned value appears only once the
+      update region has run. Every destination form takes it: a whole variable, an element, a range,
+      a structure member, and a concatenation left-hand side. A destination that is an
+      automatic-lifetime local is still rejected. Rolled up in `processes.md` (P4).
 - [ ] Fork / join and the closures a spawned branch carries.
 - [ ] Named events across a suspension. Rolled up in `processes.md` (P9).
 
@@ -239,9 +245,13 @@ each meets the same lifetime question above; none is lowerable on the execution 
       Calling an inherited method has the same hole seen from the call side: the receiver crosses
       without being re-typed to the class that declares the body. Both need one decision -- a base
       sub-object as a place step, or one flattened member list with the base's members first -- and
-      the runtime's member table has to match whichever it is. The C++ backend never had to answer
-      this, because the host language answers it. Unreachable end to end today, since constructing
-      an object is itself refused here.
+      the runtime's member table has to match whichever it is. Constructing the base is the same
+      question seen a third time, and it is the one place this backend does not refuse but drops: a
+      constructor lowers as an ordinary function, so a class that initializes its base runs a
+      constructor that does not. It reads as a gap only because a base is not reachable here yet;
+      the two answers above each imply a different shape for it, so it is not separable from them.
+      The C++ backend never had to answer any of the three, because the host language answers them.
+      Unreachable end to end today, since constructing an object is itself refused here.
 - [ ] `dump llvm`, and `run` / `compile` end to end against this backend, so a design goes from
       source to a running program without the C++ backend.
 - [ ] The smoke, benchmark, and AOT CI jobs, which are disabled until a design runs end to end here.

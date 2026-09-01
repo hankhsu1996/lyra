@@ -10,14 +10,13 @@
 #include "lyra/lir/place_query.hpp"
 #include "lyra/lir/type.hpp"
 #include "lyra/lir/type_id.hpp"
-#include "lyra/lir/type_query.hpp"
 
 namespace lyra::lir {
 
 namespace {
 
 auto IsVoid(const CompilationUnit& unit, TypeId type) -> bool {
-  return std::holds_alternative<VoidType>(unit.types.Get(type).data);
+  return unit.types.Get(type).Is<VoidType>();
 }
 
 void VerifyInstr(
@@ -27,7 +26,7 @@ void VerifyInstr(
       Overloaded{
           [&](const LoadInstr& load) {
             const TypeId place_type = PlaceType(unit, fn, load.place);
-            if (IsAddressOnly(unit.types, place_type)) {
+            if (unit.types.Get(place_type).IsAddressOnly()) {
               throw InternalError(
                   "lir verify: load of a place whose storage is only "
                   "addressable");
@@ -39,7 +38,7 @@ void VerifyInstr(
           },
           [&](const StoreInstr& store) {
             const TypeId place_type = PlaceType(unit, fn, store.place);
-            if (IsAddressOnly(unit.types, place_type)) {
+            if (unit.types.Get(place_type).IsAddressOnly()) {
               throw InternalError(
                   "lir verify: store into a place whose storage is only "
                   "addressable");
@@ -60,7 +59,7 @@ void VerifyInstr(
           [&](const AddrOfInstr& addr) {
             const TypeId place_type = PlaceType(unit, fn, addr.place);
             const std::optional<TypeId> pointee =
-                Pointee(unit.types, result_type);
+                unit.types.Get(result_type).Pointee();
             if (!pointee || *pointee != place_type) {
               throw InternalError(
                   "lir verify: address-of result is not a reference to its "
@@ -70,11 +69,11 @@ void VerifyInstr(
           [&](const PointerCastInstr& cast) {
             const std::optional<TypeId> operand_type =
                 OperandType(fn, cast.operand);
-            if (!operand_type || !Pointee(unit.types, *operand_type)) {
+            if (!operand_type || !unit.types.Get(*operand_type).Pointee()) {
               throw InternalError(
                   "lir verify: pointer cast of a non-reference operand");
             }
-            if (!Pointee(unit.types, result_type)) {
+            if (!unit.types.Get(result_type).Pointee()) {
               throw InternalError(
                   "lir verify: pointer cast result is not a reference type");
             }
@@ -83,8 +82,7 @@ void VerifyInstr(
             const std::optional<TypeId> operand_type =
                 OperandType(fn, cast.operand);
             const auto is_machine_int = [&](TypeId type) {
-              return std::holds_alternative<MachineIntType>(
-                  unit.types.Get(type).data);
+              return unit.types.Get(type).Is<MachineIntType>();
             };
             if (!operand_type || !is_machine_int(*operand_type)) {
               throw InternalError(
@@ -101,15 +99,15 @@ void VerifyInstr(
           [&](const ValueCastInstr& cast) {
             const std::optional<TypeId> operand_type =
                 OperandType(fn, cast.operand);
-            if (!operand_type || !IsIntegral(unit.types, *operand_type) ||
-                !IsIntegral(unit.types, result_type)) {
+            if (!operand_type ||
+                !unit.types.Get(*operand_type).IsIntegralPacked() ||
+                !unit.types.Get(result_type).IsIntegralPacked()) {
               throw InternalError(
                   "lir verify: value cast between types that are not both "
                   "integral");
             }
-            if (!SameRepresentation(
-                    PackedShape(unit.types, *operand_type),
-                    PackedShape(unit.types, result_type))) {
+            if (unit.types.Get(*operand_type).PackedShape() !=
+                unit.types.Get(result_type).PackedShape()) {
               throw InternalError(
                   "lir verify: value cast changes its value's representation");
             }
@@ -122,7 +120,7 @@ void VerifyInstr(
 }
 
 void VerifyFunction(const CompilationUnit& unit, const Function& fn) {
-  const bool is_coroutine = IsCoroutine(unit.types, fn.result_type);
+  const bool is_coroutine = unit.types.Get(fn.result_type).Is<CoroutineType>();
   for (const BasicBlock& block : fn.blocks) {
     for (const Instr& instr : block.instrs) {
       VerifyInstr(unit, fn, instr);

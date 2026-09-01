@@ -3,6 +3,8 @@
 #include <compare>
 #include <cstdint>
 
+#include "lyra/base/pool_id.hpp"
+
 namespace lyra::mir {
 
 // Identity of a compiler-generated struct declaration within a compilation unit
@@ -11,7 +13,7 @@ namespace lyra::mir {
 // struct is a type in the type system, not a nominal object: it has no base, no
 // dispatch, and no lifecycle. A closure is a separate category (`ClosureId`).
 struct StructId {
-  std::uint32_t value;
+  std::uint32_t value = base::kUnassignedId;
 
   auto operator<=>(const StructId&) const -> std::strong_ordering = default;
 };

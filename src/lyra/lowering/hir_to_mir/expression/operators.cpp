@@ -5,7 +5,6 @@
 #include <optional>
 #include <span>
 #include <utility>
-#include <variant>
 #include <vector>
 
 #include "lyra/base/internal_error.hpp"
@@ -15,6 +14,7 @@
 #include "lyra/hir/conversion.hpp"
 #include "lyra/hir/expr.hpp"
 #include "lyra/hir/unary_op.hpp"
+#include "lyra/lowering/hir_to_mir/block_builder.hpp"
 #include "lyra/lowering/hir_to_mir/callable_bindings.hpp"
 #include "lyra/lowering/hir_to_mir/cast_lowering.hpp"
 #include "lyra/lowering/hir_to_mir/condition.hpp"
@@ -167,18 +167,8 @@ auto LowerIncDecOp(hir::IncDecOp op) -> mir::IncDecOp {
   throw InternalError("LowerIncDecOp: unknown HIR IncDecOp");
 }
 
-auto IsRealFamilyTypeKind(mir::TypeKind k) -> bool {
-  return k == mir::TypeKind::kReal || k == mir::TypeKind::kShortReal ||
-         k == mir::TypeKind::kRealTime;
-}
-
-auto IsRealFamilyType(const mir::Type& ty) -> bool {
-  return IsRealFamilyTypeKind(ty.Kind());
-}
-
 auto IsArrayContainerType(const mir::Type& ty) -> bool {
-  return std::holds_alternative<mir::UnpackedArrayType>(ty.data) ||
-         std::holds_alternative<mir::DynamicArrayType>(ty.data);
+  return ty.Is<mir::UnpackedArrayType>() || ty.Is<mir::DynamicArrayType>();
 }
 
 // Maps the method-style MIR binary ops to their `BuiltinFn` realization on
@@ -337,8 +327,7 @@ auto BuildMirUnaryExpr(
   // integral the SV semantic prescribes. A chandle's boolean value is 0 when it
   // is null and 1 otherwise.
   if (op == mir::UnaryOp::kLogicalNot &&
-      (IsRealFamilyType(operand_ty) ||
-       operand_ty.Kind() == mir::TypeKind::kChandle)) {
+      (operand_ty.IsRealFamily() || operand_ty.Is<mir::ChandleType>())) {
     const mir::ExprId operand_bool =
         block.exprs.Add(MakeBoolCast(unit, operand_id));
     const mir::ExprId not_id = block.exprs.Add(
@@ -361,10 +350,10 @@ auto BuildMirBinaryExpr(
     -> mir::Expr {
   const auto& lhs_ty = unit.types.Get(block.exprs.Get(lhs_id).type);
   const auto& rhs_ty = unit.types.Get(block.exprs.Get(rhs_id).type);
-  const bool real_lhs = IsRealFamilyType(lhs_ty);
-  const bool real_rhs = IsRealFamilyType(rhs_ty);
-  const bool string_lhs = lhs_ty.Kind() == mir::TypeKind::kString;
-  const bool string_rhs = rhs_ty.Kind() == mir::TypeKind::kString;
+  const bool real_lhs = lhs_ty.IsRealFamily();
+  const bool real_rhs = rhs_ty.IsRealFamily();
+  const bool string_lhs = lhs_ty.Is<mir::StringType>();
+  const bool string_rhs = rhs_ty.Is<mir::StringType>();
 
   // LRM 8.4: class-handle equality compares object identity and yields a 1-bit
   // value. A class handle's `==` / `!=` produces a host bool, reshaped to the
@@ -373,7 +362,7 @@ auto BuildMirBinaryExpr(
   // value type whose `==` already yields the 1-bit integral directly, like a
   // string or a real, so it renders as a plain binary operator.
   const auto is_handle = [](const mir::Type& ty) {
-    return ty.Kind() == mir::TypeKind::kManagedRef;
+    return ty.Is<mir::ManagedRefType>();
   };
   if ((is_handle(lhs_ty) || is_handle(rhs_ty)) &&
       (op == mir::BinaryOp::kEquality || op == mir::BinaryOp::kInequality)) {
@@ -484,6 +473,94 @@ auto LowerHirBinaryExpr(
       result_type);
 }
 
+// LRM 11.4.11 over a predicate whose truth is three-valued: a predicate that
+// settles selects one arm and the other is never evaluated; an ambiguous one
+// selects neither, so both are evaluated and their results are combined bit by
+// bit. Three outcomes over one predicate, which is a chain of two selections
+// over the two ways it can settle -- so the operator states itself in the
+// primitives every selection already uses, and no consumer is left to invent a
+// way to evaluate an arm conditionally.
+//
+// The predicate is bound to a local because both selections read it and it is
+// evaluated once. Each arm is named by the outcomes that need it, and reaches
+// at most one of them on any run.
+template <ExprLowerer Lowerer>
+auto BuildMergingConditional(
+    Lowerer& lowerer, const WalkFrame& frame, const hir::ConditionalExpr& c,
+    mir::TypeId predicate_type, mir::TypeId result_type)
+    -> diag::Result<mir::Expr> {
+  auto& unit = lowerer.Owner().Unit();
+
+  BlockBuilder steps(frame);
+  mir::Block& body = steps.Body();
+  auto predicate_or = lowerer.LowerExpr(
+      lowerer.HirExprs().Get(c.conditions.front().expr), steps.Frame());
+  if (!predicate_or) return std::unexpected(std::move(predicate_or.error()));
+  const mir::ExprId predicate_value = body.exprs.Add(*std::move(predicate_or));
+  const mir::LocalId predicate_var = steps.Bindings().DeclareAnonymous(
+      mir::LocalDecl{.name = "_lyra_predicate", .type = predicate_type});
+  body.AppendStmt(
+      mir::LocalDeclStmt{.target = predicate_var, .init = predicate_value});
+  const auto read_predicate = [&] {
+    return body.exprs.Add(mir::MakeLocalRefExpr(predicate_var, predicate_type));
+  };
+
+  auto then_or =
+      lowerer.LowerExpr(lowerer.HirExprs().Get(c.then_value), steps.Frame());
+  if (!then_or) return std::unexpected(std::move(then_or.error()));
+  const mir::ExprId then_id = body.exprs.Add(*std::move(then_or));
+  auto else_or =
+      lowerer.LowerExpr(lowerer.HirExprs().Get(c.else_value), steps.Frame());
+  if (!else_or) return std::unexpected(std::move(else_or.error()));
+  const mir::ExprId else_id = body.exprs.Add(*std::move(else_or));
+
+  const mir::ExprId negated = body.exprs.Add(
+      mir::Expr{
+          .data =
+              mir::UnaryExpr{
+                  .op = mir::UnaryOp::kLogicalNot, .operand = read_predicate()},
+          .type = predicate_type});
+  // LRM 11.4.11 combines the two results bit by bit: a bit both arms know and
+  // agree on survives and every other becomes x (Table 11-20). A value with no
+  // parts that can agree that way answers with the Table 7-1 default of its own
+  // type instead, and which of the two it is follows from the result type, so
+  // it is settled here rather than left for a backend to work out.
+  const mir::Type& result_ty = unit.types.Get(result_type);
+  const bool combines_bitwise =
+      result_ty.IsIntegralPacked() || result_ty.Is<mir::UnpackedArrayType>();
+  const mir::ExprId combined =
+      combines_bitwise
+          ? body.exprs.Add(
+                mir::Expr{
+                    .data =
+                        mir::CallExpr{
+                            .callee =
+                                mir::Direct{
+                                    .target =
+                                        support::BuiltinFn::kMergeConditional},
+                            .arguments = {then_id, else_id}},
+                    .type = result_type})
+          : body.exprs.Add(BuildDefaultValueExpr(
+                lowerer.Owner(), steps.Frame(), result_type));
+  const mir::ExprId else_or_combined = body.exprs.Add(
+      mir::Expr{
+          .data =
+              mir::ConditionalExpr{
+                  .condition = ReduceToCondition(unit, body, negated),
+                  .then_value = else_id,
+                  .else_value = combined},
+          .type = result_type});
+  const mir::ExprId selected = body.exprs.Add(
+      mir::Expr{
+          .data =
+              mir::ConditionalExpr{
+                  .condition = ReduceToCondition(unit, body, read_predicate()),
+                  .then_value = then_id,
+                  .else_value = else_or_combined},
+          .type = result_type});
+  return steps.Build(selected);
+}
+
 template <ExprLowerer Lowerer>
 auto LowerHirConditionalExpr(
     Lowerer& lowerer, WalkFrame frame, const hir::ConditionalExpr& c,
@@ -495,6 +572,24 @@ auto LowerHirConditionalExpr(
   if (c.conditions.empty()) {
     throw InternalError(
         "LowerHirConditionalExpr: hir::ConditionalExpr has no clauses");
+  }
+
+  // LRM 11.4.11 reads the predicate's truth as three-valued, but only a
+  // four-state predicate can reach the third answer, where neither arm is
+  // selected and the two results are combined instead. Conjoining several
+  // clauses yields a two-state bit whatever they were, so only a lone clause
+  // can carry the third answer. The predicate's type settles which operator
+  // this is, and a type is read without evaluating anything.
+  if (c.conditions.size() == 1) {
+    const mir::TypeId predicate_type = lowerer.Owner().TranslateType(
+        lowerer.HirExprs().Get(c.conditions.front().expr).type);
+    const mir::Type& predicate_ty = unit.types.Get(predicate_type);
+    if (predicate_ty.IsIntegralPacked() &&
+        predicate_ty.PackedShape().state_kind ==
+            mir::IntegralStateKind::kFourState) {
+      return BuildMergingConditional(
+          lowerer, frame, c, predicate_type, result_type);
+    }
   }
 
   // Every clause's predicate is conjoined left to right; `&&` short-circuits,
@@ -519,22 +614,6 @@ auto LowerHirConditionalExpr(
   if (!else_or) return std::unexpected(std::move(else_or.error()));
   const mir::ExprId else_id = block.exprs.Add(*std::move(else_or));
 
-  // LRM 11.4.11 reads the predicate's truth as three-valued, but only a
-  // four-state predicate can reach the third answer. Which of the two the
-  // operator is follows from the predicate's type and is settled here, so what
-  // reaches a backend is one selection semantics per node.
-  const mir::Type& predicate_type =
-      unit.types.Get(block.exprs.Get(predicate_id).type);
-  if (predicate_type.IsIntegralPacked() &&
-      predicate_type.AsIntegralPacked().IsFourState()) {
-    return mir::Expr{
-        .data =
-            mir::MergingConditionalExpr{
-                .condition = predicate_id,
-                .then_value = then_id,
-                .else_value = else_id},
-        .type = result_type};
-  }
   return mir::Expr{
       .data =
           mir::ConditionalExpr{
@@ -693,7 +772,6 @@ template auto LowerHirBindingConditionalExpr(
 template auto LowerHirConditionalExpr(
     ProcessLowerer&, WalkFrame, const hir::ConditionalExpr&, mir::TypeId)
     -> diag::Result<mir::Expr>;
-
 template auto LowerHirConditionalExpr(
     const StructuralScopeLowerer&, WalkFrame, const hir::ConditionalExpr&,
     mir::TypeId) -> diag::Result<mir::Expr>;

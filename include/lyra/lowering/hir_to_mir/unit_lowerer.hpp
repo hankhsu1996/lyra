@@ -117,7 +117,7 @@ class UnitLowerer {
   // claim a dependency this unit does not have and pull an artifact it never
   // references.
   [[nodiscard]] auto UnitObjectNamed(const std::string& unit_name) const
-      -> mir::TypeData;
+      -> mir::Type;
 
   // Where a published member sits in the object this unit recorded. The HIR and
   // MIR records list the same members in the same order, so the position
@@ -286,8 +286,7 @@ class UnitLowerer {
   // callables.
   auto PublishUnitDeclarations() -> diag::Result<void>;
 
-  [[nodiscard]] auto TranslateTypeData(const hir::TypeData& data)
-      -> mir::TypeData;
+  [[nodiscard]] auto TranslateType(const hir::Type& type) -> mir::Type;
 
   const hir::CompilationUnit* hir_;
   const diag::SourceManager* source_manager_;

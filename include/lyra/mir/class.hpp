@@ -65,16 +65,17 @@ struct BaseInit {
 // The class's construction protocol. The constructor is a bare body block the
 // class owns directly, not a member of the callable arena: it is never a call
 // target and never dispatches, so it carries no callable identity. `code` runs
-// the constructor body; the construction facts the body does not itself express
-// -- how the base is initialized and how a field gets its pre-body initializer
-// -- live alongside it. A consumer that emits construction reads `base_init`
-// and `member_inits` in declaration order, then descends into `code`.
+// the constructor body, which is where every step of construction the body can
+// express already lives -- a property's declared initializer among them (LRM
+// 8.7), lowered as an ordinary write in declaration order. What remains beside
+// it is the one step no body statement reaches: the base is constructed before
+// the body runs, so a consumer initializes the base first, then descends into
+// `code`.
 struct ConstructorDecl {
   // A class always defines its own construction, so this code is always a
   // definition; an empty body is a class that constructs nothing.
   CallableCode code = CallableCode::Defined();
   std::optional<BaseInit> base_init;
-  std::vector<FieldInit> member_inits;
 };
 
 struct Class {

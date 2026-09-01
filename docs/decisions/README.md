@@ -58,8 +58,9 @@ the detail lives in the entry itself.
   nonblocking assignment bind; the nested-lvalue write encoding is deleted.
 - [queue-operators](queue-operators.md) -- queue access operators lower to built-in method calls;
   read and write are distinct methods chosen at lowering.
-- [concatenation-realization](concatenation-realization.md) -- a join means one operation and
-  carries two or more runs; an N-ary build reaches a fixed-arity ABI as a chain.
+- [concatenation-realization](concatenation-realization.md) -- a join is a call rather than a node
+  of its own, over every operand family, and reaches MIR already folded to the two operands every
+  entry that performs it takes.
 - [value-construction-forms](value-construction-forms.md) -- a construction says which form it is; a
   value that is its own parts is a primitive, a container built from one is a call, and what names a
   call is the type's own answer.
@@ -133,6 +134,10 @@ the detail lives in the entry itself.
   `Id` is the only durable handle, so lowering projects value facts before mutating.
 - [mir-type-interning](mir-type-interning.md) -- the MIR type pool is a structural-equality
   interner; each semantic type has one canonical `TypeId`, enabling recursive class types.
+- [lir-type-interning](lir-type-interning.md) -- the same for LIR, the layer that had not taken it:
+  a LIR type's identity is its content, so a type built by the lowering and one translated from MIR
+  are one type. Nothing needs excluding from the key, because LIR carries no source-language
+  concept; the one field that did had no reader and is deleted.
 - [hir-type-interning](hir-type-interning.md) -- the same for HIR, so a type published by one unit
   and read by another lands on the entry the reader already had; identity is the unit's own, never
   the frontend's.
@@ -155,6 +160,11 @@ the detail lives in the entry itself.
 - [reference-as-data-type](reference-as-data-type.md) -- a reference is a direction at HIR and a
   data type at MIR; one type serves `ref` formals and `ref` ports, preserving the observable-cell
   protocol.
+- [reference-binds-a-cell](reference-binds-a-cell.md) -- what that protocol makes a reference on the
+  execution backend: the address of a value cell, so every referent is one and a local whose storage
+  is lent gets a cell where it is declared. A callee has one formal, so the reference cannot vary
+  with the storage its caller lends; the address of the referent's own storage, a runtime reference
+  object, and a polymorphic storage core are rejected.
 - [object-model](object-model.md) -- a module / scope and an SV class are one generic nominal object
   type; an SV class handle is a managed reference via precise tracing GC.
 - [object-model-storage](object-model-storage.md) -- a compilation unit owns one canonical registry

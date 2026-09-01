@@ -14,7 +14,6 @@
 #include "lyra/hir/structural_scope.hpp"
 #include "lyra/hir/type.hpp"
 #include "lyra/hir/type_id.hpp"
-#include "lyra/hir/type_pool.hpp"
 
 namespace lyra::hir {
 
@@ -75,8 +74,8 @@ struct CompilationUnit {
   // single-dimension packed arrays over them (LRM 7.4.1: an integer type with a
   // predefined width matches a single-dimension packed array).
   static auto MakeBuiltins(TypePool& types) -> BuiltinHirTypes {
-    const auto add = [&](TypeData data) {
-      return types.Intern(std::move(data));
+    const auto add = [&](auto arm) {
+      return types.Intern(Type{std::move(arm)});
     };
     const TypeId scalar_bit = add(ScalarBitType{.atom = BitAtom::kBit});
     const TypeId scalar_logic = add(ScalarBitType{.atom = BitAtom::kLogic});
@@ -88,27 +87,23 @@ struct CompilationUnit {
             add(PackedArrayType{
                 .dim = PackedRange{.left = 31, .right = 0},
                 .element_type = scalar_bit,
-                .signedness = Signedness::kSigned,
-                .form = PackedArrayForm::kInt}),
+                .signedness = Signedness::kSigned}),
         .int_unsigned =
             add(PackedArrayType{
                 .dim = PackedRange{.left = 31, .right = 0},
                 .element_type = scalar_bit,
-                .signedness = Signedness::kUnsigned,
-                .form = PackedArrayForm::kInt}),
+                .signedness = Signedness::kUnsigned}),
         .integer =
             add(PackedArrayType{
                 .dim = PackedRange{.left = 31, .right = 0},
                 .element_type = scalar_logic,
-                .signedness = Signedness::kSigned,
-                .form = PackedArrayForm::kInteger}),
+                .signedness = Signedness::kSigned}),
         .string = add(StringType{}),
         .time =
             add(PackedArrayType{
                 .dim = PackedRange{.left = 63, .right = 0},
                 .element_type = scalar_logic,
-                .signedness = Signedness::kUnsigned,
-                .form = PackedArrayForm::kTime}),
+                .signedness = Signedness::kUnsigned}),
         .realtime = add(RealTimeType{}),
         .wildcard_index = add(WildcardIndexType{}),
     };

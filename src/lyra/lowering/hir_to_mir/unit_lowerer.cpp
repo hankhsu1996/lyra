@@ -39,6 +39,7 @@
 #include "lyra/mir/expr.hpp"
 #include "lyra/mir/stmt.hpp"
 #include "lyra/mir/type.hpp"
+#include "lyra/mir/type_builders.hpp"
 
 namespace lyra::lowering::hir_to_mir {
 
@@ -121,7 +122,7 @@ auto PopulatePackageStaticVariables(
           "a net declared in a package is not supported");
     }
     const mir::TypeId value_type = unit_lowerer.TranslateType(d.type);
-    const mir::TypeId cell_type = unit.types.ObservableCellOf(value_type);
+    const mir::TypeId cell_type = mir::ObservableCellOf(unit.types, value_type);
     if (!unit.types.Get(cell_type).IsCapabilityWrapper()) {
       return diag::Fail(
           diag::DiagCode::kUnsupportedExpressionForm,
@@ -204,10 +205,13 @@ void DefineRootFactory(mir::CompilationUnit& unit) {
   }
   const mir::ClassId root_class = *unit.root;
   const mir::Class& root = unit.GetClass(root_class);
-  const mir::TypeId owned_scope = unit.types.PointerTo(
-      unit.types.Intern(
-          mir::RuntimeClassType{.symbol = "lyra::runtime::Scope"}),
-      mir::PointerOwnership::kUnique);
+  const mir::TypeId owned_scope = unit.types.Intern(
+      mir::Type{mir::PointerType{
+          .pointee = unit.types.Intern(
+              mir::Type{
+                  mir::RuntimeClassType{.symbol = "lyra::runtime::Scope"}}),
+          .ownership = mir::PointerOwnership::kUnique,
+          .mutability = mir::Mutability::kMutable}});
 
   mir::CallableCode code = mir::CallableCode::Defined();
   code.body.emplace();
@@ -221,7 +225,7 @@ void DefineRootFactory(mir::CompilationUnit& unit) {
   const mir::ExprId indices = body.exprs.Add(
       mir::Expr{
           .data = mir::ArrayLiteralExpr{.elements = {}},
-          .type = unit.types.MachineArrayOf(unit.builtins.int_type, 0)});
+          .type = mir::MachineArrayOf(unit.types, unit.builtins.int_type, 0)});
   const mir::ExprId segment = body.exprs.Add(
       mir::Expr{
           .data =
@@ -236,9 +240,12 @@ void DefineRootFactory(mir::CompilationUnit& unit) {
               mir::CallExpr{
                   .callee = mir::Construct{},
                   .arguments = {no_parent, segment}},
-          .type = unit.types.PointerTo(
-              unit.types.Intern(mir::ObjectType{.class_id = root_class}),
-              mir::PointerOwnership::kUnique)});
+          .type = unit.types.Intern(
+              mir::Type{mir::PointerType{
+                  .pointee = unit.types.Intern(
+                      mir::Type{mir::ObjectType{.class_id = root_class}}),
+                  .ownership = mir::PointerOwnership::kUnique,
+                  .mutability = mir::Mutability::kMutable}})});
   body.AppendStmt(
       mir::ReturnStmt{
           .value = body.exprs.Add(
@@ -262,37 +269,40 @@ auto UnitLowerer::MemberCellType(
   return std::visit(
       Overloaded{
           [&](const hir::VariableStorage&) {
-            return unit_.types.ObservableCellOf(value_type);
+            return mir::ObservableCellOf(unit_.types, value_type);
           },
           [&](const hir::NetStorage& net) {
             return unit_.types.Intern(
-                mir::ResolvedType{
+                mir::Type{mir::ResolvedType{
                     .value = value_type,
-                    .resolution = TranslateNetResolution(net.net_type)});
+                    .resolution = TranslateNetResolution(net.net_type)}});
           },
           [&](const hir::ReferenceStorage& reference) {
             return unit_.types.Intern(
-                mir::RefType{
+                mir::Type{mir::RefType{
                     .pointee = value_type,
                     .mutability =
                         reference.binding == hir::ReferenceBinding::kConstRef
                             ? mir::Mutability::kReadOnly
-                            : mir::Mutability::kMutable});
+                            : mir::Mutability::kMutable}});
           },
           [&](const hir::BorrowedObjectStorage&) {
-            return unit_.types.PointerTo(
-                value_type, mir::PointerOwnership::kBorrowed);
+            return unit_.types.Intern(
+                mir::Type{mir::PointerType{
+                    .pointee = value_type,
+                    .ownership = mir::PointerOwnership::kBorrowed,
+                    .mutability = mir::Mutability::kMutable}});
           }},
       storage);
 }
 
 auto UnitLowerer::UnitObjectNamed(const std::string& unit_name) const
-    -> mir::TypeData {
+    -> mir::Type {
   const auto it = external_unit_objects_by_name_.find(unit_name);
   if (it == external_unit_objects_by_name_.end()) {
-    return mir::VoidType{};
+    return mir::Type{mir::VoidType{}};
   }
-  return mir::ExternalUnitObjectType{.object = it->second};
+  return mir::Type{mir::ExternalUnitObjectType{.object = it->second}};
 }
 
 auto UnitLowerer::BuildExternalUnitObject(
@@ -323,7 +333,8 @@ auto UnitLowerer::TakeClassIdentities(const hir::ClassDecl& decl)
   }
   return ClassTranslation{
       .id = id,
-      .object_type = unit_.types.Intern(mir::ObjectType{.class_id = id}),
+      .object_type =
+          unit_.types.Intern(mir::Type{mir::ObjectType{.class_id = id}}),
       .methods = {decl.methods.size(), std::move(methods)}};
 }
 
@@ -366,7 +377,7 @@ auto UnitLowerer::PublishUnitDeclarations() -> diag::Result<void> {
       base::Translation<hir::TypeId, mir::TypeId>{hir_->types.size()};
   for (const hir::TypeId hir_id : hir_->types.Ids()) {
     type_translations_.Append(
-        unit_.types.Intern(TranslateTypeData(hir_->types.Get(hir_id).data)));
+        unit_.types.Intern(TranslateType(hir_->types.Get(hir_id))));
   }
 
   // What each unit this one references promised about its object, in this
@@ -532,8 +543,8 @@ auto UnitLowerer::MakeExternalClassPointee(const hir::ExternalClassRef& ref)
     -> mir::TypeId {
   unit_.AddExternalClassUnit(ref.unit_name);
   return unit_.types.Intern(
-      mir::CrossUnitClassType{
-          .unit_name = ref.unit_name, .class_name = ref.class_name});
+      mir::Type{mir::CrossUnitClassType{
+          .unit_name = ref.unit_name, .class_name = ref.class_name}});
 }
 
 auto UnitLowerer::MakeExternalClassRef(const hir::ExternalClassRef& ref)

@@ -17,13 +17,14 @@ a `Get` reference stays valid across an `Add`.
 
 The decision rests on what lowering actually needs. Every site that held a `Get` reference across a
 same-arena `Add` was inspected. In every case the value still needed past the `Add` was a small,
-projectable fact -- a `TypeId`, a `TypeKind`, an already-copied payload -- never the whole node held
-as a live reference:
+projectable fact -- a `TypeId`, which alternative a type is, an already-copied payload -- never the
+whole node held as a live reference:
 
 - An owned-child construction needed the slot pointer's pointee `TypeId` after interning the child's
   index-array type.
 - An lvalue rewrite needed the operand's result `TypeId` after a recursive rewrite appended nodes.
-- A structural signal needed the value type's `TypeKind` after interning the field's wrapper type.
+- A structural signal needed to know which alternative the value type was, after interning the
+  field's wrapper type.
 
 No site needed a stable borrow of a whole node across a mutation. The recurring shape is "project a
 fact from an existing node, then intern the sibling or derived nodes the lowering is building" --

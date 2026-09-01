@@ -20,7 +20,7 @@
 #include "lyra/base/overloaded.hpp"
 #include "lyra/diag/diag_code.hpp"
 #include "lyra/lir/compilation_unit.hpp"
-#include "lyra/lir/type_query.hpp"
+#include "lyra/lir/type_builders.hpp"
 #include "lyra/support/value_domain.hpp"
 
 namespace lyra::backend::llvm_backend {
@@ -31,7 +31,7 @@ CodeGenFunction::CodeGenFunction(
 }
 
 auto CodeGenFunction::IsCoroutine() const -> bool {
-  return lir::IsCoroutine(module_->Unit().types, fn_->result_type);
+  return module_->Unit().types.Get(fn_->result_type).Is<lir::CoroutineType>();
 }
 
 auto CodeGenFunction::Run() -> diag::Result<void> {
@@ -229,7 +229,7 @@ auto CodeGenFunction::DomainOf(lir::TypeId type) const
         std::format(
             "llvm codegen: a value of type {} has no runtime library "
             "realization",
-            lir::TypeKindName(module_->Unit().types.Get(type))));
+            module_->Unit().types.Get(type).KindName()));
   }
   return *domain;
 }

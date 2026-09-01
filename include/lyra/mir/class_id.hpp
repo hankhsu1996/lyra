@@ -5,6 +5,8 @@
 #include <cstdint>
 #include <functional>
 
+#include "lyra/base/pool_id.hpp"
+
 namespace lyra::mir {
 
 // Identity of a class declaration within a compilation unit -- a module, a
@@ -15,7 +17,7 @@ namespace lyra::mir {
 // resolves without holding the class's container, since a class can be named
 // from a position that does not enclose it.
 struct ClassId {
-  std::uint32_t value;
+  std::uint32_t value = base::kUnassignedId;
 
   auto operator<=>(const ClassId&) const -> std::strong_ordering = default;
 };

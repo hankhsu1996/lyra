@@ -91,10 +91,10 @@ what the construct means.
   it is not a callable boundary, so its steps belong to the enclosing body and capture nothing, and
   it has no control-flow effect, so control never leaves from among its steps -- member access
   through an explicit receiver expression, access primitives for element and range selection,
-  value-build primitives for aggregate construction, and a designator naming a part of a value by
-  the place that owns the whole and the descent that reaches the part. The set is closed under what
-  a generic programming-language AST needs to express; it does not grow to model a particular
-  backend's storage realization or runtime library shape.
+  value-build primitives for the literals that spell an aggregate, and a designator naming a part of
+  a value by the place that owns the whole and the descent that reaches the part. The set is closed
+  under what a generic programming-language AST needs to express; it does not grow to model a
+  particular backend's storage realization or runtime library shape.
 - Action shapes for constructs that bind behavior to schedule events (always blocks, continuous
   assignments, deferred assertions, concurrent assertions).
 - A textual dumper that serializes MIR for inspection. The dumper is not a backend; its output is
@@ -392,16 +392,20 @@ the runtime, not through sugar nodes in MIR.
 
 Constructs in the expression set that look like sugar are not. The rvalue conditional form (`?:`) is
 preserved because MIR's `if` is a statement; there is no primitive rvalue branching in MIR's
-expression set that decomposes the ternary. It is two primitives rather than one because LRM 11.4.11
-reads its predicate's truth as three-valued: a predicate that can be ambiguous selects neither arm
-in that case but evaluates both and combines them, which no two-way select expresses. Which of the
-two a conditional is follows from the predicate's type and is settled at HIR-to-MIR, so the
-selection semantics is the node's own -- a consumer reads it and never derives it from the
-predicate's type, and the plain form keeps the invariant that a condition arrives already reduced to
-what a branch tests. Value-build primitives for aggregate construction (concatenation, replication,
-structured literal, and similar) have no smaller decomposition. Select expressions are access
-primitives. Each of these stays in MIR for the same reason: removing it would require expanding into
-a statement-form rewrite that does not fit the expression context.
+expression set that decomposes the ternary. It is one primitive, and a condition reaching it has
+already been reduced to what a branch tests. LRM 11.4.11 reads a predicate's truth as three-valued
+-- a predicate that can be ambiguous selects neither arm, evaluating both and combining them -- and
+that third answer is not a second node: three outcomes over one predicate is a chain of two
+selections over the two ways it can settle, which the conditional and the entry that combines two
+results already express. Which shape a source-level conditional takes follows from its predicate's
+type and is settled at HIR-to-MIR, so no consumer derives it. A value-build primitive spells a value
+rather than operating on values that already exist -- a structured literal is one, and so is every
+peer language's array or aggregate literal. Select expressions are access primitives. Each of these
+stays in MIR for the same reason: removing it would require expanding into a statement-form rewrite
+that does not fit the expression context. Composing values that already exist is not this. A
+concatenation or a replication is an operation over its operands, which every peer reaches through a
+library call and none of them spells as a node, so it is a `CallExpr` against the entry that
+performs it.
 
 A callable is one concept: callable code (a signature, plus a body where the declaration defines it)
 and a callable value (code plus a bound environment). A closure is a callable value with a captured

@@ -118,6 +118,17 @@ class RuntimeUnpackedArray {
       const PackedArray& left, const PackedArray& right) const
       -> RuntimeUnpackedArray;
 
+  // A functional whole-slice write (LRM 7.6): yields a new array equal to this
+  // one with the window the selector names replaced, element for element, by
+  // `replacement`. The window is resolved exactly as `Slice` resolves it, and
+  // the same coordinates that read the default write nothing -- a position the
+  // declared range does not name is skipped, and an x / z base leaves the array
+  // unchanged. Assignment compatibility gives the two the same element count.
+  [[nodiscard]] auto WithSlice(
+      const PackedArray& a, const PackedArray& b, const PackedArray& form,
+      const PackedArray& left, const PackedArray& right,
+      const RuntimeUnpackedArray& replacement) const -> RuntimeUnpackedArray;
+
   // LRM 11.4.5 `==` / `!=` (Any data type): an element-wise reduction that
   // propagates X / Z through each element's own equality.
   [[nodiscard]] auto operator==(const RuntimeUnpackedArray& other) const

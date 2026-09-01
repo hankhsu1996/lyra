@@ -1,3 +1,4 @@
+#include <cstdint>
 #include <format>
 #include <string_view>
 #include <utility>
@@ -7,6 +8,7 @@
 #include "lyra/base/overloaded.hpp"
 #include "lyra/diag/diag_code.hpp"
 #include "lyra/lir/type.hpp"
+#include "lyra/lir/type_builders.hpp"
 #include "lyra/lir/type_id.hpp"
 #include "lyra/lowering/mir_to_lir/unit_lowerer.hpp"
 #include "lyra/mir/type.hpp"
@@ -16,16 +18,14 @@ namespace lyra::lowering::mir_to_lir {
 
 namespace {
 
-auto TranslateBitAtom(mir::BitAtom a) -> lir::BitAtom {
-  switch (a) {
-    case mir::BitAtom::kBit:
-      return lir::BitAtom::kBit;
-    case mir::BitAtom::kLogic:
-      return lir::BitAtom::kLogic;
-    case mir::BitAtom::kReg:
-      return lir::BitAtom::kReg;
+auto TranslateStateKind(mir::IntegralStateKind s) -> lir::IntegralStateKind {
+  switch (s) {
+    case mir::IntegralStateKind::kTwoState:
+      return lir::IntegralStateKind::kTwoState;
+    case mir::IntegralStateKind::kFourState:
+      return lir::IntegralStateKind::kFourState;
   }
-  throw InternalError("TranslateBitAtom: unknown BitAtom");
+  throw InternalError("TranslateStateKind: unknown IntegralStateKind");
 }
 
 auto TranslateSignedness(mir::Signedness s) -> lir::Signedness {
@@ -39,26 +39,6 @@ auto TranslateNetResolution(mir::NetResolution r) -> lir::NetResolution {
       return lir::NetResolution::kTriState;
   }
   throw InternalError("TranslateNetResolution: unknown NetResolution");
-}
-
-auto TranslatePackedArrayForm(mir::PackedArrayForm f) -> lir::PackedArrayForm {
-  switch (f) {
-    case mir::PackedArrayForm::kExplicit:
-      return lir::PackedArrayForm::kExplicit;
-    case mir::PackedArrayForm::kByte:
-      return lir::PackedArrayForm::kByte;
-    case mir::PackedArrayForm::kShortInt:
-      return lir::PackedArrayForm::kShortInt;
-    case mir::PackedArrayForm::kInt:
-      return lir::PackedArrayForm::kInt;
-    case mir::PackedArrayForm::kLongInt:
-      return lir::PackedArrayForm::kLongInt;
-    case mir::PackedArrayForm::kInteger:
-      return lir::PackedArrayForm::kInteger;
-    case mir::PackedArrayForm::kTime:
-      return lir::PackedArrayForm::kTime;
-  }
-  throw InternalError("TranslatePackedArrayForm: unknown PackedArrayForm");
 }
 
 auto TranslatePointerOwnership(mir::PointerOwnership o)
@@ -87,10 +67,9 @@ auto TranslatePackedArray(const mir::PackedArrayType& pa)
     dims.push_back(lir::PackedRange{.left = d.left, .right = d.right});
   }
   return lir::PackedArrayType{
-      .atom = TranslateBitAtom(pa.atom),
+      .state_kind = TranslateStateKind(pa.state_kind),
       .signedness = TranslateSignedness(pa.signedness),
-      .dims = std::move(dims),
-      .form = TranslatePackedArrayForm(pa.form)};
+      .dims = std::move(dims)};
 }
 
 }  // namespace
@@ -99,207 +78,204 @@ auto UnitLowerer::TranslateType(mir::TypeId id) -> lir::TypeId {
   if (const auto it = type_memo_.find(id); it != type_memo_.end()) {
     return it->second;
   }
-  lir::TypeData data = TranslateTypeData(mir_->types.Get(id));
-  const lir::TypeId lir_id = out_.types.Add(lir::Type{.data = std::move(data)});
+  const lir::TypeId lir_id =
+      out_.types.Intern(TranslateType(mir_->types.Get(id)));
   type_memo_.emplace(id, lir_id);
   return lir_id;
 }
 
-auto UnitLowerer::TranslateTypeData(const mir::Type& ty) -> lir::TypeData {
-  return std::visit(
+auto UnitLowerer::TranslateType(const mir::Type& ty) -> lir::Type {
+  return ty.Visit(
       Overloaded{
-          [&](const mir::PackedArrayType& pa) -> lir::TypeData {
-            return lir::TypeData{TranslatePackedArray(pa)};
+          [&](const mir::PackedArrayType& pa) -> lir::Type {
+            return lir::Type{TranslatePackedArray(pa)};
           },
-          [&](const mir::EnumType& e) -> lir::TypeData {
+          [&](const mir::EnumType& e) -> lir::Type {
             std::vector<lir::EnumMember> members;
             members.reserve(e.members.size());
             for (const mir::EnumMember& m : e.members) {
               members.push_back(
                   lir::EnumMember{.name = m.name, .value = m.value});
             }
-            return lir::TypeData{lir::EnumType{
+            return lir::Type{lir::EnumType{
                 .base = TranslatePackedArray(e.base),
                 .members = std::move(members)}};
           },
-          [&](const mir::UnpackedArrayType& ua) -> lir::TypeData {
-            return lir::TypeData{lir::UnpackedArrayType{
+          [&](const mir::UnpackedArrayType& ua) -> lir::Type {
+            return lir::Type{lir::UnpackedArrayType{
                 .element_type = TranslateType(ua.element_type),
                 .size = ua.Size()}};
           },
-          [&](const mir::DynamicArrayType& da) -> lir::TypeData {
-            return lir::TypeData{lir::DynamicArrayType{
+          [&](const mir::DynamicArrayType& da) -> lir::Type {
+            return lir::Type{lir::DynamicArrayType{
                 .element_type = TranslateType(da.element_type)}};
           },
-          [&](const mir::QueueType& q) -> lir::TypeData {
-            return lir::TypeData{lir::QueueType{
+          [&](const mir::QueueType& q) -> lir::Type {
+            return lir::Type{lir::QueueType{
                 .element_type = TranslateType(q.element_type),
                 .max_bound = q.max_bound}};
           },
-          [&](const mir::AssociativeArrayType& aa) -> lir::TypeData {
-            return lir::TypeData{lir::AssociativeArrayType{
+          [&](const mir::AssociativeArrayType& aa) -> lir::Type {
+            return lir::Type{lir::AssociativeArrayType{
                 .element_type = TranslateType(aa.element_type),
                 .key_type = TranslateType(aa.key_type)}};
           },
-          [](const mir::WildcardIndexType&) -> lir::TypeData {
-            return lir::TypeData{lir::WildcardIndexType{}};
+          [](const mir::WildcardIndexType&) -> lir::Type {
+            return lir::Type{lir::WildcardIndexType{}};
           },
-          [](const mir::StringType&) -> lir::TypeData {
-            return lir::TypeData{lir::StringType{}};
+          [](const mir::StringType&) -> lir::Type {
+            return lir::Type{lir::StringType{}};
           },
-          [](const mir::MachineCStringType&) -> lir::TypeData {
-            return lir::TypeData{lir::MachineCStringType{}};
+          [](const mir::MachineCStringType&) -> lir::Type {
+            return lir::Type{lir::MachineCStringType{}};
           },
-          [](const mir::MachineBoolType&) -> lir::TypeData {
-            return lir::TypeData{lir::MachineBoolType{}};
+          [](const mir::MachineBoolType&) -> lir::Type {
+            return lir::Type{lir::MachineBoolType{}};
           },
-          [](const mir::MachineIntType& mi) -> lir::TypeData {
-            return lir::TypeData{lir::MachineIntType{
+          [](const mir::MachineIntType& mi) -> lir::Type {
+            return lir::Type{lir::MachineIntType{
                 .bit_width = mi.bit_width,
                 .signedness = TranslateSignedness(mi.signedness)}};
           },
-          [](const mir::MachineFloatType& mf) -> lir::TypeData {
-            return lir::TypeData{
-                lir::MachineFloatType{.bit_width = mf.bit_width}};
+          [](const mir::MachineFloatType& mf) -> lir::Type {
+            return lir::Type{lir::MachineFloatType{.bit_width = mf.bit_width}};
           },
-          [&](const mir::MachineArrayType& ma) -> lir::TypeData {
-            return lir::TypeData{lir::MachineArrayType{
+          [&](const mir::MachineArrayType& ma) -> lir::Type {
+            return lir::Type{lir::MachineArrayType{
                 .element = TranslateType(ma.element), .size = ma.size}};
           },
-          [&](const mir::MachineFunctionType&) -> lir::TypeData {
+          [&](const mir::MachineFunctionType&) -> lir::Type {
             // A code address is named only in a unit's definition constant,
             // which the backend consumes directly rather than through
             // MIR-to-LIR.
             throw InternalError(
-                "TranslateTypeData: a machine function type does not flow "
+                "TranslateType: a machine function type does not flow "
                 "through MIR-to-LIR");
           },
-          [](const mir::EventType&) -> lir::TypeData {
-            return lir::TypeData{lir::EventType{}};
+          [](const mir::EventType&) -> lir::Type {
+            return lir::Type{lir::EventType{}};
           },
-          [](const mir::RealType&) -> lir::TypeData {
-            return lir::TypeData{lir::RealType{}};
+          [](const mir::RealType&) -> lir::Type {
+            return lir::Type{lir::RealType{}};
           },
-          [](const mir::ShortRealType&) -> lir::TypeData {
-            return lir::TypeData{lir::ShortRealType{}};
+          [](const mir::ShortRealType&) -> lir::Type {
+            return lir::Type{lir::ShortRealType{}};
           },
-          [](const mir::RealTimeType&) -> lir::TypeData {
-            return lir::TypeData{lir::RealTimeType{}};
+          [](const mir::RealTimeType&) -> lir::Type {
+            return lir::Type{lir::RealTimeType{}};
           },
-          [](const mir::ChandleType&) -> lir::TypeData {
-            return lir::TypeData{lir::ChandleType{}};
+          [](const mir::ChandleType&) -> lir::Type {
+            return lir::Type{lir::ChandleType{}};
           },
-          [](const mir::VoidType&) -> lir::TypeData {
-            return lir::TypeData{lir::VoidType{}};
+          [](const mir::VoidType&) -> lir::Type {
+            return lir::Type{lir::VoidType{}};
           },
-          [](const mir::EmptyType&) -> lir::TypeData {
-            return lir::TypeData{lir::EmptyType{}};
+          [](const mir::EmptyType&) -> lir::Type {
+            return lir::Type{lir::EmptyType{}};
           },
-          [&](const mir::ObjectType& ob) -> lir::TypeData {
-            return lir::TypeData{lir::ObjectType{
+          [&](const mir::ObjectType& ob) -> lir::Type {
+            return lir::Type{lir::ObjectType{
                 .class_id = class_identities_.Get(ob.class_id).lir_class}};
           },
-          [&](const mir::ExternalUnitObjectType& eu) -> lir::TypeData {
-            return lir::TypeData{lir::ExternalUnitObjectType{
+          [&](const mir::ExternalUnitObjectType& eu) -> lir::Type {
+            return lir::Type{lir::ExternalUnitObjectType{
                 .object = external_unit_object_identities_.Get(eu.object)}};
           },
-          [](const mir::RuntimeClassType& e) -> lir::TypeData {
-            return lir::TypeData{lir::RuntimeClassType{.symbol = e.symbol}};
+          [](const mir::RuntimeClassType& e) -> lir::Type {
+            return lir::Type{lir::RuntimeClassType{.symbol = e.symbol}};
           },
-          [](const mir::CrossUnitClassType& e) -> lir::TypeData {
-            return lir::TypeData{lir::CrossUnitClassType{
+          [](const mir::CrossUnitClassType& e) -> lir::Type {
+            return lir::Type{lir::CrossUnitClassType{
                 .unit_name = e.unit_name, .class_name = e.class_name}};
           },
-          [](const mir::RuntimeEffectsType&) -> lir::TypeData {
-            return lir::TypeData{lir::RuntimeEffectsType{}};
+          [](const mir::RuntimeEffectsType&) -> lir::Type {
+            return lir::Type{lir::RuntimeEffectsType{}};
           },
-          [](const mir::FilesType&) -> lir::TypeData {
-            return lir::TypeData{lir::FilesType{}};
+          [](const mir::FilesType&) -> lir::Type {
+            return lir::Type{lir::FilesType{}};
           },
-          [](const mir::DiagnosticType&) -> lir::TypeData {
-            return lir::TypeData{lir::DiagnosticType{}};
+          [](const mir::DiagnosticType&) -> lir::Type {
+            return lir::Type{lir::DiagnosticType{}};
           },
-          [&](const mir::RuntimeLibraryType& rl) -> lir::TypeData {
+          [&](const mir::RuntimeLibraryType& rl) -> lir::Type {
             return TranslateRuntimeLibrary(rl.kind);
           },
-          [&](const mir::CoroutineType& co) -> lir::TypeData {
-            return lir::TypeData{
+          [&](const mir::CoroutineType& co) -> lir::Type {
+            return lir::Type{
                 lir::CoroutineType{.payload = TranslateType(co.payload)}};
           },
-          [&](const mir::RefType& r) -> lir::TypeData {
-            return lir::TypeData{lir::RefType{
-                .pointee = TranslateType(r.pointee),
-                .mutability = TranslateMutability(r.mutability)}};
+          [&](const mir::RefType& r) -> lir::Type {
+            return out_.types.Get(
+                lir::ReferenceToCellOf(
+                    out_.types, TranslateType(r.pointee),
+                    TranslateMutability(r.mutability)));
           },
-          [&](const mir::PointerType& pt) -> lir::TypeData {
-            return lir::TypeData{lir::PointerType{
+          [&](const mir::PointerType& pt) -> lir::Type {
+            return lir::Type{lir::PointerType{
                 .pointee = TranslateType(pt.pointee),
                 .ownership = TranslatePointerOwnership(pt.ownership),
                 .mutability = TranslateMutability(pt.mutability)}};
           },
-          [&](const mir::ManagedRefType& mr) -> lir::TypeData {
-            return lir::TypeData{
+          [&](const mir::ManagedRefType& mr) -> lir::Type {
+            return lir::Type{
                 lir::ManagedRefType{.pointee = TranslateType(mr.pointee)}};
           },
-          [&](const mir::VectorType& v) -> lir::TypeData {
-            return lir::TypeData{
+          [&](const mir::VectorType& v) -> lir::Type {
+            return lir::Type{
                 lir::VectorType{.element = TranslateType(v.element)}};
           },
-          [&](const mir::TupleType& t) -> lir::TypeData {
+          [&](const mir::TupleType& t) -> lir::Type {
             std::vector<lir::TypeId> elements;
             elements.reserve(t.elements.size());
             for (const mir::TypeId element : t.elements) {
               elements.push_back(TranslateType(element));
             }
-            return lir::TypeData{
-                lir::TupleType{.elements = std::move(elements)}};
+            return lir::Type{lir::TupleType{.elements = std::move(elements)}};
           },
-          [&](const mir::UnionType& u) -> lir::TypeData {
+          [&](const mir::UnionType& u) -> lir::Type {
             std::vector<lir::TypeId> elements;
             elements.reserve(u.elements.size());
             for (const mir::TypeId element : u.elements) {
               elements.push_back(TranslateType(element));
             }
-            return lir::TypeData{
-                lir::UnionType{.elements = std::move(elements)}};
+            return lir::Type{lir::UnionType{.elements = std::move(elements)}};
           },
-          [&](const mir::TaggedUnionType& u) -> lir::TypeData {
+          [&](const mir::TaggedUnionType& u) -> lir::Type {
             std::vector<lir::TypeId> elements;
             elements.reserve(u.elements.size());
             for (const mir::TypeId element : u.elements) {
               elements.push_back(TranslateType(element));
             }
-            return lir::TypeData{
+            return lir::Type{
                 lir::TaggedUnionType{.elements = std::move(elements)}};
           },
-          [&](const mir::ResolvedType& r) -> lir::TypeData {
-            return lir::TypeData{lir::ResolvedType{
+          [&](const mir::ResolvedType& r) -> lir::Type {
+            return lir::Type{lir::ResolvedType{
                 .value = TranslateType(r.value),
                 .resolution = TranslateNetResolution(r.resolution)}};
           },
-          [&](const mir::DriverType& d) -> lir::TypeData {
-            return lir::TypeData{lir::DriverType{
+          [&](const mir::DriverType& d) -> lir::Type {
+            return lir::Type{lir::DriverType{
                 .value = TranslateType(d.value),
                 .resolution = TranslateNetResolution(d.resolution)}};
           },
-          [&](const mir::ObservableType& ob) -> lir::TypeData {
-            return lir::TypeData{
+          [&](const mir::ObservableType& ob) -> lir::Type {
+            return lir::Type{
                 lir::ObservableType{.value = TranslateType(ob.value)}};
           },
-          [&](const mir::StructType&) -> lir::TypeData {
+          [&](const mir::StructType&) -> lir::Type {
             return RecordUnsupportedType("a nominal struct");
           },
-          [&](const mir::ClosureType& c) -> lir::TypeData {
-            return lir::TypeData{lir::ClosureType{
+          [&](const mir::ClosureType& c) -> lir::Type {
+            return lir::Type{lir::ClosureType{
                 .closure_id = ClosureDeclaration(c.closure_id)}};
-          }},
-      ty.data);
+          }});
 }
 
 auto UnitLowerer::TranslateRuntimeLibrary(mir::RuntimeLibraryKind kind)
-    -> lir::TypeData {
+    -> lir::Type {
   const auto mirror = [](lir::RuntimeLibraryKind k) {
-    return lir::TypeData{lir::RuntimeLibraryType{.kind = k}};
+    return lir::Type{lir::RuntimeLibraryType{.kind = k}};
   };
   switch (kind) {
     case mir::RuntimeLibraryKind::kPrintItem:
@@ -359,14 +335,13 @@ auto UnitLowerer::TranslateRuntimeLibrary(mir::RuntimeLibraryKind kind)
   throw InternalError("TranslateRuntimeLibrary: unknown RuntimeLibraryKind");
 }
 
-auto UnitLowerer::RecordUnsupportedType(std::string_view what)
-    -> lir::TypeData {
+auto UnitLowerer::RecordUnsupportedType(std::string_view what) -> lir::Type {
   if (!type_error_.has_value()) {
     type_error_ = diag::Make(
         diag::DiagCode::kUnsupportedTypeKind,
         std::format("mir_to_lir: {} is not yet lowerable to LIR", what));
   }
-  return lir::TypeData{lir::VoidType{}};
+  return lir::Type{lir::VoidType{}};
 }
 
 }  // namespace lyra::lowering::mir_to_lir

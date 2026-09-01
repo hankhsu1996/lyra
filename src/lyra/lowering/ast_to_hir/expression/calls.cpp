@@ -200,6 +200,7 @@ auto LowerCallExpr(
     Lowerer& lowerer, WalkFrame frame, const slang::ast::CallExpression& call,
     diag::SourceSpan span) -> diag::Result<hir::Expr> {
   auto& unit_lowerer = lowerer.Owner();
+  const hir::TypePool& types = unit_lowerer.Unit().types;
 
   // The LRM 20.6 / 20.7 queries are resolved before the argument loop: their
   // operand is never evaluated and may be a data type, which has no value form
@@ -246,7 +247,7 @@ auto LowerCallExpr(
     const std::string_view name = info.subroutine->name;
 
     if (receiver_type.has_value() &&
-        unit_lowerer.Unit().types.Get(*receiver_type).IsEnum()) {
+        types.Get(*receiver_type).Is<hir::EnumType>()) {
       if (auto kind = LowerEnumMethodName(name); kind.has_value()) {
         // `next` / `prev` have an optional `int unsigned step = 1` (LRM
         // 6.19.5.3/4). When the user omits the step, the lowering hands the
@@ -268,8 +269,7 @@ auto LowerCallExpr(
     }
 
     if (receiver_type.has_value() &&
-        unit_lowerer.Unit().types.Get(*receiver_type).Kind() ==
-            hir::TypeKind::kString) {
+        types.Get(*receiver_type).Is<hir::StringType>()) {
       if (auto kind = LowerStringMethodName(name); kind.has_value()) {
         // LRM 6.16.1 through 6.16.15 -- string intrinsic methods. The
         // receiver is arguments[0]; remaining arguments are the SV method
@@ -289,9 +289,7 @@ auto LowerCallExpr(
     }
 
     if (receiver_type.has_value() &&
-        std::holds_alternative<hir::EventType>(
-            unit_lowerer.Unit().types.Get(*receiver_type).data) &&
-        name == "triggered") {
+        types.Get(*receiver_type).Is<hir::EventType>() && name == "triggered") {
       // LRM 15.5.3: `e.triggered` returns true for the duration of the time
       // slot in which the event was last triggered. Result type is bit (1'b0
       // / 1'b1) -- slang already typed the expression; we just route the
@@ -313,8 +311,7 @@ auto LowerCallExpr(
     }
 
     if (receiver_type.has_value() &&
-        std::holds_alternative<hir::QueueType>(
-            unit_lowerer.Unit().types.Get(*receiver_type).data)) {
+        types.Get(*receiver_type).Is<hir::QueueType>()) {
       // LRM 7.10.2 queue-native methods. The receiver is arguments[0]; any
       // method parameters (insert's index and item, push's item) follow as the
       // remaining arguments. These methods take no `with` clause and are tried
@@ -341,8 +338,9 @@ auto LowerCallExpr(
     // argument. Like the queue's, these are tried before the LRM 7.12 family so
     // a name both define resolves to the one the receiver's own clause states.
     if (receiver_type.has_value() &&
-        std::holds_alternative<hir::AssociativeArrayType>(
-            unit_lowerer.Unit().types.Get(*receiver_type).data)) {
+        unit_lowerer.Unit()
+            .types.Get(*receiver_type)
+            .template Is<hir::AssociativeArrayType>()) {
       if (auto kind = LowerAssociativeMethodName(name, arg_ids.size() - 1);
           kind.has_value()) {
         auto type_id = unit_lowerer.InternType(*call.type, span);
@@ -370,15 +368,14 @@ auto LowerCallExpr(
     // no-`with` form takes only the receiver; the `with` form (LRM 7.12.4)
     // binds an iterator and a body expression carried as the optional
     // `WithClause`, which HIR -> MIR turns into a closure argument.
-    if (receiver_type.has_value() &&
-        (std::holds_alternative<hir::UnpackedArrayType>(
-             unit_lowerer.Unit().types.Get(*receiver_type).data) ||
-         std::holds_alternative<hir::DynamicArrayType>(
-             unit_lowerer.Unit().types.Get(*receiver_type).data) ||
-         std::holds_alternative<hir::QueueType>(
-             unit_lowerer.Unit().types.Get(*receiver_type).data) ||
-         std::holds_alternative<hir::AssociativeArrayType>(
-             unit_lowerer.Unit().types.Get(*receiver_type).data))) {
+    const auto receives_array_method = [&] {
+      if (!receiver_type.has_value()) return false;
+      const hir::Type& ty = unit_lowerer.Unit().types.Get(*receiver_type);
+      return ty.Is<hir::UnpackedArrayType>() ||
+             ty.Is<hir::DynamicArrayType>() || ty.Is<hir::QueueType>() ||
+             ty.Is<hir::AssociativeArrayType>();
+    };
+    if (receives_array_method()) {
       if (auto kind = LowerArrayMethodName(name); kind.has_value()) {
         auto type_id = unit_lowerer.InternType(*call.type, span);
         if (!type_id) return std::unexpected(std::move(type_id.error()));

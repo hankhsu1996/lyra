@@ -3,6 +3,8 @@
 #include <compare>
 #include <cstdint>
 
+#include "lyra/base/pool_id.hpp"
+
 namespace lyra::hir {
 
 // Identifies a loop as a non-local break target. A `foreach` lowers to nested
@@ -10,7 +12,7 @@ namespace lyra::hir {
 // loop -- the universal labeled-break primitive (Java/Go/Rust loop labels,
 // LLVM/Wasm branch targets). Minted per procedural body via AddLoopLabel.
 struct LoopLabelId {
-  std::uint32_t value;
+  std::uint32_t value = base::kUnassignedId;
 
   auto operator<=>(const LoopLabelId&) const -> std::strong_ordering = default;
 };

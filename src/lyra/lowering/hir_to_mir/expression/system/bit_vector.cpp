@@ -16,7 +16,6 @@
 #include "lyra/hir/integral_constant.hpp"
 #include "lyra/hir/primary.hpp"
 #include "lyra/lowering/hir_to_mir/call_operands.hpp"
-#include "lyra/lowering/hir_to_mir/flat_packed_type.hpp"
 #include "lyra/lowering/hir_to_mir/integral_literal.hpp"
 #include "lyra/lowering/hir_to_mir/process_lowerer.hpp"  // IWYU pragma: keep
 #include "lyra/lowering/hir_to_mir/structural_scope_lowerer.hpp"  // IWYU pragma: keep
@@ -25,6 +24,7 @@
 #include "lyra/mir/expr.hpp"
 #include "lyra/mir/integral_constant.hpp"
 #include "lyra/mir/type.hpp"
+#include "lyra/mir/type_builders.hpp"
 #include "lyra/support/builtin_fn.hpp"
 
 namespace lyra::lowering::hir_to_mir {
@@ -108,13 +108,11 @@ auto MakeControlBitsExpr(
     ++width;
   }
   return BuildIntegralLiteral(
-      unit, block, InternFlatPacked(unit, width, mir::BitAtom::kLogic),
+      unit, block,
+      mir::PackedVectorOf(
+          unit.types, width, mir::IntegralStateKind::kFourState),
       mir::IntegralConstant{
-          .value_words = {value_word},
-          .state_words = {state_word},
-          .width = width,
-          .signedness = mir::Signedness::kUnsigned,
-          .state_kind = mir::IntegralStateKind::kFourState});
+          .value_words = {value_word}, .state_words = {state_word}});
 }
 
 auto ReadingComparison(support::BitCountReading reading)

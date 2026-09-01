@@ -113,8 +113,7 @@ class ScopeView {
   // unit's registry maps that identity to the declaration.
   [[nodiscard]] auto ClassByObjectType(mir::TypeId object_type) const
       -> const mir::Class& {
-    const auto& obj =
-        std::get<mir::ObjectType>(unit_->types.Get(object_type).data);
+    const auto& obj = unit_->types.Get(object_type).Get<mir::ObjectType>();
     return unit_->GetClass(obj.class_id);
   }
 

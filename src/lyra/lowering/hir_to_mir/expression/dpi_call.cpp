@@ -21,6 +21,7 @@
 #include "lyra/lowering/hir_to_mir/call_operands.hpp"
 #include "lyra/lowering/hir_to_mir/callable_bindings.hpp"
 #include "lyra/lowering/hir_to_mir/callee_interface.hpp"
+#include "lyra/lowering/hir_to_mir/cast_lowering.hpp"
 #include "lyra/lowering/hir_to_mir/closure_builder.hpp"
 #include "lyra/lowering/hir_to_mir/default_value.hpp"
 #include "lyra/lowering/hir_to_mir/expression/expr_lowerer.hpp"
@@ -37,6 +38,7 @@
 #include "lyra/mir/expr.hpp"
 #include "lyra/mir/packed_type_descriptor.hpp"
 #include "lyra/mir/type.hpp"
+#include "lyra/mir/type_builders.hpp"
 #include "lyra/support/builtin_fn.hpp"
 #include "lyra/support/dpi_abi.hpp"
 
@@ -56,19 +58,18 @@ auto CarrierTypeId(
     -> mir::TypeId {
   if (std::holds_alternative<support::OpenArrayCarrier>(carrier)) {
     return unit.types.Intern(
-        mir::TypeData{mir::RuntimeLibraryType{
+        mir::Type{mir::RuntimeLibraryType{
             .kind = mir::RuntimeLibraryKind::kDpiOpenArray}});
   }
   if (const auto* vec = std::get_if<support::VectorCarrier>(&carrier)) {
     return unit.types.Intern(
-        mir::TypeData{mir::RuntimeLibraryType{
+        mir::Type{mir::RuntimeLibraryType{
             .kind = vec->four_state ? mir::RuntimeLibraryKind::kDpiLogicBuffer
                                     : mir::RuntimeLibraryKind::kDpiBitBuffer}});
   }
   const auto machine_int = [&](std::uint32_t bits, mir::Signedness sign) {
     return unit.types.Intern(
-        mir::TypeData{
-            mir::MachineIntType{.bit_width = bits, .signedness = sign}});
+        mir::Type{mir::MachineIntType{.bit_width = bits, .signedness = sign}});
   };
   switch (std::get<support::ScalarCarrier>(carrier).abi) {
     case support::DpiScalarAbi::kBitScalar:
@@ -84,12 +85,14 @@ auto CarrierTypeId(
       return machine_int(64, mir::Signedness::kSigned);
     case support::DpiScalarAbi::kReal:
       return unit.types.Intern(
-          mir::TypeData{mir::MachineFloatType{.bit_width = 64}});
+          mir::Type{mir::MachineFloatType{.bit_width = 64}});
     case support::DpiScalarAbi::kString:
-      return unit.types.Intern(mir::TypeData{mir::MachineCStringType{}});
+      return unit.types.Intern(mir::Type{mir::MachineCStringType{}});
     case support::DpiScalarAbi::kChandle:
-      return unit.types.PointerTo(
-          unit.builtins.void_type, mir::PointerOwnership::kBorrowed);
+      return unit.types.Intern(
+          mir::Type{mir::PointerType{
+              .pointee = unit.builtins.void_type,
+              .ownership = mir::PointerOwnership::kBorrowed}});
     case support::DpiScalarAbi::kVoid:
       return unit.builtins.void_type;
   }
@@ -119,14 +122,8 @@ auto MarshalSvToCarrier(
     case support::DpiScalarAbi::kShortInt:
     case support::DpiScalarAbi::kInt:
     case support::DpiScalarAbi::kLongInt: {
-      const mir::ExprId machine_int = block.exprs.Add(
-          mir::Expr{
-              .data =
-                  mir::CallExpr{
-                      .callee =
-                          mir::Direct{.target = support::BuiltinFn::kToInt64},
-                      .arguments = {sv_id}},
-              .type = unit.builtins.machine_int64});
+      const mir::ExprId machine_int =
+          block.exprs.Add(MakeToInt64Call(unit, sv_id));
       return block.exprs.Add(
           mir::Expr{
               .data = mir::IntCastExpr{.operand = machine_int},
@@ -281,8 +278,10 @@ auto BuildBufferDataCall(
                   .callee =
                       mir::Direct{.target = support::BuiltinFn::kDpiBufferData},
                   .arguments = {buffer_ref}},
-          .type = unit.types.PointerTo(
-              carrier_type, mir::PointerOwnership::kBorrowed)});
+          .type = unit.types.Intern(
+              mir::Type{mir::PointerType{
+                  .pointee = carrier_type,
+                  .ownership = mir::PointerOwnership::kBorrowed}})});
 }
 
 // The builtin that writes an SV value out into a foreign-owned canonical
@@ -308,8 +307,7 @@ auto BuildOpenArrayBounds(
   bounds.reserve(open.unpacked.size() * 2);
   mir::TypeId cursor = actual_type;
   for (const std::optional<support::DpiRange>& declared : open.unpacked) {
-    const auto* layer =
-        std::get_if<mir::UnpackedArrayType>(&unit.types.Get(cursor).data);
+    const auto* layer = unit.types.Get(cursor).As<mir::UnpackedArrayType>();
     if (layer == nullptr) {
       throw InternalError(
           "BuildOpenArrayBounds: the actual of an open-array formal has fewer "
@@ -322,7 +320,7 @@ auto BuildOpenArrayBounds(
     cursor = layer->element_type;
   }
   const mir::TypeId bounds_type =
-      unit.types.MachineArrayOf(int_type, bounds.size());
+      mir::MachineArrayOf(unit.types, int_type, bounds.size());
   return block.exprs.Add(
       mir::Expr{
           .data = mir::ArrayLiteralExpr{.elements = std::move(bounds)},
@@ -383,8 +381,10 @@ auto BuildBoundaryArgument(
             return block.exprs.Add(
                 mir::MakeAddressOfExpr(
                     object,
-                    unit.types.PointerTo(
-                        carrier_type, mir::PointerOwnership::kBorrowed)));
+                    unit.types.Intern(
+                        mir::Type{mir::PointerType{
+                            .pointee = carrier_type,
+                            .ownership = mir::PointerOwnership::kBorrowed}})));
           },
           [&](const support::VectorCarrier&) {
             return BuildBufferDataCall(unit, block, object, carrier_type);
@@ -400,7 +400,7 @@ auto BuildBoundaryArgument(
                                         kDpiOpenArrayHandle},
                             .arguments = {object}},
                     .type = unit.types.Intern(
-                        mir::TypeData{mir::RuntimeLibraryType{
+                        mir::Type{mir::RuntimeLibraryType{
                             .kind = mir::RuntimeLibraryKind::
                                 kDpiOpenArrayHandle}})});
           }},
@@ -658,7 +658,8 @@ auto BuildDpiScopeGuard(
   mir::CompilationUnit& unit = unit_lowerer.Unit();
   mir::Block& body = *frame.current_block;
   const mir::TypeId guard_type = unit.types.Intern(
-      mir::RuntimeLibraryType{.kind = mir::RuntimeLibraryKind::kDpiScopeGuard});
+      mir::Type{mir::RuntimeLibraryType{
+          .kind = mir::RuntimeLibraryKind::kDpiScopeGuard}});
   const mir::LocalId guard = frame.bindings->DeclareAnonymous(
       mir::LocalDecl{.name = "_lyra_dpi_scope", .type = guard_type});
   const mir::ExprId services_id =
@@ -775,8 +776,8 @@ auto LowerForeignImportTask(
 
   mir::Block& body = outer.Body();
   const mir::TypeId awaitable = unit.types.Intern(
-      mir::RuntimeLibraryType{
-          .kind = mir::RuntimeLibraryKind::kForeignTaskAwaitable});
+      mir::Type{mir::RuntimeLibraryType{
+          .kind = mir::RuntimeLibraryKind::kForeignTaskAwaitable}});
   const mir::ExprId fiber_id = body.exprs.Add(fiber_body.BuildVoid());
   const mir::ExprId run_id = body.exprs.Add(
       mir::Expr{
@@ -810,23 +811,29 @@ auto ForeignBoundaryType(
   // its boundary type does not read the direction at all.
   if (std::holds_alternative<support::OpenArrayCarrier>(carrier)) {
     return unit.types.Intern(
-        mir::TypeData{mir::RuntimeLibraryType{
+        mir::Type{mir::RuntimeLibraryType{
             .kind = mir::RuntimeLibraryKind::kDpiOpenArrayHandle}});
   }
   if (const auto* vec = std::get_if<support::VectorCarrier>(&carrier)) {
     const mir::TypeId chunk = unit.types.Intern(
-        mir::TypeData{mir::RuntimeLibraryType{
+        mir::Type{mir::RuntimeLibraryType{
             .kind = vec->four_state ? mir::RuntimeLibraryKind::kDpiLogicChunk
                                     : mir::RuntimeLibraryKind::kDpiBitChunk}});
     const mir::Mutability mutability =
         direction == support::DpiDirection::kInput ? mir::Mutability::kReadOnly
                                                    : mir::Mutability::kMutable;
-    return unit.types.PointerTo(
-        chunk, mir::PointerOwnership::kBorrowed, mutability);
+    return unit.types.Intern(
+        mir::Type{mir::PointerType{
+            .pointee = chunk,
+            .ownership = mir::PointerOwnership::kBorrowed,
+            .mutability = mutability}});
   }
   const mir::TypeId carrier_type = CarrierTypeId(unit, carrier);
   if (support::DpiDirectionWritesBack(direction)) {
-    return unit.types.PointerTo(carrier_type, mir::PointerOwnership::kBorrowed);
+    return unit.types.Intern(
+        mir::Type{mir::PointerType{
+            .pointee = carrier_type,
+            .ownership = mir::PointerOwnership::kBorrowed}});
   }
   return carrier_type;
 }
@@ -959,7 +966,7 @@ auto SynthesizeForeignExportEntry(
 
   // An exported task lowers to a coroutine -- the result type is the call
   // protocol -- while a function's result is its payload directly.
-  const bool is_task = unit.types.IsCoroutine(result_type);
+  const bool is_task = unit.types.Get(result_type).Is<mir::CoroutineType>();
 
   // A subroutine of a scope is compiled once per specialization of that scope
   // while its DPI-C name is one program-global symbol, so its entry is reached
@@ -986,8 +993,8 @@ auto SynthesizeForeignExportEntry(
     prototype_params.push_back(code.locals.Get(param).type);
   }
   const mir::TypeId signature = unit.types.Intern(
-      mir::MachineFunctionType{
-          .params = std::move(prototype_params), .result = code.result_type});
+      mir::Type{mir::MachineFunctionType{
+          .params = std::move(prototype_params), .result = code.result_type}});
 
   code.body.emplace();
   CallableBindings bindings(unit, code);
@@ -1091,8 +1098,9 @@ auto SynthesizeForeignExportEntry(
   // payload, reached past the protocol.
   const mir::TypeId method_result_type = result_type;
   const mir::TypeId payload_type =
-      is_task ? unit.types.CoroutinePayload(method_result_type)
-              : method_result_type;
+      is_task
+          ? unit.types.Get(method_result_type).Get<mir::CoroutineType>().payload
+          : method_result_type;
   const mir::ExprId method_call = body.exprs.Add(
       mir::Expr{
           .data =

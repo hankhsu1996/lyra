@@ -19,10 +19,10 @@
 #include "lyra/lowering/hir_to_mir/default_value.hpp"
 #include "lyra/lowering/hir_to_mir/expression/assignment.hpp"
 #include "lyra/lowering/hir_to_mir/expression/dpi_call.hpp"
+#include "lyra/lowering/hir_to_mir/expression/selects.hpp"
 #include "lyra/lowering/hir_to_mir/expression/system/file_io.hpp"
 #include "lyra/lowering/hir_to_mir/expression/system/mem_file.hpp"
 #include "lyra/lowering/hir_to_mir/expression/system/sformat.hpp"
-#include "lyra/lowering/hir_to_mir/integral_literal.hpp"
 #include "lyra/lowering/hir_to_mir/lhs_store.hpp"
 #include "lyra/lowering/hir_to_mir/process_lowerer.hpp"
 #include "lyra/lowering/hir_to_mir/runtime_call.hpp"
@@ -30,9 +30,9 @@
 #include "lyra/lowering/hir_to_mir/walk_frame.hpp"
 #include "lyra/mir/compilation_unit.hpp"
 #include "lyra/mir/expr.hpp"
-#include "lyra/mir/packed_type_descriptor.hpp"
 #include "lyra/mir/stmt.hpp"
 #include "lyra/mir/type.hpp"
+#include "lyra/mir/type_builders.hpp"
 #include "lyra/support/imported_runtime_class.hpp"
 #include "lyra/support/system_subroutine.hpp"
 
@@ -56,7 +56,7 @@ auto LowerDestructuringAssign(
 
   std::vector<std::uint64_t> part_widths;
   part_widths.reserve(lhs_concat.operands.size());
-  bool any_four_state = false;
+  mir::IntegralStateKind state_kind = mir::IntegralStateKind::kTwoState;
   std::uint64_t total_width = 0;
   const auto& hir_types = process.Owner().Hir().types;
   const auto& mir_types = process.Owner().Unit().types;
@@ -67,27 +67,24 @@ auto LowerDestructuringAssign(
           "LowerDestructuringAssign: destructuring operand is not "
           "a packed integral type");
     }
-    // Width and 4-state-ness are properties of the flat MIR vector; read them
-    // off it directly rather than recompute from the structural HIR type.
-    const auto& packed = mir_types.Get(process.Owner().TranslateType(op.type))
-                             .AsIntegralPacked();
+    // Width and state domain are properties of the operand's MIR type, which
+    // is what the snapshot is sliced against.
+    const auto& packed =
+        mir_types.Get(process.Owner().TranslateType(op.type)).PackedShape();
     const std::uint64_t w = packed.BitWidth();
     part_widths.push_back(w);
     total_width += w;
-    any_four_state = any_four_state || packed.IsFourState();
+    if (packed.state_kind == mir::IntegralStateKind::kFourState) {
+      state_kind = mir::IntegralStateKind::kFourState;
+    }
   }
   if (total_width == 0) {
     throw InternalError(
         "LowerDestructuringAssign: destructuring total width must be positive");
   }
 
-  const mir::TypeId temp_type = process.Owner().Unit().types.Intern(
-      mir::PackedArrayType{
-          .atom = any_four_state ? mir::BitAtom::kLogic : mir::BitAtom::kBit,
-          .signedness = mir::Signedness::kUnsigned,
-          .dims = {mir::PackedRange{
-              .left = static_cast<std::int64_t>(total_width) - 1, .right = 0}},
-          .form = mir::PackedArrayForm::kExplicit});
+  const mir::TypeId temp_type = mir::PackedVectorOf(
+      process.Owner().Unit().types, total_width, state_kind);
 
   const mir::ExprId temp_default_init = wrapper.exprs.Add(
       BuildDefaultValueExpr(process.Owner(), wrapper_frame, temp_type));
@@ -132,41 +129,12 @@ auto LowerDestructuringAssign(
         hir_proc.exprs.Get(lhs_concat.operands[i]).type);
     const mir::ExprId part_lhs_id = wrapper.exprs.Add(*std::move(part_lhs_or));
 
-    const mir::ExprId offset_id = BuildIntLiteral(
-        process.Owner().Unit(), wrapper, static_cast<std::int64_t>(offset));
-    const mir::ExprId count_id = BuildIntLiteral(
-        process.Owner().Unit(), wrapper, static_cast<std::int64_t>(w));
-    // `temp[offset +: w]`: a raw indexed-up part-select (`value::SliceForm`
-    // `kIndexedUp` == 1); the snapshot value resolves the bit window itself.
-    const mir::ExprId form_id =
-        BuildIntLiteral(process.Owner().Unit(), wrapper, 1);
     const mir::ExprId temp_ref =
         wrapper.exprs.Add(mir::MakeLocalRefExpr(snapshot_var, temp_type));
-    const mir::TypeId slice_type = process.Owner().Unit().types.Intern(
-        mir::PackedArrayType{
-            .atom = any_four_state ? mir::BitAtom::kLogic : mir::BitAtom::kBit,
-            .signedness = mir::Signedness::kUnsigned,
-            .dims = {mir::PackedRange{
-                .left = static_cast<std::int64_t>(w) - 1, .right = 0}},
-            .form = mir::PackedArrayForm::kExplicit});
-    const mir::ExprId shape_id =
-        mir::BuildPackedTypeRef(process.Owner().Unit(), wrapper, slice_type);
-    const mir::ExprId raw_slice_id = wrapper.exprs.Add(
-        mir::Expr{
-            .data =
-                mir::CallExpr{
-                    .callee = mir::Direct{.target = support::BuiltinFn::kSlice},
-                    .arguments =
-                        {temp_ref, offset_id, count_id, form_id, shape_id}},
-            .type = slice_type});
-    const mir::ExprId slice_id = wrapper.exprs.Add(
-        mir::Expr{
-            .data =
-                mir::CallExpr{
-                    .callee =
-                        mir::Direct{.target = support::BuiltinFn::kToOwned},
-                    .arguments = {raw_slice_id}},
-            .type = slice_type});
+    const mir::TypeId slice_type =
+        mir::PackedVectorOf(process.Owner().Unit().types, w, state_kind);
+    const mir::ExprId slice_id = wrapper.exprs.Add(BuildPackedRunRead(
+        process.Owner(), wrapper, temp_ref, offset, w, slice_type));
     mir::ExprId rhs_for_part = slice_id;
     if (part_mir_type != slice_type) {
       rhs_for_part = wrapper.exprs.Add(BuildValueConversion(
@@ -218,7 +186,7 @@ auto LowerDestructuringAssign(
 auto CallStatementSuspends(
     ProcessLowerer& process, const hir::CallExpr& call, mir::TypeId call_type)
     -> bool {
-  if (process.Owner().Unit().types.IsCoroutine(call_type)) {
+  if (process.Owner().Unit().types.Get(call_type).Is<mir::CoroutineType>()) {
     return true;
   }
   return std::visit(
@@ -404,12 +372,13 @@ auto LowerExprStmt(
     const mir::ExprId call_id = block.exprs.Add(*std::move(call_or));
     const mir::TypeId call_type = block.exprs.Get(call_id).type;
     if (CallStatementSuspends(process, *call, call_type)) {
-      const mir::TypeInterner& types = process.Owner().Unit().types;
+      const mir::TypePool& types = process.Owner().Unit().types;
+      const mir::Type& called = types.Get(call_type);
       const mir::ExprId await_id = block.exprs.Add(
           mir::Expr{
               .data = mir::AwaitExpr{.awaitable = call_id},
-              .type = types.IsCoroutine(call_type)
-                          ? types.CoroutinePayload(call_type)
+              .type = called.Is<mir::CoroutineType>()
+                          ? called.Get<mir::CoroutineType>().payload
                           : process.Owner().Unit().builtins.void_type});
       return mir::Stmt{
           .label = std::move(label), .data = mir::ExprStmt{.expr = await_id}};

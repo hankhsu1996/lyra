@@ -374,8 +374,7 @@ auto StructuralScopeLowerer::PopulateVariableMember(
   // Slang rejects `void` in any variable-declaration position before
   // elaboration, so a void-typed VariableSymbol can only reach this path
   // via a slang/Lyra integration bug.
-  if (std::holds_alternative<hir::VoidType>(
-          owner_->Unit().types.Get(*type_id_or).data)) {
+  if (owner_->Unit().types.Get(*type_id_or).Is<hir::VoidType>()) {
     throw InternalError(
         "StructuralScopeLowerer::PopulateVariableMember: variable declaration "
         "produced "

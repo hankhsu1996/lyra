@@ -13,16 +13,14 @@ namespace lyra::lowering::hir_to_mir {
 
 namespace {
 
-auto TranslateBitAtom(hir::BitAtom a) -> mir::BitAtom {
-  switch (a) {
+auto StateKindOf(hir::BitAtom atom) -> mir::IntegralStateKind {
+  switch (atom) {
     case hir::BitAtom::kBit:
-      return mir::BitAtom::kBit;
+      return mir::IntegralStateKind::kTwoState;
     case hir::BitAtom::kLogic:
-      return mir::BitAtom::kLogic;
-    case hir::BitAtom::kReg:
-      return mir::BitAtom::kReg;
+      return mir::IntegralStateKind::kFourState;
   }
-  throw InternalError("TranslateBitAtom: unknown BitAtom");
+  throw InternalError("StateKindOf: unknown BitAtom");
 }
 
 auto TranslateSignedness(hir::Signedness s) -> mir::Signedness {
@@ -30,29 +28,10 @@ auto TranslateSignedness(hir::Signedness s) -> mir::Signedness {
                                        : mir::Signedness::kUnsigned;
 }
 
-auto TranslatePackedArrayForm(hir::PackedArrayForm f) -> mir::PackedArrayForm {
-  switch (f) {
-    case hir::PackedArrayForm::kExplicit:
-      return mir::PackedArrayForm::kExplicit;
-    case hir::PackedArrayForm::kByte:
-      return mir::PackedArrayForm::kByte;
-    case hir::PackedArrayForm::kShortInt:
-      return mir::PackedArrayForm::kShortInt;
-    case hir::PackedArrayForm::kInt:
-      return mir::PackedArrayForm::kInt;
-    case hir::PackedArrayForm::kLongInt:
-      return mir::PackedArrayForm::kLongInt;
-    case hir::PackedArrayForm::kInteger:
-      return mir::PackedArrayForm::kInteger;
-    case hir::PackedArrayForm::kTime:
-      return mir::PackedArrayForm::kTime;
-  }
-  throw InternalError("TranslatePackedArrayForm: unknown PackedArrayForm");
-}
-
 // Projects a recursive HIR packed array onto MIR's flat single-vector shape
-// (LRM 7.4.1). A scalar-bit terminal contributes the atom and this one
-// dimension; any other element (a nested packed array, or a packed aggregate's
+// (LRM 7.4.1). A scalar-bit terminal contributes how many states its bits have
+// and this one dimension; any other element (a nested packed array, or a packed
+// aggregate's
 // single-vector projection) contributes its own flat dimensions, onto which
 // this dimension prepends.
 auto FlattenPackedArray(
@@ -60,27 +39,25 @@ auto FlattenPackedArray(
     -> mir::PackedArrayType {
   const mir::PackedRange dim{.left = pa.dim.left, .right = pa.dim.right};
   const hir::Type& element = unit_lowerer.Hir().types.Get(pa.element_type);
-  if (const auto* scalar = std::get_if<hir::ScalarBitType>(&element.data)) {
+  if (const auto* scalar = element.As<hir::ScalarBitType>()) {
     return mir::PackedArrayType{
-        .atom = TranslateBitAtom(scalar->atom),
+        .state_kind = StateKindOf(scalar->atom),
         .signedness = TranslateSignedness(pa.signedness),
         .dims = {dim},
-        .form = TranslatePackedArrayForm(pa.form),
     };
   }
   const mir::PackedArrayType& inner =
-      unit_lowerer.Unit()
-          .types.Get(unit_lowerer.TranslateType(pa.element_type))
-          .AsIntegralPacked();
+      (unit_lowerer.Unit().types.Get(
+           unit_lowerer.TranslateType(pa.element_type)))
+          .PackedShape();
   std::vector<mir::PackedRange> dims;
   dims.reserve(inner.dims.size() + 1U);
   dims.push_back(dim);
   dims.insert(dims.end(), inner.dims.begin(), inner.dims.end());
   return mir::PackedArrayType{
-      .atom = inner.atom,
+      .state_kind = inner.state_kind,
       .signedness = TranslateSignedness(pa.signedness),
       .dims = std::move(dims),
-      .form = TranslatePackedArrayForm(pa.form),
   };
 }
 
@@ -91,55 +68,51 @@ auto FlattenPackedAggregate(
     const PackedProjection& layout, hir::Signedness signedness)
     -> mir::PackedArrayType {
   return mir::PackedArrayType{
-      .atom = layout.four_state ? mir::BitAtom::kLogic : mir::BitAtom::kBit,
+      .state_kind = layout.state_kind,
       .signedness = TranslateSignedness(signedness),
       .dims = {mir::PackedRange{
           .left = static_cast<std::int64_t>(layout.bit_width) - 1, .right = 0}},
-      .form = mir::PackedArrayForm::kExplicit,
   };
 }
 
 }  // namespace
 
-auto UnitLowerer::TranslateTypeData(const hir::TypeData& data)
-    -> mir::TypeData {
-  return std::visit(
+auto UnitLowerer::TranslateType(const hir::Type& type) -> mir::Type {
+  return type.Visit(
       Overloaded{
-          [&](const hir::ScalarBitType& src) -> mir::TypeData {
+          [&](const hir::ScalarBitType& src) -> mir::Type {
             // A bare scalar is a one-bit unsigned vector in MIR's flat shape.
-            return mir::PackedArrayType{
-                .atom = TranslateBitAtom(src.atom),
+            return mir::Type{mir::PackedArrayType{
+                .state_kind = StateKindOf(src.atom),
                 .signedness = mir::Signedness::kUnsigned,
                 .dims = {mir::PackedRange{.left = 0, .right = 0}},
-                .form = mir::PackedArrayForm::kExplicit,
-            };
+            }};
           },
-          [&](const hir::PackedArrayType& src) -> mir::TypeData {
-            return FlattenPackedArray(*this, src);
+          [&](const hir::PackedArrayType& src) -> mir::Type {
+            return mir::Type{FlattenPackedArray(*this, src)};
           },
-          [&](const hir::PackedStructType& src) -> mir::TypeData {
+          [&](const hir::PackedStructType& src) -> mir::Type {
             // Per-member position bakes into a constant-bounds slice at
             // expression lowering, so MIR keeps no aggregate type -- only the
             // vector the members are placed in.
-            return FlattenPackedAggregate(
-                ProjectPackedAggregate(*this, data), src.signedness);
+            return mir::Type{FlattenPackedAggregate(
+                ProjectPackedAggregate(*this, type), src.signedness)};
           },
-          [&](const hir::PackedUnionType& src) -> mir::TypeData {
-            return FlattenPackedAggregate(
-                ProjectPackedAggregate(*this, data), src.signedness);
+          [&](const hir::PackedUnionType& src) -> mir::Type {
+            return mir::Type{FlattenPackedAggregate(
+                ProjectPackedAggregate(*this, type), src.signedness)};
           },
-          [&](const hir::EnumType& src) -> mir::TypeData {
-            // Enum is kept as a distinct mir::EnumType wrapping its base
-            // PackedArray plus the member table. Value-level operations
-            // unwrap via Type::AsIntegralPacked(); method dispatch reads the
-            // members from this struct directly.
+          [&](const hir::EnumType& src) -> mir::Type {
+            // An enumeration keeps a MIR type of its own, carrying its base's
+            // packed shape and its member table. A value operation reads the
+            // packed shape and so treats the value as its base integral; only
+            // the LRM 6.19.5 methods read the member table.
             const auto& base_mir_data =
-                Unit().types.Get(TranslateType(src.base_type)).data;
-            const auto* base_pa =
-                std::get_if<mir::PackedArrayType>(&base_mir_data);
+                Unit().types.Get(TranslateType(src.base_type));
+            const auto* base_pa = base_mir_data.As<mir::PackedArrayType>();
             if (base_pa == nullptr) {
               throw InternalError(
-                  "TranslateTypeData: enum base did not lower to a "
+                  "TranslateType: enum base did not lower to a "
                   "PackedArrayType");
             }
             std::vector<mir::EnumMember> members;
@@ -150,20 +123,20 @@ auto UnitLowerer::TranslateTypeData(const hir::TypeData& data)
               members.push_back(
                   mir::EnumMember{.name = m.name, .value = value});
             }
-            return mir::EnumType{
+            return mir::Type{mir::EnumType{
                 .base = *base_pa,
                 .members = std::move(members),
-            };
+            }};
           },
-          [&](const hir::UnpackedStructType& src) -> mir::TypeData {
+          [&](const hir::UnpackedStructType& src) -> mir::Type {
             std::vector<mir::TypeId> elements;
             elements.reserve(src.fields.size());
             for (const auto& field : src.fields) {
               elements.push_back(TranslateType(field.type));
             }
-            return mir::TupleType{.elements = std::move(elements)};
+            return mir::Type{mir::TupleType{.elements = std::move(elements)}};
           },
-          [&](const hir::UnpackedUnionType& src) -> mir::TypeData {
+          [&](const hir::UnpackedUnionType& src) -> mir::Type {
             // The untagged overlapping-storage form (LRM 7.3) maps to
             // `UnionType`; the tagged, type-checked sum form (LRM 7.3.2) to
             // `TaggedUnionType` -- MIR keeps them as distinct types because
@@ -174,63 +147,66 @@ auto UnitLowerer::TranslateTypeData(const hir::TypeData& data)
               elements.push_back(TranslateType(field.type));
             }
             if (!src.tagged) {
-              return mir::UnionType{.elements = std::move(elements)};
+              return mir::Type{mir::UnionType{.elements = std::move(elements)}};
             }
             // A `void` member (LRM 7.3.2) occupies a value slot, so its
             // component is the type carrying no information rather than the
             // absence of a type the SV keyword otherwise names.
             for (mir::TypeId& element : elements) {
-              if (unit_.types.Get(element).Kind() == mir::TypeKind::kVoid) {
-                element = unit_.types.Intern(mir::EmptyType{});
+              if (unit_.types.Get(element).Is<mir::VoidType>()) {
+                element = unit_.types.Intern(mir::Type{mir::EmptyType{}});
               }
             }
-            return mir::TaggedUnionType{.elements = std::move(elements)};
+            return mir::Type{
+                mir::TaggedUnionType{.elements = std::move(elements)}};
           },
-          [&](const hir::UnpackedArrayType& src) -> mir::TypeData {
-            return mir::UnpackedArrayType{
+          [&](const hir::UnpackedArrayType& src) -> mir::Type {
+            return mir::Type{mir::UnpackedArrayType{
                 .element_type = TranslateType(src.element_type),
                 .dim =
                     mir::UnpackedRange{
                         .left = src.dim.left, .right = src.dim.right},
-            };
+            }};
           },
-          [&](const hir::DynamicArrayType& src) -> mir::TypeData {
-            return mir::DynamicArrayType{
+          [&](const hir::DynamicArrayType& src) -> mir::Type {
+            return mir::Type{mir::DynamicArrayType{
                 .element_type = TranslateType(src.element_type),
-            };
+            }};
           },
-          [&](const hir::QueueType& src) -> mir::TypeData {
-            return mir::QueueType{
+          [&](const hir::QueueType& src) -> mir::Type {
+            return mir::Type{mir::QueueType{
                 .element_type = TranslateType(src.element_type),
                 .max_bound = src.max_bound,
-            };
+            }};
           },
-          [&](const hir::AssociativeArrayType& src) -> mir::TypeData {
-            return mir::AssociativeArrayType{
+          [&](const hir::AssociativeArrayType& src) -> mir::Type {
+            return mir::Type{mir::AssociativeArrayType{
                 .element_type = TranslateType(src.element_type),
                 .key_type = TranslateType(src.key_type),
-            };
+            }};
           },
-          [](const hir::WildcardIndexType&) -> mir::TypeData {
-            return mir::WildcardIndexType{};
+          [](const hir::WildcardIndexType&) -> mir::Type {
+            return mir::Type{mir::WildcardIndexType{}};
           },
-          [](const hir::StringType&) -> mir::TypeData {
-            return mir::StringType{};
+          [](const hir::StringType&) -> mir::Type {
+            return mir::Type{mir::StringType{}};
           },
-          [](const hir::EventType&) -> mir::TypeData {
-            return mir::EventType{};
+          [](const hir::EventType&) -> mir::Type {
+            return mir::Type{mir::EventType{}};
           },
-          [](const hir::RealType&) -> mir::TypeData { return mir::RealType{}; },
-          [](const hir::ShortRealType&) -> mir::TypeData {
-            return mir::ShortRealType{};
+          [](const hir::RealType&) -> mir::Type {
+            return mir::Type{mir::RealType{}};
           },
-          [](const hir::RealTimeType&) -> mir::TypeData {
-            return mir::RealTimeType{};
+          [](const hir::ShortRealType&) -> mir::Type {
+            return mir::Type{mir::ShortRealType{}};
           },
-          [](const hir::ChandleType&) -> mir::TypeData {
-            return mir::ChandleType{};
+          [](const hir::RealTimeType&) -> mir::Type {
+            return mir::Type{mir::RealTimeType{}};
           },
-          [&](const hir::ClassHandleType& src) -> mir::TypeData {
+          [](const hir::ChandleType&) -> mir::Type {
+            return mir::Type{mir::ChandleType{}};
+          },
+          [&](const hir::ClassHandleType& src) -> mir::Type {
             // A class handle is a managed reference to the class object: the
             // pointee is the object type naming the class's registry identity
             // (local) or the class's fully qualified name (external). The
@@ -239,31 +215,32 @@ auto UnitLowerer::TranslateTypeData(const hir::TypeData& data)
             // intern.
             if (const auto* local =
                     std::get_if<hir::LocalClassRef>(&src.class_ref)) {
-              return mir::ManagedRefType{
-                  .pointee = ClassObjectType(local->class_id)};
+              return mir::Type{mir::ManagedRefType{
+                  .pointee = ClassObjectType(local->class_id)}};
             }
-            return mir::ManagedRefType{
+            return mir::Type{mir::ManagedRefType{
                 .pointee = MakeExternalClassPointee(
-                    std::get<hir::ExternalClassRef>(src.class_ref))};
+                    std::get<hir::ExternalClassRef>(src.class_ref))}};
           },
-          [&](const hir::ImportedClassHandleType& src) -> mir::TypeData {
+          [&](const hir::ImportedClassHandleType& src) -> mir::Type {
             // A handle to an imported runtime-library class is the same managed
             // reference, its pointee the runtime-provided object type.
-            return mir::ManagedRefType{
-                .pointee = ImportedRuntimeObjectType(src.klass)};
+            return mir::Type{mir::ManagedRefType{
+                .pointee = ImportedRuntimeObjectType(src.klass)}};
           },
-          [&](const hir::UnitObjectType& src) -> mir::TypeData {
+          [&](const hir::UnitObjectType& src) -> mir::Type {
             return UnitObjectNamed(src.unit_name);
           },
-          [](const hir::NullType&) -> mir::TypeData {
+          [](const hir::NullType&) -> mir::Type {
             // The `null` literal carries no class identity; it renders as a
             // null pointer that any handle absorbs, so MIR types it as the
             // opaque handle. Its value, not its type, drives the comparison.
-            return mir::ChandleType{};
+            return mir::Type{mir::ChandleType{}};
           },
-          [](const hir::VoidType&) -> mir::TypeData { return mir::VoidType{}; },
-      },
-      data);
+          [](const hir::VoidType&) -> mir::Type {
+            return mir::Type{mir::VoidType{}};
+          },
+      });
 }
 
 }  // namespace lyra::lowering::hir_to_mir

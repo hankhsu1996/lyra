@@ -3,6 +3,8 @@
 #include <compare>
 #include <cstdint>
 
+#include "lyra/base/pool_id.hpp"
+
 namespace lyra::mir {
 
 // Identity of a class-level static constant -- a named, immutable value the
@@ -10,7 +12,7 @@ namespace lyra::mir {
 // class that declares it, the data dual of a static method. A generated
 // scope's behavior record is one such constant.
 struct StaticConstantId {
-  std::uint32_t value;
+  std::uint32_t value = base::kUnassignedId;
 
   auto operator<=>(const StaticConstantId&) const
       -> std::strong_ordering = default;

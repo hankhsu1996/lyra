@@ -125,40 +125,19 @@ class MirDumper {
     --indent_;
   }
 
-  static auto FormatBitAtom(BitAtom a) -> std::string_view {
-    switch (a) {
-      case BitAtom::kBit:
-        return "bit";
-      case BitAtom::kLogic:
-        return "logic";
-      case BitAtom::kReg:
-        return "reg";
+  static auto FormatStateKind(IntegralStateKind s) -> std::string_view {
+    switch (s) {
+      case IntegralStateKind::kTwoState:
+        return "2";
+      case IntegralStateKind::kFourState:
+        return "4";
     }
-    throw InternalError("MirDumper::FormatBitAtom: unknown BitAtom");
+    throw InternalError(
+        "MirDumper::FormatStateKind: unknown IntegralStateKind");
   }
 
   static auto FormatSignedness(Signedness s) -> std::string_view {
     return s == Signedness::kSigned ? "signed" : "unsigned";
-  }
-
-  static auto FormatPackedForm(PackedArrayForm f) -> std::string_view {
-    switch (f) {
-      case PackedArrayForm::kExplicit:
-        return "explicit";
-      case PackedArrayForm::kByte:
-        return "byte";
-      case PackedArrayForm::kShortInt:
-        return "shortint";
-      case PackedArrayForm::kInt:
-        return "int";
-      case PackedArrayForm::kLongInt:
-        return "longint";
-      case PackedArrayForm::kInteger:
-        return "integer";
-      case PackedArrayForm::kTime:
-        return "time";
-    }
-    throw InternalError("MirDumper::FormatPackedForm: unknown PackedArrayForm");
   }
 
   static auto FormatPackedDims(const std::vector<PackedRange>& dims)
@@ -220,13 +199,13 @@ class MirDumper {
   }
 
   static auto FormatType(const Type& t) -> std::string {
-    return std::visit(
+    return t.Visit(
         Overloaded{
             [](const PackedArrayType& p) -> std::string {
               return std::format(
-                  "PackedArray(atom={}, signed={}, dims={}, form={})",
-                  FormatBitAtom(p.atom), FormatSignedness(p.signedness),
-                  FormatPackedDims(p.dims), FormatPackedForm(p.form));
+                  "PackedArray(state={}, signed={}, dims={})",
+                  FormatStateKind(p.state_kind), FormatSignedness(p.signedness),
+                  FormatPackedDims(p.dims));
             },
             [](const EnumType& e) -> std::string {
               std::string members;
@@ -236,12 +215,11 @@ class MirDumper {
                     std::format("{}={}", e.members[i].name, e.members[i].value);
               }
               return std::format(
-                  "Enum(base=PackedArray(atom={}, signed={}, dims={}, "
-                  "form={}), members=[{}])",
-                  FormatBitAtom(e.base.atom),
+                  "Enum(base=PackedArray(state={}, signed={}, dims={}), "
+                  "members=[{}])",
+                  FormatStateKind(e.base.state_kind),
                   FormatSignedness(e.base.signedness),
-                  FormatPackedDims(e.base.dims), FormatPackedForm(e.base.form),
-                  members);
+                  FormatPackedDims(e.base.dims), members);
             },
             [](const UnpackedArrayType& u) -> std::string {
               return std::format(
@@ -468,8 +446,7 @@ class MirDumper {
                   "Driver(value=Type[{}], resolution={})", d.value.value,
                   FormatNetResolution(d.resolution));
             },
-        },
-        t.data);
+        });
   }
 
   static auto FormatUnaryOp(UnaryOp op) -> std::string {
@@ -725,12 +702,6 @@ class MirDumper {
                   "ConditionalExpr cond=Expr[{}] then=Expr[{}] else=Expr[{}]",
                   c.condition.value, c.then_value.value, c.else_value.value);
             },
-            [](const MergingConditionalExpr& c) -> std::string {
-              return std::format(
-                  "MergingConditionalExpr cond=Expr[{}] then=Expr[{}] "
-                  "else=Expr[{}]",
-                  c.condition.value, c.then_value.value, c.else_value.value);
-            },
             [](const BlockExpr& b) -> std::string {
               return std::format(
                   "BlockExpr scope=BlockId{{{}}} value=Expr[{}]", b.scope.value,
@@ -828,21 +799,6 @@ class MirDumper {
               return std::format(
                   "ClosureExpr closure=Closure[{}] field_inits={}",
                   cl.closure.value, cl.field_inits.size());
-            },
-            [](const ConcatExpr& c) -> std::string {
-              std::string operands;
-              for (std::size_t i = 0; i < c.operands.size(); ++i) {
-                if (i != 0) {
-                  operands += ", ";
-                }
-                operands += std::format("Expr[{}]", c.operands[i].value);
-              }
-              return std::format("ConcatExpr operands=[{}]", operands);
-            },
-            [](const ReplicationExpr& r) -> std::string {
-              return std::format(
-                  "ReplicationExpr count={} concat=Expr[{}]", r.count,
-                  r.concat.value);
             },
             [](const ValueCastExpr& v) -> std::string {
               return std::format(
@@ -1037,18 +993,6 @@ class MirDumper {
             std::format(
                 "[{}] arg=Expr[{}]", i,
                 s.constructor.base_init->args[i].value));
-      }
-      Dedent();
-    }
-    if (!s.constructor.member_inits.empty()) {
-      Line("MemberInits:");
-      Indent();
-      for (std::size_t i = 0; i < s.constructor.member_inits.size(); ++i) {
-        const auto& mi = s.constructor.member_inits[i];
-        Line(
-            std::format(
-                "[{}] field=Field[{}] value=Expr[{}]", i, mi.target.value,
-                mi.value.value));
       }
       Dedent();
     }

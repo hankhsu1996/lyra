@@ -75,13 +75,16 @@ void OpenActivationScope(
   }
   const mir::StructId struct_id = unit.AddStruct(std::move(struct_decl));
   const mir::TypeId struct_type =
-      unit.types.Intern(mir::StructType{.struct_id = struct_id});
+      unit.types.Intern(mir::Type{mir::StructType{.struct_id = struct_id}});
 
   // The handle: a shared pointer to the generated struct, allocated by
   // make_shared. Declared first in the scope, before the promoted locals it
   // stands in for.
-  const mir::TypeId handle_type =
-      unit.types.PointerTo(struct_type, mir::PointerOwnership::kShared);
+  const mir::TypeId handle_type = unit.types.Intern(
+      mir::Type{mir::PointerType{
+          .pointee = struct_type,
+          .ownership = mir::PointerOwnership::kShared,
+          .mutability = mir::Mutability::kMutable}});
   mir::Block& block = *frame.current_block;
   const mir::ExprId init = block.exprs.Add(
       mir::Expr{
@@ -109,8 +112,8 @@ void OpenActivationScope(
 
 auto CancellationTargetType(mir::CompilationUnit& unit) -> mir::TypeId {
   return unit.types.Intern(
-      mir::RuntimeLibraryType{
-          .kind = mir::RuntimeLibraryKind::kCancellationTarget});
+      mir::Type{mir::RuntimeLibraryType{
+          .kind = mir::RuntimeLibraryKind::kCancellationTarget}});
 }
 
 // The target of a block a `disable` can name (LRM 9.6.2), absent when it is
@@ -141,8 +144,10 @@ auto CancellationTarget(
   return block.exprs.Add(
       mir::Expr{
           .data = mir::AddressOfExpr{.operand = member},
-          .type = unit.types.PointerTo(
-              CancellationTargetType(unit), mir::PointerOwnership::kBorrowed)});
+          .type = unit.types.Intern(
+              mir::Type{mir::PointerType{
+                  .pointee = CancellationTargetType(unit),
+                  .ownership = mir::PointerOwnership::kBorrowed}})});
 }
 
 // Appends one end of a target's extent -- entering it or leaving it -- as a
@@ -196,7 +201,8 @@ auto BuildCancellableRegion(
       mir::FinallyStmt{.body = body_id, .cleanup = cleanup_id});
 
   const mir::TypeId effect_type = unit.types.Intern(
-      mir::RuntimeLibraryType{.kind = mir::RuntimeLibraryKind::kControlEffect});
+      mir::Type{mir::RuntimeLibraryType{
+          .kind = mir::RuntimeLibraryKind::kControlEffect}});
   const BindingOriginId origin =
       BindingOriginId::Synthesized(unit_lowerer.NextSynthesizedSite(), 0);
   const mir::LocalId caught = frame.bindings->Declare(

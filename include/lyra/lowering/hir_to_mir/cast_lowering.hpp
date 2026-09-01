@@ -46,4 +46,12 @@ namespace lyra::lowering::hir_to_mir {
     const mir::CompilationUnit& unit, mir::Block& block, mir::ExprId operand_id,
     mir::TypeId dst_type) -> mir::ExprId;
 
+// Reads a simulation value out as the widest machine integer -- the scalar a
+// runtime signature takes where it wants a count, an index, or a bit pattern
+// rather than an SV-typed value. The result type is that machine integer and
+// nothing about the operand changes it, which is why it is stated here once
+// instead of at each site that needs a value as a number.
+[[nodiscard]] auto MakeToInt64Call(
+    const mir::CompilationUnit& unit, mir::ExprId operand_id) -> mir::Expr;
+
 }  // namespace lyra::lowering::hir_to_mir

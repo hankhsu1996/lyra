@@ -1,6 +1,5 @@
 #pragma once
 
-#include <cstdint>
 #include <functional>
 #include <optional>
 #include <string>
@@ -89,7 +88,9 @@ class FunctionLowerer {
   // it was bound to, with no storage. A value-typed local in a suspending body
   // is an activation-frame value instead: its value crosses suspensions, so it
   // lives in the running activation's frame, reached through a handle read and
-  // written by activation-frame calls.
+  // written by activation-frame calls. A local whose storage is lent by
+  // reference lives in a cell, since that is the one storage a reference can
+  // name, and the binding holds the reference the lowering built over it.
   struct PlaceBinding {
     lir::ValueId slot;
   };
@@ -99,8 +100,11 @@ class FunctionLowerer {
   struct ActivationValueBinding {
     lir::Operand handle;
   };
-  using LocalBinding =
-      std::variant<PlaceBinding, ValueBinding, ActivationValueBinding>;
+  struct CellBinding {
+    lir::Operand reference;
+  };
+  using LocalBinding = std::variant<
+      PlaceBinding, ValueBinding, ActivationValueBinding, CellBinding>;
 
   auto LowerBlockInto(const mir::Block& block) -> diag::Result<void>;
   auto LowerStmtInto(const mir::Block& block, const mir::Stmt& stmt)
@@ -163,12 +167,16 @@ class FunctionLowerer {
   auto LowerCall(
       const mir::Block& block, const mir::CallExpr& call, mir::TypeId type)
       -> diag::Result<lir::Operand>;
-  // A reference is the address of the storage it binds; binding one, and
-  // reading or writing through one, are the address-of, load, and store over
-  // the referent's own place.
+  // A reference is the address of the cell its referent lives in.
   auto LowerReferenceBind(
       const mir::Block& block, const mir::CallExpr& call, mir::TypeId type)
       -> diag::Result<lir::Operand>;
+  // The place naming the cell a referent lives in -- the storage a reference
+  // binds. A referent that is itself a cell is that place already; one that is
+  // a value has a cell only where the lowering gave it one, which it does for a
+  // local whose storage is lent.
+  auto LowerCellPlace(const mir::Block& block, mir::ExprId referent)
+      -> diag::Result<lir::Place>;
   auto LowerAssign(const mir::Block& block, const mir::AssignExpr& assign)
       -> diag::Result<lir::Operand>;
   // Extracts the designated part's current value; called at most once, and only
@@ -218,33 +226,18 @@ class FunctionLowerer {
   auto LowerConditional(
       const mir::Block& block, const mir::ConditionalExpr& cond,
       mir::TypeId type) -> diag::Result<lir::Operand>;
-  // The conditional operator over a three-valued predicate, which a two-way
-  // branch cannot express: a predicate that is neither definitely true nor
-  // definitely false evaluates both arms and combines them, so each arm is
-  // evaluated under its own guard and the three outcomes meet at one result.
-  auto LowerMergingConditional(
-      const mir::Block& block, const mir::MergingConditionalExpr& cond,
-      mir::TypeId type) -> diag::Result<lir::Operand>;
-  // A join of packed runs, which reaches the machine as a chain of two-run
-  // joins because no entry takes an operand list of arbitrary length.
-  auto LowerConcat(
-      const mir::Block& block, const mir::ConcatExpr& concat, mir::TypeId type)
-      -> diag::Result<lir::Operand>;
 
   auto Emit(lir::TypeId type, lir::InstrData data) -> lir::Operand;
   auto NewPlaceLocal(lir::TypeId type) -> lir::ValueId;
   void BindLocal(mir::LocalId local, lir::TypeId type, lir::Operand init);
   auto Load(lir::Place place, lir::TypeId type) -> lir::Operand;
   auto Store(lir::Place place, lir::Operand value) -> lir::Operand;
-  // A count an entry takes as a plain machine scalar rather than as a
-  // simulation value.
-  auto MachineCount(std::uint64_t count) -> lir::Operand;
 
   // Activation-frame value operations, emitted for a value-typed local in a
-  // suspending body. `AllocateActivationValue` builds the cell (uninitialized
+  // suspending body. `AllocateActivationValue` builds the slot (uninitialized
   // -- the first `StoreActivationValue` installs its representation) and
   // returns its handle; `LoadActivationValue` copies the current value out;
-  // `StoreActivationValue` overwrites it. The handle is typed as the cell's
+  // `StoreActivationValue` overwrites it. The handle is typed as the slot's
   // value type -- both cross the boundary as one opaque handle -- so the value
   // domain an activation-frame call works in is read from that type.
   auto AllocateActivationValue(lir::TypeId value_type) -> lir::Operand;
@@ -252,6 +245,21 @@ class FunctionLowerer {
       -> lir::Operand;
   auto StoreActivationValue(lir::Operand handle, lir::Operand value)
       -> lir::Operand;
+
+  // The storage a local lent by reference lives in. `AllocateCell` builds the
+  // cell and returns the reference to it; `InitializeCell` installs the cell's
+  // representation and initial contents, the one write it takes before it will
+  // accept a store.
+  auto AllocateCell(lir::TypeId value_type) -> lir::Operand;
+  auto InitializeCell(lir::Operand reference, lir::Operand value)
+      -> lir::Operand;
+  // The two places a reference names: opening it reaches the cell it binds, and
+  // reaching through that cell names the value. A local whose storage is a cell
+  // holds a reference to it, so it names both the same way.
+  [[nodiscard]] static auto ReferencedCell(lir::Operand reference)
+      -> lir::Place;
+  [[nodiscard]] static auto ReferencedValue(lir::Operand reference)
+      -> lir::Place;
   // The activation-frame handle an assignable expression writes through, when
   // it names an activation-frame value local directly; nothing otherwise (a
   // place is written the ordinary way).
@@ -288,11 +296,13 @@ class FunctionLowerer {
   std::vector<LoopTargets> loops_;
   std::vector<PendingCleanup> cleanups_;
   std::vector<RegionTargets> regions_;
-  // Which locals the body writes through or addresses, which are
-  // activation-frame values (a value-typed local in a suspending body), and
-  // what each local has resolved to so far.
+  // Where each local's value lives: a frame place the body writes through or
+  // addresses, an activation-frame value (a value-typed local in a suspending
+  // body), or a cell (a local whose storage is lent by reference). The last
+  // holds what each local has resolved to so far.
   std::vector<bool> placed_;
   std::vector<bool> activation_value_local_;
+  std::vector<bool> cell_local_;
   std::vector<std::optional<LocalBinding>> locals_;
 };
 

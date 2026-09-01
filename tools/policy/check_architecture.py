@@ -95,6 +95,18 @@ Rules:
         is not this rule.
         Scope: src/lyra/backend/**, the type-mapping entry excepted.
 
+  A016  Every MIR expression and statement alternative is read by both of
+        MIR's consumers -- the C++ backend and the MIR-to-LIR lowering. A
+        node kind only one of them names is one of two defects, and the
+        suite catches neither: it carries one target's spelling, so the
+        other consumer has no arm for it; or the other consumer lowers
+        around it and silently drops what it meant. Both stay green,
+        because the backend that does read it produces exactly the right
+        answer. The dumper is not a consumer -- it renders every
+        alternative by construction and decides nothing.
+        Scope: include/lyra/mir/{expr,stmt}.hpp against
+               src/lyra/backend/cpp/** and src/lyra/lowering/mir_to_lir/**.
+
 When a rule fires, the printed message includes a fixed reminder that the
 fix is to change the ownership boundary, NOT to rename the function.
 
@@ -590,6 +602,66 @@ def check_a015(repo_root: Path) -> list[str]:
     return errors
 
 
+# Rule A016
+MIR_EXPR_HEADER = "include/lyra/mir/expr.hpp"
+MIR_STMT_HEADER = "include/lyra/mir/stmt.hpp"
+MIR_CONSUMERS = (
+    ("the C++ backend", ("src/lyra/backend/cpp", "include/lyra/backend/cpp")),
+    (
+        "MIR-to-LIR",
+        ("src/lyra/lowering/mir_to_lir",
+         "include/lyra/lowering/mir_to_lir"),
+    ),
+)
+
+
+def variant_alternatives(text: str, alias: str) -> list[str]:
+    m = re.search(rf"using {alias} = std::variant<(.*?)>;", text, re.S)
+    if not m:
+        return []
+    return [
+        part.strip()
+        for part in m.group(1).replace("\n", " ").split(",")
+        if part.strip()
+    ]
+
+
+def consumer_text(repo_root: Path, roots: tuple[str, ...]) -> str:
+    parts = []
+    for root in roots:
+        for path, _ in iter_files(repo_root, root):
+            parts.append(path.read_text())
+    return "\n".join(parts)
+
+
+def check_a016(repo_root: Path) -> list[str]:
+    texts = {
+        label: consumer_text(repo_root, roots) for label, roots in MIR_CONSUMERS
+    }
+    errors = []
+    for header, alias in (
+        (MIR_EXPR_HEADER, "ExprData"),
+        (MIR_STMT_HEADER, "StmtData"),
+    ):
+        text = (repo_root / header).read_text()
+        for name in variant_alternatives(text, alias):
+            pattern = re.compile(rf"\bmir::{re.escape(name)}\b")
+            missing = [
+                label
+                for label, blob in texts.items()
+                if not pattern.search(blob)
+            ]
+            if not missing:
+                continue
+            errors.append(
+                f"  {header}: A016 '{name}' is not read by "
+                f"{' and '.join(missing)}; a node kind one consumer never "
+                f"names carries that consumer's spelling, or the other one "
+                f"drops what it means"
+            )
+    return errors
+
+
 # Self-tests
 def run_self_tests() -> bool:
     def expect(cond, msg):
@@ -876,7 +948,7 @@ def run_self_tests() -> bool:
     # A015
     ok &= expect(
         RUNTIME_TYPE_LITERAL_PATTERN.search(
-            '"lyra::value::PackedArray::Concat({"'),
+            '"lyra::value::PackedArray::FromInt({}, {})"'),
         "A015 static factory of a runtime type")
     ok &= expect(
         RUNTIME_TYPE_LITERAL_PATTERN.search(
@@ -884,7 +956,7 @@ def run_self_tests() -> bool:
         "A015 type named mid-literal")
     ok &= expect(
         not RUNTIME_TYPE_LITERAL_PATTERN.search(
-            '"lyra::value::SelectByCondition({}, {}, {})"'),
+            '"lyra::value::MakeQueueConcat({})"'),
         "A015 free function is not a type")
     ok &= expect(
         not RUNTIME_TYPE_LITERAL_PATTERN.search(
@@ -894,6 +966,18 @@ def run_self_tests() -> bool:
         not RUNTIME_TYPE_LITERAL_PATTERN.search(
             "  return RenderTypeAsCpp(unit, id) + \"::Concat\";"),
         "A015 a mapped type reached into is not a literal")
+
+    # A016
+    ok &= expect(
+        variant_alternatives(
+            "using ExprData = std::variant<\n    UnaryExpr, BinaryExpr,\n"
+            "    CallExpr>;\n",
+            "ExprData") == ["UnaryExpr", "BinaryExpr", "CallExpr"],
+        "A016 parser reads the alternative list")
+    ok &= expect(
+        not variant_alternatives("using Callee = std::variant<Direct>;\n",
+                                 "ExprData"),
+        "A016 parser reads only the named alias")
 
     return ok
 
@@ -916,6 +1000,7 @@ CHECKS = [
     ("A013 closed alternative set nothing switches on", check_a013),
     ("A014 DiagCode without a registry entry", check_a014),
     ("A015 backend names a runtime library type", check_a015),
+    ("A016 MIR node kind only one consumer reads", check_a016),
 ]
 
 

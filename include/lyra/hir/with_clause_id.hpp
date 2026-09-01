@@ -3,6 +3,8 @@
 #include <compare>
 #include <cstdint>
 
+#include "lyra/base/pool_id.hpp"
+
 namespace lyra::hir {
 
 // Identity of one LRM 7.12 array-method `with` clause, assigned per clause at
@@ -10,7 +12,7 @@ namespace lyra::hir {
 // (not a nesting position), so the binding a reference points at stays stable
 // however deeply the referencing clause is nested.
 struct WithClauseId {
-  std::uint32_t value;
+  std::uint32_t value = base::kUnassignedId;
 
   auto operator<=>(const WithClauseId&) const -> std::strong_ordering = default;
 };

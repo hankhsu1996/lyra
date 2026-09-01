@@ -8,7 +8,6 @@
 #include <string>
 #include <string_view>
 #include <utility>
-#include <variant>
 #include <vector>
 
 #include <llvm/Analysis/CGSCCPassManager.h>
@@ -37,7 +36,6 @@
 #include "lyra/lir/compilation_unit.hpp"
 #include "lyra/lir/type.hpp"
 #include "lyra/lir/type_id.hpp"
-#include "lyra/lir/type_query.hpp"
 #include "lyra/runtime/closure.hpp"
 #include "lyra/runtime/design.hpp"
 #include "lyra/runtime/generated_call_scope.hpp"
@@ -202,15 +200,19 @@ void DefineRuntimeAbi(llvm::orc::LLJIT& jit) {
   add("lyra_rt_get_signal", &lyra_rt_get_signal);
   add("lyra_rt_resolve_visible_child", &lyra_rt_resolve_visible_child);
   add("lyra_rt_get_child", &lyra_rt_get_child);
+  add("lyra_rt_packed_cell_alloc", &lyra_rt_packed_cell_alloc);
   add("lyra_rt_packed_cell_get", &lyra_rt_packed_cell_get);
   add("lyra_rt_packed_cell_initialize", &lyra_rt_packed_cell_initialize);
   add("lyra_rt_packed_cell_set", &lyra_rt_packed_cell_set);
+  add("lyra_rt_string_cell_alloc", &lyra_rt_string_cell_alloc);
   add("lyra_rt_string_cell_get", &lyra_rt_string_cell_get);
   add("lyra_rt_string_cell_initialize", &lyra_rt_string_cell_initialize);
   add("lyra_rt_string_cell_set", &lyra_rt_string_cell_set);
+  add("lyra_rt_real_cell_alloc", &lyra_rt_real_cell_alloc);
   add("lyra_rt_real_cell_get", &lyra_rt_real_cell_get);
   add("lyra_rt_real_cell_initialize", &lyra_rt_real_cell_initialize);
   add("lyra_rt_real_cell_set", &lyra_rt_real_cell_set);
+  add("lyra_rt_shortreal_cell_alloc", &lyra_rt_shortreal_cell_alloc);
   add("lyra_rt_shortreal_cell_get", &lyra_rt_shortreal_cell_get);
   add("lyra_rt_shortreal_cell_initialize", &lyra_rt_shortreal_cell_initialize);
   add("lyra_rt_shortreal_cell_set", &lyra_rt_shortreal_cell_set);
@@ -434,6 +436,7 @@ void DefineRuntimeAbi(llvm::orc::LLJIT& jit) {
   add("lyra_rt_tuple_ne", &lyra_rt_tuple_ne);
   add("lyra_rt_tuple_case_equal", &lyra_rt_tuple_case_equal);
   add("lyra_rt_tuple_is_unknown", &lyra_rt_tuple_is_unknown);
+  add("lyra_rt_tuple_cell_alloc", &lyra_rt_tuple_cell_alloc);
   add("lyra_rt_tuple_cell_get", &lyra_rt_tuple_cell_get);
   add("lyra_rt_tuple_cell_initialize", &lyra_rt_tuple_cell_initialize);
   add("lyra_rt_tuple_cell_set", &lyra_rt_tuple_cell_set);
@@ -456,6 +459,7 @@ void DefineRuntimeAbi(llvm::orc::LLJIT& jit) {
   add("lyra_rt_dynarray_eq", &lyra_rt_dynarray_eq);
   add("lyra_rt_dynarray_ne", &lyra_rt_dynarray_ne);
   add("lyra_rt_dynarray_case_equal", &lyra_rt_dynarray_case_equal);
+  add("lyra_rt_dynarray_cell_alloc", &lyra_rt_dynarray_cell_alloc);
   add("lyra_rt_dynarray_cell_get", &lyra_rt_dynarray_cell_get);
   add("lyra_rt_dynarray_cell_initialize", &lyra_rt_dynarray_cell_initialize);
   add("lyra_rt_dynarray_cell_set", &lyra_rt_dynarray_cell_set);
@@ -493,6 +497,7 @@ void DefineRuntimeAbi(llvm::orc::LLJIT& jit) {
   add("lyra_rt_queue_bitstream_width", &lyra_rt_queue_bitstream_width);
   add("lyra_rt_queue_count_bits", &lyra_rt_queue_count_bits);
   add("lyra_rt_queue_value_box", &lyra_rt_queue_value_box);
+  add("lyra_rt_queue_cell_alloc", &lyra_rt_queue_cell_alloc);
   add("lyra_rt_queue_cell_get", &lyra_rt_queue_cell_get);
   add("lyra_rt_queue_cell_initialize", &lyra_rt_queue_cell_initialize);
   add("lyra_rt_queue_cell_set", &lyra_rt_queue_cell_set);
@@ -532,6 +537,7 @@ void DefineRuntimeAbi(llvm::orc::LLJIT& jit) {
       &lyra_rt_unpackedarray_bitstream_width);
   add("lyra_rt_assocarray_count_bits", &lyra_rt_assocarray_count_bits);
   add("lyra_rt_assocarray_value_box", &lyra_rt_assocarray_value_box);
+  add("lyra_rt_assocarray_cell_alloc", &lyra_rt_assocarray_cell_alloc);
   add("lyra_rt_assocarray_cell_get", &lyra_rt_assocarray_cell_get);
   add("lyra_rt_assocarray_cell_initialize",
       &lyra_rt_assocarray_cell_initialize);
@@ -546,12 +552,14 @@ void DefineRuntimeAbi(llvm::orc::LLJIT& jit) {
   add("lyra_rt_unpackedarray_with_element",
       &lyra_rt_unpackedarray_with_element);
   add("lyra_rt_unpackedarray_slice", &lyra_rt_unpackedarray_slice);
+  add("lyra_rt_unpackedarray_with_slice", &lyra_rt_unpackedarray_with_slice);
   add("lyra_rt_unpackedarray_size", &lyra_rt_unpackedarray_size);
   add("lyra_rt_unpackedarray_count_bits", &lyra_rt_unpackedarray_count_bits);
   add("lyra_rt_unpackedarray_eq", &lyra_rt_unpackedarray_eq);
   add("lyra_rt_unpackedarray_ne", &lyra_rt_unpackedarray_ne);
   add("lyra_rt_unpackedarray_case_equal", &lyra_rt_unpackedarray_case_equal);
   add("lyra_rt_unpackedarray_is_unknown", &lyra_rt_unpackedarray_is_unknown);
+  add("lyra_rt_unpackedarray_cell_alloc", &lyra_rt_unpackedarray_cell_alloc);
   add("lyra_rt_unpackedarray_cell_get", &lyra_rt_unpackedarray_cell_get);
   add("lyra_rt_unpackedarray_cell_initialize",
       &lyra_rt_unpackedarray_cell_initialize);
@@ -596,14 +604,14 @@ void DefineForeignSymbols(
 // value realization for the owner holds inline.
 auto DescribeMember(const lir::CompilationUnit& unit, lir::TypeId type)
     -> diag::Result<runtime::MemberStorageDescriptor> {
-  const auto& data = unit.types.Get(type).data;
-  if (const auto* observable = std::get_if<lir::ObservableType>(&data)) {
+  const auto& data = unit.types.Get(type);
+  if (const auto* observable = data.As<lir::ObservableType>()) {
     if (const std::optional<support::ValueDomain> domain =
             backend::llvm_backend::ValueDomainOf(unit, observable->value)) {
       return runtime::ObservableCellStorage{.domain = *domain};
     }
   }
-  if (const auto* library = std::get_if<lir::RuntimeLibraryType>(&data)) {
+  if (const auto* library = data.As<lir::RuntimeLibraryType>()) {
     switch (library->kind) {
       case lir::RuntimeLibraryKind::kCancellationTarget:
         return runtime::CancellationTargetStorage{};
@@ -611,11 +619,17 @@ auto DescribeMember(const lir::CompilationUnit& unit, lir::TypeId type)
       // which the closure performing that write owns a copy of.
       case lir::RuntimeLibraryKind::kChannelCancellation:
         return runtime::ChannelCancellationStorage{};
+      // An integral type's descriptor, which a deferred write carries so the
+      // region performing it can build the value. The module holds one per
+      // type for the whole run, so a member that names one points at storage
+      // outliving every closure that reads it rather than owning a copy.
+      case lir::RuntimeLibraryKind::kPackedType:
+        return runtime::BorrowedHandleStorage{};
       default:
         break;
     }
   }
-  if (lir::Pointee(unit.types, type).has_value()) {
+  if (unit.types.Get(type).Pointee().has_value()) {
     return runtime::BorrowedHandleStorage{};
   }
   // A value the owner holds but no process subscribes to -- a chandle (LRM
@@ -630,7 +644,7 @@ auto DescribeMember(const lir::CompilationUnit& unit, lir::TypeId type)
       std::format(
           "jit executor: a member of type {} has no storage realization on "
           "this backend",
-          lir::TypeKindName(unit.types.Get(type))));
+          unit.types.Get(type).KindName()));
 }
 
 auto DescribeMembers(
@@ -738,12 +752,11 @@ auto LoadStaticStorage(const lir::CompilationUnit& unit)
 // storage instead.
 auto OwnedChildClass(const lir::CompilationUnit& unit, lir::TypeId type)
     -> std::optional<lir::ClassId> {
-  const std::optional<lir::TypeId> pointee = lir::Pointee(unit.types, type);
+  const std::optional<lir::TypeId> pointee = unit.types.Get(type).Pointee();
   if (!pointee) {
     return std::nullopt;
   }
-  const auto* object =
-      std::get_if<lir::ObjectType>(&unit.types.Get(*pointee).data);
+  const auto* object = unit.types.Get(*pointee).As<lir::ObjectType>();
   return object != nullptr ? std::optional{object->class_id} : std::nullopt;
 }
 

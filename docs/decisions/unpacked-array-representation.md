@@ -245,8 +245,9 @@ U1 work-list; subsequent unpacked sub-steps reversed that condition.
 **ArrayLiteral as an init-only `Decl` variant rather than a first-class expression.** Rejected.
 slang's AST already shapes `'{...}` as an Expression (`SimpleAssignmentPatternExpression`).
 Procedural array assignment (`arr = '{1,2,3}`) requires the literal in RHS position; an init-only
-form would force a parallel rewrite when that lands. ConcatExpr and ReplicationExpr are first-class
-expressions despite also being context-typed -- ArrayLiteral is in the same family per `mir.md`.
+form would force a parallel rewrite when that lands. A literal spells a value rather than operating
+on values that already exist, which is what keeps it an expression primitive per `mir.md` however
+its type is arrived at.
 
 **Element list as `std::initializer_list<T>` with a backend special-case that strips the type prefix
 when the literal appears inside a `ConstructExpr` argument slot.** Rejected. The backend rendering

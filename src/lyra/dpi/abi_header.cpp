@@ -6,7 +6,6 @@
 #include <string>
 #include <string_view>
 #include <utility>
-#include <variant>
 #include <vector>
 
 #include "lyra/base/internal_error.hpp"
@@ -26,7 +25,7 @@ namespace {
 // anything else reaching here is a boundary the lowering should have rejected.
 auto RenderTypeAsC(const mir::CompilationUnit& unit, mir::TypeId id)
     -> std::string {
-  return std::visit(
+  return unit.types.Get(id).Visit(
       Overloaded{
           [](const mir::VoidType&) -> std::string { return "void"; },
           [](const mir::MachineIntType& m) -> std::string {
@@ -75,8 +74,7 @@ auto RenderTypeAsC(const mir::CompilationUnit& unit, mir::TypeId id)
           [](const auto&) -> std::string {
             throw InternalError(
                 "RenderTypeAsC: this type does not cross the DPI-C boundary");
-          }},
-      unit.types.Get(id).data);
+          }});
 }
 
 // The full C declarator of one foreign callable, the text a user's compiler

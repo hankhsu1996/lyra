@@ -3,6 +3,8 @@
 #include <compare>
 #include <cstdint>
 
+#include "lyra/base/pool_id.hpp"
+
 namespace lyra::lir {
 
 // Identity of a function of this unit. Every body the unit compiles has one --
@@ -12,7 +14,7 @@ namespace lyra::lir {
 // its receiver arrives as its first parameter, neither of which is a property
 // of the identity.
 struct FunctionId {
-  std::uint32_t value;
+  std::uint32_t value = base::kUnassignedId;
 
   auto operator<=>(const FunctionId&) const -> std::strong_ordering = default;
 };

@@ -2,6 +2,7 @@
 
 #include <cstddef>
 #include <format>
+#include <optional>
 #include <string>
 #include <string_view>
 #include <variant>
@@ -16,7 +17,6 @@
 #include "lyra/mir/class_ref.hpp"
 #include "lyra/mir/compilation_unit.hpp"
 #include "lyra/mir/field.hpp"
-#include "lyra/mir/type.hpp"
 
 namespace lyra::backend::cpp {
 
@@ -230,36 +230,29 @@ auto RenderConstructor(const mir::CompilationUnit& unit, const mir::Class& s)
     forward_names.emplace_back(p.name);
   }
 
-  std::vector<std::string> init_parts;
+  std::optional<std::string> base_clause;
   if (s.constructor.base_init.has_value()) {
-    const std::string base_class = RenderClassRefAsCpp(unit, *s.base);
     std::vector<std::string> base_args_rendered;
     base_args_rendered.reserve(s.constructor.base_init->args.size());
     for (const mir::ExprId arg : s.constructor.base_init->args) {
       base_args_rendered.push_back(
           RenderExpr(scope_view, scope_view.Expr(arg)));
     }
-    init_parts.push_back(
-        std::format(
-            "{}({})", base_class, JoinCommaSeparated(base_args_rendered)));
-  }
-  for (const mir::FieldInit& mi : s.constructor.member_inits) {
-    const auto& f = s.fields.Get(mi.target);
-    init_parts.push_back(
-        std::format(
-            "{}({})", f.name,
-            RenderExpr(scope_view, scope_view.Expr(mi.value))));
+    base_clause = std::format(
+        " : {}({})", RenderClassRefAsCpp(unit, *s.base),
+        JoinCommaSeparated(base_args_rendered));
   }
 
   const std::string cpp_name = ToCppName(s.name);
   const std::string params = JoinCommaSeparated(sig_args);
 
-  // The C++ ctor is an allocation shell that forwards to the base and the
-  // field members, then hands off to a static `init(self, ...)` -- the same
-  // static-over-self shape every method render uses, so a body-local self
-  // reference resolves as `self` here just like in any other body. The
-  // constructor formals ride alongside `self` so the body reaches them the same
-  // way it reaches any parameter.
+  // The base subobject is constructed before any statement of the body can
+  // run, so that one step stays in the C++ constructor's own initializer
+  // clause and the constructor is otherwise an allocation shell handing off to
+  // a static `init(self, ...)` -- the same static-over-self shape every method
+  // render uses, so a body-local self reference resolves as `self` here just
+  // like in any other body. The constructor formals ride alongside `self` so
+  // the body reaches them the same way it reaches any parameter.
   std::vector<std::string> init_params;
   init_params.reserve(sig_args.size() + 1);
   init_params.push_back(std::format("{}* self", cpp_name));
@@ -283,10 +276,7 @@ auto RenderConstructor(const mir::CompilationUnit& unit, const mir::Class& s)
           "inline auto {0}::init({4}) -> void {{\n"
           "{5}"
           "}}\n",
-          cpp_name, params,
-          init_parts.empty()
-              ? std::string{}
-              : std::format(" : {}", JoinCommaSeparated(init_parts)),
+          cpp_name, params, base_clause.value_or(std::string{}),
           JoinCommaSeparated(init_call_args), init_signature,
           RenderBlockStatements(scope_view, 1))};
 }

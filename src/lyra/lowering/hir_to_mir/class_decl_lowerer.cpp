@@ -147,8 +147,11 @@ auto ClassDeclLowerer::DeclareShape() -> diag::Result<void> {
   UnitLowerer& unit_lowerer = *owner_;
   const hir::ClassDecl& hir_class = *hir_class_;
 
-  const mir::TypeId self_pointer_type = unit_lowerer.Unit().types.PointerTo(
-      object_type_, mir::PointerOwnership::kBorrowed);
+  const mir::TypeId self_pointer_type = unit_lowerer.Unit().types.Intern(
+      mir::Type{mir::PointerType{
+          .pointee = object_type_,
+          .ownership = mir::PointerOwnership::kBorrowed,
+          .mutability = mir::Mutability::kMutable}});
 
   std::optional<mir::ClassRef> base_ref;
   if (hir_class.base.has_value()) {
@@ -308,10 +311,8 @@ auto ClassDeclLowerer::PopulateBodies() -> diag::Result<void> {
   // ordering is the single declaration-order pass because an initializer may
   // read an earlier property whose own initialization has already run.
   // Index the source-declared initializers by their target so the per-field
-  // loop below reads each one in O(1). The class-level `field_inits` list
-  // stays the sparse "only fields the source wrote" form, mirroring
-  // `mir::ConstructorDecl::member_inits`; the dense per-field iteration is a
-  // consumer concern this lookup encapsulates.
+  // loop below reads each one in O(1): the source names only the fields it
+  // wrote, and the pass visits every field.
   std::unordered_map<hir::FieldId, hir::ExprId> initializer_of;
   initializer_of.reserve(hir_class.field_inits.size());
   for (const hir::FieldInit& init : hir_class.field_inits) {
@@ -432,9 +433,7 @@ auto ClassDeclLowerer::PopulateBodies() -> diag::Result<void> {
   ctor_code.params = std::move(ctor_params);
   ctor_code.result_type = unit_lowerer.Unit().builtins.void_type;
   mir_class.constructor = mir::ConstructorDecl{
-      .code = std::move(ctor_code),
-      .base_init = std::move(base_init),
-      .member_inits = {}};
+      .code = std::move(ctor_code), .base_init = std::move(base_init)};
 
   auto static_init_or = LowerStaticInit(
       unit_lowerer, hir_class, shape, mir_class, class_id_, scopes);

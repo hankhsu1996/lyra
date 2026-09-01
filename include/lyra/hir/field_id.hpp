@@ -5,6 +5,8 @@
 #include <cstdint>
 #include <functional>
 
+#include "lyra/base/pool_id.hpp"
+
 namespace lyra::hir {
 
 // The declaration-order position of a class or aggregate field within its
@@ -12,7 +14,7 @@ namespace lyra::hir {
 // position; the arena that mints them decides which declaration the id
 // belongs to, so an id from one arena is never a valid handle in another.
 struct FieldId {
-  std::uint32_t value;
+  std::uint32_t value = base::kUnassignedId;
 
   auto operator<=>(const FieldId&) const -> std::strong_ordering = default;
 };

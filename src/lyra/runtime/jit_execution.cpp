@@ -48,7 +48,6 @@
 #include "lyra/value/runtime_value.hpp"
 #include "lyra/value/scan.hpp"
 #include "lyra/value/string.hpp"
-#include "lyra/value/string_op.hpp"
 
 namespace lyra::runtime {
 
@@ -394,7 +393,6 @@ using lyra::runtime::TestPlusargs;
 using lyra::runtime::Trigger;
 using lyra::runtime::Var;
 using lyra::value::Chandle;
-using lyra::value::Concat;
 using lyra::value::Format;
 using lyra::value::FormatSpec;
 using lyra::value::PackedArray;
@@ -404,7 +402,6 @@ using lyra::value::PrintItem;
 using lyra::value::PrintLiteralItem;
 using lyra::value::PrintValueItem;
 using lyra::value::Real;
-using lyra::value::Replicate;
 using lyra::value::RuntimeAssociativeArray;
 using lyra::value::RuntimeDynamicArray;
 using lyra::value::RuntimeQueue;
@@ -910,6 +907,10 @@ auto lyra_rt_get_signal(void* self, const void* name) -> void* {
   return static_cast<Scope*>(self)->GetSignal(static_cast<const char*>(name));
 }
 
+auto lyra_rt_packed_cell_alloc() -> void* {
+  return GeneratedCallScope::Current().Arena().New<Var<PackedArray>>();
+}
+
 auto lyra_rt_packed_cell_get(void* cell) -> void* {
   return Own(static_cast<Var<PackedArray>*>(cell)->Get());
 }
@@ -922,6 +923,10 @@ void lyra_rt_packed_cell_initialize(void* cell, const void* prototype) {
 void lyra_rt_packed_cell_set(void* cell, const void* value) {
   static_cast<Var<PackedArray>*>(cell)->Set(
       lyra::runtime::current_runtime(), Read<PackedArray>(value));
+}
+
+auto lyra_rt_string_cell_alloc() -> void* {
+  return GeneratedCallScope::Current().Arena().New<Var<String>>();
 }
 
 auto lyra_rt_string_cell_get(void* cell) -> void* {
@@ -937,6 +942,10 @@ void lyra_rt_string_cell_set(void* cell, const void* value) {
       lyra::runtime::current_runtime(), Read<String>(value));
 }
 
+auto lyra_rt_real_cell_alloc() -> void* {
+  return GeneratedCallScope::Current().Arena().New<Var<Real>>();
+}
+
 auto lyra_rt_real_cell_get(void* cell) -> void* {
   return Own(static_cast<Var<Real>*>(cell)->Get());
 }
@@ -948,6 +957,10 @@ void lyra_rt_real_cell_initialize(void* cell, const void* prototype) {
 void lyra_rt_real_cell_set(void* cell, const void* value) {
   static_cast<Var<Real>*>(cell)->Set(
       lyra::runtime::current_runtime(), Read<Real>(value));
+}
+
+auto lyra_rt_shortreal_cell_alloc() -> void* {
+  return GeneratedCallScope::Current().Arena().New<Var<ShortReal>>();
 }
 
 auto lyra_rt_shortreal_cell_get(void* cell) -> void* {
@@ -1129,15 +1142,12 @@ auto lyra_rt_packed_pow(const void* base, const void* exponent) -> void* {
 }
 
 auto lyra_rt_packed_concat(const void* lhs, const void* rhs) -> void* {
-  return Own(
-      PackedArray::Concat({Read<PackedArray>(lhs), Read<PackedArray>(rhs)}));
+  return Own(Read<PackedArray>(lhs).Concat(Read<PackedArray>(rhs)));
 }
 
 auto lyra_rt_packed_replicate(const void* operand, std::int64_t count)
     -> void* {
-  return Own(
-      PackedArray::Replicate(
-          Read<PackedArray>(operand), static_cast<std::uint64_t>(count)));
+  return Own(Read<PackedArray>(operand).Replicate(count));
 }
 
 auto lyra_rt_packed_shift_left(const void* value, const void* amount) -> void* {
@@ -1310,12 +1320,12 @@ auto lyra_rt_string_substr(
 }
 
 auto lyra_rt_string_concat(const void* lhs, const void* rhs) -> void* {
-  return Own(Concat(Read<String>(lhs), Read<String>(rhs)));
+  return Own(Read<String>(lhs).Concat(Read<String>(rhs)));
 }
 
 auto lyra_rt_string_replicate(const void* operand, std::int64_t count)
     -> void* {
-  return Own(Replicate(Read<String>(operand), count));
+  return Own(Read<String>(operand).Replicate(count));
 }
 
 auto lyra_rt_string_atoi(const void* value) -> void* {
@@ -1881,6 +1891,10 @@ auto lyra_rt_tuple_is_unknown(const void* value) -> void* {
   return Own(Read<RuntimeTuple>(value).IsUnknown());
 }
 
+auto lyra_rt_tuple_cell_alloc() -> void* {
+  return GeneratedCallScope::Current().Arena().New<Var<RuntimeTuple>>();
+}
+
 auto lyra_rt_tuple_cell_get(void* cell) -> void* {
   return Own(static_cast<Var<RuntimeTuple>*>(cell)->Get());
 }
@@ -1975,6 +1989,10 @@ auto lyra_rt_dynarray_ne(const void* lhs, const void* rhs) -> void* {
 auto lyra_rt_dynarray_case_equal(const void* lhs, const void* rhs) -> void* {
   return Own(
       Read<RuntimeDynamicArray>(lhs).CaseEqual(Read<RuntimeDynamicArray>(rhs)));
+}
+
+auto lyra_rt_dynarray_cell_alloc() -> void* {
+  return GeneratedCallScope::Current().Arena().New<Var<RuntimeDynamicArray>>();
 }
 
 auto lyra_rt_dynarray_cell_get(void* cell) -> void* {
@@ -2124,6 +2142,16 @@ auto lyra_rt_unpackedarray_slice(
           Read<PackedArray>(left), Read<PackedArray>(right)));
 }
 
+auto lyra_rt_unpackedarray_with_slice(
+    const void* array, const void* a, const void* b, const void* form,
+    const void* left, const void* right, const void* replacement) -> void* {
+  return Own(
+      Read<RuntimeUnpackedArray>(array).WithSlice(
+          Read<PackedArray>(a), Read<PackedArray>(b), Read<PackedArray>(form),
+          Read<PackedArray>(left), Read<PackedArray>(right),
+          Read<RuntimeUnpackedArray>(replacement)));
+}
+
 auto lyra_rt_unpackedarray_eq(const void* lhs, const void* rhs) -> void* {
   return Own(
       Read<RuntimeUnpackedArray>(lhs) == Read<RuntimeUnpackedArray>(rhs));
@@ -2143,6 +2171,10 @@ auto lyra_rt_unpackedarray_case_equal(const void* lhs, const void* rhs)
 
 auto lyra_rt_unpackedarray_is_unknown(const void* value) -> void* {
   return Own(Read<RuntimeUnpackedArray>(value).IsUnknown());
+}
+
+auto lyra_rt_unpackedarray_cell_alloc() -> void* {
+  return GeneratedCallScope::Current().Arena().New<Var<RuntimeUnpackedArray>>();
 }
 
 auto lyra_rt_unpackedarray_cell_get(void* cell) -> void* {
@@ -2302,6 +2334,10 @@ auto lyra_rt_queue_value_box(const void* value) -> void* {
   return Own(RuntimeValue{Read<RuntimeQueue>(value)});
 }
 
+auto lyra_rt_queue_cell_alloc() -> void* {
+  return GeneratedCallScope::Current().Arena().New<Var<RuntimeQueue>>();
+}
+
 auto lyra_rt_queue_cell_get(void* cell) -> void* {
   return Own(static_cast<Var<RuntimeQueue>*>(cell)->Get());
 }
@@ -2455,6 +2491,12 @@ auto lyra_rt_assocarray_count_bits(const void* array, const void* control_bits)
 
 auto lyra_rt_assocarray_value_box(const void* value) -> void* {
   return Own(RuntimeValue{Read<RuntimeAssociativeArray>(value)});
+}
+
+auto lyra_rt_assocarray_cell_alloc() -> void* {
+  return GeneratedCallScope::Current()
+      .Arena()
+      .New<Var<RuntimeAssociativeArray>>();
 }
 
 auto lyra_rt_assocarray_cell_get(void* cell) -> void* {

@@ -16,7 +16,6 @@
 #include "lyra/backend/cpp/render_type.hpp"
 #include "lyra/backend/cpp/scope_view.hpp"
 #include "lyra/backend/cpp/string_literal.hpp"
-#include "lyra/backend/cpp/value_form.hpp"
 #include "lyra/base/internal_error.hpp"
 #include "lyra/base/overloaded.hpp"
 #include "lyra/mir/binary_op.hpp"
@@ -35,10 +34,6 @@ auto LookupLocalName(const ScopeView& view, const mir::LocalRef& ref)
   // seeds from `this` -- renders as its declared name.
   return view.Local(ref).name;
 }
-
-}  // namespace
-
-namespace {
 
 // The C++ operator token for the SV binary ops that render natively. The
 // method-style ops (shifts, power, xnor, wildcard / case / implication /
@@ -158,19 +153,6 @@ auto RenderConditionalExpr(const ScopeView& view, const mir::ConditionalExpr& c)
       RenderExpr(view, view.Expr(c.else_value)));
 }
 
-// An arm reaches the entry as a callable, so the entry still evaluates only the
-// arm the predicate selects, and evaluates both only where it selects neither.
-auto RenderMergingConditionalExpr(
-    const ScopeView& view, const mir::MergingConditionalExpr& c)
-    -> std::string {
-  return std::format(
-      "lyra::value::SelectByCondition({}, [&] {{ return {}; }}, [&] {{ "
-      "return {}; }})",
-      RenderExpr(view, view.Expr(c.condition)),
-      RenderExpr(view, view.Expr(c.then_value)),
-      RenderExpr(view, view.Expr(c.else_value)));
-}
-
 // Converts a machine integer to the machine integer named by the enclosing
 // `Expr::type` -- a truncation or an extension, which `static_cast` performs.
 // This is a machine conversion, not a simulation-value one: every SV value
@@ -238,30 +220,30 @@ auto ResolveFieldAccess(const ScopeView& view, const mir::FieldAccessExpr& m)
           },
           [&](const mir::FieldId& id) -> FieldAccess {
             const mir::TypeId recv_type = view.Expr(m.receiver).type;
-            const auto& recv_data = view.Unit().types.Get(recv_type).data;
+            const auto& recv_data = view.Unit().types.Get(recv_type);
             mir::TypeId pointee{};
-            if (const auto* ptr = std::get_if<mir::PointerType>(&recv_data)) {
+            if (const auto* ptr = recv_data.As<mir::PointerType>()) {
               pointee = ptr->pointee;
             } else {
               throw InternalError(
                   "ResolveFieldAccess: bare-field-id access expects a pointer "
                   "receiver (a struct, a closure, or another unit's object)");
             }
-            const auto& pointee_data = view.Unit().types.Get(pointee).data;
-            if (const auto* c = std::get_if<mir::ClosureType>(&pointee_data)) {
+            const auto& pointee_data = view.Unit().types.Get(pointee);
+            if (const auto* c = pointee_data.As<mir::ClosureType>()) {
               return FieldAccess{
                   .name = ClosureCaptureCppName(
                       view.Unit().GetClosure(c->closure_id), id),
                   .through_receiver = false};
             }
-            if (const auto* s = std::get_if<mir::StructType>(&pointee_data)) {
+            if (const auto* s = pointee_data.As<mir::StructType>()) {
               return FieldAccess{
                   .name =
                       view.Unit().GetStruct(s->struct_id).fields.Get(id).name,
                   .through_receiver = true};
             }
             if (const auto* e =
-                    std::get_if<mir::ExternalUnitObjectType>(&pointee_data)) {
+                    pointee_data.As<mir::ExternalUnitObjectType>()) {
               return FieldAccess{
                   .name = view.Unit()
                               .external_unit_objects.Get(e->object)
@@ -500,20 +482,6 @@ auto RenderBindingParamDecl(const ScopeView& view, const mir::LocalDecl& bind)
       "{} {}", RenderTypeAsCpp(view.Unit(), bind.type), bind.name);
 }
 
-// A closure renders as a lambda whose captured fields are the closure's fields,
-// in field order. A captured read in the body resolves to the bare field name
-// (an in-scope lambda binding), so the capture clause and the body agree by
-// construction. The capture list is derived solely from the closure's fields
-// and field order and this construction's field initializers -- never
-// re-inferred from the body. A synchronous closure captures each field by value
-// (`[name = init]`) and renders the closure's per-invocation `params` as lambda
-// parameters. A coroutine closure (result
-// type `Coroutine`) is a stateless lambda whose captured fields pass as
-// frame-copied parameters supplied by an immediate call -- a capturing
-// coroutine lambda would dangle once the spawned branch outlives the
-// referencing site. The clause never contains `[this]`, `[=]`, or `[&]`: each
-// entry is a by-value field, and an alias field is a `Ref<T>`, not a hidden C++
-// reference.
 // The value a construction supplies for one field. A field init names its
 // target, because the entries are in the source's evaluation order and that is
 // not the order the fields were declared in -- so the entry for a field is the
@@ -547,6 +515,19 @@ auto RenderBlockExpr(const ScopeView& view, const mir::BlockExpr& block)
       Indent(1), RenderExpr(body_view, body_view.Expr(block.value)));
 }
 
+// A closure renders as a lambda whose captured fields are the closure's fields,
+// in field order. A captured read in the body resolves to the bare field name
+// (an in-scope lambda binding), so the capture clause and the body agree by
+// construction. The capture list is derived solely from the closure's fields
+// and field order and this construction's field initializers -- never
+// re-inferred from the body. A synchronous closure captures each field by value
+// (`[name = init]`) and renders the closure's per-invocation `params` as lambda
+// parameters. A coroutine closure (result type `Coroutine`) is a stateless
+// lambda whose captured fields pass as frame-copied parameters supplied by an
+// immediate call -- a capturing coroutine lambda would dangle once the spawned
+// branch outlives the referencing site. The clause never contains `[this]`,
+// `[=]`, or `[&]`: each entry is a by-value field, and an alias field is a
+// `Ref<T>`, not a hidden C++ reference.
 auto RenderClosureExpr(const ScopeView& view, const mir::ClosureExpr& construct)
     -> std::string {
   const mir::ClosureDecl& decl = view.Unit().GetClosure(construct.closure);
@@ -559,8 +540,7 @@ auto RenderClosureExpr(const ScopeView& view, const mir::ClosureExpr& construct)
   const std::string body =
       std::format(" {{\n{}}}", RenderBlockStatements(body_view, 1));
 
-  if (std::holds_alternative<mir::CoroutineType>(
-          view.Unit().types.Get(code.result_type).data)) {
+  if (view.Unit().types.Get(code.result_type).Is<mir::CoroutineType>()) {
     if (!code.params.empty()) {
       throw InternalError(
           "RenderClosureExpr: coroutine closure has per-invocation parameters");
@@ -606,19 +586,6 @@ auto RenderClosureExpr(const ScopeView& view, const mir::ClosureExpr& construct)
 
   return std::format(
       "[{}]({}){}{}", captures_text, params_text, return_clause, body);
-}
-
-auto RenderConcatExpr(
-    const ScopeView& view, const mir::Expr& expr, const mir::ConcatExpr& c)
-    -> std::string {
-  std::vector<std::string> operands;
-  operands.reserve(c.operands.size());
-  for (const mir::ExprId id : c.operands) {
-    operands.push_back(RenderExpr(view, view.Expr(id)));
-  }
-  return RenderValueForm(
-      ConcatValueForm(view.Unit().types.Get(expr.type)),
-      RenderTypeAsCpp(view.Unit(), expr.type), operands);
 }
 
 // The brace form of the aggregate literal's own type, which is always the
@@ -671,15 +638,6 @@ auto RenderVectorExpr(
   return out;
 }
 
-auto RenderReplicationExpr(
-    const ScopeView& view, const mir::Expr& expr, const mir::ReplicationExpr& r)
-    -> std::string {
-  return RenderValueForm(
-      ReplicationValueForm(view.Unit().types.Get(expr.type)),
-      RenderTypeAsCpp(view.Unit(), expr.type),
-      {RenderExpr(view, view.Expr(r.concat)), std::format("{}ULL", r.count)});
-}
-
 // Read-side render of a dereference: the value the operand's place stands for.
 // A pointer or handle is reached with `(*ptr)`; a capability wrapper's storage
 // is reached through the protocol its type supplies.
@@ -703,8 +661,7 @@ auto RenderAddressOfExpr(const ScopeView& view, const mir::AddressOfExpr& a)
   const mir::Expr& operand_expr = view.Expr(a.operand);
   if (const auto* deref = std::get_if<mir::DerefExpr>(&operand_expr.data)) {
     const mir::Expr& inner = view.Expr(deref->pointer);
-    if (std::holds_alternative<mir::PointerType>(
-            view.Unit().types.Get(inner.type).data)) {
+    if (view.Unit().types.Get(inner.type).Is<mir::PointerType>()) {
       return RenderExpr(view, inner);
     }
   }
@@ -742,8 +699,8 @@ auto RenderExpr(const ScopeView& view, const mir::Expr& expr) -> std::string {
             // single-precision literal carries the suffix that keeps it one.
             // `g` drops a trailing decimal point, which the C++ lexer rejects
             // before a suffix, so a whole number gets one back.
-            const auto& machine = std::get<mir::MachineFloatType>(
-                view.Unit().types.Get(expr.type).data);
+            const auto& machine =
+                view.Unit().types.Get(expr.type).Get<mir::MachineFloatType>();
             const bool single = machine.bit_width == 32;
             std::string body = std::format("{:.{}g}", f.value, single ? 9 : 17);
             if (body.find_first_of(".eE") == std::string::npos) {
@@ -757,8 +714,8 @@ auto RenderExpr(const ScopeView& view, const mir::Expr& expr) -> std::string {
             // unsigned one is a bit pattern, so it is written in hex and with
             // an unsigned suffix; a signed spelling would go negative and
             // narrow where the value lands in unsigned storage.
-            const auto& machine = std::get<mir::MachineIntType>(
-                view.Unit().types.Get(expr.type).data);
+            const auto& machine =
+                view.Unit().types.Get(expr.type).Get<mir::MachineIntType>();
             if (machine.signedness == mir::Signedness::kUnsigned) {
               return std::format(
                   "0x{:x}ULL", static_cast<std::uint64_t>(h.value));
@@ -779,9 +736,6 @@ auto RenderExpr(const ScopeView& view, const mir::Expr& expr) -> std::string {
           },
           [&](const mir::ConditionalExpr& c) -> std::string {
             return RenderConditionalExpr(view, c);
-          },
-          [&](const mir::MergingConditionalExpr& c) -> std::string {
-            return RenderMergingConditionalExpr(view, c);
           },
           [&](const mir::BlockExpr& b) -> std::string {
             return RenderBlockExpr(view, b);
@@ -861,12 +815,6 @@ auto RenderExpr(const ScopeView& view, const mir::Expr& expr) -> std::string {
           },
           [&](const mir::ClosureExpr& cl) -> std::string {
             return RenderClosureExpr(view, cl);
-          },
-          [&](const mir::ConcatExpr& c) -> std::string {
-            return RenderConcatExpr(view, expr, c);
-          },
-          [&](const mir::ReplicationExpr& r) -> std::string {
-            return RenderReplicationExpr(view, expr, r);
           },
           // The value is unchanged and so is its C++ type: an enumeration and
           // its base share one runtime class, so ascribing the other type to a

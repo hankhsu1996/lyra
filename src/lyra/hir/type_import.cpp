@@ -10,7 +10,6 @@
 #include "lyra/hir/class_ref.hpp"
 #include "lyra/hir/type.hpp"
 #include "lyra/hir/type_id.hpp"
-#include "lyra/hir/type_pool.hpp"
 
 namespace lyra::hir {
 
@@ -65,7 +64,7 @@ auto TypeImporter::Import(TypeId id) -> TypeId {
   if (const std::optional<TypeId> done = (*memo_)[id.value]) {
     return *done;
   }
-  const TypeId here = destination_->Intern(ImportData(source_->Get(id).data));
+  const TypeId here = destination_->Intern(Import(source_->Get(id)));
   (*memo_)[id.value] = here;
   return here;
 }
@@ -90,73 +89,73 @@ auto TypeImporter::ImportClassRef(const ClassRef& ref) const -> ClassRef {
       ref);
 }
 
-auto TypeImporter::ImportData(const TypeData& data) -> TypeData {
-  return std::visit(
+auto TypeImporter::Import(const Type& type) -> Type {
+  return type.Visit(
       Overloaded{
-          [](const ScalarBitType& t) -> TypeData { return t; },
-          [this](const PackedArrayType& t) -> TypeData {
-            return PackedArrayType{
+          [](const ScalarBitType& t) -> Type { return Type{t}; },
+          [this](const PackedArrayType& t) -> Type {
+            return Type{PackedArrayType{
                 .dim = t.dim,
                 .element_type = Import(t.element_type),
-                .signedness = t.signedness,
-                .form = t.form};
+                .signedness = t.signedness}};
           },
-          [this](const PackedStructType& t) -> TypeData {
-            return PackedStructType{
+          [this](const PackedStructType& t) -> Type {
+            return Type{PackedStructType{
                 .fields = ImportPackedFields(t.fields, *this),
-                .signedness = t.signedness};
+                .signedness = t.signedness}};
           },
-          [this](const PackedUnionType& t) -> TypeData {
-            return PackedUnionType{
+          [this](const PackedUnionType& t) -> Type {
+            return Type{PackedUnionType{
                 .fields = ImportPackedFields(t.fields, *this),
                 .signedness = t.signedness,
-                .tagged = t.tagged};
+                .tagged = t.tagged}};
           },
-          [this](const EnumType& t) -> TypeData {
-            return EnumType{
-                .base_type = Import(t.base_type), .members = t.members};
+          [this](const EnumType& t) -> Type {
+            return Type{EnumType{
+                .base_type = Import(t.base_type), .members = t.members}};
           },
-          [this](const UnpackedStructType& t) -> TypeData {
-            return UnpackedStructType{
-                .fields = ImportUnpackedFields(t.fields, *this)};
+          [this](const UnpackedStructType& t) -> Type {
+            return Type{UnpackedStructType{
+                .fields = ImportUnpackedFields(t.fields, *this)}};
           },
-          [this](const UnpackedUnionType& t) -> TypeData {
-            return UnpackedUnionType{
+          [this](const UnpackedUnionType& t) -> Type {
+            return Type{UnpackedUnionType{
                 .fields = ImportUnpackedFields(t.fields, *this),
-                .tagged = t.tagged};
+                .tagged = t.tagged}};
           },
-          [this](const UnpackedArrayType& t) -> TypeData {
-            return UnpackedArrayType{
-                .element_type = Import(t.element_type), .dim = t.dim};
+          [this](const UnpackedArrayType& t) -> Type {
+            return Type{UnpackedArrayType{
+                .element_type = Import(t.element_type), .dim = t.dim}};
           },
-          [this](const DynamicArrayType& t) -> TypeData {
-            return DynamicArrayType{.element_type = Import(t.element_type)};
+          [this](const DynamicArrayType& t) -> Type {
+            return Type{
+                DynamicArrayType{.element_type = Import(t.element_type)}};
           },
-          [this](const QueueType& t) -> TypeData {
-            return QueueType{
+          [this](const QueueType& t) -> Type {
+            return Type{QueueType{
                 .element_type = Import(t.element_type),
-                .max_bound = t.max_bound};
+                .max_bound = t.max_bound}};
           },
-          [this](const AssociativeArrayType& t) -> TypeData {
-            return AssociativeArrayType{
+          [this](const AssociativeArrayType& t) -> Type {
+            return Type{AssociativeArrayType{
                 .element_type = Import(t.element_type),
-                .key_type = Import(t.key_type)};
+                .key_type = Import(t.key_type)}};
           },
-          [](const WildcardIndexType& t) -> TypeData { return t; },
-          [](const StringType& t) -> TypeData { return t; },
-          [](const EventType& t) -> TypeData { return t; },
-          [](const RealType& t) -> TypeData { return t; },
-          [](const ShortRealType& t) -> TypeData { return t; },
-          [](const RealTimeType& t) -> TypeData { return t; },
-          [](const ChandleType& t) -> TypeData { return t; },
-          [this](const ClassHandleType& t) -> TypeData {
-            return ClassHandleType{.class_ref = ImportClassRef(t.class_ref)};
+          [](const WildcardIndexType& t) -> Type { return Type{t}; },
+          [](const StringType& t) -> Type { return Type{t}; },
+          [](const EventType& t) -> Type { return Type{t}; },
+          [](const RealType& t) -> Type { return Type{t}; },
+          [](const ShortRealType& t) -> Type { return Type{t}; },
+          [](const RealTimeType& t) -> Type { return Type{t}; },
+          [](const ChandleType& t) -> Type { return Type{t}; },
+          [this](const ClassHandleType& t) -> Type {
+            return Type{
+                ClassHandleType{.class_ref = ImportClassRef(t.class_ref)}};
           },
-          [](const ImportedClassHandleType& t) -> TypeData { return t; },
-          [](const UnitObjectType& t) -> TypeData { return t; },
-          [](const NullType& t) -> TypeData { return t; },
-          [](const VoidType& t) -> TypeData { return t; }},
-      data);
+          [](const ImportedClassHandleType& t) -> Type { return Type{t}; },
+          [](const UnitObjectType& t) -> Type { return Type{t}; },
+          [](const NullType& t) -> Type { return Type{t}; },
+          [](const VoidType& t) -> Type { return Type{t}; }});
 }
 
 }  // namespace lyra::hir

@@ -1,7 +1,6 @@
 #pragma once
 
 #include <cstdint>
-#include <initializer_list>
 #include <optional>
 #include <span>
 #include <string>
@@ -159,22 +158,20 @@ class PackedArray {
       std::string_view digits, unsigned base, std::uint64_t bit_width,
       bool is_signed, bool is_four_state) -> std::optional<PackedArray>;
 
-  // LRM 11.4.12: `{a, b, c, ...}`. First operand occupies the result's MSBs,
-  // last the LSBs; the result width is the sum, unsigned (LRM 11.8.1), 4-state
-  // iff any operand is. Concatenation is variadic-arity with no smaller
-  // decomposition, so the operands arrive as one `initializer_list` the emit
-  // site fills with a brace list -- no per-arity overload and no template. A
-  // single-element `{a}` is the unsigned reinterpretation.
-  [[nodiscard]] static auto Concat(std::initializer_list<PackedArray> operands)
-      -> PackedArray;
+  // LRM 11.4.12: `{*this, rhs}`. This value occupies the result's MSBs and
+  // `rhs` its LSBs; the result width is the sum, unsigned (LRM 11.8.1), and
+  // 4-state iff either operand is. A source-level join of more operands
+  // composes as the left-to-right chain of these, which holds the same value
+  // because composing is associative over both the bit plane and the state
+  // domain. Neither operand is copied to describe it.
+  [[nodiscard]] auto Concat(const PackedArray& rhs) const -> PackedArray;
 
-  // LRM 11.4.12.1: `{count{operand}}`. Result bit width is
-  // operand.BitWidth() * count, unsigned, 4-state iff operand is 4-state.
-  // Throws InternalError if the result would be zero-width -- the AST -> HIR
-  // concat lowering drops `{0{...}}` operands before they reach the runtime,
-  // so an in-runtime zero must indicate a frontend / lowering bug.
-  [[nodiscard]] static auto Replicate(
-      const PackedArray& operand, std::uint64_t count) -> PackedArray;
+  // LRM 11.4.12.1: `{count{*this}}`. Result bit width is BitWidth() * count,
+  // unsigned, 4-state iff this value is. Throws InternalError if the result
+  // would be zero-width -- a packed multiplier is a constant expression the
+  // front end has already checked, so a count that is not positive by the time
+  // it reaches here indicates a frontend / lowering bug.
+  [[nodiscard]] auto Replicate(std::int64_t count) const -> PackedArray;
 
   // The declared representation this value has, whole -- what a factory asked
   // to build another value of the same type is handed.

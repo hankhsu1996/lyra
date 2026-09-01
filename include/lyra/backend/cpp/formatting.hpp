@@ -36,12 +36,11 @@ inline void AppendSection(std::string& out, const std::string& section) {
   return out;
 }
 
-// The syntactic wrappers a value-emission entry composes around the renders of
-// its parts. Each takes rendered parts and returns one rendered form, so a
-// render entry states which wrapper it wants and never spells the punctuation:
-// how many arguments there are, where the separators go, and whether a brace
-// group belongs to the type or to something inside it stop being a per-site
-// decision. A hand-written format string carries all three at once.
+// The call form composed around the renders of a call's parts. One entry
+// renders a call, so this is spelled once and the punctuation -- how many
+// arguments there are and where the separators go -- is never a per-site
+// decision. A construct that merely looks like a call, such as a
+// member-initializer, is not one and does not reach here.
 [[nodiscard]] inline auto CallOf(
     std::string_view callee, const std::vector<std::string>& args)
     -> std::string {
@@ -69,14 +68,6 @@ inline void AppendSection(std::string& out, const std::string& section) {
     std::string_view type, std::string_view name, std::string_view init)
     -> std::string {
   return std::format("inline static const {} {} = {};\n", type, name, init);
-}
-
-// A braced list standing for a sequence the receiving parameter's own type
-// gives meaning to. Distinct from a construction, which names its type: this
-// form is only correct where something else already fixes what is being built.
-[[nodiscard]] inline auto BracedListOf(const std::vector<std::string>& elements)
-    -> std::string {
-  return "{" + JoinCommaSeparated(elements) + "}";
 }
 
 // A unit or class name spelled as a C++ identifier. A source name is already a

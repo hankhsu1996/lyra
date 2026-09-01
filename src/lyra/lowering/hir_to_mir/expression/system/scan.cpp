@@ -68,19 +68,20 @@ auto ScanCompletionComponents(
 auto LiftStringSource(
     const UnitLowerer& unit_lowerer, WalkFrame frame, mir::TypeId source_type,
     mir::ExprId source_id) -> mir::ExprId {
-  const mir::TypeKind kind = unit_lowerer.Unit().types.Get(source_type).Kind();
-  if (kind == mir::TypeKind::kString) return source_id;
+  const mir::Type& source = unit_lowerer.Unit().types.Get(source_type);
+  if (source.Is<mir::StringType>()) return source_id;
 
-  if (kind == mir::TypeKind::kUnpackedArray) {
-    const auto& ua = std::get<mir::UnpackedArrayType>(
-        unit_lowerer.Unit().types.Get(source_type).data);
+  if (source.Is<mir::UnpackedArrayType>()) {
+    const auto& ua = unit_lowerer.Unit()
+                         .types.Get(source_type)
+                         .Get<mir::UnpackedArrayType>();
     const auto& elem = unit_lowerer.Unit().types.Get(ua.element_type);
-    if (!elem.IsIntegralPacked() || elem.AsIntegralPacked().BitWidth() != 8U) {
+    if (!elem.IsIntegralPacked() || elem.PackedShape().BitWidth() != 8U) {
       throw InternalError(
           "LiftStringSource: $sscanf unpacked-array source must have an "
           "8-bit integral element (LRM 21.3.4.3)");
     }
-  } else if (kind != mir::TypeKind::kPackedArray) {
+  } else if (!source.Is<mir::PackedArrayType>()) {
     throw InternalError(
         "LiftStringSource: $sscanf source is not string, integral, or "
         "unpacked array of byte (LRM 21.3.4.3)");
@@ -97,7 +98,7 @@ auto LiftStringFormat(
     const UnitLowerer& unit_lowerer, WalkFrame frame, mir::TypeId format_type,
     mir::ExprId format_id) -> mir::ExprId {
   const auto& t = unit_lowerer.Unit().types.Get(format_type);
-  if (t.Kind() == mir::TypeKind::kString) return format_id;
+  if (t.Is<mir::StringType>()) return format_id;
   if (!t.IsIntegralPacked()) {
     throw InternalError(
         "LiftStringFormat: scan format is not string or integral (LRM "
@@ -151,7 +152,7 @@ auto ValidateTargetType(
     support::ScanSourceKind source_kind, diag::SourceSpan span)
     -> diag::Result<void> {
   const auto& target = unit.types.Get(mir_type);
-  if (target.Kind() == mir::TypeKind::kString) return {};
+  if (target.Is<mir::StringType>()) return {};
   if (target.IsIntegralPacked()) return {};
   return diag::Fail(
       span, diag::DiagCode::kUnsupportedSubroutineArgument,
@@ -253,7 +254,7 @@ auto LowerScanSystemSubroutineCall(
   mir::ExprId source_id{};
   mir::ExprId fd_id{};
   if (is_file) {
-    if (unit.types.Get(raw_source_type).Kind() != mir::TypeKind::kPackedArray) {
+    if (!unit.types.Get(raw_source_type).Is<mir::PackedArrayType>()) {
       throw InternalError(
           "LowerScanSystemSubroutineCall: $fscanf fd is not packed-integer");
     }
@@ -300,7 +301,8 @@ auto LowerScanSystemSubroutineCall(
   const mir::ExprId prototypes_id = scan_body.exprs.Add(
       mir::Expr{
           .data = mir::TupleExpr{.components = std::move(prototypes)},
-          .type = unit.types.Intern(mir::TupleType{.elements = target_types})});
+          .type = unit.types.Intern(
+              mir::Type{mir::TupleType{.elements = target_types}})});
 
   // LRM 21.3.4.3(a) gives `$sscanf` alone the rule that a null character
   // counts as white space, so which of the two parses runs is fixed by the

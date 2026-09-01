@@ -60,9 +60,11 @@ structural-key index that maps each semantic type to one canonical `TypeId`.
      are keyed by the constructor plus the canonical `TypeId`s of their children plus their semantic
      modifiers (ownership, dimensions, signedness, const-ness).
 
-3. **The key excludes non-semantic fields.** Source locations, debug/display names, and derived or
-   cached data do not participate. Two types equal in semantics but differing only in such a field
-   canonicalize to one `TypeId`.
+3. **The key is every field an alternative carries, because a field with no semantic content is not
+   carried.** A source location, a display name, a spelling the source used, derived or cached data
+   -- none is stored on a type, so none has to be excluded from its key. Excluding a stored field
+   instead would leave the type's own equality and its identity disagreeing, and whichever spelling
+   interned first would be the one every later reader sees.
 
 4. **`TypeId` is the unit-local canonical handle.** Within one compilation unit, `TypeId` equality
    implies semantic-type equality, and the converse holds by construction. `TypeId` is not a
@@ -110,10 +112,11 @@ structural-key index that maps each semantic type to one canonical `TypeId`.
   enabling self- and mutually-recursive class types.
 - The coroutine constructor's `void` branch and the composite builtin caches (`Coroutine<void>`, the
   borrowed scope pointer) are removed or become convenience aliases produced through interning.
-- Each `TypeData` variant must state which of its fields determine semantic identity. This is a
-  per-variant audit governed by the key rules above (object types by class id, enum types by their
-  scope-unique enumerators, structural types by constructor plus canonical children plus modifiers,
-  non-semantic fields excluded).
+- Each type alternative must state which of its fields determine semantic identity. This is a
+  per-alternative audit governed by the key rules above (object types by class id, enum types by
+  their scope-unique enumerators, structural types by constructor plus canonical children plus
+  modifiers). A field the audit finds non-semantic is removed from the alternative, not from the
+  key.
 - The interner is unit-global, single-writer-during-construction, mutable state. Under future
   body-level parallel lowering it is a shared-state boundary; its concurrency model is decided
   together with the body-level ownership model, not assumed lock-free.

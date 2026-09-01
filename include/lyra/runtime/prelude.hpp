@@ -53,7 +53,6 @@
 #include "lyra/value/array_case_equal.hpp"       // IWYU pragma: keep
 #include "lyra/value/associative_array.hpp"      // IWYU pragma: keep
 #include "lyra/value/chandle.hpp"                // IWYU pragma: keep
-#include "lyra/value/conditional_select.hpp"     // IWYU pragma: keep
 #include "lyra/value/dpi_canonical.hpp"          // IWYU pragma: keep
 #include "lyra/value/dpi_open_array.hpp"         // IWYU pragma: keep
 #include "lyra/value/dynamic_array.hpp"          // IWYU pragma: keep
@@ -70,7 +69,6 @@
 #include "lyra/value/require.hpp"                // IWYU pragma: keep
 #include "lyra/value/scan.hpp"                   // IWYU pragma: keep
 #include "lyra/value/string.hpp"                 // IWYU pragma: keep
-#include "lyra/value/string_op.hpp"              // IWYU pragma: keep
 #include "lyra/value/tagged_union.hpp"           // IWYU pragma: keep
 #include "lyra/value/tuple.hpp"                  // IWYU pragma: keep
 #include "lyra/value/union.hpp"                  // IWYU pragma: keep

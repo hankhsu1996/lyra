@@ -144,16 +144,16 @@ auto MakeBuiltinMirCallee(
 // as `element_type`.
 auto ArrayMethodReceiverElementType(const hir::Type& ty)
     -> std::optional<hir::TypeId> {
-  if (const auto* ua = std::get_if<hir::UnpackedArrayType>(&ty.data)) {
+  if (const auto* ua = ty.As<hir::UnpackedArrayType>()) {
     return ua->element_type;
   }
-  if (const auto* da = std::get_if<hir::DynamicArrayType>(&ty.data)) {
+  if (const auto* da = ty.As<hir::DynamicArrayType>()) {
     return da->element_type;
   }
-  if (const auto* q = std::get_if<hir::QueueType>(&ty.data)) {
+  if (const auto* q = ty.As<hir::QueueType>()) {
     return q->element_type;
   }
-  if (const auto* aa = std::get_if<hir::AssociativeArrayType>(&ty.data)) {
+  if (const auto* aa = ty.As<hir::AssociativeArrayType>()) {
     return aa->element_type;
   }
   return std::nullopt;
@@ -164,15 +164,16 @@ auto ArrayMethodReceiverElementType(const hir::Type& ty)
 // as the prototype; a scalar result is its own prototype.
 auto ResultPrototypeType(
     const UnitLowerer& unit_lowerer, mir::TypeId result_type) -> mir::TypeId {
-  return std::visit(
-      Overloaded{
-          [](const mir::UnpackedArrayType& t) { return t.element_type; },
-          [](const mir::DynamicArrayType& t) { return t.element_type; },
-          [](const mir::QueueType& t) { return t.element_type; },
-          [](const mir::AssociativeArrayType& t) { return t.element_type; },
-          [result_type](const auto&) { return result_type; },
-      },
-      unit_lowerer.Unit().types.Get(result_type).data);
+  return unit_lowerer.Unit()
+      .types.Get(result_type)
+      .Visit(
+          Overloaded{
+              [](const mir::UnpackedArrayType& t) { return t.element_type; },
+              [](const mir::DynamicArrayType& t) { return t.element_type; },
+              [](const mir::QueueType& t) { return t.element_type; },
+              [](const mir::AssociativeArrayType& t) { return t.element_type; },
+              [result_type](const auto&) { return result_type; },
+          });
 }
 
 // LRM 7.12.1 / 7.12.2 / 7.12.3 with-clause closure synthesis. The element and
@@ -189,7 +190,8 @@ auto BuildArrayMethodClosure(
     const hir::WithClause* with_clause) -> diag::Result<mir::Expr> {
   const auto& unit_lowerer = lowerer.Owner();
   const auto& hir_exprs = lowerer.HirExprs();
-  const auto& hir_recv_ty = unit_lowerer.Hir().types.Get(hir_receiver_type);
+  const hir::Type& hir_recv_ty =
+      unit_lowerer.Hir().types.Get(hir_receiver_type);
   const auto element_type = ArrayMethodReceiverElementType(hir_recv_ty);
   if (!element_type.has_value()) {
     throw InternalError(
@@ -199,8 +201,7 @@ auto BuildArrayMethodClosure(
   // LRM 7.12.4 `item.index`: the ordinal position for a sequence container, the
   // key for an associative receiver.
   mir::TypeId index_type = unit_lowerer.Unit().builtins.int_type;
-  if (const auto* assoc =
-          std::get_if<hir::AssociativeArrayType>(&hir_recv_ty.data);
+  if (const auto* assoc = hir_recv_ty.As<hir::AssociativeArrayType>();
       assoc != nullptr) {
     index_type = unit_lowerer.TranslateType(assoc->key_type);
   }

@@ -32,7 +32,7 @@ auto BindEndpoint(
           [&](const hir::RoutedRef& c) -> BoundEndpoint {
             const auto& meta = lowerer.RoutedRefTarget(c.id);
             const auto& ptr =
-                std::get<mir::PointerType>(unit.types.Get(meta.slot_type).data);
+                unit.types.Get(meta.slot_type).Get<mir::PointerType>();
             return BoundEndpoint{
                 .field = meta.target,
                 .field_type = meta.slot_type,
@@ -65,8 +65,11 @@ auto EndpointObservablePtr(
   if (endpoint.sealed) {
     return field_access;
   }
-  const mir::TypeId ptr_type = unit.types.PointerTo(
-      endpoint.field_type, mir::PointerOwnership::kBorrowed);
+  const mir::TypeId ptr_type = unit.types.Intern(
+      mir::Type{mir::PointerType{
+          .pointee = endpoint.field_type,
+          .ownership = mir::PointerOwnership::kBorrowed,
+          .mutability = mir::Mutability::kMutable}});
   return block.exprs.Add(mir::MakeAddressOfExpr(field_access, ptr_type));
 }
 

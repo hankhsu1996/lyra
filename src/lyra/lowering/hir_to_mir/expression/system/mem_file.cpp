@@ -8,7 +8,6 @@
 #include <string>
 #include <string_view>
 #include <utility>
-#include <variant>
 #include <vector>
 
 #include "lyra/base/overloaded.hpp"
@@ -26,6 +25,7 @@
 #include "lyra/mir/compilation_unit.hpp"
 #include "lyra/mir/expr.hpp"
 #include "lyra/mir/type.hpp"
+#include "lyra/mir/type_builders.hpp"
 #include "lyra/support/builtin_fn.hpp"
 
 namespace lyra::lowering::hir_to_mir {
@@ -47,13 +47,13 @@ struct MemAddressing {
 auto DescribeMemory(
     ProcessLowerer& process, WalkFrame wrapper_frame, hir::TypeId mem_type,
     bool is_store, std::string_view task) -> diag::Result<MemAddressing> {
-  auto& unit = process.Owner();
+  UnitLowerer& unit_lowerer = process.Owner();
   auto& wrapper = *wrapper_frame.current_block;
-  const mir::TypeId int_type = unit.Unit().builtins.int_type;
+  const mir::TypeId int_type = unit_lowerer.Unit().builtins.int_type;
   const auto int_literal = [&](std::int64_t value) {
-    return BuildIntLiteral(unit.Unit(), wrapper, value);
+    return BuildIntLiteral(unit_lowerer.Unit(), wrapper, value);
   };
-  return std::visit(
+  return unit_lowerer.Hir().types.Get(mem_type).Visit(
       Overloaded{
           [&](const hir::UnpackedArrayType&) -> diag::Result<MemAddressing> {
             // Walk the nested unpacked dimensions to the leaf element. One
@@ -62,8 +62,9 @@ auto DescribeMemory(
             // first, so the runtime traverses row-major by ascending address.
             std::vector<hir::UnpackedRange> dims;
             hir::TypeId cursor = mem_type;
-            while (const auto* nested = std::get_if<hir::UnpackedArrayType>(
-                       &unit.Hir().types.Get(cursor).data)) {
+            while (const auto* nested = unit_lowerer.Hir()
+                                            .types.Get(cursor)
+                                            .As<hir::UnpackedArrayType>()) {
               dims.push_back(nested->dim);
               cursor = nested->element_type;
             }
@@ -80,8 +81,8 @@ auto DescribeMemory(
               bounds.push_back(int_literal(dim.left));
               bounds.push_back(int_literal(dim.right));
             }
-            const mir::TypeId bounds_type =
-                unit.Unit().types.MachineArrayOf(int_type, bounds.size());
+            const mir::TypeId bounds_type = mir::MachineArrayOf(
+                unit_lowerer.Unit().types, int_type, bounds.size());
             return MemAddressing{
                 .element = cursor,
                 .operands = {wrapper.exprs.Add(
@@ -103,9 +104,10 @@ auto DescribeMemory(
             // index type must be integral. A load builds its keys at that
             // declared width, carried by a default value of the key type; a
             // dump reads the stored keys and needs no prototype.
-            const mir::TypeId key = unit.TranslateType(a.key_type);
-            if (!std::holds_alternative<mir::PackedArrayType>(
-                    unit.Unit().types.Get(key).data)) {
+            const mir::TypeId key = unit_lowerer.TranslateType(a.key_type);
+            if (!unit_lowerer.Unit()
+                     .types.Get(key)
+                     .Is<mir::PackedArrayType>()) {
               return diag::Fail(
                   diag::DiagCode::kUnsupportedSubroutineArgument,
                   std::format(
@@ -116,7 +118,7 @@ auto DescribeMemory(
             std::vector<mir::ExprId> operands;
             if (!is_store) {
               operands.push_back(wrapper.exprs.Add(
-                  BuildDefaultValueExpr(unit, wrapper_frame, key)));
+                  BuildDefaultValueExpr(unit_lowerer, wrapper_frame, key)));
             }
             return MemAddressing{
                 .element = a.element_type, .operands = std::move(operands)};
@@ -129,8 +131,7 @@ auto DescribeMemory(
                     "associative memory (LRM 21.4 / 21.5)",
                     task));
           },
-      },
-      unit.Hir().types.Get(mem_type).data);
+      });
 }
 
 }  // namespace
@@ -162,8 +163,7 @@ auto LowerMemFileSystemSubroutineCallStmt(
   // bit vector, or a packed struct / union / enum. A non-packed leaf (an
   // unpacked struct, say) is not a memory word.
   const mir::TypeId elem_mir = unit_lowerer.TranslateType(addressing->element);
-  if (!std::holds_alternative<mir::PackedArrayType>(
-          unit_lowerer.Unit().types.Get(elem_mir).data)) {
+  if (!unit_lowerer.Unit().types.Get(elem_mir).Is<mir::PackedArrayType>()) {
     return diag::Fail(
         diag::DiagCode::kUnsupportedSubroutineArgument,
         std::format(

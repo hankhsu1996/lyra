@@ -18,6 +18,7 @@
 #include "lyra/mir/expr.hpp"
 #include "lyra/mir/stmt.hpp"
 #include "lyra/mir/type.hpp"
+#include "lyra/mir/type_builders.hpp"
 #include "lyra/support/builtin_fn.hpp"
 
 namespace lyra::lowering::hir_to_mir {
@@ -45,8 +46,8 @@ auto BuildTriggerExpr(
           },
           [&](const hir::ExternalUnitValueRef& pkg) -> mir::ExprId {
             unit.AddExternalReferencedUnit(pkg.unit_name);
-            const mir::TypeId cell_type = unit.types.ObservableCellOf(
-                lowerer.Owner().TranslateType(pkg.value_type));
+            const mir::TypeId cell_type = mir::ObservableCellOf(
+                unit.types, lowerer.Owner().TranslateType(pkg.value_type));
             const mir::ExprId cell = block.exprs.Add(
                 mir::Expr{
                     .data =
@@ -54,8 +55,11 @@ auto BuildTriggerExpr(
                             .unit_name = pkg.unit_name,
                             .variable_name = pkg.variable_name},
                     .type = cell_type});
-            const mir::TypeId ptr_type = unit.types.PointerTo(
-                cell_type, mir::PointerOwnership::kBorrowed);
+            const mir::TypeId ptr_type = unit.types.Intern(
+                mir::Type{mir::PointerType{
+                    .pointee = cell_type,
+                    .ownership = mir::PointerOwnership::kBorrowed,
+                    .mutability = mir::Mutability::kMutable}});
             return block.exprs.Add(mir::MakeAddressOfExpr(cell, ptr_type));
           },
       },
@@ -99,7 +103,7 @@ auto BuildValueChangeWaitStmt(
         BuildTriggerExpr(target_block, frame, unit, lowerer, entry));
   }
   const mir::TypeId triggers_type =
-      unit.types.MachineArrayOf(unit.builtins.trigger, triggers.size());
+      mir::MachineArrayOf(unit.types, unit.builtins.trigger, triggers.size());
   const mir::ExprId triggers_id = target_block.exprs.Add(
       mir::Expr{
           .data = mir::ArrayLiteralExpr{.elements = std::move(triggers)},

@@ -11,6 +11,7 @@
 #include "lyra/mir/expr.hpp"
 #include "lyra/mir/expr_id.hpp"
 #include "lyra/mir/type.hpp"
+#include "lyra/mir/type_builders.hpp"
 #include "lyra/mir/type_id.hpp"
 
 namespace lyra::mir {
@@ -27,7 +28,7 @@ class RuntimeRecordBuilder {
   }
 
   [[nodiscard]] auto Type(RuntimeLibraryKind kind) const -> TypeId {
-    return unit_->types.Intern(RuntimeLibraryType{.kind = kind});
+    return unit_->types.Intern(mir::Type{RuntimeLibraryType{.kind = kind}});
   }
 
   auto Add(Expr expr) -> ExprId {
@@ -70,8 +71,7 @@ class RuntimeRecordBuilder {
     return Add(
         Expr{
             .data = ArrayLiteralExpr{.elements = std::move(elements)},
-            .type = unit_->types.Intern(
-                MachineArrayType{.element = element, .size = size})});
+            .type = MachineArrayOf(unit_->types, element, size)});
   }
 
   // The address of `adapter`, typed as the function it is. A backend that must

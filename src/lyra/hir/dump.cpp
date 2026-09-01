@@ -196,8 +196,6 @@ class HirDumper {
         return "bit";
       case BitAtom::kLogic:
         return "logic";
-      case BitAtom::kReg:
-        return "reg";
     }
     throw InternalError("HirDumper::FormatBitAtom: unknown BitAtom");
   }
@@ -233,35 +231,14 @@ class HirDumper {
     throw InternalError("HirDumper::FormatUniquePriorityCheck: unknown check");
   }
 
-  static auto FormatPackedForm(PackedArrayForm f) -> std::string_view {
-    switch (f) {
-      case PackedArrayForm::kExplicit:
-        return "explicit";
-      case PackedArrayForm::kByte:
-        return "byte";
-      case PackedArrayForm::kShortInt:
-        return "shortint";
-      case PackedArrayForm::kInt:
-        return "int";
-      case PackedArrayForm::kLongInt:
-        return "longint";
-      case PackedArrayForm::kInteger:
-        return "integer";
-      case PackedArrayForm::kTime:
-        return "time";
-    }
-    throw InternalError("HirDumper::FormatPackedForm: unknown PackedArrayForm");
-  }
-
   static auto FormatPackedArray(const PackedArrayType& p) -> std::string {
     return std::format(
-        "PackedArray(dim=[{}:{}], elem=Type[{}], signed={}, form={})",
-        p.dim.left, p.dim.right, p.element_type.value,
-        FormatSignedness(p.signedness), FormatPackedForm(p.form));
+        "PackedArray(dim=[{}:{}], elem=Type[{}], signed={})", p.dim.left,
+        p.dim.right, p.element_type.value, FormatSignedness(p.signedness));
   }
 
   static auto FormatType(const Type& t) -> std::string {
-    return std::visit(
+    return t.Visit(
         Overloaded{
             [](const ScalarBitType& s) -> std::string {
               return std::format("ScalarBit(atom={})", FormatBitAtom(s.atom));
@@ -357,8 +334,7 @@ class HirDumper {
             },
             [](const NullType&) -> std::string { return "NullType"; },
             [](const VoidType&) -> std::string { return "VoidType"; },
-        },
-        t.data);
+        });
   }
 
   static auto FormatUnaryOp(UnaryOp op) -> std::string {

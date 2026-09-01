@@ -6,6 +6,7 @@
 #include <string>
 #include <string_view>
 #include <variant>
+#include <vector>
 
 #include "lyra/backend/cpp/formatting.hpp"
 #include "lyra/backend/cpp/render_expr.hpp"
@@ -501,8 +502,6 @@ auto BuiltinFnCppNamespace(support::BuiltinFn id) -> std::string_view {
     case support::BuiltinFn::kRequire:
     case support::BuiltinFn::kMakeQueueConcat:
     case support::BuiltinFn::kSpread:
-    case support::BuiltinFn::kConcat:
-    case support::BuiltinFn::kReplicate:
       return "lyra::value";
     case support::BuiltinFn::kCurrentRuntime:
     case support::BuiltinFn::kRegisterInitial:
@@ -634,9 +633,7 @@ auto RenderDirectBuiltinCall(
   }
   const mir::Expr& receiver = view.Expr(call.arguments[0]);
   const std::string_view sep =
-      view.Unit().types.Get(receiver.type).Kind() == mir::TypeKind::kPointer
-          ? "->"
-          : ".";
+      view.Unit().types.Get(receiver.type).Is<mir::PointerType>() ? "->" : ".";
   // A mutating built-in writes through its receiver, so the receiver names a
   // place -- the same distinction an assignment target draws, and the reason a
   // receiver reaching through a capability wrapper reaches its write protocol
@@ -681,8 +678,9 @@ auto RenderDirectExternalUnitClassMethodCall(
     const mir::ExternalUnitClassMethodTarget& target) -> CalleeRender {
   const bool has_receiver_arg =
       !call.arguments.empty() &&
-      std::holds_alternative<mir::PointerType>(
-          view.Unit().types.Get(view.Expr(call.arguments[0]).type).data);
+      view.Unit()
+          .types.Get(view.Expr(call.arguments[0]).type)
+          .Is<mir::PointerType>();
   if (!has_receiver_arg) {
     return {
         .expr = std::format(
@@ -788,23 +786,19 @@ auto RenderCalleePart(
       call.callee);
 }
 
-}  // namespace
-
-namespace {
-
 auto RenderCall(
     const ScopeView& view, const mir::CallExpr& call, mir::TypeId result_type,
     std::optional<std::size_t> place_argument) -> std::string {
   const CalleeRender callee = RenderCalleePart(view, call, result_type);
-  std::string args;
+  std::vector<std::string> args;
+  args.reserve(call.arguments.size() - callee.leading_arg_count);
   for (std::size_t i = callee.leading_arg_count; i < call.arguments.size();
        ++i) {
-    if (i != callee.leading_arg_count) args += ", ";
     const mir::Expr& arg = view.Expr(call.arguments[i]);
-    args +=
-        place_argument == i ? RenderLhsExpr(view, arg) : RenderExpr(view, arg);
+    args.push_back(
+        place_argument == i ? RenderLhsExpr(view, arg) : RenderExpr(view, arg));
   }
-  return std::format("{}({})", callee.expr, args);
+  return CallOf(callee.expr, args);
 }
 
 }  // namespace

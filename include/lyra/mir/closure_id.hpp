@@ -3,6 +3,8 @@
 #include <compare>
 #include <cstdint>
 
+#include "lyra/base/pool_id.hpp"
+
 namespace lyra::mir {
 
 // Identity of a closure declaration within a compilation unit -- an anonymous
@@ -12,7 +14,7 @@ namespace lyra::mir {
 // captures are different `ClosureId`s. A closure is not a nominal object and
 // not a plain struct; it is its own callable-value category.
 struct ClosureId {
-  std::uint32_t value;
+  std::uint32_t value = base::kUnassignedId;
 
   auto operator<=>(const ClosureId&) const -> std::strong_ordering = default;
 };

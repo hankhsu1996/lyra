@@ -4,7 +4,6 @@
 #include <expected>
 #include <optional>
 #include <utility>
-#include <variant>
 #include <vector>
 
 #include "lyra/diag/diagnostic.hpp"
@@ -12,7 +11,6 @@
 #include "lyra/hir/type.hpp"
 #include "lyra/lowering/hir_to_mir/cast_lowering.hpp"
 #include "lyra/lowering/hir_to_mir/default_value.hpp"
-#include "lyra/lowering/hir_to_mir/flat_packed_type.hpp"
 #include "lyra/lowering/hir_to_mir/integral_literal.hpp"
 #include "lyra/lowering/hir_to_mir/packed_concat.hpp"
 #include "lyra/lowering/hir_to_mir/packed_projection.hpp"
@@ -21,6 +19,7 @@
 #include "lyra/lowering/hir_to_mir/walk_frame.hpp"
 #include "lyra/mir/compilation_unit.hpp"
 #include "lyra/mir/expr.hpp"
+#include "lyra/mir/type_builders.hpp"
 
 namespace lyra::lowering::hir_to_mir {
 
@@ -49,27 +48,28 @@ auto BuildPackedTaggedValue(
   // Every run is carried in the union's own state domain, so the runs compose
   // into exactly the union's vector and only its signedness is left to
   // reconcile.
-  const mir::BitAtom atom = unit.types.Get(result_type).AsPackedArray().atom;
+  const mir::IntegralStateKind state_kind =
+      unit.types.Get(result_type).PackedShape().state_kind;
   std::vector<mir::ExprId> runs;
   if (layout.tag_bits > 0) {
     const mir::ExprId named = BuildIntLiteral(
         unit, block, static_cast<std::int64_t>(t.member_index.value));
     runs.push_back(ConvertToType(
-        unit, block, named, InternFlatPacked(unit, layout.tag_bits, atom)));
+        unit, block, named,
+        mir::PackedVectorOf(unit.types, layout.tag_bits, state_kind)));
   }
   if (gap_width > 0) {
     runs.push_back(block.exprs.Add(BuildDefaultValueExpr(
-        owner, frame, InternFlatPacked(unit, gap_width, atom))));
+        owner, frame, mir::PackedVectorOf(unit.types, gap_width, state_kind))));
   }
   if (payload.has_value()) {
     runs.push_back(ConvertToType(
-        unit, block, *payload, InternFlatPacked(unit, member_width, atom)));
+        unit, block, *payload,
+        mir::PackedVectorOf(unit.types, member_width, state_kind)));
   }
 
-  const mir::ExprId concat = block.exprs.Add(BuildPackedConcat(
-      unit, block, std::move(runs),
-      InternFlatPacked(unit, layout.bit_width, atom)));
-  return BuildValueConversion(unit, block, concat, result_type);
+  return BuildValueConversion(
+      unit, block, BuildPackedConcat(unit, block, runs), result_type);
 }
 
 }  // namespace
@@ -90,10 +90,10 @@ auto LowerHirTaggedUnionExpr(
     payload = block.exprs.Add(*std::move(payload_or));
   }
 
-  if (std::holds_alternative<hir::PackedUnionType>(hir_type.data)) {
+  if (hir_type.Is<hir::PackedUnionType>()) {
     return BuildPackedTaggedValue(
-        lowerer, frame, ProjectPackedAggregate(lowerer.Owner(), hir_type.data),
-        t, payload, result_type);
+        lowerer, frame, ProjectPackedAggregate(lowerer.Owner(), hir_type), t,
+        payload, result_type);
   }
 
   // LRM 11.9: `tagged Member` without an operand names a `void` member, whose

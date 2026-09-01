@@ -10,7 +10,6 @@
 #include "lyra/hir/class_ref.hpp"
 #include "lyra/hir/type.hpp"
 #include "lyra/hir/type_id.hpp"
-#include "lyra/hir/type_pool.hpp"
 
 namespace lyra::hir {
 
@@ -44,7 +43,7 @@ class TypeImporter {
   auto Import(TypeId id) -> TypeId;
 
  private:
-  auto ImportData(const TypeData& data) -> TypeData;
+  auto Import(const Type& type) -> Type;
 
   // The class a reference names, as the destination reaches it. A class the
   // source's own unit declares is renamed to that unit and the class's name,

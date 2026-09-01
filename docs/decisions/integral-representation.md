@@ -60,24 +60,21 @@ of the integral type itself. A new C++ backend should follow the same shape.
 
 ### F3. Current MIR `PackedArrayType` is already unified semantically
 
-`include/lyra/mir/type.hpp:68`:
-
 ```cpp
 struct PackedArrayType {
-  BitAtom atom;
+  IntegralStateKind state_kind;
   Signedness signedness;
   std::vector<PackedRange> dims;
-  PackedArrayForm form;
 };
 ```
 
-`(atom, signedness, dims)` carries exactly the three slang attributes (`atom` -> `is_four_state`,
-`signedness` -> `is_signed`, `BitWidth()` from `dims`). The `form` field is purely slang's syntactic
-origin marker. cpp emit dispatching on `form` is dispatching on something with no semantic content.
+`(state_kind, signedness, dims)` carries exactly the three slang attributes (`state_kind` ->
+`is_four_state`, `signedness` -> `is_signed`, `BitWidth()` from `dims`). A backend dispatching on
+the syntactic origin would be dispatching on something with no semantic content.
 
-**Consequence:** MIR does not need to change to support the unified design. `form` continues to
-exist for the MIR dump and any diagnostic that wants to round-trip slang origin; cpp emit simply
-stops reading it.
+**Consequence:** no IR records which keyword a predefined-width integer was written with. LRM 6.11.1
+makes `int` and `bit signed [31:0]` one type, so they reach one identity in every layer, and a
+consumer asking what an integral value is has exactly the three attributes to ask about.
 
 ### F4. The five-bucket split was a `backend::cpp` invention with a real cost
 
@@ -125,8 +122,8 @@ but it does not leak into MIR or into a hypothetical IR-level API.
 1. **One C++ class for every integral type**: `lyra::value::PackedArray`, carrying its own declared
    representation. No separate `BitValue` / `LogicValue` / native int types appear in emitted code
    for integral variables.
-2. **MIR dispatch axis is `(atom, bit_width, signedness)`**. `PackedArrayForm` is read only by the
-   MIR dump and by diagnostics; cpp emit ignores it.
+2. **MIR dispatch axis is `(state_kind, bit_width, signedness)`**. Nothing else about an integral
+   type is available to dispatch on, in any backend.
 3. **Operations live on `PackedArray`**: operator overloads and member functions (or free functions
    in the same namespace). No view-based helpers exposed to emit. Storage / view abstractions remain
    internal implementation details.
@@ -152,8 +149,8 @@ but it does not leak into MIR or into a hypothetical IR-level API.
 - Narrow runtime variables (e.g., `int x;`) carry a `PackedArray`-sized object (~24-32 bytes)
   instead of a 4-byte `int32_t`. This is accepted as a clean-design trade and reconsidered only if
   profiling identifies it as a real cost.
-- A future LLVM backend uses the same MIR with the same dispatch axis; its bucketing to `iN` is its
-  own lowering.
+- The LLVM backend reads the same MIR on the same dispatch axis; its bucketing to `iN` is its own
+  lowering.
 
 ## Cross-references
 

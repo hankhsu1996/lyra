@@ -44,7 +44,7 @@ auto BuildDescriptor(const CompilationUnit& unit, PackedArrayType pa)
       {record.MachineArray(
            record.Type(RuntimeLibraryKind::kPackedRange), std::move(dims)),
        record.Bool(pa.signedness == Signedness::kSigned),
-       record.Bool(pa.IsFourState())});
+       record.Bool(pa.state_kind == IntegralStateKind::kFourState)});
   return description;
 }
 
@@ -65,8 +65,7 @@ auto BuildPackedTypeRef(
 
 auto DescribedPackedTypes(const CompilationUnit& unit) -> std::vector<TypeId> {
   std::vector<TypeId> described;
-  for (std::size_t i = 0; i < unit.types.size(); ++i) {
-    const TypeId id{static_cast<std::uint32_t>(i)};
+  for (const TypeId id : unit.types.Ids()) {
     if (unit.types.Get(id).IsIntegralPacked()) {
       described.push_back(id);
     }
@@ -82,7 +81,7 @@ auto DescribePackedType(const CompilationUnit& unit, TypeId integral)
         "DescribePackedType: only an integral type has a packed "
         "representation");
   }
-  return BuildDescriptor(unit, type.AsIntegralPacked());
+  return BuildDescriptor(unit, type.PackedShape());
 }
 
 }  // namespace lyra::mir
