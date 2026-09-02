@@ -129,6 +129,12 @@ class DynamicArray {
     return data_[i];
   }
 
+  // The element type's default (LRM Table 7-1), the shape an out-of-range read
+  // returns and a derived container seeds its own out-of-range source with.
+  [[nodiscard]] auto ElementDefault() const -> const T& {
+    return shield_.Default();
+  }
+
   [[nodiscard]] auto ToOwned() const -> DynamicArray {
     return *this;
   }
@@ -278,6 +284,25 @@ class DynamicArray {
   // canonical-reset protocol shared with PackedArray / UnpackedArray.
   auto Delete() -> void {
     data_.clear();
+  }
+
+  // LRM 10.10 unpacked concatenation, as the two-operand steps a join folds to:
+  // this array with one element appended, or with every element of a spread
+  // part appended in order. A part is one element unless the program spreads a
+  // container. Value-returning so the fold chains them without mutating a
+  // shared array, and unbounded, so every appended element is kept.
+  [[nodiscard]] auto ConcatElement(const T& item) const -> DynamicArray {
+    DynamicArray out = *this;
+    out.data_.push_back(item);
+    return out;
+  }
+  template <typename C>
+  [[nodiscard]] auto ConcatSpread(const C& part) const -> DynamicArray {
+    DynamicArray out = *this;
+    for (std::size_t i = 0; i < part.RawSize(); ++i) {
+      out.data_.push_back(part.RawAt(i));
+    }
+    return out;
   }
 
   // LRM 7.12.2 ordering: an in-place positional permutation. `reverse` takes no

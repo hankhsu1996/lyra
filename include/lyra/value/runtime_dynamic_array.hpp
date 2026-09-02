@@ -90,6 +90,16 @@ class RuntimeDynamicArray {
   // same element default.
   [[nodiscard]] auto Delete() const -> RuntimeDynamicArray;
 
+  // LRM 10.10 unpacked concatenation, as the two-operand steps a join folds to:
+  // this array with one element appended, or with every element of a spread
+  // part appended in order. Functional, so the fold chains them without
+  // disturbing a shared array, and unbounded, so every appended element is
+  // kept.
+  [[nodiscard]] auto ConcatElement(RuntimeValue item) const
+      -> RuntimeDynamicArray;
+  [[nodiscard]] auto ConcatSpread(const RuntimeValue& part) const
+      -> RuntimeDynamicArray;
+
   // LRM 11.4.5 `==` / `!=` (Any data type): a size check then an element-wise
   // reduction that propagates X / Z through each element's own equality.
   [[nodiscard]] auto operator==(const RuntimeDynamicArray& other) const

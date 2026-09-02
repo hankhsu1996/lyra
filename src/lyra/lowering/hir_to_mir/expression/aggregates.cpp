@@ -1,5 +1,6 @@
 #include "lyra/lowering/hir_to_mir/expression/aggregates.hpp"
 
+#include <algorithm>
 #include <cstddef>
 #include <cstdint>
 #include <expected>
@@ -48,6 +49,39 @@ auto BuildReplicateCall(
       .type = result_type};
 }
 
+// An unpacked array concatenation (LRM 10.10) as the chain of appends it folds
+// to: the empty accumulator the destination declares, then each part appended
+// left to right -- one element, or, where the part is itself a container, every
+// element it holds in order. No entry composes a part list of arbitrary length,
+// so the fold is here and each step is a two-operand call; the accumulator's
+// own domain (a queue enforcing its bound, a dynamic array unbounded) selects
+// the realization. A spread part crosses erased, its own container domain being
+// no concern of the entry that appends its elements. The empty `{}` is the seed
+// with no step folded onto it.
+auto BuildUnpackedConcatChain(
+    const UnitLowerer& owner, WalkFrame frame, mir::TypeId acc_type,
+    const std::vector<mir::ExprId>& operand_ids) -> mir::Expr {
+  auto& block = *frame.current_block;
+  const mir::CompilationUnit& unit = owner.Unit();
+  mir::Expr acc = BuildArrayConstructionCall(owner, frame, acc_type, {});
+  for (const mir::ExprId part : operand_ids) {
+    const bool spread =
+        IsArrayContainerType(unit.types.Get(block.exprs.Get(part).type));
+    const mir::ExprId acc_id = block.exprs.Add(std::move(acc));
+    acc = mir::Expr{
+        .data =
+            mir::CallExpr{
+                .callee =
+                    mir::Direct{
+                        .target =
+                            spread ? support::BuiltinFn::kArrayConcatSpread
+                                   : support::BuiltinFn::kArrayConcatElement},
+                .arguments = {acc_id, part}},
+        .type = acc_type};
+  }
+  return acc;
+}
+
 }  // namespace
 
 template <ExprLowerer Lowerer>
@@ -88,34 +122,50 @@ auto LowerHirConcatExpr(
     }
     return join(lhs, operand_ids.back());
   }
-  // An unpacked queue concatenation (LRM 10.10) folds where it is built into
-  // the chain of appends it stands for: an empty queue carrying the
-  // destination's element shape and LRM 7.10.5 bound, then each part appended
-  // left to right. Nothing composes a part list of arbitrary length, so the
-  // fold is here and each step is a two-operand call. A part whose value is
-  // itself an array is spread and contributes its elements in order; the same
-  // array value would be one element if the queue's element type were an array,
-  // so the role is the program's fact, not the operand type's. The empty `{}`
-  // is the seed with no step folded onto it.
-  if (result_ty.Is<mir::QueueType>()) {
-    mir::Expr acc =
-        BuildArrayConstructionCall(lowerer.Owner(), frame, result_type, {});
-    for (const mir::ExprId part : operand_ids) {
-      const bool spread =
-          IsArrayContainerType(unit.types.Get(block.exprs.Get(part).type));
-      const mir::ExprId acc_id = block.exprs.Add(std::move(acc));
-      acc = mir::Expr{
-          .data =
-              mir::CallExpr{
-                  .callee =
-                      mir::Direct{
-                          .target =
-                              spread ? support::BuiltinFn::kQueueConcatSpread
-                                     : support::BuiltinFn::kQueueConcatElement},
-                  .arguments = {acc_id, part}},
-          .type = result_type};
+  // A queue or a dynamic array is grown from the parts directly, the chain
+  // building at the destination's own type. A part whose value is itself a
+  // container is spread and contributes its elements in order; the same value
+  // would be one element if the destination's element type were a container, so
+  // the role is the program's fact, not the operand type's.
+  if (result_ty.Is<mir::QueueType>() || result_ty.Is<mir::DynamicArrayType>()) {
+    return BuildUnpackedConcatChain(
+        lowerer.Owner(), frame, result_type, operand_ids);
+  }
+  // A fixed-size unpacked array whose parts are all single elements is the
+  // assignment pattern it coincides with (LRM 10.10.1), built by position. One
+  // carrying a spread has a run-time element count, so it grows a dynamic array
+  // from the parts and then adopts it into the fixed target, which is an error
+  // when the counts differ (LRM 10.10). The front end has already rejected a
+  // spread-free mismatch, so only the spread form can reach the run-time check.
+  if (result_ty.Is<mir::UnpackedArrayType>()) {
+    const bool has_spread =
+        std::ranges::any_of(operand_ids, [&](mir::ExprId part) {
+          return IsArrayContainerType(
+              unit.types.Get(block.exprs.Get(part).type));
+        });
+    if (!has_spread) {
+      return BuildArrayConstructionCall(
+          lowerer.Owner(), frame, result_type, std::move(operand_ids));
     }
-    return acc;
+    const mir::TypeId dyn_type = unit.types.Intern(
+        mir::Type{mir::DynamicArrayType{
+            .element_type = ArrayContainerElementType(unit, result_type)}});
+    const mir::ExprId dyn_id = block.exprs.Add(BuildUnpackedConcatChain(
+        lowerer.Owner(), frame, dyn_type, operand_ids));
+    const mir::ExprId count_id = BuildMachineIntLiteral(
+        unit, block,
+        static_cast<std::int64_t>(
+            result_ty.Get<mir::UnpackedArrayType>().Size()));
+    return mir::Expr{
+        .data =
+            mir::CallExpr{
+                .callee =
+                    mir::Direct{
+                        .target = support::BuiltinFn::kArrayConformSize,
+                        .qualification =
+                            mir::TypeQualifier{.type = result_type}},
+                .arguments = {dyn_id, count_id}},
+        .type = result_type};
   }
   return BuildValueConversion(
       unit, block, BuildPackedConcat(unit, block, operand_ids), result_type);

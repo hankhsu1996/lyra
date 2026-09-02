@@ -503,6 +503,8 @@ void DefineRuntimeAbi(llvm::orc::LLJIT& jit) {
       &lyra_rt_make_dynamic_array_new_copy);
   add("lyra_rt_dynarray_from_literal", &lyra_rt_dynarray_from_literal);
   add("lyra_rt_dynarray_element", &lyra_rt_dynarray_element);
+  add("lyra_rt_dynarray_concat_element", &lyra_rt_dynarray_concat_element);
+  add("lyra_rt_dynarray_concat_spread", &lyra_rt_dynarray_concat_spread);
   add("lyra_rt_dynarray_with_element", &lyra_rt_dynarray_with_element);
   add("lyra_rt_dynarray_delete", &lyra_rt_dynarray_delete);
   add("lyra_rt_dynarray_size", &lyra_rt_dynarray_size);
@@ -520,6 +522,8 @@ void DefineRuntimeAbi(llvm::orc::LLJIT& jit) {
   add("lyra_rt_unpackedarray_value_box", &lyra_rt_unpackedarray_value_box);
   add("lyra_rt_unpackedarray_from_literal",
       &lyra_rt_unpackedarray_from_literal);
+  add("lyra_rt_unpackedarray_conform_size",
+      &lyra_rt_unpackedarray_conform_size);
   add("lyra_rt_unpackedarray_from_string", &lyra_rt_unpackedarray_from_string);
   add("lyra_rt_queue_default", &lyra_rt_queue_default);
   add("lyra_rt_queue_default_bounded", &lyra_rt_queue_default_bounded);

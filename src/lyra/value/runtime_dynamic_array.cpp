@@ -126,6 +126,23 @@ auto RuntimeDynamicArray::Delete() const -> RuntimeDynamicArray {
   return RuntimeDynamicArray(*element_default_);
 }
 
+auto RuntimeDynamicArray::ConcatElement(RuntimeValue item) const
+    -> RuntimeDynamicArray {
+  RuntimeDynamicArray result(*this);
+  result.data_.push_back(std::move(item));
+  return result;
+}
+
+auto RuntimeDynamicArray::ConcatSpread(const RuntimeValue& part) const
+    -> RuntimeDynamicArray {
+  RuntimeDynamicArray result(*this);
+  const std::size_t count = RuntimeValueContainerSize(part);
+  for (std::size_t i = 0; i < count; ++i) {
+    result.data_.push_back(RuntimeValueContainerElementAt(part, i));
+  }
+  return result;
+}
+
 auto RuntimeDynamicArray::operator==(const RuntimeDynamicArray& other) const
     -> PackedArray {
   if (data_.size() != other.data_.size()) {

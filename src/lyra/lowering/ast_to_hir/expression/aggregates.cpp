@@ -87,11 +87,13 @@ auto LowerConcatExpr(
   const hir::Type& result_ty = unit_lowerer.Unit().types.Get(*type_id);
   if (!result_ty.Is<hir::StringType>() && !result_ty.Is<hir::ScalarBitType>() &&
       !result_ty.Is<hir::PackedArrayType>() &&
-      !result_ty.Is<hir::QueueType>()) {
+      !result_ty.Is<hir::QueueType>() &&
+      !result_ty.Is<hir::UnpackedArrayType>() &&
+      !result_ty.Is<hir::DynamicArrayType>()) {
     return diag::Fail(
         span, diag::DiagCode::kUnsupportedExpressionForm,
-        "concatenation result type is not string, packed, or a queue (LRM "
-        "11.4.12 / 10.10)");
+        "concatenation result type is not string, packed, or an unpacked array "
+        "(LRM 11.4.12 / 10.10)");
   }
   std::vector<hir::ExprId> operand_ids;
   operand_ids.reserve(cc.operands().size());

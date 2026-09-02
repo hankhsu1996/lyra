@@ -401,10 +401,12 @@ auto BuiltinFnCppName(support::BuiltinFn id) -> std::string_view {
       return "FromString";
     case support::BuiltinFn::kConformBound:
       return "ConformBound";
-    case support::BuiltinFn::kQueueConcatElement:
+    case support::BuiltinFn::kArrayConcatElement:
       return "ConcatElement";
-    case support::BuiltinFn::kQueueConcatSpread:
+    case support::BuiltinFn::kArrayConcatSpread:
       return "ConcatSpread";
+    case support::BuiltinFn::kArrayConformSize:
+      return "ConformSize";
     case support::BuiltinFn::kMakeDynamicArrayDefault:
       return "Default";
     case support::BuiltinFn::kMakeDynamicArrayNew:
