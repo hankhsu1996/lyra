@@ -223,8 +223,14 @@ auto DeclareRoutedRefSlots(StructuralScopeLowerer& lowerer, ClassShape& shape)
           "DeclareRoutedRefSlots: an upward routed reference to a net is not "
           "yet supported");
     }
-    const mir::TypeId leaf = unit_lowerer.MemberCellType(
-        unit_lowerer.TranslateType(cu.recipe.type), cu.target_storage);
+    // What the endpoint points at: the cell the target's own unit says its
+    // storage is, or the object itself where the route ends on one, an object
+    // being reached by a pointer to it with no cell in between.
+    const mir::TypeId reached = unit_lowerer.TranslateType(cu.recipe.type);
+    const mir::TypeId leaf =
+        std::holds_alternative<hir::ScopeLeaf>(cu.recipe.leaf)
+            ? reached
+            : unit_lowerer.MemberCellType(reached, cu.target_storage);
     const mir::TypeId slot_type = unit_lowerer.Unit().types.Intern(
         mir::Type{mir::PointerType{
             .pointee = leaf, .ownership = mir::PointerOwnership::kBorrowed}});

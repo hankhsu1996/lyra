@@ -198,7 +198,13 @@ consume. Coverage is demonstrated through Stage D and Stage E.
 - [ ] D9 -- Hierarchical-reference target forms beyond a signal in an instance. A hierarchical path
       reaching a class property (LRM 8.4), an interface port, or a declaration kind other than a
       variable / net is rejected. Only a variable or net reached across the instance boundary
-      resolves today.
+      resolves today, and a subroutine of an interface, which that unit publishes.
+
+      A task or function of a module enabled by hierarchical name (LRM 23.6) is the one target form
+      whose obstacle is not the reference model. A module publishes only its ports, so such a name
+      was never promised and resolves while the design elaborates -- and what answers a name then
+      yields a scope or a signal, never a callable. Closing it is a runtime capability rather than a
+      new route, which is why it does not follow from an interface's subroutines being callable.
 
 Unlocks `refs/hierarchical_refs`, `refs/upward_refs`, and `instantiation/hierarchical_sensitivity`.
 

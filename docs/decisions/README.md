@@ -282,6 +282,12 @@ the detail lives in the entry itself.
   exactly where the layer below it splits; naming another unit's object and holding what it
   published are two facts with two vocabulary items. Mangling at the composition site, tagging one
   conflated arm, and recording every transitively reachable unit are rejected.
+- [calling-a-subroutine-on-another-units-object](calling-a-subroutine-on-another-units-object.md) --
+  an interface publishes its subroutines, and enabling one is a route that ends at the object plus a
+  name resolved against what that unit promised, so no sealed-endpoint category for a callable is
+  needed; an instance method and a type-associated one of another unit are different targets. Naming
+  the instance the frontend resolved to, a callable endpoint category, and a by-name lookup for a
+  published name are rejected.
 - [interface-port-binding](interface-port-binding.md) -- an interface port's declared type names the
   unit whose instance belongs there, by name, so it crosses a signature; the member holds a borrowed
   reference the parent binds once during elaboration, a fourth published storage kind; an interface

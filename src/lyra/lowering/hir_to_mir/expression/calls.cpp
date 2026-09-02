@@ -625,6 +625,11 @@ auto LowerHirCallExpr(
                 "LowerHirCallExpr: a cross-unit subroutine call is planned "
                 "before this dispatch");
           },
+          [](const hir::ExternalUnitMethodRef&) -> diag::Result<mir::Expr> {
+            throw InternalError(
+                "LowerHirCallExpr: a call on another unit's object is planned "
+                "before this dispatch");
+          },
       },
       c.callee);
 }

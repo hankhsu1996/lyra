@@ -14,6 +14,7 @@
 #include <vector>
 
 #include <slang/ast/Expression.h>
+#include <slang/ast/HierarchicalReference.h>
 #include <slang/ast/Scope.h>
 #include <slang/ast/Symbol.h>
 #include <slang/ast/symbols/BlockSymbols.h>
@@ -33,6 +34,7 @@
 #include "lyra/diag/source_span.hpp"
 #include "lyra/hir/compilation_unit.hpp"
 #include "lyra/hir/expr.hpp"
+#include "lyra/hir/expr_builders.hpp"
 #include "lyra/hir/value_ref.hpp"
 #include "lyra/lowering/ast_to_hir/expression/references.hpp"
 #include "lyra/lowering/ast_to_hir/instance_array_shape.hpp"
@@ -482,21 +484,24 @@ auto DeclaringUnitOfValue(const slang::ast::ValueSymbol& value)
 }  // namespace
 
 auto UnitLowerer::MapOrGetRoutedRef(
-    const slang::ast::ValueSymbol& target, ScopeFrameId slot_owner_frame,
-    hir::RoutedRefDecl decl) -> hir::RoutedRefId {
-  auto& frame_dedup = routed_ref_dedup_[slot_owner_frame];
-  if (const auto it = frame_dedup.find(&target); it != frame_dedup.end()) {
-    return it->second;
-  }
+    ScopeFrameId slot_owner_frame, hir::RoutedRefDecl decl)
+    -> hir::RoutedRefId {
   auto& slots = routed_refs_by_frame_[slot_owner_frame];
-  const hir::RoutedRefId id{static_cast<std::uint32_t>(slots.size())};
-  slots.push_back(std::move(decl));
-  frame_dedup.emplace(&target, id);
-  return id;
+  // Two references that navigate the same way to the same target are one
+  // endpoint; two that reach it differently are two, and the route is what says
+  // which. An object reached through a port and the same object named
+  // hierarchically coincide only in the instance being lowered -- the port
+  // reaches whatever it was bound to, the name reaches what it names -- so
+  // sharing one endpoint between them would make the second follow the first's
+  // binding.
+  for (const hir::RoutedRefId id : slots.Ids()) {
+    if (slots.Get(id).recipe == decl.recipe) return id;
+  }
+  return slots.Add(std::move(decl));
 }
 
 auto UnitLowerer::TakeRoutedRefsForFrame(ScopeFrameId slot_owner_frame)
-    -> std::vector<hir::RoutedRefDecl> {
+    -> base::Arena<hir::RoutedRefDecl, hir::RoutedRefId> {
   const auto it = routed_refs_by_frame_.find(slot_owner_frame);
   if (it == routed_refs_by_frame_.end()) {
     return {};
@@ -507,16 +512,12 @@ auto UnitLowerer::TakeRoutedRefsForFrame(ScopeFrameId slot_owner_frame)
 }
 
 auto UnitLowerer::MakeRoutedMemberRef(
-    const slang::ast::ValueSymbol& target, ScopeFrameId slot_owner_frame,
-    hir::RoutedRefDecl decl, diag::SourceSpan span) -> hir::Expr {
+    ScopeFrameId slot_owner_frame, hir::RoutedRefDecl decl,
+    diag::SourceSpan span) -> hir::Expr {
   const hir::TypeId type = decl.recipe.type;
   const hir::RoutedRefId slot =
-      MapOrGetRoutedRef(target, slot_owner_frame, std::move(decl));
-  return hir::Expr{
-      .type = type,
-      .data = hir::PrimaryExpr{.data = hir::RoutedRef{.id = slot}},
-      .span = span,
-  };
+      MapOrGetRoutedRef(slot_owner_frame, std::move(decl));
+  return hir::MakeRefExpr(hir::RoutedRef{.id = slot}, type, span);
 }
 
 auto UnitLowerer::PublishedRouteTarget(
@@ -617,16 +618,58 @@ auto UnitLowerer::MakeRoutedRef(
   auto target = ResolveRouteTarget(value, steps);
   if (!target) return std::unexpected(std::move(target.error()));
   const hir::RoutedRefId id = MapOrGetRoutedRef(
-      value, slot_owner,
-      hir::RoutedRefDecl{
-          .recipe =
-              hir::RoutedPathRecipe{
-                  .head = std::move(head),
-                  .steps = std::move(steps),
-                  .leaf = std::move(target->leaf),
-                  .type = target->type},
-          .target_storage = target->storage});
+      slot_owner, hir::RoutedRefDecl{
+                      .recipe =
+                          hir::RoutedPathRecipe{
+                              .head = std::move(head),
+                              .steps = std::move(steps),
+                              .leaf = std::move(target->leaf),
+                              .type = target->type},
+                      .target_storage = target->storage});
   return hir::ReferenceRoute{hir::RoutedRef{.id = id}};
+}
+
+auto UnitLowerer::MakeRoutedObjectRef(
+    ScopeFrameId slot_owner, ScopeRoute route, hir::TypeId object_type)
+    -> hir::RoutedRef {
+  const hir::RoutedRefId id = MapOrGetRoutedRef(
+      slot_owner, hir::RoutedRefDecl{
+                      .recipe =
+                          hir::RoutedPathRecipe{
+                              .head = std::move(route.head),
+                              .steps = std::move(route.steps),
+                              .leaf = hir::ScopeLeaf{},
+                              .type = object_type},
+                      .target_storage = hir::BorrowedObjectStorage{}});
+  return hir::RoutedRef{.id = id};
+}
+
+auto UnitLowerer::RouteToUnitObject(
+    const WalkFrame& frame, const slang::ast::InstanceBodySymbol& body,
+    const slang::ast::HierarchicalReference& reference,
+    diag::SourceSpan span) const -> diag::Result<std::optional<ScopeRoute>> {
+  // Going through a port reaches whatever that port was bound to, which is the
+  // only reach this unit has to what stands behind it; any other name reaches
+  // the same object in every instantiation, and the walk on the elaborated
+  // hierarchy is what says so. Both end at one object in the instance being
+  // lowered, so what tells them apart is how the name got there and never what
+  // it resolved to.
+  if (reference.isViaIfacePort()) {
+    // A path ends at what the name reached, so the subroutine has to be the hop
+    // below the port. A hop in between descends into what the interface itself
+    // owns, past what the port promised about the interface it carries.
+    const auto below_the_port = reference.path.subspan(1);
+    if (below_the_port.empty() ||
+        below_the_port.front().symbol != reference.target) {
+      return diag::Fail(
+          span, diag::DiagCode::kUnsupportedExpressionForm,
+          "a subroutine on an interface reached through another interface port "
+          "is not yet supported");
+    }
+    return std::optional<ScopeRoute>{
+        RouteThroughInterfacePort(frame, *reference.path.front().symbol)};
+  }
+  return RouteToScope(frame, body);
 }
 
 auto UnitLowerer::TranslateReferenceRoute(

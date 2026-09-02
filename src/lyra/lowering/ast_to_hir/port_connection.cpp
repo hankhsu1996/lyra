@@ -84,9 +84,10 @@ auto InterfaceActualRoute(
 
   if (named != nullptr && named->hierRef.isViaIfacePort()) {
     const auto path = named->hierRef.path;
-    // The port and nothing after it. A longer path selects something inside the
-    // interface the port carries, which is not that interface.
-    if (path.size() != 1) {
+    // A path ends at what the name reached, and here that has to be the port
+    // itself: a hop below it selects something inside the interface the port
+    // carries, which is not that interface.
+    if (path.front().symbol != named->hierRef.target) {
       return PortConnectionUnsupported(
           span,
           "an interface reached through part of another interface port is not "
@@ -270,7 +271,7 @@ auto ConnectElementPorts(
     const auto cell_endpoint = [&]() -> hir::PortEndpoint {
       return hir::PortCellEndpoint{
           .cell = frame.Exprs().Add(unit_lowerer.MakeRoutedMemberRef(
-              *internal, home_frame,
+              home_frame,
               hir::RoutedRefDecl{
                   .recipe = port_recipe, .target_storage = member.storage},
               span))};

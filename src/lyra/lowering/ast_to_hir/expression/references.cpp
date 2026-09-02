@@ -320,9 +320,12 @@ auto LowerInterfacePortValue(
     const slang::ast::ValueSymbol& declaration, diag::SourceSpan span)
     -> diag::Result<hir::Expr> {
   const auto path = hve.ref.path;
-  // The port, then the name on it. A longer path descends further into the
-  // interface, past what a signature promised about the port itself.
-  if (path.size() != 2) {
+  // A path ends at what the name reached, so the member has to be the hop below
+  // the port. A hop in between descends into what the interface itself owns,
+  // past what the port promised about the interface it carries.
+  const auto below_the_port = path.subspan(1);
+  if (below_the_port.empty() ||
+      below_the_port.front().symbol != hve.ref.target) {
     return diag::Fail(
         span, diag::DiagCode::kUnsupportedExpressionForm,
         "a nested name reached through an interface port is not yet supported");

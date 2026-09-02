@@ -829,6 +829,7 @@ auto UnitLowerer::MakeMethodCallee(
   return hir::ExternalMethodCallee{
       .target = std::get<hir::ExternalClassMethodTarget>(std::move(target)),
       .is_virtual = method.isVirtual(),
+      .is_static = method.flags.has(slang::ast::MethodFlags::Static),
       .interface = *std::move(interface)};
 }
 

@@ -666,41 +666,38 @@ auto RenderDirectExternalUnitCall(const mir::ExternalUnitCallableTarget& target)
       .leading_arg_count = 0};
 }
 
-// Renders a `Direct` callee whose target is a class method of another
-// compilation unit (LRM 8.6 / 8.10 across the unit boundary). Instance
-// method: the receiver arrives as `arguments[0]` (a pointer to the object)
-// and the callee is `(receiver)->method`, so target-language name-lookup
-// resolves the method through the receiver's static type after the declaring
-// unit's header is included. A `Direct` call is non-virtual by construction
-// (LRM 8.15 super, or a non-virtual callee), so the instance form is
+// Renders a `Direct` callee whose target is an instance method of another
+// compilation unit (LRM 8.6, and LRM 25.7 for a subroutine on the object a
+// unit's instances are). The receiver arrives as `arguments[0]`, a pointer to
+// the object, and the callee is `(receiver)->method`, so target-language
+// name-lookup resolves the method through the receiver's static type after the
+// declaring unit's header is included. A `Direct` call is non-virtual by
+// construction (LRM 8.15 super, or a non-virtual callee), so the form is
 // owner-qualified `(receiver)->unit::Class::method` -- the same shape the
 // intra-unit owner-qualified render uses -- which bypasses the target
 // language's vtable exactly as super demands and is equivalent to an
-// unqualified call for a non-virtual callee. Static method: no receiver in the
-// argument list, and the callee is the free qualified form
-// `unit::Class::method`. The two shapes are told apart by the receiver argument
-// -- an instance call always prepends a pointer-typed receiver.
+// unqualified call for a non-virtual callee.
 auto RenderDirectExternalUnitClassMethodCall(
     const ScopeView& view, const mir::CallExpr& call,
     const mir::ExternalUnitClassMethodTarget& target) -> CalleeRender {
-  const bool has_receiver_arg =
-      !call.arguments.empty() &&
-      view.Unit()
-          .types.Get(view.Expr(call.arguments[0]).type)
-          .Is<mir::PointerType>();
-  if (!has_receiver_arg) {
-    return {
-        .expr = std::format(
-            "{}::{}::{}", ToCppName(target.unit_name),
-            ToCppName(target.class_name), target.method_name),
-        .leading_arg_count = 0};
-  }
   return {
       .expr = std::format(
           "({})->{}::{}::{}", RenderExpr(view, view.Expr(call.arguments[0])),
           ToCppName(target.unit_name), ToCppName(target.class_name),
           target.method_name),
       .leading_arg_count = 1};
+}
+
+// Renders a `Direct` callee whose target is a type-associated method of another
+// compilation unit (LRM 8.10). It takes no receiver, so nothing leads the
+// arguments and the callee is the free qualified form `unit::Class::method`.
+auto RenderDirectExternalUnitStaticMethodCall(
+    const mir::ExternalUnitStaticMethodTarget& target) -> CalleeRender {
+  return {
+      .expr = std::format(
+          "{}::{}::{}", ToCppName(target.unit_name),
+          ToCppName(target.class_name), target.method_name),
+      .leading_arg_count = 0};
 }
 
 // Renders a call to a method the runtime library provides for an imported class
@@ -746,6 +743,9 @@ auto RenderCalleePart(
                     [&](const mir::ExternalUnitClassMethodTarget& e) {
                       return RenderDirectExternalUnitClassMethodCall(
                           view, call, e);
+                    },
+                    [](const mir::ExternalUnitStaticMethodTarget& e) {
+                      return RenderDirectExternalUnitStaticMethodCall(e);
                     },
                     [&](const mir::ImportedRuntimeCallTarget& i) {
                       return RenderDirectImportedRuntimeCall(i);

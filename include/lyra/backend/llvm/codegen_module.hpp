@@ -8,6 +8,7 @@
 #include "lyra/backend/llvm/codegen_types.hpp"
 #include "lyra/backend/llvm/emit.hpp"
 #include "lyra/base/translation.hpp"
+#include "lyra/diag/diagnostic.hpp"
 #include "lyra/lir/function_id.hpp"
 #include "lyra/lir/type_id.hpp"
 
@@ -58,7 +59,7 @@ class CodeGenModule {
   // inspects it. A declaration of this unit and one another unit publishes are
   // named the same way, since the record the host builds has one shape either
   // way.
-  auto DefinitionRef(lir::TypeId type) -> llvm::Constant*;
+  auto DefinitionRef(lir::TypeId type) -> diag::Result<llvm::Constant*>;
 
   // The module-level home of one type's descriptor. The description is settled
   // by the type, so the run builds it once and every later use loads what the

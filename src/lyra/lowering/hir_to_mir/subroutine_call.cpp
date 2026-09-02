@@ -33,18 +33,35 @@ namespace lyra::lowering::hir_to_mir {
 
 namespace {
 
-// The ambient handle a callee's first parameter binds, named by where it comes
-// from rather than by a value, because it has to be evaluated in whichever
-// block the call is finally emitted into.
+// Where the value leading a call's arguments comes from, for a callee whose
+// first parameter is one it does not get from the source. The source wrote no
+// expression for it, so it is named by its origin rather than carried as a
+// value: what it evaluates to depends on the block the call is finally emitted
+// into, which is settled after the callee is planned. A callee taking no such
+// parameter has none of these.
+
+// A scope of this unit, reached by climbing that unit's own layout.
 struct EnclosingScopeReceiver {
   mir::EnclosingHops hops;
 };
+
+// The runtime the calling process runs under, which every effect entry takes.
 struct AmbientRuntimeHandle {};
+
+// The object the source named a method on (LRM 8.6), in whichever of the three
+// receiver forms it wrote.
 struct CalledObject {
   hir::MethodReceiver source;
 };
-using AmbientHandle =
-    std::variant<EnclosingScopeReceiver, AmbientRuntimeHandle, CalledObject>;
+
+// An object across an instance boundary, reached through an endpoint sealed at
+// elaboration. The endpoint holds the pointer, so the value is read straight
+// off it and reaching the object traverses nothing.
+struct SealedObject {
+  hir::RoutedRef reference;
+};
+using AmbientHandle = std::variant<
+    EnclosingScopeReceiver, AmbientRuntimeHandle, CalledObject, SealedObject>;
 
 // The callee is named outright, and `handle`, where the callee takes one,
 // leads the arguments the source wrote. A type-associated function (LRM 8.10)
@@ -103,6 +120,18 @@ auto CanonicalVirtualSlot(
       role);
 }
 
+// The target a direct call to another unit's method names. An instance method
+// takes its receiver as the leading argument and a type-associated one takes
+// none (LRM 8.10), which the callee's own declaration answers.
+auto ExternalMethodTargetOf(
+    UnitLowerer& unit_lowerer, const hir::ExternalMethodCallee& callee)
+    -> mir::DirectTarget {
+  if (callee.is_static) {
+    return unit_lowerer.MakeExternalStaticMethodTarget(callee.target);
+  }
+  return unit_lowerer.MakeExternalMethodTarget(callee.target);
+}
+
 // What a call reads off a class method it reaches: the interface it marshals
 // against, the target a direct call names, and the slot the callee fills where
 // it takes part in dispatch (LRM 8.20). Where these come from differs by
@@ -124,7 +153,7 @@ auto ReadMethodCallee(
         .formals = CalleeFormalsOf(unit_lowerer, ext->interface),
         .direct =
             mir::Direct{
-                .target = unit_lowerer.MakeExternalMethodTarget(ext->target),
+                .target = ExternalMethodTargetOf(unit_lowerer, *ext),
                 .qualification = std::nullopt},
         .slot = std::nullopt};
     if (ext->is_virtual) {
@@ -235,6 +264,29 @@ auto PlanSubroutineCall(
                 .handle = AmbientHandle{AmbientRuntimeHandle{}}};
             return plan;
           },
+          [&](const hir::ExternalUnitMethodRef& ref) -> Planned {
+            const hir::PublishedCallable& promised =
+                unit_lowerer.Hir()
+                    .external_unit_objects.Get(ref.object)
+                    .callables.Get(ref.callable);
+            SubroutineCallee plan;
+            plan.kind = promised.kind;
+            plan.result_type = result_type;
+            plan.completion = BuildCompletionLayout(
+                CalleeFormalsOf(
+                    unit_lowerer,
+                    hir::ExternalCalleeInterface{
+                        .kind = promised.kind, .params = promised.params}),
+                result_type);
+            plan.form = NamedCallee{
+                .callee =
+                    mir::Direct{
+                        .target = unit_lowerer.MakeExternalUnitMethodTarget(
+                            ref.object, ref.callable)},
+                .handle =
+                    AmbientHandle{SealedObject{.reference = ref.receiver}}};
+            return plan;
+          },
           [&](const hir::MethodCallRef& ref) -> Planned {
             return PlanClassMethodCall(
                 unit_lowerer, ref.callee, ref.receiver, result_type);
@@ -333,6 +385,13 @@ auto BuildAmbientHandle(
           },
           [&](const CalledObject& o) -> diag::Result<mir::ExprId> {
             return BuildReceiverPointer(lowerer, frame, o.source);
+          },
+          [&](const SealedObject& s) -> diag::Result<mir::ExprId> {
+            const RoutedRefMeta& meta = lowerer.RoutedRefTarget(s.reference.id);
+            return frame.current_block->exprs.Add(
+                BuildStructuralFieldAccessExpr(
+                    frame, lowerer.Owner().Unit(), mir::EnclosingHops{0},
+                    meta.target));
           }},
       handle);
 }

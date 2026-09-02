@@ -199,6 +199,10 @@ class UnitLowerer {
   auto MakeExternalMethodTarget(const hir::ExternalClassMethodTarget& target)
       -> mir::ExternalUnitClassMethodTarget;
 
+  auto MakeExternalStaticMethodTarget(
+      const hir::ExternalClassMethodTarget& target)
+      -> mir::ExternalUnitStaticMethodTarget;
+
   auto MakeExternalMethodOverride(const hir::ExternalClassMethodTarget& target)
       -> mir::OverridesExternalSlot;
 
@@ -215,6 +219,14 @@ class UnitLowerer {
   // class one.
   auto MakeExternalCallableTarget(const hir::ExternalUnitSubroutineRef& ref)
       -> mir::ExternalUnitCallableTarget;
+
+  // A callable another unit published on the object its instances are (LRM
+  // 25.7), named by that unit, that object's class, and the callable's own
+  // name -- all three read off what the unit promised. Reaching the object is
+  // already the dependency, so nothing further is recorded here.
+  [[nodiscard]] auto MakeExternalUnitMethodTarget(
+      hir::ExternalUnitObjectId object, hir::PublishedCallableId callable) const
+      -> mir::ExternalUnitClassMethodTarget;
 
   // Mints a collision-free class name for one generate scope, tagged by its
   // arm kind (`loop` / `then` / `else` / ...). The name is only an

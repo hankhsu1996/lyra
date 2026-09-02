@@ -2,10 +2,13 @@
 // class scope resolution operator or by importing its name, and the two
 // denote one type: a static property of that class is one variable however
 // it is named, and a handle obtained under one spelling is assignable to a
-// variable declared under the other. A generic class declared in a package
-// is visible throughout the system, so its matching specializations are one
-// type as well, and a class declared elsewhere may extend one of them and
-// call its constructor through super (LRM 6.22.1, 8.13, 8.25, 26.3).
+// variable declared under the other. A static method of such a class is
+// called on the class and takes no object, so a handle passed to one is an
+// ordinary argument and not the object the call acts on. A generic class
+// declared in a package is visible throughout the system, so its matching
+// specializations are one type as well, and a class declared elsewhere may
+// extend one of them and call its constructor through super (LRM 6.22.1,
+// 8.10, 8.13, 8.25, 26.3).
 package pkg;
   class Counter;
     int value = 0;
@@ -17,6 +20,10 @@ package pkg;
 
     function void incr();
       value = value + 1;
+    endfunction
+
+    static function int value_of(Counter other);
+      return other.value;
     endfunction
   endclass
 
@@ -60,6 +67,7 @@ module Top;
   byte box_byte_payload;
   int box_int_count;
   int box_byte_count;
+  int peeked_value;
   byte derived_x;
   byte derived_y;
 
@@ -81,6 +89,7 @@ module Top;
     first_value = c1.value;
     second_value = c2.value;
     made_after_two = pkg::Counter::made;
+    peeked_value = pkg::Counter::value_of(c1);
 
     c3 = new;
     made_after_import = pkg::Counter::made;
@@ -106,6 +115,10 @@ module Top;
       $fatal(1, "second_value was %0d, expected 1", second_value);
     if (made_after_two !== 2)
       $fatal(1, "made_after_two was %0d, expected 2", made_after_two);
+    // The handle is the static method's argument, so a call that consumed it
+    // as an object instead would have no argument left to read.
+    if (peeked_value !== 3)
+      $fatal(1, "peeked_value was %0d, expected 3", peeked_value);
     if (made_after_import !== 3)
       $fatal(1, "made_after_import was %0d, expected 3", made_after_import);
     if (imported_is_same !== 1)
