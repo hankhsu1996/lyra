@@ -1,6 +1,6 @@
 ---
 description: Create a pull request with a well-formatted description
-allowed-tools: Bash(git status:*), Bash(git log:*), Bash(git diff:*), Bash(git push:*), Bash(git branch:*), Bash(git fetch:*), Bash(git rev-list:*), Bash(git rebase:*), Bash(gh pr create:*)
+allowed-tools: Bash(git status:*), Bash(git log:*), Bash(git diff:*), Bash(git add:*), Bash(git commit:*), Bash(git push:*), Bash(git branch:*), Bash(git fetch:*), Bash(git rev-list:*), Bash(git rebase:*), Bash(gh pr create:*), Bash(bazel build:*), Bash(bazel test:*), Bash(clang-format:*), Bash(find:*)
 ---
 
 # Pull Request
@@ -54,10 +54,22 @@ change in front of you.
    - `git rebase origin/main`
    - Re-run clang-format (a rebase can drift C++ formatting against upstream):
      - `find src include tests -name '*.cpp' -o -name '*.hpp' | xargs clang-format -i`
-3. **Read the full diff** (`git diff origin/main..HEAD`) before writing the PR description. The `--stat` above is not sufficient - you must see the actual code changes.
-4. Push if needed: `git push -u origin <branch>`
-5. Create PR: write the body to a file and pass `gh pr create --title "..." --body-file <file>`.
+3. **Run the gate** -- this is the tree that will land, and where step 2 rebased, it is one nothing
+   has built or tested before:
+
+   ```bash
+   bazel build //...
+   bazel test //...
+   ```
+
+   Do not narrow `//...`. Widen it to `--config=full` only when the change touches what the C++
+   backend emits, since that target is the only thing that compiles emitted text. Fix failures and
+   amend before pushing.
+
+4. **Read the full diff** (`git diff origin/main..HEAD`) before writing the PR description. The `--stat` above is not sufficient - you must see the actual code changes.
+5. Push if needed: `git push -u origin <branch>`
+6. Create PR: write the body to a file and pass `gh pr create --title "..." --body-file <file>`.
    Inline `--body` does not survive shell quoting once the text contains a table or a fenced block.
-6. Return the PR URL to the user
+7. Return the PR URL to the user
 
 If updating an existing PR, push the new commits and update the PR body with `gh pr edit`.
