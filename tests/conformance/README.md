@@ -159,6 +159,34 @@ must contain.
 // program (LRM 13.4.1).
 ```
 
+### `@reports` and `@reports-nothing`
+
+For a requirement whose whole observable is a message. A program cannot read a message about itself,
+so where the standard's requirement is that a report is issued -- or that none is -- the case states
+it here and checks everything else in SystemVerilog as usual.
+
+`@reports` gives text the run's diagnostics must contain. `@reports-nothing` takes no value and
+requires the run to write no diagnostic at all, because a conforming tool has no comment on a
+correct program.
+
+```systemverilog
+// @reports: priority violation
+//
+// A priority-if that reaches no condition and has no else issues a violation
+// report (LRM 12.4.2).
+```
+
+```systemverilog
+// @reports-nothing:
+//
+// An explicit else covers every value no condition matched, so a priority-if
+// carrying one issues no violation report (LRM 12.4.2).
+```
+
+**A requirement of this kind is only covered when both directions are written**, as two cases. An
+implementation that never reports satisfies every claim of silence on its own, and one that reports
+everywhere satisfies every claim of a report; neither half discriminates alone.
+
 ## Checking what a program prints
 
 Format-string behaviour is checked in the language, not against recorded output. `$sformatf` returns

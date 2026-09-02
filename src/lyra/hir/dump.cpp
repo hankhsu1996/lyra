@@ -941,7 +941,7 @@ class HirDumper {
                   entries += ", ";
                 }
                 entries += std::format(
-                    "Expr[{}]: Expr[{}]", k.entries[i].index.value,
+                    "{}: Expr[{}]", k.entries[i].index,
                     k.entries[i].value.value);
               }
               const std::string fill =

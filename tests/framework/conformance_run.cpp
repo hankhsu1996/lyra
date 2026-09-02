@@ -9,10 +9,12 @@
 #include <string>
 #include <string_view>
 #include <unordered_set>
+#include <variant>
 #include <vector>
 #include <yaml-cpp/yaml.h>
 
 #include "conformance_case.hpp"
+#include "lyra/base/overloaded.hpp"
 #include "process.hpp"
 
 namespace lyra::test {
@@ -59,6 +61,35 @@ auto Render(
       what, test_case.id, path_name, rendered,
       TerminationName(outcome.termination), outcome.exit_code,
       outcome.stdout_text, outcome.stderr_text);
+}
+
+// Why a run's diagnostics fall short of what the case claims of them, where
+// they do. A claim of silence is the run writing nothing at all, because a
+// conforming tool has no comment on a correct program.
+auto ReportClaimBroken(const ReportClaim& claim, std::string_view diagnostics)
+    -> std::optional<std::string> {
+  return std::visit(
+      Overloaded{
+          [](const ReportsUnstated&) -> std::optional<std::string> {
+            return std::nullopt;
+          },
+          [&](const ReportsText& required) -> std::optional<std::string> {
+            if (diagnostics.find(required.text) != std::string_view::npos) {
+              return std::nullopt;
+            }
+            return std::format(
+                "the standard requires a report here, and nothing the run "
+                "wrote mentions '{}'",
+                required.text);
+          },
+          [&](const ReportsNothing&) -> std::optional<std::string> {
+            if (diagnostics.empty()) {
+              return std::nullopt;
+            }
+            return std::string(
+                "the standard allows no report here, and the run wrote one");
+          }},
+      claim);
 }
 
 auto BuildArgv(const ConformancePath& path, const ConformanceCase& test_case)
@@ -332,6 +363,10 @@ auto RunConformanceCase(
             "the program ran to completion without printing '{}', so its "
             "checks did not all run",
             kAllChecksPassed));
+  }
+  if (const std::optional<std::string> broken =
+          ReportClaimBroken(test_case.reports, outcome.stderr_text)) {
+    return report(*broken);
   }
   return std::nullopt;
 }

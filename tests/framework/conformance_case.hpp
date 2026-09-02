@@ -4,6 +4,7 @@
 #include <optional>
 #include <string>
 #include <string_view>
+#include <variant>
 #include <vector>
 
 namespace lyra::test {
@@ -22,6 +23,25 @@ inline constexpr std::string_view kCaseEntrySource = "main.sv";
 // what a case whose subject cannot be reached at all comes to. The harness does
 // not run one, so this name is what keeps it out of the corpus proper.
 inline constexpr std::string_view kParkedCaseEntry = "main.sv.deferred";
+
+// What a case claims about the diagnostics its run writes. IEEE 1800 states
+// requirements whose whole observable is a message -- LRM 12.4.2 requires a
+// violation report where no condition of a qualified if matched, and forbids
+// one where an explicit else covers the rest -- and a program cannot read a
+// message about itself, so such a claim is stated beside the checks instead of
+// being made in SystemVerilog.
+//
+// Both directions exist because either alone is satisfied by an implementation
+// that says nothing at all, or by one that says something everywhere.
+struct ReportsUnstated {};
+
+struct ReportsText {
+  std::string text;
+};
+
+struct ReportsNothing {};
+
+using ReportClaim = std::variant<ReportsUnstated, ReportsText, ReportsNothing>;
 
 // One conformance case: a SystemVerilog program stating what IEEE 1800 requires
 // and checking itself against it. A case is a directory, so what belongs to it
@@ -54,6 +74,10 @@ struct ConformanceCase {
   // holding text the diagnostic has to contain. Such a case makes no checks and
   // prints no sentinel.
   std::optional<std::string> required_error;
+  // What the standard requires this run to report, where a report is the whole
+  // of what it requires. A case making no such claim is held to nothing about
+  // what it wrote.
+  ReportClaim reports;
 };
 
 // Every case under `corpus_root`, ordered by id. A directory holding the entry

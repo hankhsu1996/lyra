@@ -26,41 +26,37 @@ The whole Ibex RTL already parses, type-checks, and elaborates through the front
 
 ## Status
 
-**The design does not currently lower.** Measured 2026-09-01 by running it: lowering aborts with an
-internal error reading an assignment pattern's count, on the assumption that the front end has
-already folded that count to an integer literal. It has not, somewhere in this design. That is a
-compiler bug rather than a missing feature -- a legal program is told to file a report -- and it
-stands in front of everything the rest of this file records.
+`ibex_simple_system_tb` simulates end-to-end. The whole design lowers with no diagnostics, emits C++
+a host compiler accepts, links, loads `hello_test` through `$readmemh`, executes it, and terminates
+on the testbench's own software request -- with the program's expected output and a full instruction
+trace. Its sources, includes and defines are read from the `lyra.toml` at the design's root, so no
+setting has to be passed on the command line, which closes the last accepted-option gap between this
+and the condition above.
 
-The front end is unaffected: the whole design still elaborates with no diagnostics, and its sources,
-includes and defines are read from the `lyra.toml` at the design's root, so no setting has to be
-passed on the command line.
+**The run is silent.** It used to report `unique` and `priority` violations from nearly every
+module, and they were Lyra's error rather than the design's: every one of those statements spells
+out a `default` item or a final `else`, which covers the values the arms left and so discharges any
+claim that some arm matches (LRM 12.4.2, 12.5.3). Lyra reported anyway. The whole run now writes
+nothing, and the corpus states the requirement in both directions -- a qualified statement with a
+catch-all reports nothing, one without reports when nothing matched -- so it cannot regress
+unnoticed.
 
-The sentence this replaces said the design simulates end-to-end, which was true when it was written
-and had gone stale unnoticed. **Nothing runs this design automatically**, so a status sentence here
-is only ever as fresh as the last time someone ran it by hand. This is the second time the section
-has been false while standing unchanged: a lowering identity minted for a construct the assertion
-policy elides once aborted seventeen of the design's twenty-four modules for three days. Re-run
-before trusting this section, and treat a status sentence here as a measurement rather than a
+**Nothing runs this design automatically**, so every sentence here is only as fresh as the last time
+someone ran it by hand. It has stood false twice. The first time, a lowering identity minted for a
+construct the assertion policy elides aborted seventeen of the design's twenty-four modules for
+three days. The second, found the same way, was a lowering that pattern-matched a count for an
+integer literal -- a replication's multiplier and an assignment pattern's alike, both of which the
+standard's own idiom writes as arithmetic -- aborting nine modules including both tops; it
+reproduced on a clean checkout, so it had been sitting in `main` for as long as nobody ran this.
+Re-run before trusting this section, and treat a status sentence here as a measurement rather than a
 property.
-
-The run reports `unique` and `priority` violations from most modules, and they are Lyra's error
-rather than the design's. Every one of those statements carries a `default` item or a final `else`,
-and a catch-all suppresses the no-match report: LRM 12.4.2 issues it "if no condition matches unless
-there is an explicit `else`", and LRM 12.5.3 issues it if no `case_item` matches, where `default` is
-one of the `case_item` forms. Lyra counts only the compared arms, so a design that spells its
-catch-all out is warned at on every unmatched pass. It is noise rather than a wrong answer -- the
-design executed correctly alongside it when the design last executed -- but it is noise on nearly
-every module.
 
 ## Two walls
 
-1. **Feature-lowering gaps** -- the unsupported SystemVerilog forms below. Every form the list names
-   is cleared. What stops lowering now is not a missing form but the compiler bug the status section
-   records, which is a different kind of thing and is not tracked in the list.
-2. **Execution backend** -- down for the C++ path, which carried the design to a full run before
-   that bug appeared. The LLVM / JIT path is a separate backend tracked in `execution-backend.md`;
-   it is not required for the C++ run.
+1. **Feature-lowering gaps** -- the unsupported SystemVerilog forms below. This wall is down. What
+   the list below now tracks is any further form a deeper pass turns up, not a standing blocker.
+2. **Execution backend** -- also down for the C++ path, which carries the run above. The LLVM / JIT
+   path is a separate backend tracked in `execution-backend.md`; it is not required for the C++ run.
 
 ## Feature gaps
 
@@ -217,6 +213,11 @@ Independent of whether the feature is supported, each of these should fail clean
       front end lists that block beside the process it belongs to rather than inside it, so the
       block kept an identity of its own after the process was removed and nothing went on to fill
       it. Whether the design has such a block is now the owning process's answer.
+- [x] A replication whose multiplier is arithmetic rather than a bare literal or parameter --
+      `{Dw-1{1'b0}}`, which LRM 11.4.12.1's own example writes for parameterized code -- aborted
+      lowering with an internal error, taking nine modules with it including both tops and the
+      testbench. Nothing looks at the form a multiplier is written in any more, so every way of
+      spelling one works; the same holds for an assignment pattern's replication count (LRM 10.9).
 
 ## Cross-references
 

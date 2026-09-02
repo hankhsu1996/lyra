@@ -23,6 +23,7 @@ module Top;
   bit [15:0] replicated_operand_list;
   bit [15:0] zero_multiplier;
   bit [79:0] parameter_multiplier;
+  bit [47:0] expression_multiplier;
 
   initial begin
     byte pattern;
@@ -64,6 +65,10 @@ module Top;
     zero_multiplier = {8'hAB, {0{8'hFF}}, 8'hCD};
 
     parameter_multiplier = {CopyCount{16'hDEAD}};
+
+    // What the multiplier has to be is a constant expression, so arithmetic
+    // over constants is one and reaches the same answer a literal would.
+    expression_multiplier = {CopyCount - 2{16'hFEED}};
   end
 
   final begin
@@ -101,6 +106,9 @@ module Top;
     if (parameter_multiplier !== 80'hDEADDEADDEADDEADDEAD)
       $fatal(1, "parameter_multiplier was %h, expected five copies of dead",
              parameter_multiplier);
+    if (expression_multiplier !== 48'hFEEDFEEDFEED)
+      $fatal(1, "expression_multiplier was %h, expected three copies of feed",
+             expression_multiplier);
     $display("All checks passed");
   end
 endmodule

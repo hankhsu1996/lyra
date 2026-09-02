@@ -161,8 +161,8 @@ struct ConcatExpr {
   std::vector<ExprId> operands;
 };
 
-// LRM 11.4.12 / 11.4.12.2: `{multiplier{...}}` is a replication built around
-// an inner concatenation. The inner ExprId always points to a ConcatExpr.
+// LRM 11.4.12: `{multiplier{...}}` is a replication built around an inner
+// concatenation. The inner ExprId always points to a ConcatExpr.
 struct ReplicationExpr {
   ExprId count;
   ExprId concat;
@@ -182,14 +182,12 @@ struct AssignmentPatternExpr {
   std::vector<ExprId> elements;
 };
 
-// LRM 10.9 replicated assignment pattern `'{count{items...}}`. `count` is
-// slang-validated as a constant positive integer. `items` is the per-
-// iteration expression list -- slang stores only one iteration's items with
+// LRM 10.9 replicated assignment pattern `'{count{items...}}`. `items` is the
+// per-iteration expression list -- slang stores only one iteration's items with
 // that iteration's per-field casts and requires the target's per-iter type
-// chunks to repeat. A packed target lowers to a replication over the items'
-// concatenation; an unpacked or dynamic one to a construction taking the items
-// once beside the count, so what it costs to describe does not grow with how
-// many times they repeat.
+// chunks to repeat. Holding one iteration and a count is what stops a
+// mostly-uniform aggregate costing its own length to describe; whether the
+// items are expanded at all is the target type's own question.
 struct AssignmentPatternReplicationExpr {
   ExprId count;
   std::vector<ExprId> items;
@@ -254,14 +252,17 @@ struct AssociativeAssignmentPatternExpr {
 // its own length to describe -- a 32768-element array reaches the target
 // language as a four-megabyte expression that no compiler will accept.
 //
-// An index is kept as the index it was written as, not as a position, because
-// the two orders differ: positions run from the dimension's left end, which is
-// the most significant element of a packed array, while indices run whichever
-// way the dimension was declared. Resolving one to the other is the target
-// type's own arithmetic and belongs wherever that type is in hand.
+// A key designates an element of the target rather than computing one, the way
+// a structure pattern's key names a member, so what it contributes is a
+// position and not an operand. It is kept as the index it was written as rather
+// than as a storage offset, because the two orders differ: offsets run from the
+// dimension's left end, which is the most significant element of a packed
+// array, while indices run whichever way the dimension was declared. Resolving
+// one to the other is the target type's own arithmetic and belongs wherever
+// that type is in hand.
 struct AssignmentPatternKeyedExpr {
   struct Entry {
-    ExprId index;
+    std::int64_t index{};
     ExprId value;
   };
   std::vector<Entry> entries;

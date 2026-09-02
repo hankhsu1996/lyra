@@ -1,10 +1,10 @@
 #include "lyra/lowering/hir_to_mir/expression/aggregates.hpp"
 
+#include <cstddef>
 #include <cstdint>
 #include <expected>
 #include <optional>
 #include <utility>
-#include <variant>
 #include <vector>
 
 #include "lyra/base/internal_error.hpp"
@@ -15,7 +15,6 @@
 #include "lyra/lowering/hir_to_mir/default_value.hpp"
 #include "lyra/lowering/hir_to_mir/integral_literal.hpp"
 #include "lyra/lowering/hir_to_mir/packed_concat.hpp"
-#include "lyra/lowering/hir_to_mir/packed_replication.hpp"
 #include "lyra/lowering/hir_to_mir/process_lowerer.hpp"
 #include "lyra/lowering/hir_to_mir/structural_scope_lowerer.hpp"
 #include "lyra/lowering/hir_to_mir/unit_lowerer.hpp"
@@ -30,26 +29,23 @@ namespace lyra::lowering::hir_to_mir {
 
 namespace {
 
-// Reads a number the LRM makes a constant expression -- a replication's
-// multiplier (LRM 11.4.12.1) and an array pattern's index key (LRM 10.9.1) are
-// both one. The front end has already folded it to an integer literal, so it is
-// a number this layer reads rather than an operand to evaluate at run time.
-auto ExtractHirLiteralUint64(const hir::Expr& expr) -> std::uint64_t {
-  const auto* primary = std::get_if<hir::PrimaryExpr>(&expr.data);
-  if (primary == nullptr) {
-    throw InternalError(
-        "ExtractHirLiteralUint64: expected a primary expression");
-  }
-  const auto* lit = std::get_if<hir::IntegerLiteral>(&primary->data);
-  if (lit == nullptr) {
-    throw InternalError("ExtractHirLiteralUint64: expected an integer literal");
-  }
-  return lit->value.value_words[0];
-}
-
 auto IsArrayContainerType(const mir::Type& ty) -> bool {
   return ty.Is<mir::UnpackedArrayType>() || ty.Is<mir::DynamicArrayType>() ||
          ty.Is<mir::QueueType>();
+}
+
+// The value a run repeated `count_id` times denotes, landing in the type given
+// (LRM 11.4.12). What the run is made of -- bits or characters -- is the
+// entry's own question, so the same call serves both.
+auto BuildReplicateCall(
+    mir::ExprId run, mir::ExprId count_id, mir::TypeId result_type)
+    -> mir::Expr {
+  return mir::Expr{
+      .data =
+          mir::CallExpr{
+              .callee = mir::Direct{.target = support::BuiltinFn::kReplicate},
+              .arguments = {run, count_id}},
+      .type = result_type};
 }
 
 }  // namespace
@@ -108,10 +104,7 @@ auto LowerHirConcatExpr(
     args.reserve(operand_ids.size() + 2);
     args.push_back(block.exprs.Add(
         BuildDefaultValueExpr(lowerer.Owner(), frame, element_type)));
-    args.push_back(block.exprs.Add(
-        mir::Expr{
-            .data = mir::MachineIntLiteral{.value = bound},
-            .type = unit.builtins.machine_int64}));
+    args.push_back(BuildMachineIntLiteral(unit, block, bound));
     for (const mir::ExprId part : operand_ids) {
       const mir::TypeId part_type = block.exprs.Get(part).type;
       if (!IsArrayContainerType(unit.types.Get(part_type))) {
@@ -148,28 +141,11 @@ auto LowerHirReplicationExpr(
   if (!concat_or) return std::unexpected(std::move(concat_or.error()));
   const mir::ExprId concat_id = block.exprs.Add(*std::move(concat_or));
   mir::CompilationUnit& unit = lowerer.Owner().Unit();
-  // The multiplier reaches the entry as a machine count either way, and where
-  // it comes from is what separates the two forms. LRM 11.4.12.2 allows a
-  // non-constant multiplier over a string, so that form evaluates an integral
-  // expression and reshapes the result, and nothing about the count is known
-  // here. LRM 11.4.12.1 requires a constant over packed operands, so the front
-  // end has already folded it and the count is a number this layer can read.
-  if (unit.types.Get(result_type).Is<mir::StringType>()) {
-    auto evaluated = lowerer.LowerExpr(lowerer.HirExprs().Get(r.count), frame);
-    if (!evaluated) return std::unexpected(std::move(evaluated.error()));
-    const mir::ExprId value_id = block.exprs.Add(*std::move(evaluated));
-    const mir::ExprId count_id =
-        block.exprs.Add(MakeToInt64Call(unit, value_id));
-    return mir::Expr{
-        .data =
-            mir::CallExpr{
-                .callee = mir::Direct{.target = support::BuiltinFn::kReplicate},
-                .arguments = {concat_id, count_id}},
-        .type = result_type};
-  }
-  return BuildPackedReplication(
-      unit, block, concat_id,
-      ExtractHirLiteralUint64(lowerer.HirExprs().Get(r.count)), result_type);
+  auto count_or = lowerer.LowerExpr(lowerer.HirExprs().Get(r.count), frame);
+  if (!count_or) return std::unexpected(std::move(count_or.error()));
+  const mir::ExprId value_id = block.exprs.Add(*std::move(count_or));
+  return BuildReplicateCall(
+      concat_id, block.exprs.Add(MakeToInt64Call(unit, value_id)), result_type);
 }
 
 // A pattern that states every element by position, dispatched on the
@@ -226,11 +202,9 @@ auto LowerKeyedEntriesByOffset(
     const Range& dim) -> diag::Result<std::vector<std::optional<mir::Expr>>> {
   std::vector<std::optional<mir::Expr>> by_offset(dim.ElementCount());
   for (const auto& entry : k.entries) {
-    const auto index = static_cast<std::int64_t>(
-        ExtractHirLiteralUint64(lowerer.HirExprs().Get(entry.index)));
     auto value = lowerer.LowerExpr(lowerer.HirExprs().Get(entry.value), frame);
     if (!value) return std::unexpected(std::move(value.error()));
-    by_offset[dim.LinearOffset(index)] = *std::move(value);
+    by_offset[dim.LinearOffset(entry.index)] = *std::move(value);
   }
   return by_offset;
 }
@@ -270,8 +244,10 @@ auto LowerPackedKeyedPattern(
           "LowerPackedKeyedPattern: no index named this element and the "
           "pattern carries no default, which LRM 10.9.1 forbids");
     }
-    parts.push_back(block.exprs.Add(BuildPackedReplication(
-        unit, block, *fill_id, run,
+    const mir::ExprId run_id =
+        BuildMachineIntLiteral(unit, block, static_cast<std::int64_t>(run));
+    parts.push_back(block.exprs.Add(BuildReplicateCall(
+        *fill_id, run_id,
         mir::PackedVectorOf(
             unit.types, run * element_width, result_pa.state_kind))));
     run = 0;
@@ -346,9 +322,10 @@ auto LowerHirAssignmentPatternKeyedExpr(
     const mir::ExprId value_id = target.exprs.Add(*std::move(value));
     const mir::ExprId element_default = target.exprs.Add(
         BuildDefaultValueExpr(lowerer.Owner(), at, element_type));
+    const mir::ExprId size_id = BuildMachineIntLiteral(
+        unit, target, static_cast<std::int64_t>(array_ty.dim.ElementCount()));
     return BuildArrayRepeatCall(
-        lowerer.Owner(), at, result_type, element_default, {value_id},
-        array_ty.dim.ElementCount());
+        lowerer.Owner(), at, result_type, element_default, {value_id}, size_id);
   };
 
   if (k.entries.empty()) {
@@ -368,13 +345,10 @@ auto LowerHirAssignmentPatternKeyedExpr(
           .target = array, .init = body.exprs.Add(*std::move(filled))});
 
   for (const auto& entry : k.entries) {
-    auto index =
-        lowerer.LowerExpr(lowerer.HirExprs().Get(entry.index), step_frame);
-    if (!index) return std::unexpected(std::move(index.error()));
     auto value =
         lowerer.LowerExpr(lowerer.HirExprs().Get(entry.value), step_frame);
     if (!value) return std::unexpected(std::move(value.error()));
-    const mir::ExprId index_id = body.exprs.Add(*std::move(index));
+    const mir::ExprId index_id = BuildIntLiteral(unit, body, entry.index);
     const mir::ExprId value_id = body.exprs.Add(*std::move(value));
     const mir::ExprId owner = body.exprs.Add(
         mir::Expr{.data = mir::LocalRef{.var = array}, .type = result_type});
@@ -417,8 +391,27 @@ auto LowerHirAssignmentPatternReplicationExpr(
   }
   mir::CompilationUnit& unit = lowerer.Owner().Unit();
   const auto& result_ty = unit.types.Get(result_type);
-  const std::uint64_t count =
-      ExtractHirLiteralUint64(lowerer.HirExprs().Get(a.count));
+
+  // A structure's members differ in type, so there is no repeat for the target
+  // to carry out: the items land in member positions here, and how many
+  // positions there are is what the structure's own type says (LRM 10.9). The
+  // multiplier states the same number the type does, so nothing reads it.
+  if (const auto* tuple = result_ty.As<mir::TupleType>()) {
+    std::vector<mir::ExprId> components;
+    components.reserve(tuple->elements.size());
+    for (std::size_t i = 0; i < tuple->elements.size(); ++i) {
+      components.push_back(item_ids[i % item_ids.size()]);
+    }
+    return mir::Expr{
+        .data = mir::TupleExpr{.components = std::move(components)},
+        .type = result_type};
+  }
+
+  auto count_or = lowerer.LowerExpr(lowerer.HirExprs().Get(a.count), frame);
+  if (!count_or) return std::unexpected(std::move(count_or.error()));
+  const mir::ExprId count_value = block.exprs.Add(*std::move(count_or));
+  const mir::ExprId count_id =
+      block.exprs.Add(MakeToInt64Call(unit, count_value));
   if (IsArrayContainerType(result_ty)) {
     const mir::TypeId element_type =
         ArrayContainerElementType(unit, result_type);
@@ -426,25 +419,16 @@ auto LowerHirAssignmentPatternReplicationExpr(
         BuildDefaultValueExpr(lowerer.Owner(), frame, element_type));
     return BuildArrayRepeatCall(
         lowerer.Owner(), frame, result_type, element_default,
-        std::move(item_ids), count);
-  }
-  if (result_ty.Is<mir::TupleType>()) {
-    std::vector<mir::ExprId> components;
-    components.reserve(item_ids.size() * count);
-    for (std::uint64_t i = 0; i < count; ++i) {
-      components.insert(components.end(), item_ids.begin(), item_ids.end());
-    }
-    return mir::Expr{
-        .data = mir::TupleExpr{.components = std::move(components)},
-        .type = result_type};
+        std::move(item_ids), count_id);
   }
   const mir::ExprId inner_id = BuildPackedConcat(unit, block, item_ids);
   const mir::PackedArrayType& inner_pa =
       unit.types.Get(block.exprs.Get(inner_id).type).PackedShape();
-  const mir::ExprId repl_id = block.exprs.Add(BuildPackedReplication(
-      unit, block, inner_id, count,
+  const mir::ExprId repl_id = block.exprs.Add(BuildReplicateCall(
+      inner_id, count_id,
       mir::PackedVectorOf(
-          unit.types, inner_pa.BitWidth() * count, inner_pa.state_kind)));
+          unit.types, result_ty.PackedShape().BitWidth(),
+          inner_pa.state_kind)));
   return BuildValueConversion(unit, block, repl_id, result_type);
 }
 

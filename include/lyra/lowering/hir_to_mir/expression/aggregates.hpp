@@ -49,7 +49,7 @@ auto LowerHirAssociativeAssignmentPatternExpr(
     const hir::AssociativeAssignmentPatternExpr& a, mir::TypeId result_type)
     -> diag::Result<mir::Expr>;
 
-// Replication (LRM 11.4.12.1) is an ordinary value expression, legal wherever a
+// Replication (LRM 11.4.12) is an ordinary value expression, legal wherever a
 // value is, so it is one template over the pass class like the other aggregate
 // families.
 template <ExprLowerer Lowerer>

@@ -1,6 +1,5 @@
 #pragma once
 
-#include <cstdint>
 #include <optional>
 #include <utility>
 #include <vector>
@@ -78,7 +77,7 @@ namespace lyra::lowering::hir_to_mir {
 [[nodiscard]] auto BuildArrayRepeatCall(
     const UnitLowerer& unit_lowerer, WalkFrame frame, mir::TypeId array_type,
     mir::ExprId element_default, std::vector<mir::ExprId> unit,
-    std::uint64_t count) -> mir::Expr;
+    mir::ExprId count_id) -> mir::Expr;
 
 // Builds the construction call for an associative-array literal (LRM 7.9.11).
 // Each (key, value) entry becomes a `TupleExpr`; the entries ride in an
