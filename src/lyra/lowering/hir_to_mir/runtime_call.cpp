@@ -27,6 +27,21 @@ auto BuildCurrentRuntimeCallExpr(const UnitLowerer& unit_lowerer) -> mir::Expr {
   return mir::MakeCurrentRuntimeCallExpr(unit_lowerer.Unit().builtins.effects);
 }
 
+auto BuildStringValueExpr(
+    const mir::CompilationUnit& unit, mir::Block& block, std::string text)
+    -> mir::ExprId {
+  const mir::TypeId string_type = unit.builtins.string;
+  const mir::ExprId literal = block.exprs.Add(
+      mir::Expr{
+          .data = mir::StringLiteral{.value = std::move(text)},
+          .type = string_type});
+  return block.exprs.Add(
+      mir::Expr{
+          .data =
+              mir::CallExpr{.callee = mir::Construct{}, .arguments = {literal}},
+          .type = string_type});
+}
+
 auto BuildFilesCallExpr(const UnitLowerer& unit_lowerer, mir::Block& block)
     -> mir::Expr {
   const auto& builtins = unit_lowerer.Unit().builtins;
@@ -40,17 +55,14 @@ auto BuildFilesCallExpr(const UnitLowerer& unit_lowerer, mir::Block& block)
       .type = builtins.files};
 }
 
-auto BuildDiagnosticCallExpr(const UnitLowerer& unit_lowerer, mir::Block& block)
-    -> mir::Expr {
-  const auto& builtins = unit_lowerer.Unit().builtins;
-  const mir::ExprId runtime_id =
-      block.exprs.Add(BuildCurrentRuntimeCallExpr(unit_lowerer));
+auto BuildDiagnosticCallExpr(
+    const mir::CompilationUnit& unit, mir::ExprId runtime_id) -> mir::Expr {
   return mir::Expr{
       .data =
           mir::CallExpr{
               .callee = mir::Direct{.target = support::BuiltinFn::kDiagnostic},
               .arguments = {runtime_id}},
-      .type = builtins.diagnostic};
+      .type = unit.builtins.diagnostic};
 }
 
 auto BuildFormatCallExpr(

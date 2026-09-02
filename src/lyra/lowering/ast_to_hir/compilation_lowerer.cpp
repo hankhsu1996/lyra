@@ -152,7 +152,7 @@ auto LowerCompilationToHir(const LowerCompilationFacts& facts)
   const auto export_names = CollectForeignExportNames(facts);
   const LoweringFacts unit_facts(
       facts.SourceMapper(), facts.Sensitivity(), export_names,
-      facts.Assertions());
+      facts.AssertionPolicy());
 
   std::vector<std::unique_ptr<UnitLowerer>> lowerers;
   lowerers.reserve(packages.size() + compilation_units.size() + bodies.size());

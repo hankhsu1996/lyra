@@ -2,13 +2,23 @@
 
 Tracks the SystemVerilog assertion family: immediate and deferred immediate assertions (LRM 16.3,
 16.4), concurrent assertions and their sequences and properties (LRM 16.5-16.13), sampled value
-functions (LRM 16.9.3), the assertion control tasks (LRM 20.12), and checkers (LRM 17).
+functions (LRM 16.9.3), the assertion control tasks (LRM 20.11), and checkers (LRM 17).
 
-Nothing in the family lowers today. Because an assertion observes the design and never drives it, a
-run with every one of them removed behaves identically, so `--assertions skip` elides the whole
-family rather than rejecting it -- statements, declarations, checkers, and the control tasks alike.
-Sampled value functions are the one member that cannot cover: outside an assertion they produce a
-value ordinary logic consumes, so there is nothing to elide them to.
+The simple immediate forms lower and are checked; nothing else in the family does. Because an
+assertion observes the design and never drives it, a run with every one of them removed behaves
+identically, so `--assertions skip` elides the whole family rather than rejecting it -- statements,
+declarations, checkers, and the control tasks alike. Sampled value functions are the one member that
+cannot cover: outside an assertion they produce a value ordinary logic consumes, so there is nothing
+to elide them to.
+
+Two consequences of that split are what a design meets first. A design carrying both an immediate
+and a concurrent assertion has no setting that checks the immediate one: the checking policy refuses
+on the concurrent form, and eliding drops both. That is a property of the concurrent form being
+unimplemented rather than a missing policy value, and it ends when AS5 does. And an immediate
+cover's results are reported as one line per cover statement at the end of a run, on the same
+channel the design's own output uses -- not as a diagnostic, because a false cover is not a failure
+and a run over a design whose covers are only partly reached has to stay one a conforming tool has
+no comment on.
 
 Done when an assertion of each form evaluates its condition at the point the LRM specifies, runs its
 pass or fail action in the region the LRM specifies, and reports a failure with its source location;
@@ -64,7 +74,7 @@ These were established once already and are the ones easy to get backwards.
 
 The IDs are stable references and do not imply execution order beyond the dependencies noted.
 
-- [ ] AS1 -- Immediate assertions (LRM 16.3). `assert`, `assume`, and `cover` without a timing
+- [x] AS1 -- Immediate assertions (LRM 16.3). `assert`, `assume`, and `cover` without a timing
       qualifier: the condition is evaluated and the pass or fail action runs in the same procedural
       step. A failure with no user action reports with its source location and severity. This is the
       whole family's condition-evaluation model, so every later item builds on it.
@@ -84,7 +94,7 @@ The IDs are stable references and do not imply execution order beyond the depend
       declarations, `disable iff`, and the clocking a property is evaluated against. Evaluation is
       multi-cycle and against sampled values, which makes this the one form whose semantics are not
       a variation on the immediate model. Rides on AS4.
-- [ ] AS6 -- Assertion control tasks (LRM 20.12). They act on assertion state -- turning checking
+- [ ] AS6 -- Assertion control tasks (LRM 20.11). They act on assertion state -- turning checking
       on, off, or killing it by scope or by name -- so they need that state to exist first.
 - [ ] AS7 -- Checkers (LRM 17): checker declarations and instances, which package assertions with
       their own variables and procedural blocks and bind into a design.
@@ -105,7 +115,7 @@ one non-blocking assignment uses.
 ## Cross-references
 
 - LRM anchors: 16.3 (immediate), 16.4 (deferred immediate), 16.5-16.13 (concurrent), 16.9.3 (sampled
-  value functions), 17 (checkers), 20.12 (control tasks), 4.4.2.3 (Observed), 4.4.2.4 (Reactive),
+  value functions), 17 (checkers), 20.11 (control tasks), 4.4.2.3 (Observed), 4.4.2.4 (Reactive),
   4.4.2.6 (Postponed), 13.5.2 (pass by reference).
 - Architecture contracts the work must satisfy: `../architecture/scheduling.md` (which region a
   maturity and an action belong to, and that deferred work is a closure submit rather than a

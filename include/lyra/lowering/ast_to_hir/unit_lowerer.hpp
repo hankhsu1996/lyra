@@ -172,11 +172,11 @@ class LoweringFacts {
       const frontend::SlangSourceMapper& source_mapper,
       SensitivityAnalyzer& sensitivity_analyzer,
       const ForeignExportNames& foreign_export_names,
-      support::AssertionPolicy assertions)
+      support::AssertionPolicy assertion_policy)
       : source_mapper_(&source_mapper),
         sensitivity_analyzer_(&sensitivity_analyzer),
         foreign_export_names_(&foreign_export_names),
-        assertions_(assertions) {
+        assertion_policy_(assertion_policy) {
   }
 
   [[nodiscard]] auto SourceMapper() const
@@ -199,15 +199,15 @@ class LoweringFacts {
     return it->second;
   }
 
-  [[nodiscard]] auto Assertions() const -> support::AssertionPolicy {
-    return assertions_;
+  [[nodiscard]] auto AssertionPolicy() const -> support::AssertionPolicy {
+    return assertion_policy_;
   }
 
  private:
   const frontend::SlangSourceMapper* source_mapper_;
   SensitivityAnalyzer* sensitivity_analyzer_;
   const ForeignExportNames* foreign_export_names_;
-  support::AssertionPolicy assertions_;
+  support::AssertionPolicy assertion_policy_;
 };
 
 // Per-unit lowerer, over a module instance body or a package. It holds the
@@ -488,12 +488,14 @@ class UnitLowerer {
   // reads it here rather than restating the condition.
   [[nodiscard]] auto Contains(
       const slang::ast::ProceduralBlockSymbol& proc) const -> bool {
-    return Assertions() != support::AssertionPolicy::kSkip ||
-           !proc.isFromAssertion;
+    if (!proc.isFromAssertion) {
+      return true;
+    }
+    return !support::ElidesAssertions(AssertionPolicy());
   }
 
-  [[nodiscard]] auto Assertions() const -> support::AssertionPolicy {
-    return facts_.Assertions();
+  [[nodiscard]] auto AssertionPolicy() const -> support::AssertionPolicy {
+    return facts_.AssertionPolicy();
   }
 
   void MapStructuralDataObjectBinding(

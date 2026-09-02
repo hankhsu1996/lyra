@@ -1612,6 +1612,55 @@ class HirDumper {
     Dedent();
   }
 
+  void DumpActionBlock(
+      const ProceduralBody& p, std::string_view arm,
+      std::optional<StmtId> stmt) {
+    if (!stmt.has_value()) {
+      return;
+    }
+    Line(std::format("{}:", arm));
+    Indent();
+    DumpStmt(p, *stmt);
+    Dedent();
+  }
+
+  void DumpAssertStmtNode(
+      const ProceduralBody& p, StmtId id, const AssertStmt& a) {
+    std::string_view directive;
+    switch (a.directive) {
+      case AssertionDirective::kAssert:
+        directive = "assert";
+        break;
+      case AssertionDirective::kAssume:
+        directive = "assume";
+        break;
+    }
+    Line(
+        std::format(
+            "Stmt[{}] AssertStmt {} cond=Expr[{}]", id.value, directive,
+            a.condition.value));
+    Indent();
+    Line(
+        std::format(
+            "Expr[{}] {}", a.condition.value, FormatProcExpr(p, a.condition)));
+    DumpActionBlock(p, "pass", a.pass_stmt);
+    DumpActionBlock(p, "fail", a.fail_stmt);
+    Dedent();
+  }
+
+  void DumpCoverStmtNode(
+      const ProceduralBody& p, StmtId id, const CoverStmt& c) {
+    Line(
+        std::format(
+            "Stmt[{}] CoverStmt cond=Expr[{}]", id.value, c.condition.value));
+    Indent();
+    Line(
+        std::format(
+            "Expr[{}] {}", c.condition.value, FormatProcExpr(p, c.condition)));
+    DumpActionBlock(p, "pass", c.pass_stmt);
+    Dedent();
+  }
+
   void DumpCaseStmtNode(const ProceduralBody& p, StmtId id, const CaseStmt& c) {
     std::string_view kind_tag;
     switch (c.condition_kind) {
@@ -1820,6 +1869,8 @@ class HirDumper {
             [&](const PatternCaseStmt&) {
               Line(std::format("Stmt[{}] PatternCaseStmt", id.value));
             },
+            [&](const AssertStmt& a) { DumpAssertStmtNode(p, id, a); },
+            [&](const CoverStmt& c) { DumpCoverStmtNode(p, id, c); },
             [&](const ForStmt& f) { DumpForStmtNode(p, id, f); },
             [&](const WhileStmt& w) { DumpWhileStmtNode(p, id, w); },
             [&](const RepeatStmt& r) { DumpRepeatStmtNode(p, id, r); },

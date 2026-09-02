@@ -83,6 +83,10 @@ auto RuntimeEffects::PlusArgs() -> PlusArgsSource& {
   return AsRuntime(*this).plusargs_;
 }
 
+void RuntimeEffects::RecordCoverage(const value::String& site, bool succeeded) {
+  AsRuntime(*this).coverage_.Record(site.View(), succeeded);
+}
+
 void RuntimeEffects::SubmitNba(std::function<void()> closure) {
   Runtime& rt = AsRuntime(*this);
   if (rt.phase_ == SchedulerPhase::kCommitNba) {

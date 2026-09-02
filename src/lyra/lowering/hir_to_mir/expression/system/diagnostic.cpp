@@ -4,7 +4,6 @@
 #include <cstdint>
 #include <expected>
 #include <optional>
-#include <string>
 #include <utility>
 #include <variant>
 
@@ -29,25 +28,6 @@
 namespace lyra::lowering::hir_to_mir {
 
 namespace {
-
-// Materializes `origin` as a `value::String` MIR expression: a `StringLiteral`
-// renders as a raw C string in C++, so a `Construct` of `string` type
-// wraps it to satisfy the runtime method's `const value::String&` parameter.
-auto BuildOriginStringExpr(
-    const mir::CompilationUnit& unit, mir::Block& block, std::string origin)
-    -> mir::ExprId {
-  const mir::TypeId string_type = unit.builtins.string;
-  const mir::ExprId origin_lit = block.exprs.Add(
-      mir::Expr{
-          .data = mir::StringLiteral{.value = std::move(origin)},
-          .type = string_type});
-  return block.exprs.Add(
-      mir::Expr{
-          .data =
-              mir::CallExpr{
-                  .callee = mir::Construct{}, .arguments = {origin_lit}},
-          .type = string_type});
-}
 
 auto TryExtractLiteralInt(const hir::Expr& expr)
     -> std::optional<std::int64_t> {
@@ -115,8 +95,8 @@ auto LowerDiagnosticSystemSubroutineCall(
   const mir::ExprId text_id = block.exprs.Add(
       BuildFormatCallExpr(unit, block, runtime_id, items_array));
   const mir::ExprId diagnostic_id =
-      block.exprs.Add(BuildDiagnosticCallExpr(process.Owner(), block));
-  const mir::ExprId origin_id = BuildOriginStringExpr(
+      block.exprs.Add(BuildDiagnosticCallExpr(unit, runtime_id));
+  const mir::ExprId origin_id = BuildStringValueExpr(
       unit, block,
       FormatRuntimeOriginString(span, process.Owner().SourceManager()));
 

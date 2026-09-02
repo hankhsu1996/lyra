@@ -80,24 +80,10 @@ void AppendReportEmit(
       block.exprs.Add(mir::MakeCurrentRuntimeCallExpr(unit.builtins.effects));
   const mir::ExprId text_id = block.exprs.Add(
       BuildFormatCallExpr(unit, block, runtime_id, items_array));
-  const mir::ExprId diagnostic_id = block.exprs.Add(
-      mir::Expr{
-          .data =
-              mir::CallExpr{
-                  .callee =
-                      mir::Direct{.target = support::BuiltinFn::kDiagnostic},
-                  .arguments = {runtime_id}},
-          .type = unit.builtins.diagnostic});
-  const mir::ExprId origin_lit = block.exprs.Add(
-      mir::Expr{
-          .data = mir::StringLiteral{.value = std::move(origin)},
-          .type = unit.builtins.string});
-  const mir::ExprId origin_id = block.exprs.Add(
-      mir::Expr{
-          .data =
-              mir::CallExpr{
-                  .callee = mir::Construct{}, .arguments = {origin_lit}},
-          .type = unit.builtins.string});
+  const mir::ExprId diagnostic_id =
+      block.exprs.Add(BuildDiagnosticCallExpr(unit, runtime_id));
+  const mir::ExprId origin_id =
+      BuildStringValueExpr(unit, block, std::move(origin));
   const mir::ExprId emit_call_id = block.exprs.Add(
       mir::Expr{
           .data =

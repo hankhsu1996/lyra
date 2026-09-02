@@ -473,6 +473,8 @@ auto BuiltinFnName(BuiltinFn id) -> std::string_view {
       return "emit_error";
     case BuiltinFn::kEmitFatal:
       return "emit_fatal";
+    case BuiltinFn::kRecordCoverage:
+      return "record_coverage";
     case BuiltinFn::kTimeFormat:
       return "time_format";
     case BuiltinFn::kSetTimeFormat:

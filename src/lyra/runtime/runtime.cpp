@@ -92,8 +92,16 @@ auto Runtime::Run() -> int {
   ExecuteFinalProcesses();
 
   phase_ = SchedulerPhase::kIdle;
+  ReportCoverage();
   stream_.Drain();
   return fatal_finish_ ? 1 : 0;
+}
+
+void Runtime::ReportCoverage() {
+  for (const std::string& line : coverage_.Report()) {
+    stream_.Append(line);
+    stream_.FinishRecord(true);
+  }
 }
 
 void Runtime::EnsureReadyToRun() {
