@@ -264,6 +264,11 @@ the detail lives in the entry itself.
   a member as a native field, the execution backend as runtime-owned storage; a cell is only ever
   addressed, never read as a value. Physical in-frame layout is a later optimization, the
   member-storage counterpart of the opaque-handle value baseline.
+- [inherited-member-reference](inherited-member-reference.md) -- a member projection names the
+  declaration that declares the member and the slot it gave it, so which storage a shadowed name
+  reaches is stated rather than re-derived from the type the chain arrived at; an inherited member
+  keeps its slot, so a base's unpublished addition moves nothing. Flattening during lowering, a base
+  subobject as a place step, and a per-access base offset are rejected.
 - [closure-value-realization](closure-value-realization.md) -- on the execution backend a closure
   declaration publishes a definition (its body and its capture storage schema) and a closure value
   is an instance of it, so a capture is member storage, a capture read is a member place, and

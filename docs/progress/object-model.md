@@ -196,14 +196,12 @@ deletes -- commented out where the rest of its case still runs, and the whole ca
 cannot run at all. Restoring either is manual: nothing detects that the behaviour became right, so
 this list is what remembers.
 
-- [ ] `super` reaches an overridden **method**, but not an overridden **property**. LRM 8.15 states
-      the rule of members generally, and its worked example is a derived class that redeclares the
-      base's variable and reads it back through `super`; reading a shadowed property that way yields
-      the derived class's own instead.
-- [ ] A constructor chain through more than one level does not survive C++ emission -- the emitted
-      project fails to compile (LRM 8.7).
-- [ ] Storing into an inherited member produces LIR the verifier rejects, so the execution backend
-      cannot run a case that writes one; the C++ path does.
+- [ ] A base whose constructor declares a formal with a default value does not build. A derived
+      class that writes no `super.new` of its own forwards to its base implicitly (LRM 8.7), and
+      that implicit call states no arguments -- so a default the base declared never reaches it and
+      the target language is left to decide the call. The case stating construction ordering is
+      parked on this, and its own subject is argument defaulting rather than construction ordering,
+      which runs correctly where every argument is stated.
 - [ ] Reaching a member through a null handle crashes the simulation instead of reporting it. The
       access is the design's own failure, so it owes the run a diagnostic naming what was
       dereferenced; today the process dies on a signal and says nothing. Reachable from an

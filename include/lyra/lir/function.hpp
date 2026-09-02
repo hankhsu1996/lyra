@@ -350,15 +350,15 @@ struct TagTestInstr {
   base::ComponentIndex index;
 };
 
-// A logical member identity local to the declaration that holds it: the
-// member's stable declaration-order slot, carried over from the MIR field it
-// lowers from. It is meaningful only together with the base's own type --
-// `member 0` of one declaration is unrelated to `member 0` of another. Never a
-// physical index or byte offset.
-struct MemberId {
+// Where one declaration put one of its own members: the member's stable
+// position in that declaration's own member list, carried over from the MIR
+// field it lowers from. It is meaningless alone -- slot 0 of one declaration is
+// unrelated to slot 0 of another -- which is why every use of one names the
+// declaration beside it. Never a physical index or byte offset.
+struct MemberSlot {
   std::uint32_t value;
 
-  auto operator<=>(const MemberId&) const -> std::strong_ordering = default;
+  auto operator<=>(const MemberSlot&) const -> std::strong_ordering = default;
 };
 
 // Reaches the storage a reference-like value refers to. A projection chain may
@@ -367,14 +367,27 @@ struct MemberId {
 // the chain `deref, member`, never `member` alone.
 struct DerefProjection {};
 
-// Selects a member of whatever the projection has reached so far -- an
-// instance's own storage, or the captures a closure value holds.
-struct MemberProjection {
-  MemberId member;
+// Which member an access names: the declaration that declares it, and the slot
+// that declaration gave it. Both halves are needed because a class extending
+// another carries its base's members as well as its own and may declare one of
+// the same name, so a slot alone does not say which storage is meant -- and
+// which of the two an access means is fixed where the access is written, never
+// by the object it runs on (LRM 8.14).
+struct MemberRef {
+  TypeId declared_by;
+  MemberSlot slot{};
+
+  auto operator==(const MemberRef&) const -> bool = default;
 };
 
-// One step of a place's projection chain. The place vocabulary is dereference,
-// member, index, slice, and downcast: each names storage reached from the
+// Selects a member of whatever the projection has reached so far -- an
+// instance's own storage, or the captures a closure value holds. What the chain
+// arrived at has to carry the member's declaration.
+struct MemberProjection {
+  MemberRef member;
+};
+
+// One step of a place's projection chain: each names storage reached from the
 // storage the chain has arrived at, never a byte offset from it.
 using Projection = std::variant<DerefProjection, MemberProjection>;
 

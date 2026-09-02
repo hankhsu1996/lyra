@@ -1041,7 +1041,8 @@ auto LoadObjectClasses(const lir::CompilationUnit& unit)
     if (lir::IsObjectTreeNode(cls)) {
       continue;
     }
-    auto members = DescribeMembers(unit, cls.members, SlotRole::kVariable);
+    const std::vector<lir::Member> storage = lir::StorageMembers(unit, id);
+    auto members = DescribeMembers(unit, storage, SlotRole::kVariable);
     if (!members) {
       return std::unexpected(std::move(members.error()));
     }

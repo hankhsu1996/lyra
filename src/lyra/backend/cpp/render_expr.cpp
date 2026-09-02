@@ -207,9 +207,15 @@ auto ResolveFieldAccess(const ScopeView& view, const mir::FieldAccessExpr& m)
   return std::visit(
       Overloaded{
           [&](const mir::FieldTarget& t) -> FieldAccess {
+            // Qualified by the declaring class: a derived class may redeclare
+            // a name its base already used, both storages exist at once, and
+            // which of them an access reaches is fixed where the access is
+            // written rather than by the receiver's type (LRM 8.14).
             const auto& cls = view.Unit().GetClass(t.owner);
             return FieldAccess{
-                .name = cls.fields.Get(t.slot).name, .through_receiver = true};
+                .name = std::format(
+                    "{}::{}", ToCppName(cls.name), cls.fields.Get(t.slot).name),
+                .through_receiver = true};
           },
           [&](const mir::ExternalFieldTarget& t) -> FieldAccess {
             // Cross-unit class field: the declaring unit's header pulls the

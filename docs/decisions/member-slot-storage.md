@@ -24,11 +24,11 @@ Member storage is where an instance's own _places_ live. The two are independent
 
 A member is a logical place. A place is a base plus a projection chain of dereference / member /
 index / ... steps, named by logical identity; a load, a store, and an address-of each name a place.
-A member step carries a class-local member identity, never a physical offset. A unit definition
-declares a member storage schema; a generic instance owns one storage object per member, and a
-member place resolves to that object's address. This is the member-storage counterpart of the
-opaque-handle value realization: the runtime owns the storage, the generated code addresses it
-through the ABI, and no physical layout is derived.
+A member step carries a member identity local to the declaration that declares the member, never a
+physical offset. A unit definition declares a member storage schema; a generic instance owns one
+storage object per member, and a member place resolves to that object's address. This is the
+member-storage counterpart of the opaque-handle value realization: the runtime owns the storage, the
+generated code addresses it through the ABI, and no physical layout is derived.
 
 - **A member is a logical place, realized per backend.** The C++ backend realizes it as a native
   field; the execution backend realizes it as a runtime-owned storage object. Both are the same
@@ -78,11 +78,12 @@ through the ABI, and no physical layout is derived.
   descriptor, and a member place resolves to that object's address. The C++ backend's native fields
   are unaffected and it leaves the schema empty.
 - LIR gains a class member schema and the place vocabulary -- a place is a base plus a projection
-  chain, named by load, store, and address-of -- with a member step carrying a class-local member
-  identity and a dereference step as the only way to cross a reference. A LIR verifier checks that a
-  place's projections type-check, that an address-of yields a reference to its place's type, and
-  that no cell is loaded or stored as if it held a value. The execution backend realizes a member
-  place as a runtime storage address, the C++ backend from its own fields.
+  chain, named by load, store, and address-of -- with a member step carrying a member identity local
+  to the declaration that declares the member, and a dereference step as the only way to cross a
+  reference. A LIR verifier checks that a place's projections type-check, that an address-of yields
+  a reference to its place's type, and that no cell is loaded or stored as if it held a value. The
+  execution backend realizes a member place as a runtime storage address, the C++ backend from its
+  own fields.
 - The execution backend can run any construct that writes a member, so it elaborates hierarchical
   designs and the `$root` unit through the same construct path the C++ backend uses, and it runs
   procedural code over member variables.

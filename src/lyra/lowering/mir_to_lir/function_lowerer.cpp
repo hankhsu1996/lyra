@@ -51,26 +51,6 @@ auto LocalPlace(lir::ValueId local) -> lir::Place {
   return lir::Place{.base = lir::Use{.value = local}, .chain = {}};
 }
 
-// Which member position a field access names, or nothing when the field belongs
-// to an SV class another unit declares. Such a field is named rather than
-// numbered, and no unit publishes an SV class, so nothing here states where it
-// sits -- the position does not exist rather than being wrong.
-auto FieldSlot(const mir::FieldAccessExpr& field)
-    -> std::optional<std::uint32_t> {
-  return std::visit(
-      Overloaded{
-          [](const mir::FieldTarget& t) -> std::optional<std::uint32_t> {
-            return t.slot.value;
-          },
-          [](const mir::FieldId& id) -> std::optional<std::uint32_t> {
-            return id.value;
-          },
-          [](const mir::ExternalFieldTarget&) -> std::optional<std::uint32_t> {
-            return std::nullopt;
-          }},
-      field.field);
-}
-
 // Whether this call builds a reference over its one argument. A reference is
 // the address of the storage it binds, so the argument's storage is what the
 // value names -- which both the storage-topology pass and the lowering itself
@@ -1180,6 +1160,43 @@ auto FunctionLowerer::LowerCondition(const mir::Block& block, mir::ExprId id)
   return value;
 }
 
+auto FunctionLowerer::MemberRefOf(
+    const mir::Block& block, const mir::FieldAccessExpr& field)
+    -> diag::Result<lir::MemberRef> {
+  return std::visit(
+      Overloaded{
+          [&](const mir::FieldTarget& t) -> diag::Result<lir::MemberRef> {
+            return lir::MemberRef{
+                .declared_by = unit_->ClassValueType(t.owner),
+                .slot = lir::MemberSlot{t.slot.value}};
+          },
+          [&](const mir::FieldId& id) -> diag::Result<lir::MemberRef> {
+            // The receiver of a bare field id declares the field itself -- a
+            // struct, a closure, or another unit's object, none of which
+            // inherits -- so the declaration is what the receiver points at.
+            const lir::TypeId receiver =
+                unit_->TranslateType(block.exprs.Get(field.receiver).type);
+            const std::optional<lir::TypeId> pointee =
+                unit_->Types().Get(receiver).DerefTarget();
+            if (!pointee) {
+              throw InternalError(
+                  "mir_to_lir: a bare-field-id access expects a receiver that "
+                  "refers to member-bearing storage");
+            }
+            return lir::MemberRef{
+                .declared_by = *pointee, .slot = lir::MemberSlot{id.value}};
+          },
+          [](const mir::ExternalFieldTarget&) -> diag::Result<lir::MemberRef> {
+            // A field of an SV class another unit declares is named rather than
+            // numbered, and no unit publishes an SV class, so nothing here
+            // states where it sits.
+            return Unsupported(
+                "mir_to_lir: a property of a class another compilation unit "
+                "declares is not yet reachable on this backend");
+          }},
+      field.field);
+}
+
 auto FunctionLowerer::LowerPlace(const mir::Block& block, mir::ExprId id)
     -> diag::Result<lir::Place> {
   const mir::Expr& expr = block.exprs.Get(id);
@@ -1204,11 +1221,9 @@ auto FunctionLowerer::LowerPlace(const mir::Block& block, mir::ExprId id)
             return LocalPlace(place->slot);
           },
           [&](const mir::FieldAccessExpr& field) -> diag::Result<lir::Place> {
-            const std::optional<std::uint32_t> slot = FieldSlot(field);
-            if (!slot.has_value()) {
-              return Unsupported(
-                  "mir_to_lir: a property of a class another compilation unit "
-                  "declares is not yet reachable on this backend");
+            auto member = MemberRefOf(block, field);
+            if (!member) {
+              return std::unexpected(std::move(member.error()));
             }
             auto receiver = LowerExpr(block, field.receiver);
             if (!receiver) {
@@ -1218,8 +1233,7 @@ auto FunctionLowerer::LowerPlace(const mir::Block& block, mir::ExprId id)
                 .base = *std::move(receiver),
                 .chain = {
                     lir::Projection{lir::DerefProjection{}},
-                    lir::Projection{lir::MemberProjection{
-                        .member = lir::MemberId{*slot}}}}};
+                    lir::Projection{lir::MemberProjection{.member = *member}}}};
           },
           [&](const mir::DerefExpr& deref) -> diag::Result<lir::Place> {
             const mir::TypeId operand_type =

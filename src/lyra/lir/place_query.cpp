@@ -2,16 +2,14 @@
 
 #include <format>
 #include <optional>
-#include <span>
-#include <string_view>
 #include <variant>
 
 #include "lyra/base/internal_error.hpp"
 #include "lyra/base/overloaded.hpp"
+#include "lyra/lir/class_query.hpp"
 #include "lyra/lir/compilation_unit.hpp"
 #include "lyra/lir/function.hpp"
 #include "lyra/lir/type.hpp"
-#include "lyra/lir/type_builders.hpp"
 #include "lyra/lir/type_id.hpp"
 
 namespace lyra::lir {
@@ -73,21 +71,29 @@ auto PlaceType(
               }
               current = *target;
             },
-            [&](const MemberProjection& m) {
+            [&](const MemberProjection& projection) {
+              const MemberRef& member = projection.member;
               const std::optional<MemberList> declared =
-                  DeclaredMembers(unit, current);
+                  DeclaredMembers(unit, member.declared_by);
               if (!declared) {
                 throw InternalError(
-                    "lir: member projection on a base that declares no "
-                    "members");
+                    "lir: member projection names a declaration that declares "
+                    "no members");
               }
-              if (m.member.value >= declared->members.size()) {
+              if (!CarriesMembersOf(unit, current, member.declared_by)) {
                 throw InternalError(
                     std::format(
-                        "lir: member index {} out of range on '{}'",
-                        m.member.value, declared->owner));
+                        "lir: member step names '{}', which the place has not "
+                        "reached a carrier of",
+                        declared->owner));
               }
-              current = declared->members[m.member.value].type;
+              if (member.slot.value >= declared->members.size()) {
+                throw InternalError(
+                    std::format(
+                        "lir: member slot {} out of range on '{}'",
+                        member.slot.value, declared->owner));
+              }
+              current = declared->members[member.slot.value].type;
             }},
         step);
   }
