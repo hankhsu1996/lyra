@@ -95,6 +95,12 @@ auto RuntimeValueBitstreamWidth(const RuntimeValue& value) -> PackedArray {
           throw InternalError(
               "RuntimeValue::BitstreamWidth: a real and a chandle are not "
               "bit-stream types (LRM 6.24.3)");
+        } else if constexpr (
+            std::is_same_v<T, RuntimeUnion> ||
+            std::is_same_v<T, RuntimeTaggedUnion>) {
+          throw SimulationError(
+              "$bits of a union is not yet supported on this backend; please "
+              "open an issue asking for support");
         } else {
           return v.BitstreamWidth();
         }
@@ -113,6 +119,12 @@ auto RuntimeValueCountBits(
           throw InternalError(
               "RuntimeValue::CountBits: $countbits takes a bit-stream operand, "
               "which a real or a chandle is not (LRM 20.9)");
+        } else if constexpr (
+            std::is_same_v<T, RuntimeUnion> ||
+            std::is_same_v<T, RuntimeTaggedUnion>) {
+          throw SimulationError(
+              "$countbits of a union is not yet supported on this backend; "
+              "please open an issue asking for support");
         } else {
           return v.CountBits(control_bits);
         }

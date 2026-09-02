@@ -55,6 +55,7 @@ enum class RuntimeOp : std::uint8_t {
   kMake,
   kExtract,
   kUpdate,
+  kTagMatches,
   kWithElement,
   kWithSlice,
   kDefault,

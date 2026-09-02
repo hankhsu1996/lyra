@@ -12,7 +12,9 @@
 #include "lyra/value/runtime_associative_array.hpp"
 #include "lyra/value/runtime_dynamic_array.hpp"
 #include "lyra/value/runtime_queue.hpp"
+#include "lyra/value/runtime_tagged_union.hpp"
 #include "lyra/value/runtime_tuple.hpp"
+#include "lyra/value/runtime_union.hpp"
 #include "lyra/value/runtime_unpacked_array.hpp"
 #include "lyra/value/string.hpp"
 
@@ -56,6 +58,12 @@ MemberStorage::MemberStorage(MemberStorageDescriptor descriptor) {
               case support::ValueDomain::kTuple:
                 object_.emplace<Var<value::RuntimeTuple>>();
                 return;
+              case support::ValueDomain::kUnion:
+                object_.emplace<Var<value::RuntimeUnion>>();
+                return;
+              case support::ValueDomain::kTaggedUnion:
+                object_.emplace<Var<value::RuntimeTaggedUnion>>();
+                return;
               case support::ValueDomain::kDynArray:
                 object_.emplace<Var<value::RuntimeDynamicArray>>();
                 return;
@@ -79,6 +87,12 @@ MemberStorage::MemberStorage(MemberStorageDescriptor descriptor) {
               case support::ValueDomain::kManagedRef:
                 throw InternalError(
                     "MemberStorage: a class handle is not observable storage");
+              // An empty (void) value is only ever a tagged union's payload
+              // (LRM 7.3.2), held inside its union, never storage of its own
+              // that a process could wait on.
+              case support::ValueDomain::kEmpty:
+                throw InternalError(
+                    "MemberStorage: an empty value is not observable storage");
             }
             throw InternalError("MemberStorage: unknown value domain");
           },
@@ -98,6 +112,13 @@ MemberStorage::MemberStorage(MemberStorageDescriptor descriptor) {
                 return;
               case support::ValueDomain::kTuple:
                 object_.emplace<ActivationValueCell<value::RuntimeTuple>>();
+                return;
+              case support::ValueDomain::kUnion:
+                object_.emplace<ActivationValueCell<value::RuntimeUnion>>();
+                return;
+              case support::ValueDomain::kTaggedUnion:
+                object_
+                    .emplace<ActivationValueCell<value::RuntimeTaggedUnion>>();
                 return;
               case support::ValueDomain::kDynArray:
                 object_
@@ -121,6 +142,11 @@ MemberStorage::MemberStorage(MemberStorageDescriptor descriptor) {
               case support::ValueDomain::kManagedRef:
                 throw InternalError(
                     "MemberStorage: a pointer-shaped value has no cell");
+              // An empty (void) value is a tagged union's payload (LRM 7.3.2),
+              // held inside its union rather than in a cell of its own.
+              case support::ValueDomain::kEmpty:
+                throw InternalError(
+                    "MemberStorage: an empty value has no cell of its own");
             }
             throw InternalError("MemberStorage: unknown value domain");
           },
@@ -144,6 +170,12 @@ MemberStorage::MemberStorage(MemberStorageDescriptor descriptor) {
               case support::ValueDomain::kTuple:
                 object_.emplace<value::RuntimeTuple>();
                 return;
+              case support::ValueDomain::kUnion:
+                object_.emplace<value::RuntimeUnion>();
+                return;
+              case support::ValueDomain::kTaggedUnion:
+                object_.emplace<value::RuntimeTaggedUnion>();
+                return;
               case support::ValueDomain::kDynArray:
                 object_.emplace<value::RuntimeDynamicArray>();
                 return;
@@ -159,6 +191,12 @@ MemberStorage::MemberStorage(MemberStorageDescriptor descriptor) {
               case support::ValueDomain::kManagedRef:
                 object_.emplace<GcRef<ManagedObject>>();
                 return;
+              // An empty (void) value is a tagged union's payload (LRM 7.3.2),
+              // held inside its union, never a member's own inline storage.
+              case support::ValueDomain::kEmpty:
+                throw InternalError(
+                    "MemberStorage: an empty value is not a member's own "
+                    "storage");
             }
             throw InternalError("MemberStorage: unknown value domain");
           }},

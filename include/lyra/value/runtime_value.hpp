@@ -4,12 +4,15 @@
 
 #include "lyra/value/chandle.hpp"
 #include "lyra/value/concepts.hpp"
+#include "lyra/value/empty.hpp"
 #include "lyra/value/packed_array.hpp"
 #include "lyra/value/real.hpp"
 #include "lyra/value/runtime_associative_array.hpp"
 #include "lyra/value/runtime_dynamic_array.hpp"
 #include "lyra/value/runtime_queue.hpp"
+#include "lyra/value/runtime_tagged_union.hpp"
 #include "lyra/value/runtime_tuple.hpp"
+#include "lyra/value/runtime_union.hpp"
 #include "lyra/value/runtime_unpacked_array.hpp"
 #include "lyra/value/string.hpp"
 
@@ -22,9 +25,9 @@ namespace lyra::value {
 // or a container element may itself be an aggregate.
 struct RuntimeValue {
   std::variant<
-      PackedArray, String, Real, ShortReal, Chandle, RuntimeTuple,
-      RuntimeDynamicArray, RuntimeUnpackedArray, RuntimeQueue,
-      RuntimeAssociativeArray>
+      PackedArray, String, Real, ShortReal, Chandle, Empty, RuntimeTuple,
+      RuntimeUnion, RuntimeTaggedUnion, RuntimeDynamicArray,
+      RuntimeUnpackedArray, RuntimeQueue, RuntimeAssociativeArray>
       value;
 };
 

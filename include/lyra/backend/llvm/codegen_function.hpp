@@ -63,9 +63,17 @@ class CodeGenFunction {
       -> diag::Result<llvm::Value*>;
   auto LowerProduct(const lir::ProductInstr& product, lir::TypeId result_type)
       -> diag::Result<llvm::Value*>;
+  auto LowerUnion(const lir::UnionInstr& u, lir::TypeId result_type)
+      -> diag::Result<llvm::Value*>;
+  // The runtime domain a union's member `index` boxes as. Both union kinds hold
+  // their member types positionally, so this reads either one.
+  auto UnionMemberDomain(lir::TypeId union_type, std::uint32_t index)
+      -> diag::Result<support::ValueDomain>;
   auto LowerAggregateExtract(const lir::AggregateExtractInstr& extract)
       -> diag::Result<llvm::Value*>;
   auto LowerAggregateUpdate(const lir::AggregateUpdateInstr& update)
+      -> diag::Result<llvm::Value*>;
+  auto LowerTagTest(const lir::TagTestInstr& test, lir::TypeId result_type)
       -> diag::Result<llvm::Value*>;
   auto LowerLoad(const lir::LoadInstr& load, lir::TypeId result_type)
       -> diag::Result<llvm::Value*>;

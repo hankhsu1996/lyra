@@ -7,43 +7,10 @@
 
 #include "lyra/base/simulation_error.hpp"
 #include "lyra/value/concepts.hpp"
+#include "lyra/value/empty.hpp"
 #include "lyra/value/packed_array.hpp"
 
 namespace lyra::value {
-
-// A value carrying no information: it has exactly one value, so each value
-// operation is the constant that follows from having nothing to compare or
-// scan. SystemVerilog reaches it through a tagged union's `void` member (LRM
-// 7.3.2). Being an ordinary value type is what keeps every generic operation
-// over a tagged union's components uniform -- it answers the same questions
-// as any other component, so nothing that folds over them has to know it
-// exists.
-//
-// The comparison operands are unnamed because the value concept's signatures
-// mandate them while a type with one value has nothing to read from them.
-struct Empty {
-  // NOLINTNEXTLINE(readability-named-parameter)
-  auto operator==(const Empty&) const -> PackedArray {
-    return PackedArray::Bit(true);
-  }
-  auto operator!=(const Empty& other) const -> PackedArray {
-    return !(*this == other);
-  }
-  // NOLINTNEXTLINE(readability-named-parameter)
-  [[nodiscard]] static auto CaseEqual(const Empty&) -> PackedArray {
-    return PackedArray::Bit(true);
-  }
-  // NOLINTNEXTLINE(readability-named-parameter)
-  [[nodiscard]] static auto IsBitIdentical(const Empty&) -> bool {
-    return true;
-  }
-  [[nodiscard]] static auto HasUnknown() -> bool {
-    return false;
-  }
-  [[nodiscard]] static auto IsUnknown() -> PackedArray {
-    return PackedArray::Bit(false);
-  }
-};
 
 // A type-checked sum: holds exactly one of its component value types at a time,
 // identified by a declaration-order tag index that is part of the value.
@@ -193,8 +160,6 @@ class TaggedUnion {
   std::variant<Ts...> data_;
 };
 
-static_assert(LyraValue<Empty>);
-static_assert(CaseEqualComparable<Empty>);
 static_assert(LyraValue<TaggedUnion<PackedArray, PackedArray>>);
 static_assert(LyraValue<TaggedUnion<Empty, PackedArray>>);
 static_assert(CaseEqualComparable<TaggedUnion<PackedArray, PackedArray>>);

@@ -252,6 +252,18 @@ struct ArrayInstr {
   std::vector<Operand> elements;
 };
 
+// Builds an active-member value -- a union or tagged union -- naming which
+// member `index` is live and carrying `value`. Its result is that value; unlike
+// a product it names one member rather than all of them, because a union holds
+// one at a time. The result type says whether the tag is observable and a
+// mismatched access faults (a tagged union) or is erased with a cross-member
+// read defaulted (an untagged one); this instruction is the same build for
+// both.
+struct UnionInstr {
+  base::ComponentIndex index;
+  Operand value;
+};
+
 // Names a subvalue within an aggregate value. A `TupleElement` selects a
 // product component by its declaration-order position, carrying no operands
 // because the position is the whole coordinate. A `UnionMember` selects a
@@ -305,6 +317,16 @@ struct AggregateUpdateInstr {
   Operand aggregate;
   AggregateSelector selector;
   Operand replacement;
+};
+
+// Asks whether a tagged union's active tag is `index`, yielding a boolean. Not
+// an aggregate access: it reads no subvalue but a predicate over the sum's
+// discriminant, the non-throwing guard a pattern match tests before it reads a
+// member (LRM 12.6). Only a tagged union has an observable tag, so this is the
+// one operation that names one.
+struct TagTestInstr {
+  Operand aggregate;
+  base::ComponentIndex index;
 };
 
 // A logical member identity local to the declaration that holds it: the
@@ -415,9 +437,10 @@ struct IntCastInstr {
 };
 
 using InstrData = std::variant<
-    CallInstr, ProductInstr, ArrayInstr, AggregateExtractInstr,
-    AggregateUpdateInstr, LoadInstr, StoreInstr, AddrOfInstr, BinaryInstr,
-    UnaryInstr, BoolCastInstr, PointerCastInstr, ValueCastInstr, IntCastInstr>;
+    CallInstr, ProductInstr, ArrayInstr, UnionInstr, AggregateExtractInstr,
+    AggregateUpdateInstr, TagTestInstr, LoadInstr, StoreInstr, AddrOfInstr,
+    BinaryInstr, UnaryInstr, BoolCastInstr, PointerCastInstr, ValueCastInstr,
+    IntCastInstr>;
 
 // One instruction: it defines `result` (whose type lives on the function's
 // value arena) from `data`.

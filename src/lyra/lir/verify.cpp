@@ -113,9 +113,11 @@ void VerifyInstr(
             }
           },
           [](const CallInstr&) {}, [](const ProductInstr&) {},
-          [](const ArrayInstr&) {}, [](const AggregateExtractInstr&) {},
-          [](const AggregateUpdateInstr&) {}, [](const BinaryInstr&) {},
-          [](const UnaryInstr&) {}, [](const BoolCastInstr&) {}},
+          [](const ArrayInstr&) {}, [](const UnionInstr&) {},
+          [](const AggregateExtractInstr&) {},
+          [](const AggregateUpdateInstr&) {}, [](const TagTestInstr&) {},
+          [](const BinaryInstr&) {}, [](const UnaryInstr&) {},
+          [](const BoolCastInstr&) {}},
       instr.data);
 }
 

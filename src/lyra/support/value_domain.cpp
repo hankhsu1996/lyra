@@ -18,8 +18,14 @@ auto ValueDomainName(ValueDomain domain) -> std::string_view {
       return "shortreal";
     case ValueDomain::kChandle:
       return "chandle";
+    case ValueDomain::kEmpty:
+      return "empty";
     case ValueDomain::kTuple:
       return "tuple";
+    case ValueDomain::kUnion:
+      return "union";
+    case ValueDomain::kTaggedUnion:
+      return "tagged_union";
     case ValueDomain::kDynArray:
       return "dynarray";
     case ValueDomain::kUnpackedArray:
