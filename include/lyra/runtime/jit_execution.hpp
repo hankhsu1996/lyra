@@ -858,6 +858,42 @@ auto lyra_rt_unpackedarray_value_cell_alloc() -> void*;
 void lyra_rt_unpackedarray_value_cell_store(void* cell, const void* value);
 auto lyra_rt_unpackedarray_value_cell_load(const void* cell) -> void*;
 
+// Nets and their drivers (LRM 6.5, 6.6). A net is storage of its own, like a
+// cell: `net_initialize` fixes its declared type once, and `net_get` answers
+// with the fold of its drivers' contributions. It takes no store -- a value
+// reaches a net only through a driver.
+//
+// `attach_driver` issues one, and the handle it answers with is the net's to
+// own, so a source may hold it for as long as the net lives. `driver_set`
+// publishes that driver's whole contribution, after which the net re-resolves
+// and wakes its subscribers only on a real change; `driver_get` reads the
+// contribution back, which is what a source driving part of a net updates part
+// of and leaves the rest of at high impedance (LRM 6.6.1).
+//
+// LRM 6.7.1 fixes which domains these exist for: a 4-state integral net, and a
+// fixed-size unpacked array, struct, or union whose elements are themselves
+// valid for a net.
+auto lyra_rt_packed_net_get(void* net) -> void*;
+void lyra_rt_packed_net_initialize(void* net, const void* prototype);
+auto lyra_rt_packed_attach_driver(void* net) -> void*;
+auto lyra_rt_packed_driver_get(void* driver) -> void*;
+void lyra_rt_packed_driver_set(void* driver, const void* value);
+auto lyra_rt_tuple_net_get(void* net) -> void*;
+void lyra_rt_tuple_net_initialize(void* net, const void* prototype);
+auto lyra_rt_tuple_attach_driver(void* net) -> void*;
+auto lyra_rt_tuple_driver_get(void* driver) -> void*;
+void lyra_rt_tuple_driver_set(void* driver, const void* value);
+auto lyra_rt_union_net_get(void* net) -> void*;
+void lyra_rt_union_net_initialize(void* net, const void* prototype);
+auto lyra_rt_union_attach_driver(void* net) -> void*;
+auto lyra_rt_union_driver_get(void* driver) -> void*;
+void lyra_rt_union_driver_set(void* driver, const void* value);
+auto lyra_rt_unpackedarray_net_get(void* net) -> void*;
+void lyra_rt_unpackedarray_net_initialize(void* net, const void* prototype);
+auto lyra_rt_unpackedarray_attach_driver(void* net) -> void*;
+auto lyra_rt_unpackedarray_driver_get(void* driver) -> void*;
+void lyra_rt_unpackedarray_driver_set(void* driver, const void* value);
+
 // The queue domain (LRM 7.10): a run-time-sized ordered container whose
 // elements are added and removed at either end, carried behind an opaque handle
 // and owning its elements by value. `default` and `from_literal` mirror the

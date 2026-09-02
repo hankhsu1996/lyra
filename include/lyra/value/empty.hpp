@@ -48,5 +48,6 @@ struct Empty {
 
 static_assert(LyraValue<Empty>);
 static_assert(CaseEqualComparable<Empty>);
+static_assert(BitstreamSizable<Empty>);
 
 }  // namespace lyra::value

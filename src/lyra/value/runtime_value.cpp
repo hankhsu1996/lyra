@@ -61,6 +61,41 @@ auto RuntimeValueBitIdentical(const RuntimeValue& a, const RuntimeValue& b)
       a.value);
 }
 
+auto RuntimeValueResolveTriState(const RuntimeValue& a, const RuntimeValue& b)
+    -> RuntimeValue {
+  SameDomain(a, b);
+  return std::visit(
+      [&](const auto& lhs) -> RuntimeValue {
+        using T = std::decay_t<decltype(lhs)>;
+        if constexpr (NetResolvable<T>) {
+          return RuntimeValue{
+              .value = lhs.ResolveTriState(std::get<T>(b.value))};
+        } else {
+          throw InternalError(
+              "RuntimeValue::ResolveTriState: this domain is not valid for a "
+              "net (LRM 6.7.1), so nothing should have attached a driver to "
+              "it");
+        }
+      },
+      a.value);
+}
+
+auto RuntimeValueHighImpedanceLike(const RuntimeValue& prototype)
+    -> RuntimeValue {
+  return std::visit(
+      [](const auto& shape) -> RuntimeValue {
+        using T = std::decay_t<decltype(shape)>;
+        if constexpr (NetResolvable<T>) {
+          return RuntimeValue{.value = T::HighImpedanceLike(shape)};
+        } else {
+          throw InternalError(
+              "RuntimeValue::HighImpedanceLike: this domain is not valid for a "
+              "net (LRM 6.7.1), so it has no non-driving contribution");
+        }
+      },
+      prototype.value);
+}
+
 auto RuntimeValueOrderBefore(const RuntimeValue& a, const RuntimeValue& b)
     -> bool {
   SameDomain(a, b);

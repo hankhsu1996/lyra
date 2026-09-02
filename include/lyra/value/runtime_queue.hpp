@@ -177,6 +177,10 @@ static_assert(LyraValue<RuntimeQueue>);
 static_assert(CaseEqualComparable<RuntimeQueue>);
 static_assert(Sized<RuntimeQueue>);
 static_assert(BitstreamSizable<RuntimeQueue>);
+// A queue's `Slice(anchor, extent, form)` is dynamic-width -- the runtime
+// derives the element count from the bounds (LRM 7.10.1) -- not the fixed-width
+// `(anchor, count, shift)` contract `Sliceable` names, so despite the matching
+// arity it carries its own `Slice` rather than claiming that concept.
 static_assert(EntryWalkable<RuntimeQueue>);
 
 }  // namespace lyra::value

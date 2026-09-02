@@ -56,6 +56,32 @@ auto RuntimeUnion::CaseEqual(const RuntimeUnion& other) const -> PackedArray {
   return RuntimeValueCaseEqual(active_.front(), other.active_.front());
 }
 
+auto RuntimeUnion::ResolveTriState(const RuntimeUnion& other) const
+    -> RuntimeUnion {
+  if (active_index_ != other.active_index_) {
+    if (IsBitIdentical(HighImpedanceLike(*this))) {
+      return other;
+    }
+    if (other.IsBitIdentical(HighImpedanceLike(other))) {
+      return *this;
+    }
+    throw SimulationError(
+        "two drivers of an unpacked-union net are driving different members; "
+        "SystemVerilog gives an unpacked union no defined storage overlay, so "
+        "their resolution has no defined value");
+  }
+  return RuntimeUnion{
+      active_index_,
+      RuntimeValueResolveTriState(active_.front(), other.active_.front())};
+}
+
+auto RuntimeUnion::HighImpedanceLike(const RuntimeUnion& prototype)
+    -> RuntimeUnion {
+  return RuntimeUnion{
+      prototype.active_index_,
+      RuntimeValueHighImpedanceLike(prototype.active_.front())};
+}
+
 auto RuntimeUnion::IsBitIdentical(const RuntimeUnion& other) const -> bool {
   return active_index_ == other.active_index_ &&
          RuntimeValueBitIdentical(active_.front(), other.active_.front());

@@ -250,6 +250,19 @@ auto Own(T value) -> void* {
   return GeneratedCallScope::Current().Arena().New<T>(std::move(value));
 }
 
+// A net and one of its drivers, behind the addresses the ABI carries them as.
+// The tri-state fold is the one a net resolves under here; a net type naming
+// another is not yet supported.
+template <typename T>
+auto NetOf(void* net) -> ResolvedNet<T, WireResolver>& {
+  return *static_cast<ResolvedNet<T, WireResolver>*>(net);
+}
+
+template <typename T>
+auto DriverOf(void* driver) -> Driver<T, WireResolver>& {
+  return *static_cast<Driver<T, WireResolver>*>(driver);
+}
+
 // Takes over the erased value a boxed handle carries. A value crosses this way
 // when it is what states a representation, so nothing on this side could have
 // read that representation off anything else. The handle names a transient the
@@ -478,6 +491,7 @@ using lyra::runtime::Coroutine;
 using lyra::runtime::CoroutineHandle;
 using lyra::runtime::current_runtime;
 using lyra::runtime::DiagnosticDispatcher;
+using lyra::runtime::DriverOf;
 using lyra::runtime::EnterCancellationTarget;
 using lyra::runtime::FileTable;
 using lyra::runtime::ForkWaitAllMustPark;
@@ -490,6 +504,7 @@ using lyra::runtime::HierarchySegment;
 using lyra::runtime::LeaveCancellationTarget;
 using lyra::runtime::ManagedObject;
 using lyra::runtime::NamedEvent;
+using lyra::runtime::NetOf;
 using lyra::runtime::ObjectDefinition;
 using lyra::runtime::Observable;
 using lyra::runtime::Own;
@@ -2644,6 +2659,91 @@ void lyra_rt_unpackedarray_cell_initialize(void* cell, const void* prototype) {
 
 void lyra_rt_unpackedarray_cell_set(void* cell, const void* value) {
   static_cast<Var<RuntimeUnpackedArray>*>(cell)->Set(
+      lyra::runtime::current_runtime(), Read<RuntimeUnpackedArray>(value));
+}
+
+auto lyra_rt_packed_net_get(void* net) -> void* {
+  return Own(NetOf<PackedArray>(net).Get());
+}
+
+void lyra_rt_packed_net_initialize(void* net, const void* prototype) {
+  NetOf<PackedArray>(net).Initialize(Read<PackedArray>(prototype));
+}
+
+auto lyra_rt_packed_attach_driver(void* net) -> void* {
+  return &NetOf<PackedArray>(net).AttachDriver();
+}
+
+auto lyra_rt_packed_driver_get(void* driver) -> void* {
+  return Own(DriverOf<PackedArray>(driver).MutationBase());
+}
+
+void lyra_rt_packed_driver_set(void* driver, const void* value) {
+  DriverOf<PackedArray>(driver).Set(
+      lyra::runtime::current_runtime(), Read<PackedArray>(value));
+}
+
+auto lyra_rt_tuple_net_get(void* net) -> void* {
+  return Own(NetOf<RuntimeTuple>(net).Get());
+}
+
+void lyra_rt_tuple_net_initialize(void* net, const void* prototype) {
+  NetOf<RuntimeTuple>(net).Initialize(Read<RuntimeTuple>(prototype));
+}
+
+auto lyra_rt_tuple_attach_driver(void* net) -> void* {
+  return &NetOf<RuntimeTuple>(net).AttachDriver();
+}
+
+auto lyra_rt_tuple_driver_get(void* driver) -> void* {
+  return Own(DriverOf<RuntimeTuple>(driver).MutationBase());
+}
+
+void lyra_rt_tuple_driver_set(void* driver, const void* value) {
+  DriverOf<RuntimeTuple>(driver).Set(
+      lyra::runtime::current_runtime(), Read<RuntimeTuple>(value));
+}
+
+auto lyra_rt_union_net_get(void* net) -> void* {
+  return Own(NetOf<RuntimeUnion>(net).Get());
+}
+
+void lyra_rt_union_net_initialize(void* net, const void* prototype) {
+  NetOf<RuntimeUnion>(net).Initialize(Read<RuntimeUnion>(prototype));
+}
+
+auto lyra_rt_union_attach_driver(void* net) -> void* {
+  return &NetOf<RuntimeUnion>(net).AttachDriver();
+}
+
+auto lyra_rt_union_driver_get(void* driver) -> void* {
+  return Own(DriverOf<RuntimeUnion>(driver).MutationBase());
+}
+
+void lyra_rt_union_driver_set(void* driver, const void* value) {
+  DriverOf<RuntimeUnion>(driver).Set(
+      lyra::runtime::current_runtime(), Read<RuntimeUnion>(value));
+}
+
+auto lyra_rt_unpackedarray_net_get(void* net) -> void* {
+  return Own(NetOf<RuntimeUnpackedArray>(net).Get());
+}
+
+void lyra_rt_unpackedarray_net_initialize(void* net, const void* prototype) {
+  NetOf<RuntimeUnpackedArray>(net).Initialize(
+      Read<RuntimeUnpackedArray>(prototype));
+}
+
+auto lyra_rt_unpackedarray_attach_driver(void* net) -> void* {
+  return &NetOf<RuntimeUnpackedArray>(net).AttachDriver();
+}
+
+auto lyra_rt_unpackedarray_driver_get(void* driver) -> void* {
+  return Own(DriverOf<RuntimeUnpackedArray>(driver).MutationBase());
+}
+
+void lyra_rt_unpackedarray_driver_set(void* driver, const void* value) {
+  DriverOf<RuntimeUnpackedArray>(driver).Set(
       lyra::runtime::current_runtime(), Read<RuntimeUnpackedArray>(value));
 }
 

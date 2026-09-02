@@ -224,6 +224,24 @@ auto RuntimeUnpackedArray::MergeConditional(
   return result;
 }
 
+auto RuntimeUnpackedArray::ResolveTriState(
+    const RuntimeUnpackedArray& other) const -> RuntimeUnpackedArray {
+  RuntimeUnpackedArray resolved = *this;
+  for (std::size_t i = 0; i < resolved.data_.size(); ++i) {
+    resolved.data_[i] = RuntimeValueResolveTriState(data_[i], other.data_[i]);
+  }
+  return resolved;
+}
+
+auto RuntimeUnpackedArray::HighImpedanceLike(
+    const RuntimeUnpackedArray& prototype) -> RuntimeUnpackedArray {
+  RuntimeUnpackedArray floating = prototype;
+  for (RuntimeValue& element : floating.data_) {
+    element = RuntimeValueHighImpedanceLike(element);
+  }
+  return floating;
+}
+
 // LRM 9.4.2: a size mismatch is a change. That is how the empty default of a
 // fresh cell is told apart from the first sized write, so the declared-shape
 // initializer raises an update event.

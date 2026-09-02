@@ -50,6 +50,20 @@ struct RuntimeValue {
 [[nodiscard]] auto RuntimeValueBitIdentical(
     const RuntimeValue& a, const RuntimeValue& b) -> bool;
 
+// LRM 6.6.1 Table 6-2: two drivers' contributions folded into one, where
+// agreement passes through, a 0/1 conflict yields `x`, and high-impedance
+// defers. LRM 6.7.1 admits only some domains as a net's data type, and a value
+// of any other reaches this only if something above it admitted a net it should
+// not have.
+[[nodiscard]] auto RuntimeValueResolveTriState(
+    const RuntimeValue& a, const RuntimeValue& b) -> RuntimeValue;
+
+// The all-high-impedance value at `prototype`'s shape: what a driver
+// contributes where it is not driving, and so the identity the fold above
+// starts from. Only the prototype's shape is read.
+[[nodiscard]] auto RuntimeValueHighImpedanceLike(const RuntimeValue& prototype)
+    -> RuntimeValue;
+
 // The order two values of one domain sit in: lexicographic for a string,
 // numerical for an integral, and for a chandle the pointer it carries, an order
 // LRM 6.14 leaves free to vary between runs. It is the domain's own ordering,

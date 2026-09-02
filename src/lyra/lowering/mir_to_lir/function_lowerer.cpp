@@ -256,14 +256,6 @@ auto LowerCallTarget(
                     },
                     [&](const support::BuiltinFn& fn)
                         -> diag::Result<lir::CallTarget> {
-                      // Every other builtin bottoms out on a value domain's
-                      // library entry; a net's drivers act on a resolution node
-                      // instead, which no such entry answers.
-                      if (fn == support::BuiltinFn::kAttachDriver) {
-                        return Unsupported(
-                            "mir_to_lir: driving a net is not yet lowerable to "
-                            "LIR");
-                      }
                       return lir::CallTarget{
                           lir::BuiltinTarget{.fn = fn, .qualifier = qualifier}};
                     },
@@ -1233,18 +1225,12 @@ auto FunctionLowerer::LowerPlace(const mir::Block& block, mir::ExprId id)
             const mir::TypeId operand_type =
                 block.exprs.Get(deref.pointer).type;
             const mir::Type& operand_ty = unit_->Mir().types.Get(operand_type);
-            // A driver's contribution folds into a net's resolution, which no
-            // value-domain library entry answers.
-            if (operand_ty.Is<mir::DriverType>()) {
-              return Unsupported(
-                  "mir_to_lir: driving a net is not yet lowerable to LIR");
-            }
             // A wrapper that is itself storage -- an observable cell, a net's
             // resolved value -- is storage the chain has already reached, so
             // naming what it represents extends that chain by one step.
             // Everything else here refers to storage elsewhere: a pointer, a
-            // handle, and a reference are values, and a value opens a chain
-            // rather than continuing one.
+            // handle, a reference, and the driver handle a net issued are all
+            // values, and a value opens a chain rather than continuing one.
             if (operand_ty.Is<mir::ObservableType>() ||
                 operand_ty.Is<mir::ResolvedType>()) {
               auto wrapper = LowerPlace(block, deref.pointer);

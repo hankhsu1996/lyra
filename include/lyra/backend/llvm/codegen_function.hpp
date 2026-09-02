@@ -183,16 +183,28 @@ class CodeGenFunction {
   // an operand holding it.
   [[nodiscard]] auto CellDomain(lir::TypeId reference) const
       -> diag::Result<support::ValueDomain>;
-  // Place access: the cell a place names the contents of, and the domain that
-  // picks its library entries; nothing when the place names ordinary
-  // addressable storage. This is the one entry that decides how a load and a
-  // store through a cell are realized.
-  struct CellPlace {
+  // The wrapper a reference addresses and the domain its storage is realized
+  // in, for an operation that acts on the wrapper itself rather than reaching
+  // through it. It is the same classification `WrapperPlaceOf` makes, reached
+  // through a reference instead of a place.
+  struct WrapperBehindRef {
     support::ValueDomain domain{};
-    lir::Place cell;
+    WrapperKind kind{};
   };
-  [[nodiscard]] auto CellPlaceOf(const lir::Place& place) const
-      -> diag::Result<std::optional<CellPlace>>;
+  [[nodiscard]] auto WrapperBehind(lir::TypeId reference) const
+      -> diag::Result<WrapperBehindRef>;
+  // Place access: the capability wrapper a place names the storage of, which
+  // wrapper it is, and the domain that representation picks its library entries
+  // by; nothing when the place names ordinary addressable storage. This is the
+  // one entry that decides how an access through a wrapper is realized, so no
+  // other site asks which wrapper a place reaches through.
+  struct WrapperPlace {
+    support::ValueDomain domain{};
+    WrapperKind kind{};
+    lir::Place wrapper;
+  };
+  [[nodiscard]] auto WrapperPlaceOf(const lir::Place& place) const
+      -> diag::Result<std::optional<WrapperPlace>>;
   // A capture read: the closure value whose captures the place reaches, and
   // which of them it names; nothing when the place reaches an instance's own
   // members instead. A capture lives in storage the closure owns, so it is

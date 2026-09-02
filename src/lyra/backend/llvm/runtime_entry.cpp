@@ -41,6 +41,14 @@ auto RuntimeOpName(RuntimeOp op) -> std::string_view {
       return "cell_get";
     case RuntimeOp::kCellSet:
       return "cell_set";
+    case RuntimeOp::kNetInitialize:
+      return "net_initialize";
+    case RuntimeOp::kNetGet:
+      return "net_get";
+    case RuntimeOp::kDriverGet:
+      return "driver_get";
+    case RuntimeOp::kDriverSet:
+      return "driver_set";
     case RuntimeOp::kMemberAddress:
       return "member_addr";
     case RuntimeOp::kSequenceMake:
@@ -119,6 +127,14 @@ auto DeclaredIndexType(const lir::CompilationUnit& unit, lir::TypeId container)
     return std::nullopt;
   }
   return associative->key_type;
+}
+
+auto NetResolutionOf(lir::NetResolution resolution) -> support::NetResolution {
+  switch (resolution) {
+    case lir::NetResolution::kTriState:
+      return support::NetResolution::kTriState;
+  }
+  throw InternalError("llvm codegen: unknown net resolution");
 }
 
 auto ValueDomainOf(const lir::CompilationUnit& unit, lir::TypeId type)
@@ -248,6 +264,47 @@ auto RuntimeSymbol(
       destination, std::format(
                        "{}_{}", support::BuiltinFnName(fn),
                        support::ValueDomainName(source)));
+}
+
+auto LoadOpOf(WrapperKind kind) -> RuntimeOp {
+  switch (kind) {
+    case WrapperKind::kCell:
+      return RuntimeOp::kCellGet;
+    case WrapperKind::kNet:
+      return RuntimeOp::kNetGet;
+    case WrapperKind::kDriver:
+      return RuntimeOp::kDriverGet;
+  }
+  throw InternalError("llvm codegen: unknown capability wrapper");
+}
+
+auto StoreOpOf(WrapperKind kind) -> RuntimeOp {
+  switch (kind) {
+    case WrapperKind::kCell:
+      return RuntimeOp::kCellSet;
+    case WrapperKind::kNet:
+      throw InternalError(
+          "llvm codegen: a net's resolved value takes no store; a value "
+          "reaches a net through one of its drivers");
+    case WrapperKind::kDriver:
+      return RuntimeOp::kDriverSet;
+  }
+  throw InternalError("llvm codegen: unknown capability wrapper");
+}
+
+auto InstallOpOf(WrapperKind kind) -> RuntimeOp {
+  switch (kind) {
+    case WrapperKind::kCell:
+      return RuntimeOp::kCellInitialize;
+    case WrapperKind::kNet:
+      return RuntimeOp::kNetInitialize;
+    case WrapperKind::kDriver:
+      throw InternalError(
+          "llvm codegen: a driver installs no representation of its own; what "
+          "it contributes before it drives is the identity the net gave it "
+          "when it attached");
+  }
+  throw InternalError("llvm codegen: unknown capability wrapper");
 }
 
 auto EntryNamingOf(support::BuiltinFn fn) -> EntryNaming {
@@ -404,7 +461,12 @@ auto EntryNamingOf(support::BuiltinFn fn) -> EntryNaming {
       return NamedByConversion{};
 
     case support::BuiltinFn::kInitialize:
-      return NamedByCellValue{};
+      return NamedByWrapperInstall{};
+
+    // A driver is attached by the net that issues it, so what names the entry
+    // is the representation that net resolves in.
+    case support::BuiltinFn::kAttachDriver:
+      return NamedByWrapperDomain{};
 
     case support::BuiltinFn::kEnumFirst:
     case support::BuiltinFn::kEnumLast:
@@ -438,7 +500,6 @@ auto EntryNamingOf(support::BuiltinFn fn) -> EntryNaming {
     case support::BuiltinFn::kTrigger:
     case support::BuiltinFn::kAwait:
     case support::BuiltinFn::kTriggered:
-    case support::BuiltinFn::kAttachDriver:
     case support::BuiltinFn::kCurrentRuntime:
     case support::BuiltinFn::kSubmitNba:
     case support::BuiltinFn::kSubmitPostponed:
