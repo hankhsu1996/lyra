@@ -6,6 +6,7 @@
 #include "lyra/runtime/cancellation.hpp"
 #include "lyra/runtime/file_table.hpp"
 #include "lyra/runtime/gc_ref.hpp"
+#include "lyra/runtime/net.hpp"
 #include "lyra/runtime/scope_program.hpp"
 #include "lyra/runtime/var.hpp"
 #include "lyra/value/chandle.hpp"
@@ -39,11 +40,12 @@ struct BorrowedHandle {
 // One member's runtime-owned storage, realized from the descriptor its
 // declaration carries. The owner owns this object and a member place resolves
 // to its address; what the address means follows the member's storage kind. A
-// borrowed handle is a box holding a pointer the owner does not own, so reading
-// the member reads the box; an observable cell is the storage itself, which
-// library calls reach through its address and never read out as a value; an
-// inline value is a value the owner owns, whose address is the handle it
-// crosses as.
+// borrowed handle is a box holding a pointer the owner does not own -- the
+// storage behind a reference, and the driver a net issued -- so reading the
+// member reads the box; an observable cell and a net's resolution node are the
+// storage itself, which library calls reach through its address and never read
+// out as a value; an inline value is a value the owner owns, whose address is
+// the handle it crosses as.
 //
 // The same storage serves a closure value's captures, which are members of the
 // declaration whose invoke reads them: a captured pointer or reference is a
@@ -94,7 +96,11 @@ class MemberStorage {
       ActivationValueCell<value::RuntimeDynamicArray>,
       ActivationValueCell<value::RuntimeUnpackedArray>,
       ActivationValueCell<value::RuntimeQueue>,
-      ActivationValueCell<value::RuntimeAssociativeArray>>
+      ActivationValueCell<value::RuntimeAssociativeArray>,
+      ResolvedNet<value::PackedArray, WireResolver>,
+      ResolvedNet<value::RuntimeTuple, WireResolver>,
+      ResolvedNet<value::RuntimeUnion, WireResolver>,
+      ResolvedNet<value::RuntimeUnpackedArray, WireResolver>>
       object_;
 };
 

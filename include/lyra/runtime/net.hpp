@@ -3,6 +3,7 @@
 #include <concepts>
 #include <cstddef>
 #include <cstdint>
+#include <deque>
 #include <utility>
 #include <vector>
 
@@ -111,7 +112,9 @@ class ResolvedNet : public Observable {
   // the non-driving one, so a driver that has not yet driven leaves the
   // resolution exactly as it was -- attaching is not itself an act of driving.
   // The contribution list only grows, so an index into it is a stable identity.
-  auto AttachDriver() -> Driver<T, Resolver>;
+  // The handle is the net's own, so a source that can hold one by value copies
+  // it out of the reference and one that cannot keeps the reference itself.
+  auto AttachDriver() -> Driver<T, Resolver>&;
 
  private:
   friend class Driver<T, Resolver>;
@@ -163,14 +166,20 @@ class ResolvedNet : public Observable {
   T resolved_{};
   T nondriving_{};
   std::vector<DriveContribution<T>> contributions_;
+  // The handles this net has issued. They are the net's rather than each
+  // source's so that a source reaching its driver by address holds nothing that
+  // points into the contributions above: those stay the net's to reorganize,
+  // and what a reorganization would have to rewrite is these, which it can.
+  // Growth therefore must not move what has already been handed out.
+  std::deque<Driver<T, Resolver>> drivers_;
 };
 
 // The drive capability for a net: a handle to one contribution of a
-// `ResolvedNet`. Owned by the driver's source (for a port edge, the parent
-// instance). Default-constructed as a member and bound at Resolve when the net
-// attaches it. Updating a contribution goes only through this handle; the net's
-// contribution storage is never addressed directly, and the net's resolved
-// value is never written at all (LRM 6.5).
+// `ResolvedNet`. The net issues it and owns it, so a source may hold it either
+// by value or by address; a source's slot starts unbound and the net binds it
+// when it attaches, during Resolve. Updating a contribution goes only through
+// this handle; the net's contribution storage is never addressed directly, and
+// the net's resolved value is never written at all (LRM 6.5).
 //
 // A source that drives only part of the net drives through `Mutate`, the same
 // partial-write entry a variable cell offers: what it commits is this driver's
@@ -222,9 +231,10 @@ class Driver {
 };
 
 template <value::NetResolvable T, class Resolver>
-auto ResolvedNet<T, Resolver>::AttachDriver() -> Driver<T, Resolver> {
+auto ResolvedNet<T, Resolver>::AttachDriver() -> Driver<T, Resolver>& {
   contributions_.push_back(DriveContribution<T>{.value = nondriving_});
-  return Driver<T, Resolver>{*this, contributions_.size() - 1};
+  drivers_.emplace_back(*this, contributions_.size() - 1);
+  return drivers_.back();
 }
 
 static_assert(MutationSink<Driver<value::PackedArray, WireResolver>>);

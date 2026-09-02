@@ -79,6 +79,25 @@ auto RuntimeTuple::CaseEqual(const RuntimeTuple& other) const -> PackedArray {
   return result;
 }
 
+auto RuntimeTuple::ResolveTriState(const RuntimeTuple& other) const
+    -> RuntimeTuple {
+  RuntimeTuple resolved = *this;
+  for (std::size_t i = 0; i < resolved.components_.size(); ++i) {
+    resolved.components_[i] =
+        RuntimeValueResolveTriState(components_[i], other.components_[i]);
+  }
+  return resolved;
+}
+
+auto RuntimeTuple::HighImpedanceLike(const RuntimeTuple& prototype)
+    -> RuntimeTuple {
+  RuntimeTuple floating = prototype;
+  for (RuntimeValue& component : floating.components_) {
+    component = RuntimeValueHighImpedanceLike(component);
+  }
+  return floating;
+}
+
 auto RuntimeTuple::IsBitIdentical(const RuntimeTuple& other) const -> bool {
   if (components_.size() != other.components_.size()) {
     return false;

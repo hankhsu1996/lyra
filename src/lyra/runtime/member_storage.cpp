@@ -4,7 +4,9 @@
 
 #include "lyra/base/internal_error.hpp"
 #include "lyra/base/overloaded.hpp"
+#include "lyra/runtime/net.hpp"
 #include "lyra/runtime/scope_program.hpp"
+#include "lyra/support/net_resolution.hpp"
 #include "lyra/support/value_domain.hpp"
 #include "lyra/value/chandle.hpp"
 #include "lyra/value/packed_array.hpp"
@@ -25,6 +27,43 @@ namespace {
 template <typename T>
 auto Read(const void* handle) -> const T& {
   return *static_cast<const T*>(handle);
+}
+
+// Realizes a net's resolution node over the value domain the net is declared
+// in. LRM 6.7.1 admits a 4-state integral net and a fixed-size unpacked array,
+// struct, or union of net-valid elements, and nothing else; a domain outside
+// that set is one the front end should have rejected as a net's data type.
+template <typename Resolver, typename Object>
+void EmplaceResolvedNet(Object& object, support::ValueDomain domain) {
+  switch (domain) {
+    case support::ValueDomain::kPacked:
+      object.template emplace<ResolvedNet<value::PackedArray, Resolver>>();
+      return;
+    case support::ValueDomain::kTuple:
+      object.template emplace<ResolvedNet<value::RuntimeTuple, Resolver>>();
+      return;
+    case support::ValueDomain::kUnion:
+      object.template emplace<ResolvedNet<value::RuntimeUnion, Resolver>>();
+      return;
+    case support::ValueDomain::kUnpackedArray:
+      object.template emplace<
+          ResolvedNet<value::RuntimeUnpackedArray, Resolver>>();
+      return;
+    case support::ValueDomain::kString:
+    case support::ValueDomain::kReal:
+    case support::ValueDomain::kShortReal:
+    case support::ValueDomain::kChandle:
+    case support::ValueDomain::kEmpty:
+    case support::ValueDomain::kTaggedUnion:
+    case support::ValueDomain::kDynArray:
+    case support::ValueDomain::kQueue:
+    case support::ValueDomain::kAssocArray:
+    case support::ValueDomain::kManagedRef:
+      throw InternalError(
+          "MemberStorage: this value domain is not valid for a net (LRM "
+          "6.7.1)");
+  }
+  throw InternalError("MemberStorage: unknown value domain");
 }
 
 }  // namespace
@@ -150,6 +189,14 @@ MemberStorage::MemberStorage(MemberStorageDescriptor descriptor) {
             }
             throw InternalError("MemberStorage: unknown value domain");
           },
+          [this](const ResolvedNetStorage& net) {
+            switch (net.resolution) {
+              case support::NetResolution::kTriState:
+                EmplaceResolvedNet<WireResolver>(object_, net.domain);
+                return;
+            }
+            throw InternalError("MemberStorage: unknown net resolution");
+          },
           [this](const InlineValueStorage& inline_value) {
             switch (inline_value.domain) {
               case support::ValueDomain::kChandle:
@@ -225,6 +272,14 @@ auto MemberStorage::HeldValue() -> void* {
                 "MemberStorage: a variable's contents are read through its own "
                 "access, never handed back in place");
           },
+          // A net's value is the fold of its drivers' contributions, recomputed
+          // as they change, so it is read through the node's own access for the
+          // same reason a cell's contents are.
+          []<typename T, typename R>(ResolvedNet<T, R>&) -> void* {
+            throw InternalError(
+                "MemberStorage: a net's resolved value is read through its own "
+                "access, never handed back in place");
+          },
           [](auto& object) -> void* { return &object; }},
       object_);
 }
@@ -251,6 +306,14 @@ void MemberStorage::AdoptFrom(void* handle) {
                 "MemberStorage: a variable is written through its own store, "
                 "which is what lands the write at the representation the "
                 "declaration gave it");
+          },
+          // A net is never written, only driven (LRM 6.5): what reaches it is
+          // a driver updating its own contribution, after which the net
+          // re-resolves.
+          []<typename T, typename R>(ResolvedNet<T, R>&) {
+            throw InternalError(
+                "MemberStorage: a net takes no store; a value reaches it only "
+                "through one of its drivers");
           },
           [&]<typename T>(T& value) { value = Read<T>(handle); }},
       object_);

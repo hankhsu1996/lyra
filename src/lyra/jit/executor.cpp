@@ -711,6 +711,28 @@ void DefineRuntimeAbi(llvm::orc::LLJIT& jit) {
       &lyra_rt_unpackedarray_value_cell_store);
   add("lyra_rt_unpackedarray_value_cell_load",
       &lyra_rt_unpackedarray_value_cell_load);
+  add("lyra_rt_packed_net_get", &lyra_rt_packed_net_get);
+  add("lyra_rt_packed_net_initialize", &lyra_rt_packed_net_initialize);
+  add("lyra_rt_packed_attach_driver", &lyra_rt_packed_attach_driver);
+  add("lyra_rt_packed_driver_get", &lyra_rt_packed_driver_get);
+  add("lyra_rt_packed_driver_set", &lyra_rt_packed_driver_set);
+  add("lyra_rt_tuple_net_get", &lyra_rt_tuple_net_get);
+  add("lyra_rt_tuple_net_initialize", &lyra_rt_tuple_net_initialize);
+  add("lyra_rt_tuple_attach_driver", &lyra_rt_tuple_attach_driver);
+  add("lyra_rt_tuple_driver_get", &lyra_rt_tuple_driver_get);
+  add("lyra_rt_tuple_driver_set", &lyra_rt_tuple_driver_set);
+  add("lyra_rt_union_net_get", &lyra_rt_union_net_get);
+  add("lyra_rt_union_net_initialize", &lyra_rt_union_net_initialize);
+  add("lyra_rt_union_attach_driver", &lyra_rt_union_attach_driver);
+  add("lyra_rt_union_driver_get", &lyra_rt_union_driver_get);
+  add("lyra_rt_union_driver_set", &lyra_rt_union_driver_set);
+  add("lyra_rt_unpackedarray_net_get", &lyra_rt_unpackedarray_net_get);
+  add("lyra_rt_unpackedarray_net_initialize",
+      &lyra_rt_unpackedarray_net_initialize);
+  add("lyra_rt_unpackedarray_attach_driver",
+      &lyra_rt_unpackedarray_attach_driver);
+  add("lyra_rt_unpackedarray_driver_get", &lyra_rt_unpackedarray_driver_get);
+  add("lyra_rt_unpackedarray_driver_set", &lyra_rt_unpackedarray_driver_set);
   add("lyra_rt_unpackedarray_merge_conditional",
       &lyra_rt_unpackedarray_merge_conditional);
   add("lyra_rt_unpackedarray_from_packed_array",
@@ -758,6 +780,25 @@ auto DescribeMember(
             backend::llvm_backend::ValueDomainOf(unit, observable->value)) {
       return runtime::ObservableCellStorage{.domain = *domain};
     }
+  }
+  // A net is the storage its drivers' contributions fold into, so the member is
+  // the resolution node itself, reached only through its own access. The fold
+  // travels with it, because two nets of one data type resolve differently when
+  // their net types differ (LRM 6.6).
+  if (const auto* net = data.As<lir::ResolvedType>()) {
+    if (const std::optional<support::ValueDomain> domain =
+            backend::llvm_backend::ValueDomainOf(unit, net->value)) {
+      return runtime::ResolvedNetStorage{
+          .domain = *domain,
+          .resolution =
+              backend::llvm_backend::NetResolutionOf(net->resolution)};
+    }
+  }
+  // A driver is a handle on a contribution the net owns and issues, so the
+  // member is a box holding that handle rather than storage of its own (LRM
+  // 6.5).
+  if (data.Is<lir::DriverType>()) {
+    return runtime::BorrowedHandleStorage{};
   }
   if (const auto* library = data.As<lir::RuntimeLibraryType>()) {
     switch (library->kind) {

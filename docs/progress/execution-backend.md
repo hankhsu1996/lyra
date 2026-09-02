@@ -343,10 +343,24 @@ each meets the same lifetime question above.
       member holding the sequence of handles on them, built once and read by coordinate. An index is
       an ordinary value of the design and reaches the runtime as the handle every value reaches it
       as.
-- [ ] Driving a net. A net's value is the resolution of its drivers, so a driver attaches to a
-      resolution node and updates a contribution rather than writing a cell; neither reaches the
-      runtime from generated code yet, so a net-bearing design does not run here. Rolled up in
-      `nets.md`.
+- [x] **Driving a net.** A net's value is the resolution of its drivers, so a driver attaches to a
+      resolution node and updates a contribution rather than writing a cell, and a net-bearing
+      design runs here. A net is storage of its own: it fixes its declared type once, answers with
+      the fold of its drivers' contributions, and takes no store at all. Every form the source may
+      write resolves -- one driver, several, a driver contributing high impedance, a driver covering
+      only part of the net, a net reached across a port, and a net whose data type is an unpacked
+      aggregate -- and a change in the resolved value wakes its subscribers while a contribution
+      that moves without changing it wakes nobody. Which fold a net uses travels with it rather than
+      being assumed below, so a second net type adds its own without disturbing this one. Rolled up
+      in `nets.md`.
+
+      Two things this settled reach wider than a net. **How an access through a capability wrapper is
+      realized is one question asked at one place**, answering for every wrapper what a load, a store,
+      and the install that fixes a declared representation each reach -- and which of the three a
+      given wrapper defines at all, since a net takes no store and a driver installs nothing. And the
+      value layer's erased half states the net fold its monomorphized half already had, so an
+      aggregate is valid as a net's data type on both paths rather than on one.
+
 - [ ] By-pointer DPI-C marshaling (the by-value scalar surface runs; see `dpi.md`).
 - [x] **A region that consumes a control effect** -- what a named block, a named fork, and a task
       need so that `disable` of one resumes execution after it (LRM 9.6.2). A named procedural block
@@ -360,9 +374,8 @@ each meets the same lifetime question above.
       outcome rather than by unwinding. Disabling a named `fork` exercises all of it: the branches
       it spawned are enclosed by the target even though their bodies state no region, so the
       `disable` wakes one parked on a delay, that branch settles cancelled where it regains control,
-      and the process that entered the block resumes after it in the same time step. What still
-      waits on starting another activation is the `disable` of a task, whose enable is an await on a
-      coroutine callee.
+      and the process that entered the block resumes after it in the same time step. `disable` of a
+      task runs here too, now that a task enable does.
 - [ ] The transient-escape rule is held by construction and naming, not by a checker.
 - [ ] Displaying an aggregate. A print item is named by the operand's value domain, and the erased
       container this backend realizes exposes no per-element walk for a formatter to use. It is the

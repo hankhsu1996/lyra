@@ -4,6 +4,7 @@
 #include <span>
 #include <variant>
 
+#include "lyra/support/net_resolution.hpp"
 #include "lyra/support/value_domain.hpp"
 
 namespace lyra::runtime {
@@ -145,6 +146,16 @@ struct InlineValueStorage {
   support::ValueDomain domain;
 };
 
+// A net's resolution node (LRM 6.5, 6.6): the storage its drivers'
+// contributions fold into. Like the observable cell it is reached only through
+// its own access, and unlike it nothing ever writes it -- a value reaches a net
+// only through a driver. It names the domain its value is realized in and the
+// fold its net type picked.
+struct ResolvedNetStorage {
+  support::ValueDomain domain;
+  support::NetResolution resolution;
+};
+
 // A variable the owner holds: written and read through its own storage, so a
 // write lands at the representation the declaration gave it (LRM 6.9) and a
 // read copies out rather than aliasing. No process subscribes to it, which is
@@ -165,7 +176,8 @@ struct ChannelCancellationStorage {};
 
 using MemberStorageDescriptor = std::variant<
     BorrowedHandleStorage, ObservableCellStorage, InlineValueStorage,
-    ValueCellStorage, CancellationTargetStorage, ChannelCancellationStorage>;
+    ValueCellStorage, CancellationTargetStorage, ChannelCancellationStorage,
+    ResolvedNetStorage>;
 
 // One declaration's member storage schema, in its own member order: what a
 // generic value of it must realize for each member the declaration holds. It

@@ -57,6 +57,18 @@ class RuntimeTuple {
   // never reaches this method.
   [[nodiscard]] auto CaseEqual(const RuntimeTuple& other) const -> PackedArray;
 
+  // LRM 6.6.1 Table 6-2 tri-state resolution, applied component by component.
+  // LRM 6.7.1 admits an unpacked struct as a net's data type when every member
+  // is itself valid for a net, and it composes a net out of its members' bits,
+  // so folding two contributions is folding each component pair.
+  [[nodiscard]] auto ResolveTriState(const RuntimeTuple& other) const
+      -> RuntimeTuple;
+
+  // The all-high-impedance value at `prototype`'s shape: each component's own
+  // high-impedance value (LRM 6.6.1). Only the prototype's shape is read.
+  [[nodiscard]] static auto HighImpedanceLike(const RuntimeTuple& prototype)
+      -> RuntimeTuple;
+
   // LRM 9.4.2 update-event predicate (engine change-detection hook).
   [[nodiscard]] auto IsBitIdentical(const RuntimeTuple& other) const -> bool;
 
@@ -78,6 +90,7 @@ class RuntimeTuple {
 };
 
 static_assert(LyraValue<RuntimeTuple>);
+static_assert(NetResolvable<RuntimeTuple>);
 static_assert(CaseEqualComparable<RuntimeTuple>);
 static_assert(BitstreamSizable<RuntimeTuple>);
 

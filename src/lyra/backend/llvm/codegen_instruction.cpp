@@ -2,6 +2,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <format>
+#include <iterator>
 #include <optional>
 #include <span>
 #include <string>
@@ -35,6 +36,24 @@ namespace {
 auto Unsupported(std::string message) -> std::unexpected<diag::Diagnostic> {
   return diag::Fail(
       diag::DiagCode::kUnsupportedExpressionForm, std::move(message));
+}
+
+// Which capability wrapper a type is, and the value that wrapper represents;
+// nothing for a type that represents no storage. Classifying a wrapper in one
+// place is what keeps an access reached through a place and an operation
+// reached through a reference from disagreeing about what a wrapper is.
+auto WrapperOf(const lir::Type& type)
+    -> std::optional<std::pair<WrapperKind, lir::TypeId>> {
+  if (const auto* observable = type.As<lir::ObservableType>()) {
+    return std::pair{WrapperKind::kCell, observable->value};
+  }
+  if (const auto* net = type.As<lir::ResolvedType>()) {
+    return std::pair{WrapperKind::kNet, net->value};
+  }
+  if (const auto* driver = type.As<lir::DriverType>()) {
+    return std::pair{WrapperKind::kDriver, driver->value};
+  }
+  return std::nullopt;
 }
 
 // Which form a construction is. A queue is built empty or over an element list,
@@ -157,40 +176,41 @@ auto CodeGenFunction::LowerLoad(
         Entry(RuntimeSymbol(RuntimeOp::kClosureCapture), result_type, args),
         args);
   }
-  auto cell = CellPlaceOf(load.place);
-  if (!cell) {
-    return std::unexpected(std::move(cell.error()));
+  auto wrapper = WrapperPlaceOf(load.place);
+  if (!wrapper) {
+    return std::unexpected(std::move(wrapper.error()));
   }
-  if (!cell->has_value()) {
+  if (!wrapper->has_value()) {
     auto address = ResolvePlaceAddress(load.place);
     if (!address) {
       return std::unexpected(std::move(address.error()));
     }
     return builder_.CreateLoad(module_->Types().Map(result_type), *address);
   }
-  const CellPlace& through = **cell;
-  auto address = ResolvePlaceAddress(through.cell);
+  const WrapperPlace& through = **wrapper;
+  auto address = ResolvePlaceAddress(through.wrapper);
   if (!address) {
     return std::unexpected(std::move(address.error()));
   }
   const std::array<llvm::Value*, 1> args{*address};
   return builder_.CreateCall(
       Entry(
-          RuntimeSymbol(through.domain, RuntimeOp::kCellGet), result_type,
+          RuntimeSymbol(through.domain, LoadOpOf(through.kind)), result_type,
           args),
       args);
 }
 
-// Writing a place mirrors reading one, and a write through a cell is what wakes
-// whoever subscribed to it -- which is why it is the cell that performs the
-// write rather than a store to an address.
+// Writing a place mirrors reading one, and a write through a wrapper is what
+// gives the write its meaning -- waking whoever subscribed to a cell, or moving
+// one driver's contribution and re-resolving the net it feeds -- which is why
+// it is the wrapper that performs the write rather than a store to an address.
 auto CodeGenFunction::LowerStore(const lir::StoreInstr& store)
     -> diag::Result<llvm::Value*> {
-  auto cell = CellPlaceOf(store.place);
-  if (!cell) {
-    return std::unexpected(std::move(cell.error()));
+  auto wrapper = WrapperPlaceOf(store.place);
+  if (!wrapper) {
+    return std::unexpected(std::move(wrapper.error()));
   }
-  if (!cell->has_value()) {
+  if (!wrapper->has_value()) {
     auto value = LowerOperand(store.value);
     if (!value) {
       return std::unexpected(std::move(value.error()));
@@ -201,8 +221,9 @@ auto CodeGenFunction::LowerStore(const lir::StoreInstr& store)
     }
     return builder_.CreateStore(*value, *address);
   }
-  const CellPlace& through = **cell;
-  auto address = ResolvePlaceAddress(through.cell);
+  const WrapperPlace& through = **wrapper;
+  const RuntimeOp op = StoreOpOf(through.kind);
+  auto address = ResolvePlaceAddress(through.wrapper);
   if (!address) {
     return std::unexpected(std::move(address.error()));
   }
@@ -212,9 +233,7 @@ auto CodeGenFunction::LowerStore(const lir::StoreInstr& store)
   }
   const std::array<llvm::Value*, 2> args{*address, *value};
   return builder_.CreateCall(
-      Entry(
-          RuntimeSymbol(through.domain, RuntimeOp::kCellSet),
-          module_->Types().Void(), args),
+      Entry(RuntimeSymbol(through.domain, op), module_->Types().Void(), args),
       args);
 }
 
@@ -232,7 +251,13 @@ auto CodeGenFunction::ResolvePlaceAddress(const lir::Place& place)
   if (lir::IsPlaceLocal(*fn_, place.base)) {
     address = values_.at(use->value);
   } else {
-    if (step == place.chain.end() ||
+    // A value base refers to storage, so opening it is what the base value
+    // already answers; the dereference is the step that says the storage is
+    // what the place names. A prefix that stops before that step -- the wrapper
+    // half of an access whose wrapper is itself a value, as a net driver's
+    // handle is -- has no dereference left to consume and names that same
+    // storage.
+    if (step != place.chain.end() &&
         !std::holds_alternative<lir::DerefProjection>(*step)) {
       throw InternalError(
           "llvm codegen: a place over a value base must open with a "
@@ -243,7 +268,9 @@ auto CodeGenFunction::ResolvePlaceAddress(const lir::Place& place)
       return std::unexpected(std::move(base.error()));
     }
     address = OpenedReferent(*base, OperandType(place.base));
-    ++step;
+    if (step != place.chain.end()) {
+      ++step;
+    }
   }
 
   for (; step != place.chain.end(); ++step) {
@@ -1185,14 +1212,24 @@ auto CodeGenFunction::BuiltinCallee(
           [&](const NamedByValue& named) -> diag::Result<llvm::FunctionCallee> {
             return over(DomainOf(acted_on(named.operand)));
           },
-          [&](const NamedByCellValue&) -> diag::Result<llvm::FunctionCallee> {
-            auto domain = CellDomain(OperandType(call.args.at(0)));
-            if (!domain) {
-              return std::unexpected(std::move(domain.error()));
+          [&](const NamedByWrapperInstall&)
+              -> diag::Result<llvm::FunctionCallee> {
+            auto wrapper = WrapperBehind(OperandType(call.args.at(0)));
+            if (!wrapper) {
+              return std::unexpected(std::move(wrapper.error()));
             }
             return Entry(
-                RuntimeSymbol(*domain, RuntimeOp::kCellInitialize), result_type,
-                args);
+                RuntimeSymbol(wrapper->domain, InstallOpOf(wrapper->kind)),
+                result_type, args);
+          },
+          [&](const NamedByWrapperDomain&)
+              -> diag::Result<llvm::FunctionCallee> {
+            auto wrapper = WrapperBehind(OperandType(call.args.at(0)));
+            if (!wrapper) {
+              return std::unexpected(std::move(wrapper.error()));
+            }
+            return Entry(
+                RuntimeSymbol(wrapper->domain, target.fn), result_type, args);
           },
           [&](const NamedByConversion&) -> diag::Result<llvm::FunctionCallee> {
             auto destination = DomainOf(acted_on(0));
@@ -1218,36 +1255,33 @@ auto CodeGenFunction::BuiltinCallee(
       EntryNamingOf(target.fn));
 }
 
-auto CodeGenFunction::CellPlaceOf(const lir::Place& place) const
-    -> diag::Result<std::optional<CodeGenFunction::CellPlace>> {
+auto CodeGenFunction::WrapperPlaceOf(const lir::Place& place) const
+    -> diag::Result<std::optional<CodeGenFunction::WrapperPlace>> {
   // The last step names the storage behind whatever the chain had reached. When
-  // that is a cell, the storage is the cell's contents, which have no address
-  // of their own -- the cell decides what reading and writing them mean, so the
-  // prefix names the cell and the access goes through it.
+  // that is a capability wrapper, the storage is the wrapper's contents, which
+  // have no address of their own -- the wrapper decides what reading and
+  // writing them mean, so the prefix names the wrapper and the access goes
+  // through it.
   if (place.chain.empty() ||
       !std::holds_alternative<lir::DerefProjection>(place.chain.back())) {
     return std::nullopt;
   }
-  lir::Place cell{
+  lir::Place wrapper{
       .base = place.base,
       .chain = {place.chain.begin(), std::prev(place.chain.end())}};
-  // The chain up to that final step names what the dereference opens. With no
-  // step left it is the base itself, whose type is the base's own: a place over
-  // a value base becomes one only once its opening dereference is applied, so
-  // the prefix is not yet a place to ask about.
-  const lir::TypeId opened = cell.chain.empty()
-                                 ? OperandType(cell.base)
-                                 : lir::PlaceType(module_->Unit(), *fn_, cell);
-  const auto* observable =
-      module_->Unit().types.Get(opened).As<lir::ObservableType>();
-  if (observable == nullptr) {
+  const lir::Type& opened_type = module_->Unit().types.Get(
+      ReachedType(place, std::ssize(place.chain) - 1));
+  const std::optional<std::pair<WrapperKind, lir::TypeId>> reached =
+      WrapperOf(opened_type);
+  if (!reached.has_value()) {
     return std::nullopt;
   }
-  auto domain = DomainOf(observable->value);
+  auto domain = DomainOf(reached->second);
   if (!domain) {
     return std::unexpected(std::move(domain.error()));
   }
-  return CellPlace{.domain = *domain, .cell = std::move(cell)};
+  return WrapperPlace{
+      .domain = *domain, .kind = reached->first, .wrapper = std::move(wrapper)};
 }
 
 auto CodeGenFunction::CapturePlaceOf(const lir::Place& place) const
@@ -1261,15 +1295,10 @@ auto CodeGenFunction::CapturePlaceOf(const lir::Place& place) const
   if (member == nullptr) {
     return std::nullopt;
   }
-  // The chain up to that step names what holds the member. With no step left it
-  // is the base itself, whose type is the base's own, since a place over a
-  // value base becomes one only once its opening dereference is applied.
   lir::Place holder{
       .base = place.base,
       .chain = {place.chain.begin(), std::prev(place.chain.end())}};
-  const lir::TypeId reached =
-      holder.chain.empty() ? OperandType(holder.base)
-                           : lir::PlaceType(module_->Unit(), *fn_, holder);
+  const lir::TypeId reached = ReachedType(place, std::ssize(place.chain) - 1);
   if (!module_->Unit().types.Get(reached).Is<lir::ClosureType>()) {
     return std::nullopt;
   }
@@ -1277,18 +1306,37 @@ auto CodeGenFunction::CapturePlaceOf(const lir::Place& place) const
       .closure = std::move(holder), .index = member->member.value};
 }
 
-auto CodeGenFunction::CellDomain(lir::TypeId reference) const
-    -> diag::Result<support::ValueDomain> {
+auto CodeGenFunction::WrapperBehind(lir::TypeId reference) const
+    -> diag::Result<CodeGenFunction::WrapperBehindRef> {
   const lir::TypePool& types = module_->Unit().types;
   const std::optional<lir::TypeId> pointee = types.Get(reference).Pointee();
   if (!pointee) {
+    throw InternalError(
+        "llvm codegen: an operation on a wrapper needs its address");
+  }
+  const std::optional<std::pair<WrapperKind, lir::TypeId>> reached =
+      WrapperOf(types.Get(*pointee));
+  if (!reached.has_value()) {
+    throw InternalError(
+        "llvm codegen: an operation on a wrapper needs a wrapper's address");
+  }
+  auto domain = DomainOf(reached->second);
+  if (!domain) {
+    return std::unexpected(std::move(domain.error()));
+  }
+  return WrapperBehindRef{.domain = *domain, .kind = reached->first};
+}
+
+auto CodeGenFunction::CellDomain(lir::TypeId reference) const
+    -> diag::Result<support::ValueDomain> {
+  auto wrapper = WrapperBehind(reference);
+  if (!wrapper) {
+    return std::unexpected(std::move(wrapper.error()));
+  }
+  if (wrapper->kind != WrapperKind::kCell) {
     throw InternalError("llvm codegen: a cell operation needs a cell address");
   }
-  const auto* observable = types.Get(*pointee).As<lir::ObservableType>();
-  if (observable == nullptr) {
-    throw InternalError("llvm codegen: a cell operation needs an observable");
-  }
-  return DomainOf(observable->value);
+  return wrapper->domain;
 }
 
 auto CodeGenFunction::ConstructCallee(
