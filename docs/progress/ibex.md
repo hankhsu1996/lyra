@@ -31,7 +31,8 @@ a host compiler accepts, links, loads `hello_test` through `$readmemh`, executes
 on the testbench's own software request -- with the program's expected output and a full instruction
 trace. Its sources, includes and defines are read from the `lyra.toml` at the design's root, so no
 setting has to be passed on the command line, which closes the last accepted-option gap between this
-and the condition above.
+and the condition above. Measured 2026-09-02. The program's own output lands in a log file beside
+the design rather than on stdout, so an empty terminal is what a correct run looks like.
 
 **The run is silent.** It used to report `unique` and `priority` violations from nearly every
 module, and they were Lyra's error rather than the design's: every one of those statements spells

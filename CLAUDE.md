@@ -164,9 +164,10 @@ a width, plane, or arena invariant the compiler itself established gets `Interna
 the reader to report a bug. An operation a legal program requests that Lyra does not yet carry out
 is also `SimulationError` -- the reader's next step is to ask for support, not to file a bug.
 
-Avoid `assert()` and `<cassert>`; `catch(...)` is allowed only in `src/lyra/driver/`. A control
-effect -- leaving a disabled scope (LRM 9.6.2) -- is not an error and is thrown by the runtime that
-defines it; nothing else may add a thrown type.
+Avoid `assert()` and `<cassert>`; `catch(...)` is allowed only in the command's own top frame, where
+an escaped throw becomes an exit status instead of an abort (`src/lyra/cli/`). A control effect --
+leaving a disabled scope (LRM 9.6.2) -- is not an error and is thrown by the runtime that defines
+it; nothing else may add a thrown type.
 
 ## Approach to changes
 

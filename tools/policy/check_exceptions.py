@@ -3,10 +3,10 @@
 
 Rules:
   E001: No std::runtime_error or std::logic_error
-  E002: No catch(...) except in driver
+  E002: No catch(...) except at the entry point
   E003: No throw except InternalError (a compiler-invariant violation),
         SimulationError (a failure of the simulated design), or the runtime's
-        control effect; rethrow 'throw;' also banned outside driver
+        control effect; rethrow 'throw;' also banned outside the entry point
   E004: No assert() or <cassert>/<assert.h> (use InternalError for invariants)
   E005: Bug report messages only in internal_error.hpp (prevents duplicates)
 
@@ -23,7 +23,12 @@ import sys
 from pathlib import Path
 
 INCLUDE_PATHS = ("src/lyra", "include/lyra")
-CATCH_ALL_ALLOWLIST = ("src/lyra/driver",)
+# The one place a catch-all belongs is where an escaped throw would otherwise
+# abort the process: the command's own top frame, which turns anything reaching
+# it into an exit status and a message. Naming that directory is what keeps the
+# allowance from spreading, and it moves when the entry point moves -- so what
+# decides this list is which file holds `main`, not what a directory is called.
+CATCH_ALL_ALLOWLIST = ("src/lyra/cli",)
 # E003 governs the error channel. A control effect is not an error: leaving a
 # disabled scope (LRM 9.6.2) raises one, and the region owning that scope
 # consumes it. It travels by the same mechanism an exception does but reports
@@ -128,7 +133,7 @@ def check_file(filepath: str, repo_root: Path) -> list[str]:
     """Check a single file for policy violations."""
     errors = []
     full_path = repo_root / filepath
-    in_driver = any(filepath.startswith(a) for a in CATCH_ALL_ALLOWLIST)
+    at_entry_point = any(filepath.startswith(a) for a in CATCH_ALL_ALLOWLIST)
     raises_control_effect = any(
         filepath.startswith(a) for a in CONTROL_EFFECT_ALLOWLIST)
 
@@ -145,12 +150,13 @@ def check_file(filepath: str, repo_root: Path) -> list[str]:
         errors.append(
             f"{filepath}:{line}: E001 std::{match.group(1)} is banned")
 
-    # E002: No catch(...) except in driver
-    if not in_driver and not raises_control_effect:
+    # E002: No catch(...) except at the entry point
+    if not at_entry_point and not raises_control_effect:
         for match in RE_CATCH_ALL.finditer(content):
             line = offset_to_line(original, match.start())
             errors.append(
-                f"{filepath}:{line}: E002 catch(...) banned outside driver")
+                f"{filepath}:{line}: "
+                "E002 catch(...) banned outside the entry point")
 
     # E003: No throw except InternalError, SimulationError, or the runtime's
     # control effect
@@ -170,12 +176,13 @@ def check_file(filepath: str, repo_root: Path) -> list[str]:
             f"{filepath}:{line}: E003 throw {snippet} - "
             "use InternalError or SimulationError")
 
-    # E003: Rethrow 'throw;' also banned outside driver
-    if not in_driver and not raises_control_effect:
+    # E003: Rethrow 'throw;' also banned outside the entry point
+    if not at_entry_point and not raises_control_effect:
         for match in RE_RETHROW.finditer(content):
             line = offset_to_line(original, match.start())
             errors.append(
-                f"{filepath}:{line}: E003 rethrow banned outside driver")
+                f"{filepath}:{line}: "
+                "E003 rethrow banned outside the entry point")
 
     # E004: No assert() or <cassert>/<assert.h>
     for match in RE_ASSERT_CALL.finditer(content):
@@ -248,7 +255,8 @@ def main() -> int:
         print(f"\nTotal: {len(all_errors)} violations")
         print("\nRules:")
         print("  E001: Use std::expected<T, Diagnostic> instead of std exceptions")
-        print("  E002: catch(...) allowed only in src/lyra/driver/")
+        print("  E002: catch(...) allowed only in "
+              f"{', '.join(a + '/' for a in CATCH_ALL_ALLOWLIST)}")
         print("  E003: Only throw common::InternalError for compiler bugs, or "
               "the runtime's control effect")
         print("  E004: Use InternalError for invariants, not assert()")
