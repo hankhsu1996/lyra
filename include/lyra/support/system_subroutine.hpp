@@ -72,12 +72,11 @@ struct PrintSystemSubroutineInfo {
   PrintSinkKind sink_kind;
 };
 
-enum class TerminationKind : std::uint8_t {
-  kFinish,
-};
-
+// LRM 20.2 simulation control tasks ($finish, $stop, $exit). All three end a
+// non-interactive run through the same runtime request; `default_level` is the
+// diagnostic-message selector (0, 1, or 2, Table 20-1) a call takes when it
+// names none.
 struct TerminationSystemSubroutineInfo {
-  TerminationKind kind;
   int default_level;
 };
 
@@ -485,9 +484,7 @@ inline constexpr std::array kSystemSubroutines = {
         .kind = SystemSubroutineKind::kTask,
         .result_conv = ReturnConvention::kVoid,
         .arg_policy = ArgCountPolicy{.min_args = 0, .max_args = 1},
-        .semantic =
-            TerminationSystemSubroutineInfo{
-                .kind = TerminationKind::kFinish, .default_level = 1},
+        .semantic = TerminationSystemSubroutineInfo{.default_level = 1},
         .suspends = true,
     },
     SystemSubroutineDesc{
@@ -1082,6 +1079,24 @@ inline constexpr std::array kSystemSubroutines = {
         .arg_policy = ArgCountPolicy{.min_args = 3, .max_args = 3},
         .semantic =
             DistributionSystemSubroutineInfo{.kind = DistributionKind::kErlang},
+    },
+    SystemSubroutineDesc{
+        .id = SystemSubroutineId{76},
+        .name = "$stop",
+        .kind = SystemSubroutineKind::kTask,
+        .result_conv = ReturnConvention::kVoid,
+        .arg_policy = ArgCountPolicy{.min_args = 0, .max_args = 1},
+        .semantic = TerminationSystemSubroutineInfo{.default_level = 1},
+        .suspends = true,
+    },
+    SystemSubroutineDesc{
+        .id = SystemSubroutineId{77},
+        .name = "$exit",
+        .kind = SystemSubroutineKind::kTask,
+        .result_conv = ReturnConvention::kVoid,
+        .arg_policy = ArgCountPolicy{.min_args = 0, .max_args = 0},
+        .semantic = TerminationSystemSubroutineInfo{.default_level = 1},
+        .suspends = true,
     },
 };
 

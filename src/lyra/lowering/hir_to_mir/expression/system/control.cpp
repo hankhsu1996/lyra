@@ -39,7 +39,7 @@ auto TryExtractLiteralInt(const hir::Expr& expr)
 
 }  // namespace
 
-auto LowerFinishSystemSubroutineCall(
+auto LowerTerminationSystemSubroutineCall(
     const ProcessLowerer& process, const WalkFrame& frame,
     const hir::CallExpr& call, std::string_view name,
     const support::TerminationSystemSubroutineInfo& info, diag::SourceSpan span)
@@ -48,7 +48,8 @@ auto LowerFinishSystemSubroutineCall(
   int level = info.default_level;
   if (!call.arguments.empty()) {
     if (!call.arguments.front().has_value()) {
-      throw InternalError("$finish argument unexpectedly elided");
+      throw InternalError(
+          std::format("{} argument unexpectedly elided", std::string{name}));
     }
     const hir::ExprId arg_id = *call.arguments.front();
     const hir::Expr& arg_expr = hir_proc.exprs.Get(arg_id);

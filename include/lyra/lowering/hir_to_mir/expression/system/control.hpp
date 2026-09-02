@@ -12,12 +12,12 @@
 
 namespace lyra::lowering::hir_to_mir {
 
-// Lower a termination system subroutine call ($finish) into a generic
-// `mir::CallExpr`: the engine handle (`self.Services()`) followed by the level
-// argument. Resolves the optional level from the call's literal integer arg
-// (falling back to the descriptor's default_level when omitted). Returns a
-// user diagnostic if the level arg is non-literal or out of range.
-auto LowerFinishSystemSubroutineCall(
+// Lower a simulation control task ($finish, $stop, $exit, LRM 20.2) into a
+// generic `mir::CallExpr` on the runtime handle carrying the level argument.
+// Resolves the level from the call's literal integer argument, falling back to
+// the descriptor's default when the call names none. Returns a user diagnostic
+// if the argument is non-literal or is not 0, 1, or 2.
+auto LowerTerminationSystemSubroutineCall(
     const ProcessLowerer& process, const WalkFrame& frame,
     const hir::CallExpr& call, std::string_view name,
     const support::TerminationSystemSubroutineInfo& info, diag::SourceSpan span)
