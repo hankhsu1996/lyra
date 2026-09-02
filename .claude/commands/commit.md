@@ -1,6 +1,6 @@
 ---
 description: Create a commit with a well-formatted message
-allowed-tools: Bash(git status:*), Bash(git diff:*), Bash(git add:*), Bash(git branch:*), Bash(git switch:*), Bash(git log:*), Bash(clang-format:*), Bash(npx prettier:*), Bash(buildifier:*), Bash(find:*), Bash(python3 tools/policy/*), Bash(bazel build:*), Bash(bazel test:*), Bash(ls:*)
+allowed-tools: Bash(git status:*), Bash(git diff:*), Bash(git add:*), Bash(git branch:*), Bash(git switch:*), Bash(git log:*), Bash(clang-format:*), Bash(npx prettier:*), Bash(buildifier:*), Bash(find:*), Bash(python3 tools/policy/*), Bash(bazel build:*), Bash(ls:*)
 ---
 
 # Commit
@@ -28,17 +28,13 @@ Do NOT proceed with formatting or staging until you are on a feature branch.
 
 Each tool runs **once**. Formatters run in write mode; running them again in check mode is redundant since the write call already left the tree canonical. The only tools that run as a separate check are the ones formatters don't fix (buildifier lint, policy checks).
 
-### Build and test
+### Build
 
 ```bash
 bazel build //...
-bazel test //...
 ```
 
-Same target set the merge gate runs, which is what makes a green run here mean "this lands green".
-Do not narrow `//...`, and do not widen it either: a change that touches what the C++ backend emits
-pays `--config=nightly` on top, because that target is the only thing that compiles emitted text
-and the gate does not run it. Fix failures before staging.
+Fix failures before staging: a commit that does not compile is worse than one that waits.
 
 ### Format (write mode, once each)
 
@@ -104,7 +100,7 @@ Bullet points should be **concise** (under 60 chars each) and describe **what ch
 ## Instructions
 
 1. **Check branch first** - See "STOP: Check Branch First" section above. Do NOT skip this.
-2. Build and test
+2. Build
 3. Format (clang-format, prettier, buildifier - once each, write mode)
 4. Lint and policy (buildifier lint + every `check_*.py`)
 5. **Check git status again** - Formatters may modify files beyond your original changeset. Run `git status --short` to see all modified files before staging.

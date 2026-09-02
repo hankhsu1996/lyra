@@ -22,9 +22,9 @@ lose. Read the two skills; do not restate them here, and do not answer from memo
 There is no include mechanism between slash commands, so this composition only happens if you make
 it happen. Both steps are **tool calls, not references**:
 
-1. Call the Skill tool with `commit`. Follow it in full: branch gate, build and test, format, lint
-   and policy, staging, commit message. Do not start staging before its text is in context.
-2. Call the Skill tool with `pr`. Follow it in full: rebase, push, PR body, return the URL.
+1. Call the Skill tool with `commit`. Follow it in full: branch gate, build, format, lint and
+   policy, staging, commit message. Do not start staging before its text is in context.
+2. Call the Skill tool with `pr`. Follow it in full: rebase, gate, push, PR body, return the URL.
 
 If you find yourself writing a commit message or a PR body without having invoked both, stop -- you
 are working from memory. This file deliberately carries no fallback copy; an incomplete run is the
@@ -32,9 +32,9 @@ correct failure, a confidently wrong one is not.
 
 ## Only what this composition adds
 
-- **Run the checks once.** `/commit` builds, tests, formats and lints. `/pr` assumes a clean tree
-  and does not repeat any of it, except the clang-format pass a rebase can require. Re-running the
-  suite between the two steps buys nothing.
+- **The gate runs once, in `/pr`, on what the rebase produced.** `/commit` builds, formats and
+  lints; the tests belong on the tree that will land, and that tree is the rebase's output. Where
+  the rebase turns out to be a no-op it is the same single run, arriving one step later.
 - **Staging is the user's signal, not yours.** A staged file means it has been reviewed. Never
   stage, unstage, or `git restore --staged` on the user's behalf -- if files are already staged when
   this runs, commit those and add nothing.
