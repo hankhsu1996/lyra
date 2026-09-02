@@ -156,6 +156,22 @@ void lyra_rt_disable_fork(void* runtime);
 // submitted to, or the coroutine a spawned branch is entered as.
 auto lyra_rt_closure_make(const void* definition, LyraSpan captures) -> void*;
 
+// Builds an object on the managed heap and runs its constructor on it (LRM
+// 8.3): `definition` is an opaque cross-artifact reference naming both the
+// storage its properties need and the body that initializes them. The handle
+// answered is a reference to the object, transient like every value the
+// boundary hands back and owned by the current call scope until a store takes
+// a copy of it.
+auto lyra_rt_object_make(const void* definition) -> void*;
+
+// The object a class handle refers to (LRM 8.3). Which object that is, is a
+// fact the handle holds rather than is, so reaching it is an operation; a
+// handle referring to no object fails the run here rather than further in.
+auto lyra_rt_object_deref(void* handle) -> void*;
+
+// The address of a property's storage on an object, by class-local index.
+auto lyra_rt_object_member_addr(void* object, std::uint32_t index) -> void*;
+
 // The handle one capture crosses back to the body as, by declaration index. A
 // captured pointer answers the pointer it holds; a captured value answers the
 // storage the closure owns, which outlives every read of it.
@@ -380,12 +396,12 @@ void lyra_rt_shortreal_cell_set(void* cell, const void* value);
 // the declared representation -- and `load` copies the current value back into
 // the per-stretch scope. No runtime handle and no subscriber wakeup: a
 // procedural local is not observable.
-auto lyra_rt_packed_activation_frame_alloc() -> void*;
-auto lyra_rt_string_activation_frame_alloc() -> void*;
-void lyra_rt_packed_activation_frame_store(void* cell, const void* value);
-void lyra_rt_string_activation_frame_store(void* cell, const void* value);
-auto lyra_rt_packed_activation_frame_load(const void* cell) -> void*;
-auto lyra_rt_string_activation_frame_load(const void* cell) -> void*;
+auto lyra_rt_packed_value_cell_alloc() -> void*;
+auto lyra_rt_string_value_cell_alloc() -> void*;
+void lyra_rt_packed_value_cell_store(void* cell, const void* value);
+void lyra_rt_string_value_cell_store(void* cell, const void* value);
+auto lyra_rt_packed_value_cell_load(const void* cell) -> void*;
+auto lyra_rt_string_value_cell_load(const void* cell) -> void*;
 
 // One entry per operator per value domain: the generated module names the entry
 // it means, so no operator code crosses the boundary. Each is the library peer
@@ -537,8 +553,8 @@ auto lyra_rt_string_ge(const void* lhs, const void* rhs) -> void*;
 // entry yields a packed 1-bit; the arithmetic entries yield a real. `const`
 // builds a real from a host-precision immediate, `from_int64` from an integer
 // already read out of a packed value, and `from_shortreal` / `from_real`
-// reshape the other real precision. The activation-frame entries hold a real
-// local across a suspension.
+// reshape the other real precision. The cell entries hold a real in storage
+// that outlives the stretch that wrote it.
 auto lyra_rt_real_add(const void* lhs, const void* rhs) -> void*;
 auto lyra_rt_real_sub(const void* lhs, const void* rhs) -> void*;
 auto lyra_rt_real_mul(const void* lhs, const void* rhs) -> void*;
@@ -592,9 +608,9 @@ auto lyra_rt_real_const(double value) -> void*;
 auto lyra_rt_real_from_int(std::int64_t value) -> void*;
 auto lyra_rt_real_convert_from_shortreal(const void* value) -> void*;
 auto lyra_rt_real_convert_from_real(const void* value) -> void*;
-auto lyra_rt_real_activation_frame_alloc() -> void*;
-void lyra_rt_real_activation_frame_store(void* cell, const void* value);
-auto lyra_rt_real_activation_frame_load(const void* cell) -> void*;
+auto lyra_rt_real_value_cell_alloc() -> void*;
+void lyra_rt_real_value_cell_store(void* cell, const void* value);
+auto lyra_rt_real_value_cell_load(const void* cell) -> void*;
 auto lyra_rt_real_make_print_value_item(const void* value, const void* spec)
     -> void*;
 
@@ -622,9 +638,9 @@ auto lyra_rt_shortreal_from_bits(std::int64_t bits) -> void*;
 auto lyra_rt_shortreal_const(float value) -> void*;
 auto lyra_rt_shortreal_from_int(std::int64_t value) -> void*;
 auto lyra_rt_shortreal_convert_from_real(const void* value) -> void*;
-auto lyra_rt_shortreal_activation_frame_alloc() -> void*;
-void lyra_rt_shortreal_activation_frame_store(void* cell, const void* value);
-auto lyra_rt_shortreal_activation_frame_load(const void* cell) -> void*;
+auto lyra_rt_shortreal_value_cell_alloc() -> void*;
+void lyra_rt_shortreal_value_cell_store(void* cell, const void* value);
+auto lyra_rt_shortreal_value_cell_load(const void* cell) -> void*;
 auto lyra_rt_shortreal_make_print_value_item(
     const void* value, const void* spec) -> void*;
 
@@ -676,9 +692,9 @@ auto lyra_rt_tuple_cell_alloc() -> void*;
 auto lyra_rt_tuple_cell_get(void* cell) -> void*;
 void lyra_rt_tuple_cell_initialize(void* cell, const void* prototype);
 void lyra_rt_tuple_cell_set(void* cell, const void* value);
-auto lyra_rt_tuple_activation_frame_alloc() -> void*;
-void lyra_rt_tuple_activation_frame_store(void* cell, const void* value);
-auto lyra_rt_tuple_activation_frame_load(const void* cell) -> void*;
+auto lyra_rt_tuple_value_cell_alloc() -> void*;
+void lyra_rt_tuple_value_cell_store(void* cell, const void* value);
+auto lyra_rt_tuple_value_cell_load(const void* cell) -> void*;
 
 // The dynamic-array domain (LRM 7.5), MIR's `DynamicArrayType`. A
 // run-time-sized homogeneous container carried behind an opaque handle, owning
@@ -712,9 +728,9 @@ auto lyra_rt_dynarray_cell_alloc() -> void*;
 auto lyra_rt_dynarray_cell_get(void* cell) -> void*;
 void lyra_rt_dynarray_cell_initialize(void* cell, const void* prototype);
 void lyra_rt_dynarray_cell_set(void* cell, const void* value);
-auto lyra_rt_dynarray_activation_frame_alloc() -> void*;
-void lyra_rt_dynarray_activation_frame_store(void* cell, const void* value);
-auto lyra_rt_dynarray_activation_frame_load(const void* cell) -> void*;
+auto lyra_rt_dynarray_value_cell_alloc() -> void*;
+void lyra_rt_dynarray_value_cell_store(void* cell, const void* value);
+auto lyra_rt_dynarray_value_cell_load(const void* cell) -> void*;
 
 // A fixed-size unpacked array (LRM 7.4.2). Its payload is ordinal-only: the
 // declared range is the receiver's static type's, so every coordinate-consuming
@@ -754,10 +770,9 @@ auto lyra_rt_unpackedarray_cell_alloc() -> void*;
 auto lyra_rt_unpackedarray_cell_get(void* cell) -> void*;
 void lyra_rt_unpackedarray_cell_initialize(void* cell, const void* prototype);
 void lyra_rt_unpackedarray_cell_set(void* cell, const void* value);
-auto lyra_rt_unpackedarray_activation_frame_alloc() -> void*;
-void lyra_rt_unpackedarray_activation_frame_store(
-    void* cell, const void* value);
-auto lyra_rt_unpackedarray_activation_frame_load(const void* cell) -> void*;
+auto lyra_rt_unpackedarray_value_cell_alloc() -> void*;
+void lyra_rt_unpackedarray_value_cell_store(void* cell, const void* value);
+auto lyra_rt_unpackedarray_value_cell_load(const void* cell) -> void*;
 
 // The queue domain (LRM 7.10): a run-time-sized ordered container whose
 // elements are added and removed at either end, carried behind an opaque handle
@@ -812,9 +827,9 @@ auto lyra_rt_queue_cell_alloc() -> void*;
 auto lyra_rt_queue_cell_get(void* cell) -> void*;
 void lyra_rt_queue_cell_initialize(void* cell, const void* prototype);
 void lyra_rt_queue_cell_set(void* cell, const void* value);
-auto lyra_rt_queue_activation_frame_alloc() -> void*;
-void lyra_rt_queue_activation_frame_store(void* cell, const void* value);
-auto lyra_rt_queue_activation_frame_load(const void* cell) -> void*;
+auto lyra_rt_queue_value_cell_alloc() -> void*;
+void lyra_rt_queue_value_cell_store(void* cell, const void* value);
+auto lyra_rt_queue_value_cell_load(const void* cell) -> void*;
 
 // The associative-array domain (LRM 7.8): a sparse lookup table allocated entry
 // by entry and held in index order, carried behind an opaque handle. Its
@@ -867,9 +882,9 @@ auto lyra_rt_assocarray_cell_alloc() -> void*;
 auto lyra_rt_assocarray_cell_get(void* cell) -> void*;
 void lyra_rt_assocarray_cell_initialize(void* cell, const void* prototype);
 void lyra_rt_assocarray_cell_set(void* cell, const void* value);
-auto lyra_rt_assocarray_activation_frame_alloc() -> void*;
-void lyra_rt_assocarray_activation_frame_store(void* cell, const void* value);
-auto lyra_rt_assocarray_activation_frame_load(const void* cell) -> void*;
+auto lyra_rt_assocarray_value_cell_alloc() -> void*;
+void lyra_rt_assocarray_value_cell_store(void* cell, const void* value);
+auto lyra_rt_assocarray_value_cell_load(const void* cell) -> void*;
 
 // LRM 21.3.3 / 5.9: text conformed to a destination's declared shape. An
 // integral destination takes it right-justified and an unpacked array of bytes

@@ -1,13 +1,13 @@
 #include "lyra/runtime/closure.hpp"
 
 #include <cstdint>
-#include <memory>
 #include <span>
 #include <variant>
 
 #include "lyra/base/internal_error.hpp"
 #include "lyra/base/overloaded.hpp"
 #include "lyra/runtime/generated_call_scope.hpp"
+#include "lyra/runtime/scope_program.hpp"
 
 namespace lyra::runtime {
 
@@ -21,29 +21,32 @@ auto HasBody(const ClosureBody& body) -> bool {
       body);
 }
 
+// The capture schema, checked before any storage is built from it, because a
+// closure with no body is a linkage failure rather than a value that could run.
+auto CaptureSchemaOf(const ClosureDefinition* definition)
+    -> MemberStorageSchema {
+  if (definition == nullptr || !HasBody(definition->body)) {
+    throw InternalError("ClosureValue: the closure has no body to run");
+  }
+  return definition->captures;
+}
+
 }  // namespace
 
 ClosureValue::ClosureValue(
     const ClosureDefinition* definition, std::span<void* const> captures)
-    : definition_(definition) {
-  if (definition_ == nullptr || !HasBody(definition_->body)) {
-    throw InternalError("ClosureValue: the closure has no body to run");
-  }
-  const std::span<const MemberStorageDescriptor> schema =
-      definition_->captures.Descriptors();
-  if (captures.size() != schema.size()) {
+    : definition_(definition), captures_(CaptureSchemaOf(definition)) {
+  if (captures.size() != captures_.Size()) {
     throw InternalError(
         "ClosureValue: the construction does not initialize every capture");
   }
-  captures_.reserve(schema.size());
-  for (std::uint32_t i = 0; i < schema.size(); ++i) {
-    captures_.push_back(std::make_unique<MemberStorage>(schema[i]));
-    captures_.back()->AdoptFrom(captures[i]);
+  for (std::uint32_t i = 0; i < captures_.Size(); ++i) {
+    captures_.Adopt(i, captures[i]);
   }
 }
 
 auto ClosureValue::Capture(std::uint32_t index) -> void* {
-  return captures_.at(index)->HeldValue();
+  return captures_.Held(index);
 }
 
 void ClosureValue::Invoke() {

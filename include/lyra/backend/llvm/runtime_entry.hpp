@@ -45,6 +45,9 @@ enum class RuntimeOp : std::uint8_t {
   kCellSet,
   kMemberAddress,
   kClosureMake,
+  kObjectMake,
+  kObjectDeref,
+  kObjectMemberAddress,
   kClosureCapture,
   kConst,
   kToBool,
@@ -125,8 +128,7 @@ auto RuntimeSymbol(support::ValueDomain domain, lir::BinaryOp op)
 auto RuntimeSymbol(support::ValueDomain domain, lir::UnaryOp op) -> std::string;
 auto RuntimeSymbol(lir::ControlEffectTarget::Op op) -> std::string;
 auto RuntimeSymbol(lir::EnterCoroutineTarget::Op op) -> std::string;
-auto RuntimeSymbol(
-    support::ValueDomain domain, lir::ActivationFrameTarget::Op op)
+auto RuntimeSymbol(support::ValueDomain domain, lir::ValueCellTarget::Op op)
     -> std::string;
 auto RuntimeSymbol(support::BuiltinFn fn) -> std::string;
 auto RuntimeSymbol(support::ValueDomain domain, support::BuiltinFn fn)

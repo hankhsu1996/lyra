@@ -250,8 +250,8 @@ class LirDumper {
             [](const ForeignTarget& f) -> std::string {
               return std::format("extern {}", f.symbol);
             },
-            [](const ActivationFrameTarget& f) -> std::string {
-              return std::string{ActivationFrameOpName(f.op)};
+            [](const ValueCellTarget& f) -> std::string {
+              return std::string{ValueCellOpName(f.op)};
             },
             [](const ControlEffectTarget& c) -> std::string {
               return std::string{ControlEffectOpName(c.op)};

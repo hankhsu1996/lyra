@@ -10,16 +10,16 @@
 
 namespace lyra::lir {
 
-auto ActivationFrameOpName(ActivationFrameTarget::Op op) -> std::string_view {
+auto ValueCellOpName(ValueCellTarget::Op op) -> std::string_view {
   switch (op) {
-    case ActivationFrameTarget::Op::kAllocate:
-      return "activation_frame_alloc";
-    case ActivationFrameTarget::Op::kLoad:
-      return "activation_frame_load";
-    case ActivationFrameTarget::Op::kStore:
-      return "activation_frame_store";
+    case ValueCellTarget::Op::kAllocate:
+      return "value_cell_alloc";
+    case ValueCellTarget::Op::kLoad:
+      return "value_cell_load";
+    case ValueCellTarget::Op::kStore:
+      return "value_cell_store";
   }
-  throw InternalError("lir: unknown activation-frame operation");
+  throw InternalError("lir: unknown value-cell operation");
 }
 
 auto ControlEffectOpName(ControlEffectTarget::Op op) -> std::string_view {

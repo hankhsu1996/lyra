@@ -137,9 +137,19 @@ struct ObservableCellStorage {
   support::ValueDomain domain;
 };
 
-// A value the owner owns but no process subscribes to -- a chandle (LRM 6.14),
-// and every value a closure snapshots into a capture.
+// A value the owner takes a copy of once and never writes again -- a chandle
+// (LRM 6.14), and every value a closure snapshots into a capture. Reading it
+// hands back the storage itself, which is safe exactly because nothing writes
+// it afterwards.
 struct InlineValueStorage {
+  support::ValueDomain domain;
+};
+
+// A variable the owner holds: written and read through its own storage, so a
+// write lands at the representation the declaration gave it (LRM 6.9) and a
+// read copies out rather than aliasing. No process subscribes to it, which is
+// what separates it from the cell above.
+struct ValueCellStorage {
   support::ValueDomain domain;
 };
 
@@ -155,7 +165,7 @@ struct ChannelCancellationStorage {};
 
 using MemberStorageDescriptor = std::variant<
     BorrowedHandleStorage, ObservableCellStorage, InlineValueStorage,
-    CancellationTargetStorage, ChannelCancellationStorage>;
+    ValueCellStorage, CancellationTargetStorage, ChannelCancellationStorage>;
 
 // One declaration's member storage schema, in its own member order: what a
 // generic value of it must realize for each member the declaration holds. It

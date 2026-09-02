@@ -225,6 +225,13 @@ the detail lives in the entry itself.
   analysis); the cell shares a storage core with the signal cell but is not observable, and the
   access is a `ActivationFrameTarget` LIR call so the backend stays mechanical. Native in-frame
   layout, a backend-private arena, and a narrow liveness pass are rejected.
+- [managed-value-realization](managed-value-realization.md) -- a managed value never lives in
+  storage this compiler does not describe, because the coroutine frame is delegated to LLVM and its
+  contents are not enumerable. Three described storages -- the static instance tree, activation
+  frames, and scheduler-held closures -- are the root set; the activation frame gains the slot
+  description it lacked; safepoints coincide with runtime calls generated code already makes, so no
+  instruction is added for the collector. Stack maps, a shadow stack, conservative scanning, moving
+  the static tree into the heap, and a second traceable-frame path are rejected.
 - [activation-frame-and-transient-scope](activation-frame-and-transient-scope.md) -- naming and the
   escape invariant: `RuntimeProcess` is the lineage/scheduler node, `activation` is the control
   identity, the `activation frame` (`ActivationFrameStorage`) is the cross-suspension value storage,

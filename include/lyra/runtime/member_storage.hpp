@@ -2,8 +2,10 @@
 
 #include <variant>
 
+#include "lyra/runtime/activation_value_cell.hpp"
 #include "lyra/runtime/cancellation.hpp"
 #include "lyra/runtime/file_table.hpp"
+#include "lyra/runtime/gc_ref.hpp"
 #include "lyra/runtime/scope_program.hpp"
 #include "lyra/runtime/var.hpp"
 #include "lyra/value/chandle.hpp"
@@ -17,6 +19,11 @@
 #include "lyra/value/string.hpp"
 
 namespace lyra::runtime {
+
+// An object built by `new`, whose storage this file's storage is one slot of.
+// Named rather than included, because the object owns a block of these slots
+// and so is defined in terms of them.
+class ManagedObject;
 
 // The box a borrowed handle is: a pointer the instance does not own, held so
 // that reading the member loads the pointer out rather than the target. It is a
@@ -74,7 +81,15 @@ class MemberStorage {
       value::Chandle, value::PackedArray, value::String, value::Real,
       value::ShortReal, value::RuntimeTuple, value::RuntimeDynamicArray,
       value::RuntimeUnpackedArray, value::RuntimeQueue,
-      value::RuntimeAssociativeArray>
+      value::RuntimeAssociativeArray, GcRef<ManagedObject>,
+      ActivationValueCell<value::PackedArray>,
+      ActivationValueCell<value::String>, ActivationValueCell<value::Real>,
+      ActivationValueCell<value::ShortReal>,
+      ActivationValueCell<value::RuntimeTuple>,
+      ActivationValueCell<value::RuntimeDynamicArray>,
+      ActivationValueCell<value::RuntimeUnpackedArray>,
+      ActivationValueCell<value::RuntimeQueue>,
+      ActivationValueCell<value::RuntimeAssociativeArray>>
       object_;
 };
 

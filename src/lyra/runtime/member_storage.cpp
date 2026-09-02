@@ -73,6 +73,54 @@ MemberStorage::MemberStorage(MemberStorageDescriptor descriptor) {
               case support::ValueDomain::kChandle:
                 throw InternalError(
                     "MemberStorage: a chandle is not observable storage");
+              // A class handle is likewise the value its owner holds (LRM 8.3);
+              // what a process waits on is a property of the object it names,
+              // never the handle.
+              case support::ValueDomain::kManagedRef:
+                throw InternalError(
+                    "MemberStorage: a class handle is not observable storage");
+            }
+            throw InternalError("MemberStorage: unknown value domain");
+          },
+          [this](const ValueCellStorage& cell) {
+            switch (cell.domain) {
+              case support::ValueDomain::kPacked:
+                object_.emplace<ActivationValueCell<value::PackedArray>>();
+                return;
+              case support::ValueDomain::kString:
+                object_.emplace<ActivationValueCell<value::String>>();
+                return;
+              case support::ValueDomain::kReal:
+                object_.emplace<ActivationValueCell<value::Real>>();
+                return;
+              case support::ValueDomain::kShortReal:
+                object_.emplace<ActivationValueCell<value::ShortReal>>();
+                return;
+              case support::ValueDomain::kTuple:
+                object_.emplace<ActivationValueCell<value::RuntimeTuple>>();
+                return;
+              case support::ValueDomain::kDynArray:
+                object_
+                    .emplace<ActivationValueCell<value::RuntimeDynamicArray>>();
+                return;
+              case support::ValueDomain::kUnpackedArray:
+                object_.emplace<
+                    ActivationValueCell<value::RuntimeUnpackedArray>>();
+                return;
+              case support::ValueDomain::kQueue:
+                object_.emplace<ActivationValueCell<value::RuntimeQueue>>();
+                return;
+              case support::ValueDomain::kAssocArray:
+                object_.emplace<
+                    ActivationValueCell<value::RuntimeAssociativeArray>>();
+                return;
+              // A pointer-shaped value is the pointer it carries (LRM 6.14,
+              // 8.3), so a declaration gives it no representation for a write
+              // to land at and a cell would have nothing to install.
+              case support::ValueDomain::kChandle:
+              case support::ValueDomain::kManagedRef:
+                throw InternalError(
+                    "MemberStorage: a pointer-shaped value has no cell");
             }
             throw InternalError("MemberStorage: unknown value domain");
           },
@@ -108,6 +156,9 @@ MemberStorage::MemberStorage(MemberStorageDescriptor descriptor) {
               case support::ValueDomain::kAssocArray:
                 object_.emplace<value::RuntimeAssociativeArray>();
                 return;
+              case support::ValueDomain::kManagedRef:
+                object_.emplace<GcRef<ManagedObject>>();
+                return;
             }
             throw InternalError("MemberStorage: unknown value domain");
           }},
@@ -123,6 +174,19 @@ auto MemberStorage::HeldValue() -> void* {
       Overloaded{
           [](BorrowedHandle& box) -> void* { return box.target; },
           [](value::Chandle& chandle) -> void* { return chandle.Ptr(); },
+          // Storage a write can reach again hands nothing back in place: a
+          // reader given the storage itself would see a later write change what
+          // it already read, so reading copies out instead.
+          []<typename T>(Var<T>&) -> void* {
+            throw InternalError(
+                "MemberStorage: a cell's contents are read through its own "
+                "access, never handed back in place");
+          },
+          []<typename T>(ActivationValueCell<T>&) -> void* {
+            throw InternalError(
+                "MemberStorage: a variable's contents are read through its own "
+                "access, never handed back in place");
+          },
           [](auto& object) -> void* { return &object; }},
       object_);
 }
@@ -143,6 +207,12 @@ void MemberStorage::AdoptFrom(void* handle) {
             throw InternalError(
                 "MemberStorage: a cell is written through its own access, "
                 "where the write is an update event");
+          },
+          []<typename T>(ActivationValueCell<T>&) {
+            throw InternalError(
+                "MemberStorage: a variable is written through its own store, "
+                "which is what lands the write at the representation the "
+                "declaration gave it");
           },
           [&]<typename T>(T& value) { value = Read<T>(handle); }},
       object_);

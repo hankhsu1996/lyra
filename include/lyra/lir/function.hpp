@@ -168,15 +168,16 @@ struct ForeignTarget {
   std::string symbol;
 };
 
-// An operation on a value in the activation frame -- the storage a value-typed
-// local gets in a suspending body, where a value's handle cannot outlive the
-// stretch that produced it. MIR-to-LIR introduces this as storage placement:
-// `kAllocate` builds a cell in the running activation's frame, `kLoad` copies
-// its value out, `kStore` overwrites it. A LIR-only target with no MIR twin --
-// the activation frame is a below-MIR storage realization the C++ backend never
-// sees -- so a backend realizes it the way it realizes any call: the value
-// domain the op works in names the runtime entry.
-struct ActivationFrameTarget {
+// An operation on a value cell -- storage that holds a value, written and read
+// through itself so a write lands at the representation the declaration gave it
+// and a read copies out rather than aliasing. `kAllocate` asks for one the
+// running activation owns, which is what a value-typed local of a suspending
+// body needs when its handle cannot outlive the stretch that produced it.
+// A LIR-only target with no MIR twin -- where a value's storage sits is a
+// below-MIR realization the C++ backend never sees -- so a backend realizes it
+// the way it realizes any call: the value domain the op works in names the
+// runtime entry.
+struct ValueCellTarget {
   enum class Op : std::uint8_t { kAllocate, kLoad, kStore };
   Op op;
 };
@@ -219,17 +220,17 @@ struct EnterCoroutineTarget {
 // runtime-library symbol a generated module calls, so changing it renames a
 // linked symbol. Change it only to correct the operation's identity, never to
 // improve how a dump reads.
-auto ActivationFrameOpName(ActivationFrameTarget::Op op) -> std::string_view;
+auto ValueCellOpName(ValueCellTarget::Op op) -> std::string_view;
 auto ControlEffectOpName(ControlEffectTarget::Op op) -> std::string_view;
 auto EnterCoroutineOpName(EnterCoroutineTarget::Op op) -> std::string_view;
 
 // The target of a call: a runtime builtin, a function of this unit, a value
 // constructor named by the call's result type, a foreign symbol the host
-// resolves, an activation-frame value operation, a control-effect operation,
-// or entering a body as a coroutine.
+// resolves, a value-cell operation, a control-effect operation, or entering a
+// body as a coroutine.
 using CallTarget = std::variant<
     BuiltinTarget, FunctionTarget, ConstructTarget, ForeignTarget,
-    ActivationFrameTarget, ControlEffectTarget, EnterCoroutineTarget>;
+    ValueCellTarget, ControlEffectTarget, EnterCoroutineTarget>;
 
 struct CallInstr {
   CallTarget target;

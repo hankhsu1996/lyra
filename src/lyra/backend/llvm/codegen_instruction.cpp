@@ -21,6 +21,7 @@
 #include "lyra/base/internal_error.hpp"
 #include "lyra/base/overloaded.hpp"
 #include "lyra/diag/diag_code.hpp"
+#include "lyra/lir/class_query.hpp"
 #include "lyra/lir/compilation_unit.hpp"
 #include "lyra/lir/integral_constant.hpp"
 #include "lyra/lir/place_query.hpp"
@@ -235,15 +236,22 @@ auto CodeGenFunction::ResolvePlaceAddress(const lir::Place& place)
     if (!base) {
       return std::unexpected(std::move(base.error()));
     }
-    address = *base;
+    address = OpenedReferent(*base, OperandType(place.base));
     ++step;
   }
 
   for (; step != place.chain.end(); ++step) {
+    // What the chain holds where this step applies, which decides how the step
+    // reaches what it names: crossing a class handle is an operation rather
+    // than a load, and a member's address comes from whatever declares it.
+    const lir::TypeId reached =
+        ReachedType(place, std::distance(place.chain.begin(), step));
     address = std::visit(
         Overloaded{
             [&](const lir::DerefProjection&) -> llvm::Value* {
-              return builder_.CreateLoad(module_->Types().Ptr(), address);
+              return OpenedReferent(
+                  builder_.CreateLoad(module_->Types().Ptr(), address),
+                  reached);
             },
             [&](const lir::MemberProjection& member) -> llvm::Value* {
               const std::array<llvm::Value*, 2> args{
@@ -252,13 +260,60 @@ auto CodeGenFunction::ResolvePlaceAddress(const lir::Place& place)
                                member.member.value)};
               return builder_.CreateCall(
                   Entry(
-                      RuntimeSymbol(RuntimeOp::kMemberAddress),
+                      RuntimeSymbol(MemberAddressOp(reached)),
                       module_->Types().Ptr(), args),
                   args);
             }},
         *step);
   }
   return address;
+}
+
+// The type of the storage the chain has arrived at where step `index` applies,
+// which is the type of the place that stops just before it.
+auto CodeGenFunction::ReachedType(
+    const lir::Place& place, std::ptrdiff_t index) const -> lir::TypeId {
+  const lir::Place prefix{
+      .base = place.base,
+      .chain = {place.chain.begin(), place.chain.begin() + index}};
+  return prefix.chain.empty() ? OperandType(prefix.base)
+                              : lir::PlaceType(module_->Unit(), *fn_, prefix);
+}
+
+// The address of what `reference` refers to, given the type it is. A pointer is
+// the address already; a class handle is not, since which object it refers to
+// is a fact the handle holds rather than is, so the runtime answers it -- and
+// that is where a handle referring to no object is caught (LRM 8.3).
+auto CodeGenFunction::OpenedReferent(llvm::Value* reference, lir::TypeId type)
+    -> llvm::Value* {
+  if (!module_->Unit().types.Get(type).Is<lir::ManagedRefType>()) {
+    return reference;
+  }
+  const std::array<llvm::Value*, 1> args{reference};
+  return builder_.CreateCall(
+      Entry(
+          RuntimeSymbol(RuntimeOp::kObjectDeref), module_->Types().Ptr(), args),
+      args);
+}
+
+// Which entry answers the address of a member of what `owner` names. Every
+// owner holds a block of storage described the same way, so what an entry
+// differs in is the runtime type the address it is handed names.
+auto CodeGenFunction::MemberAddressOp(lir::TypeId owner) const -> RuntimeOp {
+  const lir::Type& type = module_->Unit().types.Get(owner);
+  if (const auto* object = type.As<lir::ObjectType>()) {
+    return lir::IsObjectTreeNode(module_->Unit().classes.Get(object->class_id))
+               ? RuntimeOp::kMemberAddress
+               : RuntimeOp::kObjectMemberAddress;
+  }
+  // What another unit published is an object of its own tree.
+  if (type.Is<lir::ExternalUnitObjectType>()) {
+    return RuntimeOp::kMemberAddress;
+  }
+  throw InternalError(
+      std::format(
+          "llvm codegen: a member of {} has no address entry",
+          type.KindName()));
 }
 
 auto CodeGenFunction::LowerBinary(
@@ -478,6 +533,11 @@ auto CodeGenFunction::ConstructArgs(
             args.insert(args.end(), operands.begin(), operands.end());
             return args;
           },
+          [&](const lir::ManagedRefType& m) -> std::vector<llvm::Value*> {
+            std::vector<llvm::Value*> args{module_->DefinitionRef(m.pointee)};
+            args.insert(args.end(), operands.begin(), operands.end());
+            return args;
+          },
           [&](const auto&) -> std::vector<llvm::Value*> { return operands; }});
 }
 
@@ -508,15 +568,14 @@ auto CodeGenFunction::ResolveCallee(
               -> diag::Result<llvm::FunctionCallee> {
             return Entry(t.symbol, result_type, args);
           },
-          [&](const lir::ActivationFrameTarget& t)
+          [&](const lir::ValueCellTarget& t)
               -> diag::Result<llvm::FunctionCallee> {
-            // The value domain an activation-frame call works in is read from
-            // the value it moves: the cell's own value type for an allocation
-            // or a load, the stored value's type for a store.
-            const lir::TypeId moved =
-                t.op == lir::ActivationFrameTarget::Op::kStore
-                    ? OperandType(call.args.at(1))
-                    : result_type;
+            // The domain the entry is named by is read from the value the
+            // operation moves: the cell's own value type for an allocation or
+            // a load, the stored value's type for a store.
+            const lir::TypeId moved = t.op == lir::ValueCellTarget::Op::kStore
+                                          ? OperandType(call.args.at(1))
+                                          : result_type;
             auto domain = DomainOf(moved);
             if (!domain) {
               return std::unexpected(std::move(domain.error()));
@@ -1186,13 +1245,14 @@ auto CodeGenFunction::ConstructCallee(
             }
             return entry(RuntimeSymbol(RuntimeOp::kMakeScope));
           },
-          // An object the program owns rather than the object tree, reclaimed
-          // when the last handle drops.
+          // An object the program owns rather than the object tree. A handle to
+          // one is a shared owner, so storing it must copy the handle rather
+          // than write its bits, and no storage here does that yet.
           [&](const lir::ManagedRefType&)
               -> diag::Result<llvm::FunctionCallee> {
             return Unsupported(
-                "llvm codegen: building an object on the managed heap is not "
-                "yet supported on this backend");
+                "llvm codegen: storing a handle to an object on the managed "
+                "heap is not yet supported on this backend");
           },
           // Landing a machine integer in a real and reshaping across precisions
           // are named conversions, so what reaches the real family here is a
