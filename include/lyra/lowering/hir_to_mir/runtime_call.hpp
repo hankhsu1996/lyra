@@ -35,6 +35,15 @@ namespace lyra::lowering::hir_to_mir {
 [[nodiscard]] auto BuildCurrentRuntimeCallExpr(const UnitLowerer& unit_lowerer)
     -> mir::Expr;
 
+// Materializes compile-time text as a `value::String` operand and interns it:
+// a string literal is a raw C string in the target, so a construction of the
+// SV `string` type wraps it to satisfy a runtime entry's string parameter.
+// Every synthesized operand that crosses as text -- a diagnostic's origin tag,
+// the text of a report the tool writes itself -- is built here.
+[[nodiscard]] auto BuildStringValueExpr(
+    const mir::CompilationUnit& unit, mir::Block& block, std::string text)
+    -> mir::ExprId;
+
 // Builds the file-IO broker expression `current_runtime().Files()`: a
 // `Files` method call on the engine handle, typed as the unit's `files`
 // builtin. Returns the outer call detached; the caller interns it. The
@@ -46,12 +55,14 @@ namespace lyra::lowering::hir_to_mir {
 
 // Builds the diagnostic broker expression `current_runtime().Diagnostic()`:
 // a `Diagnostic` method call on the engine handle, typed as the unit's
-// `diagnostic` builtin. Returns the outer call detached; the caller
-// interns it. The inner runtime call is interned into `block` as a child.
+// `diagnostic` builtin. Returns the call detached; the caller interns it.
+// The caller supplies `runtime_id` because every site that reaches the broker
+// is a chain that already has one interned in the surrounding sequence.
 // LRM 20.10 `$info` / `$warning` / `$error` thread the resulting handle as
-// the receiver of their severity-fixed Emit methods.
+// the receiver of their severity-fixed Emit methods, and so does the report a
+// tool issues on its own behalf.
 [[nodiscard]] auto BuildDiagnosticCallExpr(
-    const UnitLowerer& unit_lowerer, mir::Block& block) -> mir::Expr;
+    const mir::CompilationUnit& unit, mir::ExprId runtime_id) -> mir::Expr;
 
 // Builds the format-text expression `value::Format(items,
 // runtime.TimeFormat())`: a value-layer free call over the print-item array

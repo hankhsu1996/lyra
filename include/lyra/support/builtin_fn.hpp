@@ -219,6 +219,12 @@ enum class BuiltinFn : std::uint16_t {
   kEmitWarning,
   kEmitError,
   kEmitFatal,
+  // LRM 16.3 immediate cover result. One entry records an evaluation together
+  // with whether it succeeded, rather than one entry per outcome, because the
+  // two counts the standard asks a tool to report are not independent: a
+  // success is also an evaluation. The site operand is the statement's source
+  // location, which is what tells one coverage goal from another.
+  kRecordCoverage,
   // LRM 20.4.3 `$timeformat` display state on `RuntimeEffects`. `TimeFormat`
   // reads the current state, threaded into `Format` as the `%t` operand. The
   // setter takes the four `%t` display arguments (units power, precision,

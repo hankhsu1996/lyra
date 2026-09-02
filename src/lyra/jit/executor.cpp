@@ -156,6 +156,7 @@ void DefineRuntimeAbi(llvm::orc::LLJIT& jit) {
   add("lyra_rt_emit_warning", &lyra_rt_emit_warning);
   add("lyra_rt_emit_error", &lyra_rt_emit_error);
   add("lyra_rt_emit_fatal", &lyra_rt_emit_fatal);
+  add("lyra_rt_record_coverage", &lyra_rt_record_coverage);
   add("lyra_rt_enter_coroutine_borrowed_environment",
       &lyra_rt_enter_coroutine_borrowed_environment);
   add("lyra_rt_enter_coroutine_owned_environment",

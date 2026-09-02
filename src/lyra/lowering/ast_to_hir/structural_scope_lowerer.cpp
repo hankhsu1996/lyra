@@ -220,7 +220,7 @@ auto StructuralScopeLowerer::PopulateMember(
     case SymbolKind::Checker:
     case SymbolKind::CheckerInstance:
     case SymbolKind::CheckerInstanceBody:
-      if (owner_->Assertions() == support::AssertionPolicy::kSkip) {
+      if (support::ElidesAssertions(owner_->AssertionPolicy())) {
         return {};
       }
       return diag::Fail(

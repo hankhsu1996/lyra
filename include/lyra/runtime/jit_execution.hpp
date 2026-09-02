@@ -113,6 +113,11 @@ void lyra_rt_emit_warning(
 void lyra_rt_emit_error(void* dispatcher, const void* origin, const void* text);
 void lyra_rt_emit_fatal(void* dispatcher, const void* origin, const void* text);
 
+// LRM 16.3 immediate cover result: one evaluation of the cover statement at
+// `site`, and whether it succeeded. Reached on the runtime rather than through
+// a broker, because a coverage goal has one verb.
+void lyra_rt_record_coverage(void* runtime, const void* site, bool succeeded);
+
 // Makes an execution the engine can schedule out of a generated body's own
 // frame, which is built with its arguments in place and stopped before its
 // first statement. The runtime owns the coroutine the engine schedules and

@@ -35,6 +35,11 @@ class RuntimeEffects {
   auto Files() -> FileTable&;
   auto PlusArgs() -> PlusArgsSource&;
 
+  // LRM 16.3: record one evaluation of an immediate cover statement, and
+  // whether that evaluation succeeded. `site` is the statement's own source
+  // location, which is what separates one coverage goal from another.
+  void RecordCoverage(const value::String& site, bool succeeded);
+
   void SubmitNba(std::function<void()> closure);
   void SubmitPostponed(std::function<void()> closure);
   // LRM 12.4.2.1: schedule a violation report to mature in the Observed region

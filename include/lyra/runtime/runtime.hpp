@@ -11,6 +11,7 @@
 
 #include "lyra/base/time.hpp"
 #include "lyra/runtime/coroutine.hpp"
+#include "lyra/runtime/coverage.hpp"
 #include "lyra/runtime/diagnostic.hpp"
 #include "lyra/runtime/file_table.hpp"
 #include "lyra/runtime/mem_file.hpp"
@@ -158,6 +159,9 @@ class Runtime final : public RuntimeEffects {
   void ExecuteReactiveRegion();
   void ExecutePostponedRegion();
   void ExecuteFinalProcesses();
+  // LRM 16.3 requires a tool to report immediate cover results at the end of
+  // simulation where it offers no assertion API to ask for them on demand.
+  void ReportCoverage();
 
   void AdvanceToNextTime();
   void AdvanceDeltaCycle();
@@ -178,6 +182,7 @@ class Runtime final : public RuntimeEffects {
   DiagnosticDispatcher diagnostic_;
   FileTable files_{stream_};
   PlusArgsSource plusargs_;
+  CoverageLog coverage_;
   CurrentRuntimeGuard current_runtime_guard_{*this};
   std::unique_ptr<Design> design_;
   SchedulerQueues queues_;

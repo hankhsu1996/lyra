@@ -17,6 +17,7 @@
 #include "lyra/lowering/hir_to_mir/default_value.hpp"
 #include "lyra/lowering/hir_to_mir/self_ref.hpp"
 #include "lyra/lowering/hir_to_mir/sensitivity_wait.hpp"
+#include "lyra/lowering/hir_to_mir/statement/assertions.hpp"
 #include "lyra/lowering/hir_to_mir/statement/assignment.hpp"
 #include "lyra/lowering/hir_to_mir/statement/blocks.hpp"
 #include "lyra/lowering/hir_to_mir/statement/branches.hpp"
@@ -57,6 +58,12 @@ auto ProcessLowerer::LowerStmt(const hir::Stmt& stmt, WalkFrame frame)
           },
           [&](const hir::PatternCaseStmt& c) {
             return LowerPatternCaseStmt(*this, frame, stmt.label, c, stmt.span);
+          },
+          [&](const hir::AssertStmt& a) {
+            return LowerAssertStmt(*this, frame, stmt.label, a, stmt.span);
+          },
+          [&](const hir::CoverStmt& c) {
+            return LowerCoverStmt(*this, frame, stmt.label, c, stmt.span);
           },
           [&](const hir::ForStmt& f) {
             return LowerForStmt(*this, frame, stmt.label, f);

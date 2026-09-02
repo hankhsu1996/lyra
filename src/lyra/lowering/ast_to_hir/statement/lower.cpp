@@ -18,6 +18,7 @@
 #include "lyra/base/internal_error.hpp"
 #include "lyra/diag/diag_code.hpp"
 #include "lyra/lowering/ast_to_hir/process_lowerer.hpp"
+#include "lyra/lowering/ast_to_hir/statement/assertions.hpp"
 #include "lyra/lowering/ast_to_hir/statement/blocks.hpp"
 #include "lyra/lowering/ast_to_hir/statement/branches.hpp"
 #include "lyra/lowering/ast_to_hir/statement/loops.hpp"
@@ -85,7 +86,7 @@ auto LowerVariableDeclStmt(
       .span = span};
 }
 
-// LRM 20.12 assertion control tasks. Each is a void system task, so a call is
+// LRM 20.11 assertion control tasks. Each is a void system task, so a call is
 // only ever a statement -- matching here covers every position the LRM gives
 // them.
 auto IsAssertionControlTask(const slang::ast::Expression& expr) -> bool {
@@ -129,7 +130,7 @@ auto LowerExpressionStmt(
   // left to act on: it is a no-op by construction, not an approximation of
   // one. Without the policy it is a rejected construct, not silently ignored.
   if (IsAssertionControlTask(es.expr)) {
-    if (proc.Owner().Assertions() == support::AssertionPolicy::kSkip) {
+    if (support::ElidesAssertions(proc.Owner().AssertionPolicy())) {
       return LowerEmptyStmt(span);
     }
     return diag::Fail(
@@ -286,17 +287,22 @@ auto LowerStatement(
           proc, frame, stmt.as<slang::ast::ReturnStatement>(), span);
 
     case slang::ast::StatementKind::ImmediateAssertion:
+      if (support::ElidesAssertions(proc.Owner().AssertionPolicy())) {
+        return LowerEmptyStmt(span);
+      }
+      return LowerImmediateAssertionStmt(
+          proc, frame, stmt.as<slang::ast::ImmediateAssertionStatement>(),
+          span);
+
     case slang::ast::StatementKind::ConcurrentAssertion:
-      // An assertion embedded in surrounding behavior contributes no statement
-      // when disabled; the rest of the process runs. Without the policy it is a
-      // rejected construct, not silently ignored.
-      if (proc.Owner().Assertions() == support::AssertionPolicy::kSkip) {
+      if (support::ElidesAssertions(proc.Owner().AssertionPolicy())) {
         return LowerEmptyStmt(span);
       }
       return diag::Fail(
           span, diag::DiagCode::kUnsupportedStatementForm,
-          "assertion statements are not supported; pass --assertions skip "
-          "to elide them");
+          "a concurrent assertion is evaluated against values sampled across "
+          "clock ticks, which is not yet supported; pass --assertions skip to "
+          "elide it");
 
     default:
       return diag::Fail(

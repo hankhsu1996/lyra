@@ -141,6 +141,37 @@ struct PatternCaseStmt {
   std::optional<UniquePriorityCheck> check;
 };
 
+// LRM 16.2 verification directive of an immediate assertion. The two state
+// different things -- an obligation the design must meet, and an assumption
+// about the environment around it -- and a simulation tool checks both the same
+// way, so what the directive decides is which of the two a failure names.
+enum class AssertionDirective : std::uint8_t {
+  kAssert,
+  kAssume,
+};
+
+// LRM 16.3 simple immediate assert / assume: the expression is tested where
+// the statement executes, read the way the condition of a procedural if is
+// read. Either arm of the action block may be omitted, and the two omissions
+// mean different things -- with no pass statement a true expression runs
+// nothing, while with no fail statement a false expression still reaches the
+// tool's own failure report.
+struct AssertStmt {
+  AssertionDirective directive;
+  ExprId condition;
+  std::optional<StmtId> pass_stmt;
+  std::optional<StmtId> fail_stmt;
+};
+
+// LRM 16.3 simple immediate cover: success of the expression is a coverage
+// goal, which inverts the disposition an assert has. A false expression is not
+// a failure, so the grammar gives this form a single statement rather than an
+// action block and there is no fail arm to carry.
+struct CoverStmt {
+  ExprId condition;
+  std::optional<StmtId> pass_stmt;
+};
+
 struct ForInitDecl {
   ProceduralVarId var = {};
   std::optional<ExprId> init;
@@ -292,9 +323,9 @@ struct DisableStmt {
 
 using StmtData = std::variant<
     EmptyStmt, VarDeclStmt, ExprStmt, BlockStmt, ForkStmt, IfStmt, CaseStmt,
-    PatternCaseStmt, ForStmt, WhileStmt, RepeatStmt, DoWhileStmt, ForeverStmt,
-    BreakStmt, ContinueStmt, ReturnStmt, TimedStmt, EventTriggerStmt, WaitStmt,
-    WaitForkStmt, DisableForkStmt, DisableStmt>;
+    PatternCaseStmt, AssertStmt, CoverStmt, ForStmt, WhileStmt, RepeatStmt,
+    DoWhileStmt, ForeverStmt, BreakStmt, ContinueStmt, ReturnStmt, TimedStmt,
+    EventTriggerStmt, WaitStmt, WaitForkStmt, DisableForkStmt, DisableStmt>;
 
 struct Stmt {
   std::optional<std::string> label;

@@ -774,6 +774,11 @@ void lyra_rt_emit_fatal(
       ->EmitFatal(Read<String>(origin), Read<String>(text));
 }
 
+void lyra_rt_record_coverage(void* runtime, const void* site, bool succeeded) {
+  static_cast<RuntimeEffects*>(runtime)->RecordCoverage(
+      Read<String>(site), succeeded);
+}
+
 auto lyra_rt_enter_coroutine_borrowed_environment(void* frame) -> void* {
   return lyra::runtime::StartGeneratedProcess(
       lyra::runtime::GeneratedEnvironment::Borrowing(frame));
