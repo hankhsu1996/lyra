@@ -29,6 +29,13 @@ machinery owned by other workstreams; see [Blocked](#blocked).
       parsed and validated at lowering, but the engine terminates regardless of its value; the
       level-gated end-of-simulation reporting (nothing / time / time plus statistics) is not
       implemented.
+- [ ] P15 -- A run-time error Lyra itself raises ends the simulation without running `final`. LRM
+      20.10 makes `$fatal` call `$finish` implicitly, and 9.2.3 makes `final` run on an implicit
+      `$finish` as much as an explicit one, so the two ways a run can end fatally have to walk the
+      same shutdown. Today one of them reaches the tool's top level without the engine seeing it,
+      and a design carrying a `final` block can tell which happened. Settled in
+      `decisions/run-time-failure-is-not-an-outcome.md`; also open per condition is which severity
+      (LRM 20.10 has one that does not end the run) each LRM run-time error should take.
 - [x] P3 -- `always` / `always_ff` (LRM 9.2.2). `always_ff` collapses to the same shape as `always`
       because the LRM 9.2.2.4 restrictions are lint-only and the frontend already enforces them.
       Pathological zero-delay loops are caught by the engine's settle limit.

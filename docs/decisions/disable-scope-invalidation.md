@@ -2,8 +2,8 @@
 
 Date: 2026-07-18. Status: accepted; realized in both backends for a named block, a named fork, and a
 task, including nested scopes, tasks called from within a scope, and activities spawned within one.
-On the execution backend the cases reaching it are those needing no second activation, since a task
-enable and a fork branch are not lowerable there yet.
+Both backends now reach the cases that need a second activation as well, since a fork branch and a
+call into a task both lower on the execution backend.
 
 ## Why this decision matters
 

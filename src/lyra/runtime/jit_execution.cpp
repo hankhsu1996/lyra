@@ -6,6 +6,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <deque>
+#include <exception>
 #include <functional>
 #include <memory>
 #include <span>
@@ -63,8 +64,6 @@ namespace lyra::runtime {
 
 namespace {
 
-using GeneratedRamp = void* (*)(void* env);
-
 // An RAII owner of a generated body's own coroutine frame, reached as an opaque
 // address the ramp returns. Destroying it destroys the frame, so the generated
 // body is torn down on every path its driver leaves -- normal completion,
@@ -106,40 +105,41 @@ class GeneratedCoroutine {
 };
 
 // The environment a callable value binds, held for as long as the body it was
-// bound for can read it. Both alternatives are that one concept: a process and
-// a spawned branch are each a callable value, registered or spawned by a site
-// that does not supply the environment per invocation.
+// bound for can read it. Both alternatives are that one concept: a process, a
+// spawned branch and an enabled task are each a body run by a site that does
+// not stay to supply the environment per invocation.
 //
 // Which alternative one takes is how long the environment outlives the body,
-// never what construct it came from. A process reaches its members through a
-// receiver that outlives every activation reading it, so a pointer to it is
-// borrowed; a branch reads captures copied where the `fork` ran, which outlive
-// nothing on their own, so they are owned here and die with this frame.
+// never what construct it came from. A body reaching its members through a
+// receiver borrows one that outlives every activation reading it, so the frame
+// carries it and there is nothing to hold here; a branch reads captures copied
+// where the `fork` ran, which outlive nothing on their own, so they are owned
+// here and die with this frame.
 class GeneratedEnvironment {
  public:
-  static auto Borrowing(GeneratedRamp ramp, void* env) -> GeneratedEnvironment {
-    return GeneratedEnvironment{Receiver{.ramp = ramp, .env = env}};
+  static auto Borrowing(void* frame) -> GeneratedEnvironment {
+    return GeneratedEnvironment{Borrowed{.frame = frame}};
   }
   static auto Owning(ClosureValue closure) -> GeneratedEnvironment {
     return GeneratedEnvironment{std::move(closure)};
   }
 
-  // Enters the body and answers the handle it yielded, having run to its first
-  // suspension.
-  auto Start() -> void* {
+  // The body's own frame, built and not yet begun, handed over once. Where the
+  // captures are held here, building the frame is what binds the body to their
+  // address, so it cannot happen until this environment is where it will stay.
+  auto TakeFrame() -> void* {
     return std::visit(
         Overloaded{
-            [](Receiver& r) { return r.ramp(r.env); },
+            [](Borrowed& b) { return b.frame; },
             [](ClosureValue& c) { return c.Start(); }},
         held_);
   }
 
  private:
-  struct Receiver {
-    GeneratedRamp ramp = nullptr;
-    void* env = nullptr;
+  struct Borrowed {
+    void* frame = nullptr;
   };
-  using Held = std::variant<Receiver, ClosureValue>;
+  using Held = std::variant<Borrowed, ClosureValue>;
 
   explicit GeneratedEnvironment(Held held) : held_(std::move(held)) {
   }
@@ -147,53 +147,79 @@ class GeneratedEnvironment {
   Held held_;
 };
 
+// Reaches the running coroutine's own record without suspending, which is how a
+// body names storage belonging to the execution rather than to itself.
+struct RunningExecution {
+  PromiseBase* promise = nullptr;
+  // A coroutine awaiter hook is an instance customization point by contract, so
+  // it stays a member even where the implementation reads no awaiter state.
+  // NOLINTNEXTLINE(readability-convert-member-functions-to-static)
+  [[nodiscard]] auto await_ready() const noexcept -> bool {
+    return false;
+  }
+  template <class P>
+  auto await_suspend(std::coroutine_handle<P> self) noexcept -> bool {
+    promise = &self.promise();
+    return false;
+  }
+  [[nodiscard]] auto await_resume() const noexcept -> PromiseBase* {
+    return promise;
+  }
+};
+
 // The runtime-owned coroutine that is the process the engine schedules, and
 // which drives the generated body's own coroutine.
 //
 // The engine's activation token is a C++ promise carrying non-trivial members.
-// A generated body is free of it: it holds only its own coroutine, and this
-// adapter owns the promise on its behalf. So the frame a code generator lays
-// out never has to embed a runtime C++ type -- only a coroutine's resume, done,
-// and destroy cross the boundary. That is what this adapter buys, and why the
-// engine resumes it rather than the generated coroutine.
+// A generated body is free of it: it holds only its own coroutine, and this one
+// owns the promise on its behalf. So the frame a code generator lays out never
+// has to embed a runtime C++ type -- only a coroutine's resume, done, and
+// destroy cross the boundary. That is what this buys, and why the engine
+// resumes this rather than the generated body.
 //
-// The generated body runs to its next suspension, having already registered its
-// own wakeup; the adapter then parks, and resumes it when the engine runs the
-// adapter again.
-//
-// This adapter frame realizes the activation. It owns the lifetimes the
-// generated body needs but cannot hold itself. The `activation_frame` holds
-// every value whose lifetime crosses a suspension -- a procedural local a
-// suspending body reads after it resumes -- so a handle the generated frame
-// carries across a suspension points here, not into a per-stretch scope that is
-// released when the stretch returns. `generated` RAII-owns the body's own
-// coroutine, and `environment` whatever state the body was entered on, so all
-// are destroyed together, on every path the adapter leaves. Each stretch of
-// generated code runs in its own generated-call scope naming this frame; a
-// transient the stretch materializes still lives in that scope and is released
-// when the stretch returns.
+// This is the activation. It holds what the generated body needs and cannot
+// hold itself -- that body's own coroutine, the environment it was entered on,
+// and this execution's value store -- so all are released together, on every
+// path this leaves.
 auto RunGeneratedProcess(GeneratedEnvironment environment) -> Coroutine<void> {
-  ActivationFrameStorage activation_frame;
-  GeneratedCoroutine generated;
-  {
-    GeneratedCallScope scope(&activation_frame);
-    generated = GeneratedCoroutine{environment.Start()};
-  }
-  while (!generated.Done()) {
-    co_await std::suspend_always{};
+  PromiseBase& execution = *(co_await RunningExecution{});
+  execution.activation_values = std::make_unique<ActivationValueStore>();
+  ActivationValueStore& values = *execution.activation_values;
+
+  // The ramp lays out the body's frame and stops before its first statement, so
+  // no generated code has run yet and no scope is needed to hold what it makes.
+  GeneratedCoroutine generated{environment.TakeFrame()};
+
+  // Every stretch of the body runs in a scope of its own naming this store, and
+  // the parking between two of them holds none: a scope open across a park
+  // would still be the innermost one while some other execution ran.
+  for (;;) {
     {
-      GeneratedCallScope scope(&activation_frame);
+      GeneratedCallScope scope(&values);
       generated.Resume();
     }
+    if (generated.Done()) {
+      break;
+    }
+    co_await std::suspend_always{};
   }
   // A body that cannot be unwound through reports a control effect no region of
   // it claimed as an outcome rather than by leaving; raising it here is what
   // settles this activation cancelled instead of finished (LRM 9.6.2, 9.7).
-  if (CancellationTarget* target = activation_frame.CancelledBy();
-      target != nullptr) {
+  if (CancellationTarget* target = values.CancelledBy(); target != nullptr) {
     RaiseControlEffect(target);
   }
   co_return;
+}
+
+// Builds the execution that drives a generated body, suspended before its first
+// statement. It is built into the enclosing stretch's arena because whoever
+// enables it hands the handle straight to the engine or to an awaiting frame,
+// either of which takes ownership from there.
+auto StartGeneratedProcess(GeneratedEnvironment environment)
+    -> Coroutine<void>* {
+  return GeneratedCallScope::Current().Arena().New<Coroutine<void>>(
+      RunGeneratedProcess(std::move(environment)));
 }
 
 // The branches one `fork` spawned, taken out of the stretch that built them.
@@ -733,18 +759,43 @@ void lyra_rt_emit_fatal(
       ->EmitFatal(Read<String>(origin), Read<String>(text));
 }
 
-auto lyra_rt_enter_coroutine_borrowed_environment(
-    void* (*ramp)(void*), void* env) -> void* {
-  return GeneratedCallScope::Current().Arena().New<Coroutine<void>>(
-      lyra::runtime::RunGeneratedProcess(
-          lyra::runtime::GeneratedEnvironment::Borrowing(ramp, env)));
+auto lyra_rt_enter_coroutine_borrowed_environment(void* frame) -> void* {
+  return lyra::runtime::StartGeneratedProcess(
+      lyra::runtime::GeneratedEnvironment::Borrowing(frame));
 }
 
 auto lyra_rt_enter_coroutine_owned_environment(void* closure) -> void* {
-  return GeneratedCallScope::Current().Arena().New<Coroutine<void>>(
-      lyra::runtime::RunGeneratedProcess(
-          lyra::runtime::GeneratedEnvironment::Owning(
-              std::move(*static_cast<ClosureValue*>(closure)))));
+  return lyra::runtime::StartGeneratedProcess(
+      lyra::runtime::GeneratedEnvironment::Owning(
+          std::move(*static_cast<ClosureValue*>(closure))));
+}
+
+auto lyra_rt_await_coroutine(void* runtime, void* activation) -> bool {
+  auto& svc = *static_cast<RuntimeEffects*>(runtime);
+  lyra::runtime::RuntimeProcess& process = svc.CurrentProcess();
+  const CoroutineHandle caller = process.CurrentLeaf();
+  const CoroutineHandle called = process.PushActivation(
+      std::move(*static_cast<Coroutine<void>*>(activation)));
+  called->self.resume();
+  // An activation that consumed no time is over before its caller could have
+  // waited for it, and the caller is still on the stack below, so nothing
+  // continues it and it must not park.
+  if (called->self.done()) {
+    // A failure that left the body was stored rather than allowed to travel,
+    // because a coroutine's promise stores whatever escapes the body it drives.
+    // Nothing settled it and nothing here reads it, so it continues outward
+    // from the point the body stopped.
+    if (std::exception_ptr failure = process.TakeInnermostFailure(); failure) {
+      std::rethrow_exception(failure);
+    }
+    return false;
+  }
+  called->continuation = caller->self;
+  return true;
+}
+
+void lyra_rt_release_coroutine(void* runtime) {
+  static_cast<RuntimeEffects*>(runtime)->CurrentProcess().PopActivation();
 }
 
 void lyra_rt_spawn_all(void* runtime, LyraSpan branches) {
@@ -912,7 +963,7 @@ auto lyra_rt_has_invalidated_target(void* runtime) -> bool {
 }
 
 void lyra_rt_settle_cancelled(void* effect) {
-  GeneratedCallScope::Current().ActivationFrame().SettleCancelled(
+  GeneratedCallScope::Current().ActivationValues().SettleCancelled(
       static_cast<CancellationTarget*>(effect));
 }
 
@@ -1196,22 +1247,22 @@ void lyra_rt_shortreal_cell_set(void* cell, const void* value) {
 }
 
 // A procedural local whose value crosses a suspension. The cell is allocated in
-// the activation frame (the driving coroutine owns it), so the handle the
-// generated frame carries across a suspension points into activation-lifetime
-// storage. A store overwrites the cell in place -- the first store installs the
-// declared representation -- and a load copies the current value into the
+// the running execution's own value store, so the handle the generated frame
+// carries across a suspension points at storage that outlives every stretch of
+// that body. A store overwrites the cell in place -- the first store installs
+// the declared representation -- and a load copies the current value into the
 // per-stretch scope, like any other value the boundary hands back. A procedural
 // local is not observable, so no runtime handle threads through and no
 // subscriber wakes.
 auto lyra_rt_packed_value_cell_alloc() -> void* {
   return GeneratedCallScope::Current()
-      .ActivationFrame()
+      .ActivationValues()
       .New<ActivationValueCell<PackedArray>>();
 }
 
 auto lyra_rt_string_value_cell_alloc() -> void* {
   return GeneratedCallScope::Current()
-      .ActivationFrame()
+      .ActivationValues()
       .New<ActivationValueCell<String>>();
 }
 
@@ -1862,7 +1913,7 @@ auto lyra_rt_real_convert_from_real(const void* value) -> void* {
 
 auto lyra_rt_real_value_cell_alloc() -> void* {
   return GeneratedCallScope::Current()
-      .ActivationFrame()
+      .ActivationValues()
       .New<ActivationValueCell<Real>>();
 }
 
@@ -1974,7 +2025,7 @@ auto lyra_rt_shortreal_convert_from_real(const void* value) -> void* {
 
 auto lyra_rt_shortreal_value_cell_alloc() -> void* {
   return GeneratedCallScope::Current()
-      .ActivationFrame()
+      .ActivationValues()
       .New<ActivationValueCell<ShortReal>>();
 }
 
@@ -2130,7 +2181,7 @@ void lyra_rt_tuple_cell_set(void* cell, const void* value) {
 
 auto lyra_rt_tuple_value_cell_alloc() -> void* {
   return GeneratedCallScope::Current()
-      .ActivationFrame()
+      .ActivationValues()
       .New<ActivationValueCell<RuntimeTuple>>();
 }
 
@@ -2202,7 +2253,7 @@ void lyra_rt_union_cell_set(void* cell, const void* value) {
 
 auto lyra_rt_union_value_cell_alloc() -> void* {
   return GeneratedCallScope::Current()
-      .ActivationFrame()
+      .ActivationValues()
       .New<ActivationValueCell<RuntimeUnion>>();
 }
 
@@ -2287,7 +2338,7 @@ void lyra_rt_tagged_union_cell_set(void* cell, const void* value) {
 
 auto lyra_rt_tagged_union_value_cell_alloc() -> void* {
   return GeneratedCallScope::Current()
-      .ActivationFrame()
+      .ActivationValues()
       .New<ActivationValueCell<RuntimeTaggedUnion>>();
 }
 
@@ -2398,7 +2449,7 @@ void lyra_rt_dynarray_cell_set(void* cell, const void* value) {
 
 auto lyra_rt_dynarray_value_cell_alloc() -> void* {
   return GeneratedCallScope::Current()
-      .ActivationFrame()
+      .ActivationValues()
       .New<ActivationValueCell<RuntimeDynamicArray>>();
 }
 
@@ -2580,7 +2631,7 @@ void lyra_rt_unpackedarray_cell_set(void* cell, const void* value) {
 
 auto lyra_rt_unpackedarray_value_cell_alloc() -> void* {
   return GeneratedCallScope::Current()
-      .ActivationFrame()
+      .ActivationValues()
       .New<ActivationValueCell<RuntimeUnpackedArray>>();
 }
 
@@ -2740,7 +2791,7 @@ void lyra_rt_queue_cell_set(void* cell, const void* value) {
 
 auto lyra_rt_queue_value_cell_alloc() -> void* {
   return GeneratedCallScope::Current()
-      .ActivationFrame()
+      .ActivationValues()
       .New<ActivationValueCell<RuntimeQueue>>();
 }
 
@@ -2901,7 +2952,7 @@ void lyra_rt_assocarray_cell_set(void* cell, const void* value) {
 
 auto lyra_rt_assocarray_value_cell_alloc() -> void* {
   return GeneratedCallScope::Current()
-      .ActivationFrame()
+      .ActivationValues()
       .New<ActivationValueCell<RuntimeAssociativeArray>>();
 }
 

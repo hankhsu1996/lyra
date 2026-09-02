@@ -219,8 +219,8 @@ auto RuntimeSymbol(lir::ControlEffectTarget::Op op) -> std::string {
   return Symbol(lir::ControlEffectOpName(op));
 }
 
-auto RuntimeSymbol(lir::EnterCoroutineTarget::Op op) -> std::string {
-  return Symbol(lir::EnterCoroutineOpName(op));
+auto RuntimeSymbol(lir::CoroutineTarget::Op op) -> std::string {
+  return Symbol(lir::CoroutineOpName(op));
 }
 
 auto RuntimeSymbol(support::ValueDomain domain, lir::ValueCellTarget::Op op)
@@ -258,6 +258,12 @@ auto EntryNamingOf(support::BuiltinFn fn) -> EntryNaming {
   // a chain of appends, the way a packed join already is.
   constexpr std::string_view kTakesAsManyPartsAsWritten =
       "builds a container from as many parts as the source wrote";
+  // A foreign call that can suspend runs the SV side on a stack the runtime did
+  // not create (LRM 35.5.6, 35.8), which the value library reaches only through
+  // types the host compiler laid out for it. Nothing crosses a C ABI that
+  // stands for one.
+  constexpr std::string_view kCrossesAForeignStack =
+      "carries an execution across a stack the runtime does not own";
 
   switch (fn) {
     case support::BuiltinFn::kElement:
@@ -419,6 +425,12 @@ auto EntryNamingOf(support::BuiltinFn fn) -> EntryNaming {
     case support::BuiltinFn::kWriteMemWithin:
       return NamedByValue{.operand = 1};
 
+    case support::BuiltinFn::kRunForeignTaskOnFiber:
+    case support::BuiltinFn::kRunExportedTaskToCompletion:
+    case support::BuiltinFn::kCurrentExportScope:
+    case support::BuiltinFn::kFindExportEntry:
+      return NotRealized{.shape = kCrossesAForeignStack};
+
     case support::BuiltinFn::kTrigger:
     case support::BuiltinFn::kAwait:
     case support::BuiltinFn::kTriggered:
@@ -494,10 +506,6 @@ auto EntryNamingOf(support::BuiltinFn fn) -> EntryNaming {
     case support::BuiltinFn::kDisable:
     case support::BuiltinFn::kRegisterInitial:
     case support::BuiltinFn::kRegisterFinal:
-    case support::BuiltinFn::kRunForeignTaskOnFiber:
-    case support::BuiltinFn::kRunExportedTaskToCompletion:
-    case support::BuiltinFn::kCurrentExportScope:
-    case support::BuiltinFn::kFindExportEntry:
     case support::BuiltinFn::kMakeDynamicArrayDefault:
     case support::BuiltinFn::kMakeDynamicArrayNew:
     case support::BuiltinFn::kMakeDynamicArrayNewCopy:

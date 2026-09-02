@@ -227,8 +227,8 @@ the detail lives in the entry itself.
   the activation (which also RAII-owns the generated coroutine), reached through a frame-held handle
   so its value outlives the per-stretch scope. Every coroutine value local gets one (no liveness
   analysis); the cell shares a storage core with the signal cell but is not observable, and the
-  access is a `ActivationFrameTarget` LIR call so the backend stays mechanical. Native in-frame
-  layout, a backend-private arena, and a narrow liveness pass are rejected.
+  access is a `ValueCellTarget` LIR call so the backend stays mechanical. Native in-frame layout, a
+  backend-private arena, and a narrow liveness pass are rejected.
 - [managed-value-realization](managed-value-realization.md) -- a managed value never lives in
   storage this compiler does not describe, because the coroutine frame is delegated to LLVM and its
   contents are not enumerable. Three described storages -- the static instance tree, activation
@@ -238,10 +238,14 @@ the detail lives in the entry itself.
   the static tree into the heap, and a second traceable-frame path are rejected.
 - [activation-frame-and-transient-scope](activation-frame-and-transient-scope.md) -- naming and the
   escape invariant: `RuntimeProcess` is the lineage/scheduler node, `activation` is the control
-  identity, the `activation frame` (`ActivationFrameStorage`) is the cross-suspension value storage,
-  and `GeneratedCallScope` is the per-stretch transient. A transient may not escape its stretch;
-  every escaping store copies/promotes (the one non-copying path, a method return, stays in the
-  caller's scope). A fused `RuntimeActivation` and a speculative slot/trace/GC shape are rejected.
+  identity, `ActivationValueStore` is one execution's cross-suspension value storage (named a store
+  rather than a frame, because the generated body already has a frame and this is not it), and
+  `GeneratedCallScope` is the per-stretch transient. A transient may not escape its stretch; every
+  escaping store copies/promotes (the one non-copying path, a method return, stays in the caller's
+  scope). A speculative slot/trace/GC shape is rejected. The entry's own rejection of a fused
+  activation record is **withdrawn**: it left the storage nowhere to live but a coroutine body's
+  local, which dies one step before the frame around it, and both readings that forbid it were
+  already in `object_lifetime.md`.
 - [root-unit-elaboration](root-unit-elaboration.md) -- design elaboration is the synthetic `$root`
   unit's `construct` entry, which builds the top-level modules as its owned children; there is no
   design-level free function. Engine / bind / run stay host runner policy and never enter MIR; both
@@ -322,6 +326,16 @@ the detail lives in the entry itself.
   is carried by the running process, so it spans a call, and is captured at a spawn. A local goto, a
   per-thread extent frontier carried in a `DisableUnwind` exception, an explicit resume-reason, a
   dedicated entitlement object, and membership rebuilt per callable from lexical scope are rejected.
+- [run-time-failure-is-not-an-outcome](run-time-failure-is-not-an-outcome.md) -- an activation's
+  terminal outcome carries only what the source language can consume, which is the produced value
+  and the departure a region lands; SystemVerilog has no spelling for a failure, so a failure is the
+  tool speaking and not an outcome. Failures are told apart by who acts on them, not by when they
+  surface: an unsupported construct is a lowering's answer whenever it is found, a design's run-time
+  error is a severity report whose level the tool chooses (LRM 20.10 admits one that does not end
+  the run), and an internal inconsistency does not borrow the language's ending. Ending the run
+  walks `$finish`'s tail so `final` procedures execute (9.2.3). Reverses the third alternative of
+  `activation.md` invariant 2; the awaiter-side delivery every async runtime uses, a Rust-style
+  error value, and a check after every fallible operation are rejected.
 
 ### Diagnostics
 

@@ -1,6 +1,7 @@
 #pragma once
 
 #include <cstdint>
+#include <exception>
 #include <memory>
 #include <vector>
 
@@ -187,10 +188,28 @@ class RuntimeProcess : public std::enable_shared_from_this<RuntimeProcess> {
   // parks and is never dispatched again -- reaches neither.
   template <class Park>
   void RegisterWakeup(Park park) {
-    const CoroutineHandle leaf = TopHandle();
+    const CoroutineHandle leaf = current_leaf_;
     EnrolInEnclosingTargets(leaf);
     park(leaf);
   }
+
+  // Hands this thread to `nested` and takes it back. A called task runs in its
+  // caller's thread (LRM 9.5) rather than as a process of its own, so one
+  // process can be inside several activations at once; the innermost is what a
+  // wait this thread registers parks, and what the scheduler resumes. They are
+  // owned here because nothing below them outlives a suspension.
+  auto PushActivation(Coroutine<void> nested) -> CoroutineHandle;
+  void PopActivation();
+
+  // The failure that left the innermost activation's body, if any. A failure is
+  // not something an activation settles -- SystemVerilog has no spelling that
+  // could read one -- but a driver written as a coroutine stores whatever
+  // leaves the body it drives, because that is what the language does with an
+  // escaping exception. This takes it back out so it can continue on its way.
+  // A control effect is not a failure and does not come back this way: it names
+  // a target this thread is inside, which the thread answers for itself
+  // wherever it regains control.
+  [[nodiscard]] auto TakeInnermostFailure() -> std::exception_ptr;
 
   [[nodiscard]] auto CurrentLeaf() const -> CoroutineHandle {
     return current_leaf_;
@@ -419,6 +438,9 @@ class RuntimeProcess : public std::enable_shared_from_this<RuntimeProcess> {
   // non-executing process has exactly one active leaf). Starts at the top frame
   // and follows the innermost parked frame as waits block it.
   CoroutineHandle current_leaf_ = nullptr;
+  // The activations this thread is inside beyond its own body, innermost last,
+  // each called by the one before it. Empty while it runs its own body.
+  std::vector<Coroutine<void>> nested_activations_;
   // The foreign execution this thread is running under right now, valid only
   // while a foreign call is on the stack; the guard sets and clears it. Null
   // outside any foreign call, which is every plain-coroutine process.

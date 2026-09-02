@@ -42,6 +42,27 @@ auto RuntimeProcess::Parent() const -> RuntimeProcess* {
   return parent_;
 }
 
+auto RuntimeProcess::PushActivation(Coroutine<void> nested) -> CoroutineHandle {
+  nested_activations_.push_back(std::move(nested));
+  const CoroutineHandle leaf = nested_activations_.back().Token();
+  // A called task runs in its caller's thread (LRM 9.5), so it reaches the same
+  // identity, lineage and disable membership as the body that called it.
+  leaf->process = this;
+  current_leaf_ = leaf;
+  return leaf;
+}
+
+void RuntimeProcess::PopActivation() {
+  nested_activations_.pop_back();
+  current_leaf_ = nested_activations_.empty()
+                      ? TopHandle()
+                      : nested_activations_.back().Token();
+}
+
+auto RuntimeProcess::TakeInnermostFailure() -> std::exception_ptr {
+  return nested_activations_.back().Handle().promise().TakeFault();
+}
+
 void RuntimeProcess::ArmWaitFork(CoroutineHandle waiter) {
   waiter->Park(parked_wait_fork_);
 }
@@ -219,7 +240,13 @@ void RuntimeProcess::SettleTerminated(
   // frame, which revokes every registration it held -- so a killed process,
   // parked anywhere, is left unable to resume. A branch this body spawned may
   // still be running, which is why the node itself stays (LRM 9.6.3).
+  //
+  // A thread that had handed itself to a called activation holds that frame
+  // too, and it is the innermost one -- so it, not the body below it, is what a
+  // wait target can still name.
+  nested_activations_.clear();
   coroutine_ = Coroutine<void>{};
+  current_leaf_ = nullptr;
   // Settling and draining the `await` waiters are one step: a process reaching
   // terminal always hands its waiters to `woken` in the same primitive, so no
   // terminal path can leave an awaiter parked forever (LRM 9.7).

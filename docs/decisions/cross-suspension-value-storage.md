@@ -87,15 +87,15 @@ the driving adapter coroutine owns for the activation's whole life, distinct fro
    every path the activation can leave; neither leaks when the activation is released while its body
    is suspended.
 
-5. The activation-frame value is an explicit LIR operation, decided at MIR-to-LIR. A value-typed
-   local in a suspending body lowers to an activation-frame allocation and activation-frame load /
-   store calls (the `ActivationFrameTarget` LIR operation) -- storage placement, which MIR-to-LIR
-   owns -- so LIR states the storage access as a call, and LIR-to-LLVM realizes it mechanically, the
-   way it realizes any call (the value domain names the runtime entry). The backend never derives a
-   local's storage from the function's coroutine-ness or the local's type. MIR carries no
-   storage-cell node: the activation frame is a below-MIR storage realization the C++ backend, which
-   consumes MIR, never sees. The naming of the activation frame vs the per-stretch transient scope,
-   and the invariant that a transient may not escape its stretch, are settled in
+5. The cell is an explicit LIR operation, decided at MIR-to-LIR. A value-typed local in a suspending
+   body lowers to a cell allocation and cell load / store calls (the `ValueCellTarget` LIR
+   operation) -- storage placement, which MIR-to-LIR owns -- so LIR states the storage access as a
+   call, and LIR-to-LLVM realizes it mechanically, the way it realizes any call (the value domain
+   names the runtime entry). The backend never derives a local's storage from the function's
+   coroutine-ness or the local's type. MIR carries no storage-cell node: the activation frame is a
+   below-MIR storage realization the C++ backend, which consumes MIR, never sees. The naming of the
+   activation frame vs the per-stretch transient scope, and the invariant that a transient may not
+   escape its stretch, are settled in
    [activation-frame-and-transient-scope](activation-frame-and-transient-scope.md).
 
 ## Rejected

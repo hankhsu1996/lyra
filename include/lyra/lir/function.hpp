@@ -203,16 +203,37 @@ struct ControlEffectTarget {
   Op op;
 };
 
-// Entering a body as a coroutine, yielding the execution the engine drives.
-// The two differ in what becomes of the environment the body reads, which is
-// decided by how long that environment outlives the execution: a receiver
+// The protocol by which a body entered as a coroutine is run and answers.
+//
+// The two entries make an execution the engine drives out of a body's own
+// frame. They differ in what becomes of the environment the body reads, which
+// is decided by how long that environment outlives the execution: a receiver
 // outlives every execution reaching its members, so entering borrows it; the
 // captures of a callable value outlive nothing on their own, so entering owns
-// them from there. A LIR-only target with no MIR twin: a target that can enter
-// the body where the call sits does so with an ordinary call, and the operation
-// exists only where the runtime enters it later on the program's behalf.
-struct EnterCoroutineTarget {
-  enum class Op : std::uint8_t { kBorrowedEnvironment, kOwnedEnvironment };
+// them from there.
+//
+// `kAwait` hands one such execution the thread its awaiter is carrying and
+// answers whether the awaiter must park at all, since an execution that
+// consumes no time settles before it can be waited for. `kRelease` gives the
+// thread back and ends the awaited execution. Neither names the execution once
+// it is handed over: the thread carries one at a time, so the runtime knows
+// which without being told.
+//
+// The value an execution completes with (LRM 13.4, 13.5.2) travels without any
+// operation of its own: the awaiting body allocates the storage and hands it
+// over as the call's last argument, so the completing body writes exactly where
+// its awaiter will read.
+//
+// A LIR-only target with no MIR twin: a target that can enter the body where
+// the call sits does so with an ordinary call, and every operation here exists
+// only where the runtime runs the body on the program's behalf.
+struct CoroutineTarget {
+  enum class Op : std::uint8_t {
+    kEnterBorrowedEnvironment,
+    kEnterOwnedEnvironment,
+    kAwait,
+    kRelease
+  };
   Op op;
 };
 
@@ -223,15 +244,15 @@ struct EnterCoroutineTarget {
 // improve how a dump reads.
 auto ValueCellOpName(ValueCellTarget::Op op) -> std::string_view;
 auto ControlEffectOpName(ControlEffectTarget::Op op) -> std::string_view;
-auto EnterCoroutineOpName(EnterCoroutineTarget::Op op) -> std::string_view;
+auto CoroutineOpName(CoroutineTarget::Op op) -> std::string_view;
 
 // The target of a call: a runtime builtin, a function of this unit, a value
 // constructor named by the call's result type, a foreign symbol the host
-// resolves, a value-cell operation, a control-effect operation, or entering a
-// body as a coroutine.
+// resolves, a value-cell operation, a control-effect operation, or an operation
+// of the coroutine protocol.
 using CallTarget = std::variant<
     BuiltinTarget, FunctionTarget, ConstructTarget, ForeignTarget,
-    ValueCellTarget, ControlEffectTarget, EnterCoroutineTarget>;
+    ValueCellTarget, ControlEffectTarget, CoroutineTarget>;
 
 struct CallInstr {
   CallTarget target;

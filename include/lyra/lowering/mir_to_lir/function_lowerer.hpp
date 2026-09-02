@@ -87,11 +87,11 @@ class FunctionLowerer {
   // canonical lowering needs an address for it: when its address is taken, or
   // when it is assigned after its initialization. Otherwise it stays the value
   // it was bound to, with no storage. A value-typed local in a suspending body
-  // is an activation-frame value instead: its value crosses suspensions, so it
-  // lives in the running activation's frame, reached through a handle read and
-  // written by activation-frame calls. A local whose storage is lent by
-  // reference lives in a cell, since that is the one storage a reference can
-  // name, and the binding holds the reference the lowering built over it.
+  // is an activation value instead: its value crosses suspensions, so it lives
+  // in a cell of the running execution's own store, reached through a handle
+  // the cell operations read and write. A local whose storage is lent by
+  // reference lives in a cell too, since that is the one storage a reference
+  // can name, and the binding holds the reference the lowering built over it.
   struct PlaceBinding {
     lir::ValueId slot;
   };
@@ -193,6 +193,19 @@ class FunctionLowerer {
   // here rather than upstream.
   auto LowerRegistration(const mir::Block& block, const mir::CallExpr& call)
       -> diag::Result<lir::Operand>;
+  // Awaits an execution the runtime drives: hands it this one's thread, parks
+  // where it did not settle in the same instant, and reads back the value it
+  // completed with. What ends this wait is a second body reaching its own end
+  // (LRM 13.3), not a wakeup source this one armed, so nothing is registered.
+  auto LowerCoroutineAwait(
+      const mir::Block& block, const mir::AwaitExpr& await, mir::TypeId type)
+      -> diag::Result<lir::Operand>;
+  // Builds a coroutine body's frame and makes an execution of it. `completion`
+  // is where that execution writes the value it finishes with, and is absent
+  // exactly when it finishes with no value.
+  auto EnterCoroutine(
+      const mir::Block& block, const mir::CallExpr& call, mir::TypeId type,
+      std::optional<lir::Operand> completion) -> diag::Result<lir::Operand>;
   // A reference is the address of the cell its referent lives in.
   auto LowerReferenceBind(
       const mir::Block& block, const mir::CallExpr& call, mir::TypeId type)
@@ -259,12 +272,11 @@ class FunctionLowerer {
   auto Load(lir::Place place, lir::TypeId type) -> lir::Operand;
   auto Store(lir::Place place, lir::Operand value) -> lir::Operand;
 
-  // Activation-frame value operations, emitted for a value-typed local in a
-  // suspending body. `AllocateActivationValue` builds the slot (uninitialized
-  // -- the first `StoreActivationValue` installs its representation) and
-  // returns its handle, typed as the slot's value since both cross the boundary
-  // as one opaque handle; `LoadActivationValue` copies the current value out;
-  // `StoreActivationValue` overwrites it. Each states the value the slot holds,
+  // The cell operations, emitted for a value-typed local in a suspending body.
+  // Allocating builds the slot uninitialized, the first store installing its
+  // representation; a load copies the current value out and a store overwrites
+  // it. The handle is typed as the slot's value type -- both cross the boundary
+  // as one opaque handle -- so each operation states the value the slot holds,
   // which is what names the entry realizing it: a store settles nothing and a
   // handle is opaque, so neither of those carries it.
   auto AllocateActivationValue(lir::TypeId value_type) -> lir::Operand;
@@ -273,6 +285,12 @@ class FunctionLowerer {
   auto StoreActivationValue(
       lir::Operand handle, lir::Operand value, lir::TypeId value_type)
       -> lir::Operand;
+  // A cell this body supplies for something it calls to complete into, built at
+  // frame entry so a call in a loop writes into one place rather than leaving a
+  // fresh one behind per iteration. The caller supplies it because the caller
+  // outlives what it calls; a cell of the callee's own would be gone by the
+  // time the caller read it.
+  auto AllocateCompletionFor(lir::TypeId payload) -> lir::Operand;
 
   // The storage a local lent by reference lives in. `AllocateCell` builds the
   // cell and returns the reference to it; `InitializeCell` installs the cell's
@@ -288,9 +306,9 @@ class FunctionLowerer {
       -> lir::Place;
   [[nodiscard]] static auto ReferencedValue(lir::Operand reference)
       -> lir::Place;
-  // The activation-frame handle an assignable expression writes through, when
-  // it names an activation-frame value local directly; nothing otherwise (a
-  // place is written the ordinary way).
+  // The cell handle an assignable expression writes through, when it names an
+  // activation value local directly; nothing otherwise (a place is written the
+  // ordinary way).
   auto ActivationValueHandleForTarget(const mir::Block& block, mir::ExprId id)
       -> std::optional<lir::Operand>;
 
@@ -325,13 +343,22 @@ class FunctionLowerer {
   std::vector<PendingCleanup> cleanups_;
   std::vector<RegionTargets> regions_;
   // Where each local's value lives: a frame place the body writes through or
-  // addresses, an activation-frame value (a value-typed local in a suspending
-  // body), or a cell (a local whose storage is lent by reference). The last
-  // holds what each local has resolved to so far.
+  // addresses, an activation value (a value-typed local in a suspending body),
+  // or a lent cell (a local whose storage a reference binds). The last holds
+  // what each local has resolved to so far.
   std::vector<bool> placed_;
   std::vector<bool> activation_value_local_;
   std::vector<bool> cell_local_;
   std::vector<std::optional<LocalBinding>> locals_;
+  // Where this body writes the value it finishes with: storage its caller
+  // allocated and handed over as the call's last argument, and the type of the
+  // value that storage holds. Absent exactly when this body finishes with no
+  // value.
+  struct CompletionCell {
+    lir::Operand cell;
+    lir::TypeId type;
+  };
+  std::optional<CompletionCell> completion_cell_;
 };
 
 }  // namespace lyra::lowering::mir_to_lir

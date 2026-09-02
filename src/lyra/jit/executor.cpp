@@ -160,6 +160,8 @@ void DefineRuntimeAbi(llvm::orc::LLJIT& jit) {
       &lyra_rt_enter_coroutine_borrowed_environment);
   add("lyra_rt_enter_coroutine_owned_environment",
       &lyra_rt_enter_coroutine_owned_environment);
+  add("lyra_rt_await_coroutine", &lyra_rt_await_coroutine);
+  add("lyra_rt_release_coroutine", &lyra_rt_release_coroutine);
   add("lyra_rt_register_initial", &lyra_rt_register_initial);
   add("lyra_rt_register_final", &lyra_rt_register_final);
   add("lyra_rt_spawn_all", &lyra_rt_spawn_all);

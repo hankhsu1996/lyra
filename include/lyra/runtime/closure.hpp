@@ -59,8 +59,10 @@ class ClosureValue {
   // Runs an ordinary body to completion.
   void Invoke();
 
-  // Enters a coroutine body and answers the handle it yielded, having run to
-  // its first suspension. The caller drives it from there.
+  // Builds a coroutine body's frame over these captures and answers its handle,
+  // having run no statement of it; the caller drives it from there. The body
+  // reads its captures through this value's address for as long as it runs, so
+  // this may only be called once this value is where it will stay.
   [[nodiscard]] auto Start() -> void*;
 
   // Runs a per-element body on one entry (LRM 7.12.4) and answers the value it

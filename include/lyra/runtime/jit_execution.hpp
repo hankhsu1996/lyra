@@ -113,20 +113,35 @@ void lyra_rt_emit_warning(
 void lyra_rt_emit_error(void* dispatcher, const void* origin, const void* text);
 void lyra_rt_emit_fatal(void* dispatcher, const void* origin, const void* text);
 
-// Enters a generated body as a runtime-owned coroutine, having run it to its
-// first suspension. The runtime owns the coroutine the engine schedules and
+// Makes an execution the engine can schedule out of a generated body's own
+// frame, which is built with its arguments in place and stopped before its
+// first statement. The runtime owns the coroutine the engine schedules and
 // drives the generated one through its handle; the generated body never owns
-// the scheduler's coroutine.
+// the scheduler's coroutine, and every stretch of it -- the first included --
+// runs under that driver.
 //
 // The two differ only in how long the environment the body reads outlives it,
-// never in what construct it came from. A receiver is borrowed: `ramp` starts
-// the body's own coroutine when called with the receiver it reaches its members
-// through, and that receiver outlives every execution reading it. A closure is
-// taken, supplying both the entry and the captures, because the body runs after
-// the stretch that built them has returned (LRM 9.3.2).
-auto lyra_rt_enter_coroutine_borrowed_environment(
-    void* (*ramp)(void* env), void* env) -> void*;
+// never in what construct it came from. A receiver is borrowed: it outlives
+// every execution reading it, so the frame already carries everything and
+// nothing else crosses. A closure is taken, supplying both the entry and the
+// captures, because the body runs after the stretch that built them has
+// returned (LRM 9.3.2).
+auto lyra_rt_enter_coroutine_borrowed_environment(void* frame) -> void*;
 auto lyra_rt_enter_coroutine_owned_environment(void* closure) -> void*;
+
+// Calling a task (LRM 13.3, where the call is also named a task enable).
+// `await_coroutine` gives the calling thread to `activation` and runs it there,
+// so it executes in the caller's process (LRM 9.5) rather than as one of its
+// own, and answers whether the caller must park -- which a task that consumed
+// no time makes unnecessary. `release_coroutine` takes the thread back, ends
+// that activation, and raises into the caller any fault the call settled with,
+// since the call is one statement of the calling thread.
+//
+// Neither names the activation once it is handed over: a thread is inside one
+// called activation at a time, so the runtime knows which without being told,
+// and no scheduling identity reaches generated code.
+auto lyra_rt_await_coroutine(void* runtime, void* activation) -> bool;
+void lyra_rt_release_coroutine(void* runtime);
 
 void lyra_rt_register_initial(void* self, void* unit_instance, void* coroutine);
 void lyra_rt_register_final(void* self, void* unit_instance, void* coroutine);

@@ -15,13 +15,12 @@ auto CurrentScopeSlot() -> GeneratedCallScope*& {
 
 GeneratedCallScope::GeneratedCallScope()
     : previous_(CurrentScopeSlot()),
-      activation_frame_(
-          previous_ != nullptr ? previous_->activation_frame_ : nullptr) {
+      values_(previous_ != nullptr ? previous_->values_ : nullptr) {
   CurrentScopeSlot() = this;
 }
 
-GeneratedCallScope::GeneratedCallScope(ActivationFrameStorage* activation_frame)
-    : previous_(CurrentScopeSlot()), activation_frame_(activation_frame) {
+GeneratedCallScope::GeneratedCallScope(ActivationValueStore* values)
+    : previous_(CurrentScopeSlot()), values_(values) {
   CurrentScopeSlot() = this;
 }
 
@@ -29,13 +28,13 @@ GeneratedCallScope::~GeneratedCallScope() {
   CurrentScopeSlot() = previous_;
 }
 
-auto GeneratedCallScope::ActivationFrame() -> ActivationFrameStorage& {
-  if (activation_frame_ == nullptr) {
+auto GeneratedCallScope::ActivationValues() -> ActivationValueStore& {
+  if (values_ == nullptr) {
     throw InternalError(
-        "generated call: no activation frame; a cross-suspension value was "
+        "generated call: no value store; a cross-suspension value was "
         "requested outside a suspending body");
   }
-  return *activation_frame_;
+  return *values_;
 }
 
 auto GeneratedCallScope::Current() -> GeneratedCallScope& {
