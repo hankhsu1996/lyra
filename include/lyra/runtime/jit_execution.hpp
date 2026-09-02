@@ -810,6 +810,9 @@ auto lyra_rt_make_dynamic_array_new_copy(
 auto lyra_rt_dynarray_from_literal(
     void* prototype, LyraSpan unit, std::int64_t count) -> void*;
 auto lyra_rt_dynarray_element(const void* array, const void* index) -> void*;
+auto lyra_rt_dynarray_concat_element(const void* array, void* item) -> void*;
+auto lyra_rt_dynarray_concat_spread(const void* array, const void* part)
+    -> void*;
 auto lyra_rt_dynarray_with_element(
     const void* array, const void* index, void* value) -> void*;
 auto lyra_rt_dynarray_delete(const void* array) -> void*;
@@ -831,6 +834,8 @@ auto lyra_rt_dynarray_value_cell_load(const void* cell) -> void*;
 // the value.
 auto lyra_rt_unpackedarray_from_literal(
     void* prototype, LyraSpan unit, std::int64_t count) -> void*;
+auto lyra_rt_unpackedarray_conform_size(const void* parts, std::int64_t count)
+    -> void*;
 auto lyra_rt_unpackedarray_element(
     const void* array, const void* index, const void* left, const void* right)
     -> void*;

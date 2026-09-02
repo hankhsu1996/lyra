@@ -408,8 +408,9 @@ auto EntryNamingOf(support::BuiltinFn fn) -> EntryNaming {
     case support::BuiltinFn::kFromByteArray:
     case support::BuiltinFn::kFromString:
     case support::BuiltinFn::kConformBound:
-    case support::BuiltinFn::kQueueConcatElement:
-    case support::BuiltinFn::kQueueConcatSpread:
+    case support::BuiltinFn::kArrayConcatElement:
+    case support::BuiltinFn::kArrayConcatSpread:
+    case support::BuiltinFn::kArrayConformSize:
     case support::BuiltinFn::kConcat:
     case support::BuiltinFn::kReplicate:
     case support::BuiltinFn::kPow:

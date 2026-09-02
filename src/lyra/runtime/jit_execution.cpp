@@ -2435,6 +2435,18 @@ auto lyra_rt_dynarray_element(const void* array, const void* index) -> void* {
       Read<RuntimeDynamicArray>(array).Element(Read<PackedArray>(index)));
 }
 
+auto lyra_rt_dynarray_concat_element(const void* array, void* item) -> void* {
+  const auto& source = Read<RuntimeDynamicArray>(array);
+  return Own(source.ConcatElement(
+      lyra::runtime::ElementFrom(source.ElementDefault(), item)));
+}
+
+auto lyra_rt_dynarray_concat_spread(const void* array, const void* part)
+    -> void* {
+  return Own(
+      Read<RuntimeDynamicArray>(array).ConcatSpread(Read<RuntimeValue>(part)));
+}
+
 // The functional element write (LRM 7.4.6): yields a new array with element
 // `index` replaced. The incoming value is a handle of the element domain, boxed
 // into the erased representation by the domain the element default names.
@@ -2510,6 +2522,31 @@ auto lyra_rt_unpackedarray_from_literal(
   return Own(RuntimeUnpackedArray(
       std::move(element_default), std::move(unit_elements),
       static_cast<std::size_t>(count)));
+}
+
+// LRM 10.10: adopt an unpacked concatenation's parts, accumulated into a
+// dynamic array, into a fixed-size target. A count the front end could not
+// verify -- because a spread part is sized at run time -- is checked here, a
+// mismatch being the design's own failure.
+auto lyra_rt_unpackedarray_conform_size(const void* parts, std::int64_t count)
+    -> void* {
+  const auto& source = Read<RuntimeDynamicArray>(parts);
+  const std::int64_t size = source.Size().ToInt64();
+  if (size != count) {
+    throw lyra::SimulationError(
+        std::format(
+            "unpacked array concatenation yields {} elements but the "
+            "fixed-size target has {} (LRM 10.10)",
+            size, count));
+  }
+  std::vector<RuntimeValue> elements;
+  elements.reserve(static_cast<std::size_t>(size));
+  for (std::int64_t i = 0; i < size; ++i) {
+    elements.push_back(source.ElementAt(static_cast<std::size_t>(i)));
+  }
+  return Own(RuntimeUnpackedArray(
+      source.ElementDefault(), std::move(elements),
+      static_cast<std::size_t>(1)));
 }
 
 auto lyra_rt_unpackedarray_merge_conditional(const void* lhs, const void* rhs)

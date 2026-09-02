@@ -2,6 +2,7 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <format>
 #include <functional>
 #include <optional>
 #include <ranges>
@@ -10,6 +11,7 @@
 #include <utility>
 #include <vector>
 
+#include "lyra/base/simulation_error.hpp"
 #include "lyra/value/array_case_equal.hpp"
 #include "lyra/value/array_manipulation.hpp"
 #include "lyra/value/concepts.hpp"
@@ -199,6 +201,30 @@ class UnpackedArray {
   [[nodiscard]] static auto FromPackedArray(
       const PackedArray& bits, const PackedType& element_type,
       const PackedArray& count) -> UnpackedArray;
+
+  // LRM 10.10: adopt an unpacked concatenation's parts, accumulated into a
+  // growable array by the concatenation chain, into this fixed-size type. The
+  // element counts must agree; a mismatch the front end could not rule out --
+  // because a spread part is sized at run time -- is a run-time error.
+  // Templated on the accumulator so the fixed-size type needs no dependency on
+  // the growable one that feeds it.
+  template <typename C>
+  [[nodiscard]] static auto ConformSize(const C& parts, std::int64_t count)
+      -> UnpackedArray {
+    if (static_cast<std::int64_t>(parts.RawSize()) != count) {
+      throw SimulationError(
+          std::format(
+              "unpacked array concatenation yields {} elements but the "
+              "fixed-size target has {} (LRM 10.10)",
+              parts.RawSize(), count));
+    }
+    std::vector<T> elements;
+    elements.reserve(parts.RawSize());
+    for (std::size_t i = 0; i < parts.RawSize(); ++i) {
+      elements.push_back(parts.RawAt(i));
+    }
+    return UnpackedArray(parts.ElementDefault(), std::span<const T>(elements));
+  }
 
   UnpackedArray(const UnpackedArray&) = default;
   UnpackedArray(UnpackedArray&&) noexcept = default;

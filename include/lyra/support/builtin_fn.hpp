@@ -529,16 +529,27 @@ enum class BuiltinFn : std::uint16_t {
   // queue value.
   kConformBound,
   // The two steps an unpacked concatenation (LRM 10.10) folds into: appending
-  // one element to the accumulating queue, and appending every element of a
+  // one element to the accumulating array, and appending every element of a
   // spread part in order. A part contributes itself unless the program spreads
   // a container, so which step it takes is the program's fact, not the part's
-  // type. Both are instance methods on the queue, so a concatenation of any
-  // number of parts is the left-to-right chain of them, folded where the join
-  // is built -- no entry composes an operand list of arbitrary length. A spread
-  // part crosses erased; its own container representation is no concern of the
-  // appending entry.
-  kQueueConcatElement,
-  kQueueConcatSpread,
+  // type. Both are instance methods on the accumulator, so a concatenation of
+  // any number of parts is the left-to-right chain of them, folded where the
+  // join is built -- no entry composes an operand list of arbitrary length. One
+  // entry each serves every growable array family, the accumulator's own domain
+  // (a queue enforcing its bound, a dynamic array unbounded) selecting the
+  // realization. A spread part crosses erased; its own container representation
+  // is no concern of the appending entry.
+  kArrayConcatElement,
+  kArrayConcatSpread,
+  // The step that fits a concatenation's parts to a fixed-size unpacked array
+  // (LRM 10.10): the parts, accumulated into a dynamic array by the two steps
+  // above, adopted into a target whose element count is fixed, which is an
+  // error
+  // when the counts differ. The target's type qualifies the call, as it does
+  // for
+  // any static factory, so the entry is named for the array it builds and not
+  // for the dynamic array it reads.
+  kArrayConformSize,
   // A dynamic array sized at run time: empty at its declared element shape,
   // `new[N]`, and `new[N](src)` (LRM 7.5.1). Each is named because the
   // argument list does not tell them apart -- a sized `new` and an element
@@ -612,7 +623,8 @@ enum class BuiltinFn : std::uint16_t {
          id == BuiltinFn::kFromString || id == BuiltinFn::kFromBits ||
          id == BuiltinFn::kMakeDynamicArrayDefault ||
          id == BuiltinFn::kMakeDynamicArrayNew ||
-         id == BuiltinFn::kMakeDynamicArrayNewCopy;
+         id == BuiltinFn::kMakeDynamicArrayNewCopy ||
+         id == BuiltinFn::kArrayConformSize;
 }
 
 // True iff the function updates its receiver, so the receiver names a place
