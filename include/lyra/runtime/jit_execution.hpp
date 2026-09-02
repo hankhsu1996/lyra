@@ -185,7 +185,10 @@ auto lyra_rt_object_make(const void* definition) -> void*;
 // handle referring to no object fails the run here rather than further in.
 auto lyra_rt_object_deref(void* handle) -> void*;
 
-// The address of a property's storage on an object, by class-local index.
+// The address of a property's storage on an object, by its position in the
+// storage that object owns. A class carries what its bases declare before what
+// it declares itself, so a property keeps one position in the class that
+// declares it and in every class extending that one.
 auto lyra_rt_object_member_addr(void* object, std::uint32_t index) -> void*;
 
 // The handle one capture crosses back to the body as, by declaration index. A
@@ -367,7 +370,8 @@ auto lyra_rt_resolve_visible_child(
     void* self, const void* head_name, LyraSpan head_indices) -> void*;
 auto lyra_rt_get_child(void* self, const void* name, LyraSpan indices) -> void*;
 
-// The address of a generic instance's member storage, by class-local index.
+// The address of a generic instance's member storage, by its position in the
+// storage that instance owns.
 auto lyra_rt_member_addr(void* self, std::uint32_t index) -> void*;
 
 // The sequence of handles a declaration standing for several objects builds,

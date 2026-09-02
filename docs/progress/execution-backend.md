@@ -314,21 +314,23 @@ each meets the same lifetime question above.
       symbol, a place opens at that symbol and dereferences it, and the execution session resolves
       the name to the address the design's own storage sits at. A class's statics are the same shape
       and need the symbol a class mints for them, which nothing publishes yet.
-- [ ] Where a base class's storage sits inside a derived object. A member is reached by its position
-      in the owning class's member list, and the runtime builds that list from the class's own
-      members alone, so a field declared by a base indexes the derived object's list instead.
-      Calling an inherited method has the same hole seen from the call side: the receiver crosses
-      without being re-typed to the class that declares the body. Both need one decision -- a base
-      sub-object as a place step, or one flattened member list with the base's members first -- and
-      the runtime's member table has to match whichever it is. Constructing the base is the same
-      question seen a third time, and it is the one place this backend does not refuse but drops: a
-      constructor lowers as an ordinary function, so a class that initializes its base runs a
-      constructor that does not. It reads as a gap only because a base is not reachable here yet;
-      the two answers above each imply a different shape for it, so it is not separable from them.
-      The C++ backend never had to answer any of the three, because the host language answers them.
-      Unreachable end to end today, since constructing an object is itself refused here.
-- [ ] `dump llvm`, and `run` / `compile` end to end against this backend, so a design goes from
-      source to a running program without the C++ backend.
+- [x] **Where a base class's storage sits inside a derived object.** A member is named by the
+      declaration that declares it together with the slot that declaration gave it, never by a
+      position read against whatever the access arrived at -- so a class that redeclares a name its
+      base already used no longer takes the base's storage for its own, and which of the two an
+      access means is decided where the access is written (LRM 8.14). A class's storage is its
+      base's extended with its own, so an inherited member keeps its position in every class
+      extending it and an addition a base does not publish moves nothing. Settled in
+      `../decisions/inherited-member-reference.md`.
+- [ ] Calling an inherited method, and constructing the base. The receiver crosses without being
+      re-typed to the class that declares the body; and a constructor lowers as an ordinary
+      function, so a class that initializes its base runs a constructor that does not -- the one
+      place this backend drops rather than refuses. The C++ backend never had to answer either,
+      because the host language answers them. Both are unreachable end to end today, since
+      constructing an object is itself refused here.
+- [ ] `compile` end to end against this backend, so a design becomes a program that outlives the
+      session. `dump llvm` and `run` already go through it; what neither produces is an artifact
+      that can be handed on, which is what the CI job below waits on as well.
 - [ ] An AOT CI job, waiting on a design that survives this path. Neither the smoke job nor the
       benchmark waits on it any longer: both run against the C++ path, per merge and nightly
       respectively. Measuring this path beside them needs an artifact that can be timed on its own,

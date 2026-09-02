@@ -285,11 +285,13 @@ auto ClassDeclLowerer::PopulateBodies() -> diag::Result<void> {
 
   // Base construction (LRM 8.7): a derived class always forwards to its base
   // -- explicit `super.new(args)` when the source wrote one, an implicit
-  // no-arg `super.new()` otherwise. Both cases publish stated args on the
-  // constructor's base-init so the backend never falls back to its target
-  // language's default-construction convention; base-constructor ordering
-  // is a MIR-stated fact, not a backend convention. A class with no base
-  // carries no base-init.
+  // `super.new()` otherwise. Publishing the base-init is what makes
+  // base-constructor ordering a stated fact rather than a backend convention.
+  // A class with no base carries no base-init.
+  //
+  // The implicit case states no arguments, which is only right where the base
+  // constructor declares none: a formal carrying a default value never reaches
+  // the call, so the target language is left to decide it.
   std::optional<mir::BaseInit> base_init;
   if (hir_class.base_call.has_value()) {
     std::vector<mir::ExprId> lowered;

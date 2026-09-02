@@ -290,7 +290,9 @@ class LirDumper {
           Overloaded{
               [&](const DerefProjection&) { out += ".deref"; },
               [&](const MemberProjection& m) {
-                out += std::format(".member({})", m.member.value);
+                out += std::format(
+                    ".member({}:{})", FormatType(m.member.declared_by),
+                    m.member.slot.value);
               }},
           step);
     }

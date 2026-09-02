@@ -162,6 +162,13 @@ class FunctionLowerer {
       -> diag::Result<std::vector<lir::Operand>>;
   auto LowerPlace(const mir::Block& block, mir::ExprId id)
       -> diag::Result<lir::Place>;
+  // Which member a field access names. A class field names its declaring class,
+  // which the receiver's own type does not give -- a class carries what its
+  // bases declare as well as what it declares itself, and may redeclare a name
+  // one of them already used (LRM 8.14). Every other field-bearing receiver
+  // declares the field it names.
+  auto MemberRefOf(const mir::Block& block, const mir::FieldAccessExpr& field)
+      -> diag::Result<lir::MemberRef>;
   // Reads the value held where an expression names storage, whichever way it
   // names it. A cell is address-only and holds no value a reader can take out
   // of it, so an expression whose own type is one is rejected: what such a

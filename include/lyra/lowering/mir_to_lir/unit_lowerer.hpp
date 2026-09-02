@@ -76,6 +76,11 @@ class UnitLowerer {
   // declaration is what does.
   auto ClosureValueType(mir::ClosureId closure) -> lir::TypeId;
 
+  // The type of the values one class declaration builds. A member step names
+  // the class that declares the member, which is not always the class the
+  // receiver has: a class carries what its bases declare as well as its own.
+  auto ClassValueType(mir::ClassId cls) -> lir::TypeId;
+
   // The LIR function a class's callable lowers to. Throws if `callable` has no
   // body in `owner` -- a DPI-C import is reached as a foreign symbol and a pure
   // virtual has no implementation here, so neither is a function of this unit.

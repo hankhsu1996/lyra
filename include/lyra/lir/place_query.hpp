@@ -30,7 +30,7 @@ auto DeclaredMembers(const CompilationUnit& unit, TypeId type)
 // a value, which names storage only once dereferenced. Each dereference names
 // the storage behind what the chain has reached -- a reference's referent, or
 // what a capability wrapper represents; each member step selects a member of
-// the class the chain has reached.
+// the declaration it names, which the chain must have reached a carrier of.
 auto PlaceType(
     const CompilationUnit& unit, const Function& fn, const Place& place)
     -> TypeId;

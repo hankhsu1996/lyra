@@ -286,11 +286,12 @@ auto CodeGenFunction::ResolvePlaceAddress(const lir::Place& place)
                   builder_.CreateLoad(module_->Types().Ptr(), address),
                   reached);
             },
-            [&](const lir::MemberProjection& member) -> llvm::Value* {
+            [&](const lir::MemberProjection& projection) -> llvm::Value* {
               const std::array<llvm::Value*, 2> args{
-                  address, llvm::ConstantInt::get(
-                               llvm::Type::getInt32Ty(module_->Context()),
-                               member.member.value)};
+                  address,
+                  llvm::ConstantInt::get(
+                      llvm::Type::getInt32Ty(module_->Context()),
+                      lir::MemberPosition(module_->Unit(), projection.member))};
               return builder_.CreateCall(
                   Entry(
                       RuntimeSymbol(MemberAddressOp(reached)),
@@ -1303,7 +1304,8 @@ auto CodeGenFunction::CapturePlaceOf(const lir::Place& place) const
     return std::nullopt;
   }
   return CapturePlace{
-      .closure = std::move(holder), .index = member->member.value};
+      .closure = std::move(holder),
+      .index = lir::MemberPosition(module_->Unit(), member->member)};
 }
 
 auto CodeGenFunction::WrapperBehind(lir::TypeId reference) const
