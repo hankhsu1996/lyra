@@ -105,10 +105,8 @@ auto BuildUnpackedArrayValue(
       mir::Expr{
           .data = mir::ArrayLiteralExpr{.elements = std::move(element_ids)},
           .type = list_type});
-  const mir::ExprId count_id = block.exprs.Add(
-      mir::Expr{
-          .data = mir::MachineIntLiteral{.value = 1},
-          .type = unit_lowerer.Unit().builtins.machine_int64});
+  const mir::ExprId count_id =
+      BuildMachineIntLiteral(unit_lowerer.Unit(), block, 1);
   return BuildContainerFromElements(
       unit_lowerer, block, array_type, element_default, list_id, count_id);
 }
@@ -229,9 +227,12 @@ auto BuildDefaultValueExpr(
           [&](const mir::UnpackedArrayType& ua) -> mir::Expr {
             const mir::ExprId element_default = block.exprs.Add(
                 BuildDefaultValueExpr(unit_lowerer, frame, ua.element_type));
+            const mir::ExprId size_id = BuildMachineIntLiteral(
+                unit_lowerer.Unit(), block,
+                static_cast<std::int64_t>(ua.Size()));
             return BuildArrayRepeatCall(
                 unit_lowerer, frame, type, element_default, {element_default},
-                ua.Size());
+                size_id);
           },
           // LRM Table 7-1: an unpacked struct defaults member-wise -- each
           // component takes its own type's default, recursively. Synthesized as
@@ -418,9 +419,11 @@ auto BuildDefaultValueFromHir(
     const auto size = static_cast<std::uint64_t>(span) + 1U;
     const mir::ExprId element_default = block.exprs.Add(
         BuildDefaultValueFromHir(unit_lowerer, frame, ua->element_type));
+    const mir::ExprId size_id = BuildMachineIntLiteral(
+        unit_lowerer.Unit(), block, static_cast<std::int64_t>(size));
     return BuildArrayRepeatCall(
         unit_lowerer, frame, mir_type, element_default, {element_default},
-        size);
+        size_id);
   }
 
   return BuildDefaultValueExpr(unit_lowerer, frame, mir_type);
@@ -456,10 +459,8 @@ auto BuildArrayConstructionCall(
       mir::Expr{
           .data = mir::ArrayLiteralExpr{.elements = std::move(elements)},
           .type = list_type});
-  const mir::ExprId count_id = block.exprs.Add(
-      mir::Expr{
-          .data = mir::MachineIntLiteral{.value = 1},
-          .type = unit_lowerer.Unit().builtins.machine_int64});
+  const mir::ExprId count_id =
+      BuildMachineIntLiteral(unit_lowerer.Unit(), block, 1);
   return BuildContainerFromElements(
       unit_lowerer, block, array_type, element_default, list_id, count_id);
 }
@@ -467,7 +468,7 @@ auto BuildArrayConstructionCall(
 auto BuildArrayRepeatCall(
     const UnitLowerer& unit_lowerer, WalkFrame frame, mir::TypeId array_type,
     mir::ExprId element_default, std::vector<mir::ExprId> unit,
-    std::uint64_t count) -> mir::Expr {
+    mir::ExprId count_id) -> mir::Expr {
   auto& block = *frame.current_block;
   const mir::TypeId unit_type = mir::MachineArrayOf(
       unit_lowerer.Unit().types,
@@ -476,11 +477,6 @@ auto BuildArrayRepeatCall(
       mir::Expr{
           .data = mir::ArrayLiteralExpr{.elements = std::move(unit)},
           .type = unit_type});
-  const mir::ExprId count_id = block.exprs.Add(
-      mir::Expr{
-          .data =
-              mir::MachineIntLiteral{.value = static_cast<std::int64_t>(count)},
-          .type = unit_lowerer.Unit().builtins.machine_int64});
   return BuildContainerFromElements(
       unit_lowerer, block, array_type, element_default, unit_id, count_id);
 }

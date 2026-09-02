@@ -353,13 +353,10 @@ auto BuildBoundaryInit(
           },
           [&](const support::VectorCarrier&) { return construct({seed_sv}); },
           [&](const support::OpenArrayCarrier& open) {
-            const mir::ExprId addressable = block.exprs.Add(
-                mir::Expr{
-                    .data =
-                        mir::MachineIntLiteral{
-                            .value = static_cast<std::int64_t>(
-                                open.element_crosses_as_canonical_vector)},
-                    .type = unit.builtins.machine_int64});
+            const mir::ExprId addressable = BuildMachineIntLiteral(
+                unit, block,
+                static_cast<std::int64_t>(
+                    open.element_crosses_as_canonical_vector));
             return construct(
                 {seed_sv, BuildOpenArrayBounds(unit, block, open, actual_type),
                  addressable});

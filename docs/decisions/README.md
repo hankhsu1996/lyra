@@ -88,6 +88,10 @@ the detail lives in the entry itself.
   evaluating the left-hand side exactly once (LRM 11.4.1); superseded for value interiors by
   [value-projection-write](value-projection-write.md).
 - [conversion-folding](conversion-folding.md) -- when type conversions are folded.
+- [shape-from-types-contents-from-expressions](shape-from-types-contents-from-expressions.md) -- a
+  lowering reads a number it needs before run time from a type, never from an expression; an operand
+  stays the expression it is and is never evaluated or matched for a literal, and a pattern key is a
+  designator rather than an operand.
 - [variable-initialization](variable-initialization.md) -- LRM 10.5 variable initialization as a
   constructor-scope statement.
 - [variable-lifetime-storage](variable-lifetime-storage.md) -- storage of static-lifetime body
@@ -323,6 +327,10 @@ the detail lives in the entry itself.
 
 - [diagnostic-construction](diagnostic-construction.md) -- a diagnostic's kind is derived from its
   code at construction; construction is infallible; the `UnsupportedCategory` axis is removed.
+- [qualified-statement-violation-check](qualified-statement-violation-check.md) -- `unique` /
+  `unique0` / `priority` state two independent assertions, uniqueness and totality; an explicit
+  `else` or `default` discharges totality, and what the live assertions need decides what the
+  statement evaluates, so a `priority` carrying a catch-all lowers as the unqualified statement.
 
 ### Compiler inputs
 
@@ -337,6 +345,10 @@ the detail lives in the entry itself.
 - [conformance-case-shape](conformance-case-shape.md) -- a case is a self-checking SystemVerilog
   program indexed by LRM clause; it names no path, states no expected variable, and carries no
   manifest, and what a path cannot do is recorded once per path.
+- [conformance-diagnostic-claims](conformance-diagnostic-claims.md) -- a requirement whose whole
+  observable is a report is stated as a directive and written in both directions; a claim of silence
+  is the run writing nothing rather than the absence of one wording, and golden output stays
+  reserved for cases whose subject is the output channel.
 
 ### Measurement
 

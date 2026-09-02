@@ -6,9 +6,17 @@
 #include "lyra/mir/expr_id.hpp"
 #include "lyra/mir/integral_constant.hpp"
 #include "lyra/mir/stmt.hpp"
-#include "lyra/mir/type.hpp"
+#include "lyra/mir/type_id.hpp"
 
 namespace lyra::lowering::hir_to_mir {
+
+// A machine integer, written as MIR's own literal. This is the domain a
+// runtime entry's count, size, and index operands are in: they are not
+// SystemVerilog values, so they carry no declared type and need no factory to
+// produce them.
+[[nodiscard]] auto BuildMachineIntLiteral(
+    const mir::CompilationUnit& unit, mir::Block& block, std::int64_t value)
+    -> mir::ExprId;
 
 // An integral constant, as the value-layer call that builds it. A packed value
 // is a runtime object with no literal form of its own, so what stands for one

@@ -175,6 +175,23 @@ auto ParseCase(
       c.program_args = SplitOnWhitespace(d.value);
     } else if (d.key == "error") {
       c.required_error = d.value;
+    } else if (d.key == "reports") {
+      if (d.value.empty()) {
+        throw std::runtime_error(
+            std::format(
+                "{}: '@reports' needs the text the report must contain; empty "
+                "text is matched by every run",
+                entry.string()));
+      }
+      c.reports = ReportsText{.text = d.value};
+    } else if (d.key == "reports-nothing") {
+      if (!d.value.empty()) {
+        throw std::runtime_error(
+            std::format(
+                "{}: '@reports-nothing' takes no value, and was given '{}'",
+                entry.string(), d.value));
+      }
+      c.reports = ReportsNothing{};
     } else {
       throw std::runtime_error(
           std::format(

@@ -14,12 +14,12 @@
 #include "lyra/lowering/hir_to_mir/callable_bindings.hpp"
 #include "lyra/lowering/hir_to_mir/case_cascade.hpp"
 #include "lyra/lowering/hir_to_mir/condition.hpp"
-#include "lyra/lowering/hir_to_mir/deferred_check_cascade.hpp"
 #include "lyra/lowering/hir_to_mir/expression/operators.hpp"
 #include "lyra/lowering/hir_to_mir/inside_predicate.hpp"
 #include "lyra/lowering/hir_to_mir/integral_literal.hpp"
 #include "lyra/lowering/hir_to_mir/pattern.hpp"
 #include "lyra/lowering/hir_to_mir/process_lowerer.hpp"
+#include "lyra/lowering/hir_to_mir/qualified_statement_check.hpp"
 #include "lyra/lowering/hir_to_mir/statement/blocks.hpp"
 #include "lyra/lowering/hir_to_mir/walk_frame.hpp"
 #include "lyra/mir/binary_op.hpp"
@@ -51,10 +51,11 @@ auto CaseCompareOp(hir::CaseCondition condition) -> mir::BinaryOp {
 }
 
 // Turns pre-lowered item bodies into the statement that selects among them.
-// A plain case walks an if / else-if cascade, stopping at the first match
-// (LRM 12.5). A qualified one cannot stop: its violation check needs every
-// item's predicate, so all of them are evaluated up front and the cascade
-// dispatches on those values (LRM 12.5.3).
+// The linear search terminates at the first matching item (LRM 12.5), and a
+// qualifier overrides that only where it asserts uniqueness: deciding whether
+// two items matched cannot stop at the first that did, so those evaluate every
+// item up front and dispatch on the resulting values (LRM 12.5.3). A qualifier
+// asserting only totality, or nothing at all, leaves the search as it is.
 template <typename PredicateBuilder>
 auto BuildCaseSelection(
     ProcessLowerer& process, WalkFrame frame, mir::Block wrapper,
@@ -69,31 +70,57 @@ auto BuildCaseSelection(
   }
 
   const WalkFrame wrapper_frame = frame.WithBlock(&wrapper);
-  std::vector<DeferredCheckBranch> branches;
-  branches.reserve(body_scopes.size());
+  const QualifiedAssertions asserts =
+      AssertionsOf(*check, default_scope.has_value());
+
+  // The arm reached when nothing matched is the statement's own default where
+  // it has one, and the report totality owes where it has none. A statement
+  // never wants both, because a default is what discharges that assertion.
+  std::optional<mir::Block> fall_through;
+  if (asserts.totality) {
+    fall_through = BuildTotalityReportScope(
+        process.Owner(), wrapper_frame, *check, QualifiedArmKind::kCaseItem,
+        span);
+  } else {
+    fall_through = std::move(default_scope);
+  }
+
+  if (!asserts.uniqueness) {
+    return BuildCaseCascade(
+        frame, std::move(wrapper), std::move(label), std::move(body_scopes),
+        std::move(fall_through), process.Owner().Unit(), build_predicate);
+  }
+
+  std::vector<QualifiedArm> arms;
+  arms.reserve(body_scopes.size());
   for (std::size_t i = 0; i < body_scopes.size(); ++i) {
     auto pred_or = build_predicate(wrapper_frame, i);
     if (!pred_or) return std::unexpected(std::move(pred_or.error()));
-    branches.push_back(
-        DeferredCheckBranch{
-            .predicate = *pred_or, .body = std::move(body_scopes[i])});
+    arms.push_back(
+        QualifiedArm{.predicate = *pred_or, .body = std::move(body_scopes[i])});
   }
-  return BuildDeferredCheckCascade(
-      process.Owner(), frame, std::move(wrapper), std::move(branches),
-      std::move(default_scope), *check, std::move(label), span);
+  return BuildUniquenessCheckCascade(
+      process.Owner(), frame, std::move(wrapper), std::move(arms),
+      std::move(fall_through), *check, QualifiedArmKind::kCaseItem,
+      std::move(label), span);
 }
 
-auto LowerClauseChainIfStmt(
+// One arm of an if-else-if construct: the clause chain that decides it, the
+// statement it runs, and the arm reached when the chain does not hold.
+// `fall_through` is the source's own `else` where it wrote one, and the report
+// a totality assertion owes where it did not.
+auto LowerChainArm(
     ProcessLowerer& process, WalkFrame frame, std::optional<std::string> label,
-    const hir::IfStmt& i) -> diag::Result<mir::Stmt> {
+    const hir::IfStmt& arm, std::optional<mir::Block> fall_through)
+    -> diag::Result<mir::Stmt> {
   const mir::TypeId bit1_type = process.Owner().Unit().builtins.bit1;
   auto& block = *frame.current_block;
 
-  // The else-arm runs when the chain fails, which the chain reports through a
-  // flag. Nothing observes the flag when there is no else-arm, so it is only
-  // declared alongside one.
+  // The fall-through arm runs when the chain fails, which the chain reports
+  // through a flag. Nothing observes the flag when there is no such arm, so it
+  // is only declared alongside one.
   std::optional<mir::LocalId> taken_flag;
-  if (i.else_stmt.has_value()) {
+  if (fall_through.has_value()) {
     taken_flag = frame.bindings->DeclareAnonymous(
         mir::LocalDecl{.name = "_lyra_cond_taken", .type = bit1_type});
     block.AppendStmt(
@@ -103,7 +130,7 @@ auto LowerClauseChainIfStmt(
   }
 
   auto emit_then = [&](WalkFrame body_frame) -> diag::Result<void> {
-    auto then_or = LowerStmtIntoChildScope(process, body_frame, i.then_stmt);
+    auto then_or = LowerStmtIntoChildScope(process, body_frame, arm.then_stmt);
     if (!then_or) return std::unexpected(std::move(then_or.error()));
     auto& body_block = *body_frame.current_block;
     body_block.AppendStmt(
@@ -113,21 +140,20 @@ auto LowerClauseChainIfStmt(
   };
 
   auto chain_or = BuildClauseChainIf(
-      process, frame, std::span<const hir::ConditionClause>{i.conditions},
+      process, frame, std::span<const hir::ConditionClause>{arm.conditions},
       taken_flag, emit_then);
   if (!chain_or) return std::unexpected(std::move(chain_or.error()));
   const mir::IfStmt chain = *std::move(chain_or);
 
-  if (!i.else_stmt.has_value()) {
+  if (!fall_through.has_value()) {
     return mir::Stmt{.label = std::move(label), .data = chain};
   }
 
-  auto else_or = LowerStmtIntoChildScope(process, frame, *i.else_stmt);
-  if (!else_or) return std::unexpected(std::move(else_or.error()));
-  const mir::BlockId else_scope = block.child_scopes.Add(std::move(*else_or));
+  const mir::BlockId else_scope =
+      block.child_scopes.Add(std::move(*fall_through));
 
-  // The chain and its else-arm are two statements, so the label goes on the
-  // second and the first is appended ahead of it.
+  // The chain and its fall-through arm are two statements, so the label goes on
+  // the second and the first is appended ahead of it.
   block.AppendStmt(chain);
   return mir::Stmt{
       .label = std::move(label),
@@ -135,15 +161,57 @@ auto LowerClauseChainIfStmt(
           process.Owner().Unit(), block, *taken_flag, bit1_type, else_scope)};
 }
 
+// A qualified series whose check reads no arm predicate. The arms are tested in
+// order and the first that holds terminates the series (LRM 12.4.1), which is
+// what the unqualified construct already does, so the series is built from its
+// innermost arm outward with the fall-through arm at the bottom.
+auto LowerOrderedIfSeries(
+    ProcessLowerer& process, WalkFrame frame, std::optional<std::string> label,
+    const QualifiedIfSeries& series, std::optional<mir::Block> fall_through)
+    -> diag::Result<mir::Stmt> {
+  std::optional<mir::Block> tail = std::move(fall_through);
+  for (std::size_t i = series.arms.size(); i-- > 1;) {
+    mir::Block level;
+    const WalkFrame level_frame = frame.WithBlock(&level);
+    auto arm_or = LowerChainArm(
+        process, level_frame, std::nullopt, *series.arms[i], std::move(tail));
+    if (!arm_or) return std::unexpected(std::move(arm_or.error()));
+    level.AppendStmt(*std::move(arm_or));
+    tail = std::move(level);
+  }
+  return LowerChainArm(
+      process, frame, std::move(label), *series.arms[0], std::move(tail));
+}
+
 }  // namespace
 
 auto LowerIfStmt(
     ProcessLowerer& process, WalkFrame frame, std::optional<std::string> label,
     const hir::IfStmt& i, diag::SourceSpan span) -> diag::Result<mir::Stmt> {
-  if (i.check.has_value()) {
-    return LowerUniqueIfStmt(process, frame, std::move(label), i, span);
+  if (!i.check.has_value()) {
+    std::optional<mir::Block> else_arm;
+    if (i.else_stmt.has_value()) {
+      auto else_or = LowerStmtIntoChildScope(process, frame, *i.else_stmt);
+      if (!else_or) return std::unexpected(std::move(else_or.error()));
+      else_arm = std::move(*else_or);
+    }
+    return LowerChainArm(
+        process, frame, std::move(label), i, std::move(else_arm));
   }
-  return LowerClauseChainIfStmt(process, frame, std::move(label), i);
+
+  const QualifiedIfSeries series = SeriesOf(process.HirBody(), i);
+  if (AssertionsOf(*i.check, series.else_arm.has_value()).uniqueness) {
+    return LowerUniquenessIfSeries(
+        process, frame, std::move(label), series, *i.check, span);
+  }
+
+  auto fall_through_or =
+      LowerIfFallThrough(process, frame, series, *i.check, span);
+  if (!fall_through_or) {
+    return std::unexpected(std::move(fall_through_or.error()));
+  }
+  return LowerOrderedIfSeries(
+      process, frame, std::move(label), series, std::move(*fall_through_or));
 }
 
 auto LowerCaseStmt(

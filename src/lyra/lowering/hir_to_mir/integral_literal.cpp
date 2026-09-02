@@ -76,6 +76,15 @@ auto BuildFactoryCall(
 
 }  // namespace
 
+auto BuildMachineIntLiteral(
+    const mir::CompilationUnit& unit, mir::Block& block, std::int64_t value)
+    -> mir::ExprId {
+  return block.exprs.Add(
+      mir::Expr{
+          .data = mir::MachineIntLiteral{.value = value},
+          .type = unit.builtins.machine_int64});
+}
+
 auto BuildIntegralLiteral(
     const mir::CompilationUnit& unit, mir::Block& block, mir::TypeId type,
     const mir::IntegralConstant& value) -> mir::ExprId {
@@ -85,10 +94,8 @@ auto BuildIntegralLiteral(
       !value.state_words.empty() && value.state_words[0] != 0U;
   const std::uint64_t width = shape.BitWidth();
   if (width <= 64U && !has_unknown) {
-    const mir::ExprId carrier = block.exprs.Add(
-        mir::Expr{
-            .data = mir::MachineIntLiteral{.value = CarrierValue(value, shape)},
-            .type = unit.builtins.machine_int64});
+    const mir::ExprId carrier =
+        BuildMachineIntLiteral(unit, block, CarrierValue(value, shape));
     return BuildFactoryCall(
         block, type, support::BuiltinFn::kFromInt, {carrier, packed_type});
   }

@@ -8,7 +8,6 @@
 #include <utility>
 #include <vector>
 
-#include <slang/ast/EvalContext.h>
 #include <slang/ast/Expression.h>
 #include <slang/ast/SystemSubroutine.h>
 #include <slang/ast/expressions/CallExpression.h>
@@ -143,21 +142,21 @@ auto DimensionCount(const slang::ast::Type& operand, bool unpacked_only)
 }
 
 // The dimension index the call names, defaulting to 1 when the call omits it
-// (LRM 20.7). Nullopt when the index is an expression whose value only
-// simulation knows -- legal, but then the query is not an elaboration-time
-// constant.
-auto ConstantDimensionIndex(
-    const UnitLowerer& unit_lowerer, const slang::ast::CallExpression& call)
+// (LRM 20.7). Syntax 20-9 makes the index an ordinary expression rather than a
+// constant one, so whether it has a value before the program runs is the front
+// end's answer and not a question to ask again: absent here means the index is
+// one only simulation knows, which is legal and leaves the query itself a
+// run-time value.
+auto ConstantDimensionIndex(const slang::ast::CallExpression& call)
     -> std::optional<std::int64_t> {
   if (call.arguments().size() < 2) {
     return 1;
   }
-  slang::ast::EvalContext eval_context(unit_lowerer.SourceScope().asSymbol());
-  const slang::ConstantValue index = call.arguments()[1]->eval(eval_context);
-  if (!index || !index.isInteger()) {
+  const slang::ConstantValue* index = call.arguments()[1]->getConstant();
+  if (index == nullptr || !*index) {
     return std::nullopt;
   }
-  return index.integer().as<std::int64_t>();
+  return index->integer().as<std::int64_t>();
 }
 
 // A value of the type slang gave the call, so the literal carries that type's
@@ -526,9 +525,7 @@ template <ExprLowerer Lowerer>
 auto LowerDimensionQuery(
     Lowerer& lowerer, WalkFrame frame, const slang::ast::CallExpression& call,
     QueryKind query, diag::SourceSpan span) -> diag::Result<hir::Expr> {
-  UnitLowerer& unit_lowerer = lowerer.Owner();
-  const std::optional<std::int64_t> index =
-      ConstantDimensionIndex(unit_lowerer, call);
+  const std::optional<std::int64_t> index = ConstantDimensionIndex(call);
   if (!index.has_value()) {
     return LowerComposedDimensionQuery(lowerer, frame, call, query, span);
   }
