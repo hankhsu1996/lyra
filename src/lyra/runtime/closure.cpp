@@ -56,9 +56,8 @@ void ClosureValue::Invoke() {
   const auto* body = std::get_if<SynchronousBody>(&definition_->body);
   if (body == nullptr) {
     throw InternalError(
-        "ClosureValue: a body that completes as a coroutine is entered through "
-        "the coroutine protocol rather than run to completion -- please report "
-        "this as a bug");
+        "ClosureValue: this body is not one run to completion -- please "
+        "report this as a bug");
   }
   // The body is generated code, so it runs in a scope of its own like every
   // other stretch the runtime enters: the values it materializes are released
@@ -71,7 +70,7 @@ auto ClosureValue::Start() -> void* {
   const auto* body = std::get_if<CoroutineBody>(&definition_->body);
   if (body == nullptr) {
     throw InternalError(
-        "ClosureValue: an ordinary body has no handle to yield -- please "
+        "ClosureValue: this body is not one entered as a coroutine -- please "
         "report this as a bug");
   }
   // No scope is pushed here. A coroutine body's stretches each run in the scope
@@ -87,8 +86,8 @@ auto ClosureValue::RunPerElement(
   const auto* body = std::get_if<PerElementBody>(&definition_->body);
   if (body == nullptr) {
     throw InternalError(
-        "ClosureValue: a body that answers nothing has no value to settle on "
-        "per entry -- please report this as a bug");
+        "ClosureValue: this body is not one run per entry -- please report "
+        "this as a bug");
   }
   // The element and the index are borrowed for the call: the container holds
   // them and the body only reads them. The result is the one thing the body

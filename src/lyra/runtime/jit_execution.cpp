@@ -1,6 +1,7 @@
 #include "lyra/runtime/jit_execution.hpp"
 
 #include <algorithm>
+#include <array>
 #include <coroutine>
 #include <cstddef>
 #include <cstdint>
@@ -47,6 +48,7 @@
 #include "lyra/value/runtime_array_manipulation.hpp"
 #include "lyra/value/runtime_associative_array.hpp"
 #include "lyra/value/runtime_dynamic_array.hpp"
+#include "lyra/value/runtime_memory.hpp"
 #include "lyra/value/runtime_queue.hpp"
 #include "lyra/value/runtime_tuple.hpp"
 #include "lyra/value/runtime_unpacked_array.hpp"
@@ -333,7 +335,9 @@ auto TakeClosure(void* closure) -> std::function<void()> {
               *static_cast<ClosureValue*>(closure)))] { held->Invoke(); };
 }
 
-// The body an LRM 7.12 method runs, as the value layer takes it.
+// The body an LRM 7.12 method runs, as the value layer takes it. The closure is
+// borrowed rather than taken: the method runs it to completion before
+// returning, so the stretch that built it is still alive for the whole walk.
 auto ArrayBody(void* body) -> value::ArrayMethodBody {
   return [closure = static_cast<ClosureValue*>(body)](
              const value::RuntimeValue& item,
@@ -417,33 +421,6 @@ auto OwnVisited(std::optional<value::RuntimeValue> index, const void* probe)
       std::vector<value::RuntimeValue>{
           value::RuntimeValue{value::PackedArray::Int(found ? 1 : 0)},
           found ? *std::move(index) : Read<value::RuntimeValue>(probe)});
-}
-
-// The memory a load leaves behind: `words` are what it read, running ascending
-// by declared index from `first_sv`, and every other word keeps what it held
-// (LRM 21.3.4.4, 21.4). Built in one pass over the memory, because a
-// functional write per word would cost a whole-array rebuild each time.
-auto MemoryWithWords(
-    const value::RuntimeUnpackedArray& memory, const value::PackedArray& left,
-    const value::PackedArray& right, std::int64_t first_sv,
-    std::span<const value::PackedArray> words) -> value::RuntimeUnpackedArray {
-  const std::int64_t left_sv = left.ToInt64();
-  const std::int64_t right_sv = right.ToInt64();
-  const std::int64_t step = left_sv <= right_sv ? 1 : -1;
-  const auto written = static_cast<std::int64_t>(words.size());
-  std::vector<value::RuntimeValue> elements;
-  for (std::int64_t sv = left_sv;; sv += step) {
-    const std::int64_t offset = sv - first_sv;
-    elements.push_back(
-        offset >= 0 && offset < written
-            ? value::RuntimeValue{words[static_cast<std::size_t>(offset)]}
-            : memory.Element(
-                  value::PackedArray::Int(static_cast<std::int32_t>(sv)), left,
-                  right));
-    if (sv == right_sv) break;
-  }
-  return value::RuntimeUnpackedArray{
-      memory.ElementDefault(), std::move(elements), 1};
 }
 
 // A completion the runtime already assembled as a pair, boxed into the erased
@@ -588,23 +565,23 @@ auto lyra_rt_file_read_memory(
     void* files, const void* dest, const void* fd, const void* left,
     const void* right, const void* start, const void* count) -> void* {
   const auto memory = Read<lyra::value::RuntimeUnpackedArray>(dest);
-  const PackedArray left_bound = Read<PackedArray>(left);
-  const PackedArray right_bound = Read<PackedArray>(right);
-  const std::int64_t first_sv = Read<PackedArray>(start).ToInt64();
-  std::vector<PackedArray> words;
+  const std::array<PackedArray, 2> dims{
+      Read<PackedArray>(left), Read<PackedArray>(right)};
+  const std::int64_t lowest = std::min(dims[0].ToInt64(), dims[1].ToInt64());
+  std::vector<PackedArray> words = lyra::value::MemoryWords(memory, dims);
   const std::int32_t read = lyra::runtime::ReadMemoryWords(
       *static_cast<FileTable*>(files), Read<PackedArray>(fd),
-      std::get<PackedArray>(memory.ElementDefault().value),
-      left_bound.ToInt64(), right_bound.ToInt64(), first_sv,
+      std::get<PackedArray>(memory.ElementDefault().value), dims[0].ToInt64(),
+      dims[1].ToInt64(), Read<PackedArray>(start).ToInt64(),
       Read<PackedArray>(count).ToInt64(),
-      [&words](std::int64_t, PackedArray word) {
-        words.push_back(std::move(word));
+      [&words, lowest](std::int64_t sv, PackedArray word) {
+        words[static_cast<std::size_t>(sv - lowest)] = std::move(word);
       });
   return lyra::runtime::OwnCompletion(
       std::vector<lyra::value::RuntimeValue>{
           lyra::value::RuntimeValue{PackedArray::Int(read)},
-          lyra::value::RuntimeValue{lyra::runtime::MemoryWithWords(
-              memory, left_bound, right_bound, first_sv, words)}});
+          lyra::value::RuntimeValue{
+              lyra::value::MemoryWithWords(memory, dims, words)}});
 }
 
 auto lyra_rt_file_ungetc(void* files, const void* c, const void* fd) -> void* {
@@ -1123,7 +1100,7 @@ auto lyra_rt_member_addr(void* self, std::uint32_t index) -> void* {
 }
 
 auto lyra_rt_object_deref(void* handle) -> void* {
-  const GcRef<ManagedObject>& object = Read<GcRef<ManagedObject>>(handle);
+  const auto& object = Read<GcRef<ManagedObject>>(handle);
   if (object.Get() == nullptr) {
     throw lyra::SimulationError(
         "a class handle referring to no object was dereferenced");
@@ -3353,7 +3330,7 @@ auto lyra_rt_unpackedarray_read_mem(
       std::vector<RuntimeValue>{RuntimeValue{lyra::runtime::ReadMem(
           *static_cast<RuntimeEffects*>(runtime),
           Read<RuntimeUnpackedArray>(memory), Read<String>(name),
-          lyra::runtime::PackedValuesOf(dims), Read<PackedArray>(base),
+          PackedValuesOf(dims), Read<PackedArray>(base),
           Read<PackedArray>(start), std::nullopt)}});
 }
 
@@ -3364,7 +3341,7 @@ auto lyra_rt_unpackedarray_read_mem_within(
       std::vector<RuntimeValue>{RuntimeValue{lyra::runtime::ReadMem(
           *static_cast<RuntimeEffects*>(runtime),
           Read<RuntimeUnpackedArray>(memory), Read<String>(name),
-          lyra::runtime::PackedValuesOf(dims), Read<PackedArray>(base),
+          PackedValuesOf(dims), Read<PackedArray>(base),
           Read<PackedArray>(start), Read<PackedArray>(finish).ToInt64())}});
 }
 
@@ -3374,8 +3351,8 @@ void lyra_rt_unpackedarray_write_mem(
   lyra::runtime::WriteMem(
       *static_cast<RuntimeEffects*>(runtime),
       Read<RuntimeUnpackedArray>(memory), Read<String>(name),
-      lyra::runtime::PackedValuesOf(dims), Read<PackedArray>(base),
-      Read<PackedArray>(start), std::nullopt);
+      PackedValuesOf(dims), Read<PackedArray>(base), Read<PackedArray>(start),
+      std::nullopt);
 }
 
 void lyra_rt_unpackedarray_write_mem_within(
@@ -3384,8 +3361,8 @@ void lyra_rt_unpackedarray_write_mem_within(
   lyra::runtime::WriteMem(
       *static_cast<RuntimeEffects*>(runtime),
       Read<RuntimeUnpackedArray>(memory), Read<String>(name),
-      lyra::runtime::PackedValuesOf(dims), Read<PackedArray>(base),
-      Read<PackedArray>(start), Read<PackedArray>(finish).ToInt64());
+      PackedValuesOf(dims), Read<PackedArray>(base), Read<PackedArray>(start),
+      Read<PackedArray>(finish).ToInt64());
 }
 
 auto lyra_rt_dynarray_read_mem(

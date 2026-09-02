@@ -22,11 +22,11 @@ struct SynchronousBody {
 struct CoroutineBody {
   void* (*start)(void* self) = nullptr;
 };
-// A result crosses as a handle and a handle carries no type, so which
-// representation this body's result is in rides beside the entry: it is a fact
-// only whoever compiled the body holds.
 struct PerElementBody {
   void* (*run)(void* self, const void* item, const void* index) = nullptr;
+  // A result crosses as a handle and a handle carries no type, so which
+  // representation this body's result is in rides with the entry: it is a fact
+  // only whoever compiled the body holds.
   support::ValueDomain result_domain{};
 };
 using ClosureBody =
@@ -45,7 +45,7 @@ struct ClosureDefinition {
 // `fork` spawns, the `with` expression an array method evaluates per entry. It
 // owns one storage object per capture, so a captured value is a copy taken
 // where the closure was built and released with the closure, never a handle
-// into the stretch that built it, which is gone by the time the body runs.
+// into the stretch that built it, which may be gone by the time the body runs.
 class ClosureValue {
  public:
   // `captures` supplies one handle per capture, in declaration order. Each is

@@ -965,8 +965,7 @@ auto LoadObjectClasses(const lir::CompilationUnit& unit)
 
 // The definition of one closure a unit declares, kept alive for the session
 // beside the schema it names as plain data it does not own. `protocol` carries
-// which alternative the body is, decided by the invoke's result type and
-// selected before the symbol it holds is known.
+// which alternative the body is, selected before the symbol it holds is known.
 struct LoadedClosure {
   std::string name;
   std::vector<runtime::MemberStorageDescriptor> captures;

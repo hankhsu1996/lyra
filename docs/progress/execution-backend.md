@@ -253,14 +253,14 @@ each meets the same lifetime question above.
       size spans, and an associative memory its own keys. A load answers through its completion,
       like every other service that reports through an argument.
 - [x] **A body the runtime runs on the program's behalf, one alternative per call protocol.** Three
-      run here: the effect a region runs once the stretch that built it has returned -- a
-      non-blocking assignment, a postponed print, a deferred assertion's action -- the branch a
-      `fork` spawns, and the `with` expression an array method evaluates once per entry of its
-      receiver. Each alternative carries an entry of its own signature, because what a body is
-      called with and answers is what its type says; the alternative a body is, is read off what its
-      own invoke answers rather than recorded beside it. What no type carries is what C says nothing
-      about -- how the captured state is laid out, and which representation a result comes back in
-      -- and those ride with the body as the record it was registered under.
+      run here: the effect a region runs once the stretch that built it has returned (a non-blocking
+      assignment, a postponed print, a deferred assertion's action), the branch a `fork` spawns, and
+      the `with` expression an array method evaluates once per entry of its receiver. Each
+      alternative carries an entry of its own signature, because what a body is called with and
+      answers is what its type says; the alternative a body is, is read off what its own invoke
+      answers rather than recorded beside it. What no type carries is what C says nothing about --
+      how the captured state is laid out, and which representation a result comes back in -- and
+      those ride with the body as the record it was registered under.
 
       What a body captures is independent of what it is called with, so the captured state is one
       block whatever the body is, described by the same schema an object's properties and a scope's

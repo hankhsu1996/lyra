@@ -889,15 +889,15 @@ auto lyra_rt_assocarray_value_cell_alloc() -> void*;
 void lyra_rt_assocarray_value_cell_store(void* cell, const void* value);
 auto lyra_rt_assocarray_value_cell_load(const void* cell) -> void*;
 
-// LRM 7.12 array manipulation. The body a `with` clause states is a closure the
-// entry runs once per entry, handing it the element and the entry's index and
-// taking back what the body settled on; a result whose shape the receiver does
-// not determine takes the prototype the call supplies, which crosses erased
-// because the shape it states varies with the clause rather than with the
-// receiver. The ordering family reorders the receiver and produces no element
-// it did not already hold, so it takes no prototype, and `reverse` projects
-// nothing, so it runs no body. The clause defines ordering on the ordinally
-// indexed containers alone.
+// LRM 7.12 array manipulation. The body a `with` clause states is a closure run
+// over each of the receiver's entries, handed the element and that entry's
+// index and taking back what it settled on; a result whose shape the receiver
+// does not determine takes the prototype the call supplies, which crosses
+// erased because the shape it states varies with the clause rather than with
+// the receiver. The ordering family reorders the receiver and produces no
+// element it did not already hold, so it takes no prototype, and `reverse`
+// projects nothing, so it runs no body. The clause defines ordering on the
+// ordinally indexed containers alone.
 auto lyra_rt_unpackedarray_sum(
     const void* receiver, void* body, void* prototype) -> void*;
 auto lyra_rt_unpackedarray_product(
