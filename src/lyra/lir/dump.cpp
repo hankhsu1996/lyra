@@ -142,6 +142,10 @@ class LirDumper {
             [&](const ArrayInstr& array) -> std::string {
               return std::format("array({})", FormatOperands(array.elements));
             },
+            [&](const UnionInstr& u) -> std::string {
+              return std::format(
+                  "union({}, {})", u.index.value, FormatOperand(u.value));
+            },
             [&](const ValueCastInstr& cast) -> std::string {
               return std::format("valuecast {}", FormatOperand(cast.operand));
             },
@@ -156,6 +160,11 @@ class LirDumper {
                   FormatOperand(update.aggregate),
                   FormatSelector(update.selector),
                   FormatOperand(update.replacement));
+            },
+            [&](const TagTestInstr& test) -> std::string {
+              return std::format(
+                  "tag_test {}, {}", FormatOperand(test.aggregate),
+                  test.index.value);
             },
             [&](const LoadInstr& load) -> std::string {
               return std::format("load {}", FormatPlace(load.place));

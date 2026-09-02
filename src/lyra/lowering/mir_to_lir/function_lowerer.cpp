@@ -2263,10 +2263,14 @@ auto FunctionLowerer::LowerExpr(const mir::Block& block, mir::ExprId id)
             // read.
             return *park;
           },
-          [](const mir::UnionExpr&) -> diag::Result<lir::Operand> {
-            return Unsupported(
-                "mir_to_lir: building a union value is not yet lowerable to "
-                "LIR");
+          [&](const mir::UnionExpr& u) -> diag::Result<lir::Operand> {
+            auto value = LowerExpr(block, u.value);
+            if (!value) {
+              return value;
+            }
+            return Emit(
+                unit_->TranslateType(type),
+                lir::UnionInstr{.index = u.index, .value = *std::move(value)});
           },
           [&](const mir::UnionGetExpr& get) -> diag::Result<lir::Operand> {
             auto union_value = LowerExpr(block, get.union_value);
@@ -2279,25 +2283,46 @@ auto FunctionLowerer::LowerExpr(const mir::Block& block, mir::ExprId id)
                     .aggregate = *std::move(union_value),
                     .selector = lir::UnionMember{.index = get.index}});
           },
-          [](const mir::TaggedExpr&) -> diag::Result<lir::Operand> {
-            return Unsupported(
-                "mir_to_lir: building a tagged union value is not yet "
-                "lowerable to LIR");
+          [&](const mir::TaggedExpr& t) -> diag::Result<lir::Operand> {
+            auto payload = LowerExpr(block, t.payload);
+            if (!payload) {
+              return payload;
+            }
+            return Emit(
+                unit_->TranslateType(type),
+                lir::UnionInstr{
+                    .index = t.tag_index, .value = *std::move(payload)});
           },
-          [](const mir::TaggedGetExpr&) -> diag::Result<lir::Operand> {
-            return Unsupported(
-                "mir_to_lir: reading a tagged union's member is not yet "
-                "lowerable to LIR");
+          [&](const mir::TaggedGetExpr& g) -> diag::Result<lir::Operand> {
+            auto union_value = LowerExpr(block, g.union_value);
+            if (!union_value) {
+              return union_value;
+            }
+            return Emit(
+                unit_->TranslateType(type),
+                lir::AggregateExtractInstr{
+                    .aggregate = *std::move(union_value),
+                    .selector = lir::UnionMember{.index = g.tag_index}});
           },
           [](const mir::TaggedGetRefExpr&) -> diag::Result<lir::Operand> {
             return Unsupported(
                 "mir_to_lir: writing a tagged union's member is not yet "
                 "lowerable to LIR");
           },
-          [](const mir::TaggedIsExpr&) -> diag::Result<lir::Operand> {
-            return Unsupported(
-                "mir_to_lir: testing a tagged union's active tag is not yet "
-                "lowerable to LIR");
+          [&](const mir::TaggedIsExpr& g) -> diag::Result<lir::Operand> {
+            // The non-throwing guard a pattern match tests: whether the value's
+            // active tag is the one the pattern names (LRM 12.6). The runtime
+            // holds the comparison, so this is one predicate, not a tag read
+            // and a compare against a constant.
+            auto union_value = LowerExpr(block, g.union_value);
+            if (!union_value) {
+              return union_value;
+            }
+            return Emit(
+                unit_->MachineBoolType(),
+                lir::TagTestInstr{
+                    .aggregate = *std::move(union_value),
+                    .index = g.tag_index});
           },
           // A designator reaches value position where a construct binds the
           // part rather than writing it. Binding it needs storage for a part a

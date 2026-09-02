@@ -89,6 +89,9 @@ auto CodeGenFunction::LowerInstr(const lir::Instr& instr)
           [&](const lir::ArrayInstr& array) -> diag::Result<llvm::Value*> {
             return LowerArray(array, result_type);
           },
+          [&](const lir::UnionInstr& u) -> diag::Result<llvm::Value*> {
+            return LowerUnion(u, result_type);
+          },
           [&](const lir::AggregateExtractInstr& extract)
               -> diag::Result<llvm::Value*> {
             return LowerAggregateExtract(extract);
@@ -96,6 +99,9 @@ auto CodeGenFunction::LowerInstr(const lir::Instr& instr)
           [&](const lir::AggregateUpdateInstr& update)
               -> diag::Result<llvm::Value*> {
             return LowerAggregateUpdate(update);
+          },
+          [&](const lir::TagTestInstr& test) -> diag::Result<llvm::Value*> {
+            return LowerTagTest(test, result_type);
           },
           [&](const lir::LoadInstr& load) -> diag::Result<llvm::Value*> {
             return LowerLoad(load, result_type);
@@ -684,6 +690,80 @@ auto CodeGenFunction::LowerProduct(
       args);
 }
 
+auto CodeGenFunction::UnionMemberDomain(
+    lir::TypeId union_type, std::uint32_t index)
+    -> diag::Result<support::ValueDomain> {
+  const lir::Type& ty = module_->Unit().types.Get(union_type);
+  const std::vector<lir::TypeId>* members = nullptr;
+  if (const auto* untagged = ty.As<lir::UnionType>()) {
+    members = &untagged->elements;
+  } else if (const auto* tagged = ty.As<lir::TaggedUnionType>()) {
+    members = &tagged->elements;
+  } else {
+    throw InternalError(
+        "llvm codegen: a union member selects into a non-union type");
+  }
+  if (index >= members->size()) {
+    throw InternalError("llvm codegen: a union member index is out of range");
+  }
+  return DomainOf((*members)[index]);
+}
+
+auto CodeGenFunction::LowerUnion(
+    const lir::UnionInstr& u, lir::TypeId result_type)
+    -> diag::Result<llvm::Value*> {
+  // The live member's value crosses boxed, the way a product's components do;
+  // the union domain's `make` takes which member is live beside it.
+  auto member_domain = UnionMemberDomain(result_type, u.index.value);
+  if (!member_domain) {
+    return std::unexpected(std::move(member_domain.error()));
+  }
+  auto value = LowerOperand(u.value);
+  if (!value) {
+    return std::unexpected(std::move(value.error()));
+  }
+  const std::array<llvm::Value*, 1> box{*value};
+  llvm::Value* boxed = builder_.CreateCall(
+      Entry(
+          RuntimeSymbol(*member_domain, RuntimeOp::kValueBox),
+          module_->Types().Ptr(), box),
+      box);
+  auto union_domain = DomainOf(result_type);
+  if (!union_domain) {
+    return std::unexpected(std::move(union_domain.error()));
+  }
+  const std::array<llvm::Value*, 2> args{
+      llvm::ConstantInt::get(
+          llvm::Type::getInt64Ty(module_->Context()), u.index.value),
+      boxed};
+  return builder_.CreateCall(
+      Entry(RuntimeSymbol(*union_domain, RuntimeOp::kMake), result_type, args),
+      args);
+}
+
+auto CodeGenFunction::LowerTagTest(
+    const lir::TagTestInstr& test, lir::TypeId result_type)
+    -> diag::Result<llvm::Value*> {
+  auto aggregate = LowerOperand(test.aggregate);
+  if (!aggregate) {
+    return std::unexpected(std::move(aggregate.error()));
+  }
+  auto domain = DomainOf(OperandType(test.aggregate));
+  if (!domain) {
+    return std::unexpected(std::move(domain.error()));
+  }
+  // The predicate is a machine boolean, the shape a value's `to_bool` yields;
+  // the packed one-bit surface a pattern expression wears is restored by the
+  // enclosing `from_bool`, not here.
+  const std::array<llvm::Value*, 2> args{
+      *aggregate,
+      llvm::ConstantInt::get(
+          llvm::Type::getInt64Ty(module_->Context()), test.index.value)};
+  return builder_.CreateCall(
+      Entry(RuntimeSymbol(*domain, RuntimeOp::kTagMatches), result_type, args),
+      args);
+}
+
 auto CodeGenFunction::CoordinateDomain(lir::TypeId container) const
     -> diag::Result<std::optional<support::ValueDomain>> {
   const std::optional<lir::TypeId> index =
@@ -758,10 +838,19 @@ auto CodeGenFunction::LowerAggregateExtract(
                     module_->Types().Ptr(), args),
                 args);
           },
-          [&](const lir::UnionMember&) -> diag::Result<llvm::Value*> {
-            return Unsupported(
-                "llvm codegen: a union value has no member read on this "
-                "backend");
+          [&](const lir::UnionMember& m) -> diag::Result<llvm::Value*> {
+            // Whether the read is the untagged domain's (defaulting a
+            // cross-member read) or the tagged one's (faulting it) follows from
+            // the aggregate's domain, so one shape names both.
+            const std::array<llvm::Value*, 2> args{
+                *aggregate,
+                llvm::ConstantInt::get(
+                    llvm::Type::getInt64Ty(module_->Context()), m.index.value)};
+            return builder_.CreateCall(
+                Entry(
+                    RuntimeSymbol(*domain, RuntimeOp::kExtract),
+                    module_->Types().Ptr(), args),
+                args);
           },
           [&](const lir::ContainerElement& e) -> diag::Result<llvm::Value*> {
             auto shape = coordinates(e.operands);
@@ -829,10 +918,32 @@ auto CodeGenFunction::LowerAggregateUpdate(
                     module_->Types().Ptr(), args),
                 args);
           },
-          [&](const lir::UnionMember&) -> diag::Result<llvm::Value*> {
-            return Unsupported(
-                "llvm codegen: a union value has no member write on this "
-                "backend");
+          [&](const lir::UnionMember& m) -> diag::Result<llvm::Value*> {
+            // The member value crosses boxed, so the domain's `update` reads it
+            // in the member's own domain -- which the runtime cannot recover
+            // from a raw handle, because a union keeps no per-member prototype.
+            // Whether the write activates the member (untagged) or faults a
+            // mismatched tag (tagged) follows from the aggregate's domain.
+            auto member_domain = UnionMemberDomain(container, m.index.value);
+            if (!member_domain) {
+              return std::unexpected(std::move(member_domain.error()));
+            }
+            const std::array<llvm::Value*, 1> box{*replacement};
+            llvm::Value* boxed = builder_.CreateCall(
+                Entry(
+                    RuntimeSymbol(*member_domain, RuntimeOp::kValueBox),
+                    module_->Types().Ptr(), box),
+                box);
+            const std::array<llvm::Value*, 3> args{
+                *aggregate,
+                llvm::ConstantInt::get(
+                    llvm::Type::getInt64Ty(module_->Context()), m.index.value),
+                boxed};
+            return builder_.CreateCall(
+                Entry(
+                    RuntimeSymbol(*domain, RuntimeOp::kUpdate),
+                    module_->Types().Ptr(), args),
+                args);
           },
           [&](const lir::ContainerElement& e) -> diag::Result<llvm::Value*> {
             auto shape = coordinates(e.operands);
@@ -1269,6 +1380,13 @@ auto CodeGenFunction::ConstructCallee(
           },
           [&](const lir::ShortRealType&) -> diag::Result<llvm::FunctionCallee> {
             return real_from_host();
+          },
+          // A value carrying no bits has exactly one value (a tagged union's
+          // void member, LRM 7.3.2), so its construction takes nothing and
+          // yields that value.
+          [&](const lir::EmptyType&) -> diag::Result<llvm::FunctionCallee> {
+            return entry(RuntimeSymbol(
+                support::ValueDomain::kEmpty, RuntimeOp::kDefault));
           },
           [&](const auto&) -> diag::Result<llvm::FunctionCallee> {
             return no_construct();

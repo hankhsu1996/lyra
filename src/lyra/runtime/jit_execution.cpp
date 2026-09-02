@@ -42,6 +42,7 @@
 #include "lyra/runtime/sim_time.hpp"
 #include "lyra/runtime/var.hpp"
 #include "lyra/value/chandle.hpp"
+#include "lyra/value/empty.hpp"
 #include "lyra/value/format.hpp"
 #include "lyra/value/packed_array.hpp"
 #include "lyra/value/real.hpp"
@@ -50,7 +51,9 @@
 #include "lyra/value/runtime_dynamic_array.hpp"
 #include "lyra/value/runtime_memory.hpp"
 #include "lyra/value/runtime_queue.hpp"
+#include "lyra/value/runtime_tagged_union.hpp"
 #include "lyra/value/runtime_tuple.hpp"
+#include "lyra/value/runtime_union.hpp"
 #include "lyra/value/runtime_unpacked_array.hpp"
 #include "lyra/value/runtime_value.hpp"
 #include "lyra/value/scan.hpp"
@@ -493,7 +496,9 @@ using lyra::value::Real;
 using lyra::value::RuntimeAssociativeArray;
 using lyra::value::RuntimeDynamicArray;
 using lyra::value::RuntimeQueue;
+using lyra::value::RuntimeTaggedUnion;
 using lyra::value::RuntimeTuple;
+using lyra::value::RuntimeUnion;
 using lyra::value::RuntimeUnpackedArray;
 using lyra::value::RuntimeValue;
 using lyra::value::ShortReal;
@@ -2137,6 +2142,174 @@ void lyra_rt_tuple_value_cell_store(void* cell, const void* value) {
 auto lyra_rt_tuple_value_cell_load(const void* cell) -> void* {
   return Own(
       static_cast<const ActivationValueCell<RuntimeTuple>*>(cell)->Get());
+}
+
+auto lyra_rt_union_make(std::int64_t index, void* value) -> void* {
+  return Own(RuntimeUnion(
+      static_cast<std::size_t>(index), lyra::runtime::ErasedValue(value)));
+}
+
+auto lyra_rt_union_extract(const void* value, std::int64_t index) -> void* {
+  return lyra::runtime::ElementHandle(
+      Read<RuntimeUnion>(value).Member(static_cast<std::size_t>(index)));
+}
+
+auto lyra_rt_union_update(const void* value, std::int64_t index, void* member)
+    -> void* {
+  RuntimeUnion result = Read<RuntimeUnion>(value);
+  result.SetActive(
+      static_cast<std::size_t>(index), lyra::runtime::ErasedValue(member));
+  return Own(std::move(result));
+}
+
+auto lyra_rt_union_value_box(const void* value) -> void* {
+  return Own(RuntimeValue{Read<RuntimeUnion>(value)});
+}
+
+auto lyra_rt_union_eq(const void* lhs, const void* rhs) -> void* {
+  return Own(Read<RuntimeUnion>(lhs) == Read<RuntimeUnion>(rhs));
+}
+
+auto lyra_rt_union_ne(const void* lhs, const void* rhs) -> void* {
+  return Own(Read<RuntimeUnion>(lhs) != Read<RuntimeUnion>(rhs));
+}
+
+auto lyra_rt_union_case_equal(const void* lhs, const void* rhs) -> void* {
+  return Own(Read<RuntimeUnion>(lhs).CaseEqual(Read<RuntimeUnion>(rhs)));
+}
+
+auto lyra_rt_union_is_unknown(const void* value) -> void* {
+  return Own(Read<RuntimeUnion>(value).IsUnknown());
+}
+
+auto lyra_rt_union_cell_alloc() -> void* {
+  return GeneratedCallScope::Current().Arena().New<Var<RuntimeUnion>>();
+}
+
+auto lyra_rt_union_cell_get(void* cell) -> void* {
+  return Own(static_cast<Var<RuntimeUnion>*>(cell)->Get());
+}
+
+void lyra_rt_union_cell_initialize(void* cell, const void* prototype) {
+  static_cast<Var<RuntimeUnion>*>(cell)->Initialize(
+      Read<RuntimeUnion>(prototype));
+}
+
+void lyra_rt_union_cell_set(void* cell, const void* value) {
+  static_cast<Var<RuntimeUnion>*>(cell)->Set(
+      lyra::runtime::current_runtime(), Read<RuntimeUnion>(value));
+}
+
+auto lyra_rt_union_value_cell_alloc() -> void* {
+  return GeneratedCallScope::Current()
+      .ActivationFrame()
+      .New<ActivationValueCell<RuntimeUnion>>();
+}
+
+void lyra_rt_union_value_cell_store(void* cell, const void* value) {
+  static_cast<ActivationValueCell<RuntimeUnion>*>(cell)->Store(
+      Read<RuntimeUnion>(value));
+}
+
+auto lyra_rt_union_value_cell_load(const void* cell) -> void* {
+  return Own(
+      static_cast<const ActivationValueCell<RuntimeUnion>*>(cell)->Get());
+}
+
+auto lyra_rt_tagged_union_make(std::int64_t tag, void* payload) -> void* {
+  return Own(RuntimeTaggedUnion(
+      static_cast<std::size_t>(tag), lyra::runtime::ErasedValue(payload)));
+}
+
+auto lyra_rt_tagged_union_extract(const void* value, std::int64_t index)
+    -> void* {
+  return lyra::runtime::ElementHandle(
+      Read<RuntimeTaggedUnion>(value).Member(static_cast<std::size_t>(index)));
+}
+
+auto lyra_rt_tagged_union_update(
+    const void* value, std::int64_t index, void* member) -> void* {
+  RuntimeTaggedUnion result = Read<RuntimeTaggedUnion>(value);
+  result.SetMember(
+      static_cast<std::size_t>(index), lyra::runtime::ErasedValue(member));
+  return Own(std::move(result));
+}
+
+// Whether the active tag is `index`, as the machine boolean the pattern-match
+// guard tests (LRM 12.6) -- the same shape a value's `to_bool` yields, which an
+// enclosing `from_bool` lifts to the packed one-bit surface. The runtime holds
+// the comparison, so no packed tag constant crosses the boundary.
+auto lyra_rt_tagged_union_tag_matches(const void* value, std::int64_t index)
+    -> bool {
+  return Read<RuntimeTaggedUnion>(value).Tag() ==
+         static_cast<std::size_t>(index);
+}
+
+auto lyra_rt_tagged_union_value_box(const void* value) -> void* {
+  return Own(RuntimeValue{Read<RuntimeTaggedUnion>(value)});
+}
+
+auto lyra_rt_tagged_union_eq(const void* lhs, const void* rhs) -> void* {
+  return Own(Read<RuntimeTaggedUnion>(lhs) == Read<RuntimeTaggedUnion>(rhs));
+}
+
+auto lyra_rt_tagged_union_ne(const void* lhs, const void* rhs) -> void* {
+  return Own(Read<RuntimeTaggedUnion>(lhs) != Read<RuntimeTaggedUnion>(rhs));
+}
+
+auto lyra_rt_tagged_union_case_equal(const void* lhs, const void* rhs)
+    -> void* {
+  return Own(
+      Read<RuntimeTaggedUnion>(lhs).CaseEqual(Read<RuntimeTaggedUnion>(rhs)));
+}
+
+auto lyra_rt_tagged_union_is_unknown(const void* value) -> void* {
+  return Own(Read<RuntimeTaggedUnion>(value).IsUnknown());
+}
+
+auto lyra_rt_tagged_union_cell_alloc() -> void* {
+  return GeneratedCallScope::Current().Arena().New<Var<RuntimeTaggedUnion>>();
+}
+
+auto lyra_rt_tagged_union_cell_get(void* cell) -> void* {
+  return Own(static_cast<Var<RuntimeTaggedUnion>*>(cell)->Get());
+}
+
+void lyra_rt_tagged_union_cell_initialize(void* cell, const void* prototype) {
+  static_cast<Var<RuntimeTaggedUnion>*>(cell)->Initialize(
+      Read<RuntimeTaggedUnion>(prototype));
+}
+
+void lyra_rt_tagged_union_cell_set(void* cell, const void* value) {
+  static_cast<Var<RuntimeTaggedUnion>*>(cell)->Set(
+      lyra::runtime::current_runtime(), Read<RuntimeTaggedUnion>(value));
+}
+
+auto lyra_rt_tagged_union_value_cell_alloc() -> void* {
+  return GeneratedCallScope::Current()
+      .ActivationFrame()
+      .New<ActivationValueCell<RuntimeTaggedUnion>>();
+}
+
+void lyra_rt_tagged_union_value_cell_store(void* cell, const void* value) {
+  static_cast<ActivationValueCell<RuntimeTaggedUnion>*>(cell)->Store(
+      Read<RuntimeTaggedUnion>(value));
+}
+
+auto lyra_rt_tagged_union_value_cell_load(const void* cell) -> void* {
+  return Own(
+      static_cast<const ActivationValueCell<RuntimeTaggedUnion>*>(cell)->Get());
+}
+
+// A tagged union's `void` member (LRM 7.3.2) carries a value with no bits.
+// `default` builds the one value it has; `value_box` erases it for a build's
+// payload the way every other domain does.
+auto lyra_rt_empty_default() -> void* {
+  return Own(lyra::value::Empty{});
+}
+
+auto lyra_rt_empty_value_box(const void* value) -> void* {
+  return Own(RuntimeValue{Read<lyra::value::Empty>(value)});
 }
 
 auto lyra_rt_make_dynamic_array_default(void* prototype) -> void* {

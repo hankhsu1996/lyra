@@ -44,8 +44,14 @@ auto ValueOf(support::ValueDomain domain, void* handle) -> value::RuntimeValue {
       return Read<value::ShortReal>(handle);
     case support::ValueDomain::kChandle:
       return value::RuntimeValue{value::Chandle{handle}};
+    case support::ValueDomain::kEmpty:
+      return Read<value::Empty>(handle);
     case support::ValueDomain::kTuple:
       return Read<value::RuntimeTuple>(handle);
+    case support::ValueDomain::kUnion:
+      return Read<value::RuntimeUnion>(handle);
+    case support::ValueDomain::kTaggedUnion:
+      return Read<value::RuntimeTaggedUnion>(handle);
     case support::ValueDomain::kDynArray:
       return Read<value::RuntimeDynamicArray>(handle);
     case support::ValueDomain::kUnpackedArray:

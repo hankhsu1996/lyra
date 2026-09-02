@@ -14,7 +14,9 @@
 #include "lyra/value/runtime_associative_array.hpp"
 #include "lyra/value/runtime_dynamic_array.hpp"
 #include "lyra/value/runtime_queue.hpp"
+#include "lyra/value/runtime_tagged_union.hpp"
 #include "lyra/value/runtime_tuple.hpp"
+#include "lyra/value/runtime_union.hpp"
 #include "lyra/value/runtime_unpacked_array.hpp"
 #include "lyra/value/string.hpp"
 
@@ -75,17 +77,20 @@ class MemberStorage {
   std::variant<
       BorrowedHandle, CancellationTarget, ChannelCancellation,
       Var<value::PackedArray>, Var<value::String>, Var<value::Real>,
-      Var<value::ShortReal>, Var<value::RuntimeTuple>,
-      Var<value::RuntimeDynamicArray>, Var<value::RuntimeUnpackedArray>,
-      Var<value::RuntimeQueue>, Var<value::RuntimeAssociativeArray>,
-      value::Chandle, value::PackedArray, value::String, value::Real,
-      value::ShortReal, value::RuntimeTuple, value::RuntimeDynamicArray,
-      value::RuntimeUnpackedArray, value::RuntimeQueue,
-      value::RuntimeAssociativeArray, GcRef<ManagedObject>,
+      Var<value::ShortReal>, Var<value::RuntimeTuple>, Var<value::RuntimeUnion>,
+      Var<value::RuntimeTaggedUnion>, Var<value::RuntimeDynamicArray>,
+      Var<value::RuntimeUnpackedArray>, Var<value::RuntimeQueue>,
+      Var<value::RuntimeAssociativeArray>, value::Chandle, value::PackedArray,
+      value::String, value::Real, value::ShortReal, value::RuntimeTuple,
+      value::RuntimeUnion, value::RuntimeTaggedUnion,
+      value::RuntimeDynamicArray, value::RuntimeUnpackedArray,
+      value::RuntimeQueue, value::RuntimeAssociativeArray, GcRef<ManagedObject>,
       ActivationValueCell<value::PackedArray>,
       ActivationValueCell<value::String>, ActivationValueCell<value::Real>,
       ActivationValueCell<value::ShortReal>,
       ActivationValueCell<value::RuntimeTuple>,
+      ActivationValueCell<value::RuntimeUnion>,
+      ActivationValueCell<value::RuntimeTaggedUnion>,
       ActivationValueCell<value::RuntimeDynamicArray>,
       ActivationValueCell<value::RuntimeUnpackedArray>,
       ActivationValueCell<value::RuntimeQueue>,

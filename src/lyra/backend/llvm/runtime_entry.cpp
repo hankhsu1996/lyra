@@ -65,6 +65,8 @@ auto RuntimeOpName(RuntimeOp op) -> std::string_view {
       return "extract";
     case RuntimeOp::kUpdate:
       return "update";
+    case RuntimeOp::kTagMatches:
+      return "tag_matches";
     case RuntimeOp::kWithElement:
       return "with_element";
     case RuntimeOp::kWithSlice:
@@ -150,6 +152,22 @@ auto ValueDomainOf(const lir::CompilationUnit& unit, lir::TypeId type)
           },
           [](const lir::TupleType&) -> Domain {
             return support::ValueDomain::kTuple;
+          },
+          // An untagged union erases its tag and gives a cross-member read the
+          // component default; a tagged union keeps the tag observable and
+          // faults a mismatched access (LRM 7.3 / 7.3.2), so the two realize as
+          // different runtime value types and name different domains.
+          [](const lir::UnionType&) -> Domain {
+            return support::ValueDomain::kUnion;
+          },
+          [](const lir::TaggedUnionType&) -> Domain {
+            return support::ValueDomain::kTaggedUnion;
+          },
+          // A tagged union's `void` member (LRM 7.3.2) is a value carrying no
+          // bits; it crosses the boundary as its own domain so a build's
+          // payload is uniform whatever the member type.
+          [](const lir::EmptyType&) -> Domain {
+            return support::ValueDomain::kEmpty;
           },
           [](const lir::DynamicArrayType&) -> Domain {
             return support::ValueDomain::kDynArray;

@@ -454,6 +454,43 @@ void DefineRuntimeAbi(llvm::orc::LLJIT& jit) {
   add("lyra_rt_tuple_value_cell_alloc", &lyra_rt_tuple_value_cell_alloc);
   add("lyra_rt_tuple_value_cell_store", &lyra_rt_tuple_value_cell_store);
   add("lyra_rt_tuple_value_cell_load", &lyra_rt_tuple_value_cell_load);
+  add("lyra_rt_union_value_box", &lyra_rt_union_value_box);
+  add("lyra_rt_union_make", &lyra_rt_union_make);
+  add("lyra_rt_union_extract", &lyra_rt_union_extract);
+  add("lyra_rt_union_update", &lyra_rt_union_update);
+  add("lyra_rt_union_eq", &lyra_rt_union_eq);
+  add("lyra_rt_union_ne", &lyra_rt_union_ne);
+  add("lyra_rt_union_case_equal", &lyra_rt_union_case_equal);
+  add("lyra_rt_union_is_unknown", &lyra_rt_union_is_unknown);
+  add("lyra_rt_union_cell_alloc", &lyra_rt_union_cell_alloc);
+  add("lyra_rt_union_cell_get", &lyra_rt_union_cell_get);
+  add("lyra_rt_union_cell_initialize", &lyra_rt_union_cell_initialize);
+  add("lyra_rt_union_cell_set", &lyra_rt_union_cell_set);
+  add("lyra_rt_union_value_cell_alloc", &lyra_rt_union_value_cell_alloc);
+  add("lyra_rt_union_value_cell_store", &lyra_rt_union_value_cell_store);
+  add("lyra_rt_union_value_cell_load", &lyra_rt_union_value_cell_load);
+  add("lyra_rt_tagged_union_value_box", &lyra_rt_tagged_union_value_box);
+  add("lyra_rt_tagged_union_make", &lyra_rt_tagged_union_make);
+  add("lyra_rt_tagged_union_extract", &lyra_rt_tagged_union_extract);
+  add("lyra_rt_tagged_union_update", &lyra_rt_tagged_union_update);
+  add("lyra_rt_tagged_union_tag_matches", &lyra_rt_tagged_union_tag_matches);
+  add("lyra_rt_tagged_union_eq", &lyra_rt_tagged_union_eq);
+  add("lyra_rt_tagged_union_ne", &lyra_rt_tagged_union_ne);
+  add("lyra_rt_tagged_union_case_equal", &lyra_rt_tagged_union_case_equal);
+  add("lyra_rt_tagged_union_is_unknown", &lyra_rt_tagged_union_is_unknown);
+  add("lyra_rt_tagged_union_cell_alloc", &lyra_rt_tagged_union_cell_alloc);
+  add("lyra_rt_tagged_union_cell_get", &lyra_rt_tagged_union_cell_get);
+  add("lyra_rt_tagged_union_cell_initialize",
+      &lyra_rt_tagged_union_cell_initialize);
+  add("lyra_rt_tagged_union_cell_set", &lyra_rt_tagged_union_cell_set);
+  add("lyra_rt_tagged_union_value_cell_alloc",
+      &lyra_rt_tagged_union_value_cell_alloc);
+  add("lyra_rt_tagged_union_value_cell_store",
+      &lyra_rt_tagged_union_value_cell_store);
+  add("lyra_rt_tagged_union_value_cell_load",
+      &lyra_rt_tagged_union_value_cell_load);
+  add("lyra_rt_empty_default", &lyra_rt_empty_default);
+  add("lyra_rt_empty_value_box", &lyra_rt_empty_value_box);
   add("lyra_rt_make_dynamic_array_default",
       &lyra_rt_make_dynamic_array_default);
   add("lyra_rt_make_dynamic_array_new", &lyra_rt_make_dynamic_array_new);

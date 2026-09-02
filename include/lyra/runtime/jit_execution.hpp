@@ -699,6 +699,63 @@ auto lyra_rt_tuple_value_cell_alloc() -> void*;
 void lyra_rt_tuple_value_cell_store(void* cell, const void* value);
 auto lyra_rt_tuple_value_cell_load(const void* cell) -> void*;
 
+// The untagged-union domain (LRM 7.3), MIR's `UnionType`. An active-member
+// value carried behind an opaque handle: it stores the one live member and its
+// index. `make` builds it from an index and a boxed member value; `extract`
+// returns the member at `index`, which must be the live one -- a cross-member
+// read is undefined (LRM 7.3) and, since only the active member is stored,
+// reported rather than defaulted on this backend; `update` returns a copy whose
+// live member is `index` carrying the boxed replacement. All are value
+// operations, never in-place writes.
+auto lyra_rt_union_value_box(const void* value) -> void*;
+auto lyra_rt_union_make(std::int64_t index, void* value) -> void*;
+auto lyra_rt_union_extract(const void* value, std::int64_t index) -> void*;
+auto lyra_rt_union_update(const void* value, std::int64_t index, void* member)
+    -> void*;
+auto lyra_rt_union_eq(const void* lhs, const void* rhs) -> void*;
+auto lyra_rt_union_ne(const void* lhs, const void* rhs) -> void*;
+auto lyra_rt_union_case_equal(const void* lhs, const void* rhs) -> void*;
+auto lyra_rt_union_is_unknown(const void* value) -> void*;
+auto lyra_rt_union_cell_alloc() -> void*;
+auto lyra_rt_union_cell_get(void* cell) -> void*;
+void lyra_rt_union_cell_initialize(void* cell, const void* prototype);
+void lyra_rt_union_cell_set(void* cell, const void* value);
+auto lyra_rt_union_value_cell_alloc() -> void*;
+void lyra_rt_union_value_cell_store(void* cell, const void* value);
+auto lyra_rt_union_value_cell_load(const void* cell) -> void*;
+
+// The tagged-union domain (LRM 7.3.2 / 11.9), MIR's `TaggedUnionType`. The
+// tagged sibling of the untagged union: the tag is observable, so `extract` and
+// `update` fault when `index` is not the live tag rather than returning a
+// fallback, and `tag_matches` answers whether the active tag is a given one,
+// the packed guard a pattern match tests (LRM 12.6). `make` builds it from a
+// tag and a boxed payload; re-tagging goes through `make`, never `update`.
+auto lyra_rt_tagged_union_value_box(const void* value) -> void*;
+auto lyra_rt_tagged_union_make(std::int64_t tag, void* payload) -> void*;
+auto lyra_rt_tagged_union_extract(const void* value, std::int64_t index)
+    -> void*;
+auto lyra_rt_tagged_union_update(
+    const void* value, std::int64_t index, void* member) -> void*;
+auto lyra_rt_tagged_union_tag_matches(const void* value, std::int64_t index)
+    -> bool;
+auto lyra_rt_tagged_union_eq(const void* lhs, const void* rhs) -> void*;
+auto lyra_rt_tagged_union_ne(const void* lhs, const void* rhs) -> void*;
+auto lyra_rt_tagged_union_case_equal(const void* lhs, const void* rhs) -> void*;
+auto lyra_rt_tagged_union_is_unknown(const void* value) -> void*;
+auto lyra_rt_tagged_union_cell_alloc() -> void*;
+auto lyra_rt_tagged_union_cell_get(void* cell) -> void*;
+void lyra_rt_tagged_union_cell_initialize(void* cell, const void* prototype);
+void lyra_rt_tagged_union_cell_set(void* cell, const void* value);
+auto lyra_rt_tagged_union_value_cell_alloc() -> void*;
+void lyra_rt_tagged_union_value_cell_store(void* cell, const void* value);
+auto lyra_rt_tagged_union_value_cell_load(const void* cell) -> void*;
+
+// The empty domain: a tagged union's `void` member (LRM 7.3.2), a value with no
+// bits. `default` builds the one value it has; `value_box` erases it for a
+// build's payload the way every other domain does.
+auto lyra_rt_empty_default() -> void*;
+auto lyra_rt_empty_value_box(const void* value) -> void*;
+
 // The dynamic-array domain (LRM 7.5), MIR's `DynamicArrayType`. A
 // run-time-sized homogeneous container carried behind an opaque handle, owning
 // its elements by value. `default` / `new` / `new_copy` are the LRM 7.5.1
