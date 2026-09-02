@@ -5,7 +5,7 @@ Tracks the SystemVerilog assertion family: immediate and deferred immediate asse
 functions (LRM 16.9.3), the assertion control tasks (LRM 20.12), and checkers (LRM 17).
 
 Nothing in the family lowers today. Because an assertion observes the design and never drives it, a
-run with every one of them removed behaves identically, so `--disable-assertions` elides the whole
+run with every one of them removed behaves identically, so `--assertions skip` elides the whole
 family rather than rejecting it -- statements, declarations, checkers, and the control tasks alike.
 Sampled value functions are the one member that cannot cover: outside an assertion they produce a
 value ordinary logic consumes, so there is nothing to elide them to.

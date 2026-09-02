@@ -318,6 +318,14 @@ the detail lives in the entry itself.
 - [diagnostic-construction](diagnostic-construction.md) -- a diagnostic's kind is derived from its
   code at construction; construction is infallible; the `UnsupportedCategory` axis is removed.
 
+### Compiler inputs
+
+- [project-file](project-file.md) -- `lyra.toml` is a manifest of the design, carrying what is true
+  of it for everyone who builds it and never an invocation or machine property; material accumulates
+  and selection is replaced, a path resolves against its own manifest, and naming sources on the
+  command line uses no manifest at all. A project mode, a merged cascade, and a flag to suppress
+  discovery are rejected.
+
 ### Conformance testing
 
 - [conformance-case-shape](conformance-case-shape.md) -- a case is a self-checking SystemVerilog

@@ -344,9 +344,42 @@ cc_library(
     ],
 )
 
+# The command surface: what commands exist, how a command line and a design's
+# declaration are read, and what each command does. It sits above `driver`,
+# which supplies the build, cache and foreign-boundary machinery it orchestrates.
+cc_library(
+    name = "cli",
+    srcs = glob(
+        ["src/lyra/cli/*.cpp"],
+        exclude = ["src/lyra/cli/main.cpp"],
+    ),
+    hdrs = glob(["include/lyra/cli/*.hpp"]),
+    copts = LYRA_COPTS,
+    includes = ["include"],
+    # A malformed design declaration is a recoverable failure the caller
+    # reports, so the TOML parser has to hand its error back rather than throw
+    # one; the library reads this at include time and cannot be told later.
+    local_defines = ["TOML_EXCEPTIONS=0"],
+    visibility = ["//visibility:public"],
+    deps = [
+        ":backend_llvm",
+        ":compiler",
+        ":diag",
+        ":driver",
+        ":hir",
+        ":jit",
+        ":lir",
+        ":mir",
+        ":support",
+        "@fmt",
+        "@slang",
+        "@tomlplusplus",
+    ],
+)
+
 cc_binary(
     name = "lyra",
-    srcs = ["src/lyra/driver/cli.cpp"],
+    srcs = ["src/lyra/cli/main.cpp"],
     copts = LYRA_COPTS,
     data = [
         ":cpp_runtime",
@@ -356,17 +389,11 @@ cc_binary(
     linkopts = ["-rdynamic"],
     visibility = ["//visibility:public"],
     deps = [
-        ":backend_llvm",
+        ":cli",
         ":compiler",
         ":diag",
         ":driver",
-        ":frontend",
-        ":hir",
-        ":jit",
-        ":lir",
-        ":mir",
-        ":support",
-        ":unit_metadata",
         "@fmt",
+        "@slang",
     ],
 )

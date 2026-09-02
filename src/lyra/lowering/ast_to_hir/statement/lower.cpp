@@ -129,13 +129,13 @@ auto LowerExpressionStmt(
   // left to act on: it is a no-op by construction, not an approximation of
   // one. Without the policy it is a rejected construct, not silently ignored.
   if (IsAssertionControlTask(es.expr)) {
-    if (proc.Owner().DisableAssertions()) {
+    if (proc.Owner().Assertions() == support::AssertionPolicy::kSkip) {
       return LowerEmptyStmt(span);
     }
     return diag::Fail(
         span, diag::DiagCode::kUnsupportedStatementForm,
         "assertion control tasks are not supported; pass "
-        "--disable-assertions to skip them");
+        "--assertions skip to elide them");
   }
   auto expr = proc.LowerExpr(es.expr, frame);
   if (!expr) return std::unexpected(std::move(expr.error()));
@@ -290,13 +290,13 @@ auto LowerStatement(
       // An assertion embedded in surrounding behavior contributes no statement
       // when disabled; the rest of the process runs. Without the policy it is a
       // rejected construct, not silently ignored.
-      if (proc.Owner().DisableAssertions()) {
+      if (proc.Owner().Assertions() == support::AssertionPolicy::kSkip) {
         return LowerEmptyStmt(span);
       }
       return diag::Fail(
           span, diag::DiagCode::kUnsupportedStatementForm,
-          "assertion statements are not supported; pass --disable-assertions "
-          "to skip them");
+          "assertion statements are not supported; pass --assertions skip "
+          "to elide them");
 
     default:
       return diag::Fail(

@@ -1,4 +1,4 @@
-// @args: --disable-assertions
+// @args: --assertions skip
 //
 // A statement label creates a named block around the statement it labels, so
 // the label names a scope rather than the assertion itself (LRM 16.3). An

@@ -1,3 +1,4 @@
+#include <array>
 #include <cerrno>
 #include <cstring>
 #include <expected>
@@ -243,6 +244,194 @@ TEST(LyraEmit, ReEmitIntoSameDirectorySucceeds) {
   }
   EXPECT_TRUE(
       std::filesystem::exists(out_dir / "runtime/lib/libcpp_runtime.a"));
+}
+
+// A design spread over a directory, declared by a `lyra.toml` beside it. Every
+// path in the declaration is relative, which is what makes the file's own
+// directory -- rather than whatever directory a command was typed in -- the
+// thing these tests are about.
+auto WriteDeclaredDesign(const std::filesystem::path& root) -> void {
+  std::filesystem::create_directories(root / "rtl");
+  std::filesystem::create_directories(root / "include");
+  std::filesystem::create_directories(root / "sub");
+
+  std::ofstream header(root / "include" / "width.svh");
+  header << "`ifndef LYRA_WIDTH\n`define LYRA_WIDTH 8\n`endif\n";
+
+  std::ofstream leaf(root / "rtl" / "alu.sv");
+  leaf << "`include \"width.svh\"\n"
+       << "module alu;\n"
+       << "  logic [`LYRA_WIDTH-1:0] y;\n"
+       << "  initial $display(\"alu width %0d\", $bits(y));\n"
+       << "endmodule\n";
+
+  std::ofstream top(root / "rtl" / "soc_tb.sv");
+  top << "module soc_tb;\n"
+      << "  alu u_alu ();\n"
+      << "  initial $display(\"tb trace %0d\", `TRACE);\n"
+      << "endmodule\n";
+
+  std::ofstream manifest(root / "lyra.toml");
+  manifest << "[design]\n"
+           << "name = \"soc\"\n"
+           << "top = [\"soc_tb\"]\n"
+           << "files = [\"rtl/alu.sv\", \"rtl/soc_tb.sv\"]\n"
+           << "incdir = [\"include\"]\n"
+           << "defines = [\"TRACE=1\"]\n"
+           << "\n[compile]\nsingle_unit = true\n";
+}
+
+// Runs lyra from `dir`, which is what a declaration search reads and what no
+// argument can express.
+auto RunLyraFrom(
+    const std::filesystem::path& lyra, const std::filesystem::path& dir,
+    std::string_view args) -> lyra::test::ProcessOutcome {
+  auto sh_or = lyra::support::FindOnPath("sh");
+  EXPECT_TRUE(sh_or.has_value());
+  if (!sh_or) return {};
+  const std::vector<std::string> argv = {
+      "-c",
+      std::format("cd '{}' && '{}' {}", dir.string(), lyra.string(), args)};
+  return RunChildProcess(*sh_or, argv, 60s);
+}
+
+// The whole point of the file: a design describes itself once, and the command
+// line that runs it carries nothing. Running from a subdirectory is the same
+// test asking whether a relative path in the declaration was resolved against
+// the declaration or against whatever directory the command was typed in.
+TEST(LyraDesignManifest, DeclaresTheDesignFromAnyDirectoryWithin) {
+  const auto lyra = ResolveLyra();
+  ASSERT_TRUE(std::filesystem::exists(lyra)) << lyra.string();
+  auto tmp_or = MakeScratchDir();
+  ASSERT_TRUE(tmp_or.has_value()) << tmp_or.error();
+  WriteDeclaredDesign(*tmp_or);
+
+  for (const auto& from : {*tmp_or, *tmp_or / "sub"}) {
+    const auto run = RunLyraFrom(lyra, from, "run");
+    ASSERT_EQ(run.exit_code, 0) << from.string() << ": " << run.stderr_text;
+    EXPECT_NE(run.stdout_text.find("tb trace 1"), std::string::npos)
+        << from.string() << ": " << run.stdout_text;
+    EXPECT_NE(run.stdout_text.find("alu width 8"), std::string::npos)
+        << from.string() << ": " << run.stdout_text;
+  }
+}
+
+// The precedence rule in both directions at once: a define given on the command
+// line joins the declaration's rather than replacing it, while a top given
+// there replaces the declaration's rather than joining it.
+TEST(LyraDesignManifest, CommandLineJoinsMaterialAndReplacesSelection) {
+  const auto lyra = ResolveLyra();
+  ASSERT_TRUE(std::filesystem::exists(lyra)) << lyra.string();
+  auto tmp_or = MakeScratchDir();
+  ASSERT_TRUE(tmp_or.has_value()) << tmp_or.error();
+  WriteDeclaredDesign(*tmp_or);
+
+  const auto joined = RunLyraFrom(lyra, *tmp_or, "run -D LYRA_WIDTH=16");
+  ASSERT_EQ(joined.exit_code, 0) << joined.stderr_text;
+  // The declaration's own define survived, and the command line's won over the
+  // default the header would otherwise have supplied.
+  EXPECT_NE(joined.stdout_text.find("tb trace 1"), std::string::npos)
+      << joined.stdout_text;
+  EXPECT_NE(joined.stdout_text.find("alu width 16"), std::string::npos)
+      << joined.stdout_text;
+
+  const auto narrowed = RunLyraFrom(lyra, *tmp_or, "run --top alu");
+  ASSERT_EQ(narrowed.exit_code, 0) << narrowed.stderr_text;
+  EXPECT_NE(narrowed.stdout_text.find("alu width 8"), std::string::npos)
+      << narrowed.stdout_text;
+  EXPECT_EQ(narrowed.stdout_text.find("tb trace"), std::string::npos)
+      << "the declaration's top was joined rather than replaced: "
+      << narrowed.stdout_text;
+}
+
+// Naming a source is naming a design outright, so no declaration is searched
+// for -- which is what makes an invocation mean the same thing in any
+// directory. The tell is that the design's other half is missing.
+TEST(LyraDesignManifest, NamingASourceUsesNoDeclaration) {
+  const auto lyra = ResolveLyra();
+  ASSERT_TRUE(std::filesystem::exists(lyra)) << lyra.string();
+  auto tmp_or = MakeScratchDir();
+  ASSERT_TRUE(tmp_or.has_value()) << tmp_or.error();
+  WriteDeclaredDesign(*tmp_or);
+
+  const auto checked = RunLyraFrom(lyra, *tmp_or, "check rtl/soc_tb.sv");
+  EXPECT_NE(checked.exit_code, 0) << checked.stdout_text;
+  EXPECT_NE(checked.stderr_text.find("unknown module 'alu'"), std::string::npos)
+      << checked.stderr_text;
+}
+
+// Every refusal the schema makes, in one case because they are one feature: a
+// declaration states what the design is, and anything else in it is a mistake
+// that has to be reported rather than ignored.
+TEST(LyraDesignManifest, RefusesWhatADesignCannotDeclare) {
+  const auto lyra = ResolveLyra();
+  ASSERT_TRUE(std::filesystem::exists(lyra)) << lyra.string();
+  auto tmp_or = MakeScratchDir();
+  ASSERT_TRUE(tmp_or.has_value()) << tmp_or.error();
+
+  struct Refusal {
+    std::string_view name;
+    std::string_view body;
+    std::string_view expected;
+  };
+  static constexpr std::array<Refusal, 6> kRefusals = {
+      {{.name = "unknown-key.toml",
+        .body = "[design]\ntops = [\"a\"]\n",
+        .expected = "unrecognized key"},
+       {.name = "unknown-table.toml",
+        .body = "[designs]\ntop = [\"a\"]\n",
+        .expected = "unrecognized table"},
+       {.name = "invocation-key.toml",
+        .body = "[compile]\nrelease = true\n",
+        .expected = "pass it on the command line"},
+       {.name = "pattern.toml",
+        .body = "[design]\nfiles = [\"rtl/*.sv\"]\n",
+        .expected = "is a pattern"},
+       {.name = "bad-policy.toml",
+        .body = "[compile]\nassertions = \"loud\"\n",
+        .expected = "is not one of check, skip"},
+       {.name = "no-name.toml",
+        .body = "[design]\ntop = [\"a\"]\n",
+        .expected = "a design has to say what it is called"}}};
+
+  for (const auto& refusal : kRefusals) {
+    const auto path = *tmp_or / refusal.name;
+    std::ofstream(path) << refusal.body;
+    const auto checked = RunLyraFrom(
+        lyra, *tmp_or, std::format("check --config '{}'", path.string()));
+    EXPECT_NE(checked.exit_code, 0) << refusal.name << ": accepted";
+    EXPECT_NE(checked.stderr_text.find(refusal.expected), std::string::npos)
+        << refusal.name << ": " << checked.stderr_text;
+  }
+}
+
+// A command that names nothing says so, and says enough to act on. The two
+// ways of arriving there look identical without that: nothing declared
+// anywhere, or a declaration that itself named no sources -- and the
+// declaration that applied may be several directories above the caller.
+TEST(LyraDesignManifest, ReportsNoInputAndWhyThereIsNone) {
+  const auto lyra = ResolveLyra();
+  ASSERT_TRUE(std::filesystem::exists(lyra)) << lyra.string();
+  auto tmp_or = MakeScratchDir();
+  ASSERT_TRUE(tmp_or.has_value()) << tmp_or.error();
+  std::filesystem::create_directory(*tmp_or / ".git");
+
+  const auto searched = RunLyraFrom(lyra, *tmp_or, "check");
+  EXPECT_NE(searched.exit_code, 0) << searched.stdout_text;
+  EXPECT_NE(searched.stderr_text.find("no input files"), std::string::npos)
+      << searched.stderr_text;
+  EXPECT_NE(
+      searched.stderr_text.find("searched for lyra.toml"), std::string::npos)
+      << searched.stderr_text;
+
+  std::ofstream(*tmp_or / "lyra.toml") << "[design]\nname = \"hollow\"\n";
+  const auto declared = RunLyraFrom(lyra, *tmp_or, "check");
+  EXPECT_NE(declared.exit_code, 0) << declared.stdout_text;
+  EXPECT_NE(declared.stderr_text.find("design 'hollow'"), std::string::npos)
+      << declared.stderr_text;
+  EXPECT_NE(
+      declared.stderr_text.find("declares no source files"), std::string::npos)
+      << declared.stderr_text;
 }
 
 }  // namespace

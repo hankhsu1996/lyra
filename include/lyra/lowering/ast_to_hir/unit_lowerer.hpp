@@ -35,6 +35,7 @@
 #include "lyra/hir/value_ref.hpp"
 #include "lyra/lowering/ast_to_hir/sensitivity.hpp"
 #include "lyra/lowering/ast_to_hir/walk_frame.hpp"
+#include "lyra/support/assertion_policy.hpp"
 #include "lyra/support/event_edge.hpp"
 
 namespace slang::ast {
@@ -169,11 +170,12 @@ class LoweringFacts {
   LoweringFacts(
       const frontend::SlangSourceMapper& source_mapper,
       SensitivityAnalyzer& sensitivity_analyzer,
-      const ForeignExportNames& foreign_export_names, bool disable_assertions)
+      const ForeignExportNames& foreign_export_names,
+      support::AssertionPolicy assertions)
       : source_mapper_(&source_mapper),
         sensitivity_analyzer_(&sensitivity_analyzer),
         foreign_export_names_(&foreign_export_names),
-        disable_assertions_(disable_assertions) {
+        assertions_(assertions) {
   }
 
   [[nodiscard]] auto SourceMapper() const
@@ -196,15 +198,15 @@ class LoweringFacts {
     return it->second;
   }
 
-  [[nodiscard]] auto DisableAssertions() const -> bool {
-    return disable_assertions_;
+  [[nodiscard]] auto Assertions() const -> support::AssertionPolicy {
+    return assertions_;
   }
 
  private:
   const frontend::SlangSourceMapper* source_mapper_;
   SensitivityAnalyzer* sensitivity_analyzer_;
   const ForeignExportNames* foreign_export_names_;
-  bool disable_assertions_;
+  support::AssertionPolicy assertions_;
 };
 
 // Per-unit lowerer, over a module instance body or a package. It holds the
@@ -485,11 +487,12 @@ class UnitLowerer {
   // reads it here rather than restating the condition.
   [[nodiscard]] auto Contains(
       const slang::ast::ProceduralBlockSymbol& proc) const -> bool {
-    return !DisableAssertions() || !proc.isFromAssertion;
+    return Assertions() != support::AssertionPolicy::kSkip ||
+           !proc.isFromAssertion;
   }
 
-  [[nodiscard]] auto DisableAssertions() const -> bool {
-    return facts_.DisableAssertions();
+  [[nodiscard]] auto Assertions() const -> support::AssertionPolicy {
+    return facts_.Assertions();
   }
 
   void MapStructuralDataObjectBinding(
