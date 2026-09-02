@@ -532,6 +532,8 @@ void DefineRuntimeAbi(llvm::orc::LLJIT& jit) {
   add("lyra_rt_queue_size", &lyra_rt_queue_size);
   add("lyra_rt_queue_push_back", &lyra_rt_queue_push_back);
   add("lyra_rt_queue_push_front", &lyra_rt_queue_push_front);
+  add("lyra_rt_queue_concat_element", &lyra_rt_queue_concat_element);
+  add("lyra_rt_queue_concat_spread", &lyra_rt_queue_concat_spread);
   add("lyra_rt_queue_insert", &lyra_rt_queue_insert);
   add("lyra_rt_queue_pop_front", &lyra_rt_queue_pop_front);
   add("lyra_rt_queue_pop_back", &lyra_rt_queue_pop_back);

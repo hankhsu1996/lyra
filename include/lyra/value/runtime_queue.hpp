@@ -114,6 +114,14 @@ class RuntimeQueue {
   [[nodiscard]] auto PushFront(RuntimeValue item) const -> RuntimeQueue;
   [[nodiscard]] auto PushBack(RuntimeValue item) const -> RuntimeQueue;
 
+  // LRM 10.10: a copy of this queue with every element of a spread part
+  // appended in order, trimmed to the bound. The part crosses erased as any
+  // element container, so its own domain is read off the value rather than
+  // named here. Only a spread part reaches this; a scalar part appends as one
+  // element.
+  [[nodiscard]] auto ConcatSpread(const RuntimeValue& part) const
+      -> RuntimeQueue;
+
   // LRM 7.10.2.4 / 7.10.2.5 pop, as its two halves: the element at the front
   // or the back, and the queue left once it is gone. An empty queue has none
   // to remove, so it reads the element default and stays as it is.

@@ -2837,6 +2837,16 @@ auto lyra_rt_queue_push_front(const void* queue, void* item) -> void* {
       lyra::runtime::ElementFrom(source.ElementDefault(), item)));
 }
 
+auto lyra_rt_queue_concat_element(const void* queue, void* item) -> void* {
+  const auto& source = Read<RuntimeQueue>(queue);
+  return Own(source.PushBack(
+      lyra::runtime::ElementFrom(source.ElementDefault(), item)));
+}
+
+auto lyra_rt_queue_concat_spread(const void* queue, const void* part) -> void* {
+  return Own(Read<RuntimeQueue>(queue).ConcatSpread(Read<RuntimeValue>(part)));
+}
+
 auto lyra_rt_queue_insert(const void* queue, const void* index, void* item)
     -> void* {
   const auto& source = Read<RuntimeQueue>(queue);

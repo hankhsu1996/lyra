@@ -118,6 +118,19 @@ auto ContainerIndexOperand(BuiltinFn id) -> std::optional<std::size_t> {
   }
 }
 
+auto SpreadPartOperand(BuiltinFn id) -> std::optional<std::size_t> {
+  switch (id) {
+    // LRM 10.10: the queue leads, and the spread part whose elements it appends
+    // follows. The part is a container of any domain, which the appending entry
+    // cannot name, so it crosses erased -- boxed into a runtime value in its
+    // own domain and read back element by element.
+    case BuiltinFn::kQueueConcatSpread:
+      return 1;
+    default:
+      return std::nullopt;
+  }
+}
+
 auto BuiltinFnName(BuiltinFn id) -> std::string_view {
   switch (id) {
     case BuiltinFn::kElement:
@@ -522,16 +535,16 @@ auto BuiltinFnName(BuiltinFn id) -> std::string_view {
       return "from_string";
     case BuiltinFn::kConformBound:
       return "conform_bound";
-    case BuiltinFn::kMakeQueueConcat:
-      return "make_queue_concat";
+    case BuiltinFn::kQueueConcatElement:
+      return "concat_element";
+    case BuiltinFn::kQueueConcatSpread:
+      return "concat_spread";
     case BuiltinFn::kMakeDynamicArrayDefault:
       return "make_dynamic_array_default";
     case BuiltinFn::kMakeDynamicArrayNew:
       return "make_dynamic_array_new";
     case BuiltinFn::kMakeDynamicArrayNewCopy:
       return "make_dynamic_array_new_copy";
-    case BuiltinFn::kSpread:
-      return "spread";
     case BuiltinFn::kConcat:
       return "concat";
     case BuiltinFn::kReplicate:

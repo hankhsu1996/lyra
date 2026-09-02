@@ -335,6 +335,28 @@ class Queue {
     EnforceBound();
   }
 
+  // LRM 10.10 unpacked concatenation, as the two-operand steps a join folds to:
+  // this queue with one element appended, or with every element of a spread
+  // part appended in order. A part is one element unless the program spreads a
+  // container. Value-returning so the fold chains them without mutating a
+  // shared queue, and the declared bound is enforced as the elements land (LRM
+  // 7.10.5).
+  [[nodiscard]] auto ConcatElement(const T& item) const -> Queue {
+    Queue out = *this;
+    out.data_.push_back(item);
+    out.EnforceBound();
+    return out;
+  }
+  template <typename C>
+  [[nodiscard]] auto ConcatSpread(const C& part) const -> Queue {
+    Queue out = *this;
+    for (std::size_t i = 0; i < part.RawSize(); ++i) {
+      out.data_.push_back(part.RawAt(i));
+    }
+    out.EnforceBound();
+    return out;
+  }
+
   // LRM 7.10.2.4 / 7.10.2.5: remove and return the first / last element. On an
   // empty queue the result is the element type's LRM Table 7-1 default and the
   // queue is left unchanged.
@@ -535,55 +557,6 @@ class Queue {
   std::deque<T> data_;
   std::optional<std::uint64_t> max_bound_ = std::nullopt;
 };
-
-// LRM 10.10 unpacked array concatenation builder. A part contributes either
-// itself, as one element, or its own elements in order -- the second marked by
-// `QSpread`, since an array-valued part is legal in both roles and only the
-// program says which one it is. `MakeQueueConcat` folds the parts onto a queue
-// seeded with the element shape and bound of its result type, so even the empty
-// `{}` carries the declared representation -- the concatenation value matches
-// its type with no destination-side shape preservation.
-template <typename C>
-struct ConcatSpreadArg {
-  const C* array;
-};
-
-template <typename C>
-auto QSpread(const C& array) -> ConcatSpreadArg<C> {
-  return ConcatSpreadArg<C>{&array};
-}
-
-template <typename T>
-auto AppendConcatPart(Queue<T>& out, const T& part) -> void {
-  out.PushBack(part);
-}
-template <typename T, typename C>
-auto AppendConcatPart(Queue<T>& out, const ConcatSpreadArg<C>& part) -> void {
-  for (std::size_t i = 0; i < part.array->RawSize(); ++i) {
-    out.PushBack(part.array->RawAt(i));
-  }
-}
-
-// The result carries its element shape and LRM 7.10.5 bound (a negative bound
-// means unbounded) so the concatenation value matches its declared type, even
-// for the empty `{}`. `element_default` cannot be deduced from an empty part
-// list, so it is supplied explicitly; the parts are folded on and the bound
-// enforced.
-template <typename T, typename... Parts>
-auto MakeQueueConcat(
-    const T& element_default, std::int64_t max_bound, const Parts&... parts)
-    -> Queue<T> {
-  Queue<T> out =
-      max_bound < 0
-          ? Queue<T>(element_default)
-          : Queue<T>(
-                element_default,
-                PackedArray::Int(static_cast<std::int32_t>(max_bound)));
-  // Each PushBack enforces the bound, so an over-long concatenation trims as it
-  // folds (LRM 7.10.5).
-  (AppendConcatPart(out, parts), ...);
-  return out;
-}
 
 // LRM 21.2.1.6 aggregate format. Mirrors `Formatter<DynamicArray<T>>`: walk
 // the elements, deferring each to its own `Formatter`. Empty queues compose

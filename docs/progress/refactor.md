@@ -885,8 +885,6 @@ enough to warrant its own focused review.
       is stated in one central mapping (the peer of the type-mapping dispatch, extended to value
       forms), and every prologue statement the wrapper needs sits in the MIR body as an ordinary
       statement the render walks. Concrete sites today:
-  - The queue-concatenation builder renders as inline `lyra::value::MakeQueueConcat<...>(...)` with
-    element spread/append wrapped by `QSpread(...)` / `QElem(...)` at the render site.
   - Class construction of a managed reference renders as inline `lyra::runtime::GcNew<...>` from a
     Construct call whose result type is `ManagedRefType`.
   - A coroutine closure's captures reach its body as an argument list the render site composes,

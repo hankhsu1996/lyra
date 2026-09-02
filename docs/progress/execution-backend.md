@@ -131,14 +131,13 @@ ownership, or native in-frame layout) for every value.
       unchanged where the array holds no such neighbour, and the call site stores that index into
       the variable the source named -- so the variable's own write path runs and its update event
       fires. `foreach` over an associative array and the index-ordered checks run through this.
-- [ ] **An unpacked concatenation** (LRM 10.10) -- refused on the execution backend, so a queue
-      built from one, and every queue whose declared bound is exercised through one, waits here. Two
-      things it needs, both already shaped by what is settled. No C ABI names an entry per arity, so
-      the parts fold into a chain: the empty container the destination declares, then one append per
-      part, left to right, which is the order the parts were written in and so the order their
-      elements land in. And a part that contributes its own elements may be a container of any kind,
-      whose representation the appending entry has no way to know, so that part crosses erased like
-      every other value that states a representation.
+- [x] **An unpacked concatenation** (LRM 10.10) -- realized on the execution backend: a queue is
+      built from its parts, each contributing itself as one element or, spread, its own elements in
+      order, so a queue grown or spliced through `{q, ...}` and one whose declared bound trims an
+      over-long result both run here. No entry composes a part list of arbitrary length, so the
+      concatenation is the left-to-right chain of two-operand appends it stands for, folded where it
+      is built; a spread part crosses erased, its own container domain being no concern of the entry
+      that appends its elements.
 - [x] **The union domains** (LRM 7.3 untagged, 7.3.2 tagged) -- realized on the execution backend.
       An untagged union holds one member at a time, so its value is that member plus which one it
       is, and a member write makes the written member the live one; a tagged union adds a checked
@@ -253,9 +252,8 @@ each meets the same lifetime question above.
       does not realize is stated the same way, naming which shape it has no entry for. An entry now
       exists as a prototype, a definition, and a binding held to each other by a check, so one
       written without the others fails the build instead of failing to resolve at run time. What is
-      still refused no longer shares one message: an unpacked concatenation takes as many parts as
-      the source wrote and no C ABI names an entry per arity, and a named event's members have no
-      storage realization.
+      still refused says which shape it has no entry for: a named event's members have no storage
+      realization.
 - [x] **A memory load or dump (LRM 21.4, 21.5).** Every form the source may write runs here: an
       unpacked memory of any depth, a dynamic array, a queue, an associative array, each either
       running upward from an address or bounded by a window. A memory's words are taken out in

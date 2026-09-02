@@ -167,4 +167,44 @@ auto RuntimeValueCountBits(
       value.value);
 }
 
+namespace {
+
+template <typename T>
+constexpr bool kIsElementContainer =
+    std::is_same_v<T, RuntimeQueue> || std::is_same_v<T, RuntimeDynamicArray> ||
+    std::is_same_v<T, RuntimeUnpackedArray>;
+
+}  // namespace
+
+auto RuntimeValueContainerSize(const RuntimeValue& value) -> std::size_t {
+  return std::visit(
+      [](const auto& v) -> std::size_t {
+        using T = std::decay_t<decltype(v)>;
+        if constexpr (kIsElementContainer<T>) {
+          return static_cast<std::size_t>(v.Size().ToInt64());
+        } else {
+          throw InternalError(
+              "RuntimeValue: a spread concatenation part is not an element "
+              "container (LRM 10.10)");
+        }
+      },
+      value.value);
+}
+
+auto RuntimeValueContainerElementAt(
+    const RuntimeValue& value, std::size_t position) -> const RuntimeValue& {
+  return std::visit(
+      [position](const auto& v) -> const RuntimeValue& {
+        using T = std::decay_t<decltype(v)>;
+        if constexpr (kIsElementContainer<T>) {
+          return v.ElementAt(position);
+        } else {
+          throw InternalError(
+              "RuntimeValue: a spread concatenation part is not an element "
+              "container (LRM 10.10)");
+        }
+      },
+      value.value);
+}
+
 }  // namespace lyra::value
