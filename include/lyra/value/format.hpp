@@ -42,6 +42,12 @@ enum class IntegralStateKind : std::uint8_t {
   kFourState,
 };
 
+// One conversion's modifiers. LRM 21.2.1.2 gives a conversion a single modifier
+// -- a non-negative field width, or none at all where the conversion has a size
+// its operand's type implies -- and fixes everything else about how the field
+// is filled. LRM 21.2.1.1 Table 21-2 gives the three real conversions C's full
+// formatting capability instead, so `precision`, `zero_pad`, and `left_align`
+// describe one of those and nothing else.
 struct FormatSpec {
   FormatKind kind = FormatKind::kDecimal;
   std::int32_t width = -1;
@@ -61,6 +67,17 @@ struct FormatSpec {
       const PackedArray& precision, const PackedArray& zero_pad,
       const PackedArray& left_align, const PackedArray& timeunit_power);
 };
+
+// LRM 21.2.1.2: a rendering narrower than its field is padded to reach it and
+// one wider expands the field rather than being truncated. What fills the field
+// and which side it goes on are the conversion's own properties -- spaces for a
+// decimal or string value, zeros for the other radices, and always on the left
+// -- so only a real conversion, carrying C's capability, can ask for something
+// else. `spec.width` is the field this rendering is to occupy, which for a
+// conversion sized from its operand's type means the caller has resolved that
+// size into the spec first; a width still negative asks for no field at all.
+[[nodiscard]] auto ApplyFieldWidth(std::string body, const FormatSpec& spec)
+    -> std::string;
 
 // LRM 20.4.3 / Table 20-3: the design-wide settings that drive every `%t`. The
 // runtime owns one mutable instance (on the Engine); `$timeformat` writes it.

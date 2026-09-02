@@ -71,6 +71,29 @@ auto SpecCharToKind(char c) -> std::optional<SpecKind> {
   }
 }
 
+// LRM 21.2.1.1 Table 21-2 hands the real conversions C's whole formatting
+// capability. Everywhere else LRM 21.2.1.2 fixes the fill and the justification
+// itself and admits only a field width, so this is what says which of the two
+// grammars a directive was written in.
+auto IsRealConversion(FormatKind kind) -> bool {
+  switch (kind) {
+    case FormatKind::kRealDecimal:
+    case FormatKind::kRealExponential:
+    case FormatKind::kRealGeneral:
+      return true;
+    case FormatKind::kDecimal:
+    case FormatKind::kHex:
+    case FormatKind::kBinary:
+    case FormatKind::kOctal:
+    case FormatKind::kString:
+    case FormatKind::kChar:
+    case FormatKind::kAssignmentPattern:
+    case FormatKind::kTime:
+      return false;
+  }
+  return false;
+}
+
 // Parses a digit run as a non-negative int32. Returns std::nullopt on overflow,
 // and -1 (through the value) when no digit is present.
 auto ParseInt32(std::string_view text, std::size_t& pos)
@@ -133,38 +156,26 @@ auto ParseFormatString(std::string_view text) -> FormatParseResult {
 
       FormatModifiers mods;
 
-      if (pos < text.size() && text[pos] == '-') {
-        mods.left_align = true;
-        ++pos;
-      }
-      if (pos < text.size() && text[pos] == '0' && pos + 1 < text.size() &&
-          std::isdigit(static_cast<unsigned char>(text[pos + 1])) != 0) {
-        mods.zero_pad = true;
-        ++pos;
-      } else if (
-          pos < text.size() && text[pos] == '0' &&
-          (pos + 1 >= text.size() ||
-           std::isdigit(static_cast<unsigned char>(text[pos + 1])) == 0)) {
-        // LRM 21.2.1.1 minimal-width marker `%0X`: zero pad with no width run.
-        mods.zero_pad = true;
-        ++pos;
-        mods.width = 0;
-        if (pos >= text.size()) {
-          return fail(FormatParseError::kMissingSpecifier, directive_start);
-        }
-      }
+      // Which grammar this directive follows is settled by its conversion
+      // character, which is read last, so the modifier text is taken as written
+      // here and read against that character below. A leading zero is the one
+      // place the same text means different things rather than existing in only
+      // one grammar: under LRM 21.2.1.2 it opens the field width, under C it
+      // asks for zero fill.
+      const bool minus_written = pos < text.size() && text[pos] == '-';
+      if (minus_written) ++pos;
 
-      if (mods.width != 0) {
-        auto width_or = ParseInt32(text, pos);
-        if (!width_or.has_value()) {
-          return fail(FormatParseError::kWidthOverflow, directive_start);
-        }
-        if (*width_or != -1) {
-          mods.width = *width_or;
-        }
+      const bool zero_written = pos < text.size() && text[pos] == '0';
+      const std::size_t digits_start = pos;
+      auto width_or = ParseInt32(text, pos);
+      if (!width_or.has_value()) {
+        return fail(FormatParseError::kWidthOverflow, directive_start);
       }
+      const std::size_t digit_count = pos - digits_start;
+      mods.width = *width_or;
 
-      if (pos < text.size() && text[pos] == '.') {
+      const bool precision_written = pos < text.size() && text[pos] == '.';
+      if (precision_written) {
         ++pos;
         auto prec_or = ParseInt32(text, pos);
         if (!prec_or.has_value()) {
@@ -187,6 +198,20 @@ auto ParseFormatString(std::string_view text) -> FormatParseResult {
             FormatParseError::kUnknownSpecifier, directive_start, spec_char);
       }
       ++pos;
+
+      if (IsRealConversion(spec_or->kind)) {
+        mods.left_align = minus_written;
+        mods.zero_pad = zero_written;
+        // A run of exactly "0" is the fill flag alone, leaving C's field width
+        // unstated.
+        if (zero_written && digit_count == 1U) {
+          mods.width = -1;
+        }
+      } else if (minus_written || precision_written) {
+        return fail(
+            FormatParseError::kModifierNotPermitted, directive_start,
+            spec_char);
+      }
 
       result.directives.push_back(
           FormatDirective{

@@ -42,17 +42,24 @@ auto TimeUnitText(std::int8_t power) -> std::string {
 
 namespace {
 
-auto ApplyStringWidth(std::string body, const FormatSpec& spec) -> std::string {
-  if (spec.width <= 0) return body;
-  const auto target = static_cast<std::size_t>(spec.width);
-  if (body.size() >= target) return body;
-  const std::size_t pad = target - body.size();
-  const char fill = spec.zero_pad ? '0' : ' ';
-  if (spec.left_align) {
-    body.append(pad, ' ');
-    return body;
+auto FieldFill(const FormatSpec& spec) -> char {
+  switch (spec.kind) {
+    case FormatKind::kHex:
+    case FormatKind::kBinary:
+    case FormatKind::kOctal:
+      return '0';
+    case FormatKind::kRealDecimal:
+    case FormatKind::kRealExponential:
+    case FormatKind::kRealGeneral:
+      return spec.zero_pad ? '0' : ' ';
+    case FormatKind::kDecimal:
+    case FormatKind::kString:
+    case FormatKind::kChar:
+    case FormatKind::kAssignmentPattern:
+    case FormatKind::kTime:
+      return ' ';
   }
-  return std::string(pad, fill) + std::move(body);
+  throw InternalError("FieldFill: unknown format kind");
 }
 
 auto FormatRealBody(const FormatSpec& spec, double v) -> std::string {
@@ -76,6 +83,18 @@ auto PackedArrayLowWord(const PackedArray& pa) -> std::uint64_t {
 }
 
 }  // namespace
+
+auto ApplyFieldWidth(std::string body, const FormatSpec& spec) -> std::string {
+  if (spec.width <= 0) return body;
+  const auto target = static_cast<std::size_t>(spec.width);
+  if (body.size() >= target) return body;
+  const std::size_t pad = target - body.size();
+  if (spec.left_align) {
+    body.append(pad, ' ');
+    return body;
+  }
+  return std::string(pad, FieldFill(spec)) + std::move(body);
+}
 
 auto Format(const FormatSpec& spec, FormatArg arg, const FormatContext& ctx)
     -> std::string {
@@ -160,15 +179,18 @@ auto Formatter<PackedArray>::Format(
     return FormatTimeMagnitude(
         spec, static_cast<double>(PackedArrayLowWord(value)), *ctx.time_format);
   }
-  // LRM 21.2.1.6: a singular integral element under %p prints "as it would
-  // unformatted" -- the default $display radix is decimal. Rewrite the spec
-  // here before the integral algorithm runs, so an aggregate's element
-  // recursion (which passes the outer %p spec down) renders each integral
-  // leaf as decimal.
+  // LRM 21.2.1.6: an integral element of an assignment pattern prints "as it
+  // would unformatted", and the default $display radix is decimal. It occupies
+  // no field: the white space a pattern carries is the tool's to choose, and an
+  // element sits inside a pattern rather than in the columns the directive
+  // asked of the whole. Rewriting the spec here is what makes that true at
+  // every depth, since the recursion through an aggregate hands each element
+  // the pattern spec the directive was written with.
   if (spec.kind == FormatKind::kAssignmentPattern) {
-    FormatSpec decimal_spec = spec;
-    decimal_spec.kind = FormatKind::kDecimal;
-    return FormatIntegral(decimal_spec, value);
+    FormatSpec element_spec = spec;
+    element_spec.kind = FormatKind::kDecimal;
+    element_spec.width = 0;
+    return FormatIntegral(element_spec, value);
   }
   return FormatIntegral(spec, value);
 }
@@ -180,11 +202,12 @@ auto Formatter<String>::Format(const FormatSpec& spec, const String& value)
         "a string operand cannot be formatted as %t (LRM 21.2.1.3)");
   }
   std::string body{value.View()};
-  // LRM 21.2.1.6: a string with %p prints quoted.
+  // LRM 21.2.1.6: a string element of an assignment pattern prints quoted, and
+  // like every element occupies no field of its own.
   if (spec.kind == FormatKind::kAssignmentPattern) {
-    return ApplyStringWidth("\"" + std::move(body) + "\"", spec);
+    return "\"" + std::move(body) + "\"";
   }
-  return ApplyStringWidth(std::move(body), spec);
+  return ApplyFieldWidth(std::move(body), spec);
 }
 
 auto Formatter<double>::Format(
@@ -198,7 +221,7 @@ auto Formatter<double>::Format(
     }
     return FormatTimeMagnitude(spec, value, *ctx.time_format);
   }
-  return ApplyStringWidth(FormatRealBody(spec, value), spec);
+  return ApplyFieldWidth(FormatRealBody(spec, value), spec);
 }
 
 auto Formatter<float>::Format(
@@ -213,7 +236,7 @@ auto Formatter<float>::Format(
     return FormatTimeMagnitude(
         spec, static_cast<double>(value), *ctx.time_format);
   }
-  return ApplyStringWidth(
+  return ApplyFieldWidth(
       FormatRealBody(spec, static_cast<double>(value)), spec);
 }
 

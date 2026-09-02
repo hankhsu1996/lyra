@@ -10,8 +10,10 @@
 
 namespace lyra::value {
 
-// The width / precision / justification modifiers an LRM 21.2.1.1 format
-// directive may carry ahead of its conversion character. `-1` on width or
+// What a format directive carries ahead of its conversion character. LRM
+// 21.2.1.2 admits a non-negative field width alone; the wider set is the C
+// formatting LRM 21.2.1.1 Table 21-2 grants the real conversions, so a
+// precision, a fill, and a justification reach only those. `-1` on width or
 // precision means the directive left it unset, so the formatter uses its
 // per-kind default.
 struct FormatModifiers {
@@ -41,18 +43,18 @@ struct FormatDirective {
 // compile-time diagnostic vocabulary does not exist.
 enum class FormatParseError : std::uint8_t {
   kNone,
-  kMissingSpecifier,
   kTrailingPercent,
   kUnknownSpecifier,
   kWidthOverflow,
   kPrecisionOverflow,
   kMissingPrecision,
+  kModifierNotPermitted,
 };
 
 // Either the directives or the first malformed one, never both. `error_offset`
 // locates the offending `%` within the format text, so a compile-time caller
 // can resolve it against the format string's source span; `spec_char` carries
-// the conversion character an unknown-specifier error rejected.
+// the conversion character of the directive an error names.
 struct FormatParseResult {
   std::vector<FormatDirective> directives;
   FormatParseError error = FormatParseError::kNone;

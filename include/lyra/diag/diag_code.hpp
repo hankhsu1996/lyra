@@ -38,9 +38,10 @@ enum class DiagCode : std::uint32_t {
   kErrorDelayValueOutOfRange,
   kErrorCaseEqualityOnRealOperand,
   kErrorFormatStringTrailingPercent,
-  kErrorFormatStringMissingSpecifier,
+  kErrorFormatStringMissingPrecision,
   kErrorFormatStringWidthOverflow,
   kErrorFormatStringUnknownSpecifier,
+  kErrorFormatStringModifierNotPermitted,
   kErrorDisplayMissingArg,
 
   kHostInvalidCliArgs,

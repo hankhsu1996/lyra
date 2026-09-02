@@ -225,13 +225,9 @@ auto FailFormatParse(
     const value::FormatParseResult& parsed, diag::SourceSpan span)
     -> std::unexpected<diag::Diagnostic> {
   switch (parsed.error) {
-    case value::FormatParseError::kMissingSpecifier:
-      return diag::Fail(
-          span, diag::DiagCode::kErrorFormatStringMissingSpecifier,
-          "format directive '%' is missing its specifier character");
     case value::FormatParseError::kMissingPrecision:
       return diag::Fail(
-          span, diag::DiagCode::kErrorFormatStringMissingSpecifier,
+          span, diag::DiagCode::kErrorFormatStringMissingPrecision,
           "format directive '.' is missing precision digits");
     case value::FormatParseError::kTrailingPercent:
       return diag::Fail(
@@ -249,6 +245,14 @@ auto FailFormatParse(
       return diag::Fail(
           span, diag::DiagCode::kErrorFormatStringWidthOverflow,
           "format directive precision does not fit in int32");
+    case value::FormatParseError::kModifierNotPermitted:
+      return diag::Fail(
+          span, diag::DiagCode::kErrorFormatStringModifierNotPermitted,
+          std::format(
+              "'%{}' takes a non-negative field width and nothing else; a "
+              "left-justifying '-' and a precision are defined only for the "
+              "real conversions %e / %f / %g (LRM 21.2.1.2)",
+              parsed.spec_char));
     case value::FormatParseError::kNone:
       break;
   }
