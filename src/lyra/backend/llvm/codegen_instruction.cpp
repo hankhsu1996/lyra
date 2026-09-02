@@ -595,7 +595,7 @@ auto CodeGenFunction::ResolveCallee(
               -> diag::Result<llvm::FunctionCallee> {
             return Entry(RuntimeSymbol(t.op), result_type, args);
           },
-          [&](const lir::EnterCoroutineTarget& t)
+          [&](const lir::CoroutineTarget& t)
               -> diag::Result<llvm::FunctionCallee> {
             return Entry(RuntimeSymbol(t.op), result_type, args);
           }},

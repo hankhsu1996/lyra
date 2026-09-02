@@ -48,8 +48,8 @@ auto CodeGenFunction::Run() -> diag::Result<void> {
   }
 
   // A coroutine body opens with its ramp -- identity, frame, begin -- ahead of
-  // the body: a local that must survive a suspension is moved into the
-  // coroutine frame only if it is allocated once the frame exists.
+  // the body, and the slots that must survive a suspension are allocated there,
+  // since only a slot allocated once the frame exists is moved into it.
   llvm::BasicBlock* entry = blocks_.front();
   if (IsCoroutine()) {
     entry = llvm::BasicBlock::Create(
@@ -69,7 +69,11 @@ auto CodeGenFunction::Run() -> diag::Result<void> {
     }
   }
   if (IsCoroutine()) {
-    builder_.CreateBr(blocks_.front());
+    // The ramp places the arguments in the frame and stops before the body's
+    // first statement. An execution's stretches all belong to whoever drives
+    // it -- including the first -- so none of them may run where the frame
+    // happened to be built.
+    EmitCoroutineSuspend(blocks_.front(), false);
   }
 
   for (std::uint32_t i = 0; i < fn_->blocks.size(); ++i) {

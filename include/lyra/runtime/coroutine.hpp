@@ -4,11 +4,13 @@
 #include <deque>
 #include <exception>
 #include <functional>
+#include <memory>
 #include <utility>
 #include <variant>
 
 #include "lyra/base/internal_error.hpp"
 #include "lyra/runtime/cancellation.hpp"
+#include "lyra/runtime/generated_call_scope.hpp"
 #include "lyra/runtime/registration.hpp"
 
 namespace lyra::runtime {
@@ -43,6 +45,15 @@ struct PromiseBase {
   // executing, or terminal. The awaiter is frame-resident, so this points
   // within the same frame and dies with it.
   PendingWait* pending_wait = nullptr;
+  // This execution's value storage: the home of every value whose life exceeds
+  // one stretch of generated code, such as a local read after a resumption.
+  //
+  // It hangs here, on the scheduling record, because that is where a collector
+  // can reach it -- the generated body's own frame is opaque, so a value living
+  // there would be findable by nothing. An execution that needs one installs it
+  // before running a statement; a backend whose bodies hold their values
+  // natively leaves it null.
+  std::unique_ptr<ActivationValueStore> activation_values;
 
   PromiseBase() = default;
   PromiseBase(const PromiseBase&) = delete;

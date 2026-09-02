@@ -265,8 +265,8 @@ class LirDumper {
             [](const ControlEffectTarget& c) -> std::string {
               return std::string{ControlEffectOpName(c.op)};
             },
-            [](const EnterCoroutineTarget& e) -> std::string {
-              return std::string{EnterCoroutineOpName(e.op)};
+            [](const CoroutineTarget& c) -> std::string {
+              return std::string{CoroutineOpName(c.op)};
             }},
         target);
   }

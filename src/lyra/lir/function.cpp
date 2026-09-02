@@ -34,14 +34,18 @@ auto ControlEffectOpName(ControlEffectTarget::Op op) -> std::string_view {
   throw InternalError("lir: unknown control-effect operation");
 }
 
-auto EnterCoroutineOpName(EnterCoroutineTarget::Op op) -> std::string_view {
+auto CoroutineOpName(CoroutineTarget::Op op) -> std::string_view {
   switch (op) {
-    case EnterCoroutineTarget::Op::kBorrowedEnvironment:
+    case CoroutineTarget::Op::kEnterBorrowedEnvironment:
       return "enter_coroutine_borrowed_environment";
-    case EnterCoroutineTarget::Op::kOwnedEnvironment:
+    case CoroutineTarget::Op::kEnterOwnedEnvironment:
       return "enter_coroutine_owned_environment";
+    case CoroutineTarget::Op::kAwait:
+      return "await_coroutine";
+    case CoroutineTarget::Op::kRelease:
+      return "release_coroutine";
   }
-  throw InternalError("lir: unknown coroutine entry operation");
+  throw InternalError("lir: unknown coroutine operation");
 }
 
 auto OperandType(const Function& fn, const Operand& operand)

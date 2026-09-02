@@ -128,7 +128,7 @@ auto RuntimeSymbol(support::ValueDomain domain, lir::BinaryOp op)
     -> std::string;
 auto RuntimeSymbol(support::ValueDomain domain, lir::UnaryOp op) -> std::string;
 auto RuntimeSymbol(lir::ControlEffectTarget::Op op) -> std::string;
-auto RuntimeSymbol(lir::EnterCoroutineTarget::Op op) -> std::string;
+auto RuntimeSymbol(lir::CoroutineTarget::Op op) -> std::string;
 auto RuntimeSymbol(support::ValueDomain domain, lir::ValueCellTarget::Op op)
     -> std::string;
 auto RuntimeSymbol(support::BuiltinFn fn) -> std::string;

@@ -39,19 +39,21 @@ its own name.
   the elaboration phase that creates processes (`elaboration_lifecycle.md`). These uses are correct
   and are left as they are. The word does not name any value storage.
 
-- **"activation frame" names the cross-suspension value storage.** The storage a value-typed local
-  needs to survive a suspension is the activation frame (`object_lifetime.md`). Its runtime home is
-  `ActivationFrameStorage`, owned by the adapter that drives a generated process for the
-  activation's whole life; a value living in it is an `ActivationValueCell<T>`. The LIR operation
-  that allocates, reads, and writes such a value is `ActivationFrameTarget`, realized through the
-  `lyra_rt_activation_frame_*` ABI. `ActivationFrameStorage` is a distinct type from the per-stretch
-  arena even though both allocate the same way, so the two lifetimes cannot be passed for each
-  other.
+- **"activation frame" is the architecture's neutral name; the execution backend's type is not
+  one.** The storage a value-typed local needs to survive a suspension is the activation frame
+  (`object_lifetime.md`), and on a backend whose bodies are real C++ that frame **is** the coroutine
+  frame. On the execution backend it is not: there the generated body has a frame of its own, and
+  what the runtime holds is only the values. Naming the runtime type after the architecture's
+  concept hid that second frame, so the type is `ActivationValueStore` -- a store, of values,
+  belonging to one execution -- and what lives in it is an `ActivationValueCell<T>`, which had the
+  right word all along. The LIR operation that allocates, reads and writes such a value is
+  `ValueCellTarget`. The store is a distinct type from the per-stretch arena even though both
+  allocate the same way, so the two lifetimes cannot be passed for each other.
 
 - **`GeneratedCallScope` is the transient, per-stretch store only.** It owns the values one stretch
-  of generated code materializes and releases them when the stretch returns. It is never activation
-  storage; a scope over a stretch of a suspending body borrows the enclosing
-  `ActivationFrameStorage` but keeps its own transient arena separate.
+  of generated code materializes and releases them when the stretch returns. It is never an
+  execution's own storage; a scope over a stretch of a suspending body borrows the enclosing
+  `ActivationValueStore` but keeps its own transient arena separate.
 
 ## The escape invariant
 
@@ -76,23 +78,41 @@ concrete need makes it worth its cost.
 
 ## Rejected
 
-- **A single fused `RuntimeActivation` owning control, storage, and the GC root.** It re-merges the
-  activation (control, backend-neutral) and the activation frame (storage, per-backend) that
-  `activation.md` and `object_lifetime.md` deliberately keep apart; storage realization differs per
-  backend (the C++ backend's activation is a coroutine frame with no separate storage object), so
-  folding storage into the neutral concept couples it to one realization.
-
-- **A generic typed slot schema, trace hooks, or a GC-root shape now.** The frame has one consumer
+- **A generic typed slot schema, trace hooks, or a GC-root shape now.** The store has one consumer
   today (value-typed procedural locals in packed/string), no second value domain and no managed
   value on the execution backend, and GC is doc-only. Building the general storage schema ahead of
   those consumers is speculative infrastructure
   ([lifetime-extended-automatic-scope](lifetime-extended-automatic-scope.md): no facility ahead of a
   second consumer); its shape is learned from the consumers that force it.
 
+## Withdrawn: the rejection of a fused activation record
+
+This entry first rejected **a single fused activation record owning control, storage, and the GC
+root**, on the grounds that it re-merged a backend-neutral concept (the activation) with a
+per-backend one (its storage).
+
+That rejection was wrong, and it caused a defect. With the record refused as a home, the storage had
+one place left -- a local of the coroutine that drives the generated body -- and a coroutine
+destroys its locals when its body completes, one step before the frame it sits in. So the storage
+was gone before anything that reads an execution's result could read it, which surfaced as a task's
+`output` arriving as a default value with no error anywhere.
+
+`object_lifetime.md` had already ruled it out twice, and both readings were available at the time: a
+value that outlives a safepoint may not live "in opaque backend execution state -- a backend
+coroutine-frame local", and an execution's storage may not be reachable "only through opaque backend
+execution state". Hanging the store on the scheduling record is not a merge of two concepts; it is
+what those two lines require. The storage stays a per-backend type -- a backend whose bodies hold
+their values natively leaves the field empty -- so nothing about the neutral concept is coupled to
+one realization.
+
+Whoever starts an execution allocates that storage, before the execution exists, and leaves it on
+the record. That is the same rule the completion value follows one level up, where the caller
+allocates the place the callee completes into.
+
 ## Consequences
 
-- The storage-side vocabulary converges on "activation frame"; the word "activation" no longer names
-  a value store. `ActivationFrameStorage` and the per-stretch arena are distinct types.
+- The word "activation" no longer names a value store on its own. `ActivationValueStore` and the
+  per-stretch arena are distinct types, and the store hangs on the scheduling record.
 - The escape invariant and its one non-copying path (method return) are written down; a future
   change to per-call scoping must honor it.
 - The slot schema, tracing, and the GC root remain future work, taken up when a value domain beyond

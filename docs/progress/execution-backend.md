@@ -204,9 +204,22 @@ value-domain breadth can be filled first, and the C++ backend is transitional.
 Each defers a value, or hands control to another activation, past the end of the current stretch, so
 each meets the same lifetime question above.
 
-- [ ] A task enable. Control returns to the enabler only once the task completes (LRM 13.3), so the
-      enabler suspends on another activation's completion rather than on a wakeup source it
-      registered itself -- the one suspension whose resumption is a second body's to signal.
+- [x] **Calling a task.** Control returns to the caller only once the task completes (LRM 13.3), so
+      the caller waits on another execution's end rather than on a wakeup source it registered
+      itself -- the one wait whose end is a second body's to signal. A call creates no thread of its
+      own (LRM 9.5 lists what does, and a call is not among them), so the callee runs in the
+      caller's, becomes what a wait registered there parks and what the scheduler resumes, and hands
+      the thread back when it ends. `output` and `inout` values pass at the return (LRM 13.5) into
+      storage the caller allocated and handed over, which is why they are still there to read after
+      the callee has stopped.
+
+      Two things this settled reach wider than a task. **A caller allocates what it will read**: an
+      execution's own storage is gone the moment its body ends, so anything read afterwards has to
+      belong to whoever reads it -- the same rule that decides where an execution's cross-suspension
+      values live, one level up. And a body that cannot be unwound through has no landing for a
+      failure, so a failure is not one of the outcomes an execution settles at all
+      (`decisions/run-time-failure-is-not-an-outcome.md`).
+
 - [x] **Non-blocking assignment** (LRM 10.4.2). A read taken after the statement in the same time
       step still sees the value the destination had, and the assigned value appears only once the
       update region has run. Every destination form takes it: a whole variable, an element, a range,
