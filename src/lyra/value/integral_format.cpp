@@ -394,7 +394,25 @@ auto FormatDecimalBody(const PackedArray& pa) -> std::string {
   return FormatDecimalNumeric(pa);
 }
 
-auto AutoWidthFor(FormatKind kind, std::uint64_t bit_width) -> std::int32_t {
+// Decimal digits of the largest value `bit_width` bits can hold, which is the
+// floor of that value's base-10 logarithm plus one. `log10(2)` is irrational,
+// so the product is never an integer, and it stays further from one than a
+// double's error for any width a declaration can carry -- which is what makes
+// truncating it the floor rather than an approximation of it.
+auto DecimalDigitsOfWidest(std::uint64_t bit_width) -> std::uint64_t {
+  constexpr double kLog10Of2 = 0.30102999566398119521;
+  return static_cast<std::uint64_t>(
+             static_cast<double>(bit_width) * kLog10Of2) +
+         1U;
+}
+
+// LRM 21.2.1.2: with no field width written, a conversion is given the columns
+// the largest value the operand's type can hold occupies in that radix, so no
+// value has to expand its field. A signed decimal needs one column more than
+// that, for the sign its most negative value carries; the other radices print
+// every bit pattern in the same width whatever the type's signedness.
+auto AutoWidthFor(FormatKind kind, const PackedArray& value) -> std::int32_t {
+  const std::uint64_t bit_width = value.BitWidth();
   switch (kind) {
     case FormatKind::kHex:
       return static_cast<std::int32_t>((bit_width + 3U) / 4U);
@@ -403,6 +421,8 @@ auto AutoWidthFor(FormatKind kind, std::uint64_t bit_width) -> std::int32_t {
     case FormatKind::kOctal:
       return static_cast<std::int32_t>((bit_width + 2U) / 3U);
     case FormatKind::kDecimal:
+      return static_cast<std::int32_t>(
+          DecimalDigitsOfWidest(bit_width) + (value.IsSigned() ? 1U : 0U));
     case FormatKind::kString:
     case FormatKind::kChar:
     case FormatKind::kRealDecimal:
@@ -413,29 +433,6 @@ auto AutoWidthFor(FormatKind kind, std::uint64_t bit_width) -> std::int32_t {
       return -1;
   }
   return -1;
-}
-
-auto AutoPadChar(const PackedArray& pa) -> char {
-  if (IsAllX(pa)) return 'x';
-  if (IsAllZ(pa)) return 'z';
-  return '0';
-}
-
-auto ApplyWidthWithChar(std::string body, const FormatSpec& spec, char pad_char)
-    -> std::string {
-  if (spec.width <= 0) return body;
-  const auto target = static_cast<std::size_t>(spec.width);
-  if (body.size() >= target) return body;
-  const std::size_t pad = target - body.size();
-  if (spec.left_align) {
-    body.append(pad, ' ');
-    return body;
-  }
-  // Sign before zero pad: %05d of -5 -> "-0005", not "000-5".
-  if (pad_char == '0' && !body.empty() && body[0] == '-') {
-    return "-" + std::string(pad, '0') + body.substr(1);
-  }
-  return std::string(pad, pad_char) + std::move(body);
 }
 
 }  // namespace
@@ -498,17 +495,10 @@ auto FormatIntegral(const FormatSpec& spec, const PackedArray& value)
   }
 
   FormatSpec effective = spec;
-  char pad_char = spec.zero_pad ? '0' : ' ';
-  if (spec.width < 0) {
-    const std::int32_t aw = AutoWidthFor(spec.kind, value.BitWidth());
-    if (aw >= 0) {
-      effective.width = aw;
-      effective.zero_pad = true;
-      pad_char = AutoPadChar(value);
-    }
+  if (effective.width < 0) {
+    effective.width = AutoWidthFor(spec.kind, value);
   }
-
-  return ApplyWidthWithChar(std::move(body), effective, pad_char);
+  return ApplyFieldWidth(std::move(body), effective);
 }
 
 }  // namespace lyra::value

@@ -2,6 +2,22 @@
 
 Tracks `$display` / `$write` / `$strobe` format-specifier coverage and file-sink support.
 
+The standard describes two formatting models and the conversion character selects which one a
+directive follows, so Lyra holds each conversion to its own. Every conversion but the three real
+ones takes a non-negative field width and nothing else: the field is filled on the left, with spaces
+for a decimal or string value and zeros for the other radices, and a directive that writes no width
+gets the columns the widest value of the operand's type occupies -- one more than that where the
+type is signed, for the sign (LRM 21.2.1.2). The three real conversions are given C's whole
+formatting capability instead (LRM 21.2.1.1 Table 21-2), so a left-justifying `-` and a precision
+stand on `%e` / `%f` / `%g` and are refused everywhere else, where the standard defines no such
+syntax for a conforming program to contain.
+
+Two consequences are worth stating because a design written against a tool that follows C will meet
+them. `%05d` asks for a field of five filled with spaces, not a zero-filled one, because a field
+width is a decimal constant and a leading zero belongs to that number -- while `%08h` reads the same
+under both models, zeros being what a hexadecimal field is filled with either way. And `%-4h` is
+refused outright rather than left-justified.
+
 ## Sub-Steps
 
 - [x] DI1 -- `%c` (char): low byte of an integral argument as ASCII (LRM 21.2.1.1 example). The low
@@ -39,8 +55,9 @@ Tracks `$display` / `$write` / `$strobe` format-specifier coverage and file-sink
       `, ` between elements; empty containers print `'{}`; multi-dimensional and mixed-container
       forms nest naturally. Singular integral elements follow the LRM "as it would unformatted" rule
       (default `$display` radix, i.e. decimal); singular string elements print quoted. `%0p`
-      produces identical text in this scope; LRM 21.2.1.6 allows it. Struct / union / enum /
-      string-typed / real element formats land with their respective type workstreams.
+      produces identical text in this scope; LRM 21.2.1.6 allows it. Struct / union / string-typed /
+      real element formats land with their respective type workstreams; the enumeration element is
+      the recorded gap below.
 - [x] DI8 -- `$sscanf` and `$fscanf` over a shared scanner core (LRM 21.3.4.3). Statement-position
       call (bare or blocking assign-RHS); conversions `%d` / `%h` / `%x` / `%b` / `%o` / `%s` / `%c`
       / `%%`; 4-state vocabulary (`x` / `z` / `?` / `_`) inside the integer conversions; single-char
@@ -53,8 +70,8 @@ Tracks `$display` / `$write` / `$strobe` format-specifier coverage and file-sink
       21.2.1.1), `$sformat` with explicit literal format, and `$sformatf` returning the formatted
       string as a function result. Reuses the print engine's literal-format walker and the
       `value::Format` runtime so the conversion-spec set is identical to `$display` / `$write` (`%d`
-      / `%h` / `%x` / `%b` / `%o` / `%s` / `%c` / `%%` / `%p` / `%0p` / `%f` / `%e` / `%g` plus
-      width / precision / zero-pad / left-align modifiers). No newline appended (LRM 21.3.3 is a
+      / `%h` / `%x` / `%b` / `%o` / `%s` / `%c` / `%%` / `%p` / `%0p` / `%f` / `%e` / `%g`, each
+      carrying the modifiers its own formatting model admits). No newline appended (LRM 21.3.3 is a
       string-producer; newline policy belongs to the display / write family).
 
 ## Scan family follow-ups
@@ -168,23 +185,16 @@ makes, recorded against the path it answers wrongly on; the day the answer becom
 passes and that record fails until its entry goes. What is written here is what the standard
 requires.
 
-- [ ] **A conversion with no field width does not pad to the operand's size** (LRM 21.2.1.2). The
-      clause's own worked example fixes `%d` of a 32-bit value in ten right-justified columns and
-      `%3h` of `32'h5` as `005`; Lyra prints `10` and `  5`. Two independent readings of the clause
-      reached the same conclusion. Decimal pads with spaces and the other radices with zeros, so the
-      two halves are separate requirements that happen to fail together.
-- [ ] **Format flags C provides but the standard does not.** `%-4h` (left-justify) and `%05d`
-      (zero-pad a decimal) are accepted and behave as C's `printf` does. 21.2.1.2 admits only a
-      non-negative field width, and fixes decimal padding as leading spaces, so `%05d` of -5 is
-      required to give four leading spaces rather than `-0005`. Whether to reject these or define
-      them is open; today they silently follow C.
 - [ ] **`%p` of an enumeration prints the integer** (LRM 21.2.1.6), where the clause requires the
-      enumeration name.
+      enumeration name whenever the value is one the type declares and the base type's rendering
+      otherwise. The rule reaches every singular element an aggregate is traversed down to, not only
+      an operand written as one, so an array of an enumeration is covered by the same requirement.
 
 ## Out of Scope
 
-- Format-string parse diagnostics (trailing `%`, missing specifier, width overflow, unknown
-  specifier) -- already implemented, not gaps.
+- Format-string parse diagnostics (an unfinished trailing `%`, an unknown specifier, a width or
+  precision too large to hold, a missing precision, a modifier the conversion does not admit) --
+  already implemented, not gaps.
 - `$monitor` / `$fmonitor`. Not modelled today; add an entry when a concrete consumer needs it.
 - File read / positioning tasks (`$fgetc` / `$ungetc` / `$fseek` / `$rewind` / `$ftell` / `$feof` /
   `$fflush`) are implemented per LRM 21.3.4..21.3.8. The output-argument reads `$fgets` / `$fread` /

@@ -120,10 +120,10 @@ constexpr std::array kEntries{
             .kind = DiagKind::kError,
             .name = "format_string_trailing_percent"}},
     std::pair{
-        DiagCode::kErrorFormatStringMissingSpecifier,
+        DiagCode::kErrorFormatStringMissingPrecision,
         DiagCodeInfo{
             .kind = DiagKind::kError,
-            .name = "format_string_missing_specifier"}},
+            .name = "format_string_missing_precision"}},
     std::pair{
         DiagCode::kErrorFormatStringWidthOverflow,
         DiagCodeInfo{
@@ -133,6 +133,11 @@ constexpr std::array kEntries{
         DiagCodeInfo{
             .kind = DiagKind::kError,
             .name = "format_string_unknown_specifier"}},
+    std::pair{
+        DiagCode::kErrorFormatStringModifierNotPermitted,
+        DiagCodeInfo{
+            .kind = DiagKind::kError,
+            .name = "format_string_modifier_not_permitted"}},
     std::pair{
         DiagCode::kErrorDisplayMissingArg,
         DiagCodeInfo{.kind = DiagKind::kError, .name = "display_missing_arg"}},

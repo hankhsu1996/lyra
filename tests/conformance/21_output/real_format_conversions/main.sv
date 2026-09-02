@@ -7,7 +7,10 @@
 // point and %g keeps six significant digits, and a precision written after a
 // period replaces that count. A field width written before the period is a
 // minimum: a result shorter than it is padded on the left and a longer one
-// expands to fit (LRM 21.2.1.2, Table 21-2).
+// expands to fit. A minus ahead of the width justifies to the left instead,
+// and a leading zero fills with zeros rather than spaces -- both being C
+// capabilities these three conversions alone are given
+// (LRM 21.2.1.2, Table 21-2).
 module Top;
   real pi;
   real hundred;
@@ -26,6 +29,8 @@ module Top;
   string decimal_precision;
   string exponential_precision;
   string decimal_in_field;
+  string decimal_left_justified;
+  string decimal_zero_filled;
 
   initial begin
     pi = 3.14159265358979;
@@ -49,6 +54,8 @@ module Top;
     decimal_precision = $sformatf("%.3f", pi);
     exponential_precision = $sformatf("%.3e", pi);
     decimal_in_field = $sformatf("%10.3f", pi);
+    decimal_left_justified = $sformatf("%-10.3f", pi);
+    decimal_zero_filled = $sformatf("%010.3f", pi);
   end
 
   final begin
@@ -87,6 +94,12 @@ module Top;
     if (decimal_in_field != "     3.142")
       $fatal(1, "%%10.3f of pi was '%s', expected 3.142 in a field of ten",
              decimal_in_field);
+    if (decimal_left_justified != "3.142     ")
+      $fatal(1, "%%-10.3f of pi was '%s', expected 3.142 then five spaces",
+             decimal_left_justified);
+    if (decimal_zero_filled != "000003.142")
+      $fatal(1, "%%010.3f of pi was '%s', expected 000003.142",
+             decimal_zero_filled);
     $display("All checks passed");
   end
 endmodule
