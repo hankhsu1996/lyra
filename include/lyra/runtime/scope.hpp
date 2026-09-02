@@ -10,9 +10,9 @@
 #include <vector>
 
 #include "lyra/runtime/hierarchy_segment.hpp"
-#include "lyra/runtime/member_storage.hpp"
 #include "lyra/runtime/rng.hpp"
 #include "lyra/runtime/scope_program.hpp"
+#include "lyra/runtime/storage_block.hpp"
 #include "lyra/value/packed_array.hpp"
 #include "lyra/value/string.hpp"
 
@@ -209,20 +209,16 @@ class GeneratedScope : public Scope {
   GeneratedScope(
       Scope* parent, HierarchySegment segment,
       const ScopeDefinition* definition)
-      : Scope(parent, std::move(segment), definition) {
-    members_.reserve(definition->members.size);
-    for (const MemberStorageDescriptor& descriptor :
-         definition->members.Descriptors()) {
-      members_.push_back(std::make_unique<MemberStorage>(descriptor));
-    }
+      : Scope(parent, std::move(segment), definition),
+        members_(definition->members) {
   }
 
   [[nodiscard]] auto MemberAddress(std::uint32_t index) -> void* {
-    return members_.at(index)->Address();
+    return members_.Address(index);
   }
 
  private:
-  std::vector<std::unique_ptr<MemberStorage>> members_;
+  StorageBlock members_;
 };
 
 }  // namespace lyra::runtime

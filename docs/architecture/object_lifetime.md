@@ -24,6 +24,30 @@ The model is a generic managed-runtime concept -- the object references of Java,
 -- not a SystemVerilog-specific mechanism. SystemVerilog classes are the first Lyra feature that
 requires it.
 
+```mermaid
+flowchart LR
+  subgraph owned [owning lifetime -- built at time zero, torn down at the end]
+    ST[Static instance tree<br/>modules, generate scopes]
+  end
+  subgraph live [execution state -- lives while its execution does]
+    AF[Activation frames]
+    SC[Scheduled work<br/>closures, waiters, queue entries]
+  end
+  subgraph managed [managed heap -- retained while reachable]
+    MO[Managed objects<br/>graphs and cycles]
+  end
+  ST -- traced edge --> MO
+  AF -- traced edge --> MO
+  SC -- traced edge --> MO
+  MO -- traced edge --> MO
+  MO -. borrowed, never traced .-> ST
+```
+
+The left two groups are the **roots**: what the collector starts from, and never itself collects.
+The one-way boundary is the point to read off the picture -- a managed object may refer back to the
+static tree, but only through a borrowed reference the collector does not follow, so the tree's
+lifetime never depends on the heap's.
+
 ## Owns
 
 - The lifetime meaning of the **managed reference** (`gc<T>`): a traced edge that retains its

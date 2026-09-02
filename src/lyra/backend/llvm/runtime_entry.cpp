@@ -46,6 +46,12 @@ auto RuntimeOpName(RuntimeOp op) -> std::string_view {
       return "member_addr";
     case RuntimeOp::kClosureMake:
       return "closure_make";
+    case RuntimeOp::kObjectMake:
+      return "object_make";
+    case RuntimeOp::kObjectDeref:
+      return "object_deref";
+    case RuntimeOp::kObjectMemberAddress:
+      return "object_member_addr";
     case RuntimeOp::kClosureCapture:
       return "closure_capture";
     case RuntimeOp::kConst:
@@ -163,6 +169,14 @@ auto ValueDomainOf(const lir::CompilationUnit& unit, lir::TypeId type)
           [](const lir::AssociativeArrayType&) -> Domain {
             return support::ValueDomain::kAssocArray;
           },
+          // A class handle (LRM 8.3) refers to an object the simulator owns.
+          // Which object it refers to is the whole value, so the domain's
+          // operations are the ones over a reference -- defaulting to null,
+          // copying, and comparing identity -- and never operations on the
+          // object it names.
+          [](const lir::ManagedRefType&) -> Domain {
+            return support::ValueDomain::kManagedRef;
+          },
           [](const auto&) -> Domain { return std::nullopt; }});
 }
 
@@ -192,10 +206,9 @@ auto RuntimeSymbol(lir::EnterCoroutineTarget::Op op) -> std::string {
   return Symbol(lir::EnterCoroutineOpName(op));
 }
 
-auto RuntimeSymbol(
-    support::ValueDomain domain, lir::ActivationFrameTarget::Op op)
+auto RuntimeSymbol(support::ValueDomain domain, lir::ValueCellTarget::Op op)
     -> std::string {
-  return Symbol(domain, lir::ActivationFrameOpName(op));
+  return Symbol(domain, lir::ValueCellOpName(op));
 }
 
 auto RuntimeSymbol(support::BuiltinFn fn) -> std::string {

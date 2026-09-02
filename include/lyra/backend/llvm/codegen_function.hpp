@@ -10,6 +10,7 @@
 
 #include <llvm/IR/IRBuilder.h>
 
+#include "lyra/backend/llvm/runtime_entry.hpp"
 #include "lyra/diag/diagnostic.hpp"
 #include "lyra/lir/function.hpp"
 #include "lyra/lir/type_id.hpp"
@@ -192,6 +193,13 @@ class CodeGenFunction {
   };
   [[nodiscard]] auto CapturePlaceOf(const lir::Place& place) const
       -> std::optional<CapturePlace>;
+
+  [[nodiscard]] auto MemberAddressOp(lir::TypeId owner) const -> RuntimeOp;
+
+  [[nodiscard]] auto ReachedType(
+      const lir::Place& place, std::ptrdiff_t index) const -> lir::TypeId;
+
+  auto OpenedReferent(llvm::Value* reference, lir::TypeId type) -> llvm::Value*;
 
   CodeGenModule* module_;
   const lir::Function* fn_;

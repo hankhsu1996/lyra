@@ -1,13 +1,11 @@
 #pragma once
 
 #include <cstdint>
-#include <memory>
 #include <span>
 #include <variant>
-#include <vector>
 
-#include "lyra/runtime/member_storage.hpp"
 #include "lyra/runtime/scope_program.hpp"
+#include "lyra/runtime/storage_block.hpp"
 
 namespace lyra::runtime {
 
@@ -55,7 +53,7 @@ class ClosureValue {
 
  private:
   const ClosureDefinition* definition_;
-  std::vector<std::unique_ptr<MemberStorage>> captures_;
+  StorageBlock captures_;
 };
 
 }  // namespace lyra::runtime

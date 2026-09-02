@@ -34,6 +34,7 @@
 #include "lyra/base/overloaded.hpp"
 #include "lyra/compiler/unit_metadata.hpp"
 #include "lyra/diag/diag_code.hpp"
+#include "lyra/lir/class_query.hpp"
 #include "lyra/lir/compilation_unit.hpp"
 #include "lyra/lir/type.hpp"
 #include "lyra/lir/type_id.hpp"
@@ -42,6 +43,7 @@
 #include "lyra/runtime/generated_call_scope.hpp"
 #include "lyra/runtime/hierarchy_segment.hpp"
 #include "lyra/runtime/jit_execution.hpp"
+#include "lyra/runtime/managed_object.hpp"
 #include "lyra/runtime/member_storage.hpp"
 #include "lyra/runtime/plusargs.hpp"
 #include "lyra/runtime/runtime.hpp"
@@ -167,6 +169,9 @@ void DefineRuntimeAbi(llvm::orc::LLJIT& jit) {
   add("lyra_rt_cancellation_for", &lyra_rt_cancellation_for);
   add("lyra_rt_is_cancelled", &lyra_rt_is_cancelled);
   add("lyra_rt_closure_make", &lyra_rt_closure_make);
+  add("lyra_rt_object_make", &lyra_rt_object_make);
+  add("lyra_rt_object_deref", &lyra_rt_object_deref);
+  add("lyra_rt_object_member_addr", &lyra_rt_object_member_addr);
   add("lyra_rt_closure_capture", &lyra_rt_closure_capture);
   add("lyra_rt_submit_nba", &lyra_rt_submit_nba);
   add("lyra_rt_submit_postponed", &lyra_rt_submit_postponed);
@@ -231,18 +236,12 @@ void DefineRuntimeAbi(llvm::orc::LLJIT& jit) {
   add("lyra_rt_shortreal_cell_get", &lyra_rt_shortreal_cell_get);
   add("lyra_rt_shortreal_cell_initialize", &lyra_rt_shortreal_cell_initialize);
   add("lyra_rt_shortreal_cell_set", &lyra_rt_shortreal_cell_set);
-  add("lyra_rt_packed_activation_frame_alloc",
-      &lyra_rt_packed_activation_frame_alloc);
-  add("lyra_rt_string_activation_frame_alloc",
-      &lyra_rt_string_activation_frame_alloc);
-  add("lyra_rt_packed_activation_frame_store",
-      &lyra_rt_packed_activation_frame_store);
-  add("lyra_rt_string_activation_frame_store",
-      &lyra_rt_string_activation_frame_store);
-  add("lyra_rt_packed_activation_frame_load",
-      &lyra_rt_packed_activation_frame_load);
-  add("lyra_rt_string_activation_frame_load",
-      &lyra_rt_string_activation_frame_load);
+  add("lyra_rt_packed_value_cell_alloc", &lyra_rt_packed_value_cell_alloc);
+  add("lyra_rt_string_value_cell_alloc", &lyra_rt_string_value_cell_alloc);
+  add("lyra_rt_packed_value_cell_store", &lyra_rt_packed_value_cell_store);
+  add("lyra_rt_string_value_cell_store", &lyra_rt_string_value_cell_store);
+  add("lyra_rt_packed_value_cell_load", &lyra_rt_packed_value_cell_load);
+  add("lyra_rt_string_value_cell_load", &lyra_rt_string_value_cell_load);
   add("lyra_rt_packed_add", &lyra_rt_packed_add);
   add("lyra_rt_packed_replicate", &lyra_rt_packed_replicate);
   add("lyra_rt_packed_concat", &lyra_rt_packed_concat);
@@ -393,12 +392,9 @@ void DefineRuntimeAbi(llvm::orc::LLJIT& jit) {
   add("lyra_rt_real_convert_from_shortreal",
       &lyra_rt_real_convert_from_shortreal);
   add("lyra_rt_real_convert_from_real", &lyra_rt_real_convert_from_real);
-  add("lyra_rt_real_activation_frame_alloc",
-      &lyra_rt_real_activation_frame_alloc);
-  add("lyra_rt_real_activation_frame_store",
-      &lyra_rt_real_activation_frame_store);
-  add("lyra_rt_real_activation_frame_load",
-      &lyra_rt_real_activation_frame_load);
+  add("lyra_rt_real_value_cell_alloc", &lyra_rt_real_value_cell_alloc);
+  add("lyra_rt_real_value_cell_store", &lyra_rt_real_value_cell_store);
+  add("lyra_rt_real_value_cell_load", &lyra_rt_real_value_cell_load);
   add("lyra_rt_real_make_print_value_item",
       &lyra_rt_real_make_print_value_item);
   add("lyra_rt_shortreal_add", &lyra_rt_shortreal_add);
@@ -424,12 +420,11 @@ void DefineRuntimeAbi(llvm::orc::LLJIT& jit) {
   add("lyra_rt_shortreal_from_int", &lyra_rt_shortreal_from_int);
   add("lyra_rt_shortreal_convert_from_real",
       &lyra_rt_shortreal_convert_from_real);
-  add("lyra_rt_shortreal_activation_frame_alloc",
-      &lyra_rt_shortreal_activation_frame_alloc);
-  add("lyra_rt_shortreal_activation_frame_store",
-      &lyra_rt_shortreal_activation_frame_store);
-  add("lyra_rt_shortreal_activation_frame_load",
-      &lyra_rt_shortreal_activation_frame_load);
+  add("lyra_rt_shortreal_value_cell_alloc",
+      &lyra_rt_shortreal_value_cell_alloc);
+  add("lyra_rt_shortreal_value_cell_store",
+      &lyra_rt_shortreal_value_cell_store);
+  add("lyra_rt_shortreal_value_cell_load", &lyra_rt_shortreal_value_cell_load);
   add("lyra_rt_shortreal_make_print_value_item",
       &lyra_rt_shortreal_make_print_value_item);
   add("lyra_rt_chandle_eq", &lyra_rt_chandle_eq);
@@ -455,12 +450,9 @@ void DefineRuntimeAbi(llvm::orc::LLJIT& jit) {
   add("lyra_rt_tuple_cell_get", &lyra_rt_tuple_cell_get);
   add("lyra_rt_tuple_cell_initialize", &lyra_rt_tuple_cell_initialize);
   add("lyra_rt_tuple_cell_set", &lyra_rt_tuple_cell_set);
-  add("lyra_rt_tuple_activation_frame_alloc",
-      &lyra_rt_tuple_activation_frame_alloc);
-  add("lyra_rt_tuple_activation_frame_store",
-      &lyra_rt_tuple_activation_frame_store);
-  add("lyra_rt_tuple_activation_frame_load",
-      &lyra_rt_tuple_activation_frame_load);
+  add("lyra_rt_tuple_value_cell_alloc", &lyra_rt_tuple_value_cell_alloc);
+  add("lyra_rt_tuple_value_cell_store", &lyra_rt_tuple_value_cell_store);
+  add("lyra_rt_tuple_value_cell_load", &lyra_rt_tuple_value_cell_load);
   add("lyra_rt_make_dynamic_array_default",
       &lyra_rt_make_dynamic_array_default);
   add("lyra_rt_make_dynamic_array_new", &lyra_rt_make_dynamic_array_new);
@@ -478,12 +470,9 @@ void DefineRuntimeAbi(llvm::orc::LLJIT& jit) {
   add("lyra_rt_dynarray_cell_get", &lyra_rt_dynarray_cell_get);
   add("lyra_rt_dynarray_cell_initialize", &lyra_rt_dynarray_cell_initialize);
   add("lyra_rt_dynarray_cell_set", &lyra_rt_dynarray_cell_set);
-  add("lyra_rt_dynarray_activation_frame_alloc",
-      &lyra_rt_dynarray_activation_frame_alloc);
-  add("lyra_rt_dynarray_activation_frame_store",
-      &lyra_rt_dynarray_activation_frame_store);
-  add("lyra_rt_dynarray_activation_frame_load",
-      &lyra_rt_dynarray_activation_frame_load);
+  add("lyra_rt_dynarray_value_cell_alloc", &lyra_rt_dynarray_value_cell_alloc);
+  add("lyra_rt_dynarray_value_cell_store", &lyra_rt_dynarray_value_cell_store);
+  add("lyra_rt_dynarray_value_cell_load", &lyra_rt_dynarray_value_cell_load);
   add("lyra_rt_dynarray_count_bits", &lyra_rt_dynarray_count_bits);
   add("lyra_rt_unpackedarray_value_box", &lyra_rt_unpackedarray_value_box);
   add("lyra_rt_unpackedarray_from_literal",
@@ -516,12 +505,9 @@ void DefineRuntimeAbi(llvm::orc::LLJIT& jit) {
   add("lyra_rt_queue_cell_get", &lyra_rt_queue_cell_get);
   add("lyra_rt_queue_cell_initialize", &lyra_rt_queue_cell_initialize);
   add("lyra_rt_queue_cell_set", &lyra_rt_queue_cell_set);
-  add("lyra_rt_queue_activation_frame_alloc",
-      &lyra_rt_queue_activation_frame_alloc);
-  add("lyra_rt_queue_activation_frame_store",
-      &lyra_rt_queue_activation_frame_store);
-  add("lyra_rt_queue_activation_frame_load",
-      &lyra_rt_queue_activation_frame_load);
+  add("lyra_rt_queue_value_cell_alloc", &lyra_rt_queue_value_cell_alloc);
+  add("lyra_rt_queue_value_cell_store", &lyra_rt_queue_value_cell_store);
+  add("lyra_rt_queue_value_cell_load", &lyra_rt_queue_value_cell_load);
   add("lyra_rt_assocarray_default", &lyra_rt_assocarray_default);
   add("lyra_rt_assocarray_from_entries", &lyra_rt_assocarray_from_entries);
   add("lyra_rt_assocarray_from_entries_default",
@@ -557,12 +543,12 @@ void DefineRuntimeAbi(llvm::orc::LLJIT& jit) {
   add("lyra_rt_assocarray_cell_initialize",
       &lyra_rt_assocarray_cell_initialize);
   add("lyra_rt_assocarray_cell_set", &lyra_rt_assocarray_cell_set);
-  add("lyra_rt_assocarray_activation_frame_alloc",
-      &lyra_rt_assocarray_activation_frame_alloc);
-  add("lyra_rt_assocarray_activation_frame_store",
-      &lyra_rt_assocarray_activation_frame_store);
-  add("lyra_rt_assocarray_activation_frame_load",
-      &lyra_rt_assocarray_activation_frame_load);
+  add("lyra_rt_assocarray_value_cell_alloc",
+      &lyra_rt_assocarray_value_cell_alloc);
+  add("lyra_rt_assocarray_value_cell_store",
+      &lyra_rt_assocarray_value_cell_store);
+  add("lyra_rt_assocarray_value_cell_load",
+      &lyra_rt_assocarray_value_cell_load);
   add("lyra_rt_unpackedarray_element", &lyra_rt_unpackedarray_element);
   add("lyra_rt_unpackedarray_with_element",
       &lyra_rt_unpackedarray_with_element);
@@ -579,12 +565,12 @@ void DefineRuntimeAbi(llvm::orc::LLJIT& jit) {
   add("lyra_rt_unpackedarray_cell_initialize",
       &lyra_rt_unpackedarray_cell_initialize);
   add("lyra_rt_unpackedarray_cell_set", &lyra_rt_unpackedarray_cell_set);
-  add("lyra_rt_unpackedarray_activation_frame_alloc",
-      &lyra_rt_unpackedarray_activation_frame_alloc);
-  add("lyra_rt_unpackedarray_activation_frame_store",
-      &lyra_rt_unpackedarray_activation_frame_store);
-  add("lyra_rt_unpackedarray_activation_frame_load",
-      &lyra_rt_unpackedarray_activation_frame_load);
+  add("lyra_rt_unpackedarray_value_cell_alloc",
+      &lyra_rt_unpackedarray_value_cell_alloc);
+  add("lyra_rt_unpackedarray_value_cell_store",
+      &lyra_rt_unpackedarray_value_cell_store);
+  add("lyra_rt_unpackedarray_value_cell_load",
+      &lyra_rt_unpackedarray_value_cell_load);
   add("lyra_rt_unpackedarray_merge_conditional",
       &lyra_rt_unpackedarray_merge_conditional);
   add("lyra_rt_unpackedarray_from_packed_array",
@@ -612,12 +598,19 @@ void DefineForeignSymbols(
   jit.getMainJITDylib().addGenerator(std::move(*generator));
 }
 
+// What a slot is for, which two declarations answer differently for a slot of
+// the same type: a variable is written through its own store for as long as its
+// owner lives, and a snapshot is filled once where its owner is built and only
+// read afterwards.
+enum class SlotRole : std::uint8_t { kVariable, kSnapshot };
+
 // The storage a generic value realizes for one member its declaration holds,
 // projected from that member's LIR type: an observable cell holds a value other
 // processes subscribe to, a reference-typed member is a box holding a borrowed
 // handle, a runtime record is that record, and anything else the runtime has a
-// value realization for the owner holds inline.
-auto DescribeMember(const lir::CompilationUnit& unit, lir::TypeId type)
+// value realization for the owner holds itself, as its role says.
+auto DescribeMember(
+    const lir::CompilationUnit& unit, lir::TypeId type, SlotRole role)
     -> diag::Result<runtime::MemberStorageDescriptor> {
   const auto& data = unit.types.Get(type);
   if (const auto* observable = data.As<lir::ObservableType>()) {
@@ -644,14 +637,30 @@ auto DescribeMember(const lir::CompilationUnit& unit, lir::TypeId type)
         break;
     }
   }
-  if (unit.types.Get(type).Pointee().has_value()) {
+  // A class handle is the value the member holds, not a pointer it merely
+  // points with: the object stays alive because the member refers to it (LRM
+  // 8.3), which is what a box holding a borrowed handle does not do.
+  if (data.Is<lir::ManagedRefType>()) {
+    return runtime::InlineValueStorage{
+        .domain = support::ValueDomain::kManagedRef};
+  }
+  if (data.Pointee().has_value()) {
     return runtime::BorrowedHandleStorage{};
   }
-  // A value the owner holds but no process subscribes to -- a chandle (LRM
-  // 6.14), and every value a closure snapshots -- lives in its slot rather than
-  // behind an observable cell.
+  // A value nothing subscribes to lives in the owner's own slot rather than
+  // behind an observable cell, and what the slot is for decides how: a
+  // variable keeps the representation its declaration gave it across every
+  // write, and a snapshot is the value it was filled with.
   if (const std::optional<support::ValueDomain> domain =
           backend::llvm_backend::ValueDomainOf(unit, type)) {
+    // A pointer-shaped value has no representation a declaration could give
+    // it (LRM 6.14, 8.3), so there is nothing for a write to land at and no
+    // cell to land in; it is held as it is whatever the slot is for.
+    const bool pointer_shaped = *domain == support::ValueDomain::kChandle ||
+                                *domain == support::ValueDomain::kManagedRef;
+    if (role == SlotRole::kVariable && !pointer_shaped) {
+      return runtime::ValueCellStorage{.domain = *domain};
+    }
     return runtime::InlineValueStorage{.domain = *domain};
   }
   return diag::Fail(
@@ -663,12 +672,13 @@ auto DescribeMember(const lir::CompilationUnit& unit, lir::TypeId type)
 }
 
 auto DescribeMembers(
-    const lir::CompilationUnit& unit, std::span<const lir::Member> members)
+    const lir::CompilationUnit& unit, std::span<const lir::Member> members,
+    SlotRole role)
     -> diag::Result<std::vector<runtime::MemberStorageDescriptor>> {
   std::vector<runtime::MemberStorageDescriptor> descriptors;
   descriptors.reserve(members.size());
   for (const lir::Member& member : members) {
-    auto described = DescribeMember(unit, member.type);
+    auto described = DescribeMember(unit, member.type, role);
     if (!described) {
       return std::unexpected(std::move(described.error()));
     }
@@ -751,7 +761,7 @@ auto LoadStaticStorage(const lir::CompilationUnit& unit)
   std::vector<LoadedStaticStorage> loaded;
   loaded.reserve(unit.static_storage.size());
   for (const lir::StaticStorage& entry : unit.static_storage) {
-    auto described = DescribeMember(unit, entry.type);
+    auto described = DescribeMember(unit, entry.type, SlotRole::kVariable);
     if (!described) {
       return std::unexpected(std::move(described.error()));
     }
@@ -767,11 +777,14 @@ auto LoadStaticStorage(const lir::CompilationUnit& unit)
 // storage instead.
 auto OwnedChildClass(const lir::CompilationUnit& unit, lir::TypeId type)
     -> std::optional<lir::ClassId> {
-  const std::optional<lir::TypeId> pointee = unit.types.Get(type).Pointee();
-  if (!pointee) {
+  // A child is reached by a pointer at it. A class handle also points at an
+  // object of this unit, but at one the program built rather than one the tree
+  // owns, so the pointer kind is what tells the two apart.
+  const auto* pointer = unit.types.Get(type).As<lir::PointerType>();
+  if (pointer == nullptr) {
     return std::nullopt;
   }
-  const auto* object = unit.types.Get(*pointee).As<lir::ObjectType>();
+  const auto* object = unit.types.Get(pointer->pointee).As<lir::ObjectType>();
   return object != nullptr ? std::optional{object->class_id} : std::nullopt;
 }
 
@@ -787,7 +800,7 @@ auto LoadScopeClasses(
   const auto descend = [&](const auto& self_ref,
                            lir::ClassId id) -> diag::Result<void> {
     const lir::Class& cls = unit.classes.Get(id);
-    auto members = DescribeMembers(unit, cls.members);
+    auto members = DescribeMembers(unit, cls.members, SlotRole::kVariable);
     if (!members) {
       return std::unexpected(std::move(members.error()));
     }
@@ -822,6 +835,35 @@ auto LoadScopeClasses(
   return loaded;
 }
 
+// One class whose values the program builds with `new`, rather than a class the
+// object tree owns an instance of.
+struct LoadedObjectClass {
+  std::string name;
+  std::vector<runtime::MemberStorageDescriptor> members;
+  std::unique_ptr<runtime::ObjectDefinition> definition;
+};
+
+auto LoadObjectClasses(const lir::CompilationUnit& unit)
+    -> diag::Result<std::vector<LoadedObjectClass>> {
+  std::vector<LoadedObjectClass> loaded;
+  for (const lir::ClassId id : unit.classes.Ids()) {
+    const lir::Class& cls = unit.classes.Get(id);
+    if (lir::IsObjectTreeNode(cls)) {
+      continue;
+    }
+    auto members = DescribeMembers(unit, cls.members, SlotRole::kVariable);
+    if (!members) {
+      return std::unexpected(std::move(members.error()));
+    }
+    loaded.push_back(
+        LoadedObjectClass{
+            .name = cls.name,
+            .members = *std::move(members),
+            .definition = std::make_unique<runtime::ObjectDefinition>()});
+  }
+  return loaded;
+}
+
 // The definition of one closure a unit declares, kept alive for the session
 // beside the schema it names as plain data it does not own. `protocol` carries
 // which alternative the body is, decided by the invoke's result type and
@@ -838,7 +880,8 @@ auto LoadClosures(const lir::CompilationUnit& unit)
   std::vector<LoadedClosure> loaded;
   loaded.reserve(unit.closures.size());
   for (const lir::Closure& closure : unit.closures) {
-    auto captures = DescribeMembers(unit, closure.captures);
+    auto captures =
+        DescribeMembers(unit, closure.captures, SlotRole::kSnapshot);
     if (!captures) {
       return std::unexpected(std::move(captures.error()));
     }
@@ -925,6 +968,17 @@ auto Execute(
       loaded.end(), std::make_move_iterator(root_classes->begin()),
       std::make_move_iterator(root_classes->end()));
 
+  std::vector<LoadedObjectClass> objects;
+  for (const lir::CompilationUnit* unit : loaded_units) {
+    auto unit_objects = LoadObjectClasses(*unit);
+    if (!unit_objects) {
+      return std::unexpected(std::move(unit_objects.error()));
+    }
+    objects.insert(
+        objects.end(), std::make_move_iterator(unit_objects->begin()),
+        std::make_move_iterator(unit_objects->end()));
+  }
+
   std::vector<LoadedClosure> closures;
   for (const lir::CompilationUnit* unit : loaded_units) {
     auto unit_closures = LoadClosures(*unit);
@@ -949,6 +1003,11 @@ auto Execute(
         .data = entry.captures.data(),
         .size = static_cast<std::uint32_t>(entry.captures.size())};
   }
+  for (LoadedObjectClass& entry : objects) {
+    entry.definition->members = runtime::MemberStorageSchema{
+        .data = entry.members.data(),
+        .size = static_cast<std::uint32_t>(entry.members.size())};
+  }
 
   // Each declaration the runtime builds values of publishes its definition as
   // an injected data symbol the construct references. Every definition is
@@ -967,6 +1026,9 @@ auto Execute(
     publish(entry.name, entry.definition.get());
   }
   for (const LoadedClosure& entry : closures) {
+    publish(entry.name, entry.definition.get());
+  }
+  for (const LoadedObjectClass& entry : objects) {
     publish(entry.name, entry.definition.get());
   }
   Check(
@@ -1027,6 +1089,18 @@ auto Execute(
                   .start = found->toPtr<void*(void*)>()};
             }},
         entry.protocol);
+  }
+  // Every class has a constructor (LRM 8.7), so a name that does not resolve
+  // is not an absent body but one that could not be brought up.
+  for (const LoadedObjectClass& entry : objects) {
+    const std::string symbol = entry.name + ".constructor";
+    auto found = jit->lookup(symbol);
+    if (!found) {
+      throw InternalError(
+          "jit executor: the constructor '" + symbol +
+          "' did not resolve: " + llvm::toString(found.takeError()));
+    }
+    entry.definition->construct = found->toPtr<runtime::ObjectEntry>();
   }
 
   auto runtime_options = runtime::DefaultRuntimeOptions();

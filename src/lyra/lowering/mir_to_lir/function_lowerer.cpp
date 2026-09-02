@@ -566,21 +566,20 @@ auto FunctionLowerer::Store(lir::Place place, lir::Operand value)
 auto FunctionLowerer::AllocateActivationValue(lir::TypeId value_type)
     -> lir::Operand {
   return Emit(
-      value_type, lir::CallInstr{
-                      .target =
-                          lir::ActivationFrameTarget{
-                              .op = lir::ActivationFrameTarget::Op::kAllocate},
-                      .args = {}});
+      value_type,
+      lir::CallInstr{
+          .target =
+              lir::ValueCellTarget{.op = lir::ValueCellTarget::Op::kAllocate},
+          .args = {}});
 }
 
 auto FunctionLowerer::LoadActivationValue(
     lir::Operand handle, lir::TypeId value_type) -> lir::Operand {
   return Emit(
-      value_type, lir::CallInstr{
-                      .target =
-                          lir::ActivationFrameTarget{
-                              .op = lir::ActivationFrameTarget::Op::kLoad},
-                      .args = {std::move(handle)}});
+      value_type,
+      lir::CallInstr{
+          .target = lir::ValueCellTarget{.op = lir::ValueCellTarget::Op::kLoad},
+          .args = {std::move(handle)}});
 }
 
 auto FunctionLowerer::StoreActivationValue(
@@ -589,8 +588,7 @@ auto FunctionLowerer::StoreActivationValue(
       unit_->TranslateType(unit_->Mir().builtins.void_type),
       lir::CallInstr{
           .target =
-              lir::ActivationFrameTarget{
-                  .op = lir::ActivationFrameTarget::Op::kStore},
+              lir::ValueCellTarget{.op = lir::ValueCellTarget::Op::kStore},
           .args = {std::move(handle), std::move(value)}});
 }
 

@@ -18,6 +18,22 @@ direction. The governing thesis:
 > construction model. Compilation-unit boundaries determine how an object type's identity is
 > represented, never its semantic category.
 
+```mermaid
+flowchart TD
+  D[Nominal object declaration<br/>name, fields, methods,<br/>conformances, type-level namespace]
+  D --> A1[base lineage]
+  D --> A2[reference kind]
+  D --> A3[lifecycle]
+  A1 --> V1[runtime instance base<br/>runtime generate-scope base<br/>another class<br/>none]
+  A2 --> V2[owning<br/>borrowed<br/>shared<br/>managed]
+  A3 --> V3[elaboration phases<br/>none]
+```
+
+The three axes are independent, and that independence is the model. A module instance, a generate
+scope, and a SystemVerilog class are three readings of one declaration along them; collapsing any
+two -- reading a reference kind as membership in the runtime tree, or a class handle as the shared
+reference -- destroys a distinction a consumer has to read.
+
 ## Owns
 
 - The nominal object type declaration: a name, instance fields, instance methods, an optional single

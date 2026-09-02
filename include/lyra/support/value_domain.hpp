@@ -28,6 +28,7 @@ enum class ValueDomain : std::uint8_t {
   kUnpackedArray,
   kQueue,
   kAssocArray,
+  kManagedRef,
 };
 
 // The spelling a domain-parametric entry's symbol carries. It is part of what

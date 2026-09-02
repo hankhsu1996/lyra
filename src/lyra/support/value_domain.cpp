@@ -28,6 +28,8 @@ auto ValueDomainName(ValueDomain domain) -> std::string_view {
       return "queue";
     case ValueDomain::kAssocArray:
       return "assocarray";
+    case ValueDomain::kManagedRef:
+      return "managedref";
   }
   throw InternalError("value domain: unknown domain");
 }
