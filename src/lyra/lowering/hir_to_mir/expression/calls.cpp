@@ -285,7 +285,7 @@ auto LowerSystemSubroutineCall(
           [&](const support::TerminationSystemSubroutineInfo& term)
               -> diag::Result<mir::Expr> {
             if constexpr (kProcedural) {
-              return LowerFinishSystemSubroutineCall(
+              return LowerTerminationSystemSubroutineCall(
                   lowerer, frame, call, desc.name, term, span);
             } else {
               return RejectStructuralEffect(span);
