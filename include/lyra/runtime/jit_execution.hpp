@@ -153,7 +153,8 @@ void lyra_rt_disable_fork(void* runtime);
 // each taken into that storage as the schema says -- a pointer held, a value
 // copied. The value is transient, owned by the current call scope until
 // something that outlives the stretch takes it: a region a deferred effect is
-// submitted to, or the coroutine a spawned branch is entered as.
+// submitted to, the coroutine a spawned branch is entered as, or the array
+// method that runs a per-element body over its receiver.
 auto lyra_rt_closure_make(const void* definition, LyraSpan captures) -> void*;
 
 // Builds an object on the managed heap and runs its constructor on it (LRM
@@ -174,7 +175,9 @@ auto lyra_rt_object_member_addr(void* object, std::uint32_t index) -> void*;
 
 // The handle one capture crosses back to the body as, by declaration index. A
 // captured pointer answers the pointer it holds; a captured value answers the
-// storage the closure owns, which outlives every read of it.
+// storage the closure owns, which outlives every read of it. A body reaches its
+// captures the same way whatever it is called with, so this is one entry for
+// every body.
 auto lyra_rt_closure_capture(void* self, std::uint32_t index) -> void*;
 
 // Hands a callable to the region that will run it (LRM 4.4): the write a
@@ -885,6 +888,212 @@ void lyra_rt_assocarray_cell_set(void* cell, const void* value);
 auto lyra_rt_assocarray_value_cell_alloc() -> void*;
 void lyra_rt_assocarray_value_cell_store(void* cell, const void* value);
 auto lyra_rt_assocarray_value_cell_load(const void* cell) -> void*;
+
+// LRM 7.12 array manipulation. The body a `with` clause states is a closure run
+// over each of the receiver's entries, handed the element and that entry's
+// index and taking back what it settled on; a result whose shape the receiver
+// does not determine takes the prototype the call supplies, which crosses
+// erased because the shape it states varies with the clause rather than with
+// the receiver. The ordering family reorders the receiver and produces no
+// element it did not already hold, so it takes no prototype, and `reverse`
+// projects nothing, so it runs no body. The clause defines ordering on the
+// ordinally indexed containers alone.
+auto lyra_rt_unpackedarray_sum(
+    const void* receiver, void* body, void* prototype) -> void*;
+auto lyra_rt_unpackedarray_product(
+    const void* receiver, void* body, void* prototype) -> void*;
+auto lyra_rt_unpackedarray_and(
+    const void* receiver, void* body, void* prototype) -> void*;
+auto lyra_rt_unpackedarray_or(const void* receiver, void* body, void* prototype)
+    -> void*;
+auto lyra_rt_unpackedarray_xor(
+    const void* receiver, void* body, void* prototype) -> void*;
+auto lyra_rt_unpackedarray_find(
+    const void* receiver, void* body, void* prototype) -> void*;
+auto lyra_rt_unpackedarray_find_index(
+    const void* receiver, void* body, void* prototype) -> void*;
+auto lyra_rt_unpackedarray_find_first(
+    const void* receiver, void* body, void* prototype) -> void*;
+auto lyra_rt_unpackedarray_find_first_index(
+    const void* receiver, void* body, void* prototype) -> void*;
+auto lyra_rt_unpackedarray_find_last(
+    const void* receiver, void* body, void* prototype) -> void*;
+auto lyra_rt_unpackedarray_find_last_index(
+    const void* receiver, void* body, void* prototype) -> void*;
+auto lyra_rt_unpackedarray_min(
+    const void* receiver, void* body, void* prototype) -> void*;
+auto lyra_rt_unpackedarray_max(
+    const void* receiver, void* body, void* prototype) -> void*;
+auto lyra_rt_unpackedarray_unique(
+    const void* receiver, void* body, void* prototype) -> void*;
+auto lyra_rt_unpackedarray_unique_index(
+    const void* receiver, void* body, void* prototype) -> void*;
+auto lyra_rt_unpackedarray_map(
+    const void* receiver, void* body, void* prototype) -> void*;
+auto lyra_rt_dynarray_sum(const void* receiver, void* body, void* prototype)
+    -> void*;
+auto lyra_rt_dynarray_product(const void* receiver, void* body, void* prototype)
+    -> void*;
+auto lyra_rt_dynarray_and(const void* receiver, void* body, void* prototype)
+    -> void*;
+auto lyra_rt_dynarray_or(const void* receiver, void* body, void* prototype)
+    -> void*;
+auto lyra_rt_dynarray_xor(const void* receiver, void* body, void* prototype)
+    -> void*;
+auto lyra_rt_dynarray_find(const void* receiver, void* body, void* prototype)
+    -> void*;
+auto lyra_rt_dynarray_find_index(
+    const void* receiver, void* body, void* prototype) -> void*;
+auto lyra_rt_dynarray_find_first(
+    const void* receiver, void* body, void* prototype) -> void*;
+auto lyra_rt_dynarray_find_first_index(
+    const void* receiver, void* body, void* prototype) -> void*;
+auto lyra_rt_dynarray_find_last(
+    const void* receiver, void* body, void* prototype) -> void*;
+auto lyra_rt_dynarray_find_last_index(
+    const void* receiver, void* body, void* prototype) -> void*;
+auto lyra_rt_dynarray_min(const void* receiver, void* body, void* prototype)
+    -> void*;
+auto lyra_rt_dynarray_max(const void* receiver, void* body, void* prototype)
+    -> void*;
+auto lyra_rt_dynarray_unique(const void* receiver, void* body, void* prototype)
+    -> void*;
+auto lyra_rt_dynarray_unique_index(
+    const void* receiver, void* body, void* prototype) -> void*;
+auto lyra_rt_dynarray_map(const void* receiver, void* body, void* prototype)
+    -> void*;
+auto lyra_rt_queue_sum(const void* receiver, void* body, void* prototype)
+    -> void*;
+auto lyra_rt_queue_product(const void* receiver, void* body, void* prototype)
+    -> void*;
+auto lyra_rt_queue_and(const void* receiver, void* body, void* prototype)
+    -> void*;
+auto lyra_rt_queue_or(const void* receiver, void* body, void* prototype)
+    -> void*;
+auto lyra_rt_queue_xor(const void* receiver, void* body, void* prototype)
+    -> void*;
+auto lyra_rt_queue_find(const void* receiver, void* body, void* prototype)
+    -> void*;
+auto lyra_rt_queue_find_index(const void* receiver, void* body, void* prototype)
+    -> void*;
+auto lyra_rt_queue_find_first(const void* receiver, void* body, void* prototype)
+    -> void*;
+auto lyra_rt_queue_find_first_index(
+    const void* receiver, void* body, void* prototype) -> void*;
+auto lyra_rt_queue_find_last(const void* receiver, void* body, void* prototype)
+    -> void*;
+auto lyra_rt_queue_find_last_index(
+    const void* receiver, void* body, void* prototype) -> void*;
+auto lyra_rt_queue_min(const void* receiver, void* body, void* prototype)
+    -> void*;
+auto lyra_rt_queue_max(const void* receiver, void* body, void* prototype)
+    -> void*;
+auto lyra_rt_queue_unique(const void* receiver, void* body, void* prototype)
+    -> void*;
+auto lyra_rt_queue_unique_index(
+    const void* receiver, void* body, void* prototype) -> void*;
+auto lyra_rt_queue_map(const void* receiver, void* body, void* prototype)
+    -> void*;
+auto lyra_rt_assocarray_sum(const void* receiver, void* body, void* prototype)
+    -> void*;
+auto lyra_rt_assocarray_product(
+    const void* receiver, void* body, void* prototype) -> void*;
+auto lyra_rt_assocarray_and(const void* receiver, void* body, void* prototype)
+    -> void*;
+auto lyra_rt_assocarray_or(const void* receiver, void* body, void* prototype)
+    -> void*;
+auto lyra_rt_assocarray_xor(const void* receiver, void* body, void* prototype)
+    -> void*;
+auto lyra_rt_assocarray_find(const void* receiver, void* body, void* prototype)
+    -> void*;
+auto lyra_rt_assocarray_find_index(
+    const void* receiver, void* body, void* prototype) -> void*;
+auto lyra_rt_assocarray_find_first(
+    const void* receiver, void* body, void* prototype) -> void*;
+auto lyra_rt_assocarray_find_first_index(
+    const void* receiver, void* body, void* prototype) -> void*;
+auto lyra_rt_assocarray_find_last(
+    const void* receiver, void* body, void* prototype) -> void*;
+auto lyra_rt_assocarray_find_last_index(
+    const void* receiver, void* body, void* prototype) -> void*;
+auto lyra_rt_assocarray_min(const void* receiver, void* body, void* prototype)
+    -> void*;
+auto lyra_rt_assocarray_max(const void* receiver, void* body, void* prototype)
+    -> void*;
+auto lyra_rt_assocarray_unique(
+    const void* receiver, void* body, void* prototype) -> void*;
+auto lyra_rt_assocarray_unique_index(
+    const void* receiver, void* body, void* prototype) -> void*;
+auto lyra_rt_assocarray_map(const void* receiver, void* body, void* prototype)
+    -> void*;
+auto lyra_rt_unpackedarray_sort(const void* receiver, void* body) -> void*;
+auto lyra_rt_unpackedarray_rsort(const void* receiver, void* body) -> void*;
+auto lyra_rt_dynarray_sort(const void* receiver, void* body) -> void*;
+auto lyra_rt_dynarray_rsort(const void* receiver, void* body) -> void*;
+auto lyra_rt_queue_sort(const void* receiver, void* body) -> void*;
+auto lyra_rt_queue_rsort(const void* receiver, void* body) -> void*;
+auto lyra_rt_unpackedarray_reverse(const void* receiver) -> void*;
+auto lyra_rt_dynarray_reverse(const void* receiver) -> void*;
+auto lyra_rt_queue_reverse(const void* receiver) -> void*;
+
+// LRM 21.4 / 21.5 memory load and dump. The memory names the entry, since what
+// an address means is its own: an unpacked memory reads the declared bounds of
+// every dimension, which ride as a run of packed values with the addressed one
+// first; a dynamic array or queue is the dense space its current size spans;
+// and an associative memory is addressed by key, so a load takes a key
+// prototype to build each key at the width an ordinary access uses. Running
+// upward from an address and running within a window are two requests, so each
+// is its own entry. A load answers through its completion, because a word the
+// file does not address keeps what it held.
+auto lyra_rt_unpackedarray_read_mem(
+    void* runtime, const void* memory, const void* name, LyraSpan dims,
+    const void* base, const void* start) -> void*;
+auto lyra_rt_unpackedarray_read_mem_within(
+    void* runtime, const void* memory, const void* name, LyraSpan dims,
+    const void* base, const void* start, const void* finish) -> void*;
+void lyra_rt_unpackedarray_write_mem(
+    void* runtime, const void* memory, const void* name, LyraSpan dims,
+    const void* base, const void* start);
+void lyra_rt_unpackedarray_write_mem_within(
+    void* runtime, const void* memory, const void* name, LyraSpan dims,
+    const void* base, const void* start, const void* finish);
+auto lyra_rt_dynarray_read_mem(
+    void* runtime, const void* memory, const void* name, const void* base,
+    const void* start) -> void*;
+auto lyra_rt_dynarray_read_mem_within(
+    void* runtime, const void* memory, const void* name, const void* base,
+    const void* start, const void* finish) -> void*;
+void lyra_rt_dynarray_write_mem(
+    void* runtime, const void* memory, const void* name, const void* base,
+    const void* start);
+void lyra_rt_dynarray_write_mem_within(
+    void* runtime, const void* memory, const void* name, const void* base,
+    const void* start, const void* finish);
+auto lyra_rt_queue_read_mem(
+    void* runtime, const void* memory, const void* name, const void* base,
+    const void* start) -> void*;
+auto lyra_rt_queue_read_mem_within(
+    void* runtime, const void* memory, const void* name, const void* base,
+    const void* start, const void* finish) -> void*;
+void lyra_rt_queue_write_mem(
+    void* runtime, const void* memory, const void* name, const void* base,
+    const void* start);
+void lyra_rt_queue_write_mem_within(
+    void* runtime, const void* memory, const void* name, const void* base,
+    const void* start, const void* finish);
+auto lyra_rt_assocarray_read_mem(
+    void* runtime, const void* memory, const void* name,
+    const void* key_prototype, const void* base, const void* start) -> void*;
+auto lyra_rt_assocarray_read_mem_within(
+    void* runtime, const void* memory, const void* name,
+    const void* key_prototype, const void* base, const void* start,
+    const void* finish) -> void*;
+void lyra_rt_assocarray_write_mem(
+    void* runtime, const void* memory, const void* name, const void* base,
+    const void* start);
+void lyra_rt_assocarray_write_mem_within(
+    void* runtime, const void* memory, const void* name, const void* base,
+    const void* start, const void* finish);
 
 // LRM 21.3.3 / 5.9: text conformed to a destination's declared shape. An
 // integral destination takes it right-justified and an unpacked array of bytes

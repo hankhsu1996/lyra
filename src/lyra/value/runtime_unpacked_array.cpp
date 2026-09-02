@@ -76,6 +76,15 @@ auto RuntimeUnpackedArray::Element(
   return data_[*ordinal];
 }
 
+auto RuntimeUnpackedArray::ElementAt(std::size_t position) const
+    -> const RuntimeValue& {
+  if (position >= data_.size()) {
+    throw InternalError(
+        "RuntimeUnpackedArray::ElementAt: the position is past the last");
+  }
+  return data_[position];
+}
+
 auto RuntimeUnpackedArray::WithElement(
     const PackedArray& sv_index, const PackedArray& left,
     const PackedArray& right, RuntimeValue value) const

@@ -431,7 +431,7 @@ auto FunctionLowerer::Run() -> diag::Result<lir::Function> {
       const lir::Operand handle = AllocateActivationValue(type);
       locals_[param.value] =
           LocalBinding{ActivationValueBinding{.handle = handle}};
-      StoreActivationValue(handle, lir::Use{.value = value});
+      StoreActivationValue(handle, lir::Use{.value = value}, type);
     } else if (cell_local_[param.value]) {
       const lir::Operand reference = AllocateCell(type);
       locals_[param.value] = LocalBinding{CellBinding{.reference = reference}};
@@ -531,7 +531,7 @@ void FunctionLowerer::BindLocal(
   if (activation_value_local_[local.value]) {
     StoreActivationValue(
         std::get<ActivationValueBinding>(*locals_[local.value]).handle,
-        std::move(init));
+        std::move(init), type);
     return;
   }
   // A lent local's cell is built where it is declared, so each entry to that
@@ -566,11 +566,12 @@ auto FunctionLowerer::Store(lir::Place place, lir::Operand value)
 auto FunctionLowerer::AllocateActivationValue(lir::TypeId value_type)
     -> lir::Operand {
   return Emit(
-      value_type,
-      lir::CallInstr{
-          .target =
-              lir::ValueCellTarget{.op = lir::ValueCellTarget::Op::kAllocate},
-          .args = {}});
+      value_type, lir::CallInstr{
+                      .target =
+                          lir::ValueCellTarget{
+                              .op = lir::ValueCellTarget::Op::kAllocate,
+                              .value = value_type},
+                      .args = {}});
 }
 
 auto FunctionLowerer::LoadActivationValue(
@@ -578,17 +579,21 @@ auto FunctionLowerer::LoadActivationValue(
   return Emit(
       value_type,
       lir::CallInstr{
-          .target = lir::ValueCellTarget{.op = lir::ValueCellTarget::Op::kLoad},
+          .target =
+              lir::ValueCellTarget{
+                  .op = lir::ValueCellTarget::Op::kLoad, .value = value_type},
           .args = {std::move(handle)}});
 }
 
 auto FunctionLowerer::StoreActivationValue(
-    lir::Operand handle, lir::Operand value) -> lir::Operand {
+    lir::Operand handle, lir::Operand value, lir::TypeId value_type)
+    -> lir::Operand {
   return Emit(
       unit_->TranslateType(unit_->Mir().builtins.void_type),
       lir::CallInstr{
           .target =
-              lir::ValueCellTarget{.op = lir::ValueCellTarget::Op::kStore},
+              lir::ValueCellTarget{
+                  .op = lir::ValueCellTarget::Op::kStore, .value = value_type},
           .args = {std::move(handle), std::move(value)}});
 }
 
@@ -1494,7 +1499,7 @@ auto FunctionLowerer::LowerAssign(
                     .lhs = LoadActivationValue(*handle, type),
                     .rhs = *std::move(value)});
     }
-    StoreActivationValue(*handle, written);
+    StoreActivationValue(*handle, written, type);
     return written;
   }
 
@@ -1529,7 +1534,9 @@ auto FunctionLowerer::WriteWholeValue(
     -> diag::Result<lir::Operand> {
   if (const std::optional<lir::Operand> handle =
           ActivationValueHandleForTarget(block, id)) {
-    return StoreActivationValue(*handle, std::move(value));
+    return StoreActivationValue(
+        *handle, std::move(value),
+        unit_->TranslateType(block.exprs.Get(id).type));
   }
   auto place = LowerPlace(block, id);
   if (!place) {
@@ -1801,7 +1808,7 @@ auto FunctionLowerer::LowerIncDec(
     const lir::Operand old = LoadActivationValue(*handle, type);
     const lir::Operand updated =
         Emit(type, lir::UnaryInstr{.op = op, .operand = old});
-    StoreActivationValue(*handle, updated);
+    StoreActivationValue(*handle, updated, type);
     return is_prefix ? updated : old;
   }
 

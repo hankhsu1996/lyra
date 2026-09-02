@@ -570,13 +570,7 @@ auto CodeGenFunction::ResolveCallee(
           },
           [&](const lir::ValueCellTarget& t)
               -> diag::Result<llvm::FunctionCallee> {
-            // The domain the entry is named by is read from the value the
-            // operation moves: the cell's own value type for an allocation or
-            // a load, the stored value's type for a store.
-            const lir::TypeId moved = t.op == lir::ValueCellTarget::Op::kStore
-                                          ? OperandType(call.args.at(1))
-                                          : result_type;
-            auto domain = DomainOf(moved);
+            auto domain = DomainOf(t.value);
             if (!domain) {
               return std::unexpected(std::move(domain.error()));
             }
@@ -947,10 +941,10 @@ auto CodeGenFunction::LowerPackedTypeRef(const lir::PackedTypeRef& ref)
   builder_.CreateBr(ready);
 
   builder_.SetInsertPoint(ready);
-  llvm::PHINode* descriptor = builder_.CreatePHI(ptr_ty, 2);
-  descriptor->addIncoming(cached, entry);
-  descriptor->addIncoming(built, build);
-  return descriptor;
+  llvm::PHINode* packed_type = builder_.CreatePHI(ptr_ty, 2);
+  packed_type->addIncoming(cached, entry);
+  packed_type->addIncoming(built, build);
+  return packed_type;
 }
 
 // A string literal materializes as its native constant bytes; the owning
@@ -1272,7 +1266,7 @@ auto CodeGenFunction::ConstructCallee(
           }});
 }
 
-auto CodeGenFunction::ElementPrototypeOperand(const lir::CallInstr& call) const
+auto CodeGenFunction::ResultShapeOperand(const lir::CallInstr& call) const
     -> std::optional<std::size_t> {
   if (const auto* construct = std::get_if<lir::ConstructTarget>(&call.target)) {
     return module_->Unit()
@@ -1304,14 +1298,23 @@ auto CodeGenFunction::ElementPrototypeOperand(const lir::CallInstr& call) const
     case support::BuiltinFn::kMakeDynamicArrayNewCopy:
       return 1;
     default:
-      return std::nullopt;
+      break;
   }
+  // LRM 7.12: a method whose result shape the receiver does not determine takes
+  // the prototype the producer supplied, trailing the operands the method
+  // itself needs. Its representation follows the `with` clause rather than the
+  // receiver, so one entry over a receiver of one representation still meets
+  // prototypes of several.
+  if (support::ArrayMethodTakesClosure(builtin->fn) &&
+      support::BuiltinFnTakesResultPrototype(builtin->fn)) {
+    return call.args.size() - 1;
+  }
+  return std::nullopt;
 }
 
 auto CodeGenFunction::ErasedOperand(const lir::CallInstr& call) const
     -> diag::Result<std::optional<ErasedArgument>> {
-  if (const std::optional<std::size_t> prototype =
-          ElementPrototypeOperand(call)) {
+  if (const std::optional<std::size_t> prototype = ResultShapeOperand(call)) {
     auto domain = DomainOf(OperandType(call.args.at(*prototype)));
     if (!domain) {
       return std::unexpected(std::move(domain.error()));

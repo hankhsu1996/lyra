@@ -3,7 +3,6 @@
 #include <format>
 #include <string>
 #include <utility>
-#include <variant>
 #include <vector>
 
 #include <llvm/IR/Constant.h>
@@ -33,15 +32,15 @@ CodeGenModule::CodeGenModule(const lir::CompilationUnit& unit)
 auto CodeGenModule::Run() -> diag::Result<EmittedModule> {
   // Every function is declared before any body is generated, because a body may
   // call one whose own body is generated later, including itself.
-  for (const lir::Function& fn : unit_->functions) {
-    functions_.Append(DeclareCallable(fn));
+  for (const lir::FunctionId id : unit_->functions.Ids()) {
+    functions_.Append(DeclareCallable(id));
   }
   packed_type_cells_ = base::Translation<lir::TypeId, llvm::GlobalVariable*>(
       unit_->types.size());
   for (const lir::TypeId id : unit_->types.Ids()) {
     packed_type_cells_.Append(
         unit_->packed_type_initializers.Get(id).has_value()
-            ? DeclareDescriptorCell()
+            ? DeclarePackedTypeCell(id)
             : nullptr);
   }
   for (const lir::FunctionId id : unit_->functions.Ids()) {
@@ -62,8 +61,8 @@ auto CodeGenModule::Run() -> diag::Result<EmittedModule> {
   return EmittedModule{std::move(context_), std::move(module_)};
 }
 
-auto CodeGenModule::DeclareCallable(const lir::Function& fn)
-    -> llvm::Function* {
+auto CodeGenModule::DeclareCallable(lir::FunctionId id) -> llvm::Function* {
+  const lir::Function& fn = unit_->functions.Get(id);
   std::vector<llvm::Type*> params;
   params.reserve(fn.params.size());
   for (const lir::ValueId param : fn.params) {
@@ -115,13 +114,17 @@ auto CodeGenModule::PackedTypeCell(lir::TypeId integral)
   return packed_type_cells_.Get(integral);
 }
 
-// Constructing a global appends it to the module, which owns it from then on;
-// what the list keeps is the module's cells, not a second owner of them.
-auto CodeGenModule::DeclareDescriptorCell() -> llvm::GlobalVariable* {
-  auto* ptr_ty = types_.Ptr();
-  return new llvm::GlobalVariable(
-      *module_, ptr_ty, false, llvm::GlobalValue::PrivateLinkage,
-      llvm::ConstantPointerNull::get(ptr_ty));
+// The module owns its globals, so what the list keeps is the module's cells
+// rather than a second owner of them. The label reaches no linker, so a type's
+// own identity is enough to tell one cell from another.
+auto CodeGenModule::DeclarePackedTypeCell(lir::TypeId integral)
+    -> llvm::GlobalVariable* {
+  llvm::PointerType* ptr_ty = types_.Ptr();
+  auto* cell = llvm::cast<llvm::GlobalVariable>(module_->getOrInsertGlobal(
+      std::format("packed_type_{}", integral.value), ptr_ty));
+  cell->setLinkage(llvm::GlobalValue::PrivateLinkage);
+  cell->setInitializer(llvm::ConstantPointerNull::get(ptr_ty));
+  return cell;
 }
 
 }  // namespace lyra::backend::llvm_backend

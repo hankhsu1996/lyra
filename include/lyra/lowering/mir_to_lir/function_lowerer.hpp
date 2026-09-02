@@ -262,14 +262,16 @@ class FunctionLowerer {
   // Activation-frame value operations, emitted for a value-typed local in a
   // suspending body. `AllocateActivationValue` builds the slot (uninitialized
   // -- the first `StoreActivationValue` installs its representation) and
-  // returns its handle; `LoadActivationValue` copies the current value out;
-  // `StoreActivationValue` overwrites it. The handle is typed as the slot's
-  // value type -- both cross the boundary as one opaque handle -- so the value
-  // domain an activation-frame call works in is read from that type.
+  // returns its handle, typed as the slot's value since both cross the boundary
+  // as one opaque handle; `LoadActivationValue` copies the current value out;
+  // `StoreActivationValue` overwrites it. Each states the value the slot holds,
+  // which is what names the entry realizing it: a store settles nothing and a
+  // handle is opaque, so neither of those carries it.
   auto AllocateActivationValue(lir::TypeId value_type) -> lir::Operand;
   auto LoadActivationValue(lir::Operand handle, lir::TypeId value_type)
       -> lir::Operand;
-  auto StoreActivationValue(lir::Operand handle, lir::Operand value)
+  auto StoreActivationValue(
+      lir::Operand handle, lir::Operand value, lir::TypeId value_type)
       -> lir::Operand;
 
   // The storage a local lent by reference lives in. `AllocateCell` builds the

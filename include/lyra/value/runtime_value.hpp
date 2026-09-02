@@ -47,13 +47,13 @@ struct RuntimeValue {
 [[nodiscard]] auto RuntimeValueBitIdentical(
     const RuntimeValue& a, const RuntimeValue& b) -> bool;
 
-// The order two associative-array indices sit in (LRM 7.8.2 lexicographic for
-// a string index, 7.8.4 numerical for an integral one). It is the index type's
-// own ordering, so it is read off the values rather than supplied beside them,
-// which is what lets a keyed container carry no index prototype. A chandle
-// orders by the pointer it carries, an order LRM 6.14 leaves free to vary
-// between runs.
-[[nodiscard]] auto RuntimeValueIndexBefore(
+// The order two values of one domain sit in: lexicographic for a string,
+// numerical for an integral, and for a chandle the pointer it carries, an order
+// LRM 6.14 leaves free to vary between runs. It is the domain's own ordering,
+// read off the values rather than supplied beside them, which is what lets a
+// keyed container carry no index prototype (LRM 7.8.2, 7.8.4) and lets an
+// LRM 7.12.1 locator compare keys of whatever shape a `with` clause produced.
+[[nodiscard]] auto RuntimeValueOrderBefore(
     const RuntimeValue& a, const RuntimeValue& b) -> bool;
 
 // LRM 20.9: whether the value carries any unknown bit.

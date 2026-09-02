@@ -6,8 +6,10 @@
 
 #include "lyra/base/internal_error.hpp"
 #include "lyra/base/overloaded.hpp"
+#include "lyra/runtime/erased_value.hpp"
 #include "lyra/runtime/generated_call_scope.hpp"
 #include "lyra/runtime/scope_program.hpp"
+#include "lyra/value/runtime_value.hpp"
 
 namespace lyra::runtime {
 
@@ -17,7 +19,8 @@ auto HasBody(const ClosureBody& body) -> bool {
   return std::visit(
       Overloaded{
           [](const SynchronousBody& b) { return b.run != nullptr; },
-          [](const CoroutineBody& b) { return b.start != nullptr; }},
+          [](const CoroutineBody& b) { return b.start != nullptr; },
+          [](const PerElementBody& b) { return b.run != nullptr; }},
       body);
 }
 
@@ -53,9 +56,8 @@ void ClosureValue::Invoke() {
   const auto* body = std::get_if<SynchronousBody>(&definition_->body);
   if (body == nullptr) {
     throw InternalError(
-        "ClosureValue: a body that completes as a coroutine is entered through "
-        "the coroutine protocol rather than run to completion -- please report "
-        "this as a bug");
+        "ClosureValue: this body is not one run to completion -- please "
+        "report this as a bug");
   }
   // The body is generated code, so it runs in a scope of its own like every
   // other stretch the runtime enters: the values it materializes are released
@@ -68,7 +70,7 @@ auto ClosureValue::Start() -> void* {
   const auto* body = std::get_if<CoroutineBody>(&definition_->body);
   if (body == nullptr) {
     throw InternalError(
-        "ClosureValue: an ordinary body has no handle to yield -- please "
+        "ClosureValue: this body is not one entered as a coroutine -- please "
         "report this as a bug");
   }
   // No scope is pushed here. A coroutine body's stretches each run in the scope
@@ -76,6 +78,28 @@ auto ClosureValue::Start() -> void* {
   // its later resumptions need too; a scope opened here would cover only the
   // first stretch and would name no frame.
   return body->start(this);
+}
+
+auto ClosureValue::RunPerElement(
+    const value::RuntimeValue& item, const value::RuntimeValue& index)
+    -> value::RuntimeValue {
+  const auto* body = std::get_if<PerElementBody>(&definition_->body);
+  if (body == nullptr) {
+    throw InternalError(
+        "ClosureValue: this body is not one run per entry -- please report "
+        "this as a bug");
+  }
+  // The element and the index are borrowed for the call: the container holds
+  // them and the body only reads them. The result is the one thing the body
+  // materializes, so it is read out before the scope it lives in is released.
+  GeneratedCallScope scope;
+  void* result = body->run(this, HandleOf(item), HandleOf(index));
+  if (result == nullptr) {
+    throw InternalError(
+        "ClosureValue: an LRM 7.12 with-clause settles a value -- please "
+        "report this as a bug");
+  }
+  return ValueOf(body->result_domain, result);
 }
 
 }  // namespace lyra::runtime

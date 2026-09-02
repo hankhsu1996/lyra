@@ -180,6 +180,7 @@ struct ForeignTarget {
 struct ValueCellTarget {
   enum class Op : std::uint8_t { kAllocate, kLoad, kStore };
   Op op;
+  TypeId value;
 };
 
 // An operation on the control effect that leaves a disabled target (LRM

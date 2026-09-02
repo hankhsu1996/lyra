@@ -81,6 +81,15 @@ class RuntimeAssociativeArray {
   [[nodiscard]] auto Element(const RuntimeValue& index) const
       -> const RuntimeValue&;
 
+  // The index and the element at storage position `position`, counted from the
+  // first in LRM 7.8 index order -- the coordinate LRM 7.12 walks a container
+  // by. An entry of a keyed container reports its own index rather than an
+  // ordinal, so the two are read as a pair. A position past the last is a walk
+  // defect rather than a read of an index the array has no entry for.
+  [[nodiscard]] auto IndexAt(std::size_t position) const -> const RuntimeValue&;
+  [[nodiscard]] auto ElementAt(std::size_t position) const
+      -> const RuntimeValue&;
+
   // A functional element write: yields a new array with `value` stored under
   // `index`, allocating the entry if there was none (LRM 7.8.7). An index
   // carrying x or z is invalid whatever it names, so the write is discarded.
@@ -157,5 +166,6 @@ static_assert(LyraValue<RuntimeAssociativeArray>);
 static_assert(CaseEqualComparable<RuntimeAssociativeArray>);
 static_assert(Sized<RuntimeAssociativeArray>);
 static_assert(BitstreamSizable<RuntimeAssociativeArray>);
+static_assert(KeyedEntryWalkable<RuntimeAssociativeArray>);
 
 }  // namespace lyra::value

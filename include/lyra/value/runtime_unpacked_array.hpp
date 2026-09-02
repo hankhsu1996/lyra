@@ -100,6 +100,13 @@ class RuntimeUnpackedArray {
       const PackedArray& sv_index, const PackedArray& left,
       const PackedArray& right) const -> const RuntimeValue&;
 
+  // The element at storage position `position`, counted from the first in the
+  // array's own order -- the coordinate LRM 7.12 walks a container by, and the
+  // one this value carries, its declared range belonging to the static type. A
+  // position past the last is a walk defect rather than an out-of-range read.
+  [[nodiscard]] auto ElementAt(std::size_t position) const
+      -> const RuntimeValue&;
+
   // A functional element write: yields a new array equal to this one with the
   // named element replaced by `value`. LRM 7.4.5: an index the declared range
   // does not name, or an x / z one, leaves the array unchanged.
@@ -178,6 +185,7 @@ static_assert(CaseEqualComparable<RuntimeUnpackedArray>);
 static_assert(ConditionallyMergeable<RuntimeUnpackedArray>);
 static_assert(Sized<RuntimeUnpackedArray>);
 static_assert(BitstreamSizable<RuntimeUnpackedArray>);
+static_assert(EntryWalkable<RuntimeUnpackedArray>);
 static_assert(RangedSliceable<RuntimeUnpackedArray>);
 
 }  // namespace lyra::value

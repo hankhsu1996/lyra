@@ -11,6 +11,10 @@
 #include "lyra/value/dynamic_array.hpp"
 #include "lyra/value/packed_array.hpp"
 #include "lyra/value/queue.hpp"
+#include "lyra/value/runtime_associative_array.hpp"
+#include "lyra/value/runtime_dynamic_array.hpp"
+#include "lyra/value/runtime_queue.hpp"
+#include "lyra/value/runtime_unpacked_array.hpp"
 #include "lyra/value/string.hpp"
 #include "lyra/value/tuple.hpp"
 #include "lyra/value/unpacked_array.hpp"
@@ -105,6 +109,54 @@ void WriteMemWithin(
     RuntimeEffects& runtime, const AssociativeMemory& src,
     const value::String& filename, const value::PackedArray& base,
     const value::PackedArray& start, const value::PackedArray& finish);
+
+// The same four memories, held as the erased values the execution backend
+// realizes them by. A load answers with the memory it filled rather than with
+// a completion, because what a completion is made of belongs to the boundary
+// that builds one. Nothing about the addressing changes: the words are taken
+// out in address order, the same cores fill or render them, and the memory is
+// rebuilt around them -- which is what a value that cannot be written in place
+// needs in order to keep the words the file does not reach.
+auto ReadMem(
+    RuntimeEffects& runtime, const value::RuntimeUnpackedArray& dest,
+    const value::String& filename, std::span<const value::PackedArray> dims,
+    const value::PackedArray& base, const value::PackedArray& start,
+    std::optional<std::int64_t> finish) -> value::RuntimeUnpackedArray;
+void WriteMem(
+    RuntimeEffects& runtime, const value::RuntimeUnpackedArray& src,
+    const value::String& filename, std::span<const value::PackedArray> dims,
+    const value::PackedArray& base, const value::PackedArray& start,
+    std::optional<std::int64_t> finish);
+
+auto ReadMem(
+    RuntimeEffects& runtime, const value::RuntimeDynamicArray& dest,
+    const value::String& filename, const value::PackedArray& base,
+    const value::PackedArray& start, std::optional<std::int64_t> finish)
+    -> value::RuntimeDynamicArray;
+void WriteMem(
+    RuntimeEffects& runtime, const value::RuntimeDynamicArray& src,
+    const value::String& filename, const value::PackedArray& base,
+    const value::PackedArray& start, std::optional<std::int64_t> finish);
+
+auto ReadMem(
+    RuntimeEffects& runtime, const value::RuntimeQueue& dest,
+    const value::String& filename, const value::PackedArray& base,
+    const value::PackedArray& start, std::optional<std::int64_t> finish)
+    -> value::RuntimeQueue;
+void WriteMem(
+    RuntimeEffects& runtime, const value::RuntimeQueue& src,
+    const value::String& filename, const value::PackedArray& base,
+    const value::PackedArray& start, std::optional<std::int64_t> finish);
+
+auto ReadMem(
+    RuntimeEffects& runtime, const value::RuntimeAssociativeArray& dest,
+    const value::String& filename, const value::PackedArray& key_prototype,
+    const value::PackedArray& base, const value::PackedArray& start,
+    std::optional<std::int64_t> finish) -> value::RuntimeAssociativeArray;
+void WriteMem(
+    RuntimeEffects& runtime, const value::RuntimeAssociativeArray& src,
+    const value::String& filename, const value::PackedArray& base,
+    const value::PackedArray& start, std::optional<std::int64_t> finish);
 
 // LRM 21.4.3: multidimensional memory support. The type-driven navigation lives
 // in these header templates -- arbitrary nesting depth, traversed in ascending
