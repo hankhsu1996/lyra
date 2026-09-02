@@ -30,10 +30,29 @@ layer directly.
       dangerous for a backgrounded run. Related to D5 but more fundamental: D5 is about seeing _why_
       a case failed; this is about not missing _that_ it failed.
 
-- [ ] D7 -- Project mode: a design is named by a project file rather than by repeating its sources,
-      include directories, defines, and top on every command line. The file also names the native
-      sources that supply DPI-C foreign symbols, which today only the command line can name. Until
-      this lands, any multi-file design must be spelled out in full at each invocation.
+- [x] D7 -- A design describes itself once, in a `lyra.toml` beside it, so a multi-file design is
+      not respelled at every invocation: its sources, include directories, defines, undefines,
+      parameter overrides, library search, tops, language version, timescale, compilation-unit
+      model, assertion policy, and the native sources that give DPI-C its foreign symbols. The file
+      carries what is true of the design for everyone who builds it and never what is true of one
+      invocation or one machine, so a command line still names a design outright and a file that is
+      absent is simply no defaults. A command line adds to what the file lists where the field is
+      material and replaces it where the field is a choice; naming sources on the command line uses
+      no file at all. The file is found by walking up from the working directory, and a path inside
+      it means the same thing from wherever the compiler was invoked. `decisions/project-file.md`
+      settles the shape.
+
+- [ ] D8 -- A design that finds its modules through a library rather than by listing them can
+      declare that: library files, library maps, the library search order, and the default library
+      name. Design material by the rule D7 already applies, and absent only because the language's
+      library and configuration system (LRM 33) is not implemented, so a field for it would declare
+      something the compiler cannot act on. Until then such a design passes those settings on the
+      command line.
+
+- [ ] D9 -- A design written for a dialect another tool defined can declare that: legacy protect
+      envelopes, translate-off comment formats, ignored directives, keyword-version mapping, and
+      include-lookup order. Each changes what program the source text denotes, so each is design
+      material rather than an invocation setting; none has been needed yet.
 
 ## Out of Scope
 

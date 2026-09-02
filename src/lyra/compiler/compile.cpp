@@ -71,7 +71,7 @@ auto Compile(
   const lowering::ast_to_hir::LowerCompilationFacts facts(
       *result.artifacts.parse->compilation,
       result.artifacts.parse->source_mapper, sensitivity_analyzer,
-      policy.disable_assertions);
+      policy.assertions);
   result.artifacts.top_unit_names = lowering::ast_to_hir::TopLevelUnitNames(
       *result.artifacts.parse->compilation);
 

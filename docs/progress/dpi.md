@@ -216,7 +216,8 @@ protocol on top of it.
       header its types are spelled in, and a copy of each foreign source, and its build recipe
       compiles and links them -- so a project that crosses the boundary still builds where neither
       Lyra nor the original foreign sources are reachable. Naming the same link inputs from a
-      project file rides on project mode itself (`dev-ergonomics.md`), not on anything DPI owns.
+      design's own declaration is one more kind of material that declaration carries, not anything
+      DPI owns.
 
 ### Execution backend
 

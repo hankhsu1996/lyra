@@ -222,14 +222,14 @@ auto StructuralScopeLowerer::PopulateMember(
     case SymbolKind::Checker:
     case SymbolKind::CheckerInstance:
     case SymbolKind::CheckerInstanceBody:
-      if (owner_->DisableAssertions()) {
+      if (owner_->Assertions() == support::AssertionPolicy::kSkip) {
         return {};
       }
       return diag::Fail(
           owner_->SourceMapper().PointSpanOf(member.location),
           diag::DiagCode::kUnsupportedStructuralMember,
           "assertion and checker declarations are not supported; pass "
-          "--disable-assertions to skip them");
+          "--assertions skip to elide them");
 
     // Behavior the design depends on: skipping one would hand the backend a
     // different design than the source describes.

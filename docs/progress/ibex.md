@@ -7,11 +7,11 @@ pure-SV testbench. This file is the running inventory of the language features I
 does not yet support.
 
 Done when `ibex_simple_system_tb` simulates end-to-end with **no source modifications and no
-simulator-specific defines**, using only accepted Lyra compilation options.
-`disable_assertions = true` is an accepted option (a real, intended flag), so skipping concurrent
-assertions does not count as a trick. What does count as a trick, and is never an accepted end
-state: a discovery-only define such as `SYNTHESIS` or `VERILATOR`, stubbing a module, or editing the
-design. Those are only ever used to reveal the next gap during discovery.
+simulator-specific defines**, using only accepted Lyra compilation options. An assertion policy of
+`skip` is an accepted option (a real, intended one), so eliding concurrent assertions does not count
+as a trick. What does count as a trick, and is never an accepted end state: a discovery-only define
+such as `SYNTHESIS` or `VERILATOR`, stubbing a module, or editing the design. Those are only ever
+used to reveal the next gap during discovery.
 
 ## Method
 
@@ -26,17 +26,22 @@ The whole Ibex RTL already parses, type-checks, and elaborates through the front
 
 ## Status
 
-`ibex_simple_system_tb` simulates end-to-end. The whole design lowers with no diagnostics, emits C++
-a host compiler accepts, links, loads `hello_test` through `$readmemh`, executes it, and terminates
-on the testbench's own software request -- with the program's expected output and a full instruction
-trace. Sources, includes, and defines are still passed on the command line rather than read from
-`lyra.toml`, which is the one accepted-option gap left between this and the closing condition above.
+**The design does not currently lower.** Measured 2026-09-01 by running it: lowering aborts with an
+internal error reading an assignment pattern's count, on the assumption that the front end has
+already folded that count to an integer literal. It has not, somewhere in this design. That is a
+compiler bug rather than a missing feature -- a legal program is told to file a report -- and it
+stands in front of everything the rest of this file records.
 
-**Nothing runs this design automatically**, so that claim is only ever as fresh as the last time
-someone ran it by hand. It has already been false once while standing here unchanged: a lowering
-identity minted for a construct the assertion policy elides aborted seventeen of the design's
-twenty-four modules for three days, and no test in the repository covers the option that reaches it.
-Re-run before trusting this section, and treat a status sentence here as a measurement rather than a
+The front end is unaffected: the whole design still elaborates with no diagnostics, and its sources,
+includes and defines are read from the `lyra.toml` at the design's root, so no setting has to be
+passed on the command line.
+
+The sentence this replaces said the design simulates end-to-end, which was true when it was written
+and had gone stale unnoticed. **Nothing runs this design automatically**, so a status sentence here
+is only ever as fresh as the last time someone ran it by hand. This is the second time the section
+has been false while standing unchanged: a lowering identity minted for a construct the assertion
+policy elides once aborted seventeen of the design's twenty-four modules for three days. Re-run
+before trusting this section, and treat a status sentence here as a measurement rather than a
 property.
 
 The run reports `unique` and `priority` violations from most modules, and they are Lyra's error
@@ -44,18 +49,18 @@ rather than the design's. Every one of those statements carries a `default` item
 and a catch-all suppresses the no-match report: LRM 12.4.2 issues it "if no condition matches unless
 there is an explicit `else`", and LRM 12.5.3 issues it if no `case_item` matches, where `default` is
 one of the `case_item` forms. Lyra counts only the compared arms, so a design that spells its
-catch-all out is warned at on every unmatched pass. The design still executes correctly, so this is
-noise rather than a wrong answer -- but it is noise on nearly every module, and it is what stands at
-the frontier now that the forms below are cleared.
+catch-all out is warned at on every unmatched pass. It is noise rather than a wrong answer -- the
+design executed correctly alongside it when the design last executed -- but it is noise on nearly
+every module.
 
 ## Two walls
 
-1. **Feature-lowering gaps** -- the unsupported SystemVerilog forms below. This wall is down. What
-   the list below now tracks is any further form a deeper pass turns up, not a standing blocker.
-2. **Execution backend** -- also down for the C++ path, which carries the run above. What remains is
-   convenience rather than reach: project mode (`lyra.toml` lookup) is still not wired, so sources,
-   includes, and defines must be passed explicitly on the command line. The LLVM / JIT path is a
-   separate backend tracked in `execution-backend.md`; it is not required for the C++ run.
+1. **Feature-lowering gaps** -- the unsupported SystemVerilog forms below. Every form the list names
+   is cleared. What stops lowering now is not a missing form but the compiler bug the status section
+   records, which is a different kind of thing and is not tracked in the list.
+2. **Execution backend** -- down for the C++ path, which carried the design to a full run before
+   that bug appeared. The LLVM / JIT path is a separate backend tracked in `execution-backend.md`;
+   it is not required for the C++ run.
 
 ## Feature gaps
 
@@ -95,12 +100,12 @@ full support.
 
 ### Common forms
 
-- [x] **Expose `disable_assertions` on the current entry path.** Untouched, the design's first
+- [x] **Expose the assertion policy on the current entry path.** Untouched, the design's first
       blocker in many modules is a concurrent assertion (the `assert`/`assume`/`cover property`
-      family and the macros wrapping them). The accepted handling is the `disable_assertions`
-      compilation option, which skips assertion constructs during lowering. Implementing SVA proper
-      (sampled-value functions `$rose`/`$fell`/`$stable`/`$past`, the `Observed` region) is a
-      separate, optional feature off the critical path to running Ibex.
+      family and the macros wrapping them). The accepted handling is an assertion policy of `skip`,
+      which elides assertion constructs during lowering. Implementing SVA proper (sampled-value
+      functions `$rose`/`$fell`/`$stable`/`$past`, the `Observed` region) is a separate, optional
+      feature off the critical path to running Ibex.
 - [x] **Packed array whose element is a struct or enum** (a packed array of a packed aggregate, not
       just of a scalar bit/logic).
 - [x] **Net-typed port connections** -- connecting a net (`wire`) across a module port, as the

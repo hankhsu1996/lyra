@@ -14,6 +14,7 @@
 #include "lyra/hir/compilation_unit.hpp"
 #include "lyra/lir/compilation_unit.hpp"
 #include "lyra/mir/compilation_unit.hpp"
+#include "lyra/support/assertion_policy.hpp"
 
 namespace lyra::compiler {
 
@@ -97,9 +98,7 @@ struct CompileArtifacts {
 
 // Choices about how to lower that the design does not make for itself.
 struct LoweringPolicy {
-  // Elide assertion constructs rather than refusing to lower them, so a design
-  // whose assertions Lyra cannot yet express still runs.
-  bool disable_assertions = false;
+  support::AssertionPolicy assertions = support::AssertionPolicy::kCheck;
 };
 
 // Lyra-owned errors flow through `sink`; slang parse/elaboration errors are

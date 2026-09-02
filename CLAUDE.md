@@ -61,6 +61,15 @@ driver: every front-end option slang accepts -- `--top`, `-I`, `-D`, `-G`, `--si
 Lyra's command line; what follows is the simulation's own argv, where LRM 21.6 plusargs go.
 `lyra --help` prints the authoritative option list.
 
+**A design declares itself in a `lyra.toml` beside it, so it is not respelled at every invocation.**
+The file names the design's sources, search paths, defines, parameter overrides, tops, and the
+native sources DPI-C resolves against; it is found by walking up from the working directory, and
+every path in it resolves against the file's own directory. A command line naming sources uses no
+declaration at all, and `--config <file>` names one outright. What is true of one invocation or one
+machine -- `-o`, `--release`, `--backend`, `--cxx` -- is refused by name, because the file is
+committed and shared. `docs/decisions/project-file.md` holds the schema and the precedence rule:
+material accumulates, selection is replaced.
+
 **`--release` trades build time for simulation speed.** By default the design's translation unit is
 compiled unoptimized, because iterating pays that compile on every edit; `--release` optimizes it
 for a run long enough to earn the compile back. The runtime library the program links is prebuilt
