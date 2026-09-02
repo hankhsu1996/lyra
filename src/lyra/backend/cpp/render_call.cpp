@@ -399,16 +399,16 @@ auto BuiltinFnCppName(support::BuiltinFn id) -> std::string_view {
       return "FromString";
     case support::BuiltinFn::kConformBound:
       return "ConformBound";
-    case support::BuiltinFn::kMakeQueueConcat:
-      return "MakeQueueConcat";
+    case support::BuiltinFn::kQueueConcatElement:
+      return "ConcatElement";
+    case support::BuiltinFn::kQueueConcatSpread:
+      return "ConcatSpread";
     case support::BuiltinFn::kMakeDynamicArrayDefault:
       return "Default";
     case support::BuiltinFn::kMakeDynamicArrayNew:
       return "New";
     case support::BuiltinFn::kMakeDynamicArrayNewCopy:
       return "NewCopy";
-    case support::BuiltinFn::kSpread:
-      return "QSpread";
     case support::BuiltinFn::kConcat:
       return "Concat";
     case support::BuiltinFn::kReplicate:
@@ -505,8 +505,6 @@ auto BuiltinFnCppNamespace(support::BuiltinFn id) -> std::string_view {
     case support::BuiltinFn::kWriteCanonicalLogicVec:
     case support::BuiltinFn::kFromSvLogic:
     case support::BuiltinFn::kRequire:
-    case support::BuiltinFn::kMakeQueueConcat:
-    case support::BuiltinFn::kSpread:
       return "lyra::value";
     case support::BuiltinFn::kCurrentRuntime:
     case support::BuiltinFn::kRegisterInitial:

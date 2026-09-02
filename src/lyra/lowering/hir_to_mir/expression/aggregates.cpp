@@ -88,45 +88,34 @@ auto LowerHirConcatExpr(
     }
     return join(lhs, operand_ids.back());
   }
-  // An unpacked queue needs more than its parts: a default value of its
-  // declared element type (an empty `{}` part list cannot supply one) and its
-  // LRM 7.10.5 bound, built here as ordinary arguments ahead of them. A part
-  // whose value is itself an array contributes its elements in order (LRM
-  // 10.10), which is spread and is marked so -- the same array value would be
-  // one element if the queue's element type were an array, so the role is the
-  // program's fact, not the operand type's.
-  if (const auto* q = result_ty.As<mir::QueueType>()) {
-    const mir::TypeId element_type = q->element_type;
-    const std::int64_t bound = q->max_bound.has_value()
-                                   ? static_cast<std::int64_t>(*q->max_bound)
-                                   : -1;
-    std::vector<mir::ExprId> args;
-    args.reserve(operand_ids.size() + 2);
-    args.push_back(block.exprs.Add(
-        BuildDefaultValueExpr(lowerer.Owner(), frame, element_type)));
-    args.push_back(BuildMachineIntLiteral(unit, block, bound));
+  // An unpacked queue concatenation (LRM 10.10) folds where it is built into
+  // the chain of appends it stands for: an empty queue carrying the
+  // destination's element shape and LRM 7.10.5 bound, then each part appended
+  // left to right. Nothing composes a part list of arbitrary length, so the
+  // fold is here and each step is a two-operand call. A part whose value is
+  // itself an array is spread and contributes its elements in order; the same
+  // array value would be one element if the queue's element type were an array,
+  // so the role is the program's fact, not the operand type's. The empty `{}`
+  // is the seed with no step folded onto it.
+  if (result_ty.Is<mir::QueueType>()) {
+    mir::Expr acc =
+        BuildArrayConstructionCall(lowerer.Owner(), frame, result_type, {});
     for (const mir::ExprId part : operand_ids) {
-      const mir::TypeId part_type = block.exprs.Get(part).type;
-      if (!IsArrayContainerType(unit.types.Get(part_type))) {
-        args.push_back(part);
-        continue;
-      }
-      args.push_back(block.exprs.Add(
-          mir::Expr{
-              .data =
-                  mir::CallExpr{
-                      .callee =
-                          mir::Direct{.target = support::BuiltinFn::kSpread},
-                      .arguments = {part}},
-              .type = part_type}));
+      const bool spread =
+          IsArrayContainerType(unit.types.Get(block.exprs.Get(part).type));
+      const mir::ExprId acc_id = block.exprs.Add(std::move(acc));
+      acc = mir::Expr{
+          .data =
+              mir::CallExpr{
+                  .callee =
+                      mir::Direct{
+                          .target =
+                              spread ? support::BuiltinFn::kQueueConcatSpread
+                                     : support::BuiltinFn::kQueueConcatElement},
+                  .arguments = {acc_id, part}},
+          .type = result_type};
     }
-    return mir::Expr{
-        .data =
-            mir::CallExpr{
-                .callee =
-                    mir::Direct{.target = support::BuiltinFn::kMakeQueueConcat},
-                .arguments = std::move(args)},
-        .type = result_type};
+    return acc;
   }
   return BuildValueConversion(
       unit, block, BuildPackedConcat(unit, block, operand_ids), result_type);

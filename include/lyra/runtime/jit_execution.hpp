@@ -925,6 +925,8 @@ auto lyra_rt_queue_slice(
 auto lyra_rt_queue_size(const void* queue) -> void*;
 auto lyra_rt_queue_push_back(const void* queue, void* item) -> void*;
 auto lyra_rt_queue_push_front(const void* queue, void* item) -> void*;
+auto lyra_rt_queue_concat_element(const void* queue, void* item) -> void*;
+auto lyra_rt_queue_concat_spread(const void* queue, const void* part) -> void*;
 auto lyra_rt_queue_insert(const void* queue, const void* index, void* item)
     -> void*;
 // LRM 7.10.2.4 / 7.10.2.5 pop. Each completes with the queue left once the

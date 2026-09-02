@@ -522,11 +522,17 @@ enum class BuiltinFn : std::uint16_t {
   // source to the destination's declared bound. An instance method on the
   // queue value.
   kConformBound,
-  // Builds an unpacked-queue concatenation value (LRM 10.10). The first two
-  // arguments are a default element of the queue's element type and its LRM
-  // 7.10.5 bound; the remaining arguments are the concatenation parts, each
-  // contributing itself unless it is marked as spread.
-  kMakeQueueConcat,
+  // The two steps an unpacked concatenation (LRM 10.10) folds into: appending
+  // one element to the accumulating queue, and appending every element of a
+  // spread part in order. A part contributes itself unless the program spreads
+  // a container, so which step it takes is the program's fact, not the part's
+  // type. Both are instance methods on the queue, so a concatenation of any
+  // number of parts is the left-to-right chain of them, folded where the join
+  // is built -- no entry composes an operand list of arbitrary length. A spread
+  // part crosses erased; its own container representation is no concern of the
+  // appending entry.
+  kQueueConcatElement,
+  kQueueConcatSpread,
   // A dynamic array sized at run time: empty at its declared element shape,
   // `new[N]`, and `new[N](src)` (LRM 7.5.1). Each is named because the
   // argument list does not tell them apart -- a sized `new` and an element
@@ -538,12 +544,6 @@ enum class BuiltinFn : std::uint16_t {
   kMakeDynamicArrayDefault,
   kMakeDynamicArrayNew,
   kMakeDynamicArrayNewCopy,
-  // Marks an operand as contributing its own elements in order rather than
-  // itself -- spread, the same concept a variadic call site spells with `...`
-  // or `*`. An array-valued operand is legal in either role, so which one it
-  // plays is a fact of the program and not of the operand's type. The result
-  // is the operand at its own type; only its role differs.
-  kSpread,
   // LRM 11.4.12 concatenation and replication. What the two operators join --
   // bit planes or characters -- follows the operand's value domain, so one
   // entry each serves both and the domain names the realization. Each joins
@@ -649,6 +649,13 @@ enum class BuiltinFn : std::uint16_t {
 // searches from as well as the one a select names, since both cross the same
 // way.
 [[nodiscard]] auto ContainerIndexOperand(BuiltinFn id)
+    -> std::optional<std::size_t>;
+
+// Which operand of an entry is a whole container crossing erased -- a spread
+// concatenation part (LRM 10.10) whose own domain the entry cannot name, so it
+// boxes into a runtime value in that domain and is read back element by
+// element. Absent for an entry that has none.
+[[nodiscard]] auto SpreadPartOperand(BuiltinFn id)
     -> std::optional<std::size_t>;
 
 // The id's stable spelling. It aligns with the SV method spelling where one

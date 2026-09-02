@@ -209,6 +209,17 @@ auto RuntimeQueue::PushBack(RuntimeValue item) const -> RuntimeQueue {
   return result;
 }
 
+auto RuntimeQueue::ConcatSpread(const RuntimeValue& part) const
+    -> RuntimeQueue {
+  RuntimeQueue result(*this);
+  const std::size_t count = RuntimeValueContainerSize(part);
+  for (std::size_t i = 0; i < count; ++i) {
+    result.data_.push_back(RuntimeValueContainerElementAt(part, i));
+  }
+  result.EnforceBound();
+  return result;
+}
+
 auto RuntimeQueue::Front() const -> const RuntimeValue& {
   return data_.empty() ? *element_default_ : data_.front();
 }

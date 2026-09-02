@@ -313,12 +313,6 @@ auto EntryNamingOf(support::BuiltinFn fn) -> EntryNaming {
   // generated artifact, not to the value domain its representation shares.
   constexpr std::string_view kReadsDeclaredMembers =
       "reads an enumeration's declared members";
-  // An unpacked concatenation (LRM 10.10) takes as many parts as the source
-  // wrote, each contributing either itself or its own elements, and no C ABI
-  // names an entry per arity. Reaching the machine needs the parts folded into
-  // a chain of appends, the way a packed join already is.
-  constexpr std::string_view kTakesAsManyPartsAsWritten =
-      "builds a container from as many parts as the source wrote";
   // A foreign call that can suspend runs the SV side on a stack the runtime did
   // not create (LRM 35.5.6, 35.8), which the value library reaches only through
   // types the host compiler laid out for it. Nothing crosses a C ABI that
@@ -414,6 +408,8 @@ auto EntryNamingOf(support::BuiltinFn fn) -> EntryNaming {
     case support::BuiltinFn::kFromByteArray:
     case support::BuiltinFn::kFromString:
     case support::BuiltinFn::kConformBound:
+    case support::BuiltinFn::kQueueConcatElement:
+    case support::BuiltinFn::kQueueConcatSpread:
     case support::BuiltinFn::kConcat:
     case support::BuiltinFn::kReplicate:
     case support::BuiltinFn::kPow:
@@ -473,10 +469,6 @@ auto EntryNamingOf(support::BuiltinFn fn) -> EntryNaming {
     case support::BuiltinFn::kEnumNum:
     case support::BuiltinFn::kEnumName:
       return NotRealized{.shape = kReadsDeclaredMembers};
-
-    case support::BuiltinFn::kMakeQueueConcat:
-    case support::BuiltinFn::kSpread:
-      return NotRealized{.shape = kTakesAsManyPartsAsWritten};
 
     // The runtime, then the user string, then the destination whose
     // representation names the entry.

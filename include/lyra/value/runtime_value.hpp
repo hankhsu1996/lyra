@@ -1,5 +1,6 @@
 #pragma once
 
+#include <cstddef>
 #include <variant>
 
 #include "lyra/value/chandle.hpp"
@@ -86,6 +87,17 @@ struct RuntimeValue {
 // end.
 [[nodiscard]] auto RuntimeValueCountBits(
     const RuntimeValue& value, const PackedArray& control_bits) -> PackedArray;
+
+// The element count of a container value, and the element at a position, over
+// any element-container domain (queue, dynamic array, unpacked array) -- the
+// erased form of the raw element access a monomorphized container exposes. A
+// spread concatenation part (LRM 10.10) crosses erased, so the entry that
+// appends its elements reads them without naming its domain. A value of any
+// other domain reaching these is a caller that spread a non-container.
+[[nodiscard]] auto RuntimeValueContainerSize(const RuntimeValue& value)
+    -> std::size_t;
+[[nodiscard]] auto RuntimeValueContainerElementAt(
+    const RuntimeValue& value, std::size_t position) -> const RuntimeValue&;
 
 // A keyed container's contract is over the pair of the container and the type
 // its indices are, and the erased container's index type is the erased value
