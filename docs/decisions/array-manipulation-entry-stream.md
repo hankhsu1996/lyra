@@ -40,11 +40,14 @@ runs on an associative array.
    container type; each container exposes its stream as a lazy view (a sequence container is
    `views::enumerate` over its storage so the index is the ordinal; the associative array is a
    transform over its `std::map`, whose entries are natively `(key, value)`, so the index is the
-   key). The algorithms are generic combinators over that view -- the locator family filters the
-   entries (`find_first` adds `views::take(1)`, `find_last` adds `views::reverse`), `min` / `max`
-   are `ranges::min_element` / `max_element` under a key projection, reduction is
-   `ranges::fold_left` seeded by the first element, and `map` is a transform -- and each container's
-   thin wrapper shapes the result.
+   key). A type-erased container exposes one the same way, over the positions it enumerates rather
+   than over storage it can name a type for; the index and the element are then one type, so the
+   four erased containers reach these algorithms rather than a family of their own. The algorithms
+   are generic combinators over that view -- the locator family filters the entries (`find_first`
+   adds `views::take(1)`, `find_last` adds `views::reverse`), `min` / `max` are
+   `ranges::min_element` / `max_element` under a key projection, reduction is `ranges::fold_left`
+   seeded by the first element, and `map` is a transform -- and each container's thin wrapper shapes
+   the result.
 
 2. **The ordering family stays an in-place positional permutation** on the sequence containers'
    storage. It is sequence-only; the associative array never participates, and the frontend enforces

@@ -8,6 +8,7 @@
 #include <utility>
 #include <vector>
 
+#include "lyra/base/internal_error.hpp"
 #include "lyra/value/packed_array.hpp"
 #include "lyra/value/runtime_value.hpp"
 
@@ -23,7 +24,7 @@ namespace {
 // Two indices name one entry when neither orders before the other, so the
 // ordering is the whole of what tells one index from another.
 auto SameIndex(const RuntimeValue& a, const RuntimeValue& b) -> bool {
-  return !RuntimeValueIndexBefore(a, b) && !RuntimeValueIndexBefore(b, a);
+  return !RuntimeValueOrderBefore(a, b) && !RuntimeValueOrderBefore(b, a);
 }
 
 }  // namespace
@@ -77,7 +78,7 @@ RuntimeAssociativeArray::~RuntimeAssociativeArray() = default;
 auto RuntimeAssociativeArray::LowerBound(const RuntimeValue& index) const
     -> std::size_t {
   const auto position = std::ranges::lower_bound(
-      data_, index, RuntimeValueIndexBefore,
+      data_, index, RuntimeValueOrderBefore,
       [](const RuntimeAssociativeEntry& entry) -> const RuntimeValue& {
         return entry.index;
       });
@@ -116,6 +117,24 @@ auto RuntimeAssociativeArray::Element(const RuntimeValue& index) const
     return data_[*position].element;
   }
   return user_default_ == nullptr ? *element_default_ : *user_default_;
+}
+
+auto RuntimeAssociativeArray::IndexAt(std::size_t position) const
+    -> const RuntimeValue& {
+  if (position >= data_.size()) {
+    throw InternalError(
+        "RuntimeAssociativeArray::IndexAt: the position is past the last");
+  }
+  return data_[position].index;
+}
+
+auto RuntimeAssociativeArray::ElementAt(std::size_t position) const
+    -> const RuntimeValue& {
+  if (position >= data_.size()) {
+    throw InternalError(
+        "RuntimeAssociativeArray::ElementAt: the position is past the last");
+  }
+  return data_[position].element;
 }
 
 auto RuntimeAssociativeArray::WithElement(

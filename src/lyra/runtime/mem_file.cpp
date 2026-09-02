@@ -8,9 +8,11 @@
 #include <fstream>
 #include <functional>
 #include <optional>
+#include <span>
 #include <sstream>
 #include <string>
 #include <string_view>
+#include <utility>
 #include <vector>
 
 #include "lyra/runtime/diagnostic.hpp"
@@ -19,6 +21,8 @@
 #include "lyra/value/format.hpp"
 #include "lyra/value/packed_array.hpp"
 #include "lyra/value/packed_type.hpp"
+#include "lyra/value/runtime_memory.hpp"
+#include "lyra/value/runtime_value.hpp"
 #include "lyra/value/string.hpp"
 #include "lyra/value/unpacked_array.hpp"
 
@@ -280,6 +284,115 @@ void WriteMemAssoc(
       });
 }
 
+// The grid a bounds list describes: the addressed dimension read in ascending
+// address, and how many leaves each of its addresses expands to.
+struct MemoryGrid {
+  std::int64_t lo;
+  std::int64_t hi;
+  std::size_t inner;
+};
+
+auto GridOf(std::span<const value::PackedArray> dims) -> MemoryGrid {
+  const std::int64_t left = dims[0].ToInt64();
+  const std::int64_t right = dims[1].ToInt64();
+  return MemoryGrid{
+      .lo = std::min(left, right),
+      .hi = std::max(left, right),
+      .inner = detail::InnerLeafCount(dims.subspan(2))};
+}
+
+// Where in a memory's run of words the leaf at one grid coordinate sits.
+auto LeafPosition(const MemoryGrid& grid, std::int64_t top, std::size_t ordinal)
+    -> std::size_t {
+  return (static_cast<std::size_t>(top - grid.lo) * grid.inner) + ordinal;
+}
+
+// A flat erased memory's words, in the 0-based address order LRM 21.4.1 gives a
+// dynamic array or a queue.
+template <value::EntryWalkable Container>
+auto FlatWords(const Container& memory) -> std::vector<value::PackedArray> {
+  const auto size = static_cast<std::size_t>(memory.Size().ToInt64());
+  std::vector<value::PackedArray> words;
+  words.reserve(size);
+  for (std::size_t position = 0; position < size; ++position) {
+    words.push_back(value::MemoryWordOf(memory.ElementAt(position)));
+  }
+  return words;
+}
+
+// The same memory holding `words`. The size is fixed across a load (LRM
+// 21.4.1), so the run of words is the run of elements.
+template <typename Container>
+auto FlatWithWords(
+    const Container& memory, std::span<const value::PackedArray> words)
+    -> Container {
+  std::vector<value::RuntimeValue> elements;
+  elements.reserve(words.size());
+  for (const value::PackedArray& word : words) {
+    elements.emplace_back(word);
+  }
+  return {memory.ElementDefault(), std::move(elements)};
+}
+
+// A flat memory's load and dump, which address `[0, size-1]` with one leaf per
+// address. The words are filled or rendered by the same core every memory task
+// runs; only where they are taken from and put back differs.
+template <typename Container>
+auto ReadFlatErased(
+    RuntimeEffects& runtime, const Container& dest,
+    const value::String& filename, const value::PackedArray& base,
+    const value::PackedArray& start, std::optional<std::int64_t> finish)
+    -> Container {
+  std::vector<value::PackedArray> words = FlatWords(dest);
+  ReadMemGridCore(
+      runtime, filename, static_cast<unsigned>(base.ToInt64()), 0,
+      static_cast<std::int64_t>(words.size()) - 1, 1, start.ToInt64(), finish,
+      [&words](std::int64_t address, std::size_t) -> value::PackedArray& {
+        return words[static_cast<std::size_t>(address)];
+      });
+  return FlatWithWords(dest, words);
+}
+
+template <typename Container>
+void WriteFlatErased(
+    RuntimeEffects& runtime, const Container& src,
+    const value::String& filename, const value::PackedArray& base,
+    const value::PackedArray& start, std::optional<std::int64_t> finish) {
+  const std::vector<value::PackedArray> words = FlatWords(src);
+  WriteMemGridCore(
+      runtime, filename, static_cast<unsigned>(base.ToInt64()), 0,
+      static_cast<std::int64_t>(words.size()) - 1, 1, start.ToInt64(), finish,
+      [&words](std::int64_t address, std::size_t) -> const value::PackedArray& {
+        return words[static_cast<std::size_t>(address)];
+      });
+}
+
+// The monomorphized keyed memory an erased one holds, and the erased one built
+// back from it. The two are the same table -- an integral index and a packed
+// word (LRM 21.4.1) -- so the key-addressed core runs over the erased memory
+// unchanged.
+auto KeyedMemoryOf(const value::RuntimeAssociativeArray& memory) -> AssocMem {
+  AssocMem table{value::MemoryWordOf(memory.ElementDefault())};
+  const auto size = static_cast<std::size_t>(memory.Size().ToInt64());
+  for (std::size_t position = 0; position < size; ++position) {
+    table.ElementRef(value::MemoryWordOf(memory.IndexAt(position))) =
+        value::MemoryWordOf(memory.ElementAt(position));
+  }
+  return table;
+}
+
+auto ErasedMemoryOf(
+    const value::RuntimeAssociativeArray& shape, const AssocMem& table)
+    -> value::RuntimeAssociativeArray {
+  value::RuntimeAssociativeArray memory(shape.ElementDefault());
+  table.ForEachEntry(
+      [&memory](const value::PackedArray& key, const value::PackedArray& word) {
+        memory = memory.WithElement(
+            value::RuntimeValue{key}, value::RuntimeValue{word});
+      });
+  return memory;
+}
+
 }  // namespace
 
 void ReadMemGridCore(
@@ -498,6 +611,90 @@ void WriteMemWithin(
   WriteMemAssoc(
       runtime, src, filename, static_cast<unsigned>(base.ToInt64()),
       start.ToInt64(), finish.ToInt64());
+}
+
+auto ReadMem(
+    RuntimeEffects& runtime, const value::RuntimeUnpackedArray& dest,
+    const value::String& filename, std::span<const value::PackedArray> dims,
+    const value::PackedArray& base, const value::PackedArray& start,
+    std::optional<std::int64_t> finish) -> value::RuntimeUnpackedArray {
+  std::vector<value::PackedArray> words = value::MemoryWords(dest, dims);
+  const MemoryGrid grid = GridOf(dims);
+  ReadMemGridCore(
+      runtime, filename, static_cast<unsigned>(base.ToInt64()), grid.lo,
+      grid.hi, grid.inner, start.ToInt64(), finish,
+      [&words, grid](
+          std::int64_t top, std::size_t ordinal) -> value::PackedArray& {
+        return words[LeafPosition(grid, top, ordinal)];
+      });
+  return value::MemoryWithWords(dest, dims, words);
+}
+
+void WriteMem(
+    RuntimeEffects& runtime, const value::RuntimeUnpackedArray& src,
+    const value::String& filename, std::span<const value::PackedArray> dims,
+    const value::PackedArray& base, const value::PackedArray& start,
+    std::optional<std::int64_t> finish) {
+  const std::vector<value::PackedArray> words = value::MemoryWords(src, dims);
+  const MemoryGrid grid = GridOf(dims);
+  WriteMemGridCore(
+      runtime, filename, static_cast<unsigned>(base.ToInt64()), grid.lo,
+      grid.hi, grid.inner, start.ToInt64(), finish,
+      [&words, grid](
+          std::int64_t top, std::size_t ordinal) -> const value::PackedArray& {
+        return words[LeafPosition(grid, top, ordinal)];
+      });
+}
+
+auto ReadMem(
+    RuntimeEffects& runtime, const value::RuntimeDynamicArray& dest,
+    const value::String& filename, const value::PackedArray& base,
+    const value::PackedArray& start, std::optional<std::int64_t> finish)
+    -> value::RuntimeDynamicArray {
+  return ReadFlatErased(runtime, dest, filename, base, start, finish);
+}
+
+void WriteMem(
+    RuntimeEffects& runtime, const value::RuntimeDynamicArray& src,
+    const value::String& filename, const value::PackedArray& base,
+    const value::PackedArray& start, std::optional<std::int64_t> finish) {
+  WriteFlatErased(runtime, src, filename, base, start, finish);
+}
+
+auto ReadMem(
+    RuntimeEffects& runtime, const value::RuntimeQueue& dest,
+    const value::String& filename, const value::PackedArray& base,
+    const value::PackedArray& start, std::optional<std::int64_t> finish)
+    -> value::RuntimeQueue {
+  return ReadFlatErased(runtime, dest, filename, base, start, finish);
+}
+
+void WriteMem(
+    RuntimeEffects& runtime, const value::RuntimeQueue& src,
+    const value::String& filename, const value::PackedArray& base,
+    const value::PackedArray& start, std::optional<std::int64_t> finish) {
+  WriteFlatErased(runtime, src, filename, base, start, finish);
+}
+
+auto ReadMem(
+    RuntimeEffects& runtime, const value::RuntimeAssociativeArray& dest,
+    const value::String& filename, const value::PackedArray& key_prototype,
+    const value::PackedArray& base, const value::PackedArray& start,
+    std::optional<std::int64_t> finish) -> value::RuntimeAssociativeArray {
+  AssocMem table = KeyedMemoryOf(dest);
+  ReadMemAssoc(
+      runtime, table, filename, key_prototype,
+      static_cast<unsigned>(base.ToInt64()), start.ToInt64(), finish);
+  return ErasedMemoryOf(dest, table);
+}
+
+void WriteMem(
+    RuntimeEffects& runtime, const value::RuntimeAssociativeArray& src,
+    const value::String& filename, const value::PackedArray& base,
+    const value::PackedArray& start, std::optional<std::int64_t> finish) {
+  WriteMemAssoc(
+      runtime, KeyedMemoryOf(src), filename,
+      static_cast<unsigned>(base.ToInt64()), start.ToInt64(), finish);
 }
 
 }  // namespace lyra::runtime

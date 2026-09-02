@@ -4,7 +4,6 @@
 #include <optional>
 #include <string>
 #include <string_view>
-#include <variant>
 
 #include "lyra/base/internal_error.hpp"
 #include "lyra/base/overloaded.hpp"
@@ -230,12 +229,6 @@ auto RuntimeSymbol(
 }
 
 auto EntryNamingOf(support::BuiltinFn fn) -> EntryNaming {
-  // An array manipulation method (LRM 7.12) runs a body the call supplies, once
-  // per entry. The value library reaches that body only as a template its own
-  // compiler expands, so the whole family waits on an entry taking the body as
-  // a value.
-  constexpr std::string_view kRunsASuppliedBody =
-      "runs a body the call supplies once per entry";
   // An enumeration's own entries read its declared members, which no library
   // over the packed representation can answer. They belong to the enumeration's
   // generated artifact, not to the value domain its representation shares.
@@ -247,13 +240,6 @@ auto EntryNamingOf(support::BuiltinFn fn) -> EntryNaming {
   // a chain of appends, the way a packed join already is.
   constexpr std::string_view kTakesAsManyPartsAsWritten =
       "builds a container from as many parts as the source wrote";
-  // A memory load or dump walks its container to reach each word, and the
-  // library's walk is compiled against that container's own type -- nesting
-  // depth included, which an erased handle does not carry. Realizing one here
-  // means a walk driven by the value's runtime domain instead.
-  constexpr std::string_view kWalksACompiledContainer =
-      "walks a memory whose container kind and depth its entry is compiled "
-      "against";
 
   switch (fn) {
     case support::BuiltinFn::kElement:
@@ -365,14 +351,6 @@ auto EntryNamingOf(support::BuiltinFn fn) -> EntryNaming {
     case support::BuiltinFn::kReductionXnor:
     case support::BuiltinFn::kFromBool:
     case support::BuiltinFn::kFromWords:
-      return NamedByValue{};
-
-    case support::BuiltinFn::kConvertFrom:
-      return NamedByConversion{};
-
-    case support::BuiltinFn::kInitialize:
-      return NamedByCellValue{};
-
     case support::BuiltinFn::kReverse:
     case support::BuiltinFn::kSort:
     case support::BuiltinFn::kRsort:
@@ -392,7 +370,13 @@ auto EntryNamingOf(support::BuiltinFn fn) -> EntryNaming {
     case support::BuiltinFn::kUnique:
     case support::BuiltinFn::kUniqueIndex:
     case support::BuiltinFn::kMap:
-      return NotRealized{.shape = kRunsASuppliedBody};
+      return NamedByValue{};
+
+    case support::BuiltinFn::kConvertFrom:
+      return NamedByConversion{};
+
+    case support::BuiltinFn::kInitialize:
+      return NamedByCellValue{};
 
     case support::BuiltinFn::kEnumFirst:
     case support::BuiltinFn::kEnumLast:
@@ -409,11 +393,13 @@ auto EntryNamingOf(support::BuiltinFn fn) -> EntryNaming {
     case support::BuiltinFn::kValuePlusargs:
       return NamedByValue{.operand = 2};
 
+    // The runtime leads, and the memory whose addressing names the entry
+    // follows.
     case support::BuiltinFn::kReadMem:
     case support::BuiltinFn::kReadMemWithin:
     case support::BuiltinFn::kWriteMem:
     case support::BuiltinFn::kWriteMemWithin:
-      return NotRealized{.shape = kWalksACompiledContainer};
+      return NamedByValue{.operand = 1};
 
     case support::BuiltinFn::kTrigger:
     case support::BuiltinFn::kAwait:

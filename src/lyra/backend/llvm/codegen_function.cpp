@@ -20,7 +20,6 @@
 #include "lyra/base/overloaded.hpp"
 #include "lyra/diag/diag_code.hpp"
 #include "lyra/lir/compilation_unit.hpp"
-#include "lyra/lir/type_builders.hpp"
 #include "lyra/support/value_domain.hpp"
 
 namespace lyra::backend::llvm_backend {
@@ -171,7 +170,7 @@ auto CodeGenFunction::LowerTerminatorInto(const lir::Terminator& terminator)
               builder_.CreateBr(coro_final_);
               return {};
             }
-            if (value_->getReturnType()->isVoidTy()) {
+            if (!ret.value.has_value()) {
               builder_.CreateRetVoid();
               return {};
             }

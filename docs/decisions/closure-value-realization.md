@@ -56,10 +56,10 @@ D2. A closure value is built through the generic constructor protocol, from the 
     capture initializers in capture order. Nothing about a capture's representation is inspected
     where the value is built: each initializer crosses as the handle its own storage kind takes.
 
-D3. The invoke takes its receiver, uniformly, and reads each capture as a member place. Every
-    closure that survives is one a holder invokes later, so there is one invoke signature per
-    declaration and nothing has to decide which shape a declaration gets -- the receiver rule the
-    semantic layer states is literally what the machine layer does.
+D3. The invoke takes its receiver, uniformly, and reads each capture as a member place. A
+    declaration has exactly one body, so it has exactly one invoke signature and nothing has to
+    decide which shape a declaration gets -- the receiver rule the semantic layer states is
+    literally what the machine layer does.
 
 D4. Constructing the value is where a captured value is promoted. A borrowed-handle slot stores the
     pointer it was handed; a value slot copies the value in. The copy is driven by the schema, in
@@ -110,7 +110,8 @@ D6. A closure's linkage name is qualified by its declaring unit. Its ordinal is 
 - **Captures as the invoke's leading parameters.** This is what the lowering did while no closure
   escaped, and it was sound only for a body invoked where it was built -- which is a body that
   should never have been a callable value. Such a body is a block expression, so the shape it needed
-  no longer exists, and one invoke signature covers every closure that is left.
+  no longer exists, and what a closure is invoked with is its own signature rather than a prefix of
+  captures every caller has to reconstruct.
 
 - **An erased callable type introduced at the semantic layer.**
   [closure-environment-and-activation-frame](closure-environment-and-activation-frame.md) holds one
@@ -147,4 +148,4 @@ D6. A closure's linkage name is qualified by its declaring unit. Its ordinal is 
 - [jit-process-suspension](jit-process-suspension.md) -- the coroutine protocol a closure's invoke
   may state, and the runtime-owned coroutine entering one yields.
 - [block-expression](block-expression.md) -- the node a body invoked where it is built became, which
-  is what leaves every remaining closure an escaping one and its invoke signature uniform.
+  is what leaves a closure value only where one is genuinely handed over.

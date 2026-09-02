@@ -1,5 +1,6 @@
 #pragma once
 
+#include <cstddef>
 #include <cstdint>
 #include <deque>
 #include <memory>
@@ -82,6 +83,12 @@ class RuntimeQueue {
   // never grows the queue. The caller copies the result out across the
   // opaque-handle boundary rather than aliasing it.
   [[nodiscard]] auto Element(const PackedArray& index) const
+      -> const RuntimeValue&;
+
+  // The element at storage position `position`, counted from the first in the
+  // queue's own order -- the coordinate LRM 7.12 walks a container by. A
+  // position past the last is a walk defect rather than an out-of-range read.
+  [[nodiscard]] auto ElementAt(std::size_t position) const
       -> const RuntimeValue&;
 
   // A functional element write: yields a new queue equal to this one with
@@ -170,5 +177,6 @@ static_assert(LyraValue<RuntimeQueue>);
 static_assert(CaseEqualComparable<RuntimeQueue>);
 static_assert(Sized<RuntimeQueue>);
 static_assert(BitstreamSizable<RuntimeQueue>);
+static_assert(EntryWalkable<RuntimeQueue>);
 
 }  // namespace lyra::value

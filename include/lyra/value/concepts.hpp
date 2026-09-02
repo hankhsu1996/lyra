@@ -1,6 +1,7 @@
 #pragma once
 
 #include <concepts>
+#include <cstddef>
 #include <optional>
 
 // Runtime value-layer concept catalogue. Each concept names a contract that a
@@ -25,6 +26,7 @@ namespace lyra::value {
 
 class PackedArray;
 struct PackedType;
+struct RuntimeValue;
 
 // C++ storage mechanics every runtime value type must satisfy so it can
 // live in the STL containers the runtime stores it in (`std::vector` /
@@ -312,6 +314,31 @@ concept IndexTraversal = requires(const T& t, const Index& probe) {
   { t.NextIndex(probe) } -> std::same_as<std::optional<Index>>;
   { t.PrevIndex(probe) } -> std::same_as<std::optional<Index>>;
 };
+
+// EntryWalkable: the LRM 7.12 entry stream, read by position. A method of that
+// clause visits every entry of its receiver in the container's own order, and
+// the position is the one coordinate every container answers to -- an ordinally
+// indexed container's own index, and the place a key sits in index order for a
+// keyed one. A position past the last is a walk defect rather than the
+// out-of-range read a declared coordinate gets, so the element comes back by
+// reference and the walk stays within what the size reports.
+//
+// The type-erased realizations claim this; the monomorphized ones expose the
+// same stream as a lazy view over storage whose type they can name, which no
+// concept over a position can state.
+template <typename T>
+concept EntryWalkable = Sized<T> && requires(const T& t, std::size_t position) {
+  { t.ElementAt(position) } -> std::same_as<const RuntimeValue&>;
+};
+
+// KeyedEntryWalkable: the same stream where an entry reports the index it is
+// stored under rather than an ordinal (LRM 7.12.4), so a walk reads the two as
+// a pair.
+template <typename T>
+concept KeyedEntryWalkable =
+    EntryWalkable<T> && requires(const T& t, std::size_t position) {
+      { t.IndexAt(position) } -> std::same_as<const RuntimeValue&>;
+    };
 
 // Reducible and Searchable are documented for completeness but not exposed
 // as compile-time concepts: every method in those families is templated on

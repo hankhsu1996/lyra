@@ -61,7 +61,7 @@ auto RuntimeValueBitIdentical(const RuntimeValue& a, const RuntimeValue& b)
       a.value);
 }
 
-auto RuntimeValueIndexBefore(const RuntimeValue& a, const RuntimeValue& b)
+auto RuntimeValueOrderBefore(const RuntimeValue& a, const RuntimeValue& b)
     -> bool {
   SameDomain(a, b);
   return std::visit(
@@ -73,8 +73,8 @@ auto RuntimeValueIndexBefore(const RuntimeValue& a, const RuntimeValue& b)
           return static_cast<bool>(lhs < std::get<T>(b.value));
         } else {
           throw SimulationError(
-              "associative array: this index type has no order on this "
-              "backend; please open an issue asking for support");
+              "this value's domain has no order on this backend; please open "
+              "an issue asking for support");
         }
       },
       a.value);

@@ -44,6 +44,7 @@
 #include "lyra/value/format.hpp"
 #include "lyra/value/packed_array.hpp"
 #include "lyra/value/real.hpp"
+#include "lyra/value/runtime_array_manipulation.hpp"
 #include "lyra/value/runtime_associative_array.hpp"
 #include "lyra/value/runtime_dynamic_array.hpp"
 #include "lyra/value/runtime_queue.hpp"
@@ -306,17 +307,18 @@ auto ReplicateLiteral(
   return collected;
 }
 
-// The per-axis indices that pick one instance out of an array of them. An index
-// is an ordinary value of the design, so it crosses as the opaque handle every
-// value crosses as, and the scope tree it is matched against holds a copy: the
-// handle is transient and the tree outlives it.
-auto IndicesOf(LyraSpan indices) -> std::vector<value::PackedArray> {
+// A run of packed values, each crossing as the opaque handle every value
+// crosses as -- the per-axis indices that pick one instance out of an array of
+// them, or the bounds a memory's dimensions are addressed through. What the run
+// points at is the whole of what the two sides must agree on, the signature
+// saying only that a run crosses, so it is read in one place.
+auto PackedValuesOf(LyraSpan values) -> std::vector<value::PackedArray> {
   const std::span<const void* const> raw(
-      static_cast<const void* const*>(indices.data), indices.count);
+      static_cast<const void* const*>(values.data), values.count);
   std::vector<value::PackedArray> resolved;
   resolved.reserve(raw.size());
-  for (const void* index : raw) {
-    resolved.push_back(Read<value::PackedArray>(index));
+  for (const void* value : raw) {
+    resolved.push_back(Read<value::PackedArray>(value));
   }
   return resolved;
 }
@@ -329,6 +331,15 @@ auto IndicesOf(LyraSpan indices) -> std::vector<value::PackedArray> {
 auto TakeClosure(void* closure) -> std::function<void()> {
   return [held = std::make_shared<ClosureValue>(std::move(
               *static_cast<ClosureValue*>(closure)))] { held->Invoke(); };
+}
+
+// The body an LRM 7.12 method runs, as the value layer takes it.
+auto ArrayBody(void* body) -> value::ArrayMethodBody {
+  return [closure = static_cast<ClosureValue*>(body)](
+             const value::RuntimeValue& item,
+             const value::RuntimeValue& index) -> value::RuntimeValue {
+    return closure->RunPerElement(item, index);
+  };
 }
 
 // A call that answers with more than one value completes with the product of
@@ -470,13 +481,13 @@ using lyra::runtime::GcRef;
 using lyra::runtime::GeneratedCallScope;
 using lyra::runtime::GeneratedScope;
 using lyra::runtime::HierarchySegment;
-using lyra::runtime::IndicesOf;
 using lyra::runtime::LeaveCancellationTarget;
 using lyra::runtime::ManagedObject;
 using lyra::runtime::NamedEvent;
 using lyra::runtime::ObjectDefinition;
 using lyra::runtime::Observable;
 using lyra::runtime::Own;
+using lyra::runtime::PackedValuesOf;
 using lyra::runtime::ProgramLifetime;
 using lyra::runtime::Read;
 using lyra::runtime::RealTimeInUnit;
@@ -1065,7 +1076,7 @@ void lyra_rt_register_final(void* self, void* unit_instance, void* coroutine) {
 
 auto lyra_rt_make_segment(void* label, LyraSpan indices) -> void* {
   return GeneratedCallScope::Current().Arena().New<HierarchySegment>(
-      std::string(static_cast<const char*>(label)), IndicesOf(indices));
+      std::string(static_cast<const char*>(label)), PackedValuesOf(indices));
 }
 
 auto lyra_rt_make_scope(const void* definition, void* parent, void* segment)
@@ -1098,13 +1109,13 @@ auto lyra_rt_add_owned_child(void* parent, void* child) -> void* {
 auto lyra_rt_resolve_visible_child(
     void* self, const void* head_name, LyraSpan head_indices) -> void* {
   return static_cast<Scope*>(self)->ResolveVisibleChild(
-      static_cast<const char*>(head_name), IndicesOf(head_indices));
+      static_cast<const char*>(head_name), PackedValuesOf(head_indices));
 }
 
 auto lyra_rt_get_child(void* self, const void* name, LyraSpan indices)
     -> void* {
   return static_cast<Scope*>(self)->GetChild(
-      static_cast<const char*>(name), IndicesOf(indices));
+      static_cast<const char*>(name), PackedValuesOf(indices));
 }
 
 auto lyra_rt_member_addr(void* self, std::uint32_t index) -> void* {
@@ -2753,5 +2764,746 @@ auto lyra_rt_assocarray_value_cell_load(const void* cell) -> void* {
   return Own(
       static_cast<const ActivationValueCell<RuntimeAssociativeArray>*>(cell)
           ->Get());
+}
+
+auto lyra_rt_unpackedarray_sum(
+    const void* receiver, void* body, void* prototype) -> void* {
+  return lyra::runtime::ElementHandle(
+      lyra::value::RuntimeArraySum(
+          Read<RuntimeUnpackedArray>(receiver), lyra::runtime::ArrayBody(body),
+          lyra::runtime::ErasedValue(prototype)));
+}
+
+auto lyra_rt_unpackedarray_product(
+    const void* receiver, void* body, void* prototype) -> void* {
+  return lyra::runtime::ElementHandle(
+      lyra::value::RuntimeArrayProduct(
+          Read<RuntimeUnpackedArray>(receiver), lyra::runtime::ArrayBody(body),
+          lyra::runtime::ErasedValue(prototype)));
+}
+
+auto lyra_rt_unpackedarray_and(
+    const void* receiver, void* body, void* prototype) -> void* {
+  return lyra::runtime::ElementHandle(
+      lyra::value::RuntimeArrayAnd(
+          Read<RuntimeUnpackedArray>(receiver), lyra::runtime::ArrayBody(body),
+          lyra::runtime::ErasedValue(prototype)));
+}
+
+auto lyra_rt_unpackedarray_or(const void* receiver, void* body, void* prototype)
+    -> void* {
+  return lyra::runtime::ElementHandle(
+      lyra::value::RuntimeArrayOr(
+          Read<RuntimeUnpackedArray>(receiver), lyra::runtime::ArrayBody(body),
+          lyra::runtime::ErasedValue(prototype)));
+}
+
+auto lyra_rt_unpackedarray_xor(
+    const void* receiver, void* body, void* prototype) -> void* {
+  return lyra::runtime::ElementHandle(
+      lyra::value::RuntimeArrayXor(
+          Read<RuntimeUnpackedArray>(receiver), lyra::runtime::ArrayBody(body),
+          lyra::runtime::ErasedValue(prototype)));
+}
+
+auto lyra_rt_unpackedarray_find(
+    const void* receiver, void* body, void* prototype) -> void* {
+  return Own(
+      lyra::value::RuntimeArrayFind(
+          Read<RuntimeUnpackedArray>(receiver), lyra::runtime::ArrayBody(body),
+          lyra::runtime::ErasedValue(prototype)));
+}
+
+auto lyra_rt_unpackedarray_find_index(
+    const void* receiver, void* body, void* prototype) -> void* {
+  return Own(
+      lyra::value::RuntimeArrayFindIndex(
+          Read<RuntimeUnpackedArray>(receiver), lyra::runtime::ArrayBody(body),
+          lyra::runtime::ErasedValue(prototype)));
+}
+
+auto lyra_rt_unpackedarray_find_first(
+    const void* receiver, void* body, void* prototype) -> void* {
+  return Own(
+      lyra::value::RuntimeArrayFindFirst(
+          Read<RuntimeUnpackedArray>(receiver), lyra::runtime::ArrayBody(body),
+          lyra::runtime::ErasedValue(prototype)));
+}
+
+auto lyra_rt_unpackedarray_find_first_index(
+    const void* receiver, void* body, void* prototype) -> void* {
+  return Own(
+      lyra::value::RuntimeArrayFindFirstIndex(
+          Read<RuntimeUnpackedArray>(receiver), lyra::runtime::ArrayBody(body),
+          lyra::runtime::ErasedValue(prototype)));
+}
+
+auto lyra_rt_unpackedarray_find_last(
+    const void* receiver, void* body, void* prototype) -> void* {
+  return Own(
+      lyra::value::RuntimeArrayFindLast(
+          Read<RuntimeUnpackedArray>(receiver), lyra::runtime::ArrayBody(body),
+          lyra::runtime::ErasedValue(prototype)));
+}
+
+auto lyra_rt_unpackedarray_find_last_index(
+    const void* receiver, void* body, void* prototype) -> void* {
+  return Own(
+      lyra::value::RuntimeArrayFindLastIndex(
+          Read<RuntimeUnpackedArray>(receiver), lyra::runtime::ArrayBody(body),
+          lyra::runtime::ErasedValue(prototype)));
+}
+
+auto lyra_rt_unpackedarray_min(
+    const void* receiver, void* body, void* prototype) -> void* {
+  return Own(
+      lyra::value::RuntimeArrayMin(
+          Read<RuntimeUnpackedArray>(receiver), lyra::runtime::ArrayBody(body),
+          lyra::runtime::ErasedValue(prototype)));
+}
+
+auto lyra_rt_unpackedarray_max(
+    const void* receiver, void* body, void* prototype) -> void* {
+  return Own(
+      lyra::value::RuntimeArrayMax(
+          Read<RuntimeUnpackedArray>(receiver), lyra::runtime::ArrayBody(body),
+          lyra::runtime::ErasedValue(prototype)));
+}
+
+auto lyra_rt_unpackedarray_unique(
+    const void* receiver, void* body, void* prototype) -> void* {
+  return Own(
+      lyra::value::RuntimeArrayUnique(
+          Read<RuntimeUnpackedArray>(receiver), lyra::runtime::ArrayBody(body),
+          lyra::runtime::ErasedValue(prototype)));
+}
+
+auto lyra_rt_unpackedarray_unique_index(
+    const void* receiver, void* body, void* prototype) -> void* {
+  return Own(
+      lyra::value::RuntimeArrayUniqueIndex(
+          Read<RuntimeUnpackedArray>(receiver), lyra::runtime::ArrayBody(body),
+          lyra::runtime::ErasedValue(prototype)));
+}
+
+auto lyra_rt_unpackedarray_map(
+    const void* receiver, void* body, void* prototype) -> void* {
+  return Own(
+      lyra::value::RuntimeArrayMap(
+          Read<RuntimeUnpackedArray>(receiver), lyra::runtime::ArrayBody(body),
+          lyra::runtime::ErasedValue(prototype)));
+}
+
+auto lyra_rt_dynarray_sum(const void* receiver, void* body, void* prototype)
+    -> void* {
+  return lyra::runtime::ElementHandle(
+      lyra::value::RuntimeArraySum(
+          Read<RuntimeDynamicArray>(receiver), lyra::runtime::ArrayBody(body),
+          lyra::runtime::ErasedValue(prototype)));
+}
+
+auto lyra_rt_dynarray_product(const void* receiver, void* body, void* prototype)
+    -> void* {
+  return lyra::runtime::ElementHandle(
+      lyra::value::RuntimeArrayProduct(
+          Read<RuntimeDynamicArray>(receiver), lyra::runtime::ArrayBody(body),
+          lyra::runtime::ErasedValue(prototype)));
+}
+
+auto lyra_rt_dynarray_and(const void* receiver, void* body, void* prototype)
+    -> void* {
+  return lyra::runtime::ElementHandle(
+      lyra::value::RuntimeArrayAnd(
+          Read<RuntimeDynamicArray>(receiver), lyra::runtime::ArrayBody(body),
+          lyra::runtime::ErasedValue(prototype)));
+}
+
+auto lyra_rt_dynarray_or(const void* receiver, void* body, void* prototype)
+    -> void* {
+  return lyra::runtime::ElementHandle(
+      lyra::value::RuntimeArrayOr(
+          Read<RuntimeDynamicArray>(receiver), lyra::runtime::ArrayBody(body),
+          lyra::runtime::ErasedValue(prototype)));
+}
+
+auto lyra_rt_dynarray_xor(const void* receiver, void* body, void* prototype)
+    -> void* {
+  return lyra::runtime::ElementHandle(
+      lyra::value::RuntimeArrayXor(
+          Read<RuntimeDynamicArray>(receiver), lyra::runtime::ArrayBody(body),
+          lyra::runtime::ErasedValue(prototype)));
+}
+
+auto lyra_rt_dynarray_find(const void* receiver, void* body, void* prototype)
+    -> void* {
+  return Own(
+      lyra::value::RuntimeArrayFind(
+          Read<RuntimeDynamicArray>(receiver), lyra::runtime::ArrayBody(body),
+          lyra::runtime::ErasedValue(prototype)));
+}
+
+auto lyra_rt_dynarray_find_index(
+    const void* receiver, void* body, void* prototype) -> void* {
+  return Own(
+      lyra::value::RuntimeArrayFindIndex(
+          Read<RuntimeDynamicArray>(receiver), lyra::runtime::ArrayBody(body),
+          lyra::runtime::ErasedValue(prototype)));
+}
+
+auto lyra_rt_dynarray_find_first(
+    const void* receiver, void* body, void* prototype) -> void* {
+  return Own(
+      lyra::value::RuntimeArrayFindFirst(
+          Read<RuntimeDynamicArray>(receiver), lyra::runtime::ArrayBody(body),
+          lyra::runtime::ErasedValue(prototype)));
+}
+
+auto lyra_rt_dynarray_find_first_index(
+    const void* receiver, void* body, void* prototype) -> void* {
+  return Own(
+      lyra::value::RuntimeArrayFindFirstIndex(
+          Read<RuntimeDynamicArray>(receiver), lyra::runtime::ArrayBody(body),
+          lyra::runtime::ErasedValue(prototype)));
+}
+
+auto lyra_rt_dynarray_find_last(
+    const void* receiver, void* body, void* prototype) -> void* {
+  return Own(
+      lyra::value::RuntimeArrayFindLast(
+          Read<RuntimeDynamicArray>(receiver), lyra::runtime::ArrayBody(body),
+          lyra::runtime::ErasedValue(prototype)));
+}
+
+auto lyra_rt_dynarray_find_last_index(
+    const void* receiver, void* body, void* prototype) -> void* {
+  return Own(
+      lyra::value::RuntimeArrayFindLastIndex(
+          Read<RuntimeDynamicArray>(receiver), lyra::runtime::ArrayBody(body),
+          lyra::runtime::ErasedValue(prototype)));
+}
+
+auto lyra_rt_dynarray_min(const void* receiver, void* body, void* prototype)
+    -> void* {
+  return Own(
+      lyra::value::RuntimeArrayMin(
+          Read<RuntimeDynamicArray>(receiver), lyra::runtime::ArrayBody(body),
+          lyra::runtime::ErasedValue(prototype)));
+}
+
+auto lyra_rt_dynarray_max(const void* receiver, void* body, void* prototype)
+    -> void* {
+  return Own(
+      lyra::value::RuntimeArrayMax(
+          Read<RuntimeDynamicArray>(receiver), lyra::runtime::ArrayBody(body),
+          lyra::runtime::ErasedValue(prototype)));
+}
+
+auto lyra_rt_dynarray_unique(const void* receiver, void* body, void* prototype)
+    -> void* {
+  return Own(
+      lyra::value::RuntimeArrayUnique(
+          Read<RuntimeDynamicArray>(receiver), lyra::runtime::ArrayBody(body),
+          lyra::runtime::ErasedValue(prototype)));
+}
+
+auto lyra_rt_dynarray_unique_index(
+    const void* receiver, void* body, void* prototype) -> void* {
+  return Own(
+      lyra::value::RuntimeArrayUniqueIndex(
+          Read<RuntimeDynamicArray>(receiver), lyra::runtime::ArrayBody(body),
+          lyra::runtime::ErasedValue(prototype)));
+}
+
+auto lyra_rt_dynarray_map(const void* receiver, void* body, void* prototype)
+    -> void* {
+  return Own(
+      lyra::value::RuntimeArrayMap(
+          Read<RuntimeDynamicArray>(receiver), lyra::runtime::ArrayBody(body),
+          lyra::runtime::ErasedValue(prototype)));
+}
+
+auto lyra_rt_queue_sum(const void* receiver, void* body, void* prototype)
+    -> void* {
+  return lyra::runtime::ElementHandle(
+      lyra::value::RuntimeArraySum(
+          Read<RuntimeQueue>(receiver), lyra::runtime::ArrayBody(body),
+          lyra::runtime::ErasedValue(prototype)));
+}
+
+auto lyra_rt_queue_product(const void* receiver, void* body, void* prototype)
+    -> void* {
+  return lyra::runtime::ElementHandle(
+      lyra::value::RuntimeArrayProduct(
+          Read<RuntimeQueue>(receiver), lyra::runtime::ArrayBody(body),
+          lyra::runtime::ErasedValue(prototype)));
+}
+
+auto lyra_rt_queue_and(const void* receiver, void* body, void* prototype)
+    -> void* {
+  return lyra::runtime::ElementHandle(
+      lyra::value::RuntimeArrayAnd(
+          Read<RuntimeQueue>(receiver), lyra::runtime::ArrayBody(body),
+          lyra::runtime::ErasedValue(prototype)));
+}
+
+auto lyra_rt_queue_or(const void* receiver, void* body, void* prototype)
+    -> void* {
+  return lyra::runtime::ElementHandle(
+      lyra::value::RuntimeArrayOr(
+          Read<RuntimeQueue>(receiver), lyra::runtime::ArrayBody(body),
+          lyra::runtime::ErasedValue(prototype)));
+}
+
+auto lyra_rt_queue_xor(const void* receiver, void* body, void* prototype)
+    -> void* {
+  return lyra::runtime::ElementHandle(
+      lyra::value::RuntimeArrayXor(
+          Read<RuntimeQueue>(receiver), lyra::runtime::ArrayBody(body),
+          lyra::runtime::ErasedValue(prototype)));
+}
+
+auto lyra_rt_queue_find(const void* receiver, void* body, void* prototype)
+    -> void* {
+  return Own(
+      lyra::value::RuntimeArrayFind(
+          Read<RuntimeQueue>(receiver), lyra::runtime::ArrayBody(body),
+          lyra::runtime::ErasedValue(prototype)));
+}
+
+auto lyra_rt_queue_find_index(const void* receiver, void* body, void* prototype)
+    -> void* {
+  return Own(
+      lyra::value::RuntimeArrayFindIndex(
+          Read<RuntimeQueue>(receiver), lyra::runtime::ArrayBody(body),
+          lyra::runtime::ErasedValue(prototype)));
+}
+
+auto lyra_rt_queue_find_first(const void* receiver, void* body, void* prototype)
+    -> void* {
+  return Own(
+      lyra::value::RuntimeArrayFindFirst(
+          Read<RuntimeQueue>(receiver), lyra::runtime::ArrayBody(body),
+          lyra::runtime::ErasedValue(prototype)));
+}
+
+auto lyra_rt_queue_find_first_index(
+    const void* receiver, void* body, void* prototype) -> void* {
+  return Own(
+      lyra::value::RuntimeArrayFindFirstIndex(
+          Read<RuntimeQueue>(receiver), lyra::runtime::ArrayBody(body),
+          lyra::runtime::ErasedValue(prototype)));
+}
+
+auto lyra_rt_queue_find_last(const void* receiver, void* body, void* prototype)
+    -> void* {
+  return Own(
+      lyra::value::RuntimeArrayFindLast(
+          Read<RuntimeQueue>(receiver), lyra::runtime::ArrayBody(body),
+          lyra::runtime::ErasedValue(prototype)));
+}
+
+auto lyra_rt_queue_find_last_index(
+    const void* receiver, void* body, void* prototype) -> void* {
+  return Own(
+      lyra::value::RuntimeArrayFindLastIndex(
+          Read<RuntimeQueue>(receiver), lyra::runtime::ArrayBody(body),
+          lyra::runtime::ErasedValue(prototype)));
+}
+
+auto lyra_rt_queue_min(const void* receiver, void* body, void* prototype)
+    -> void* {
+  return Own(
+      lyra::value::RuntimeArrayMin(
+          Read<RuntimeQueue>(receiver), lyra::runtime::ArrayBody(body),
+          lyra::runtime::ErasedValue(prototype)));
+}
+
+auto lyra_rt_queue_max(const void* receiver, void* body, void* prototype)
+    -> void* {
+  return Own(
+      lyra::value::RuntimeArrayMax(
+          Read<RuntimeQueue>(receiver), lyra::runtime::ArrayBody(body),
+          lyra::runtime::ErasedValue(prototype)));
+}
+
+auto lyra_rt_queue_unique(const void* receiver, void* body, void* prototype)
+    -> void* {
+  return Own(
+      lyra::value::RuntimeArrayUnique(
+          Read<RuntimeQueue>(receiver), lyra::runtime::ArrayBody(body),
+          lyra::runtime::ErasedValue(prototype)));
+}
+
+auto lyra_rt_queue_unique_index(
+    const void* receiver, void* body, void* prototype) -> void* {
+  return Own(
+      lyra::value::RuntimeArrayUniqueIndex(
+          Read<RuntimeQueue>(receiver), lyra::runtime::ArrayBody(body),
+          lyra::runtime::ErasedValue(prototype)));
+}
+
+auto lyra_rt_queue_map(const void* receiver, void* body, void* prototype)
+    -> void* {
+  return Own(
+      lyra::value::RuntimeArrayMap(
+          Read<RuntimeQueue>(receiver), lyra::runtime::ArrayBody(body),
+          lyra::runtime::ErasedValue(prototype)));
+}
+
+auto lyra_rt_assocarray_sum(const void* receiver, void* body, void* prototype)
+    -> void* {
+  return lyra::runtime::ElementHandle(
+      lyra::value::RuntimeArraySum(
+          Read<RuntimeAssociativeArray>(receiver),
+          lyra::runtime::ArrayBody(body),
+          lyra::runtime::ErasedValue(prototype)));
+}
+
+auto lyra_rt_assocarray_product(
+    const void* receiver, void* body, void* prototype) -> void* {
+  return lyra::runtime::ElementHandle(
+      lyra::value::RuntimeArrayProduct(
+          Read<RuntimeAssociativeArray>(receiver),
+          lyra::runtime::ArrayBody(body),
+          lyra::runtime::ErasedValue(prototype)));
+}
+
+auto lyra_rt_assocarray_and(const void* receiver, void* body, void* prototype)
+    -> void* {
+  return lyra::runtime::ElementHandle(
+      lyra::value::RuntimeArrayAnd(
+          Read<RuntimeAssociativeArray>(receiver),
+          lyra::runtime::ArrayBody(body),
+          lyra::runtime::ErasedValue(prototype)));
+}
+
+auto lyra_rt_assocarray_or(const void* receiver, void* body, void* prototype)
+    -> void* {
+  return lyra::runtime::ElementHandle(
+      lyra::value::RuntimeArrayOr(
+          Read<RuntimeAssociativeArray>(receiver),
+          lyra::runtime::ArrayBody(body),
+          lyra::runtime::ErasedValue(prototype)));
+}
+
+auto lyra_rt_assocarray_xor(const void* receiver, void* body, void* prototype)
+    -> void* {
+  return lyra::runtime::ElementHandle(
+      lyra::value::RuntimeArrayXor(
+          Read<RuntimeAssociativeArray>(receiver),
+          lyra::runtime::ArrayBody(body),
+          lyra::runtime::ErasedValue(prototype)));
+}
+
+auto lyra_rt_assocarray_find(const void* receiver, void* body, void* prototype)
+    -> void* {
+  return Own(
+      lyra::value::RuntimeArrayFind(
+          Read<RuntimeAssociativeArray>(receiver),
+          lyra::runtime::ArrayBody(body),
+          lyra::runtime::ErasedValue(prototype)));
+}
+
+auto lyra_rt_assocarray_find_index(
+    const void* receiver, void* body, void* prototype) -> void* {
+  return Own(
+      lyra::value::RuntimeArrayFindIndex(
+          Read<RuntimeAssociativeArray>(receiver),
+          lyra::runtime::ArrayBody(body),
+          lyra::runtime::ErasedValue(prototype)));
+}
+
+auto lyra_rt_assocarray_find_first(
+    const void* receiver, void* body, void* prototype) -> void* {
+  return Own(
+      lyra::value::RuntimeArrayFindFirst(
+          Read<RuntimeAssociativeArray>(receiver),
+          lyra::runtime::ArrayBody(body),
+          lyra::runtime::ErasedValue(prototype)));
+}
+
+auto lyra_rt_assocarray_find_first_index(
+    const void* receiver, void* body, void* prototype) -> void* {
+  return Own(
+      lyra::value::RuntimeArrayFindFirstIndex(
+          Read<RuntimeAssociativeArray>(receiver),
+          lyra::runtime::ArrayBody(body),
+          lyra::runtime::ErasedValue(prototype)));
+}
+
+auto lyra_rt_assocarray_find_last(
+    const void* receiver, void* body, void* prototype) -> void* {
+  return Own(
+      lyra::value::RuntimeArrayFindLast(
+          Read<RuntimeAssociativeArray>(receiver),
+          lyra::runtime::ArrayBody(body),
+          lyra::runtime::ErasedValue(prototype)));
+}
+
+auto lyra_rt_assocarray_find_last_index(
+    const void* receiver, void* body, void* prototype) -> void* {
+  return Own(
+      lyra::value::RuntimeArrayFindLastIndex(
+          Read<RuntimeAssociativeArray>(receiver),
+          lyra::runtime::ArrayBody(body),
+          lyra::runtime::ErasedValue(prototype)));
+}
+
+auto lyra_rt_assocarray_min(const void* receiver, void* body, void* prototype)
+    -> void* {
+  return Own(
+      lyra::value::RuntimeArrayMin(
+          Read<RuntimeAssociativeArray>(receiver),
+          lyra::runtime::ArrayBody(body),
+          lyra::runtime::ErasedValue(prototype)));
+}
+
+auto lyra_rt_assocarray_max(const void* receiver, void* body, void* prototype)
+    -> void* {
+  return Own(
+      lyra::value::RuntimeArrayMax(
+          Read<RuntimeAssociativeArray>(receiver),
+          lyra::runtime::ArrayBody(body),
+          lyra::runtime::ErasedValue(prototype)));
+}
+
+auto lyra_rt_assocarray_unique(
+    const void* receiver, void* body, void* prototype) -> void* {
+  return Own(
+      lyra::value::RuntimeArrayUnique(
+          Read<RuntimeAssociativeArray>(receiver),
+          lyra::runtime::ArrayBody(body),
+          lyra::runtime::ErasedValue(prototype)));
+}
+
+auto lyra_rt_assocarray_unique_index(
+    const void* receiver, void* body, void* prototype) -> void* {
+  return Own(
+      lyra::value::RuntimeArrayUniqueIndex(
+          Read<RuntimeAssociativeArray>(receiver),
+          lyra::runtime::ArrayBody(body),
+          lyra::runtime::ErasedValue(prototype)));
+}
+
+auto lyra_rt_assocarray_map(const void* receiver, void* body, void* prototype)
+    -> void* {
+  return Own(
+      lyra::value::RuntimeArrayMap(
+          Read<RuntimeAssociativeArray>(receiver),
+          lyra::runtime::ArrayBody(body),
+          lyra::runtime::ErasedValue(prototype)));
+}
+
+auto lyra_rt_unpackedarray_sort(const void* receiver, void* body) -> void* {
+  return Own(
+      lyra::value::RuntimeArraySort(
+          Read<RuntimeUnpackedArray>(receiver),
+          lyra::runtime::ArrayBody(body)));
+}
+
+auto lyra_rt_unpackedarray_rsort(const void* receiver, void* body) -> void* {
+  return Own(
+      lyra::value::RuntimeArrayRsort(
+          Read<RuntimeUnpackedArray>(receiver),
+          lyra::runtime::ArrayBody(body)));
+}
+
+auto lyra_rt_dynarray_sort(const void* receiver, void* body) -> void* {
+  return Own(
+      lyra::value::RuntimeArraySort(
+          Read<RuntimeDynamicArray>(receiver), lyra::runtime::ArrayBody(body)));
+}
+
+auto lyra_rt_dynarray_rsort(const void* receiver, void* body) -> void* {
+  return Own(
+      lyra::value::RuntimeArrayRsort(
+          Read<RuntimeDynamicArray>(receiver), lyra::runtime::ArrayBody(body)));
+}
+
+auto lyra_rt_queue_sort(const void* receiver, void* body) -> void* {
+  return Own(
+      lyra::value::RuntimeArraySort(
+          Read<RuntimeQueue>(receiver), lyra::runtime::ArrayBody(body)));
+}
+
+auto lyra_rt_queue_rsort(const void* receiver, void* body) -> void* {
+  return Own(
+      lyra::value::RuntimeArrayRsort(
+          Read<RuntimeQueue>(receiver), lyra::runtime::ArrayBody(body)));
+}
+
+auto lyra_rt_unpackedarray_reverse(const void* receiver) -> void* {
+  return Own(
+      lyra::value::RuntimeArrayReverse(Read<RuntimeUnpackedArray>(receiver)));
+}
+
+auto lyra_rt_dynarray_reverse(const void* receiver) -> void* {
+  return Own(
+      lyra::value::RuntimeArrayReverse(Read<RuntimeDynamicArray>(receiver)));
+}
+
+auto lyra_rt_queue_reverse(const void* receiver) -> void* {
+  return Own(lyra::value::RuntimeArrayReverse(Read<RuntimeQueue>(receiver)));
+}
+
+auto lyra_rt_unpackedarray_read_mem(
+    void* runtime, const void* memory, const void* name, LyraSpan dims,
+    const void* base, const void* start) -> void* {
+  return lyra::runtime::OwnCompletion(
+      std::vector<RuntimeValue>{RuntimeValue{lyra::runtime::ReadMem(
+          *static_cast<RuntimeEffects*>(runtime),
+          Read<RuntimeUnpackedArray>(memory), Read<String>(name),
+          lyra::runtime::PackedValuesOf(dims), Read<PackedArray>(base),
+          Read<PackedArray>(start), std::nullopt)}});
+}
+
+auto lyra_rt_unpackedarray_read_mem_within(
+    void* runtime, const void* memory, const void* name, LyraSpan dims,
+    const void* base, const void* start, const void* finish) -> void* {
+  return lyra::runtime::OwnCompletion(
+      std::vector<RuntimeValue>{RuntimeValue{lyra::runtime::ReadMem(
+          *static_cast<RuntimeEffects*>(runtime),
+          Read<RuntimeUnpackedArray>(memory), Read<String>(name),
+          lyra::runtime::PackedValuesOf(dims), Read<PackedArray>(base),
+          Read<PackedArray>(start), Read<PackedArray>(finish).ToInt64())}});
+}
+
+void lyra_rt_unpackedarray_write_mem(
+    void* runtime, const void* memory, const void* name, LyraSpan dims,
+    const void* base, const void* start) {
+  lyra::runtime::WriteMem(
+      *static_cast<RuntimeEffects*>(runtime),
+      Read<RuntimeUnpackedArray>(memory), Read<String>(name),
+      lyra::runtime::PackedValuesOf(dims), Read<PackedArray>(base),
+      Read<PackedArray>(start), std::nullopt);
+}
+
+void lyra_rt_unpackedarray_write_mem_within(
+    void* runtime, const void* memory, const void* name, LyraSpan dims,
+    const void* base, const void* start, const void* finish) {
+  lyra::runtime::WriteMem(
+      *static_cast<RuntimeEffects*>(runtime),
+      Read<RuntimeUnpackedArray>(memory), Read<String>(name),
+      lyra::runtime::PackedValuesOf(dims), Read<PackedArray>(base),
+      Read<PackedArray>(start), Read<PackedArray>(finish).ToInt64());
+}
+
+auto lyra_rt_dynarray_read_mem(
+    void* runtime, const void* memory, const void* name, const void* base,
+    const void* start) -> void* {
+  return lyra::runtime::OwnCompletion(
+      std::vector<RuntimeValue>{RuntimeValue{lyra::runtime::ReadMem(
+          *static_cast<RuntimeEffects*>(runtime),
+          Read<RuntimeDynamicArray>(memory), Read<String>(name),
+          Read<PackedArray>(base), Read<PackedArray>(start), std::nullopt)}});
+}
+
+auto lyra_rt_dynarray_read_mem_within(
+    void* runtime, const void* memory, const void* name, const void* base,
+    const void* start, const void* finish) -> void* {
+  return lyra::runtime::OwnCompletion(
+      std::vector<RuntimeValue>{RuntimeValue{lyra::runtime::ReadMem(
+          *static_cast<RuntimeEffects*>(runtime),
+          Read<RuntimeDynamicArray>(memory), Read<String>(name),
+          Read<PackedArray>(base), Read<PackedArray>(start),
+          Read<PackedArray>(finish).ToInt64())}});
+}
+
+void lyra_rt_dynarray_write_mem(
+    void* runtime, const void* memory, const void* name, const void* base,
+    const void* start) {
+  lyra::runtime::WriteMem(
+      *static_cast<RuntimeEffects*>(runtime), Read<RuntimeDynamicArray>(memory),
+      Read<String>(name), Read<PackedArray>(base), Read<PackedArray>(start),
+      std::nullopt);
+}
+
+void lyra_rt_dynarray_write_mem_within(
+    void* runtime, const void* memory, const void* name, const void* base,
+    const void* start, const void* finish) {
+  lyra::runtime::WriteMem(
+      *static_cast<RuntimeEffects*>(runtime), Read<RuntimeDynamicArray>(memory),
+      Read<String>(name), Read<PackedArray>(base), Read<PackedArray>(start),
+      Read<PackedArray>(finish).ToInt64());
+}
+
+auto lyra_rt_queue_read_mem(
+    void* runtime, const void* memory, const void* name, const void* base,
+    const void* start) -> void* {
+  return lyra::runtime::OwnCompletion(
+      std::vector<RuntimeValue>{RuntimeValue{lyra::runtime::ReadMem(
+          *static_cast<RuntimeEffects*>(runtime), Read<RuntimeQueue>(memory),
+          Read<String>(name), Read<PackedArray>(base), Read<PackedArray>(start),
+          std::nullopt)}});
+}
+
+auto lyra_rt_queue_read_mem_within(
+    void* runtime, const void* memory, const void* name, const void* base,
+    const void* start, const void* finish) -> void* {
+  return lyra::runtime::OwnCompletion(
+      std::vector<RuntimeValue>{RuntimeValue{lyra::runtime::ReadMem(
+          *static_cast<RuntimeEffects*>(runtime), Read<RuntimeQueue>(memory),
+          Read<String>(name), Read<PackedArray>(base), Read<PackedArray>(start),
+          Read<PackedArray>(finish).ToInt64())}});
+}
+
+void lyra_rt_queue_write_mem(
+    void* runtime, const void* memory, const void* name, const void* base,
+    const void* start) {
+  lyra::runtime::WriteMem(
+      *static_cast<RuntimeEffects*>(runtime), Read<RuntimeQueue>(memory),
+      Read<String>(name), Read<PackedArray>(base), Read<PackedArray>(start),
+      std::nullopt);
+}
+
+void lyra_rt_queue_write_mem_within(
+    void* runtime, const void* memory, const void* name, const void* base,
+    const void* start, const void* finish) {
+  lyra::runtime::WriteMem(
+      *static_cast<RuntimeEffects*>(runtime), Read<RuntimeQueue>(memory),
+      Read<String>(name), Read<PackedArray>(base), Read<PackedArray>(start),
+      Read<PackedArray>(finish).ToInt64());
+}
+
+auto lyra_rt_assocarray_read_mem(
+    void* runtime, const void* memory, const void* name,
+    const void* key_prototype, const void* base, const void* start) -> void* {
+  return lyra::runtime::OwnCompletion(
+      std::vector<RuntimeValue>{RuntimeValue{lyra::runtime::ReadMem(
+          *static_cast<RuntimeEffects*>(runtime),
+          Read<RuntimeAssociativeArray>(memory), Read<String>(name),
+          Read<PackedArray>(key_prototype), Read<PackedArray>(base),
+          Read<PackedArray>(start), std::nullopt)}});
+}
+
+auto lyra_rt_assocarray_read_mem_within(
+    void* runtime, const void* memory, const void* name,
+    const void* key_prototype, const void* base, const void* start,
+    const void* finish) -> void* {
+  return lyra::runtime::OwnCompletion(
+      std::vector<RuntimeValue>{RuntimeValue{lyra::runtime::ReadMem(
+          *static_cast<RuntimeEffects*>(runtime),
+          Read<RuntimeAssociativeArray>(memory), Read<String>(name),
+          Read<PackedArray>(key_prototype), Read<PackedArray>(base),
+          Read<PackedArray>(start), Read<PackedArray>(finish).ToInt64())}});
+}
+
+void lyra_rt_assocarray_write_mem(
+    void* runtime, const void* memory, const void* name, const void* base,
+    const void* start) {
+  lyra::runtime::WriteMem(
+      *static_cast<RuntimeEffects*>(runtime),
+      Read<RuntimeAssociativeArray>(memory), Read<String>(name),
+      Read<PackedArray>(base), Read<PackedArray>(start), std::nullopt);
+}
+
+void lyra_rt_assocarray_write_mem_within(
+    void* runtime, const void* memory, const void* name, const void* base,
+    const void* start, const void* finish) {
+  lyra::runtime::WriteMem(
+      *static_cast<RuntimeEffects*>(runtime),
+      Read<RuntimeAssociativeArray>(memory), Read<String>(name),
+      Read<PackedArray>(base), Read<PackedArray>(start),
+      Read<PackedArray>(finish).ToInt64());
 }
 }

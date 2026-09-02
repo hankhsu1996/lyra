@@ -1,5 +1,6 @@
 #pragma once
 
+#include <cstddef>
 #include <memory>
 #include <vector>
 
@@ -73,6 +74,12 @@ class RuntimeDynamicArray {
   [[nodiscard]] auto Element(const PackedArray& index) const
       -> const RuntimeValue&;
 
+  // The element at storage position `position`, counted from the first in the
+  // array's own order -- the coordinate LRM 7.12 walks a container by. A
+  // position past the last is a walk defect rather than an out-of-range read.
+  [[nodiscard]] auto ElementAt(std::size_t position) const
+      -> const RuntimeValue&;
+
   // A functional element write: yields a new array equal to this one with
   // element `index` replaced by `value`. LRM 7.4.6: an out-of-range or x / z
   // index leaves the array unchanged (the write is discarded).
@@ -127,5 +134,6 @@ static_assert(LyraValue<RuntimeDynamicArray>);
 static_assert(CaseEqualComparable<RuntimeDynamicArray>);
 static_assert(Sized<RuntimeDynamicArray>);
 static_assert(BitstreamSizable<RuntimeDynamicArray>);
+static_assert(EntryWalkable<RuntimeDynamicArray>);
 
 }  // namespace lyra::value

@@ -8,6 +8,7 @@
 #include <string>
 #include <string_view>
 #include <utility>
+#include <variant>
 #include <vector>
 
 #include <llvm/Analysis/CGSCCPassManager.h>
@@ -549,6 +550,104 @@ void DefineRuntimeAbi(llvm::orc::LLJIT& jit) {
       &lyra_rt_assocarray_value_cell_store);
   add("lyra_rt_assocarray_value_cell_load",
       &lyra_rt_assocarray_value_cell_load);
+  add("lyra_rt_unpackedarray_sum", &lyra_rt_unpackedarray_sum);
+  add("lyra_rt_unpackedarray_product", &lyra_rt_unpackedarray_product);
+  add("lyra_rt_unpackedarray_and", &lyra_rt_unpackedarray_and);
+  add("lyra_rt_unpackedarray_or", &lyra_rt_unpackedarray_or);
+  add("lyra_rt_unpackedarray_xor", &lyra_rt_unpackedarray_xor);
+  add("lyra_rt_unpackedarray_find", &lyra_rt_unpackedarray_find);
+  add("lyra_rt_unpackedarray_find_index", &lyra_rt_unpackedarray_find_index);
+  add("lyra_rt_unpackedarray_find_first", &lyra_rt_unpackedarray_find_first);
+  add("lyra_rt_unpackedarray_find_first_index",
+      &lyra_rt_unpackedarray_find_first_index);
+  add("lyra_rt_unpackedarray_find_last", &lyra_rt_unpackedarray_find_last);
+  add("lyra_rt_unpackedarray_find_last_index",
+      &lyra_rt_unpackedarray_find_last_index);
+  add("lyra_rt_unpackedarray_min", &lyra_rt_unpackedarray_min);
+  add("lyra_rt_unpackedarray_max", &lyra_rt_unpackedarray_max);
+  add("lyra_rt_unpackedarray_unique", &lyra_rt_unpackedarray_unique);
+  add("lyra_rt_unpackedarray_unique_index",
+      &lyra_rt_unpackedarray_unique_index);
+  add("lyra_rt_unpackedarray_map", &lyra_rt_unpackedarray_map);
+  add("lyra_rt_dynarray_sum", &lyra_rt_dynarray_sum);
+  add("lyra_rt_dynarray_product", &lyra_rt_dynarray_product);
+  add("lyra_rt_dynarray_and", &lyra_rt_dynarray_and);
+  add("lyra_rt_dynarray_or", &lyra_rt_dynarray_or);
+  add("lyra_rt_dynarray_xor", &lyra_rt_dynarray_xor);
+  add("lyra_rt_dynarray_find", &lyra_rt_dynarray_find);
+  add("lyra_rt_dynarray_find_index", &lyra_rt_dynarray_find_index);
+  add("lyra_rt_dynarray_find_first", &lyra_rt_dynarray_find_first);
+  add("lyra_rt_dynarray_find_first_index", &lyra_rt_dynarray_find_first_index);
+  add("lyra_rt_dynarray_find_last", &lyra_rt_dynarray_find_last);
+  add("lyra_rt_dynarray_find_last_index", &lyra_rt_dynarray_find_last_index);
+  add("lyra_rt_dynarray_min", &lyra_rt_dynarray_min);
+  add("lyra_rt_dynarray_max", &lyra_rt_dynarray_max);
+  add("lyra_rt_dynarray_unique", &lyra_rt_dynarray_unique);
+  add("lyra_rt_dynarray_unique_index", &lyra_rt_dynarray_unique_index);
+  add("lyra_rt_dynarray_map", &lyra_rt_dynarray_map);
+  add("lyra_rt_queue_sum", &lyra_rt_queue_sum);
+  add("lyra_rt_queue_product", &lyra_rt_queue_product);
+  add("lyra_rt_queue_and", &lyra_rt_queue_and);
+  add("lyra_rt_queue_or", &lyra_rt_queue_or);
+  add("lyra_rt_queue_xor", &lyra_rt_queue_xor);
+  add("lyra_rt_queue_find", &lyra_rt_queue_find);
+  add("lyra_rt_queue_find_index", &lyra_rt_queue_find_index);
+  add("lyra_rt_queue_find_first", &lyra_rt_queue_find_first);
+  add("lyra_rt_queue_find_first_index", &lyra_rt_queue_find_first_index);
+  add("lyra_rt_queue_find_last", &lyra_rt_queue_find_last);
+  add("lyra_rt_queue_find_last_index", &lyra_rt_queue_find_last_index);
+  add("lyra_rt_queue_min", &lyra_rt_queue_min);
+  add("lyra_rt_queue_max", &lyra_rt_queue_max);
+  add("lyra_rt_queue_unique", &lyra_rt_queue_unique);
+  add("lyra_rt_queue_unique_index", &lyra_rt_queue_unique_index);
+  add("lyra_rt_queue_map", &lyra_rt_queue_map);
+  add("lyra_rt_assocarray_sum", &lyra_rt_assocarray_sum);
+  add("lyra_rt_assocarray_product", &lyra_rt_assocarray_product);
+  add("lyra_rt_assocarray_and", &lyra_rt_assocarray_and);
+  add("lyra_rt_assocarray_or", &lyra_rt_assocarray_or);
+  add("lyra_rt_assocarray_xor", &lyra_rt_assocarray_xor);
+  add("lyra_rt_assocarray_find", &lyra_rt_assocarray_find);
+  add("lyra_rt_assocarray_find_index", &lyra_rt_assocarray_find_index);
+  add("lyra_rt_assocarray_find_first", &lyra_rt_assocarray_find_first);
+  add("lyra_rt_assocarray_find_first_index",
+      &lyra_rt_assocarray_find_first_index);
+  add("lyra_rt_assocarray_find_last", &lyra_rt_assocarray_find_last);
+  add("lyra_rt_assocarray_find_last_index",
+      &lyra_rt_assocarray_find_last_index);
+  add("lyra_rt_assocarray_min", &lyra_rt_assocarray_min);
+  add("lyra_rt_assocarray_max", &lyra_rt_assocarray_max);
+  add("lyra_rt_assocarray_unique", &lyra_rt_assocarray_unique);
+  add("lyra_rt_assocarray_unique_index", &lyra_rt_assocarray_unique_index);
+  add("lyra_rt_assocarray_map", &lyra_rt_assocarray_map);
+  add("lyra_rt_unpackedarray_sort", &lyra_rt_unpackedarray_sort);
+  add("lyra_rt_unpackedarray_rsort", &lyra_rt_unpackedarray_rsort);
+  add("lyra_rt_dynarray_sort", &lyra_rt_dynarray_sort);
+  add("lyra_rt_dynarray_rsort", &lyra_rt_dynarray_rsort);
+  add("lyra_rt_queue_sort", &lyra_rt_queue_sort);
+  add("lyra_rt_queue_rsort", &lyra_rt_queue_rsort);
+  add("lyra_rt_unpackedarray_reverse", &lyra_rt_unpackedarray_reverse);
+  add("lyra_rt_dynarray_reverse", &lyra_rt_dynarray_reverse);
+  add("lyra_rt_queue_reverse", &lyra_rt_queue_reverse);
+  add("lyra_rt_assocarray_read_mem", &lyra_rt_assocarray_read_mem);
+  add("lyra_rt_assocarray_read_mem_within",
+      &lyra_rt_assocarray_read_mem_within);
+  add("lyra_rt_assocarray_write_mem", &lyra_rt_assocarray_write_mem);
+  add("lyra_rt_assocarray_write_mem_within",
+      &lyra_rt_assocarray_write_mem_within);
+  add("lyra_rt_dynarray_read_mem", &lyra_rt_dynarray_read_mem);
+  add("lyra_rt_dynarray_read_mem_within", &lyra_rt_dynarray_read_mem_within);
+  add("lyra_rt_dynarray_write_mem", &lyra_rt_dynarray_write_mem);
+  add("lyra_rt_dynarray_write_mem_within", &lyra_rt_dynarray_write_mem_within);
+  add("lyra_rt_queue_read_mem", &lyra_rt_queue_read_mem);
+  add("lyra_rt_queue_read_mem_within", &lyra_rt_queue_read_mem_within);
+  add("lyra_rt_queue_write_mem", &lyra_rt_queue_write_mem);
+  add("lyra_rt_queue_write_mem_within", &lyra_rt_queue_write_mem_within);
+  add("lyra_rt_unpackedarray_read_mem", &lyra_rt_unpackedarray_read_mem);
+  add("lyra_rt_unpackedarray_read_mem_within",
+      &lyra_rt_unpackedarray_read_mem_within);
+  add("lyra_rt_unpackedarray_write_mem", &lyra_rt_unpackedarray_write_mem);
+  add("lyra_rt_unpackedarray_write_mem_within",
+      &lyra_rt_unpackedarray_write_mem_within);
   add("lyra_rt_unpackedarray_element", &lyra_rt_unpackedarray_element);
   add("lyra_rt_unpackedarray_with_element",
       &lyra_rt_unpackedarray_with_element);
@@ -875,6 +974,28 @@ struct LoadedClosure {
   std::unique_ptr<runtime::ClosureDefinition> definition;
 };
 
+// Which alternative a body is, read from what its invoke answers: a coroutine
+// result is the coroutine protocol, no result at all is a body run to
+// completion, and a value result is a body run per entry of a container -- and
+// that one carries the representation its result comes back in, since a handle
+// carries none.
+auto ProtocolOf(const lir::CompilationUnit& unit, lir::TypeId result)
+    -> runtime::ClosureBody {
+  if (unit.types.Get(result).Is<lir::CoroutineType>()) {
+    return runtime::CoroutineBody{};
+  }
+  if (unit.types.Get(result).Is<lir::VoidType>()) {
+    return runtime::SynchronousBody{};
+  }
+  const std::optional<support::ValueDomain> domain =
+      backend::llvm_backend::ValueDomainOf(unit, result);
+  if (!domain) {
+    throw InternalError(
+        "jit executor: a body run per entry settles a runtime value");
+  }
+  return runtime::PerElementBody{.result_domain = *domain};
+}
+
 auto LoadClosures(const lir::CompilationUnit& unit)
     -> diag::Result<std::vector<LoadedClosure>> {
   std::vector<LoadedClosure> loaded;
@@ -890,9 +1011,7 @@ auto LoadClosures(const lir::CompilationUnit& unit)
         LoadedClosure{
             .name = closure.name,
             .captures = *std::move(captures),
-            .protocol = unit.types.Get(result).Is<lir::CoroutineType>()
-                            ? runtime::ClosureBody{runtime::CoroutineBody{}}
-                            : runtime::ClosureBody{runtime::SynchronousBody{}},
+            .protocol = ProtocolOf(unit, result),
             .definition = std::make_unique<runtime::ClosureDefinition>()});
   }
   return loaded;
@@ -1087,6 +1206,11 @@ auto Execute(
             [&](const runtime::CoroutineBody&) -> runtime::ClosureBody {
               return runtime::CoroutineBody{
                   .start = found->toPtr<void*(void*)>()};
+            },
+            [&](const runtime::PerElementBody& body) -> runtime::ClosureBody {
+              return runtime::PerElementBody{
+                  .run = found->toPtr<void*(void*, const void*, const void*)>(),
+                  .result_domain = body.result_domain};
             }},
         entry.protocol);
   }

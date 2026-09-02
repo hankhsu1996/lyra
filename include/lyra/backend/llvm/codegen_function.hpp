@@ -135,18 +135,20 @@ class CodeGenFunction {
       lir::TypeId result, const std::vector<llvm::Value*>& operands)
       -> std::vector<llvm::Value*>;
 
-  // Which operand of a construction is the element default it is seeded from,
-  // absent for a call that builds no container. A construction leads with it,
-  // except where a size precedes it: the LRM 7.5.1 run-time-sized forms state
-  // how many elements there are before what each one is.
-  [[nodiscard]] auto ElementPrototypeOperand(const lir::CallInstr& call) const
+  // Which operand states the shape of what a call produces, absent for a call
+  // whose result the operands already shape. A construction leads with the
+  // element default it is seeded from, except where a size precedes it -- the
+  // LRM 7.5.1 run-time-sized forms state how many elements there are before
+  // what each one is -- and an LRM 7.12 method trails the result element the
+  // producer supplied behind the operands the method itself needs.
+  [[nodiscard]] auto ResultShapeOperand(const lir::CallInstr& call) const
       -> std::optional<std::size_t>;
 
   // Which operand of a call crosses erased, and in which representation. A
   // value crosses erased where it states a representation the entry has no
-  // other way to know: a construction's element prototype, which states its
-  // own, and the index a keyed container selects by, which states the one that
-  // container's declared index type names.
+  // other way to know: the shape a call's result takes, which follows the call
+  // rather than the entry's own name, and the index a keyed container selects
+  // by, which states the one that container's declared index type names.
   struct ErasedArgument {
     std::size_t position;
     support::ValueDomain domain;

@@ -239,24 +239,36 @@ each meets the same lifetime question above.
       does not realize is stated the same way, naming which shape it has no entry for. An entry now
       exists as a prototype, a definition, and a binding held to each other by a check, so one
       written without the others fails the build instead of failing to resolve at run time. What is
-      still refused no longer shares one message: the memory load and dump tasks walk their memory
-      through the container kind and depth their entry is compiled against, which an erased handle
-      does not carry, and a named event's members have no storage realization.
-- [ ] **A memory load or dump (LRM 21.4, 21.5).** Every form the source may write reaches the
-      backend now -- an unpacked memory of any depth, a dynamic array, a queue, an associative
-      array, each either running upward from an address or bounded by a window -- and every one of
-      them refuses, because the library reaches a memory's words by walking the container type its
-      entry was compiled against, and an erased handle carries neither that kind nor its nesting
-      depth. Realizing them means a walk driven by the value's runtime domain, and a load then
-      answers through its completion like every other service that reports through an argument.
-- [x] **A closure the runtime holds and runs later.** A deferred effect -- a non-blocking
-      assignment, a postponed print, a deferred assertion's action -- is a closure the process hands
-      to a region and keeps running past, so the body runs once the stretch that built it has
-      returned. What it captured survives with it: a captured value is taken by copy where the
-      closure was built, so nothing a deferred body reads points into storage that is already gone.
-      The closure a `fork` branch builds shares that storage and differs in what becomes of it:
-      entering the branch takes the captures rather than borrowing them, since the execution
-      outlives the stretch that built them and nothing else owns them.
+      still refused no longer shares one message: an unpacked concatenation takes as many parts as
+      the source wrote and no C ABI names an entry per arity, and a named event's members have no
+      storage realization.
+- [x] **A memory load or dump (LRM 21.4, 21.5).** Every form the source may write runs here: an
+      unpacked memory of any depth, a dynamic array, a queue, an associative array, each either
+      running upward from an address or bounded by a window. A memory's words are taken out in
+      address order, filled or rendered by the cores every memory task runs, and put back where they
+      came from -- which is how an address the file does not reach keeps what it held, against a
+      value nothing may write in place. What a memory addresses through is a property of the memory,
+      so it is what names the entry: an unpacked memory reads the declared bounds of every
+      dimension, whatever its nesting depth, a dynamic array or queue the dense space its current
+      size spans, and an associative memory its own keys. A load answers through its completion,
+      like every other service that reports through an argument.
+- [x] **A body the runtime runs on the program's behalf, one alternative per call protocol.** Three
+      run here: the effect a region runs once the stretch that built it has returned -- a
+      non-blocking assignment, a postponed print, a deferred assertion's action -- the branch a
+      `fork` spawns, and the `with` expression an array method evaluates once per entry of its
+      receiver. Each alternative carries an entry of its own signature, because what a body is
+      called with and answers is what its type says; the alternative a body is, is read off what its
+      own invoke answers rather than recorded beside it. What no type carries is what C says nothing
+      about -- how the captured state is laid out, and which representation a result comes back in
+      -- and those ride with the body as the record it was registered under.
+
+      What a body captures is independent of what it is called with, so the captured state is one
+      block whatever the body is, described by the same schema an object's properties and a scope's
+      members are. A captured value is a copy taken where the body was built, so nothing a body
+      reads points into storage that may already be gone. A `fork` branch differs in what becomes
+      of that storage: entering the branch takes the captures rather than borrowing them, since the
+      execution outlives the stretch that built them and nothing else owns them.
+
 - [x] **A runtime service answers through its completion, never through storage the caller lends.**
       Every service that reports through an argument the call names -- `$fgets`, `$ferror`,
       `$fread`, `$value$plusargs`, `$readmem` -- completes with a product of the values it settled,
@@ -274,6 +286,17 @@ each meets the same lifetime question above.
       the caller could read. The two backends therefore disagreed on the same source, which is the
       one difference between them the agreement contract does not allow.
 
+- [x] **A method that runs a body the call supplies, once per entry** (LRM 7.12). The locator,
+      reduction, projection and ordering families run here over every unpacked container. A `with`
+      clause is a callable value the call hands the entry, which enters it once per entry with the
+      element and that entry's index and takes back the value it settled on; where the source wrote
+      no clause the identity one is supplied, so one shape reaches every consumer. What crosses in
+      each direction is what its own type names, and the one thing no type names -- which
+      representation a handle is in -- is recorded where the thing it describes is registered: the
+      body's answer on the body's definition, and the result shape the producer supplies on the
+      call, which crosses erased because it follows the clause rather than the receiver. Erasing an
+      index and an element makes them one type, so the algorithms are the ones the other backend
+      runs rather than a second family beside them.
 - [ ] Storage reached by name rather than through a receiver, for a class's static property and
       static constant. A package or `$unit` variable runs: such storage is named by its linkage
       symbol, a place opens at that symbol and dereferences it, and the execution session resolves

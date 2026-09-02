@@ -7,6 +7,7 @@
 #include <utility>
 #include <vector>
 
+#include "lyra/base/internal_error.hpp"
 #include "lyra/base/simulation_error.hpp"
 #include "lyra/value/packed_array.hpp"
 #include "lyra/value/runtime_value.hpp"
@@ -101,6 +102,15 @@ auto RuntimeDynamicArray::Element(const PackedArray& index) const
     return *element_default_;
   }
   return data_[static_cast<std::size_t>(index.ToInt64())];
+}
+
+auto RuntimeDynamicArray::ElementAt(std::size_t position) const
+    -> const RuntimeValue& {
+  if (position >= data_.size()) {
+    throw InternalError(
+        "RuntimeDynamicArray::ElementAt: the position is past the last");
+  }
+  return data_[position];
 }
 
 auto RuntimeDynamicArray::WithElement(

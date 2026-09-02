@@ -19,7 +19,6 @@ class GlobalVariable;
 
 namespace lyra::lir {
 struct CompilationUnit;
-struct Function;
 }  // namespace lyra::lir
 
 namespace lyra::backend::llvm_backend {
@@ -68,8 +67,8 @@ class CodeGenModule {
   auto PackedTypeCell(lir::TypeId integral) -> llvm::GlobalVariable*;
 
  private:
-  auto DeclareCallable(const lir::Function& fn) -> llvm::Function*;
-  auto DeclareDescriptorCell() -> llvm::GlobalVariable*;
+  auto DeclareCallable(lir::FunctionId id) -> llvm::Function*;
+  auto DeclarePackedTypeCell(lir::TypeId integral) -> llvm::GlobalVariable*;
 
   std::unique_ptr<llvm::LLVMContext> context_;
   std::unique_ptr<llvm::Module> module_;
