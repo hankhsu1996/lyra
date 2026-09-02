@@ -370,6 +370,15 @@ auto lyra_rt_get_child(void* self, const void* name, LyraSpan indices) -> void*;
 // The address of a generic instance's member storage, by class-local index.
 auto lyra_rt_member_addr(void* self, std::uint32_t index) -> void*;
 
+// The sequence of handles a declaration standing for several objects builds,
+// in the order its coordinates count, and the handle at a position in one. A
+// sequence is built once where its owner is built and held by address for the
+// rest of the run, which is what lets a dimension of a multidimensional
+// declaration be an ordinary handle in the dimension above it.
+auto lyra_rt_sequence_make(LyraSpan handles) -> const void*;
+auto lyra_rt_sequence_element(const void* sequence, std::int64_t index)
+    -> void*;
+
 // Publishes a member cell under its source-level name for by-name navigation,
 // and reads one back. The read answers an untyped address because the reader is
 // the artifact a hierarchical reference is written in, which does not know the

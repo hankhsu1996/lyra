@@ -125,14 +125,15 @@ specializations, not with instance count.
       state. The two should be reconciled when this is picked up, with the specialization model
       governing.
 
-- [ ] An instance array is the narrowest case of that same axis, and the only one whose target shape
-      is already settled. `Child c[0:N-1]` becomes N members and N construction statements, one per
-      element, so the artifact grows with the instance count although every element is the same
-      unit; measured at 16 elements it is 16 endpoint members plus 16 handle members. `mir.md`
-      invariant 9 already names the vehicle -- instance multiplicity is the vector wrapper on the
-      member's type, so one member carries the whole array and construction is one loop -- and that
-      wrapper is declared in the type system but never built. Nothing else in MIR is in that state,
-      which is why this is worth naming separately from the two above rather than waiting on them.
+- [ ] What remains of the instance array on that same axis. The member and the construction
+      statement no longer scale: `Child c[0:N-1]` is one member whose type carries the multiplicity
+      and one statement composing the whole sequence, so widening an array changes neither. Two
+      things still do. The composition names every element, so the constructor holds N element
+      expressions; reaching one loop needs a way to build a sequence from a count rather than from
+      its elements, which the value model does not have -- a sequence is composed where it is built.
+      And a port connection on an array is still distributed per element by the frontend, so its
+      endpoint members and its implied continuous assignments stay one per element; collapsing those
+      needs the peer to be a function of the index, which is exactly what the distribution spent.
 
 ### Open questions
 

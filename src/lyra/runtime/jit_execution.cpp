@@ -1155,6 +1155,24 @@ auto lyra_rt_member_addr(void* self, std::uint32_t index) -> void* {
   return static_cast<GeneratedScope*>(self)->MemberAddress(index);
 }
 
+auto lyra_rt_sequence_make(LyraSpan handles) -> const void* {
+  const std::span<void* const> raw(
+      static_cast<void* const*>(handles.data), handles.count);
+  return ProgramLifetime(std::vector<void*>(raw.begin(), raw.end()));
+}
+
+auto lyra_rt_sequence_element(const void* sequence, std::int64_t index)
+    -> void* {
+  const auto& handles = *static_cast<const std::vector<void*>*>(sequence);
+  const auto position = static_cast<std::size_t>(index);
+  if (index < 0 || position >= handles.size()) {
+    throw lyra::InternalError(
+        "lyra_rt_sequence_element: the coordinate names no object the "
+        "declaration built");
+  }
+  return handles[position];
+}
+
 auto lyra_rt_object_deref(void* handle) -> void* {
   const auto& object = Read<GcRef<ManagedObject>>(handle);
   if (object.Get() == nullptr) {

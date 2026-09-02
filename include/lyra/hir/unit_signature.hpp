@@ -32,8 +32,8 @@ struct DataPortPart {
 // A port part naming a scope rather than carrying data -- an interface port
 // (LRM 25.3). Nothing flows across it in any direction, so it has no direction
 // and no value type; what crosses is which member of this unit's instance the
-// connection binds, and the type of that member says which unit's object it
-// must be bound to.
+// connection binds, and the type of that member says which unit's objects it
+// must be bound to and how many of them.
 struct InterfacePortPart {
   PublishedMemberId member;
 };

@@ -1304,10 +1304,14 @@ class HirDumper {
                     "{} {} peer=Expr[{}]", direction, endpoint, d.peer.value);
               },
               [](const InterfacePortConnection& i) -> std::string {
+                std::string peers;
+                for (const RoutedPathRecipe& peer : i.peers) {
+                  if (!peers.empty()) peers += ", ";
+                  peers += FormatRoutedPathRecipe(peer);
+                }
                 return std::format(
-                    "interface bind_to:{} peer:{}",
-                    FormatRoutedPathRecipe(i.endpoint),
-                    FormatRoutedPathRecipe(i.peer));
+                    "interface bind_to:{} peers:[{}]",
+                    FormatRoutedPathRecipe(i.endpoint), peers);
               }},
           pc.kind);
       Line(std::format("PortConnection[{}] {}", id.value, body));

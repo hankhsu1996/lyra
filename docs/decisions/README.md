@@ -174,6 +174,13 @@ the detail lives in the entry itself.
 - [object-model-storage](object-model-storage.md) -- a compilation unit owns one canonical registry
   of local nominal object declarations; identity, lexical name resolution, and backend emission
   nesting are separate relations; the lexical-tree-only storage and a second identity are rejected.
+- [instance-array-multiplicity](instance-array-multiplicity.md) -- an array of children is one
+  member whose type is a sequence of the child pointer, carrying multiplicity but no length, so
+  which element a reference names is an operand of a projection rather than part of a member's
+  identity; an interface port carrying a range is the same member over a borrowed pointer. A member
+  per element with the coordinate in its name, a fixed-size aggregate carrying the count, an index
+  step in the place vocabulary, one published member per element, and a simulation-value container
+  are rejected.
 - [procedural-storage-scope](procedural-storage-scope.md) -- HIR carries a lexical procedural scope
   tree (downward ownership, no backrefs) alongside its statement tree; a HIR-to-MIR two-pass
   scope-tree fold decides which named begin/ends materialize as runtime hierarchy children and where

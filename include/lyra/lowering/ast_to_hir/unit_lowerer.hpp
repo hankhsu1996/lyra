@@ -725,8 +725,21 @@ class UnitLowerer {
   // route ends at is the caller's, so one derivation serves a name read through
   // the port and a connection handing the port's interface on.
   [[nodiscard]] auto RouteThroughInterfacePort(
-      const WalkFrame& frame, const slang::ast::Symbol& port) const
-      -> ScopeRoute;
+      const WalkFrame& frame, const slang::ast::Symbol& port,
+      std::vector<std::uint32_t> indices = {}) const -> ScopeRoute;
+
+  // The coordinates a name selected on an interface port before reaching what
+  // it names: the hops between the port and the target are the element
+  // selections a port carrying a range admits (LRM 25.3). Each is already the
+  // position of the instance it picked rather than the coordinate the source
+  // wrote, because resolving the select is what spends the declared range; the
+  // range is read here only for how many coordinates the port admits. Nothing
+  // when a hop is anything else, which is a name descending into what the
+  // interface itself owns rather than selecting one of the instances the port
+  // stands for.
+  [[nodiscard]] static auto InterfacePortCoordinates(
+      const slang::ast::HierarchicalReference& reference)
+      -> std::optional<std::vector<std::uint32_t>>;
 
   // The reads of a dependency set that name a cell, as the entries that wake on
   // it under `edge`. A read of anything else contributes none, so a constant

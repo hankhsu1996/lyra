@@ -28,6 +28,21 @@ auto TranslateSignedness(hir::Signedness s) -> mir::Signedness {
                                        : mir::Signedness::kUnsigned;
 }
 
+// Whether what a type stands for is objects rather than values: an object of
+// another unit, or an array bottoming out at one. It is what separates an array
+// a declaration builds from an array a program computes with, which the source
+// spells the same way. Asked of the declared type rather than of what it
+// lowered to, because a referrer that never reaches inside such an object
+// carries no identity for it and so cannot be asked which unit it is.
+auto DeclaresObjects(const hir::TypePool& types, hir::TypeId type) -> bool {
+  const hir::Type& data = types.Get(type);
+  if (data.Is<hir::UnitObjectType>()) {
+    return true;
+  }
+  const auto* array = data.As<hir::UnpackedArrayType>();
+  return array != nullptr && DeclaresObjects(types, array->element_type);
+}
+
 // Projects a recursive HIR packed array onto MIR's flat single-vector shape
 // (LRM 7.4.1). A scalar-bit terminal contributes how many states its bits have
 // and this one dimension; any other element (a nested packed array, or a packed
@@ -161,8 +176,18 @@ auto UnitLowerer::TranslateType(const hir::Type& type) -> mir::Type {
                 mir::TaggedUnionType{.elements = std::move(elements)}};
           },
           [&](const hir::UnpackedArrayType& src) -> mir::Type {
+            const mir::TypeId element = TranslateType(src.element_type);
+            // An array of objects is a sequence, never a value array: an object
+            // is reached by its address and has no value form, so there is
+            // nothing for a value array to hold. Which element a coordinate
+            // names is settled where the reference is built, which is what
+            // spends the declared range and leaves the sequence stating only
+            // that there are several.
+            if (DeclaresObjects(Hir().types, src.element_type)) {
+              return mir::Type{mir::VectorType{.element = element}};
+            }
             return mir::Type{mir::UnpackedArrayType{
-                .element_type = TranslateType(src.element_type),
+                .element_type = element,
                 .dim =
                     mir::UnpackedRange{
                         .left = src.dim.left, .right = src.dim.right},

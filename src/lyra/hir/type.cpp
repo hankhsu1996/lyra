@@ -44,6 +44,11 @@ auto PackedRange::LinearOffset(std::int64_t index) const -> std::uint64_t {
   return static_cast<std::uint64_t>(index - left);
 }
 
+auto UnpackedRange::ElementCount() const -> std::uint64_t {
+  const std::int64_t span = (left >= right) ? (left - right) : (right - left);
+  return static_cast<std::uint64_t>(span) + 1U;
+}
+
 namespace {
 
 template <typename T>

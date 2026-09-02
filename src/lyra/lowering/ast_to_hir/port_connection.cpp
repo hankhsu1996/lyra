@@ -58,22 +58,83 @@ auto PublishedMemberRecipe(
       .type = type};
 }
 
-// The route to the interface instance a connection names (LRM 25.3). An actual
-// written as an interface port of a scope enclosing the connection is the
-// port's own route; every other actual names an instance somewhere on the
+// What a published member's type says it stands for: the object at the bottom
+// of it, how many of them, and whether it holds them as a sequence at all. The
+// last is not the count being one -- a range of one element is still a
+// sequence, and what a route reaches through such a member is that sequence
+// rather than the object inside it.
+//
+// It is a walk because a signature carries a member's multiplicity in its type
+// and in nothing beside it, so every reader that needs the shape reads it back
+// out of the nesting rather than off a field the promise would have to state
+// twice.
+struct MemberObjects {
+  hir::TypeId element_type;
+  std::size_t count;
+  bool sequence;
+};
+
+auto ObjectsBehind(const UnitLowerer& unit_lowerer, hir::TypeId member_type)
+    -> MemberObjects {
+  MemberObjects behind{
+      .element_type = member_type, .count = 1, .sequence = false};
+  while (const auto* array = unit_lowerer.Unit()
+                                 .types.Get(behind.element_type)
+                                 .As<hir::UnpackedArrayType>()) {
+    behind.count *= array->dim.ElementCount();
+    behind.element_type = array->element_type;
+    behind.sequence = true;
+  }
+  return behind;
+}
+
+// Every interface instance a connection supplies, in the order the port's
+// coordinates count them (LRM 23.3.3.5). A connection to a port standing for
+// one instance supplies one, which is the no-dimension case of the same walk;
+// an array of interfaces contributes its elements, and a nested one its
+// elements' elements, so the walk flattens exactly as the coordinates do.
+// Element order needs no correction here: what a connection resolves to is
+// already rebased onto the range the port declared, matched left index to left
+// index, so the walk takes it as it stands. Nothing when the connection
+// resolves to something that is neither.
+auto CollectConnectedInstances(const slang::ast::Symbol& connected)
+    -> std::optional<std::vector<const slang::ast::InstanceSymbol*>> {
+  if (const auto* instance = connected.as_if<slang::ast::InstanceSymbol>()) {
+    return std::vector<const slang::ast::InstanceSymbol*>{instance};
+  }
+  const auto* array = connected.as_if<slang::ast::InstanceArraySymbol>();
+  if (array == nullptr) {
+    return std::nullopt;
+  }
+  std::vector<const slang::ast::InstanceSymbol*> instances;
+  for (const auto* element : array->elements) {
+    auto nested = CollectConnectedInstances(*element);
+    if (!nested.has_value()) {
+      return std::nullopt;
+    }
+    instances.insert(instances.end(), nested->begin(), nested->end());
+  }
+  return instances;
+}
+
+// The routes to the interface instances a connection names (LRM 25.3). An
+// actual written as an interface port of a scope enclosing the connection is
+// the port's own route; every other actual names instances somewhere on the
 // object tree, reached by the same walk every reference across an instance
 // boundary uses.
-auto InterfaceActualRoute(
+auto InterfaceActualRoutes(
     UnitLowerer& unit_lowerer, const slang::ast::PortConnection& conn,
-    hir::TypeId object_type, diag::SourceSpan span, WalkFrame frame)
-    -> diag::Result<hir::RoutedPathRecipe> {
+    MemberObjects behind, diag::SourceSpan span, WalkFrame frame)
+    -> diag::Result<std::vector<hir::RoutedPathRecipe>> {
+  // A route ends at one object, so what types a peer is the element the member
+  // stands for rather than the member's whole shape.
   const auto recipe = [&](hir::RouteHead head,
                           std::vector<hir::PathStep> steps) {
     return hir::RoutedPathRecipe{
         .head = std::move(head),
         .steps = std::move(steps),
         .leaf = hir::ScopeLeaf{},
-        .type = object_type};
+        .type = behind.element_type};
   };
 
   const slang::ast::Expression* actual = conn.getExpression();
@@ -93,38 +154,54 @@ auto InterfaceActualRoute(
           "an interface reached through part of another interface port is not "
           "yet supported");
     }
+    // Handing a whole port on names no instance: what the route reaches is the
+    // forwarding scope's own member, which for a port carrying a range is
+    // already the sequence rather than one of the objects in it.
+    if (behind.sequence) {
+      return PortConnectionUnsupported(
+          span,
+          "an interface port carrying a range forwarded from another port is "
+          "not yet supported");
+    }
     auto through =
         unit_lowerer.RouteThroughInterfacePort(frame, *path[0].symbol);
-    return recipe(std::move(through.head), std::move(through.steps));
+    std::vector<hir::RoutedPathRecipe> peers;
+    peers.push_back(recipe(std::move(through.head), std::move(through.steps)));
+    return peers;
   }
 
   // Which instance an element of an instance array is given is settled while
   // the design elaborates (LRM 23.3.3.5), so the connection states it; the
   // actual's own expression names the whole array the elements were cut from.
   const slang::ast::Symbol* connected = conn.getIfaceConn().first;
-  const auto* instance = connected == nullptr
-                             ? nullptr
-                             : connected->as_if<slang::ast::InstanceSymbol>();
-  if (instance == nullptr) {
+  const auto instances = connected == nullptr
+                             ? std::nullopt
+                             : CollectConnectedInstances(*connected);
+  if (!instances.has_value()) {
     return PortConnectionUnsupported(
         span, "this interface port connection form is not yet supported");
   }
-  auto route = unit_lowerer.RouteToScope(frame, instance->body);
-  if (!route.has_value()) {
-    return PortConnectionUnsupported(
-        span,
-        "an interface port connected to an instance this scope cannot name is "
-        "not yet supported");
+  std::vector<hir::RoutedPathRecipe> peers;
+  peers.reserve(instances->size());
+  for (const auto* instance : *instances) {
+    auto route = unit_lowerer.RouteToScope(frame, instance->body);
+    if (!route.has_value()) {
+      return PortConnectionUnsupported(
+          span,
+          "an interface port connected to an instance this scope cannot name "
+          "is not yet supported");
+    }
+    peers.push_back(recipe(std::move(route->head), std::move(route->steps)));
   }
-  return recipe(std::move(route->head), std::move(route->steps));
+  return peers;
 }
 
-// Binds one interface port of a child instance to the interface instance the
+// Binds one interface port of a child instance to the interface instances the
 // connection names (LRM 25.3). Both sides are routes resolved once in the
 // resolve phase: the child's port member, reached through the step onto the
-// instance, and the interface object the actual names. Nothing crosses the
-// boundary as a value, so the connection installs no driver and waits on
-// nothing.
+// instance, and one route per interface object the actual names. Nothing
+// crosses the boundary as a value, so the connection installs no driver and
+// waits on nothing.
 auto ConnectInterfacePort(
     UnitLowerer& unit_lowerer, const hir::InterfacePortPart& published,
     const hir::UnitSignature& child_signature,
@@ -135,21 +212,32 @@ auto ConnectInterfacePort(
   const hir::PublishedMember& member =
       hir::InstanceClassOf(child_signature).members.Get(published.member);
   // The type of what is bound is the child's own statement of which unit
-  // belongs there, taken into this unit's pool, so the parent's record of the
-  // connection rests on the child's promise rather than on a second reading of
-  // the frontend.
-  const hir::TypeId object_type =
+  // belongs there and how many of it, taken into this unit's pool, so the
+  // parent's record of the connection rests on the child's promise rather than
+  // on a second reading of the frontend.
+  const hir::TypeId member_type =
       unit_lowerer.ImportSignatureType(child_signature, member.type);
-  auto peer =
-      InterfaceActualRoute(unit_lowerer, conn, object_type, span, frame);
-  if (!peer) return std::unexpected(std::move(peer.error()));
+  const MemberObjects behind = ObjectsBehind(unit_lowerer, member_type);
+  auto peers = InterfaceActualRoutes(unit_lowerer, conn, behind, span, frame);
+  if (!peers) return std::unexpected(std::move(peers.error()));
+  // How many objects the member stands for is the child's promise; how many the
+  // connection supplies is what the parent worked out from the frontend. Each
+  // side counts its own and they meet here, because a side that takes the count
+  // from the other agrees with it by construction, and the two would then build
+  // different layouts with nothing able to say so.
+  if (peers->size() != behind.count) {
+    return PortConnectionUnsupported(
+        span,
+        "an interface port bound to a number of interface instances other than "
+        "the number it stands for is not yet supported");
+  }
   frame.current_structural_scope->port_connections.Add(
       hir::PortConnection{
           .span = span,
           .kind = hir::InterfacePortConnection{
               .endpoint = PublishedMemberRecipe(
-                  instance_step, child_object, published.member, object_type),
-              .peer = *std::move(peer)}});
+                  instance_step, child_object, published.member, member_type),
+              .peers = *std::move(peers)}});
   return {};
 }
 

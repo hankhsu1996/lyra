@@ -337,11 +337,12 @@ each meets the same lifetime question above.
       which the run modes do not produce.
 - [x] **An array of owned children.** A child scope -- a module instance, a generate block, a
       procedural block scope -- is constructed, reached by name and per-axis index, and reports its
-      hierarchical name, whether it stands alone or is one of an array. The array is not a sequence
-      a member holds: each element is its own child, told apart by the index its hierarchy segment
-      carries, which is what a lookup by index matches against and what `%m` renders in brackets. An
-      index is an ordinary value of the design and reaches the runtime as the handle every value
-      reaches it as.
+      hierarchical name, whether it stands alone or is one of an array. Each element is its own
+      child, told apart by the index its hierarchy segment carries, which is what a lookup by index
+      matches against and what `%m` renders in brackets; what the declaring scope keeps is one
+      member holding the sequence of handles on them, built once and read by coordinate. An index is
+      an ordinary value of the design and reaches the runtime as the handle every value reaches it
+      as.
 - [ ] Driving a net. A net's value is the resolution of its drivers, so a driver attaches to a
       resolution node and updates a contribution rather than writing a cell; neither reaches the
       runtime from generated code yet, so a net-bearing design does not run here. Rolled up in

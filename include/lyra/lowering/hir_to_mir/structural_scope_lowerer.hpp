@@ -1,8 +1,6 @@
 #pragma once
 
-#include <cstdint>
 #include <memory>
-#include <span>
 #include <string>
 #include <utility>
 #include <variant>
@@ -18,7 +16,6 @@
 #include "lyra/hir/structural_hops.hpp"
 #include "lyra/hir/structural_scope.hpp"
 #include "lyra/lowering/hir_to_mir/declared_callable.hpp"
-#include "lyra/lowering/hir_to_mir/declared_instances.hpp"
 #include "lyra/lowering/hir_to_mir/declared_scope.hpp"
 #include "lyra/lowering/hir_to_mir/package_initialization.hpp"
 #include "lyra/lowering/hir_to_mir/static_var_binding.hpp"
@@ -46,8 +43,8 @@ struct ChildStructuralScopeBinding {
 
 // How a hierarchical route reaches an owned child: the parent's borrowed typed
 // handle on it, and the child's own lowerer. The handle's type carries the
-// child's cardinality, so a step reaches an element by indexing it rather than
-// by naming the child a second time. `target_scope` is present when the
+// declaration's multiplicity, so a step naming an element indexes the handle.
+// `target_scope` is present when the
 // artifact owns the child's body -- so the receiver stays typed and whatever
 // the route names next resolves against that scope -- and absent when the
 // child is another compilation unit, opaque from there.
@@ -235,8 +232,8 @@ class StructuralScopeLowerer {
   // sibling-of-ancestor install when the child lives outside the referrer's
   // frame.
   [[nodiscard]] auto TranslateOwnedChild(
-      hir::StructuralHops hops, const hir::OwnedChildRef& child,
-      std::span<const std::uint32_t> coords) const -> OwnedChildAnchor {
+      hir::StructuralHops hops, const hir::OwnedChildRef& child) const
+      -> OwnedChildAnchor {
     if (hops.value == 0) {
       return std::visit(
           Overloaded{
@@ -245,7 +242,7 @@ class StructuralScopeLowerer {
                 // this artifact lowers no scope for it; the object is typed but
                 // opaque from there.
                 return OwnedChildAnchor{
-                    .borrowed_handle = Instances(id).HandleAt(coords),
+                    .borrowed_handle = instance_member_fields_.Get(id),
                     .target_scope = nullptr};
               },
               [&](const hir::GenerateChildRef& g) -> OwnedChildAnchor {
@@ -263,7 +260,7 @@ class StructuralScopeLowerer {
           "chain depth");
     }
     return parent_->TranslateOwnedChild(
-        hir::StructuralHops{hops.value - 1}, child, coords);
+        hir::StructuralHops{hops.value - 1}, child);
   }
 
   // Registry identity of the class this scope lowers to.
@@ -322,10 +319,12 @@ class StructuralScopeLowerer {
         hir::StructuralHops{hops.value - 1}, hir_id);
   }
 
-  // The objects one instance member declares, and this scope's handle on each.
-  [[nodiscard]] auto Instances(hir::InstanceMemberId hir_id) const
-      -> const DeclaredInstances& {
-    return declared_instances_.Get(hir_id);
+  // The MIR field one instance member became. A declaration is one field
+  // whatever its multiplicity: what it holds is a handle for a single instance
+  // and a sequence of them for an array, which is what the field's type states.
+  [[nodiscard]] auto InstanceMemberField(hir::InstanceMemberId hir_id) const
+      -> mir::FieldId {
+    return instance_member_fields_.Get(hir_id);
   }
 
  private:
@@ -342,8 +341,8 @@ class StructuralScopeLowerer {
   base::Translation<hir::InterfacePortId, mir::FieldId> interface_port_fields_;
   base::Translation<hir::RoutedRefId, RoutedRefMeta> routed_ref_targets_;
   base::Translation<hir::GenerateId, GenerateBindings> generate_bindings_;
-  base::Translation<hir::InstanceMemberId, DeclaredInstances>
-      declared_instances_;
+  base::Translation<hir::InstanceMemberId, mir::FieldId>
+      instance_member_fields_;
   DeclaredScopes scopes_;
   base::Translation<hir::StructuralSubroutineId, DeclaredCallable>
       declared_subroutines_;
