@@ -82,6 +82,11 @@ struct IncDecExpr {
   ExprId target;
 };
 
+struct ConversionExpr {
+  ConversionKind kind;
+  ExprId operand;
+};
+
 // LRM 7.12 array-method `with` clause. `id` names this clause; the element
 // (`item`) and its index (`item.index`) are referenced inside `expr` by that
 // identity and role (`IterationBindingRef`), so a clause nested in `expr` that

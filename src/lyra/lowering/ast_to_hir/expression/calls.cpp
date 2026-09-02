@@ -18,16 +18,20 @@
 #include <slang/ast/expressions/MiscExpressions.h>
 #include <slang/ast/symbols/ClassSymbols.h>
 #include <slang/ast/symbols/CompilationUnitSymbols.h>
+#include <slang/ast/symbols/InstanceSymbols.h>
 #include <slang/ast/symbols/SubroutineSymbols.h>
 #include <slang/ast/symbols/VariableSymbols.h>
 #include <slang/ast/types/AllTypes.h>
 #include <slang/numeric/SVInt.h>
-#include <slang/syntax/AllSyntax.h>
 
 #include "lyra/base/internal_error.hpp"
 #include "lyra/diag/diag_code.hpp"
+#include "lyra/hir/external_unit_object.hpp"
+#include "lyra/hir/published_callable.hpp"
 #include "lyra/hir/subroutine_ref.hpp"
 #include "lyra/hir/type.hpp"
+#include "lyra/hir/type_id.hpp"
+#include "lyra/hir/value_ref.hpp"
 #include "lyra/lowering/ast_to_hir/expression/expr_lowerer.hpp"
 #include "lyra/lowering/ast_to_hir/expression/query.hpp"
 #include "lyra/lowering/ast_to_hir/expression/slang_atoms.hpp"
@@ -41,35 +45,6 @@
 namespace lyra::lowering::ast_to_hir {
 
 namespace {
-
-// True when the call's source syntax carries LRM 8.15 super qualification
-// (`super.foo()` or `this.super.foo()`). Slang resolves `super.foo` to the
-// base's callee symbol but records no semantic flag, so the qualifier
-// survives only on the source syntax -- a scoped name for the plain form or
-// a member access for `this.super.foo()`. Two callee syntaxes reach here
-// depending on whether the source used parentheses; both share the same
-// shape: the callee has a `.left` whose kind is `SuperHandle`.
-auto CallReceivesSuper(const slang::ast::CallExpression& call) -> bool {
-  const auto* syn = call.syntax;
-  if (syn == nullptr) return false;
-  const slang::syntax::SyntaxNode* callee = syn;
-  if (syn->kind == slang::syntax::SyntaxKind::InvocationExpression) {
-    callee = syn->as<slang::syntax::InvocationExpressionSyntax>().left;
-  }
-  if (callee == nullptr) return false;
-  const auto is_super =
-      [](const slang::syntax::SyntaxNode& left_of_dot) -> bool {
-    return left_of_dot.kind == slang::syntax::SyntaxKind::SuperHandle;
-  };
-  if (callee->kind == slang::syntax::SyntaxKind::ScopedName) {
-    return is_super(*callee->as<slang::syntax::ScopedNameSyntax>().left);
-  }
-  if (callee->kind == slang::syntax::SyntaxKind::MemberAccessExpression) {
-    return is_super(
-        *callee->as<slang::syntax::MemberAccessExpressionSyntax>().left);
-  }
-  return false;
-}
 
 // True when the call reaches an instance method through its enclosing class
 // -- either the source supplied a handle (`h.foo()`) or slang resolved an
@@ -85,16 +60,15 @@ auto CallReachesInstanceMethod(
          parent->asSymbol().kind == slang::ast::SymbolKind::ClassType;
 }
 
-// Classifies the three LRM-defined receiver forms of an instance-method
-// call into a MethodReceiver arm. Super takes precedence over an
-// accompanying `thisClass` because `this.super.foo()` synthesizes a
-// `thisClass` for the outer `this` while the super qualifier still applies
-// at the syntactic level.
+// Classifies the three LRM-defined receiver forms of an instance-method call
+// into a MethodReceiver arm. Super takes precedence over an accompanying
+// `thisClass`, because `this.super.foo()` reaches the base through the `super`
+// qualifier while still naming the outer `this` as the object.
 template <ExprLowerer Lowerer>
 auto ClassifyMethodReceiver(
     Lowerer& lowerer, WalkFrame frame, const slang::ast::CallExpression& call)
     -> diag::Result<hir::MethodReceiver> {
-  if (CallReceivesSuper(call)) return hir::SuperReceiver{};
+  if (call.lookupInfo.viaSuper) return hir::SuperReceiver{};
   if (const auto* this_class = call.thisClass(); this_class != nullptr) {
     auto receiver_or = lowerer.LowerExpr(*this_class, frame);
     if (!receiver_or) return std::unexpected(std::move(receiver_or.error()));
@@ -191,6 +165,79 @@ auto DeclaringUnitOfSubroutine(const slang::ast::SubroutineSymbol& sym)
     return nullptr;
   }
   return &owner;
+}
+
+// Enables a subroutine on an instance of the unit whose body declares it (LRM
+// 25.7, 23.6). Two facts have to line up for that: a route from here to the
+// object, and a promise from that unit that the name is callable on it. An
+// interface promises its whole declared surface, so the second holds wherever
+// the first does; a module promises only its ports, so a subroutine of one is
+// reached, if at all, by a name the runtime answers while the design elaborates
+// -- which no route to a sealed endpoint expresses.
+auto LowerObjectSubroutineCall(
+    UnitLowerer& unit_lowerer, WalkFrame frame,
+    const slang::ast::CallExpression& call,
+    const slang::ast::SubroutineSymbol& sym,
+    std::vector<std::optional<hir::ExprId>> arguments, diag::SourceSpan span)
+    -> diag::Result<hir::Expr> {
+  const auto refuse = [&](std::string message) {
+    return diag::Fail(
+        span, diag::DiagCode::kUnsupportedExpressionForm, std::move(message));
+  };
+  const slang::ast::Scope* owner = sym.getParentScope();
+  const auto* body =
+      owner == nullptr
+          ? nullptr
+          : owner->asSymbol().as_if<slang::ast::InstanceBodySymbol>();
+  if (body == nullptr) {
+    return refuse(
+        "a subroutine declared in this scope kind is not yet supported");
+  }
+
+  auto route = unit_lowerer.RouteToUnitObject(
+      frame, *body, call.lookupInfo.hierRef, span);
+  if (!route) return std::unexpected(std::move(route.error()));
+  if (!route->has_value()) {
+    return refuse(
+        "a subroutine on an instance reached this way is not yet supported");
+  }
+
+  // Reaching an object is what declares the dependency on the unit it belongs
+  // to, so a unit this one never declared has no record here and nothing was
+  // promised to compile against.
+  const std::string unit_name = SpecializationName(*body);
+  if (unit_lowerer.Signatures().Find(unit_name) == nullptr) {
+    return refuse(
+        "a subroutine on an instance this unit does not reach is not yet "
+        "supported");
+  }
+  const hir::ExternalUnitObjectId object =
+      unit_lowerer.ExternalUnitObjectOf(unit_name);
+  const hir::ExternalUnitObject& promised =
+      unit_lowerer.Unit().external_unit_objects.Get(object);
+  const auto callable = promised.FindCallable(sym.name);
+  if (!callable.has_value()) {
+    return refuse(
+        "a subroutine the declaring unit does not publish is not yet "
+        "supported");
+  }
+
+  const hir::TypeId object_type = unit_lowerer.Unit().types.Intern(
+      hir::Type{hir::UnitObjectType{.unit_name = unit_name}});
+  const hir::RoutedRef receiver = unit_lowerer.MakeRoutedObjectRef(
+      frame.Current(), *std::move(*route), object_type);
+  return hir::Expr{
+      .type = promised.callables.Get(*callable).result_type,
+      .data =
+          hir::CallExpr{
+              .callee =
+                  hir::ExternalUnitMethodRef{
+                      .receiver = receiver,
+                      .object = object,
+                      .callable = *callable},
+              .arguments = std::move(arguments)},
+      .span = span,
+  };
 }
 
 }  // namespace
@@ -474,8 +521,8 @@ auto LowerCallExpr(
           .type = *type_id,
           .data =
               hir::ConversionExpr{
-                  .operand = *arg_ids.front(),
-                  .kind = hir::ConversionKind::kExplicit},
+                  .kind = hir::ConversionKind::kExplicit,
+                  .operand = *arg_ids.front()},
           .span = span,
       };
     }
@@ -528,8 +575,8 @@ auto LowerCallExpr(
           .type = *type_id,
           .data =
               hir::ConversionExpr{
-                  .operand = *arg_ids.front(),
-                  .kind = hir::ConversionKind::kImplicit},
+                  .kind = hir::ConversionKind::kImplicit,
+                  .operand = *arg_ids.front()},
           .span = span,
       };
     }
@@ -733,16 +780,14 @@ auto LowerCallExpr(
   }
 
   const auto binding = unit_lowerer.LookupSubroutineBinding(*sym);
-  // What is left is a subroutine some other instance declares -- one an
-  // interface offers across a port (LRM 25.7), or one a hierarchical name
-  // enables (LRM 23.6). Neither is reached by naming a unit: the caller holds a
-  // route to an object, and the callable sits on the far end of it, which is a
-  // route endpoint the reference model does not yet carry.
+  // What is left is a subroutine another instance declares -- one an interface
+  // offers across a port (LRM 25.7), or one a hierarchical name enables (LRM
+  // 23.6). The frontend resolved the name to that instance's own declaration
+  // and kept no path, so the object to enable it on is the one whose body
+  // declares it, and the route to that object is the caller's own.
   if (!binding.has_value()) {
-    return diag::Fail(
-        span, diag::DiagCode::kUnsupportedExpressionForm,
-        "a subroutine reached across an instance boundary is not yet "
-        "supported");
+    return LowerObjectSubroutineCall(
+        unit_lowerer, frame, call, *sym, std::move(arg_ids), span);
   }
   const auto hops = frame.HopsTo(binding->owner_frame);
   if (!hops.has_value()) {

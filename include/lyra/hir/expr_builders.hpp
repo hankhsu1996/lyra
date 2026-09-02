@@ -31,9 +31,7 @@ namespace lyra::hir {
                               .state_words = {},
                               .width = 32,
                               .signedness = Signedness::kSigned,
-                              .state_kind = IntegralStateKind::kTwoState},
-                      .base = IntegerLiteralBase::kDecimal,
-                      .declared_unsized = false}},
+                              .state_kind = IntegralStateKind::kTwoState}}},
       .span = span};
 }
 

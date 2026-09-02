@@ -82,8 +82,6 @@ auto MakeIntegerLiteralFromConstant(
               .data =
                   hir::IntegerLiteral{
                       .value = std::move(value),
-                      .base = hir::IntegerLiteralBase::kDecimal,
-                      .declared_unsized = false,
                   }},
       .span = span,
   };

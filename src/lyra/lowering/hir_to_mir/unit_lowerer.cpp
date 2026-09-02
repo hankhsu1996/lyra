@@ -604,6 +604,16 @@ auto UnitLowerer::MakeExternalMethodTarget(
       .method_name = target.method_name};
 }
 
+auto UnitLowerer::MakeExternalStaticMethodTarget(
+    const hir::ExternalClassMethodTarget& target)
+    -> mir::ExternalUnitStaticMethodTarget {
+  unit_.AddExternalClassUnit(target.unit_name);
+  return mir::ExternalUnitStaticMethodTarget{
+      .unit_name = target.unit_name,
+      .class_name = target.class_name,
+      .method_name = target.method_name};
+}
+
 auto UnitLowerer::MakeExternalMethodOverride(
     const hir::ExternalClassMethodTarget& target)
     -> mir::OverridesExternalSlot {
@@ -629,6 +639,17 @@ auto UnitLowerer::MakeExternalCallableTarget(
   unit_.AddExternalReferencedUnit(ref.unit_name);
   return mir::ExternalUnitCallableTarget{
       .unit_name = ref.unit_name, .callable_name = ref.subroutine_name};
+}
+
+auto UnitLowerer::MakeExternalUnitMethodTarget(
+    hir::ExternalUnitObjectId object, hir::PublishedCallableId callable) const
+    -> mir::ExternalUnitClassMethodTarget {
+  const hir::ExternalUnitObject& promised =
+      Hir().external_unit_objects.Get(object);
+  return mir::ExternalUnitClassMethodTarget{
+      .unit_name = promised.unit_name,
+      .class_name = promised.class_name,
+      .method_name = promised.callables.Get(callable).name};
 }
 
 }  // namespace lyra::lowering::hir_to_mir

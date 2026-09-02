@@ -133,7 +133,7 @@ class CodeGenFunction {
   // -- read from the result type the same way the entry itself is.
   auto ConstructArgs(
       lir::TypeId result, const std::vector<llvm::Value*>& operands)
-      -> std::vector<llvm::Value*>;
+      -> diag::Result<std::vector<llvm::Value*>>;
 
   // Which operand states the shape of what a call produces, absent for a call
   // whose result the operands already shape. A construction leads with the

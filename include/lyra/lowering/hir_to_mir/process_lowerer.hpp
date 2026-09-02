@@ -215,6 +215,10 @@ class ProcessLowerer {
       -> mir::Direct {
     return EnclosingScopeLowerer().TranslateStructuralSubroutine(hops, id);
   }
+  [[nodiscard]] auto RoutedRefTarget(hir::RoutedRefId hir_id) const
+      -> const RoutedRefMeta& {
+    return EnclosingScopeLowerer().RoutedRefTarget(hir_id);
+  }
 
   [[nodiscard]] auto Resolution() const -> TimeResolution {
     return time_resolution_;

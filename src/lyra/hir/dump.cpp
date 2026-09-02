@@ -443,22 +443,6 @@ class HirDumper {
     throw InternalError("HirDumper::FormatTimeScale: unknown TimeScale");
   }
 
-  static auto FormatLiteralBase(IntegerLiteralBase b) -> std::string_view {
-    switch (b) {
-      case IntegerLiteralBase::kBinary:
-        return "b";
-      case IntegerLiteralBase::kOctal:
-        return "o";
-      case IntegerLiteralBase::kDecimal:
-        return "d";
-      case IntegerLiteralBase::kHexadecimal:
-        return "h";
-      case IntegerLiteralBase::kUnbased:
-        return "unbased";
-    }
-    throw InternalError("HirDumper::FormatLiteralBase: unknown base");
-  }
-
   static auto FormatIntegralConstant(const IntegralConstant& c) -> std::string {
     std::string out = std::format(
         "{}'{}", c.width, c.signedness == Signedness::kSigned ? 's' : 'u');
@@ -486,9 +470,7 @@ class HirDumper {
         Overloaded{
             [](const IntegerLiteral& lit) -> std::string {
               return std::format(
-                  "IntegerLiteral(base={}, unsized={}, {})",
-                  FormatLiteralBase(lit.base), lit.declared_unsized,
-                  FormatIntegralConstant(lit.value));
+                  "IntegerLiteral({})", FormatIntegralConstant(lit.value));
             },
             [](const StringLiteral& lit) -> std::string {
               return std::format("StringLiteral(\"{}\")", lit.value);
@@ -716,6 +698,16 @@ class HirDumper {
                   e.interface.kind == SubroutineKind::kTask ? "task"
                                                             : "function",
                   e.unit_name, e.subroutine_name);
+            },
+            [this](const ExternalUnitMethodRef& e) -> std::string {
+              const ExternalUnitObject& promised =
+                  unit_->external_unit_objects.Get(e.object);
+              const PublishedCallable& callable =
+                  promised.callables.Get(e.callable);
+              return std::format(
+                  "ExternalUnitMethod {} \"{}::{}\" recv=RoutedRef[{}]",
+                  callable.kind == SubroutineKind::kTask ? "task" : "function",
+                  promised.class_name, callable.name, e.receiver.id.value);
             },
         },
         callee);

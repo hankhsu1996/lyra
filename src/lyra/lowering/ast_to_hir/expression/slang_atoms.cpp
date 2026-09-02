@@ -6,30 +6,10 @@
 #include <slang/ast/expressions/LiteralExpressions.h>
 #include <slang/ast/expressions/MiscExpressions.h>
 #include <slang/ast/expressions/OperatorExpressions.h>
-#include <slang/syntax/AllSyntax.h>
 
 #include "lyra/base/internal_error.hpp"
 
 namespace lyra::lowering::ast_to_hir {
-
-auto LowerSlangLiteralBase(const slang::syntax::SyntaxNode* syntax)
-    -> hir::IntegerLiteralBase {
-  if (syntax != nullptr &&
-      syntax->kind == slang::syntax::SyntaxKind::IntegerVectorExpression) {
-    const auto& iv = syntax->as<slang::syntax::IntegerVectorExpressionSyntax>();
-    switch (iv.base.numericFlags().base()) {
-      case slang::LiteralBase::Binary:
-        return hir::IntegerLiteralBase::kBinary;
-      case slang::LiteralBase::Octal:
-        return hir::IntegerLiteralBase::kOctal;
-      case slang::LiteralBase::Decimal:
-        return hir::IntegerLiteralBase::kDecimal;
-      case slang::LiteralBase::Hex:
-        return hir::IntegerLiteralBase::kHexadecimal;
-    }
-  }
-  return hir::IntegerLiteralBase::kDecimal;
-}
 
 auto LowerConversionKind(slang::ast::ConversionKind k) -> hir::ConversionKind {
   switch (k) {

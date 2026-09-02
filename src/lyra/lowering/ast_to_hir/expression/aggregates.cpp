@@ -9,6 +9,7 @@
 #include <slang/ast/Expression.h>
 #include <slang/ast/expressions/AssignmentExpressions.h>
 #include <slang/ast/expressions/CallExpression.h>
+#include <slang/ast/expressions/LiteralExpressions.h>
 #include <slang/ast/expressions/OperatorExpressions.h>
 #include <slang/ast/symbols/ClassSymbols.h>
 #include <slang/ast/types/AllTypes.h>
@@ -16,6 +17,7 @@
 
 #include "lyra/diag/diag_code.hpp"
 #include "lyra/hir/type.hpp"
+#include "lyra/lowering/ast_to_hir/integral_constant.hpp"
 #include "lyra/lowering/ast_to_hir/process_lowerer.hpp"
 #include "lyra/lowering/ast_to_hir/structural_scope_lowerer.hpp"
 #include "lyra/lowering/ast_to_hir/unit_lowerer.hpp"
@@ -212,17 +214,12 @@ auto LowerDefaultKeyValue(
   if (!element_type_id) {
     return std::unexpected(std::move(element_type_id.error()));
   }
-  auto lowered = lowerer.LowerExpr(*ap.defaultSetter, frame);
-  if (!lowered) return std::unexpected(std::move(lowered.error()));
-  hir::Expr value = *std::move(lowered);
-
-  const auto* primary = std::get_if<hir::PrimaryExpr>(&value.data);
-  const auto* literal = primary != nullptr
-                            ? std::get_if<hir::IntegerLiteral>(&primary->data)
-                            : nullptr;
-  if (literal != nullptr &&
-      literal->base == hir::IntegerLiteralBase::kUnbased &&
-      element_type.isIntegral()) {
+  // LRM 5.7.1: an unbased unsized literal fills every bit of what it reaches,
+  // and here it reaches an element rather than the pattern, so the fill is to
+  // the element's width.
+  const auto* unbased =
+      ap.defaultSetter->as_if<slang::ast::UnbasedUnsizedIntegerLiteral>();
+  if (unbased != nullptr && element_type.isIntegral()) {
     return hir::Expr{
         .type = *element_type_id,
         .data =
@@ -230,19 +227,22 @@ auto LowerDefaultKeyValue(
                 .data =
                     hir::IntegerLiteral{
                         .value = RepeatBitPattern(
-                            literal->value, element_type.getBitWidth(),
+                            LowerSVIntToIntegralConstant(unbased->getValue()),
+                            element_type.getBitWidth(),
                             element_type.isFourState(),
-                            element_type.isSigned()),
-                        .base = hir::IntegerLiteralBase::kUnbased,
-                        .declared_unsized = true}},
+                            element_type.isSigned())}},
         .span = span};
   }
+
+  auto lowered = lowerer.LowerExpr(*ap.defaultSetter, frame);
+  if (!lowered) return std::unexpected(std::move(lowered.error()));
+  hir::Expr value = *std::move(lowered);
   return hir::Expr{
       .type = *element_type_id,
       .data =
           hir::ConversionExpr{
-              .operand = frame.Exprs().Add(std::move(value)),
-              .kind = hir::ConversionKind::kImplicit},
+              .kind = hir::ConversionKind::kImplicit,
+              .operand = frame.Exprs().Add(std::move(value))},
       .span = span};
 }
 

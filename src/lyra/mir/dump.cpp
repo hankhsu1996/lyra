@@ -589,6 +589,11 @@ class MirDumper {
                   "external_class_method={}::{}::{}", e.unit_name, e.class_name,
                   e.method_name);
             },
+            [](const ExternalUnitStaticMethodTarget& e) -> std::string {
+              return std::format(
+                  "external_class_static={}::{}::{}", e.unit_name, e.class_name,
+                  e.method_name);
+            },
             [](const ForeignSymbolTarget& f) -> std::string {
               return std::format("foreign_symbol=\"{}\"", f.linkage_name);
             }},

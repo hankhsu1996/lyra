@@ -224,7 +224,7 @@ auto BuildElementCountExpr(
       .type = *result_type,
       .data =
           hir::ConversionExpr{
-              .operand = count_id, .kind = hir::ConversionKind::kImplicit},
+              .kind = hir::ConversionKind::kImplicit, .operand = count_id},
       .span = span};
 }
 
@@ -379,7 +379,7 @@ auto LowerDynamicBitsQuery(
       .type = *result_type,
       .data =
           hir::ConversionExpr{
-              .operand = width_id, .kind = hir::ConversionKind::kImplicit},
+              .kind = hir::ConversionKind::kImplicit, .operand = width_id},
       .span = span};
 }
 

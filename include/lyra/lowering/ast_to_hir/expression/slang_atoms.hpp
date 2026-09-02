@@ -8,7 +8,6 @@
 #include <slang/ast/expressions/Operator.h>
 #include <slang/numeric/Time.h>
 #include <slang/parsing/KnownSystemName.h>
-#include <slang/syntax/SyntaxNode.h>
 
 #include "lyra/hir/binary_op.hpp"
 #include "lyra/hir/conversion.hpp"
@@ -25,9 +24,6 @@
 // machinery in `expression/lower.cpp`) so the "encapsulate slang's quirks"
 // concern stays distinct from the "walk the AST and produce HIR" concern.
 namespace lyra::lowering::ast_to_hir {
-
-auto LowerSlangLiteralBase(const slang::syntax::SyntaxNode* syntax)
-    -> hir::IntegerLiteralBase;
 
 auto LowerConversionKind(slang::ast::ConversionKind k) -> hir::ConversionKind;
 

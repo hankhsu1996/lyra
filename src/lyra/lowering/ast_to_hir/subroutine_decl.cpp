@@ -17,7 +17,6 @@
 #include <slang/ast/symbols/VariableSymbols.h>
 #include <slang/ast/types/AllTypes.h>
 #include <slang/ast/types/Type.h>
-#include <slang/syntax/AllSyntax.h>
 
 #include "lyra/base/internal_error.hpp"
 #include "lyra/diag/diag_code.hpp"
@@ -266,22 +265,6 @@ auto ClassifyDpiDirection(
   throw InternalError("ClassifyDpiDirection: unknown ArgumentDirection");
 }
 
-// The resolved C linkage name of a DPI import (LRM 35.5.4): the explicit
-// `c_identifier` token when present, otherwise the SV subroutine name. slang
-// does not persist this for imports, so it is re-derived from the syntax here.
-auto ResolveImportCName(const slang::ast::SubroutineSymbol& sym)
-    -> std::string {
-  if (const auto* syntax = sym.getSyntax();
-      syntax != nullptr &&
-      syntax->kind == slang::syntax::SyntaxKind::DPIImport) {
-    const auto& dpi = syntax->as<slang::syntax::DPIImportSyntax>();
-    if (dpi.c_identifier) {
-      return std::string{dpi.c_identifier.valueText()};
-    }
-  }
-  return std::string{sym.name};
-}
-
 // The subroutine's callable code lowered against its own binding frame plus
 // the optional base-call args lowered against that same frame. The two
 // halves must share one frame because a base-call arg may reference a formal
@@ -520,7 +503,7 @@ auto LowerForeignImport(
 
   return hir::ForeignImportDecl{
       .name = std::string{sym.name},
-      .foreign_name = ResolveImportCName(sym),
+      .foreign_name = std::string{sym.getDPICIdentifier()},
       .is_pure = sym.flags.has(slang::ast::MethodFlags::Pure),
       .is_task = is_task,
       .is_context = sym.flags.has(slang::ast::MethodFlags::DPIContext),

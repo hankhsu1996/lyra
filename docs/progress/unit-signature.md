@@ -101,9 +101,9 @@ why nothing a signature states may rest on it.
       rather than an exception -- it instantiates the tops, so it reads their signatures and nothing
       else.
 - [x] S7 -- A signature is organized as the unit's namespace-level declarations beside an entry per
-      published class, each carrying its own name and its published members in declaration order.
-      Which class a referrer instantiates is stated rather than inferred from a name that matches
-      the unit's or from a position in a list.
+      published class, each carrying its own name, its published members in declaration order, and
+      the callables another unit may enable on it. Which class a referrer instantiates is stated
+      rather than inferred from a name that matches the unit's or from a position in a list.
 
       The unit names the class its instances are once, and both sides read that name: the signature
       states it to every referrer, and the unit's own lowering builds the class under it. A referrer

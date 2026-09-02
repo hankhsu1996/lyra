@@ -520,25 +520,34 @@ auto CodeGenFunction::CallArgs(
 // are one answer read from the result type.
 auto CodeGenFunction::ConstructArgs(
     lir::TypeId result, const std::vector<llvm::Value*>& operands)
-    -> std::vector<llvm::Value*> {
+    -> diag::Result<std::vector<llvm::Value*>> {
+  const auto led_by_definition =
+      [&](lir::TypeId described) -> diag::Result<std::vector<llvm::Value*>> {
+    auto definition = module_->DefinitionRef(described);
+    if (!definition) return std::unexpected(std::move(definition.error()));
+    std::vector<llvm::Value*> args{*definition};
+    args.insert(args.end(), operands.begin(), operands.end());
+    return args;
+  };
   return module_->Unit().types.Get(result).Visit(
       Overloaded{
-          [&](const lir::ClosureType&) -> std::vector<llvm::Value*> {
-            return {
-                module_->DefinitionRef(result),
-                SpanOver(operands, module_->Types().Ptr())};
+          [&](const lir::ClosureType&)
+              -> diag::Result<std::vector<llvm::Value*>> {
+            auto definition = module_->DefinitionRef(result);
+            if (!definition)
+              return std::unexpected(std::move(definition.error()));
+            return std::vector<llvm::Value*>{
+                *definition, SpanOver(operands, module_->Types().Ptr())};
           },
-          [&](const lir::PointerType& p) -> std::vector<llvm::Value*> {
-            std::vector<llvm::Value*> args{module_->DefinitionRef(p.pointee)};
-            args.insert(args.end(), operands.begin(), operands.end());
-            return args;
+          [&](const lir::PointerType& p) {
+            return led_by_definition(p.pointee);
           },
-          [&](const lir::ManagedRefType& m) -> std::vector<llvm::Value*> {
-            std::vector<llvm::Value*> args{module_->DefinitionRef(m.pointee)};
-            args.insert(args.end(), operands.begin(), operands.end());
-            return args;
+          [&](const lir::ManagedRefType& m) {
+            return led_by_definition(m.pointee);
           },
-          [&](const auto&) -> std::vector<llvm::Value*> { return operands; }});
+          [&](const auto&) -> diag::Result<std::vector<llvm::Value*>> {
+            return operands;
+          }});
 }
 
 // Every call is a symbol invoked with arguments; the target kinds differ only

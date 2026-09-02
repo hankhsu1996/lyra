@@ -211,6 +211,17 @@ void CollectStorageLocals(
   }
 }
 
+// A method of another unit's class is reached by the symbol that unit emits it
+// under, which the referrer composes from the unit, the class, and the method
+// its signature named -- the same three names, so the two agree with no table
+// between them.
+auto ExternalMethodSymbol(
+    std::string_view unit_name, std::string_view class_name,
+    std::string_view method_name) -> lir::ForeignTarget {
+  return lir::ForeignTarget{
+      .symbol = std::format("{}.{}.{}", unit_name, class_name, method_name)};
+}
+
 auto LowerCallTarget(
     UnitLowerer& unit, const mir::Callee& callee, lir::TypeId result)
     -> diag::Result<lir::CallTarget> {
@@ -265,11 +276,15 @@ auto LowerCallTarget(
                           .symbol = std::format(
                               "{}.{}", t.unit_name, t.callable_name)}};
                     },
-                    [&](const mir::ExternalUnitClassMethodTarget&)
+                    [&](const mir::ExternalUnitClassMethodTarget& t)
                         -> diag::Result<lir::CallTarget> {
-                      return Unsupported(
-                          "mir_to_lir: a cross-unit class method call is not "
-                          "yet lowerable to LIR");
+                      return lir::CallTarget{ExternalMethodSymbol(
+                          t.unit_name, t.class_name, t.method_name)};
+                    },
+                    [&](const mir::ExternalUnitStaticMethodTarget& t)
+                        -> diag::Result<lir::CallTarget> {
+                      return lir::CallTarget{ExternalMethodSymbol(
+                          t.unit_name, t.class_name, t.method_name)};
                     },
                     [&](const mir::ImportedRuntimeCallTarget&)
                         -> diag::Result<lir::CallTarget> {

@@ -163,9 +163,7 @@ auto StructuralScopeLowerer::Run(WalkFrame parent_frame)
   auto pc = PopulatePortConnections(*slang_scope_, frame);
   if (!pc) return std::unexpected(std::move(pc.error()));
 
-  for (auto& ref : owner_->TakeRoutedRefsForFrame(frame_)) {
-    scope.routed_refs.Add(std::move(ref));
-  }
+  scope.routed_refs = owner_->TakeRoutedRefsForFrame(frame_);
   return scope;
 }
 

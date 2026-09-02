@@ -41,6 +41,7 @@
 namespace slang::ast {
 class Expression;
 class ClassType;
+class HierarchicalReference;
 class InterfacePortSymbol;
 class Scope;
 }  // namespace slang::ast
@@ -575,11 +576,10 @@ class UnitLowerer {
   // is the referrer's frame while the head lives in an enclosing frame; for a
   // downward head in the referrer's own scope the slot owner is also the head's
   // owner.
-  auto MapOrGetRoutedRef(
-      const slang::ast::ValueSymbol& target, ScopeFrameId slot_owner_frame,
-      hir::RoutedRefDecl decl) -> hir::RoutedRefId;
+  auto MapOrGetRoutedRef(ScopeFrameId slot_owner_frame, hir::RoutedRefDecl decl)
+      -> hir::RoutedRefId;
   auto TakeRoutedRefsForFrame(ScopeFrameId slot_owner_frame)
-      -> std::vector<hir::RoutedRefDecl>;
+      -> base::Arena<hir::RoutedRefDecl, hir::RoutedRefId>;
 
   // The compilation-unit declaration pass (LRM 23.6 / 23.9 / 27): before any
   // executable body lowers, walk the whole unit's scope tree and mint every
@@ -657,13 +657,12 @@ class UnitLowerer {
   // still lands here, in its declaring unit.
   auto InternOwnClassDeclarations() -> diag::Result<void>;
 
-  // Builds a HIR Expr referring to the leaf `decl` navigates to. `target` is
-  // the leaf value symbol, which is also the key two references to one target
-  // dedup on; `slot_owner_frame` is the frame whose routed-reference arena
-  // holds the slot.
+  // Builds a HIR Expr referring to the leaf `decl` navigates to.
+  // `slot_owner_frame` is the frame whose routed-reference arena holds the
+  // slot.
   auto MakeRoutedMemberRef(
-      const slang::ast::ValueSymbol& target, ScopeFrameId slot_owner_frame,
-      hir::RoutedRefDecl decl, diag::SourceSpan span) -> hir::Expr;
+      ScopeFrameId slot_owner_frame, hir::RoutedRefDecl decl,
+      diag::SourceSpan span) -> hir::Expr;
 
   // The reference to `value` over a route the caller derived: `head` and
   // `steps` say how the reader reaches it, and what the route ends at follows
@@ -675,6 +674,24 @@ class UnitLowerer {
       const slang::ast::ValueSymbol& value, ScopeFrameId slot_owner,
       hir::RouteHead head, std::vector<hir::PathStep> steps)
       -> diag::Result<hir::ReferenceRoute>;
+
+  // The reference to the object `route` reaches. Reaching an object across an
+  // instance boundary seals like reaching a cell there: the route runs once at
+  // elaboration and what it lands on is read directly after, so a caller
+  // holding this reaches the object with no traversal of its own.
+  [[nodiscard]] auto MakeRoutedObjectRef(
+      ScopeFrameId slot_owner, ScopeRoute route, hir::TypeId object_type)
+      -> hir::RoutedRef;
+
+  // How this reader reaches the object an instance of another unit is, given
+  // how the name reached it. A port is the answer where the name went through
+  // one, since what stands behind a port is reached no other way; any other
+  // name reaches the same object in every instantiation, and the walk on the
+  // elaborated hierarchy states that. Empty when no route reaches it.
+  [[nodiscard]] auto RouteToUnitObject(
+      const WalkFrame& frame, const slang::ast::InstanceBodySymbol& body,
+      const slang::ast::HierarchicalReference& reference,
+      diag::SourceSpan span) const -> diag::Result<std::optional<ScopeRoute>>;
 
   // Where a named value lives, as this unit reaches it. One answer serves
   // every consumer of a reference -- reading it, writing it, and waiting on it
@@ -840,14 +857,8 @@ class UnitLowerer {
   std::unordered_map<const slang::ast::PatternVarSymbol*, hir::PatternId>
       pattern_var_bindings_;
   std::unordered_map<const slang::ast::Scope*, ScopeFrameId> scope_frames_;
-  // Dedup by (home_frame, target): the slot id is an index within a scope's
-  // own `routed_refs`, so two scopes referencing the same member each need
-  // their own slot.
-  std::map<
-      ScopeFrameId,
-      std::unordered_map<const slang::ast::ValueSymbol*, hir::RoutedRefId>>
-      routed_ref_dedup_;
-  std::map<ScopeFrameId, std::vector<hir::RoutedRefDecl>> routed_refs_by_frame_;
+  std::map<ScopeFrameId, base::Arena<hir::RoutedRefDecl, hir::RoutedRefId>>
+      routed_refs_by_frame_;
   std::uint32_t next_scope_frame_ = 0;
   std::uint32_t next_with_clause_ = 0;
   std::unordered_map<const slang::ast::Symbol*, hir::ProceduralScopeId>

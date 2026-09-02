@@ -4,7 +4,6 @@
 #include <string>
 #include <variant>
 
-#include "lyra/hir/conversion.hpp"
 #include "lyra/hir/integral_constant.hpp"
 #include "lyra/hir/value_ref.hpp"
 
@@ -14,8 +13,6 @@ enum class TimeScale : std::uint8_t { kFs, kPs, kNs, kUs, kMs, kS };
 
 struct IntegerLiteral {
   IntegralConstant value;
-  IntegerLiteralBase base = IntegerLiteralBase::kDecimal;
-  bool declared_unsized = false;
 };
 
 struct StringLiteral {

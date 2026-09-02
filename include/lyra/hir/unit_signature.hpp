@@ -10,6 +10,7 @@
 #include "lyra/base/internal_error.hpp"
 #include "lyra/hir/external_unit_object.hpp"
 #include "lyra/hir/port_direction.hpp"
+#include "lyra/hir/published_callable.hpp"
 #include "lyra/hir/published_member.hpp"
 #include "lyra/hir/type.hpp"
 #include "lyra/hir/type_id.hpp"
@@ -56,16 +57,18 @@ struct PortDecl {
   std::vector<PortPart> parts;
 };
 
-// The object an instance of this unit is: the class's own name, and the
-// members another unit may name on it. A unit's name and the name of the class
-// it builds are two facts, so a referrer reads the class it reaches here
-// rather than deriving it from the unit it reached through.
+// The object an instance of this unit is: the class's own name, the members
+// another unit may name on it, and the subroutines another unit may call on it.
+// A unit's name and the name of the class it builds are two facts, so a
+// referrer reads the class it reaches here rather than deriving it from the
+// unit it reached through.
 struct InstanceClassSignature {
   std::string class_name;
   // The order is as much a part of the promise as the names are: a member's
   // position is what fixes where its storage sits, and both sides of the
   // boundary read that position out of this one order.
   base::Arena<PublishedMember, PublishedMemberId> members;
+  base::Arena<PublishedCallable, PublishedCallableId> callables;
 
   // The member published under `name`, or nothing when the unit published no
   // such name. A name with no answer here is one the unit never promised, and

@@ -16,7 +16,6 @@
 #include <slang/ast/types/Type.h>
 
 #include "lyra/diag/diag_code.hpp"
-#include "lyra/hir/conversion.hpp"
 #include "lyra/lowering/ast_to_hir/expression/slang_atoms.hpp"
 #include "lyra/lowering/ast_to_hir/pattern.hpp"
 #include "lyra/lowering/ast_to_hir/process_lowerer.hpp"
@@ -92,8 +91,8 @@ auto LowerConversionExpr(
       .type = *type_id,
       .data =
           hir::ConversionExpr{
-              .operand = operand_id,
               .kind = LowerConversionKind(conv.conversionKind),
+              .operand = operand_id,
           },
       .span = span,
   };

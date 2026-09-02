@@ -17,7 +17,6 @@
 #include <slang/ast/symbols/VariableSymbols.h>
 #include <slang/ast/types/AllTypes.h>
 #include <slang/numeric/Time.h>
-#include <slang/syntax/AllSyntax.h>
 
 #include "lyra/base/component_index.hpp"
 #include "lyra/base/internal_error.hpp"
@@ -54,8 +53,6 @@ auto MakeIntegerLiteralExpr(
               .data =
                   hir::IntegerLiteral{
                       .value = LowerSVIntToIntegralConstant(lit.getValue()),
-                      .base = LowerSlangLiteralBase(lit.syntax),
-                      .declared_unsized = lit.isDeclaredUnsized,
                   }},
       .span = span,
   };
@@ -71,8 +68,6 @@ auto MakeUnbasedUnsizedLiteralExpr(
               .data =
                   hir::IntegerLiteral{
                       .value = LowerSVIntToIntegralConstant(lit.getValue()),
-                      .base = hir::IntegerLiteralBase::kUnbased,
-                      .declared_unsized = true,
                   }},
       .span = span,
   };

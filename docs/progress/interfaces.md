@@ -139,6 +139,12 @@ B  The interface port
       counts a member's position out of the order its signature states, so how many positions such a
       member occupies is part of the placement rule rather than of this stage. It lands with that
       answer, not before it.
+- [ ] B8 -- A name continues past the port into what the interface itself owns: an interface may
+      instantiate another interface (LRM 25.3), and a port bound to the outer one reaches the inner
+      instance's members and enables its subroutines through that port. What it reaches is the inner
+      instance belonging to whichever outer one the port was bound to, so the reach is the port's
+      and not a name on the elaborated hierarchy -- which is why it refuses today rather than
+      resolving to the instance one binding happens to name.
 
 ### Stage C -- Modports
 
@@ -159,17 +165,26 @@ B  The interface port
 
 A call on a port with no modport selected belongs to this stage as much as an imported one does: LRM
 25.7 makes every subroutine an interface declares callable through a plain port, and the `import`
-form states which of them a restricted view offers. Both refuse today, under one reason that is not
-about interfaces at all -- the caller holds a route to an object and the subroutine sits at the far
-end of it, which is a route endpoint the reference model does not yet carry. A subroutine a
-hierarchical name enables (LRM 23.6) refuses for the same reason, so what closes this stage closes
-that too.
+form states which of them a restricted view offers. What separates the two directions is which side
+declares the subroutine: D1 is a call this module makes on the interface, and D2 and D3 are calls
+the interface makes on a module connected to it, which is why the second half does not follow from
+the first.
 
-- [ ] D1 -- A modport `import` makes an interface subroutine callable through the port, so a call on
+A subroutine a hierarchical name enables (LRM 23.6) does not follow from it either, and the reason
+is the unit boundary rather than the call: an interface promises its whole declared surface, so a
+name on one is resolved where the caller compiles, while a module promises only its ports, so a
+subroutine of one is reached -- if at all -- by a name the runtime answers while the design
+elaborates. That form is refused, and it is tracked with the hierarchical-reference target forms in
+`hierarchy.md` rather than here.
+
+- [x] D1 -- A modport `import` makes an interface subroutine callable through the port, so a call on
       the port identifier enables that task or function on the bound interface instance (LRM 25.7).
-      The identifier form and the prototype form name the same subroutine; a full prototype is
-      required where default argument values or binding by name are used, and the prototype's
-      argument number, types, and directions must match the declaration.
+      A port naming no modport reaches every subroutine the interface declares, and a scope that
+      owns the instance enables one on it by hierarchical name. A task suspends its caller until it
+      completes and an `output` formal is copied back at that completion, across the boundary as
+      within one scope. Not yet: the prototype form of an import, which a modport needs where
+      default argument values or binding by name are used, and whose argument number, types, and
+      directions must match the declaration.
 - [ ] D2 -- A modport `export` inverts the direction: the module connected through that modport
       defines the subroutine, and the interface -- or another module reaching it through the
       interface -- calls it. A connected module that does not define an exported subroutine, or
@@ -210,12 +225,12 @@ that too.
 ## Open questions
 
 - The reference model leaves its set of sealed-endpoint target categories open and requires a
-  decision entry per category (`../decisions/hierarchical-reference-routing.md`, D5). Stage D
-  introduces one, a route whose endpoint is a callable rather than a storage cell, and it lands with
-  its entry before the stage it serves. Stage B introduced no category: a member reached through a
-  port ends at a member another unit published, which is the endpoint a downward port connection
-  already seals to; what it added is one route step, recorded in
-  `../decisions/interface-port-binding.md`.
+  decision entry per category (`../decisions/hierarchical-reference-routing.md`, D5). Neither Stage
+  B nor Stage D introduced one. A member reached through a port ends at a member another unit
+  published, which is the endpoint a downward port connection already seals to; a call on an
+  interface ends at the object, which is an endpoint that already exists, with the callable named
+  against what that unit published. Both are recorded in `../decisions/interface-port-binding.md`
+  and `../decisions/calling-a-subroutine-on-another-units-object.md`.
 - Stage E's access resolves per access rather than against an endpoint sealed once, because the
   target is chosen at run time. Whether the resolution memoizes per handle and name, and where such
   a cache lives so that it is a cache and not a second authority, is open.

@@ -200,6 +200,9 @@ auto CallStatementSuspends(
           // complete as coroutines, which the call's type already answered.
           [](const hir::StructuralSubroutineRef&) { return false; },
           [](const hir::ExternalUnitSubroutineRef&) { return false; },
+          // A task an interface publishes (LRM 25.7) completes as a coroutine
+          // on the same terms.
+          [](const hir::ExternalUnitMethodRef&) { return false; },
           // A foreign task import (LRM 35.5.2) completes as a coroutine too,
           // which the call's type already answered.
           [](const hir::ForeignImportRef&) { return false; },

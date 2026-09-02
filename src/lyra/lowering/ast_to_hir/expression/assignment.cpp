@@ -74,7 +74,7 @@ auto LowerAssignmentExprProc(
         .type = *type_id,
         .data =
             hir::ConversionExpr{
-                .operand = inner_id, .kind = hir::ConversionKind::kImplicit},
+                .kind = hir::ConversionKind::kImplicit, .operand = inner_id},
         .span = span,
     };
   }
