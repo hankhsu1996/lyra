@@ -204,6 +204,12 @@ class CodeGenFunction {
   [[nodiscard]] auto CapturePlaceOf(const lir::Place& place) const
       -> std::optional<CapturePlace>;
 
+  // Whether a type is the sequence of handles a declaration standing for
+  // several objects builds. It belongs to no value domain -- what it holds are
+  // objects, not values -- so an operation over one is answered by the entry
+  // that knows sequences rather than through the value model.
+  [[nodiscard]] auto IsHandleSequence(lir::TypeId type) const -> bool;
+
   [[nodiscard]] auto MemberAddressOp(lir::TypeId owner) const -> RuntimeOp;
 
   [[nodiscard]] auto ReachedType(

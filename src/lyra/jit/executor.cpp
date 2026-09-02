@@ -219,6 +219,8 @@ void DefineRuntimeAbi(llvm::orc::LLJIT& jit) {
   add("lyra_rt_parent", &lyra_rt_parent);
   add("lyra_rt_add_owned_child", &lyra_rt_add_owned_child);
   add("lyra_rt_member_addr", &lyra_rt_member_addr);
+  add("lyra_rt_sequence_make", &lyra_rt_sequence_make);
+  add("lyra_rt_sequence_element", &lyra_rt_sequence_element);
   add("lyra_rt_register_signal", &lyra_rt_register_signal);
   add("lyra_rt_get_signal", &lyra_rt_get_signal);
   add("lyra_rt_resolve_visible_child", &lyra_rt_resolve_visible_child);
@@ -781,6 +783,13 @@ auto DescribeMember(
   if (data.Is<lir::ManagedRefType>()) {
     return runtime::InlineValueStorage{
         .domain = support::ValueDomain::kManagedRef};
+  }
+  // A declaration standing for several objects keeps a handle on the sequence
+  // of them, which is built once where the owner is built and held for the rest
+  // of the run. So the member is the same box a single such handle is: it owns
+  // neither the sequence nor the objects in it.
+  if (data.Is<lir::VectorType>()) {
+    return runtime::BorrowedHandleStorage{};
   }
   if (data.Pointee().has_value()) {
     return runtime::BorrowedHandleStorage{};

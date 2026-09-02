@@ -157,6 +157,8 @@ struct UnpackedRange {
   std::int64_t left;
   std::int64_t right;
 
+  [[nodiscard]] auto ElementCount() const -> std::uint64_t;
+
   auto operator==(const UnpackedRange&) const -> bool = default;
 };
 

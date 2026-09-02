@@ -25,7 +25,6 @@
 #include "lyra/lowering/hir_to_mir/class_shape.hpp"
 #include "lyra/lowering/hir_to_mir/continuous_assign.hpp"
 #include "lyra/lowering/hir_to_mir/declaration_initializer.hpp"
-#include "lyra/lowering/hir_to_mir/declared_instances.hpp"
 #include "lyra/lowering/hir_to_mir/default_value.hpp"
 #include "lyra/lowering/hir_to_mir/expression/dpi_call.hpp"
 #include "lyra/lowering/hir_to_mir/integral_literal.hpp"
@@ -107,6 +106,44 @@ auto MakeExternalUnitPointer(
           mir::PointerType{.pointee = object_type, .ownership = ownership}});
 }
 
+// A type wrapped once per dimension still to be fixed: what a declaration
+// standing for several objects covers where `depth` of its coordinates are
+// open. At depth zero it is the type itself, which is why one object needs no
+// case of its own.
+auto SequenceOver(
+    UnitLowerer& unit_lowerer, mir::TypeId type, std::size_t depth)
+    -> mir::TypeId {
+  for (std::size_t i = 0; i < depth; ++i) {
+    type = unit_lowerer.Unit().types.Intern(
+        mir::Type{mir::VectorType{.element = type}});
+  }
+  return type;
+}
+
+// The type of the member one instance declaration becomes. Multiplicity is this
+// type and nothing else, so an array and a single instance are one declaration
+// shape differing in how many wrappers stand over the handle (LRM 23.3.2).
+auto MakeInstanceMemberType(
+    UnitLowerer& unit_lowerer, const hir::InstanceMemberDecl& member,
+    mir::PointerOwnership ownership) -> mir::TypeId {
+  return SequenceOver(
+      unit_lowerer, MakeExternalUnitPointer(unit_lowerer, member, ownership),
+      member.array_dims.size());
+}
+
+// The position a coordinate names, as the machine integer a sequence is indexed
+// by. Which element a route reaches is settled during elaboration, so it
+// crosses as a constant rather than as a value the design computes.
+auto BuildSequenceIndex(
+    UnitLowerer& unit_lowerer, mir::Block& block, std::uint32_t coord)
+    -> mir::ExprId {
+  return block.exprs.Add(
+      mir::Expr{
+          .data =
+              mir::MachineIntLiteral{.value = static_cast<std::int64_t>(coord)},
+          .type = unit_lowerer.Unit().builtins.machine_int64});
+}
+
 // Builds one object an external-unit instance member declares, at `coords`, and
 // hands back the borrowed pointer the runtime tree returns. The object is built
 // and given to the tree to own; its Segment -- the label plus these coordinates
@@ -169,10 +206,45 @@ auto BuildOwnedInstance(
           .type = borrowed_pointer_type});
 }
 
+// Builds what an instance declaration's member holds once `coords` are fixed as
+// far as they go: the handle to the object those coordinates name when they are
+// complete, and the sequence of what the next dimension holds while they are
+// not. A sequence is composed where it is built rather than filled afterwards,
+// so a dimension's elements are built inside the value that holds them.
+auto BuildInstanceMemberValue(
+    UnitLowerer& unit_lowerer, const WalkFrame& frame,
+    const hir::InstanceMemberDecl& member, mir::TypeId owning,
+    mir::TypeId borrowed, std::vector<std::uint32_t>& coords) -> mir::ExprId {
+  mir::Block& block = *frame.current_block;
+  if (coords.size() == member.array_dims.size()) {
+    const mir::ExprId parent_self = block.exprs.Add(
+        MakeSelfRefExpr(frame, frame.current_class->self_pointer_type));
+    return BuildOwnedInstance(
+        unit_lowerer, frame, parent_self, member.instance_name, owning,
+        borrowed, coords);
+  }
+  const std::uint32_t count = member.array_dims[coords.size()];
+  std::vector<mir::ExprId> elements;
+  elements.reserve(count);
+  for (std::uint32_t i = 0; i < count; ++i) {
+    coords.push_back(i);
+    elements.push_back(BuildInstanceMemberValue(
+        unit_lowerer, frame, member, owning, borrowed, coords));
+    coords.pop_back();
+  }
+  const mir::TypeId type = SequenceOver(
+      unit_lowerer, borrowed, member.array_dims.size() - coords.size());
+  return block.exprs.Add(
+      mir::Expr{
+          .data = mir::VectorExpr{.elements = std::move(elements)},
+          .type = type});
+}
+
 // Emits the constructor-body construction for every object the scope's instance
-// members declare: one built object per element, each stored into the field
-// that element was given. The runtime tree owns every built instance; the field
-// keeps the borrowed handle a layout-visible route projects through.
+// members declare: one value per declaration, holding every object that
+// declaration builds, stored into the one field it was given. The runtime tree
+// owns every built instance; the field keeps the borrowed handles a
+// layout-visible route projects through.
 void EmitInstanceMemberConstruction(
     StructuralScopeLowerer& lowerer, WalkFrame frame) {
   UnitLowerer& unit_lowerer = lowerer.Owner();
@@ -184,23 +256,23 @@ void EmitInstanceMemberConstruction(
         unit_lowerer, im, mir::PointerOwnership::kUnique);
     const mir::TypeId borrowed = MakeExternalUnitPointer(
         unit_lowerer, im, mir::PointerOwnership::kBorrowed);
-    for (const DeclaredInstance& object : lowerer.Instances(id)) {
-      const mir::ExprId parent_self = block.exprs.Add(
-          MakeSelfRefExpr(frame, frame.current_class->self_pointer_type));
-      const mir::ExprId value = BuildOwnedInstance(
-          unit_lowerer, frame, parent_self, im.instance_name, owning, borrowed,
-          object.coordinates);
-      const mir::ExprId member = block.exprs.Add(
-          mir::MakeFieldAccessExpr(
-              parent_self,
-              mir::FieldTarget{
-                  .owner = frame.current_class_id, .slot = object.handle},
-              borrowed));
-      block.AppendStmt(
-          mir::ExprStmt{
-              .expr = block.exprs.Add(
-                  mir::MakeAssignExpr(member, value, borrowed))});
-    }
+    std::vector<std::uint32_t> coords;
+    const mir::ExprId value = BuildInstanceMemberValue(
+        unit_lowerer, frame, im, owning, borrowed, coords);
+    const mir::TypeId member_type =
+        SequenceOver(unit_lowerer, borrowed, im.array_dims.size());
+    const mir::ExprId member = block.exprs.Add(
+        mir::MakeFieldAccessExpr(
+            block.exprs.Add(
+                MakeSelfRefExpr(frame, frame.current_class->self_pointer_type)),
+            mir::FieldTarget{
+                .owner = frame.current_class_id,
+                .slot = lowerer.InstanceMemberField(id)},
+            member_type));
+    block.AppendStmt(
+        mir::ExprStmt{
+            .expr = block.exprs.Add(
+                mir::MakeAssignExpr(member, value, member_type))});
   }
 }
 
@@ -381,30 +453,41 @@ auto BuildRouteAnchor(
 }
 
 // Descends one step into a child the receiver's scope declares: the typed
-// member access that projects the parent's handle on that child. The step's
-// coordinates are settled during elaboration, so they name one of the objects
-// the child declares rather than indexing anything here; a child with no
-// declared dimensions is the one-object case and carries none. A child whose
-// body is another compilation unit is still reached by a typed pointer, but
-// what it declares is that unit's to state, so the route stops resolving names
-// against a scope of this one.
+// member access that projects the parent's handle on that child, then one index
+// per coordinate the step names. The coordinates are settled during
+// elaboration, and each takes one dimension off what the member holds, so a
+// child with no declared dimensions indexes nothing and is the same step with
+// no coordinates. A child whose body is another compilation unit is still
+// reached by a typed pointer, but what it declares is that unit's to state, so
+// the route stops resolving names against a scope of this one.
 auto StepToOwnedChild(
     UnitLowerer& unit_lowerer, mir::Block& block, const RouteReceiver& receiver,
     const hir::OwnedChildStep& step) -> RouteReceiver {
   const StructuralScopeLowerer& scope =
       OwnScopeOf(receiver, "StepToOwnedChild");
-  const OwnedChildAnchor anchor = scope.TranslateOwnedChild(
-      hir::StructuralHops{}, step.child, step.indices);
+  const OwnedChildAnchor anchor =
+      scope.TranslateOwnedChild(hir::StructuralHops{}, step.child);
   const mir::ClassId receiver_class = scope.ClassId();
-  const mir::TypeId type = unit_lowerer.GetClassShape(receiver_class)
-                               .fields.Get(anchor.borrowed_handle)
-                               .type;
-  const mir::ExprId access = block.exprs.Add(
+  mir::TypeId reached = unit_lowerer.GetClassShape(receiver_class)
+                            .fields.Get(anchor.borrowed_handle)
+                            .type;
+  mir::ExprId access = block.exprs.Add(
       mir::MakeFieldAccessExpr(
           receiver.expr,
           mir::FieldTarget{
               .owner = receiver_class, .slot = anchor.borrowed_handle},
-          type));
+          reached));
+  for (const std::uint32_t coord : step.indices) {
+    reached =
+        unit_lowerer.Unit().types.Get(reached).Get<mir::VectorType>().element;
+    access = block.exprs.Add(
+        mir::Expr{
+            .data =
+                mir::VectorGetExpr{
+                    .vector = access,
+                    .index = BuildSequenceIndex(unit_lowerer, block, coord)},
+            .type = reached});
+  }
   // A child whose body is another compilation unit leaves the artifact here;
   // one this artifact lowers keeps the route inside it.
   return RouteReceiver{
@@ -416,10 +499,11 @@ auto StepToOwnedChild(
 
 // Descends one step through an interface port of the receiver's scope: the
 // typed member access that projects the borrowed reference the parent bound
-// there (LRM 25.3). Everything past the step belongs to the unit the port
-// names, which this artifact does not lower, so the receiver stops being one of
-// its own scopes -- the same place an owned child whose body is another unit
-// leaves it.
+// there (LRM 25.3), then one index per coordinate the step names, since a port
+// carrying a range is one member standing for every instance bound to it.
+// Everything past the step belongs to the unit the port names, which this
+// artifact does not lower, so the receiver stops being one of its own scopes --
+// the same place an owned child whose body is another unit leaves it.
 auto StepThroughInterfacePort(
     UnitLowerer& unit_lowerer, mir::Block& block, const RouteReceiver& receiver,
     const hir::InterfacePortStep& step) -> RouteReceiver {
@@ -428,12 +512,23 @@ auto StepThroughInterfacePort(
   const mir::ClassId receiver_class = scope.ClassId();
   const mir::FieldId field =
       scope.TranslateInterfacePort(hir::StructuralHops{}, step.port);
-  const mir::TypeId type =
+  mir::TypeId reached =
       unit_lowerer.GetClassShape(receiver_class).fields.Get(field).type;
-  const mir::ExprId access = block.exprs.Add(
+  mir::ExprId access = block.exprs.Add(
       mir::MakeFieldAccessExpr(
           receiver.expr,
-          mir::FieldTarget{.owner = receiver_class, .slot = field}, type));
+          mir::FieldTarget{.owner = receiver_class, .slot = field}, reached));
+  for (const std::uint32_t coord : step.indices) {
+    reached =
+        unit_lowerer.Unit().types.Get(reached).Get<mir::VectorType>().element;
+    access = block.exprs.Add(
+        mir::Expr{
+            .data =
+                mir::VectorGetExpr{
+                    .vector = access,
+                    .index = BuildSequenceIndex(unit_lowerer, block, coord)},
+            .type = reached});
+  }
   return RouteReceiver{.expr = access, .target = ExternalObject{}};
 }
 
@@ -647,12 +742,46 @@ void AppendProcessRegistration(
   block.AppendStmt(mir::ExprStmt{.expr = reg_call});
 }
 
-// Binds a child's interface port to the interface instance the connection
+// Composes the value a port member takes from the handles its connection
+// supplies: the handle itself where the member stands for one object, and the
+// sequence of what the dimension below holds where it stands for several. The
+// shape is read off the child's own declared type, so how many the parent
+// supplies per dimension is the child's promise rather than a second count.
+// `next` walks the handles in the order the port's coordinates count them.
+auto ComposeBoundObjects(
+    UnitLowerer& unit_lowerer, mir::Block& block, hir::TypeId member_type,
+    std::span<const mir::ExprId> handles, std::size_t& next) -> mir::ExprId {
+  const auto* array =
+      unit_lowerer.Hir().types.Get(member_type).As<hir::UnpackedArrayType>();
+  if (array == nullptr) {
+    if (next >= handles.size()) {
+      throw InternalError(
+          "ComposeBoundObjects: the connection supplies one instance per "
+          "object the port stands for, which is checked where it is recorded");
+    }
+    return handles[next++];
+  }
+  const std::uint64_t count = array->dim.ElementCount();
+  std::vector<mir::ExprId> elements;
+  elements.reserve(count);
+  for (std::uint64_t i = 0; i < count; ++i) {
+    elements.push_back(ComposeBoundObjects(
+        unit_lowerer, block, array->element_type, handles, next));
+  }
+  return block.exprs.Add(
+      mir::Expr{
+          .data = mir::VectorExpr{.elements = std::move(elements)},
+          .type = unit_lowerer.MemberCellType(
+              unit_lowerer.TranslateType(member_type),
+              hir::BorrowedObjectStorage{})});
+}
+
+// Binds a child's interface port to the interface instances the connection
 // names (LRM 25.3), in the resolve phase where the object tree is complete: the
 // route to the child's member yields a pointer to the slot the child holds, the
-// route to the interface yields the object, and one store fills the one with
+// routes to the interfaces yield the objects, and one store fills the one with
 // the other. The child owns no storage on either side, so nothing else happens
-// here -- the same shape a `ref` port's alias bind takes, over an object rather
+// here -- the same shape a `ref` port's alias bind takes, over objects rather
 // than a cell.
 void InstallInterfacePortConnection(
     StructuralScopeLowerer& lowerer, const WalkFrame& resolve_frame,
@@ -660,10 +789,11 @@ void InstallInterfacePortConnection(
   UnitLowerer& unit_lowerer = lowerer.Owner();
   mir::Block& block = *resolve_frame.current_block;
   auto& types = unit_lowerer.Unit().types;
-  const mir::TypeId member_type = types.Intern(
-      mir::Type{mir::PointerType{
-          .pointee = unit_lowerer.TranslateType(conn.endpoint.type),
-          .ownership = mir::PointerOwnership::kBorrowed}});
+  // What the member holds is a handle on each object it stands for, which is
+  // the same function of its declared type the declaring unit built it from.
+  const mir::TypeId member_type = unit_lowerer.MemberCellType(
+      unit_lowerer.TranslateType(conn.endpoint.type),
+      hir::BorrowedObjectStorage{});
   const mir::TypeId slot_type = types.Intern(
       mir::Type{mir::PointerType{
           .pointee = member_type,
@@ -672,13 +802,25 @@ void InstallInterfacePortConnection(
       BuildRouteValue(lowerer, resolve_frame, conn.endpoint, slot_type);
   const mir::ExprId target = block.exprs.Add(
       mir::Expr{.data = mir::DerefExpr{.pointer = nav}, .type = member_type});
-  const mir::ExprId peer =
-      BuildRouteValue(lowerer, resolve_frame, conn.peer, member_type);
+
+  std::vector<mir::ExprId> handles;
+  handles.reserve(conn.peers.size());
+  for (const hir::RoutedPathRecipe& peer : conn.peers) {
+    const mir::TypeId handle_type = types.Intern(
+        mir::Type{mir::PointerType{
+            .pointee = unit_lowerer.TranslateType(peer.type),
+            .ownership = mir::PointerOwnership::kBorrowed}});
+    handles.push_back(
+        BuildRouteValue(lowerer, resolve_frame, peer, handle_type));
+  }
+  std::size_t next = 0;
+  const mir::ExprId value = ComposeBoundObjects(
+      unit_lowerer, block, conn.endpoint.type, handles, next);
   block.AppendStmt(
       mir::ExprStmt{
           .expr = block.exprs.Add(
               mir::Expr{
-                  .data = mir::AssignExpr{.target = target, .value = peer},
+                  .data = mir::AssignExpr{.target = target, .value = value},
                   .type = member_type})});
 }
 
@@ -1000,9 +1142,11 @@ auto StructuralScopeLowerer::DeclareShape() -> diag::Result<mir::ClassId> {
             },
             [&](const hir::InterfacePortId& id) {
               const auto& port = hir_scope.interface_ports.Get(id);
-              // The port stands for an instance of the unit its record names,
-              // so that record is the one source of both the object's type and
-              // the positions a name reached through it is counted out of.
+              // The port stands for instances of the unit its record names, so
+              // that record is the one source of both the object's type and the
+              // positions a name reached through it is counted out of. How many
+              // instances is the port's own multiplicity, which stands over
+              // that type the way an instance member's stands over its handle.
               const mir::TypeId object_type = unit_lowerer.Unit().types.Intern(
                   mir::Type{mir::ExternalUnitObjectType{
                       .object = unit_lowerer.TranslateExternalUnitObject(
@@ -1011,7 +1155,10 @@ auto StructuralScopeLowerer::DeclareShape() -> diag::Result<mir::ClassId> {
                   mir::FieldDecl{
                       .name = port.name,
                       .type = unit_lowerer.MemberCellType(
-                          object_type, hir::BorrowedObjectStorage{})});
+                          SequenceOver(
+                              unit_lowerer, object_type,
+                              port.array_dims.size()),
+                          hir::BorrowedObjectStorage{})});
             }},
         decl);
   }
@@ -1069,33 +1216,24 @@ auto StructuralScopeLowerer::DeclareShape() -> diag::Result<mir::ClassId> {
   }
   generate_bindings_ = {hir_scope.generates.size(), std::move(generates)};
 
-  // Every instance member keeps a borrowed typed handle on this class, and that
-  // handle's type states the member's cardinality -- the bare handle for a
+  // Every instance member keeps one borrowed typed handle on this class, and
+  // that handle's type states the member's cardinality -- the bare handle for a
   // single instance, one sequence wrapper per declared dimension for an array
   // (LRM 23.3.2). A layout-visible route step projects the handle and indexes
   // it once per dimension, so reaching an element never has to name the member
   // a second time.
   {
-    std::vector<DeclaredInstances> declared;
-    declared.reserve(hir_scope.instance_members.size());
+    std::vector<mir::FieldId> instance_fields;
+    instance_fields.reserve(hir_scope.instance_members.size());
     for (const auto& im : hir_scope.instance_members) {
-      const mir::TypeId handle_type = MakeExternalUnitPointer(
-          unit_lowerer, im, mir::PointerOwnership::kBorrowed);
-      declared.push_back(
-          DeclaredInstances::Declare(
-              im.array_dims, [&](std::span<const std::uint32_t> coords) {
-                std::string name = im.instance_name;
-                for (const std::uint32_t coord : coords) {
-                  name += std::format("_{}", coord);
-                }
-                return shape.fields.Add(
-                    mir::FieldDecl{
-                        .name = std::format("{}_borrowed_handle", name),
-                        .type = handle_type});
-              }));
+      instance_fields.push_back(shape.fields.Add(
+          mir::FieldDecl{
+              .name = std::format("{}_borrowed_handle", im.instance_name),
+              .type = MakeInstanceMemberType(
+                  unit_lowerer, im, mir::PointerOwnership::kBorrowed)}));
     }
-    declared_instances_ = {
-        hir_scope.instance_members.size(), std::move(declared)};
+    instance_member_fields_ = {
+        hir_scope.instance_members.size(), std::move(instance_fields)};
   }
 
   // Every procedural scope becomes a name node -- an object carrying the

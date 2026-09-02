@@ -44,6 +44,8 @@ enum class RuntimeOp : std::uint8_t {
   kCellGet,
   kCellSet,
   kMemberAddress,
+  kSequenceMake,
+  kSequenceElement,
   kClosureMake,
   kObjectMake,
   kObjectDeref,

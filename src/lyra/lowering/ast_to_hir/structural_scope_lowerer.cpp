@@ -402,10 +402,26 @@ auto StructuralScopeLowerer::PopulateInterfacePortMember(
     -> diag::Result<void> {
   const hir::ExternalUnitObjectId object =
       owner_->ExternalUnitObjectOf(owner_->InterfaceUnitOf(port));
+  // How many instances the port stands for is the range it declares (LRM 25.3),
+  // outermost first; a port standing for one declares none, which is the same
+  // answer with nothing in it.
+  const auto declared = port.getDeclaredRange();
+  if (!declared.has_value()) {
+    throw InternalError(
+        "PopulateInterfacePortMember: the port's range evaluated where the "
+        "signature was published, so it evaluates here too");
+  }
+  std::vector<std::uint32_t> array_dims;
+  array_dims.reserve(declared->size());
+  for (const slang::ConstantRange& dim : *declared) {
+    array_dims.push_back(dim.width());
+  }
   const hir::InterfacePortId local =
       frame.current_structural_scope->interface_ports.Add(
           hir::InterfacePortDecl{
-              .name = std::string{port.name}, .object = object});
+              .name = std::string{port.name},
+              .object = object,
+              .array_dims = std::move(array_dims)});
   owner_->MapInterfacePortBinding(port, frame_, local, object);
   return {};
 }

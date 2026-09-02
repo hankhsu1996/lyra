@@ -203,6 +203,8 @@ is what it reaches -- read at the member level.
   by-name resolution this rests on.
 - `published-member-placement.md` -- how a published member's position is computed on both sides; D2
   here adds the fourth storage kind its D4 maps to a cell.
+- `instance-array-multiplicity.md` -- what D1's type names when the header gives the port a range:
+  one member still, with the multiplicity standing over the unit it names.
 - `specialization-identity.md` -- the identity function D4 widens, and the reason producer and
   consumer can compute it independently.
 - `reference-as-data-type.md` -- the `ref` port's fill-once-at-Resolve lifecycle, which the

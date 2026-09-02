@@ -24,6 +24,7 @@
 #include "lyra/hir/type_import.hpp"
 #include "lyra/hir/unit_signature.hpp"
 #include "lyra/lowering/ast_to_hir/expression/slang_atoms.hpp"
+#include "lyra/lowering/ast_to_hir/instance_array_shape.hpp"
 #include "lyra/lowering/ast_to_hir/net_type.hpp"
 #include "lyra/lowering/ast_to_hir/subroutine_decl.hpp"
 #include "lyra/lowering/ast_to_hir/unit_identity.hpp"
@@ -152,9 +153,11 @@ auto UnitLowerer::PublishSignature() -> diag::Result<void> {
           span, diag::DiagCode::kUnsupportedStructuralMember,
           std::move(message));
     };
-    const auto range = port.getDeclaredRange();
-    if (!range.has_value() || !range->empty()) {
-      return refuse("an interface array port is not yet supported");
+    const auto declared = port.getDeclaredRange();
+    if (!declared.has_value()) {
+      return refuse(
+          "an interface port whose range is not constant is not yet "
+          "supported");
     }
     // Which interface the port carries is settled during elaboration, so the
     // unit reads it here and publishes it; a header that leaves it unnamed
@@ -164,17 +167,41 @@ auto UnitLowerer::PublishSignature() -> diag::Result<void> {
     // direction (LRM 25.5), which is settled where that referrer compiles; what
     // a connection binds is the whole interface instance under any of its
     // views, so the port publishes the same member whichever one names it.
+    //
+    // A port carrying a range is bound to an array of instances, every one of
+    // them the same interface specialization, so descending to any element
+    // names the unit for all of them.
     const slang::ast::Symbol* connected = port.getConnection().first;
-    const auto* instance = connected == nullptr
-                               ? nullptr
-                               : connected->as_if<slang::ast::InstanceSymbol>();
+    const slang::ast::InstanceSymbol* instance = nullptr;
+    if (connected != nullptr) {
+      instance = connected->as_if<slang::ast::InstanceSymbol>();
+      if (instance == nullptr) {
+        if (const auto* array =
+                connected->as_if<slang::ast::InstanceArraySymbol>()) {
+          if (const auto shape = ResolveInstanceArrayShape(*array)) {
+            instance = shape->leaf;
+          }
+        }
+      }
+    }
     if (instance == nullptr) {
       return refuse("an unconnected interface port is not yet supported");
     }
     std::string interface_unit = SpecializationName(*instance);
     RecordReferencedUnit(interface_unit);
-    const hir::TypeId own = unit_.types.Intern(
+    hir::TypeId own = unit_.types.Intern(
         hir::Type{hir::UnitObjectType{.unit_name = interface_unit}});
+    // A port carrying a range stands for as many instances as the range has
+    // elements (LRM 25.3), which is a fact about what the member is and so
+    // travels on its type. The innermost dimension is wrapped first, so the
+    // range written leftmost ends up outermost.
+    for (const slang::ConstantRange& dim : std::views::reverse(*declared)) {
+      own = unit_.types.Intern(
+          hir::Type{hir::UnpackedArrayType{
+              .element_type = own,
+              .dim =
+                  hir::UnpackedRange{.left = dim.left, .right = dim.right}}});
+    }
     interface_port_units_.emplace(&port, std::move(interface_unit));
     const hir::PublishedMemberId id = instance_class.members.Add(
         hir::PublishedMember{

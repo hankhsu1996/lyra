@@ -305,6 +305,10 @@ auto CodeGenFunction::OpenedReferent(llvm::Value* reference, lir::TypeId type)
 // Which entry answers the address of a member of what `owner` names. Every
 // owner holds a block of storage described the same way, so what an entry
 // differs in is the runtime type the address it is handed names.
+auto CodeGenFunction::IsHandleSequence(lir::TypeId type) const -> bool {
+  return module_->Unit().types.Get(type).Is<lir::VectorType>();
+}
+
 auto CodeGenFunction::MemberAddressOp(lir::TypeId owner) const -> RuntimeOp {
   const lir::Type& type = module_->Unit().types.Get(owner);
   if (const auto* object = type.As<lir::ObjectType>()) {
@@ -629,8 +633,15 @@ auto CodeGenFunction::SpanOver(
 auto CodeGenFunction::LowerArray(
     const lir::ArrayInstr& array, lir::TypeId result_type)
     -> diag::Result<llvm::Value*> {
-  const auto& machine_array =
-      module_->Unit().types.Get(result_type).Get<lir::MachineArrayType>();
+  // A fixed-size machine aggregate and a sequence of handles are both composed
+  // from their elements in order, and both start as a span over them; where the
+  // element type is read from, and whether the span is the value or is handed
+  // to the runtime to keep, are what differ.
+  const lir::Type& result = module_->Unit().types.Get(result_type);
+  const lir::TypeId element_type =
+      result.Is<lir::VectorType>()
+          ? result.Get<lir::VectorType>().element
+          : result.Get<lir::MachineArrayType>().element;
   std::vector<llvm::Value*> elements;
   elements.reserve(array.elements.size());
   for (const lir::Operand& element : array.elements) {
@@ -640,7 +651,20 @@ auto CodeGenFunction::LowerArray(
     }
     elements.push_back(*lowered);
   }
-  return SpanOver(elements, module_->Types().Map(machine_array.element));
+  llvm::Value* span = SpanOver(elements, module_->Types().Map(element_type));
+  if (!result.Is<lir::VectorType>()) {
+    return span;
+  }
+  // A sequence outlives the stretch that built it -- the owner keeps its
+  // address, and a dimension above it keeps that address as an ordinary element
+  // -- so the runtime takes the handles rather than the span standing as the
+  // value.
+  const std::array<llvm::Value*, 1> args{span};
+  return builder_.CreateCall(
+      Entry(
+          RuntimeSymbol(RuntimeOp::kSequenceMake), module_->Types().Ptr(),
+          args),
+      args);
 }
 
 // A product value is assembled by boxing each component into the erased
@@ -811,6 +835,27 @@ auto CodeGenFunction::LowerAggregateExtract(
     return std::unexpected(std::move(aggregate.error()));
   }
   const lir::TypeId container = OperandType(extract.aggregate);
+  // A sequence of handles belongs to no value domain, so which object a
+  // coordinate names is answered by the entry that knows the sequence rather
+  // than by a value's own element read.
+  if (IsHandleSequence(container)) {
+    const auto* element = std::get_if<lir::ContainerElement>(&extract.selector);
+    if (element == nullptr || element->operands.size() != 1) {
+      throw InternalError(
+          "llvm codegen: a sequence of handles is reached by one coordinate, "
+          "which is what the step naming an element carries");
+    }
+    auto index = LowerOperand(element->operands.front());
+    if (!index) {
+      return std::unexpected(std::move(index.error()));
+    }
+    const std::array<llvm::Value*, 2> args{*aggregate, *index};
+    return builder_.CreateCall(
+        Entry(
+            RuntimeSymbol(RuntimeOp::kSequenceElement), module_->Types().Ptr(),
+            args),
+        args);
+  }
   auto domain = DomainOf(container);
   if (!domain) {
     return std::unexpected(std::move(domain.error()));

@@ -43,6 +43,10 @@ auto RuntimeOpName(RuntimeOp op) -> std::string_view {
       return "cell_set";
     case RuntimeOp::kMemberAddress:
       return "member_addr";
+    case RuntimeOp::kSequenceMake:
+      return "sequence_make";
+    case RuntimeOp::kSequenceElement:
+      return "sequence_element";
     case RuntimeOp::kClosureMake:
       return "closure_make";
     case RuntimeOp::kObjectMake:

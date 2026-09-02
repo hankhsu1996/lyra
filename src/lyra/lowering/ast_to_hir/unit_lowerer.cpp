@@ -655,19 +655,19 @@ auto UnitLowerer::RouteToUnitObject(
   // lowered, so what tells them apart is how the name got there and never what
   // it resolved to.
   if (reference.isViaIfacePort()) {
-    // A path ends at what the name reached, so the subroutine has to be the hop
-    // below the port. A hop in between descends into what the interface itself
-    // owns, past what the port promised about the interface it carries.
-    const auto below_the_port = reference.path.subspan(1);
-    if (below_the_port.empty() ||
-        below_the_port.front().symbol != reference.target) {
+    // A path ends at what the name reached, so the hops between the port and
+    // the subroutine are the elements a port carrying a range was selected on.
+    // Anything else there descends into what the interface itself owns, past
+    // what the port promised about the interface it carries.
+    auto indices = InterfacePortCoordinates(reference);
+    if (!indices.has_value()) {
       return diag::Fail(
           span, diag::DiagCode::kUnsupportedExpressionForm,
           "a subroutine on an interface reached through another interface port "
           "is not yet supported");
     }
-    return std::optional<ScopeRoute>{
-        RouteThroughInterfacePort(frame, *reference.path.front().symbol)};
+    return std::optional<ScopeRoute>{RouteThroughInterfacePort(
+        frame, *reference.path.front().symbol, *std::move(indices))};
   }
   return RouteToScope(frame, body);
 }
@@ -733,9 +733,37 @@ auto UnitLowerer::TranslateReferenceRoute(
       frame.Current(), std::move(route->head), std::move(route->steps));
 }
 
+auto UnitLowerer::InterfacePortCoordinates(
+    const slang::ast::HierarchicalReference& reference)
+    -> std::optional<std::vector<std::uint32_t>> {
+  const auto path = reference.path;
+  const auto* port =
+      path.front().symbol->as_if<slang::ast::InterfacePortSymbol>();
+  if (port == nullptr) {
+    return std::nullopt;
+  }
+  const auto declared = port->getDeclaredRange();
+  if (!declared.has_value()) {
+    return std::nullopt;
+  }
+  std::vector<std::uint32_t> indices;
+  for (std::size_t hop = 1; hop < path.size(); ++hop) {
+    if (path[hop].symbol == reference.target) {
+      return indices;
+    }
+    const auto* position = std::get_if<std::int32_t>(&path[hop].selector);
+    if (position == nullptr || *position < 0 ||
+        indices.size() >= declared->size()) {
+      return std::nullopt;
+    }
+    indices.push_back(static_cast<std::uint32_t>(*position));
+  }
+  return std::nullopt;
+}
+
 auto UnitLowerer::RouteThroughInterfacePort(
-    const WalkFrame& frame, const slang::ast::Symbol& port) const
-    -> ScopeRoute {
+    const WalkFrame& frame, const slang::ast::Symbol& port,
+    std::vector<std::uint32_t> indices) const -> ScopeRoute {
   const auto binding = LookupInterfacePortBinding(port);
   if (!binding.has_value()) {
     throw InternalError(
@@ -750,7 +778,8 @@ auto UnitLowerer::RouteThroughInterfacePort(
   }
   return ScopeRoute{
       .head = hir::InUnitHead{.hops = *hops},
-      .steps = {hir::PathStep{hir::InterfacePortStep{.port = binding->port}}}};
+      .steps = {hir::PathStep{hir::InterfacePortStep{
+          .port = binding->port, .indices = std::move(indices)}}}};
 }
 
 auto UnitLowerer::RouteToScope(

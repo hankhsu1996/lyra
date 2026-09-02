@@ -45,6 +45,23 @@ namespace lyra::lowering::hir_to_mir {
 
 namespace {
 
+// The handle a member holds on each object it stands for. A handle reaches one
+// object, so where the member stands for several the multiplicity stays outside
+// it: a sequence of handles, never one handle on the sequence.
+auto BorrowedObjectHandles(const mir::TypePool& types, mir::TypeId value_type)
+    -> mir::TypeId {
+  if (const auto* sequence = types.Get(value_type).As<mir::VectorType>()) {
+    return types.Intern(
+        mir::Type{mir::VectorType{
+            .element = BorrowedObjectHandles(types, sequence->element)}});
+  }
+  return types.Intern(
+      mir::Type{mir::PointerType{
+          .pointee = value_type,
+          .ownership = mir::PointerOwnership::kBorrowed,
+          .mutability = mir::Mutability::kMutable}});
+}
+
 // The other units whose variables `body` reads. A body is a tree of blocks --
 // a predicate that declares identifiers (LRM 12.6.3) puts the arms it guards in
 // one of its own -- so the answer is the union over the whole tree.
@@ -287,11 +304,7 @@ auto UnitLowerer::MemberCellType(
                             : mir::Mutability::kMutable}});
           },
           [&](const hir::BorrowedObjectStorage&) {
-            return unit_.types.Intern(
-                mir::Type{mir::PointerType{
-                    .pointee = value_type,
-                    .ownership = mir::PointerOwnership::kBorrowed,
-                    .mutability = mir::Mutability::kMutable}});
+            return BorrowedObjectHandles(unit_.types, value_type);
           }},
       storage);
 }

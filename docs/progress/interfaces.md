@@ -44,6 +44,9 @@ This workstream reasons from these architecture docs and does not restate them:
 - `../decisions/published-member-placement.md` -- a published member sits at the position its
   signature states, derived independently by the declaring unit and by every referrer, so how many
   positions one member occupies is settled there rather than here.
+- `../decisions/instance-array-multiplicity.md` -- a declaration standing for several objects is one
+  member whose type carries the multiplicity, which is what an interface port carrying a range is
+  over a borrowed pointer.
 
 Stage B onward depends on the workstream tracked in `unit-signature.md` under this directory. An
 interface exists to be written against, so its members are its signature; reaching them through a
@@ -132,13 +135,13 @@ B  The interface port
 - [x] B6 -- An interface port connection on an instance array binds each element's own handle (LRM
       23.3.3.5), whether one interface instance is replicated to every element or an interface array
       is mapped element to element.
-- [ ] B7 -- An interface reference in a module header carries a range, so one port names as many
+- [x] B7 -- An interface reference in a module header carries a range, so one port names as many
       interface instances as the range has elements, the connection supplies an array of interfaces
       of that size, and selecting an element of the port reaches that one instance (LRM 25.3,
-      23.2.2). What this needs is a published member standing for more than one object: a referrer
-      counts a member's position out of the order its signature states, so how many positions such a
-      member occupies is part of the placement rule rather than of this stage. It lands with that
-      answer, not before it.
+      23.2.2). The port is one published member whatever its multiplicity, which its type carries;
+      the connection binds every instance it supplies at once, in the order the port's coordinates
+      count them; and a name selecting an element spends the declared range where it is resolved, so
+      everything below reaches an element by position.
 - [ ] B8 -- A name continues past the port into what the interface itself owns: an interface may
       instantiate another interface (LRM 25.3), and a port bound to the outer one reaches the inner
       instance's members and enables its subroutines through that port. What it reaches is the inner

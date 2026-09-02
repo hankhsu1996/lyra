@@ -106,8 +106,13 @@ struct OpaqueStep {
 // elaboration, so the step is typed member navigation like an owned child's;
 // what differs is that everything past it belongs to the unit the port names,
 // which is why a leaf past this step is counted out of that unit's signature.
+// `indices` are the element coordinates within the port, one per declared
+// dimension: a port carrying a range is one member standing for every instance
+// bound to it, so the coordinates pick one out of it. They are positions --
+// the range the port declared is spent where the name resolves.
 struct InterfacePortStep {
   InterfacePortId port;
+  std::vector<std::uint32_t> indices;
 
   auto operator==(const InterfacePortStep&) const -> bool = default;
 };
@@ -233,15 +238,19 @@ struct InstanceMemberDecl {
   std::vector<std::uint32_t> array_dims;
 };
 
-// An interface port's internal name (LRM 25.3). The scope names an instance of
-// another unit that it neither owns nor builds; the parent binds it during
+// An interface port's internal name (LRM 25.3). The scope names instances of
+// another unit that it neither owns nor builds; the parent binds them during
 // elaboration, the way it binds a `ref` port's internal name to the connected
 // variable. `object` is this unit's record of what that unit published, so a
 // name reached through the port is counted out of the order its signature
-// states.
+// states. `array_dims` is empty for a port standing for one instance and holds
+// one element count per dimension, outermost first, for a port carrying a
+// range: the port is one member however many instances it stands for, holding a
+// handle on each.
 struct InterfacePortDecl {
   std::string name;
   ExternalUnitObjectId object;
+  std::vector<std::uint32_t> array_dims;
 };
 
 // How the child port is reached, by endpoint capability. An input or output
@@ -279,14 +288,17 @@ struct DataPortConnection {
   std::vector<SensitivityEntry> sensitivity;
 };
 
-// A connection binding a child's interface port to an interface instance
-// (LRM 25.3). No value crosses in either direction, so there is nothing to
-// drive and nothing to wait on: `endpoint` reaches the child's port member and
-// `peer` reaches the instance bound there, both resolved once in the resolve
-// phase, the way a `ref` port's alias is.
+// A connection binding a child's interface port to the interface instances it
+// names (LRM 25.3). No value crosses in either direction, so there is nothing
+// to drive and nothing to wait on: `endpoint` reaches the child's port member
+// and each of `peers` reaches one instance bound there, all resolved once in
+// the resolve phase, the way a `ref` port's alias is. A port carrying a range
+// is bound to as many instances as it stands for, in the order its coordinates
+// count them (LRM 23.3.3.5); a port standing for one has one peer, which is the
+// no-dimension case of the same list rather than a shape of its own.
 struct InterfacePortConnection {
   RoutedPathRecipe endpoint;
-  RoutedPathRecipe peer;
+  std::vector<RoutedPathRecipe> peers;
 };
 
 struct PortConnection {

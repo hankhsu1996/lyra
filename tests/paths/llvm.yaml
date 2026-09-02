@@ -61,7 +61,6 @@
 23_hierarchy/port_expression_connects_a_part_select: "port connected to part of an internal name is not yet supported"
 23_hierarchy/task_enabled_by_hierarchical_name: "a subroutine the declaring unit does not publish is not yet supported"
 23_hierarchy/ref_port_aliases_connected_variable: "mir_to_lir: storage of this kind is not yet lendable by reference"
-25_interfaces/interface_array_port_binds_each_element: "an interface array port is not yet supported"
 25_interfaces/interface_port_reaches_a_net: "driving a net is not yet lowerable to LIR"
 25_interfaces/modport_expression_names_part_of_a_member: "a modport expression is not yet supported"
 25_interfaces/name_reaches_through_a_nested_interface: "a subroutine on an interface reached through another interface port is not yet supported"

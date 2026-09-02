@@ -320,19 +320,20 @@ auto LowerInterfacePortValue(
     const slang::ast::ValueSymbol& declaration, diag::SourceSpan span)
     -> diag::Result<hir::Expr> {
   const auto path = hve.ref.path;
-  // A path ends at what the name reached, so the member has to be the hop below
-  // the port. A hop in between descends into what the interface itself owns,
-  // past what the port promised about the interface it carries.
-  const auto below_the_port = path.subspan(1);
-  if (below_the_port.empty() ||
-      below_the_port.front().symbol != hve.ref.target) {
+  // A path ends at what the name reached, so the hops between the port and the
+  // member are the elements a port carrying a range was selected on. Anything
+  // else there descends into what the interface itself owns, past what the port
+  // promised about the interface it carries.
+  auto indices = UnitLowerer::InterfacePortCoordinates(hve.ref);
+  if (!indices.has_value()) {
     return diag::Fail(
         span, diag::DiagCode::kUnsupportedExpressionForm,
         "a nested name reached through an interface port is not yet supported");
   }
   auto type_id = unit_lowerer.InternType(*hve.type, span);
   if (!type_id) return std::unexpected(std::move(type_id.error()));
-  auto through = unit_lowerer.RouteThroughInterfacePort(frame, *path[0].symbol);
+  auto through = unit_lowerer.RouteThroughInterfacePort(
+      frame, *path[0].symbol, *std::move(indices));
   auto route = unit_lowerer.MakeRoutedRef(
       declaration, frame.Current(), std::move(through.head),
       std::move(through.steps));
