@@ -1578,6 +1578,30 @@ auto FunctionLowerer::LowerCoroutineAwait(
   return completion.value_or(park);
 }
 
+auto FunctionLowerer::LowerCompoundOperator(
+    mir::BinaryOp op, lir::Operand old_value, lir::Operand rhs,
+    lir::TypeId type) -> diag::Result<lir::Operand> {
+  if (const std::optional<lir::BinaryOp> binop = TranslateBinaryOp(op)) {
+    return Emit(
+        type,
+        lir::BinaryInstr{
+            .op = *binop, .lhs = std::move(old_value), .rhs = std::move(rhs)});
+  }
+  // A builtin operator's domain rides on its first operand, so the target
+  // carries no qualifier and the entry resolves to the same call an expression
+  // of the operator lowers to.
+  if (const std::optional<support::BuiltinFn> fn =
+          mir::BinaryOpAsBuiltinFn(op)) {
+    return Emit(
+        type,
+        lir::CallInstr{
+            .target = lir::BuiltinTarget{.fn = *fn, .qualifier = std::nullopt},
+            .args = {std::move(old_value), std::move(rhs)}});
+  }
+  return Unsupported(
+      "mir_to_lir: compound assignment operator has no direct realization");
+}
+
 auto FunctionLowerer::LowerAssign(
     const mir::Block& block, const mir::AssignExpr& assign)
     -> diag::Result<lir::Operand> {
@@ -1620,18 +1644,13 @@ auto FunctionLowerer::LowerAssign(
     }
     lir::Operand written = *value;
     if (assign.compound_op.has_value()) {
-      const std::optional<lir::BinaryOp> op =
-          TranslateBinaryOp(*assign.compound_op);
-      if (!op) {
-        return Unsupported(
-            "mir_to_lir: compound assignment operator has no direct "
-            "realization");
+      auto combined = LowerCompoundOperator(
+          *assign.compound_op, LoadActivationValue(*handle, type),
+          *std::move(value), type);
+      if (!combined) {
+        return std::unexpected(std::move(combined.error()));
       }
-      written = Emit(
-          type, lir::BinaryInstr{
-                    .op = *op,
-                    .lhs = LoadActivationValue(*handle, type),
-                    .rhs = *std::move(value)});
+      written = *std::move(combined);
     }
     StoreActivationValue(*handle, written, type);
     return written;
@@ -1648,16 +1667,12 @@ auto FunctionLowerer::LowerAssign(
 
   lir::Operand written = *value;
   if (assign.compound_op.has_value()) {
-    const std::optional<lir::BinaryOp> op =
-        TranslateBinaryOp(*assign.compound_op);
-    if (!op) {
-      return Unsupported(
-          "mir_to_lir: compound assignment operator has no direct realization");
+    auto combined = LowerCompoundOperator(
+        *assign.compound_op, Load(*place, type), *std::move(value), type);
+    if (!combined) {
+      return std::unexpected(std::move(combined.error()));
     }
-    lir::Operand old = Load(*place, type);
-    written = Emit(
-        type, lir::BinaryInstr{
-                  .op = *op, .lhs = std::move(old), .rhs = *std::move(value)});
+    written = *std::move(combined);
   }
   Store(*std::move(place), written);
   return written;
@@ -1825,17 +1840,12 @@ auto FunctionLowerer::LowerProjectionAssign(
           assigned = *std::move(rhs);
           return *assigned;
         }
-        const std::optional<lir::BinaryOp> op =
-            TranslateBinaryOp(*assign.compound_op);
-        if (!op) {
-          return Unsupported(
-              "mir_to_lir: compound assignment operator has no direct "
-              "realization");
+        auto combined = LowerCompoundOperator(
+            *assign.compound_op, read_leaf(), *std::move(rhs), leaf_type);
+        if (!combined) {
+          return std::unexpected(std::move(combined.error()));
         }
-        assigned = Emit(
-            leaf_type,
-            lir::BinaryInstr{
-                .op = *op, .lhs = read_leaf(), .rhs = *std::move(rhs)});
+        assigned = *std::move(combined);
         return *assigned;
       });
   if (!written) {

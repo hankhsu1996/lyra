@@ -109,10 +109,10 @@ merged node.
       target, including a side-effecting subscript (`a[f()] op= b`) at any nesting. Every write
       target -- whole var, array / string element, struct / union member -- is an op=-able
       write-back location, so compound lowers uniformly to `AssignExpr{target, op, value}` and the
-      backend evaluates the single target once (C++ `op=`; a future LIR computes the address once).
-      A string character write is a write-back proxy (`String::ElementRef`) and a union member write
-      a reference to the active member (`Union::GetRef`); neither is a read-modify-write desugar at
-      the lowering.
+      backend evaluates the single target once (C++ `op=`; the LIR backend forms the target place
+      once, then loads, combines, and stores). A string character write is a write-back proxy
+      (`String::ElementRef`) and a union member write a reference to the active member
+      (`Union::GetRef`); neither is a read-modify-write desugar at the lowering.
 
 ## Cross-references
 

@@ -171,40 +171,6 @@ auto IsArrayContainerType(const mir::Type& ty) -> bool {
   return ty.Is<mir::UnpackedArrayType>() || ty.Is<mir::DynamicArrayType>();
 }
 
-// Maps the method-style MIR binary ops to their `BuiltinFn` realization on
-// `PackedArray`. Returns `nullopt` for ops that render natively (`+`, `==`,
-// ...). The negation-then-positive forms (`kWildcardInequality`,
-// `kCaseInequality`) are handled separately by the caller as `!Eq(...)`.
-auto BinaryOpAsBuiltinFn(mir::BinaryOp op)
-    -> std::optional<support::BuiltinFn> {
-  switch (op) {
-    case mir::BinaryOp::kPower:
-      return support::BuiltinFn::kPow;
-    case mir::BinaryOp::kShiftLeft:
-      return support::BuiltinFn::kShiftLeft;
-    case mir::BinaryOp::kLogicalShiftRight:
-      return support::BuiltinFn::kLogicalShiftRight;
-    case mir::BinaryOp::kArithmeticShiftRight:
-      return support::BuiltinFn::kArithmeticShiftRight;
-    case mir::BinaryOp::kBitwiseXnor:
-      return support::BuiltinFn::kBitwiseXnor;
-    case mir::BinaryOp::kLogicalImplication:
-      return support::BuiltinFn::kLogicalImplication;
-    case mir::BinaryOp::kLogicalEquivalence:
-      return support::BuiltinFn::kLogicalEquivalence;
-    case mir::BinaryOp::kWildcardEquality:
-      return support::BuiltinFn::kWildcardEquals;
-    case mir::BinaryOp::kCaseEquality:
-      return support::BuiltinFn::kCaseEqual;
-    case mir::BinaryOp::kCasezEquality:
-      return support::BuiltinFn::kCasezEquals;
-    case mir::BinaryOp::kCasexEquality:
-      return support::BuiltinFn::kCasexEquals;
-    default:
-      return std::nullopt;
-  }
-}
-
 auto UnaryOpAsBuiltinFn(mir::UnaryOp op) -> std::optional<support::BuiltinFn> {
   switch (op) {
     case mir::UnaryOp::kReductionAnd:
@@ -414,7 +380,7 @@ auto BuildMirBinaryExpr(
 
   // LRM 11.4 method-style binary ops (shifts, power, xnor, wildcard /
   // case / implication / equivalence): route through a `Direct` builtin call.
-  if (auto builtin = BinaryOpAsBuiltinFn(op)) {
+  if (auto builtin = mir::BinaryOpAsBuiltinFn(op)) {
     return MakeBuiltinFnCall(*builtin, {lhs_id, rhs_id}, result_type);
   }
 
