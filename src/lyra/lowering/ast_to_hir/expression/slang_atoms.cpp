@@ -138,24 +138,6 @@ auto LowerSlangIncDecOp(slang::ast::UnaryOperator op) -> hir::IncDecOp {
   }
 }
 
-auto LowerTimeUnit(slang::TimeUnit u) -> hir::TimeScale {
-  switch (u) {
-    case slang::TimeUnit::Femtoseconds:
-      return hir::TimeScale::kFs;
-    case slang::TimeUnit::Picoseconds:
-      return hir::TimeScale::kPs;
-    case slang::TimeUnit::Nanoseconds:
-      return hir::TimeScale::kNs;
-    case slang::TimeUnit::Microseconds:
-      return hir::TimeScale::kUs;
-    case slang::TimeUnit::Milliseconds:
-      return hir::TimeScale::kMs;
-    case slang::TimeUnit::Seconds:
-      return hir::TimeScale::kS;
-  }
-  throw InternalError("LowerTimeUnit: unknown slang TimeUnit");
-}
-
 auto FromSlangSubroutineKind(slang::ast::SubroutineKind k)
     -> support::SystemSubroutineKind {
   switch (k) {

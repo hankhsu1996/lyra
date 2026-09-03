@@ -181,6 +181,7 @@ void DefineRuntimeAbi(llvm::orc::LLJIT& jit) {
   add("lyra_rt_submit_postponed", &lyra_rt_submit_postponed);
   add("lyra_rt_submit_observed", &lyra_rt_submit_observed);
   add("lyra_rt_delay", &lyra_rt_delay);
+  add("lyra_rt_delay_real", &lyra_rt_delay_real);
   add("lyra_rt_make_trigger", &lyra_rt_make_trigger);
   add("lyra_rt_wait_any", &lyra_rt_wait_any);
   add("lyra_rt_triggered", &lyra_rt_triggered);

@@ -363,6 +363,8 @@ auto BuiltinFnName(BuiltinFn id) -> std::string_view {
       return "write_mem";
     case BuiltinFn::kDelay:
       return "delay";
+    case BuiltinFn::kDelayReal:
+      return "delay_real";
     case BuiltinFn::kWaitAny:
       return "wait_any";
     case BuiltinFn::kSimTime:

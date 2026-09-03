@@ -277,6 +277,8 @@ auto BuiltinFnCppName(support::BuiltinFn id) -> std::string_view {
       return "MaxIndex";
     case support::BuiltinFn::kDelay:
       return "Delay";
+    case support::BuiltinFn::kDelayReal:
+      return "DelayReal";
     case support::BuiltinFn::kWaitAny:
       return "WaitAny";
     case support::BuiltinFn::kSimTime:
@@ -514,6 +516,7 @@ auto BuiltinFnCppNamespace(support::BuiltinFn id) -> std::string_view {
     case support::BuiltinFn::kRegisterInitial:
     case support::BuiltinFn::kRegisterFinal:
     case support::BuiltinFn::kDelay:
+    case support::BuiltinFn::kDelayReal:
     case support::BuiltinFn::kWaitAny:
     case support::BuiltinFn::kSimTime:
     case support::BuiltinFn::kSTime:

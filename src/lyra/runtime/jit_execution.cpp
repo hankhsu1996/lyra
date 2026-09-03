@@ -478,6 +478,24 @@ auto OwnBoth(const value::Tuple<First, Second>& completion) -> void* {
           value::RuntimeValue{completion.template Get<1>()}});
 }
 
+// A time-scale power crosses as an opaque packed value, like every other scalar
+// an entry takes.
+auto PowerOf(const void* packed) -> std::int8_t {
+  return static_cast<std::int8_t>(Read<value::PackedArray>(packed).ToInt64());
+}
+
+// Registers the running process to wake after `ticks` steps of
+// `precision_power`. The two delay entries meet here: they differ only in how
+// the amount the design wrote becomes that count.
+auto ParkForDelayTicks(
+    RuntimeEffects& svc, SimDuration ticks, std::int8_t precision_power)
+    -> bool {
+  svc.CurrentProcess().RegisterWakeup([&](CoroutineHandle token) {
+    ParkForDelay(svc, token, ticks, precision_power);
+  });
+  return true;
+}
+
 }  // namespace
 
 }  // namespace lyra::runtime
@@ -490,6 +508,8 @@ using lyra::runtime::ClosureValue;
 using lyra::runtime::Coroutine;
 using lyra::runtime::CoroutineHandle;
 using lyra::runtime::current_runtime;
+using lyra::runtime::DelayTicks;
+using lyra::runtime::DelayTicksReal;
 using lyra::runtime::DiagnosticDispatcher;
 using lyra::runtime::DriverOf;
 using lyra::runtime::EnterCancellationTarget;
@@ -509,6 +529,8 @@ using lyra::runtime::ObjectDefinition;
 using lyra::runtime::Observable;
 using lyra::runtime::Own;
 using lyra::runtime::PackedValuesOf;
+using lyra::runtime::ParkForDelayTicks;
+using lyra::runtime::PowerOf;
 using lyra::runtime::ProgramLifetime;
 using lyra::runtime::Read;
 using lyra::runtime::RealTimeInUnit;
@@ -886,21 +908,23 @@ void lyra_rt_submit_observed(void* runtime, void* closure) {
 }
 
 auto lyra_rt_delay(
-    void* runtime, const void* ticks, const void* precision_power) -> bool {
-  auto& svc = *static_cast<RuntimeEffects*>(runtime);
-  const std::int64_t tick_count = Read<PackedArray>(ticks).ToInt64();
-  svc.CurrentProcess().RegisterWakeup([&](CoroutineHandle token) {
-    if (tick_count == 0) {
-      svc.ScheduleInactive(token);
-      return;
-    }
-    const lyra::SimDuration global = lyra::runtime::ScaleToGlobalTicks(
-        static_cast<lyra::SimDuration>(tick_count),
-        static_cast<std::int8_t>(Read<PackedArray>(precision_power).ToInt64()),
-        svc.GlobalPrecisionPower());
-    svc.ScheduleAtTime(svc.Now() + global, token);
-  });
-  return true;
+    void* runtime, const void* duration, const void* unit_power,
+    const void* precision_power) -> bool {
+  const std::int8_t precision = PowerOf(precision_power);
+  return ParkForDelayTicks(
+      *static_cast<RuntimeEffects*>(runtime),
+      DelayTicks(Read<PackedArray>(duration), PowerOf(unit_power), precision),
+      precision);
+}
+
+auto lyra_rt_delay_real(
+    void* runtime, const void* duration, const void* unit_power,
+    const void* precision_power) -> bool {
+  const std::int8_t precision = PowerOf(precision_power);
+  return ParkForDelayTicks(
+      *static_cast<RuntimeEffects*>(runtime),
+      DelayTicksReal(Read<Real>(duration), PowerOf(unit_power), precision),
+      precision);
 }
 
 auto lyra_rt_make_trigger(

@@ -425,24 +425,6 @@ class HirDumper {
     throw InternalError("HirDumper: unknown BinaryOp");
   }
 
-  static auto FormatTimeScale(TimeScale s) -> std::string_view {
-    switch (s) {
-      case TimeScale::kFs:
-        return "fs";
-      case TimeScale::kPs:
-        return "ps";
-      case TimeScale::kNs:
-        return "ns";
-      case TimeScale::kUs:
-        return "us";
-      case TimeScale::kMs:
-        return "ms";
-      case TimeScale::kS:
-        return "s";
-    }
-    throw InternalError("HirDumper::FormatTimeScale: unknown TimeScale");
-  }
-
   static auto FormatIntegralConstant(const IntegralConstant& c) -> std::string {
     std::string out = std::format(
         "{}'{}", c.width, c.signedness == Signedness::kSigned ? 's' : 'u');
@@ -474,11 +456,6 @@ class HirDumper {
             },
             [](const StringLiteral& lit) -> std::string {
               return std::format("StringLiteral(\"{}\")", lit.value);
-            },
-            [](const TimeLiteral& lit) -> std::string {
-              return std::format(
-                  "TimeLiteral(value={}, scale={})", lit.value,
-                  FormatTimeScale(lit.scale));
             },
             [](const RealLiteral& lit) -> std::string {
               return std::format("RealLiteral({})", lit.value);

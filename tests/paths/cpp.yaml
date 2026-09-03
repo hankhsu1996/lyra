@@ -11,5 +11,3 @@
 23_hierarchy/task_enabled_by_hierarchical_name: "a subroutine the declaring unit does not publish is not yet supported"
 25_interfaces/modport_expression_names_part_of_a_member: "a modport expression is not yet supported"
 25_interfaces/name_reaches_through_a_nested_interface: "reached through another interface port is not yet supported"
-35_dpi/concurrent_context_call_chains_keep_scope: "delay durations beyond an integer or time literal are not yet supported"
-35_dpi/imported_task_consumes_simulation_time: "delay durations beyond an integer or time literal are not yet supported"

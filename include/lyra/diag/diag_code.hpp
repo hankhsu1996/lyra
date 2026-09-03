@@ -25,7 +25,6 @@ enum class DiagCode : std::uint32_t {
   kUnsupportedNonVariableNamedReference,
   kUnsupportedAssignmentTarget,
   kUnsupportedTimingControlKind,
-  kUnsupportedDelayExpressionForm,
   kUnsupportedEventTriggerForm,
   kUnsupportedContinuousAssignForm,
   kUnsupportedPortConnectionForm,
@@ -35,7 +34,6 @@ enum class DiagCode : std::uint32_t {
   kUnsupportedDpi,
   kUnsupportedConversionForm,
 
-  kErrorDelayValueOutOfRange,
   kErrorCaseEqualityOnRealOperand,
   kErrorFormatStringTrailingPercent,
   kErrorFormatStringMissingPrecision,

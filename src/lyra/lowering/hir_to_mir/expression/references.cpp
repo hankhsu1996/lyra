@@ -80,18 +80,6 @@ auto LowerHirStringLiteral(
       .type = type};
 }
 
-// LRM 5.8: a time literal is a `realtime` value scaled to the current time
-// unit, so `5us` under a 1ns time unit is the number 5000. The front end has
-// already applied that scaling, and the unit it was written in says nothing
-// further -- what is left is a real number.
-auto LowerHirTimeLiteral(
-    const UnitLowerer& unit_lowerer, const WalkFrame& frame,
-    const hir::TimeLiteral& t, mir::TypeId type) -> mir::Expr {
-  mir::Block& block = *frame.current_block;
-  return block.exprs.Get(
-      BuildRealLiteral(unit_lowerer.Unit(), block, type, t.value));
-}
-
 auto LowerHirNullLiteral(mir::TypeId type) -> mir::Expr {
   return mir::Expr{.data = mir::NullLiteral{}, .type = type};
 }
@@ -251,9 +239,6 @@ auto LowerHirPrimaryExprProc(
             return LowerHirStringLiteral(
                 process.Owner(), frame, s, result_type);
           },
-          [&](const hir::TimeLiteral& t) -> mir::Expr {
-            return LowerHirTimeLiteral(process.Owner(), frame, t, result_type);
-          },
           [&](const hir::RealLiteral& r) -> mir::Expr {
             return LowerHirRealLiteral(process.Owner(), frame, r, result_type);
           },
@@ -310,9 +295,6 @@ auto LowerHirPrimaryExprStructural(
           [&](const hir::StringLiteral& s) -> mir::Expr {
             return LowerHirStringLiteral(
                 lowerer.Owner(), frame, s, result_type);
-          },
-          [&](const hir::TimeLiteral& t) -> mir::Expr {
-            return LowerHirTimeLiteral(lowerer.Owner(), frame, t, result_type);
           },
           [&](const hir::RealLiteral& r) -> mir::Expr {
             return LowerHirRealLiteral(lowerer.Owner(), frame, r, result_type);

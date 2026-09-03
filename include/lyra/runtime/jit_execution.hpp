@@ -212,15 +212,23 @@ void lyra_rt_submit_nba(void* runtime, void* closure);
 void lyra_rt_submit_postponed(void* runtime, void* closure);
 void lyra_rt_submit_observed(void* runtime, void* closure);
 
-// Registers the running process to wake after `ticks` steps of its scope's
-// precision (`precision_power`), the registration a delay's suspend edge is
-// preceded by (LRM 9.4.1). A zero delay re-enqueues on the current slot's
-// inactive region; a positive one scales to the engine's global tick. The
-// counts cross as opaque packed values, like every scalar. The wakeup source is
-// the running process itself, read from the runtime; no token crosses the
-// boundary. A delay always parks.
+// Registers the running process to wake after `duration` steps of its scope's
+// time unit (`unit_power`), the registration a delay's suspend edge is preceded
+// by (LRM 9.4.1). The runtime rounds that amount to the scope's precision
+// (`precision_power`) and scales it to the engine's global tick; a zero wait
+// re-enqueues on the current slot's inactive region. The counts cross as opaque
+// packed values, like every scalar. The wakeup source is the running process
+// itself, read from the runtime; no token crosses the boundary. A delay always
+// parks.
 auto lyra_rt_delay(
-    void* runtime, const void* ticks, const void* precision_power) -> bool;
+    void* runtime, const void* duration, const void* unit_power,
+    const void* precision_power) -> bool;
+
+// The same for a delay the design wrote as a real expression, which can name a
+// fraction of a time unit and is rounded to the precision (LRM 3.14.1).
+auto lyra_rt_delay_real(
+    void* runtime, const void* duration, const void* unit_power,
+    const void* precision_power) -> bool;
 
 // Builds one leaf of a value-change wait: the observable cell it watches, the
 // bit projection of that cell's packed encoding it watches as a
