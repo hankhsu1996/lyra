@@ -225,6 +225,13 @@ class FunctionLowerer {
       -> diag::Result<lir::Place>;
   auto LowerAssign(const mir::Block& block, const mir::AssignExpr& assign)
       -> diag::Result<lir::Operand>;
+  // The value a compound assignment stores: its operator applied to the old
+  // value and the right-hand side (LRM 11.4.1). The operator is realized the
+  // way an expression realizes it -- a runtime builtin call for the operators
+  // whose width and signedness rules need one, a binary instruction otherwise.
+  auto LowerCompoundOperator(
+      mir::BinaryOp op, lir::Operand old_value, lir::Operand rhs,
+      lir::TypeId type) -> diag::Result<lir::Operand>;
   // Extracts the designated part's current value; called at most once, and only
   // by a leaf transform that needs the old value.
   using LeafReader = std::function<lir::Operand()>;

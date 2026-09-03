@@ -41,7 +41,6 @@
 09_processes/process_status_reports_how_it_ended: "an imported runtime-library method call is not yet lowerable to LIR"
 09_processes/process_suspend_desensitizes_while_suspended: "an imported runtime-library method call is not yet lowerable to LIR"
 10_assignments/array_assignment_pattern: "local is not addressable storage"
-11_operators/compound_assign_operators: "compound assignment operator has no direct realization"
 13_tasks_and_functions/aggregate_argument_passed_by_value: "local is not addressable storage"
 13_tasks_and_functions/class_method_argument_directions: "mir_to_lir: storage of this kind is not yet lendable by reference"
 13_tasks_and_functions/class_task_enable: "virtual method dispatch is not yet lowerable to LIR"
