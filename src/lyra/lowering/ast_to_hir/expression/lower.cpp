@@ -16,7 +16,6 @@
 #include <slang/ast/expressions/SelectExpressions.h>
 #include <slang/ast/symbols/VariableSymbols.h>
 #include <slang/ast/types/AllTypes.h>
-#include <slang/numeric/Time.h>
 
 #include "lyra/base/component_index.hpp"
 #include "lyra/base/internal_error.hpp"
@@ -30,7 +29,6 @@
 #include "lyra/lowering/ast_to_hir/expression/operators.hpp"
 #include "lyra/lowering/ast_to_hir/expression/references.hpp"
 #include "lyra/lowering/ast_to_hir/expression/selects.hpp"
-#include "lyra/lowering/ast_to_hir/expression/slang_atoms.hpp"
 #include "lyra/lowering/ast_to_hir/integral_constant.hpp"
 #include "lyra/lowering/ast_to_hir/process_lowerer.hpp"
 #include "lyra/lowering/ast_to_hir/structural_scope_lowerer.hpp"
@@ -80,18 +78,6 @@ auto MakeStringLiteralExpr(
       .data =
           hir::PrimaryExpr{
               .data = hir::StringLiteral{.value = std::move(text)}},
-      .span = span,
-  };
-}
-
-auto MakeTimeLiteralExpr(
-    double value, hir::TimeScale scale, hir::TypeId type, diag::SourceSpan span)
-    -> hir::Expr {
-  return hir::Expr{
-      .type = type,
-      .data =
-          hir::PrimaryExpr{
-              .data = hir::TimeLiteral{.value = value, .scale = scale}},
       .span = span,
   };
 }
@@ -154,13 +140,16 @@ auto LowerExprImpl(
       return MakeStringLiteralExpr(std::string{sl.getValue()}, *type_id, span);
     }
 
+    // LRM 5.8: a time literal is a `realtime` value scaled to the time unit of
+    // the scope it sits in, so `5us`, `5000ns` and `5` all name the number 5
+    // where that unit is 1us. The front end has already applied that scaling,
+    // and the unit the literal was written with is spent in producing the
+    // number -- what reaches HIR is a real, and its type says which real.
     case slang::ast::ExpressionKind::TimeLiteral: {
       const auto& tl = expr.as<slang::ast::TimeLiteral>();
       auto type_id = unit_lowerer.InternType(*expr.type, span);
       if (!type_id) return std::unexpected(std::move(type_id.error()));
-      return MakeTimeLiteralExpr(
-          tl.getValue(), LowerTimeUnit(tl.getScale().base.unit), *type_id,
-          span);
+      return MakeRealLiteralExpr(tl.getValue(), *type_id, span);
     }
 
     case slang::ast::ExpressionKind::RealLiteral: {

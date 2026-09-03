@@ -2,7 +2,7 @@
 
 Tracks SystemVerilog procedural-block constructs and the supporting timing-control machinery.
 
-The numeric IDs (P1..P15, T1..T5) are stable references and do **not** imply execution order.
+The numeric IDs (P1..P15, T1..T6) are stable references and do **not** imply execution order.
 
 ## Actionable
 
@@ -84,19 +84,22 @@ machinery owned by other workstreams; see [Blocked](#blocked).
 
 ### Timing controls
 
-- [x] T1 -- Delay control `#N` (LRM 9.4.1). Engine schedules the suspended coroutine onto the
-      delayed queue.
+- [x] T1 -- Delay control `#N` (LRM 9.4.1). The amount waited is any numeric expression, evaluated
+      where the statement is reached, so a parameter, a variable, and an arithmetic combination of
+      them all name one; a later write to anything the expression read does not reach a wait already
+      under way. The amount is expressed in the scope's time unit and rounded to its precision
+      before use (LRM 3.14.1), which is what lets a real amount name a fraction of a unit. An
+      unknown or high-impedance amount is no delay, and a negative one is its own bits read as an
+      unsigned integer -- a wait no simulation reaches -- rather than an error.
 - [x] T2..T5 -- Event control `@(...)` across all `expression`, `posedge`, `negedge`, `edge` forms,
       including bit-select (`bus[N]`), range-select (`bus[hi:lo]`), and indexed part-select
       (`bus[base +: w]` / `bus[base -: w]`) on packed types, plus event-list (`or` / `,`) of any of
-      the above. The pipeline routes every value-change wait (always_comb body, `@*`, `wait (cond)`,
-      `@(...)`) through `mir::SensitivityWaitStmt` carrying per-leaf `(var, bit_range, edge_kind)`
-      records; slang's flow analysis computes the leaves and the AST -> HIR lowering attaches the SV
-      edge identifier (with LRM 9.4.2 LSB-reduce for edge-qualified single-leaf expressions).
-      Runtime per-leaf classification samples each waiter's projection on every variable write, so
-      changes outside the projection do not cause spurious wakes (LRM 9.4.2 "no change in result"
-      rule). `ClassifyEdge` covers the LRM Table 9-2 4-state transition matrix; `kBothEdges` matches
-      either posedge or negedge. Complete for the packed-vector, constant-selector, single-leaf
+      the above. Every construct that waits on a signal -- an `always_comb` body, `@*`, `@(...)`,
+      `wait (cond)`, and a continuous assignment -- waits the same way, on the part of each signal
+      the expression actually reads. A write that leaves that part unchanged does not wake the
+      procedure (LRM 9.4.2 "no change in the result" rule), and an edge event watches only the least
+      significant bit of its expression, over the whole LRM Table 9-2 transition matrix, with `edge`
+      matching either direction. Complete for the packed-vector, constant-selector, single-leaf
       subset, including multi-dimensional packed selects and ascending / negative-base ranges (LRM
       11.5.1 direction translation). Compound expressions (concatenation, arithmetic, dynamic index)
       remain rejected -- see Blocked.
@@ -105,8 +108,6 @@ machinery owned by other workstreams; see [Blocked](#blocked).
         on a non-value operand (LRM 9.4.2): only packed-vector / value operands are accepted.
   - [ ] Repeated event control `repeat (N) @(...)` (LRM 9.4.4), and nested timing controls inside an
         event-list entry: only signal events compose in a list today.
-  - [ ] A delay whose duration is not an integer or time literal (LRM 9.4.1): a computed or
-        real-valued delay expression is rejected.
 - [ ] T6 -- Event-trigger forms beyond the blocking `-> e`: the non-blocking trigger `->> e` (LRM
       15.5.2) and a delayed trigger carrying an intra-assignment timing control are rejected.
 
@@ -133,14 +134,11 @@ machinery owned by other workstreams; see [Blocked](#blocked).
 
 ## Conformance gaps the corpus records
 
-Behaviour the corpus asks for and does not get. Each is held by a disabled check inside a case that
-otherwise runs. Re-enabling that check is manual: nothing detects that the behaviour became right,
-so this list is what remembers.
+Behaviour the corpus asks for and does not get. What holds each one differs, and so does whether
+anything notices when it is fixed: a case whose wrong answer or refusal is recorded fails the run
+the day that answer becomes right, so the record is what remembers, while a case parked because it
+cannot run at all is watched by nothing and has to be revisited by hand.
 
-- [ ] A `wait` whose condition is unknown does not block. LRM 9.4.3 makes the process block while
-      the condition "is not true (as defined in 12.4)", and 12.4 counts x and z as not true, so a
-      four-state condition starting at x must block exactly as a two-state one starting at 0 does.
-      Today the four-state form passes at time zero.
 - [ ] A variable declared inside a fork branch cannot read the enclosing loop's variable. LRM 9.3.2
       initializes such a declaration when the branch starts running rather than when the fork is
       reached, so a branch spawned in a loop sees the value the loop variable holds once the loop

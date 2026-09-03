@@ -62,11 +62,6 @@ constexpr std::array kEntries{
             .kind = DiagKind::kUnsupported,
             .name = "unsupported_timing_control_kind"}},
     std::pair{
-        DiagCode::kUnsupportedDelayExpressionForm,
-        DiagCodeInfo{
-            .kind = DiagKind::kUnsupported,
-            .name = "unsupported_delay_expression_form"}},
-    std::pair{
         DiagCode::kUnsupportedEventTriggerForm,
         DiagCodeInfo{
             .kind = DiagKind::kUnsupported,
@@ -106,10 +101,6 @@ constexpr std::array kEntries{
             .kind = DiagKind::kUnsupported,
             .name = "unsupported_conversion_form"}},
 
-    std::pair{
-        DiagCode::kErrorDelayValueOutOfRange,
-        DiagCodeInfo{
-            .kind = DiagKind::kError, .name = "delay_value_out_of_range"}},
     std::pair{
         DiagCode::kErrorCaseEqualityOnRealOperand,
         DiagCodeInfo{

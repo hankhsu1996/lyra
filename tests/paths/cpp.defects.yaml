@@ -7,6 +7,5 @@
 # out inside the case, where nothing would notice.
 #
 # A case may appear in this file or in the refusal record, never both.
-09_processes/level_sensitive_wait: "unknown_scalar_time was 0, expected 5"
 11_operators/real_shortreal_result_type: "narrow_square was 1.000244155526, expected 1.000244140625"
 21_output/assignment_pattern_format_of_singular_values: "a declared enumeration value gave '0', expected ON"

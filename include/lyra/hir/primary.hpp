@@ -1,6 +1,5 @@
 #pragma once
 
-#include <cstdint>
 #include <string>
 #include <variant>
 
@@ -9,19 +8,12 @@
 
 namespace lyra::hir {
 
-enum class TimeScale : std::uint8_t { kFs, kPs, kNs, kUs, kMs, kS };
-
 struct IntegerLiteral {
   IntegralConstant value;
 };
 
 struct StringLiteral {
   std::string value;
-};
-
-struct TimeLiteral {
-  double value;
-  TimeScale scale;
 };
 
 struct RealLiteral {
@@ -40,8 +32,8 @@ struct NullLiteral {};
 // the same shape under `BinaryExpr.lhs` is a read), not by an extra type
 // tag.
 using Primary = std::variant<
-    IntegerLiteral, StringLiteral, TimeLiteral, RealLiteral, NullLiteral,
-    DirectMemberRef, ProceduralVarRef, ClassPropertyRef, StaticPropertyRef,
-    RoutedRef, IterationBindingRef, PatternVarRef, ExternalUnitValueRef>;
+    IntegerLiteral, StringLiteral, RealLiteral, NullLiteral, DirectMemberRef,
+    ProceduralVarRef, ClassPropertyRef, StaticPropertyRef, RoutedRef,
+    IterationBindingRef, PatternVarRef, ExternalUnitValueRef>;
 
 }  // namespace lyra::hir

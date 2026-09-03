@@ -306,11 +306,16 @@ enum class BuiltinFn : std::uint16_t {
   kReadMemWithin,
   kWriteMem,
   kWriteMemWithin,
-  // LRM 9.4.1 `#N`. The runtime free function the scheduler suspends on.
-  // The call takes the runtime handle, the duration in the calling scope's
-  // precision steps, and the calling scope's precision power; the runtime
-  // scales to the design-global tick (LRM 3.14.3).
+  // LRM 9.4.1 `#N`. The runtime free functions the scheduler suspends on. Each
+  // call takes the runtime handle, the amount of time the design asked to wait,
+  // and the calling scope's time unit and precision powers; the runtime rounds
+  // that amount to the scope's precision (LRM 3.14.1) and scales it to the
+  // design-global tick (LRM 3.14.3). There are two because the language gives a
+  // program two ways to write such an amount and reads them differently -- an
+  // integral expression, whose unknown and negative values carry meanings of
+  // their own, and a real expression, which can name a fraction of a unit.
   kDelay,
+  kDelayReal,
   // LRM 9.4.2 / 9.4.2.2 / 9.4.3 value-change wait. The runtime free function
   // every wait on a signal suspends on -- an `@(...)`, an `@*`, an
   // `always_comb` / `always_latch` body, a `wait (cond)`, a continuous

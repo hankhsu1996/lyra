@@ -12,12 +12,10 @@
 #include "lyra/diag/diag_code.hpp"
 #include "lyra/diag/diagnostic.hpp"
 #include "lyra/hir/expr.hpp"
-#include "lyra/hir/integral_constant.hpp"
-#include "lyra/hir/primary.hpp"
 #include "lyra/hir/procedural_body.hpp"
 #include "lyra/hir/stmt.hpp"
+#include "lyra/lowering/hir_to_mir/cast_lowering.hpp"
 #include "lyra/lowering/hir_to_mir/condition.hpp"
-#include "lyra/lowering/hir_to_mir/delay_time_resolver.hpp"
 #include "lyra/lowering/hir_to_mir/integral_literal.hpp"
 #include "lyra/lowering/hir_to_mir/process_lowerer.hpp"
 #include "lyra/lowering/hir_to_mir/runtime_call.hpp"
@@ -31,50 +29,6 @@
 namespace lyra::lowering::hir_to_mir {
 
 namespace {
-
-auto IntegralConstantToInt64(const hir::IntegralConstant& c) -> std::int64_t {
-  if (c.state_kind == hir::IntegralStateKind::kFourState) {
-    throw InternalError(
-        "IntegralConstantToInt64: 4-state literal in integer-delay context");
-  }
-  const std::uint64_t raw = c.value_words[0];
-  if (c.signedness == hir::Signedness::kSigned && c.width < 64U) {
-    const std::uint64_t sign_bit = std::uint64_t{1} << (c.width - 1U);
-    if ((raw & sign_bit) != 0U) {
-      const std::uint64_t fill =
-          ~((std::uint64_t{1} << c.width) - std::uint64_t{1});
-      return static_cast<std::int64_t>(raw | fill);
-    }
-  }
-  return static_cast<std::int64_t>(raw);
-}
-
-auto ResolveDelayDuration(
-    const DelayTimeResolver& resolver, const hir::Expr& duration)
-    -> diag::Result<SimDuration> {
-  if (const auto* primary = std::get_if<hir::PrimaryExpr>(&duration.data)) {
-    if (const auto* int_lit =
-            std::get_if<hir::IntegerLiteral>(&primary->data)) {
-      return resolver.ResolveIntegerDelay(
-          IntegralConstantToInt64(int_lit->value), duration.span);
-    }
-    if (const auto* time_lit = std::get_if<hir::TimeLiteral>(&primary->data)) {
-      return resolver.ResolveTimeLiteral(
-          time_lit->value, time_lit->scale, duration.span);
-    }
-  }
-  return diag::Fail(
-      duration.span, diag::DiagCode::kUnsupportedDelayExpressionForm,
-      "delay durations beyond an integer or time literal are not yet "
-      "supported");
-}
-
-auto ResolveDelayTicks(ProcessLowerer& process, const hir::DelayControl& d)
-    -> diag::Result<SimDuration> {
-  const DelayTimeResolver resolver{process.Resolution()};
-  return ResolveDelayDuration(
-      resolver, process.HirBody().exprs.Get(d.duration));
-}
 
 // LRM 9.4.2.2 `@*`-shaped timed statement: a fresh child scope holding a
 // prepended wait / control statement followed by the lowered body. The four
@@ -190,44 +144,72 @@ auto LowerImplicitEventTimedStmt(
 }
 
 // LRM 9.4.1 `#N body`. The wait lowers to a coroutine-suspending free-function
-// call whose argument vector states the runtime handle, the literal tick count
-// in the enclosing scope's precision, and that scope's precision power
-// (LRM 3.14.2); the runtime scales from precision to the design-global tick
-// (LRM 3.14.3).
+// call whose argument vector states the runtime handle, the amount of time the
+// design asked to wait, and the enclosing scope's time unit and precision
+// powers (LRM 3.14.2); the runtime rounds that amount to the scope's precision
+// (LRM 3.14.1) and scales it to the design-global tick (LRM 3.14.3). The amount
+// is evaluated here, where the statement is reached, so a later write to
+// anything it read does not reach a wait already under way.
+//
+// Which entry carries it follows the amount's own type, because the language
+// reads the same written value differently in each: an integral amount counts
+// whole time units and gives its unknown and negative values meanings of their
+// own, while a real one may name a fraction of a unit. The front end has
+// already refused an amount that is neither (a delay expression must be
+// numeric), so the two together are the whole of what arrives.
 auto LowerDelayTimedStmt(
     ProcessLowerer& process, WalkFrame frame, std::optional<std::string> label,
     const hir::TimedStmt& t, const hir::DelayControl& d)
     -> diag::Result<mir::Stmt> {
   return LowerTimedWaitWrapper(
       process, frame, std::move(label), t.stmt,
-      // NOLINTNEXTLINE(readability-named-parameter): the callback interface
-      // hands us a `WalkFrame` that a delay body has no use for -- the
-      // ambient runtime covers what an event-shaped wait needs the frame
-      // to reach for.
-      [&](mir::Block& child_block, WalkFrame) -> diag::Result<mir::Stmt> {
-        auto ticks_or = ResolveDelayTicks(process, d);
-        if (!ticks_or) return std::unexpected(std::move(ticks_or.error()));
-        const auto& builtins = process.Owner().Unit().builtins;
+      [&](mir::Block& child_block,
+          WalkFrame child_frame) -> diag::Result<mir::Stmt> {
+        auto& unit = process.Owner().Unit();
+        auto duration_or = process.LowerExpr(
+            process.HirBody().exprs.Get(d.duration), child_frame);
+        if (!duration_or) {
+          return std::unexpected(std::move(duration_or.error()));
+        }
+        mir::ExprId duration_id =
+            child_block.exprs.Add(*std::move(duration_or));
+
+        const mir::Type& duration_type =
+            unit.types.Get(child_block.exprs.Get(duration_id).type);
+        const bool is_real = duration_type.IsRealFamily();
+        if (duration_type.Is<mir::ShortRealType>()) {
+          // LRM 6.12.1: `real` and `realtime` are one type, and a `shortreal`
+          // differs from them only in host precision, so the entry takes the
+          // wider and the narrower reshapes into it.
+          duration_id = ConvertToType(
+              unit, child_block, duration_id, unit.builtins.realtime);
+        }
+
         const mir::ExprId runtime_id =
             child_block.exprs.Add(BuildCurrentRuntimeCallExpr(process.Owner()));
-        const mir::ExprId duration_id = BuildIntLiteral(
-            process.Owner().Unit(), child_block,
-            static_cast<std::int64_t>(*ticks_or));
-        const mir::ExprId precision_id = BuildIntLiteral(
-            process.Owner().Unit(), child_block,
+        const mir::ExprId unit_power_id = BuildIntLiteral(
+            unit, child_block,
+            static_cast<std::int64_t>(process.Resolution().unit_power));
+        const mir::ExprId precision_power_id = BuildIntLiteral(
+            unit, child_block,
             static_cast<std::int64_t>(process.Resolution().precision_power));
         const mir::ExprId call_id = child_block.exprs.Add(
             mir::Expr{
                 .data =
                     mir::CallExpr{
                         .callee =
-                            mir::Direct{.target = support::BuiltinFn::kDelay},
-                        .arguments = {runtime_id, duration_id, precision_id}},
-                .type = builtins.void_type});
+                            mir::Direct{
+                                .target = is_real
+                                              ? support::BuiltinFn::kDelayReal
+                                              : support::BuiltinFn::kDelay},
+                        .arguments =
+                            {runtime_id, duration_id, unit_power_id,
+                             precision_power_id}},
+                .type = unit.builtins.void_type});
         const mir::ExprId await_expr_id = child_block.exprs.Add(
             mir::Expr{
                 .data = mir::AwaitExpr{.awaitable = call_id},
-                .type = builtins.void_type});
+                .type = unit.builtins.void_type});
         return mir::Stmt{
             .label = std::nullopt,
             .data = mir::ExprStmt{.expr = await_expr_id}};
@@ -296,14 +278,20 @@ auto LowerWaitStmt(
     return std::unexpected(std::move(cond_or.error()));
   }
   const mir::ExprId cond_id = wrapper.exprs.Add(*std::move(cond_or));
-  const mir::TypeId cond_type = wrapper.exprs.Get(cond_id).type;
 
-  const mir::ExprId not_cond_id = wrapper.exprs.Add(
+  // The loop runs while the condition is not true, and "not true" is decided
+  // after the condition has been reduced to a predicate, never before. A
+  // four-state `!` answers unknown for an unknown operand, and reducing that
+  // answer yields false -- so negating first would run no iteration at all for
+  // exactly the condition LRM 9.4.3 says must block.
+  const mir::ExprId waiting_id = wrapper.exprs.Add(
       mir::Expr{
           .data =
               mir::UnaryExpr{
-                  .op = mir::UnaryOp::kLogicalNot, .operand = cond_id},
-          .type = cond_type});
+                  .op = mir::UnaryOp::kLogicalNot,
+                  .operand = ReduceToCondition(
+                      process.Owner().Unit(), wrapper, cond_id)},
+          .type = process.Owner().Unit().builtins.machine_bool});
 
   const auto& reads = w.sensitivity_list;
 
@@ -316,10 +304,7 @@ auto LowerWaitStmt(
       wrapper.child_scopes.Add(std::move(inner_block));
 
   wrapper.AppendStmt(
-      mir::WhileStmt{
-          .condition =
-              ReduceToCondition(process.Owner().Unit(), wrapper, not_cond_id),
-          .scope = inner_scope_id});
+      mir::WhileStmt{.condition = waiting_id, .scope = inner_scope_id});
 
   const hir::Stmt& body_hir = hir_proc.stmts.Get(w.body);
   auto body_or = process.LowerStmt(body_hir, wrapper_frame);

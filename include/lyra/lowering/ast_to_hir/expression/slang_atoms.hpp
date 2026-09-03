@@ -6,13 +6,11 @@
 #include <slang/ast/Expression.h>
 #include <slang/ast/SemanticFacts.h>
 #include <slang/ast/expressions/Operator.h>
-#include <slang/numeric/Time.h>
 #include <slang/parsing/KnownSystemName.h>
 
 #include "lyra/hir/binary_op.hpp"
 #include "lyra/hir/conversion.hpp"
 #include "lyra/hir/inc_dec_op.hpp"
-#include "lyra/hir/primary.hpp"
 #include "lyra/hir/subroutine_kind.hpp"
 #include "lyra/hir/unary_op.hpp"
 #include "lyra/support/builtin_fn.hpp"
@@ -35,8 +33,6 @@ auto LowerUnaryOp(slang::ast::UnaryOperator op) -> hir::UnaryOp;
 // Throws InternalError if `op` is not one of the four inc/dec variants
 // (callers must dispatch on `slang::ast::OpInfo::isLValue(op)` first).
 auto LowerSlangIncDecOp(slang::ast::UnaryOperator op) -> hir::IncDecOp;
-
-auto LowerTimeUnit(slang::TimeUnit u) -> hir::TimeScale;
 
 auto FromSlangSubroutineKind(slang::ast::SubroutineKind k)
     -> support::SystemSubroutineKind;

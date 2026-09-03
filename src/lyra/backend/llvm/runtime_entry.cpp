@@ -534,6 +534,7 @@ auto EntryNamingOf(support::BuiltinFn fn) -> EntryNaming {
     case support::BuiltinFn::kRunHostCommand:
     case support::BuiltinFn::kRunNullHostCommand:
     case support::BuiltinFn::kDelay:
+    case support::BuiltinFn::kDelayReal:
     case support::BuiltinFn::kWaitAny:
     case support::BuiltinFn::kSimTime:
     case support::BuiltinFn::kSTime:
