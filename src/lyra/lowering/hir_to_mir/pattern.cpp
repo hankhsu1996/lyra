@@ -33,7 +33,6 @@
 #include "lyra/mir/expr.hpp"
 #include "lyra/mir/local.hpp"
 #include "lyra/mir/stmt.hpp"
-#include "lyra/mir/type.hpp"
 #include "lyra/mir/type_id.hpp"
 #include "lyra/mir/unary_op.hpp"
 
@@ -48,27 +47,25 @@ auto SubjectComponent(
     UnitLowerer& owner, mir::Block& block, mir::ExprId subject,
     hir::TypeId subject_type, base::ComponentIndex index) -> mir::ExprId {
   const hir::Type& ty = owner.Hir().types.Get(subject_type);
+  // A struct and a tagged union are reached the same way -- one field of a
+  // structural product, named by position. Only a tagged union is destructured
+  // by a pattern (LRM 12.6): an untagged one has no tag to name the component a
+  // pattern would ask for.
   const auto unpacked_component =
-      [&](const std::vector<hir::UnpackedAggregateField>& fields,
-          mir::ExprData access) -> mir::ExprId {
+      [&](const std::vector<hir::UnpackedAggregateField>& fields)
+      -> mir::ExprId {
     if (index.value >= fields.size()) {
       throw InternalError("SubjectComponent: component index out of range");
     }
     return block.exprs.Add(
-        mir::Expr{
-            .data = std::move(access),
-            .type = owner.TranslateType(fields[index.value].type)});
+        mir::MakeComponentAccessExpr(
+            subject, index, owner.TranslateType(fields[index.value].type)));
   };
   if (const auto* s = ty.As<hir::UnpackedStructType>()) {
-    return unpacked_component(
-        s->fields, mir::TupleGetExpr{.tuple = subject, .index = index});
+    return unpacked_component(s->fields);
   }
-  // Only a tagged union is destructured by a pattern (LRM 12.6): an untagged
-  // one has no tag to name the component a pattern would ask for.
   if (const auto* u = ty.As<hir::UnpackedUnionType>()) {
-    return unpacked_component(
-        u->fields,
-        mir::TaggedGetExpr{.union_value = subject, .tag_index = index});
+    return unpacked_component(u->fields);
   }
   const PackedProjection projection = ProjectPackedAggregate(owner, ty);
   if (index.value >= projection.members.size()) {

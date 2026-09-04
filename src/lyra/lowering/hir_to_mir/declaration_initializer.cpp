@@ -19,7 +19,7 @@ auto IntegrateStaticInitializer(
     const WalkFrame& init_frame, const StaticVarBinding& binding)
     -> diag::Result<void> {
   auto& init_block = *init_frame.current_block;
-  const mir::CompilationUnit& unit = process.Owner().Unit();
+  mir::CompilationUnit& unit = process.Owner().Unit();
   const hir::ProceduralVarDecl& decl = body.procedural_vars.Get(binding.var);
   const mir::TypeId storage_type = process.Owner().TranslateType(decl.type);
 

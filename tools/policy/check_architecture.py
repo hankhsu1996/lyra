@@ -79,6 +79,16 @@ Rules:
         Scope: every .cpp/.hpp under src/lyra and include/lyra, dump writers
                excepted.
 
+  A017  A MIR node kind may not be split into a read form and a write form.
+        An `XRefExpr` alternative standing beside an `XExpr` alternative says
+        that reaching a thing to read it and reaching it to write it are
+        different programs; they are not. Whether an access is read or
+        written is its position in the enclosing expression -- its value
+        category -- which is why every language MIR names as a peer has one
+        node for both, and why a split one leaves each consumer to decide
+        which half it is looking at.
+        Scope: the ExprData and StmtData alternative lists.
+
   A014  Every `DiagCode` enumerator has an entry in the diagnostic registry.
         The registry is a table rather than a switch because it is read in
         both directions -- a code to its name and kind, and a name back to a
@@ -603,6 +613,8 @@ def check_a015(repo_root: Path) -> list[str]:
 
 
 # Rule A016
+REF_NODE_PATTERN = re.compile(r"RefExpr$")
+
 MIR_EXPR_HEADER = "include/lyra/mir/expr.hpp"
 MIR_STMT_HEADER = "include/lyra/mir/stmt.hpp"
 MIR_CONSUMERS = (
@@ -632,6 +644,27 @@ def consumer_text(repo_root: Path, roots: tuple[str, ...]) -> str:
         for path, _ in iter_files(repo_root, root):
             parts.append(path.read_text())
     return "\n".join(parts)
+
+
+def check_a017(repo_root: Path) -> list[str]:
+    errors = []
+    for header, alias in (
+        (MIR_EXPR_HEADER, "ExprData"),
+        (MIR_STMT_HEADER, "StmtData"),
+    ):
+        text = (repo_root / header).read_text()
+        names = set(variant_alternatives(text, alias))
+        for name in sorted(names):
+            plain = REF_NODE_PATTERN.sub("Expr", name)
+            if plain == name or plain not in names:
+                continue
+            errors.append(
+                f"  {header}: A017 '{name}' stands beside '{plain}'; whether "
+                f"an access is read or written is its position, not its node "
+                f"kind, so the two are one node and the target language has "
+                f"one node for them too"
+            )
+    return errors
 
 
 def check_a016(repo_root: Path) -> list[str]:
@@ -1006,6 +1039,14 @@ def run_self_tests() -> bool:
                                  "ExprData"),
         "A016 parser reads only the named alias")
 
+    # A017
+    ok &= expect(
+        REF_NODE_PATTERN.sub("Expr", "UnionGetRefExpr") == "UnionGetExpr",
+        "A017 a Ref form names its plain form")
+    ok &= expect(
+        REF_NODE_PATTERN.sub("Expr", "DerefExpr") == "DerefExpr",
+        "A017 a node merely ending in Expr is not a Ref form")
+
     return ok
 
 
@@ -1028,6 +1069,7 @@ CHECKS = [
     ("A014 DiagCode without a registry entry", check_a014),
     ("A015 backend names a runtime library type", check_a015),
     ("A016 MIR node kind only one consumer reads", check_a016),
+    ("A017 MIR node kind split by read versus write", check_a017),
 ]
 
 

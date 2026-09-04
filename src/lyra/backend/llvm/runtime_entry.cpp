@@ -19,13 +19,14 @@ namespace lyra::backend::llvm_backend {
 namespace {
 
 auto Symbol(std::string_view operation) -> std::string {
-  return std::format("lyra_rt_{}", operation);
+  return std::format("{}{}", kRuntimeSymbolPrefix, operation);
 }
 
 auto Symbol(support::ValueDomain domain, std::string_view operation)
     -> std::string {
   return std::format(
-      "lyra_rt_{}_{}", support::ValueDomainName(domain), operation);
+      "{}{}_{}", kRuntimeSymbolPrefix, support::ValueDomainName(domain),
+      operation);
 }
 
 // The operation's stable spelling. This is an interface contract, not a display
@@ -319,6 +320,19 @@ auto EntryNamingOf(support::BuiltinFn fn) -> EntryNaming {
   // stands for one.
   constexpr std::string_view kCrossesAForeignStack =
       "carries an execution across a stack the runtime does not own";
+  // A value crosses this boundary as a handle a copy may alias, so nothing here
+  // may answer with the part of one: a write through such an answer would be
+  // visible through every copy. What this backend needs instead is the
+  // functional update the part's owner performs, which the lowering builds from
+  // the parts rather than reaching for an entry here.
+  constexpr std::string_view kAnswersWithPartOfAValue =
+      "answers with part of a value rather than its contents";
+  // Reading what a wrapper holds and replacing it reach the storage it stands
+  // for, which this target already names as a place; the lowering realizes them
+  // there rather than asking for an entry, so one site decides how an access
+  // through a wrapper happens and reaching one here means it did not.
+  constexpr std::string_view kReachesStorageAWrapperStandsFor =
+      "reaches the storage a capability wrapper stands for";
 
   switch (fn) {
     case support::BuiltinFn::kElement:
@@ -464,6 +478,15 @@ auto EntryNamingOf(support::BuiltinFn fn) -> EntryNaming {
     // is the representation that net resolves in.
     case support::BuiltinFn::kAttachDriver:
       return NamedByWrapperDomain{};
+
+    case support::BuiltinFn::kLoad:
+    case support::BuiltinFn::kStore:
+      return NotRealized{.shape = kReachesStorageAWrapperStandsFor};
+
+    case support::BuiltinFn::kElementRef:
+    case support::BuiltinFn::kSliceRef:
+    case support::BuiltinFn::kOpenForWrite:
+      return NotRealized{.shape = kAnswersWithPartOfAValue};
 
     case support::BuiltinFn::kEnumFirst:
     case support::BuiltinFn::kEnumLast:

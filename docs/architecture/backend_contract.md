@@ -32,9 +32,11 @@ will hit the same obstruction. The bug is in MIR, not in render.
   - **Type mapping** -- one dispatch per MIR type variant returning a target representation (a
     target-language type literal for C++, a size + an LLVM type for LLVM IR). This is the only entry
     that names a target-language runtime library type.
-  - **Place access** -- one dispatch per MIR type variant returning how a load through a place of
-    that type is realized, how a store through it is, and how it is lent to a callee by reference.
-    This is the only entry that names a runtime library's access protocol.
+  - **Place access** -- one dispatch per MIR type variant returning how the storage behind a place
+    of that type is named as an lvalue, which is what a by-reference binding and the owner of a
+    descending write both compose onto. This is the only entry that names a runtime library's access
+    protocol. Reading what a wrapper holds and replacing the whole of it are calls rather than
+    accesses, so neither is one of its answers.
   - **Value emission** -- the entries that translate MIR expression, statement, member, and body
     nodes into target-language form. They compose mechanical syntactic wrappers around recursive
     renders; they make no decisions about what the program means.
@@ -70,12 +72,21 @@ will hit the same obstruction. The bug is in MIR, not in render.
 
 4. **Place access is one dispatch per MIR type variant, exhaustive over capability wrappers.** MIR
    states that the storage a wrapper represents is reached by dereferencing the wrapper's place
-   (`mir.md` invariant 14); it does not state what reaching it costs in a target. Each backend
-   supplies that from the place's type through a single dispatch, sibling to type mapping, answering
-   three questions for a place of that type: how a load through it is realized, how a store through
-   it is, and how it is lent to a callee that takes it by reference. Value emission asks that
-   dispatch and never inspects the wrapper kind itself. Reading a wrapper's own value, rebinding it,
-   and taking its address name the bare place and reach no protocol, so they have no entry here.
+   (`mir.md` invariant 14); it does not state what that costs in a target. Each backend supplies it
+   from the place's type through a single dispatch, sibling to type mapping, answering one question:
+   how the storage behind a place of that type is named as an lvalue. Two things compose onto that
+   answer -- a by-reference binding, and the owner of a write that descends into the value -- and
+   they are the same step, which is why there is one entry rather than one per consumer. Value
+   emission asks that dispatch and never inspects the wrapper kind itself. Reading a wrapper's own
+   value, rebinding it, and taking its address name the bare place and reach no protocol, so they
+   have no entry here.
+
+   Replacing the whole of what a wrapper holds, and reading it, reach no entry here either, for the
+   opposite reason: each acts on the wrapper rather than naming its storage, so each is a call in
+   MIR and is realized by the same entries that realize every other call. Their target-language
+   spelling comes from where every call's spelling comes from, which is what keeps one runtime
+   method named at one site (invariant 3). A write that descends is not among them: what descends is
+   a designation, and only its owner reaches this dispatch.
 
 5. **Member declaration is (name, type) -- nothing else reaches member render.** A member's
    target-language declaration form is determined by its name and its type alone (the type carries
@@ -159,17 +170,25 @@ you cannot write a mechanical translation rule for it -- if your draft contains 
 produce different LLVM instruction sequences -- the MIR primitive set is incomplete. Fix MIR; render
 then writes itself.
 
-A read of an observable signal is a read of a dereferenced place: the `MemberAccess` reaching the
-wrapper-typed field is the wrapper's place, and dereferencing it names the storage the wrapper
-represents. Render asks the place-access dispatch how a load through a place of that type is
-realized, and composes the result around the recursive render of the place. It does not know the
-wrapper's name, its read method, or which wrapper kind it is -- one dispatch on the type answers all
-three, the same way the type-mapping dispatch answers how to spell the type. A store through the
-same place is the same shape with the store realization, and a partial store is that store applied
-to the designator's updated whole value.
+Reading what a capability wrapper holds, and replacing the whole of it, are both calls, because MIR
+states them as calls: each acts on the wrapper rather than naming its storage. Render composes them
+the way it composes every other call, so each method's spelling comes from the one place every
+runtime entry's spelling comes from, and no access entry writes a second copy of it. Neither render
+knows the wrapper's name or which wrapper kind it is.
 
-Rebinding a wrapper renders as an ordinary assignment to the bare place, reaching no protocol,
-because MIR states rebinding and writing-through as different nodes.
+Writing part of what it holds is a different node, because it is a different operation. It names a
+designation -- an owner place, and a path of selectors into the value the owner holds -- and assigns
+to that, so only the owner reaches the place-access dispatch. How a backend realizes the descent is
+its own choice: descending into the storage in place, or rebuilding the whole value and storing
+that. That choice is a property of a value domain rather than a decision taken per site, and neither
+form is visible above render.
+
+Naming that storage as an lvalue is not a call: it names storage rather than operating on it, and it
+is the one question the place-access dispatch answers. Two things ask it and both compose onto the
+same answer -- a by-reference binding, and the owner of a write that descends.
+
+Rebinding a wrapper renders as an ordinary assignment to the bare place, reaching no protocol and no
+call, because MIR states rebinding and writing-through as different nodes.
 
 A wrapper-typed member's construction follows the same shape. Construction state arrives as ordinary
 MIR primitives in the constructor body (a `CallExpr` to an initialize method on the wrapper, with

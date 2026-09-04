@@ -285,17 +285,13 @@ struct UnionInstr {
   Operand value;
 };
 
-// Names a subvalue within an aggregate value. A `TupleElement` selects a
-// product component by its declaration-order position, carrying no operands
-// because the position is the whole coordinate. A `UnionMember` selects a
-// union's member by the same kind of position but is a distinct selector: a
-// union holds one member at a time, so an update makes the selected member the
-// live one rather than replacing one of several that coexist.
-struct TupleElement {
-  base::ComponentIndex index;
-};
-
-struct UnionMember {
+// Names a subvalue within an aggregate value. A `Component` selects one by its
+// declaration-order position, carrying no operands because the position is the
+// whole coordinate. What selecting it means -- one of several parts that
+// coexist, or the one a union holds at a time, so that an update makes it the
+// live one -- follows from the aggregate's type, the same way the entry that
+// realizes a coordinate step does.
+struct Component {
   base::ComponentIndex index;
 };
 
@@ -314,7 +310,7 @@ struct ContainerSlice {
 };
 
 using AggregateSelector =
-    std::variant<TupleElement, UnionMember, ContainerElement, ContainerSlice>;
+    std::variant<Component, ContainerElement, ContainerSlice>;
 
 // Extracts a subvalue of an aggregate value, named by `selector`. The aggregate
 // is a value, reached by value: the subvalue is copied out, not aliased. This

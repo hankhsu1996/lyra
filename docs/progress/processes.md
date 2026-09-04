@@ -104,6 +104,16 @@ machinery owned by other workstreams; see [Blocked](#blocked).
       subset, including multi-dimensional packed selects and ascending / negative-base ranges (LRM
       11.5.1 direction translation). Compound expressions (concatenation, arithmetic, dynamic index)
       remain rejected -- see Blocked.
+  - [ ] A value-change event control whose operand is an element or field of an unpacked aggregate
+        is accepted and answers wrongly: it wakes on any change to the containing variable, because
+        a waiter's projection is a bit range in the variable's flat bit space and no such range
+        names an element of an aggregate. `@(mem[3])` fires on every write to `mem[4]`, where LRM
+        9.4.2 requires no event when an operand changes without the result changing. Unlike an
+        inferred sensitivity, an explicit event control does not re-evaluate a body afterwards, so
+        the extra wake is the observable answer rather than a cost.
+        [../decisions/owner-transition-and-observation.md](../decisions/owner-transition-and-observation.md)
+        settles the model: detection belongs to the armed observation, which compares its own
+        expression against the baseline it took when it armed.
   - [ ] The `iff` qualifier on an event control (LRM 9.4.2.3): `@(e iff cond)` is rejected.
   - [ ] An edge event control on a non-packed-bit-vector operand, and a value-change event control
         on a non-value operand (LRM 9.4.2): only packed-vector / value operands are accepted.

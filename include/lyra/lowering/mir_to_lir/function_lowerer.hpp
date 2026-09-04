@@ -162,6 +162,14 @@ class FunctionLowerer {
       -> diag::Result<std::vector<lir::Operand>>;
   auto LowerPlace(const mir::Block& block, mir::ExprId id)
       -> diag::Result<lir::Place>;
+  // The storage a capability wrapper stands for. A wrapper that is itself
+  // storage continues the chain that reached it; one that refers to storage
+  // elsewhere opens a new chain at what it refers to. This is the whole of how
+  // an access through a wrapper is realized here, so reading its contents,
+  // replacing them, and reaching a part of them all come through it and none of
+  // them asks the question a second time.
+  auto WrapperContentsPlace(const mir::Block& block, mir::ExprId wrapper)
+      -> diag::Result<lir::Place>;
   // Which member a field access names. A class field names its declaring class,
   // which the receiver's own type does not give -- a class carries what its
   // bases declare as well as what it declares itself, and may redeclare a name
@@ -232,31 +240,29 @@ class FunctionLowerer {
   auto LowerCompoundOperator(
       mir::BinaryOp op, lir::Operand old_value, lir::Operand rhs,
       lir::TypeId type) -> diag::Result<lir::Operand>;
-  // Extracts the designated part's current value; called at most once, and only
+  // Extracts the written part's current value; called at most once, and only
   // by a leaf transform that needs the old value.
   using LeafReader = std::function<lir::Operand()>;
-  // Produces the designated part's new value, given a reader for its current
-  // one and the part's type.
+  // Produces the written part's new value, given a reader for its current one
+  // and the part's type.
   using LeafTransform =
       std::function<diag::Result<lir::Operand>(const LeafReader&, lir::TypeId)>;
-  // The shared realization of every write through a designator: read the
-  // owner's whole value, descend the path, transform the part, rebuild the
-  // whole value outward, store it back. The owner and every coordinate evaluate
-  // exactly once, and the store back through the owner is a single one -- for
-  // an observable owner, one cell write whatever the path's depth.
-  auto LowerProjectionUpdate(
+  // The selector one step names, in LIR's own vocabulary, with whatever
+  // coordinates it carries evaluated here so a compound read and the write-back
+  // share them.
+  auto LowerValuePartSelector(const mir::Block& block, mir::ExprId step)
+      -> diag::Result<lir::AggregateSelector>;
+  // The shared realization of every write that reaches part of a value: read
+  // the owner's whole value, descend the steps, transform the part, rebuild the
+  // whole value outward, store it back. A value crosses to the generated side
+  // as a handle a copy may alias, so it has no interior anything may write
+  // through; what one target realizes by writing the part in place, this one
+  // realizes functionally. The owner and every coordinate evaluate exactly
+  // once, and the store back through the owner is a single one -- for an
+  // observable owner, one cell write whatever the depth.
+  auto LowerValuePartUpdate(
       const mir::Block& block, mir::ExprId target,
       const LeafTransform& make_leaf) -> diag::Result<lir::Operand>;
-  // A write through a designated part of an owner's value (`s.f = x`,
-  // `arr[i] = x`, `a[i].f = x`). The owner's whole value is read, the path is
-  // folded into a functional whole-value update -- a product component a static
-  // value instruction, a container element a runtime-library call -- and the
-  // rebuilt whole value is stored back through the owner, so value semantics
-  // hold and, when the owner is an observable cell, the whole-cell update
-  // fires once whatever the path's depth.
-  auto LowerProjectionAssign(
-      const mir::Block& block, const mir::AssignExpr& assign)
-      -> diag::Result<lir::Operand>;
   // A receiver-mutating value-container method (`arr.delete()`). The container
   // value cannot be mutated in place through a shared handle, so the method is
   // a functional operation whose result is stored back through the receiver's

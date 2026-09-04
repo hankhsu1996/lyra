@@ -3,8 +3,10 @@
 #include <cstddef>
 #include <cstdint>
 #include <filesystem>
+#include <format>
 #include <memory>
 #include <optional>
+#include <set>
 #include <string>
 #include <string_view>
 #include <utility>
@@ -116,9 +118,16 @@ void LowerCoroutines(llvm::orc::LLJIT& jit) {
 // Binds the runtime ABI the generated module calls to the definitions linked
 // into this process. Absolute addresses resolve every generated call without
 // relying on the host's exported dynamic symbol table.
-void DefineRuntimeAbi(llvm::orc::LLJIT& jit) {
+//
+// The names bound are also the answer to what this backend can carry out, so
+// they are returned rather than only defined: an entry's name composes a value
+// domain with an operation, and the pairs the library implements are a subset
+// of the pairs that compose.
+auto DefineRuntimeAbi(llvm::orc::LLJIT& jit) -> std::set<std::string> {
   llvm::orc::SymbolMap symbols;
+  std::set<std::string> published;
   auto add = [&](std::string_view name, auto* fn) {
+    published.emplace(name);
     symbols[jit.getExecutionSession().intern(name)] =
         llvm::orc::ExecutorSymbolDef(
             llvm::orc::ExecutorAddr::fromPtr(fn),
@@ -753,6 +762,35 @@ void DefineRuntimeAbi(llvm::orc::LLJIT& jit) {
       jit.getMainJITDylib().define(
           llvm::orc::absoluteSymbols(std::move(symbols))),
       "define runtime abi");
+  return published;
+}
+
+// The runtime entries a generated module calls that the library does not
+// publish, listed in the order the module names them and empty when it names
+// none. Everything else a module leaves undefined is resolved elsewhere --
+// another unit's generated symbol, a foreign function, the host's allocator --
+// so the runtime entry family is the only one answerable here.
+auto UnpublishedEntries(
+    const llvm::Module& module, const std::set<std::string>& published)
+    -> std::string {
+  std::string unpublished;
+  for (const llvm::Function& fn : module.functions()) {
+    if (!fn.isDeclaration()) {
+      continue;
+    }
+    const std::string name = fn.getName().str();
+    if (!name.starts_with(backend::llvm_backend::kRuntimeSymbolPrefix)) {
+      continue;
+    }
+    if (published.contains(name)) {
+      continue;
+    }
+    if (!unpublished.empty()) {
+      unpublished += ", ";
+    }
+    unpublished += name;
+  }
+  return unpublished;
 }
 
 // Opens the design's DPI-C library to the execution session, so a generated
@@ -1132,7 +1170,7 @@ auto Execute(
 
   auto jit = Unwrap(llvm::orc::LLJITBuilder().create(), "create jit");
   LowerCoroutines(*jit);
-  DefineRuntimeAbi(*jit);
+  const std::set<std::string> published = DefineRuntimeAbi(*jit);
   if (dpi_library.has_value()) {
     DefineForeignSymbols(*jit, *dpi_library);
   }
@@ -1156,6 +1194,21 @@ auto Execute(
       return std::unexpected(std::move(emitted.error()));
     }
     auto owned = std::move(*emitted).Release();
+    // A module may name an entry the library does not publish, because the
+    // naming composes a domain with an operation and not every pair is
+    // implemented. Said here it names the entry and refuses the run; left to
+    // symbol resolution the same absence arrives as a module that could not be
+    // brought up, which reads as a compiler bug rather than as an operation
+    // nobody wrote.
+    const std::string unpublished =
+        UnpublishedEntries(*owned.module, published);
+    if (!unpublished.empty()) {
+      return diag::Fail(
+          diag::DiagCode::kUnsupportedExpressionForm,
+          std::format(
+              "llvm codegen: the runtime library publishes no entry named {}",
+              unpublished));
+    }
     Check(
         jit->addIRModule(
             llvm::orc::ThreadSafeModule(

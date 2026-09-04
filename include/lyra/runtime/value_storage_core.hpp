@@ -29,6 +29,15 @@ class ValueStorageCore {
     return value_;
   }
 
+  // The contents as storage a caller descends into, for a write that reaches
+  // part of them. Taking this reference changes nothing and tells nobody: what
+  // decides an update event is the part written, which only whoever performs
+  // that write knows, so the write is bracketed by the handle the cell hands
+  // out for it rather than by this.
+  [[nodiscard]] auto Storage() noexcept -> T& {
+    return value_;
+  }
+
   // True once the cell carries its declared representation. A `PackedArray` has
   // an explicit uninitialized state fixed at first write; every other value
   // type is usable immediately.
@@ -48,11 +57,12 @@ class ValueStorageCore {
   }
 
   // Overwrites the contents with a value already at the declared
-  // representation, reporting whether the stored value changed per LRM 9.4.2
-  // `===`. A `PackedArray` whose representation does not match the cell's is a
-  // missing upstream conversion, surfaced as a compiler bug rather than
-  // silently reshaping the cell.
-  auto Overwrite(const T& value) -> bool {
+  // representation. A `PackedArray` whose representation does not match the
+  // cell's is a missing upstream conversion, surfaced as a compiler bug rather
+  // than silently reshaping the cell. Whether the contents moved is not
+  // answered here: only whoever is armed to read that answer should pay for it,
+  // and this is the one path a write takes whether or not anything is.
+  void Overwrite(const T& value) {
     if constexpr (std::same_as<T, value::PackedArray>) {
       if (!value_.SameRepresentation(value)) {
         throw InternalError(
@@ -61,9 +71,7 @@ class ValueStorageCore {
             "emitted");
       }
     }
-    const bool changed = !value_.IsBitIdentical(value);
     value_ = value;
-    return changed;
   }
 
  private:

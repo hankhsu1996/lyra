@@ -646,11 +646,8 @@ auto LowerSubroutineCall(
   }
   mir::Block& block = *frame.current_block;
   const mir::ExprId completion = block.exprs.Add(std::move(emitted->call));
-  return diag::Result<mir::Expr>{mir::Expr{
-      .data =
-          mir::TupleGetExpr{
-              .tuple = completion, .index = base::ComponentIndex{}},
-      .type = *callee.result_type}};
+  return diag::Result<mir::Expr>{mir::MakeComponentAccessExpr(
+      completion, base::ComponentIndex{}, *callee.result_type)};
 }
 
 template auto LowerSubroutineCall(

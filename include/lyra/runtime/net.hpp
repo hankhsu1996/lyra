@@ -122,6 +122,15 @@ class ResolvedNet : public Observable {
   void UpdateContribution(
       RuntimeEffects& runtime, std::size_t index, const T& value) {
     ContributionOf(index).value = value;
+    Reresolve(runtime);
+  }
+
+  // Recomputes the resolved value from the contributions as they now stand,
+  // and publishes it if it moved. A driver that wrote its contribution in
+  // place calls this instead of handing one back: the net reads the same
+  // storage either way, and the transition that matters is the resolved
+  // value's, which no driver can see.
+  void Reresolve(RuntimeEffects& runtime) {
     PublishIfChanged(runtime, Resolver::Resolve(contributions_, nondriving_));
   }
 
@@ -181,14 +190,17 @@ class ResolvedNet : public Observable {
 // this handle; the net's contribution storage is never addressed directly, and
 // the net's resolved value is never written at all (LRM 6.5).
 //
-// A source that drives only part of the net drives through `Mutate`, the same
-// partial-write entry a variable cell offers: what it commits is this driver's
-// whole contribution with that part replaced, so the positions it does not
-// drive keep contributing high-impedance and defer to whoever does drive them.
+// A source that drives only part of the net opens the same partial-write
+// bracket a variable cell offers: the write lands in this driver's
+// own contribution and reaches only the positions it names, so the ones it does
+// not drive keep contributing high-impedance and defer to whoever does drive
+// them. The net then re-resolves, which is the only place the resolved value
+// is ever written.
 template <value::NetResolvable T, class Resolver>
 class Driver {
  public:
   using ValueType = T;
+  using TransitionBase = T;
 
   Driver() = default;
   Driver(ResolvedNet<T, Resolver>& net, std::size_t contribution)
@@ -200,22 +212,36 @@ class Driver {
   // because a store through a handle reaches whatever that handle addresses,
   // and what this one addresses is a contribution -- never the net's resolved
   // value.
-  void Set(RuntimeEffects& runtime, const T& value) const {
-    Net().UpdateContribution(runtime, contribution_, value);
+  void Set(const T& value) const {
+    Net().UpdateContribution(current_runtime(), contribution_, value);
   }
 
-  [[nodiscard]] auto Mutate(RuntimeEffects& runtime) const
-      -> ScopedMutation<Driver> {
-    return ScopedMutation<Driver>{runtime, *this};
-  }
-
-  // The `MutationSink` surface: this driver's whole contribution, and the
-  // publish that commits a mutated one.
-  [[nodiscard]] auto MutationBase() const -> T {
+  // This driver's own contribution as it currently stands -- what it publishes
+  // into the resolution, never the resolved value the net arrives at.
+  [[nodiscard]] auto Get() const -> const T& {
     return Net().ContributionOf(contribution_).value;
   }
-  void CommitMutation(RuntimeEffects& runtime, const T& value) const {
-    Set(runtime, value);
+
+  [[nodiscard]] auto Mutate() const -> ScopedMutation<Driver> {
+    return ScopedMutation<Driver>{*this};
+  }
+
+  // The `MutationSink` surface: this driver's own contribution as storage, and
+  // the re-resolution that follows a write to it. What is held from before the
+  // write is the contribution as it stood, because a chain that leaves it
+  // bit-identical leaves the resolution over it unchanged too, and there is
+  // then nothing for the net to redo.
+  [[nodiscard]] auto MutationStorage() const -> T& {
+    return Net().ContributionOf(contribution_).value;
+  }
+  [[nodiscard]] auto CaptureTransitionBase() const -> T {
+    return MutationStorage();
+  }
+  void PublishTransition(const T& before) const {
+    if (before.IsBitIdentical(MutationStorage())) {
+      return;
+    }
+    Net().Reresolve(current_runtime());
   }
 
  private:

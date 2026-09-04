@@ -899,26 +899,11 @@ auto CodeGenFunction::LowerAggregateExtract(
   };
   return std::visit(
       Overloaded{
-          [&](const lir::TupleElement& element) -> diag::Result<llvm::Value*> {
+          [&](const lir::Component& component) -> diag::Result<llvm::Value*> {
             const std::array<llvm::Value*, 2> args{
                 *aggregate, llvm::ConstantInt::get(
                                 llvm::Type::getInt64Ty(module_->Context()),
-                                element.index.value)};
-            return builder_.CreateCall(
-                Entry(
-                    RuntimeSymbol(
-                        support::ValueDomain::kTuple, RuntimeOp::kExtract),
-                    module_->Types().Ptr(), args),
-                args);
-          },
-          [&](const lir::UnionMember& m) -> diag::Result<llvm::Value*> {
-            // Whether the read is the untagged domain's (defaulting a
-            // cross-member read) or the tagged one's (faulting it) follows from
-            // the aggregate's domain, so one shape names both.
-            const std::array<llvm::Value*, 2> args{
-                *aggregate,
-                llvm::ConstantInt::get(
-                    llvm::Type::getInt64Ty(module_->Context()), m.index.value)};
+                                component.index.value)};
             return builder_.CreateCall(
                 Entry(
                     RuntimeSymbol(*domain, RuntimeOp::kExtract),
@@ -977,41 +962,38 @@ auto CodeGenFunction::LowerAggregateUpdate(
   };
   return std::visit(
       Overloaded{
-          [&](const lir::TupleElement& element) -> diag::Result<llvm::Value*> {
+          [&](const lir::Component& component) -> diag::Result<llvm::Value*> {
+            // A union keeps no per-member prototype, so the runtime cannot
+            // recover which domain a raw handle is in and the caller states it
+            // by boxing the replacement in the member's own domain. A product
+            // states its components in its own type, so nothing is boxed there.
+            // Which of the two this is follows from the aggregate's type, the
+            // same way the entry that realizes the write does; and whether that
+            // write activates the member (untagged) or faults a mismatched tag
+            // (tagged) follows from the domain the entry is named in.
+            const lir::Type& aggregate_type =
+                module_->Unit().types.Get(container);
+            llvm::Value* written = *replacement;
+            if (aggregate_type.As<lir::UnionType>() != nullptr ||
+                aggregate_type.As<lir::TaggedUnionType>() != nullptr) {
+              auto member_domain =
+                  UnionMemberDomain(container, component.index.value);
+              if (!member_domain) {
+                return std::unexpected(std::move(member_domain.error()));
+              }
+              const std::array<llvm::Value*, 1> box{*replacement};
+              written = builder_.CreateCall(
+                  Entry(
+                      RuntimeSymbol(*member_domain, RuntimeOp::kValueBox),
+                      module_->Types().Ptr(), box),
+                  box);
+            }
             const std::array<llvm::Value*, 3> args{
                 *aggregate,
                 llvm::ConstantInt::get(
                     llvm::Type::getInt64Ty(module_->Context()),
-                    element.index.value),
-                *replacement};
-            return builder_.CreateCall(
-                Entry(
-                    RuntimeSymbol(
-                        support::ValueDomain::kTuple, RuntimeOp::kUpdate),
-                    module_->Types().Ptr(), args),
-                args);
-          },
-          [&](const lir::UnionMember& m) -> diag::Result<llvm::Value*> {
-            // The member value crosses boxed, so the domain's `update` reads it
-            // in the member's own domain -- which the runtime cannot recover
-            // from a raw handle, because a union keeps no per-member prototype.
-            // Whether the write activates the member (untagged) or faults a
-            // mismatched tag (tagged) follows from the aggregate's domain.
-            auto member_domain = UnionMemberDomain(container, m.index.value);
-            if (!member_domain) {
-              return std::unexpected(std::move(member_domain.error()));
-            }
-            const std::array<llvm::Value*, 1> box{*replacement};
-            llvm::Value* boxed = builder_.CreateCall(
-                Entry(
-                    RuntimeSymbol(*member_domain, RuntimeOp::kValueBox),
-                    module_->Types().Ptr(), box),
-                box);
-            const std::array<llvm::Value*, 3> args{
-                *aggregate,
-                llvm::ConstantInt::get(
-                    llvm::Type::getInt64Ty(module_->Context()), m.index.value),
-                boxed};
+                    component.index.value),
+                written};
             return builder_.CreateCall(
                 Entry(
                     RuntimeSymbol(*domain, RuntimeOp::kUpdate),

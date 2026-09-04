@@ -394,14 +394,13 @@ auto LowerHirAssignmentPatternKeyedExpr(
     const mir::ExprId target = body.exprs.Add(
         mir::Expr{
             .data =
-                mir::ValueProjectionExpr{
-                    .owner = owner,
-                    .path = {mir::ElementSelector{
-                        .operands =
-                            {index_id,
-                             BuildIntLiteral(unit, body, array_ty.dim.left),
-                             BuildIntLiteral(unit, body, array_ty.dim.right)},
-                        .projected_type = element_type}}},
+                mir::CallExpr{
+                    .callee =
+                        mir::Direct{.target = support::BuiltinFn::kElementRef},
+                    .arguments =
+                        {owner, index_id,
+                         BuildIntLiteral(unit, body, array_ty.dim.left),
+                         BuildIntLiteral(unit, body, array_ty.dim.right)}},
             .type = element_type});
     const mir::ExprId assign = body.exprs.Add(
         mir::Expr{
