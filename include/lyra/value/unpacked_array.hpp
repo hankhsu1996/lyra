@@ -127,6 +127,36 @@ struct SliceWindow {
       .base_known = !a.HasUnknown()};
 }
 
+// The zero-based counterpart, for a run-time-sized container whose source
+// coordinate is already its storage ordinal, so no declared range enters: the
+// same endpoint-and-form resolution as above without the rebase. Shared by the
+// monomorphized and the type-erased dynamic array, so neither can drift on what
+// a range selector names.
+[[nodiscard]] inline auto ResolveSliceWindow(
+    const PackedArray& a, const PackedArray& b, const PackedArray& form)
+    -> SliceWindow {
+  const std::int64_t base_coord = a.ToInt64();
+  const std::int64_t extent = b.ToInt64();
+  std::int64_t other = extent;
+  switch (static_cast<SliceForm>(form.ToInt64())) {
+    case SliceForm::kIndexedUp:
+      other = base_coord + extent - 1;
+      break;
+    case SliceForm::kIndexedDown:
+      other = base_coord - extent + 1;
+      break;
+    case SliceForm::kConstant:
+      break;
+  }
+  const std::int64_t lo = base_coord < other ? base_coord : other;
+  const std::int64_t span =
+      base_coord < other ? other - base_coord : base_coord - other;
+  return SliceWindow{
+      .base = lo,
+      .count = static_cast<std::uint32_t>(span + 1),
+      .base_known = !a.HasUnknown()};
+}
+
 // SystemVerilog fixed-size unpacked array (LRM 7.4.2). One C++ container layer
 // per declared unpacked dimension; multi-dim composes as
 // `UnpackedArray<UnpackedArray<...>>`. Mirrors `PackedArray`'s surface for

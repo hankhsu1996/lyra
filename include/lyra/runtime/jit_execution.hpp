@@ -824,6 +824,11 @@ auto lyra_rt_dynarray_concat_spread(const void* array, const void* part)
 auto lyra_rt_dynarray_with_element(
     const void* array, const void* index, void* value) -> void*;
 auto lyra_rt_dynarray_delete(const void* array) -> void*;
+auto lyra_rt_dynarray_slice(
+    const void* array, const void* a, const void* b, const void* form) -> void*;
+auto lyra_rt_dynarray_with_slice(
+    const void* array, const void* a, const void* b, const void* form,
+    const void* replacement) -> void*;
 auto lyra_rt_dynarray_size(const void* array) -> void*;
 auto lyra_rt_dynarray_eq(const void* lhs, const void* rhs) -> void*;
 auto lyra_rt_dynarray_ne(const void* lhs, const void* rhs) -> void*;

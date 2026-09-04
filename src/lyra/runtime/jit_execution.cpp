@@ -2486,6 +2486,23 @@ auto lyra_rt_dynarray_delete(const void* array) -> void* {
   return Own(Read<RuntimeDynamicArray>(array).Delete());
 }
 
+auto lyra_rt_dynarray_slice(
+    const void* array, const void* a, const void* b, const void* form)
+    -> void* {
+  return Own(
+      Read<RuntimeDynamicArray>(array).Slice(
+          Read<PackedArray>(a), Read<PackedArray>(b), Read<PackedArray>(form)));
+}
+
+auto lyra_rt_dynarray_with_slice(
+    const void* array, const void* a, const void* b, const void* form,
+    const void* replacement) -> void* {
+  return Own(
+      Read<RuntimeDynamicArray>(array).WithSlice(
+          Read<PackedArray>(a), Read<PackedArray>(b), Read<PackedArray>(form),
+          Read<RuntimeUnpackedArray>(replacement)));
+}
+
 auto lyra_rt_dynarray_size(const void* array) -> void* {
   return Own(Read<RuntimeDynamicArray>(array).Size());
 }

@@ -508,6 +508,8 @@ void DefineRuntimeAbi(llvm::orc::LLJIT& jit) {
   add("lyra_rt_dynarray_concat_spread", &lyra_rt_dynarray_concat_spread);
   add("lyra_rt_dynarray_with_element", &lyra_rt_dynarray_with_element);
   add("lyra_rt_dynarray_delete", &lyra_rt_dynarray_delete);
+  add("lyra_rt_dynarray_slice", &lyra_rt_dynarray_slice);
+  add("lyra_rt_dynarray_with_slice", &lyra_rt_dynarray_with_slice);
   add("lyra_rt_dynarray_size", &lyra_rt_dynarray_size);
   add("lyra_rt_dynarray_eq", &lyra_rt_dynarray_eq);
   add("lyra_rt_dynarray_ne", &lyra_rt_dynarray_ne);
