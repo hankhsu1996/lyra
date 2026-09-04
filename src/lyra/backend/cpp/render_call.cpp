@@ -37,6 +37,10 @@ auto BuiltinFnCppName(support::BuiltinFn id) -> std::string_view {
       return "AttachDriver";
     case support::BuiltinFn::kSubmitNba:
       return "SubmitNba";
+    case support::BuiltinFn::kSubmitNbaAfter:
+      return "SubmitNbaAfter";
+    case support::BuiltinFn::kSubmitNbaAfterReal:
+      return "SubmitNbaAfterReal";
     case support::BuiltinFn::kSubmitPostponed:
       return "SubmitPostponed";
     case support::BuiltinFn::kSubmitObserved:

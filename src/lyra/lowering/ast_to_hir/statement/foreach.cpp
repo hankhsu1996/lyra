@@ -208,7 +208,7 @@ auto BuildAssociativeLevel(
           .type = int_type,
           .data =
               hir::AssignExpr{
-                  .kind = hir::AssignKind::kBlocking,
+                  .kind = hir::BlockingAssign{},
                   .lhs = more_lhs,
                   .compound_op = std::nullopt,
                   .rhs = walk_call(support::BuiltinFn::kAssocNext)},

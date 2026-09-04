@@ -5,10 +5,10 @@ Date: 2026-07-20 (deferred-check attribution revised 2026-07-24) Status: accepte
 ## Context
 
 Runtime effects (`Diagnostic`, `Files`, `TimeFormat`, `SubmitNba`, `SubmitPostponed`,
-`SubmitObserved`, `ScheduleAtTime`, ...) are declared on `RuntimeEffects`, the narrow surface a
-generated body may reach. The concrete `Runtime` (a `final : public RuntimeEffects`) adds the host
-orchestration methods -- `BindDesign`, `Run` -- that are not visible through the effects view. Every
-emitted body reaches an effect through a MIR builtin call.
+`SubmitObserved`, ...) are declared on `RuntimeEffects`, the narrow surface a generated body may
+reach. The concrete `Runtime` (a `final : public RuntimeEffects`) adds the host orchestration
+methods -- `BindDesign`, `Run` -- that are not visible through the effects view. Every emitted body
+reaches an effect through a MIR builtin call.
 
 The previous shape emitted every access as `(self)->Services()`, where `self` was the callable
 body's receiver. `self.Services()` was a generic `CallExpr` on a services builtin taking `self` as
@@ -85,12 +85,13 @@ Concretely:
    statement, and an `always_comb` / `always_latch` resumed by a transition on what it reads. LRM
    16.4.1 says the same for deferred assertion reports. Reports are therefore appended in the order
    their checks fire, matured together at the Observed region, and no longer flushable once matured.
-   The owning process is recorded as the key a flush erases by, not as the holder the report is
-   stored on -- which is what lets a check reached before any process exists have no owner at all: a
-   static variable's initializer runs ahead of every procedure (LRM 6.8), no flush point can name
-   it, and its report simply survives to the Observed region. Each suspending construct declares
-   whether resuming from it is a flush point, so the resume path never branches on which construct a
-   wait came from.
+   A report is discarded by its own process reaching a flush point and by nothing else, so what ties
+   the two together travels with the report rather than with the region holding it -- the scheduler
+   keeps one uniform shape per region and knows nothing of violation reports. A check reached before
+   any process exists is then simply a report nothing can discard: a static variable's initializer
+   runs ahead of every procedure (LRM 6.8), so no flush point can name it and it survives to the
+   Observed region. Each suspending construct declares whether resuming from it is a flush point, so
+   the resume path never branches on which construct a wait came from.
 
 `self` retains its role in `mir.md` invariant 11: the per-instance handle for instance-method
 bodies. What it loses is its second job as the runtime-access route. The two concerns were
@@ -150,9 +151,9 @@ incidentally coupled under the module-only design; they are semantically indepen
 
 - **A single Runtime god-class, no `RuntimeEffects` split.** Generated code sees the whole
   `Runtime&`; `BindDesign` / `Run` are visible from an effect body. Rejected because ambient reach
-  still leaves a capability-boundary question: an emitted body could call `BindDesign` or manipulate
-  `queues_` if the type does not forbid it. The split has zero runtime cost and makes what generated
-  code may vs may not touch a type-checkable fact.
+  still leaves a capability-boundary question: an emitted body could call `BindDesign` or reach into
+  the scheduler's own queues if the type does not forbid it. The split has zero runtime cost and
+  makes what generated code may vs may not touch a type-checkable fact.
 
 - **Keying the pending report set by the executing scope.** Held while the runtime published an
   ambient scope, on the reasoning that the scope a body runs in is the natural owner of its side

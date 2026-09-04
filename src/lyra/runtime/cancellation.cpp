@@ -14,7 +14,7 @@ void CancellationTarget::Invalidate(RuntimeEffects& effects) {
   // once. An execution that is running or already runnable is not waiting on
   // this target and reaches the check on its own.
   while (Registration* waiter = cancel_waiters_.PopFront()) {
-    effects.ScheduleNextDelta(waiter->activation);
+    effects.Wake(waiter->activation);
   }
 }
 

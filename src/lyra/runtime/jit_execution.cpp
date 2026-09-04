@@ -899,6 +899,22 @@ void lyra_rt_submit_nba(void* runtime, void* closure) {
   static_cast<RuntimeEffects*>(runtime)->SubmitNba(TakeClosure(closure));
 }
 
+void lyra_rt_submit_nba_after(
+    void* runtime, const void* duration, const void* unit_power,
+    const void* precision_power, void* closure) {
+  static_cast<RuntimeEffects*>(runtime)->SubmitNbaAfter(
+      Read<PackedArray>(duration), Read<PackedArray>(unit_power),
+      Read<PackedArray>(precision_power), TakeClosure(closure));
+}
+
+void lyra_rt_submit_nba_after_real(
+    void* runtime, const void* duration, const void* unit_power,
+    const void* precision_power, void* closure) {
+  static_cast<RuntimeEffects*>(runtime)->SubmitNbaAfterReal(
+      Read<Real>(duration), Read<PackedArray>(unit_power),
+      Read<PackedArray>(precision_power), TakeClosure(closure));
+}
+
 void lyra_rt_submit_postponed(void* runtime, void* closure) {
   static_cast<RuntimeEffects*>(runtime)->SubmitPostponed(TakeClosure(closure));
 }

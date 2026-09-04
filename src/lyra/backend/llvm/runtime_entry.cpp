@@ -495,6 +495,8 @@ auto EntryNamingOf(support::BuiltinFn fn) -> EntryNaming {
     case support::BuiltinFn::kTriggered:
     case support::BuiltinFn::kCurrentRuntime:
     case support::BuiltinFn::kSubmitNba:
+    case support::BuiltinFn::kSubmitNbaAfter:
+    case support::BuiltinFn::kSubmitNbaAfterReal:
     case support::BuiltinFn::kSubmitPostponed:
     case support::BuiltinFn::kSubmitObserved:
     case support::BuiltinFn::kFiles:

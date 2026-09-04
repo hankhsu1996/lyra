@@ -7,6 +7,7 @@
 #include <utility>
 
 #include <slang/ast/Expression.h>
+#include <slang/ast/TimingControl.h>
 #include <slang/ast/expressions/AssignmentExpressions.h>
 #include <slang/ast/expressions/MiscExpressions.h>
 #include <slang/ast/expressions/OperatorExpressions.h>
@@ -24,6 +25,40 @@
 
 namespace lyra::lowering::ast_to_hir {
 
+namespace {
+
+// LRM 9.4.5: which intra-assignment timing control the assignment carries, and
+// what it means for when the update happens. A non-blocking delay names the
+// slot the update is scheduled into; a blocking one suspends the procedure,
+// which is a statement rather than an expression, so it is expanded into the
+// equivalent statement sequence before any expression is built.
+auto LowerAssignKind(
+    ProcessLowerer& proc, WalkFrame frame,
+    const slang::ast::AssignmentExpression& as, diag::SourceSpan span)
+    -> diag::Result<hir::AssignKind> {
+  if (as.timingControl == nullptr) {
+    return as.isNonBlocking() ? hir::AssignKind{hir::NonBlockingAssign{}}
+                              : hir::AssignKind{hir::BlockingAssign{}};
+  }
+  if (!as.isNonBlocking()) {
+    throw InternalError(
+        "LowerAssignKind: a blocking assignment carrying an intra-assignment "
+        "timing control reached expression lowering unexpanded");
+  }
+  if (as.timingControl->kind != slang::ast::TimingControlKind::Delay) {
+    return diag::Fail(
+        span, diag::DiagCode::kUnsupportedTimingControlKind,
+        "an event control on a non-blocking assignment is not yet supported");
+  }
+  auto duration = proc.LowerExpr(
+      as.timingControl->as<slang::ast::DelayControl>().expr, frame);
+  if (!duration) return std::unexpected(std::move(duration.error()));
+  return hir::AssignKind{
+      hir::NonBlockingAssign{.delay = frame.Exprs().Add(*std::move(duration))}};
+}
+
+}  // namespace
+
 auto LowerAssignmentExprProc(
     ProcessLowerer& proc, WalkFrame frame,
     const slang::ast::AssignmentExpression& as, diag::SourceSpan span)
@@ -39,8 +74,9 @@ auto LowerAssignmentExprProc(
   auto type_id = unit_lowerer.InternType(*as.type, span);
   if (!type_id) return std::unexpected(std::move(type_id.error()));
 
-  const auto kind = as.isNonBlocking() ? hir::AssignKind::kNonBlocking
-                                       : hir::AssignKind::kBlocking;
+  auto kind_or = LowerAssignKind(proc, frame, as, span);
+  if (!kind_or) return std::unexpected(std::move(kind_or.error()));
+  const hir::AssignKind kind = *std::move(kind_or);
 
   if (!as.op.has_value()) {
     auto rhs_or = proc.LowerExpr(as.right(), frame);

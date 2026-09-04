@@ -144,9 +144,9 @@ D8. There is no registration-target interface. Because the detach in D3 is point
   addresses, so appending a membership must not move the ones already linked.
 - Revoking, cancelling a queued activation, and cancelling a parked one are all one constant-time
   detach. The scheduler is never searched for an activation.
-- Moving a whole set of activations between scheduler queues -- promoting the next delta, or
-  releasing a delay slot when time advances -- is a constant-time relink of one list onto another,
-  not a walk that re-registers each activation.
+- Moving a whole set of activations between scheduler queues -- taking a region's snapshot out
+  before draining it, so that work the drain produces waits for the next pass -- is a constant-time
+  relink of one list onto another, not a walk that re-registers each activation.
 - Releasing a target detaches whatever is still linked to it, so an activation that outlives a
   target at shutdown never revokes through freed storage.
 - Adding a new kind of wait means giving a target a list. It does not mean teaching the scheduler a

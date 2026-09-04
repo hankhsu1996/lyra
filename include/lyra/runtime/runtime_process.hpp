@@ -41,6 +41,13 @@ enum class ProcessTerminationCause : std::uint8_t {
   kKilled,
 };
 
+// One run of violation reports a process has pending (LRM 12.4.2.1). It stands
+// for nothing but its own existence: a report holds it weakly, a flush point
+// retires it, and an expired one is exactly a report that was flushed. This is
+// what lets a report outlive the process that raised it -- termination is not a
+// flush point, so a check that fired before the body ended still matures.
+struct ViolationReportEpoch {};
+
 // A node of the dynamic process lineage (LRM 9.5) and, while its body runs, the
 // owner of the coroutine frame executing it. The two lifetimes are distinct:
 // the frame is released the moment the body terminates, whereas the node
@@ -309,6 +316,22 @@ class RuntimeProcess : public std::enable_shared_from_this<RuntimeProcess> {
   // bridge.
   void MarkResumed();
 
+  // The epoch a violation report raised by this process right now belongs to
+  // (LRM 12.4.2.1), created on first use because most processes raise none.
+  [[nodiscard]] auto CurrentViolationReportEpoch()
+      -> std::shared_ptr<ViolationReportEpoch> {
+    if (violation_report_epoch_ == nullptr) {
+      violation_report_epoch_ = std::make_shared<ViolationReportEpoch>();
+    }
+    return violation_report_epoch_;
+  }
+
+  // LRM 12.4.2.1: reaching a violation report flush point clears this process's
+  // violation report queue, discarding every report still pending.
+  void FlushViolationReports() noexcept {
+    violation_report_epoch_.reset();
+  }
+
   // True when no immediate child is still executing: the whole live set has
   // reached a terminal state, or there were none. Terminated children retained
   // for their own live descendants (LRM 9.6.3) do not count as live. This is
@@ -458,6 +481,9 @@ class RuntimeProcess : public std::enable_shared_from_this<RuntimeProcess> {
   // import in this process's foreign call chain. Empty outside any context
   // import.
   std::vector<Scope*> dpi_scope_chain_;
+  // Held by every violation report this process has pending; null when it has
+  // none, which is also the state a flush point leaves it in.
+  std::shared_ptr<ViolationReportEpoch> violation_report_epoch_;
   ProcessExecutionState execution_state_ = ProcessExecutionState::kCreated;
   ProcessTerminationCause termination_cause_ =
       ProcessTerminationCause::kCompleted;

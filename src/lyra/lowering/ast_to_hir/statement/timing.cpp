@@ -2,17 +2,24 @@
 
 #include <expected>
 #include <optional>
+#include <string>
+#include <string_view>
 #include <utility>
 #include <variant>
 #include <vector>
 
 #include <slang/ast/Statement.h>
 #include <slang/ast/TimingControl.h>
+#include <slang/ast/expressions/AssignmentExpressions.h>
 #include <slang/ast/statements/MiscStatements.h>
+#include <slang/ast/types/Type.h>
 
 #include "lyra/base/internal_error.hpp"
 #include "lyra/diag/diag_code.hpp"
+#include "lyra/hir/expr.hpp"
+#include "lyra/hir/expr_builders.hpp"
 #include "lyra/hir/value_ref.hpp"
+#include "lyra/lowering/ast_to_hir/expression/assignment.hpp"
 #include "lyra/lowering/ast_to_hir/unit_lowerer.hpp"
 
 namespace lyra::lowering::ast_to_hir {
@@ -177,9 +184,13 @@ auto LowerTimingControl(
           .sensitivity_list = *std::move(sensitivity)}};
     }
     case slang::ast::TimingControlKind::RepeatedEvent:
-      return diag::Fail(
-          span, diag::DiagCode::kUnsupportedTimingControlKind,
-          "repeated event control (`repeat (N) @(...)`) is not yet supported");
+      // LRM A.6.5: a repeat event control is only ever an intra-assignment
+      // control -- what prefixes a statement is a delay, an event control, or a
+      // cycle delay -- and the intra-assignment form is expanded into its
+      // repeat loop before it reaches here.
+      throw InternalError(
+          "LowerTimingControl: a repeated event control reached statement "
+          "timing, where the grammar does not put one");
     default:
       return diag::Fail(
           span, diag::DiagCode::kUnsupportedTimingControlKind,
@@ -187,7 +198,113 @@ auto LowerTimingControl(
   }
 }
 
+// The name a held right-hand side carries. LRM 9.4.5 gives it no name of its
+// own, so one that cannot collide with a design's is minted here.
+constexpr std::string_view kHeldValueName = "_lyra_intra_assign";
+
 }  // namespace
+
+auto LowerIntraAssignmentStmt(
+    ProcessLowerer& proc, WalkFrame frame,
+    const slang::ast::AssignmentExpression& as,
+    const slang::ast::Statement& controlled, diag::SourceSpan span)
+    -> diag::Result<hir::Stmt> {
+  auto validate = ValidateAssignableImpl(proc.Owner(), true, as.left());
+  if (!validate) return std::unexpected(std::move(validate.error()));
+  auto type_or = proc.Owner().InternType(*as.type, span);
+  if (!type_or) return std::unexpected(std::move(type_or.error()));
+  const hir::TypeId type = *type_or;
+
+  auto& body = *frame.current_procedural_body;
+  OpenProceduralScope scope{
+      frame.ProceduralScopes().Declare(), hir::ProceduralScopeKind::kBlock,
+      std::nullopt};
+  const WalkFrame inner = frame.WithOpenScope(&scope);
+
+  const hir::ProceduralVarId held = body.procedural_vars.Declare();
+  body.procedural_vars.Define(
+      held, hir::ProceduralVarDecl{
+                .name = std::string{kHeldValueName},
+                .type = type,
+                .lifetime = hir::VariableLifetime::kAutomatic});
+  inner.OpenScope().declarations.push_back(held);
+
+  const auto held_ref = [&] {
+    return inner.Exprs().Add(
+        hir::MakeRefExpr(hir::ProceduralVarRef{.var = held}, type, span));
+  };
+  const auto store = [&](hir::ExprId lhs, hir::ExprId rhs) -> hir::StmtId {
+    const hir::ExprId assign = inner.Exprs().Add(
+        hir::Expr{
+            .type = type,
+            .data =
+                hir::AssignExpr{
+                    .kind = hir::BlockingAssign{},
+                    .lhs = lhs,
+                    .compound_op = std::nullopt,
+                    .rhs = rhs},
+            .span = span});
+    return body.stmts.Add(
+        hir::Stmt{
+            .label = std::nullopt,
+            .data = hir::ExprStmt{.expr = assign},
+            .span = span});
+  };
+  const auto plain = [&](hir::StmtData data) -> hir::StmtId {
+    return body.stmts.Add(
+        hir::Stmt{
+            .label = std::nullopt, .data = std::move(data), .span = span});
+  };
+
+  std::vector<hir::StmtId> statements;
+  statements.push_back(plain(hir::VarDeclStmt{.var = held}));
+
+  auto rhs_or = proc.LowerExpr(as.right(), inner);
+  if (!rhs_or) return std::unexpected(std::move(rhs_or.error()));
+  statements.push_back(
+      store(held_ref(), inner.Exprs().Add(*std::move(rhs_or))));
+
+  // The assignment itself runs under the control, which is what LRM 10.4.1 asks
+  // for: a left side that needs evaluating -- an index, a class handle, a
+  // virtual interface reference -- is evaluated where the control is satisfied,
+  // not where the statement is reached.
+  auto lhs_or = proc.LowerExpr(as.left(), inner);
+  if (!lhs_or) return std::unexpected(std::move(lhs_or.error()));
+  const hir::StmtId assign =
+      store(inner.Exprs().Add(*std::move(lhs_or)), held_ref());
+
+  const auto* repeated =
+      as.timingControl->kind == slang::ast::TimingControlKind::RepeatedEvent
+          ? &as.timingControl->as<slang::ast::RepeatedEventControl>()
+          : nullptr;
+  auto timing = LowerTimingControl(
+      proc, inner, repeated != nullptr ? repeated->event : *as.timingControl,
+      controlled, span);
+  if (!timing) return std::unexpected(std::move(timing.error()));
+
+  if (repeated == nullptr) {
+    statements.push_back(
+        plain(hir::TimedStmt{.timing = *std::move(timing), .stmt = assign}));
+  } else {
+    auto count_or = proc.LowerExpr(repeated->expr, inner);
+    if (!count_or) return std::unexpected(std::move(count_or.error()));
+    const hir::StmtId nothing = plain(hir::EmptyStmt{});
+    const hir::StmtId wait =
+        plain(hir::TimedStmt{.timing = *std::move(timing), .stmt = nothing});
+    statements.push_back(plain(
+        hir::RepeatStmt{
+            .count = inner.Exprs().Add(*std::move(count_or)), .body = wait}));
+    statements.push_back(assign);
+  }
+
+  return hir::Stmt{
+      .label = std::nullopt,
+      .data =
+          hir::BlockStmt{
+              .statements = std::move(statements),
+              .scope = frame.SealScope(std::move(scope))},
+      .span = span};
+}
 
 auto LowerTimedStmt(
     ProcessLowerer& proc, WalkFrame frame, const slang::ast::TimedStatement& ts,

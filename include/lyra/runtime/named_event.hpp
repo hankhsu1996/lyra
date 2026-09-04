@@ -72,12 +72,12 @@ class NamedEvent {
   auto operator=(NamedEvent&&) -> NamedEvent& = delete;
   ~NamedEvent() = default;
 
-  // LRM 15.5.1: `-> e;` records the current simulation time and wakes every
-  // currently-waiting process via the engine's generic scheduling primitive.
+  // LRM 15.5.1: `-> e;` records the time it fired and ends the wait of every
+  // process parked on the event.
   void Trigger(RuntimeEffects& runtime) {
     last_triggered_at_ = runtime.Now();
     for (CoroutineHandle waiter : event_.TakeWaiters()) {
-      runtime.ScheduleNextDelta(waiter);
+      runtime.Wake(waiter);
     }
   }
 

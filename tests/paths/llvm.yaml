@@ -34,6 +34,7 @@
 09_processes/fork_in_task_blocks_the_caller: "storage of this kind is not yet lendable by reference"
 09_processes/named_event_trigger_and_wait: "jit executor: a member of type named event has no storage realization on this backend"
 09_processes/named_event_triggered_state: "jit executor: a member of type named event has no storage realization on this backend"
+09_processes/nonblocking_assignment_event_control: "an event control on a non-blocking assignment is not yet supported"
 09_processes/process_await_waits_for_termination: "an imported runtime-library method call is not yet lowerable to LIR"
 09_processes/process_kill_reaches_the_caller: "an imported runtime-library method call is not yet lowerable to LIR"
 09_processes/process_kill_terminates_descendants: "an imported runtime-library method call is not yet lowerable to LIR"

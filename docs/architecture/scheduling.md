@@ -40,11 +40,20 @@ parks each one on whichever queue the code it just ran asked for. It never inspe
 represents, why it suspended, or what it waits for. A coroutine frame is opaque to it.
 
 Construct semantics live entirely in awaitables. A `co_await` suspends the coroutine and, in
-`await_suspend`, reaches back through `RuntimeServices` to a small fixed set of construct-neutral
-scheduling verbs: enqueue on the next delta, enqueue on the inactive region, enqueue at a future
-time, request that the simulation stop. The verbs name _when_ a handle becomes runnable again, never
-_why_. Distinct constructs -- a delay, an event wait, a task enable -- bottom out in the same verbs,
-and the engine cannot tell them apart.
+`await_suspend`, reaches back to a small fixed set of construct-neutral scheduling verbs. What those
+verbs take is a **placement** -- which time slot, and which region of it -- because that is what an
+LRM 4.4 event is: a time, a region, and the thing to do there. An awaitable places its activation; a
+satisfied wait wakes one into the Active region of the current slot; a spawning construct may adopt
+a coroutine and place it; and a construct may ask that the simulation stop. The verbs name _where
+and when_ a handle becomes runnable again, never _why_. Distinct constructs -- a delay, an event
+wait, a task enable -- bottom out in the same verbs, and the engine cannot tell them apart.
+
+Taking the placement as an argument rather than encoding it in the verb's name is what keeps the set
+complete. A verb per combination covers points of that space and leaves the rest unreachable, and a
+missing combination is invisible, because it is the absence of a name and nothing reports a name
+nobody wrote. A nonblocking assignment carrying a delay wants the NBA region of a future slot; a set
+that can say "a future slot" only about the Active region has nowhere to put it, and says so by
+being silent.
 
 This is the division a host event loop draws: the loop runs its queues and knows nothing of the
 timers, I/O, or callbacks that fill them; the meaning lives in the APIs that enqueue, not in the
@@ -61,10 +70,11 @@ primitive -- add the primitive, do not teach the engine the construct.
 
 ## Deferred work is a closure submit, not a suspension
 
-When a process needs an effect to happen later in the same time slot -- a non-blocking write to a
-signal, a postponed `$strobe` print -- it does not yield. It snapshots its inputs into a closure
-(see `mir.md` for the MIR-level shape) and hands the closure to the engine via a region-specific
-submit call, then keeps running.
+When a process needs an effect to happen later -- a non-blocking write to a signal, a postponed
+`$strobe` print -- it does not yield. It snapshots its inputs into a closure (see `mir.md` for the
+MIR-level shape) and submits the closure to a placement, then keeps running. A submit takes the same
+placement a suspension does, which is what lets a nonblocking assignment carrying a delay reach the
+NBA region of a later slot (LRM 4.4.2.4, 10.4.2) with no second mechanism.
 
 Yield-based alternatives are rejected because they would entangle the deferred effect's commit time
 with the process's resumption schedule. A process that does `q <= d; #5; ...` should not be forced
@@ -77,36 +87,39 @@ region queue, so commit order is the region's, not a function of which signal a 
 ## Region structure
 
 A time slot runs regions in LRM 4.4 order: Preponed, Active, Inactive, NBA, Observed, Reactive,
-ReInactive, ReNBA, Postponed.
+ReInactive, ReNBA, Postponed. That clause's PLI regions are absent, because there is no PLI.
+
+Preponed runs once on entry and Postponed once on exit. Between them the slot repeats one step: take
+the earliest region from Active through ReNBA that has anything pending, run it, and look again.
+Running a region produces work that lands back in the slot -- an NBA commit wakes a process into
+Active, a resumed process submits an NBA -- so the step repeats until nothing between those two
+bounds is left.
 
 ```mermaid
 flowchart TB
-  P[Preponed] --> AG
-  subgraph AG [active group -- iterates as a unit]
+  P[Preponed] --> S
+  subgraph S [scanned in order; the earliest with work runs, then the scan restarts]
     direction LR
-    ACT[Active] --> INA[Inactive] --> NBA
-    NBA -.->|committed writes woke a process| ACT
+    A[Active] --> I[Inactive] --> N[NBA] --> O[Observed] --> R[Reactive] --> RI[ReInactive] --> RN[ReNBA]
   end
-  AG --> OBS[Observed] --> RG
-  subgraph RG [reactive group -- same rule, program blocks]
-    direction LR
-    RE[Reactive] --> REI[ReInactive] --> RNB[ReNBA]
-    RNB -.-> RE
-  end
-  RG --> POST[Postponed]
+  S --> POST[Postponed]
 ```
 
-The dashed edges are the whole point: a process woken by an NBA commit belongs to the slot whose NBA
-woke it, so the group re-runs rather than deferring that process to the next time slot.
+That one step is LRM 4.5's loop. The reference algorithm writes it as moving the earliest nonempty
+region's events into Active and running Active again; running the region where it stands reaches the
+same order, since a region later in the list is reached only once everything before it is empty, and
+whatever it schedules earlier is found first on the next look.
 
-The **active group** (Active, Inactive, NBA) iterates as a unit. Active drains, then Inactive
-promotes; Inactive drains, then NBA commits; if NBA's committed writes wake any sensitivity-bound
-processes, Active runs again. The cycle repeats until all three queues are empty. Without this
-iteration, a process woken by an NBA commit would be deferred to the next time slot, which is
-incorrect -- it belongs to the slot whose NBA woke it.
+Two consequences carry the weight. A process woken by a blocking write runs while the active set
+drains, before the NBA region commits the nonblocking writes issued beside it -- deferring it past
+NBA is the classic wrong answer, because the process then reads values that in the standard's order
+it cannot yet see. And a process woken by an NBA commit belongs to the slot whose NBA woke it, so it
+runs before that slot's Observed region rather than being pushed to the next time slot.
 
-The reactive group (Reactive, ReInactive, ReNBA) iterates by the same rule, for program-block work.
-The two groups are independent of each other.
+The reactive group (Reactive, ReInactive, ReNBA) is reached only when the active group has drained,
+which the one ordering rule already gives. It holds program-block statements, checker code, and the
+action blocks of concurrent assertions; none of those are implemented, so the three regions exist
+and stay empty. Preponed is the same: `#1step` sampling is what fills it.
 
 `#0` delays land in **Inactive**, not Active. A user writing `#0` is asking the engine to let other
 already-pending active work finish first, then come back at this same simulation time. Pushing
@@ -115,13 +128,17 @@ earlier, defeating the intent.
 
 ## `$finish`
 
-`$finish` reaches the engine's stop verb, which sets a stop flag; the time-slot loop then exits
-without running further regions in the in-progress slot. Pending NBA writes for that slot do not
-commit; queued active processes do not resume.
+`$finish` reaches the engine's stop verb, which sets a stop flag. No process resumes after it: the
+flag is read where a process would be entered, so whatever is still parked in the in-progress slot
+is drained without running a statement.
+
+Deferred effects already submitted for that slot do still run, so a nonblocking write issued before
+the `$finish` commits and a `final` procedure can read it. LRM 20.2 says only that `$finish` makes
+the simulator exit and does not say how much of the in-progress slot still happens, so this is a
+choice rather than a requirement -- which is why the corpus does not hold a case for it.
 
 Registered `final` actions then run in registration order. A `$finish` raised from inside a `final`
-aborts the remaining finals. This three-cornered behavior (active shutdown, NBA discard, final
-abort) follows LRM 9.2.3.
+aborts the remaining finals (LRM 9.2.3).
 
 ## Closure capture lifetime
 

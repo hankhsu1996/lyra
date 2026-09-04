@@ -141,7 +141,7 @@ auto LowerDestructuringAssign(
     }
 
     mir::ExprId per_part_expr_id{};
-    if (assign.kind == hir::AssignKind::kBlocking) {
+    if (std::holds_alternative<hir::BlockingAssign>(assign.kind)) {
       const mir::Expr part_assign_expr = BuildStoreExpr(
           process.Owner().Unit(), wrapper, part_lhs_id, rhs_for_part,
           std::nullopt, part_mir_type);
@@ -384,7 +384,7 @@ auto LowerExprStmt(
   }
   if (const auto* assign = std::get_if<hir::AssignExpr>(&inner.data)) {
     if (!assign->compound_op.has_value() &&
-        assign->kind == hir::AssignKind::kBlocking) {
+        std::holds_alternative<hir::BlockingAssign>(assign->kind)) {
       // Peek through an implicit conversion wrapper that slang inserts when
       // the call's return type does not match the LHS type bit-for-bit.
       const hir::Expr* call_carrier = &hir_proc.exprs.Get(assign->rhs);
