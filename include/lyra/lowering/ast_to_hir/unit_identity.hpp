@@ -78,12 +78,17 @@ struct SpecializationKey {
   auto operator==(const SpecializationKey&) const -> bool = default;
 };
 
-// The key of the specialization `body` is, read off the bindings that made it
-// one: its resolved parameters (LRM 6.20, 23.10) and the interface each of its
-// interface ports carries (LRM 25.3). Instances agreeing on all of it share
-// slang's one canonical body and so key alike; instances differing anywhere key
-// apart, because they compile against different types at different positions.
-auto SpecializationKeyOf(const slang::ast::InstanceBodySymbol& body)
+// The key of the specialization `inst` is an application of, read off what its
+// parent fixed for it: its resolved parameters (LRM 6.20, 23.10) and the
+// interface each of its interface ports is connected to (LRM 25.3). Two
+// instances compile alike exactly when every part of this agrees, because
+// anything that differs reaches different types at different positions.
+//
+// Every part is read at the instantiation, which is where a parent fixed it and
+// the only place all of it is stated for one instance. What the frontend chose
+// to elaborate once serves a question about its own work and settles nothing
+// here.
+auto SpecializationKeyOf(const slang::ast::InstanceSymbol& inst)
     -> SpecializationKey;
 
 // The key of a SystemVerilog class specialization (LRM 8.25). Two
@@ -101,12 +106,8 @@ auto SpecializationKeyOf(const slang::ast::ClassType& cls) -> SpecializationKey;
 // same answer across separate compilations with no shared table.
 auto SpecializationName(const SpecializationKey& key) -> std::string;
 
-// The name the specialization `body` is, for a caller that wants the name and
-// not the key it comes from.
-auto SpecializationName(const slang::ast::InstanceBodySymbol& body)
-    -> std::string;
-
-// Resolves the instance to its canonical body and names that specialization.
+// The name the specialization `inst` is an application of, for a caller that
+// wants the name and not the key it comes from.
 auto SpecializationName(const slang::ast::InstanceSymbol& inst) -> std::string;
 
 // The name the class specialization `cls` is, for a caller that wants the name

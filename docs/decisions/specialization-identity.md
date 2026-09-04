@@ -55,7 +55,39 @@ not position (`identity_and_ownership.md`) and a fingerprint captures semantic m
 (`incremental_build.md` inv 3). Two structurally identical bindings encode identically; an arena id,
 which is a unit-local insertion position, is never part of the encoding.
 
-### F4. Generic-language precedent points to injective mangling for a reason that does not bind us
+### F4. A correctness-bearing equivalence may not be borrowed from a component that computes one for another purpose
+
+`specialization_model.md` makes concrete elaboration the correctness baseline and sharing an
+optimization admitted only when proven behavior-preserving. What supplies that proof is the question
+this finding answers, because the frontend computes an equivalence over the same instances -- which
+of them need not be elaborated twice -- and that answer is available for nothing.
+
+It is not a proof. It answers a question about elaboration work rather than about compiled behavior,
+it is free to be coarser or finer than this one, and it may change between releases. Taking it as
+this compiler's answer leaves the baseline in the keeping of another component's optimization, and
+the failure that admits is the intolerable direction: an artifact standing in for an instance whose
+behavior differs from the one it was built for.
+
+So the frontend's grouping is not an input to identity, and the artifact for a specialization
+compiles a body elaborated for an occurrence in it. A frontend that splits more finely than this key
+then costs nothing at all, and one that merges more coarsely costs the elaboration it meant to skip,
+which is the price of the correctness baseline rather than a condition to handle.
+
+The divergence is not hypothetical, and the shape it takes is worth carrying. A module whose
+interface port carries a range, instantiated against two differently parameterized interfaces, is
+marked a duplicate by the frontend while the two reach different types at the same member positions
+-- so the relation that looked safe to borrow was already wrong on a construct ordinary RTL writes,
+which is how a bundle of identical links between blocks is spelled.
+
+### F5. The selections and the body come from the same instantiation
+
+A body's contents are elaborated under some particular set of fixed selections: the types of the
+expressions inside it are the types those selections produce. An artifact is therefore a pair -- the
+selections fixed at an instantiation, and a body elaborated under those selections -- and both
+halves have to come from the same one. An identity computed from one instantiation over a body
+elaborated under another describes nothing that exists, however correct each half is on its own.
+
+### F6. Generic-language precedent points to injective mangling for a reason that does not bind us
 
 C++ (Itanium ABI) and Rust (v0) encode template / generic arguments into an injective mangled symbol
 name. They do so because the name must be demanglable for debuggers and must be self-contained for a
@@ -102,13 +134,26 @@ Rust cannot.
    collision-free, and degrades gracefully on bindings it cannot render. The hash is the
    load-bearing identity.
 
+6. **Every selection is read where the parent fixed it, and the frontend's own grouping is not read
+   at all.** Which instances the frontend elaborated into one body is a classification with a
+   different purpose, so it may inform how much work is done and never which artifact an instance
+   belongs to. An instance whose selections differ from the ones an artifact was built from does not
+   belong to that artifact, whatever the frontend grouped it with.
+
+   **The body an artifact compiles is the one belonging to an instance its key was computed from.**
+   A body elaborated for another application states different types at the same positions, so it is
+   never a substitute; that the frontend elaborated one body for several applications is a statement
+   about its own work and not about which artifact any of them belongs to. Compiling one of the
+   separated sets for all of them is the merging error F4 names.
+
 ## Consequences
 
 - Distinct selections produce distinct names, hence distinct artifacts; the current name-collision
   collapse is fixed, including value parameters of any type (unpacked aggregates included), type
   parameters, and a module bound to different interfaces through one unparameterized header.
-- Two instances agreeing on every selection share one artifact, which is where the frontend also
-  shares one elaborated body, so the two need no adjustment to agree.
+- Two instances agreeing on every selection share one artifact. Which instances the frontend
+  elaborates into one body is a separate relation over the same instances, and neither relation is
+  derivable from the other, so the two are compared rather than assumed to coincide.
 - The hash's only failure mode is collision; a wide content hash makes it not a practical concern,
   and no global view is needed to guarantee that the producer and consumer agree.
 - The deferred dedup optimization reuses the same serializer with a narrower input subset, so it

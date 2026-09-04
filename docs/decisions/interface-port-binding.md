@@ -67,6 +67,13 @@ nothing behind it, and the parent binds it once during elaboration, after the ob
 and before anything observes it. What differs is only the referent -- an object rather than a cell
 -- so the connection installs no driver, arms no reactive edge, and waits on nothing.
 
+Sharing that lifecycle means sharing its precondition, and the module a simulation begins from does
+not meet it. Neither kind of port may be left unconnected -- an interface port because an interface
+is never implicitly instantiated (LRM 23.3.3.4, 25.3), a `ref` port because it aliases a variable
+the instantiating scope names (LRM 23.3.3.2) -- and nothing instantiates a top to connect its ports.
+So a module declaring either is a design element rather than a design, and choosing one as a top is
+refused where the tops are chosen, rather than allowed to reach lowering as a member nothing fills.
+
 ### D3. An interface publishes its whole declared surface; a module publishes its ports
 
 What a unit publishes is what another unit may reach by a name resolved where it compiles. For a

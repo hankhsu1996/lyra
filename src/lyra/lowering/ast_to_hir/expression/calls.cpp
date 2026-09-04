@@ -205,7 +205,7 @@ auto LowerObjectSubroutineCall(
   // Reaching an object is what declares the dependency on the unit it belongs
   // to, so a unit this one never declared has no record here and nothing was
   // promised to compile against.
-  const std::string unit_name = SpecializationName(*body);
+  const std::string unit_name = CompilationUnitName(*body);
   if (unit_lowerer.Signatures().Find(unit_name) == nullptr) {
     return refuse(
         "a subroutine on an instance this unit does not reach is not yet "

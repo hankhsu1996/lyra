@@ -110,10 +110,66 @@ Leaf on_narrow (.b(narrow));  ~   Leaf<Bus<8>> on_narrow{&narrow};
 interface share a name and a source text and nothing else, and neither is substitutable for the
 other.
 
+## What the frontend supplies, and what it does not
+
+The frontend elaborates the design into symbols, and two of them correspond to concepts here:
+
+| This model                                     | Frontend symbol                          |
+| ---------------------------------------------- | ---------------------------------------- |
+| An occurrence of a definition in the hierarchy | an instance                              |
+| The contents elaborated for that occurrence    | that instance's body, one per occurrence |
+| A specialization                               | nothing                                  |
+
+The third row is empty because the frontend generates no code and so never has to answer how many
+artifacts a definition compiles to. What it does answer, for its own traversal, is whether one body
+duplicates another closely enough that visiting it again would be wasted work, and it records that
+as a pointer from the second occurrence to the first one's body.
+
+That pointer is bookkeeping about elaboration work. It has the same shape as the question this model
+answers -- which occurrences may share -- and it is a different relation, computed for a different
+purpose, free to be coarser or finer. `front-end-semantic-boundary.md` establishes that a semantic
+fact the frontend resolved is translated here rather than re-derived; the frontend's account of its
+own work is not such a fact, and translating it puts a correctness decision in the keeping of an
+optimization.
+
+```mermaid
+flowchart TB
+  subgraph FE["frontend symbols"]
+    direction TB
+    N["occurrence A"]
+    W["occurrence B"]
+    BN["body elaborated for A"]
+    BW["body elaborated for B"]
+    N --> BN
+    W --> BW
+    W -. "duplicate marker, when the frontend sets one" .-> BN
+  end
+  subgraph SP["specializations, computed here"]
+    direction TB
+    S1["definition + A's arguments"]
+    S2["definition + B's arguments"]
+  end
+  N ==> S1
+  W ==> S2
+  S1 --> A1["artifact, compiling A's body"]
+  S2 --> A2["artifact, compiling B's body"]
+```
+
+Each occurrence has a body of its own, elaborated under what its own parent fixed. The heavy arrows
+are this model: an occurrence belongs to the specialization its arguments say it does, and the
+artifact for that specialization compiles a body elaborated for an occurrence in it.
+
+The dotted arrow is drawn to be ignored. Whether the frontend sets it, and whether where it sets it
+coincides with where the heavy arrows meet, are both properties of the frontend's own traversal, and
+this model reads the same either way -- which is what makes it a model rather than a restatement of
+what the frontend happened to do.
+
 ## Owns
 
 - The definition of a specialization: a compilation unit together with the set of inputs that change
   compiled code shape.
+- The correspondence between this model and the frontend's symbol graph, including which of its
+  records are inputs here and which are not.
 - The classification of parameters into code-shape-affecting inputs and constructor/config inputs.
 - The rule that one specialization produces one compile-time artifact, shared by every instance that
   matches.
@@ -155,7 +211,13 @@ other.
 7. **Specialization keys are stable and deterministic.** Given a compilation unit and its
    code-shape-affecting inputs, the specialization key is fully determined. Keys do not depend on
    traversal order, instance enumeration, or the order in which instances are encountered.
-8. **Producer and consumer derive the identity independently and agree.** A unit's own identity and
+8. **A specialization is computed from occurrences, and the artifact compiles a body elaborated for
+   one of them.** Every argument is read where a parent fixed it, which is the occurrence. The body
+   an artifact compiles is one elaborated under those same arguments, so what it was named for and
+   what it compiles against are one application; a body elaborated for a different application
+   states different types at the same positions. The frontend's record that two bodies duplicate
+   each other is an input to neither half.
+9. **Producer and consumer derive the identity independently and agree.** A unit's own identity and
    the identity a parent means when it instantiates that unit are computed from the same inputs by
    the same function, with no table between them -- which is what lets units compile in any order
    and in isolation. A name is how that identity crosses the boundary; the identity is what decides
@@ -180,6 +242,10 @@ other.
 - Using runtime-only state (counter initial values, enable flags, sizes that the runtime constructor
   handles) as part of the specialization key.
 - Specialization keys derived from instance path, instance ordinal, or instance enumeration.
+- Deriving a specialization, or which artifact an occurrence belongs to, from the frontend's record
+  that two bodies duplicate each other. Its subject is whether elaboration must be repeated, and a
+  relation of the same shape computed for another purpose is not evidence about compiled behavior.
+- Compiling, for one specialization, a body elaborated for an occurrence outside it.
 - An identity stored as the name it renders to, so that two applications are told apart by comparing
   renderings. A name drops whatever the target it is written for recovers by other means; an
   identity may drop nothing. Where the two are one value, the day they disagree is silent.

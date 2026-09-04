@@ -72,8 +72,12 @@ auto Compile(
       *result.artifacts.parse->compilation,
       result.artifacts.parse->source_mapper, sensitivity_analyzer,
       policy.assertions);
-  result.artifacts.top_unit_names = lowering::ast_to_hir::TopLevelUnitNames(
-      *result.artifacts.parse->compilation);
+  auto top_unit_names = lowering::ast_to_hir::TopLevelUnitNames(facts);
+  if (!top_unit_names) {
+    sink.Report(std::move(top_unit_names.error()));
+    return result;
+  }
+  result.artifacts.top_unit_names = *std::move(top_unit_names);
 
   // Step 1: lower the whole compilation to a flat set of self-contained HIR
   // units -- every package, then every module body -- each tagged with its

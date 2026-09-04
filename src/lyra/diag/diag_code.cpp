@@ -102,6 +102,11 @@ constexpr std::array kEntries{
             .name = "unsupported_conversion_form"}},
 
     std::pair{
+        DiagCode::kErrorTopLevelPortMustBeConnected,
+        DiagCodeInfo{
+            .kind = DiagKind::kError,
+            .name = "top_level_port_must_be_connected"}},
+    std::pair{
         DiagCode::kErrorCaseEqualityOnRealOperand,
         DiagCodeInfo{
             .kind = DiagKind::kError, .name = "case_equality_on_real_operand"}},

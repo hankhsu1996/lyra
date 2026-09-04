@@ -1,16 +1,24 @@
+#include <cstdint>
+#include <expected>
+#include <format>
 #include <memory>
+#include <optional>
 #include <string>
+#include <string_view>
 #include <unordered_map>
 #include <utility>
 #include <vector>
 
 #include <slang/ast/ASTVisitor.h>
 #include <slang/ast/Compilation.h>
+#include <slang/ast/SemanticFacts.h>
 #include <slang/ast/symbols/CompilationUnitSymbols.h>
 #include <slang/ast/symbols/InstanceSymbols.h>
+#include <slang/ast/symbols/PortSymbols.h>
 #include <slang/ast/symbols/SubroutineSymbols.h>
 
 #include "lyra/base/internal_error.hpp"
+#include "lyra/diag/diag_code.hpp"
 #include "lyra/diag/diagnostic.hpp"
 #include "lyra/hir/compilation_unit.hpp"
 #include "lyra/hir/unit_signatures.hpp"
@@ -21,6 +29,17 @@
 namespace lyra::lowering::ast_to_hir {
 
 namespace {
+
+// A unit to compile: the body it compiles, and the name its specialization is
+// known by. The body belongs to an instance that name was computed from, so
+// what the unit compiles against and what it was named for are one application
+// of a definition. A body the frontend elaborated for a different application
+// states different types at the same positions, which is a unit nothing in the
+// design asked for.
+struct CollectedUnit {
+  const slang::ast::InstanceBodySymbol* body;
+  std::string name;
+};
 
 // Collects the distinct units reachable from the tops. slang owns the
 // structural descent: visiting an instance recurses into its body, and every
@@ -36,19 +55,23 @@ namespace {
 // instance, but that resolution is settled per instance at construction and
 // never inside the unit, so the unit itself is the same.
 //
+// Descending reaches each occurrence's own body, so a child is collected under
+// what its own parent fixed for it. Descending happens once per key rather than
+// once per occurrence, because an occurrence whose key is already held stops
+// here, so reaching every body costs nothing beyond what telling the
+// specializations apart requires.
+//
 // Two keys reaching one name would silently make two units into one, so the
 // name a unit is known by is checked against the key it came from rather than
 // standing in for it.
-struct UnitCollector
-    : slang::ast::ASTVisitor<UnitCollector, slang::ast::VisitFlags::Canonical> {
+struct UnitCollector : slang::ast::ASTVisitor<UnitCollector> {
   std::unordered_map<std::string, SpecializationKey> seen;
-  std::vector<const slang::ast::InstanceBodySymbol*> order;
+  std::vector<CollectedUnit> order;
 
   void handle(const slang::ast::InstanceSymbol& inst) {
-    const auto* canonical = inst.getCanonicalBody();
-    const auto& body = canonical != nullptr ? *canonical : inst.body;
-    SpecializationKey key = SpecializationKeyOf(body);
-    const auto [entry, fresh] = seen.try_emplace(SpecializationName(key), key);
+    SpecializationKey key = SpecializationKeyOf(inst);
+    std::string name = SpecializationName(key);
+    const auto [entry, fresh] = seen.try_emplace(name, key);
     if (!fresh) {
       if (entry->second != key) {
         throw InternalError(
@@ -57,13 +80,13 @@ struct UnitCollector
       }
       return;
     }
-    order.push_back(&body);
+    order.push_back(CollectedUnit{.body = &inst.body, .name = std::move(name)});
     visitDefault(inst);
   }
 };
 
-auto CollectUnitBodies(const LowerCompilationFacts& facts)
-    -> std::vector<const slang::ast::InstanceBodySymbol*> {
+auto CollectUnits(const LowerCompilationFacts& facts)
+    -> std::vector<CollectedUnit> {
   const auto& root = facts.Compilation().getRoot();
   UnitCollector collector;
   for (const auto* top : root.topInstances) {
@@ -142,20 +165,63 @@ auto CollectCompilationUnits(const LowerCompilationFacts& facts)
   return units;
 }
 
+// The two port kinds IEEE 1800 forbids leaving unconnected. Every other
+// direction has a defined meaning with no connection -- an input takes its
+// declared default and an output drives nothing -- so only these two decide
+// whether a module can stand alone.
+enum class PortConnectionRule : std::uint8_t { kInterfacePort, kRefPort };
+
+struct PortRequiringConnection {
+  const slang::ast::Symbol* port;
+  PortConnectionRule rule;
+};
+
+auto FindPortRequiringConnection(const slang::ast::InstanceBodySymbol& body)
+    -> std::optional<PortRequiringConnection> {
+  for (const auto* port : body.getPortList()) {
+    if (port->kind == slang::ast::SymbolKind::InterfacePort) {
+      return PortRequiringConnection{
+          .port = port, .rule = PortConnectionRule::kInterfacePort};
+    }
+    const slang::ast::ArgumentDirection direction =
+        port->kind == slang::ast::SymbolKind::MultiPort
+            ? port->as<slang::ast::MultiPortSymbol>().direction
+            : port->as<slang::ast::PortSymbol>().direction;
+    if (direction == slang::ast::ArgumentDirection::Ref) {
+      return PortRequiringConnection{
+          .port = port, .rule = PortConnectionRule::kRefPort};
+    }
+  }
+  return std::nullopt;
+}
+
+auto WhyItMustBeConnected(PortConnectionRule rule) -> std::string_view {
+  switch (rule) {
+    case PortConnectionRule::kInterfacePort:
+      return "an interface port cannot be left unconnected (LRM 23.3.3.4)";
+    case PortConnectionRule::kRefPort:
+      return "a 'ref' port cannot be left unconnected (LRM 23.3.3.2)";
+  }
+  throw InternalError(
+      "WhyItMustBeConnected: a port connection rule the language does not "
+      "state");
+}
+
 }  // namespace
 
 auto LowerCompilationToHir(const LowerCompilationFacts& facts)
     -> diag::Result<HirCompilation> {
   const auto packages = CollectPackages(facts);
   const auto compilation_units = CollectCompilationUnits(facts);
-  const auto bodies = CollectUnitBodies(facts);
+  const auto units_to_compile = CollectUnits(facts);
   const auto export_names = CollectForeignExportNames(facts);
   const LoweringFacts unit_facts(
       facts.SourceMapper(), facts.Sensitivity(), export_names,
       facts.AssertionPolicy());
 
   std::vector<std::unique_ptr<UnitLowerer>> lowerers;
-  lowerers.reserve(packages.size() + compilation_units.size() + bodies.size());
+  lowerers.reserve(
+      packages.size() + compilation_units.size() + units_to_compile.size());
   for (const auto* package : packages) {
     lowerers.push_back(
         std::make_unique<UnitLowerer>(
@@ -171,11 +237,10 @@ auto LowerCompilationToHir(const LowerCompilationFacts& facts)
             unit_facts, *cu, CompilationUnitName(*cu),
             hir::UnitRole::kNamespace));
   }
-  for (const auto* body : bodies) {
+  for (const CollectedUnit& unit : units_to_compile) {
     lowerers.push_back(
         std::make_unique<UnitLowerer>(
-            unit_facts, *body, SpecializationName(*body),
-            hir::UnitRole::kObjectRoot));
+            unit_facts, *unit.body, unit.name, hir::UnitRole::kObjectRoot));
   }
 
   // Every unit declares before any unit lowers a body, because a body may
@@ -208,12 +273,27 @@ auto LowerCompilationToHir(const LowerCompilationFacts& facts)
       .units = std::move(units), .signatures = std::move(signatures)};
 }
 
-auto TopLevelUnitNames(slang::ast::Compilation& compilation)
-    -> std::vector<std::string> {
-  const auto& root = compilation.getRoot();
+auto TopLevelUnitNames(const LowerCompilationFacts& facts)
+    -> diag::Result<std::vector<std::string>> {
+  const auto& root = facts.Compilation().getRoot();
   std::vector<std::string> names;
   names.reserve(root.topInstances.size());
   for (const auto* inst : root.topInstances) {
+    if (const auto required = FindPortRequiringConnection(inst->body)) {
+      return std::unexpected(
+          diag::Make(
+              facts.SourceMapper().PointSpanOf(required->port->location),
+              diag::DiagCode::kErrorTopLevelPortMustBeConnected,
+              std::format(
+                  "'{}' cannot be a simulation top because nothing "
+                  "instantiates a top to connect its ports, and {}",
+                  inst->name, WhyItMustBeConnected(required->rule)))
+              .WithNote(
+                  std::format(
+                      "instantiate '{}' from a module that connects this port, "
+                      "and make that module the top",
+                      inst->name)));
+    }
     names.emplace_back(SpecializationName(*inst));
   }
   return names;

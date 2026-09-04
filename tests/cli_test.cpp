@@ -405,6 +405,59 @@ TEST(LyraDesignManifest, RefusesWhatADesignCannotDeclare) {
   }
 }
 
+// An interface port (LRM 23.3.3.4) and a `ref` port (LRM 23.3.3.2) may not be
+// left unconnected, and a top's ports are connected to nothing, so a module
+// declaring either is a design element and not a design. Every name inside such
+// a module still resolves, which is why analysis answers and building a design
+// does not.
+//
+// Both forms are here because one front-end option admits both, and that option
+// is what the shape needs to elaborate at all -- so no source file alone
+// reaches it and the corpus cannot state it.
+TEST(LyraTopSelection, RefusesATopWhosePortNeedsAnInstantiation) {
+  const auto lyra = ResolveLyra();
+  ASSERT_TRUE(std::filesystem::exists(lyra)) << lyra.string();
+  auto tmp_or = MakeScratchDir();
+  ASSERT_TRUE(tmp_or.has_value()) << tmp_or.error();
+
+  struct Refusal {
+    std::string_view name;
+    std::string_view body;
+    std::string_view expected;
+  };
+  static constexpr std::array<Refusal, 2> kRefusals = {
+      {{.name = "iface.sv",
+        .body = "interface Bus;\n"
+                "  logic [7:0] data;\n"
+                "endinterface\n"
+                "module Dut(Bus b);\n"
+                "  initial $display(\"%0d\", b.data);\n"
+                "endmodule\n",
+        .expected = "an interface port cannot be left unconnected"},
+       {.name = "ref.sv",
+        .body = "module Dut(ref int x);\n"
+                "  initial x = 7;\n"
+                "endmodule\n",
+        .expected = "a 'ref' port cannot be left unconnected"}}};
+
+  for (const auto& refusal : kRefusals) {
+    const auto source = *tmp_or / refusal.name;
+    std::ofstream(source) << refusal.body;
+    const auto args =
+        std::format("--allow-toplevel-iface-ports '{}'", source.string());
+
+    const auto checked = RunLyraFrom(lyra, *tmp_or, "check " + args);
+    EXPECT_EQ(checked.exit_code, 0)
+        << refusal.name << ": " << checked.stderr_text;
+
+    const auto lowered = RunLyraFrom(lyra, *tmp_or, "dump hir " + args);
+    EXPECT_EQ(lowered.exit_code, 1)
+        << refusal.name << ": " << lowered.stderr_text;
+    EXPECT_NE(lowered.stderr_text.find(refusal.expected), std::string::npos)
+        << refusal.name << ": " << lowered.stderr_text;
+  }
+}
+
 // A command that names nothing says so, and says enough to act on. The two
 // ways of arriving there look identical without that: nothing declared
 // anywhere, or a declaration that itself named no sources -- and the

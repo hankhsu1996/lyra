@@ -546,7 +546,7 @@ auto UnitLowerer::PublishedRouteTarget(
   if (body == nullptr) return std::nullopt;
 
   const hir::UnitSignature* signature =
-      Signatures().Find(SpecializationName(*body));
+      Signatures().Find(CompilationUnitName(*body));
   if (signature == nullptr || !signature->instance_class.has_value()) {
     return std::nullopt;
   }

@@ -30,9 +30,11 @@ class ConsumedSignatures {
     return it == by_name_.end() ? nullptr : it->second;
   }
 
-  // What the unit an instance is built from publishes. Instantiating a unit is
-  // how a dependency on it gets declared, so its signature is always in reach
-  // and the absence is a compiler bug rather than a case a caller handles.
+  // What the unit an instance is built from publishes. Every instance the
+  // design holds belongs to a scope the design compiles, and compiling a scope
+  // compiles the units it instantiates, so an instantiated name is always among
+  // these and the absence is a compiler bug rather than a case a caller
+  // handles.
   [[nodiscard]] auto Instantiated(const std::string& unit_name) const
       -> const UnitSignature& {
     const UnitSignature* signature = Find(unit_name);

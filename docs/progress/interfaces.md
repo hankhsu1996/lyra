@@ -47,6 +47,9 @@ This workstream reasons from these architecture docs and does not restate them:
 - `../decisions/instance-array-multiplicity.md` -- a declaration standing for several objects is one
   member whose type carries the multiplicity, which is what an interface port carrying a range is
   over a borrowed pointer.
+- `../decisions/specialization-identity.md` -- which interface a port carries is one of the
+  selections a unit's identity is made of, read where the parent fixed it, so two connections naming
+  different interfaces are two units and the frontend's own grouping of instances decides neither.
 
 Stage B onward depends on the workstream tracked in `unit-signature.md` under this directory. An
 interface exists to be written against, so its members are its signature; reaching them through a
@@ -148,6 +151,13 @@ B  The interface port
       instance belonging to whichever outer one the port was bound to, so the reach is the port's
       and not a name on the elaborated hierarchy -- which is why it refuses today rather than
       resolving to the instance one binding happens to name.
+- [x] B9 -- Two instantiations of one module whose interface ports carry different interfaces
+      compile to distinct units, at any multiplicity. What a port carries is settled by the
+      connection (LRM 25.3), so a port declared with a range settles it exactly as one without a
+      range does, and a module reached through two different interfaces is two members of a family
+      rather than one unit serving both. Each compiles against the interface its own connection
+      named, so a member reached through the port is the one that interface declares at that
+      position.
 
 ### Stage C -- Modports
 
@@ -263,6 +273,13 @@ elaborates. That form is refused, and it is tracked with the hierarchical-refere
 - `defparam` reaching a parameter of an interface instance or its hierarchy. LRM 25.3 and 25.9 both
   carve out restrictions for it; `defparam` itself is unsupported, so the restrictions have nothing
   to constrain.
+- An interface port on the module a simulation is run from. An interface port may not be left
+  unconnected (LRM 23.3.3.4) and an interface is never implicitly instantiated (LRM 25.3), so
+  nothing instantiates a top to connect one and the simulation has nowhere to begin. The module
+  itself is supported, and is reached by instantiating it from one that owns the interface. Checking
+  such a module reports what it always did; running or emitting one is refused with a diagnostic. A
+  `ref` port is refused at a top under the same rule and is not particular to interfaces, so
+  `hierarchy.md` carries it.
 - Assertions, properties, sequences, and coverage declared inside an interface. They are legal
   interface items, and each follows its own workstream: what an interface adds is only that they
   appear in a unit of this kind.
