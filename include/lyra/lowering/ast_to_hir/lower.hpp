@@ -75,7 +75,12 @@ auto LowerCompilationToHir(const LowerCompilationFacts& facts)
 // A top-level block is an auto-promoted, uninstantiated module. These names
 // are a subset of the compiled units: a unit reached only through
 // instantiation is compiled but is not a top.
-auto TopLevelUnitNames(slang::ast::Compilation& compilation)
-    -> std::vector<std::string>;
+//
+// A top is where the design begins, so nothing instantiates it and its ports
+// are connected to nothing. Two kinds of port may not be left unconnected -- an
+// interface port (LRM 23.3.3.4) and a `ref` port (LRM 23.3.3.2) -- so a module
+// declaring either is a design element and not a design.
+auto TopLevelUnitNames(const LowerCompilationFacts& facts)
+    -> diag::Result<std::vector<std::string>>;
 
 }  // namespace lyra::lowering::ast_to_hir

@@ -26,6 +26,7 @@
 
 #include "lyra/base/internal_error.hpp"
 #include "lyra/base/overloaded.hpp"
+#include "lyra/lowering/ast_to_hir/connected_interface.hpp"
 
 namespace lyra::lowering::ast_to_hir {
 
@@ -115,12 +116,11 @@ auto TypeIdentity(const slang::ast::Type& type) -> std::string {
   }
 }
 
-// What one parameter was fixed to, on the same value/type split slang uses to
-// decide canonical-body equivalence (ParameterSymbolBase::allMatching). The
-// parameter arrives as its concrete Symbol so this serves both spaces slang
-// exposes bindings through -- a module body's ParameterSymbolBase span
-// (`.symbol` per entry) and a class specialization's genericParameters (a
-// Symbol span).
+// What one parameter was fixed to. A parameter is fixed to a value or to a type
+// (LRM 6.20.2, 6.20.3), and that is the whole of the split. The parameter
+// arrives as its concrete Symbol so this serves both spaces the frontend
+// exposes bindings through -- a module body's parameter list and a class
+// specialization's generic parameters.
 auto ParameterInput(const slang::ast::Symbol& symbol) -> SpecializationInput {
   if (symbol.kind == slang::ast::SymbolKind::Parameter) {
     return SpecializationInput{
@@ -141,22 +141,33 @@ auto ParameterInput(const slang::ast::Symbol& symbol) -> SpecializationInput {
 // that interface instantiates is. Everything reached through the port takes its
 // types and positions from there, so two instantiations bound to different
 // interfaces build different objects and are different units, exactly as two
-// parameter bindings are. This is the same axis slang splits a module body on,
-// so a body it did not share keys apart here. A modport narrows what the port
-// reaches (LRM 25.5), so it belongs to the same answer.
-auto InterfacePortInput(const slang::ast::InterfacePortSymbol& port)
+// parameter bindings are. A modport narrows what the port reaches (LRM 25.5),
+// so it belongs to the same answer.
+auto InterfacePortInput(const slang::ast::PortConnection& connection)
     -> SpecializationInput {
-  const auto [connected, modport] = port.getConnection();
-  const auto* instance = connected == nullptr
-                             ? nullptr
-                             : connected->as_if<slang::ast::InstanceSymbol>();
+  const auto [instance, modport] =
+      ConnectedInterfaceOf(connection.getIfaceConn());
   return SpecializationInput{
-      .name = std::string{port.name},
+      .name = std::string{connection.port.name},
       .kind = FixedInterface{
           .unit_name = instance == nullptr ? std::string{}
                                            : SpecializationName(*instance),
           .modport =
               modport == nullptr ? std::string{} : std::string{modport->name}}};
+}
+
+// The instantiation a body was elaborated for. A body is what one application
+// of a definition produced and states no bindings apart from that application,
+// so it belongs to exactly one and is never asked what it is a specialization
+// of on its own.
+auto InstantiationOf(const slang::ast::InstanceBodySymbol& body)
+    -> const slang::ast::InstanceSymbol& {
+  if (body.parentInstance == nullptr) {
+    throw InternalError(
+        "InstantiationOf: a body is elaborated for an application of a "
+        "definition, so one that belongs to none was never built");
+  }
+  return *body.parentInstance;
 }
 
 // The generate blocks (LRM 27.6) between a declaration and the compilation unit
@@ -202,17 +213,16 @@ auto KeyBytes(const SpecializationKey& key) -> std::string {
 
 }  // namespace
 
-auto SpecializationKeyOf(const slang::ast::InstanceBodySymbol& body)
+auto SpecializationKeyOf(const slang::ast::InstanceSymbol& inst)
     -> SpecializationKey {
   SpecializationKey key{
-      .definition = std::string{body.getDefinition().name}, .inputs = {}};
-  for (const auto* param : body.getParameters()) {
+      .definition = std::string{inst.getDefinition().name}, .inputs = {}};
+  for (const auto* param : inst.body.getParameters()) {
     key.inputs.push_back(ParameterInput(param->symbol));
   }
-  for (const slang::ast::Symbol* port : body.getPortList()) {
-    if (port->kind == slang::ast::SymbolKind::InterfacePort) {
-      key.inputs.push_back(
-          InterfacePortInput(port->as<slang::ast::InterfacePortSymbol>()));
+  for (const auto* connection : inst.getPortConnections()) {
+    if (connection->port.kind == slang::ast::SymbolKind::InterfacePort) {
+      key.inputs.push_back(InterfacePortInput(*connection));
     }
   }
   return key;
@@ -225,14 +235,8 @@ auto SpecializationName(const SpecializationKey& key) -> std::string {
   return std::format("{}__{:016x}", key.definition, Fnv1a64(KeyBytes(key)));
 }
 
-auto SpecializationName(const slang::ast::InstanceBodySymbol& body)
-    -> std::string {
-  return SpecializationName(SpecializationKeyOf(body));
-}
-
 auto SpecializationName(const slang::ast::InstanceSymbol& inst) -> std::string {
-  const auto* canonical = inst.getCanonicalBody();
-  return SpecializationName(canonical != nullptr ? *canonical : inst.body);
+  return SpecializationName(SpecializationKeyOf(inst));
 }
 
 auto SpecializationKeyOf(const slang::ast::ClassType& cls)
@@ -284,7 +288,8 @@ auto CompilationUnitName(const slang::ast::Symbol& unit) -> std::string {
     return std::string(unit.name);
   }
   if (unit.kind == SymbolKind::InstanceBody) {
-    return SpecializationName(unit.as<slang::ast::InstanceBodySymbol>());
+    return SpecializationName(
+        InstantiationOf(unit.as<slang::ast::InstanceBodySymbol>()));
   }
   if (unit.kind == SymbolKind::CompilationUnit) {
     // The anonymous $unit scope has no source name; its distinguishing identity

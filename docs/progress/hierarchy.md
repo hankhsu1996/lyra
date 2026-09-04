@@ -277,6 +277,11 @@ Unlocks the port-connection surface.
   workstream already carries it; what that one adds is how a module reaches an interface it does not
   own -- the interface port, the modport view over it, and the virtual interface. A hierarchical
   reference resolved through an interface port belongs there.
+- A port that may not be left unconnected, on the module a simulation is run from. A `ref` port (LRM
+  23.3.3.2) and an interface port (LRM 23.3.3.4) both require a connection, and nothing instantiates
+  a top to connect its ports, so the simulation has nowhere to begin. The module itself is supported
+  and is reached by instantiating it from one that connects the port. Checking such a module reports
+  what it always did; running or emitting one is refused with a diagnostic.
 - Programs as a compilation-unit kind. A program is a unit kind in `compilation_unit_model.md`, but
   its scheduling region and termination semantics are its own subject rather than a facet of module
   hierarchy.
