@@ -7,6 +7,7 @@
 #include <slang/ast/Statement.h>
 #include <slang/ast/Symbol.h>
 #include <slang/ast/SystemSubroutine.h>
+#include <slang/ast/expressions/AssignmentExpressions.h>
 #include <slang/ast/expressions/CallExpression.h>
 #include <slang/ast/expressions/MiscExpressions.h>
 #include <slang/ast/statements/ConditionalStatements.h>
@@ -137,6 +138,16 @@ auto LowerExpressionStmt(
         span, diag::DiagCode::kUnsupportedStatementForm,
         "assertion control tasks are not supported; pass "
         "--assertions skip to elide them");
+  }
+  // LRM 9.4.5: an intra-assignment timing control on a blocking assignment
+  // suspends the procedure between reading the right-hand side and making the
+  // assignment, and a suspension is a statement. It is the statement position
+  // the grammar puts such an assignment in, so this is where it is expanded.
+  if (es.expr.kind == slang::ast::ExpressionKind::Assignment) {
+    const auto& as = es.expr.as<slang::ast::AssignmentExpression>();
+    if (as.timingControl != nullptr && !as.isNonBlocking()) {
+      return LowerIntraAssignmentStmt(proc, frame, as, es, span);
+    }
   }
   auto expr = proc.LowerExpr(es.expr, frame);
   if (!expr) return std::unexpected(std::move(expr.error()));

@@ -2,7 +2,6 @@
 
 #include <cstddef>
 #include <cstdint>
-#include <functional>
 #include <map>
 #include <memory>
 #include <string>
@@ -16,9 +15,11 @@
 #include "lyra/runtime/file_table.hpp"
 #include "lyra/runtime/mem_file.hpp"
 #include "lyra/runtime/plusargs.hpp"
+#include "lyra/runtime/region.hpp"
 #include "lyra/runtime/registration.hpp"
 #include "lyra/runtime/runtime_effects.hpp"
 #include "lyra/runtime/stream_dispatcher.hpp"
+#include "lyra/runtime/time_slot.hpp"
 #include "lyra/value/format.hpp"
 
 namespace lyra::runtime {
@@ -27,18 +28,6 @@ class Design;
 class Observable;
 class RuntimeProcess;
 class Scope;
-
-enum class SchedulerPhase : std::uint8_t {
-  kIdle,
-  kActive,
-  kInactive,
-  kFlushUpdates,
-  kCommitNba,
-  kObserved,
-  kReactive,
-  kPostponed,
-  kAdvanceTime,
-};
 
 struct RuntimeOptions {
   StreamDispatcher::StreamSink stream_sink;
@@ -87,51 +76,17 @@ class Runtime final : public RuntimeEffects {
   friend class CurrentRuntimeGuard;
   friend class ProcessExecutionGuard;
 
-  // A violation report waiting to mature (LRM 12.4.2.1). The owner is the
-  // process that raised it: the key a flush erases by, not the holder the
-  // report is stored on. A check reached before any process exists -- a static
-  // variable's initializer runs ahead of every procedure (LRM 6.8) -- has no
-  // owner, and no flush point can name one, so its report simply survives to
-  // the Observed region.
-  struct PendingReport {
-    const RuntimeProcess* owner;
-    std::function<void()> emit;
-  };
+  // How many times one slot may re-enter its regions before the design is
+  // declared unable to settle. A design that keeps scheduling work at the
+  // current time never advances, so this bound is what turns a run that would
+  // not end into one that reports why.
+  static constexpr std::size_t kMaxRegionPassesPerSlot = 10000;
 
-  // An activation waiting on the runtime is parked on one of these exactly as
-  // it parks on an event or an observable, so cancelling it while it is queued
-  // is the same constant-time unlink -- the runtime is never searched.
-  struct SchedulerQueues {
-    RegistrationList active;
-    RegistrationList inactive;
-    RegistrationList next_delta;
-    std::vector<std::function<void()>> nba;
-    std::vector<std::function<void()>> postponed;
-    // Pending violation reports in the order the checks that raised them
-    // fired. They mature together at Observed region entry, and once matured
-    // can no longer be flushed (LRM 12.4.2.1).
-    std::vector<PendingReport> observed;
-    std::map<SimTime, RegistrationList> delayed;
-    RegistrationList finals;
-    // The snapshot a region drain is working through, moved out of its source
-    // queue so that work arriving mid-drain lands in the queue and waits for
-    // the next pass (LRM 9.3.2).
-    RegistrationList draining;
-  };
-
-  static constexpr std::size_t kMaxCurrentTimeIterations = 10000;
-  static constexpr std::size_t kMaxDeltaCyclesPerTimeSlot = 10000;
-
-  // Wait-resume verb: revoke the leaf's scheduler participation and park it
-  // on the next-delta queue. LRM 9.3.2 delta cycle boundary.
-  void EnqueueNextDelta(CoroutineHandle handle);
-
-  // Ends the wait that parked `handle`: it is runnable now, so it holds no
-  // membership and no pending wait until its body parks again. A wait the
-  // LRM counts as a flush point takes its process's pending violation reports
-  // with it (LRM 12.4.2.1) -- the activation cannot run between here and its
-  // resume, so discarding at either point is the same discard.
-  void ConsumeWait(CoroutineHandle handle);
+  // The slot at `when`, created on first use. LRM 4.4 has the simulator never
+  // go backwards in time, so work placed in a slot earlier than the current one
+  // would be lost with nothing to show for it, which is why naming one faults
+  // here instead.
+  auto SlotAt(SimTime when) -> TimeSlot&;
 
   void EnsureReadyToRun();
   // LRM 3.14.3: design-global tick is the minimum declared precision across
@@ -148,35 +103,16 @@ class Runtime final : public RuntimeEffects {
   auto ResumeProcess(
       CoroutineHandle handle, std::vector<CoroutineHandle>& woken) -> bool;
   void RunProcess(CoroutineHandle handle);
-  void DrainRunnableQueue(RegistrationList& queue);
 
-  void ExecuteCurrentTimeSlot();
-  void ExecuteActiveRegion();
-  void ExecuteInactiveRegion();
-  void FlushRuntimeUpdates();
-  void ExecuteNbaRegion();
-  void ExecuteObservedRegion();
-  void ExecuteReactiveRegion();
-  void ExecutePostponedRegion();
+  // LRM 4.5: Preponed, then regions taken in order until nothing in Active
+  // through Re-NBA remains, then Postponed. Work a region produces lands back
+  // in the slot, so the middle step repeats until the slot settles.
+  void ExecuteTimeSlot(TimeSlot& slot);
+  void RunRegion(TimeSlot& slot, Region region);
   void ExecuteFinalProcesses();
   // LRM 16.3 requires a tool to report immediate cover results at the end of
   // simulation where it offers no assertion API to ask for them on demand.
   void ReportCoverage();
-
-  void AdvanceToNextTime();
-  void AdvanceDeltaCycle();
-  void PromoteNextDeltaToActive();
-
-  [[nodiscard]] auto HasCurrentTimeWork() const -> bool;
-  [[nodiscard]] auto HasFutureTimedWork() const -> bool;
-  [[nodiscard]] auto HasScheduledWork() const -> bool;
-  [[nodiscard]] auto HasNextDeltaWork() const -> bool;
-  [[nodiscard]] auto IsRunnablePhase() const -> bool;
-
-  void ScheduleActive(CoroutineHandle handle);
-
-  [[nodiscard]] static auto CheckedAdd(SimTime base, SimDuration delta)
-      -> SimTime;
 
   StreamDispatcher stream_;
   DiagnosticDispatcher diagnostic_;
@@ -185,7 +121,22 @@ class Runtime final : public RuntimeEffects {
   CoverageLog coverage_;
   CurrentRuntimeGuard current_runtime_guard_{*this};
   std::unique_ptr<Design> design_;
-  SchedulerQueues queues_;
+  // Every time slot with something pending, earliest first -- LRM 4.4's first
+  // division of the event set, by time, with each slot holding the second
+  // division, by region. A slot exists exactly while something is pending in
+  // it, so having any at all is the whole of "the simulation has work left".
+  // The slot at `now_` is the one running; naming a later time creates that
+  // slot, which is what lets a nonblocking assignment carrying a delay reach
+  // the NBA region of a future slot (LRM 4.4.2.4, 10.4.2). Node-based because
+  // a slot runs as a reference into here while its own execution creates the
+  // later slots it schedules into.
+  std::map<SimTime, TimeSlot> slots_;
+  // Final processes wait here rather than in any slot: LRM 9.2.3 runs them
+  // after the last one, when no slot is left to hold them.
+  RegistrationList finals_;
+  // The activations a region drain is working through, held apart from the
+  // region they came out of.
+  RegistrationList draining_;
   std::vector<std::shared_ptr<RuntimeProcess>> processes_;
   // Secondary index: pointers into `processes_` keyed by owning scope. Kept
   // in lockstep with `processes_` (register push, teardown erase). Consumers
@@ -197,8 +148,6 @@ class Runtime final : public RuntimeEffects {
   SimTime now_ = 0;
   std::int8_t global_precision_power_ = kDefaultTimePrecisionPower;
   value::TimeFormat time_format_;
-  SchedulerPhase phase_ = SchedulerPhase::kIdle;
-  std::size_t current_delta_ = 0;
   bool bound_ = false;
   bool ran_ = false;
   bool finished_ = false;

@@ -5,9 +5,11 @@
 
 #include "lyra/base/time.hpp"
 #include "lyra/runtime/coroutine.hpp"
+#include "lyra/runtime/region.hpp"
 #include "lyra/runtime/trigger.hpp"
 #include "lyra/value/format.hpp"
 #include "lyra/value/packed_array.hpp"
+#include "lyra/value/real.hpp"
 #include "lyra/value/string.hpp"
 
 namespace lyra::runtime {
@@ -40,20 +42,44 @@ class RuntimeEffects {
   // location, which is what separates one coverage goal from another.
   void RecordCoverage(const value::String& site, bool succeeded);
 
+  // LRM 4.4: place `activation` in `region` of the time slot at `when`, to be
+  // resumed when that region runs. Naming the placement is the whole of what a
+  // suspending construct tells the engine; nothing here says what it waits for.
+  void Schedule(SimTime when, Region region, CoroutineHandle activation);
+
+  // The wait that parked `activation` is satisfied, so it becomes runnable in
+  // the Active region of the current slot (LRM 4.5). Ending the wait belongs to
+  // the same step: nothing it was parked on -- the sibling observables of an
+  // `@(a or b)`, the event it waited for -- may fire it a second time, and a
+  // suspend in the woken-but-not-yet-resumed window then saves a runnable
+  // disposition rather than a blocked one.
+  void Wake(CoroutineHandle activation);
+
+  // LRM 4.4: place `effect` in `region` of the time slot at `when`. A deferred
+  // effect runs where it is placed and never suspends whoever submitted it.
+  void Submit(SimTime when, Region region, std::function<void()> effect);
+
+  // The regions a deferred effect is written into, one entry each: the
+  // construct that writes it fixes the region, and the slot is the current one
+  // unless the entry takes a delay.
   void SubmitNba(std::function<void()> closure);
+  // LRM 9.4.5: a non-blocking assignment carrying an intra-assignment delay
+  // schedules its update into the NBA region of the slot that delay names (LRM
+  // 4.4.2.4). `duration` is an amount in the scope's time unit, read exactly as
+  // a delay control reads one.
+  void SubmitNbaAfter(
+      const value::PackedArray& duration, const value::PackedArray& unit_power,
+      const value::PackedArray& precision_power, std::function<void()> closure);
+  void SubmitNbaAfterReal(
+      const value::Real& duration, const value::PackedArray& unit_power,
+      const value::PackedArray& precision_power, std::function<void()> closure);
   void SubmitPostponed(std::function<void()> closure);
-  // LRM 12.4.2.1: schedule a violation report to mature in the Observed region
-  // of the current time slot. The report is pending on behalf of the process
-  // that raised it, so a flush point that process reaches discards it; a check
-  // reached before any process exists has no owner and nothing can discard it.
-  void SubmitObserved(std::function<void()> fn);
+  // LRM 12.4.2.1: a violation report matures in the Observed region unless the
+  // process that raised it reaches a flush point first.
+  void SubmitObserved(std::function<void()> report);
 
   void TriggerValueChange(
       Observable& observable, const EdgeClassifier& classify);
-
-  void ScheduleNextDelta(CoroutineHandle handle);
-  void ScheduleInactive(CoroutineHandle handle);
-  void ScheduleAtTime(SimTime when, CoroutineHandle handle);
   // LRM 20.2 / 20.10: `fatal=true` bumps the eventual `Run()` return to a
   // non-zero exit code.
   void RequestFinish(int level, bool fatal = false);

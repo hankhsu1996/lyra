@@ -45,18 +45,28 @@ struct ConditionalExpr {
   ExprId else_value;
 };
 
-enum class AssignKind : std::uint8_t {
-  kBlocking,
-  kNonBlocking,
+// LRM 10.4.1: the update happens where the statement is reached.
+struct BlockingAssign {};
+
+// LRM 10.4.2: the update is scheduled into the NBA region of a time slot rather
+// than made on the spot, so the procedure carries on without waiting for it.
+// `delay` is the intra-assignment delay of LRM 9.4.5, naming a later slot; with
+// none, the slot is the one the statement is reached in. It is an amount in the
+// scope's time unit, so a negative or unknown one is read the way LRM 9.4.1
+// reads any delay expression.
+struct NonBlockingAssign {
+  std::optional<ExprId> delay = std::nullopt;
 };
+
+using AssignKind = std::variant<BlockingAssign, NonBlockingAssign>;
 
 // `compound_op.has_value()` marks a compound assignment (`+=`, `-=`, etc.):
 // the runtime reads the lvalue, combines with `rhs`, writes back -- the
 // LRM 11.4.1 "evaluate target only once" rule is delegated to the backend's
 // compound-op emit (the C++ proxy's `operator+=` etc.). `rhs` is already
 // typed to match `lhs`; AST -> HIR inserts a `ConversionExpr` if slang's
-// expansion required one. LRM A.6.2 forbids compound on non-blocking, so
-// `kind == kNonBlocking && compound_op.has_value()` is an InternalError.
+// expansion required one. LRM A.6.2 forbids compound on non-blocking, so a
+// non-blocking kind carrying a compound operator is an InternalError.
 //
 // `lhs` is an ExprId pointing at any expression whose form is addressable.
 // Allowed forms: a PrimaryExpr var reference, ElementSelectExpr /

@@ -15,8 +15,10 @@
 #include "lyra/diag/diagnostic.hpp"
 #include "lyra/hir/expr.hpp"
 #include "lyra/hir/procedural_body.hpp"
+#include "lyra/lowering/hir_to_mir/cast_lowering.hpp"
 #include "lyra/lowering/hir_to_mir/closure_builder.hpp"
 #include "lyra/lowering/hir_to_mir/expression/operators.hpp"
+#include "lyra/lowering/hir_to_mir/integral_literal.hpp"
 #include "lyra/lowering/hir_to_mir/lhs_store.hpp"
 #include "lyra/lowering/hir_to_mir/process_lowerer.hpp"
 #include "lyra/lowering/hir_to_mir/runtime_call.hpp"
@@ -216,18 +218,70 @@ auto BuildDeferredAssignClosure(
   return closure.BuildVoid();
 }
 
+// The NBA commit of `closure_id`, into the region of the slot the assignment
+// names. Without an intra-assignment delay that is the slot the statement is
+// reached in; with one it is the slot that delay reaches, and the amount
+// crosses unscaled with its scope's powers because LRM 9.4.1 reads a delay
+// expression's own value before any scaling.
+auto BuildNbaSubmitCall(
+    ProcessLowerer& process, WalkFrame frame,
+    const hir::NonBlockingAssign& deferred, mir::ExprId runtime_id,
+    mir::ExprId closure_id) -> diag::Result<mir::Expr> {
+  auto& unit = process.Owner().Unit();
+  auto& block = *frame.current_block;
+  if (!deferred.delay.has_value()) {
+    return mir::Expr{
+        .data =
+            mir::CallExpr{
+                .callee = mir::Direct{.target = support::BuiltinFn::kSubmitNba},
+                .arguments = {runtime_id, closure_id}},
+        .type = unit.builtins.void_type};
+  }
+  auto duration_or =
+      process.LowerExpr(process.HirBody().exprs.Get(*deferred.delay), frame);
+  if (!duration_or) return std::unexpected(std::move(duration_or.error()));
+  mir::ExprId duration_id = block.exprs.Add(*std::move(duration_or));
+  const mir::Type& duration_type =
+      unit.types.Get(block.exprs.Get(duration_id).type);
+  const bool is_real = duration_type.IsRealFamily();
+  if (duration_type.Is<mir::ShortRealType>()) {
+    // LRM 6.12.1: `real` and `realtime` are one type, and a `shortreal` differs
+    // from them only in host precision, so the entry takes the wider.
+    duration_id =
+        ConvertToType(unit, block, duration_id, unit.builtins.realtime);
+  }
+  const mir::ExprId unit_power_id = BuildIntLiteral(
+      unit, block, static_cast<std::int64_t>(process.Resolution().unit_power));
+  const mir::ExprId precision_power_id = BuildIntLiteral(
+      unit, block,
+      static_cast<std::int64_t>(process.Resolution().precision_power));
+  return mir::Expr{
+      .data =
+          mir::CallExpr{
+              .callee =
+                  mir::Direct{
+                      .target = is_real
+                                    ? support::BuiltinFn::kSubmitNbaAfterReal
+                                    : support::BuiltinFn::kSubmitNbaAfter},
+              .arguments =
+                  {runtime_id, duration_id, unit_power_id, precision_power_id,
+                   closure_id}},
+      .type = unit.builtins.void_type};
+}
+
 // Axis B (timing): apply a target's write effect now (blocking) or deferred to
 // the NBA region (nonblocking). `effect_fn(block, target, operands)` builds the
 // write into `block`; this is the only place the blocking/deferred choice
 // lives, so every target shares one timing envelope (LRM 10.4).
 template <typename EffectFn>
 auto ApplyAssignEffect(
-    ProcessLowerer& process, WalkFrame frame, hir::AssignKind kind,
+    ProcessLowerer& process, WalkFrame frame, const hir::AssignKind& kind,
     diag::SourceSpan span, mir::ExprId target_in_outer,
     std::span<const mir::ExprId> operands_in_outer, EffectFn effect_fn)
     -> diag::Result<mir::Expr> {
   auto& block = *frame.current_block;
-  if (kind == hir::AssignKind::kBlocking) {
+  const auto* deferred = std::get_if<hir::NonBlockingAssign>(&kind);
+  if (deferred == nullptr) {
     return effect_fn(block, target_in_outer, operands_in_outer);
   }
   // The update runs after the stretch that submitted it returns, so it may only
@@ -243,12 +297,7 @@ auto ApplyAssignEffect(
   const mir::ExprId closure_id = block.exprs.Add(std::move(closure));
   const mir::ExprId runtime_id =
       block.exprs.Add(BuildCurrentRuntimeCallExpr(process.Owner()));
-  return mir::Expr{
-      .data =
-          mir::CallExpr{
-              .callee = mir::Direct{.target = support::BuiltinFn::kSubmitNba},
-              .arguments = {runtime_id, closure_id}},
-      .type = process.Owner().Unit().builtins.void_type};
+  return BuildNbaSubmitCall(process, frame, *deferred, runtime_id, closure_id);
 }
 
 // Axis A: the store itself, against the storage the target designates.
@@ -285,7 +334,8 @@ auto LowerObservableAssign(
 auto LowerHirAssignExprProc(
     ProcessLowerer& process, WalkFrame frame, const hir::AssignExpr& a,
     diag::SourceSpan span, mir::TypeId result_type) -> diag::Result<mir::Expr> {
-  if (a.compound_op.has_value() && a.kind == hir::AssignKind::kNonBlocking) {
+  if (a.compound_op.has_value() &&
+      std::holds_alternative<hir::NonBlockingAssign>(a.kind)) {
     throw InternalError(
         "LowerHirAssignExprProc: compound assignment with non-blocking kind "
         "is not a legal SV form (LRM A.6.2 grammar)");

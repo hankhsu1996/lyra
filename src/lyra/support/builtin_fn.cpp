@@ -319,6 +319,10 @@ auto BuiltinFnName(BuiltinFn id) -> std::string_view {
       return "current_runtime";
     case BuiltinFn::kSubmitNba:
       return "submit_nba";
+    case BuiltinFn::kSubmitNbaAfter:
+      return "submit_nba_after";
+    case BuiltinFn::kSubmitNbaAfterReal:
+      return "submit_nba_after_real";
     case BuiltinFn::kSubmitPostponed:
       return "submit_postponed";
     case BuiltinFn::kSubmitObserved:

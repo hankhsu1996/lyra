@@ -7,6 +7,7 @@
 #include "lyra/base/time.hpp"
 #include "lyra/runtime/coroutine.hpp"
 #include "lyra/runtime/pending_wait.hpp"
+#include "lyra/runtime/region.hpp"
 #include "lyra/runtime/runtime_effects.hpp"
 #include "lyra/runtime/runtime_process.hpp"
 #include "lyra/value/packed_array.hpp"
@@ -99,25 +100,31 @@ inline auto DelayTicksReal(
   return static_cast<SimDuration>(steps);
 }
 
-// Enqueues `token` to run again `ticks` steps of `precision_power` from now,
-// and answers the absolute time that will be. A wait of no steps goes to the
-// inactive region of the current slot, whose time is this instant, so a resume
-// finds its deadline already transpired; anything else scales to the engine's
-// global tick and goes to the slot that lands in. The engine does not know
-// about delays as a category -- it only sees a process arriving in a queue at
-// the right time.
-inline auto ParkForDelay(
-    RuntimeEffects& runtime, CoroutineHandle token, SimDuration ticks,
-    std::int8_t precision_power) -> SimTime {
-  if (ticks == 0) {
-    runtime.ScheduleInactive(token);
-    return runtime.Now();
-  }
-  const SimTime deadline = DeadlineAfter(
+// The absolute simulation time a delay of `ticks` steps of `precision_power`
+// reaches. The scope's steps scale up to the engine's global tick before they
+// are added, because a design may declare several precisions and the engine
+// counts in the finest of them (LRM 3.14.3).
+inline auto DelayDeadline(
+    RuntimeEffects& runtime, SimDuration ticks, std::int8_t precision_power)
+    -> SimTime {
+  return DeadlineAfter(
       runtime.Now(),
       ScaleToGlobalTicks(
           ticks, precision_power, runtime.GlobalPrecisionPower()));
-  runtime.ScheduleAtTime(deadline, token);
+}
+
+// Parks `token` until its delay elapses, and answers the time that will be.
+// LRM 4.4.2.3: a delay of no steps is an explicit `#0`, which suspends into the
+// inactive region of the current time slot so that active work already pending
+// finishes first and the process resumes at this same time. The engine does not
+// know about delays as a category -- it only sees an activation arriving in a
+// region at the right time.
+inline auto ParkForDelay(
+    RuntimeEffects& runtime, CoroutineHandle token, SimDuration ticks,
+    std::int8_t precision_power) -> SimTime {
+  const SimTime deadline = DelayDeadline(runtime, ticks, precision_power);
+  runtime.Schedule(
+      deadline, ticks == 0 ? Region::kInactive : Region::kActive, token);
   return deadline;
 }
 
@@ -152,7 +159,7 @@ class DelayAwaitable : public PendingWait {
     if (runtime.Now() >= deadline_) {
       return PendingWaitOutcome::kRunnable;
     }
-    runtime.ScheduleAtTime(deadline_, activation);
+    runtime.Schedule(deadline_, Region::kActive, activation);
     return PendingWaitOutcome::kReblocked;
   }
 

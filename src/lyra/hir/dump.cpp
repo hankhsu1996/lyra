@@ -768,9 +768,19 @@ class HirDumper {
                   c.conditions.size(), c.then_value.value, c.else_value.value);
             },
             [](const AssignExpr& a) -> std::string {
-              const auto* kind_str = a.kind == AssignKind::kNonBlocking
-                                         ? "nonblocking"
-                                         : "blocking";
+              const std::string kind_str = std::visit(
+                  Overloaded{
+                      [](const BlockingAssign&) -> std::string {
+                        return "blocking";
+                      },
+                      [](const NonBlockingAssign& nb) -> std::string {
+                        return nb.delay.has_value()
+                                   ? std::format(
+                                         "nonblocking delay=Expr[{}]",
+                                         nb.delay->value)
+                                   : std::string{"nonblocking"};
+                      }},
+                  a.kind);
               const std::string op_str =
                   a.compound_op.has_value()
                       ? std::format(" op={}", FormatBinaryOp(*a.compound_op))

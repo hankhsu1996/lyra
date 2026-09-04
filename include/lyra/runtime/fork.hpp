@@ -49,7 +49,7 @@ class ForkGroup {
     }
     if (completions_needed_ == 0) {
       if (Registration* parent = parked_parent_.PopFront()) {
-        runtime_->ScheduleNextDelta(parent->activation);
+        runtime_->Wake(parent->activation);
       }
     }
   }
@@ -267,7 +267,7 @@ inline void DisableFork(RuntimeEffects& runtime) {
   std::vector<CoroutineHandle> woken;
   runtime.CurrentProcess().DisableDescendants(woken);
   for (CoroutineHandle waiter : woken) {
-    runtime.ScheduleNextDelta(waiter);
+    runtime.Wake(waiter);
   }
 }
 

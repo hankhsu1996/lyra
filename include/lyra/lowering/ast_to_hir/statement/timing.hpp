@@ -13,12 +13,24 @@
 #include "lyra/lowering/ast_to_hir/walk_frame.hpp"
 
 namespace slang::ast {
+class AssignmentExpression;
 class EventTriggerStatement;
+class Statement;
 class TimedStatement;
 class WaitStatement;
 }  // namespace slang::ast
 
 namespace lyra::lowering::ast_to_hir {
+
+// LRM 9.4.5 Table 9-3: a blocking assignment carrying an intra-assignment
+// timing control is the same program as holding the right-hand side in a
+// temporary, applying the control, and then assigning. `controlled` is the
+// statement an implicit event control would take its sensitivity from.
+auto LowerIntraAssignmentStmt(
+    ProcessLowerer& proc, WalkFrame frame,
+    const slang::ast::AssignmentExpression& as,
+    const slang::ast::Statement& controlled, diag::SourceSpan span)
+    -> diag::Result<hir::Stmt>;
 
 auto LowerTimedStmt(
     ProcessLowerer& proc, WalkFrame frame, const slang::ast::TimedStatement& ts,

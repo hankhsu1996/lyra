@@ -72,4 +72,13 @@ class PendingWait {
   RuntimeProcess* waiting_process_ = nullptr;
 };
 
+// The dual of blocking on a wait: `activation` is runnable now, so it holds no
+// membership and no pending wait until its body parks again, and nothing it was
+// enrolled on -- the sibling observables of an `@(a or b)`, the event it waited
+// for -- can fire it a second time. A wait the LRM counts as a violation report
+// flush point clears its process's report queue on the way out (LRM 12.4.2.1);
+// the activation cannot run between here and its resume, so discarding at
+// either point is the same discard.
+void ConsumeWait(CoroutineHandle activation);
+
 }  // namespace lyra::runtime

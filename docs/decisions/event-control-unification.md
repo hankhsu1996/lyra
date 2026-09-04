@@ -58,11 +58,11 @@ syntax-grouped artifacts that combined two execution families (clock-anchored de
 value-change) under one variant. MIR is execution-modelling, so the three wait families live at the
 same level as disjoint statements:
 
-| Family                | MIR construct                   | Engine subsystem         |
-| --------------------- | ------------------------------- | ------------------------ |
-| Time-anchored         | `DelayStmt { duration }`        | `Engine::ScheduleAtTime` |
-| Value-change anchored | `SensitivityWaitStmt { reads }` | `Observable::Subscribe`  |
-| Sync-primitive        | `ExprStmt { event.Await() }`    | `NamedEvent` waiter list |
+| Family                | MIR construct                   | Engine subsystem            |
+| --------------------- | ------------------------------- | --------------------------- |
+| Time-anchored         | `DelayStmt { duration }`        | a placement in a later slot |
+| Value-change anchored | `SensitivityWaitStmt { reads }` | `Observable::Subscribe`     |
+| Sync-primitive        | `ExprStmt { event.Await() }`    | `NamedEvent` waiter list    |
 
 HIR keeps `hir::TimingControl` as a sum type because HIR is source-faithful and LRM 9.4 groups them
 syntactically.

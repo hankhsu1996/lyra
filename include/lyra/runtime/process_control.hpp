@@ -83,7 +83,7 @@ inline void ProcessKill(
     std::vector<CoroutineHandle> woken;
     target.TerminateSubtreeDeferringRunning(caller, woken);
     for (CoroutineHandle waiter : woken) {
-      runtime.ScheduleNextDelta(waiter);
+      runtime.Wake(waiter);
     }
     RaiseUnclaimableEffect();
   }
@@ -102,7 +102,7 @@ inline void ProcessKill(
     RuntimeProcess::ReleaseTerminatedLineage(*parent);
   }
   for (CoroutineHandle waiter : woken) {
-    runtime.ScheduleNextDelta(waiter);
+    runtime.Wake(waiter);
   }
 }
 
@@ -211,7 +211,7 @@ inline void ProcessResume(
       pending == nullptr ||
       pending->Reestablish(runtime, leaf) == PendingWaitOutcome::kRunnable;
   if (runnable) {
-    runtime.ScheduleNextDelta(leaf);
+    runtime.Wake(leaf);
   }
 }
 

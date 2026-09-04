@@ -2,7 +2,7 @@
 
 Tracks SystemVerilog procedural-block constructs and the supporting timing-control machinery.
 
-The numeric IDs (P1..P15, T1..T6) are stable references and do **not** imply execution order.
+The numeric IDs (P1..P15, T1..T7) are stable references and do **not** imply execution order.
 
 ## Actionable
 
@@ -62,9 +62,10 @@ machinery owned by other workstreams; see [Blocked](#blocked).
 
 ### Procedural assignments
 
-- [x] P4 -- Non-blocking assignment `<=`. Submits a closure to the NBA region during the active
-      phase; the engine commits all closures in the NBA commit phase before observing changes.
-      Re-entrancy during NBA commit is rejected.
+- [x] P4 -- Non-blocking assignment `<=`. Reads its right-hand side where the statement is reached
+      and leaves the update for the NBA region of that time slot, so the procedure carries on and
+      every such update in the slot lands together, before anything the slot goes on to observe. An
+      update that itself schedules work leaves it for a later pass of the same slot (LRM 10.4.2).
   - [ ] A non-blocking assignment whose target is an automatic-lifetime procedural local (LRM
         13.3.2) is rejected; the deferred-commit closure would outlive the local's activation.
 - [x] P7 -- Continuous assignment `assign x = y;` (LRM 10.3). Read set is precomputed by slang's
@@ -106,10 +107,24 @@ machinery owned by other workstreams; see [Blocked](#blocked).
   - [ ] The `iff` qualifier on an event control (LRM 9.4.2.3): `@(e iff cond)` is rejected.
   - [ ] An edge event control on a non-packed-bit-vector operand, and a value-change event control
         on a non-value operand (LRM 9.4.2): only packed-vector / value operands are accepted.
-  - [ ] Repeated event control `repeat (N) @(...)` (LRM 9.4.4), and nested timing controls inside an
-        event-list entry: only signal events compose in a list today.
+  - [ ] A nested timing control inside an event-list entry: only signal events compose in a list
+        today.
 - [ ] T6 -- Event-trigger forms beyond the blocking `-> e`: the non-blocking trigger `->> e` (LRM
       15.5.2) and a delayed trigger carrying an intra-assignment timing control are rejected.
+- [x] T7 -- Intra-assignment timing controls (LRM 9.4.5). An assignment carrying one reads its
+      right-hand side where the statement is reached and makes the assignment only once the control
+      is satisfied, so a later write to anything that right-hand side read does not reach it --
+      which is what lets `fork a = #5 b; b = #5 a; join` swap the two. A blocking form suspends the
+      procedure meanwhile and covers all three controls: a delay, an event control, and a repeat
+      event control that waits for that many occurrences, where a count that is zero, negative,
+      unknown or high impedance waits for none. A left side that needs evaluating is evaluated when
+      the control is satisfied rather than where the statement is reached (LRM 10.4.1). A
+      non-blocking delay does not suspend the procedure: it schedules the update into the NBA region
+      of the slot that delay names, and several such updates to one variable stay pending at once,
+      each landing at its own time (LRM 4.4.2.4, 10.4.2).
+  - [ ] An event control on a non-blocking assignment (`a <= @(ev) b`, `a <= repeat (n) @(ev) b`) is
+        rejected. Its update has to become due on an event while the procedure that wrote it carries
+        on, which is the one deferred effect a time cannot say when to run.
 
 ### Synchronisation primitives
 

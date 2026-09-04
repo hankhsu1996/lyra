@@ -11,6 +11,15 @@ void PendingWait::BlockOn(CoroutineHandle leaf) {
   waiting_process_->BlockLeaf(leaf, this);
 }
 
+void ConsumeWait(CoroutineHandle activation) {
+  activation->RevokeRegistrations();
+  const PendingWait* wait = activation->pending_wait;
+  if (wait != nullptr && wait->IsReportFlushPoint()) {
+    activation->Process().FlushViolationReports();
+  }
+  activation->pending_wait = nullptr;
+}
+
 void PendingWait::CheckAbortOnResume() const {
   // A wait whose condition already held never suspended, so its execution never
   // lost control and nothing can have disabled a target under it.

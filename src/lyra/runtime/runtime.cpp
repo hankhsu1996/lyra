@@ -4,7 +4,6 @@
 #include <cstddef>
 #include <cstdint>
 #include <iostream>
-#include <limits>
 #include <memory>
 #include <string>
 #include <string_view>
@@ -78,20 +77,23 @@ auto Runtime::Run() -> int {
   ResolveGlobalTimePrecision();
   RegisterProcesses();
 
-  while (HasScheduledWork() && !finished_) {
-    ExecuteCurrentTimeSlot();
+  // LRM 4.4: slots run in time order and the simulator never goes backwards,
+  // so the earliest pending slot is always the next one.
+  while (!finished_) {
+    auto slot = slots_.begin();
+    if (slot == slots_.end()) {
+      break;
+    }
+    now_ = slot->first;
+    ExecuteTimeSlot(slot->second);
     if (finished_) {
       break;
     }
-    if (!HasFutureTimedWork()) {
-      break;
-    }
-    AdvanceToNextTime();
+    slots_.erase(slot);
   }
 
   ExecuteFinalProcesses();
 
-  phase_ = SchedulerPhase::kIdle;
   ReportCoverage();
   stream_.Drain();
   return fatal_finish_ ? 1 : 0;
@@ -135,10 +137,10 @@ void Runtime::RegisterProcesses() {
   for (const auto& process : processes_) {
     switch (process->Kind()) {
       case ProcessKind::kInitial:
-        ScheduleActive(process->TopHandle());
+        Schedule(now_, Region::kActive, process->TopHandle());
         break;
       case ProcessKind::kFinal:
-        process->TopHandle()->Park(queues_.finals);
+        process->TopHandle()->Park(finals_);
         break;
       case ProcessKind::kSpawned:
         throw InternalError(
@@ -158,120 +160,60 @@ void Runtime::RegisterProcessInRegistry(
   }
 }
 
-void Runtime::EnqueueNextDelta(CoroutineHandle handle) {
-  // Every satisfied wait comes back through this verb, so it is also where the
-  // wait ends: nothing it was parked on -- the sibling observables of an
-  // `@(a or b)`, the event it waited for -- may fire it a second time. Ending
-  // the wait here also means a suspend in the woken-but-not-yet-resumed window
-  // saves a runnable disposition (a re-queue on resume), not a blocked one (a
-  // re-establish).
-  ConsumeWait(handle);
-  handle->Park(queues_.next_delta);
-}
-
-void Runtime::ConsumeWait(CoroutineHandle handle) {
-  handle->RevokeRegistrations();
-  const PendingWait* wait = handle->pending_wait;
-  if (wait != nullptr && wait->IsReportFlushPoint()) {
-    const RuntimeProcess* owner = handle->process;
-    std::erase_if(queues_.observed, [owner](const PendingReport& pending) {
-      return pending.owner == owner;
-    });
+auto Runtime::SlotAt(SimTime when) -> TimeSlot& {
+  if (when < now_) {
+    throw InternalError(
+        "Runtime::SlotAt: a time slot earlier than the current one can never "
+        "run");
   }
-  handle->pending_wait = nullptr;
+  return slots_[when];
 }
 
-void Runtime::ExecuteCurrentTimeSlot() {
-  current_delta_ = 0;
-  std::size_t current_work_iterations = 0;
-  while (true) {
-    while (!queues_.active.Empty() || !queues_.inactive.Empty()) {
-      if (++current_work_iterations > kMaxCurrentTimeIterations) {
-        throw SimulationError(
-            "the current time slot did not settle: the design keeps "
-            "scheduling work without advancing time");
-      }
-      ExecuteActiveRegion();
-      ExecuteInactiveRegion();
+void Runtime::ExecuteTimeSlot(TimeSlot& slot) {
+  RunRegion(slot, Region::kPreponed);
+  std::size_t passes = 0;
+  // LRM 4.5: take the earliest region that has anything, run it, and look
+  // again -- what it produced lands back in the slot. The reactive group comes
+  // after Observed in the order, so it is reached only once the active group is
+  // empty, and work it schedules back into Active is found first on the next
+  // look.
+  while (std::optional<Region> region =
+             slot.FirstPending(Region::kActive, Region::kReNba)) {
+    if (++passes > kMaxRegionPassesPerSlot) {
+      throw SimulationError(
+          "the current time slot did not settle: the design keeps "
+          "scheduling work without advancing time");
     }
-    FlushRuntimeUpdates();
-    ExecuteNbaRegion();
-    FlushRuntimeUpdates();
-    ExecuteObservedRegion();
-    ExecuteReactiveRegion();
-    if (!HasNextDeltaWork()) {
-      break;
-    }
-    AdvanceDeltaCycle();
-    PromoteNextDeltaToActive();
+    RunRegion(slot, *region);
   }
-  ExecutePostponedRegion();
+  RunRegion(slot, Region::kPostponed);
+  if (!finished_ && !slot.Empty()) {
+    throw SimulationError(
+        "the postponed region scheduled work back into the time slot that "
+        "ends with it (LRM 4.4.2.9)");
+  }
 }
 
-void Runtime::ExecuteActiveRegion() {
-  phase_ = SchedulerPhase::kActive;
-  DrainRunnableQueue(queues_.active);
-}
-
-void Runtime::ExecuteInactiveRegion() {
-  phase_ = SchedulerPhase::kInactive;
-  DrainRunnableQueue(queues_.inactive);
-}
-
-void Runtime::DrainRunnableQueue(RegistrationList& queue) {
-  // LRM 9.3.2: work enqueued while this pass runs belongs to the next pass, so
-  // the snapshot moves out of the queue and new arrivals accumulate behind it.
-  queue.SpliceBackOnto(queues_.draining);
-  while (Registration* queued = queues_.draining.PopFront()) {
+void Runtime::RunRegion(TimeSlot& slot, Region region) {
+  RegionQueue& queue = slot[region];
+  // LRM 9.3.2: work arriving while this pass runs belongs to the next pass, so
+  // both snapshots move out of the region and new arrivals accumulate behind
+  // them. LRM 4.5 fixes no order between the events of one region.
+  std::vector<std::function<void()>> effects = std::move(queue.effects);
+  queue.effects.clear();
+  queue.activations.SpliceBackOnto(draining_);
+  for (const auto& effect : effects) {
+    effect();
+  }
+  while (Registration* queued = draining_.PopFront()) {
     CoroutineHandle handle = queued->activation;
     ConsumeWait(handle);
     RunProcess(handle);
   }
 }
 
-void Runtime::FlushRuntimeUpdates() {
-  phase_ = SchedulerPhase::kFlushUpdates;
-}
-
-void Runtime::ExecuteNbaRegion() {
-  phase_ = SchedulerPhase::kCommitNba;
-  auto pending = std::move(queues_.nba);
-  queues_.nba.clear();
-  for (auto& closure : pending) {
-    closure();
-  }
-}
-
-void Runtime::ExecuteObservedRegion() {
-  phase_ = SchedulerPhase::kObserved;
-  // LRM 12.4.2.1: every pending report matures here, and a matured report can
-  // no longer be flushed -- so the set moves out before any of it fires, and a
-  // report raised while these fire belongs to the next region. Reports fire in
-  // the order their checks did; the LRM fixes no order between processes, and
-  // this one is the only one a reader can predict from the source.
-  const std::vector<PendingReport> matured = std::move(queues_.observed);
-  queues_.observed.clear();
-  for (const PendingReport& pending : matured) {
-    pending.emit();
-  }
-}
-
-void Runtime::ExecuteReactiveRegion() {
-  phase_ = SchedulerPhase::kReactive;
-}
-
-void Runtime::ExecutePostponedRegion() {
-  phase_ = SchedulerPhase::kPostponed;
-  auto pending = std::move(queues_.postponed);
-  queues_.postponed.clear();
-  for (auto& closure : pending) {
-    closure();
-  }
-}
-
 void Runtime::ExecuteFinalProcesses() {
-  phase_ = SchedulerPhase::kPostponed;
-  while (Registration* queued = queues_.finals.PopFront()) {
+  while (Registration* queued = finals_.PopFront()) {
     CoroutineHandle handle = queued->activation;
     handle->RevokeRegistrations();
     // A `final` block is never an `await` target (LRM 9.7 restricts targets to
@@ -293,63 +235,7 @@ void Runtime::ExecuteFinalProcesses() {
         "a final block suspended: time-controlling statements are not allowed "
         "inside `final` (LRM 9.2.3)");
   }
-  queues_.finals.Clear();
-}
-
-void Runtime::AdvanceDeltaCycle() {
-  ++current_delta_;
-  if (current_delta_ > kMaxDeltaCyclesPerTimeSlot) {
-    throw SimulationError(
-        "delta cycle limit exceeded: the design has a zero-delay loop");
-  }
-}
-
-void Runtime::PromoteNextDeltaToActive() {
-  queues_.next_delta.SpliceBackOnto(queues_.active);
-}
-
-void Runtime::AdvanceToNextTime() {
-  phase_ = SchedulerPhase::kAdvanceTime;
-  auto it = queues_.delayed.begin();
-  now_ = it->first;
-  it->second.SpliceBackOnto(queues_.active);
-  queues_.delayed.erase(it);
-}
-
-auto Runtime::HasCurrentTimeWork() const -> bool {
-  return !queues_.active.Empty() || !queues_.inactive.Empty() ||
-         !queues_.next_delta.Empty();
-}
-
-auto Runtime::HasFutureTimedWork() const -> bool {
-  return !queues_.delayed.empty();
-}
-
-auto Runtime::HasScheduledWork() const -> bool {
-  return HasCurrentTimeWork() || HasFutureTimedWork();
-}
-
-auto Runtime::HasNextDeltaWork() const -> bool {
-  return !queues_.next_delta.Empty();
-}
-
-auto Runtime::IsRunnablePhase() const -> bool {
-  // The regions of a time slot that dispatch process code (LRM 4.4); the rest
-  // either move values between regions or move time.
-  switch (phase_) {
-    case SchedulerPhase::kActive:
-    case SchedulerPhase::kInactive:
-    case SchedulerPhase::kReactive:
-      return true;
-    case SchedulerPhase::kIdle:
-    case SchedulerPhase::kFlushUpdates:
-    case SchedulerPhase::kCommitNba:
-    case SchedulerPhase::kObserved:
-    case SchedulerPhase::kPostponed:
-    case SchedulerPhase::kAdvanceTime:
-      return false;
-  }
-  throw InternalError("Runtime::IsRunnablePhase: unknown SchedulerPhase");
+  finals_.Clear();
 }
 
 auto Runtime::ResumeProcess(
@@ -363,13 +249,11 @@ auto Runtime::ResumeProcess(
 }
 
 void Runtime::RunProcess(CoroutineHandle handle) {
-  // Sole gate for post-$finish user code; finals bypass via their own path.
+  // Where a `$finish` stops the design: no process resumes after it. Deferred
+  // effects the slot already holds still run, and a `final` body reaches its
+  // statements through its own path.
   if (finished_) {
     return;
-  }
-  if (!IsRunnablePhase()) {
-    throw InternalError(
-        "Runtime::RunProcess: process resumed outside runnable phase");
   }
   // No wait dispatch: each awaitable has already arranged its own wakeup path
   // during await_suspend.
@@ -388,23 +272,11 @@ void Runtime::RunProcess(CoroutineHandle handle) {
     }
   }
   for (CoroutineHandle waiter : woken) {
-    EnqueueNextDelta(waiter);
+    Wake(waiter);
   }
   // Releasing destroys `process` and every ancestor the release leaves with no
   // lineage to retain, so no statement may follow it here.
   RuntimeProcess::ReleaseTerminatedLineage(process);
-}
-
-void Runtime::ScheduleActive(CoroutineHandle handle) {
-  handle->Park(queues_.active);
-}
-
-auto Runtime::CheckedAdd(SimTime base, SimDuration delta) -> SimTime {
-  if (delta > std::numeric_limits<SimTime>::max() - base) {
-    throw SimulationError(
-        "a delay would advance simulation time past its representable range");
-  }
-  return base + delta;
 }
 
 void RegisterInitialProcess(

@@ -91,7 +91,7 @@ D5. `Suspended` is not another kind of wait. It saves the disposition it replace
     Runnable re-takes an execution entitlement; a saved Blocked re-establishes its pending wait,
     which re-enrolls or reports satisfied.
 
-D6. `Runnable` carries no region. The region (active / inactive / next-delta / delay bucket) is the
+D6. `Runnable` carries no region. Which region of which time slot an activation sits in is the
     engine's placement, chosen when the activation is scheduled. `resume` places a runnable-suspended
     activation into the active region (LRM 9.7); it does not restore a saved region.
 

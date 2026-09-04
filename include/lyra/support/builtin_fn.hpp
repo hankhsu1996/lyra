@@ -179,6 +179,13 @@ enum class BuiltinFn : std::uint16_t {
   // executing process, which the runtime reads ambiently, so the call carries
   // only the closure.
   kSubmitNba,
+  // LRM 9.4.5: the same NBA commit, into the region of the slot an
+  // intra-assignment delay names (LRM 4.4.2.4). The delay crosses as an amount
+  // in the scope's time unit with that scope's unit and precision powers, the
+  // way a delay control's does, because LRM 9.4.1 reads the amount before any
+  // scaling. One entry per amount representation.
+  kSubmitNbaAfter,
+  kSubmitNbaAfterReal,
   kSubmitPostponed,
   kSubmitObserved,
   // File-IO subsystem accessor and cancellation token operations. `Files`

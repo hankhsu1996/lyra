@@ -178,6 +178,8 @@ void DefineRuntimeAbi(llvm::orc::LLJIT& jit) {
   add("lyra_rt_object_member_addr", &lyra_rt_object_member_addr);
   add("lyra_rt_closure_capture", &lyra_rt_closure_capture);
   add("lyra_rt_submit_nba", &lyra_rt_submit_nba);
+  add("lyra_rt_submit_nba_after", &lyra_rt_submit_nba_after);
+  add("lyra_rt_submit_nba_after_real", &lyra_rt_submit_nba_after_real);
   add("lyra_rt_submit_postponed", &lyra_rt_submit_postponed);
   add("lyra_rt_submit_observed", &lyra_rt_submit_observed);
   add("lyra_rt_delay", &lyra_rt_delay);

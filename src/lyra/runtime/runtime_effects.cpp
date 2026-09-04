@@ -6,8 +6,9 @@
 #include <utility>
 
 #include "lyra/base/internal_error.hpp"
-#include "lyra/base/simulation_error.hpp"
 #include "lyra/runtime/coroutine.hpp"
+#include "lyra/runtime/delay.hpp"
+#include "lyra/runtime/pending_wait.hpp"
 #include "lyra/runtime/registration.hpp"
 #include "lyra/runtime/runtime.hpp"
 #include "lyra/runtime/runtime_process.hpp"
@@ -87,53 +88,76 @@ void RuntimeEffects::RecordCoverage(const value::String& site, bool succeeded) {
   AsRuntime(*this).coverage_.Record(site.View(), succeeded);
 }
 
+void RuntimeEffects::Schedule(
+    SimTime when, Region region, CoroutineHandle activation) {
+  activation->Park(AsRuntime(*this).SlotAt(when)[region].activations);
+}
+
+void RuntimeEffects::Wake(CoroutineHandle activation) {
+  ConsumeWait(activation);
+  Schedule(Now(), Region::kActive, activation);
+}
+
+void RuntimeEffects::Submit(
+    SimTime when, Region region, std::function<void()> effect) {
+  AsRuntime(*this).SlotAt(when)[region].effects.push_back(std::move(effect));
+}
+
 void RuntimeEffects::SubmitNba(std::function<void()> closure) {
-  Runtime& rt = AsRuntime(*this);
-  if (rt.phase_ == SchedulerPhase::kCommitNba) {
-    throw SimulationError(
-        "a nonblocking assignment scheduled from inside the NBA region is not "
-        "yet supported");
-  }
-  rt.queues_.nba.push_back(std::move(closure));
+  Submit(Now(), Region::kNba, std::move(closure));
+}
+
+void RuntimeEffects::SubmitNbaAfter(
+    const value::PackedArray& duration, const value::PackedArray& unit_power,
+    const value::PackedArray& precision_power, std::function<void()> closure) {
+  const auto unit = static_cast<std::int8_t>(unit_power.ToInt64());
+  const auto precision = static_cast<std::int8_t>(precision_power.ToInt64());
+  Submit(
+      DelayDeadline(*this, DelayTicks(duration, unit, precision), precision),
+      Region::kNba, std::move(closure));
+}
+
+void RuntimeEffects::SubmitNbaAfterReal(
+    const value::Real& duration, const value::PackedArray& unit_power,
+    const value::PackedArray& precision_power, std::function<void()> closure) {
+  const auto unit = static_cast<std::int8_t>(unit_power.ToInt64());
+  const auto precision = static_cast<std::int8_t>(precision_power.ToInt64());
+  Submit(
+      DelayDeadline(
+          *this, DelayTicksReal(duration, unit, precision), precision),
+      Region::kNba, std::move(closure));
 }
 
 void RuntimeEffects::SubmitPostponed(std::function<void()> closure) {
-  Runtime& rt = AsRuntime(*this);
-  if (rt.phase_ == SchedulerPhase::kPostponed) {
-    throw SimulationError(
-        "work scheduled into the postponed region from inside that region is "
-        "not yet supported");
-  }
-  rt.queues_.postponed.push_back(std::move(closure));
+  Submit(Now(), Region::kPostponed, std::move(closure));
 }
 
-void RuntimeEffects::SubmitObserved(std::function<void()> fn) {
-  Runtime& rt = AsRuntime(*this);
-  rt.queues_.observed.push_back(
-      Runtime::PendingReport{
-          .owner = rt.current_process_, .emit = std::move(fn)});
+void RuntimeEffects::SubmitObserved(std::function<void()> report) {
+  RuntimeProcess* process = AsRuntime(*this).current_process_;
+  if (process == nullptr) {
+    // A check that fires before any procedure runs -- a static variable's
+    // initializer (LRM 6.8) -- belongs to no process, so LRM 12.4.2.1 has no
+    // violation report queue for a flush point to clear and it always matures.
+    Submit(Now(), Region::kObserved, std::move(report));
+    return;
+  }
+  Submit(
+      Now(), Region::kObserved,
+      [epoch = std::weak_ptr(process->CurrentViolationReportEpoch()),
+       report = std::move(report)] {
+        // LRM 12.4.2.1: an expired epoch is a flush point the process reached
+        // before this report could mature.
+        if (!epoch.expired()) {
+          report();
+        }
+      });
 }
 
 void RuntimeEffects::TriggerValueChange(
     Observable& observable, const EdgeClassifier& classify) {
-  Runtime& rt = AsRuntime(*this);
   for (CoroutineHandle handle : observable.TakeMatchingWaiters(classify)) {
-    rt.EnqueueNextDelta(handle);
+    Wake(handle);
   }
-}
-
-void RuntimeEffects::ScheduleNextDelta(CoroutineHandle handle) {
-  AsRuntime(*this).EnqueueNextDelta(handle);
-}
-
-void RuntimeEffects::ScheduleInactive(CoroutineHandle handle) {
-  Runtime& rt = AsRuntime(*this);
-  handle->Park(rt.queues_.inactive);
-}
-
-void RuntimeEffects::ScheduleAtTime(SimTime when, CoroutineHandle handle) {
-  Runtime& rt = AsRuntime(*this);
-  handle->Park(rt.queues_.delayed[when]);
 }
 
 void RuntimeEffects::RequestFinish(
@@ -165,7 +189,7 @@ void RuntimeEffects::Spawn(Coroutine<void> coroutine) {
   child->InheritEnclosingTargets(parent);
   parent.AdoptChild(child);
   rt.RegisterProcessInRegistry(child);
-  handle->Park(rt.queues_.active);
+  Schedule(Now(), Region::kActive, handle);
 }
 
 auto RuntimeEffects::CurrentProcess() -> RuntimeProcess& {

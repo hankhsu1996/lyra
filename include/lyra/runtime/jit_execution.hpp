@@ -212,6 +212,17 @@ void lyra_rt_submit_nba(void* runtime, void* closure);
 void lyra_rt_submit_postponed(void* runtime, void* closure);
 void lyra_rt_submit_observed(void* runtime, void* closure);
 
+// The NBA commit of an assignment carrying an intra-assignment delay (LRM
+// 9.4.5): the region is the same, the slot is the one `duration` steps of the
+// scope's time unit (`unit_power`) away, read and rounded exactly as a delay
+// control's amount is.
+void lyra_rt_submit_nba_after(
+    void* runtime, const void* duration, const void* unit_power,
+    const void* precision_power, void* closure);
+void lyra_rt_submit_nba_after_real(
+    void* runtime, const void* duration, const void* unit_power,
+    const void* precision_power, void* closure);
+
 // Registers the running process to wake after `duration` steps of its scope's
 // time unit (`unit_power`), the registration a delay's suspend edge is preceded
 // by (LRM 9.4.1). The runtime rounds that amount to the scope's precision
