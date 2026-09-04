@@ -71,6 +71,13 @@ class RuntimeUnpackedArray {
       const PackedArray& bits, const PackedType& element_type,
       const PackedArray& count) -> RuntimeUnpackedArray;
 
+  // An array built directly from an already-computed element run and its
+  // default -- what a slice yields (LRM 7.4.6): ordinal-only payload over the
+  // given elements, with no declared range of its own.
+  [[nodiscard]] static auto FromValues(
+      RuntimeValue element_default, std::vector<RuntimeValue> data)
+      -> RuntimeUnpackedArray;
+
   RuntimeUnpackedArray(const RuntimeUnpackedArray&);
   RuntimeUnpackedArray(RuntimeUnpackedArray&&) noexcept;
   auto operator=(const RuntimeUnpackedArray&) -> RuntimeUnpackedArray&;

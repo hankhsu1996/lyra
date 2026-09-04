@@ -144,6 +144,16 @@ auto RuntimeUnpackedArray::FromPackedArray(
   return result;
 }
 
+auto RuntimeUnpackedArray::FromValues(
+    RuntimeValue element_default, std::vector<RuntimeValue> data)
+    -> RuntimeUnpackedArray {
+  RuntimeUnpackedArray result;
+  result.element_default_ =
+      std::make_unique<RuntimeValue>(std::move(element_default));
+  result.data_ = std::move(data);
+  return result;
+}
+
 auto RuntimeUnpackedArray::ToByteString() const -> String {
   std::string out;
   out.reserve(data_.size());
@@ -164,11 +174,10 @@ auto RuntimeUnpackedArray::Slice(
     const PackedArray& left, const PackedArray& right) const
     -> RuntimeUnpackedArray {
   const SliceWindow window = ResolveSliceWindow(a, b, form, left, right);
-  RuntimeUnpackedArray result;
-  result.element_default_ = std::make_unique<RuntimeValue>(*element_default_);
-  result.data_ = detail::ArraySliceGather(
-      data_, *element_default_, window.base, window.count, window.base_known);
-  return result;
+  return FromValues(
+      *element_default_, detail::ArraySliceGather(
+                             data_, *element_default_, window.base,
+                             window.count, window.base_known));
 }
 
 auto RuntimeUnpackedArray::WithSlice(

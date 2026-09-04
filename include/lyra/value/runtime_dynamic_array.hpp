@@ -6,6 +6,7 @@
 
 #include "lyra/value/concepts.hpp"
 #include "lyra/value/packed_array.hpp"
+#include "lyra/value/runtime_unpacked_array.hpp"
 
 namespace lyra::value {
 
@@ -89,6 +90,23 @@ class RuntimeDynamicArray {
   // LRM 7.5.3 `delete`: a functional clear -- yields the empty array with the
   // same element default.
   [[nodiscard]] auto Delete() const -> RuntimeDynamicArray;
+
+  // LRM 7.4.6 contiguous-range read: the `count` elements the selector names,
+  // as a fixed-size unpacked array. A dynamic array is zero-based, so the
+  // source index is the storage ordinal; a partial-out-of-range position or an
+  // x / z base reads the element default.
+  [[nodiscard]] auto Slice(
+      const PackedArray& a, const PackedArray& b, const PackedArray& form) const
+      -> RuntimeUnpackedArray;
+
+  // A functional whole-slice write (LRM 7.6): yields a new array with the
+  // window the selector names replaced, element for element, by `replacement`.
+  // A position past the end is skipped and an x / z base performs no operation,
+  // matching the invalid-index write contract; assignment compatibility gives
+  // the replacement the window's element count.
+  [[nodiscard]] auto WithSlice(
+      const PackedArray& a, const PackedArray& b, const PackedArray& form,
+      const RuntimeUnpackedArray& replacement) const -> RuntimeDynamicArray;
 
   // LRM 10.10 unpacked concatenation, as the two-operand steps a join folds to:
   // this array with one element appended, or with every element of a spread

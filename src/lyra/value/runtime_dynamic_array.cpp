@@ -9,8 +9,11 @@
 
 #include "lyra/base/internal_error.hpp"
 #include "lyra/base/simulation_error.hpp"
+#include "lyra/value/array_manipulation.hpp"
 #include "lyra/value/packed_array.hpp"
+#include "lyra/value/runtime_unpacked_array.hpp"
 #include "lyra/value/runtime_value.hpp"
+#include "lyra/value/unpacked_array.hpp"
 
 namespace lyra::value {
 
@@ -124,6 +127,32 @@ auto RuntimeDynamicArray::WithElement(
 
 auto RuntimeDynamicArray::Delete() const -> RuntimeDynamicArray {
   return RuntimeDynamicArray(*element_default_);
+}
+
+auto RuntimeDynamicArray::Slice(
+    const PackedArray& a, const PackedArray& b, const PackedArray& form) const
+    -> RuntimeUnpackedArray {
+  const SliceWindow window = ResolveSliceWindow(a, b, form);
+  return RuntimeUnpackedArray::FromValues(
+      *element_default_, detail::ArraySliceGather(
+                             data_, *element_default_, window.base,
+                             window.count, window.base_known));
+}
+
+auto RuntimeDynamicArray::WithSlice(
+    const PackedArray& a, const PackedArray& b, const PackedArray& form,
+    const RuntimeUnpackedArray& replacement) const -> RuntimeDynamicArray {
+  const SliceWindow window = ResolveSliceWindow(a, b, form);
+  std::vector<RuntimeValue> replacement_values;
+  replacement_values.reserve(window.count);
+  for (std::uint32_t i = 0; i < window.count; ++i) {
+    replacement_values.push_back(replacement.ElementAt(i));
+  }
+  RuntimeDynamicArray result(*this);
+  detail::ArraySliceScatter(
+      result.data_, window.base, window.count, replacement_values,
+      window.base_known);
+  return result;
 }
 
 auto RuntimeDynamicArray::ConcatElement(RuntimeValue item) const

@@ -82,24 +82,25 @@ ownership, or native in-frame layout) for every value.
       `new[N]` / `new[N](src)` and an assignment pattern, copies with value semantics, takes the
       equality and case-equality families, reports its size, reads and writes an element (an
       out-of-range read yields the element default and an out-of-range write is discarded, LRM 7.4.5
-      / 7.4.6), empties under `delete`, lives in a member slot as a whole-cell observable signal
-      whose element write fires subscribers, and crosses a suspension as an activation-frame value.
-      An element write and `delete` are functional whole-value updates stored back through the owner
-      -- never an in-place mutation of a value reached through a possibly-shared handle -- so value
-      semantics hold across a copy; this is the mutating-container protocol the queue and
-      associative array reuse.
+      / 7.4.6), empties under `delete`, reads a contiguous range select as a fixed-size unpacked
+      array and writes one functionally (LRM 7.4.6), lives in a member slot as a whole-cell
+      observable signal whose element write fires subscribers, and crosses a suspension as an
+      activation-frame value. An element write, a range write, and `delete` are functional
+      whole-value updates stored back through the owner -- never an in-place mutation of a value
+      reached through a possibly-shared handle -- so value semantics hold across a copy; this is the
+      mutating-container protocol the queue and associative array reuse.
 - [x] **The fixed-size unpacked array** (LRM 7.4.2) -- realized on the execution backend as a
       fixed-arity container value domain. It default-constructs member-wise, builds from an
       enumerated element list and from a replicated pattern through one repeat-unit-and-count path,
       copies with value semantics, takes the equality and case-equality families, reports its size
-      and its bit-stream width and count, reads and writes an element, reads a contiguous range
-      select, lives in a member slot as a whole-cell observable signal, and crosses a suspension as
-      an activation-frame value. Its payload is ordinal-only: the declared range is the receiver's
-      static type's and arrives at a select as its own operand, so a whole-value store copies
-      positions and relabels nothing -- and a store between two arrays whose declared ranges differ
-      lowers, because the range is gone by this layer, both sides are one type, and a type pool
-      keyed by content says so. Writing a range is refused: it rebuilds the whole value with that
-      window replaced, which no container here offers yet.
+      and its bit-stream width and count, reads and writes an element, reads and writes a contiguous
+      range select, lives in a member slot as a whole-cell observable signal, and crosses a
+      suspension as an activation-frame value. Its payload is ordinal-only: the declared range is
+      the receiver's static type's and arrives at a select as its own operand, so a whole-value
+      store copies positions and relabels nothing -- and a store between two arrays whose declared
+      ranges differ lowers, because the range is gone by this layer, both sides are one type, and a
+      type pool keyed by content says so. A range write rebuilds the whole value with that window
+      replaced (LRM 7.4.6) and stores it back through the owner.
 - [x] **The queue** (LRM 7.10) -- realized on the execution backend as a run-time-sized ordered
       container value domain. It defaults to empty, builds from an assignment pattern, copies with
       value semantics, takes the equality and case-equality families, reports its size and its

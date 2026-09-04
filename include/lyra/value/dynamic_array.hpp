@@ -17,7 +17,6 @@
 #include "lyra/value/oob_shield.hpp"
 #include "lyra/value/packed_array.hpp"
 #include "lyra/value/queue.hpp"
-#include "lyra/value/slice_selector.hpp"
 #include "lyra/value/unpacked_array.hpp"
 
 namespace lyra::value {
@@ -441,42 +440,6 @@ class DynamicArray {
     const auto v = idx.ToInt64();
     return v < 0 || static_cast<std::uint64_t>(v) >=
                         static_cast<std::uint64_t>(data_.size());
-  }
-
-  // The zero-based declared range of a `count`-element slice at ordinal `base`.
-  struct SliceWindow {
-    std::int64_t base;
-    std::uint32_t count;
-    bool base_known;
-  };
-
-  // A dynamic array is zero-based, so a source coordinate is its own ordinal.
-  // Resolve the raw range selector `(a, b, form)` to the ordinal window: a
-  // constant range passes its two endpoints, an indexed part-select its base
-  // and (constant) width with the direction in `form`.
-  [[nodiscard]] auto ResolveSliceWindow(
-      const PackedArray& a, const PackedArray& b, const PackedArray& form) const
-      -> SliceWindow {
-    const std::int64_t base_coord = a.ToInt64();
-    const std::int64_t extent = b.ToInt64();
-    std::int64_t other = extent;
-    switch (static_cast<SliceForm>(form.ToInt64())) {
-      case SliceForm::kIndexedUp:
-        other = base_coord + extent - 1;
-        break;
-      case SliceForm::kIndexedDown:
-        other = base_coord - extent + 1;
-        break;
-      case SliceForm::kConstant:
-        break;
-    }
-    const std::int64_t lo = base_coord < other ? base_coord : other;
-    const std::int64_t span =
-        base_coord < other ? other - base_coord : base_coord - other;
-    return SliceWindow{
-        .base = lo,
-        .count = static_cast<std::uint32_t>(span + 1),
-        .base_known = !a.HasUnknown()};
   }
 
   detail::OobShield<T> shield_;

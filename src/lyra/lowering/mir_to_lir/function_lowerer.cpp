@@ -1614,25 +1614,7 @@ auto FunctionLowerer::LowerAssign(
     return LowerProjectionAssign(block, assign);
   }
 
-  // A whole-value store between two unpacked arrays of one size whose declared
-  // ranges differ is position-wise (LRM 7.6), so both sides are the same value
-  // below this layer -- the range names coordinates and reaches a select as its
-  // own operand, never the payload. This layer still gives each declared range
-  // its own type identity, so the two sides arrive as unequal types and the
-  // store has no well-typed form here.
   const mir::TypeId target_type = block.exprs.Get(assign.target).type;
-  const mir::TypeId value_type = block.exprs.Get(assign.value).type;
-  if (const auto* target_array =
-          unit_->Mir().types.Get(target_type).As<mir::UnpackedArrayType>()) {
-    const auto* value_array =
-        unit_->Mir().types.Get(value_type).As<mir::UnpackedArrayType>();
-    if (value_array != nullptr && value_array->dim != target_array->dim) {
-      return Unsupported(
-          "mir_to_lir: a whole-value store between unpacked arrays of "
-          "different declared ranges is not yet lowerable to LIR");
-    }
-  }
-
   const lir::TypeId type = unit_->TranslateType(target_type);
 
   // An activation value is written through its handle, not a place: a compound
