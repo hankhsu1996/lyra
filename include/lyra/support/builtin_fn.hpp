@@ -14,11 +14,19 @@ namespace lyra::support {
 // observable storage cells, runtime effects, scope handle); this enum
 // carries only the method identity.
 enum class BuiltinFn : std::uint16_t {
-  // LRM 7.4 / 7.8 / 7.10 / 11.5 positional access, both reads. A write is not
-  // an access call: it is a descent step on the target's designator, and the
-  // entry that realizes it is named below this layer.
+  // LRM 7.4 / 7.8 / 7.10 / 11.5 positional access. The plain form answers with
+  // the part's value; the `Ref` form answers with the part itself, so what
+  // stands there may be assigned to and a further access composes onto it.
+  //
+  // Two entries rather than one entry read two ways: which of them a source
+  // position calls is settled where the source is read, and a consumer that had
+  // to work it out from the position could work it out differently. Composition
+  // is the operand that carries it -- an access whose receiver is another
+  // access is the descent, so nothing states a path.
   kElement,
   kSlice,
+  kElementRef,
+  kSliceRef,
   // Yields the receiver when a condition holds and raises the given message as
   // a simulation error when it does not. The shape for a check the language
   // requires to run as part of evaluating an access rather than ahead of it
@@ -158,11 +166,30 @@ enum class BuiltinFn : std::uint16_t {
   kAtanh,
   // Installs a capability wrapper's declared representation once at
   // construction. It acts on the wrapper rather than on the storage the wrapper
-  // represents, which is why it is a call at all; reaching that storage is a
-  // dereference of the wrapper's place, not an operation. No runtime handle: it
-  // runs before any process, so nothing is subscribed yet. Every later store
+  // represents, which is why it is a call at all. No runtime handle: it runs
+  // before any process, so nothing is subscribed yet. Every later store
   // requires its value to already be at the installed representation.
   kInitialize,
+  // Reading what a cell holds, and replacing it. Both act on the wrapper rather
+  // than name its storage: a read answers with a value the cell decides how to
+  // produce, and a write publishes the change to whatever the wrapper relates
+  // to in the object graph (LRM 4.3). Naming the wrapper itself is the bare
+  // place, which is how rebinding a reference stays a different program from
+  // writing through one.
+  //
+  // Neither carries a runtime handle. The wrapper reaches the ambient one,
+  // which has the standing of a stack pointer rather than of program data. A
+  // stored value must already be at the cell's installed representation, which
+  // is the store boundary's job upstream, not this entry's.
+  kLoad,
+  kStore,
+  // Asking a cell for its storage as somewhere to write, which is an operation
+  // on the wrapper for the same reason the two above are: which storage it
+  // currently stands for is a fact about the wrapper, not about the place
+  // naming it. It answers with a borrowed pointer, so the ordinary dereference
+  // names the storage through it and a write that reaches one part of a value
+  // costs that part rather than the whole.
+  kOpenForWrite,
   // Attaching a driver to a net (LRM 6.5): a `ResolvedNet` method returning the
   // driver handle the drive capability is reached through.
   kAttachDriver,
@@ -645,12 +672,13 @@ enum class BuiltinFn : std::uint16_t {
 // gets there is each target's own answer.
 [[nodiscard]] auto IsMutatingBuiltinFn(BuiltinFn id) -> bool;
 
-// True iff the function hands its first argument back unchanged, so a call to
-// it stands for whatever that argument stands for -- a value where the argument
-// is a value, and the same place where the argument is a place. A consumer
-// following where storage lives passes through such a call rather than stopping
-// at it.
-[[nodiscard]] auto IsPassThroughBuiltinFn(BuiltinFn id) -> bool;
+// True iff the function's result stands for storage its first argument names,
+// so a call to it stands for whatever that argument stands for -- a value where
+// the argument is a value, and a place where the argument is a place. Two kinds
+// qualify: one that hands the argument back unchanged, and one that answers
+// with a part of it. A consumer following where storage lives passes through
+// such a call rather than stopping at it.
+[[nodiscard]] auto ReachesThroughReceiverBuiltinFn(BuiltinFn id) -> bool;
 
 // True iff the LRM 7.12 method takes a `with`-clause closure as its second
 // argument. The other LRM 7.5 / 7.10 array entries (`size`, `delete`,

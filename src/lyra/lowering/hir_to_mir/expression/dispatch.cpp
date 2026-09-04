@@ -192,7 +192,7 @@ auto LowerExprImpl(L& lowerer, const hir::Expr& expr, WalkFrame frame)
   if (lowerer.Owner().Unit().types.Get(raw_or->type).IsCapabilityWrapper()) {
     const mir::ExprId cell_id =
         frame.current_block->exprs.Add(*std::move(raw_or));
-    return mir::MakeDerefExpr(cell_id, result_type);
+    return mir::MakeCellLoadCallExpr(cell_id, result_type);
   }
   return raw_or;
 }

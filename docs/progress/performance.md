@@ -5,6 +5,10 @@ optimization with a defined target shape, not a correctness gap: the feature alr
 correctly without it, and the item only makes the same behavior cheaper. Split into two domains that
 have different cost models and different measurement methods.
 
+One item departs from that and says so where it sits. The information a write discards is what makes
+it expensive here and what makes one construct answer wrongly elsewhere, so the same change closes
+both; the wrong answer is tracked with the construct it affects rather than here.
+
 ## Runtime performance
 
 Simulation execution speed: the cost of running processes, scheduling events, and reading and
@@ -35,27 +39,32 @@ same answer. And the Verilator column is **not** a like-for-like comparison: the
 mode, so every factor carries whatever X/Z tracking costs.
 
 Read that way, most cost families put Lyra between 270x and 4,700x Verilator's rate, with the
-narrowest a subscription scan that fires nothing at 15x. Two sit nowhere near that band. Wide
-bitwise work on a 256-bit value is **16,000x**, and writing an unpacked array element by element is
-**three million times**, three orders of magnitude past anything else. A factor of a few hundred is
-an engine that is slow everywhere; a factor of three million in one place is a defect, and the item
-below names it.
+narrowest a subscription scan that fires nothing at 15x. One sits nowhere near that band: wide
+bitwise work on a 256-bit value is **16,000x**. A factor of a few hundred is an engine that is slow
+everywhere; a factor orders of magnitude past that in one place is a defect rather than slowness.
 
-The unpacked-array _read_ case cannot report a read rate while that defect stands, and the way it
-fails is worth knowing. It fills the array before reading it, one element at a time, so its setup
-runs the write path once over the whole array -- which costs more than a minute against a second for
-each read pass that follows. Separating a fixed cost from a marginal one needs the marginal part to
-clear the noise between two readings, and here it does not, so what the case reports is its own
-setup. The number to expect once writes stop materializing the whole value is a few hundred, in line
-with every other family: a read copies the element it selects and nothing else. The case becomes
-truthful again then, with no change to the case.
+Writing an unpacked array element by element was the other such outlier, at **three million times**,
+and is now 2,345x -- inside the band, and no longer the thing to look at. It is the one entry here
+whose fix has been measured twice, so it is also the record of what such a factor is worth chasing:
+what it bought was a thousandfold on the operation, and the design that spends two thirds of its run
+there gains the two thirds, not a thousandfold.
+
+The unpacked-array _read_ case could not report a read rate while that defect stood, and the way it
+failed is worth keeping. It fills the array before reading it, one element at a time, so its setup
+ran the write path once over the whole array -- more than a minute, against a second for each read
+pass that followed. Separating a fixed cost from a marginal one needs the marginal part to clear the
+noise between two readings, and there it did not, so what the case reported was its own setup. It
+now reports 1,069x, which is a read rate, and it did so with no change to the case: nothing in the
+write work touched the read path, which is what makes this the independent check that the write
+stopped moving the array.
 
 A profile of the integration design says where the time goes there, and it is not where the
-pre-reset engine spent it -- propagation does not appear at all. Two thirds of a run is a single
-nonblocking write into the design's memory, because a partial write to a cell materializes the whole
-value: the write copies the array, changes one element of the copy, compares the copy against the
-stored value, and stores the copy back. A further quarter is spent constructing and range-checking
-views over bit vectors, which every bit access pays whatever its storage.
+pre-reset engine spent it -- propagation does not appear at all. Two thirds of a run was a single
+nonblocking write into the design's memory, and a further quarter is spent constructing and
+range-checking views over bit vectors, which every bit access pays whatever its storage. That
+profile predates the write fix below and has not been retaken, so the two thirds is what the fix was
+sized against rather than what a run costs now; the quarter is untouched by it and is what the next
+profile should show at the top.
 
 - [x] An integral value's dimension stack no longer allocates for the single-dimension case. Every
       declared integral carried its stack in a growable container, so constructing or copying any
@@ -66,24 +75,37 @@ views over bit vectors, which every bit access pays whatever its storage.
       168 bytes in exchange, so a whole-array copy moves more; the trade was measured rather than
       assumed, and on a design whose arrays dominate it could go the other way.
 
-- [ ] A partial write to a cell should not materialize the whole value. The snapshot exists so a
-      partial write reuses the whole-variable commit path, with its LRM 4.3 change detection and
-      subscriber wake, and for a packed value that is cheap and the edge classifier needs the old
-      bits anyway. For an aggregate the premise fails: whether the value changed is answerable at
-      the element being written. This is the largest single item here and it is a change to the
-      observability contract, not an optimization behind it.
+- [x] A partial write to a cell no longer materializes the whole value. It used to reuse the
+      whole-variable commit path, which reads the owner's whole value so that LRM 4.3 change
+      detection and the subscriber wake could be answered by comparing it against the whole new
+      value. For a packed value that is cheap and the edge decision needs the old bits anyway; for
+      an aggregate the premise fails, because whether the value changed is answerable at the part
+      being written. A write now lands in the owner's storage where it happens, and describes itself
+      only where something is armed to read the description -- LRM 4.3 makes an update event matter
+      to what is considered for evaluation, so a cell nothing observes has nothing to report and
+      takes a plain store. The model is
+      [../decisions/owner-transition-and-observation.md](../decisions/owner-transition-and-observation.md).
 
-      Measured by writing each element of an unpacked array of 32-bit elements in turn: one element
-      costs 1.55 ms into a 32768-element array and 72 us into a 2048-element one, against 1.16 us to
-      read one element back. So the cost of a write tracks the size of the array it lands in rather
-      than the size of the element, which is the signature of the copy. The larger figure is 5.5 MB
-      of value moved in 1.55 ms, or 3.5 GB/s, which is that machine's memory bandwidth -- the write
-      is bounded by copying the array and by nothing else.
+      Writing each element of a 32768-element unpacked array of 32-bit elements in turn cost 1.55 ms
+      per element, against 1.16 us to read one back: the cost of a write tracked the size of the
+      array it landed in rather than the size of the element, which is the signature of the copy.
+      That figure is 5.5 MB of value moved in 1.55 ms, or 3.5 GB/s, the measuring machine's memory
+      bandwidth -- so the write was bounded by copying the array and by nothing else, and only not
+      copying could recover anything. It is now 1.5 us per element, a thousandfold, and reading one
+      back is 0.48 us: a write and a read are the same order, which is what "the write touches one
+      element" means and is the thing to re-measure if this ever regresses.
 
-      The array's length is therefore what the case measures, not how long it runs, and shrinking it
-      to make the suite quick shrinks the defect along with it: at 2048 elements the same case
-      reports a factor of a thousand against Verilator, in line with every other cost family, and
-      the thing worth seeing disappears.
+      Two of the four predictions written down before the work landed as stated -- the write family
+      left the outlier band, and a write came down to a read's order. The third was the independent
+      check and it held with a number higher than predicted: the unpacked-array read case reports a
+      read rate for the first time, at 1,069x rather than the few hundred expected. The fourth,
+      about three times on the integration design, is not yet measured.
+
+      What the correctness half of this cost is not fixed by it. A value-change event control on an
+      aggregate element still answers wrongly, because what a sensitivity leaf carries is a bit
+      window in a flat address space and an aggregate has no such thing -- tracked with the
+      construct it affects, in [processes.md](processes.md). The write path now reports enough for
+      that answer to be got right; nothing yet reads it.
 
 - [ ] The sequence type behind a value's words and dimensions holds its inline storage and its spill
       container at the same time, so a value that never spills still carries the spill container and

@@ -13,12 +13,14 @@ namespace lyra::lowering::hir_to_mir {
 
 namespace {
 
-// The operand a call yields unchanged, when `expr` is such a call. A walk that
-// is following where storage lives passes through it rather than stopping.
-auto GuardedOperand(const mir::Expr& expr) -> const mir::ExprId* {
+// The operand a call in target position reaches its storage through, when
+// `expr` is such a call. Two kinds qualify and both name it first: a guard,
+// which yields the value it guards, and an access, whose receiver holds the
+// part it reaches. A walk following where storage lives passes through either.
+auto ReceiverOperand(const mir::Expr& expr) -> const mir::ExprId* {
   const auto* call = std::get_if<mir::CallExpr>(&expr.data);
   if (call == nullptr || call->arguments.empty()) return nullptr;
-  if (!mir::IsPassThroughCallee(call->callee)) return nullptr;
+  if (!mir::ReachesThroughReceiver(call->callee)) return nullptr;
   return &call->arguments.front();
 }
 
@@ -36,21 +38,15 @@ auto FindLhsRootId(
     if (unit.types.Get(expr.type).IsCapabilityWrapper()) {
       return lhs_id;
     }
-    // A designated part of a value states its owner, so the root is reached
-    // without walking a descent chain.
-    if (const auto* projection =
-            std::get_if<mir::ValueProjectionExpr>(&expr.data)) {
-      lhs_id = projection->owner;
+    // Every step above the root reaches its storage through the value it is
+    // taken from, so the walk is one step per node until something is not a
+    // step at all.
+    if (const mir::ExprId* receiver = ReceiverOperand(expr)) {
+      lhs_id = *receiver;
       continue;
     }
-    // A guard yields the value it guards, so the storage a write reaches is
-    // whatever the guarded expression reaches.
-    if (const mir::ExprId* guarded = GuardedOperand(expr)) {
-      lhs_id = *guarded;
-      continue;
-    }
-    if (const auto* m = std::get_if<mir::TaggedGetRefExpr>(&expr.data)) {
-      lhs_id = m->union_value;
+    if (const auto* m = std::get_if<mir::FieldAccessExpr>(&expr.data)) {
+      lhs_id = m->receiver;
       continue;
     }
     return lhs_id;
@@ -66,24 +62,16 @@ auto ReplaceLhsRoot(
   if (unit.types.Get(expr.type).IsCapabilityWrapper()) {
     return root_id;
   }
-  if (const auto* projection =
-          std::get_if<mir::ValueProjectionExpr>(&expr.data)) {
-    mir::ValueProjectionExpr rebuilt = *projection;
-    // Read the type out before the recursion below: it appends to the same
-    // arena, which invalidates the `expr` reference.
+  // Read the type out before each recursion: it appends to the same arena,
+  // which invalidates the `expr` reference.
+  if (const auto* m = std::get_if<mir::FieldAccessExpr>(&expr.data)) {
+    mir::FieldAccessExpr rebuilt = *m;
     const mir::TypeId result_ty = expr.type;
-    rebuilt.owner = ReplaceLhsRoot(unit, block, rebuilt.owner, root_id);
+    rebuilt.receiver = ReplaceLhsRoot(unit, block, rebuilt.receiver, root_id);
     return block.exprs.Add(
         mir::Expr{.data = std::move(rebuilt), .type = result_ty});
   }
-  if (const auto* m = std::get_if<mir::TaggedGetRefExpr>(&expr.data)) {
-    mir::TaggedGetRefExpr rebuilt = *m;
-    const mir::TypeId result_ty = expr.type;
-    rebuilt.union_value =
-        ReplaceLhsRoot(unit, block, rebuilt.union_value, root_id);
-    return block.exprs.Add(mir::Expr{.data = rebuilt, .type = result_ty});
-  }
-  if (GuardedOperand(expr) != nullptr) {
+  if (ReceiverOperand(expr) != nullptr) {
     auto rebuilt = std::get<mir::CallExpr>(expr.data);
     const mir::TypeId result_ty = expr.type;
     rebuilt.arguments.front() =
@@ -95,7 +83,7 @@ auto ReplaceLhsRoot(
 }
 
 auto StoragePlaceOf(
-    const mir::CompilationUnit& unit, mir::Block& block, mir::ExprId lhs_id)
+    mir::CompilationUnit& unit, mir::Block& block, mir::ExprId lhs_id)
     -> mir::ExprId {
   const mir::ExprId root_id = FindLhsRootId(unit, block, lhs_id);
   const mir::Type& root_ty = unit.types.Get(block.exprs.Get(root_id).type);
@@ -113,13 +101,30 @@ auto StoragePlaceOf(
         "StoragePlaceOf: a net's cell holds no storage a write or a reference "
         "may reach; the destination is one of its drivers");
   }
+  // Asking a wrapper for its storage as somewhere to write is an operation on
+  // the wrapper -- which storage it currently stands for is a fact about it --
+  // so it is a call, and the answer is a pointer the ordinary dereference then
+  // names the storage through.
+  const mir::TypeId value_type = root_ty.WrappedValueType();
+  const mir::ExprId opened = block.exprs.Add(
+      mir::Expr{
+          .data =
+              mir::CallExpr{
+                  .callee =
+                      mir::Direct{.target = support::BuiltinFn::kOpenForWrite},
+                  .arguments = {root_id}},
+          .type = unit.types.Intern(
+              mir::Type{mir::PointerType{
+                  .pointee = value_type,
+                  .ownership = mir::PointerOwnership::kBorrowed,
+                  .mutability = mir::Mutability::kMutable}})});
   const mir::ExprId storage_id =
-      block.exprs.Add(mir::MakeDerefExpr(root_id, root_ty.WrappedValueType()));
+      block.exprs.Add(mir::MakeDerefExpr(opened, value_type));
   return ReplaceLhsRoot(unit, block, lhs_id, storage_id);
 }
 
 auto BuildStoreExpr(
-    const mir::CompilationUnit& unit, mir::Block& block, mir::ExprId lhs_id,
+    mir::CompilationUnit& unit, mir::Block& block, mir::ExprId lhs_id,
     mir::ExprId rhs_id, std::optional<mir::BinaryOp> compound_op,
     mir::TypeId result_type) -> mir::Expr {
   // A plain store carries the right-hand side to the destination's full
@@ -137,6 +142,27 @@ auto BuildStoreExpr(
         lhs_ty.IsCapabilityWrapper() ? lhs_ty.WrappedValueType() : lhs_type;
     rhs_id = ConvertToType(unit, block, rhs_id, dst_value_type);
   }
+  // Replacing the whole of what a capability wrapper holds acts on the wrapper
+  // -- the value lands in its storage and it reports the change to whatever is
+  // watching -- so the operation is a call taking the wrapper as its
+  // destination. A compound store reads before it writes, and a store that
+  // descends writes a part; both reach storage the way a read does and assign
+  // through what they reach.
+  const mir::ExprId root_id = FindLhsRootId(unit, block, lhs_id);
+  const mir::Type& root_ty = unit.types.Get(block.exprs.Get(root_id).type);
+  if (root_id == lhs_id && !compound_op.has_value() &&
+      root_ty.IsCapabilityWrapper() && !root_ty.Is<mir::ResolvedType>()) {
+    // The operands are the destination and the value, and nothing else: the
+    // engine the wrapper reports through is the ambient one, which has the
+    // standing of a stack pointer rather than of program data.
+    return mir::Expr{
+        .data =
+            mir::CallExpr{
+                .callee = mir::Direct{.target = support::BuiltinFn::kStore},
+                .arguments = {root_id, rhs_id}},
+        .type = unit.builtins.void_type};
+  }
+
   const mir::ExprId target_id = StoragePlaceOf(unit, block, lhs_id);
   return mir::Expr{
       .data =

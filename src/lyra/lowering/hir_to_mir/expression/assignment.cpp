@@ -50,7 +50,16 @@ auto TargetOutlivesDeferredUpdate(const mir::Block& block, mir::ExprId expr_id)
   const auto& expr = block.exprs.Get(expr_id);
   return std::visit(
       Overloaded{
-          [](const mir::FieldAccessExpr&) { return true; },
+          // A field reached through a pointer is storage of its own and
+          // outlives the update. A structural product's component is not: it
+          // lives exactly as long as the value holding it, so the question
+          // passes to the receiver.
+          [&](const mir::FieldAccessExpr& m) {
+            if (!std::holds_alternative<mir::ComponentTarget>(m.field)) {
+              return true;
+            }
+            return TargetOutlivesDeferredUpdate(block, m.receiver);
+          },
           [](const mir::StaticPropertyRef&) { return true; },
           [](const mir::ExternalStaticPropertyRef&) { return true; },
           [](const mir::ExternalUnitVariableRef&) { return true; },
@@ -63,15 +72,6 @@ auto TargetOutlivesDeferredUpdate(const mir::Block& block, mir::ExprId expr_id)
           // structural.
           [&](const mir::DerefExpr& d) {
             return TargetOutlivesDeferredUpdate(block, d.pointer);
-          },
-          [&](const mir::ValueProjectionExpr& p) {
-            return TargetOutlivesDeferredUpdate(block, p.owner);
-          },
-          [&](const mir::TaggedGetRefExpr& g) {
-            return TargetOutlivesDeferredUpdate(block, g.union_value);
-          },
-          [&](const mir::TupleGetExpr& g) {
-            return TargetOutlivesDeferredUpdate(block, g.tuple);
           },
           // A join stands for the destructuring LHS it came from, which writes
           // each run through that run's own root, so the whole outlives the
@@ -116,54 +116,37 @@ auto CloneLhsSelectorChainOntoRef(
   const auto& outer_expr = outer_block.exprs.Get(outer_id);
   return std::visit(
       Overloaded{
-          // The owner is rebuilt onto the body-side reference; each step's
-          // coordinates are snapshotted by value, so the body writes the part
-          // the statement designated at submit time. Copy the path up front:
-          // the recursion and snapshots below append to `outer_block`, which
-          // can reallocate and dangle the `outer_expr` reference `p` is bound
-          // to.
-          [&](const mir::ValueProjectionExpr& p) -> mir::ExprId {
+          // An access above the root: its receiver is rebuilt onto the
+          // body-side
+          // reference and its coordinates are snapshotted by value, so the body
+          // writes the part the statement named at submit time. Copy the call
+          // up front -- the recursion and snapshots below append to
+          // `outer_block`, which can reallocate and dangle `outer_expr`.
+          [&](const mir::CallExpr& c) -> mir::ExprId {
             const mir::TypeId type = outer_expr.type;
-            const mir::ExprId src_owner = p.owner;
-            std::vector<mir::Selector> path = p.path;
-            const mir::ExprId owner = CloneLhsSelectorChainOntoRef(
-                unit_lowerer, outer_frame, closure, src_owner, root_id,
-                captured_root);
-            const auto snapshot = [&](std::vector<mir::ExprId>& operands) {
-              for (mir::ExprId& operand : operands) {
-                operand = SnapshotIntoClosure(
-                    unit_lowerer, outer_frame, closure, operand,
-                    "_lyra_nba_arg");
-              }
-            };
-            for (mir::Selector& selector : path) {
-              std::visit(
-                  Overloaded{
-                      [](const mir::ComponentSelector&) {},
-                      [](const mir::UnionMemberSelector&) {},
-                      [&](mir::ElementSelector& e) { snapshot(e.operands); },
-                      [&](mir::SliceSelector& s) { snapshot(s.operands); }},
-                  selector);
+            mir::CallExpr rebuilt = c;
+            rebuilt.arguments.front() = CloneLhsSelectorChainOntoRef(
+                unit_lowerer, outer_frame, closure, rebuilt.arguments.front(),
+                root_id, captured_root);
+            for (mir::ExprId& coordinate :
+                 std::span(rebuilt.arguments).subspan(1)) {
+              coordinate = SnapshotIntoClosure(
+                  unit_lowerer, outer_frame, closure, coordinate,
+                  "_lyra_nba_arg");
             }
             return body.exprs.Add(
-                mir::Expr{
-                    .data =
-                        mir::ValueProjectionExpr{
-                            .owner = owner, .path = std::move(path)},
-                    .type = type});
+                mir::Expr{.data = std::move(rebuilt), .type = type});
           },
-          [&](const mir::TaggedGetRefExpr& g) -> mir::ExprId {
-            const auto tag_index = g.tag_index;
+          // A field above the root names no coordinates to snapshot, so only
+          // its receiver is rebuilt.
+          [&](const mir::FieldAccessExpr& m) -> mir::ExprId {
+            mir::FieldAccessExpr rebuilt = m;
             const mir::TypeId type = outer_expr.type;
-            const mir::ExprId base = CloneLhsSelectorChainOntoRef(
-                unit_lowerer, outer_frame, closure, g.union_value, root_id,
+            rebuilt.receiver = CloneLhsSelectorChainOntoRef(
+                unit_lowerer, outer_frame, closure, rebuilt.receiver, root_id,
                 captured_root);
             return body.exprs.Add(
-                mir::Expr{
-                    .data =
-                        mir::TaggedGetRefExpr{
-                            .union_value = base, .tag_index = tag_index},
-                    .type = type});
+                mir::Expr{.data = std::move(rebuilt), .type = type});
           },
           [&](const auto&) -> mir::ExprId {
             throw InternalError(
@@ -284,13 +267,18 @@ auto ApplyAssignEffect(
   if (deferred == nullptr) {
     return effect_fn(block, target_in_outer, operands_in_outer);
   }
-  // The update runs after the stretch that submitted it returns, so it may only
-  // name storage that outlives the stretch.
+  // The update runs after the stretch that submitted it returns, and it holds a
+  // reference to the target's storage until then, so that storage has to
+  // outlive the stretch. LRM 10.4.2 makes the case that fails this illegal --
+  // "It shall be illegal to make nonblocking assignments to automatic
+  // variables" -- and the front end rejects it, so this stands behind that
+  // rather than in front of it: reaching it means a target was lowered to
+  // storage the source did not name.
   if (!TargetOutlivesDeferredUpdate(block, target_in_outer)) {
     return diag::Fail(
         span, diag::DiagCode::kUnsupportedAssignmentTarget,
-        "a non-blocking assignment whose destination is a procedural local is "
-        "not supported yet");
+        "a nonblocking assignment names storage that does not outlive the "
+        "statement submitting it (LRM 10.4.2)");
   }
   mir::Expr closure = BuildDeferredAssignClosure(
       process.Owner(), frame, target_in_outer, operands_in_outer, effect_fn);

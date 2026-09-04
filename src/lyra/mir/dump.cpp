@@ -763,6 +763,9 @@ class MirDumper {
                           [](const FieldId& id) -> std::string {
                             return std::format("Field[{}]", id.value);
                           },
+                          [](const ComponentTarget& c) -> std::string {
+                            return std::format("Component[{}]", c.index.value);
+                          },
                           [](const ExternalFieldTarget& t) -> std::string {
                             return std::format(
                                 "External[{}::{}::{}]", t.unit_name,
@@ -843,11 +846,6 @@ class MirDumper {
               return std::format(
                   "AwaitExpr awaitable=Expr[{}]", a.awaitable.value);
             },
-            [](const TupleGetExpr& g) -> std::string {
-              return std::format(
-                  "TupleGetExpr tuple=Expr[{}] index={}", g.tuple.value,
-                  g.index.value);
-            },
             [](const VectorGetExpr& g) -> std::string {
               return std::format(
                   "VectorGetExpr vector=Expr[{}] index=Expr[{}]",
@@ -858,59 +856,10 @@ class MirDumper {
                   "UnionExpr index={} value=Expr[{}]", u.index.value,
                   u.value.value);
             },
-            [](const UnionGetExpr& g) -> std::string {
-              return std::format(
-                  "UnionGetExpr union=Expr[{}] index={}", g.union_value.value,
-                  g.index.value);
-            },
-            [](const ValueProjectionExpr& p) -> std::string {
-              const auto operands =
-                  [](const std::vector<ExprId>& ids) -> std::string {
-                std::string out;
-                for (const ExprId id : ids) {
-                  out += out.empty() ? "" : ", ";
-                  out += std::format("Expr[{}]", id.value);
-                }
-                return out;
-              };
-              std::string path;
-              for (const Selector& selector : p.path) {
-                path += path.empty() ? "" : ", ";
-                path += std::visit(
-                    Overloaded{
-                        [](const ComponentSelector& c) -> std::string {
-                          return std::format("component {}", c.index.value);
-                        },
-                        [](const UnionMemberSelector& m) -> std::string {
-                          return std::format("member {}", m.index.value);
-                        },
-                        [&](const ElementSelector& e) -> std::string {
-                          return std::format(
-                              "element({})", operands(e.operands));
-                        },
-                        [&](const SliceSelector& s) -> std::string {
-                          return std::format("slice({})", operands(s.operands));
-                        }},
-                    selector);
-              }
-              return std::format(
-                  "ValueProjectionExpr owner=Expr[{}] path=[{}]", p.owner.value,
-                  path);
-            },
             [](const TaggedExpr& t) -> std::string {
               return std::format(
                   "TaggedExpr tag={} payload=Expr[{}]", t.tag_index.value,
                   t.payload.value);
-            },
-            [](const TaggedGetExpr& g) -> std::string {
-              return std::format(
-                  "TaggedGetExpr union=Expr[{}] tag={}", g.union_value.value,
-                  g.tag_index.value);
-            },
-            [](const TaggedGetRefExpr& g) -> std::string {
-              return std::format(
-                  "TaggedGetRefExpr union=Expr[{}] tag={}", g.union_value.value,
-                  g.tag_index.value);
             },
             [](const TaggedIsExpr& g) -> std::string {
               return std::format(

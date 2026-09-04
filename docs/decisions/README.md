@@ -79,8 +79,9 @@ the detail lives in the entry itself.
 - [lowering-organization](lowering-organization.md) -- how lowering passes organize their internal
   objects (facts, registries, builders, walk frame).
 - [storage-access-as-place-formation](storage-access-as-place-formation.md) -- a dereference of a
-  capability wrapper's place names the storage it represents; access is never a call, and each
-  backend supplies the protocol from the place's type.
+  capability wrapper's place names the storage it represents, and each backend supplies the protocol
+  from the place's type; reading it is never a call, and its write side is superseded by
+  [owner-transition-and-observation](owner-transition-and-observation.md).
 - [declarations-before-bodies](declarations-before-bodies.md) -- every structural declaration's
   identity and shape is CU-global and queryable before any executable lowering begins.
 - [foreach-lowering](foreach-lowering.md) -- the lowering shape of `foreach`.
@@ -322,6 +323,12 @@ the detail lives in the entry itself.
 
 ### Runtime execution and scheduling
 
+- [owner-transition-and-observation](owner-transition-and-observation.md) -- every mutation of
+  observable storage reports one thing, whether the owner transitioned, and publication is a
+  function of that alone; forming a designation is itself such a mutation; an event control's
+  detection belongs to the armed observation, which compares its own expression against the baseline
+  it took when it armed. Information about what a write could have affected may only eliminate
+  candidate observations, never decide one.
 - [activation-registration](activation-registration.md) -- an activation's membership in a wake
   target (an observable, an event, a join condition, a region queue, a delay slot) is one record the
   activation owns and the target merely links; the activation-side set and the target-side list are

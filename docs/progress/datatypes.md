@@ -10,10 +10,11 @@ parameters and typedef, real, tagged union, default initialization, and value re
 The datatype surface in scope is complete but for the gaps below. Real, string, fixed-size unpacked
 arrays, the integral-family declaration initializers, and parameter references in expressions are
 complete; enum is complete but for the package-context method gap E4 below. The variable-size
-aggregate family (dynamic array, queue, associative array) is complete. Unpacked struct and union,
-tagged and untagged, are complete. Default initialization (LRM Table 6-7) and value representation,
-including a wide value carrying X/Z across the 64-bit word boundary, are complete. Chandle is
-complete.
+aggregate family (dynamic array, queue, associative array) is complete as a value surface; what an
+element reference into one has to survive is not, and is recorded with the conformance gaps below.
+Unpacked struct and union, tagged and untagged, are complete. Default initialization (LRM Table 6-7)
+and value representation, including a wide value carrying X/Z across the 64-bit word boundary, are
+complete. Chandle is complete.
 
 ## Tagged union
 
@@ -144,6 +145,15 @@ and keeps every check it makes, recorded against the path that answers it wrongl
 answer becomes right the case passes and that record fails until its entry goes. A bullet saying no
 case holds it is one nothing watches.
 
+- [ ] A reference to an element of a dynamic array, queue, or associative array does not survive
+      operations that renumber positions. LRM 13.5.2 gives such an element a lifetime of its own --
+      it "shall continue to exist within the scope of the called subroutines until they complete" --
+      and makes a reference to a removed element an _outdated reference_ whose later writes "shall
+      not be visible outside". LRM 7.10.3 then fixes which queue operations do this: `insert`,
+      `push_back` and `push_front` "can never give rise to outdated references", a whole-queue
+      assignment outdates every element reference, and a removal outdates only what it removed. So a
+      reference held across a `push_front` must still name the element it named before, though every
+      position has moved. Nothing implements any of this, and no case holds it.
 - [ ] A dynamic array cannot be sized by its own declaration assignment. LRM 7.5.1 permits `new[]`
       "in place of the right-hand side expression of variable declaration assignments and blocking
       procedural assignments", and gives four declaration examples, so `int data[] = new [2];` is a

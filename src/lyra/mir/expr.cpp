@@ -13,11 +13,11 @@ auto IsMutatingCallee(const Callee& callee) -> bool {
   return id != nullptr && support::IsMutatingBuiltinFn(*id);
 }
 
-auto IsPassThroughCallee(const Callee& callee) -> bool {
+auto ReachesThroughReceiver(const Callee& callee) -> bool {
   const auto* direct = std::get_if<Direct>(&callee);
   if (direct == nullptr) return false;
   const auto* id = std::get_if<support::BuiltinFn>(&direct->target);
-  return id != nullptr && support::IsPassThroughBuiltinFn(*id);
+  return id != nullptr && support::ReachesThroughReceiverBuiltinFn(*id);
 }
 
 }  // namespace lyra::mir

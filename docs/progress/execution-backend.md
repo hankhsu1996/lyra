@@ -19,11 +19,14 @@ Contracts: `../architecture/backend_contract.md`, `../architecture/lir.md`,
 ## Agreement with the C++ backend
 
 Wherever both backends accept a source they answer the same, and what this backend has not realized
-refuses to lower and says which construct it was. The difference between the two is a diagnostic,
-never a different answer -- a construct that lowers and then answers wrongly is a defect, not a gap.
-A conformance case says nothing about either backend; it states what IEEE 1800 requires and both are
-held to it. What this one refuses is recorded once for the path, so the cases absent from that
-record are the cases it runs -- coverage is read off a file that only ever shrinks, never asserted.
+refuses to lower and says which construct it was. That refusal is checked rather than trusted: an
+operation named for a value domain it was never implemented for is refused before any of the design
+stands, and says which operation, so it cannot instead reach the run and arrive as a design that
+failed to come up. The difference between the two is a diagnostic, never a different answer -- a
+construct that lowers and then answers wrongly is a defect, not a gap. A conformance case says
+nothing about either backend; it states what IEEE 1800 requires and both are held to it. What this
+one refuses is recorded once for the path, so the cases absent from that record are the cases it
+runs -- coverage is read off a file that only ever shrinks, never asserted.
 
 ## Runtime-value lifetime
 

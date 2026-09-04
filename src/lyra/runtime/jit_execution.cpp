@@ -1269,8 +1269,7 @@ void lyra_rt_packed_cell_initialize(void* cell, const void* prototype) {
 }
 
 void lyra_rt_packed_cell_set(void* cell, const void* value) {
-  static_cast<Var<PackedArray>*>(cell)->Set(
-      lyra::runtime::current_runtime(), Read<PackedArray>(value));
+  static_cast<Var<PackedArray>*>(cell)->Set(Read<PackedArray>(value));
 }
 
 auto lyra_rt_string_cell_alloc() -> void* {
@@ -1286,8 +1285,7 @@ void lyra_rt_string_cell_initialize(void* cell, const void* prototype) {
 }
 
 void lyra_rt_string_cell_set(void* cell, const void* value) {
-  static_cast<Var<String>*>(cell)->Set(
-      lyra::runtime::current_runtime(), Read<String>(value));
+  static_cast<Var<String>*>(cell)->Set(Read<String>(value));
 }
 
 auto lyra_rt_real_cell_alloc() -> void* {
@@ -1303,8 +1301,7 @@ void lyra_rt_real_cell_initialize(void* cell, const void* prototype) {
 }
 
 void lyra_rt_real_cell_set(void* cell, const void* value) {
-  static_cast<Var<Real>*>(cell)->Set(
-      lyra::runtime::current_runtime(), Read<Real>(value));
+  static_cast<Var<Real>*>(cell)->Set(Read<Real>(value));
 }
 
 auto lyra_rt_shortreal_cell_alloc() -> void* {
@@ -1320,8 +1317,7 @@ void lyra_rt_shortreal_cell_initialize(void* cell, const void* prototype) {
 }
 
 void lyra_rt_shortreal_cell_set(void* cell, const void* value) {
-  static_cast<Var<ShortReal>*>(cell)->Set(
-      lyra::runtime::current_runtime(), Read<ShortReal>(value));
+  static_cast<Var<ShortReal>*>(cell)->Set(Read<ShortReal>(value));
 }
 
 // A procedural local whose value crosses a suspension. The cell is allocated in
@@ -2253,8 +2249,7 @@ void lyra_rt_tuple_cell_initialize(void* cell, const void* prototype) {
 }
 
 void lyra_rt_tuple_cell_set(void* cell, const void* value) {
-  static_cast<Var<RuntimeTuple>*>(cell)->Set(
-      lyra::runtime::current_runtime(), Read<RuntimeTuple>(value));
+  static_cast<Var<RuntimeTuple>*>(cell)->Set(Read<RuntimeTuple>(value));
 }
 
 auto lyra_rt_tuple_value_cell_alloc() -> void* {
@@ -2325,8 +2320,7 @@ void lyra_rt_union_cell_initialize(void* cell, const void* prototype) {
 }
 
 void lyra_rt_union_cell_set(void* cell, const void* value) {
-  static_cast<Var<RuntimeUnion>*>(cell)->Set(
-      lyra::runtime::current_runtime(), Read<RuntimeUnion>(value));
+  static_cast<Var<RuntimeUnion>*>(cell)->Set(Read<RuntimeUnion>(value));
 }
 
 auto lyra_rt_union_value_cell_alloc() -> void* {
@@ -2411,7 +2405,7 @@ void lyra_rt_tagged_union_cell_initialize(void* cell, const void* prototype) {
 
 void lyra_rt_tagged_union_cell_set(void* cell, const void* value) {
   static_cast<Var<RuntimeTaggedUnion>*>(cell)->Set(
-      lyra::runtime::current_runtime(), Read<RuntimeTaggedUnion>(value));
+      Read<RuntimeTaggedUnion>(value));
 }
 
 auto lyra_rt_tagged_union_value_cell_alloc() -> void* {
@@ -2551,7 +2545,7 @@ void lyra_rt_dynarray_cell_initialize(void* cell, const void* prototype) {
 
 void lyra_rt_dynarray_cell_set(void* cell, const void* value) {
   static_cast<Var<RuntimeDynamicArray>*>(cell)->Set(
-      lyra::runtime::current_runtime(), Read<RuntimeDynamicArray>(value));
+      Read<RuntimeDynamicArray>(value));
 }
 
 auto lyra_rt_dynarray_value_cell_alloc() -> void* {
@@ -2758,7 +2752,7 @@ void lyra_rt_unpackedarray_cell_initialize(void* cell, const void* prototype) {
 
 void lyra_rt_unpackedarray_cell_set(void* cell, const void* value) {
   static_cast<Var<RuntimeUnpackedArray>*>(cell)->Set(
-      lyra::runtime::current_runtime(), Read<RuntimeUnpackedArray>(value));
+      Read<RuntimeUnpackedArray>(value));
 }
 
 auto lyra_rt_packed_net_get(void* net) -> void* {
@@ -2774,12 +2768,11 @@ auto lyra_rt_packed_attach_driver(void* net) -> void* {
 }
 
 auto lyra_rt_packed_driver_get(void* driver) -> void* {
-  return Own(DriverOf<PackedArray>(driver).MutationBase());
+  return Own(DriverOf<PackedArray>(driver).Get());
 }
 
 void lyra_rt_packed_driver_set(void* driver, const void* value) {
-  DriverOf<PackedArray>(driver).Set(
-      lyra::runtime::current_runtime(), Read<PackedArray>(value));
+  DriverOf<PackedArray>(driver).Set(Read<PackedArray>(value));
 }
 
 auto lyra_rt_tuple_net_get(void* net) -> void* {
@@ -2795,12 +2788,11 @@ auto lyra_rt_tuple_attach_driver(void* net) -> void* {
 }
 
 auto lyra_rt_tuple_driver_get(void* driver) -> void* {
-  return Own(DriverOf<RuntimeTuple>(driver).MutationBase());
+  return Own(DriverOf<RuntimeTuple>(driver).Get());
 }
 
 void lyra_rt_tuple_driver_set(void* driver, const void* value) {
-  DriverOf<RuntimeTuple>(driver).Set(
-      lyra::runtime::current_runtime(), Read<RuntimeTuple>(value));
+  DriverOf<RuntimeTuple>(driver).Set(Read<RuntimeTuple>(value));
 }
 
 auto lyra_rt_union_net_get(void* net) -> void* {
@@ -2816,12 +2808,11 @@ auto lyra_rt_union_attach_driver(void* net) -> void* {
 }
 
 auto lyra_rt_union_driver_get(void* driver) -> void* {
-  return Own(DriverOf<RuntimeUnion>(driver).MutationBase());
+  return Own(DriverOf<RuntimeUnion>(driver).Get());
 }
 
 void lyra_rt_union_driver_set(void* driver, const void* value) {
-  DriverOf<RuntimeUnion>(driver).Set(
-      lyra::runtime::current_runtime(), Read<RuntimeUnion>(value));
+  DriverOf<RuntimeUnion>(driver).Set(Read<RuntimeUnion>(value));
 }
 
 auto lyra_rt_unpackedarray_net_get(void* net) -> void* {
@@ -2838,12 +2829,11 @@ auto lyra_rt_unpackedarray_attach_driver(void* net) -> void* {
 }
 
 auto lyra_rt_unpackedarray_driver_get(void* driver) -> void* {
-  return Own(DriverOf<RuntimeUnpackedArray>(driver).MutationBase());
+  return Own(DriverOf<RuntimeUnpackedArray>(driver).Get());
 }
 
 void lyra_rt_unpackedarray_driver_set(void* driver, const void* value) {
-  DriverOf<RuntimeUnpackedArray>(driver).Set(
-      lyra::runtime::current_runtime(), Read<RuntimeUnpackedArray>(value));
+  DriverOf<RuntimeUnpackedArray>(driver).Set(Read<RuntimeUnpackedArray>(value));
 }
 
 auto lyra_rt_unpackedarray_value_cell_alloc() -> void* {
@@ -3012,8 +3002,7 @@ void lyra_rt_queue_cell_initialize(void* cell, const void* prototype) {
 }
 
 void lyra_rt_queue_cell_set(void* cell, const void* value) {
-  static_cast<Var<RuntimeQueue>*>(cell)->Set(
-      lyra::runtime::current_runtime(), Read<RuntimeQueue>(value));
+  static_cast<Var<RuntimeQueue>*>(cell)->Set(Read<RuntimeQueue>(value));
 }
 
 auto lyra_rt_queue_value_cell_alloc() -> void* {
@@ -3174,7 +3163,7 @@ void lyra_rt_assocarray_cell_initialize(void* cell, const void* prototype) {
 
 void lyra_rt_assocarray_cell_set(void* cell, const void* value) {
   static_cast<Var<RuntimeAssociativeArray>*>(cell)->Set(
-      lyra::runtime::current_runtime(), Read<RuntimeAssociativeArray>(value));
+      Read<RuntimeAssociativeArray>(value));
 }
 
 auto lyra_rt_assocarray_value_cell_alloc() -> void* {

@@ -31,8 +31,15 @@ auto IsMutatingBuiltinFn(BuiltinFn id) -> bool {
   }
 }
 
-auto IsPassThroughBuiltinFn(BuiltinFn id) -> bool {
-  return id == BuiltinFn::kRequire;
+auto ReachesThroughReceiverBuiltinFn(BuiltinFn id) -> bool {
+  switch (id) {
+    case BuiltinFn::kRequire:
+    case BuiltinFn::kElementRef:
+    case BuiltinFn::kSliceRef:
+      return true;
+    default:
+      return false;
+  }
 }
 
 auto ArrayMethodTakesClosure(BuiltinFn id) -> bool {
@@ -137,6 +144,10 @@ auto BuiltinFnName(BuiltinFn id) -> std::string_view {
       return "element";
     case BuiltinFn::kSlice:
       return "slice";
+    case BuiltinFn::kElementRef:
+      return "element_ref";
+    case BuiltinFn::kSliceRef:
+      return "slice_ref";
     case BuiltinFn::kRequire:
       return "require";
     case BuiltinFn::kSize:
@@ -313,6 +324,12 @@ auto BuiltinFnName(BuiltinFn id) -> std::string_view {
       return "atanh";
     case BuiltinFn::kInitialize:
       return "initialize";
+    case BuiltinFn::kLoad:
+      return "load";
+    case BuiltinFn::kStore:
+      return "store";
+    case BuiltinFn::kOpenForWrite:
+      return "open_for_write";
     case BuiltinFn::kAttachDriver:
       return "attach_driver";
     case BuiltinFn::kCurrentRuntime:

@@ -40,13 +40,13 @@ namespace lyra::lowering::hir_to_mir {
 // net's own cell is a caller error: a net takes a value only through one of its
 // drivers.
 [[nodiscard]] auto StoragePlaceOf(
-    const mir::CompilationUnit& unit, mir::Block& block, mir::ExprId lhs_id)
+    mir::CompilationUnit& unit, mir::Block& block, mir::ExprId lhs_id)
     -> mir::ExprId;
 
 // Builds an `lhs op= rhs` (or simple `lhs = rhs`) against the storage the
 // destination designates.
 [[nodiscard]] auto BuildStoreExpr(
-    const mir::CompilationUnit& unit, mir::Block& block, mir::ExprId lhs_id,
+    mir::CompilationUnit& unit, mir::Block& block, mir::ExprId lhs_id,
     mir::ExprId rhs_id, std::optional<mir::BinaryOp> compound_op,
     mir::TypeId result_type) -> mir::Expr;
 

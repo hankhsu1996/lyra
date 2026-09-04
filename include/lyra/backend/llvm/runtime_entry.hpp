@@ -21,6 +21,13 @@ struct CompilationUnit;
 
 namespace lyra::backend::llvm_backend {
 
+// What every runtime-library entry's symbol opens with. It is what tells an
+// undefined name in a generated module apart from the ones resolved some other
+// way -- another unit's generated symbol, a foreign function, the host's
+// allocator -- so a reader of a module can say which absences the library is
+// answerable for.
+inline constexpr std::string_view kRuntimeSymbolPrefix = "lyra_rt_";
+
 // The domain a LIR type is realized in, absent for a type the runtime library
 // has no value realization for. The one place a LIR type is classified, so the
 // entry a call names and the storage a cell owns cannot disagree.

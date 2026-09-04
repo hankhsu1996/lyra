@@ -303,11 +303,8 @@ class LirDumper {
       -> std::string {
     return std::visit(
         Overloaded{
-            [](const TupleElement& e) -> std::string {
-              return std::format("component {}", e.index.value);
-            },
-            [](const UnionMember& m) -> std::string {
-              return std::format("member {}", m.index.value);
+            [](const Component& c) -> std::string {
+              return std::format("component {}", c.index.value);
             },
             [&](const ContainerElement& e) -> std::string {
               return std::format("element({})", FormatOperands(e.operands));

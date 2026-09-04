@@ -116,11 +116,11 @@ struct BlockExpr {
 // `compound_op.has_value()` marks the assignment as `target op= value`;
 // `nullopt` is a simple write. `value` is already typed to match `target`.
 //
-// `target` is either a place, whose write is a store, or a
-// `ValueProjectionExpr`, whose write is a functional whole-value update through
-// the designated part's owner. A join in target position (LRM 11.4.12
-// destructuring LHS) is desugared upstream into a snapshot + per-part
-// assignment sequence, so render does not encounter it.
+// `target` is anything that names storage or a part of a value: a place, a
+// field of a product, an element or window of a container. What settles that a
+// write is meant is this position, not the target's own node kind. A join in
+// target position (LRM 11.4.12 destructuring LHS) is desugared upstream into a
+// snapshot + per-part assignment sequence, so render does not encounter it.
 struct AssignExpr {
   ExprId target;
   std::optional<BinaryOp> compound_op = std::nullopt;
@@ -128,8 +128,8 @@ struct AssignExpr {
 };
 
 // LRM 11.4.2: `++a`, `a++`, `--a`, `a--`. Mirrors hir::IncDecExpr. `target`
-// takes the same two forms an assignment target does, a place or a designated
-// part; a join in target position is illegal per slang.
+// takes whatever an assignment target takes; a join in target position is
+// illegal per slang.
 struct IncDecExpr {
   IncDecOp op;
   ExprId target;
@@ -454,6 +454,16 @@ struct ExternalFieldTarget {
   auto operator==(const ExternalFieldTarget&) const -> bool = default;
 };
 
+// One field of a structural product, named by its position. A tuple, a union
+// and a tagged union declare their fields nowhere: the type is the field list,
+// so a position is the whole of the identity and there is no arena to qualify
+// it with.
+struct ComponentTarget {
+  base::ComponentIndex index;
+
+  auto operator==(const ComponentTarget&) const -> bool = default;
+};
+
 // Which arena's field a `FieldAccessExpr` reaches. Three shapes because the
 // class case is where "which arena" is a semantic decision that also splits
 // on unit boundary:
@@ -473,15 +483,25 @@ struct ExternalFieldTarget {
 //   `ExternalUnitObjectType.object`) and never participates in an inheritance
 //   chain, so the arena is uniquely determined by the receiver's type; stating
 //   it again would restate what the structural context already fixes.
-using FieldRef = std::variant<FieldTarget, FieldId, ExternalFieldTarget>;
+//
+// - `ComponentTarget` is used when the receiver is a structural product -- a
+//   tuple, a union, a tagged union -- whose fields are its type and are named
+//   by position rather than declared anywhere. There is no arena to name.
+using FieldRef =
+    std::variant<FieldTarget, FieldId, ExternalFieldTarget, ComponentTarget>;
 
-// Field access through an explicit receiver expression. `receiver` evaluates to
-// a field-bearing value reached by pointer -- a class instance, a closure, or a
-// promoted-scope handle (typically `LocalRef(self)` or a shared handle);
-// `field` names which arena position to reach. The receiver is explicit -- a
-// backend never asks "what is the current receiver?" -- and for a class
-// receiver the field is owner-qualified -- a backend never derives which class
-// arena to search from the receiver's type.
+// Field access through an explicit receiver expression: `receiver.field`. The
+// receiver is a field-bearing value -- a class instance, a closure, a
+// promoted-scope handle, a tuple, a union -- reached by pointer or held
+// directly, which is the receiver expression's business and not this node's.
+// The receiver is explicit, so a backend never asks "what is the current
+// receiver?"; and for a class receiver the field is owner-qualified, so a
+// backend never derives which class arena to search from the receiver's type.
+//
+// One node serves reading the field and writing it. Which of the two an
+// occurrence is follows from where it stands -- a value position reads, an
+// assignment target writes -- exactly as it does in the languages MIR is a peer
+// of, where `u.f` is one syntax and its value category settles the rest.
 struct FieldAccessExpr {
   ExprId receiver;
   FieldRef field;
@@ -546,17 +566,6 @@ struct AwaitExpr {
   ExprId awaitable;
 };
 
-// Projects one component out of a tuple value by position: `tuple.index`. The
-// inverse of `TupleExpr`, used to read a single field from a heterogeneous
-// product -- a task completion's output pack, where each `output` / `inout`
-// writeback reads its component. `Expr::type` is the component's type (the
-// `index`-th element of the operand's `TupleType`). The C++ backend realizes it
-// as `std::get<index>`.
-struct TupleGetExpr {
-  ExprId tuple;
-  base::ComponentIndex index;
-};
-
 // Projects one element out of a sequence value by position. The inverse of
 // `VectorExpr`. The position is an operand rather than part of the node
 // because a sequence is homogeneous: which element is named cannot change the
@@ -580,18 +589,6 @@ struct UnionExpr {
   ExprId value;
 };
 
-// Reads component `index` of a union value (`union.index`), the read side of
-// union member access and the active-member analogue of `TupleGetExpr` (both
-// `std::get<I>`-style positional access). `Expr::type` is the component's type.
-// Reading an inactive member is undefined in SV (LRM 7.3) and the backend
-// returns that member's default. A write is not this node's dual: writing a
-// member is a descent step on the target's designator, which makes the member
-// active as part of the whole-value update.
-struct UnionGetExpr {
-  ExprId union_value;
-  base::ComponentIndex index;
-};
-
 // Builds a tagged-union value whose active tag is `tag_index`, carrying
 // `payload`. The value-build primitive for `TaggedUnionType` and the tagged
 // analogue of `UnionExpr`: SystemVerilog spells this as `tagged Member expr`
@@ -603,28 +600,6 @@ struct UnionGetExpr {
 struct TaggedExpr {
   base::ComponentIndex tag_index;
   ExprId payload;
-};
-
-// Reads component `tag_index` of a tagged union (`u.Member`), the read side of
-// tagged-union member access. Unlike `UnionGetExpr` -- which returns the
-// component default on a cross-member read -- an access whose tag does not
-// match the current one is a run-time error (LRM 11.9). `Expr::type` is the
-// component's type; a `VoidType` component is never read (a void member has no
-// payload) and so never lands here.
-struct TaggedGetExpr {
-  ExprId union_value;
-  base::ComponentIndex tag_index;
-};
-
-// The writable location of tagged-union component `tag_index` (`u.Member` as an
-// assignment target), the write side of tagged-union member access. Writing an
-// untagged union's member makes that member active; a tagged union's does not
-// -- a write whose `tag_index` is not the current tag is a run-time error (LRM
-// 11.9), and re-tagging goes through a whole-value `TaggedExpr` construction
-// rather than a member write.
-struct TaggedGetRefExpr {
-  ExprId union_value;
-  base::ComponentIndex tag_index;
 };
 
 // Non-throwing tag check: `1` iff the tagged-union value's active tag equals
@@ -701,66 +676,6 @@ struct ExternalStaticPropertyRef {
   std::string property_name;
 };
 
-// One descent step into a value, naming a part of it. A step is positional (a
-// product component, a union member) or coordinate-bearing (an element, a
-// window). A coordinate-bearing step's operands are the source-level
-// coordinates followed by the operands the value's family takes from its static
-// type rather than from the value -- the declared range for the unpacked
-// family, the declared result shape for a packed window. No operand is ever a
-// rebased position: the coordinate system belongs to the value being selected.
-// Each step states the type of the part it reaches, so a consumer descending
-// the path knows every intermediate value's type without reimplementing the
-// projection rules. The value a step descends into is the previous step's part,
-// or the owner's value at the first step.
-struct ComponentSelector {
-  base::ComponentIndex index;
-  TypeId projected_type;
-};
-
-// Selecting a union member makes it the active one; the update carries that
-// activation (LRM 7.3).
-struct UnionMemberSelector {
-  base::ComponentIndex index;
-  TypeId projected_type;
-};
-
-// LRM 7.4.5 / 7.5 / 7.8 / 7.10 / 11.5.1 positional access: an array, queue, or
-// associative element, a string character, a packed bit-select.
-struct ElementSelector {
-  std::vector<ExprId> operands;
-  TypeId projected_type;
-};
-
-// LRM 7.4.6 / 11.5.1 fixed-width window: a packed part-select, an unpacked
-// slice, and a packed aggregate's member, which projects to a constant-bounds
-// window over the aggregate's base.
-struct SliceSelector {
-  std::vector<ExprId> operands;
-  TypeId projected_type;
-};
-
-using Selector = std::variant<
-    ComponentSelector, UnionMemberSelector, ElementSelector, SliceSelector>;
-
-// Designates a part of the value held by a place: the place that owns the whole
-// value, and the descent that reaches the part. Writing through it is a
-// functional whole-value update -- read the owner, rebuild it with the part
-// replaced, store it back -- because a value aggregate's interior is not
-// independently addressable. `Expr::type` is the designated part's type.
-//
-// The owner is a place and the path never crosses a dereference: where a chain
-// re-enters storage, that dereference terminates the path and whatever
-// projection reached the referent is an ordinary read inside `owner`.
-//
-// This is the write-side form. A read composes bottom-up through ordinary
-// select expressions and needs no owner, because every step of a read is a
-// function from a value to a part of it; a write has to name where the rebuilt
-// value goes.
-struct ValueProjectionExpr {
-  ExprId owner;
-  std::vector<Selector> path;
-};
-
 using ExprData = std::variant<
     StringLiteral, NullLiteral, MachineBoolLiteral, MachineIntLiteral,
     MachineFloatLiteral, LocalRef, UnaryExpr, BinaryExpr, BoolCastExpr,
@@ -768,9 +683,8 @@ using ExprData = std::variant<
     AddressOfExpr, MachineArrayDataExpr, MoveExpr, PointerCastExpr,
     FunctionCastExpr, IntCastExpr, FieldAccessExpr, ClosureExpr,
     ArrayLiteralExpr, ValueCastExpr, TupleExpr, VectorExpr, AwaitExpr,
-    TupleGetExpr, VectorGetExpr, UnionExpr, UnionGetExpr, TaggedExpr,
-    TaggedGetExpr, TaggedGetRefExpr, TaggedIsExpr, ValueProjectionExpr,
-    FunctionRef, StaticConstantRef, PackedTypeRef, StaticPropertyRef,
+    VectorGetExpr, UnionExpr, TaggedExpr, TaggedIsExpr, FunctionRef,
+    StaticConstantRef, PackedTypeRef, StaticPropertyRef,
     ExternalUnitVariableRef, ExternalStaticPropertyRef>;
 
 struct Expr {
@@ -813,11 +727,11 @@ struct Expr {
 // else (direct call to a user method, indirect, construct) is false.
 [[nodiscard]] auto IsMutatingCallee(const Callee& callee) -> bool;
 
-// Whether the call hands `args[0]` back unchanged, so the call stands for
-// whatever that argument stands for. A walk following where storage lives
-// passes through such a call, and a consumer naming the call as a place names
-// the place that argument names.
-[[nodiscard]] auto IsPassThroughCallee(const Callee& callee) -> bool;
+// Whether the call reaches into what `args[0]` names, so a consumer that wants
+// the call as a place wants that argument as one too. True only for a direct
+// call to a built-in whose id is in the reaching set; everything else (direct
+// call to a user method, indirect, construct) is false.
+[[nodiscard]] auto ReachesThroughReceiver(const Callee& callee) -> bool;
 
 // `lyra::runtime::current_runtime()` -- reaches the attached Runtime's
 // capability view through a thread-local pointer the Runtime publishes for
@@ -834,11 +748,34 @@ struct Expr {
 }
 
 // `*place` -- names the storage `place` stands for. `referent_type` is what
-// that storage holds: the pointee for a pointer or handle, the represented
-// value type for a capability wrapper.
+// that storage holds: the pointee for a pointer or handle.
 [[nodiscard]] inline auto MakeDerefExpr(ExprId place, TypeId referent_type)
     -> Expr {
   return Expr{.data = DerefExpr{.pointer = place}, .type = referent_type};
+}
+
+// `receiver.index` -- one field of a structural product, named by position.
+[[nodiscard]] inline auto MakeComponentAccessExpr(
+    ExprId receiver, base::ComponentIndex index, TypeId component) -> Expr {
+  return Expr{
+      .data =
+          FieldAccessExpr{
+              .receiver = receiver, .field = ComponentTarget{.index = index}},
+      .type = component};
+}
+
+// Reading what a capability wrapper's storage holds. An operation on the
+// wrapper rather than a way of naming its storage: the wrapper decides what
+// producing that value means, which is why a bare wrapper place -- the wrapper
+// read as a value, or rebound -- stays a different program.
+[[nodiscard]] inline auto MakeCellLoadCallExpr(ExprId cell, TypeId value)
+    -> Expr {
+  return Expr{
+      .data =
+          CallExpr{
+              .callee = Direct{.target = support::BuiltinFn::kLoad},
+              .arguments = {cell}},
+      .type = value};
 }
 
 // `wrapper.Initialize(prototype)` -- fixes the declared representation (and

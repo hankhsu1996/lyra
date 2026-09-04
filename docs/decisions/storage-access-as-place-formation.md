@@ -1,6 +1,15 @@
 # Storage access as place formation
 
-Date: 2026-08-03 Status: accepted
+Date: 2026-08-03 Status: accepted, with D2 superseded for a read and a whole store, and D5 given up
+
+[owner-transition-and-observation](owner-transition-and-observation.md) D5 supersedes D2 below for a
+read and for a whole store, and with it those answers of D4: each acts on the wrapper as an object
+-- a read decides which storage the wrapper currently stands for, a whole store publishes the change
+to whatever the wrapper relates to -- so D3's own dividing question makes each a call. D5 below is
+given up by the same argument: a whole store and a partial one are not one operation at two path
+lengths, because only the first acts on the wrapper. D1, D3 and D6 stand, and D2 stands for naming
+the storage as an lvalue, which is what a by-reference binding and a designator's owner both do. The
+reasoning below is left intact because the superseding entry argues against it directly.
 
 Supersedes the "Lowering observable reads and writes" section of
 [value-type-concepts](value-type-concepts.md).

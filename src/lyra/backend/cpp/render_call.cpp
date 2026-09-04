@@ -33,6 +33,12 @@ auto BuiltinFnCppName(support::BuiltinFn id) -> std::string_view {
       return "current_runtime";
     case support::BuiltinFn::kInitialize:
       return "Initialize";
+    case support::BuiltinFn::kLoad:
+      return "Get";
+    case support::BuiltinFn::kStore:
+      return "Set";
+    case support::BuiltinFn::kOpenForWrite:
+      return "Mutate";
     case support::BuiltinFn::kAttachDriver:
       return "AttachDriver";
     case support::BuiltinFn::kSubmitNba:
@@ -190,6 +196,10 @@ auto BuiltinFnCppName(support::BuiltinFn id) -> std::string_view {
       return "Realtoa";
     case support::BuiltinFn::kElement:
       return "Element";
+    case support::BuiltinFn::kElementRef:
+      return "ElementRef";
+    case support::BuiltinFn::kSliceRef:
+      return "SliceRef";
     case support::BuiltinFn::kEnumFirst:
     case support::BuiltinFn::kEnumLast:
     case support::BuiltinFn::kEnumNum:
@@ -650,11 +660,12 @@ auto RenderDirectBuiltinCall(
   const mir::Expr& receiver = view.Expr(call.arguments[0]);
   const std::string_view sep =
       view.Unit().types.Get(receiver.type).Is<mir::PointerType>() ? "->" : ".";
-  // A mutating built-in writes through its receiver, so the receiver names a
-  // place -- the same distinction an assignment target draws, and the reason a
-  // receiver reaching through a capability wrapper reaches its write protocol
-  // rather than its read.
-  const std::string receiver_text = mir::IsMutatingCallee(call.callee)
+  // A built-in that writes through its receiver, or answers with a part of it,
+  // takes the receiver as a place -- the same distinction an assignment target
+  // draws.
+  const bool receiver_is_place = mir::IsMutatingCallee(call.callee) ||
+                                 mir::ReachesThroughReceiver(call.callee);
+  const std::string receiver_text = receiver_is_place
                                         ? RenderLhsExpr(view, receiver)
                                         : RenderExpr(view, receiver);
   return {
@@ -829,8 +840,8 @@ auto RenderLhsCallExpr(
     const ScopeView& view, const mir::CallExpr& call, mir::TypeId result_type)
     -> std::string {
   const std::optional<std::size_t> place_argument =
-      mir::IsPassThroughCallee(call.callee) ? std::optional<std::size_t>{0}
-                                            : std::nullopt;
+      mir::ReachesThroughReceiver(call.callee) ? std::optional<std::size_t>{0}
+                                               : std::nullopt;
   return RenderCall(view, call, result_type, place_argument);
 }
 
