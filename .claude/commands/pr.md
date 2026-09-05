@@ -46,6 +46,8 @@ change in front of you.
 - Internal planning vocabulary ("Phase 1", "Step 2").
 - Time-sensitive state: TODOs, follow-up notes, other PRs' status, CI results. The description is a
   permanent record of the change as if already merged, not a snapshot of where the work is.
+- **Attribution of any kind** -- no "Generated with", no tool credit, no session link, no co-author
+  line. A squash merge composes this text into the commit it creates, so it lands in the history.
 
 ## Instructions
 
