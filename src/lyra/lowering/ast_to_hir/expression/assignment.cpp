@@ -64,6 +64,23 @@ auto LowerAssignmentExprProc(
   auto validate = ValidateAssignableImpl(unit_lowerer, true, as.left());
   if (!validate) return std::unexpected(std::move(validate.error()));
 
+  // A name a modport offers stands for an expression the interface evaluates
+  // (LRM 25.5.4), so assigning to it is the interface carrying that assignment
+  // out. Reaching it needs the value first, which is what the call takes.
+  if (const auto* offered = NameOfferedByModport(as.left())) {
+    if (as.op.has_value() || as.isNonBlocking()) {
+      return diag::Fail(
+          span, diag::DiagCode::kUnsupportedExpressionForm,
+          "a compound or nonblocking assignment to a name a view offers is "
+          "not yet supported");
+    }
+    auto rhs_or = proc.LowerExpr(as.right(), frame);
+    if (!rhs_or) return std::unexpected(std::move(rhs_or.error()));
+    return LowerModportPortWrite(
+        unit_lowerer, frame, *offered, frame.Exprs().Add(*std::move(rhs_or)),
+        span);
+  }
+
   auto lhs_or = proc.LowerExpr(as.left(), frame);
   if (!lhs_or) return std::unexpected(std::move(lhs_or.error()));
   const hir::ExprId lhs_id = frame.Exprs().Add(*std::move(lhs_or));
@@ -218,10 +235,22 @@ auto ValidateAssignableImpl(
     }
     case EK::HierarchicalValue: {
       const auto& hv = expr.as<slang::ast::HierarchicalValueExpression>();
-      auto declaration = ResolveNamedDeclaration(hv.symbol, span);
-      if (!declaration) return std::unexpected(std::move(declaration.error()));
-      if ((*declaration)->kind != slang::ast::SymbolKind::Variable) {
-        return reject("assignment target must be a variable reference");
+      // A name a modport offers belongs to that view rather than to the
+      // interface's declarations (LRM 25.5.4), so there is no declaration here
+      // to check a write against; which storage it reaches is settled where
+      // the reference lowers, and the front end has already refused a write
+      // the view's direction does not permit.
+      const bool offered_by_a_view =
+          hv.ref.isViaIfacePort() &&
+          hv.symbol.kind == slang::ast::SymbolKind::ModportPort;
+      if (!offered_by_a_view) {
+        auto declaration = ResolveNamedDeclaration(hv.symbol, span);
+        if (!declaration) {
+          return std::unexpected(std::move(declaration.error()));
+        }
+        if ((*declaration)->kind != slang::ast::SymbolKind::Variable) {
+          return reject("assignment target must be a variable reference");
+        }
       }
       if (!procedural_context) {
         return reject(

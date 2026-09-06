@@ -47,6 +47,16 @@ auto ParamDirectionOf(const slang::ast::FormalArgumentSymbol& formal)
   throw InternalError("ParamDirectionOf: unknown ArgumentDirection");
 }
 
+auto ModportReadName(std::string_view modport, std::string_view port)
+    -> std::string {
+  return std::format("modport_read_{}_{}", modport, port);
+}
+
+auto ModportWriteName(std::string_view modport, std::string_view port)
+    -> std::string {
+  return std::format("modport_write_{}_{}", modport, port);
+}
+
 namespace {
 
 // The ABI projection of one DPI-C type: the carrier it crosses as, and the SV

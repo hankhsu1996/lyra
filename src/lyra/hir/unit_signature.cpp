@@ -2,7 +2,6 @@
 
 #include <optional>
 #include <utility>
-#include <vector>
 
 #include "lyra/hir/external_callee.hpp"
 #include "lyra/hir/external_unit_object.hpp"
@@ -20,7 +19,8 @@ auto ImportExternalUnitObject(const UnitSignature& signature, TypePool& into)
       .unit_name = signature.unit_name,
       .class_name = published.class_name,
       .members = {},
-      .callables = {}};
+      .callables = {},
+      .modports = published.modports};
   TypeImportMemo memo;
   TypeImporter importer(signature.types, std::nullopt, into, memo);
   // The whole promise crosses, and a type is the only part of it that cannot

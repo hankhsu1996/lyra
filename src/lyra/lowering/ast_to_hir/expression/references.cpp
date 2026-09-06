@@ -14,6 +14,7 @@
 #include <slang/ast/symbols/ClassSymbols.h>
 #include <slang/ast/symbols/MemberSymbols.h>
 #include <slang/ast/symbols/ParameterSymbols.h>
+#include <slang/ast/symbols/PortSymbols.h>
 #include <slang/ast/symbols/VariableSymbols.h>
 #include <slang/ast/types/AllTypes.h>
 #include <slang/numeric/ConstantValue.h>
@@ -22,8 +23,11 @@
 #include "lyra/base/overloaded.hpp"
 #include "lyra/diag/diag_code.hpp"
 #include "lyra/hir/expr_builders.hpp"
+#include "lyra/hir/external_unit_object.hpp"
+#include "lyra/hir/published_modport.hpp"
 #include "lyra/hir/structural_scope.hpp"
 #include "lyra/hir/value_ref.hpp"
+#include "lyra/lowering/ast_to_hir/connected_interface.hpp"
 #include "lyra/lowering/ast_to_hir/constant_value.hpp"
 #include "lyra/lowering/ast_to_hir/expression/selects.hpp"
 #include "lyra/lowering/ast_to_hir/integral_constant.hpp"
@@ -341,6 +345,103 @@ auto LowerInterfacePortValue(
   return ValueTargetRefExpr(hir::ValueTarget{*route}, *type_id, span);
 }
 
+// LRM 25.5: a name the modport an interface port selected offers. The
+// identifier belongs to the view rather than to the interface's declarations
+// (LRM 25.5.4), so what it reaches is read out of the view the interface
+// published -- an identifier that carries an expression names no declaration
+// at all and could not be found among the members.
+// What the interface promised about one name a view offers: which of this
+// unit's records of that interface holds it, and the subroutines carrying out
+// the read and, where the view admits one, the write.
+struct OfferedName {
+  hir::ExternalUnitObjectId object;
+  hir::PublishedCallableId getter;
+  std::optional<hir::PublishedCallableId> setter;
+};
+
+auto ResolveOfferedName(
+    UnitLowerer& unit_lowerer,
+    const slang::ast::HierarchicalValueExpression& hve, diag::SourceSpan span)
+    -> diag::Result<OfferedName> {
+  const slang::ast::Symbol& port = *hve.ref.path[0].symbol;
+  const slang::ast::ModportSymbol* selected =
+      ConnectedInterfaceOf(
+          port.as<slang::ast::InterfacePortSymbol>().getConnection())
+          .modport;
+  if (selected == nullptr) {
+    throw InternalError(
+        "ResolveOfferedName: a name a view offers was reached through a port "
+        "that selected no view");
+  }
+  const hir::ExternalUnitObjectId object =
+      unit_lowerer.ExternalUnitObjectOf(unit_lowerer.InterfaceUnitOf(port));
+  // The record is an arena entry, so what this reference needs comes out of it
+  // before anything else can grow the arena.
+  const hir::PublishedModport* view = hir::FindModport(
+      unit_lowerer.Unit().external_unit_objects.Get(object).modports,
+      selected->name);
+  const hir::PublishedModportPort* offered =
+      view == nullptr ? nullptr : view->Find(hve.symbol.name);
+  if (offered == nullptr) {
+    return diag::Fail(
+        span, diag::DiagCode::kUnsupportedExpressionForm,
+        "a name reached through an interface port that its view does not "
+        "offer is not yet supported");
+  }
+  return OfferedName{
+      .object = object, .getter = offered->getter, .setter = offered->setter};
+}
+
+// The instance the port carries, as the receiver a call on it takes.
+auto MakeOfferedNameReceiver(
+    UnitLowerer& unit_lowerer, WalkFrame frame,
+    const slang::ast::HierarchicalValueExpression& hve, diag::SourceSpan span)
+    -> diag::Result<hir::RoutedRef> {
+  auto indices = UnitLowerer::InterfacePortCoordinates(hve.ref);
+  if (!indices.has_value()) {
+    return diag::Fail(
+        span, diag::DiagCode::kUnsupportedExpressionForm,
+        "a nested name reached through an interface port is not yet supported");
+  }
+  const slang::ast::Symbol& port = *hve.ref.path[0].symbol;
+  auto through =
+      unit_lowerer.RouteThroughInterfacePort(frame, port, *std::move(indices));
+  const hir::TypeId object_type = unit_lowerer.Unit().types.Intern(
+      hir::Type{hir::UnitObjectType{
+          .unit_name = unit_lowerer.InterfaceUnitOf(port)}});
+  return unit_lowerer.MakeRoutedObjectRef(
+      frame.Current(), std::move(through), object_type);
+}
+
+// LRM 25.5: reading a name a view offers is the interface evaluating the
+// expression the view bound it to, so the reference is a call on the instance
+// the port carries.
+auto LowerModportPortValue(
+    UnitLowerer& unit_lowerer, WalkFrame frame,
+    const slang::ast::HierarchicalValueExpression& hve, diag::SourceSpan span)
+    -> diag::Result<hir::Expr> {
+  auto resolved = ResolveOfferedName(unit_lowerer, hve, span);
+  if (!resolved) return std::unexpected(std::move(resolved.error()));
+  const hir::TypeId result_type =
+      unit_lowerer.Unit()
+          .external_unit_objects.Get(resolved->object)
+          .callables.Get(resolved->getter)
+          .result_type;
+  auto receiver = MakeOfferedNameReceiver(unit_lowerer, frame, hve, span);
+  if (!receiver) return std::unexpected(std::move(receiver.error()));
+  return hir::Expr{
+      .type = result_type,
+      .data =
+          hir::CallExpr{
+              .callee =
+                  hir::ExternalUnitMethodRef{
+                      .receiver = *receiver,
+                      .object = resolved->object,
+                      .callable = resolved->getter},
+              .arguments = {}},
+      .span = span};
+}
+
 }  // namespace
 
 auto ResolveNamedDeclaration(
@@ -351,7 +452,7 @@ auto ResolveNamedDeclaration(
   if (port->explicitConnection != nullptr) {
     return diag::Fail(
         span, diag::DiagCode::kUnsupportedExpressionForm,
-        "a modport expression is not yet supported");
+        "a name a modport gives its own meaning is not yet supported here");
   }
   const auto* item =
       port->internalSymbol == nullptr
@@ -364,6 +465,40 @@ auto ResolveNamedDeclaration(
         "supported");
   }
   return item;
+}
+
+auto NameOfferedByModport(const slang::ast::Expression& expr)
+    -> const slang::ast::HierarchicalValueExpression* {
+  const auto* hve = expr.as_if<slang::ast::HierarchicalValueExpression>();
+  if (hve == nullptr || !hve->ref.isViaIfacePort()) return nullptr;
+  return hve->symbol.as_if<slang::ast::ModportPortSymbol>() == nullptr ? nullptr
+                                                                       : hve;
+}
+
+auto LowerModportPortWrite(
+    UnitLowerer& unit_lowerer, WalkFrame frame,
+    const slang::ast::HierarchicalValueExpression& target, hir::ExprId value,
+    diag::SourceSpan span) -> diag::Result<hir::Expr> {
+  auto resolved = ResolveOfferedName(unit_lowerer, target, span);
+  if (!resolved) return std::unexpected(std::move(resolved.error()));
+  if (!resolved->setter.has_value()) {
+    return diag::Fail(
+        span, diag::DiagCode::kUnsupportedExpressionForm,
+        "a name a view offers only for reading is not assignable");
+  }
+  auto receiver = MakeOfferedNameReceiver(unit_lowerer, frame, target, span);
+  if (!receiver) return std::unexpected(std::move(receiver.error()));
+  return hir::Expr{
+      .type = unit_lowerer.Unit().types.Intern(hir::Type{hir::VoidType{}}),
+      .data =
+          hir::CallExpr{
+              .callee =
+                  hir::ExternalUnitMethodRef{
+                      .receiver = *receiver,
+                      .object = resolved->object,
+                      .callable = *resolved->setter},
+              .arguments = {value}},
+      .span = span};
 }
 
 auto LowerNamedValueProc(
@@ -435,6 +570,14 @@ auto LowerHierarchicalValue(
     const slang::ast::HierarchicalValueExpression& hve)
     -> diag::Result<hir::Expr> {
   const auto span = unit_lowerer.SourceMapper().SpanOf(hve.sourceRange);
+
+  // A name reached through an interface port under a modport is one the view
+  // offers (LRM 25.5), so it resolves against the view rather than against the
+  // interface's members -- the name may be the view's own and stand for a part
+  // of a declaration, or for a value, or for nothing.
+  if (NameOfferedByModport(hve) != nullptr) {
+    return LowerModportPortValue(unit_lowerer, frame, hve, span);
+  }
 
   auto declaration = ResolveNamedDeclaration(hve.symbol, span);
   if (!declaration) return std::unexpected(std::move(declaration.error()));

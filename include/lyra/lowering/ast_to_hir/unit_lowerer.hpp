@@ -42,6 +42,7 @@ class Expression;
 class ClassType;
 class HierarchicalReference;
 class InterfacePortSymbol;
+class ModportPortSymbol;
 class Scope;
 }  // namespace slang::ast
 
@@ -517,6 +518,30 @@ class UnitLowerer {
       const slang::ast::SubroutineSymbol& sym) const
       -> std::optional<SubroutineBinding>;
 
+  // The subroutines an interface carries out on behalf of one name a modport
+  // offers (LRM 25.5.4). The name stands for an expression this unit
+  // evaluates, so reading it runs one subroutine and writing it runs the
+  // other; a view that admits no write publishes only the first. Their
+  // identities are minted with every other structural identity so the
+  // signature can name them before any body is lowered.
+  struct ModportAccessors {
+    hir::StructuralSubroutineId getter;
+    std::optional<hir::StructuralSubroutineId> setter;
+  };
+
+  void MapModportAccessors(
+      const slang::ast::Symbol& port, ModportAccessors accessors);
+  [[nodiscard]] auto ModportAccessorsOf(const slang::ast::Symbol& port) const
+      -> ModportAccessors;
+
+  // What a process waiting on a name a modport offers observes: every member
+  // the expression behind that name reads (LRM 25.5.4), each reached through
+  // the interface the reader's own port carries. The name is no storage of its
+  // own, so nothing waits on it directly.
+  auto ObservedThroughModport(
+      const slang::ast::ModportPortSymbol& offered, const WalkFrame& frame)
+      -> diag::Result<std::vector<hir::SensitivityEntry>>;
+
   // Interns this unit's record of a DPI-C import (LRM 35.4), classifying its
   // ABI projection on first sight and answering with the same id every later
   // time. Both the declaration walk and a call site reach an import through
@@ -850,6 +875,8 @@ class UnitLowerer {
   std::unordered_map<const slang::ast::Symbol*, InterfacePortBinding>
       interface_port_bindings_;
   SubroutineBindings subroutine_bindings_;
+  std::unordered_map<const slang::ast::Symbol*, ModportAccessors>
+      modport_accessors_;
   ForeignImportBindings foreign_import_bindings_;
   ForeignImportScopes foreign_import_scopes_;
   OwnedChildBindings owned_child_bindings_;

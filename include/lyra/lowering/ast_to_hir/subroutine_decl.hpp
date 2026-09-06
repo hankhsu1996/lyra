@@ -1,6 +1,7 @@
 #pragma once
 
 #include <optional>
+#include <string>
 #include <string_view>
 
 #include "lyra/diag/diagnostic.hpp"
@@ -29,6 +30,15 @@ class UnitLowerer;
 // the same directions from the same formals.
 auto ParamDirectionOf(const slang::ast::FormalArgumentSymbol& formal)
     -> hir::ParamDirection;
+
+// The subroutines an interface carries out for one name a modport offers (LRM
+// 25.5.4), named from the view and the name it offers. The declaring unit both
+// promises these and builds them, so the two are spelled through one function
+// and cannot describe different subroutines.
+auto ModportReadName(std::string_view modport, std::string_view port)
+    -> std::string;
+auto ModportWriteName(std::string_view modport, std::string_view port)
+    -> std::string;
 
 // Lowers a slang subroutine (LRM 13) into a hir::SubroutineDecl: its result
 // type, its formals as body-local procedural vars carrying their direction, the

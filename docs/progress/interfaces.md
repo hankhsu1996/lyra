@@ -44,6 +44,9 @@ This workstream reasons from these architecture docs and does not restate them:
 - `../decisions/published-member-placement.md` -- a published member sits at the position its
   signature states, derived independently by the declaring unit and by every referrer, so how many
   positions one member occupies is settled there rather than here.
+- `../decisions/publishing-part-of-a-member.md` -- what a connection point names when it is not a
+  whole declaration, why an interface publishes its views, and why a signature carries a closed
+  descent rather than an expression.
 - `../decisions/instance-array-multiplicity.md` -- a declaration standing for several objects is one
   member whose type carries the multiplicity, which is what an interface port carrying a range is
   over a borrowed pointer.
@@ -167,12 +170,26 @@ B  The interface port
       members the port may reach and in which direction, and changes nothing about how a member is
       reached: the handle and the route are the modport-free ones. A port with no modport selected
       reaches every net and variable in the interface with direction `inout` or `ref`.
-- [ ] C2 -- A modport expression gives a port identifier its own meaning inside the interface (LRM
-      25.5.4): a part-select, an element, a concatenation, an assignment pattern, or a constant. The
-      module's access through that identifier reaches the part of the interface's storage the
-      interface named, so the route's leaf carries a projection the referrer did not write. Port
-      identifiers live in their own name space per modport, and a modport port declared with no
-      expression connects to nothing internal and is legal.
+- [x] C2 -- A modport expression gives a port identifier its own meaning inside the interface (LRM
+      25.5.4): an element, a part-select, a concatenation, an assignment pattern, or a constant. The
+      identifier names an expression the interface evaluates, which is one concept rather than a set
+      of kinds -- a plain identifier is that expression being the item's own name. Reading the
+      identifier evaluates that expression and writing it assigns to it, so the interface publishes
+      the two subroutines carrying those out and a module written against the view reaches the name
+      by calling them. Port identifiers live in their own name space per modport, so one name
+      carries a different meaning per view and a module written once against it acts on whichever
+      the view it was bound through named.
+
+      The expression is lowered in the interface, where its names resolve, so no form of it needs
+      recognizing at the referrer and none is folded: a designator, a constant, a concatenation and
+      an expression over the interface's members all reach a module the same way. A process waiting
+      on such a name waits on every member the expression reads, which the interface publishes
+      alongside it, so a computed name re-evaluates exactly when a plain one does.
+
+      A view offering a name that reaches nothing inside its interface is legal and is rejected with
+      a clean diagnostic, as is a compound or nonblocking assignment to such a name, and waiting on
+      a name whose view the reading scope carries on more than one of its own ports -- a read states
+      no path, so which port it came through is not recoverable there.
 
 ### Stage D -- Subroutines across the boundary
 
@@ -247,14 +264,14 @@ elaborates. That form is refused, and it is tracked with the hierarchical-refere
 - Stage E's access resolves per access rather than against an endpoint sealed once, because the
   target is chosen at run time. Whether the resolution memoizes per handle and name, and where such
   a cache lives so that it is a cache and not a second authority, is open.
-- A modport expression (C2) states a projection at the interface rather than at the referrer, and
-  that is what separates it from the rest of Stage C. A modport port written as a plain name is the
-  interface item's own name used twice, so a referrer resolves it against what the interface
-  published and needs to know nothing about the modport. One written as an expression renames a
-  shape instead, and that name is on no signature, so the interface has to publish its modports for
-  a referrer to resolve it at all. What such a view carries per port -- a published member, a
-  projection of one, a concatenation, a constant, or nothing -- is open, and the answer decides
-  whether a signature ever carries an expression across the unit boundary.
+- A port expression written as a concatenation or an assignment pattern in an ANSI header (LRM
+  23.2.2.2) states one port over several pieces of the unit's storage, and it is refused. The
+  non-ANSI form of the same thing is not open: LRM 23.2.2.1 makes it several bundled names, which is
+  already one published point each. What is open is whether the ANSI form is the same shape read
+  differently by the front end, or a port whose sink is genuinely several places at once -- and a
+  port's sink is where the answer has to come from, since a port connection is an assignment (LRM
+  23.3.3). Nothing is open on the modport side, where a name stands for an expression whatever shape
+  that expression takes.
 
 ## Out of scope
 

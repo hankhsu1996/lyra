@@ -303,6 +303,12 @@ the detail lives in the entry itself.
   referrer records the object it compiled against in its own IR, in a registry separate from the
   classes it compiles, so no pass below the one that consumes a signature reads one. Carrying the
   position on the reference, handing signatures to a lower pass, and a by-name lookup are rejected.
+- [publishing-part-of-a-member](publishing-part-of-a-member.md) -- a connection point names a
+  projection of a published member, a folded value, or nothing; a signature carries a closed
+  selector path and never an expression, an interface publishes its modports, and the referrer
+  applies the projection as an ordinary access so no endpoint category is added. A synthesized cell
+  per point, carrying the source expression, reading it off the frontend, a member per point, and a
+  per-modport member list are rejected.
 - [identity-is-not-a-rendering](identity-is-not-a-rendering.md) -- what must distinguish is stored
   as its parts and composed into a name only by whoever knows the spelling rules; an identity splits
   exactly where the layer below it splits; naming another unit's object and holding what it

@@ -35,6 +35,20 @@ auto ResolveNamedDeclaration(
     const slang::ast::ValueSymbol& value, diag::SourceSpan span)
     -> diag::Result<const slang::ast::ValueSymbol*>;
 
+// `expr` as a name offered by the modport an interface port selected, or
+// nothing when it is anything else. Such a name stands for an expression the
+// interface evaluates (LRM 25.5.4), so both reading and writing it are the
+// interface carrying that out rather than storage the referrer reaches.
+auto NameOfferedByModport(const slang::ast::Expression& expr)
+    -> const slang::ast::HierarchicalValueExpression*;
+
+// Writing such a name, as the call which performs it. `value` is the already
+// lowered right side, which crosses as the call's one argument.
+auto LowerModportPortWrite(
+    UnitLowerer& unit_lowerer, WalkFrame frame,
+    const slang::ast::HierarchicalValueExpression& target, hir::ExprId value,
+    diag::SourceSpan span) -> diag::Result<hir::Expr>;
+
 auto LowerNamedValueProc(
     ProcessLowerer& proc, WalkFrame frame,
     const slang::ast::NamedValueExpression& named) -> diag::Result<hir::Expr>;
