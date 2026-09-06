@@ -565,9 +565,8 @@ class HirDumper {
                   if (j != 0) out += ", ";
                   const auto& r = e.triggers[i].sensitivity_list[j];
                   out += std::format(
-                      "{{{} bits={} edge={}}}", FormatValueTarget(r.ref),
-                      FormatFootprint(r.footprint),
-                      FormatEventEdge(r.edge_kind));
+                      "{{{} bits={}}}", FormatValueTarget(r.ref),
+                      FormatFootprint(r.footprint));
                 }
                 out += "]}";
               }
@@ -580,8 +579,8 @@ class HirDumper {
                 if (i != 0) out += ", ";
                 const auto& r = ie.sensitivity_list[i];
                 out += std::format(
-                    "{{{} bits={} edge={}}}", FormatValueTarget(r.ref),
-                    FormatFootprint(r.footprint), FormatEventEdge(r.edge_kind));
+                    "{{{} bits={}}}", FormatValueTarget(r.ref),
+                    FormatFootprint(r.footprint));
               }
               out += "]";
               return out;

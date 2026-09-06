@@ -241,17 +241,32 @@ auto lyra_rt_delay_real(
     void* runtime, const void* duration, const void* unit_power,
     const void* precision_power) -> bool;
 
-// Builds one leaf of a value-change wait: the observable cell it watches, the
-// bit projection of that cell's packed encoding it watches as a
-// `(lsb_bit_offset, bit_width)` pair, and the edge polarity it watches for (LRM
-// 9.4.2). The scalars cross as opaque packed values, like every scalar. The
-// trigger is a transient runtime value owned by the current call scope.
+// Builds one leaf of a value-change wait: the observable cell it watches, and
+// which bits of that cell's packed encoding it reads, as a `(lsb_bit_offset,
+// bit_width)` pair. Nothing decides beyond being reached, which is the
+// sensitivity the standard gives a construct that names variables rather than
+// an expression (LRM 9.2.2.2.1). The scalars cross as opaque packed values,
+// like every scalar. The trigger is a transient runtime value owned by the
+// current call scope.
 auto lyra_rt_make_trigger(
-    void* observable, const void* edge, const void* lsb_bit_offset,
+    void* observable, const void* lsb_bit_offset, const void* bit_width)
+    -> void*;
+
+// The same leaf where an event control decides what a change there means: the
+// observation the leaves of one event expression share.
+auto lyra_rt_make_observed_trigger(
+    void* observable, const void* observation, const void* lsb_bit_offset,
     const void* bit_width) -> void*;
 
-// Registers the running process to wake when any leaf of `triggers` changes as
-// its edge demands, the registration a value-change wait's suspend edge is
+// What an event control watches (LRM 9.4.2): a closure answering what the
+// event expression is worth now, and the edge specifier written on it, crossing
+// as an opaque packed value like every scalar. It is armed here with what the
+// expression is worth at this moment. Like a trigger it is transient, and the
+// waits built from it hold it for as long as they last.
+auto lyra_rt_make_observation(void* expression, const void* edge) -> void*;
+
+// Registers the running process to wake when a change to one of `triggers` is
+// an event for the wait, the registration a value-change wait's suspend edge is
 // preceded by (LRM 9.4.2 / 9.4.2.2 / 9.4.3). An empty span means "never wake
 // up". The wakeup source is the running process itself, read from the runtime;
 // no token crosses the boundary. A value-change wait always parks.

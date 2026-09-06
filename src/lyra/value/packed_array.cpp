@@ -482,26 +482,6 @@ auto PackedArray::Lsb() const -> FourStateBit {
   return value_bit ? FourStateBit::kOne : FourStateBit::kZero;
 }
 
-auto PackedArray::GetBit(std::uint64_t flat_offset) const -> FourStateBit {
-  if (flat_offset >= type_.bit_width) {
-    return type_.is_four_state ? FourStateBit::kUnknown : FourStateBit::kZero;
-  }
-  const auto w_idx = static_cast<std::size_t>(flat_offset / 64U);
-  const auto b_idx = static_cast<std::uint64_t>(flat_offset % 64U);
-  const auto vw = ValueWords();
-  const bool value_bit = ((vw[w_idx] >> b_idx) & std::uint64_t{1}) != 0U;
-  if (!type_.is_four_state) {
-    return value_bit ? FourStateBit::kOne : FourStateBit::kZero;
-  }
-  const auto uw = UnknownWords();
-  const bool unknown_bit =
-      w_idx < uw.size() && ((uw[w_idx] >> b_idx) & std::uint64_t{1}) != 0U;
-  if (unknown_bit) {
-    return value_bit ? FourStateBit::kUnknown : FourStateBit::kHighImpedance;
-  }
-  return value_bit ? FourStateBit::kOne : FourStateBit::kZero;
-}
-
 auto PackedArray::AsBitView() -> BitView {
   auto* bv = std::get_if<BitValue>(&storage_);
   if (bv == nullptr) {

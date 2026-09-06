@@ -56,8 +56,9 @@ hold in their head.
 Registration  = one membership: "this target can resume this activation"
   activation      -- who to resume
   prev / next     -- linked into the target's list
-  fire condition  -- the edge and bit projection of a value-change wait (LRM 9.4.2);
-                     a target with no condition (event, join, queue, delay) leaves it unset
+  fire condition  -- what decides whether a change at this target is an event for this
+                     activation (LRM 9.4.2); a target that fires on being reached
+                     (event, join, queue, delay) leaves it unset
 
 Activation  owns its registrations. Releasing it destroys them.
 Target      owns a list. It links registrations; it does not copy them.
@@ -94,9 +95,11 @@ D3. Revoking is a detach, never a search. A registration unlinks itself from whi
     it using its own links alone. No target is consulted, no container is scanned, and no side needs
     to know what kind of target the other end is.
 
-D4. Condition data belongs to the membership, not to either end. A value-change wait's edge and bit
-    projection describe the (observable, activation) pair, so they live on the registration. A target
-    that fires unconditionally carries none.
+D4. Condition data belongs to the membership, not to either end. A value-change wait's bit
+    projection describes the (observable, activation) pair, so it lives on the registration -- and
+    the test is that description: what an event control compares is the value of one expression,
+    which the leaves of that expression share rather than each holding, so it is reached from the
+    membership rather than copied onto each. A target that fires unconditionally carries none.
 
 D5. A registration settles exactly once: the target claims it when the wait is satisfied, or the
     activation revokes it. Either way it is unlinked, and an unlinked registration can resume

@@ -24,8 +24,7 @@ auto BuildContinuousAssign(
     UnitLowerer& unit_lowerer, WalkFrame frame, diag::SourceSpan span,
     hir::Expr lhs, hir::Expr rhs, const std::vector<SensitivityRead>& reads)
     -> diag::Result<hir::ContinuousAssign> {
-  auto sensitivity = unit_lowerer.TranslateSensitivityReads(
-      reads, frame, support::EventEdge::kAnyChange);
+  auto sensitivity = unit_lowerer.TranslateSensitivityReads(reads, frame);
   if (!sensitivity) return std::unexpected(std::move(sensitivity.error()));
   const hir::ExprId lhs_id = frame.Exprs().Add(std::move(lhs));
   const hir::ExprId rhs_id = frame.Exprs().Add(std::move(rhs));

@@ -36,7 +36,6 @@
 #include "lyra/lowering/ast_to_hir/sensitivity.hpp"
 #include "lyra/lowering/ast_to_hir/walk_frame.hpp"
 #include "lyra/support/assertion_policy.hpp"
-#include "lyra/support/event_edge.hpp"
 
 namespace slang::ast {
 class Expression;
@@ -743,15 +742,11 @@ class UnitLowerer {
       const slang::ast::HierarchicalReference& reference)
       -> std::optional<std::vector<std::uint32_t>>;
 
-  // The reads of a dependency set that name a cell, as the entries that wake on
-  // it under `edge`. A read of anything else contributes none, so a constant
-  // read alongside a signal leaves only the signal subscribed (LRM 9.2.2.2.1).
-  // An inferred sensitivity wakes on any change; only an explicit event control
-  // qualifies its terms with a polarity (LRM 9.4.2), and every leaf of one term
-  // carries that term's own.
+  // The reads of a dependency set that name a cell, as the entries watching it.
+  // A read of anything else contributes none, so a constant read alongside a
+  // signal leaves only the signal watched (LRM 9.2.2.2.1).
   [[nodiscard]] auto TranslateSensitivityReads(
-      const std::vector<SensitivityRead>& reads, const WalkFrame& frame,
-      support::EventEdge edge)
+      const std::vector<SensitivityRead>& reads, const WalkFrame& frame)
       -> diag::Result<std::vector<hir::SensitivityEntry>>;
 
  private:

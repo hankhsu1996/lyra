@@ -327,6 +327,8 @@ class MirDumper {
                   return "RuntimeLibrary(HierarchySegment)";
                 case RuntimeLibraryKind::kTrigger:
                   return "RuntimeLibrary(Trigger)";
+                case RuntimeLibraryKind::kObservation:
+                  return "RuntimeLibrary(Observation)";
                 case RuntimeLibraryKind::kScopeProgram:
                   return "RuntimeLibrary(ScopeProgram)";
                 case RuntimeLibraryKind::kScopeDefinition:

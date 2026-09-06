@@ -5,10 +5,11 @@
 namespace lyra::support {
 
 // LRM 9.4.2 edge specifier on `@(...)`. Shared vocabulary: the compiler encodes
-// each observed leaf's polarity, and the runtime decides which subscribed
-// waiters a value change wakes. `kAnyChange` is the polarity of an implicit
-// sensitivity (an `always_comb` / `always_latch` body, an `@*`, a `wait
-// (cond)`, a continuous assignment), which no edge keyword names.
+// what an event control was written with, and the runtime reads it to decide
+// whether a change in the expression's value is the event that control waits
+// for. `kAnyChange` is what an event control carrying no edge keyword waits
+// for -- a change anywhere in the value, rather than a direction its least
+// significant bit took.
 enum class EventEdge : std::uint8_t {
   kAnyChange,
   kPosedge,

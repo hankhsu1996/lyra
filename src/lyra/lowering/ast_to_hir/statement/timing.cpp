@@ -72,13 +72,11 @@ auto LowerSignalEventTrigger(
 
   const auto edge_kind = LowerEventEdge(sig.edge);
 
+  // The leaves are what the expression reads, which is what makes the wait a
+  // candidate; the edge belongs to the expression, whose value decides.
   const auto& reads = proc.Owner().Sensitivity().AnalyzeReads(
       sig.expr, proc.ContainingSymbol());
-  // Faithful record of SV: every leaf carries the trigger's edge identifier.
-  // Whether the runtime can act on it directly (single leaf, LSB-reduce) or
-  // needs a snapshot + re-eval wrapper (compound) is a HIR -> MIR decision.
-  auto sensitivity_list =
-      proc.Owner().TranslateSensitivityReads(reads, frame, edge_kind);
+  auto sensitivity_list = proc.Owner().TranslateSensitivityReads(reads, frame);
   if (!sensitivity_list) {
     return std::unexpected(std::move(sensitivity_list.error()));
   }
@@ -177,8 +175,7 @@ auto LowerTimingControl(
     case slang::ast::TimingControlKind::ImplicitEvent: {
       const auto& reads = proc.Owner().Sensitivity().AnalyzeReads(
           controlled, proc.ContainingSymbol());
-      auto sensitivity = proc.Owner().TranslateSensitivityReads(
-          reads, frame, support::EventEdge::kAnyChange);
+      auto sensitivity = proc.Owner().TranslateSensitivityReads(reads, frame);
       if (!sensitivity) return std::unexpected(std::move(sensitivity.error()));
       return hir::TimingControl{hir::ImplicitEventControl{
           .sensitivity_list = *std::move(sensitivity)}};
@@ -375,8 +372,7 @@ auto LowerWaitStmt(
       frame.current_procedural_body->stmts.Add(*std::move(body_or));
   const auto& reads =
       proc.Owner().Sensitivity().AnalyzeReads(w.cond, proc.ContainingSymbol());
-  auto sensitivity = proc.Owner().TranslateSensitivityReads(
-      reads, frame, support::EventEdge::kAnyChange);
+  auto sensitivity = proc.Owner().TranslateSensitivityReads(reads, frame);
   if (!sensitivity) return std::unexpected(std::move(sensitivity.error()));
   return hir::Stmt{
       .label = std::nullopt,

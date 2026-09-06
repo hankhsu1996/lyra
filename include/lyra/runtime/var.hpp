@@ -10,80 +10,16 @@
 
 #include "lyra/base/internal_error.hpp"
 #include "lyra/runtime/coroutine.hpp"
+#include "lyra/runtime/observation.hpp"
 #include "lyra/runtime/pending_wait.hpp"
 #include "lyra/runtime/registration.hpp"
 #include "lyra/runtime/runtime_effects.hpp"
 #include "lyra/runtime/trigger.hpp"
 #include "lyra/runtime/value_storage_core.hpp"
 #include "lyra/value/concepts.hpp"
-#include "lyra/value/packed.hpp"
 #include "lyra/value/packed_array.hpp"
 
 namespace lyra::runtime {
-
-// Classification of a single value change by its LSB transition per LRM
-// 9.4.2 Table 9-2:
-//   - posedge: 0 -> {1, x, z}; {x, z} -> 1
-//   - negedge: 1 -> {0, x, z}; {x, z} -> 0
-//   - kChangeOnly: any other LSB-different change (x <-> z), or the full
-//     value moved but the LSB stayed the same (upper bits changing).
-enum class EdgeTransition : std::uint8_t {
-  kChangeOnly,
-  kPosedge,
-  kNegedge,
-};
-
-inline auto ClassifyEdge(
-    value::FourStateBit old_lsb, value::FourStateBit new_lsb)
-    -> EdgeTransition {
-  if (old_lsb == new_lsb) {
-    return EdgeTransition::kChangeOnly;
-  }
-  // Leaving 0 is posedge regardless of destination (1, x, or z).
-  if (old_lsb == value::FourStateBit::kZero) {
-    return EdgeTransition::kPosedge;
-  }
-  // Leaving 1 is negedge regardless of destination (0, x, or z).
-  if (old_lsb == value::FourStateBit::kOne) {
-    return EdgeTransition::kNegedge;
-  }
-  // Leaving x or z: only arrival at 0 or 1 counts; x <-> z is kChangeOnly.
-  if (new_lsb == value::FourStateBit::kOne) {
-    return EdgeTransition::kPosedge;
-  }
-  if (new_lsb == value::FourStateBit::kZero) {
-    return EdgeTransition::kNegedge;
-  }
-  return EdgeTransition::kChangeOnly;
-}
-
-// Whether the transition names a direction, as opposed to a change that names
-// none (LRM 9.4.2 Table 9-2).
-[[nodiscard]] constexpr auto IsDirectedEdge(EdgeTransition transition) -> bool {
-  switch (transition) {
-    case EdgeTransition::kPosedge:
-    case EdgeTransition::kNegedge:
-      return true;
-    case EdgeTransition::kChangeOnly:
-      return false;
-  }
-  throw InternalError("runtime::IsDirectedEdge: unknown EdgeTransition");
-}
-
-inline auto EdgeMatches(
-    support::EventEdge subscribed, EdgeTransition transition) -> bool {
-  switch (subscribed) {
-    case support::EventEdge::kAnyChange:
-      return true;
-    case support::EventEdge::kPosedge:
-      return transition == EdgeTransition::kPosedge;
-    case support::EventEdge::kNegedge:
-      return transition == EdgeTransition::kNegedge;
-    case support::EventEdge::kBothEdges:
-      return IsDirectedEdge(transition);
-  }
-  throw InternalError("runtime::EdgeMatches: unknown EventEdge");
-}
 
 class Observable {
  public:
@@ -94,36 +30,42 @@ class Observable {
   auto operator=(Observable&&) -> Observable& = delete;
   ~Observable() = default;
 
-  // Whether anything is currently armed to observe a change here. LRM 4.3
-  // makes an update event matter to what is "considered for evaluation", and
-  // the armed observations are the whole of that: nothing else reads a change.
-  // So a write to a cell with none has nothing to report, and may skip the
-  // work of describing itself.
-  [[nodiscard]] auto HasArmedObservation() const noexcept -> bool {
+  // Whether anything is currently waiting on a change here. LRM 4.3 makes an
+  // update event matter to what is "considered for evaluation", and what waits
+  // here is the whole of that: nothing else reads a change. So a write to a
+  // cell with nothing waiting has nothing to report, and may skip the work of
+  // describing itself.
+  [[nodiscard]] auto HasWaiter() const noexcept -> bool {
     return !waiters_.Empty();
   }
 
   void Subscribe(
-      CoroutineHandle handle, support::EventEdge edge,
+      CoroutineHandle handle, Observation observation,
       std::uint64_t lsb_bit_offset, std::uint64_t bit_width) {
     Registration& reg = handle->Park(waiters_);
-    reg.edge = edge;
     reg.lsb_bit_offset = lsb_bit_offset;
     reg.bit_width = bit_width;
+    reg.observation = std::move(observation);
   }
 
-  // Claims and returns the activations whose fire condition this change
-  // satisfies; the rest stay parked. The classifier reads each membership's
-  // projection and edge, and decides from the old / new value the caller
-  // captured.
-  [[nodiscard]] auto TakeMatchingWaiters(const EdgeClassifier& classify)
+  // Claims and returns the activations this change is an event for; the rest
+  // stay parked. A wait whose bits the change left alone is passed over without
+  // being asked, and every other one answers for itself -- an event control by
+  // what its expression is worth now, an implicit sensitivity by having been
+  // reached at all (LRM 9.2.2.2.1, 9.4.2).
+  [[nodiscard]] auto TakeFiringWaiters(const ProjectionUnchanged& unchanged)
       -> std::vector<CoroutineHandle> {
     std::vector<CoroutineHandle> woken;
     waiters_.ForEach([&](Registration& reg) {
-      if (classify(reg.lsb_bit_offset, reg.bit_width, reg.edge)) {
-        reg.Unlink();
-        woken.push_back(reg.activation);
+      if (reg.bit_width != 0 && unchanged(reg.lsb_bit_offset, reg.bit_width)) {
+        return;
       }
+      ArmedObservation* observation = reg.observation.Get();
+      if (observation != nullptr && !observation->Fires()) {
+        return;
+      }
+      reg.Unlink();
+      woken.push_back(reg.activation);
     });
     return woken;
   }
@@ -201,25 +143,26 @@ class Var : public Observable, public ValueStorageCore<T> {
   }
 
   // Commits a whole-variable write and, on a real change (LRM 4.3 update
-  // event), wakes subscribers through the engine. The engine is the ambient
+  // event), wakes whoever waits through the engine. The engine is the ambient
   // one: it has the standing of a stack pointer, so a store does not carry it.
-  // Defined out of line below so it can reach the PackedArray edge classifier.
+  // Defined out of line below, where the per-value-family test it reports
+  // through is in scope.
   void Set(const T& new_val);
 
-  // The before-image a transition is computed against, held only where an
-  // armed observation will read the answer. With nothing armed there is no
-  // question to answer, which is what lets an unobserved cell take a plain
+  // The before-image a transition is computed against, held only where
+  // something waiting here will read the answer. With nothing waiting there is
+  // no question to answer, which is what lets an unobserved cell take a plain
   // store.
   [[nodiscard]] auto CaptureTransitionBase() const -> std::optional<T> {
-    if (!this->HasArmedObservation()) {
+    if (!this->HasWaiter()) {
       return std::nullopt;
     }
     return this->Get();
   }
 
-  // Reports what the write between the capture and here did to the cell,
-  // waking whichever armed observations the transition satisfies. Defined out
-  // of line below so it can reach the PackedArray edge classifier.
+  // Reports what the write between the capture and here did to the cell, waking
+  // whoever the change is an event for. Defined out of line below, where the
+  // per-value-family test it reports through is in scope.
   void PublishTransition(const std::optional<T>& before);
 
   // RAII entry to partial-write context. Construct via `var.Mutate()` at the
@@ -302,13 +245,12 @@ class Ref {
   T* plain_ = nullptr;
 };
 
-// Makes `frame` runnable again when any leaf of `triggers` changes as its edge
-// demands (LRM 9.4.2 / 9.4.2.2 / 9.4.3). Each subscription registers on the
-// frame's own wait-registration set, so waking or destroying the frame revokes
-// every leaf and the one that wakes it drops the siblings; the engine has no
-// idea what kind of wait this is. Each leaf's projection is copied into the
-// cell's subscriber record, so `triggers` is only read for the duration of this
-// call.
+// Makes `frame` runnable again when a change to one of `triggers` is an event
+// for the wait (LRM 9.4.2 / 9.4.2.2 / 9.4.3). Each subscription registers on
+// the frame's own wait-registration set, so waking or destroying the frame
+// revokes every leaf and the one that wakes it drops the siblings; the engine
+// has no idea what kind of wait this is. Each leaf is copied into the cell's
+// waiter record, so `triggers` is only read for the duration of this call.
 //
 // An empty trigger set is legal and means "never wake up" -- an `always_comb`
 // whose body reads nothing (`always_comb c = 7;`) runs once, then suspends
@@ -321,7 +263,7 @@ inline void SubscribeValueChange(
           "SubscribeValueChange: a trigger names no observable cell");
     }
     trigger.observable->Subscribe(
-        frame, trigger.edge, trigger.lsb_bit_offset, trigger.bit_width);
+        frame, trigger.observation, trigger.lsb_bit_offset, trigger.bit_width);
   }
 }
 
@@ -350,13 +292,19 @@ class EventControlAwaitable : public PendingWait {
     CheckAbortOnResume();
   }
 
-  // An edge / value-change is not a level: a change during suspension is missed
-  // (LRM 9.7 resensitize), so resume re-subscribes and waits for the next one.
-  // Re-subscribing needs no runtime access, but the capability signature
-  // carries them uniformly.
+  // An edge / value-change is not a level: a change while the procedure was not
+  // waiting here is missed, so resuming waits for the next one and compares
+  // against what it finds now rather than against what it left. Re-establishing
+  // needs no runtime access, but the capability signature carries them
+  // uniformly.
   // NOLINTNEXTLINE(readability-named-parameter)
   auto Reestablish(RuntimeEffects&, CoroutineHandle activation)
       -> PendingWaitOutcome override {
+    for (const Trigger& trigger : triggers_) {
+      if (ArmedObservation* observation = trigger.observation.Get()) {
+        observation->Arm();
+      }
+    }
     SubscribeValueChange(activation, triggers_);
     return PendingWaitOutcome::kReblocked;
   }
@@ -384,44 +332,26 @@ inline auto WaitAny(
   return EventControlAwaitable{triggers};
 }
 
-// Builds the per-leaf classifier that the Observable invokes per waiter.
-// For any-change waiters: compares the projected slice in `old` and `new` (or
-// fires unconditionally when the waiter is whole-var, `bit_width == 0`).
-// For edge waiters: classifies the transition at `lsb_bit_offset` (LRM Table
-// 9-2 via `ClassifyEdge`), then matches against the subscribed edge.
-inline auto MakePackedArrayEdgeClassifier(
+// Reads one leaf's bits out of the values a change moved between, so a wait
+// that reads only bits this change left alone is passed over.
+inline auto MakePackedProjectionTest(
     const value::PackedArray& old_val, const value::PackedArray& new_val)
-    -> EdgeClassifier {
-  return [&old_val, &new_val](
-             std::uint64_t lsb, std::uint64_t width,
-             support::EventEdge edge) -> bool {
-    if (edge == support::EventEdge::kAnyChange) {
-      if (width == 0U) {
-        return true;
-      }
-      const auto lsb_arg = value::PackedArray::FromInt(
-          static_cast<std::int64_t>(lsb), 64U, false, false);
-      const auto old_slice =
-          old_val.ExtractBits(lsb_arg, static_cast<std::uint32_t>(width));
-      const auto new_slice =
-          new_val.ExtractBits(lsb_arg, static_cast<std::uint32_t>(width));
-      return !old_slice.IsBitIdentical(new_slice);
-    }
-    const value::FourStateBit old_bit =
-        (width == 0U) ? old_val.Lsb() : old_val.GetBit(lsb);
-    const value::FourStateBit new_bit =
-        (width == 0U) ? new_val.Lsb() : new_val.GetBit(lsb);
-    return EdgeMatches(edge, ClassifyEdge(old_bit, new_bit));
+    -> ProjectionUnchanged {
+  return [&old_val, &new_val](std::uint64_t lsb, std::uint64_t width) -> bool {
+    const auto lsb_arg = value::PackedArray::FromInt(
+        static_cast<std::int64_t>(lsb), 64U, false, false);
+    const auto old_slice =
+        old_val.ExtractBits(lsb_arg, static_cast<std::uint32_t>(width));
+    const auto new_slice =
+        new_val.ExtractBits(lsb_arg, static_cast<std::uint32_t>(width));
+    return old_slice.IsBitIdentical(new_slice);
   };
 }
 
-// The classifier for a value with no bit projection to speak of: it changed,
-// so every any-change waiter fires and no edge waiter can, there being no LSB
-// for LRM 9.4.2 Table 9-2 to read.
-inline auto MakeAnyChangeClassifier() -> EdgeClassifier {
-  return [](std::uint64_t, std::uint64_t, support::EventEdge edge) -> bool {
-    return edge == support::EventEdge::kAnyChange;
-  };
+// The answer for a value whose parts are not bit ranges: nothing about a leaf's
+// bits can be shown untouched, so every wait on it is asked.
+inline auto MakeWholeValueProjectionTest() -> ProjectionUnchanged {
+  return [](std::uint64_t, std::uint64_t) -> bool { return false; };
 }
 
 template <value::LyraValue T>
@@ -431,9 +361,9 @@ void Var<T>::PublishTransition(const std::optional<T>& before) {
   }
   if constexpr (std::same_as<T, value::PackedArray>) {
     current_runtime().TriggerValueChange(
-        *this, MakePackedArrayEdgeClassifier(*before, this->Get()));
+        *this, MakePackedProjectionTest(*before, this->Get()));
   } else {
-    current_runtime().TriggerValueChange(*this, MakeAnyChangeClassifier());
+    current_runtime().TriggerValueChange(*this, MakeWholeValueProjectionTest());
   }
 }
 

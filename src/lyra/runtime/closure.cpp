@@ -20,7 +20,8 @@ auto HasBody(const ClosureBody& body) -> bool {
       Overloaded{
           [](const SynchronousBody& b) { return b.run != nullptr; },
           [](const CoroutineBody& b) { return b.start != nullptr; },
-          [](const PerElementBody& b) { return b.run != nullptr; }},
+          [](const PerElementBody& b) { return b.run != nullptr; },
+          [](const ValueBody& b) { return b.run != nullptr; }},
       body);
 }
 
@@ -97,6 +98,25 @@ auto ClosureValue::RunPerElement(
   if (result == nullptr) {
     throw InternalError(
         "ClosureValue: an LRM 7.12 with-clause settles a value -- please "
+        "report this as a bug");
+  }
+  return ValueOf(body->result_domain, result);
+}
+
+auto ClosureValue::RunValue() -> value::RuntimeValue {
+  const auto* body = std::get_if<ValueBody>(&definition_->body);
+  if (body == nullptr) {
+    throw InternalError(
+        "ClosureValue: this body is not one that answers a value on its own "
+        "-- please report this as a bug");
+  }
+  // The result is the one thing the body materializes, so it is read out
+  // before the scope it lives in is released.
+  GeneratedCallScope scope;
+  void* result = body->run(this);
+  if (result == nullptr) {
+    throw InternalError(
+        "ClosureValue: a body that answers a value settled none -- please "
         "report this as a bug");
   }
   return ValueOf(body->result_domain, result);

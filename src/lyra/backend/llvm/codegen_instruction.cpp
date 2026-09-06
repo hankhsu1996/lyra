@@ -92,6 +92,14 @@ auto FormatSpecConstruction(std::size_t argument_count) -> RuntimeOp {
                              : RuntimeOp::kMakeFormatSpec;
 }
 
+// A leaf of a wait carries the observation that decides what a change there
+// means only where an event control is what waits (LRM 9.4.2); an implicit
+// sensitivity names none and supplies the cell and its bit range alone.
+auto TriggerConstruction(std::size_t argument_count) -> RuntimeOp {
+  return argument_count == 3 ? RuntimeOp::kMakeTrigger
+                             : RuntimeOp::kMakeObservedTrigger;
+}
+
 }  // namespace
 
 auto CodeGenFunction::LowerInstr(const lir::Instr& instr)
@@ -1405,7 +1413,10 @@ auto CodeGenFunction::ConstructCallee(
               case lir::RuntimeLibraryKind::kHierarchySegment:
                 return entry(RuntimeSymbol(RuntimeOp::kMakeSegment));
               case lir::RuntimeLibraryKind::kTrigger:
-                return entry(RuntimeSymbol(RuntimeOp::kMakeTrigger));
+                return entry(
+                    RuntimeSymbol(TriggerConstruction(call.args.size())));
+              case lir::RuntimeLibraryKind::kObservation:
+                return entry(RuntimeSymbol(RuntimeOp::kMakeObservation));
               case lir::RuntimeLibraryKind::kFormatSpec:
                 return entry(
                     RuntimeSymbol(FormatSpecConstruction(call.args.size())));

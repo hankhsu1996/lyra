@@ -933,8 +933,7 @@ auto UnitLowerer::ResolveValueTarget(
 }
 
 auto UnitLowerer::TranslateSensitivityReads(
-    const std::vector<SensitivityRead>& reads, const WalkFrame& frame,
-    support::EventEdge edge)
+    const std::vector<SensitivityRead>& reads, const WalkFrame& frame)
     -> diag::Result<std::vector<hir::SensitivityEntry>> {
   std::vector<hir::SensitivityEntry> out;
   out.reserve(reads.size());
@@ -957,8 +956,7 @@ auto UnitLowerer::TranslateSensitivityReads(
             .ref = *std::move(*target),
             .footprint = read_type.isIntegral() && !read_type.isEnum()
                              ? read.footprint
-                             : std::nullopt,
-            .edge_kind = edge});
+                             : std::nullopt});
   }
   return out;
 }

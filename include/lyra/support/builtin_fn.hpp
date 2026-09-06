@@ -354,8 +354,8 @@ enum class BuiltinFn : std::uint16_t {
   // every wait on a signal suspends on -- an `@(...)`, an `@*`, an
   // `always_comb` / `always_latch` body, a `wait (cond)`, a continuous
   // assignment. The call takes the runtime handle and the trigger set, one
-  // entry per observed leaf; the process resumes when any leaf changes as its
-  // edge demands.
+  // entry per watched leaf; the process resumes when a change to one of them
+  // is an event for the wait.
   kWaitAny,
   // LRM 20.3 simulation-time read functions. Each takes the runtime handle
   // and the calling scope's unit power; the runtime scales the design-global

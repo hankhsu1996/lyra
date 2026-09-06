@@ -226,27 +226,19 @@ struct DelayControl {
   ExprId duration;
 };
 
-// One leaf entry of a wait's projection set. Identity-only: which cell, the
-// flat-bit footprint of its packed encoding the leaf observes, and what edge
-// polarity the leaf was subscribed under. An absent footprint
-// means the whole signal is observed; an edge then reduces to its LSB. Implicit
-// sensitivity sources (always_comb / always_latch / `@*` / wait cond /
-// continuous assignment) supply leaves with `edge_kind == kAnyChange`. Explicit
-// event control `@(posedge ...)` / `@(negedge ...)` / `@(edge ...)` set the
-// per-leaf edge.
+// One leaf entry of a wait's read set. Identity-only: which cell, and the
+// flat-bit footprint of its packed encoding the leaf reads. An absent footprint
+// means the whole signal is read.
 struct SensitivityEntry {
   ValueTarget ref;
   std::optional<std::pair<std::uint64_t, std::uint64_t>> footprint;
-  support::EventEdge edge_kind = support::EventEdge::kAnyChange;
 };
 
-// One entry of an explicit `@(...)` event control. `signal` is the SV
-// expression being monitored; `edge` is the optional edge identifier; the
-// per-leaf `sensitivity_list` is the read set of `signal` (slang DFA) used
-// for subscription. For a compound expression (concat / arithmetic / dynamic
-// index) the leaves are over-broad relative to "fire only when the result
-// changes" -- HIR -> MIR builds a snapshot + re-eval loop around the leaf
-// wait that enforces LRM 9.4.2 correctness.
+// One entry of an explicit `@(...)` event control (LRM 9.4.2). `signal` is the
+// expression the event is a change in the value of, `edge` the direction its
+// least significant bit must take where one was written, and
+// `sensitivity_list` the variables that expression reads -- a change to one of
+// which is a candidacy for the event rather than the event itself.
 struct EventTrigger {
   ExprId signal;
   support::EventEdge edge;

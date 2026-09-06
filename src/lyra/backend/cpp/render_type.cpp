@@ -188,6 +188,8 @@ auto RenderTypeAsCpp(const mir::CompilationUnit& unit, mir::TypeId type_id)
                 return std::string{"lyra::runtime::HierarchySegment"};
               case mir::RuntimeLibraryKind::kTrigger:
                 return std::string{"lyra::runtime::Trigger"};
+              case mir::RuntimeLibraryKind::kObservation:
+                return std::string{"lyra::runtime::Observation"};
               case mir::RuntimeLibraryKind::kScopeProgram:
                 return std::string{"lyra::runtime::ScopeProgram"};
               case mir::RuntimeLibraryKind::kScopeExport:

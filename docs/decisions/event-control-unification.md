@@ -6,11 +6,27 @@
 
 ## Status
 
-Accepted. The unification -- one shape for every value-change wait, per-leaf
-`(observable, bit_range, edge)`, frontend LSB-reduce, runtime per-leaf filtering -- stands. What
-carries that shape in MIR is superseded by
+Accepted. The unification -- one shape for every value-change wait, over a per-leaf
+`(observable, bit_range)` set -- stands. Two things it settled no longer hold.
+
+What carries that shape in MIR is superseded by
 [value-change-wait-as-runtime-call](value-change-wait-as-runtime-call.md): the wait is a runtime
 call awaited like any other suspending call, not a MIR statement kind.
+
+**What a leaf's bit range decides is superseded by
+[owner-transition-and-observation](owner-transition-and-observation.md) D6 and D7.** This entry made
+the per-leaf projection and edge the fire decision, and rejected re-evaluating the expression for a
+single-leaf form on the grounds that "per-leaf runtime filtering already produces LRM-correct wake
+decisions when the expression is a single leaf (its projection covers the full result)". That is
+true, and it proves less than the entry read into it: it says a projection that did not move proves
+the expression did not move _through this write_, which is a sound negative. It does not say a
+projection that moved proves the expression moved, and every case where those differ -- an operand
+of a compound expression, an element of an aggregate that has no bit range at all -- was answered
+wrongly. Detection now belongs to the wait, which holds the expression and the value it had when it
+began; the bit range stays exactly where this entry put it and does the negative half only, passing
+over a wait a write cannot have reached. The frontend LSB-reduce goes with the decision it served:
+reducing a leaf to the expression's least significant bit is unsound as a bound on what the write
+could have reached, since an expression's own LSB may read any bit of an operand.
 
 ## Why this decision matters
 

@@ -79,7 +79,7 @@ class RuntimeEffects {
   void SubmitObserved(std::function<void()> report);
 
   void TriggerValueChange(
-      Observable& observable, const EdgeClassifier& classify);
+      Observable& observable, const ProjectionUnchanged& unchanged);
   // LRM 20.2 / 20.10: `fatal=true` bumps the eventual `Run()` return to a
   // non-zero exit code.
   void RequestFinish(int level, bool fatal = false);

@@ -90,7 +90,7 @@ auto ProcessLowerer::LowerStmt(const hir::Stmt& stmt, WalkFrame frame)
             return LowerReturnStmt(*this, frame, stmt.label, r);
           },
           [&](const hir::TimedStmt& t) {
-            return LowerTimedStmt(*this, frame, stmt.label, t, stmt.span);
+            return LowerTimedStmt(*this, frame, stmt.label, t);
           },
           [&](const hir::EventTriggerStmt& et) {
             return LowerEventTriggerStmt(*this, frame, stmt.label, et);

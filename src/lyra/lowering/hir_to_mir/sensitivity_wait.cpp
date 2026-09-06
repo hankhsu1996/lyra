@@ -25,15 +25,16 @@ namespace lyra::lowering::hir_to_mir {
 
 namespace {
 
-// One leaf of the wait: the observable cell it watches, the bit projection of
-// that cell's packed encoding it watches, and the edge polarity it watches for.
-// LRM 9.4.2 / 9.4.2.2 / 9.4.3: a bit-addressed footprint becomes
+// One leaf of the wait: the observable cell it watches, which bits of that
+// cell's packed encoding it reads, and what decides whether a change there is
+// an event. LRM 9.4.2 / 9.4.2.2 / 9.4.3: a bit-addressed footprint becomes
 // `(lsb, hi - lsb + 1)`; a whole-signal read (no footprint) is width 0, which
-// the runtime reads as the whole cell.
+// the runtime reads as the whole cell. A leaf with no observation is an
+// implicit sensitivity, where being reached is the whole condition.
 auto BuildTriggerExpr(
     mir::Block& block, const WalkFrame& frame, mir::CompilationUnit& unit,
-    const StructuralScopeLowerer& lowerer, const hir::SensitivityEntry& entry)
-    -> mir::ExprId {
+    const StructuralScopeLowerer& lowerer, const hir::SensitivityEntry& entry,
+    std::optional<mir::LocalId> observation) -> mir::ExprId {
   // The leaf watches either an intra-unit cell reached through its route, or a
   // package variable's one program-global cell reached by name (LRM 26.2). Both
   // resolve to a borrowed pointer to the observable cell the runtime subscribes
@@ -76,32 +77,26 @@ auto BuildTriggerExpr(
   const auto int_literal = [&](std::int64_t value) {
     return BuildIntLiteral(unit, block, value);
   };
+  std::vector<mir::ExprId> arguments{observable_ptr};
+  if (observation.has_value()) {
+    arguments.push_back(block.exprs.Add(
+        mir::MakeLocalRefExpr(*observation, unit.builtins.observation)));
+  }
+  arguments.push_back(int_literal(lsb_bit_offset));
+  arguments.push_back(int_literal(bit_width));
   return block.exprs.Add(
       mir::Expr{
           .data =
               mir::CallExpr{
                   .callee = mir::Construct{},
-                  .arguments =
-                      {observable_ptr,
-                       int_literal(static_cast<std::int64_t>(entry.edge_kind)),
-                       int_literal(lsb_bit_offset), int_literal(bit_width)}},
+                  .arguments = std::move(arguments)},
           .type = unit.builtins.trigger});
 }
 
-}  // namespace
-
-auto BuildValueChangeWaitStmt(
-    mir::Block& target_block, const WalkFrame& frame,
-    const StructuralScopeLowerer& lowerer,
-    const std::vector<hir::SensitivityEntry>& sensitivity_list) -> mir::Stmt {
+auto BuildWaitStmt(
+    mir::Block& target_block, const StructuralScopeLowerer& lowerer,
+    std::vector<mir::ExprId> triggers) -> mir::Stmt {
   auto& unit = lowerer.Owner().Unit();
-
-  std::vector<mir::ExprId> triggers;
-  triggers.reserve(sensitivity_list.size());
-  for (const auto& entry : sensitivity_list) {
-    triggers.push_back(
-        BuildTriggerExpr(target_block, frame, unit, lowerer, entry));
-  }
   const mir::TypeId triggers_type =
       mir::MachineArrayOf(unit.types, unit.builtins.trigger, triggers.size());
   const mir::ExprId triggers_id = target_block.exprs.Add(
@@ -125,6 +120,38 @@ auto BuildValueChangeWaitStmt(
 
   return mir::Stmt{
       .label = std::nullopt, .data = mir::ExprStmt{.expr = await_id}};
+}
+
+}  // namespace
+
+auto BuildValueChangeWaitStmt(
+    mir::Block& target_block, const WalkFrame& frame,
+    const StructuralScopeLowerer& lowerer,
+    const std::vector<hir::SensitivityEntry>& sensitivity_list) -> mir::Stmt {
+  auto& unit = lowerer.Owner().Unit();
+
+  std::vector<mir::ExprId> triggers;
+  triggers.reserve(sensitivity_list.size());
+  for (const auto& entry : sensitivity_list) {
+    triggers.push_back(BuildTriggerExpr(
+        target_block, frame, unit, lowerer, entry, std::nullopt));
+  }
+  return BuildWaitStmt(target_block, lowerer, std::move(triggers));
+}
+
+auto BuildEventControlWaitStmt(
+    mir::Block& target_block, const WalkFrame& frame,
+    const StructuralScopeLowerer& lowerer, std::span<const ObservedLeaf> leaves)
+    -> mir::Stmt {
+  auto& unit = lowerer.Owner().Unit();
+
+  std::vector<mir::ExprId> triggers;
+  triggers.reserve(leaves.size());
+  for (const ObservedLeaf& leaf : leaves) {
+    triggers.push_back(BuildTriggerExpr(
+        target_block, frame, unit, lowerer, *leaf.entry, leaf.observation));
+  }
+  return BuildWaitStmt(target_block, lowerer, std::move(triggers));
 }
 
 }  // namespace lyra::lowering::hir_to_mir
