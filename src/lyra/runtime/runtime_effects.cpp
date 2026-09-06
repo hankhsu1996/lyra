@@ -154,8 +154,8 @@ void RuntimeEffects::SubmitObserved(std::function<void()> report) {
 }
 
 void RuntimeEffects::TriggerValueChange(
-    Observable& observable, const EdgeClassifier& classify) {
-  for (CoroutineHandle handle : observable.TakeMatchingWaiters(classify)) {
+    Observable& observable, const ProjectionUnchanged& unchanged) {
+  for (CoroutineHandle handle : observable.TakeFiringWaiters(unchanged)) {
     Wake(handle);
   }
 }

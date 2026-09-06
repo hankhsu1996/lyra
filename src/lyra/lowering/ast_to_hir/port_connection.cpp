@@ -393,8 +393,7 @@ auto ConnectElementPorts(
           if (!peer_or) return std::unexpected(std::move(peer_or.error()));
           peer = frame.Exprs().Add(*std::move(peer_or));
           auto entries = unit_lowerer.TranslateSensitivityReads(
-              unit_lowerer.Sensitivity().AnalyzeReads(*expr, inst), frame,
-              support::EventEdge::kAnyChange);
+              unit_lowerer.Sensitivity().AnalyzeReads(*expr, inst), frame);
           if (!entries) return std::unexpected(std::move(entries.error()));
           sensitivity = *std::move(entries);
         }
@@ -418,7 +417,7 @@ auto ConnectElementPorts(
         peer = frame.Exprs().Add(*std::move(peer_or));
         auto entries = unit_lowerer.TranslateSensitivityReads(
             {SensitivityRead{.symbol = internal, .footprint = std::nullopt}},
-            frame, support::EventEdge::kAnyChange);
+            frame);
         if (!entries) return std::unexpected(std::move(entries.error()));
         sensitivity = *std::move(entries);
         break;

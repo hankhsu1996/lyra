@@ -5,8 +5,17 @@
 // an enumeration serves as well as an integral one. When the expression is a
 // select, its value is made of the bits the select names, so a change confined
 // to the bits outside the select is not a change in the expression, whichever
-// direction the dimension is declared in and wherever its bounds start.
+// direction the dimension is declared in and wherever its bounds start. An
+// element of an unpacked array and a field of an unpacked struct are the same
+// requirement over parts that are not bit ranges: the expression's value is
+// that one part, so a write to a sibling part changes an operand of the
+// expression and not its result, which is no event.
 typedef enum logic [1:0] {Red, Green, Blue} colour_t;
+
+typedef struct {
+  int watched;
+  int sibling;
+} pair_t;
 
 module Top;
   logic changing = 1'b0;
@@ -21,6 +30,9 @@ module Top;
   logic [0:7] ascending = '0;
   logic [-1:6] offset = '0;
 
+  int mem[0:7];
+  pair_t pair;
+
   time changing_at;
   int repeated_wakes;
   time repeated_last_at;
@@ -33,6 +45,8 @@ module Top;
   time two_dimensional_at;
   time ascending_at;
   time offset_at;
+  time mem_at;
+  time pair_at;
 
   initial begin
     @(changing);
@@ -90,11 +104,23 @@ module Top;
   end
 
   initial begin
+    @(mem[3]);
+    mem_at = $time;
+  end
+
+  initial begin
+    @(pair.watched);
+    pair_at = $time;
+  end
+
+  initial begin
     #5;
     descending = 8'b0010_1000;
     two_dimensional[0] = 8'hFF;
     ascending[5] = 1'b1;
     offset[6] = 1'b1;
+    mem[4] = 99;
+    pair.sibling = 99;
     repeated = 1'b0;
     #5;
     changing = 1'b1;
@@ -103,6 +129,8 @@ module Top;
     two_dimensional[1] = 8'hAA;
     ascending[2] = 1'b1;
     offset[0] = 1'b1;
+    mem[3] = 7;
+    pair.watched = 7;
     repeated = 1'b1;
     #5;
     text = "y";
@@ -142,6 +170,8 @@ module Top;
       $fatal(1, "ascending_at was %0d, expected 10", ascending_at);
     if (offset_at !== 10)
       $fatal(1, "offset_at was %0d, expected 10", offset_at);
+    if (mem_at !== 10) $fatal(1, "mem_at was %0d, expected 10", mem_at);
+    if (pair_at !== 10) $fatal(1, "pair_at was %0d, expected 10", pair_at);
     $display("All checks passed");
   end
 endmodule

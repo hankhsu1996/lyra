@@ -59,6 +59,7 @@ enum class RuntimeLibraryKind : std::uint8_t {
   kDpiOpenArray,
   kDpiOpenArrayHandle,
   kTrigger,
+  kObservation,
   kCancellationTarget,
   kControlEffect,
 };

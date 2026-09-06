@@ -87,6 +87,8 @@ enum class RuntimeOp : std::uint8_t {
   kMakeScope,
   kMakeSegment,
   kMakeTrigger,
+  kMakeObservedTrigger,
+  kMakeObservation,
   kMakePackedRange,
   kMakePackedType,
   kMakePrintLiteralItem,

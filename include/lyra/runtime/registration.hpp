@@ -2,7 +2,7 @@
 
 #include <cstdint>
 
-#include "lyra/runtime/trigger.hpp"
+#include "lyra/runtime/observation.hpp"
 
 namespace lyra::runtime {
 
@@ -39,13 +39,18 @@ struct Registration {
   Registration* prev = nullptr;
   Registration* next = nullptr;
 
-  // The fire condition of a value-change wait (LRM 9.4.2): which edge, and
-  // which bit projection of the observable it watches. A membership that
-  // carries no condition -- an event, a join, a scheduler queue -- leaves these
-  // unset.
-  support::EventEdge edge = support::EventEdge::kAnyChange;
+  // Which bits of this observable the wait reads. It bounds what a change here
+  // could do to the wait, so a change confined outside it needs no further
+  // question asked; a width of zero is "the whole of it", which bounds nothing.
   std::uint64_t lsb_bit_offset = 0;
   std::uint64_t bit_width = 0;
+
+  // The event control this membership serves, where the wait is one (LRM
+  // 9.4.2): reaching it is a candidacy, and it decides. A membership that
+  // decides by being reached -- an implicit sensitivity, an event, a join, a
+  // scheduler queue -- names none. The memberships of one wait keep it between
+  // them, so it lives exactly as long as the wait it is watching for.
+  Observation observation;
 
   Registration() = default;
   Registration(const Registration&) = delete;

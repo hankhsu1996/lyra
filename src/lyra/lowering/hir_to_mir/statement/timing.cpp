@@ -9,12 +9,13 @@
 #include <vector>
 
 #include "lyra/base/internal_error.hpp"
-#include "lyra/diag/diag_code.hpp"
 #include "lyra/diag/diagnostic.hpp"
 #include "lyra/hir/expr.hpp"
 #include "lyra/hir/procedural_body.hpp"
 #include "lyra/hir/stmt.hpp"
+#include "lyra/lowering/hir_to_mir/callable_bindings.hpp"
 #include "lyra/lowering/hir_to_mir/cast_lowering.hpp"
+#include "lyra/lowering/hir_to_mir/closure_builder.hpp"
 #include "lyra/lowering/hir_to_mir/condition.hpp"
 #include "lyra/lowering/hir_to_mir/integral_literal.hpp"
 #include "lyra/lowering/hir_to_mir/process_lowerer.hpp"
@@ -30,11 +31,11 @@ namespace lyra::lowering::hir_to_mir {
 
 namespace {
 
-// LRM 9.4.2.2 `@*`-shaped timed statement: a fresh child scope holding a
-// prepended wait / control statement followed by the lowered body. The four
+// The shape every timed statement takes (LRM 9.4): a fresh child scope holding
+// a prepended wait or control statement followed by the lowered body. The four
 // timing forms differ only in that control statement; `build_wait` produces it
-// and may lower sub-expressions into the child block (the named-event form
-// awaits a lowered event expression).
+// and may lower whatever it needs into the child block, which is where a
+// controlled body's own wait keeps the values it evaluated on the way in.
 auto LowerTimedWaitWrapper(
     ProcessLowerer& process, WalkFrame frame, std::optional<std::string> label,
     hir::StmtId inner_stmt, auto build_wait) -> diag::Result<mir::Stmt> {
@@ -89,42 +90,65 @@ auto LowerNamedEventTimedStmt(
       });
 }
 
-// LRM 9.4.2 `@(...) body`. Single-leaf trigger expressions lower directly to a
-// wait over the union of the event list's leaves; a multi-leaf expression needs
-// a snapshot wrapper that is not yet implemented, because a leaf changing does
-// not entail the expression's result changing.
+// The observation one event expression is watched through (LRM 9.4.2): a
+// closure that answers what the expression is worth now, armed with what it is
+// worth here. It is one value every leaf of that expression names, since the
+// value being watched is the expression's and there is one of it.
+auto BuildObservationLocal(
+    ProcessLowerer& process, WalkFrame frame, mir::Block& block,
+    const hir::EventTrigger& trigger) -> diag::Result<mir::LocalId> {
+  auto& unit = process.Owner().Unit();
+
+  ClosureBuilder closure(unit, frame);
+  auto value_or = process.LowerExpr(
+      process.HirBody().exprs.Get(trigger.signal), closure.Frame());
+  if (!value_or) return std::unexpected(std::move(value_or.error()));
+  const mir::ExprId value_id = closure.Body().exprs.Add(*std::move(value_or));
+  const mir::ExprId closure_id = block.exprs.Add(closure.Build(value_id));
+
+  const mir::ExprId edge_id =
+      BuildIntLiteral(unit, block, static_cast<std::int64_t>(trigger.edge));
+  const mir::ExprId observe_id = block.exprs.Add(
+      mir::Expr{
+          .data =
+              mir::CallExpr{
+                  .callee = mir::Construct{},
+                  .arguments = {closure_id, edge_id}},
+          .type = unit.builtins.observation});
+
+  const mir::LocalId local = frame.bindings->DeclareAnonymous(
+      mir::LocalDecl{
+          .name = "_lyra_observation", .type = unit.builtins.observation});
+  block.AppendStmt(mir::LocalDeclStmt{.target = local, .init = observe_id});
+  return local;
+}
+
+// LRM 9.4.2 `@(...) body`. Each event expression of the list gets an
+// observation, and every variable that expression reads is a leaf watched
+// through it, so a change to an operand that leaves the expression's value
+// alone is no event.
 auto LowerEventTimedStmt(
     ProcessLowerer& process, WalkFrame frame, std::optional<std::string> label,
-    diag::SourceSpan span, const hir::TimedStmt& t, const hir::EventControl& ec)
+    const hir::TimedStmt& t, const hir::EventControl& ec)
     -> diag::Result<mir::Stmt> {
   return LowerTimedWaitWrapper(
       process, frame, std::move(label), t.stmt,
       [&](mir::Block& child_block,
           WalkFrame child_frame) -> diag::Result<mir::Stmt> {
-        std::vector<hir::SensitivityEntry> union_reads;
-        union_reads.reserve(ec.triggers.size());
-        for (const auto& trigger : ec.triggers) {
-          if (trigger.sensitivity_list.size() > 1) {
-            return diag::Fail(
-                span, diag::DiagCode::kUnsupportedEventTriggerForm,
-                "compound event expressions (concatenation, arithmetic, "
-                "dynamic index) are not yet supported");
+        std::vector<ObservedLeaf> leaves;
+        for (const hir::EventTrigger& trigger : ec.triggers) {
+          auto observation =
+              BuildObservationLocal(process, child_frame, child_block, trigger);
+          if (!observation) {
+            return std::unexpected(std::move(observation.error()));
           }
-          for (auto leaf : trigger.sensitivity_list) {
-            // LRM 9.4.2 LSB-reduce: an edge event monitors only the LSB of
-            // the expression. A whole-signal footprint already reduces to the
-            // LSB at the runtime trigger, so only a bit-addressed footprint
-            // needs collapsing.
-            if (leaf.edge_kind != support::EventEdge::kAnyChange &&
-                leaf.footprint.has_value()) {
-              leaf.footprint = {{leaf.footprint->first, leaf.footprint->first}};
-            }
-            union_reads.push_back(leaf);
+          for (const hir::SensitivityEntry& leaf : trigger.sensitivity_list) {
+            leaves.push_back(
+                ObservedLeaf{.entry = &leaf, .observation = *observation});
           }
         }
-        return BuildValueChangeWaitStmt(
-            child_block, child_frame, process.EnclosingScopeLowerer(),
-            union_reads);
+        return BuildEventControlWaitStmt(
+            child_block, child_frame, process.EnclosingScopeLowerer(), leaves);
       });
 }
 
@@ -220,7 +244,7 @@ auto LowerDelayTimedStmt(
 
 auto LowerTimedStmt(
     ProcessLowerer& process, WalkFrame frame, std::optional<std::string> label,
-    const hir::TimedStmt& t, diag::SourceSpan span) -> diag::Result<mir::Stmt> {
+    const hir::TimedStmt& t) -> diag::Result<mir::Stmt> {
   if (const auto* ie = std::get_if<hir::ImplicitEventControl>(&t.timing)) {
     return LowerImplicitEventTimedStmt(
         process, frame, std::move(label), t, *ie);
@@ -229,7 +253,7 @@ auto LowerTimedStmt(
     return LowerNamedEventTimedStmt(process, frame, std::move(label), t, *nec);
   }
   if (const auto* ec = std::get_if<hir::EventControl>(&t.timing)) {
-    return LowerEventTimedStmt(process, frame, std::move(label), span, t, *ec);
+    return LowerEventTimedStmt(process, frame, std::move(label), t, *ec);
   }
   const auto* d = std::get_if<hir::DelayControl>(&t.timing);
   if (d == nullptr) {

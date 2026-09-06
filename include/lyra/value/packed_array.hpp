@@ -218,12 +218,6 @@ class PackedArray {
   // posedge, 1/x/z to 0 negedge).
   [[nodiscard]] auto Lsb() const -> FourStateBit;
 
-  // Returns one bit at the flat-storage offset, encoded as a 4-state code.
-  // Used by the runtime's per-leaf edge classifier to sample the bit a waiter
-  // projected onto. LRM 11.5.1 OOB rule applies: a position outside `[0,
-  // BitWidth())` reads as X for 4-state and 0 for 2-state.
-  [[nodiscard]] auto GetBit(std::uint64_t flat_offset) const -> FourStateBit;
-
   // LRM 11.4.5 `===` operator form (1-bit PackedArray); `==` returns 4-state
   // and propagates X, this returns deterministic 0 or 1.
   [[nodiscard]] auto CaseEqual(const PackedArray& other) const -> PackedArray;

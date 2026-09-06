@@ -194,6 +194,8 @@ auto DefineRuntimeAbi(llvm::orc::LLJIT& jit) -> std::set<std::string> {
   add("lyra_rt_delay", &lyra_rt_delay);
   add("lyra_rt_delay_real", &lyra_rt_delay_real);
   add("lyra_rt_make_trigger", &lyra_rt_make_trigger);
+  add("lyra_rt_make_observed_trigger", &lyra_rt_make_observed_trigger);
+  add("lyra_rt_make_observation", &lyra_rt_make_observation);
   add("lyra_rt_wait_any", &lyra_rt_wait_any);
   add("lyra_rt_triggered", &lyra_rt_triggered);
   add("lyra_rt_trigger", &lyra_rt_trigger);
@@ -1119,26 +1121,31 @@ struct LoadedClosure {
   std::unique_ptr<runtime::ClosureDefinition> definition;
 };
 
-// Which alternative a body is, read from what its invoke answers: a coroutine
-// result is the coroutine protocol, no result at all is a body run to
-// completion, and a value result is a body run per entry of a container -- and
-// that one carries the representation its result comes back in, since a handle
-// carries none.
-auto ProtocolOf(const lir::CompilationUnit& unit, lir::TypeId result)
+// Which alternative a body is, read from its signature: a coroutine result is
+// the coroutine protocol, no result at all is a body run to completion, and a
+// value result is a body that answers one -- once per entry of a container it
+// is handed, or on its own where it is handed nothing. Either of those carries
+// the representation its result comes back in, since a handle carries none.
+auto ProtocolOf(const lir::CompilationUnit& unit, const lir::Function& invoke)
     -> runtime::ClosureBody {
-  if (unit.types.Get(result).Is<lir::CoroutineType>()) {
+  if (unit.types.Get(invoke.result_type).Is<lir::CoroutineType>()) {
     return runtime::CoroutineBody{};
   }
-  if (unit.types.Get(result).Is<lir::VoidType>()) {
+  if (unit.types.Get(invoke.result_type).Is<lir::VoidType>()) {
     return runtime::SynchronousBody{};
   }
   const std::optional<support::ValueDomain> domain =
-      backend::llvm_backend::ValueDomainOf(unit, result);
+      backend::llvm_backend::ValueDomainOf(unit, invoke.result_type);
   if (!domain) {
     throw InternalError(
-        "jit executor: a body run per entry settles a runtime value");
+        "jit executor: a body that answers a value settles a runtime value");
   }
-  return runtime::PerElementBody{.result_domain = *domain};
+  // The receiver is every closure body's first parameter, so what it is handed
+  // beyond that is what separates the two.
+  if (invoke.params.size() > 1) {
+    return runtime::PerElementBody{.result_domain = *domain};
+  }
+  return runtime::ValueBody{.result_domain = *domain};
 }
 
 auto LoadClosures(const lir::CompilationUnit& unit)
@@ -1151,12 +1158,11 @@ auto LoadClosures(const lir::CompilationUnit& unit)
     if (!captures) {
       return std::unexpected(std::move(captures.error()));
     }
-    const lir::TypeId result = unit.functions.Get(closure.invoke).result_type;
     loaded.push_back(
         LoadedClosure{
             .name = closure.name,
             .captures = *std::move(captures),
-            .protocol = ProtocolOf(unit, result),
+            .protocol = ProtocolOf(unit, unit.functions.Get(closure.invoke)),
             .definition = std::make_unique<runtime::ClosureDefinition>()});
   }
   return loaded;
@@ -1370,6 +1376,11 @@ auto Execute(
             [&](const runtime::PerElementBody& body) -> runtime::ClosureBody {
               return runtime::PerElementBody{
                   .run = found->toPtr<void*(void*, const void*, const void*)>(),
+                  .result_domain = body.result_domain};
+            },
+            [&](const runtime::ValueBody& body) -> runtime::ClosureBody {
+              return runtime::ValueBody{
+                  .run = found->toPtr<void*(void*)>(),
                   .result_domain = body.result_domain};
             }},
         entry.protocol);

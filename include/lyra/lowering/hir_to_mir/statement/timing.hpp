@@ -8,7 +8,6 @@
 #include <string>
 
 #include "lyra/diag/diagnostic.hpp"
-#include "lyra/diag/source_span.hpp"
 #include "lyra/hir/stmt.hpp"
 #include "lyra/lowering/hir_to_mir/process_lowerer.hpp"
 #include "lyra/lowering/hir_to_mir/walk_frame.hpp"
@@ -18,7 +17,7 @@ namespace lyra::lowering::hir_to_mir {
 
 auto LowerTimedStmt(
     ProcessLowerer& process, WalkFrame frame, std::optional<std::string> label,
-    const hir::TimedStmt& t, diag::SourceSpan span) -> diag::Result<mir::Stmt>;
+    const hir::TimedStmt& t) -> diag::Result<mir::Stmt>;
 
 auto LowerEventTriggerStmt(
     ProcessLowerer& process, WalkFrame frame, std::optional<std::string> label,

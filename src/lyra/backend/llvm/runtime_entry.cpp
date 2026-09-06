@@ -102,6 +102,10 @@ auto RuntimeOpName(RuntimeOp op) -> std::string_view {
       return "make_segment";
     case RuntimeOp::kMakeTrigger:
       return "make_trigger";
+    case RuntimeOp::kMakeObservedTrigger:
+      return "make_observed_trigger";
+    case RuntimeOp::kMakeObservation:
+      return "make_observation";
     case RuntimeOp::kMakePackedRange:
       return "make_packed_range";
     case RuntimeOp::kMakePackedType:

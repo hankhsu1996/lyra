@@ -6,15 +6,18 @@ The numeric IDs (P1..P15, T1..T7) are stable references and do **not** imply exe
 
 ## Actionable
 
-No procedural-block items are currently actionable from within this workstream. Open items wait on
-machinery owned by other workstreams; see [Blocked](#blocked).
+- The `iff` qualifier on an event control (LRM 9.4.2.3), under T2..T5. It gates an event the
+  expression's value would otherwise be, and is evaluated when that value moves rather than when the
+  condition itself does, so it is a guard on the decision a wait already makes for itself.
+- The non-blocking form of an event control (`a <= @(ev) b`), under T7. Its update becomes due on an
+  event while the procedure that wrote it carries on, so what the event has to reach is a deferred
+  effect rather than a procedure to resume.
 
 ## Blocked
 
-| Item   | Blocked on                                                                                                                                                       |
-| ------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| P12    | Process generate; rides on the existing P1..P11 surface, mostly frontend elaboration.                                                                            |
-| T2..T5 | Compound event expressions (concatenation, arithmetic, dynamic index): needs the snapshot + re-eval wrapper at HIR -> MIR plus a runtime edge-classifier helper. |
+| Item | Blocked on                                                                            |
+| ---- | ------------------------------------------------------------------------------------- |
+| P12  | Process generate; rides on the existing P1..P11 surface, mostly frontend elaboration. |
 
 ## Sub-Steps
 
@@ -42,12 +45,12 @@ machinery owned by other workstreams; see [Blocked](#blocked).
 - [x] P10 / P13 -- `always_comb` / `always_latch` (LRM 9.2.2.2.1) and `always @*` / `always @(*)`
       (LRM 9.4.2.2). Slang's flow analysis produces the implicit read sets; the body runs at t = 0
       (always_comb / always_latch) or after the first wait (`@*`), then waits on any change to the
-      read set. Reads collapse to whole-variable subscription until the runtime supports bit-level
-      any-change.
-  - [ ] Sensitivity narrowed below whole-variable granularity: a process reading one bit, one
-        element, or one field wakes only when that sub-part changes, rather than on any write to the
-        variable containing it. Correctness is unaffected -- the process re-evaluates and reaches
-        the same answer -- so this is what separates a correct wake set from a minimal one.
+      read set.
+  - [ ] Sensitivity narrowed below whole-variable granularity for a read that is not a range of
+        bits: a process reading one element or one field wakes on any write to the variable
+        containing it, where one reading a bit range of a packed value already wakes only on a write
+        reaching that range. Correctness is unaffected -- the process re-evaluates and reaches the
+        same answer -- so this is what separates a correct wake set from a minimal one.
 
 ### Variable lifetime
 
@@ -92,28 +95,19 @@ machinery owned by other workstreams; see [Blocked](#blocked).
       before use (LRM 3.14.1), which is what lets a real amount name a fraction of a unit. An
       unknown or high-impedance amount is no delay, and a negative one is its own bits read as an
       unsigned integer -- a wait no simulation reaches -- rather than an error.
-- [x] T2..T5 -- Event control `@(...)` across all `expression`, `posedge`, `negedge`, `edge` forms,
-      including bit-select (`bus[N]`), range-select (`bus[hi:lo]`), and indexed part-select
-      (`bus[base +: w]` / `bus[base -: w]`) on packed types, plus event-list (`or` / `,`) of any of
-      the above. Every construct that waits on a signal -- an `always_comb` body, `@*`, `@(...)`,
-      `wait (cond)`, and a continuous assignment -- waits the same way, on the part of each signal
-      the expression actually reads. A write that leaves that part unchanged does not wake the
-      procedure (LRM 9.4.2 "no change in the result" rule), and an edge event watches only the least
-      significant bit of its expression, over the whole LRM Table 9-2 transition matrix, with `edge`
-      matching either direction. Complete for the packed-vector, constant-selector, single-leaf
-      subset, including multi-dimensional packed selects and ascending / negative-base ranges (LRM
-      11.5.1 direction translation). Compound expressions (concatenation, arithmetic, dynamic index)
-      remain rejected -- see Blocked.
-  - [ ] A value-change event control whose operand is an element or field of an unpacked aggregate
-        is accepted and answers wrongly: it wakes on any change to the containing variable, because
-        a waiter's projection is a bit range in the variable's flat bit space and no such range
-        names an element of an aggregate. `@(mem[3])` fires on every write to `mem[4]`, where LRM
-        9.4.2 requires no event when an operand changes without the result changing. Unlike an
-        inferred sensitivity, an explicit event control does not re-evaluate a body afterwards, so
-        the extra wake is the observable answer rather than a cost.
-        [../decisions/owner-transition-and-observation.md](../decisions/owner-transition-and-observation.md)
-        settles the model: detection belongs to the armed observation, which compares its own
-        expression against the baseline it took when it armed.
+- [x] T2..T5 -- Event control `@(...)` in every form: bare, `posedge`, `negedge` and `edge`, and an
+      event list (`or` / `,`) of any of them. Every construct that waits on a signal -- an
+      `always_comb` body, `@*`, `@(...)`, `wait (cond)`, and a continuous assignment -- waits the
+      same way, on the variables the expression reads. What an event control watches is the value of
+      that expression: a change to an operand that leaves the value alone is no event (LRM 9.4.2 "no
+      change in the result" rule), and an edge is the direction its least significant bit took, over
+      the whole LRM Table 9-2 transition matrix, with `edge` matching either direction. The
+      expression need only reduce to a singular value (LRM 9.4.2), so it may read several variables
+      -- a concatenation, an operator over them, a select whose index is itself read -- and its
+      operand may be an element or a field of an unpacked aggregate as well as a packed select of
+      any depth, direction or base, including an indexed part-select (LRM 11.5.1 direction
+      translation). A procedure that is not waiting at the control has nothing watching there, so a
+      change while it is elsewhere is not detected.
   - [ ] The `iff` qualifier on an event control (LRM 9.4.2.3): `@(e iff cond)` is rejected.
   - [ ] An edge event control on a non-packed-bit-vector operand, and a value-change event control
         on a non-value operand (LRM 9.4.2): only packed-vector / value operands are accepted.

@@ -7,8 +7,8 @@ Date: 2026-07-14 Status: accepted
 [event-control-unification](event-control-unification.md) collapsed the four SV constructs that wait
 on a signal -- an `always_comb` / `always_latch` body, an `@*`, an `@(...)`, a `wait (cond)`, and
 the continuous-assignment body that shares their machinery -- into one shape: subscribe to a leaf
-set of `(observable cell, bit projection, edge polarity)`, suspend, wake when a relevant leaf
-changes. That unification stands.
+set of `(observable cell, bit projection)`, suspend, wake when a change to one of them is an event
+for the wait. That unification stands.
 
 It carried the shape in a dedicated MIR statement holding the leaf list. That carrier is what this
 decision replaces.
@@ -33,20 +33,20 @@ await( wait_entry(services, [trigger(leaf) for leaf in leaves]) )
 ```
 
 A **trigger** is one leaf of the wait: the observable cell it watches, the bit projection of that
-cell's packed encoding it watches, and the edge polarity it watches for. It is a runtime-library
-value the IR constructs and forwards without inspecting -- the same category as a print item or a
-format specification, built by a construct call and passed as an array. MIR carries no node kind for
-an event control, and none for a trigger; the existing call, construct, array-literal, and await
-primitives express the whole thing.
+cell's packed encoding it reads, and what decides whether a change there is an event. It is a
+runtime-library value the IR constructs and forwards without inspecting -- the same category as a
+print item or a format specification, built by a construct call and passed as an array. MIR carries
+no node kind for an event control, and none for a trigger; the existing call, construct,
+array-literal, and await primitives express the whole thing.
 
 Every construct that waits on a signal produces this identical call, so a backend that can translate
 one translates all of them, and adding a value-change construct adds no backend code. Reaching the
 execution backend needed no new IR concept below MIR: the wait is a call, the suspension is the
 suspend edge every await already lowers to.
 
-The edge polarity is one enum shared by the compiler and the runtime, not a per-layer copy with
-conversions between them. It is the compile-time/runtime agreement about what a leaf's polarity
-means, like the standard file descriptors or the DPI ABI classes.
+The edge specifier is one enum shared by the compiler and the runtime, not a per-layer copy with
+conversions between them. It is the compile-time/runtime agreement about what an event control was
+written with, like the standard file descriptors or the DPI ABI classes.
 
 ### The whole trigger set goes in one call
 
@@ -79,9 +79,10 @@ for it.
   call, construct, and array-literal paths as every other runtime effect. The generated text is more
   verbose (an edge is a packed literal, not a named enumerator), which is the standing trade of the
   uniform value model and a debug concern, not a semantic one.
-- The trigger set lives only for the duration of the registration call. The runtime copies each
-  leaf's projection into the cell's subscriber record, so nothing points back into the set once the
-  call returns -- which is why a wait needs no value to survive its own suspension.
+- The trigger set lives only for the duration of the registration call. Each leaf's projection is
+  copied into the cell's subscriber record, and what an event control watches through is held there
+  too, so nothing points back into the set once the call returns -- which is why a wait needs no
+  value of its own to survive its suspension.
 - An empty trigger set is legal and means "never wake up" (`always_comb c = 7;`): the body runs
   once, then the process suspends forever. It is the zero case of the same loop, not a special form.
 
@@ -116,8 +117,7 @@ for it.
 ## Cross-references
 
 - [event-control-unification](event-control-unification.md) -- the unification this refines: one
-  shape for every value-change wait, per-leaf projection and edge, frontend LSB-reduce, runtime
-  per-leaf filtering.
+  shape for every value-change wait, over a per-leaf projection set.
 - [runtime-effects-as-generic-calls](runtime-effects-as-generic-calls.md) -- a runtime effect is an
   ordinary call whose first argument is the engine handle; a backend never injects it.
 - [jit-process-suspension](jit-process-suspension.md) -- the suspend edge every await lowers to, and

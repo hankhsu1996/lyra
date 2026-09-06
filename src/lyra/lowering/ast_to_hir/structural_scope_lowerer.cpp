@@ -460,8 +460,7 @@ auto StructuralScopeLowerer::PopulateNetMember(
             hir::DirectMemberRef{.var = local}, *type_id_or, span));
     const hir::ExprId rhs_id = frame.Exprs().Add(*std::move(rhs_or));
     const auto& reads = owner_->Sensitivity().AnalyzeReads(*init, net);
-    auto sensitivity = owner_->TranslateSensitivityReads(
-        reads, frame, support::EventEdge::kAnyChange);
+    auto sensitivity = owner_->TranslateSensitivityReads(reads, frame);
     if (!sensitivity) return std::unexpected(std::move(sensitivity.error()));
     frame.current_structural_scope->continuous_assigns.Add(
         hir::ContinuousAssign{

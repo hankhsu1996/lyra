@@ -527,6 +527,7 @@ using lyra::runtime::NamedEvent;
 using lyra::runtime::NetOf;
 using lyra::runtime::ObjectDefinition;
 using lyra::runtime::Observable;
+using lyra::runtime::Observation;
 using lyra::runtime::Own;
 using lyra::runtime::PackedValuesOf;
 using lyra::runtime::ParkForDelayTicks;
@@ -944,11 +945,28 @@ auto lyra_rt_delay_real(
 }
 
 auto lyra_rt_make_trigger(
-    void* observable, const void* edge, const void* lsb_bit_offset,
+    void* observable, const void* lsb_bit_offset, const void* bit_width)
+    -> void* {
+  return Own(Trigger(
+      static_cast<Observable*>(observable), Read<PackedArray>(lsb_bit_offset),
+      Read<PackedArray>(bit_width)));
+}
+
+auto lyra_rt_make_observed_trigger(
+    void* observable, const void* observation, const void* lsb_bit_offset,
     const void* bit_width) -> void* {
   return Own(Trigger(
-      static_cast<Observable*>(observable), Read<PackedArray>(edge),
+      static_cast<Observable*>(observable), Read<Observation>(observation),
       Read<PackedArray>(lsb_bit_offset), Read<PackedArray>(bit_width)));
+}
+
+auto lyra_rt_make_observation(void* expression, const void* edge) -> void* {
+  return Own(Observation(
+      [held = std::make_shared<ClosureValue>(
+           std::move(*static_cast<ClosureValue*>(expression)))] {
+        return held->RunValue();
+      },
+      Read<PackedArray>(edge)));
 }
 
 // The generated frame the process suspends is not a frame the engine ever sees

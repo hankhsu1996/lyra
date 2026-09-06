@@ -2,7 +2,6 @@
 
 #include <concepts>
 #include <cstddef>
-#include <cstdint>
 #include <deque>
 #include <utility>
 #include <vector>
@@ -157,17 +156,13 @@ class ResolvedNet : public Observable {
       resolved_ = std::move(next);
       if (changed) {
         runtime.TriggerValueChange(
-            *this, MakePackedArrayEdgeClassifier(old_val, resolved_));
+            *this, MakePackedProjectionTest(old_val, resolved_));
       }
     } else {
       const bool changed = !resolved_.IsBitIdentical(next);
       resolved_ = std::move(next);
       if (changed) {
-        runtime.TriggerValueChange(
-            *this,
-            [](std::uint64_t, std::uint64_t, support::EventEdge edge) -> bool {
-              return edge == support::EventEdge::kAnyChange;
-            });
+        runtime.TriggerValueChange(*this, MakeWholeValueProjectionTest());
       }
     }
   }

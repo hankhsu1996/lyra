@@ -350,11 +350,15 @@ enum class RuntimeLibraryKind : std::uint8_t {
   // an explicit operand from the engine's current state.
   kTimeFormat,
   // LRM 9.4.2 / 9.4.2.2 / 9.4.3 one leaf of a value-change wait:
-  // `lyra::runtime::Trigger`, pairing the observable cell with the observed bit
-  // projection of its packed encoding and the edge polarity it is subscribed
-  // under. A wait registers a set of these, and the runtime wakes the process
-  // when any leaf's projection changes as its edge demands.
+  // `lyra::runtime::Trigger`, pairing the observable cell with the bits of its
+  // encoding the wait reads and what decides whether a change there is an
+  // event. A wait registers a set of these.
   kTrigger,
+  // LRM 9.4.2 what an event control watches while a procedure waits at it:
+  // `lyra::runtime::Observation`, holding the expression whose value decides
+  // the event and the value it had when the wait began. The leaves of one
+  // event expression name one of these between them.
+  kObservation,
   // LRM 23.3.3.5 / 27.6 elaborated hierarchy segment:
   // `lyra::runtime::HierarchySegment`, the per-scope structured identity each
   // child carries from construction (base name plus per-dimension indices).

@@ -95,8 +95,7 @@ auto ProcessLowerer::Run(
     // the procedure-level sensitivity, not the raw read set of the body node,
     // which reflects only call arguments across a function boundary.
     auto sensitivity = owner_->TranslateSensitivityReads(
-        owner_->Sensitivity().AnalyzeProcedureSensitivity(proc), frame,
-        support::EventEdge::kAnyChange);
+        owner_->Sensitivity().AnalyzeProcedureSensitivity(proc), frame);
     if (!sensitivity) return std::unexpected(std::move(sensitivity.error()));
     out.implicit_sensitivity_list = *std::move(sensitivity);
   }

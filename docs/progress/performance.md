@@ -101,11 +101,11 @@ profile should show at the top.
       read rate for the first time, at 1,069x rather than the few hundred expected. The fourth,
       about three times on the integration design, is not yet measured.
 
-      What the correctness half of this cost is not fixed by it. A value-change event control on an
-      aggregate element still answers wrongly, because what a sensitivity leaf carries is a bit
-      window in a flat address space and an aggregate has no such thing -- tracked with the
-      construct it affects, in [processes.md](processes.md). The write path now reports enough for
-      that answer to be got right; nothing yet reads it.
+      What the correctness half of this cost is not fixed by it, and is fixed separately: a
+      value-change event control now decides for itself, by comparing the value of its own
+      expression, so what a leaf's bit window does is pass over a wait a write cannot have reached
+      rather than decide one. Tracked with the construct it affects, in
+      [processes.md](processes.md).
 
 - [ ] The sequence type behind a value's words and dimensions holds its inline storage and its spill
       container at the same time, so a value that never spills still carries the spill container and
