@@ -8,7 +8,7 @@
 #include <variant>
 #include <vector>
 
-#include "lyra/base/internal_error.hpp"
+#include "lyra/base/overloaded.hpp"
 #include "lyra/diag/diagnostic.hpp"
 #include "lyra/hir/expr.hpp"
 #include "lyra/hir/procedural_body.hpp"
@@ -54,46 +54,56 @@ auto LowerTimedWaitWrapper(
       .label = std::move(label), .data = mir::BlockStmt{.scope = scope_id}};
 }
 
-// LRM 15.5.2 `@e body;`: the wait is on a named event's waiter list, not on a
-// value change, so it awaits the event rather than a trigger set.
-auto LowerNamedEventTimedStmt(
-    ProcessLowerer& process, WalkFrame frame, std::optional<std::string> label,
-    const hir::TimedStmt& t, const hir::NamedEventControl& nec)
-    -> diag::Result<mir::Stmt> {
-  return LowerTimedWaitWrapper(
-      process, frame, std::move(label), t.stmt,
-      [&](mir::Block& child_block,
-          WalkFrame child_frame) -> diag::Result<mir::Stmt> {
-        auto receiver_or = process.LowerExpr(
-            process.HirBody().exprs.Get(nec.event), child_frame);
-        if (!receiver_or) {
-          return std::unexpected(std::move(receiver_or.error()));
-        }
-        const mir::ExprId receiver_id =
-            child_block.exprs.Add(*std::move(receiver_or));
-        mir::Expr await_call{
-            .data =
-                mir::CallExpr{
-                    .callee = mir::Direct{.target = support::BuiltinFn::kAwait},
-                    .arguments = {receiver_id},
-                },
-            .type = process.Owner().Unit().builtins.void_type};
-        const mir::ExprId await_id =
-            child_block.exprs.Add(std::move(await_call));
-        const mir::ExprId await_expr_id = child_block.exprs.Add(
-            mir::Expr{
-                .data = mir::AwaitExpr{.awaitable = await_id},
-                .type = process.Owner().Unit().builtins.void_type});
-        return mir::Stmt{
-            .label = std::nullopt,
-            .data = mir::ExprStmt{.expr = await_expr_id}};
-      });
+// The LRM 9.4.2.3 `iff` qualifier, as the closure that answers it where the
+// change happens. It answers a one-bit value the standard's own truth rule
+// (LRM 12.4) has already decided, because that rule is the language's and
+// belongs where the expression is compiled rather than in the runtime that
+// reads the answer.
+auto BuildConditionClosure(
+    ProcessLowerer& process, WalkFrame frame, mir::Block& block,
+    hir::ExprId condition) -> diag::Result<mir::ExprId> {
+  auto& unit = process.Owner().Unit();
+  ClosureBuilder closure(unit, frame);
+  auto cond_or = process.LowerExpr(
+      process.HirBody().exprs.Get(condition), closure.Frame());
+  if (!cond_or) return std::unexpected(std::move(cond_or.error()));
+  mir::Block& body = closure.Body();
+  const mir::ExprId raw_id = body.exprs.Add(*std::move(cond_or));
+  const mir::ExprId held_id = body.exprs.Add(
+      mir::Expr{
+          .data =
+              mir::ConditionalExpr{
+                  .condition = ReduceToCondition(unit, body, raw_id),
+                  .then_value = BuildBit1Literal(unit, body, true),
+                  .else_value = BuildBit1Literal(unit, body, false)},
+          .type = unit.builtins.bit1});
+  return block.exprs.Add(closure.Build(held_id));
+}
+
+// Materialises an observation into a local of `block`, so every leaf of the
+// event expression names one value rather than one each.
+auto DeclareObservation(
+    const mir::CompilationUnit& unit, WalkFrame frame, mir::Block& block,
+    std::vector<mir::ExprId> arguments) -> mir::LocalId {
+  const mir::ExprId observe_id = block.exprs.Add(
+      mir::Expr{
+          .data =
+              mir::CallExpr{
+                  .callee = mir::Construct{},
+                  .arguments = std::move(arguments)},
+          .type = unit.builtins.observation});
+  const mir::LocalId local = frame.bindings->DeclareAnonymous(
+      mir::LocalDecl{
+          .name = "_lyra_observation", .type = unit.builtins.observation});
+  block.AppendStmt(mir::LocalDeclStmt{.target = local, .init = observe_id});
+  return local;
 }
 
 // The observation one event expression is watched through (LRM 9.4.2): a
 // closure that answers what the expression is worth now, armed with what it is
-// worth here. It is one value every leaf of that expression names, since the
-// value being watched is the expression's and there is one of it.
+// worth here, and the `iff` qualifier where the source wrote one. It is one
+// value every leaf of that expression names, since the value being watched is
+// the expression's and there is one of it.
 auto BuildObservationLocal(
     ProcessLowerer& process, WalkFrame frame, mir::Block& block,
     const hir::EventTrigger& trigger) -> diag::Result<mir::LocalId> {
@@ -104,70 +114,30 @@ auto BuildObservationLocal(
       process.HirBody().exprs.Get(trigger.signal), closure.Frame());
   if (!value_or) return std::unexpected(std::move(value_or.error()));
   const mir::ExprId value_id = closure.Body().exprs.Add(*std::move(value_or));
-  const mir::ExprId closure_id = block.exprs.Add(closure.Build(value_id));
 
-  const mir::ExprId edge_id =
-      BuildIntLiteral(unit, block, static_cast<std::int64_t>(trigger.edge));
-  const mir::ExprId observe_id = block.exprs.Add(
-      mir::Expr{
-          .data =
-              mir::CallExpr{
-                  .callee = mir::Construct{},
-                  .arguments = {closure_id, edge_id}},
-          .type = unit.builtins.observation});
-
-  const mir::LocalId local = frame.bindings->DeclareAnonymous(
-      mir::LocalDecl{
-          .name = "_lyra_observation", .type = unit.builtins.observation});
-  block.AppendStmt(mir::LocalDeclStmt{.target = local, .init = observe_id});
-  return local;
+  std::vector<mir::ExprId> arguments{
+      block.exprs.Add(closure.Build(value_id)),
+      BuildIntLiteral(unit, block, static_cast<std::int64_t>(trigger.edge))};
+  if (trigger.condition.has_value()) {
+    auto condition =
+        BuildConditionClosure(process, frame, block, *trigger.condition);
+    if (!condition) return std::unexpected(std::move(condition.error()));
+    arguments.push_back(*condition);
+  }
+  return DeclareObservation(unit, frame, block, std::move(arguments));
 }
 
-// LRM 9.4.2 `@(...) body`. Each event expression of the list gets an
-// observation, and every variable that expression reads is a leaf watched
-// through it, so a change to an operand that leaves the expression's value
-// alone is no event.
-auto LowerEventTimedStmt(
-    ProcessLowerer& process, WalkFrame frame, std::optional<std::string> label,
-    const hir::TimedStmt& t, const hir::EventControl& ec)
-    -> diag::Result<mir::Stmt> {
-  return LowerTimedWaitWrapper(
-      process, frame, std::move(label), t.stmt,
-      [&](mir::Block& child_block,
-          WalkFrame child_frame) -> diag::Result<mir::Stmt> {
-        std::vector<ObservedLeaf> leaves;
-        for (const hir::EventTrigger& trigger : ec.triggers) {
-          auto observation =
-              BuildObservationLocal(process, child_frame, child_block, trigger);
-          if (!observation) {
-            return std::unexpected(std::move(observation.error()));
-          }
-          for (const hir::SensitivityEntry& leaf : trigger.sensitivity_list) {
-            leaves.push_back(
-                ObservedLeaf{.entry = &leaf, .observation = *observation});
-          }
-        }
-        return BuildEventControlWaitStmt(
-            child_block, child_frame, process.EnclosingScopeLowerer(), leaves);
-      });
+// LRM 9.4.2.2 `@*`: the standard makes the wait sensitive to the variables the
+// controlled statement reads rather than to the value of an expression, so
+// being reached is the whole of the condition and no observation is built.
+auto BuildImplicitEventWaitStmt(
+    ProcessLowerer& process, WalkFrame frame, mir::Block& block,
+    const hir::ImplicitEventControl& ie) -> mir::Stmt {
+  return BuildValueChangeWaitStmt(
+      block, frame, process.EnclosingScopeLowerer(), ie.sensitivity_list);
 }
 
-// LRM 9.4.2.2 `@* body`.
-auto LowerImplicitEventTimedStmt(
-    ProcessLowerer& process, WalkFrame frame, std::optional<std::string> label,
-    const hir::TimedStmt& t, const hir::ImplicitEventControl& ie)
-    -> diag::Result<mir::Stmt> {
-  return LowerTimedWaitWrapper(
-      process, frame, std::move(label), t.stmt,
-      [&](mir::Block& child_block,
-          WalkFrame child_frame) -> diag::Result<mir::Stmt> {
-        return BuildValueChangeWaitStmt(
-            child_block, child_frame, process.EnclosingScopeLowerer(),
-            ie.sensitivity_list);
-      });
-}
-
-// LRM 9.4.1 `#N body`. The wait lowers to a coroutine-suspending free-function
+// LRM 9.4.1 `#N`. The wait lowers to a coroutine-suspending free-function
 // call whose argument vector states the runtime handle, the amount of time the
 // design asked to wait, and the enclosing scope's time unit and precision
 // powers (LRM 3.14.2); the runtime rounds that amount to the scope's precision
@@ -181,85 +151,146 @@ auto LowerImplicitEventTimedStmt(
 // own, while a real one may name a fraction of a unit. The front end has
 // already refused an amount that is neither (a delay expression must be
 // numeric), so the two together are the whole of what arrives.
-auto LowerDelayTimedStmt(
-    ProcessLowerer& process, WalkFrame frame, std::optional<std::string> label,
-    const hir::TimedStmt& t, const hir::DelayControl& d)
-    -> diag::Result<mir::Stmt> {
-  return LowerTimedWaitWrapper(
-      process, frame, std::move(label), t.stmt,
-      [&](mir::Block& child_block,
-          WalkFrame child_frame) -> diag::Result<mir::Stmt> {
-        auto& unit = process.Owner().Unit();
-        auto duration_or = process.LowerExpr(
-            process.HirBody().exprs.Get(d.duration), child_frame);
-        if (!duration_or) {
-          return std::unexpected(std::move(duration_or.error()));
-        }
-        mir::ExprId duration_id =
-            child_block.exprs.Add(*std::move(duration_or));
+auto BuildDelayWaitStmt(
+    ProcessLowerer& process, WalkFrame frame, mir::Block& block,
+    const hir::DelayControl& d) -> diag::Result<mir::Stmt> {
+  auto& unit = process.Owner().Unit();
+  auto duration_or =
+      process.LowerExpr(process.HirBody().exprs.Get(d.duration), frame);
+  if (!duration_or) return std::unexpected(std::move(duration_or.error()));
+  mir::ExprId duration_id = block.exprs.Add(*std::move(duration_or));
 
-        const mir::Type& duration_type =
-            unit.types.Get(child_block.exprs.Get(duration_id).type);
-        const bool is_real = duration_type.IsRealFamily();
-        if (duration_type.Is<mir::ShortRealType>()) {
-          // LRM 6.12.1: `real` and `realtime` are one type, and a `shortreal`
-          // differs from them only in host precision, so the entry takes the
-          // wider and the narrower reshapes into it.
-          duration_id = ConvertToType(
-              unit, child_block, duration_id, unit.builtins.realtime);
-        }
+  const mir::Type& duration_type =
+      unit.types.Get(block.exprs.Get(duration_id).type);
+  const bool is_real = duration_type.IsRealFamily();
+  if (duration_type.Is<mir::ShortRealType>()) {
+    // LRM 6.12.1: `real` and `realtime` are one type, and a `shortreal` differs
+    // from them only in host precision, so the entry takes the wider and the
+    // narrower reshapes into it.
+    duration_id =
+        ConvertToType(unit, block, duration_id, unit.builtins.realtime);
+  }
 
-        const mir::ExprId runtime_id =
-            child_block.exprs.Add(BuildCurrentRuntimeCallExpr(process.Owner()));
-        const mir::ExprId unit_power_id = BuildIntLiteral(
-            unit, child_block,
-            static_cast<std::int64_t>(process.Resolution().unit_power));
-        const mir::ExprId precision_power_id = BuildIntLiteral(
-            unit, child_block,
-            static_cast<std::int64_t>(process.Resolution().precision_power));
-        const mir::ExprId call_id = child_block.exprs.Add(
-            mir::Expr{
-                .data =
-                    mir::CallExpr{
-                        .callee =
-                            mir::Direct{
-                                .target = is_real
-                                              ? support::BuiltinFn::kDelayReal
-                                              : support::BuiltinFn::kDelay},
-                        .arguments =
-                            {runtime_id, duration_id, unit_power_id,
-                             precision_power_id}},
-                .type = unit.builtins.void_type});
-        const mir::ExprId await_expr_id = child_block.exprs.Add(
-            mir::Expr{
-                .data = mir::AwaitExpr{.awaitable = call_id},
-                .type = unit.builtins.void_type});
-        return mir::Stmt{
-            .label = std::nullopt,
-            .data = mir::ExprStmt{.expr = await_expr_id}};
-      });
+  const mir::ExprId runtime_id =
+      block.exprs.Add(BuildCurrentRuntimeCallExpr(process.Owner()));
+  const mir::ExprId unit_power_id = BuildIntLiteral(
+      unit, block, static_cast<std::int64_t>(process.Resolution().unit_power));
+  const mir::ExprId precision_power_id = BuildIntLiteral(
+      unit, block,
+      static_cast<std::int64_t>(process.Resolution().precision_power));
+  const mir::ExprId call_id = block.exprs.Add(
+      mir::Expr{
+          .data =
+              mir::CallExpr{
+                  .callee =
+                      mir::Direct{
+                          .target = is_real ? support::BuiltinFn::kDelayReal
+                                            : support::BuiltinFn::kDelay},
+                  .arguments =
+                      {runtime_id, duration_id, unit_power_id,
+                       precision_power_id}},
+          .type = unit.builtins.void_type});
+  const mir::ExprId await_expr_id = block.exprs.Add(
+      mir::Expr{
+          .data = mir::AwaitExpr{.awaitable = call_id},
+          .type = unit.builtins.void_type});
+  return mir::Stmt{
+      .label = std::nullopt, .data = mir::ExprStmt{.expr = await_expr_id}};
 }
 
 }  // namespace
 
+auto BuildEventWaitStmt(
+    ProcessLowerer& process, WalkFrame frame, mir::Block& block,
+    const hir::EventControl& ec) -> diag::Result<mir::Stmt> {
+  std::vector<ObservedLeaf> leaves;
+  for (const hir::EventTrigger& trigger : ec.triggers) {
+    auto observation = BuildObservationLocal(process, frame, block, trigger);
+    if (!observation) {
+      return std::unexpected(std::move(observation.error()));
+    }
+    for (const hir::SensitivityEntry& leaf : trigger.sensitivity_list) {
+      leaves.push_back(
+          ObservedLeaf{.entry = &leaf, .observation = *observation});
+    }
+  }
+  return BuildEventControlWaitStmt(
+      block, frame, process.EnclosingScopeLowerer(), leaves);
+}
+
+auto BuildNamedEventWaitStmt(
+    ProcessLowerer& process, WalkFrame frame, mir::Block& block,
+    const hir::NamedEventControl& nec) -> diag::Result<mir::Stmt> {
+  const auto& builtins = process.Owner().Unit().builtins;
+  auto receiver_or =
+      process.LowerExpr(process.HirBody().exprs.Get(nec.event), frame);
+  if (!receiver_or) return std::unexpected(std::move(receiver_or.error()));
+
+  std::vector<mir::ExprId> arguments{block.exprs.Add(*std::move(receiver_or))};
+  support::BuiltinFn target = support::BuiltinFn::kAwait;
+  if (nec.condition.has_value()) {
+    auto condition =
+        BuildConditionClosure(process, frame, block, *nec.condition);
+    if (!condition) return std::unexpected(std::move(condition.error()));
+    arguments.push_back(block.exprs.Add(
+        mir::MakeLocalRefExpr(
+            DeclareObservation(
+                process.Owner().Unit(), frame, block, {*condition}),
+            builtins.observation)));
+    target = support::BuiltinFn::kAwaitQualified;
+  }
+  const mir::ExprId await_id = block.exprs.Add(
+      mir::Expr{
+          .data =
+              mir::CallExpr{
+                  .callee = mir::Direct{.target = target},
+                  .arguments = std::move(arguments)},
+          .type = builtins.void_type});
+  const mir::ExprId await_expr_id = block.exprs.Add(
+      mir::Expr{
+          .data = mir::AwaitExpr{.awaitable = await_id},
+          .type = builtins.void_type});
+  return mir::Stmt{
+      .label = std::nullopt, .data = mir::ExprStmt{.expr = await_expr_id}};
+}
+
+auto BuildAnyEventWaitStmt(
+    ProcessLowerer& process, WalkFrame frame, mir::Block& block,
+    const hir::AnyEventControl& event) -> diag::Result<mir::Stmt> {
+  return std::visit(
+      Overloaded{
+          [&](const hir::EventControl& ec) {
+            return BuildEventWaitStmt(process, frame, block, ec);
+          },
+          [&](const hir::NamedEventControl& nec) {
+            return BuildNamedEventWaitStmt(process, frame, block, nec);
+          }},
+      event);
+}
+
 auto LowerTimedStmt(
     ProcessLowerer& process, WalkFrame frame, std::optional<std::string> label,
     const hir::TimedStmt& t) -> diag::Result<mir::Stmt> {
-  if (const auto* ie = std::get_if<hir::ImplicitEventControl>(&t.timing)) {
-    return LowerImplicitEventTimedStmt(
-        process, frame, std::move(label), t, *ie);
-  }
-  if (const auto* nec = std::get_if<hir::NamedEventControl>(&t.timing)) {
-    return LowerNamedEventTimedStmt(process, frame, std::move(label), t, *nec);
-  }
-  if (const auto* ec = std::get_if<hir::EventControl>(&t.timing)) {
-    return LowerEventTimedStmt(process, frame, std::move(label), t, *ec);
-  }
-  const auto* d = std::get_if<hir::DelayControl>(&t.timing);
-  if (d == nullptr) {
-    throw InternalError("LowerTimedStmt: unknown hir::TimingControl variant");
-  }
-  return LowerDelayTimedStmt(process, frame, std::move(label), t, *d);
+  return LowerTimedWaitWrapper(
+      process, frame, std::move(label), t.stmt,
+      [&](mir::Block& block, WalkFrame inner) -> diag::Result<mir::Stmt> {
+        return std::visit(
+            Overloaded{
+                [&](const hir::DelayControl& d) {
+                  return BuildDelayWaitStmt(process, inner, block, d);
+                },
+                [&](const hir::EventControl& ec) {
+                  return BuildEventWaitStmt(process, inner, block, ec);
+                },
+                [&](const hir::NamedEventControl& nec) {
+                  return BuildNamedEventWaitStmt(process, inner, block, nec);
+                },
+                [&](const hir::ImplicitEventControl& ie)
+                    -> diag::Result<mir::Stmt> {
+                  return BuildImplicitEventWaitStmt(process, inner, block, ie);
+                }},
+            t.timing);
+      });
 }
 
 // LRM 15.5.1 `-> e;`.

@@ -4,7 +4,6 @@
 #include <cstdint>
 #include <optional>
 #include <string>
-#include <utility>
 #include <variant>
 #include <vector>
 
@@ -14,8 +13,7 @@
 #include "lyra/hir/pattern.hpp"
 #include "lyra/hir/procedural_scope.hpp"
 #include "lyra/hir/procedural_var.hpp"
-#include "lyra/hir/value_ref.hpp"
-#include "lyra/support/event_edge.hpp"
+#include "lyra/hir/timing.hpp"
 
 namespace lyra::hir {
 
@@ -221,52 +219,6 @@ struct ContinueStmt {};
 struct ReturnStmt {
   std::optional<ExprId> value;
 };
-
-struct DelayControl {
-  ExprId duration;
-};
-
-// One leaf entry of a wait's read set. Identity-only: which cell, and the
-// flat-bit footprint of its packed encoding the leaf reads. An absent footprint
-// means the whole signal is read.
-struct SensitivityEntry {
-  ValueTarget ref;
-  std::optional<std::pair<std::uint64_t, std::uint64_t>> footprint;
-};
-
-// One entry of an explicit `@(...)` event control (LRM 9.4.2). `signal` is the
-// expression the event is a change in the value of, `edge` the direction its
-// least significant bit must take where one was written, and
-// `sensitivity_list` the variables that expression reads -- a change to one of
-// which is a candidacy for the event rather than the event itself.
-struct EventTrigger {
-  ExprId signal;
-  support::EventEdge edge;
-  std::vector<SensitivityEntry> sensitivity_list;
-};
-
-struct EventControl {
-  std::vector<EventTrigger> triggers;
-};
-
-// LRM 9.4.2.2 `@*` / `@(*)`. Sensitivity for the controlled body is
-// computed by slang's AnalysisManager (write-before-read exclusion via
-// must-def) and looked up at AST -> HIR via the precomputed read-set facts.
-struct ImplicitEventControl {
-  std::vector<SensitivityEntry> sensitivity_list;
-};
-
-// LRM 15.5.2 `@e;`. The controlled timing is a wait on a named event rather
-// than a value-change event. HIR mirrors slang's TimingControl shape; HIR ->
-// MIR collapses this onto a method call (`event.Await()`) on the named-event
-// data type. The `event` ExprId resolves to a PrimaryExpr of a direct or routed
-// reference pointing at the event variable.
-struct NamedEventControl {
-  ExprId event;
-};
-
-using TimingControl = std::variant<
-    DelayControl, EventControl, ImplicitEventControl, NamedEventControl>;
 
 struct TimedStmt {
   TimingControl timing;

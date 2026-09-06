@@ -1,15 +1,18 @@
 #pragma once
 
+#include <utility>
 #include <vector>
 
 #include "lyra/runtime/coroutine.hpp"
+#include "lyra/runtime/observation.hpp"
 #include "lyra/runtime/registration.hpp"
 
 namespace lyra::runtime {
 
-// The waiter set behind a named event (LRM 15.5): a trigger releases every
-// activation parked on it at once, so unlike a value-change wait there is no
-// per-membership fire condition to evaluate.
+// The waiter set behind a named event (LRM 15.5). A trigger is the event
+// itself, so nothing here has a value to compare; what a wait can still carry
+// is an `iff` qualifier, which decides at the trigger and leaves the wait in
+// place when it does not hold (LRM 9.4.2.3).
 class RuntimeEvent {
  public:
   RuntimeEvent() = default;
@@ -20,15 +23,21 @@ class RuntimeEvent {
   auto operator=(RuntimeEvent&&) -> RuntimeEvent& = delete;
   ~RuntimeEvent() = default;
 
-  void AddWaiter(CoroutineHandle waiter) {
-    waiter->Park(waiters_);
+  void AddWaiter(CoroutineHandle waiter, Observation observation = {}) {
+    waiter->Park(waiters_).observation = std::move(observation);
   }
 
-  [[nodiscard]] auto TakeWaiters() -> std::vector<CoroutineHandle> {
+  // Claims and returns the activations this trigger is an event for; a wait
+  // the qualifier holds back stays parked for the next one.
+  [[nodiscard]] auto TakeFiringWaiters() -> std::vector<CoroutineHandle> {
     std::vector<CoroutineHandle> woken;
-    while (Registration* reg = waiters_.PopFront()) {
-      woken.push_back(reg->activation);
-    }
+    waiters_.ForEach([&](Registration& reg) {
+      if (!reg.FiresNow()) {
+        return;
+      }
+      reg.Unlink();
+      woken.push_back(reg.activation);
+    });
     return woken;
   }
 

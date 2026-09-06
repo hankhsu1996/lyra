@@ -60,8 +60,7 @@ class Observable {
       if (reg.bit_width != 0 && unchanged(reg.lsb_bit_offset, reg.bit_width)) {
         return;
       }
-      ArmedObservation* observation = reg.observation.Get();
-      if (observation != nullptr && !observation->Fires()) {
+      if (!reg.FiresNow()) {
         return;
       }
       reg.Unlink();

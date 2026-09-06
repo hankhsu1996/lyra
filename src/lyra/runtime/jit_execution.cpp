@@ -377,6 +377,18 @@ auto TakeClosure(void* closure) -> std::function<void()> {
               *static_cast<ClosureValue*>(closure)))] { held->Invoke(); };
 }
 
+// A closure an observation keeps and runs each time it is asked -- what the
+// watched expression is worth now, or whether an `iff` qualifier holds. The
+// observation outlives the stretch that built the closure, so it takes it, and
+// holds it by a shared handle because an observation is copied to each leaf of
+// the expression while a closure value owns its captures and is only movable.
+auto TakeEvaluator(void* closure) {
+  return [held = std::make_shared<ClosureValue>(
+              std::move(*static_cast<ClosureValue*>(closure)))] {
+    return held->RunValue();
+  };
+}
+
 // The body an LRM 7.12 method runs, as the value layer takes it. The closure is
 // borrowed rather than taken: the method runs it to completion before
 // returning, so the stretch that built it is still alive for the whole walk.
@@ -535,6 +547,7 @@ using lyra::runtime::PowerOf;
 using lyra::runtime::ProgramLifetime;
 using lyra::runtime::Read;
 using lyra::runtime::RealTimeInUnit;
+using lyra::runtime::Region;
 using lyra::runtime::RunHostCommand;
 using lyra::runtime::RuntimeEffects;
 using lyra::runtime::Scope;
@@ -544,6 +557,7 @@ using lyra::runtime::STimeInUnit;
 using lyra::runtime::SubscribeValueChange;
 using lyra::runtime::TakeBranches;
 using lyra::runtime::TakeClosure;
+using lyra::runtime::TakeEvaluator;
 using lyra::runtime::TestPlusargs;
 using lyra::runtime::Trigger;
 using lyra::runtime::Var;
@@ -916,6 +930,11 @@ void lyra_rt_submit_nba_after_real(
       Read<PackedArray>(precision_power), TakeClosure(closure));
 }
 
+void lyra_rt_run_detached(void* runtime, void* carrier) {
+  static_cast<RuntimeEffects*>(runtime)->RunDetached(
+      std::move(*static_cast<Coroutine<void>*>(carrier)));
+}
+
 void lyra_rt_submit_postponed(void* runtime, void* closure) {
   static_cast<RuntimeEffects*>(runtime)->SubmitPostponed(TakeClosure(closure));
 }
@@ -961,12 +980,18 @@ auto lyra_rt_make_observed_trigger(
 }
 
 auto lyra_rt_make_observation(void* expression, const void* edge) -> void* {
+  return Own(Observation(TakeEvaluator(expression), Read<PackedArray>(edge)));
+}
+
+auto lyra_rt_make_qualified_observation(
+    void* expression, const void* edge, void* condition) -> void* {
   return Own(Observation(
-      [held = std::make_shared<ClosureValue>(
-           std::move(*static_cast<ClosureValue*>(expression)))] {
-        return held->RunValue();
-      },
-      Read<PackedArray>(edge)));
+      TakeEvaluator(expression), Read<PackedArray>(edge),
+      TakeEvaluator(condition)));
+}
+
+auto lyra_rt_make_condition_observation(void* condition) -> void* {
+  return Own(Observation(TakeEvaluator(condition)));
 }
 
 // The generated frame the process suspends is not a frame the engine ever sees
@@ -987,6 +1012,19 @@ auto lyra_rt_wait_any(void* runtime, LyraSpan triggers) -> bool {
   return true;
 }
 
+// The region an event-controlled update is due in, reached by the execution
+// carrying it (LRM 4.4.2.4). Which execution suspends is the running one, which
+// the runtime already knows, so nothing about it crosses the boundary; the
+// answer is the park flag every registration returns, and this one always
+// parks.
+auto lyra_rt_resume_in_nba_region(void* runtime) -> bool {
+  auto& svc = *static_cast<RuntimeEffects*>(runtime);
+  svc.CurrentProcess().RegisterWakeup([&svc](CoroutineHandle token) {
+    svc.Schedule(svc.Now(), Region::kNba, token);
+  });
+  return true;
+}
+
 void lyra_rt_trigger(void* event, void* runtime) {
   static_cast<NamedEvent*>(event)->Trigger(
       *static_cast<RuntimeEffects*>(runtime));
@@ -1001,6 +1039,13 @@ void lyra_rt_trigger(void* event, void* runtime) {
 auto lyra_rt_await(void* event) -> bool {
   static_cast<NamedEvent*>(event)->AddWaiter(
       current_runtime().CurrentProcess().TopHandle());
+  return true;
+}
+
+auto lyra_rt_await_qualified(void* event, const void* observation) -> bool {
+  static_cast<NamedEvent*>(event)->AddWaiter(
+      current_runtime().CurrentProcess().TopHandle(),
+      Read<Observation>(observation));
   return true;
 }
 

@@ -223,6 +223,20 @@ void lyra_rt_submit_nba_after_real(
     void* runtime, const void* duration, const void* unit_power,
     const void* precision_power, void* closure);
 
+// The NBA commit of an assignment carrying an intra-assignment event control
+// (LRM 9.4.5), which cannot name its slot where the statement is reached. What
+// crosses is the execution that waits for the event and then makes the commit
+// in whichever slot it landed in: a handle to a coroutine the building stretch
+// owns, taken the way a fork branch is. It runs apart from every lineage, being
+// an update the standard makes no process of.
+void lyra_rt_run_detached(void* runtime, void* carrier);
+
+// The region that update is due in, reached by the carrier once the event has
+// named the slot (LRM 4.4.2.4). Which execution suspends is the running one,
+// read from the runtime, so nothing about it crosses; the answer is the park
+// flag every registration returns, and this one always parks.
+auto lyra_rt_resume_in_nba_region(void* runtime) -> bool;
+
 // Registers the running process to wake after `duration` steps of its scope's
 // time unit (`unit_power`), the registration a delay's suspend edge is preceded
 // by (LRM 9.4.1). The runtime rounds that amount to the scope's precision
@@ -258,12 +272,21 @@ auto lyra_rt_make_observed_trigger(
     void* observable, const void* observation, const void* lsb_bit_offset,
     const void* bit_width) -> void*;
 
-// What an event control watches (LRM 9.4.2): a closure answering what the
-// event expression is worth now, and the edge specifier written on it, crossing
-// as an opaque packed value like every scalar. It is armed here with what the
-// expression is worth at this moment. Like a trigger it is transient, and the
-// waits built from it hold it for as long as they last.
+// What decides whether reaching a wait is an event for it (LRM 9.4.2): a
+// closure answering what the event expression is worth now, and the edge
+// specifier written on it, crossing as an opaque packed value like every
+// scalar. It is armed here with what the expression is worth at this moment.
+// Like a trigger it is transient, and the waits built from it hold it for as
+// long as they last.
+//
+// The qualified form carries an `iff` condition beside them, answering as a
+// one-bit value already reduced to LRM 12.4 truth. The condition-only form is a
+// named event's, whose trigger is the event itself, so the qualifier is the
+// whole of what can hold the wait back (LRM 9.4.2.3, 15.5).
 auto lyra_rt_make_observation(void* expression, const void* edge) -> void*;
+auto lyra_rt_make_qualified_observation(
+    void* expression, const void* edge, void* condition) -> void*;
+auto lyra_rt_make_condition_observation(void* condition) -> void*;
 
 // Registers the running process to wake when a change to one of `triggers` is
 // an event for the wait, the registration a value-change wait's suspend edge is
@@ -272,14 +295,16 @@ auto lyra_rt_make_observation(void* expression, const void* edge) -> void*;
 // no token crosses the boundary. A value-change wait always parks.
 auto lyra_rt_wait_any(void* runtime, LyraSpan triggers) -> bool;
 
-// A named event (LRM 15.5). Triggering records the instant and releases every
-// process parked on the event at once, since the event carries no per-waiter
-// condition to evaluate; awaiting parks the running process, which the runtime
-// knows without being told, so nothing but the event crosses; and `triggered`
-// answers whether the most recent trigger happened in this time step, which is
-// a comparison of instants rather than a state the event clears.
+// A named event (LRM 15.5). Triggering records the instant and ends the wait of
+// every process the trigger is an event for; awaiting parks the running
+// process, which the runtime knows without being told, so nothing but the event
+// crosses unless the wait carries an `iff` observation (LRM 9.4.2.3), which
+// decides at the trigger and leaves the wait in place when it does not hold;
+// and `triggered` answers whether the most recent trigger happened in this time
+// step, which is a comparison of instants rather than a state the event clears.
 void lyra_rt_trigger(void* event, void* runtime);
 auto lyra_rt_await(void* event) -> bool;
+auto lyra_rt_await_qualified(void* event, const void* observation) -> bool;
 auto lyra_rt_triggered(const void* event, void* runtime) -> void*;
 
 // LRM 9.6.2 `disable`. A target crosses as its address, and a control effect as

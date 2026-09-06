@@ -100,6 +100,21 @@ auto TriggerConstruction(std::size_t argument_count) -> RuntimeOp {
                              : RuntimeOp::kMakeObservedTrigger;
 }
 
+// What an observation is built over: the watched expression and its edge, both
+// of those plus an `iff` qualifier, or the qualifier alone -- which is a named
+// event's, whose trigger is the event itself so there is no value to watch
+// (LRM 9.4.2, 9.4.2.3, 15.5).
+auto ObservationConstruction(std::size_t argument_count) -> RuntimeOp {
+  switch (argument_count) {
+    case 1:
+      return RuntimeOp::kMakeConditionObservation;
+    case 2:
+      return RuntimeOp::kMakeObservation;
+    default:
+      return RuntimeOp::kMakeQualifiedObservation;
+  }
+}
+
 }  // namespace
 
 auto CodeGenFunction::LowerInstr(const lir::Instr& instr)
@@ -1416,7 +1431,8 @@ auto CodeGenFunction::ConstructCallee(
                 return entry(
                     RuntimeSymbol(TriggerConstruction(call.args.size())));
               case lir::RuntimeLibraryKind::kObservation:
-                return entry(RuntimeSymbol(RuntimeOp::kMakeObservation));
+                return entry(
+                    RuntimeSymbol(ObservationConstruction(call.args.size())));
               case lir::RuntimeLibraryKind::kFormatSpec:
                 return entry(
                     RuntimeSymbol(FormatSpecConstruction(call.args.size())));

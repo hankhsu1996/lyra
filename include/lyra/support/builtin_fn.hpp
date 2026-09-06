@@ -114,9 +114,12 @@ enum class BuiltinFn : std::uint16_t {
   kBintoa,
   kRealtoa,
   // LRM 15.5 named-event operations. `Trigger` / `Await` arise from
-  // `-> e;` / `@e;` collapsing at HIR -> MIR.
+  // `-> e;` / `@e;` collapsing at HIR -> MIR. `AwaitQualified` is the same
+  // wait carrying the LRM 9.4.2.3 `iff` observation, which decides at the
+  // trigger and leaves the wait in place when it does not hold.
   kTrigger,
   kAwait,
+  kAwaitQualified,
   kTriggered,
   // LRM 6.19.5 enum type-static queries. `constexpr` in the runtime so
   // downstream optimizers fold the call.
@@ -213,6 +216,16 @@ enum class BuiltinFn : std::uint16_t {
   // scaling. One entry per amount representation.
   kSubmitNbaAfter,
   kSubmitNbaAfterReal,
+  // LRM 9.4.5: an assignment whose intra-assignment control is an event cannot
+  // say, where the statement is reached, which slot its update lands in, so the
+  // update is carried by an execution that waits for the event and then makes
+  // it. `RunDetached` takes that execution as a coroutine and runs it apart
+  // from every lineage -- the standard makes no process of the update, so
+  // `wait fork` does not wait for it and `disable fork` does not reach it --
+  // and `ResumeInNbaRegion` is how it reaches the region the update is due in
+  // (LRM 4.4.2.4) once the event has named the slot.
+  kRunDetached,
+  kResumeInNbaRegion,
   kSubmitPostponed,
   kSubmitObserved,
   // File-IO subsystem accessor and cancellation token operations. `Files`

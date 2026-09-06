@@ -1,9 +1,11 @@
 #pragma once
 
 #include <optional>
+#include <utility>
 
 #include "lyra/base/time.hpp"
 #include "lyra/runtime/event.hpp"
+#include "lyra/runtime/observation.hpp"
 #include "lyra/runtime/pending_wait.hpp"
 #include "lyra/runtime/runtime_effects.hpp"
 #include "lyra/value/packed_array.hpp"
@@ -16,7 +18,8 @@ namespace lyra::runtime {
 // verb every other wait uses, so the engine has no event-specific code path.
 class EventAwaitable : public PendingWait {
  public:
-  explicit EventAwaitable(RuntimeEvent& event) : event_(&event) {
+  explicit EventAwaitable(RuntimeEvent& event, Observation observation = {})
+      : event_(&event), observation_(std::move(observation)) {
   }
 
   [[nodiscard]] static auto await_ready() noexcept -> bool {
@@ -26,7 +29,7 @@ class EventAwaitable : public PendingWait {
   template <class P>
   void await_suspend(std::coroutine_handle<P> handle) {
     CoroutineHandle token = &handle.promise();
-    event_->AddWaiter(token);
+    event_->AddWaiter(token, observation_);
     BlockOn(token);
   }
 
@@ -40,7 +43,7 @@ class EventAwaitable : public PendingWait {
   // NOLINTNEXTLINE(readability-named-parameter)
   auto Reestablish(RuntimeEffects&, CoroutineHandle activation)
       -> PendingWaitOutcome override {
-    event_->AddWaiter(activation);
+    event_->AddWaiter(activation, observation_);
     return PendingWaitOutcome::kReblocked;
   }
 
@@ -52,6 +55,7 @@ class EventAwaitable : public PendingWait {
 
  private:
   RuntimeEvent* event_;
+  Observation observation_;
 };
 
 // SystemVerilog named event (LRM 15.5). A field of this type lives on the
@@ -64,8 +68,8 @@ class NamedEvent {
  public:
   NamedEvent() = default;
 
-  // Non-movable: the runtime takes pointers into `event_` via Await(), so the
-  // address must be stable once a process subscribes.
+  // Non-movable: subscribing takes pointers into the waiter set, so the address
+  // must be stable once a process has waited here.
   NamedEvent(const NamedEvent&) = delete;
   auto operator=(const NamedEvent&) -> NamedEvent& = delete;
   NamedEvent(NamedEvent&&) = delete;
@@ -73,24 +77,26 @@ class NamedEvent {
   ~NamedEvent() = default;
 
   // LRM 15.5.1: `-> e;` records the time it fired and ends the wait of every
-  // process parked on the event.
+  // process the trigger is an event for.
   void Trigger(RuntimeEffects& runtime) {
     last_triggered_at_ = runtime.Now();
-    for (CoroutineHandle waiter : event_.TakeWaiters()) {
+    for (CoroutineHandle waiter : event_.TakeFiringWaiters()) {
       runtime.Wake(waiter);
     }
   }
 
-  // LRM 15.5.2: `@e;` blocks until the next trigger.
-  auto Await() -> EventAwaitable {
-    return EventAwaitable{event_};
+  // LRM 15.5.2: `@e;` blocks until the next trigger. With an `iff` qualifier
+  // (LRM 9.4.2.3) the observation carries it, and a trigger the qualifier holds
+  // back leaves the wait in place.
+  auto Await(Observation observation = {}) -> EventAwaitable {
+    return EventAwaitable{event_, std::move(observation)};
   }
 
   // LRM 15.5.2 for a caller that states registration and suspension as two
   // steps: enrols `waiter` without suspending it, leaving the event holding the
   // same waiter set the awaitable form would.
-  void AddWaiter(CoroutineHandle waiter) {
-    event_.AddWaiter(waiter);
+  void AddWaiter(CoroutineHandle waiter, Observation observation = {}) {
+    event_.AddWaiter(waiter, std::move(observation));
   }
 
   // LRM 15.5.3: `e.triggered` is true iff the most recent trigger happened

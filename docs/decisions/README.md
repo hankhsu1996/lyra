@@ -133,6 +133,11 @@ the detail lives in the entry itself.
   carries no event-control node, and one enum for the edge specifier is shared by compiler and
   runtime. A dedicated MIR statement, a per-leaf registration call, and an engine subscription verb
   are rejected.
+- [update-due-on-an-event](update-due-on-an-event.md) -- an assignment whose update is due on an
+  event states no slot where it stands, so the update is carried by an execution of no lineage that
+  waits, places itself in the NBA region of the slot the event lands in, and writes there. A
+  membership naming a closure, a `fork` branch, and submitting a closure after the event are
+  rejected.
 - [generic-lowering-machinery](generic-lowering-machinery.md) -- generic arena and shared
   context-free expression-handler templates over the pass class; node types stay typed.
 - [arena-reference-lifetime](arena-reference-lifetime.md) -- `Arena::Get` is a transient view; the

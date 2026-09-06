@@ -192,6 +192,29 @@ void RuntimeEffects::Spawn(Coroutine<void> coroutine) {
   Schedule(Now(), Region::kActive, handle);
 }
 
+void RuntimeEffects::RunDetached(Coroutine<void> coroutine) {
+  Runtime& rt = AsRuntime(*this);
+  if (rt.current_process_ == nullptr) {
+    throw InternalError(
+        "RuntimeEffects::RunDetached: no ambient process to take the owning "
+        "scope from");
+  }
+  // The carrier evaluates nothing of the design -- what it writes and where it
+  // writes it were both settled where the statement was reached -- so it draws
+  // no random values, and taking a seed from the process that reached the
+  // statement would move that process's own stream (LRM 18.14.1).
+  auto carrier = std::make_shared<RuntimeProcess>(
+      rt.current_process_->OwningScope(), ProcessKind::kDetached,
+      std::move(coroutine), RandomSeed{0});
+  const CoroutineHandle handle = carrier->TopHandle();
+  // No lineage and no disable membership: the standard makes no process of the
+  // update this carries out, so nothing that names processes may find it. What
+  // keeps it alive is therefore the runtime's own registry, which every
+  // execution created during simulation is held by.
+  rt.RegisterProcessInRegistry(std::move(carrier));
+  Schedule(Now(), Region::kActive, handle);
+}
+
 auto RuntimeEffects::CurrentProcess() -> RuntimeProcess& {
   RuntimeProcess* p = AsRuntime(*this).current_process_;
   if (p == nullptr) {

@@ -143,21 +143,17 @@ void Runtime::RegisterProcesses() {
         process->TopHandle()->Park(finals_);
         break;
       case ProcessKind::kSpawned:
+      case ProcessKind::kDetached:
         throw InternalError(
-            "Runtime::RegisterProcesses: a spawned process must not appear in "
-            "static scope registration");
+            "Runtime::RegisterProcesses: an execution created during "
+            "simulation must not appear in static scope registration");
     }
   }
 }
 
 void Runtime::RegisterProcessInRegistry(
     std::shared_ptr<RuntimeProcess> process) {
-  Scope* owning = process->OwningScope();
-  RuntimeProcess* raw = process.get();
   processes_.push_back(std::move(process));
-  if (owning != nullptr) {
-    processes_by_scope_[owning].push_back(raw);
-  }
 }
 
 auto Runtime::SlotAt(SimTime when) -> TimeSlot& {

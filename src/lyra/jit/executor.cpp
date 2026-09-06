@@ -189,6 +189,8 @@ auto DefineRuntimeAbi(llvm::orc::LLJIT& jit) -> std::set<std::string> {
   add("lyra_rt_submit_nba", &lyra_rt_submit_nba);
   add("lyra_rt_submit_nba_after", &lyra_rt_submit_nba_after);
   add("lyra_rt_submit_nba_after_real", &lyra_rt_submit_nba_after_real);
+  add("lyra_rt_run_detached", &lyra_rt_run_detached);
+  add("lyra_rt_resume_in_nba_region", &lyra_rt_resume_in_nba_region);
   add("lyra_rt_submit_postponed", &lyra_rt_submit_postponed);
   add("lyra_rt_submit_observed", &lyra_rt_submit_observed);
   add("lyra_rt_delay", &lyra_rt_delay);
@@ -196,10 +198,15 @@ auto DefineRuntimeAbi(llvm::orc::LLJIT& jit) -> std::set<std::string> {
   add("lyra_rt_make_trigger", &lyra_rt_make_trigger);
   add("lyra_rt_make_observed_trigger", &lyra_rt_make_observed_trigger);
   add("lyra_rt_make_observation", &lyra_rt_make_observation);
+  add("lyra_rt_make_qualified_observation",
+      &lyra_rt_make_qualified_observation);
+  add("lyra_rt_make_condition_observation",
+      &lyra_rt_make_condition_observation);
   add("lyra_rt_wait_any", &lyra_rt_wait_any);
   add("lyra_rt_triggered", &lyra_rt_triggered);
   add("lyra_rt_trigger", &lyra_rt_trigger);
   add("lyra_rt_await", &lyra_rt_await);
+  add("lyra_rt_await_qualified", &lyra_rt_await_qualified);
   add("lyra_rt_enter_target", &lyra_rt_enter_target);
   add("lyra_rt_leave_target", &lyra_rt_leave_target);
   add("lyra_rt_disable", &lyra_rt_disable);

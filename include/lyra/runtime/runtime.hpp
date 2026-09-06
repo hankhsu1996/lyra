@@ -5,7 +5,6 @@
 #include <map>
 #include <memory>
 #include <string>
-#include <unordered_map>
 #include <vector>
 
 #include "lyra/base/time.hpp"
@@ -138,12 +137,6 @@ class Runtime final : public RuntimeEffects {
   // region they came out of.
   RegistrationList draining_;
   std::vector<std::shared_ptr<RuntimeProcess>> processes_;
-  // Secondary index: pointers into `processes_` keyed by owning scope. Kept
-  // in lockstep with `processes_` (register push, teardown erase). Consumers
-  // that ask "which processes belong to this scope" (hierarchical `disable`,
-  // `wait fork` descendant walk, scope teardown, `%m` attribution) reach it
-  // here without scanning the full registry.
-  std::unordered_map<Scope*, std::vector<RuntimeProcess*>> processes_by_scope_;
   RuntimeProcess* current_process_ = nullptr;
   SimTime now_ = 0;
   std::int8_t global_precision_power_ = kDefaultTimePrecisionPower;

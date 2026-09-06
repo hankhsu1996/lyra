@@ -3,7 +3,7 @@
 #include <span>
 #include <vector>
 
-#include "lyra/hir/stmt.hpp"
+#include "lyra/hir/timing.hpp"
 #include "lyra/lowering/hir_to_mir/walk_frame.hpp"
 #include "lyra/mir/local.hpp"
 #include "lyra/mir/stmt.hpp"

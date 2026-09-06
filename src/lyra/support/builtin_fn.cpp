@@ -262,6 +262,8 @@ auto BuiltinFnName(BuiltinFn id) -> std::string_view {
       return "trigger";
     case BuiltinFn::kAwait:
       return "await";
+    case BuiltinFn::kAwaitQualified:
+      return "await_qualified";
     case BuiltinFn::kTriggered:
       return "triggered";
     case BuiltinFn::kEnumFirst:
@@ -340,6 +342,10 @@ auto BuiltinFnName(BuiltinFn id) -> std::string_view {
       return "submit_nba_after";
     case BuiltinFn::kSubmitNbaAfterReal:
       return "submit_nba_after_real";
+    case BuiltinFn::kRunDetached:
+      return "run_detached";
+    case BuiltinFn::kResumeInNbaRegion:
+      return "resume_in_nba_region";
     case BuiltinFn::kSubmitPostponed:
       return "submit_postponed";
     case BuiltinFn::kSubmitObserved:

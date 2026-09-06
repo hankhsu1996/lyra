@@ -146,7 +146,7 @@ auto LowerExpressionStmt(
   if (es.expr.kind == slang::ast::ExpressionKind::Assignment) {
     const auto& as = es.expr.as<slang::ast::AssignmentExpression>();
     if (as.timingControl != nullptr && !as.isNonBlocking()) {
-      return LowerIntraAssignmentStmt(proc, frame, as, es, span);
+      return LowerIntraAssignmentStmt(proc, frame, as, span);
     }
   }
   auto expr = proc.LowerExpr(es.expr, frame);

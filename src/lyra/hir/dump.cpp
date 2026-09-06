@@ -544,35 +544,62 @@ class HirDumper {
     throw InternalError("HirDumper::FormatEventEdge: unknown EventEdge");
   }
 
+  static auto FormatCondition(const std::optional<ExprId>& condition)
+      -> std::string {
+    return condition.has_value()
+               ? std::format(" iff=Expr[{}]", condition->value)
+               : std::string{};
+  }
+
+  static auto FormatDelayControl(const DelayControl& d) -> std::string {
+    return std::format("DelayControl duration=Expr[{}]", d.duration.value);
+  }
+
+  static auto FormatEventControl(const EventControl& e) -> std::string {
+    std::string out = "EventControl triggers=[";
+    for (std::size_t i = 0; i < e.triggers.size(); ++i) {
+      if (i != 0) out += ", ";
+      out += std::format(
+          "{{signal=Expr[{}] edge={}{} sensitivity=[",
+          e.triggers[i].signal.value, FormatEventEdge(e.triggers[i].edge),
+          FormatCondition(e.triggers[i].condition));
+      for (std::size_t j = 0; j < e.triggers[i].sensitivity_list.size(); ++j) {
+        if (j != 0) out += ", ";
+        const auto& r = e.triggers[i].sensitivity_list[j];
+        out += std::format(
+            "{{{} bits={}}}", FormatValueTarget(r.ref),
+            FormatFootprint(r.footprint));
+      }
+      out += "]}";
+    }
+    out += "]";
+    return out;
+  }
+
+  static auto FormatNamedEventControl(const NamedEventControl& n)
+      -> std::string {
+    return std::format(
+        "NamedEventControl event=Expr[{}]{}", n.event.value,
+        FormatCondition(n.condition));
+  }
+
+  static auto FormatAnyEventControl(const AnyEventControl& event)
+      -> std::string {
+    return std::visit(
+        Overloaded{
+            [](const EventControl& e) { return FormatEventControl(e); },
+            [](const NamedEventControl& n) {
+              return FormatNamedEventControl(n);
+            }},
+        event);
+  }
+
   static auto FormatTimingControlHeader(const TimingControl& tc)
       -> std::string {
     return std::visit(
         Overloaded{
-            [](const DelayControl& d) -> std::string {
-              return std::format(
-                  "DelayControl duration=Expr[{}]", d.duration.value);
-            },
-            [](const EventControl& e) -> std::string {
-              std::string out = "EventControl triggers=[";
-              for (std::size_t i = 0; i < e.triggers.size(); ++i) {
-                if (i != 0) out += ", ";
-                out += std::format(
-                    "{{signal=Expr[{}] edge={} sensitivity=[",
-                    e.triggers[i].signal.value,
-                    FormatEventEdge(e.triggers[i].edge));
-                for (std::size_t j = 0;
-                     j < e.triggers[i].sensitivity_list.size(); ++j) {
-                  if (j != 0) out += ", ";
-                  const auto& r = e.triggers[i].sensitivity_list[j];
-                  out += std::format(
-                      "{{{} bits={}}}", FormatValueTarget(r.ref),
-                      FormatFootprint(r.footprint));
-                }
-                out += "]}";
-              }
-              out += "]";
-              return out;
-            },
+            [](const DelayControl& d) { return FormatDelayControl(d); },
+            [](const EventControl& e) { return FormatEventControl(e); },
             [](const ImplicitEventControl& ie) -> std::string {
               std::string out = "ImplicitEventControl sensitivity=[";
               for (std::size_t i = 0; i < ie.sensitivity_list.size(); ++i) {
@@ -585,12 +612,29 @@ class HirDumper {
               out += "]";
               return out;
             },
-            [](const NamedEventControl& n) -> std::string {
-              return std::format(
-                  "NamedEventControl event=Expr[{}]", n.event.value);
+            [](const NamedEventControl& n) {
+              return FormatNamedEventControl(n);
             },
         },
         tc);
+  }
+
+  static auto FormatIntraAssignmentControl(
+      const IntraAssignmentControl& control) -> std::string {
+    return std::visit(
+        Overloaded{
+            [](const DelayControl& d) { return FormatDelayControl(d); },
+            [](const EventControl& e) { return FormatEventControl(e); },
+            [](const NamedEventControl& n) {
+              return FormatNamedEventControl(n);
+            },
+            [](const RepeatedEventControl& r) -> std::string {
+              return std::format(
+                  "RepeatedEventControl count=Expr[{}] event={}", r.count.value,
+                  FormatAnyEventControl(r.event));
+            },
+        },
+        control);
   }
 
   static auto FormatConversionKind(ConversionKind k) -> std::string_view {
@@ -773,10 +817,11 @@ class HirDumper {
                         return "blocking";
                       },
                       [](const NonBlockingAssign& nb) -> std::string {
-                        return nb.delay.has_value()
+                        return nb.control.has_value()
                                    ? std::format(
-                                         "nonblocking delay=Expr[{}]",
-                                         nb.delay->value)
+                                         "nonblocking control={}",
+                                         FormatIntraAssignmentControl(
+                                             *nb.control))
                                    : std::string{"nonblocking"};
                       }},
                   a.kind);

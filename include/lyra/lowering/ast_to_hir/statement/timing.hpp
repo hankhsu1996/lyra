@@ -1,6 +1,7 @@
 #pragma once
 
-// Lowering of timing-control-bearing statements:
+// Lowering of the timing controls themselves (LRM 9.4), wherever the grammar
+// puts one, and of the statements that carry one:
 //   - TimedStatement (LRM 9.4)
 //   - SignalEventControl (`@(...)`) and NamedEventControl (`@e`)
 //   - WaitStatement (LRM 9.4.3)
@@ -15,21 +16,27 @@
 namespace slang::ast {
 class AssignmentExpression;
 class EventTriggerStatement;
-class Statement;
 class TimedStatement;
+class TimingControl;
 class WaitStatement;
 }  // namespace slang::ast
 
 namespace lyra::lowering::ast_to_hir {
 
+// LRM 9.4.5 `delay_or_event_control`: the control an assignment carries between
+// its operator and its right-hand side. Both assignment forms read it here --
+// the blocking one to suspend the procedure at it, the nonblocking one to say
+// which slot's NBA region the update lands in.
+auto LowerIntraAssignmentControl(
+    ProcessLowerer& proc, WalkFrame frame, const slang::ast::TimingControl& tc,
+    diag::SourceSpan span) -> diag::Result<hir::IntraAssignmentControl>;
+
 // LRM 9.4.5 Table 9-3: a blocking assignment carrying an intra-assignment
 // timing control is the same program as holding the right-hand side in a
-// temporary, applying the control, and then assigning. `controlled` is the
-// statement an implicit event control would take its sensitivity from.
+// temporary, applying the control, and then assigning.
 auto LowerIntraAssignmentStmt(
     ProcessLowerer& proc, WalkFrame frame,
-    const slang::ast::AssignmentExpression& as,
-    const slang::ast::Statement& controlled, diag::SourceSpan span)
+    const slang::ast::AssignmentExpression& as, diag::SourceSpan span)
     -> diag::Result<hir::Stmt>;
 
 auto LowerTimedStmt(

@@ -22,16 +22,18 @@
 #include "lyra/lowering/ast_to_hir/expression/references.hpp"
 #include "lyra/lowering/ast_to_hir/expression/slang_atoms.hpp"
 #include "lyra/lowering/ast_to_hir/process_lowerer.hpp"
+#include "lyra/lowering/ast_to_hir/statement/timing.hpp"
 
 namespace lyra::lowering::ast_to_hir {
 
 namespace {
 
 // LRM 9.4.5: which intra-assignment timing control the assignment carries, and
-// what it means for when the update happens. A non-blocking delay names the
-// slot the update is scheduled into; a blocking one suspends the procedure,
-// which is a statement rather than an expression, so it is expanded into the
-// equivalent statement sequence before any expression is built.
+// what it means for when the update happens. A nonblocking one says which
+// slot's NBA region the update lands in and leaves the procedure running; a
+// blocking one suspends the procedure, which is a statement rather than an
+// expression, so it is expanded into the equivalent statement sequence before
+// any expression is built.
 auto LowerAssignKind(
     ProcessLowerer& proc, WalkFrame frame,
     const slang::ast::AssignmentExpression& as, diag::SourceSpan span)
@@ -45,16 +47,11 @@ auto LowerAssignKind(
         "LowerAssignKind: a blocking assignment carrying an intra-assignment "
         "timing control reached expression lowering unexpanded");
   }
-  if (as.timingControl->kind != slang::ast::TimingControlKind::Delay) {
-    return diag::Fail(
-        span, diag::DiagCode::kUnsupportedTimingControlKind,
-        "an event control on a non-blocking assignment is not yet supported");
-  }
-  auto duration = proc.LowerExpr(
-      as.timingControl->as<slang::ast::DelayControl>().expr, frame);
-  if (!duration) return std::unexpected(std::move(duration.error()));
+  auto control =
+      LowerIntraAssignmentControl(proc, frame, *as.timingControl, span);
+  if (!control) return std::unexpected(std::move(control.error()));
   return hir::AssignKind{
-      hir::NonBlockingAssign{.delay = frame.Exprs().Add(*std::move(duration))}};
+      hir::NonBlockingAssign{.control = *std::move(control)}};
 }
 
 }  // namespace

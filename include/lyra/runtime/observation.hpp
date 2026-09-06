@@ -4,6 +4,7 @@
 #include <cstdint>
 #include <functional>
 #include <memory>
+#include <optional>
 #include <utility>
 #include <variant>
 
@@ -72,34 +73,25 @@ inline auto EdgeMatches(support::EventEdge edge, EdgeTransition transition)
   throw InternalError("runtime::EdgeMatches: unknown EventEdge");
 }
 
-// What an event control holds while a procedure waits at it (LRM 9.4.2): the
-// expression whose value decides the event, and the value that expression had
-// when the wait began.
+// The expression an event control is watching, and what it was worth when the
+// wait began (LRM 9.4.2).
 //
-// A change to a variable the expression reads only makes this a candidate. The
-// event itself is a change in the value of the *expression*, so an operand that
-// moves without moving the result is no event -- which is answerable only here,
-// because only the wait knows what it is watching. A candidate that does not
-// fire advances the baseline, so consecutive comparisons are between
+// A change to a variable the expression reads only makes the wait a candidate.
+// The event itself is a change in the value of the *expression*, so an operand
+// that moves without moving the result is no event -- which is answerable only
+// here, because only the wait knows what it is watching. A candidate that does
+// not fire advances the baseline, so consecutive comparisons are between
 // consecutive observed states: watching for a posedge while the operand sits at
 // 1, a fall to 0 does not fire, and without advancing, the rise back to 1 would
 // compare 1 against 1 and miss the edge.
-//
-// The baseline lives no longer than the wait. A procedure that is not waiting
-// at an event control has no observation there, so a change while it is
-// elsewhere is not detected -- which is what the standard requires of a
-// procedure that has left and re-reached the control.
-class ArmedObservation {
+class ValueWatch {
  public:
-  // Built where execution reaches the event control, which is where the wait
-  // begins, so it is armed from the outset. `edge` arrives as a PackedArray
-  // literal, the way every compile-time scalar crosses into a runtime entry.
   template <std::invocable Evaluate>
-  ArmedObservation(Evaluate evaluate, const value::PackedArray& edge)
+  ValueWatch(Evaluate evaluate, support::EventEdge edge)
       : evaluate_([evaluate = std::move(evaluate)]() -> value::RuntimeValue {
           return value::RuntimeValue{evaluate()};
         }),
-        edge_(static_cast<support::EventEdge>(edge.ToInt64())) {
+        edge_(edge) {
     Arm();
   }
 
@@ -109,17 +101,17 @@ class ArmedObservation {
     baseline_ = evaluate_();
   }
 
-  // Whether the change that made this a candidate is an event for it. An edge
-  // reads only the expression's least significant bit; any other event is a
-  // change anywhere in its value (LRM 9.4.2).
-  [[nodiscard]] auto Fires() -> bool {
+  // Whether the expression moved the way this control asks for, advancing the
+  // baseline either way. An edge reads only the expression's least significant
+  // bit; any other event is a change anywhere in its value (LRM 9.4.2).
+  [[nodiscard]] auto TakeTransition() -> bool {
     value::RuntimeValue current = evaluate_();
-    const bool fires =
+    const bool moved =
         edge_ == support::EventEdge::kAnyChange
             ? !value::RuntimeValueBitIdentical(baseline_, current)
             : EdgeMatches(edge_, ClassifyEdge(Lsb(baseline_), Lsb(current)));
     baseline_ = std::move(current);
-    return fires;
+    return moved;
   }
 
  private:
@@ -131,8 +123,7 @@ class ArmedObservation {
     const auto* packed = std::get_if<value::PackedArray>(&value.value);
     if (packed == nullptr) {
       throw InternalError(
-          "ArmedObservation: an edge event control watches a value with no "
-          "bits");
+          "ValueWatch: an edge event control watches a value with no bits");
     }
     return packed->Lsb();
   }
@@ -142,10 +133,94 @@ class ArmedObservation {
   support::EventEdge edge_ = support::EventEdge::kAnyChange;
 };
 
-// What a wait carries an observation as. Every leaf of one event expression
-// names the same observation, and the wait outlives the statement that reached
-// the control, so the leaves hold it between them rather than any one of them
-// or the procedure's frame owning it.
+// What decides whether reaching a wait is an event for it, held while the
+// procedure waits there. Two halves, each present exactly where the source put
+// one: an event control watches an expression's value, and a named event's
+// trigger is the event itself so it watches nothing; either may carry an `iff`
+// qualifier, which is read where the change happens and not when the qualifier
+// itself moves (LRM 9.4.2, 9.4.2.3, 15.5).
+//
+// Both live no longer than the wait. A procedure that is not waiting at an
+// event control has no observation there, so a change while it is elsewhere is
+// not detected -- which is what the standard requires of a procedure that has
+// left and re-reached the control.
+class ArmedObservation {
+ public:
+  // Built where execution reaches the event control, which is where the wait
+  // begins, so it is armed from the outset. `edge` arrives as a PackedArray
+  // literal, the way every compile-time scalar crosses into a runtime entry.
+  template <std::invocable Evaluate>
+  ArmedObservation(Evaluate evaluate, const value::PackedArray& edge)
+      : watch_(std::in_place, std::move(evaluate), EdgeOf(edge)) {
+  }
+
+  template <std::invocable Evaluate, std::invocable Condition>
+  ArmedObservation(
+      Evaluate evaluate, const value::PackedArray& edge, Condition condition)
+      : watch_(std::in_place, std::move(evaluate), EdgeOf(edge)),
+        condition_(WrapCondition(std::move(condition))) {
+  }
+
+  // The qualifier alone, for a wait whose target decides by being reached: a
+  // named event's trigger is the event, and `iff` is the whole of what can
+  // still hold it back.
+  template <std::invocable Condition>
+  explicit ArmedObservation(Condition condition)
+      : condition_(WrapCondition(std::move(condition))) {
+  }
+
+  // Re-takes the baseline for a wait that is being established again.
+  void Arm() {
+    if (watch_.has_value()) {
+      watch_->Arm();
+    }
+  }
+
+  // Whether the change that made this a candidate is an event for it.
+  //
+  // The watched expression is read first and unconditionally, because the
+  // qualifier gates the event and not the watching: a change it holds back is
+  // still a change, and the baseline has to advance to it or the wait goes on
+  // comparing against a value the design has left behind.
+  [[nodiscard]] auto Fires() -> bool {
+    if (watch_.has_value() && !watch_->TakeTransition()) {
+      return false;
+    }
+    return !condition_ || condition_();
+  }
+
+ private:
+  [[nodiscard]] static auto EdgeOf(const value::PackedArray& edge)
+      -> support::EventEdge {
+    return static_cast<support::EventEdge>(edge.ToInt64());
+  }
+
+  // The qualifier arrives already reduced to LRM 12.4 truth as a one-bit value,
+  // because that reduction is the language's and belongs where the expression
+  // is compiled rather than here.
+  template <std::invocable Condition>
+  [[nodiscard]] static auto WrapCondition(Condition condition)
+      -> std::function<bool()> {
+    return [condition = std::move(condition)]() -> bool {
+      const value::RuntimeValue held{condition()};
+      const auto* packed = std::get_if<value::PackedArray>(&held.value);
+      if (packed == nullptr) {
+        throw InternalError(
+            "ArmedObservation: an `iff` qualifier answers a value with no "
+            "bits");
+      }
+      return packed->IsTruthy();
+    };
+  }
+
+  std::optional<ValueWatch> watch_;
+  std::function<bool()> condition_;
+};
+
+// What a wait carries an observation as. One event expression has one
+// observation however many places watch for it, and it lives as long as the
+// wait rather than as long as the statement that reached the control, so
+// whatever is watching holds it between them and none of them owns it.
 //
 // A default-built handle names none, which is the implicit sensitivity of an
 // `always_comb` / `always_latch` body, an `@*`, a `wait (cond)` or a continuous
@@ -159,6 +234,19 @@ class Observation {
   template <std::invocable Evaluate>
   Observation(Evaluate evaluate, const value::PackedArray& edge)
       : held_(std::make_shared<ArmedObservation>(std::move(evaluate), edge)) {
+  }
+
+  template <std::invocable Evaluate, std::invocable Condition>
+  Observation(
+      Evaluate evaluate, const value::PackedArray& edge, Condition condition)
+      : held_(
+            std::make_shared<ArmedObservation>(
+                std::move(evaluate), edge, std::move(condition))) {
+  }
+
+  template <std::invocable Condition>
+  explicit Observation(Condition condition)
+      : held_(std::make_shared<ArmedObservation>(std::move(condition))) {
   }
 
   [[nodiscard]] auto Get() const -> ArmedObservation* {
