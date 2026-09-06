@@ -6,7 +6,7 @@
 #include <vector>
 
 #include "lyra/base/overloaded.hpp"
-#include "lyra/hir/stmt.hpp"
+#include "lyra/hir/timing.hpp"
 #include "lyra/hir/value_ref.hpp"
 #include "lyra/lowering/hir_to_mir/endpoint.hpp"
 #include "lyra/lowering/hir_to_mir/integral_literal.hpp"

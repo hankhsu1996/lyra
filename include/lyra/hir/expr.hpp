@@ -17,6 +17,7 @@
 #include "lyra/hir/primary.hpp"
 #include "lyra/hir/range_bounds.hpp"
 #include "lyra/hir/subroutine_ref.hpp"
+#include "lyra/hir/timing.hpp"
 #include "lyra/hir/unary_op.hpp"
 
 namespace lyra::hir {
@@ -50,12 +51,13 @@ struct BlockingAssign {};
 
 // LRM 10.4.2: the update is scheduled into the NBA region of a time slot rather
 // than made on the spot, so the procedure carries on without waiting for it.
-// `delay` is the intra-assignment delay of LRM 9.4.5, naming a later slot; with
-// none, the slot is the one the statement is reached in. It is an amount in the
-// scope's time unit, so a negative or unknown one is read the way LRM 9.4.1
-// reads any delay expression.
+// `control` is the intra-assignment control of LRM 9.4.5, saying which slot's
+// NBA region the update lands in: with none it is the slot the statement is
+// reached in, a delay names a later one (an amount in the scope's time unit,
+// read the way LRM 9.4.1 reads any delay expression), and an event control
+// makes it the slot that event happens in, however far off that is.
 struct NonBlockingAssign {
-  std::optional<ExprId> delay = std::nullopt;
+  std::optional<IntraAssignmentControl> control = std::nullopt;
 };
 
 using AssignKind = std::variant<BlockingAssign, NonBlockingAssign>;

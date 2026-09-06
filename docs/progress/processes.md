@@ -2,16 +2,12 @@
 
 Tracks SystemVerilog procedural-block constructs and the supporting timing-control machinery.
 
-The numeric IDs (P1..P15, T1..T7) are stable references and do **not** imply execution order.
+The numeric IDs (P1..P16, T1..T7) are stable references and do **not** imply execution order.
 
 ## Actionable
 
-- The `iff` qualifier on an event control (LRM 9.4.2.3), under T2..T5. It gates an event the
-  expression's value would otherwise be, and is evaluated when that value moves rather than when the
-  condition itself does, so it is a guard on the decision a wait already makes for itself.
-- The non-blocking form of an event control (`a <= @(ev) b`), under T7. Its update becomes due on an
-  event while the procedure that wrote it carries on, so what the event has to reach is a deferred
-  effect rather than a procedure to resume.
+Every numbered item is closed but P12, P14 and P15. What stays open otherwise is the forms recorded
+as rejected under each item, and the conformance gaps at the end.
 
 ## Blocked
 
@@ -54,7 +50,7 @@ The numeric IDs (P1..P15, T1..T7) are stable references and do **not** imply exe
 
 ### Variable lifetime
 
-- [x] P15 -- Process-body variable lifetime (LRM 6.21). A local declared in an `initial` / `always`
+- [x] P16 -- Process-body variable lifetime (LRM 6.21). A local declared in an `initial` / `always`
       / `final` body follows its resolved lifetime. An automatic local is reinitialized on each
       entry and lives only for that activation; a static local (the module default) has one
       per-instance copy that is default-initialized once and persists across activations, so it
@@ -107,8 +103,11 @@ The numeric IDs (P1..P15, T1..T7) are stable references and do **not** imply exe
       operand may be an element or a field of an unpacked aggregate as well as a packed select of
       any depth, direction or base, including an indexed part-select (LRM 11.5.1 direction
       translation). A procedure that is not waiting at the control has nothing watching there, so a
-      change while it is elsewhere is not detected.
-  - [ ] The `iff` qualifier on an event control (LRM 9.4.2.3): `@(e iff cond)` is rejected.
+      change while it is elsewhere is not detected. An entry may carry an `iff` qualifier (LRM
+      9.4.2.3), which gates the event without gating the watching: it is read where the watched
+      expression changes and never when the qualifier itself does, so a change in the qualifier
+      alone reaches nothing, and a change it holds back still moves what the wait compares against
+      next. It qualifies a named event as well, and binds tighter than the `or` of an event list.
   - [ ] An edge event control on a non-packed-bit-vector operand, and a value-change event control
         on a non-value operand (LRM 9.4.2): only packed-vector / value operands are accepted.
   - [ ] A nested timing control inside an event-list entry: only signal events compose in a list
@@ -125,10 +124,13 @@ The numeric IDs (P1..P15, T1..T7) are stable references and do **not** imply exe
       the control is satisfied rather than where the statement is reached (LRM 10.4.1). A
       non-blocking delay does not suspend the procedure: it schedules the update into the NBA region
       of the slot that delay names, and several such updates to one variable stay pending at once,
-      each landing at its own time (LRM 4.4.2.4, 10.4.2).
-  - [ ] An event control on a non-blocking assignment (`a <= @(ev) b`, `a <= repeat (n) @(ev) b`) is
-        rejected. Its update has to become due on an event while the procedure that wrote it carries
-        on, which is the one deferred effect a time cannot say when to run.
+      each landing at its own time (LRM 4.4.2.4, 10.4.2). A non-blocking event control does not
+      suspend it either: the update becomes due in the NBA region of the slot the event happens in,
+      however far off that is, so a procedure the same event wakes reads the value the target held
+      before it. Everything the update needs is settled where the statement stands, its target's
+      index included, and two updates to one variable land in the order the statements ran. The
+      standard makes no process of a pending update, so `wait fork` does not wait for one and
+      `disable fork` does not reach one.
 
 ### Synchronisation primitives
 

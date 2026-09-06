@@ -87,6 +87,11 @@ class RuntimeEffects {
   // lineage (LRM 9.5) and schedules it.
   void Spawn(Coroutine<void> coroutine);
 
+  // Takes `coroutine` on as an execution of no lineage and schedules it: a
+  // deferred effect the standard makes no process of, so nothing that names
+  // processes finds it (LRM 9.4.5 against 9.6.1, 9.6.3).
+  void RunDetached(Coroutine<void> coroutine);
+
   // The process whose body is executing right now (LRM 9.5); the observation
   // target `wait fork` reads and a fork spawn parents its branch to. Throws
   // if no process is executing.

@@ -15,6 +15,7 @@
 #include <slang/ast/types/Type.h>
 
 #include "lyra/base/internal_error.hpp"
+#include "lyra/base/overloaded.hpp"
 #include "lyra/diag/diag_code.hpp"
 #include "lyra/hir/expr.hpp"
 #include "lyra/hir/expr_builders.hpp"
@@ -40,16 +41,34 @@ auto LowerEventEdge(slang::ast::EdgeKind kind) -> support::EventEdge {
   throw InternalError("LowerEventEdge: unknown slang EdgeKind value");
 }
 
+// LRM 9.4.2.3: the `iff` qualifier, which the change must hold for to be an
+// event. What it reads is no part of the wait's sensitivity -- the standard
+// evaluates it where the watched expression moves and not when the qualifier
+// itself does, so a change in the qualifier alone reaches nothing.
+auto LowerEventCondition(
+    ProcessLowerer& proc, WalkFrame frame,
+    const slang::ast::SignalEventControl& sig)
+    -> diag::Result<std::optional<hir::Expr>> {
+  if (sig.iffCondition == nullptr) {
+    return std::nullopt;
+  }
+  auto cond_or = proc.LowerExpr(*sig.iffCondition, frame);
+  if (!cond_or) return std::unexpected(std::move(cond_or.error()));
+  return std::optional<hir::Expr>{*std::move(cond_or)};
+}
+
+auto AddEventCondition(WalkFrame frame, std::optional<hir::Expr> condition)
+    -> std::optional<hir::ExprId> {
+  if (!condition.has_value()) {
+    return std::nullopt;
+  }
+  return frame.Exprs().Add(*std::move(condition));
+}
+
 auto LowerSignalEventTrigger(
     ProcessLowerer& proc, WalkFrame frame,
     const slang::ast::SignalEventControl& sig, diag::SourceSpan span)
     -> diag::Result<hir::EventTrigger> {
-  if (sig.iffCondition != nullptr) {
-    return diag::Fail(
-        span, diag::DiagCode::kUnsupportedEventTriggerForm,
-        "`iff` qualifier on event control is not yet supported");
-  }
-
   auto expr_or = proc.LowerExpr(sig.expr, frame);
   if (!expr_or) return std::unexpected(std::move(expr_or.error()));
 
@@ -81,10 +100,14 @@ auto LowerSignalEventTrigger(
     return std::unexpected(std::move(sensitivity_list.error()));
   }
 
+  auto condition = LowerEventCondition(proc, frame, sig);
+  if (!condition) return std::unexpected(std::move(condition.error()));
+
   return hir::EventTrigger{
       .signal = frame.Exprs().Add(*std::move(expr_or)),
       .edge = edge_kind,
       .sensitivity_list = *std::move(sensitivity_list),
+      .condition = AddEventCondition(frame, *std::move(condition)),
   };
 }
 
@@ -95,11 +118,6 @@ auto LowerNamedEventControl(
     ProcessLowerer& proc, WalkFrame frame,
     const slang::ast::SignalEventControl& sig, diag::SourceSpan span)
     -> diag::Result<hir::NamedEventControl> {
-  if (sig.iffCondition != nullptr) {
-    return diag::Fail(
-        span, diag::DiagCode::kUnsupportedEventTriggerForm,
-        "`iff` qualifier on event control is not yet supported");
-  }
   if (sig.edge != slang::ast::EdgeKind::None) {
     return diag::Fail(
         span, diag::DiagCode::kUnsupportedEventTriggerForm,
@@ -117,9 +135,78 @@ auto LowerNamedEventControl(
         span, diag::DiagCode::kUnsupportedEventTriggerForm,
         "named event reference must be a plain structural variable");
   }
+  auto condition = LowerEventCondition(proc, frame, sig);
+  if (!condition) return std::unexpected(std::move(condition.error()));
   return hir::NamedEventControl{
       .event = frame.Exprs().Add(*std::move(expr_or)),
+      .condition = AddEventCondition(frame, *std::move(condition)),
   };
+}
+
+// One `@(...)` entry, which is a named event or a value change by the type of
+// what it names (LRM 15.5.2, 9.4.2); slang gives both the same shape.
+auto LowerEventEntry(
+    ProcessLowerer& proc, WalkFrame frame,
+    const slang::ast::SignalEventControl& sig, diag::SourceSpan span)
+    -> diag::Result<hir::AnyEventControl> {
+  if (sig.expr.type->isEvent()) {
+    auto nec_or = LowerNamedEventControl(proc, frame, sig, span);
+    if (!nec_or) return std::unexpected(std::move(nec_or.error()));
+    return *std::move(nec_or);
+  }
+  auto trigger_or = LowerSignalEventTrigger(proc, frame, sig, span);
+  if (!trigger_or) return std::unexpected(std::move(trigger_or.error()));
+  return hir::EventControl{.triggers = {*std::move(trigger_or)}};
+}
+
+// LRM 9.4.2.1 `@(a or b)` / `@(a, b)`: every entry watches for its own event
+// and the wait ends on the first of them.
+auto LowerEventListControl(
+    ProcessLowerer& proc, WalkFrame frame,
+    const slang::ast::EventListControl& list, diag::SourceSpan span)
+    -> diag::Result<hir::EventControl> {
+  std::vector<hir::EventTrigger> triggers;
+  triggers.reserve(list.events.size());
+  for (const auto* event : list.events) {
+    if (event->kind != slang::ast::TimingControlKind::SignalEvent) {
+      return diag::Fail(
+          span, diag::DiagCode::kUnsupportedTimingControlKind,
+          "event list entries must be signal events; nested timing "
+          "controls are not yet supported");
+    }
+    auto trigger_or = LowerSignalEventTrigger(
+        proc, frame, event->as<slang::ast::SignalEventControl>(), span);
+    if (!trigger_or) return std::unexpected(std::move(trigger_or.error()));
+    triggers.push_back(*std::move(trigger_or));
+  }
+  return hir::EventControl{.triggers = std::move(triggers)};
+}
+
+// An `event_control` (LRM 9.4.2), whichever of the two shapes slang gives it:
+// one entry, or a list of them. Every position the grammar admits one -- in
+// front of a statement, inside an assignment, behind a repeat count -- reaches
+// it here, so what an event control is written to mean is settled once.
+auto LowerEventControl(
+    ProcessLowerer& proc, WalkFrame frame, const slang::ast::TimingControl& tc,
+    diag::SourceSpan span) -> diag::Result<hir::AnyEventControl> {
+  if (tc.kind == slang::ast::TimingControlKind::EventList) {
+    auto list_or = LowerEventListControl(
+        proc, frame, tc.as<slang::ast::EventListControl>(), span);
+    if (!list_or) return std::unexpected(std::move(list_or.error()));
+    return *std::move(list_or);
+  }
+  return LowerEventEntry(
+      proc, frame, tc.as<slang::ast::SignalEventControl>(), span);
+}
+
+// LRM 9.4.1 `#N`. The amount is an ordinary expression, read where the control
+// is, so nothing about the scope's time unit is decided here.
+auto LowerDelayControl(
+    ProcessLowerer& proc, WalkFrame frame,
+    const slang::ast::DelayControl& delay) -> diag::Result<hir::DelayControl> {
+  auto duration = proc.LowerExpr(delay.expr, frame);
+  if (!duration) return std::unexpected(std::move(duration.error()));
+  return hir::DelayControl{.duration = frame.Exprs().Add(*std::move(duration))};
 }
 
 // `controlled` is the statement the control gates. Only `@*` reads it: LRM
@@ -132,45 +219,18 @@ auto LowerTimingControl(
     -> diag::Result<hir::TimingControl> {
   switch (tc.kind) {
     case slang::ast::TimingControlKind::Delay: {
-      const auto& delay = tc.as<slang::ast::DelayControl>();
-      auto duration = proc.LowerExpr(delay.expr, frame);
-      if (!duration) return std::unexpected(std::move(duration.error()));
-      return hir::TimingControl{hir::DelayControl{
-          .duration = frame.Exprs().Add(*std::move(duration))}};
+      auto delay_or =
+          LowerDelayControl(proc, frame, tc.as<slang::ast::DelayControl>());
+      if (!delay_or) return std::unexpected(std::move(delay_or.error()));
+      return hir::TimingControl{*delay_or};
     }
-    case slang::ast::TimingControlKind::SignalEvent: {
-      const auto& sig = tc.as<slang::ast::SignalEventControl>();
-      // Named events (LRM 15.5.2) and value-change events (LRM 9.4.2) share
-      // slang's SignalEventControl shape; distinguish by the controlled
-      // expression's type.
-      if (sig.expr.type->isEvent()) {
-        auto nec_or = LowerNamedEventControl(proc, frame, sig, span);
-        if (!nec_or) return std::unexpected(std::move(nec_or.error()));
-        return hir::TimingControl{*std::move(nec_or)};
-      }
-      auto trigger_or = LowerSignalEventTrigger(proc, frame, sig, span);
-      if (!trigger_or) return std::unexpected(std::move(trigger_or.error()));
-      return hir::TimingControl{
-          hir::EventControl{.triggers = {*std::move(trigger_or)}}};
-    }
+    case slang::ast::TimingControlKind::SignalEvent:
     case slang::ast::TimingControlKind::EventList: {
-      const auto& list = tc.as<slang::ast::EventListControl>();
-      std::vector<hir::EventTrigger> triggers;
-      triggers.reserve(list.events.size());
-      for (const auto* event : list.events) {
-        if (event->kind != slang::ast::TimingControlKind::SignalEvent) {
-          return diag::Fail(
-              span, diag::DiagCode::kUnsupportedTimingControlKind,
-              "event list entries must be signal events; nested timing "
-              "controls are not yet supported");
-        }
-        const auto& sig = event->as<slang::ast::SignalEventControl>();
-        auto trigger_or = LowerSignalEventTrigger(proc, frame, sig, span);
-        if (!trigger_or) return std::unexpected(std::move(trigger_or.error()));
-        triggers.push_back(*std::move(trigger_or));
-      }
-      return hir::TimingControl{
-          hir::EventControl{.triggers = std::move(triggers)}};
+      auto event_or = LowerEventControl(proc, frame, tc, span);
+      if (!event_or) return std::unexpected(std::move(event_or.error()));
+      return std::visit(
+          [](auto event) { return hir::TimingControl{std::move(event)}; },
+          *std::move(event_or));
     }
     case slang::ast::TimingControlKind::ImplicitEvent: {
       const auto& reads = proc.Owner().Sensitivity().AnalyzeReads(
@@ -183,8 +243,7 @@ auto LowerTimingControl(
     case slang::ast::TimingControlKind::RepeatedEvent:
       // LRM A.6.5: a repeat event control is only ever an intra-assignment
       // control -- what prefixes a statement is a delay, an event control, or a
-      // cycle delay -- and the intra-assignment form is expanded into its
-      // repeat loop before it reaches here.
+      // cycle delay -- so the assignment form below is where one is read.
       throw InternalError(
           "LowerTimingControl: a repeated event control reached statement "
           "timing, where the grammar does not put one");
@@ -195,16 +254,72 @@ auto LowerTimingControl(
   }
 }
 
+// The statement-prefix spelling of an intra-assignment control, for the
+// blocking form, whose control is a suspension of the procedure and so a
+// statement. The repeat form has no such spelling -- it is a count of
+// suspensions rather than one -- and the caller expands it.
+auto AsStatementTiming(const hir::IntraAssignmentControl& control)
+    -> hir::TimingControl {
+  return std::visit(
+      Overloaded{
+          [](const hir::RepeatedEventControl&) -> hir::TimingControl {
+            throw InternalError(
+                "AsStatementTiming: a repeat event control is a count of "
+                "waits, which no single timing control spells");
+          },
+          [](const auto& plain) -> hir::TimingControl { return plain; }},
+      control);
+}
+
 // The name a held right-hand side carries. LRM 9.4.5 gives it no name of its
 // own, so one that cannot collide with a design's is minted here.
 constexpr std::string_view kHeldValueName = "_lyra_intra_assign";
 
 }  // namespace
 
+auto LowerIntraAssignmentControl(
+    ProcessLowerer& proc, WalkFrame frame, const slang::ast::TimingControl& tc,
+    diag::SourceSpan span) -> diag::Result<hir::IntraAssignmentControl> {
+  switch (tc.kind) {
+    case slang::ast::TimingControlKind::Delay: {
+      auto delay_or =
+          LowerDelayControl(proc, frame, tc.as<slang::ast::DelayControl>());
+      if (!delay_or) return std::unexpected(std::move(delay_or.error()));
+      return hir::IntraAssignmentControl{*delay_or};
+    }
+    case slang::ast::TimingControlKind::SignalEvent:
+    case slang::ast::TimingControlKind::EventList: {
+      auto event_or = LowerEventControl(proc, frame, tc, span);
+      if (!event_or) return std::unexpected(std::move(event_or.error()));
+      return std::visit(
+          [](auto event) {
+            return hir::IntraAssignmentControl{std::move(event)};
+          },
+          *std::move(event_or));
+    }
+    case slang::ast::TimingControlKind::RepeatedEvent: {
+      const auto& repeated = tc.as<slang::ast::RepeatedEventControl>();
+      // LRM 9.4.5 reads the count once, where the statement is reached, so
+      // changing what it read afterwards does not move the number of
+      // occurrences still to come.
+      auto count_or = proc.LowerExpr(repeated.expr, frame);
+      if (!count_or) return std::unexpected(std::move(count_or.error()));
+      const hir::ExprId count = frame.Exprs().Add(*std::move(count_or));
+      auto event_or = LowerEventControl(proc, frame, repeated.event, span);
+      if (!event_or) return std::unexpected(std::move(event_or.error()));
+      return hir::IntraAssignmentControl{hir::RepeatedEventControl{
+          .count = count, .event = *std::move(event_or)}};
+    }
+    default:
+      return diag::Fail(
+          span, diag::DiagCode::kUnsupportedTimingControlKind,
+          "this intra-assignment timing control kind is not yet supported");
+  }
+}
+
 auto LowerIntraAssignmentStmt(
     ProcessLowerer& proc, WalkFrame frame,
-    const slang::ast::AssignmentExpression& as,
-    const slang::ast::Statement& controlled, diag::SourceSpan span)
+    const slang::ast::AssignmentExpression& as, diag::SourceSpan span)
     -> diag::Result<hir::Stmt> {
   auto validate = ValidateAssignableImpl(proc.Owner(), true, as.left());
   if (!validate) return std::unexpected(std::move(validate.error()));
@@ -270,28 +385,27 @@ auto LowerIntraAssignmentStmt(
   const hir::StmtId assign =
       store(inner.Exprs().Add(*std::move(lhs_or)), held_ref());
 
-  const auto* repeated =
-      as.timingControl->kind == slang::ast::TimingControlKind::RepeatedEvent
-          ? &as.timingControl->as<slang::ast::RepeatedEventControl>()
-          : nullptr;
-  auto timing = LowerTimingControl(
-      proc, inner, repeated != nullptr ? repeated->event : *as.timingControl,
-      controlled, span);
-  if (!timing) return std::unexpected(std::move(timing.error()));
+  auto control =
+      LowerIntraAssignmentControl(proc, inner, *as.timingControl, span);
+  if (!control) return std::unexpected(std::move(control.error()));
 
-  if (repeated == nullptr) {
-    statements.push_back(
-        plain(hir::TimedStmt{.timing = *std::move(timing), .stmt = assign}));
-  } else {
-    auto count_or = proc.LowerExpr(repeated->expr, inner);
-    if (!count_or) return std::unexpected(std::move(count_or.error()));
+  if (const auto* repeated =
+          std::get_if<hir::RepeatedEventControl>(&*control)) {
+    // LRM 9.4.5: the count is how many occurrences the assignment waits out, so
+    // a count of none reaches the assignment where the statement stands.
     const hir::StmtId nothing = plain(hir::EmptyStmt{});
-    const hir::StmtId wait =
-        plain(hir::TimedStmt{.timing = *std::move(timing), .stmt = nothing});
-    statements.push_back(plain(
-        hir::RepeatStmt{
-            .count = inner.Exprs().Add(*std::move(count_or)), .body = wait}));
+    const hir::StmtId wait = plain(
+        hir::TimedStmt{
+            .timing = std::visit(
+                [](auto entry) { return hir::TimingControl{std::move(entry)}; },
+                repeated->event),
+            .stmt = nothing});
+    statements.push_back(
+        plain(hir::RepeatStmt{.count = repeated->count, .body = wait}));
     statements.push_back(assign);
+  } else {
+    statements.push_back(plain(
+        hir::TimedStmt{.timing = AsStatementTiming(*control), .stmt = assign}));
   }
 
   return hir::Stmt{

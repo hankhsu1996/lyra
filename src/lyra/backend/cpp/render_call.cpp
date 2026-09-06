@@ -47,6 +47,10 @@ auto BuiltinFnCppName(support::BuiltinFn id) -> std::string_view {
       return "SubmitNbaAfter";
     case support::BuiltinFn::kSubmitNbaAfterReal:
       return "SubmitNbaAfterReal";
+    case support::BuiltinFn::kRunDetached:
+      return "RunDetached";
+    case support::BuiltinFn::kResumeInNbaRegion:
+      return "ResumeInNbaRegion";
     case support::BuiltinFn::kSubmitPostponed:
       return "SubmitPostponed";
     case support::BuiltinFn::kSubmitObserved:
@@ -109,6 +113,7 @@ auto BuiltinFnCppName(support::BuiltinFn id) -> std::string_view {
     case support::BuiltinFn::kTrigger:
       return "Trigger";
     case support::BuiltinFn::kAwait:
+    case support::BuiltinFn::kAwaitQualified:
       return "Await";
     case support::BuiltinFn::kTriggered:
       return "Triggered";
@@ -532,6 +537,7 @@ auto BuiltinFnCppNamespace(support::BuiltinFn id) -> std::string_view {
     case support::BuiltinFn::kDelay:
     case support::BuiltinFn::kDelayReal:
     case support::BuiltinFn::kWaitAny:
+    case support::BuiltinFn::kResumeInNbaRegion:
     case support::BuiltinFn::kSimTime:
     case support::BuiltinFn::kSTime:
     case support::BuiltinFn::kRealTime:

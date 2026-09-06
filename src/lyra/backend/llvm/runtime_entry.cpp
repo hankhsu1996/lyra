@@ -106,6 +106,10 @@ auto RuntimeOpName(RuntimeOp op) -> std::string_view {
       return "make_observed_trigger";
     case RuntimeOp::kMakeObservation:
       return "make_observation";
+    case RuntimeOp::kMakeQualifiedObservation:
+      return "make_qualified_observation";
+    case RuntimeOp::kMakeConditionObservation:
+      return "make_condition_observation";
     case RuntimeOp::kMakePackedRange:
       return "make_packed_range";
     case RuntimeOp::kMakePackedType:
@@ -519,11 +523,14 @@ auto EntryNamingOf(support::BuiltinFn fn) -> EntryNaming {
 
     case support::BuiltinFn::kTrigger:
     case support::BuiltinFn::kAwait:
+    case support::BuiltinFn::kAwaitQualified:
     case support::BuiltinFn::kTriggered:
     case support::BuiltinFn::kCurrentRuntime:
     case support::BuiltinFn::kSubmitNba:
     case support::BuiltinFn::kSubmitNbaAfter:
     case support::BuiltinFn::kSubmitNbaAfterReal:
+    case support::BuiltinFn::kRunDetached:
+    case support::BuiltinFn::kResumeInNbaRegion:
     case support::BuiltinFn::kSubmitPostponed:
     case support::BuiltinFn::kSubmitObserved:
     case support::BuiltinFn::kFiles:

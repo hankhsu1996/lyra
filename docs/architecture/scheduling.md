@@ -5,7 +5,8 @@ SystemVerilog process -- `initial`, `always*`, `final` -- compiles to a C++ coro
 pulls coroutines from time-slot region queues and resumes them; a coroutine runs until it suspends,
 and lands on whichever queue its own `await_suspend` chose. Deferred effects (`<=` writes, `$strobe`
 prints) are not yields: the coroutine snapshots its inputs into a closure, hands the closure to the
-engine, and continues running. The engine invokes those closures when their owning region runs.
+engine, and continues running. The engine invokes those closures when their owning region runs, and
+where the slot to run in is not yet knowable, what is handed over is an execution that finds it.
 
 This doc covers the decisions behind the engine itself: process model, suspension protocol, region
 structure, deferred work, `$finish` semantics, and the MIR boundary. Sensitivity tracking, change
@@ -75,6 +76,19 @@ When a process needs an effect to happen later -- a non-blocking write to a sign
 MIR-level shape) and submits the closure to a placement, then keeps running. A submit takes the same
 placement a suspension does, which is what lets a nonblocking assignment carrying a delay reach the
 NBA region of a later slot (LRM 4.4.2.4, 10.4.2) with no second mechanism.
+
+**Where the placement is not yet knowable, what is handed over is an execution rather than a
+closure.** An update due on an event (LRM 9.4.5) has a region but no slot: which slot it lands in is
+whichever one the event happens in, and nothing where the statement stands can say. So the process
+snapshots its inputs the same way, into an execution that waits for the event and then places itself
+in the region -- and keeps running, exactly as it does for a submit. The waiting is the only part
+that is new; what the update writes, and where, are settled where the statement stands as they are
+for every other deferred effect.
+
+That execution belongs to no lineage. The standard makes no process of a pending update, so nothing
+that names processes may find it: `wait fork` does not wait for it and `disable fork` does not reach
+it (LRM 9.6.1, 9.6.3). **Forbidden:** giving such an execution a parent to reuse the spawning path,
+which makes the update visible to process control the standard never put it under.
 
 Yield-based alternatives are rejected because they would entangle the deferred effect's commit time
 with the process's resumption schedule. A process that does `q <= d; #5; ...` should not be forced

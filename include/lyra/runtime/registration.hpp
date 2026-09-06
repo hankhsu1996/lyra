@@ -47,9 +47,9 @@ struct Registration {
 
   // The event control this membership serves, where the wait is one (LRM
   // 9.4.2): reaching it is a candidacy, and it decides. A membership that
-  // decides by being reached -- an implicit sensitivity, an event, a join, a
-  // scheduler queue -- names none. The memberships of one wait keep it between
-  // them, so it lives exactly as long as the wait it is watching for.
+  // decides by being reached -- an implicit sensitivity, an unqualified event,
+  // a join, a scheduler queue -- names none. It is held rather than pointed at,
+  // so it lives as long as anything watching for that event control does.
   Observation observation;
 
   Registration() = default;
@@ -60,6 +60,19 @@ struct Registration {
   auto operator=(Registration&&) -> Registration& = delete;
   ~Registration() {
     Unlink();
+  }
+
+  // Whether reaching this membership is an event for the wait it names. Every
+  // target that holds memberships asks it, so what an event control decides for
+  // itself is stated once rather than per target.
+  //
+  // Const: asking advances the observation's baseline, and the observation is
+  // the wait's, shared with the wait's other memberships -- this membership's
+  // own state is untouched, as writing through a reference leaves the reference
+  // alone.
+  [[nodiscard]] auto FiresNow() const -> bool {
+    ArmedObservation* observed = observation.Get();
+    return observed == nullptr || observed->Fires();
   }
 
   // Detaches from whichever target holds it. Pointer surgery only -- which is
