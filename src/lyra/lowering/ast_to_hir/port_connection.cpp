@@ -21,12 +21,15 @@
 #include <slang/numeric/ConstantValue.h>
 
 #include "lyra/base/internal_error.hpp"
+#include "lyra/base/overloaded.hpp"
 #include "lyra/diag/diag_code.hpp"
 #include "lyra/diag/diagnostic.hpp"
+#include "lyra/hir/published_target.hpp"
 #include "lyra/hir/structural_scope.hpp"
 #include "lyra/hir/unit_signature.hpp"
 #include "lyra/lowering/ast_to_hir/constant_value.hpp"
 #include "lyra/lowering/ast_to_hir/instance_array_shape.hpp"
+#include "lyra/lowering/ast_to_hir/published_projection.hpp"
 #include "lyra/lowering/ast_to_hir/sensitivity.hpp"
 #include "lyra/lowering/ast_to_hir/structural_scope_lowerer.hpp"
 #include "lyra/lowering/ast_to_hir/unit_identity.hpp"
@@ -56,6 +59,29 @@ auto PublishedMemberRecipe(
       .leaf =
           hir::SignatureMemberLeaf{.object = child_object, .member = member},
       .type = type};
+}
+
+// The member and descent a port part reaches, or why no connection can be made
+// to it. A port whose expression names declared elements always reaches one
+// (LRM 23.2.2.2); a port defined to reach nothing inside the unit is the other
+// form the same clause admits.
+auto ConnectedProjection(
+    const hir::ConnectionTarget& target, diag::SourceSpan span)
+    -> diag::Result<const hir::MemberProjection*> {
+  return std::visit(
+      Overloaded{
+          [](const hir::MemberProjection& projection)
+              -> diag::Result<const hir::MemberProjection*> {
+            return &projection;
+          },
+          [&](const hir::NoInternalTarget&)
+              -> diag::Result<const hir::MemberProjection*> {
+            return PortConnectionUnsupported(
+                span,
+                "a port reaching nothing inside the child is not yet "
+                "supported");
+          }},
+      target);
 }
 
 // What a published member's type says it stands for: the object at the bottom
@@ -297,31 +323,18 @@ auto ConnectElementPorts(
       return PortConnectionUnsupported(
           span, "non-variable port connection is not yet supported");
     }
-    if (!data->member.has_value()) {
-      return PortConnectionUnsupported(
-          span,
-          "port not bound to a connectable variable is not yet supported");
-    }
-    // The storage behind the part, as the child states it. Its type may be
-    // wider than the part's: a port expression (LRM 23.2.2.2) connects part of
-    // an internal name, and standing a projection between the connection and
-    // the storage is not something the child's statement carries.
+    auto connected = ConnectedProjection(data->target, span);
+    if (!connected) return std::unexpected(std::move(connected.error()));
+    const hir::MemberProjection* projection = *connected;
+    // The storage behind the part, as the child states it. Its type is wider
+    // than the part's whenever the child named only a piece of it (LRM
+    // 23.2.2.2), and the descent between the two is published alongside.
     const hir::PublishedMember& member =
-        published_class.members.Get(*data->member);
-    if (member.type != data->type) {
-      return PortConnectionUnsupported(
-          span,
-          "port connected to part of an internal name is not yet supported");
-    }
+        published_class.members.Get(projection->member);
     const auto* internal =
         port->internalSymbol == nullptr
             ? nullptr
             : port->internalSymbol->as_if<slang::ast::ValueSymbol>();
-    if (internal == nullptr) {
-      throw InternalError(
-          "ConnectElementPorts: the child published a member for this part, so "
-          "the declaration behind it exists");
-    }
     // What crosses is the type the child published, taken into this unit's own
     // pool -- so the parent's record of the connection rests on the child's
     // statement of its port and not on a second reading of the frontend.
@@ -350,18 +363,24 @@ auto ConnectElementPorts(
     }
 
     // Which cell that member is, is the child's own statement of it, so the
-    // parent never reads the child's declaration to find out.
+    // parent never reads the child's declaration to find out. The route ends at
+    // the member, whatever part of it the port stands for.
     const hir::RoutedPathRecipe port_recipe = PublishedMemberRecipe(
-        instance_step, child_object, *data->member, type_id);
+        instance_step, child_object, projection->member,
+        unit_lowerer.ImportSignatureType(child_signature, member.type));
     // An input/output port reads the child cell during simulation, so it holds
     // a persistent routed reference; a `ref` port is bound once in the resolve
     // phase, so it keeps only the reach.
     const auto cell_endpoint = [&]() -> hir::PortEndpoint {
       return hir::PortCellEndpoint{
-          .cell = frame.Exprs().Add(unit_lowerer.MakeRoutedMemberRef(
-              home_frame,
-              hir::RoutedRefDecl{
-                  .recipe = port_recipe, .target_storage = member.storage},
+          .cell = frame.Exprs().Add(ProjectPublishedPath(
+              unit_lowerer, frame, child_signature, projection->path,
+              unit_lowerer.MakeRoutedMemberRef(
+
+                  home_frame,
+                  hir::RoutedRefDecl{
+                      .recipe = port_recipe, .target_storage = member.storage},
+                  span),
               span))};
     };
 
@@ -411,6 +430,12 @@ auto ConnectElementPorts(
               "an "
               "assignment");
         }
+        if (internal == nullptr) {
+          return PortConnectionUnsupported(
+              span,
+              "an output port whose name reaches no single declaration of the "
+              "child is not yet supported");
+        }
         auto peer_or = scope.LowerExpr(
             expr->as<slang::ast::AssignmentExpression>().left(), frame);
         if (!peer_or) return std::unexpected(std::move(peer_or.error()));
@@ -423,6 +448,15 @@ auto ConnectElementPorts(
         break;
       }
       case hir::PortDirection::kRef: {
+        // A `ref` port seals to the connected variable's own cell (LRM
+        // 23.3.3.2), so what the route reaches has to be the whole of the
+        // child's declaration rather than a part of it.
+        if (!projection->path.empty()) {
+          return PortConnectionUnsupported(
+              span,
+              "a ref port naming part of an internal name is not yet "
+              "supported");
+        }
         endpoint = port_recipe;
         auto peer_or = scope.LowerExpr(*expr, frame);
         if (!peer_or) return std::unexpected(std::move(peer_or.error()));

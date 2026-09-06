@@ -252,11 +252,13 @@ Unlocks `refs/hierarchical_refs`, `refs/upward_refs`, and `instantiation/hierarc
       parent when the child re-drives the whole signal. Covered for a string and an unpacked array
       connected in both directions. An unpacked struct port rides on unpacked-struct type support
       and lands with it.
-- [ ] E11 -- A port connected to part of an internal name (LRM 23.2.2.2): what crosses the port is
+- [x] E11 -- A port connected to part of an internal name (LRM 23.2.2.2): what crosses the port is
       that part, so two ports selecting disjoint parts of one name each carry their own connection
-      into their own bits and neither disturbs the other's. Rejected with a clean diagnostic. The
-      connection reaches a projection of the unit's storage rather than the whole of it, which is
-      what the unit publishes today.
+      into their own bits and neither disturbs the other's. The unit publishes which of its
+      declarations the port reaches and the descent that reaches the part, so the connection lands
+      on that part and the storage the two ports share stays one declaration. A `ref` port naming a
+      part is rejected with a clean diagnostic, since such a port seals to the whole of the
+      connected variable's cell (LRM 23.3.3.2).
 
 Unlocks the port-connection surface.
 

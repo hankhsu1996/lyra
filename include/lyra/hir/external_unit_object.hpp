@@ -5,10 +5,12 @@
 #include <optional>
 #include <string>
 #include <string_view>
+#include <vector>
 
 #include "lyra/base/arena.hpp"
 #include "lyra/hir/published_callable.hpp"
 #include "lyra/hir/published_member.hpp"
+#include "lyra/hir/published_modport.hpp"
 
 namespace lyra::hir {
 
@@ -32,6 +34,7 @@ struct ExternalUnitObject {
   std::string class_name;
   base::Arena<PublishedMember, PublishedMemberId> members;
   base::Arena<PublishedCallable, PublishedCallableId> callables;
+  std::vector<PublishedModport> modports;
 
   // The callable published under `name`, or nothing when the unit published no
   // such name. A name with no answer here is one the unit never promised, so a

@@ -12,21 +12,22 @@
 #include "lyra/hir/port_direction.hpp"
 #include "lyra/hir/published_callable.hpp"
 #include "lyra/hir/published_member.hpp"
+#include "lyra/hir/published_modport.hpp"
+#include "lyra/hir/published_target.hpp"
 #include "lyra/hir/type.hpp"
 #include "lyra/hir/type_id.hpp"
 
 namespace lyra::hir {
 
 // A port part carrying data across the boundary: which way it flows, the type
-// of what crosses, and the member of this unit's instance whose storage it
-// reaches. The type is not always the whole of that member: a port expression
-// (LRM 23.2.2.2) names part of an internal name, and the two then differ.
-// `member` is absent when the port connects to nothing inside the unit, which
-// the same clause admits.
+// of what crosses, and what inside this unit's instance it reaches. The type is
+// the port expression's own self-determined type (LRM 23.2.2.2), which is
+// narrower than the storage behind it whenever that expression names part of an
+// internal name.
 struct DataPortPart {
   PortDirection direction{};
   TypeId type{};
-  std::optional<PublishedMemberId> member;
+  ConnectionTarget target;
 };
 
 // A port part naming a scope rather than carrying data -- an interface port
@@ -58,10 +59,10 @@ struct PortDecl {
 };
 
 // The object an instance of this unit is: the class's own name, the members
-// another unit may name on it, and the subroutines another unit may call on it.
-// A unit's name and the name of the class it builds are two facts, so a
-// referrer reads the class it reaches here rather than deriving it from the
-// unit it reached through.
+// another unit may name on it, the subroutines another unit may call on it,
+// and the views it offers over those members. A unit's name and the name of
+// the class it builds are two facts, so a referrer reads the class it reaches
+// here rather than deriving it from the unit it reached through.
 struct InstanceClassSignature {
   std::string class_name;
   // The order is as much a part of the promise as the names are: a member's
@@ -69,6 +70,7 @@ struct InstanceClassSignature {
   // boundary read that position out of this one order.
   base::Arena<PublishedMember, PublishedMemberId> members;
   base::Arena<PublishedCallable, PublishedCallableId> callables;
+  std::vector<PublishedModport> modports;
 
   // The member published under `name`, or nothing when the unit published no
   // such name. A name with no answer here is one the unit never promised, and

@@ -1,3 +1,5 @@
+#include <algorithm>
+#include <cstdint>
 #include <expected>
 #include <optional>
 #include <ranges>
@@ -5,10 +7,14 @@
 #include <utility>
 #include <vector>
 
+#include <slang/ast/Expression.h>
 #include <slang/ast/Scope.h>
 #include <slang/ast/SemanticFacts.h>
 #include <slang/ast/Symbol.h>
+#include <slang/ast/expressions/MiscExpressions.h>
+#include <slang/ast/expressions/SelectExpressions.h>
 #include <slang/ast/symbols/InstanceSymbols.h>
+#include <slang/ast/symbols/MemberSymbols.h>
 #include <slang/ast/symbols/PortSymbols.h>
 #include <slang/ast/symbols/SubroutineSymbols.h>
 #include <slang/ast/symbols/ValueSymbol.h>
@@ -19,6 +25,8 @@
 #include "lyra/diag/diagnostic.hpp"
 #include "lyra/hir/external_callee.hpp"
 #include "lyra/hir/published_callable.hpp"
+#include "lyra/hir/published_modport.hpp"
+#include "lyra/hir/published_target.hpp"
 #include "lyra/hir/type.hpp"
 #include "lyra/hir/type_id.hpp"
 #include "lyra/hir/type_import.hpp"
@@ -42,6 +50,80 @@ auto IsConstRef(const slang::ast::Symbol* internal) -> bool {
   const auto* variable = internal->as_if<slang::ast::VariableSymbol>();
   return variable != nullptr &&
          variable->flags.has(slang::ast::VariableFlags::Const);
+}
+
+// One coordinate a port expression wrote. LRM 23.2.2.1 gives a port reference a
+// `constant_select`, so the language itself has fixed the coordinate before the
+// program runs and the front end's answer is what is read. It crosses the
+// boundary as a number because a number is what a descent step can carry: an
+// expression names declarations of the unit that wrote it and would mean
+// nothing where the signature is read.
+auto SelectCoordinate(const slang::ast::Expression& bound)
+    -> std::optional<std::int32_t> {
+  const slang::ConstantValue* value = bound.getConstant();
+  if (value == nullptr || !value->isInteger()) return std::nullopt;
+  return value->integer().as<std::int32_t>();
+}
+
+// Whether a declaration holds a cell (LRM 6.5). That is what a unit publishes
+// as a member, and what an expression over its declarations can be waited on
+// through; anything else it declares carries a value and no storage.
+auto IsPublishedStorage(const slang::ast::Symbol& symbol) -> bool {
+  return symbol.kind == slang::ast::SymbolKind::Variable ||
+         symbol.kind == slang::ast::SymbolKind::Net;
+}
+
+auto SelectRange(const slang::ast::RangeSelectExpression& select)
+    -> std::optional<hir::PublishedRange> {
+  const auto left = SelectCoordinate(select.left());
+  const auto right = SelectCoordinate(select.right());
+  if (!left.has_value() || !right.has_value()) return std::nullopt;
+  switch (select.getSelectionKind()) {
+    case slang::ast::RangeSelectionKind::Simple:
+      return hir::PublishedRange{
+          hir::PublishedConstantRange{.left = *left, .right = *right}};
+    case slang::ast::RangeSelectionKind::IndexedUp:
+      return hir::PublishedRange{
+          hir::PublishedIndexedUpRange{.base = *left, .width = *right}};
+    case slang::ast::RangeSelectionKind::IndexedDown:
+      return hir::PublishedRange{
+          hir::PublishedIndexedDownRange{.base = *left, .width = *right}};
+  }
+  throw InternalError("SelectRange: unknown slang RangeSelectionKind");
+}
+
+// The declaration a port expression bottoms out at, and the selects standing
+// between the two (LRM 23.2.2.1, 23.2.2.2). Selects peel from the outside in,
+// so `steps` is leaf-first and a reader walks it in reverse to descend. Nothing
+// when the expression takes a form no descent step spells, which the caller
+// refuses as the port form it is.
+struct PeeledPortExpression {
+  const slang::ast::ValueSymbol* base;
+  std::vector<const slang::ast::Expression*> steps;
+};
+
+auto PeelPortExpression(const slang::ast::Expression& expr)
+    -> std::optional<PeeledPortExpression> {
+  std::vector<const slang::ast::Expression*> steps;
+  for (const slang::ast::Expression* step = &expr;;) {
+    if (const auto* value = step->as_if<slang::ast::ValueExpressionBase>()) {
+      return PeeledPortExpression{
+          .base = &value->symbol, .steps = std::move(steps)};
+    }
+    if (const auto* select = step->as_if<slang::ast::ElementSelectExpression>();
+        select != nullptr) {
+      steps.push_back(step);
+      step = &select->value();
+      continue;
+    }
+    if (const auto* select = step->as_if<slang::ast::RangeSelectExpression>();
+        select != nullptr) {
+      steps.push_back(step);
+      step = &select->value();
+      continue;
+    }
+    return std::nullopt;
+  }
 }
 
 auto TranslateDirection(
@@ -75,7 +157,8 @@ auto UnitLowerer::PublishSignature() -> diag::Result<void> {
       hir::InstanceClassSignature{
           .class_name = hir::InstanceClassName(unit_.name),
           .members = {},
-          .callables = {}});
+          .callables = {},
+          .modports = {}});
 
   hir::TypeImportMemo published;
   const auto publish_type = [&](hir::TypeId own) {
@@ -197,6 +280,54 @@ auto UnitLowerer::PublishSignature() -> diag::Result<void> {
     return id;
   };
 
+  // The descent a port expression's own selects state, turned from the
+  // leaf-first steps a peel collects into the owner-to-leaf order a reader
+  // walks. Each step states the type it lands on, so a reader needs no
+  // knowledge of what selecting from a type produces.
+  const auto publish_path =
+      [&](std::span<const slang::ast::Expression* const> steps,
+          diag::SourceSpan span)
+      -> diag::Result<std::vector<hir::PublishedSelector>> {
+    std::vector<hir::PublishedSelector> path;
+    path.reserve(steps.size());
+    for (const auto* step : std::views::reverse(steps)) {
+      auto step_type = InternType(*step->type, span);
+      if (!step_type) return std::unexpected(std::move(step_type.error()));
+      const hir::TypeId projected = publish_type(*step_type);
+      if (const auto* select =
+              step->as_if<slang::ast::ElementSelectExpression>()) {
+        const auto index = SelectCoordinate(select->selector());
+        if (!index.has_value()) {
+          return diag::Fail(
+              span, diag::DiagCode::kUnsupportedStructuralMember,
+              "a port naming an element of an internal name at a coordinate "
+              "the front end did not fix is not yet supported");
+        }
+        path.emplace_back(
+            hir::PublishedElementSelector{
+                .index = *index, .projected_type = projected});
+        continue;
+      }
+      const auto* select = step->as_if<slang::ast::RangeSelectExpression>();
+      if (select == nullptr) {
+        throw InternalError(
+            "PublishSignature: a step that is neither an element nor a range "
+            "select was collected as one");
+      }
+      auto range = SelectRange(*select);
+      if (!range.has_value()) {
+        return diag::Fail(
+            span, diag::DiagCode::kUnsupportedStructuralMember,
+            "a port naming a window of an internal name at bounds the front "
+            "end did not fix is not yet supported");
+      }
+      path.emplace_back(
+          hir::PublishedSliceSelector{
+              .range = *std::move(range), .projected_type = projected});
+    }
+    return path;
+  };
+
   const auto publish_part =
       [&](const slang::ast::PortSymbol& port) -> diag::Result<hir::PortPart> {
     const auto span = SourceMapper().PointSpanOf(port.location);
@@ -204,30 +335,51 @@ auto UnitLowerer::PublishSignature() -> diag::Result<void> {
     if (!interned) return std::unexpected(std::move(interned.error()));
     const hir::PortDirection direction =
         TranslateDirection(port.direction, port.internalSymbol);
-    const auto* internal =
-        port.internalSymbol == nullptr
-            ? nullptr
-            : port.internalSymbol->as_if<slang::ast::ValueSymbol>();
-    std::optional<hir::PublishedMemberId> member;
-    if (internal != nullptr) {
-      // A `ref` port's direction is what makes its declaration a reference
-      // (LRM 23.3.3.2), so the answer is taken here and read back wherever that
-      // declaration is asked what it holds.
-      if (direction == hir::PortDirection::kRef ||
-          direction == hir::PortDirection::kConstRef) {
-        ref_port_internals_.emplace(
-            internal, direction == hir::PortDirection::kConstRef
-                          ? hir::ReferenceBinding::kConstRef
-                          : hir::ReferenceBinding::kRef);
-      }
-      auto id = publish_member(*internal);
-      if (!id) return std::unexpected(std::move(id.error()));
-      member = *id;
+    // A port expression names the part of a declaration the port stands for
+    // (LRM 23.2.2.2); a port written as a plain name has none, and the whole of
+    // the declaration behind it is the same descent with no steps. A port with
+    // neither reaches nothing inside the unit, which the same clause admits.
+    const auto* written = port.getInternalExpr();
+    std::optional<PeeledPortExpression> peeled;
+    if (written != nullptr) {
+      peeled = PeelPortExpression(*written);
+    } else if (const auto* internal =
+                   port.internalSymbol == nullptr
+                       ? nullptr
+                       : port.internalSymbol->as_if<slang::ast::ValueSymbol>();
+               internal != nullptr) {
+      peeled = PeeledPortExpression{.base = internal, .steps = {}};
+    } else {
+      return hir::PortPart{hir::DataPortPart{
+          .direction = direction,
+          .type = publish_type(*interned),
+          .target = hir::NoInternalTarget{}}};
     }
+    if (!peeled.has_value()) {
+      return diag::Fail(
+          span, diag::DiagCode::kUnsupportedStructuralMember,
+          "a port naming this part of an internal name is not yet supported");
+    }
+
+    // A `ref` port's direction is what makes its declaration a reference (LRM
+    // 23.3.3.2), so the answer is taken here and read back wherever that
+    // declaration is asked what it holds.
+    if (direction == hir::PortDirection::kRef ||
+        direction == hir::PortDirection::kConstRef) {
+      ref_port_internals_.emplace(
+          peeled->base, direction == hir::PortDirection::kConstRef
+                            ? hir::ReferenceBinding::kConstRef
+                            : hir::ReferenceBinding::kRef);
+    }
+    auto id = publish_member(*peeled->base);
+    if (!id) return std::unexpected(std::move(id.error()));
+    auto path = publish_path(peeled->steps, span);
+    if (!path) return std::unexpected(std::move(path.error()));
     return hir::PortPart{hir::DataPortPart{
         .direction = direction,
         .type = publish_type(*interned),
-        .member = member}};
+        .target =
+            hir::MemberProjection{.member = *id, .path = *std::move(path)}}};
   };
 
   for (const auto* member : body->getPortList()) {
@@ -285,14 +437,93 @@ auto UnitLowerer::PublishSignature() -> diag::Result<void> {
         if (!published) return std::unexpected(std::move(published.error()));
         continue;
       }
-      const auto* value = member.as_if<slang::ast::ValueSymbol>();
-      if (value == nullptr ||
-          (member.kind != slang::ast::SymbolKind::Variable &&
-           member.kind != slang::ast::SymbolKind::Net)) {
-        continue;
-      }
-      auto id = publish_member(*value);
+      if (!IsPublishedStorage(member)) continue;
+      auto id = publish_member(member.as<slang::ast::ValueSymbol>());
       if (!id) return std::unexpected(std::move(id.error()));
+    }
+
+    // A modport is a named view of what the interface publishes (LRM 25.5), and
+    // each name it offers stands for an expression this interface evaluates
+    // (LRM 25.5.4) -- an item's own name where the view wrote none. Reading the
+    // name is that expression evaluated and writing it is that expression
+    // assigned to, so what the view promises is the pair of subroutines
+    // carrying those out: the expression names declarations of this interface
+    // and would mean nothing where the signature is read, while a callable
+    // crosses as any other does.
+    const auto publish_modport_port =
+        [&](std::string_view modport_name,
+            const slang::ast::ModportPortSymbol& port)
+        -> diag::Result<hir::PublishedModportPort> {
+      const auto span = SourceMapper().PointSpanOf(port.location);
+      const auto* connection = port.getConnectionExpr();
+      if (connection == nullptr) {
+        return diag::Fail(
+            span, diag::DiagCode::kUnsupportedStructuralMember,
+            "a view offering a name that reaches nothing inside its interface "
+            "is not yet supported");
+      }
+      auto interned = InternType(*connection->type, span);
+      if (!interned) return std::unexpected(std::move(interned.error()));
+      const hir::TypeId crossing = publish_type(*interned);
+      const ModportAccessors accessors = ModportAccessorsOf(port);
+      const hir::PublishedCallableId getter = instance_class.callables.Add(
+          hir::PublishedCallable{
+              .name = ModportReadName(modport_name, port.name),
+              .kind = hir::SubroutineKind::kFunction,
+              .result_type = crossing,
+              .params = {}});
+      std::optional<hir::PublishedCallableId> setter;
+      if (accessors.setter.has_value()) {
+        setter = instance_class.callables.Add(
+            hir::PublishedCallable{
+                .name = ModportWriteName(modport_name, port.name),
+                .kind = hir::SubroutineKind::kFunction,
+                .result_type = publish_type(
+                    unit_.types.Intern(hir::Type{hir::VoidType{}})),
+                .params = {hir::ExternalCalleeParam{
+                    .direction = hir::ParamDirection::kInput,
+                    .type = crossing}}});
+      }
+      // What the expression reads, which is what a process waiting on the name
+      // observes. LRM 25.5 confines those names to this interface's own
+      // declarations, so each is already a member it publishes.
+      std::vector<hir::PublishedMemberId> reads;
+      diag::Result<void> read_failure;
+      connection->visitSymbolReferences(
+          [&](const slang::ast::Expression&, const slang::ast::Symbol& symbol) {
+            if (!read_failure || !IsPublishedStorage(symbol)) return;
+            auto id = publish_member(symbol.as<slang::ast::ValueSymbol>());
+            if (!id) {
+              read_failure = std::unexpected(std::move(id.error()));
+              return;
+            }
+            if (!std::ranges::contains(reads, *id)) reads.push_back(*id);
+          });
+      if (!read_failure) {
+        return std::unexpected(std::move(read_failure.error()));
+      }
+      return hir::PublishedModportPort{
+          .name = std::string{port.name},
+          .getter = getter,
+          .setter = setter,
+          .reads = std::move(reads)};
+    };
+
+    for (const auto& member : scope_->members()) {
+      const auto* modport = member.as_if<slang::ast::ModportSymbol>();
+      if (modport == nullptr) continue;
+      hir::PublishedModport published{
+          .name = std::string{modport->name}, .ports = {}};
+      for (const auto& item : modport->members()) {
+        const auto* port = item.as_if<slang::ast::ModportPortSymbol>();
+        if (port == nullptr) continue;
+        auto published_port = publish_modport_port(modport->name, *port);
+        if (!published_port) {
+          return std::unexpected(std::move(published_port.error()));
+        }
+        published.ports.push_back(*std::move(published_port));
+      }
+      instance_class.modports.push_back(std::move(published));
     }
   }
 

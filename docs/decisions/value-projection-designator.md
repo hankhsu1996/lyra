@@ -116,8 +116,10 @@ Three constructs need exactly this, and all three take it:
 
 The formal's type is unchanged -- a `ref` formal is a reference-typed parameter
 ([reference-as-data-type](reference-as-data-type.md)). What is new is that the actual may be a
-designator, and that the reference a designator produces carries selector state. A `ref` port still
-binds to a whole variable and seals to a direct cell; ports are not projections.
+designator, and that the reference a designator produces carries selector state. A `ref` port's
+actual is not one of the three: it binds to a whole variable and seals to a direct cell. What the
+declaring unit says its own connection point reaches is a separate question, settled in
+[publishing-part-of-a-member](publishing-part-of-a-member.md).
 
 A projection reference holds a reference to storage, never a transient value handle, so it never
 installs a per-stretch transient into longer-lived storage

@@ -36,6 +36,7 @@
 #include "lyra/hir/expr.hpp"
 #include "lyra/hir/expr_builders.hpp"
 #include "lyra/hir/value_ref.hpp"
+#include "lyra/lowering/ast_to_hir/connected_interface.hpp"
 #include "lyra/lowering/ast_to_hir/expression/references.hpp"
 #include "lyra/lowering/ast_to_hir/instance_array_shape.hpp"
 #include "lyra/lowering/ast_to_hir/sensitivity.hpp"
@@ -209,6 +210,27 @@ auto UnitLowerer::DeclareStructuralIdentities(const slang::ast::Scope& scope)
           decls.structural_subroutines.Declare();
       MapSubroutineBinding(sub, frame, id);
       DeclareProceduralStatics(sub, sub, hir::ProceduralBodyRef{id}, frame);
+    } else if (member.kind == slang::ast::SymbolKind::Modport) {
+      // A name a modport offers stands for an expression this unit evaluates
+      // (LRM 25.5.4), so it carries out a read and, where the view admits a
+      // write, an assignment. Both are subroutines of this scope and take
+      // their identities here with every other, so the signature can name them
+      // before any body is lowered.
+      for (const auto& item : member.as<slang::ast::Scope>().members()) {
+        const auto* port = item.as_if<slang::ast::ModportPortSymbol>();
+        if (port == nullptr) continue;
+        const bool writable =
+            port->direction == slang::ast::ArgumentDirection::Out ||
+            port->direction == slang::ast::ArgumentDirection::InOut;
+        MapModportAccessors(
+            *port,
+            ModportAccessors{
+                .getter = decls.structural_subroutines.Declare(),
+                .setter =
+                    writable
+                        ? std::optional{decls.structural_subroutines.Declare()}
+                        : std::nullopt});
+      }
     } else if (member.kind == slang::ast::SymbolKind::ProceduralBlock) {
       const auto& proc = member.as<slang::ast::ProceduralBlockSymbol>();
       if (!Contains(proc)) continue;
@@ -335,6 +357,27 @@ auto UnitLowerer::LookupStructuralDataObjectBinding(
   const auto it = structural_data_object_bindings_.find(&var);
   if (it == structural_data_object_bindings_.end()) {
     return std::nullopt;
+  }
+  return it->second;
+}
+
+void UnitLowerer::MapModportAccessors(
+    const slang::ast::Symbol& port, ModportAccessors accessors) {
+  const auto [_, inserted] = modport_accessors_.emplace(&port, accessors);
+  if (!inserted) {
+    throw InternalError(
+        "UnitLowerer::MapModportAccessors: a name a modport offers is declared "
+        "once");
+  }
+}
+
+auto UnitLowerer::ModportAccessorsOf(const slang::ast::Symbol& port) const
+    -> ModportAccessors {
+  const auto it = modport_accessors_.find(&port);
+  if (it == modport_accessors_.end()) {
+    throw InternalError(
+        "UnitLowerer::ModportAccessorsOf: every name a modport offers takes "
+        "its identities with the unit's other structural declarations");
   }
   return it->second;
 }
@@ -932,12 +975,107 @@ auto UnitLowerer::ResolveValueTarget(
   return hir::ValueTarget{*std::move(*route)};
 }
 
+auto UnitLowerer::ObservedThroughModport(
+    const slang::ast::ModportPortSymbol& offered, const WalkFrame& frame)
+    -> diag::Result<std::vector<hir::SensitivityEntry>> {
+  const auto span = SourceMapper().PointSpanOf(offered.location);
+  const auto refuse = [&](std::string message) {
+    return diag::Fail(
+        span, diag::DiagCode::kUnsupportedExpressionForm, std::move(message));
+  };
+  const slang::ast::Scope* view = offered.getParentScope();
+  if (view == nullptr) {
+    throw InternalError(
+        "UnitLowerer::ObservedThroughModport: a name a view offers is declared "
+        "by the view");
+  }
+
+  // The port is the whole route to what stands behind it, so the one this
+  // reader waits through is the one whose connection selected this very view. A
+  // read carries no path of its own, so a reader holding two such ports has
+  // stated no choice between them.
+  const slang::ast::InstanceBodySymbol* reader = nullptr;
+  for (const slang::ast::Scope* s = frame.reader_scope;
+       s != nullptr && reader == nullptr; s = s->asSymbol().getParentScope()) {
+    reader = s->asSymbol().as_if<slang::ast::InstanceBodySymbol>();
+  }
+  const slang::ast::InterfacePortSymbol* through = nullptr;
+  for (const auto* member : reader == nullptr
+                                ? std::span<const slang::ast::Symbol* const>{}
+                                : reader->getPortList()) {
+    const auto* port = member->as_if<slang::ast::InterfacePortSymbol>();
+    if (port == nullptr ||
+        ConnectedInterfaceOf(port->getConnection()).modport !=
+            &view->asSymbol()) {
+      continue;
+    }
+    if (through != nullptr) {
+      return refuse(
+          "waiting on a name a view offers where this scope carries that view "
+          "on more than one of its own ports is not yet supported");
+    }
+    through = port;
+  }
+  if (through == nullptr) {
+    return refuse(
+        "waiting on a name a view offers reached other than through this "
+        "scope's own interface port is not yet supported");
+  }
+  ScopeRoute route = RouteThroughInterfacePort(frame, *through, {});
+  const hir::ExternalUnitObjectId object =
+      ExternalUnitObjectOf(InterfaceUnitOf(*through));
+  const hir::PublishedModport* published = hir::FindModport(
+      unit_.external_unit_objects.Get(object).modports, view->asSymbol().name);
+  const hir::PublishedModportPort* name =
+      published == nullptr ? nullptr : published->Find(offered.name);
+  if (name == nullptr) {
+    throw InternalError(
+        "UnitLowerer::ObservedThroughModport: an interface publishes every "
+        "view it declares and every name each view offers");
+  }
+
+  std::vector<hir::SensitivityEntry> out;
+  out.reserve(name->reads.size());
+  for (const hir::PublishedMemberId id : name->reads) {
+    const hir::PublishedMember member =
+        unit_.external_unit_objects.Get(object).members.Get(id);
+    const hir::RoutedRefId slot = MapOrGetRoutedRef(
+        frame.Current(), hir::RoutedRefDecl{
+                             .recipe =
+                                 hir::RoutedPathRecipe{
+                                     .head = route.head,
+                                     .steps = route.steps,
+                                     .leaf =
+                                         hir::SignatureMemberLeaf{
+                                             .object = object, .member = id},
+                                     .type = member.type},
+                             .target_storage = member.storage});
+    out.push_back(
+        hir::SensitivityEntry{
+            .ref = hir::ValueTarget{hir::ReferenceRoute{
+                hir::RoutedRef{.id = slot}}},
+            .footprint = std::nullopt});
+  }
+  return out;
+}
+
 auto UnitLowerer::TranslateSensitivityReads(
     const std::vector<SensitivityRead>& reads, const WalkFrame& frame)
     -> diag::Result<std::vector<hir::SensitivityEntry>> {
   std::vector<hir::SensitivityEntry> out;
   out.reserve(reads.size());
   for (const auto& read : reads) {
+    // A name a modport offers stands for an expression the interface evaluates
+    // (LRM 25.5.4), so it is no single declaration to wait on. What waiting on
+    // it means is waiting on every member that expression reads, which the
+    // interface publishes alongside the name.
+    if (const auto* offered =
+            read.symbol->as_if<slang::ast::ModportPortSymbol>()) {
+      auto entries = ObservedThroughModport(*offered, frame);
+      if (!entries) return std::unexpected(std::move(entries.error()));
+      out.insert(out.end(), entries->begin(), entries->end());
+      continue;
+    }
     auto declaration = ResolveNamedDeclaration(
         *read.symbol, SourceMapper().PointSpanOf(read.symbol->location));
     if (!declaration) return std::unexpected(std::move(declaration.error()));
