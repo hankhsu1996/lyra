@@ -1469,9 +1469,9 @@ auto PackedArray::MergeConditional(const PackedArray& other) const
       res_val, res_unk, PackedType{type_.dims, type_.is_signed, true});
 }
 
-auto PackedArray::ResolveTriState(const PackedArray& other) const
+auto PackedArray::ResolveNet(const PackedArray& other, NetResolution fold) const
     -> PackedArray {
-  RequireSameStorageDomain(*this, other, "ResolveTriState");
+  RequireSameStorageDomain(*this, other, "ResolveNet");
   const auto words = WordCountForBits(type_.bit_width);
   const auto a_val = ValueWords();
   const auto b_val = other.ValueWords();
@@ -1485,17 +1485,48 @@ auto PackedArray::ResolveTriState(const PackedArray& other) const
     const std::uint64_t bv = b_val[w];
     const std::uint64_t au = w < a_unk.size() ? a_unk[w] : 0U;
     const std::uint64_t bu = w < b_unk.size() ? b_unk[w] : 0U;
-    // Lyra encoding (see packed.cpp): Z = (value=0, unknown=1) and is the
-    // resolution identity; equal contributions pass through; any remaining
-    // disagreement is a conflict resolving to X = (value=1, unknown=1).
+    // Lyra encoding (see packed.cpp): Z = (value=0, unknown=1) is every fold's
+    // identity and defers to the other driver; X = (value=1, unknown=1). The
+    // folds differ only in how two driving bits combine. A bit only one driver
+    // drives takes that driver's value; `both` is where the fold decides.
     const std::uint64_t a_z = ~av & au;
     const std::uint64_t b_z = ~bv & bu;
-    const std::uint64_t eq = ~(av ^ bv) & ~(au ^ bu);
     const std::uint64_t take_b = a_z;
-    const std::uint64_t take_a = ~a_z & (b_z | eq);
-    const std::uint64_t conflict = ~a_z & ~b_z & ~eq;
-    std::uint64_t v = (take_b & bv) | (take_a & av) | conflict;
-    std::uint64_t u = (take_b & bu) | (take_a & au) | conflict;
+    const std::uint64_t take_a = ~a_z & b_z;
+    const std::uint64_t both = ~a_z & ~b_z;
+    std::uint64_t v = 0U;
+    std::uint64_t u = 0U;
+    switch (fold) {
+      case NetResolution::kTriState: {
+        // LRM 6.6.1 Table 6-2: equal drivers pass through, a 0/1 conflict is X.
+        const std::uint64_t eq = ~(av ^ bv) & ~(au ^ bu);
+        const std::uint64_t pass = both & eq;
+        const std::uint64_t conflict = both & ~eq;
+        v = (take_b & bv) | ((take_a | pass) & av) | conflict;
+        u = (take_b & bu) | ((take_a | pass) & au) | conflict;
+        break;
+      }
+      case NetResolution::kWiredAnd: {
+        // LRM 6.6.3 Table 6-3: any 0 wins, else X dominates, else both drive 1.
+        const std::uint64_t any_zero = (~av & ~au) | (~bv & ~bu);
+        const std::uint64_t any_x = (av & au) | (bv & bu);
+        const std::uint64_t x_bits = both & ~any_zero & any_x;
+        const std::uint64_t one_bits = both & ~any_zero & ~any_x;
+        v = (take_b & bv) | (take_a & av) | x_bits | one_bits;
+        u = (take_b & bu) | (take_a & au) | x_bits;
+        break;
+      }
+      case NetResolution::kWiredOr: {
+        // LRM 6.6.3 Table 6-4: any 1 wins, else X dominates, else both drive 0.
+        const std::uint64_t any_one = (av & ~au) | (bv & ~bu);
+        const std::uint64_t any_x = (av & au) | (bv & bu);
+        const std::uint64_t x_bits = both & ~any_one & any_x;
+        const std::uint64_t one_bits = both & any_one;
+        v = (take_b & bv) | (take_a & av) | one_bits | x_bits;
+        u = (take_b & bu) | (take_a & au) | x_bits;
+        break;
+      }
+    }
     if (w + 1U == words) {
       v &= top_mask;
       u &= top_mask;

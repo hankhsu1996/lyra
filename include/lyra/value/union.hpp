@@ -133,10 +133,10 @@ class Union {
         data_, other.data_);
   }
 
-  // LRM 6.6.1 Table 6-2 tri-state resolution over the active member. LRM 6.7.1
-  // admits an unpacked union as a net's data type when every member is itself
-  // valid for a net, so a union net resolves its drivers like any other -- as
-  // long as they agree on which member they drive.
+  // Net resolution over the active member under the fold `fold` names
+  // (LRM 6.6). LRM 6.7.1 admits an unpacked union as a net's data type when
+  // every member is itself valid for a net, so a union net resolves its drivers
+  // like any other when they agree on which member they drive.
   //
   // They need not. Two contributions may nominally carry different members, and
   // one of those cases is ordinary: a contribution that drives nothing is
@@ -152,7 +152,8 @@ class Union {
   // defined bit space the two overlay in. The design is relying on something
   // the standard declines to define, so this reports that rather than inventing
   // a value.
-  [[nodiscard]] auto ResolveTriState(const Union& other) const -> Union {
+  [[nodiscard]] auto ResolveNet(const Union& other, NetResolution fold) const
+      -> Union {
     if (data_.index() != other.data_.index()) {
       if (IsBitIdentical(HighImpedanceLike(*this))) {
         return other;
@@ -171,8 +172,8 @@ class Union {
       ((std::get_if<I>(&data_) == nullptr
             ? void()
             : void(resolved.data_.template emplace<I>(
-                  std::get_if<I>(&data_)->ResolveTriState(
-                      *std::get_if<I>(&other.data_))))),
+                  std::get_if<I>(&data_)->ResolveNet(
+                      *std::get_if<I>(&other.data_), fold)))),
        ...);
     }(std::index_sequence_for<Ts...>{});
     return resolved;

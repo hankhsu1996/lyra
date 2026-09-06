@@ -61,7 +61,8 @@ auto RuntimeValueBitIdentical(const RuntimeValue& a, const RuntimeValue& b)
       a.value);
 }
 
-auto RuntimeValueResolveTriState(const RuntimeValue& a, const RuntimeValue& b)
+auto RuntimeValueResolveNet(
+    const RuntimeValue& a, const RuntimeValue& b, NetResolution fold)
     -> RuntimeValue {
   SameDomain(a, b);
   return std::visit(
@@ -69,10 +70,10 @@ auto RuntimeValueResolveTriState(const RuntimeValue& a, const RuntimeValue& b)
         using T = std::decay_t<decltype(lhs)>;
         if constexpr (NetResolvable<T>) {
           return RuntimeValue{
-              .value = lhs.ResolveTriState(std::get<T>(b.value))};
+              .value = lhs.ResolveNet(std::get<T>(b.value), fold)};
         } else {
           throw InternalError(
-              "RuntimeValue::ResolveTriState: this domain is not valid for a "
+              "RuntimeValue::ResolveNet: this domain is not valid for a "
               "net (LRM 6.7.1), so nothing should have attached a driver to "
               "it");
         }

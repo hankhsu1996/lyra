@@ -13,6 +13,7 @@
 #include "lyra/backend/cpp/render_stmt.hpp"
 #include "lyra/backend/cpp/render_type.hpp"
 #include "lyra/backend/cpp/scope_view.hpp"
+#include "lyra/base/overloaded.hpp"
 #include "lyra/mir/class.hpp"
 #include "lyra/mir/class_ref.hpp"
 #include "lyra/mir/compilation_unit.hpp"
@@ -23,16 +24,26 @@ namespace lyra::backend::cpp {
 namespace {
 
 // A field declaration is (name, type): the type carries the target storage
-// form, the name the source identifier. Per-field construction state -- a
-// cell's declared representation, its initial value -- arrives as ordinary MIR
-// statements in the constructor body; render never composes it here from type
-// payload. The field value-initializes; an integral cell's declared
-// representation is established by its first store.
+// form, the name the source identifier. Mutable per-field state -- a cell's
+// declared representation, its initial value -- arrives as ordinary MIR
+// statements in the constructor body, not from type payload here. The field
+// value-initializes, except a net, whose fold (LRM 6.6) is a fixed structural
+// property the type names and the runtime net carries as data, so it is passed
+// to the net's constructor here rather than established by a later store.
 auto RenderField(
     const mir::CompilationUnit& unit, const mir::FieldDecl& field,
     std::size_t indent) -> std::string {
   const std::string type = RenderTypeAsCpp(unit, field.type);
-  return std::format("{}{} {}{{}};\n", Indent(indent), type, field.name);
+  const std::string init =
+      unit.types.Get(field.type)
+          .Visit(
+              Overloaded{
+                  [](const mir::ResolvedType& net) -> std::string {
+                    return std::format(
+                        "{{{}}}", NetResolutionCppLiteral(net.resolution));
+                  },
+                  [](const auto&) -> std::string { return "{}"; }});
+  return std::format("{}{} {}{};\n", Indent(indent), type, field.name, init);
 }
 
 // The value-init field declarations of any field-bearing storage -- a class's

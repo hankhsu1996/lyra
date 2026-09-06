@@ -56,8 +56,8 @@ auto RuntimeUnion::CaseEqual(const RuntimeUnion& other) const -> PackedArray {
   return RuntimeValueCaseEqual(active_.front(), other.active_.front());
 }
 
-auto RuntimeUnion::ResolveTriState(const RuntimeUnion& other) const
-    -> RuntimeUnion {
+auto RuntimeUnion::ResolveNet(
+    const RuntimeUnion& other, NetResolution fold) const -> RuntimeUnion {
   if (active_index_ != other.active_index_) {
     if (IsBitIdentical(HighImpedanceLike(*this))) {
       return other;
@@ -72,7 +72,7 @@ auto RuntimeUnion::ResolveTriState(const RuntimeUnion& other) const
   }
   return RuntimeUnion{
       active_index_,
-      RuntimeValueResolveTriState(active_.front(), other.active_.front())};
+      RuntimeValueResolveNet(active_.front(), other.active_.front(), fold)};
 }
 
 auto RuntimeUnion::HighImpedanceLike(const RuntimeUnion& prototype)

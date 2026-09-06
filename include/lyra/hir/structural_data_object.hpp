@@ -19,8 +19,11 @@ struct StructuralDataObjectId {
 };
 
 // The net type of a net data object (LRM 6.6): it fixes how the net's drivers
-// resolve. `wire` and `tri` share one resolution.
-enum class NetType : std::uint8_t { kWire, kTri };
+// resolve. `wire` and `tri` share the tri-state resolution; `wand` and `triand`
+// share the wired-and resolution, and `wor` and `trior` the wired-or one
+// (LRM 6.6.3). The source spelling is kept, and the fold it names is derived
+// where the net type is translated.
+enum class NetType : std::uint8_t { kWire, kTri, kWand, kTriand, kWor, kTrior };
 
 // Whether writing through a `ref` port's internal name is permitted
 // (LRM 23.3.3.2).

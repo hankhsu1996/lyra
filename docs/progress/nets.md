@@ -78,8 +78,11 @@ This workstream reasons from these and does not restate them:
 - [ ] N4 -- A single-driver net type (`uwire`) reports a diagnostic when more than one driver
       attaches, naming each driver's source. The constraint is on the number of attached drivers,
       not on any current value.
-- [ ] N5 -- The wired-logic net types resolve under their own truth tables: `wand` / `triand` by
-      and-resolution and `wor` / `trior` by or-resolution (LRM 6.6.3).
+- [x] N5 -- The wired-logic net types resolve under their own truth tables (LRM 6.6.3): `wand` /
+      `triand` by and-resolution, where any driver at 0 forces the bit to 0, and `wor` / `trior` by
+      or-resolution, where any driver at 1 forces it to 1. High impedance is the identity of either
+      fold, so a driver holding a bit at z leaves it to the others and an undriven net reads z, and
+      the fold reaches an unpacked-aggregate net by resolving each element. Both backends run it.
 - [ ] N6 -- Drive strength on continuous assignments and resolution by strength (LRM 28): a
       contribution carries a drive-0 / drive-1 strength, and stronger drivers dominate weaker ones.
 - [ ] N7 -- Pull and supply nets (`tri0` / `tri1` / `supply0` / `supply1`) behave as built-in,

@@ -98,10 +98,9 @@ class MemberStorage {
       ActivationValueCell<value::RuntimeUnpackedArray>,
       ActivationValueCell<value::RuntimeQueue>,
       ActivationValueCell<value::RuntimeAssociativeArray>,
-      ResolvedNet<value::PackedArray, WireResolver>,
-      ResolvedNet<value::RuntimeTuple, WireResolver>,
-      ResolvedNet<value::RuntimeUnion, WireResolver>,
-      ResolvedNet<value::RuntimeUnpackedArray, WireResolver>>
+      ResolvedNet<value::PackedArray>, ResolvedNet<value::RuntimeTuple>,
+      ResolvedNet<value::RuntimeUnion>,
+      ResolvedNet<value::RuntimeUnpackedArray>>
       object_;
 };
 

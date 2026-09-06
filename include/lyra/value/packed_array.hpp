@@ -420,12 +420,14 @@ class PackedArray {
   // agree on survives, and every other bit becomes x.
   [[nodiscard]] auto MergeConditional(const PackedArray& other) const
       -> PackedArray;
-  // LRM 6.6.1 Table 6-2 tri-state resolution of two driver contributions: Z
-  // (the resolution identity) defers to the other, equal drivers pass through,
-  // and a 0/1 conflict yields X. Associative and commutative, so a net folds
-  // its drivers in any order.
-  [[nodiscard]] auto ResolveTriState(const PackedArray& other) const
-      -> PackedArray;
+  // Resolution of two driver contributions under the truth table `fold` names:
+  // tri-state (LRM 6.6.1 Table 6-2), wired-and (LRM 6.6.3 Table 6-3), or
+  // wired-or (Table 6-4). Z is every fold's identity and defers to the other
+  // driver; tri-state passes equal drivers through and yields X on a 0/1
+  // conflict, wired-and lets any 0 win, wired-or any 1. Associative and
+  // commutative, so a net folds its drivers in any order.
+  [[nodiscard]] auto ResolveNet(
+      const PackedArray& other, NetResolution fold) const -> PackedArray;
 
   // Low-level bit-level primitives. `ExtractBits` reads `bit_width` contiguous
   // bits starting at `lsb_bit`. `AssignSlice` writes those bits with the LRM

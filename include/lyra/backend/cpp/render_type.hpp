@@ -1,12 +1,19 @@
 #pragma once
 
 #include <string>
+#include <string_view>
 
 #include "lyra/mir/class_ref.hpp"
 #include "lyra/mir/compilation_unit.hpp"
 #include "lyra/mir/type.hpp"
 
 namespace lyra::backend::cpp {
+
+// The `lyra::support::NetResolution` enumerator naming a net's fold (LRM 6.6),
+// as a C++ literal. A net member is value-initialized with it, so the runtime
+// net carries its fold as data rather than as a type parameter.
+[[nodiscard]] auto NetResolutionCppLiteral(mir::NetResolution resolution)
+    -> std::string_view;
 
 // Renders a MIR type as the corresponding C++ type expression. An enum is a
 // nominal type over a base integral, so its value renders as that base --

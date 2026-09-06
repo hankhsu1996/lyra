@@ -407,14 +407,14 @@ class UnpackedArray {
     return true;
   }
 
-  // LRM 6.6.1 Table 6-2 tri-state resolution, applied element-wise. LRM 6.7.1
-  // defines a net over an unpacked array as one net composed of its elements'
-  // bits, so folding two contributions is folding each element pair.
-  [[nodiscard]] auto ResolveTriState(const UnpackedArray& other) const
-      -> UnpackedArray {
+  // Net resolution applied element-wise under the fold `fold` names (LRM 6.6).
+  // LRM 6.7.1 defines a net over an unpacked array as one net composed of its
+  // elements' bits, so folding two contributions is folding each element pair.
+  [[nodiscard]] auto ResolveNet(
+      const UnpackedArray& other, NetResolution fold) const -> UnpackedArray {
     UnpackedArray resolved = *this;
     for (std::size_t i = 0; i < resolved.data_.size(); ++i) {
-      resolved.data_[i] = resolved.data_[i].ResolveTriState(other.data_[i]);
+      resolved.data_[i] = resolved.data_[i].ResolveNet(other.data_[i], fold);
     }
     return resolved;
   }

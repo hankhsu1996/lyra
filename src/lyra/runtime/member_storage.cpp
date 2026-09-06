@@ -34,21 +34,23 @@ auto Read(const void* handle) -> const T& {
 // in. LRM 6.7.1 admits a 4-state integral net and a fixed-size unpacked array,
 // struct, or union of net-valid elements, and nothing else; a domain outside
 // that set is one the front end should have rejected as a net's data type.
-template <typename Resolver, typename Object>
-void EmplaceResolvedNet(Object& object, support::ValueDomain domain) {
+template <typename Object>
+void EmplaceResolvedNet(
+    Object& object, support::ValueDomain domain,
+    support::NetResolution resolution) {
   switch (domain) {
     case support::ValueDomain::kPacked:
-      object.template emplace<ResolvedNet<value::PackedArray, Resolver>>();
+      object.template emplace<ResolvedNet<value::PackedArray>>(resolution);
       return;
     case support::ValueDomain::kTuple:
-      object.template emplace<ResolvedNet<value::RuntimeTuple, Resolver>>();
+      object.template emplace<ResolvedNet<value::RuntimeTuple>>(resolution);
       return;
     case support::ValueDomain::kUnion:
-      object.template emplace<ResolvedNet<value::RuntimeUnion, Resolver>>();
+      object.template emplace<ResolvedNet<value::RuntimeUnion>>(resolution);
       return;
     case support::ValueDomain::kUnpackedArray:
-      object.template emplace<
-          ResolvedNet<value::RuntimeUnpackedArray, Resolver>>();
+      object.template emplace<ResolvedNet<value::RuntimeUnpackedArray>>(
+          resolution);
       return;
     case support::ValueDomain::kString:
     case support::ValueDomain::kReal:
@@ -192,12 +194,7 @@ MemberStorage::MemberStorage(MemberStorageDescriptor descriptor) {
             throw InternalError("MemberStorage: unknown value domain");
           },
           [this](const ResolvedNetStorage& net) {
-            switch (net.resolution) {
-              case support::NetResolution::kTriState:
-                EmplaceResolvedNet<WireResolver>(object_, net.domain);
-                return;
-            }
-            throw InternalError("MemberStorage: unknown net resolution");
+            EmplaceResolvedNet(object_, net.domain, net.resolution);
           },
           [this](const InlineValueStorage& inline_value) {
             switch (inline_value.domain) {
@@ -277,7 +274,7 @@ auto MemberStorage::HeldValue() -> void* {
           // A net's value is the fold of its drivers' contributions, recomputed
           // as they change, so it is read through the node's own access for the
           // same reason a cell's contents are.
-          []<typename T, typename R>(ResolvedNet<T, R>&) -> void* {
+          []<typename T>(ResolvedNet<T>&) -> void* {
             throw InternalError(
                 "MemberStorage: a net's resolved value is read through its own "
                 "access, never handed back in place");
@@ -317,7 +314,7 @@ void MemberStorage::AdoptFrom(void* handle) {
           // A net is never written, only driven (LRM 6.5): what reaches it is
           // a driver updating its own contribution, after which the net
           // re-resolves.
-          []<typename T, typename R>(ResolvedNet<T, R>&) {
+          []<typename T>(ResolvedNet<T>&) {
             throw InternalError(
                 "MemberStorage: a net takes no store; a value reaches it only "
                 "through one of its drivers");

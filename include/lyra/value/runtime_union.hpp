@@ -55,19 +55,19 @@ class RuntimeUnion {
   // bit-for-bit identical value.
   [[nodiscard]] auto CaseEqual(const RuntimeUnion& other) const -> PackedArray;
 
-  // LRM 6.6.1 Table 6-2 tri-state resolution. Two contributions carrying the
-  // same member fold that member; one that is not driving is all-high-impedance
-  // and defers to the other whichever member it nominally carries, which is
-  // what makes a single driver of any member exact while the fold starts from
-  // the first member (LRM 7.3).
+  // Net resolution under the fold `fold` names (LRM 6.6). Two contributions
+  // carrying the same member fold that member; one that is not driving is
+  // all-high-impedance and defers to the other whichever member it nominally
+  // carries, which is what makes a single driver of any member exact while the
+  // fold starts from the first member (LRM 7.3).
   //
   // Two contributions both driving different members has no answer: LRM 7.3
   // gives an unpacked union no required storage representation and, unlike a
   // packed union, no reading back of a member written as another, so there is
   // no defined bit space the two overlay in. That is reported rather than
   // answered with an invented value.
-  [[nodiscard]] auto ResolveTriState(const RuntimeUnion& other) const
-      -> RuntimeUnion;
+  [[nodiscard]] auto ResolveNet(
+      const RuntimeUnion& other, NetResolution fold) const -> RuntimeUnion;
 
   // The all-high-impedance value at `prototype`'s shape: the prototype's own
   // active member carrying that member's high-impedance value (LRM 6.6.1).

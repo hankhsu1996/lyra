@@ -194,6 +194,10 @@ class MirDumper {
     switch (resolution) {
       case NetResolution::kTriState:
         return "tri_state";
+      case NetResolution::kWiredAnd:
+        return "wired_and";
+      case NetResolution::kWiredOr:
+        return "wired_or";
     }
     throw InternalError("FormatNetResolution: unknown NetResolution");
   }

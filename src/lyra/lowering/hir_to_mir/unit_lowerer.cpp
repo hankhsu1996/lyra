@@ -199,13 +199,21 @@ auto PopulatePackageStaticVariables(
   return {};
 }
 
-// The fold a net's declared net type names (LRM 6.6). `wire` and `tri` differ
-// only in source spelling; both resolve under the tri-state truth table.
+// The fold a net's declared net type names (LRM 6.6). Each pair differs only in
+// source spelling: `wire` / `tri` resolve under the tri-state truth table,
+// `wand` / `triand` under wired-and, and `wor` / `trior` under wired-or
+// (LRM 6.6.3).
 auto TranslateNetResolution(hir::NetType net_type) -> mir::NetResolution {
   switch (net_type) {
     case hir::NetType::kWire:
     case hir::NetType::kTri:
       return mir::NetResolution::kTriState;
+    case hir::NetType::kWand:
+    case hir::NetType::kTriand:
+      return mir::NetResolution::kWiredAnd;
+    case hir::NetType::kWor:
+    case hir::NetType::kTrior:
+      return mir::NetResolution::kWiredOr;
   }
   throw InternalError("TranslateNetResolution: unknown NetType");
 }

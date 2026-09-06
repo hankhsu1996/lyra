@@ -14,6 +14,6 @@ namespace lyra::support {
 // Two sides name it, which is why it lives beside them rather than in either. A
 // backend classifies a net's type into a fold; the runtime realizes storage
 // that resolves under it.
-enum class NetResolution : std::uint8_t { kTriState };
+enum class NetResolution : std::uint8_t { kTriState, kWiredAnd, kWiredOr };
 
 }  // namespace lyra::support

@@ -303,8 +303,9 @@ struct TaggedUnionType {
 };
 
 // How a net folds its drivers' contributions into its value (LRM 6.6), carried
-// down from the net's declared net type.
-enum class NetResolution : std::uint8_t { kTriState };
+// down from the net's declared net type. Tri-state for `wire` / `tri`,
+// wired-and for `wand` / `triand`, wired-or for `wor` / `trior` (LRM 6.6.3).
+enum class NetResolution : std::uint8_t { kTriState, kWiredAnd, kWiredOr };
 
 // The sealed endpoint of a cross-instance reference -- a resolution node
 // wrapping the referenced value type.

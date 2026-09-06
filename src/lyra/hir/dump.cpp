@@ -37,7 +37,21 @@ namespace lyra::hir {
 namespace {
 
 auto NetTypeLabel(NetType net_type) -> std::string_view {
-  return net_type == NetType::kWire ? "wire" : "tri";
+  switch (net_type) {
+    case NetType::kWire:
+      return "wire";
+    case NetType::kTri:
+      return "tri";
+    case NetType::kWand:
+      return "wand";
+    case NetType::kTriand:
+      return "triand";
+    case NetType::kWor:
+      return "wor";
+    case NetType::kTrior:
+      return "trior";
+  }
+  throw InternalError("NetTypeLabel: unknown NetType");
 }
 
 auto ForkJoinModeLabel(JoinMode mode) -> std::string_view {

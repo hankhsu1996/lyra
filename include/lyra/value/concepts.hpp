@@ -4,6 +4,8 @@
 #include <cstddef>
 #include <optional>
 
+#include "lyra/value/net_resolution.hpp"
+
 // Runtime value-layer concept catalogue. Each concept names a contract that a
 // `lyra::value::*` type claims via `static_assert(<Concept><T>)` in its own
 // header, hard-pinning the signature shape at compile time so any future
@@ -95,18 +97,20 @@ concept WildcardComparable = LyraValue<T> && requires(const T& a, const T& b) {
 // or a fixed-size unpacked array / struct / union whose every element is itself
 // such a type, so a net is composed entirely of 4-state bits and combines per
 // bit. The recursion is what this concept states: an aggregate is
-// net-resolvable exactly when its elements are, and it answers both net
-// questions by delegating to them. `ResolveTriState` folds one driver's
-// contribution into another (LRM 6.6.1 Table 6-2); `HighImpedanceLike` yields
-// the all-`z` value at the prototype's shape, which is the fold's identity and
-// therefore the value of a position no driver drives. A dynamically sized
-// container is excluded by "fixed-size", and `String` / `Real` by "4-state
-// bits".
+// net-resolvable exactly when its elements are, and it answers every net
+// question by delegating to them. `ResolveNet` folds one driver's contribution
+// into another under the truth table its `NetResolution` names -- tri-state,
+// wired-and, or wired-or (LRM 6.6.1 Table 6-2, LRM 6.6.3 Tables 6-3 and 6-4);
+// `HighImpedanceLike` yields the all-`z` value at the prototype's shape, which
+// is every fold's identity and therefore the value of a position no driver
+// drives. A dynamically sized container is excluded by "fixed-size", and
+// `String` / `Real` by "4-state bits".
 template <typename T>
-concept NetResolvable = LyraValue<T> && requires(const T& a, const T& b) {
-  { a.ResolveTriState(b) } -> std::same_as<T>;
-  { T::HighImpedanceLike(a) } -> std::same_as<T>;
-};
+concept NetResolvable =
+    LyraValue<T> && requires(const T& a, const T& b, NetResolution fold) {
+      { a.ResolveNet(b, fold) } -> std::same_as<T>;
+      { T::HighImpedanceLike(a) } -> std::same_as<T>;
+    };
 
 // LRM 11.4.11: where a conditional operator's condition is ambiguous it selects
 // neither arm, evaluates both, and combines them. A type made of parts that can

@@ -88,14 +88,15 @@ class Tuple {
     }(std::index_sequence_for<Ts...>{});
   }
 
-  // LRM 6.6.1 Table 6-2 tri-state resolution, applied member-wise. LRM 6.7.1
-  // admits an unpacked struct as a net's data type when every member is itself
-  // valid for a net, and it composes a net out of its members' bits, so folding
-  // two contributions is folding each member pair.
-  [[nodiscard]] auto ResolveTriState(const Tuple& other) const -> Tuple {
+  // Net resolution applied member-wise under the fold `fold` names (LRM 6.6).
+  // LRM 6.7.1 admits an unpacked struct as a net's data type when every member
+  // is itself valid for a net, and it composes a net out of its members' bits,
+  // so folding two contributions is folding each member pair.
+  [[nodiscard]] auto ResolveNet(const Tuple& other, NetResolution fold) const
+      -> Tuple {
     return [&]<std::size_t... I>(std::index_sequence<I...>) {
       return Tuple(
-          std::get<I>(data_).ResolveTriState(std::get<I>(other.data_))...);
+          std::get<I>(data_).ResolveNet(std::get<I>(other.data_), fold)...);
     }(std::index_sequence_for<Ts...>{});
   }
 
