@@ -32,11 +32,10 @@ namespace lyra::lowering::hir_to_mir {
 
 namespace {
 
-// Where the value leading a call's arguments comes from, for a callee whose
-// first parameter is one it does not get from the source. The source wrote no
-// expression for it, so it is named by its origin rather than carried as a
-// value: what it evaluates to depends on the block the call is finally emitted
-// into, which is settled after the callee is planned. A callee taking no such
+// Where a callee's first parameter comes from, when it is one the source wrote
+// no expression for. It is named by its origin rather than carried as a value:
+// what it evaluates to depends on the block the call is finally emitted into,
+// which is settled after the callee is planned. A callee taking no such
 // parameter has none of these.
 
 // A scope of this unit, reached by climbing that unit's own layout.
@@ -62,11 +61,24 @@ struct SealedObject {
 using AmbientHandle = std::variant<
     EnclosingScopeReceiver, AmbientRuntimeHandle, CalledObject, SealedObject>;
 
-// The callee is named outright, and `handle`, where the callee takes one,
-// leads the arguments the source wrote. A type-associated function (LRM 8.10)
-// takes none.
+// Whether the value an origin names is the object the callee dispatches on. A
+// scope, a called object, and a sealed endpoint each name one; the engine
+// handle names what every effect entry takes as a parameter.
+auto BindsAsReceiver(const AmbientHandle& handle) -> bool {
+  return std::visit(
+      Overloaded{
+          [](const EnclosingScopeReceiver&) { return true; },
+          [](const CalledObject&) { return true; },
+          [](const SealedObject&) { return true; },
+          [](const AmbientRuntimeHandle&) { return false; }},
+      handle);
+}
+
+// The callee is named outright, and `handle`, where the callee takes one, names
+// what its first parameter binds -- the object it dispatches on, or the engine
+// it runs under. A type-associated function (LRM 8.10) takes neither.
 struct NamedCallee {
-  mir::Callee callee;
+  mir::Direct callee;
   std::optional<AmbientHandle> handle;
 };
 
@@ -120,8 +132,8 @@ auto CanonicalVirtualSlot(
 }
 
 // The target a direct call to another unit's method names. An instance method
-// takes its receiver as the leading argument and a type-associated one takes
-// none (LRM 8.10), which the callee's own declaration answers.
+// dispatches on a receiver and a type-associated one dispatches on nothing
+// (LRM 8.10), which the callee's own declaration answers.
 auto ExternalMethodTargetOf(
     UnitLowerer& unit_lowerer, const hir::ExternalMethodCallee& callee)
     -> mir::DirectTarget {
@@ -139,7 +151,7 @@ auto ExternalMethodTargetOf(
 struct MethodCalleeFacts {
   hir::SubroutineKind kind = hir::SubroutineKind::kFunction;
   std::vector<CalleeFormal> formals;
-  mir::Callee direct;
+  mir::Direct direct;
   std::optional<mir::VirtualSlot> slot;
 };
 
@@ -323,9 +335,8 @@ struct EmittedCall {
   std::vector<CompletionWriteback> writebacks;
 };
 
-// A callee once its operands exist: how the call names it, and the value that
-// leads the arguments the source wrote. A dispatched call has no leading value,
-// its receiver riding the callee itself.
+// A callee once its operands exist: how the call names it, and the engine
+// handle leading the arguments the source wrote where the callee takes one.
 struct ResolvedCallee {
   mir::Callee callee;
   std::optional<mir::ExprId> leading;
@@ -429,8 +440,17 @@ auto EmitSubroutineCall(
             if (!handle_or) {
               return std::unexpected(std::move(handle_or.error()));
             }
+            if (!BindsAsReceiver(*named.handle)) {
+              return ResolvedCallee{
+                  .callee = named.callee, .leading = *handle_or};
+            }
             return ResolvedCallee{
-                .callee = named.callee, .leading = *handle_or};
+                .callee =
+                    mir::Direct{
+                        .target = named.callee.target,
+                        .receiver = *handle_or,
+                        .qualification = named.callee.qualification},
+                .leading = std::nullopt};
           },
           [&](const DispatchedCallee& dispatched)
               -> diag::Result<ResolvedCallee> {

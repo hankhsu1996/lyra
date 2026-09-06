@@ -252,8 +252,9 @@ auto BuildHierarchicalNameExpr(Lowerer& lowerer, const WalkFrame& frame)
               mir::CallExpr{
                   .callee =
                       mir::Direct{
-                          .target = support::BuiltinFn::kHierarchicalPath},
-                  .arguments = {receiver_id}},
+                          .target = support::BuiltinFn::kHierarchicalPath,
+                          .receiver = receiver_id},
+                  .arguments = {}},
           .type = unit.builtins.string});
 }
 
@@ -545,8 +546,10 @@ auto BuildRuntimeFormatCallExpr(
           .data =
               mir::CallExpr{
                   .callee =
-                      mir::Direct{.target = support::BuiltinFn::kTimeFormat},
-                  .arguments = {runtime_id}},
+                      mir::Direct{
+                          .target = support::BuiltinFn::kTimeFormat,
+                          .receiver = runtime_id},
+                  .arguments = {}},
           .type = unit.builtins.time_format});
   const mir::ExprId time_unit_power = BuildIntLiteral(
       unit, block, static_cast<std::int64_t>(lowerer.Resolution().unit_power));

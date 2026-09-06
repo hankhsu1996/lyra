@@ -13,15 +13,16 @@ namespace lyra::lowering::hir_to_mir {
 
 namespace {
 
-// The operand a call in target position reaches its storage through, when
-// `expr` is such a call. Two kinds qualify and both name it first: a guard,
-// which yields the value it guards, and an access, whose receiver holds the
-// part it reaches. A walk following where storage lives passes through either.
-auto ReceiverOperand(const mir::Expr& expr) -> const mir::ExprId* {
+// The object a call in target position reaches its storage through, when `expr`
+// is such a call. Two kinds qualify: a guard, which yields the value it guards,
+// and an access, whose receiver holds the part it reaches. A walk following
+// where storage lives passes through either.
+auto ReachingReceiver(const mir::Expr& expr) -> std::optional<mir::ExprId> {
   const auto* call = std::get_if<mir::CallExpr>(&expr.data);
-  if (call == nullptr || call->arguments.empty()) return nullptr;
-  if (!mir::ReachesThroughReceiver(call->callee)) return nullptr;
-  return &call->arguments.front();
+  if (call == nullptr || !mir::ReachesThroughReceiver(call->callee)) {
+    return std::nullopt;
+  }
+  return mir::CalleeReceiver(call->callee);
 }
 
 }  // namespace
@@ -41,7 +42,7 @@ auto FindLhsRootId(
     // Every step above the root reaches its storage through the value it is
     // taken from, so the walk is one step per node until something is not a
     // step at all.
-    if (const mir::ExprId* receiver = ReceiverOperand(expr)) {
+    if (const std::optional<mir::ExprId> receiver = ReachingReceiver(expr)) {
       lhs_id = *receiver;
       continue;
     }
@@ -71,11 +72,11 @@ auto ReplaceLhsRoot(
     return block.exprs.Add(
         mir::Expr{.data = std::move(rebuilt), .type = result_ty});
   }
-  if (ReceiverOperand(expr) != nullptr) {
+  if (const std::optional<mir::ExprId> receiver = ReachingReceiver(expr)) {
     auto rebuilt = std::get<mir::CallExpr>(expr.data);
     const mir::TypeId result_ty = expr.type;
-    rebuilt.arguments.front() =
-        ReplaceLhsRoot(unit, block, rebuilt.arguments.front(), root_id);
+    std::get<mir::Direct>(rebuilt.callee).receiver =
+        ReplaceLhsRoot(unit, block, *receiver, root_id);
     return block.exprs.Add(
         mir::Expr{.data = std::move(rebuilt), .type = result_ty});
   }
@@ -111,8 +112,10 @@ auto StoragePlaceOf(
           .data =
               mir::CallExpr{
                   .callee =
-                      mir::Direct{.target = support::BuiltinFn::kOpenForWrite},
-                  .arguments = {root_id}},
+                      mir::Direct{
+                          .target = support::BuiltinFn::kOpenForWrite,
+                          .receiver = root_id},
+                  .arguments = {}},
           .type = unit.types.Intern(
               mir::Type{mir::PointerType{
                   .pointee = value_type,
@@ -158,8 +161,11 @@ auto BuildStoreExpr(
     return mir::Expr{
         .data =
             mir::CallExpr{
-                .callee = mir::Direct{.target = support::BuiltinFn::kStore},
-                .arguments = {root_id, rhs_id}},
+                .callee =
+                    mir::Direct{
+                        .target = support::BuiltinFn::kStore,
+                        .receiver = root_id},
+                .arguments = {rhs_id}},
         .type = unit.builtins.void_type};
   }
 

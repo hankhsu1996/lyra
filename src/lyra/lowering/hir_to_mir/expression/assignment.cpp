@@ -71,18 +71,25 @@ auto TargetOutlivesDeferredUpdate(const mir::Block& block, mir::ExprId expr_id)
           [&](const mir::DerefExpr& d) {
             return TargetOutlivesDeferredUpdate(block, d.pointer);
           },
-          // A join stands for the destructuring LHS it came from, which writes
-          // each run through that run's own root, so the whole outlives the
-          // update exactly when every run does. Any other call in target
-          // position names a place through its receiver, its first argument.
+          // A call in target position names a place through the object it
+          // dispatches on. A join stands for the destructuring LHS it came
+          // from, which writes each run through that run's own root, so the
+          // whole outlives the update exactly when every run does.
           [&](const mir::CallExpr& c) {
-            if (mir::DirectBuiltinFn(c) == support::BuiltinFn::kConcat) {
-              return std::ranges::all_of(c.arguments, [&](mir::ExprId op) {
-                return TargetOutlivesDeferredUpdate(block, op);
-              });
+            const std::optional<mir::ExprId> receiver =
+                mir::CalleeReceiver(c.callee);
+            if (!receiver.has_value()) {
+              return false;
             }
-            return !c.arguments.empty() &&
-                   TargetOutlivesDeferredUpdate(block, c.arguments[0]);
+            if (!TargetOutlivesDeferredUpdate(block, *receiver)) {
+              return false;
+            }
+            if (mir::DirectBuiltinFn(c) != support::BuiltinFn::kConcat) {
+              return true;
+            }
+            return std::ranges::all_of(c.arguments, [&](mir::ExprId op) {
+              return TargetOutlivesDeferredUpdate(block, op);
+            });
           },
           [](const auto&) -> bool {
             throw InternalError(
@@ -114,20 +121,26 @@ auto CloneLhsSelectorChainOntoRef(
   const auto& outer_expr = outer_block.exprs.Get(outer_id);
   return std::visit(
       Overloaded{
-          // An access above the root: its receiver is rebuilt onto the
-          // body-side
-          // reference and its coordinates are snapshotted by value, so the body
-          // writes the part the statement named at submit time. Copy the call
-          // up front -- the recursion and snapshots below append to
-          // `outer_block`, which can reallocate and dangle `outer_expr`.
+          // An access above the root: the object it dispatches on is rebuilt
+          // onto the body-side reference and its coordinates are snapshotted by
+          // value, so the body writes the part the statement named at submit
+          // time. Copy the call up front -- the recursion and snapshots below
+          // append to `outer_block`, which can reallocate and dangle
+          // `outer_expr`.
           [&](const mir::CallExpr& c) -> mir::ExprId {
             const mir::TypeId type = outer_expr.type;
             mir::CallExpr rebuilt = c;
-            rebuilt.arguments.front() = CloneLhsSelectorChainOntoRef(
-                unit_lowerer, outer_frame, closure, rebuilt.arguments.front(),
-                root_id, captured_root);
-            for (mir::ExprId& coordinate :
-                 std::span(rebuilt.arguments).subspan(1)) {
+            auto* callee = std::get_if<mir::Direct>(&rebuilt.callee);
+            if (callee == nullptr || !callee->receiver.has_value()) {
+              throw InternalError(
+                  "CloneLhsSelectorChainOntoRef: a selector above the root "
+                  "reaches it through the object it dispatches on, and this "
+                  "call names none -- please report this as a bug");
+            }
+            callee->receiver = CloneLhsSelectorChainOntoRef(
+                unit_lowerer, outer_frame, closure, *callee->receiver, root_id,
+                captured_root);
+            for (mir::ExprId& coordinate : rebuilt.arguments) {
               coordinate = SnapshotIntoClosure(
                   unit_lowerer, outer_frame, closure, coordinate,
                   "_lyra_nba_arg");

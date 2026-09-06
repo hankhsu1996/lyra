@@ -115,8 +115,10 @@ auto CaseEq(
           .data =
               mir::CallExpr{
                   .callee =
-                      mir::Direct{.target = support::BuiltinFn::kCaseEqual},
-                  .arguments = {lhs, rhs}},
+                      mir::Direct{
+                          .target = support::BuiltinFn::kCaseEqual,
+                          .receiver = lhs},
+                  .arguments = {rhs}},
           .type = bit_ty});
 }
 

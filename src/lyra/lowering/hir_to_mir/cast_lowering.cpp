@@ -80,8 +80,11 @@ auto MakeRoundCall(const mir::CompilationUnit& unit, mir::ExprId operand_id)
   return mir::Expr{
       .data =
           mir::CallExpr{
-              .callee = mir::Direct{.target = support::BuiltinFn::kRound},
-              .arguments = {operand_id}},
+              .callee =
+                  mir::Direct{
+                      .target = support::BuiltinFn::kRound,
+                      .receiver = operand_id},
+              .arguments = {}},
       .type = unit.builtins.machine_int64};
 }
 
@@ -147,8 +150,11 @@ auto MakeToInt64Call(const mir::CompilationUnit& unit, mir::ExprId operand_id)
   return mir::Expr{
       .data =
           mir::CallExpr{
-              .callee = mir::Direct{.target = support::BuiltinFn::kToInt64},
-              .arguments = {operand_id}},
+              .callee =
+                  mir::Direct{
+                      .target = support::BuiltinFn::kToInt64,
+                      .receiver = operand_id},
+              .arguments = {}},
       .type = unit.builtins.machine_int64};
 }
 
@@ -321,8 +327,10 @@ auto BuildValueConversion(
         .data =
             mir::CallExpr{
                 .callee =
-                    mir::Direct{.target = support::BuiltinFn::kConformBound},
-                .arguments = {operand_id, bound_id}},
+                    mir::Direct{
+                        .target = support::BuiltinFn::kConformBound,
+                        .receiver = operand_id},
+                .arguments = {bound_id}},
         .type = dst_type};
   }
 

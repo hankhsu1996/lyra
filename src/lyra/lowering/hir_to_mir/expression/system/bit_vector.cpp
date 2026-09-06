@@ -141,8 +141,11 @@ auto LowerUnknownTest(Lowerer& lowerer, WalkFrame frame, hir::ExprId value)
   return mir::Expr{
       .data =
           mir::CallExpr{
-              .callee = mir::Direct{.target = support::BuiltinFn::kIsUnknown},
-              .arguments = {body.exprs.Add(*std::move(operand_or))}},
+              .callee =
+                  mir::Direct{
+                      .target = support::BuiltinFn::kIsUnknown,
+                      .receiver = body.exprs.Add(*std::move(operand_or))},
+              .arguments = {}},
       .type = lowerer.Owner().Unit().builtins.bit1};
 }
 
@@ -195,8 +198,11 @@ auto LowerBitVectorSystemSubroutineCall(
   mir::Expr count{
       .data =
           mir::CallExpr{
-              .callee = mir::Direct{.target = support::BuiltinFn::kCountBits},
-              .arguments = {operand_id, control_id}},
+              .callee =
+                  mir::Direct{
+                      .target = support::BuiltinFn::kCountBits,
+                      .receiver = operand_id},
+              .arguments = {control_id}},
       .type = unit.builtins.int_type};
 
   const std::optional<mir::BinaryOp> op = ReadingComparison(info.reading);

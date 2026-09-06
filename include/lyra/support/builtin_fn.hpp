@@ -140,10 +140,10 @@ enum class BuiltinFn : std::uint16_t {
   kClog2,
   // LRM 20.8.2 Table 20-4: real-valued mathematics, each entry cross-listed
   // with the C standard math library function whose behavior the standard
-  // defines it to have. Instance methods on the real receiver (`args[0]`),
-  // with the two-argument forms taking the second operand after it. The
-  // table's `$pow` row has no entry of its own: it asks for exactly what LRM
-  // 11.4.3 `**` asks for, and one entry serves both spellings.
+  // defines it to have. Each dispatches on the real it operates on, and the
+  // two-argument forms carry the second operand as an argument. The table's
+  // `$pow` row has no entry of its own: it asks for exactly what LRM 11.4.3
+  // `**` asks for, and one entry serves both spellings.
   kLn,
   kLog10,
   kExp,
@@ -432,15 +432,15 @@ enum class BuiltinFn : std::uint16_t {
   kStop,
   // Ancestor-scope resolution for a hierarchical reference whose route starts
   // above the referrer (LRM 23.6 / 23.8). Called once per reference in the
-  // resolve phase against the referrer's own scope handle (`args[0]`).
+  // resolve phase, dispatching on the referrer's own scope handle.
   // `kResolveRoot` climbs to the parent-less `$root` anchor; the descent
   // suffix (`kGetChild` / `kGetSignal`) starts strictly below it.
   // `kResolveVisibleChild` walks the enclosing chain and matches a child by
-  // its canonical instance name and per-axis index (`args[1]`, `args[2]`);
+  // the canonical instance name and per-axis index it carries as arguments;
   // the descent suffix starts below the matched child.
   kResolveRoot,
   kResolveVisibleChild,
-  // The scope handle's runtime ABI, reached on `args[0]`. A constructor
+  // The scope handle's runtime ABI, each entry dispatching on it. A constructor
   // registers a signal by name, looks a signal or child up by name, or hands
   // a freshly-built child to its parent to own. `kRegisterSignal` and
   // `kGetSignal` carry the signal name as a regular argument; `kGetChild`
@@ -491,8 +491,8 @@ enum class BuiltinFn : std::uint16_t {
   // Lifecycle activation registration (LRM 9.2): binds a process body's
   // coroutine to the scope's startup (`kRegisterInitial`) or shutdown
   // (`kRegisterFinal`) lifecycle. Distinct callees, not one tagged call --
-  // initial and final are different registrations. Instance methods on the
-  // scope handle (`args[0]`); the coroutine to register is a regular argument.
+  // initial and final are different registrations. Each dispatches on the
+  // scope handle; the coroutine to register is a regular argument.
   kRegisterInitial,
   kRegisterFinal,
   // The inner step of a value conversion: reading the source out as a machine
@@ -516,7 +516,7 @@ enum class BuiltinFn : std::uint16_t {
   // `kRealValue` reads a `Real` / `ShortReal` out as its machine float;
   // `kStringCStr` borrows a `String` as a NUL-terminated C string valid for the
   // owning string's lifetime; `kChandlePtr` reads a `Chandle` out as the opaque
-  // pointer it carries. Instance methods on the receiver (`args[0]`).
+  // pointer it carries. Each dispatches on the value it reads out of.
   kRealValue,
   kStringCStr,
   kChandlePtr,
@@ -548,9 +548,9 @@ enum class BuiltinFn : std::uint16_t {
   // `kDpiOpenArrayHandle`
   // reads the opaque handle the foreign side receives in place of the actual;
   // `kDpiOpenArrayValue` reads the image back as an SV value shaped like the
-  // prototype it takes (`args[1]`), which is what an `output` / `inout` open
-  // array stores into its actual. Instance methods on the image (`args[0]`),
-  // which the call site builds from the actual before the foreign call.
+  // prototype it carries as an argument, which is what an `output` / `inout`
+  // open array stores into its actual. Each dispatches on the image, which the
+  // call site builds from the actual before the foreign call.
   kDpiOpenArrayHandle,
   kDpiOpenArrayValue,
   // Runs a DPI-C import task's foreign call (LRM 35.5.2) on a fiber whose
@@ -651,9 +651,9 @@ enum class BuiltinFn : std::uint16_t {
   // entries, so the backend renders every operator mechanically: native
   // forms (`+`, `==`, ...) collapse to a single formatter, method forms
   // route through the call path. The shift / power / xnor / wildcard /
-  // case / implication / equivalence ids are instance methods on the
-  // receiver (`args[0]`); the reduction ids likewise take the operand as
-  // `args[0]`. `kFromBool` is a static factory that wraps a host bool
+  // case / implication / equivalence ids dispatch on their left operand,
+  // and the reduction ids likewise dispatch on the operand they fold.
+  // `kFromBool` is a static factory that wraps a host bool
   // into a 1-bit `PackedArray` (used to shape the result of a real /
   // string comparison or logical operator into the LRM 11.3 / 11.4 1-bit
   // integral result type).

@@ -67,8 +67,10 @@ auto EmitFormatThenWrite(
           .data =
               mir::CallExpr{
                   .callee =
-                      mir::Direct{.target = WriteCalleeFor(append_newline)},
-                  .arguments = {files, fd, text}},
+                      mir::Direct{
+                          .target = WriteCalleeFor(append_newline),
+                          .receiver = files},
+                  .arguments = {fd, text}},
           .type = unit.builtins.void_type});
 }
 
@@ -101,8 +103,9 @@ auto LowerStrobeCall(
                 mir::CallExpr{
                     .callee =
                         mir::Direct{
-                            .target = support::BuiltinFn::kCancellationFor},
-                    .arguments = {outer_files, *outer_user_descriptor}},
+                            .target = support::BuiltinFn::kCancellationFor,
+                            .receiver = outer_files},
+                    .arguments = {*outer_user_descriptor}},
             .type = unit.builtins.channel_cancellation});
   }
 
@@ -123,8 +126,10 @@ auto LowerStrobeCall(
             .data =
                 mir::CallExpr{
                     .callee =
-                        mir::Direct{.target = support::BuiltinFn::kIsCancelled},
-                    .arguments = {cancellation}},
+                        mir::Direct{
+                            .target = support::BuiltinFn::kIsCancelled,
+                            .receiver = cancellation},
+                    .arguments = {}},
             .type = unit.builtins.bit1});
     mir::Block guard;
     guard.AppendStmt(mir::ReturnStmt{.value = std::nullopt});
@@ -161,8 +166,10 @@ auto LowerStrobeCall(
       .data =
           mir::CallExpr{
               .callee =
-                  mir::Direct{.target = support::BuiltinFn::kSubmitPostponed},
-              .arguments = {runtime_id, closure_id}},
+                  mir::Direct{
+                      .target = support::BuiltinFn::kSubmitPostponed,
+                      .receiver = runtime_id},
+              .arguments = {closure_id}},
       .type = void_type};
 }
 

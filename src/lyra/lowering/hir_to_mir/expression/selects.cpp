@@ -50,10 +50,9 @@ namespace lyra::lowering::hir_to_mir {
 
 namespace {
 
-// An element read. A write is not a call: it is a descent step on the target's
-// designator, so no write-side access entry exists.
-auto ElementAccessCallee() -> mir::Direct {
-  return mir::Direct{.target = support::BuiltinFn::kElement};
+auto ElementAccessCallee(mir::ExprId receiver) -> mir::Direct {
+  return mir::Direct{
+      .target = support::BuiltinFn::kElement, .receiver = receiver};
 }
 
 auto ProjectedMemberAt(
@@ -78,8 +77,11 @@ auto WrapPackedAsOwned(
   return mir::Expr{
       .data =
           mir::CallExpr{
-              .callee = mir::Direct{.target = support::BuiltinFn::kToOwned},
-              .arguments = {access_id}},
+              .callee =
+                  mir::Direct{
+                      .target = support::BuiltinFn::kToOwned,
+                      .receiver = access_id},
+              .arguments = {}},
       .type = result_type};
 }
 
@@ -175,25 +177,20 @@ auto BuildSliceFormLiteral(
   return BuildIntLiteral(unit, block, static_cast<std::int64_t>(form));
 }
 
-// Extends a write target by one descent step. A target that already designates
-// a part of some owner's value gains another selector; a target that is still a
-// place becomes the owner of a new designation. The place boundary therefore
-// falls out of the lowering's own recursion -- the innermost expression that is
-// not itself a descent is the owner -- and no consumer recovers it afterwards.
-// `arr[i]` element access (LRM 7.4.5 / 7.5 / 7.10). A read is a call whose
-// receiver's container kind picks the runtime overload; a write is a descent
-// step on the target's designator. Either way the raw source index is passed
-// through, plus the receiver's declared range for the unpacked family; every
-// selectable value resolves the coordinate against that range.
+// `arr[i]` element access (LRM 7.4.5 / 7.5 / 7.10). The container kind of what
+// the call dispatches on picks the runtime overload, and the raw source index
+// passes through, plus that value's declared range for the unpacked family --
+// every selectable value resolves the coordinate against its own range.
 auto BuildElementAccessCallExpr(
     UnitLowerer& unit_lowerer, mir::Block& block, mir::ExprId base_id,
     mir::ExprId idx_id, mir::TypeId result_type) -> mir::Expr {
-  std::vector<mir::ExprId> args = {base_id, idx_id};
+  std::vector<mir::ExprId> args = {idx_id};
   AppendReceiverRange(unit_lowerer, block, block.exprs.Get(base_id).type, args);
   return mir::Expr{
       .data =
           mir::CallExpr{
-              .callee = ElementAccessCallee(), .arguments = std::move(args)},
+              .callee = ElementAccessCallee(base_id),
+              .arguments = std::move(args)},
       .type = result_type};
 }
 
@@ -203,12 +200,16 @@ auto ProjectElement(
     UnitLowerer& unit_lowerer, mir::Block& block, mir::Expr base,
     mir::ExprId idx_id, mir::TypeId result_type) -> mir::Expr {
   const mir::TypeId base_type = base.type;
-  std::vector<mir::ExprId> args = {block.exprs.Add(std::move(base)), idx_id};
+  const mir::ExprId base_id = block.exprs.Add(std::move(base));
+  std::vector<mir::ExprId> args = {idx_id};
   AppendReceiverRange(unit_lowerer, block, base_type, args);
   return mir::Expr{
       .data =
           mir::CallExpr{
-              .callee = mir::Direct{.target = support::BuiltinFn::kElementRef},
+              .callee =
+                  mir::Direct{
+                      .target = support::BuiltinFn::kElementRef,
+                      .receiver = base_id},
               .arguments = std::move(args)},
       .type = result_type};
 }
@@ -278,13 +279,14 @@ auto BuildRangeSliceCallExpr(
       unit_lowerer, block, bounds, block.exprs.Get(base_id).type, result_type,
       lower_one);
   if (!operands_or) return std::unexpected(std::move(operands_or.error()));
-  std::vector<mir::ExprId> args = {base_id};
-  args.insert(args.end(), operands_or->begin(), operands_or->end());
   return mir::Expr{
       .data =
           mir::CallExpr{
-              .callee = mir::Direct{.target = support::BuiltinFn::kSlice},
-              .arguments = std::move(args)},
+              .callee =
+                  mir::Direct{
+                      .target = support::BuiltinFn::kSlice,
+                      .receiver = base_id},
+              .arguments = *std::move(operands_or)},
       .type = result_type};
 }
 
@@ -298,13 +300,14 @@ auto ProjectSlice(
   auto operands_or = UnfoldRangeSelectOperands(
       unit_lowerer, block, bounds, base.type, result_type, lower_one);
   if (!operands_or) return std::unexpected(std::move(operands_or.error()));
-  std::vector<mir::ExprId> args = {block.exprs.Add(std::move(base))};
-  args.insert(args.end(), operands_or->begin(), operands_or->end());
   return mir::Expr{
       .data =
           mir::CallExpr{
-              .callee = mir::Direct{.target = support::BuiltinFn::kSliceRef},
-              .arguments = std::move(args)},
+              .callee =
+                  mir::Direct{
+                      .target = support::BuiltinFn::kSliceRef,
+                      .receiver = block.exprs.Add(std::move(base))},
+              .arguments = *std::move(operands_or)},
       .type = result_type};
 }
 
@@ -335,13 +338,14 @@ auto BuildFieldSliceCallExpr(
     -> mir::Expr {
   std::vector<mir::ExprId> operands = UnfoldFieldSliceOperands(
       unit_lowerer, block, bit_offset, bit_width, result_type);
-  std::vector<mir::ExprId> args = {base_id};
-  args.insert(args.end(), operands.begin(), operands.end());
   return mir::Expr{
       .data =
           mir::CallExpr{
-              .callee = mir::Direct{.target = support::BuiltinFn::kSlice},
-              .arguments = std::move(args)},
+              .callee =
+                  mir::Direct{
+                      .target = support::BuiltinFn::kSlice,
+                      .receiver = base_id},
+              .arguments = std::move(operands)},
       .type = result_type};
 }
 
@@ -351,15 +355,16 @@ auto ProjectFieldSlice(
     UnitLowerer& unit_lowerer, mir::Block& block, mir::Expr base,
     std::uint32_t bit_offset, std::uint32_t bit_width, mir::TypeId result_type)
     -> mir::Expr {
-  const std::vector<mir::ExprId> operands = UnfoldFieldSliceOperands(
+  std::vector<mir::ExprId> operands = UnfoldFieldSliceOperands(
       unit_lowerer, block, bit_offset, bit_width, result_type);
-  std::vector<mir::ExprId> args = {block.exprs.Add(std::move(base))};
-  args.insert(args.end(), operands.begin(), operands.end());
   return mir::Expr{
       .data =
           mir::CallExpr{
-              .callee = mir::Direct{.target = support::BuiltinFn::kSliceRef},
-              .arguments = std::move(args)},
+              .callee =
+                  mir::Direct{
+                      .target = support::BuiltinFn::kSliceRef,
+                      .receiver = block.exprs.Add(std::move(base))},
+              .arguments = std::move(operands)},
       .type = result_type};
 }
 
@@ -393,8 +398,11 @@ auto BuildTagGuard(
   return mir::Expr{
       .data =
           mir::CallExpr{
-              .callee = mir::Direct{.target = support::BuiltinFn::kRequire},
-              .arguments = {base_id, test, message_id}},
+              .callee =
+                  mir::Direct{
+                      .target = support::BuiltinFn::kRequire,
+                      .receiver = base_id},
+              .arguments = {test, message_id}},
       .type = value_type};
 }
 
@@ -537,8 +545,7 @@ auto LowerHirElementSelectExpr(
     return mir::Expr{
         .data =
             mir::CallExpr{
-                .callee = ElementAccessCallee(),
-                .arguments = {base_id, idx_id}},
+                .callee = ElementAccessCallee(base_id), .arguments = {idx_id}},
         .type = result_type};
   }
   return LowerElementSelectInner(

@@ -57,7 +57,8 @@ the detail lives in the entry itself.
   write path and by the projection reference a `ref`, an `output` / `inout` actual, and a
   nonblocking assignment bind; the nested-lvalue write encoding is deleted.
 - [queue-operators](queue-operators.md) -- queue access operators lower to built-in method calls;
-  read and write are distinct methods chosen at lowering.
+  read and write are distinct methods chosen at lowering. Where it places the receiver is superseded
+  by [call-receiver-on-the-callee](call-receiver-on-the-callee.md).
 - [concatenation-realization](concatenation-realization.md) -- a join is a call rather than a node
   of its own, over every operand family, and reaches MIR already folded to the two operands every
   entry that performs it takes.
@@ -121,7 +122,11 @@ the detail lives in the entry itself.
   invoke; the callable value has a concrete `ClosureType` level and an erased
   `ErasedCallableType<Sig>` level with an explicit erasure.
 - [builtin-call-identity](builtin-call-identity.md) -- built-in method calls carry a flat
-  closed-namespace identifier (`support::BuiltinFn`) shared by HIR and MIR.
+  closed-namespace identifier (`support::BuiltinFn`) shared by HIR and MIR. Its positional receiver
+  convention is superseded by the next entry.
+- [call-receiver-on-the-callee](call-receiver-on-the-callee.md) -- the object a call dispatches on
+  is a field of the callee, not the first of its arguments, so no consumer works out which operand
+  is a receiver.
 - [address-of-primitive](address-of-primitive.md) -- MIR carries an explicit place-to-pointer
   operator (`AddressOfExpr`), dual to `DerefExpr`; the backend never injects `&`.
 - [event-control-unification](event-control-unification.md) -- unified treatment of event control:

@@ -6,7 +6,6 @@
 #include <format>
 #include <optional>
 #include <ranges>
-#include <span>
 #include <string>
 #include <utility>
 #include <variant>
@@ -1223,15 +1222,16 @@ auto ReachesIntoValue(const mir::Block& block, mir::ExprId target) -> bool {
          fn == support::BuiltinFn::kSliceRef;
 }
 
-// The value a step reaches its part out of. Every such step names it first, so
-// this is the operand a walk toward the owner continues through.
+// The value a step reaches its part out of -- what a field access is taken
+// from, and what an access call dispatches on. This is the operand a walk
+// toward the owner continues through.
 auto ValuePartReceiver(const mir::Block& block, mir::ExprId step)
     -> mir::ExprId {
   const mir::ExprData& data = block.exprs.Get(step).data;
   if (const auto* field = std::get_if<mir::FieldAccessExpr>(&data)) {
     return field->receiver;
   }
-  return std::get<mir::CallExpr>(data).arguments.front();
+  return *mir::CalleeReceiver(std::get<mir::CallExpr>(data).callee);
 }
 
 // The wrapper a pointer opens, when the pointer is that opening rather than an
@@ -1242,11 +1242,11 @@ auto ValuePartReceiver(const mir::Block& block, mir::ExprId step)
 auto OpenedWrapper(const mir::Block& block, mir::ExprId pointer)
     -> std::optional<mir::ExprId> {
   const auto* call = std::get_if<mir::CallExpr>(&block.exprs.Get(pointer).data);
-  if (call == nullptr || call->arguments.empty() ||
+  if (call == nullptr ||
       mir::DirectBuiltinFn(*call) != support::BuiltinFn::kOpenForWrite) {
     return std::nullopt;
   }
-  return call->arguments.front();
+  return mir::CalleeReceiver(call->callee);
 }
 
 auto FunctionLowerer::WrapperContentsPlace(
@@ -1424,17 +1424,29 @@ auto FunctionLowerer::LowerArgument(const mir::Block& block, mir::ExprId id)
       lir::AddrOfInstr{.place = *std::move(place)});
 }
 
-auto FunctionLowerer::LowerArguments(
-    const mir::Block& block, std::span<const mir::ExprId> arguments)
+auto FunctionLowerer::LowerCallOperands(
+    const mir::Block& block, const mir::CallExpr& call)
     -> diag::Result<std::vector<lir::Operand>> {
   std::vector<lir::Operand> args;
-  args.reserve(arguments.size());
-  for (const mir::ExprId argument : arguments) {
-    auto lowered = LowerArgument(block, argument);
+  args.reserve(call.arguments.size() + 1);
+  const auto lower_into = [&](mir::ExprId id) -> diag::Result<void> {
+    auto lowered = LowerArgument(block, id);
     if (!lowered) {
       return std::unexpected(std::move(lowered.error()));
     }
     args.push_back(*std::move(lowered));
+    return {};
+  };
+  if (const std::optional<mir::ExprId> receiver =
+          mir::CalleeReceiver(call.callee)) {
+    if (auto lowered = lower_into(*receiver); !lowered) {
+      return std::unexpected(std::move(lowered.error()));
+    }
+  }
+  for (const mir::ExprId argument : call.arguments) {
+    if (auto lowered = lower_into(argument); !lowered) {
+      return std::unexpected(std::move(lowered.error()));
+    }
   }
   return args;
 }
@@ -1487,8 +1499,7 @@ auto FunctionLowerer::LowerCall(
   // semantics forbid changing what a copy of the receiver would share, so it is
   // a functional operation whose result is stored back through the owner.
   if (const auto fn = mir::DirectBuiltinFn(call);
-      fn.has_value() && support::IsMutatingBuiltinFn(*fn) &&
-      !call.arguments.empty()) {
+      fn.has_value() && support::IsMutatingBuiltinFn(*fn)) {
     return LowerMutatingCall(block, call, *fn, type);
   }
 
@@ -1499,7 +1510,7 @@ auto FunctionLowerer::LowerCall(
   // where the contents live.
   if (const auto fn = mir::DirectBuiltinFn(call);
       fn == support::BuiltinFn::kLoad || fn == support::BuiltinFn::kStore) {
-    auto place = WrapperContentsPlace(block, call.arguments.front());
+    auto place = WrapperContentsPlace(block, *mir::CalleeReceiver(call.callee));
     if (!place) {
       return std::unexpected(std::move(place.error()));
     }
@@ -1527,7 +1538,7 @@ auto FunctionLowerer::LowerCall(
     return EnterCoroutine(block, call, type, std::nullopt);
   }
 
-  auto args = LowerArguments(block, call.arguments);
+  auto args = LowerCallOperands(block, call);
   if (!args) {
     return std::unexpected(std::move(args.error()));
   }
@@ -1537,7 +1548,7 @@ auto FunctionLowerer::LowerCall(
 auto FunctionLowerer::EnterCoroutine(
     const mir::Block& block, const mir::CallExpr& call, mir::TypeId type,
     std::optional<lir::Operand> completion) -> diag::Result<lir::Operand> {
-  auto args = LowerArguments(block, call.arguments);
+  auto args = LowerCallOperands(block, call);
   if (!args) {
     return std::unexpected(std::move(args.error()));
   }
@@ -1592,7 +1603,7 @@ auto FunctionLowerer::EmitCall(
 auto FunctionLowerer::LowerRegistration(
     const mir::Block& block, const mir::CallExpr& call)
     -> diag::Result<lir::Operand> {
-  auto args = LowerArguments(block, call.arguments);
+  auto args = LowerCallOperands(block, call);
   if (!args) {
     return std::unexpected(std::move(args.error()));
   }
@@ -1802,9 +1813,9 @@ auto FunctionLowerer::LowerValuePartSelector(
   }
   const auto& call = std::get<mir::CallExpr>(data);
   std::vector<lir::Operand> operands;
-  operands.reserve(call.arguments.size() - 1);
-  for (std::size_t i = 1; i < call.arguments.size(); ++i) {
-    auto operand = LowerExpr(block, call.arguments[i]);
+  operands.reserve(call.arguments.size());
+  for (const mir::ExprId argument : call.arguments) {
+    auto operand = LowerExpr(block, argument);
     if (!operand) {
       return std::unexpected(std::move(operand.error()));
     }
@@ -1895,24 +1906,29 @@ auto FunctionLowerer::LowerValuePartUpdate(
 auto FunctionLowerer::LowerMutatingCall(
     const mir::Block& block, const mir::CallExpr& call, support::BuiltinFn fn,
     mir::TypeId type) -> diag::Result<lir::Operand> {
-  const mir::ExprId receiver = call.arguments[0];
+  const std::optional<mir::ExprId> receiver = mir::CalleeReceiver(call.callee);
+  if (!receiver.has_value()) {
+    throw InternalError(
+        "mir_to_lir: a method that updates what it is applied to names that "
+        "object, and this call names none -- please report this as a bug");
+  }
   const lir::TypeId container_type =
-      unit_->TranslateType(block.exprs.Get(receiver).type);
+      unit_->TranslateType(block.exprs.Get(*receiver).type);
   const bool yields_result = type != unit_->Mir().builtins.void_type;
   const lir::TypeId call_type =
       yields_result
           ? unit_->ProductOf({container_type, unit_->TranslateType(type)})
           : container_type;
 
-  auto value = LowerExpr(block, receiver);
+  auto value = LowerExpr(block, *receiver);
   if (!value) {
     return std::unexpected(std::move(value.error()));
   }
   std::vector<lir::Operand> args;
-  args.reserve(call.arguments.size());
+  args.reserve(call.arguments.size() + 1);
   args.push_back(*std::move(value));
-  for (std::size_t i = 1; i < call.arguments.size(); ++i) {
-    auto arg = LowerArgument(block, call.arguments[i]);
+  for (const mir::ExprId argument : call.arguments) {
+    auto arg = LowerArgument(block, argument);
     if (!arg) {
       return std::unexpected(std::move(arg.error()));
     }
@@ -1925,7 +1941,7 @@ auto FunctionLowerer::LowerMutatingCall(
           .target = lir::BuiltinTarget{.fn = fn, .qualifier = std::nullopt},
           .args = std::move(args)});
   if (!yields_result) {
-    return WriteWholeValue(block, receiver, std::move(completion));
+    return WriteWholeValue(block, *receiver, std::move(completion));
   }
 
   lir::Operand updated = Emit(
@@ -1933,7 +1949,7 @@ auto FunctionLowerer::LowerMutatingCall(
       lir::AggregateExtractInstr{
           .aggregate = completion,
           .selector = lir::Component{.index = kUpdatedReceiver}});
-  auto stored = WriteWholeValue(block, receiver, std::move(updated));
+  auto stored = WriteWholeValue(block, *receiver, std::move(updated));
   if (!stored) {
     return std::unexpected(std::move(stored.error()));
   }

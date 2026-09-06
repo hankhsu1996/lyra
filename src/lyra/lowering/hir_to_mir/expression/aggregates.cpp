@@ -39,8 +39,11 @@ auto BuildReplicateCall(
   return mir::Expr{
       .data =
           mir::CallExpr{
-              .callee = mir::Direct{.target = support::BuiltinFn::kReplicate},
-              .arguments = {run, count_id}},
+              .callee =
+                  mir::Direct{
+                      .target = support::BuiltinFn::kReplicate,
+                      .receiver = run},
+              .arguments = {count_id}},
       .type = result_type};
 }
 
@@ -68,10 +71,11 @@ auto BuildUnpackedConcatChain(
             mir::CallExpr{
                 .callee =
                     mir::Direct{
-                        .target =
-                            spread ? support::BuiltinFn::kArrayConcatSpread
-                                   : support::BuiltinFn::kArrayConcatElement},
-                .arguments = {acc_id, part}},
+                        .target = spread
+                                      ? support::BuiltinFn::kArrayConcatSpread
+                                      : support::BuiltinFn::kArrayConcatElement,
+                        .receiver = acc_id},
+                .arguments = {part}},
         .type = acc_type};
   }
   return acc;
@@ -107,8 +111,11 @@ auto LowerHirConcatExpr(
       return mir::Expr{
           .data =
               mir::CallExpr{
-                  .callee = mir::Direct{.target = support::BuiltinFn::kConcat},
-                  .arguments = {lhs, rhs}},
+                  .callee =
+                      mir::Direct{
+                          .target = support::BuiltinFn::kConcat,
+                          .receiver = lhs},
+                  .arguments = {rhs}},
           .type = result_type};
     };
     mir::ExprId lhs = operand_ids.front();
@@ -391,9 +398,11 @@ auto LowerHirAssignmentPatternKeyedExpr(
             .data =
                 mir::CallExpr{
                     .callee =
-                        mir::Direct{.target = support::BuiltinFn::kElementRef},
+                        mir::Direct{
+                            .target = support::BuiltinFn::kElementRef,
+                            .receiver = owner},
                     .arguments =
-                        {owner, index_id,
+                        {index_id,
                          BuildIntLiteral(unit, body, array_ty.dim.left),
                          BuildIntLiteral(unit, body, array_ty.dim.right)}},
             .type = element_type});

@@ -187,12 +187,12 @@ auto UnaryOpAsBuiltinFn(mir::UnaryOp op) -> std::optional<support::BuiltinFn> {
 }
 
 auto MakeBuiltinFnCall(
-    support::BuiltinFn id, std::vector<mir::ExprId> arguments,
-    mir::TypeId result_type) -> mir::Expr {
+    support::BuiltinFn id, mir::ExprId receiver,
+    std::vector<mir::ExprId> arguments, mir::TypeId result_type) -> mir::Expr {
   return mir::Expr{
       .data =
           mir::CallExpr{
-              .callee = mir::Direct{.target = id},
+              .callee = mir::Direct{.target = id, .receiver = receiver},
               .arguments = std::move(arguments)},
       .type = result_type};
 }
@@ -281,7 +281,7 @@ auto BuildMirUnaryExpr(
   // routed through a `Direct` builtin call so the backend's render path
   // collapses to mechanical method dispatch.
   if (auto builtin = UnaryOpAsBuiltinFn(op)) {
-    return MakeBuiltinFnCall(*builtin, {operand_id}, result_type);
+    return MakeBuiltinFnCall(*builtin, operand_id, {}, result_type);
   }
 
   // LRM 11.3.1 real `!` and LRM 6.14 chandle `!`: route through `bool(...)` and
@@ -364,7 +364,7 @@ auto BuildMirBinaryExpr(
       op == mir::BinaryOp::kCaseInequality) {
     const mir::TypeId known = unit.builtins.bit1;
     mir::ExprId answer = block.exprs.Add(MakeBuiltinFnCall(
-        support::BuiltinFn::kCaseEqual, {lhs_id, rhs_id}, known));
+        support::BuiltinFn::kCaseEqual, lhs_id, {rhs_id}, known));
     if (op == mir::BinaryOp::kCaseInequality) {
       answer = block.exprs.Add(
           mir::Expr{
@@ -379,7 +379,7 @@ auto BuildMirBinaryExpr(
   // LRM 11.4 method-style binary ops (shifts, power, xnor, wildcard /
   // implication / equivalence): route through a `Direct` builtin call.
   if (auto builtin = mir::BinaryOpAsBuiltinFn(op)) {
-    return MakeBuiltinFnCall(*builtin, {lhs_id, rhs_id}, result_type);
+    return MakeBuiltinFnCall(*builtin, lhs_id, {rhs_id}, result_type);
   }
 
   // LRM 11.4.6 `!=?` lifts to its positive form wrapped in logical NOT, keeping
@@ -388,7 +388,7 @@ auto BuildMirBinaryExpr(
   // class its operands do, which is the one the context asked for.
   if (op == mir::BinaryOp::kWildcardInequality) {
     const mir::ExprId inner = block.exprs.Add(MakeBuiltinFnCall(
-        support::BuiltinFn::kWildcardEquals, {lhs_id, rhs_id}, result_type));
+        support::BuiltinFn::kWildcardEquals, lhs_id, {rhs_id}, result_type));
     return mir::Expr{
         .data =
             mir::UnaryExpr{.op = mir::UnaryOp::kLogicalNot, .operand = inner},
@@ -494,8 +494,9 @@ auto BuildMergingConditional(
                             .callee =
                                 mir::Direct{
                                     .target =
-                                        support::BuiltinFn::kMergeConditional},
-                            .arguments = {then_id, else_id}},
+                                        support::BuiltinFn::kMergeConditional,
+                                    .receiver = then_id},
+                            .arguments = {else_id}},
                     .type = result_type})
           : body.exprs.Add(BuildDefaultValueExpr(unit, body, result_type));
   const mir::ExprId else_or_combined = body.exprs.Add(

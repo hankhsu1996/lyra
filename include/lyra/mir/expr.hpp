@@ -174,7 +174,9 @@ struct CallableTarget {
 // class (LRM 9.7 `process`). A bodyless external callable whose implementation
 // is a runtime symbol; the identity names the method, and the backend renders
 // the call mechanically to that symbol -- no per-unit declaration and no
-// per-method backend branch. A receiver, if the method has one, is `args[0]`.
+// per-method backend branch. An instance method of such a class dispatches on
+// its handle, which the library takes positionally because a runtime symbol has
+// no receiver of its own to bind.
 struct ImportedRuntimeCallTarget {
   support::ImportedRuntimeMethod method;
 
@@ -213,8 +215,8 @@ struct ExternalUnitCallableTarget {
 // instances are (LRM 25.7). The declaring class carries no unit-local id here,
 // so the target names the declaring unit, the class's canonical
 // (specialization) name, and the method's source name, resolved against that
-// unit's signature at link time. The receiver leads the arguments like any
-// instance method's.
+// unit's signature at link time. It dispatches on a receiver, which is what
+// separates it from the type-associated form.
 struct ExternalUnitClassMethodTarget {
   std::string unit_name;
   std::string class_name;
@@ -224,8 +226,8 @@ struct ExternalUnitClassMethodTarget {
 };
 
 // Identity of a type-associated method another compilation unit declares (LRM
-// 8.10), named the same three ways. It has no receiver, which is what separates
-// it from the instance form: the two take different argument lists.
+// 8.10), named the same three ways. It dispatches on nothing, which is what
+// separates it from the instance form.
 struct ExternalUnitStaticMethodTarget {
   std::string unit_name;
   std::string class_name;
@@ -251,19 +253,20 @@ using DirectTarget = std::variant<
     ExternalUnitCallableTarget, ExternalUnitClassMethodTarget,
     ExternalUnitStaticMethodTarget, ForeignSymbolTarget>;
 
-// A direct call to a named symbol. The single shape for every direct
-// invocation -- user method, built-in instance method, type-qualified
-// static, runtime free function. The render mode (instance form
-// `recv.name(rest)`, type-qualified `Q::name(args)`, or free
-// `ns::name(args)`) is a fixed function of the target's signature and
-// whether `qualification` is present; it is not encoded as a separate arm.
+// A direct call to a named symbol -- the code is found by name at compile
+// time. The single shape for every direct invocation: a user method, a
+// built-in, another compilation unit's subroutine, a name in the DPI-C space.
 //
-// Receiver, when the target's signature declares one, is `args[0]` -- an
-// instance method reaches its receiver explicitly as the first argument,
-// never through implicit context. Instance and static dispatch differ only in
-// whether the signature has a `self` formal, not in MIR's call shape.
+// The object the call dispatches on rides here, distinct from user-supplied
+// `CallExpr::arguments`, so the call carries exactly the arguments the SV
+// source wrote and the receiver is not conflated with them. It is absent for a
+// call that dispatches on nothing -- a type-associated method (LRM 8.10), a
+// package subroutine (LRM 26.3), a runtime entry the program reaches by name.
+// The target says where the code is found and this says what it is applied to,
+// so the two vary independently.
 struct Direct {
   DirectTarget target;
+  std::optional<ExprId> receiver = std::nullopt;
   std::optional<ScopeQualifier> qualification = std::nullopt;
 };
 
@@ -722,15 +725,22 @@ struct Expr {
       .data = AssignExpr{.target = target, .value = value}, .type = type};
 }
 
+// The object the call dispatches on, absent for a call that dispatches on
+// nothing. The one place the question is answered, so no consumer works out
+// which operand a receiver is from a signature, a namespace, or an operand's
+// type.
+[[nodiscard]] auto CalleeReceiver(const Callee& callee)
+    -> std::optional<ExprId>;
+
 // Whether the call's receiver is mutated by the dispatch. True only for a
 // direct call to a built-in whose id is in the mutating set; everything
 // else (direct call to a user method, indirect, construct) is false.
 [[nodiscard]] auto IsMutatingCallee(const Callee& callee) -> bool;
 
-// Whether the call reaches into what `args[0]` names, so a consumer that wants
-// the call as a place wants that argument as one too. True only for a direct
-// call to a built-in whose id is in the reaching set; everything else (direct
-// call to a user method, indirect, construct) is false.
+// Whether the call reaches into what its receiver names, so a consumer that
+// wants the call as a place wants the receiver as one too. True only for a
+// direct call to a built-in whose id is in the reaching set; everything else
+// (direct call to a user method, indirect, construct) is false.
 [[nodiscard]] auto ReachesThroughReceiver(const Callee& callee) -> bool;
 
 // `lyra::runtime::current_runtime()` -- reaches the attached Runtime's
@@ -773,8 +783,9 @@ struct Expr {
   return Expr{
       .data =
           CallExpr{
-              .callee = Direct{.target = support::BuiltinFn::kLoad},
-              .arguments = {cell}},
+              .callee =
+                  Direct{.target = support::BuiltinFn::kLoad, .receiver = cell},
+              .arguments = {}},
       .type = value};
 }
 
@@ -815,8 +826,11 @@ struct Expr {
   return Expr{
       .data =
           CallExpr{
-              .callee = Direct{.target = support::BuiltinFn::kInitialize},
-              .arguments = {wrapper, prototype}},
+              .callee =
+                  Direct{
+                      .target = support::BuiltinFn::kInitialize,
+                      .receiver = wrapper},
+              .arguments = {prototype}},
       .type = void_type};
 }
 
@@ -827,8 +841,11 @@ struct Expr {
   return Expr{
       .data =
           CallExpr{
-              .callee = Direct{.target = support::BuiltinFn::kAttachDriver},
-              .arguments = {net}},
+              .callee =
+                  Direct{
+                      .target = support::BuiltinFn::kAttachDriver,
+                      .receiver = net},
+              .arguments = {}},
       .type = driver_type};
 }
 

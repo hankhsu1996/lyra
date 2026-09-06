@@ -228,8 +228,11 @@ auto BuildTriggerCallExpr(
   return mir::Expr{
       .data =
           mir::CallExpr{
-              .callee = mir::Direct{.target = support::BuiltinFn::kTrigger},
-              .arguments = {event_id, runtime_id},
+              .callee =
+                  mir::Direct{
+                      .target = support::BuiltinFn::kTrigger,
+                      .receiver = event_id},
+              .arguments = {runtime_id},
           },
       .type = unit_lowerer.Unit().builtins.void_type};
 }

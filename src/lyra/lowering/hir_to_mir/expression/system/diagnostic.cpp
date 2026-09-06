@@ -75,8 +75,10 @@ auto LowerDiagnosticSystemSubroutineCall(
   mir::Expr emit_call{
       .data =
           mir::CallExpr{
-              .callee = mir::Direct{.target = info.builtin_fn},
-              .arguments = {diagnostic_id, origin_id, text_id}},
+              .callee =
+                  mir::Direct{
+                      .target = info.builtin_fn, .receiver = diagnostic_id},
+              .arguments = {origin_id, text_id}},
       .type = unit.builtins.void_type};
 
   if (!is_fatal) return emit_call;

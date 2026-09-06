@@ -198,8 +198,10 @@ auto BuildOwnedInstance(
           .data =
               mir::CallExpr{
                   .callee =
-                      mir::Direct{.target = support::BuiltinFn::kAddOwnedChild},
-                  .arguments = {parent_self, ctor_call_id}},
+                      mir::Direct{
+                          .target = support::BuiltinFn::kAddOwnedChild,
+                          .receiver = parent_self},
+                  .arguments = {ctor_call_id}},
           .type = builtins.scope_ptr});
   return block.exprs.Add(
       mir::Expr{
@@ -393,9 +395,11 @@ auto StepToChildByName(
           .data =
               mir::CallExpr{
                   .callee =
-                      mir::Direct{.target = support::BuiltinFn::kGetChild},
+                      mir::Direct{
+                          .target = support::BuiltinFn::kGetChild,
+                          .receiver = receiver},
                   .arguments =
-                      {receiver, BuildStringLiteral(unit_lowerer, block, name),
+                      {BuildStringLiteral(unit_lowerer, block, name),
                        BuildIndicesLiteral(unit_lowerer, block, indices)}},
           .type = unit_lowerer.Unit().builtins.scope_ptr});
   return RouteReceiver{.expr = step, .target = ScopeBase{}};
@@ -429,8 +433,10 @@ auto BuildRouteAnchor(
             .data =
                 mir::CallExpr{
                     .callee =
-                        mir::Direct{.target = support::BuiltinFn::kResolveRoot},
-                    .arguments = {self_ref}},
+                        mir::Direct{
+                            .target = support::BuiltinFn::kResolveRoot,
+                            .receiver = self_ref},
+                    .arguments = {}},
             .type = scope_ptr_type});
     return RouteReceiver{.expr = root, .target = ScopeBase{}};
   }
@@ -443,10 +449,10 @@ auto BuildRouteAnchor(
               mir::CallExpr{
                   .callee =
                       mir::Direct{
-                          .target = support::BuiltinFn::kResolveVisibleChild},
+                          .target = support::BuiltinFn::kResolveVisibleChild,
+                          .receiver = self_ref},
                   .arguments =
-                      {self_ref,
-                       BuildStringLiteral(unit_lowerer, block, vc.head_name),
+                      {BuildStringLiteral(unit_lowerer, block, vc.head_name),
                        BuildIndicesLiteral(
                            unit_lowerer, block, vc.head_indices)}},
           .type = scope_ptr_type});
@@ -638,11 +644,11 @@ auto MaterializeLeaf(
             .data =
                 mir::CallExpr{
                     .callee =
-                        mir::Direct{.target = support::BuiltinFn::kGetSignal},
-                    .arguments =
-                        {receiver.expr,
-                         BuildStringLiteral(
-                             unit_lowerer, block, opaque->name)}},
+                        mir::Direct{
+                            .target = support::BuiltinFn::kGetSignal,
+                            .receiver = receiver.expr},
+                    .arguments = {BuildStringLiteral(
+                        unit_lowerer, block, opaque->name)}},
             .type = void_ptr_type});
     return block.exprs.Add(
         mir::Expr{
@@ -763,8 +769,9 @@ void AppendProcessRegistration(
                           .target =
                               mir::CallableTarget{
                                   .owner = activate_frame.current_class_id,
-                                  .slot = body}},
-                  .arguments = {body_self}},
+                                  .slot = body},
+                          .receiver = body_self},
+                  .arguments = {}},
           .type = unit_lowerer.Unit().builtins.coroutine_void});
   const mir::ExprId reg_self =
       block.exprs.Add(MakeSelfRefExpr(activate_frame, self_ptr_type));
@@ -1073,8 +1080,10 @@ void AppendOwnedChildConstruction(
           .data =
               mir::CallExpr{
                   .callee =
-                      mir::Direct{.target = support::BuiltinFn::kAddOwnedChild},
-                  .arguments = {parent_read(), ctor_call_id}},
+                      mir::Direct{
+                          .target = support::BuiltinFn::kAddOwnedChild,
+                          .receiver = parent_read()},
+                  .arguments = {ctor_call_id}},
           .type = builtins.scope_ptr});
   const mir::TypeId handle_type = owner_class.fields.Get(handle_field).type;
   const mir::ExprId typed_handle = arm_block.exprs.Add(
@@ -1436,8 +1445,9 @@ auto InstallGeneratedDefinition(
                           mir::Direct{
                               .target =
                                   mir::CallableTarget{
-                                      .owner = cls_id, .slot = *body}},
-                      .arguments = {typed}},
+                                      .owner = cls_id, .slot = *body},
+                              .receiver = typed},
+                      .arguments = {}},
               .type = void_type});
       code.Body().AppendStmt(mir::ExprStmt{.expr = call});
     }
@@ -1772,8 +1782,9 @@ auto StructuralScopeLowerer::PopulateBodies(WalkFrame parent_frame)
                   mir::CallExpr{
                       .callee =
                           mir::Direct{
-                              .target = support::BuiltinFn::kRegisterSignal},
-                      .arguments = {self_read(), name_id, addr_id}},
+                              .target = support::BuiltinFn::kRegisterSignal,
+                              .receiver = self_read()},
+                      .arguments = {name_id, addr_id}},
               .type = void_type});
       ctor_block.AppendStmt(mir::ExprStmt{.expr = call});
     }
@@ -1922,8 +1933,9 @@ auto StructuralScopeLowerer::PopulateBodies(WalkFrame parent_frame)
                               .callee =
                                   mir::Direct{
                                       .target =
-                                          support::BuiltinFn::kRegisterSignal},
-                              .arguments = {node, name_lit, addr}},
+                                          support::BuiltinFn::kRegisterSignal,
+                                      .receiver = node},
+                              .arguments = {name_lit, addr}},
                       .type = void_type})});
     }
   };

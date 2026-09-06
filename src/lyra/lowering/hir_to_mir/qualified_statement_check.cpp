@@ -89,8 +89,10 @@ void AppendReportEmit(
           .data =
               mir::CallExpr{
                   .callee =
-                      mir::Direct{.target = support::BuiltinFn::kEmitWarning},
-                  .arguments = {diagnostic_id, origin_id, text_id}},
+                      mir::Direct{
+                          .target = support::BuiltinFn::kEmitWarning,
+                          .receiver = diagnostic_id},
+                  .arguments = {origin_id, text_id}},
           .type = unit.builtins.void_type});
   block.AppendStmt(mir::ExprStmt{.expr = emit_call_id});
 }
@@ -109,8 +111,9 @@ void SubmitToObservedRegion(
               mir::CallExpr{
                   .callee =
                       mir::Direct{
-                          .target = support::BuiltinFn::kSubmitObserved},
-                  .arguments = {runtime_id, body_id}},
+                          .target = support::BuiltinFn::kSubmitObserved,
+                          .receiver = runtime_id},
+                  .arguments = {body_id}},
           .type = unit_lowerer.Unit().builtins.void_type});
   block.AppendStmt(mir::ExprStmt{.expr = submit_id});
 }

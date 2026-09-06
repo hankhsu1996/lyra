@@ -38,9 +38,9 @@ auto ImportedRuntimeMethodSymbol(ImportedRuntimeMethod method)
 // Whether the runtime symbol takes the runtime handle. Every method
 // needs it except `status`, a pure read of the process node: `self` and
 // `suspend` identify the calling process through it, while `kill`, `await`, and
-// `resume` reach the scheduler to wake, park, or re-schedule. It is threaded as
-// the leading argument for a receiver-less static call (`self`) and after the
-// receiver otherwise.
+// `resume` reach the scheduler to wake, park, or re-schedule. It is an ordinary
+// argument wherever it is taken, whether or not the method dispatches on a
+// handle.
 auto ImportedRuntimeMethodTakesServices(ImportedRuntimeMethod method) -> bool;
 
 // Whether calling the method suspends the caller until the target settles, so

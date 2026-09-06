@@ -135,8 +135,10 @@ auto MarshalSvToCarrier(
               .data =
                   mir::CallExpr{
                       .callee =
-                          mir::Direct{.target = support::BuiltinFn::kRealValue},
-                      .arguments = {sv_id}},
+                          mir::Direct{
+                              .target = support::BuiltinFn::kRealValue,
+                              .receiver = sv_id},
+                      .arguments = {}},
               .type = carrier});
     case support::DpiScalarAbi::kString:
       return block.exprs.Add(
@@ -145,8 +147,9 @@ auto MarshalSvToCarrier(
                   mir::CallExpr{
                       .callee =
                           mir::Direct{
-                              .target = support::BuiltinFn::kStringCStr},
-                      .arguments = {sv_id}},
+                              .target = support::BuiltinFn::kStringCStr,
+                              .receiver = sv_id},
+                      .arguments = {}},
               .type = carrier});
     case support::DpiScalarAbi::kChandle:
       return block.exprs.Add(
@@ -155,8 +158,9 @@ auto MarshalSvToCarrier(
                   mir::CallExpr{
                       .callee =
                           mir::Direct{
-                              .target = support::BuiltinFn::kChandlePtr},
-                      .arguments = {sv_id}},
+                              .target = support::BuiltinFn::kChandlePtr,
+                              .receiver = sv_id},
+                      .arguments = {}},
               .type = carrier});
     case support::DpiScalarAbi::kLogicScalar:
       return block.exprs.Add(
@@ -276,8 +280,10 @@ auto BuildBufferDataCall(
           .data =
               mir::CallExpr{
                   .callee =
-                      mir::Direct{.target = support::BuiltinFn::kDpiBufferData},
-                  .arguments = {buffer_ref}},
+                      mir::Direct{
+                          .target = support::BuiltinFn::kDpiBufferData,
+                          .receiver = buffer_ref},
+                  .arguments = {}},
           .type = unit.types.Intern(
               mir::Type{mir::PointerType{
                   .pointee = carrier_type,
@@ -393,9 +399,10 @@ auto BuildBoundaryArgument(
                         mir::CallExpr{
                             .callee =
                                 mir::Direct{
-                                    .target = support::BuiltinFn::
-                                        kDpiOpenArrayHandle},
-                            .arguments = {object}},
+                                    .target =
+                                        support::BuiltinFn::kDpiOpenArrayHandle,
+                                    .receiver = object},
+                            .arguments = {}},
                     .type = unit.types.Intern(
                         mir::Type{mir::RuntimeLibraryType{
                             .kind = mir::RuntimeLibraryKind::
@@ -421,14 +428,17 @@ auto BuildBoundaryReadback(
     mir::TypeId carrier_type, mir::TypeId sv_type) -> mir::ExprId {
   mir::CompilationUnit& unit = unit_lowerer.Unit();
   mir::Block& block = *frame.current_block;
-  const auto read = [&](support::BuiltinFn target, mir::ExprId source,
-                        mir::ExprId destination) {
+  // A canonical chunk buffer is read by an entry over two operands, while an
+  // open array's image is read by an entry the image itself answers, so each
+  // arm states its own callee and the shared step is only the interning.
+  const auto read = [&](mir::Direct callee,
+                        std::vector<mir::ExprId> arguments) {
     return block.exprs.Add(
         mir::Expr{
             .data =
                 mir::CallExpr{
-                    .callee = mir::Direct{.target = target},
-                    .arguments = {source, destination}},
+                    .callee = std::move(callee),
+                    .arguments = std::move(arguments)},
             .type = sv_type});
   };
   return std::visit(
@@ -439,15 +449,17 @@ auto BuildBoundaryReadback(
           },
           [&](const support::VectorCarrier& vector) {
             return read(
-                VectorReadBuiltin(vector),
-                BuildBufferDataCall(unit, block, object, carrier_type),
-                mir::BuildPackedTypeRef(unit, block, sv_type));
+                mir::Direct{.target = VectorReadBuiltin(vector)},
+                {BuildBufferDataCall(unit, block, object, carrier_type),
+                 mir::BuildPackedTypeRef(unit, block, sv_type)});
           },
           [&](const support::OpenArrayCarrier&) {
             return read(
-                support::BuiltinFn::kDpiOpenArrayValue, object,
-                block.exprs.Add(BuildDefaultValueExpr(
-                    unit_lowerer.Unit(), block, sv_type)));
+                mir::Direct{
+                    .target = support::BuiltinFn::kDpiOpenArrayValue,
+                    .receiver = object},
+                {block.exprs.Add(BuildDefaultValueExpr(
+                    unit_lowerer.Unit(), block, sv_type))});
           }},
       carrier);
 }
@@ -1007,9 +1019,9 @@ auto SynthesizeForeignExportEntry(
   const WalkFrame body_frame =
       context_frame.WithBlock(&body).WithBindings(&bindings);
 
-  // The leading argument the target expects, bound as a body local first so the
+  // What the target's first parameter binds, bound as a body local first so the
   // whole body (recovery, marshaling, call, writeback) is MIR a backend renders
-  // mechanically. A subroutine of a scope (LRM 8.6) takes a `self` receiver,
+  // mechanically. A subroutine of a scope (LRM 8.6) dispatches on a `self`,
   // narrowed from the generic scope this entry was reached on -- valid because
   // the lookup that found the entry found it on that very scope. A
   // receiver-less package function (LRM 26.3) takes the run's effects,
@@ -1053,9 +1065,12 @@ auto SynthesizeForeignExportEntry(
   // method parameter -- it rides the completion payload (LRM 13.5). A vector
   // reads its SV value from the incoming canonical buffer; a scalar `input`
   // crosses by value; a scalar `inout` reads through its pointer.
+  const mir::ExprId context_ref =
+      body.exprs.Add(mir::MakeLocalRefExpr(context_local, context_type));
   std::vector<mir::ExprId> call_args;
-  call_args.push_back(
-      body.exprs.Add(mir::MakeLocalRefExpr(context_local, context_type)));
+  if (!through_scope) {
+    call_args.push_back(context_ref);
+  }
   for (std::size_t i = 0; i < export_decl.params.size(); ++i) {
     const hir::DpiParamAbi& p = export_decl.params[i];
     if (p.direction == support::DpiDirection::kOutput) {
@@ -1102,7 +1117,11 @@ auto SynthesizeForeignExportEntry(
       mir::Expr{
           .data =
               mir::CallExpr{
-                  .callee = mir::Direct{.target = std::move(target)},
+                  .callee =
+                      mir::Direct{
+                          .target = std::move(target),
+                          .receiver = through_scope ? std::optional{context_ref}
+                                                    : std::nullopt},
                   .arguments = std::move(call_args)},
           .type = method_result_type});
 

@@ -123,8 +123,10 @@ auto EmitScanOperandsKnown(
             .data =
                 mir::CallExpr{
                     .callee =
-                        mir::Direct{.target = support::BuiltinFn::kIsUnknown},
-                    .arguments = {operand}},
+                        mir::Direct{
+                            .target = support::BuiltinFn::kIsUnknown,
+                            .receiver = operand},
+                    .arguments = {}},
             .type = bit_t});
     return body.exprs.Add(
         mir::Expr{
@@ -266,8 +268,11 @@ auto LowerScanSystemSubroutineCall(
         mir::Expr{
             .data =
                 mir::CallExpr{
-                    .callee = mir::Direct{.target = support::BuiltinFn::kFiles},
-                    .arguments = {runtime_id}},
+                    .callee =
+                        mir::Direct{
+                            .target = support::BuiltinFn::kFiles,
+                            .receiver = runtime_id},
+                    .arguments = {}},
             .type = unit.builtins.files});
     source_id = scan_body.exprs.Add(
         mir::Expr{
@@ -275,8 +280,9 @@ auto LowerScanSystemSubroutineCall(
                 mir::CallExpr{
                     .callee =
                         mir::Direct{
-                            .target = support::BuiltinFn::kPeekBuffered},
-                    .arguments = {files_id, fd_id}},
+                            .target = support::BuiltinFn::kPeekBuffered,
+                            .receiver = files_id},
+                    .arguments = {fd_id}},
             .type = string_t});
   } else {
     source_id = LiftStringSource(
@@ -344,8 +350,11 @@ auto LowerScanSystemSubroutineCall(
         mir::Expr{
             .data =
                 mir::CallExpr{
-                    .callee = mir::Direct{.target = support::BuiltinFn::kFiles},
-                    .arguments = {runtime_after}},
+                    .callee =
+                        mir::Direct{
+                            .target = support::BuiltinFn::kFiles,
+                            .receiver = runtime_after},
+                    .arguments = {}},
             .type = unit.builtins.files});
     // LRM 21.3.4.3 "the offending input character is left unread in the input
     // stream": how far the parse advanced is what lets the file form rewind
@@ -357,8 +366,10 @@ auto LowerScanSystemSubroutineCall(
             .data =
                 mir::CallExpr{
                     .callee =
-                        mir::Direct{.target = support::BuiltinFn::kAdvanceFd},
-                    .arguments = {files_after, fd_id, consumed_read}},
+                        mir::Direct{
+                            .target = support::BuiltinFn::kAdvanceFd,
+                            .receiver = files_after},
+                    .arguments = {fd_id, consumed_read}},
             .type = void_t});
     scan_body.AppendStmt(mir::ExprStmt{.expr = advance_call});
   }

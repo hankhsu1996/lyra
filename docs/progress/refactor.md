@@ -591,18 +591,16 @@ enough to warrant its own focused review.
       `Callee = variant<Direct, Indirect, Construct>`, where
       `Direct { target, qualification: optional<ScopeQualifier> }`. `target` is the symbol identity,
       which R49 unifies into one space, and `qualification` names the scope a source-level `::`
-      resolved through. `MethodRef`'s `hops` field retires -- the receiver becomes explicit
-      (`Deref(LocalRef(self_at_hops))` in `args[0]`), the receiver's type pins the enclosing class
-      whose `methods` arena names the `MethodId`. Render mode is read off the callee's signature: a
-      self formal (built-in: per-`BuiltinFn` metadata table; user method:
-      `MethodDecl.code.params[0]`) drives `args[0].name(rest)`; a qualification drives
-      `Q::name(args)`; neither drives `<backend_ns>::name(args)`, where `<backend_ns>` is per-id
-      backend metadata (the C++ namespace a runtime helper lives in, no MIR-level meaning). The
-      `decisions/builtin-call-identity.md` paragraph that justified the instance / static / free
-      split as "structural at MIR" for backend convenience is rewritten -- the split was an
-      invariant-10 violation, not a structural fact. Reserves the seat for `Virtual` (R8e) without
-      inventing it now: gated on R47, a future `Virtual { slot, static_receiver_type }` arm slots in
-      as an additional `Callee` arm with no change to the others.
+      resolved through. `MethodRef`'s `hops` field retires -- the receiver becomes an explicit
+      expression the call carries, and its type pins the enclosing class whose arena names the
+      callable. Render mode follows the callee: a receiver drives the instance form, a qualification
+      the type-qualified one, and neither the free form, whose namespace is per-id backend metadata
+      with no MIR-level meaning. The `decisions/builtin-call-identity.md` paragraph that justified
+      the instance / static / free split as "structural at MIR" for backend convenience is rewritten
+      -- the split was an invariant-10 violation, not a structural fact. Reserves the seat for
+      `Virtual` (R8e) without inventing it now: gated on R47, a future
+      `Virtual { slot, static_receiver_type }` arm slots in as an additional `Callee` arm with no
+      change to the others.
 
 - [x] R46 -- MIR's cast vocabulary is a set of single-meaning primitives, each carrying no kind axis
       because each _is_ one kind: `BoolCastExpr` reduces a value to a machine boolean,

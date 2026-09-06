@@ -2,7 +2,6 @@
 
 #include <functional>
 #include <optional>
-#include <span>
 #include <string>
 #include <variant>
 #include <vector>
@@ -157,8 +156,10 @@ class FunctionLowerer {
   // without an explicit address-of in the source IR.
   auto LowerArgument(const mir::Block& block, mir::ExprId id)
       -> diag::Result<lir::Operand>;
-  auto LowerArguments(
-      const mir::Block& block, std::span<const mir::ExprId> arguments)
+  // Every operand a call carries, in the order the runtime library takes them.
+  // The object the call dispatches on leads, because a library entry is a free
+  // function and takes what it acts on as its first parameter.
+  auto LowerCallOperands(const mir::Block& block, const mir::CallExpr& call)
       -> diag::Result<std::vector<lir::Operand>>;
   auto LowerPlace(const mir::Block& block, mir::ExprId id)
       -> diag::Result<lir::Place>;

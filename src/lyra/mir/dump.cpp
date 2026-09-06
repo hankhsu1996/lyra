@@ -622,8 +622,12 @@ class MirDumper {
     return std::visit(
         Overloaded{
             [this](const Direct& d) -> std::string {
+              const std::string receiver =
+                  d.receiver.has_value()
+                      ? std::format(" recv=Expr[{}]", d.receiver->value)
+                      : std::string{};
               return std::format(
-                  "Direct[{}{}]", FormatDirectTarget(d.target),
+                  "Direct[{}{}{}]", FormatDirectTarget(d.target), receiver,
                   FormatQualification(d.qualification));
             },
             [](const Indirect& i) -> std::string {

@@ -315,6 +315,11 @@ auto RenderFieldAccessExpr(
 // overloads return write-through references). A dereference of a capability
 // wrapper is where the wrapper's own write protocol enters, supplied by the
 // place-access dispatch on the wrapper's type.
+//
+// Only a component access spells differently in target position; every other
+// addressable form is the expression as it reads. The forms are listed rather
+// than defaulted, so what a target may be is stated here and nothing else
+// reaches a write.
 auto RenderLhsExpr(const ScopeView& view, const mir::Expr& expr)
     -> std::string {
   return std::visit(
@@ -322,38 +327,29 @@ auto RenderLhsExpr(const ScopeView& view, const mir::Expr& expr)
           [&](const mir::FieldAccessExpr& m) -> std::string {
             return RenderFieldAccessExpr(view, m, FieldPosition::kTarget);
           },
-          [&](const mir::LocalRef& l) -> std::string {
-            return LookupLocalName(view, l);
+          [&](const mir::LocalRef&) -> std::string {
+            return RenderExpr(view, expr);
           },
-          [&](const mir::StaticConstantRef& r) -> std::string {
-            const mir::Class& cls = view.Class();
-            return std::format(
-                "{}::{}", ToCppName(cls.name),
-                cls.static_constants.Get(r.constant).name);
+          [&](const mir::StaticConstantRef&) -> std::string {
+            return RenderExpr(view, expr);
           },
-          [&](const mir::PackedTypeRef& r) -> std::string {
-            return mir::PackedTypeDescriptionName(r.integral);
+          [&](const mir::PackedTypeRef&) -> std::string {
+            return RenderExpr(view, expr);
           },
-          [&](const mir::StaticPropertyRef& r) -> std::string {
-            const mir::Class& owner_cls = view.Unit().GetClass(r.owner);
-            return std::format(
-                "{}::{}", ToCppName(owner_cls.name),
-                owner_cls.static_properties.Get(r.prop).name);
+          [&](const mir::StaticPropertyRef&) -> std::string {
+            return RenderExpr(view, expr);
           },
-          [&](const mir::ExternalUnitVariableRef& r) -> std::string {
-            return std::format(
-                "{}::{}", ToCppName(r.unit_name), r.variable_name);
+          [&](const mir::ExternalUnitVariableRef&) -> std::string {
+            return RenderExpr(view, expr);
           },
-          [&](const mir::ExternalStaticPropertyRef& r) -> std::string {
-            return std::format(
-                "{}::{}::{}", ToCppName(r.unit_name), ToCppName(r.class_name),
-                r.property_name);
+          [&](const mir::ExternalStaticPropertyRef&) -> std::string {
+            return RenderExpr(view, expr);
           },
-          [&](const mir::CallExpr& c) -> std::string {
-            return RenderLhsCallExpr(view, c, expr.type);
+          [&](const mir::CallExpr&) -> std::string {
+            return RenderExpr(view, expr);
           },
-          [&](const mir::DerefExpr& d) -> std::string {
-            return RenderDerefExpr(view, d);
+          [&](const mir::DerefExpr&) -> std::string {
+            return RenderExpr(view, expr);
           },
           [&](const auto&) -> std::string {
             throw InternalError(

@@ -50,8 +50,11 @@ auto BuildFilesCallExpr(const UnitLowerer& unit_lowerer, mir::Block& block)
   return mir::Expr{
       .data =
           mir::CallExpr{
-              .callee = mir::Direct{.target = support::BuiltinFn::kFiles},
-              .arguments = {runtime_id}},
+              .callee =
+                  mir::Direct{
+                      .target = support::BuiltinFn::kFiles,
+                      .receiver = runtime_id},
+              .arguments = {}},
       .type = builtins.files};
 }
 
@@ -60,8 +63,11 @@ auto BuildDiagnosticCallExpr(
   return mir::Expr{
       .data =
           mir::CallExpr{
-              .callee = mir::Direct{.target = support::BuiltinFn::kDiagnostic},
-              .arguments = {runtime_id}},
+              .callee =
+                  mir::Direct{
+                      .target = support::BuiltinFn::kDiagnostic,
+                      .receiver = runtime_id},
+              .arguments = {}},
       .type = unit.builtins.diagnostic};
 }
 
@@ -74,8 +80,10 @@ auto BuildFormatCallExpr(
           .data =
               mir::CallExpr{
                   .callee =
-                      mir::Direct{.target = support::BuiltinFn::kTimeFormat},
-                  .arguments = {runtime_id}},
+                      mir::Direct{
+                          .target = support::BuiltinFn::kTimeFormat,
+                          .receiver = runtime_id},
+                  .arguments = {}},
           .type = builtins.time_format});
   return mir::Expr{
       .data =
