@@ -59,7 +59,7 @@ auto BuildPackedTypeRef(
   }
   return block.exprs.Add(
       Expr{
-          .data = PackedTypeRef{.integral = integral},
+          .data = ReferenceExpr{.target = PackedTypeRef{.integral = integral}},
           .type = unit.builtins.packed_type});
 }
 

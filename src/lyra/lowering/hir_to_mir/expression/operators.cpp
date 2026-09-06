@@ -640,7 +640,8 @@ auto LowerHirBindingConditionalExpr(
       BuildChainElseIf(unit, block, taken_flag, bit1_type, else_scope));
 
   return mir::Expr{
-      .data = mir::LocalRef{.var = result_local}, .type = result_type};
+      .data = mir::ReferenceExpr{.target = mir::LocalRef{.var = result_local}},
+      .type = result_type};
 }
 
 auto LowerHirIncDecExprProc(

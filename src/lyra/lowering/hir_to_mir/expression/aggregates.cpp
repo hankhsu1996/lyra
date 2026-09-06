@@ -391,8 +391,8 @@ auto LowerHirAssignmentPatternKeyedExpr(
     if (!value) return std::unexpected(std::move(value.error()));
     const mir::ExprId index_id = BuildIntLiteral(unit, body, entry.index);
     const mir::ExprId value_id = body.exprs.Add(*std::move(value));
-    const mir::ExprId owner = body.exprs.Add(
-        mir::Expr{.data = mir::LocalRef{.var = array}, .type = result_type});
+    const mir::ExprId owner =
+        body.exprs.Add(mir::MakeLocalRefExpr(array, result_type));
     const mir::ExprId target = body.exprs.Add(
         mir::Expr{
             .data =
@@ -413,8 +413,8 @@ auto LowerHirAssignmentPatternKeyedExpr(
     body.AppendStmt(mir::ExprStmt{.expr = assign});
   }
 
-  const mir::ExprId result = body.exprs.Add(
-      mir::Expr{.data = mir::LocalRef{.var = array}, .type = result_type});
+  const mir::ExprId result =
+      body.exprs.Add(mir::MakeLocalRefExpr(array, result_type));
   return steps.Build(result);
 }
 

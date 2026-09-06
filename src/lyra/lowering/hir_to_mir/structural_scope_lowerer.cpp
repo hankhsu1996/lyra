@@ -1431,8 +1431,8 @@ auto InstallGeneratedDefinition(
     code.params = {self};
     code.result_type = void_type;
     if (body.has_value()) {
-      const mir::ExprId self_ref = code.Body().exprs.Add(
-          mir::Expr{.data = mir::LocalRef{.var = self}, .type = scope_ptr});
+      const mir::ExprId self_ref =
+          code.Body().exprs.Add(mir::MakeLocalRefExpr(self, scope_ptr));
       const mir::ExprId typed = code.Body().exprs.Add(
           mir::Expr{
               .data = mir::PointerCastExpr{.operand = self_ref},
@@ -1497,7 +1497,9 @@ auto InstallGeneratedDefinition(
   mir::RuntimeRecordBuilder definition(unit, def.body.exprs);
   const mir::ExprId exports_ref = definition.Add(
       mir::Expr{
-          .data = mir::StaticConstantRef{.constant = exports_id},
+          .data =
+              mir::ReferenceExpr{
+                  .target = mir::StaticConstantRef{.constant = exports_id}},
           .type = exports_type});
   const mir::ExprId exports_data = definition.Add(
       mir::Expr{
@@ -1534,7 +1536,9 @@ auto InstallGeneratedDefinition(
   auto& cex = ctor_code.Body().exprs;
   const mir::ExprId ref = cex.Add(
       mir::Expr{
-          .data = mir::StaticConstantRef{.constant = def_id},
+          .data =
+              mir::ReferenceExpr{
+                  .target = mir::StaticConstantRef{.constant = def_id}},
           .type = const_type});
   const mir::ExprId addr = cex.Add(
       mir::Expr{
@@ -1561,8 +1565,8 @@ void FinalizeConstructor(
     base_args.reserve(prefix_local_ids.size() + base_trailing_args.size());
     for (const mir::LocalId id : prefix_local_ids) {
       const mir::TypeId ty = ctor_code.locals.Get(id).type;
-      const mir::ExprId local_ref = ctor_code.Body().exprs.Add(
-          mir::Expr{.data = mir::LocalRef{.var = id}, .type = ty});
+      const mir::ExprId local_ref =
+          ctor_code.Body().exprs.Add(mir::MakeLocalRefExpr(id, ty));
       if (unit.types.Get(ty).IsAliasHandle()) {
         base_args.push_back(local_ref);
       } else {

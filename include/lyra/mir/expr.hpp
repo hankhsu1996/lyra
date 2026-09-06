@@ -679,16 +679,31 @@ struct ExternalStaticPropertyRef {
   std::string property_name;
 };
 
+// Which declared thing a reference names. The alternatives differ in the table
+// that resolves the name -- a body's own bindings, a class's arena, another
+// unit's signature, the descriptors this unit generates -- and that is the
+// referent's business: every one of them reaches storage or code that exists
+// whether or not this expression names it.
+using ReferenceTarget = std::variant<
+    LocalRef, FunctionRef, StaticConstantRef, PackedTypeRef, StaticPropertyRef,
+    ExternalUnitVariableRef, ExternalStaticPropertyRef>;
+
+// Names a declared thing. Reading it loads what the name reaches, assigning to
+// it stores there, and taking its address yields a pointer to it -- one node
+// for all of that, because which of them an occurrence is follows from where it
+// stands, exactly as it does for a field access.
+struct ReferenceExpr {
+  ReferenceTarget target;
+};
+
 using ExprData = std::variant<
     StringLiteral, NullLiteral, MachineBoolLiteral, MachineIntLiteral,
-    MachineFloatLiteral, LocalRef, UnaryExpr, BinaryExpr, BoolCastExpr,
+    MachineFloatLiteral, ReferenceExpr, UnaryExpr, BinaryExpr, BoolCastExpr,
     ConditionalExpr, BlockExpr, AssignExpr, IncDecExpr, CallExpr, DerefExpr,
     AddressOfExpr, MachineArrayDataExpr, MoveExpr, PointerCastExpr,
     FunctionCastExpr, IntCastExpr, FieldAccessExpr, ClosureExpr,
     ArrayLiteralExpr, ValueCastExpr, TupleExpr, VectorExpr, AwaitExpr,
-    VectorGetExpr, UnionExpr, TaggedExpr, TaggedIsExpr, FunctionRef,
-    StaticConstantRef, PackedTypeRef, StaticPropertyRef,
-    ExternalUnitVariableRef, ExternalStaticPropertyRef>;
+    VectorGetExpr, UnionExpr, TaggedExpr, TaggedIsExpr>;
 
 struct Expr {
   ExprData data;
@@ -696,7 +711,20 @@ struct Expr {
 };
 
 [[nodiscard]] inline auto MakeLocalRefExpr(LocalId var, TypeId type) -> Expr {
-  return Expr{.data = LocalRef{.var = var}, .type = type};
+  return Expr{
+      .data = ReferenceExpr{.target = LocalRef{.var = var}}, .type = type};
+}
+
+// The local a reference names, for a consumer following where storage lives;
+// absent for a reference to anything a body does not bind.
+[[nodiscard]] inline auto ReferencedLocal(const ExprData& data)
+    -> std::optional<LocalId> {
+  const auto* reference = std::get_if<ReferenceExpr>(&data);
+  if (reference == nullptr) {
+    return std::nullopt;
+  }
+  const auto* local = std::get_if<LocalRef>(&reference->target);
+  return local != nullptr ? std::optional{local->var} : std::nullopt;
 }
 
 // The library entry a call names outright, if it names one. A call whose callee

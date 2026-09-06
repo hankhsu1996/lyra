@@ -71,8 +71,13 @@ auto UnitsReadBy(const mir::Block& body, std::string_view own_unit)
     -> std::unordered_set<std::string> {
   std::unordered_set<std::string> units;
   for (const mir::ExprId id : body.exprs.Ids()) {
+    const auto* reference =
+        std::get_if<mir::ReferenceExpr>(&body.exprs.Get(id).data);
+    if (reference == nullptr) {
+      continue;
+    }
     if (const auto* ref =
-            std::get_if<mir::ExternalUnitVariableRef>(&body.exprs.Get(id).data);
+            std::get_if<mir::ExternalUnitVariableRef>(&reference->target);
         ref != nullptr && ref->unit_name != own_unit) {
       units.insert(ref->unit_name);
     }
@@ -125,8 +130,10 @@ auto PopulatePackageStaticStorage(
     return block.exprs.Add(
         mir::Expr{
             .data =
-                mir::ExternalUnitVariableRef{
-                    .unit_name = unit.name, .variable_name = name},
+                mir::ReferenceExpr{
+                    .target =
+                        mir::ExternalUnitVariableRef{
+                            .unit_name = unit.name, .variable_name = name}},
             .type = cell_type});
   };
 

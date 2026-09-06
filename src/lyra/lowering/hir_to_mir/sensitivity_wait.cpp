@@ -40,9 +40,11 @@ auto BuildObservableCellExpr(
             return block.exprs.Add(
                 mir::Expr{
                     .data =
-                        mir::ExternalUnitVariableRef{
-                            .unit_name = pkg.unit_name,
-                            .variable_name = pkg.variable_name},
+                        mir::ReferenceExpr{
+                            .target =
+                                mir::ExternalUnitVariableRef{
+                                    .unit_name = pkg.unit_name,
+                                    .variable_name = pkg.variable_name}},
                     .type = cell_type});
           },
       },

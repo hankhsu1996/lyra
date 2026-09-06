@@ -117,11 +117,9 @@ auto TranslateUnaryOp(mir::UnaryOp op) -> std::optional<lir::UnaryOp> {
   }
 }
 
-// The local a place-position expression names, if it names one directly.
-auto PlacedLocal(const mir::Block& block, mir::ExprId id)
+auto LocalNamedBy(const mir::Block& block, mir::ExprId id)
     -> std::optional<mir::LocalId> {
-  const auto* ref = std::get_if<mir::LocalRef>(&block.exprs.Get(id).data);
-  return ref != nullptr ? std::optional{ref->var} : std::nullopt;
+  return mir::ReferencedLocal(block.exprs.Get(id).data);
 }
 
 // A value type whose runtime realization is an opaque handle into transient
@@ -164,24 +162,24 @@ void CollectStorageLocals(
     std::visit(
         Overloaded{
             [&](const mir::AssignExpr& e) {
-              mark(PlacedLocal(block, e.target));
+              mark(LocalNamedBy(block, e.target));
             },
             [&](const mir::IncDecExpr& e) {
-              mark(PlacedLocal(block, e.target));
+              mark(LocalNamedBy(block, e.target));
             },
             [&](const mir::AddressOfExpr& e) {
-              mark(PlacedLocal(block, e.operand));
+              mark(LocalNamedBy(block, e.operand));
             },
             // Building a reference over a local binds that local's storage, so
             // the local needs an address for the same reason an explicit
             // address-of gives it one.
             [&](const mir::CallExpr& e) {
               if (BindsReference(types, e, expr.type)) {
-                mark_lent(PlacedLocal(block, e.arguments[0]));
+                mark_lent(LocalNamedBy(block, e.arguments[0]));
               }
             },
             [&](const mir::MachineArrayDataExpr& e) {
-              mark(PlacedLocal(block, e.array));
+              mark(LocalNamedBy(block, e.array));
             },
             [](const auto&) {}},
         expr.data);
@@ -655,12 +653,12 @@ auto FunctionLowerer::ReferencedValue(lir::Operand reference) -> lir::Place {
 
 auto FunctionLowerer::ActivationValueHandleForTarget(
     const mir::Block& block, mir::ExprId id) -> std::optional<lir::Operand> {
-  const auto* ref = std::get_if<mir::LocalRef>(&block.exprs.Get(id).data);
-  if (ref == nullptr || !locals_[ref->var.value].has_value()) {
+  const std::optional<mir::LocalId> ref =
+      mir::ReferencedLocal(block.exprs.Get(id).data);
+  if (!ref.has_value() || !locals_[ref->value].has_value()) {
     return std::nullopt;
   }
-  const auto* slot =
-      std::get_if<ActivationValueBinding>(&*locals_[ref->var.value]);
+  const auto* slot = std::get_if<ActivationValueBinding>(&*locals_[ref->value]);
   return slot != nullptr ? std::optional{slot->handle} : std::nullopt;
 }
 
@@ -1282,19 +1280,68 @@ auto FunctionLowerer::WrapperContentsPlace(
       .chain = {lir::Projection{lir::DerefProjection{}}}};
 }
 
-auto FunctionLowerer::LowerPlace(const mir::Block& block, mir::ExprId id)
+auto FunctionLowerer::ReferenceValue(
+    const mir::Block& block, mir::ExprId id, const mir::ReferenceTarget& target,
+    mir::TypeId type) -> diag::Result<lir::Operand> {
+  return std::visit(
+      Overloaded{
+          [&](const mir::LocalRef& ref) -> diag::Result<lir::Operand> {
+            const std::optional<LocalBinding>& binding = locals_[ref.var.value];
+            if (!binding.has_value()) {
+              return Unsupported("mir_to_lir: reference to an unlowered local");
+            }
+            return std::visit(
+                Overloaded{
+                    [&](const PlaceBinding& place)
+                        -> diag::Result<lir::Operand> {
+                      return Load(
+                          LocalPlace(place.slot),
+                          fn_.values.Get(place.slot).type);
+                    },
+                    [](const ValueBinding& value)
+                        -> diag::Result<lir::Operand> { return value.value; },
+                    [&](const ActivationValueBinding& frame)
+                        -> diag::Result<lir::Operand> {
+                      return LoadActivationValue(
+                          frame.handle, unit_->TranslateType(type));
+                    },
+                    [&](const CellBinding& cell) -> diag::Result<lir::Operand> {
+                      return Load(
+                          ReferencedValue(cell.reference),
+                          unit_->TranslateType(type));
+                    }},
+                *binding);
+          },
+          [&](const mir::PackedTypeRef& ref) -> diag::Result<lir::Operand> {
+            return lir::Operand{lir::PackedTypeRef{
+                .integral = unit_->TranslateType(ref.integral),
+                .type = unit_->TranslateType(type)}};
+          },
+          [](const mir::FunctionRef&) -> diag::Result<lir::Operand> {
+            return Unsupported(
+                "mir_to_lir: a code address as a value is not yet lowerable to "
+                "LIR");
+          },
+          [&](const mir::ExternalUnitVariableRef&)
+              -> diag::Result<lir::Operand> {
+            return ReadPlace(block, id, unit_->TranslateType(type));
+          },
+          [&](const mir::StaticConstantRef&) -> diag::Result<lir::Operand> {
+            return ReadPlace(block, id, unit_->TranslateType(type));
+          },
+          [&](const mir::StaticPropertyRef&) -> diag::Result<lir::Operand> {
+            return ReadPlace(block, id, unit_->TranslateType(type));
+          },
+          [&](const mir::ExternalStaticPropertyRef&)
+              -> diag::Result<lir::Operand> {
+            return ReadPlace(block, id, unit_->TranslateType(type));
+          }},
+      target);
+}
+
+auto FunctionLowerer::ReferencePlace(
+    const mir::ReferenceTarget& target, mir::TypeId type)
     -> diag::Result<lir::Place> {
-  const mir::Expr& expr = block.exprs.Get(id);
-  // A part of a value is a position in it rather than a slot in storage: the
-  // value crosses to the generated side as a handle a copy may alias, so the
-  // part has no storage of its own for anything to bind. A write through one
-  // still has a realization -- read the whole, replace the part, store it back
-  // -- because nothing there has to outlive the expression.
-  if (ReachesIntoValue(block, id)) {
-    return Unsupported(
-        "mir_to_lir: binding part of a value rather than writing it is not yet "
-        "lowerable to LIR");
-  }
   return std::visit(
       Overloaded{
           [&](const mir::LocalRef& ref) -> diag::Result<lir::Place> {
@@ -1314,6 +1361,77 @@ auto FunctionLowerer::LowerPlace(const mir::Block& block, mir::ExprId id)
                   "mir_to_lir: local is not addressable storage");
             }
             return LocalPlace(place->slot);
+          },
+          // A variable of a unit's namespace is one cell for the whole program
+          // that no instance holds, so it is reached by the symbol it links
+          // under rather than through a receiver -- by the unit that declares
+          // it exactly as by any other, since a namespace has no instance. The
+          // symbol names the cell's address, so the place opens there and
+          // dereferences it, the same shape a member place has once its
+          // receiver is resolved.
+          [&](const mir::ExternalUnitVariableRef& ref)
+              -> diag::Result<lir::Place> {
+            return lir::Place{
+                .base =
+                    lir::StaticRef{
+                        .symbol = StaticVariableSymbol(
+                            ref.unit_name, ref.variable_name),
+                        .type = unit_->Types().Intern(
+                            lir::Type{lir::PointerType{
+                                .pointee = unit_->TranslateType(type),
+                                .ownership = lir::PointerOwnership::kBorrowed,
+                                .mutability = lir::Mutability::kMutable}})},
+                .chain = {lir::Projection{lir::DerefProjection{}}}};
+          },
+          // Each of the following does name storage, reached by a name rather
+          // than through a receiver, and what it lacks is the storage itself:
+          // nothing yet builds a cell for a class's type-associated
+          // declarations, so no symbol names one.
+          [](const mir::StaticConstantRef&) -> diag::Result<lir::Place> {
+            return Unsupported(
+                "mir_to_lir: a class's static constant is not yet reachable on "
+                "this backend");
+          },
+          [](const mir::StaticPropertyRef&) -> diag::Result<lir::Place> {
+            return Unsupported(
+                "mir_to_lir: a class's static property is not yet reachable on "
+                "this backend");
+          },
+          [](const mir::ExternalStaticPropertyRef&)
+              -> diag::Result<lir::Place> {
+            return Unsupported(
+                "mir_to_lir: a static property of a class another compilation "
+                "unit declares is not yet reachable on this backend");
+          },
+          // A descriptor and a function are values the unit generates, not
+          // storage anything writes through.
+          [](const mir::PackedTypeRef&) -> diag::Result<lir::Place> {
+            return Unsupported(
+                "mir_to_lir: a type's runtime descriptor names no place");
+          },
+          [](const mir::FunctionRef&) -> diag::Result<lir::Place> {
+            return Unsupported("mir_to_lir: a function names no place");
+          }},
+      target);
+}
+
+auto FunctionLowerer::LowerPlace(const mir::Block& block, mir::ExprId id)
+    -> diag::Result<lir::Place> {
+  const mir::Expr& expr = block.exprs.Get(id);
+  // A part of a value is a position in it rather than a slot in storage: the
+  // value crosses to the generated side as a handle a copy may alias, so the
+  // part has no storage of its own for anything to bind. A write through one
+  // still has a realization -- read the whole, replace the part, store it back
+  // -- because nothing there has to outlive the expression.
+  if (ReachesIntoValue(block, id)) {
+    return Unsupported(
+        "mir_to_lir: binding part of a value rather than writing it is not yet "
+        "lowerable to LIR");
+  }
+  return std::visit(
+      Overloaded{
+          [&](const mir::ReferenceExpr& reference) -> diag::Result<lir::Place> {
+            return ReferencePlace(reference.target, expr.type);
           },
           [&](const mir::FieldAccessExpr& field) -> diag::Result<lir::Place> {
             auto member = MemberRefOf(block, field);
@@ -1338,47 +1456,6 @@ auto FunctionLowerer::LowerPlace(const mir::Block& block, mir::ExprId id)
               return WrapperContentsPlace(block, *wrapper);
             }
             return WrapperContentsPlace(block, deref.pointer);
-          },
-          // A variable of a unit's namespace is one cell for the whole program
-          // that no instance holds, so it is reached by the symbol it links
-          // under rather than through a receiver -- by the unit that declares
-          // it exactly as by any other, since a namespace has no instance. The
-          // symbol names the cell's address, so the place opens there and
-          // dereferences it, the same shape a member place has once its
-          // receiver is resolved.
-          [&](const mir::ExternalUnitVariableRef& ref)
-              -> diag::Result<lir::Place> {
-            return lir::Place{
-                .base =
-                    lir::StaticRef{
-                        .symbol = StaticVariableSymbol(
-                            ref.unit_name, ref.variable_name),
-                        .type = unit_->Types().Intern(
-                            lir::Type{lir::PointerType{
-                                .pointee = unit_->TranslateType(expr.type),
-                                .ownership = lir::PointerOwnership::kBorrowed,
-                                .mutability = lir::Mutability::kMutable}})},
-                .chain = {lir::Projection{lir::DerefProjection{}}}};
-          },
-          // Each of the following does name storage, reached by a name rather
-          // than through a receiver, and what it lacks is the storage itself:
-          // nothing yet builds a cell for a class's type-associated
-          // declarations, so no symbol names one.
-          [](const mir::StaticConstantRef&) -> diag::Result<lir::Place> {
-            return Unsupported(
-                "mir_to_lir: a class's static constant is not yet reachable on "
-                "this backend");
-          },
-          [](const mir::StaticPropertyRef&) -> diag::Result<lir::Place> {
-            return Unsupported(
-                "mir_to_lir: a class's static property is not yet reachable on "
-                "this backend");
-          },
-          [](const mir::ExternalStaticPropertyRef&)
-              -> diag::Result<lir::Place> {
-            return Unsupported(
-                "mir_to_lir: a static property of a class another compilation "
-                "unit declares is not yet reachable on this backend");
           },
           [](const auto&) -> diag::Result<lir::Place> {
             return Unsupported("mir_to_lir: expression form names no place");
@@ -1475,10 +1552,9 @@ auto FunctionLowerer::LowerCellPlace(
   if (unit_->Mir().types.Get(expr.type).Is<mir::ObservableType>()) {
     return LowerPlace(block, referent);
   }
-  if (const auto* local = std::get_if<mir::LocalRef>(&expr.data);
-      local != nullptr && locals_[local->var.value].has_value()) {
-    if (const auto* cell =
-            std::get_if<CellBinding>(&*locals_[local->var.value])) {
+  if (const std::optional<mir::LocalId> local = mir::ReferencedLocal(expr.data);
+      local.has_value() && locals_[local->value].has_value()) {
+    if (const auto* cell = std::get_if<CellBinding>(&*locals_[local->value])) {
       return ReferencedCell(cell->reference);
     }
   }
@@ -2077,10 +2153,9 @@ auto FunctionLowerer::LowerExpr(const mir::Block& block, mir::ExprId id)
             return lir::Operand{lir::BoolConst{
                 .value = lit.value, .type = unit_->TranslateType(type)}};
           },
-          [&](const mir::PackedTypeRef& ref) -> diag::Result<lir::Operand> {
-            return lir::Operand{lir::PackedTypeRef{
-                .integral = unit_->TranslateType(ref.integral),
-                .type = unit_->TranslateType(type)}};
+          [&](const mir::ReferenceExpr& reference)
+              -> diag::Result<lir::Operand> {
+            return ReferenceValue(block, id, reference.target, type);
           },
           [&](const mir::MachineIntLiteral& lit) -> diag::Result<lir::Operand> {
             return lir::Operand{lir::IntConst{
@@ -2089,33 +2164,6 @@ auto FunctionLowerer::LowerExpr(const mir::Block& block, mir::ExprId id)
                         .value_words = {static_cast<std::uint64_t>(lit.value)},
                         .state_words = {}},
                 .type = unit_->TranslateType(type)}};
-          },
-          [&](const mir::LocalRef& ref) -> diag::Result<lir::Operand> {
-            const std::optional<LocalBinding>& binding = locals_[ref.var.value];
-            if (!binding.has_value()) {
-              return Unsupported("mir_to_lir: reference to an unlowered local");
-            }
-            return std::visit(
-                Overloaded{
-                    [&](const PlaceBinding& place)
-                        -> diag::Result<lir::Operand> {
-                      return Load(
-                          LocalPlace(place.slot),
-                          fn_.values.Get(place.slot).type);
-                    },
-                    [](const ValueBinding& value)
-                        -> diag::Result<lir::Operand> { return value.value; },
-                    [&](const ActivationValueBinding& frame)
-                        -> diag::Result<lir::Operand> {
-                      return LoadActivationValue(
-                          frame.handle, unit_->TranslateType(type));
-                    },
-                    [&](const CellBinding& cell) -> diag::Result<lir::Operand> {
-                      return Load(
-                          ReferencedValue(cell.reference),
-                          unit_->TranslateType(type));
-                    }},
-                *binding);
           },
           [&](const mir::CallExpr& call) -> diag::Result<lir::Operand> {
             return LowerCall(block, call, type);
@@ -2494,35 +2542,7 @@ auto FunctionLowerer::LowerExpr(const mir::Block& block, mir::ExprId id)
                 "mir_to_lir: naming a code address as another function type is "
                 "not yet lowerable to LIR");
           },
-          [](const mir::FunctionRef&) -> diag::Result<lir::Operand> {
-            return Unsupported(
-                "mir_to_lir: a code address as a value is not yet lowerable to "
-                "LIR");
-          },
-          [&](const mir::ExternalUnitVariableRef&)
-              -> diag::Result<lir::Operand> {
-            return ReadPlace(block, id, unit_->TranslateType(type));
-          },
-          // Each of the following names storage rather than reaching it
-          // through a receiver, and nothing yet builds a cell for a class's
-          // type-associated declarations, so there is no place to read one
-          // from.
-          [](const mir::StaticConstantRef&) -> diag::Result<lir::Operand> {
-            return Unsupported(
-                "mir_to_lir: a class's static constant is not yet reachable on "
-                "this backend");
-          },
-          [](const mir::StaticPropertyRef&) -> diag::Result<lir::Operand> {
-            return Unsupported(
-                "mir_to_lir: a class's static property is not yet reachable on "
-                "this backend");
-          },
-          [](const mir::ExternalStaticPropertyRef&)
-              -> diag::Result<lir::Operand> {
-            return Unsupported(
-                "mir_to_lir: a static property of a class another compilation "
-                "unit declares is not yet reachable on this backend");
-          }},
+      },
       expr.data);
 }
 

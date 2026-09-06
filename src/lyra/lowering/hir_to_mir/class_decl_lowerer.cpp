@@ -109,10 +109,10 @@ struct BodyStatics {
 // formal-less callable code the runtime invokes once at program startup,
 // before any initial or always procedure runs. Everything the class owns for
 // itself is brought up here. Each source-written static property initializer
-// lowers to an `AssignExpr(StaticPropertyRef, value)` statement in declaration
-// order; a static property without a source initializer takes its type's Table
-// 7-1 default and gets no statement here. A static-lifetime local of a body
-// follows, its cell being the class's for the same reason.
+// lowers to an assignment to that property, in declaration order; a static
+// property without a source initializer takes its type's Table 7-1 default and
+// gets no statement here. A static-lifetime local of a body follows, its cell
+// being the class's for the same reason.
 auto LowerStaticInit(
     UnitLowerer& unit_lowerer, const hir::ClassDecl& hir_class,
     const ClassShape& shape, mir::Class& mir_class, mir::ClassId class_id,
@@ -145,7 +145,10 @@ auto LowerStaticInit(
     const mir::ExprId target = block.exprs.Add(
         mir::Expr{
             .data =
-                mir::StaticPropertyRef{.owner = class_id, .prop = mir_prop_id},
+                mir::ReferenceExpr{
+                    .target =
+                        mir::StaticPropertyRef{
+                            .owner = class_id, .prop = mir_prop_id}},
             .type = prop_type});
     const mir::ExprId assign =
         block.exprs.Add(mir::MakeAssignExpr(target, value_id, prop_type));

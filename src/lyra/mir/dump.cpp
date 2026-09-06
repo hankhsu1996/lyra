@@ -643,6 +643,45 @@ class MirDumper {
         callee);
   }
 
+  [[nodiscard]] auto FormatReferenceTarget(const ReferenceTarget& target) const
+      -> std::string {
+    return std::visit(
+        Overloaded{
+            [this](const LocalRef& r) -> std::string {
+              return std::format(
+                  "LocalRef[var={}] \"{}\"", r.var.value,
+                  code_->locals.Get(r.var).name);
+            },
+            [](const FunctionRef& fr) -> std::string {
+              return std::format(
+                  "FunctionRef adapter=AbiAdapter[{}]", fr.adapter.value);
+            },
+            [](const StaticConstantRef& r) -> std::string {
+              return std::format(
+                  "StaticConstantRef constant=StaticConstant[{}]",
+                  r.constant.value);
+            },
+            [](const PackedTypeRef& r) -> std::string {
+              return std::format("PackedTypeRef Type[{}]", r.integral.value);
+            },
+            [](const StaticPropertyRef& r) -> std::string {
+              return std::format(
+                  "StaticPropertyRef owner=Class[{}] prop=StaticProperty[{}]",
+                  r.owner.value, r.prop.value);
+            },
+            [](const ExternalUnitVariableRef& r) -> std::string {
+              return std::format(
+                  "ExternalUnitVariableRef unit={} variable={}", r.unit_name,
+                  r.variable_name);
+            },
+            [](const ExternalStaticPropertyRef& r) -> std::string {
+              return std::format(
+                  "ExternalStaticPropertyRef external={}::{}::{}", r.unit_name,
+                  r.class_name, r.property_name);
+            }},
+        target);
+  }
+
   [[nodiscard]] auto ResolveScopeAtHops(std::uint32_t hops) const
       -> const Class& {
     if (hops >= scope_stack_.size()) {
@@ -693,10 +732,9 @@ class MirDumper {
               return std::format(
                   "IntCastExpr operand=Expr[{}]", c.operand.value);
             },
-            [this](const LocalRef& r) -> std::string {
-              const auto& var = code_->locals.Get(r.var);
+            [this](const ReferenceExpr& r) -> std::string {
               return std::format(
-                  "LocalRef[var={}] \"{}\"", r.var.value, var.name);
+                  "ReferenceExpr[{}]", FormatReferenceTarget(r.target));
             },
             [](const UnaryExpr& u) -> std::string {
               return std::format(
@@ -785,33 +823,6 @@ class MirDumper {
             },
             [](const DerefExpr& d) -> std::string {
               return std::format("DerefExpr pointer=Expr[{}]", d.pointer.value);
-            },
-            [](const FunctionRef& fr) -> std::string {
-              return std::format(
-                  "FunctionRef adapter=AbiAdapter[{}]", fr.adapter.value);
-            },
-            [](const StaticConstantRef& r) -> std::string {
-              return std::format(
-                  "StaticConstantRef constant=StaticConstant[{}]",
-                  r.constant.value);
-            },
-            [](const PackedTypeRef& r) -> std::string {
-              return std::format("PackedTypeRef Type[{}]", r.integral.value);
-            },
-            [](const StaticPropertyRef& r) -> std::string {
-              return std::format(
-                  "StaticPropertyRef owner=Class[{}] prop=StaticProperty[{}]",
-                  r.owner.value, r.prop.value);
-            },
-            [](const ExternalUnitVariableRef& r) -> std::string {
-              return std::format(
-                  "ExternalUnitVariableRef unit={} variable={}", r.unit_name,
-                  r.variable_name);
-            },
-            [](const ExternalStaticPropertyRef& r) -> std::string {
-              return std::format(
-                  "ExternalStaticPropertyRef external={}::{}::{}", r.unit_name,
-                  r.class_name, r.property_name);
             },
             [](const ClosureExpr& cl) -> std::string {
               return std::format(

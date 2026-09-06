@@ -163,6 +163,18 @@ class FunctionLowerer {
       -> diag::Result<std::vector<lir::Operand>>;
   auto LowerPlace(const mir::Block& block, mir::ExprId id)
       -> diag::Result<lir::Place>;
+  // The storage a reference names, or why the referent has none. Whether a
+  // referent has storage is the target's own fact, so the place side owns that
+  // answer and a use in value position reads it.
+  auto ReferencePlace(const mir::ReferenceTarget& target, mir::TypeId type)
+      -> diag::Result<lir::Place>;
+  // The value naming a referent yields, whether that is the reference itself --
+  // a descriptor, a function, a local bound to a value that never had storage
+  // -- or what the storage it names holds.
+  auto ReferenceValue(
+      const mir::Block& block, mir::ExprId id,
+      const mir::ReferenceTarget& target, mir::TypeId type)
+      -> diag::Result<lir::Operand>;
   // The storage a capability wrapper stands for. A wrapper that is itself
   // storage continues the chain that reached it; one that refers to storage
   // elsewhere opens a new chain at what it refers to. This is the whole of how

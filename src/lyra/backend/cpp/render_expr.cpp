@@ -310,6 +310,51 @@ auto RenderFieldAccessExpr(
       "{}->{}", RenderExpr(view, view.Expr(m.receiver)), field.name);
 }
 
+// The C++ text a reference names. Every alternative comes out as a name, or a
+// scope and a name joined; what differs is which table the strings are read out
+// of, which is the whole of what separates one referent from another. A
+// function is named by its address, since C++ spells a bare function name as a
+// call.
+auto RenderReferenceExpr(
+    const ScopeView& view, const mir::ReferenceExpr& reference) -> std::string {
+  return std::visit(
+      Overloaded{
+          [&](const mir::LocalRef& l) -> std::string {
+            return LookupLocalName(view, l);
+          },
+          [&](const mir::FunctionRef& fr) -> std::string {
+            const mir::Class& cls = view.Class();
+            return std::format(
+                "&{}::{}", ToCppName(cls.name),
+                cls.abi_adapters.Get(fr.adapter).name);
+          },
+          [&](const mir::StaticConstantRef& r) -> std::string {
+            const mir::Class& cls = view.Class();
+            return std::format(
+                "{}::{}", ToCppName(cls.name),
+                cls.static_constants.Get(r.constant).name);
+          },
+          [&](const mir::PackedTypeRef& r) -> std::string {
+            return mir::PackedTypeDescriptionName(r.integral);
+          },
+          [&](const mir::StaticPropertyRef& r) -> std::string {
+            const mir::Class& owner_cls = view.Unit().GetClass(r.owner);
+            return std::format(
+                "{}::{}", ToCppName(owner_cls.name),
+                owner_cls.static_properties.Get(r.prop).name);
+          },
+          [&](const mir::ExternalUnitVariableRef& r) -> std::string {
+            return std::format(
+                "{}::{}", ToCppName(r.unit_name), r.variable_name);
+          },
+          [&](const mir::ExternalStaticPropertyRef& r) -> std::string {
+            return std::format(
+                "{}::{}::{}", ToCppName(r.unit_name), ToCppName(r.class_name),
+                r.property_name);
+          }},
+      reference.target);
+}
+
 // LHS expression render: produces a write-target reference (a name, a
 // dereference, or a chain of container-access `CallExpr`s whose runtime
 // overloads return write-through references). A dereference of a capability
@@ -327,22 +372,7 @@ auto RenderLhsExpr(const ScopeView& view, const mir::Expr& expr)
           [&](const mir::FieldAccessExpr& m) -> std::string {
             return RenderFieldAccessExpr(view, m, FieldPosition::kTarget);
           },
-          [&](const mir::LocalRef&) -> std::string {
-            return RenderExpr(view, expr);
-          },
-          [&](const mir::StaticConstantRef&) -> std::string {
-            return RenderExpr(view, expr);
-          },
-          [&](const mir::PackedTypeRef&) -> std::string {
-            return RenderExpr(view, expr);
-          },
-          [&](const mir::StaticPropertyRef&) -> std::string {
-            return RenderExpr(view, expr);
-          },
-          [&](const mir::ExternalUnitVariableRef&) -> std::string {
-            return RenderExpr(view, expr);
-          },
-          [&](const mir::ExternalStaticPropertyRef&) -> std::string {
+          [&](const mir::ReferenceExpr&) -> std::string {
             return RenderExpr(view, expr);
           },
           [&](const mir::CallExpr&) -> std::string {
@@ -684,8 +714,8 @@ auto RenderExpr(const ScopeView& view, const mir::Expr& expr) -> std::string {
             }
             return std::format("{}LL", h.value);
           },
-          [&](const mir::LocalRef& l) -> std::string {
-            return LookupLocalName(view, l);
+          [&](const mir::ReferenceExpr& r) -> std::string {
+            return RenderReferenceExpr(view, r);
           },
           [&](const mir::UnaryExpr& u) -> std::string {
             return RenderUnaryExpr(view, u);
@@ -739,36 +769,6 @@ auto RenderExpr(const ScopeView& view, const mir::Expr& expr) -> std::string {
           },
           [&](const mir::FieldAccessExpr& m) -> std::string {
             return RenderFieldAccessExpr(view, m, FieldPosition::kValue);
-          },
-          [&](const mir::FunctionRef& fr) -> std::string {
-            const mir::Class& cls = view.Class();
-            return std::format(
-                "&{}::{}", ToCppName(cls.name),
-                cls.abi_adapters.Get(fr.adapter).name);
-          },
-          [&](const mir::StaticConstantRef& r) -> std::string {
-            const mir::Class& cls = view.Class();
-            return std::format(
-                "{}::{}", ToCppName(cls.name),
-                cls.static_constants.Get(r.constant).name);
-          },
-          [&](const mir::PackedTypeRef& r) -> std::string {
-            return mir::PackedTypeDescriptionName(r.integral);
-          },
-          [&](const mir::StaticPropertyRef& r) -> std::string {
-            const mir::Class& owner_cls = view.Unit().GetClass(r.owner);
-            return std::format(
-                "{}::{}", ToCppName(owner_cls.name),
-                owner_cls.static_properties.Get(r.prop).name);
-          },
-          [&](const mir::ExternalUnitVariableRef& r) -> std::string {
-            return std::format(
-                "{}::{}", ToCppName(r.unit_name), r.variable_name);
-          },
-          [&](const mir::ExternalStaticPropertyRef& r) -> std::string {
-            return std::format(
-                "{}::{}::{}", ToCppName(r.unit_name), ToCppName(r.class_name),
-                r.property_name);
           },
           [&](const mir::ClosureExpr& cl) -> std::string {
             return RenderClosureExpr(view, cl);

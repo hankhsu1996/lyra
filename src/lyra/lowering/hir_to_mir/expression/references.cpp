@@ -135,8 +135,11 @@ auto LowerExternalUnitValueRefExpr(
   }
   return mir::Expr{
       .data =
-          mir::ExternalUnitVariableRef{
-              .unit_name = r.unit_name, .variable_name = r.variable_name},
+          mir::ReferenceExpr{
+              .target =
+                  mir::ExternalUnitVariableRef{
+                      .unit_name = r.unit_name,
+                      .variable_name = r.variable_name}},
       .type = mir::ObservableCellOf(unit.types, value_type)};
 }
 
@@ -226,16 +229,20 @@ auto LowerStaticPropertyRefExpr(
     const mir::ClassId owner = unit_lowerer.TranslateClass(local->owner);
     return mir::Expr{
         .data =
-            mir::StaticPropertyRef{
-                .owner = owner,
-                .prop = unit_lowerer.GetClassShape(owner)
-                            .static_property_translation.Get(local->prop),
-            },
+            mir::ReferenceExpr{
+                .target =
+                    mir::StaticPropertyRef{
+                        .owner = owner,
+                        .prop =
+                            unit_lowerer.GetClassShape(owner)
+                                .static_property_translation.Get(local->prop)}},
         .type = result_type};
   }
   return mir::Expr{
-      .data = unit_lowerer.MakeExternalStaticPropertyRef(
-          std::get<hir::ExternalStaticPropertyTarget>(r.target)),
+      .data =
+          mir::ReferenceExpr{
+              .target = unit_lowerer.MakeExternalStaticPropertyRef(
+                  std::get<hir::ExternalStaticPropertyTarget>(r.target))},
       .type = result_type};
 }
 
