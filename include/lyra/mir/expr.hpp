@@ -210,13 +210,14 @@ struct ExternalUnitCallableTarget {
   auto operator==(const ExternalUnitCallableTarget&) const -> bool = default;
 };
 
-// Identity of an instance method another compilation unit declares (LRM 8.6) --
-// on a class the referring unit reaches by name, or on the object that unit's
-// instances are (LRM 25.7). The declaring class carries no unit-local id here,
-// so the target names the declaring unit, the class's canonical
-// (specialization) name, and the method's source name, resolved against that
-// unit's signature at link time. It dispatches on a receiver, which is what
-// separates it from the type-associated form.
+// Identity of a method another compilation unit declares on a class -- an
+// instance method (LRM 8.6), including one on the object that unit's instances
+// are (LRM 25.7), or a type-associated method (LRM 8.10). The declaring class
+// carries no unit-local id here, so the target names the declaring unit, the
+// class's canonical (specialization) name, and the method's source name,
+// resolved against that unit's signature at link time. Whether the call
+// dispatches on an object is the presence of the callee's receiver, so the two
+// LRM forms are one identity here.
 struct ExternalUnitClassMethodTarget {
   std::string unit_name;
   std::string class_name;
@@ -225,33 +226,20 @@ struct ExternalUnitClassMethodTarget {
   auto operator==(const ExternalUnitClassMethodTarget&) const -> bool = default;
 };
 
-// Identity of a type-associated method another compilation unit declares (LRM
-// 8.10), named the same three ways. It dispatches on nothing, which is what
-// separates it from the instance form.
-struct ExternalUnitStaticMethodTarget {
-  std::string unit_name;
-  std::string class_name;
-  std::string method_name;
-
-  auto operator==(const ExternalUnitStaticMethodTarget&) const
-      -> bool = default;
-};
-
-// The target of a `Direct` call -- the symbol identity. The identity spaces: an
-// owner-qualified callable of this unit (`CallableTarget` -- an instance method
-// or a receiver-less static callable, one arena), a built-in runtime entry
-// (closed-namespace `BuiltinFn`), a method the runtime library provides for an
-// imported class (`ImportedRuntimeCallTarget`, LRM 9.7), a receiver-less
-// callable of another compilation unit (`ExternalUnitCallableTarget`, named
-// across the unit boundary), an instance method of another compilation unit
-// (`ExternalUnitClassMethodTarget`) and a type-associated one
-// (`ExternalUnitStaticMethodTarget`), both class-qualified across the unit
-// boundary, and a name in the DPI-C name space (`ForeignSymbolTarget`, LRM
-// 35.4). None is recovered from the receiver's runtime type.
+// The target of a `Direct` call -- the symbol identity. Each alternative is one
+// identity space, told apart by the table that resolves the name: this unit's
+// own callable arena (`CallableTarget`), the closed set of runtime library
+// entries (`BuiltinFn`, and `ImportedRuntimeCallTarget` for the methods the
+// library provides for an imported class, LRM 9.7), another compilation unit's
+// namespace (`ExternalUnitCallableTarget`) or one of its classes
+// (`ExternalUnitClassMethodTarget`), and the DPI-C name space
+// (`ForeignSymbolTarget`, LRM 35.4). Nothing here says whether the call
+// dispatches on an object -- that is the callee's receiver -- and none is
+// recovered from the receiver's runtime type.
 using DirectTarget = std::variant<
     CallableTarget, support::BuiltinFn, ImportedRuntimeCallTarget,
     ExternalUnitCallableTarget, ExternalUnitClassMethodTarget,
-    ExternalUnitStaticMethodTarget, ForeignSymbolTarget>;
+    ForeignSymbolTarget>;
 
 // A direct call to a named symbol -- the code is found by name at compile
 // time. The single shape for every direct invocation: a user method, a

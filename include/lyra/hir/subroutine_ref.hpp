@@ -75,14 +75,14 @@ using MethodReceiver =
 // Calls a class method whose declaring class is in another compilation unit.
 // Beside naming the callee it carries the facts this unit cannot look up about
 // one: whether the method is virtual (LRM 8.20), which routes the call between
-// dynamic and static dispatch; whether it is type-associated (LRM 8.10), which
-// is whether it takes a receiver at all; and its interface, which shapes the
-// arguments the call passes and the completion it consumes. All are read from
-// the frontend's view of the callee where this callee is minted.
+// dynamic and static dispatch, and its interface, which shapes the arguments
+// the call passes and the completion it consumes. Both are read from the
+// frontend's view of the callee where this callee is minted. Whether the
+// method is type-associated (LRM 8.10) is not among them: a call to one is a
+// different reference, which is where that shows.
 struct ExternalMethodCallee {
   ExternalClassMethodTarget target;
   bool is_virtual = false;
-  bool is_static = false;
   ExternalCalleeInterface interface;
 };
 

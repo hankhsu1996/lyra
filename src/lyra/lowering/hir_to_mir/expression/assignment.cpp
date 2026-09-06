@@ -58,10 +58,24 @@ auto TargetOutlivesDeferredUpdate(const mir::Block& block, mir::ExprId expr_id)
             }
             return TargetOutlivesDeferredUpdate(block, m.receiver);
           },
-          [](const mir::StaticPropertyRef&) { return true; },
-          [](const mir::ExternalStaticPropertyRef&) { return true; },
-          [](const mir::ExternalUnitVariableRef&) { return true; },
-          [](const mir::LocalRef&) { return false; },
+          // A name reaches storage of one of two durations: a body's own
+          // binding, which goes away when the stretch that holds it returns,
+          // and everything a compilation unit declares once -- a
+          // type-associated cell, a namespace variable, a generated descriptor
+          // -- which the whole program shares and so outlives any stretch.
+          [](const mir::ReferenceExpr& r) {
+            return std::visit(
+                Overloaded{
+                    [](const mir::LocalRef&) { return false; },
+                    [](const mir::StaticConstantRef&) { return true; },
+                    [](const mir::StaticPropertyRef&) { return true; },
+                    [](const mir::PackedTypeRef&) { return true; },
+                    [](const mir::FunctionRef&) { return true; },
+                    [](const mir::ExternalUnitVariableRef&) { return true; },
+                    [](const mir::ExternalStaticPropertyRef&) { return true; },
+                },
+                r.target);
+          },
           // A sealed endpoint reaches a structural cell through a borrowed
           // pointer stored on this object: a routed reference (an enclosing,
           // sibling, or cross-unit target) dereferences its slot member. The

@@ -622,8 +622,12 @@ enough to warrant its own focused review.
       lives and how it is reached, not what a call to it means. The target is one identity space
       whose entries name a declaration carrying signature, implementation form (internal body,
       external symbol, built-in intrinsic), receiver convention, and per-backend render metadata; a
-      call names one identity and nothing branches on origin. **Gated on**: R8e (external callable
-      form) and a co-design with DPI's symbol contract, which needs the same declaration shape.
+      call names one identity and nothing branches on origin. Two halves of this have landed: the
+      arms now differ only in where the declaration lives, the one that instead recorded whether the
+      call dispatches on an object having gone; and the C++ backend composes a call once, each arm
+      answering with the name it is spelled by and where its receiver goes rather than with the call
+      text. **Gated on**: R8e (external callable form) and a co-design with DPI's symbol contract,
+      which needs the same declaration shape.
 
 - [x] R51 -- Reaching a capability wrapper's storage is place formation, not a call. A bare wrapper
       place denotes the wrapper and a dereference of it denotes the storage it represents, so an

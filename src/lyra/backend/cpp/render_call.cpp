@@ -1,5 +1,6 @@
 #include "lyra/backend/cpp/render_call.hpp"
 
+#include <cstdint>
 #include <format>
 #include <optional>
 #include <string>
@@ -21,9 +22,10 @@ namespace lyra::backend::cpp {
 
 namespace {
 
-// The bare C++ identifier this backend declares the builtin fn as. One of
-// three orthogonal facts a render path composes: name, namespace, and the
-// receiver expression / type qualifier supplied by the callee variant.
+// The bare C++ identifier this backend declares the builtin fn as, without the
+// scope it is reached through: what that scope is depends on how the library
+// declares the entry and on what the call site qualifies it with, and neither
+// changes the identifier.
 auto BuiltinFnCppName(support::BuiltinFn id) -> std::string_view {
   switch (id) {
     case support::BuiltinFn::kParent:
@@ -517,15 +519,20 @@ auto BuiltinFnCppName(support::BuiltinFn id) -> std::string_view {
   throw InternalError("BuiltinFnCppName: unknown BuiltinFn");
 }
 
-// The C++ namespace the runtime helper is declared in (e.g. `lyra::value`
-// for `lyra::value::Scan`). Used only for the free-function render form --
-// a built-in whose id has no receiver and is not qualified by the call
-// site needs the namespace to spell its symbol. A built-in id with a
-// receiver consumes its receiver expression instead; a static-qualified
-// call (per `IsStaticBuiltinFn`) consumes the call site's qualification.
-// An empty return means "no namespace declared"; ids whose render does
-// not need one (instance and static forms) leave this unset.
-auto BuiltinFnCppNamespace(support::BuiltinFn id) -> std::string_view {
+// How the C++ runtime library declares a built-in entry. A free function is
+// reached by its namespace and takes the object the entry acts on as an
+// ordinary leading argument, because a free function binds no receiver; a
+// member is reached through that object and binds it.
+struct FreeFunction {
+  std::string_view namespace_name;
+};
+struct InstanceMethod {};
+using BuiltinCppForm = std::variant<FreeFunction, InstanceMethod>;
+
+// Which of those two this backend declares the entry as. Most entries are
+// declared on the type they act on, so that is what an entry this table does
+// not place in a namespace is.
+auto BuiltinFnCppForm(support::BuiltinFn id) -> BuiltinCppForm {
   switch (id) {
     case support::BuiltinFn::kScanString:
     case support::BuiltinFn::kScanFile:
@@ -538,7 +545,7 @@ auto BuiltinFnCppNamespace(support::BuiltinFn id) -> std::string_view {
     case support::BuiltinFn::kWriteCanonicalLogicVec:
     case support::BuiltinFn::kFromSvLogic:
     case support::BuiltinFn::kRequire:
-      return "lyra::value";
+      return FreeFunction{"lyra::value"};
     case support::BuiltinFn::kCurrentRuntime:
     case support::BuiltinFn::kRegisterInitial:
     case support::BuiltinFn::kRegisterFinal:
@@ -584,22 +591,30 @@ auto BuiltinFnCppNamespace(support::BuiltinFn id) -> std::string_view {
     case support::BuiltinFn::kCurrentExportScope:
     case support::BuiltinFn::kFindExportEntry:
     case support::BuiltinFn::kSelfHandle:
-      return "lyra::runtime";
+      return FreeFunction{"lyra::runtime"};
     default:
-      return "";
+      return InstanceMethod{};
   }
 }
 
-// The C++ text written before the `(args)` list, plus the receiver this
-// spelling passes positionally rather than binding into that text: a runtime
-// library symbol is a free function, so the object the operation acts on
-// reaches it as an ordinary leading argument. The outer render then does one
-// concatenation -- `{callee}({args})` -- so every form (instance,
-// type-qualified static, free function, indirect closure, type constructor)
-// renders through the same final formatter.
-struct CalleeRender {
-  std::string expr;
-  std::optional<std::string> positional_receiver;
+// Where in the call text the object a call dispatches on goes. C++ offers two
+// positions and no third: a member call reaches the object through the callee
+// expression, and a free function takes it as an ordinary leading argument,
+// because a free function binds nothing. This says where such an object would
+// go, not that there is one -- a callee that dispatches on nothing has nothing
+// to place and answers here vacuously.
+enum class ReceiverPlacement : std::uint8_t {
+  kIntoCalleeName,
+  kIntoArgumentList
+};
+
+// What C++ names a callee, and where the object it dispatches on goes. Every
+// callee form -- an instance method, a type-qualified static, a free function,
+// an indirect closure, a type constructor -- answers with these two and nothing
+// else, so one site composes the call text out of them.
+struct CalleeSpelling {
+  std::string name;
+  ReceiverPlacement placement;
 };
 
 // The object a call dispatches on, ready to compose into a callee: the rendered
@@ -628,211 +643,153 @@ auto RenderReceiver(const ScopeView& view, const mir::Callee& callee)
           view.Unit().types.Get(expr.type).Is<mir::PointerType>() ? "->" : "."};
 }
 
-// Renders a `Direct` callee naming an owner-qualified callable this class
-// owns -- an instance method (LRM 8.6) or a static method (LRM 8.10), one
-// arena. An instance callable renders as an owner-qualified C++ member call:
-// the owner prefix is a fixed function of the target's owner, redundant for a
-// non-virtual method and, for a virtual method reached through Direct (LRM 8.15
-// super), forcing C++ to bypass the vtable. A static callable renders as the
-// free type-qualified form `Owner::name`. No qualification is allowed today --
-// cross-class explicit qualification is gated on SV class support.
-auto RenderDirectCallableCall(
-    const ScopeView& view, const mir::CallableTarget& target,
-    const std::optional<RenderedReceiver>& receiver,
-    const std::optional<mir::ScopeQualifier>& qualification) -> CalleeRender {
-  if (qualification.has_value()) {
-    throw InternalError(
-        "Direct callable call: qualification is not yet implemented");
-  }
-  const auto& cls = view.Unit().GetClass(target.owner);
-  const auto& callable = cls.callables.Get(target.slot);
-  if (!receiver.has_value()) {
-    return {
-        .expr = std::format("{}::{}", ToCppName(cls.name), callable.name),
-        .positional_receiver = std::nullopt};
-  }
-  return {
-      .expr = std::format(
-          "({}){}{}::{}", receiver->expr, receiver->member_access,
-          ToCppName(cls.name), callable.name),
-      .positional_receiver = std::nullopt};
-}
-
-// Renders a `Direct` callee whose target is a `BuiltinFn`. Picks one of three
-// C++ forms: qualification present -> type-qualified static `Qual::Name(args)`;
-// a declared namespace -> free function `ns::Name(args)`, which a receiver
-// reaches as its leading argument because a free function binds none;
-// otherwise -> instance form `(recv).Name(args)`.
-auto RenderDirectBuiltinCall(
+// A built-in runtime entry. Where MIR states a qualification the entry is
+// reached on the type it names -- a conversion's destination, the type a
+// library value is built as -- and otherwise the library's own declaration
+// says how the entry is reached.
+auto ResolveBuiltinSpelling(
     const ScopeView& view, support::BuiltinFn id,
-    const std::optional<RenderedReceiver>& receiver,
-    const std::optional<mir::ScopeQualifier>& qualification) -> CalleeRender {
+    const std::optional<mir::ScopeQualifier>& qualification,
+    const std::optional<RenderedReceiver>& receiver) -> CalleeSpelling {
+  const std::string_view name = BuiltinFnCppName(id);
   if (qualification.has_value()) {
     const auto& tq = std::get<mir::TypeQualifier>(*qualification);
     return {
-        .expr = std::format(
-            "{}::{}", RenderTypeAsCpp(view.Unit(), tq.type),
-            BuiltinFnCppName(id)),
-        .positional_receiver = std::nullopt};
+        .name =
+            std::format("{}::{}", RenderTypeAsCpp(view.Unit(), tq.type), name),
+        .placement = ReceiverPlacement::kIntoCalleeName};
   }
-  const std::string_view ns = BuiltinFnCppNamespace(id);
-  if (!ns.empty()) {
-    return {
-        .expr = std::format("{}::{}", ns, BuiltinFnCppName(id)),
-        .positional_receiver = receiver.transform(
-            [](const RenderedReceiver& r) { return r.expr; })};
-  }
-  if (!receiver.has_value()) {
-    throw InternalError(
-        "Direct builtin call: the instance form of a runtime entry is reached "
-        "through the object it acts on, and this call names none -- please "
-        "report this as a bug");
-  }
-  return {
-      .expr = std::format(
-          "({}){}{}", receiver->expr, receiver->member_access,
-          BuiltinFnCppName(id)),
-      .positional_receiver = std::nullopt};
-}
-
-// Renders a `Direct` callee whose target is a receiver-less callable of another
-// compilation unit -- a package function or task (LRM 26.3). The unit's C++
-// peer is a namespace, so the callee is the free qualified form
-// `unit_name::callable_name`.
-auto RenderDirectExternalUnitCall(const mir::ExternalUnitCallableTarget& target)
-    -> CalleeRender {
-  return {
-      .expr = std::format(
-          "{}::{}", ToCppName(target.unit_name), target.callable_name),
-      .positional_receiver = std::nullopt};
-}
-
-// Renders a `Direct` callee whose target is an instance method of another
-// compilation unit (LRM 8.6, and LRM 25.7 for a subroutine on the object a
-// unit's instances are). The callee reaches the method through the object, so
-// target-language name-lookup resolves it against the receiver's static type
-// after the declaring unit's header is included. A `Direct` call is non-virtual
-// by construction (LRM 8.15 super, or a non-virtual callee), so the form is
-// owner-qualified -- the same shape the intra-unit owner-qualified render uses
-// -- which bypasses the target language's vtable exactly as super demands and
-// is equivalent to an unqualified call for a non-virtual callee.
-auto RenderDirectExternalUnitClassMethodCall(
-    const RenderedReceiver& receiver,
-    const mir::ExternalUnitClassMethodTarget& target) -> CalleeRender {
-  return {
-      .expr = std::format(
-          "({}){}{}::{}::{}", receiver.expr, receiver.member_access,
-          ToCppName(target.unit_name), ToCppName(target.class_name),
-          target.method_name),
-      .positional_receiver = std::nullopt};
-}
-
-// Renders a `Direct` callee whose target is a type-associated method of another
-// compilation unit (LRM 8.10). It dispatches on nothing, so the callee is the
-// free qualified form `unit::Class::method`.
-auto RenderDirectExternalUnitStaticMethodCall(
-    const mir::ExternalUnitStaticMethodTarget& target) -> CalleeRender {
-  return {
-      .expr = std::format(
-          "{}::{}::{}", ToCppName(target.unit_name),
-          ToCppName(target.class_name), target.method_name),
-      .positional_receiver = std::nullopt};
-}
-
-// Renders a call to a method the runtime library provides for an imported class
-// (LRM 9.7 `process`). The callee is the runtime symbol named by the method
-// identity -- a free function, which binds no receiver, so the handle the call
-// dispatches on reaches it as the leading argument.
-auto RenderDirectImportedRuntimeCall(
-    const mir::ImportedRuntimeCallTarget& target,
-    const std::optional<RenderedReceiver>& receiver) -> CalleeRender {
-  return {
-      .expr = std::format(
-          "lyra::runtime::{}",
-          support::ImportedRuntimeMethodSymbol(target.method)),
-      .positional_receiver =
-          receiver.transform([](const RenderedReceiver& r) { return r.expr; })};
-}
-
-// Renders a call to a name in the DPI-C name space (LRM 35.4). The symbol is
-// program-global, so it is spelled unqualified and dispatches on nothing; the
-// prototype it resolves against is declared once in this artifact.
-auto RenderDirectForeignSymbolCall(const mir::ForeignSymbolTarget& target)
-    -> CalleeRender {
-  return {.expr = target.linkage_name, .positional_receiver = std::nullopt};
-}
-
-auto RenderCalleePart(
-    const ScopeView& view, const mir::CallExpr& call, mir::TypeId result_type)
-    -> CalleeRender {
-  const std::optional<RenderedReceiver> receiver =
-      RenderReceiver(view, call.callee);
   return std::visit(
       Overloaded{
-          [&](const mir::Direct& d) -> CalleeRender {
-            return std::visit(
-                Overloaded{
-                    [&](const mir::CallableTarget& t) {
-                      return RenderDirectCallableCall(
-                          view, t, receiver, d.qualification);
-                    },
-                    [&](const support::BuiltinFn& id) {
-                      return RenderDirectBuiltinCall(
-                          view, id, receiver, d.qualification);
-                    },
-                    [&](const mir::ExternalUnitCallableTarget& e) {
-                      return RenderDirectExternalUnitCall(e);
-                    },
-                    [&](const mir::ExternalUnitClassMethodTarget& e) {
-                      return RenderDirectExternalUnitClassMethodCall(
-                          *receiver, e);
-                    },
-                    [](const mir::ExternalUnitStaticMethodTarget& e) {
-                      return RenderDirectExternalUnitStaticMethodCall(e);
-                    },
-                    [&](const mir::ImportedRuntimeCallTarget& i) {
-                      return RenderDirectImportedRuntimeCall(i, receiver);
-                    },
-                    [](const mir::ForeignSymbolTarget& f) {
-                      return RenderDirectForeignSymbolCall(f);
-                    },
-                },
-                d.target);
-          },
-          [&](const mir::Indirect& i) -> CalleeRender {
+          [&](const FreeFunction& f) -> CalleeSpelling {
             return {
-                .expr =
+                .name = std::format("{}::{}", f.namespace_name, name),
+                .placement = ReceiverPlacement::kIntoArgumentList};
+          },
+          // A member names nothing on its own, so a call reaching this spelling
+          // without an object to reach it through has no C++ text at all.
+          [&](const InstanceMethod&) -> CalleeSpelling {
+            if (!receiver.has_value()) {
+              throw InternalError(
+                  "Direct builtin call: the instance form of a runtime entry "
+                  "is reached through the object it acts on, and this call "
+                  "names none -- please report this as a bug");
+            }
+            return {
+                .name = std::string{name},
+                .placement = ReceiverPlacement::kIntoCalleeName};
+          }},
+      BuiltinFnCppForm(id));
+}
+
+// What C++ names a `Direct` callee. Each alternative is a lookup in the table
+// that resolves its own identity space, and how a receiver rides follows from
+// what that lookup found.
+auto ResolveDirectSpelling(
+    const ScopeView& view, const mir::Direct& direct,
+    const std::optional<RenderedReceiver>& receiver) -> CalleeSpelling {
+  return std::visit(
+      Overloaded{
+          // The owner prefix is a fixed function of the target's owner: it is
+          // redundant for a non-virtual method and, for a virtual one a direct
+          // call reaches (LRM 8.15 super), is what makes C++ bypass the vtable.
+          // No qualification is allowed today -- cross-class explicit
+          // qualification is gated on SV class support.
+          [&](const mir::CallableTarget& t) -> CalleeSpelling {
+            if (direct.qualification.has_value()) {
+              throw InternalError(
+                  "Direct callable call: qualification is not yet implemented");
+            }
+            const auto& cls = view.Unit().GetClass(t.owner);
+            return {
+                .name = std::format(
+                    "{}::{}", ToCppName(cls.name),
+                    cls.callables.Get(t.slot).name),
+                .placement = ReceiverPlacement::kIntoCalleeName};
+          },
+          [&](const support::BuiltinFn& id) -> CalleeSpelling {
+            return ResolveBuiltinSpelling(
+                view, id, direct.qualification, receiver);
+          },
+          // The runtime library provides an imported class's methods (LRM 9.7)
+          // as symbols named by the method identity.
+          [](const mir::ImportedRuntimeCallTarget& t) -> CalleeSpelling {
+            return {
+                .name = std::format(
+                    "lyra::runtime::{}",
+                    support::ImportedRuntimeMethodSymbol(t.method)),
+                .placement = ReceiverPlacement::kIntoArgumentList};
+          },
+          // Another compilation unit's C++ peer is a namespace, so a callable
+          // of it (LRM 26.3) is named through that namespace.
+          [](const mir::ExternalUnitCallableTarget& t) -> CalleeSpelling {
+            return {
+                .name = std::format(
+                    "{}::{}", ToCppName(t.unit_name), t.callable_name),
+                .placement = ReceiverPlacement::kIntoCalleeName};
+          },
+          // A method on one of that namespace's classes is named through the
+          // class as well. Target-language name lookup resolves it once the
+          // declaring unit's header is included, and the class qualification
+          // makes C++ bypass the vtable, exactly as a direct call to a virtual
+          // method demands (LRM 8.15 super).
+          [](const mir::ExternalUnitClassMethodTarget& t) -> CalleeSpelling {
+            return {
+                .name = std::format(
+                    "{}::{}::{}", ToCppName(t.unit_name),
+                    ToCppName(t.class_name), t.method_name),
+                .placement = ReceiverPlacement::kIntoCalleeName};
+          },
+          // A DPI-C symbol is program-global, so it is spelled unqualified
+          // (LRM 35.4); the prototype it resolves against is declared once in
+          // this artifact.
+          [](const mir::ForeignSymbolTarget& t) -> CalleeSpelling {
+            return {
+                .name = t.linkage_name,
+                .placement = ReceiverPlacement::kIntoCalleeName};
+          }},
+      direct.target);
+}
+
+auto ResolveCalleeSpelling(
+    const ScopeView& view, const mir::CallExpr& call,
+    const std::optional<RenderedReceiver>& receiver, mir::TypeId result_type)
+    -> CalleeSpelling {
+  return std::visit(
+      Overloaded{
+          [&](const mir::Direct& d) -> CalleeSpelling {
+            return ResolveDirectSpelling(view, d, receiver);
+          },
+          [&](const mir::Indirect& i) -> CalleeSpelling {
+            return {
+                .name =
                     std::format("({})", RenderExpr(view, view.Expr(i.code))),
-                .positional_receiver = std::nullopt};
+                .placement = ReceiverPlacement::kIntoCalleeName};
           },
-          [&](const mir::Virtual& v) -> CalleeRender {
-            const std::string method_name = std::visit(
-                Overloaded{
-                    [&](const mir::LocalVirtualSlot& l) -> std::string {
-                      return view.Unit()
-                          .GetClass(l.owner_class)
-                          .callables.Get(l.slot)
-                          .name;
-                    },
-                    [](const mir::ExternalVirtualSlot& e) -> std::string {
-                      return e.method_name;
-                    }},
-                v.slot);
+          [&](const mir::Virtual& v) -> CalleeSpelling {
             return {
-                .expr = std::format(
-                    "({}){}{}", receiver->expr, receiver->member_access,
-                    method_name),
-                .positional_receiver = std::nullopt};
+                .name = std::visit(
+                    Overloaded{
+                        [&](const mir::LocalVirtualSlot& l) -> std::string {
+                          return view.Unit()
+                              .GetClass(l.owner_class)
+                              .callables.Get(l.slot)
+                              .name;
+                        },
+                        [](const mir::ExternalVirtualSlot& e) -> std::string {
+                          return e.method_name;
+                        }},
+                    v.slot),
+                .placement = ReceiverPlacement::kIntoCalleeName};
           },
           // A type has one way to come into existence, and what names it is the
           // type's own answer -- read through type mapping, the way every other
           // target-language spelling of a type is.
-          [&](const mir::Construct&) -> CalleeRender {
+          [&](const mir::Construct&) -> CalleeSpelling {
             return {
-                .expr = RenderTypeConstructionAsCpp(view.Unit(), result_type),
-                .positional_receiver = std::nullopt};
-          },
-      },
+                .name = RenderTypeConstructionAsCpp(view.Unit(), result_type),
+                .placement = ReceiverPlacement::kIntoCalleeName};
+          }},
       call.callee);
 }
 
@@ -841,16 +798,32 @@ auto RenderCalleePart(
 auto RenderCallExpr(
     const ScopeView& view, const mir::CallExpr& call, mir::TypeId result_type)
     -> std::string {
-  const CalleeRender callee = RenderCalleePart(view, call, result_type);
+  const std::optional<RenderedReceiver> receiver =
+      RenderReceiver(view, call.callee);
+  const CalleeSpelling callee =
+      ResolveCalleeSpelling(view, call, receiver, result_type);
+
+  // The object the call dispatches on goes where the spelling puts it, and a
+  // call that dispatches on none puts nothing anywhere. Everything after this
+  // is punctuation.
+  std::string callee_text = callee.name;
   std::vector<std::string> args;
   args.reserve(call.arguments.size() + 1);
-  if (callee.positional_receiver.has_value()) {
-    args.push_back(*callee.positional_receiver);
+  if (receiver.has_value()) {
+    switch (callee.placement) {
+      case ReceiverPlacement::kIntoCalleeName:
+        callee_text = std::format(
+            "({}){}{}", receiver->expr, receiver->member_access, callee.name);
+        break;
+      case ReceiverPlacement::kIntoArgumentList:
+        args.push_back(receiver->expr);
+        break;
+    }
   }
   for (const mir::ExprId id : call.arguments) {
     args.push_back(RenderExpr(view, view.Expr(id)));
   }
-  return CallOf(callee.expr, args);
+  return CallOf(callee_text, args);
 }
 
 }  // namespace lyra::backend::cpp

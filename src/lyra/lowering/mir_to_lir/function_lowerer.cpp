@@ -251,11 +251,6 @@ auto LowerCallTarget(
                       return lir::CallTarget{ExternalMethodSymbol(
                           t.unit_name, t.class_name, t.method_name)};
                     },
-                    [&](const mir::ExternalUnitStaticMethodTarget& t)
-                        -> diag::Result<lir::CallTarget> {
-                      return lir::CallTarget{ExternalMethodSymbol(
-                          t.unit_name, t.class_name, t.method_name)};
-                    },
                     [&](const mir::ImportedRuntimeCallTarget&)
                         -> diag::Result<lir::CallTarget> {
                       return Unsupported(

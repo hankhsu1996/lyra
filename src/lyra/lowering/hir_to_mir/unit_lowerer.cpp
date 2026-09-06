@@ -672,16 +672,6 @@ auto UnitLowerer::MakeExternalMethodTarget(
       .method_name = target.method_name};
 }
 
-auto UnitLowerer::MakeExternalStaticMethodTarget(
-    const hir::ExternalClassMethodTarget& target)
-    -> mir::ExternalUnitStaticMethodTarget {
-  unit_.AddExternalClassUnit(target.unit_name);
-  return mir::ExternalUnitStaticMethodTarget{
-      .unit_name = target.unit_name,
-      .class_name = target.class_name,
-      .method_name = target.method_name};
-}
-
 auto UnitLowerer::MakeExternalMethodOverride(
     const hir::ExternalClassMethodTarget& target)
     -> mir::OverridesExternalSlot {

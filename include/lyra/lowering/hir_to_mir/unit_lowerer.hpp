@@ -199,18 +199,13 @@ class UnitLowerer {
   auto MakeExternalMethodTarget(const hir::ExternalClassMethodTarget& target)
       -> mir::ExternalUnitClassMethodTarget;
 
-  auto MakeExternalStaticMethodTarget(
-      const hir::ExternalClassMethodTarget& target)
-      -> mir::ExternalUnitStaticMethodTarget;
-
   auto MakeExternalMethodOverride(const hir::ExternalClassMethodTarget& target)
       -> mir::OverridesExternalSlot;
 
-  // The virtual-call-site counterpart of `MakeExternalMethodTarget`: the
-  // referring unit reaches a slot introduced by a class in another
-  // compilation unit and dispatches through the target language's own
-  // virtual-call machinery reached by including the declaring unit's
-  // header. Records the class dependency so the header include is emitted.
+  // The slot a call dispatches through when the class introducing it belongs to
+  // another compilation unit: the referring unit reaches it through the target
+  // language's own virtual-call machinery, which the declaring unit's header
+  // brings in. Records the class dependency so that include is emitted.
   auto MakeExternalVirtualSlot(const hir::ExternalClassMethodTarget& target)
       -> mir::ExternalVirtualSlot;
 

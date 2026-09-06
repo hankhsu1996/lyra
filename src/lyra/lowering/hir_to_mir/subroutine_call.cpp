@@ -131,18 +131,6 @@ auto CanonicalVirtualSlot(
       role);
 }
 
-// The target a direct call to another unit's method names. An instance method
-// dispatches on a receiver and a type-associated one dispatches on nothing
-// (LRM 8.10), which the callee's own declaration answers.
-auto ExternalMethodTargetOf(
-    UnitLowerer& unit_lowerer, const hir::ExternalMethodCallee& callee)
-    -> mir::DirectTarget {
-  if (callee.is_static) {
-    return unit_lowerer.MakeExternalStaticMethodTarget(callee.target);
-  }
-  return unit_lowerer.MakeExternalMethodTarget(callee.target);
-}
-
 // What a call reads off a class method it reaches: the interface it marshals
 // against, the target a direct call names, and the slot the callee fills where
 // it takes part in dispatch (LRM 8.20). Where these come from differs by
@@ -164,7 +152,7 @@ auto ReadMethodCallee(
         .formals = CalleeFormalsOf(unit_lowerer, ext->interface),
         .direct =
             mir::Direct{
-                .target = ExternalMethodTargetOf(unit_lowerer, *ext),
+                .target = unit_lowerer.MakeExternalMethodTarget(ext->target),
                 .qualification = std::nullopt},
         .slot = std::nullopt};
     if (ext->is_virtual) {

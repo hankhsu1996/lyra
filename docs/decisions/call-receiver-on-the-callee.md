@@ -7,11 +7,10 @@
 ## Status
 
 Accepted. Supersedes the receiver convention `builtin-call-identity.md` fixed -- "instance calls,
-where the receiver is `args[0]`" -- and generalizes
-`calling-a-subroutine-on-another-units-object.md` D6 from one identity space to every call. It
-reverses neither decision's subject: the callee identity stays one flat `support::BuiltinFn`, the
-callee stays one `Direct` shape with no instance / static / free arms, and the C++ backend keeps
-method-call syntax.
+where the receiver is `args[0]`" -- and supersedes `calling-a-subroutine-on-another-units-object.md`
+D6, whose fact this carries for every call instead of for one identity space. It reverses neither
+decision's subject: the callee identity stays one flat `support::BuiltinFn`, the callee stays one
+`Direct` shape with no instance / static / free arms, and the C++ backend keeps method-call syntax.
 
 ## Why this decision matters
 
@@ -57,12 +56,14 @@ is what built the call.
 
 The target says where the code is found -- by name in this unit's arena, by name across a unit
 boundary, in the DPI-C name space, in the runtime library. What the code is applied to is a separate
-question, and the two vary independently: a callable target may or may not take a receiver, a
-built-in may or may not, a cross-unit method does and a cross-unit static does not.
+question, and the two vary independently: any of those may or may not take a receiver.
 
-So the receiver does not split the target variant along a second axis. Where two targets already
-differ for identity reasons and also differ in receiver-ness -- the cross-unit instance and static
-methods -- that split stays, because it was made for how the name resolves, not for this.
+So the receiver does not split the target variant along a second axis, and a target that exists only
+because two forms differ in receiver-ness does not survive this. Each alternative is one identity
+space, told apart by the table that resolves the name; two alternatives resolving through the same
+table with the same fields are one alternative, whatever else differs about the calls that reach
+them. The falsifiable form: an alternative no consumer can tell from its neighbour except by asking
+whether the call has a receiver is stating the receiver twice.
 
 ### D3. One reading, consumed exhaustively
 
@@ -96,10 +97,11 @@ What it replaces is a count passed between two halves of one render.
   call node can only express that as an optional every consumer must then handle. The receiver
   belongs to the thing that needs it.
 
-- **Split every target into a receiver-binding form and a receiver-less one.** This is D2's
-  alternative taken as a rule rather than as an identity-driven exception. It doubles the target
-  variant along an axis that has nothing to do with how a name is resolved, and it puts the same
-  fact in two places for every target that can go either way.
+- **Split every target into a receiver-binding form and a receiver-less one.** This doubles the
+  target variant along an axis that has nothing to do with how a name is resolved, and it puts the
+  same fact in two places for every target that can go either way. The cross-unit class methods were
+  the one place this had already happened, and the split cost what the general form would: three of
+  its four consumers could not tell the two apart at all, and the fourth read the receiver.
 
 - **Give the receiver a value category as well as a position.** The receiver of a mutating method
   names storage and the receiver of a query names a value, and that could ride the callee too.
@@ -114,9 +116,14 @@ What it replaces is a count passed between two halves of one render.
 - No consumer counts. The C++ render's argument loop walks `arguments` from the start, and the
   place-ness of an operand is asked at one site instead of at two that a third site's fallback arm
   kept apart.
-- A builtin's declared namespace stops doubling as a call-form discriminator. An empty namespace now
-  means global scope and nothing else, so a builtin nobody listed can no longer be re-classified
-  into the instance form and lose an argument.
+- A builtin's declared namespace stops doubling as a call-form discriminator. The backend's table
+  answers with the form the library declares -- a free function of a namespace, or a member of the
+  type the entry acts on -- rather than with a string whose emptiness a reader has to know to
+  interpret, so a builtin nobody listed can no longer be re-classified into the instance form and
+  lose an argument.
+- The C++ render composes a call in one place. Each target answers with the name it is spelled by
+  and where its receiver goes, both by lookup, and one site turns those two into the call text -- so
+  which C++ call form a callee takes is settled once rather than in a function per target.
 - One boundary this deliberately leaves where it was: the engine handle a namespaced runtime entry
   takes stays an ordinary operand rather than becoming a receiver. Whether the runtime library's
   split between a method on the engine and a free function taking it is a language fact or a library

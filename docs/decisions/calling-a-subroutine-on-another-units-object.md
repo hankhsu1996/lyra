@@ -8,7 +8,8 @@
 
 Accepted. Extends `unit-signature.md` D1 with what an interface publishes beyond its members, and
 answers `hierarchical-reference-routing.md` D5 for the callable target it named as a candidate;
-reverses neither.
+reverses neither. D6 is superseded by [call-receiver-on-the-callee](call-receiver-on-the-callee.md),
+which carries the same fact on the callee instead of in the target.
 
 ## Why this decision matters
 
@@ -116,14 +117,19 @@ the construct that hit it.
 That leaves the boundary exactly where the signature draws it: what a unit published is callable on
 its object, and what it did not is not reachable yet at all.
 
-### D6. An instance method and a type-associated one are different targets
+### D6. Whether a method of another unit takes a receiver is the callee's declaration, carried down
 
-A method of another unit that takes a receiver and one that does not are two targets, not one target
-a consumer tells apart. The distinction is the callee's own declaration (LRM 8.10), read where the
-callee is minted and carried down, because the alternative is a backend recovering it from whether
-the leading argument happens to be pointer-typed -- which is a semantic decision re-derived below
-the layer that knew it, and answers wrongly for a type-associated method whose first argument is a
-handle.
+The distinction between a method that dispatches on an object and one that does not (LRM 8.10) is
+read where the callee is minted and carried to every consumer, because the alternative is a backend
+recovering it from whether the leading argument happens to be pointer-typed -- a semantic decision
+re-derived below the layer that knew it, and one that answers wrongly for a type-associated method
+whose first argument is a handle.
+
+This decision originally carried the fact by giving the two forms separate targets, when the
+receiver's only home was the argument list.
+[call-receiver-on-the-callee](call-receiver-on-the-callee.md) gives the receiver a home of its own,
+which carries the same fact for every call rather than for this one identity space, so the two
+targets became one.
 
 ## Rejected alternatives
 

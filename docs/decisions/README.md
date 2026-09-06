@@ -126,7 +126,9 @@ the detail lives in the entry itself.
   convention is superseded by the next entry.
 - [call-receiver-on-the-callee](call-receiver-on-the-callee.md) -- the object a call dispatches on
   is a field of the callee, not the first of its arguments, so no consumer works out which operand
-  is a receiver.
+  is a receiver, and no callee target exists only to say whether there is one. Splitting every
+  target by receiver-ness, putting the receiver on the call node, and verifying the positional
+  convention are rejected.
 - [address-of-primitive](address-of-primitive.md) -- MIR carries an explicit place-to-pointer
   operator (`AddressOfExpr`), dual to `DerefExpr`; the backend never injects `&`.
 - [event-control-unification](event-control-unification.md) -- unified treatment of event control:
@@ -328,9 +330,10 @@ the detail lives in the entry itself.
 - [calling-a-subroutine-on-another-units-object](calling-a-subroutine-on-another-units-object.md) --
   an interface publishes its subroutines, and enabling one is a route that ends at the object plus a
   name resolved against what that unit promised, so no sealed-endpoint category for a callable is
-  needed; an instance method and a type-associated one of another unit are different targets. Naming
-  the instance the frontend resolved to, a callable endpoint category, and a by-name lookup for a
-  published name are rejected.
+  needed; whether such a method takes a receiver is its declaration, carried down rather than
+  re-derived below. Naming the instance the frontend resolved to, a callable endpoint category, and
+  a by-name lookup for a published name are rejected. How that fact is carried is superseded by
+  [call-receiver-on-the-callee](call-receiver-on-the-callee.md).
 - [interface-port-binding](interface-port-binding.md) -- an interface port's declared type names the
   unit whose instance belongs there, by name, so it crosses a signature; the member holds a borrowed
   reference the parent binds once during elaboration, a fourth published storage kind; an interface
