@@ -4,6 +4,7 @@
 
 #include "lyra/base/internal_error.hpp"
 #include "lyra/base/overloaded.hpp"
+#include "lyra/runtime/named_event.hpp"
 #include "lyra/runtime/net.hpp"
 #include "lyra/runtime/scope_program.hpp"
 #include "lyra/support/net_resolution.hpp"
@@ -80,6 +81,7 @@ MemberStorage::MemberStorage(MemberStorageDescriptor descriptor) {
           [this](const ChannelCancellationStorage&) {
             object_.emplace<ChannelCancellation>();
           },
+          [this](const NamedEventStorage&) { object_.emplace<NamedEvent>(); },
           [this](const ObservableCellStorage& cell) {
             switch (cell.domain) {
               case support::ValueDomain::kPacked:
@@ -294,6 +296,11 @@ void MemberStorage::AdoptFrom(void* handle) {
           [](CancellationTarget&) {
             throw InternalError(
                 "MemberStorage: a cancellation source is created by the scope "
+                "that owns it, never copied into storage");
+          },
+          [](NamedEvent&) {
+            throw InternalError(
+                "MemberStorage: a named event is created in place by the scope "
                 "that owns it, never copied into storage");
           },
           []<typename T>(Var<T>&) {

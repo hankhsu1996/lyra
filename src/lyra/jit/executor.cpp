@@ -868,6 +868,12 @@ auto DescribeMember(
         break;
     }
   }
+  // A named event (LRM 15.5) is reached only through its address and never read
+  // out as a value, so the member is the event itself rather than a value the
+  // owner reads.
+  if (data.Is<lir::EventType>()) {
+    return runtime::NamedEventStorage{};
+  }
   // A class handle is the value the member holds, not a pointer it merely
   // points with: the object stays alive because the member refers to it (LRM
   // 8.3), which is what a box holding a borrowed handle does not do.

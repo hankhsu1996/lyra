@@ -245,7 +245,14 @@ each meets the same lifetime question above.
       lets `disable` of a named `fork` reach a branch parked on a delay, and what a task enabled
       inside a target will need for the same reason.
 
-- [ ] Named events across a suspension. Rolled up in `processes.md` (P9).
+- [x] **Named events across a suspension** (LRM 15.5) -- realized on the execution backend. A named
+      event is member storage the owner holds, a waiter set and the instant of its last trigger,
+      reached only through its address and never read out as a value: `-> e` records the instant and
+      releases every process parked on it at once, `@e` parks the running process until the next
+      trigger, and `e.triggered` answers whether the most recent trigger happened in the current
+      time step (LRM 15.5.3). The await is an ordinary registration whose suspension follows it, so
+      an event a process parks on crosses a time step like every other wait. Rolled up in
+      `processes.md` (P9).
 
 ## Other backend surfaces
 
