@@ -1098,17 +1098,22 @@ auto LoadScopeClasses(
   return loaded;
 }
 
-// One class whose values the program builds with `new`, rather than a class the
-// object tree owns an instance of.
-struct LoadedObjectClass {
+// One declaration whose values the program builds itself, rather than one the
+// object tree owns an instance of: the storage its members need, and the
+// definition every value of it shares.
+struct LoadedMemberStorage {
   std::string name;
   std::vector<runtime::MemberStorageDescriptor> members;
   std::unique_ptr<runtime::ObjectDefinition> definition;
+  // The symbol whose body brings a value to its initial state, for a
+  // declaration that has one. A class does (LRM 8.7); a struct declares no body
+  // at all, so its fields are filled by whoever builds it.
+  std::optional<std::string> constructor;
 };
 
 auto LoadObjectClasses(const lir::CompilationUnit& unit)
-    -> diag::Result<std::vector<LoadedObjectClass>> {
-  std::vector<LoadedObjectClass> loaded;
+    -> diag::Result<std::vector<LoadedMemberStorage>> {
+  std::vector<LoadedMemberStorage> loaded;
   for (const lir::ClassId id : unit.classes.Ids()) {
     const lir::Class& cls = unit.classes.Get(id);
     if (lir::IsObjectTreeNode(cls)) {
@@ -1120,10 +1125,30 @@ auto LoadObjectClasses(const lir::CompilationUnit& unit)
       return std::unexpected(std::move(members.error()));
     }
     loaded.push_back(
-        LoadedObjectClass{
+        LoadedMemberStorage{
             .name = cls.name,
             .members = *std::move(members),
-            .definition = std::make_unique<runtime::ObjectDefinition>()});
+            .definition = std::make_unique<runtime::ObjectDefinition>(),
+            .constructor = cls.name + ".constructor"});
+  }
+  return loaded;
+}
+
+auto LoadStructs(const lir::CompilationUnit& unit)
+    -> diag::Result<std::vector<LoadedMemberStorage>> {
+  std::vector<LoadedMemberStorage> loaded;
+  for (const lir::StructId id : unit.structs.Ids()) {
+    const lir::Struct& record = unit.structs.Get(id);
+    auto members = DescribeMembers(unit, record.fields, SlotRole::kVariable);
+    if (!members) {
+      return std::unexpected(std::move(members.error()));
+    }
+    loaded.push_back(
+        LoadedMemberStorage{
+            .name = record.name,
+            .members = *std::move(members),
+            .definition = std::make_unique<runtime::ObjectDefinition>(),
+            .constructor = std::nullopt});
   }
   return loaded;
 }
@@ -1270,7 +1295,7 @@ auto Execute(
       loaded.end(), std::make_move_iterator(root_classes->begin()),
       std::make_move_iterator(root_classes->end()));
 
-  std::vector<LoadedObjectClass> objects;
+  std::vector<LoadedMemberStorage> objects;
   for (const lir::CompilationUnit* unit : loaded_units) {
     auto unit_objects = LoadObjectClasses(*unit);
     if (!unit_objects) {
@@ -1279,6 +1304,15 @@ auto Execute(
     objects.insert(
         objects.end(), std::make_move_iterator(unit_objects->begin()),
         std::make_move_iterator(unit_objects->end()));
+    // A struct declares the same member storage a class does, so it publishes
+    // the same kind of definition; what it does not declare is any body.
+    auto unit_structs = LoadStructs(*unit);
+    if (!unit_structs) {
+      return std::unexpected(std::move(unit_structs.error()));
+    }
+    objects.insert(
+        objects.end(), std::make_move_iterator(unit_structs->begin()),
+        std::make_move_iterator(unit_structs->end()));
   }
 
   std::vector<LoadedClosure> closures;
@@ -1305,7 +1339,7 @@ auto Execute(
         .data = entry.captures.data(),
         .size = static_cast<std::uint32_t>(entry.captures.size())};
   }
-  for (LoadedObjectClass& entry : objects) {
+  for (LoadedMemberStorage& entry : objects) {
     entry.definition->members = runtime::MemberStorageSchema{
         .data = entry.members.data(),
         .size = static_cast<std::uint32_t>(entry.members.size())};
@@ -1330,7 +1364,7 @@ auto Execute(
   for (const LoadedClosure& entry : closures) {
     publish(entry.name, entry.definition.get());
   }
-  for (const LoadedObjectClass& entry : objects) {
+  for (const LoadedMemberStorage& entry : objects) {
     publish(entry.name, entry.definition.get());
   }
   Check(
@@ -1402,10 +1436,14 @@ auto Execute(
             }},
         entry.protocol);
   }
-  // Every class has a constructor (LRM 8.7), so a name that does not resolve
-  // is not an absent body but one that could not be brought up.
-  for (const LoadedObjectClass& entry : objects) {
-    const std::string symbol = entry.name + ".constructor";
+  // A declaration that names a constructor has one (LRM 8.7 makes that every
+  // class), so a name that does not resolve is not an absent body but one that
+  // could not be brought up.
+  for (const LoadedMemberStorage& entry : objects) {
+    if (!entry.constructor.has_value()) {
+      continue;
+    }
+    const std::string& symbol = *entry.constructor;
     auto found = jit->lookup(symbol);
     if (!found) {
       throw InternalError(

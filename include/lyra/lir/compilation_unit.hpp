@@ -82,6 +82,16 @@ struct Closure {
   FunctionId invoke{};
 };
 
+// One struct declaration: the fields values of it hold, and nothing else. It
+// shares the member vocabulary with a class and a closure because a field is
+// reached the same way a property and a capture are; what it does not share is
+// any code, since a struct is storage a builder fills rather than a thing that
+// runs.
+struct Struct {
+  std::string name;
+  std::vector<Member> fields;
+};
+
 // Storage this unit defines that no instance owns: one cell for the whole
 // program, reached by its linkage symbol rather than through a receiver.
 // `type` is the storage's own type, which is what tells whoever realizes it
@@ -107,6 +117,7 @@ struct CompilationUnit {
   TypePool types;
   base::Registry<Class, ClassId> classes;
   base::Registry<Closure, ClosureId> closures;
+  base::Registry<Struct, StructId> structs;
   // One record per unit this one compiled against, under the same
   // declare-then-define lifecycle a class has: a member of one record may name
   // another of them -- an interface port's does (LRM 25.3) -- so a record's

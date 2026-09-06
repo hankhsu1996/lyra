@@ -353,13 +353,13 @@ auto CodeGenFunction::OpenedReferent(llvm::Value* reference, lir::TypeId type)
       args);
 }
 
-// Which entry answers the address of a member of what `owner` names. Every
-// owner holds a block of storage described the same way, so what an entry
-// differs in is the runtime type the address it is handed names.
 auto CodeGenFunction::IsHandleSequence(lir::TypeId type) const -> bool {
   return module_->Unit().types.Get(type).Is<lir::VectorType>();
 }
 
+// Which entry answers the address of a member of what `owner` names. Every
+// owner holds a block of storage described the same way, so what an entry
+// differs in is the runtime type the address it is handed names.
 auto CodeGenFunction::MemberAddressOp(lir::TypeId owner) const -> RuntimeOp {
   const lir::Type& type = module_->Unit().types.Get(owner);
   if (const auto* object = type.As<lir::ObjectType>()) {
@@ -370,6 +370,11 @@ auto CodeGenFunction::MemberAddressOp(lir::TypeId owner) const -> RuntimeOp {
   // What another unit published is an object of its own tree.
   if (type.Is<lir::ExternalUnitObjectType>()) {
     return RuntimeOp::kMemberAddress;
+  }
+  // A struct's fields are the same storage block a heap object's properties
+  // are, reached through the same handle.
+  if (type.Is<lir::StructType>()) {
+    return RuntimeOp::kObjectMemberAddress;
   }
   throw InternalError(
       std::format(
@@ -1452,14 +1457,17 @@ auto CodeGenFunction::ConstructCallee(
                 return no_construct();
             }
           },
-          // A wrapper that owns an object brings the object into existence with
+          // A wrapper that owns storage brings that storage into existence with
           // itself. The runtime owns the object tree, so it is the runtime that
-          // builds a node of it; a shared owner has no realization here yet.
+          // builds a node of it. A shared owner instead keeps its storage alive
+          // for as long as anything holds one, which takes a slot the collector
+          // can see, and generated storage is not yet visible to it.
           [&](const lir::PointerType& p) -> diag::Result<llvm::FunctionCallee> {
             if (p.ownership != lir::PointerOwnership::kUnique) {
               return Unsupported(
-                  "llvm codegen: building an object under a shared owner is "
-                  "not yet supported on this backend");
+                  "llvm codegen: storage kept alive by a shared owner needs a "
+                  "slot the collector can see, which generated storage is not "
+                  "yet");
             }
             return entry(RuntimeSymbol(RuntimeOp::kMakeScope));
           },

@@ -33,6 +33,10 @@ auto DeclaredMembers(const CompilationUnit& unit, TypeId type)
             const Closure& decl = unit.closures.Get(closure.closure_id);
             return MemberList{.members = decl.captures, .owner = decl.name};
           },
+          [&](const StructType& record) -> std::optional<MemberList> {
+            const Struct& decl = unit.structs.Get(record.struct_id);
+            return MemberList{.members = decl.fields, .owner = decl.name};
+          },
           [](const auto&) -> std::optional<MemberList> {
             return std::nullopt;
           }});

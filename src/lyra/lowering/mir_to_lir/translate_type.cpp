@@ -266,8 +266,9 @@ auto UnitLowerer::TranslateType(const mir::Type& ty) -> lir::Type {
             return lir::Type{
                 lir::ObservableType{.value = TranslateType(ob.value)}};
           },
-          [&](const mir::StructType&) -> lir::Type {
-            return RecordUnsupportedType("a nominal struct");
+          [&](const mir::StructType& s) -> lir::Type {
+            return lir::Type{
+                lir::StructType{.struct_id = StructDeclaration(s.struct_id)}};
           },
           [&](const mir::ClosureType& c) -> lir::Type {
             return lir::Type{lir::ClosureType{

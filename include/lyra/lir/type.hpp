@@ -12,6 +12,7 @@
 #include "lyra/lir/class_id.hpp"
 #include "lyra/lir/closure_id.hpp"
 #include "lyra/lir/external_unit_object_id.hpp"
+#include "lyra/lir/struct_id.hpp"
 #include "lyra/lir/type_id.hpp"
 
 namespace lyra::lir {
@@ -235,6 +236,17 @@ struct ClosureType {
   auto operator==(const ClosureType&) const -> bool = default;
 };
 
+// Member-bearing storage of one struct declaration, carrying no code of its
+// own: nothing dispatches on it, nothing constructs it, and a field is reached
+// by a member projection the way every other member-bearing storage's is. What
+// separates it from the others is only what they carry beyond their members --
+// a class its methods, a closure its invoke.
+struct StructType {
+  StructId struct_id;
+
+  auto operator==(const StructType&) const -> bool = default;
+};
+
 struct RuntimeEffectsType {
   auto operator==(const RuntimeEffectsType&) const -> bool = default;
 };
@@ -348,7 +360,7 @@ class Type {
       MachineBoolType, MachineIntType, MachineFloatType, MachineArrayType,
       EventType, RealType, ShortRealType, RealTimeType, ChandleType, VoidType,
       EmptyType, ObjectType, ExternalUnitObjectType, CrossUnitClassType,
-      RuntimeClassType, ClosureType, RuntimeEffectsType, FilesType,
+      RuntimeClassType, ClosureType, StructType, RuntimeEffectsType, FilesType,
       DiagnosticType, RuntimeLibraryType, CoroutineType, RefType, PointerType,
       ManagedRefType, VectorType, TupleType, UnionType, TaggedUnionType,
       ResolvedType, DriverType, ObservableType>;

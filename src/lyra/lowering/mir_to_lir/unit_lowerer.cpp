@@ -85,6 +85,13 @@ auto UnitLowerer::Run() -> diag::Result<lir::CompilationUnit> {
   }
   closure_identities_ = {mir_->closures.size(), std::move(closures)};
 
+  std::vector<lir::StructId> structs;
+  structs.reserve(mir_->structs.size());
+  for (std::size_t i = 0; i < mir_->structs.size(); ++i) {
+    structs.push_back(out_.structs.Declare());
+  }
+  struct_identities_ = {mir_->structs.size(), std::move(structs)};
+
   // A variable the unit's namespace owns -- a package's (LRM 26.2), a
   // `$unit` scope's (LRM 3.12.1) -- is one cell for the whole program that no
   // instance holds, so the unit publishes it under a symbol instead. Every
@@ -151,6 +158,23 @@ auto UnitLowerer::Run() -> diag::Result<lir::CompilationUnit> {
     out_.closures.Define(ClosureDeclaration(id), std::move(closure));
   }
 
+  // A struct's fields are the storage its values own. Nothing else of it
+  // lowers: it declares no body, so there is no function to reserve and none to
+  // fill in beside the declaration.
+  for (const mir::StructId id : mir_->structs.Ids()) {
+    const mir::StructDecl& decl = mir_->GetStruct(id);
+    lir::Struct record;
+    record.name = StructSymbol(id);
+    record.fields.reserve(decl.fields.size());
+    for (const mir::FieldId field : decl.fields.Ids()) {
+      record.fields.push_back(
+          lir::Member{
+              .name = decl.fields.Get(field).name,
+              .type = TranslateType(decl.fields.Get(field).type)});
+    }
+    out_.structs.Define(StructDeclaration(id), std::move(record));
+  }
+
   // Descriptions are lowered after the bodies: each one translates types of
   // its own, and what receives them below is indexed by LIR type, so its
   // extent is settled only once nothing more will translate. Building a value
@@ -212,6 +236,13 @@ auto UnitLowerer::ClosureSymbol(mir::ClosureId closure) const -> std::string {
   // links into one name space, so the unit qualifies it -- the same reason a
   // class and a namespace callable are qualified.
   return std::format("{}.closure_{}", mir_->name, closure.value);
+}
+
+auto UnitLowerer::StructSymbol(mir::StructId record) const -> std::string {
+  // A struct's name is unique within the unit that declares it while the whole
+  // program links into one name space, so the unit qualifies it -- the same
+  // reason a class and a closure are qualified.
+  return std::format("{}.{}", mir_->name, mir_->GetStruct(record).name);
 }
 
 auto UnitLowerer::TakeClassIdentities(const mir::Class& cls)
@@ -315,6 +346,11 @@ auto UnitLowerer::ClosureFunction(mir::ClosureId closure) const
 auto UnitLowerer::ClosureDeclaration(mir::ClosureId closure) const
     -> lir::ClosureId {
   return closure_identities_.Get(closure).declaration;
+}
+
+auto UnitLowerer::StructDeclaration(mir::StructId record) const
+    -> lir::StructId {
+  return struct_identities_.Get(record);
 }
 
 auto UnitLowerer::MachineBoolType() -> lir::TypeId {

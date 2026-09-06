@@ -95,6 +95,11 @@ class UnitLowerer {
   [[nodiscard]] auto ClosureFunction(mir::ClosureId closure) const
       -> lir::FunctionId;
 
+  // The declaration a struct's fields are members of. A struct carries no code,
+  // so its identity is the declaration and nothing beside it.
+  [[nodiscard]] auto StructDeclaration(mir::StructId record) const
+      -> lir::StructId;
+
   // The LIR identities taken on behalf of one MIR class: the class itself, its
   // constructor's function, and one per callable that has a body. A callable
   // with no body is no function of this unit and holds none. `lir::Class` holds
@@ -133,6 +138,9 @@ class UnitLowerer {
   // qualifier its invoke takes.
   [[nodiscard]] auto ClosureSymbol(mir::ClosureId closure) const -> std::string;
 
+  // The symbol a struct of this unit is emitted and linked under.
+  [[nodiscard]] auto StructSymbol(mir::StructId record) const -> std::string;
+
   auto TranslateType(const mir::Type& ty) -> lir::Type;
   // The LIR mirror of a runtime-library record type. MIR is written once for
   // every backend, so a record only the C++ backend realizes reaches here
@@ -156,6 +164,7 @@ class UnitLowerer {
   base::Translation<mir::ExternalUnitObjectId, lir::ExternalUnitObjectId>
       external_unit_object_identities_;
   base::Translation<mir::ClosureId, ClosureIdentities> closure_identities_;
+  base::Translation<mir::StructId, lir::StructId> struct_identities_;
   std::map<std::vector<lir::TypeId>, lir::TypeId> product_memo_;
   // Set the first time a MIR type with no LIR mirror is reached; surfaced as
   // the unit's failure at `Run`, so translation stays non-throwing and
