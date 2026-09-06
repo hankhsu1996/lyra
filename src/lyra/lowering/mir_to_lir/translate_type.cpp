@@ -1,4 +1,3 @@
-#include <cstdint>
 #include <format>
 #include <string_view>
 #include <utility>
@@ -37,6 +36,10 @@ auto TranslateNetResolution(mir::NetResolution r) -> lir::NetResolution {
   switch (r) {
     case mir::NetResolution::kTriState:
       return lir::NetResolution::kTriState;
+    case mir::NetResolution::kWiredAnd:
+      return lir::NetResolution::kWiredAnd;
+    case mir::NetResolution::kWiredOr:
+      return lir::NetResolution::kWiredOr;
   }
   throw InternalError("TranslateNetResolution: unknown NetResolution");
 }

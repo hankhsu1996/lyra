@@ -138,6 +138,10 @@ auto NetResolutionOf(lir::NetResolution resolution) -> support::NetResolution {
   switch (resolution) {
     case lir::NetResolution::kTriState:
       return support::NetResolution::kTriState;
+    case lir::NetResolution::kWiredAnd:
+      return support::NetResolution::kWiredAnd;
+    case lir::NetResolution::kWiredOr:
+      return support::NetResolution::kWiredOr;
   }
   throw InternalError("llvm codegen: unknown net resolution");
 }

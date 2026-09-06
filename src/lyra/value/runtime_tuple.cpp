@@ -79,12 +79,12 @@ auto RuntimeTuple::CaseEqual(const RuntimeTuple& other) const -> PackedArray {
   return result;
 }
 
-auto RuntimeTuple::ResolveTriState(const RuntimeTuple& other) const
-    -> RuntimeTuple {
+auto RuntimeTuple::ResolveNet(
+    const RuntimeTuple& other, NetResolution fold) const -> RuntimeTuple {
   RuntimeTuple resolved = *this;
   for (std::size_t i = 0; i < resolved.components_.size(); ++i) {
     resolved.components_[i] =
-        RuntimeValueResolveTriState(components_[i], other.components_[i]);
+        RuntimeValueResolveNet(components_[i], other.components_[i], fold);
   }
   return resolved;
 }

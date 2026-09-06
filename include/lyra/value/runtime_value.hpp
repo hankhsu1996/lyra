@@ -51,13 +51,14 @@ struct RuntimeValue {
 [[nodiscard]] auto RuntimeValueBitIdentical(
     const RuntimeValue& a, const RuntimeValue& b) -> bool;
 
-// LRM 6.6.1 Table 6-2: two drivers' contributions folded into one, where
-// agreement passes through, a 0/1 conflict yields `x`, and high-impedance
-// defers. LRM 6.7.1 admits only some domains as a net's data type, and a value
-// of any other reaches this only if something above it admitted a net it should
-// not have.
-[[nodiscard]] auto RuntimeValueResolveTriState(
-    const RuntimeValue& a, const RuntimeValue& b) -> RuntimeValue;
+// Two drivers' contributions folded into one under the truth table `fold`
+// names -- tri-state, wired-and, or wired-or (LRM 6.6.1 Table 6-2, LRM 6.6.3
+// Tables 6-3 and 6-4); high-impedance defers under every fold. LRM 6.7.1 admits
+// only some domains as a net's data type, and a value of any other reaches this
+// only if something above it admitted a net it should not have.
+[[nodiscard]] auto RuntimeValueResolveNet(
+    const RuntimeValue& a, const RuntimeValue& b, NetResolution fold)
+    -> RuntimeValue;
 
 // The all-high-impedance value at `prototype`'s shape: what a driver
 // contributes where it is not driving, and so the identity the fold above

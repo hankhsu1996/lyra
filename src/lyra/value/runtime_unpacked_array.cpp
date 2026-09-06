@@ -233,11 +233,12 @@ auto RuntimeUnpackedArray::MergeConditional(
   return result;
 }
 
-auto RuntimeUnpackedArray::ResolveTriState(
-    const RuntimeUnpackedArray& other) const -> RuntimeUnpackedArray {
+auto RuntimeUnpackedArray::ResolveNet(
+    const RuntimeUnpackedArray& other, NetResolution fold) const
+    -> RuntimeUnpackedArray {
   RuntimeUnpackedArray resolved = *this;
   for (std::size_t i = 0; i < resolved.data_.size(); ++i) {
-    resolved.data_[i] = RuntimeValueResolveTriState(data_[i], other.data_[i]);
+    resolved.data_[i] = RuntimeValueResolveNet(data_[i], other.data_[i], fold);
   }
   return resolved;
 }

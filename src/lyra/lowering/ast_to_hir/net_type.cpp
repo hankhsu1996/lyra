@@ -15,6 +15,14 @@ auto TranslateNetType(const slang::ast::NetType& net_type)
       return hir::NetType::kWire;
     case slang::ast::NetType::Tri:
       return hir::NetType::kTri;
+    case slang::ast::NetType::WAnd:
+      return hir::NetType::kWand;
+    case slang::ast::NetType::TriAnd:
+      return hir::NetType::kTriand;
+    case slang::ast::NetType::WOr:
+      return hir::NetType::kWor;
+    case slang::ast::NetType::TriOr:
+      return hir::NetType::kTrior;
     default:
       return std::nullopt;
   }

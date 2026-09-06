@@ -617,7 +617,7 @@ struct ObservableType {
 // own. It is part of the net's type because two nets of one data type resolve
 // differently when their net types differ, so nothing below can recover it from
 // the value type or invent it.
-enum class NetResolution : std::uint8_t { kTriState };
+enum class NetResolution : std::uint8_t { kTriState, kWiredAnd, kWiredOr };
 
 // A net's resolved storage: an observable value produced by resolving the
 // contributions of the net's drivers (LRM 6.5, 6.6). Readable and observable

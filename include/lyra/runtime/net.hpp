@@ -10,10 +10,29 @@
 #include "lyra/runtime/runtime_effects.hpp"
 #include "lyra/runtime/trigger.hpp"
 #include "lyra/runtime/var.hpp"
+#include "lyra/support/net_resolution.hpp"
 #include "lyra/value/concepts.hpp"
+#include "lyra/value/net_resolution.hpp"
 #include "lyra/value/packed_array.hpp"
 
 namespace lyra::runtime {
+
+// The value layer's own naming of the fold a net's declared net type picked
+// (LRM 6.6). A net crosses into the runtime carrying the backend-facing
+// `support::NetResolution`; the per-bit resolution the value layer performs is
+// named by `value::NetResolution`, and this is the one place the two meet.
+[[nodiscard]] inline auto ToValueNetResolution(
+    support::NetResolution resolution) -> value::NetResolution {
+  switch (resolution) {
+    case support::NetResolution::kTriState:
+      return value::NetResolution::kTriState;
+    case support::NetResolution::kWiredAnd:
+      return value::NetResolution::kWiredAnd;
+    case support::NetResolution::kWiredOr:
+      return value::NetResolution::kWiredOr;
+  }
+  throw InternalError("ToValueNetResolution: unknown net resolution");
+}
 
 // The drive strength of a driver's contribution (LRM 28). Strength is a
 // property of what a driver contributes, not of the net's resolved value, so it
@@ -28,57 +47,44 @@ struct DriveContribution {
   DriveStrength strength{};
 };
 
-// Resolution policy for `wire` / `tri` nets (LRM 6.6.1, Table 6-2): the
-// drivers' current contributions folded under the tri-state truth table, where
-// agreement passes through and a 0/1 conflict yields `x`.
-//
-// The policy is stated over any value a net may hold (LRM 6.7.1), not over one
-// value type: a net's data type may be an unpacked aggregate of net-valid
-// elements, and the truth table then applies to each of its bits. Which value
-// types those are is `value::NetResolvable`; the fold reads the same two
-// operations from every one of them.
-struct WireResolver {
-  template <value::NetResolvable T>
-  [[nodiscard]] static auto Resolve(
-      const std::vector<DriveContribution<T>>& contributions,
-      const T& nondriving) -> T {
-    T resolved = nondriving;
-    for (const auto& contribution : contributions) {
-      resolved = resolved.ResolveTriState(contribution.value);
-    }
-    return resolved;
+// Folds a net's driver contributions into its resolved value under the truth
+// table `resolution` names (LRM 6.6): tri-state for `wire` / `tri`, wired-and
+// for `wand` / `triand`, wired-or for `wor` / `trior` (LRM 6.6.1 Table 6-2,
+// LRM 6.6.3 Tables 6-3 and 6-4). The fold starts at `nondriving` -- the all-`z`
+// value that is every fold's identity -- so an empty driver set is not a case
+// of its own, and it reads the same operation from every net-valid value type,
+// which is what `value::NetResolvable` states. The fold is a value the net
+// carries, not a type it is parameterized by, so one realization serves every
+// net type and a backend that erases the value type still resolves correctly.
+template <value::NetResolvable T>
+[[nodiscard]] auto FoldContributions(
+    const std::vector<DriveContribution<T>>& contributions, const T& nondriving,
+    value::NetResolution resolution) -> T {
+  T resolved = nondriving;
+  for (const auto& contribution : contributions) {
+    resolved = resolved.ResolveNet(contribution.value, resolution);
   }
+  return resolved;
+}
 
-  // What a driver of a `wire` / `tri` net contributes where it is not driving:
-  // high-impedance (LRM 6.6.1). That makes it the fold's identity, since
-  // folding it in changes nothing. `prototype` carries the net's declared type;
-  // its contents are unused.
-  //
-  // This is not the same question as what the net reads when nothing drives it.
-  // The two coincide here, but a net type whose undriven level is 0 or 1
-  // answers the second with a built-in driver of that level rather than with a
-  // different identity -- the identity has to stay the value a fold can absorb.
-  template <value::NetResolvable T>
-  [[nodiscard]] static auto NondrivingContribution(const T& prototype) -> T {
-    return T::HighImpedanceLike(prototype);
-  }
-};
-
-template <value::NetResolvable T, class Resolver>
+template <value::NetResolvable T>
 class Driver;
 
 // A net: a resolved observable value produced from a set of independently
-// attached driver contributions under `Resolver` (LRM 6.5, 6.6). Readable and
-// observable like a `Var<T>` (it extends `Observable`, so a process can wait on
-// it), but never written directly: a value reaches it only by a driver updating
-// its own contribution, after which the net re-resolves and publishes on a real
-// change (LRM 9.4.2). The net owns the contribution storage; a
-// `Driver<T, Resolver>` names one contribution by an index the net issued, so
-// the storage stays the net's to reorganize.
-template <value::NetResolvable T, class Resolver>
+// attached driver contributions folded under the net's resolution (LRM 6.5,
+// 6.6). Readable and observable like a `Var<T>` (it extends `Observable`, so a
+// process can wait on it), but never written directly: a value reaches it only
+// by a driver updating its own contribution, after which the net re-resolves
+// and publishes on a real change (LRM 9.4.2). The net owns the contribution
+// storage; a `Driver<T>` names one contribution by an index the net issued, so
+// the storage stays the net's to reorganize. The fold is fixed at construction
+// from the declared net type and carried as data, not as a template parameter.
+template <value::NetResolvable T>
 class ResolvedNet : public Observable {
  public:
-  ResolvedNet() = default;
+  explicit ResolvedNet(support::NetResolution resolution)
+      : resolution_(ToValueNetResolution(resolution)) {
+  }
 
   // Fixes the net's declared type, once at construction, from a value carrying
   // it. The net is therefore a readable, well-typed observable before any
@@ -93,8 +99,8 @@ class ResolvedNet : public Observable {
             "fixed");
       }
     }
-    nondriving_ = Resolver::NondrivingContribution(prototype);
-    resolved_ = Resolver::Resolve(contributions_, nondriving_);
+    nondriving_ = T::HighImpedanceLike(prototype);
+    resolved_ = FoldContributions(contributions_, nondriving_, resolution_);
   }
 
   ResolvedNet(const ResolvedNet&) = delete;
@@ -113,10 +119,10 @@ class ResolvedNet : public Observable {
   // The contribution list only grows, so an index into it is a stable identity.
   // The handle is the net's own, so a source that can hold one by value copies
   // it out of the reference and one that cannot keeps the reference itself.
-  auto AttachDriver() -> Driver<T, Resolver>&;
+  auto AttachDriver() -> Driver<T>&;
 
  private:
-  friend class Driver<T, Resolver>;
+  friend class Driver<T>;
 
   void UpdateContribution(
       RuntimeEffects& runtime, std::size_t index, const T& value) {
@@ -130,7 +136,8 @@ class ResolvedNet : public Observable {
   // storage either way, and the transition that matters is the resolved
   // value's, which no driver can see.
   void Reresolve(RuntimeEffects& runtime) {
-    PublishIfChanged(runtime, Resolver::Resolve(contributions_, nondriving_));
+    PublishIfChanged(
+        runtime, FoldContributions(contributions_, nondriving_, resolution_));
   }
 
   // The contribution a driver names. Every driver reaches its own through the
@@ -169,13 +176,14 @@ class ResolvedNet : public Observable {
 
   T resolved_{};
   T nondriving_{};
+  value::NetResolution resolution_;
   std::vector<DriveContribution<T>> contributions_;
   // The handles this net has issued. They are the net's rather than each
   // source's so that a source reaching its driver by address holds nothing that
   // points into the contributions above: those stay the net's to reorganize,
   // and what a reorganization would have to rewrite is these, which it can.
   // Growth therefore must not move what has already been handed out.
-  std::deque<Driver<T, Resolver>> drivers_;
+  std::deque<Driver<T>> drivers_;
 };
 
 // The drive capability for a net: a handle to one contribution of a
@@ -191,14 +199,14 @@ class ResolvedNet : public Observable {
 // not drive keep contributing high-impedance and defer to whoever does drive
 // them. The net then re-resolves, which is the only place the resolved value
 // is ever written.
-template <value::NetResolvable T, class Resolver>
+template <value::NetResolvable T>
 class Driver {
  public:
   using ValueType = T;
   using TransitionBase = T;
 
   Driver() = default;
-  Driver(ResolvedNet<T, Resolver>& net, std::size_t contribution)
+  Driver(ResolvedNet<T>& net, std::size_t contribution)
       : net_(&net), contribution_(contribution) {
   }
 
@@ -240,24 +248,24 @@ class Driver {
   }
 
  private:
-  [[nodiscard]] auto Net() const -> ResolvedNet<T, Resolver>& {
+  [[nodiscard]] auto Net() const -> ResolvedNet<T>& {
     if (net_ == nullptr) {
       throw InternalError("Driver: driver is not attached");
     }
     return *net_;
   }
 
-  ResolvedNet<T, Resolver>* net_ = nullptr;
+  ResolvedNet<T>* net_ = nullptr;
   std::size_t contribution_ = 0;
 };
 
-template <value::NetResolvable T, class Resolver>
-auto ResolvedNet<T, Resolver>::AttachDriver() -> Driver<T, Resolver>& {
+template <value::NetResolvable T>
+auto ResolvedNet<T>::AttachDriver() -> Driver<T>& {
   contributions_.push_back(DriveContribution<T>{.value = nondriving_});
   drivers_.emplace_back(*this, contributions_.size() - 1);
   return drivers_.back();
 }
 
-static_assert(MutationSink<Driver<value::PackedArray, WireResolver>>);
+static_assert(MutationSink<Driver<value::PackedArray>>);
 
 }  // namespace lyra::runtime

@@ -163,11 +163,12 @@ class RuntimeUnpackedArray {
   [[nodiscard]] auto MergeConditional(const RuntimeUnpackedArray& other) const
       -> RuntimeUnpackedArray;
 
-  // LRM 6.6.1 Table 6-2 tri-state resolution, applied element by element. LRM
-  // 6.7.1 admits an unpacked array as a net's data type when its element type
-  // is itself valid for a net, and it composes a net out of its elements' bits,
-  // so folding two contributions is folding each element pair.
-  [[nodiscard]] auto ResolveTriState(const RuntimeUnpackedArray& other) const
+  // Net resolution applied element by element under the fold `fold` names
+  // (LRM 6.6). LRM 6.7.1 admits an unpacked array as a net's data type when its
+  // element type is itself valid for a net, and it composes a net out of its
+  // elements' bits, so folding two contributions is folding each element pair.
+  [[nodiscard]] auto ResolveNet(
+      const RuntimeUnpackedArray& other, NetResolution fold) const
       -> RuntimeUnpackedArray;
 
   // The all-high-impedance value at `prototype`'s shape: each element's own

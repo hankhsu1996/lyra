@@ -251,16 +251,17 @@ auto Own(T value) -> void* {
 }
 
 // A net and one of its drivers, behind the addresses the ABI carries them as.
-// The tri-state fold is the one a net resolves under here; a net type naming
-// another is not yet supported.
+// The fold a net resolves under travels in the net object itself, so one
+// recovery serves every net type: the address names a net, not a net of a
+// particular fold.
 template <typename T>
-auto NetOf(void* net) -> ResolvedNet<T, WireResolver>& {
-  return *static_cast<ResolvedNet<T, WireResolver>*>(net);
+auto NetOf(void* net) -> ResolvedNet<T>& {
+  return *static_cast<ResolvedNet<T>*>(net);
 }
 
 template <typename T>
-auto DriverOf(void* driver) -> Driver<T, WireResolver>& {
-  return *static_cast<Driver<T, WireResolver>*>(driver);
+auto DriverOf(void* driver) -> Driver<T>& {
+  return *static_cast<Driver<T>*>(driver);
 }
 
 // Takes over the erased value a boxed handle carries. A value crosses this way
