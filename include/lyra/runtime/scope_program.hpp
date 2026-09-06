@@ -174,10 +174,17 @@ struct CancellationTargetStorage {};
 // write short-circuits if a descriptor is closed before its region runs.
 struct ChannelCancellationStorage {};
 
+// A named event (LRM 15.5): the waiter set a `-> e` releases and the instant of
+// its last trigger. The owner holds it and it is reached only through its
+// address -- the trigger, await, and triggered calls take that address and
+// nothing is ever read out of it. It names no value domain, so unlike a cell it
+// carries none.
+struct NamedEventStorage {};
+
 using MemberStorageDescriptor = std::variant<
     BorrowedHandleStorage, ObservableCellStorage, InlineValueStorage,
     ValueCellStorage, CancellationTargetStorage, ChannelCancellationStorage,
-    ResolvedNetStorage>;
+    NamedEventStorage, ResolvedNetStorage>;
 
 // One declaration's member storage schema, in its own member order: what a
 // generic value of it must realize for each member the declaration holds. It

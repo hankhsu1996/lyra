@@ -977,10 +977,13 @@ void lyra_rt_trigger(void* event, void* runtime) {
 // A wait names only the event: which process waits is the running one, which
 // the runtime already knows, so nothing about it crosses the boundary. The
 // suspension itself follows this call, the same way it follows every other
-// registration.
-void lyra_rt_await(void* event) {
+// registration, so the answer is the park flag every registration returns -- a
+// named-event wait always parks, since a trigger is instantaneous and the next
+// one is what it waits for (LRM 15.5).
+auto lyra_rt_await(void* event) -> bool {
   static_cast<NamedEvent*>(event)->AddWaiter(
       current_runtime().CurrentProcess().TopHandle());
+  return true;
 }
 
 auto lyra_rt_triggered(const void* event, void* runtime) -> void* {

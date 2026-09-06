@@ -6,6 +6,7 @@
 #include "lyra/runtime/cancellation.hpp"
 #include "lyra/runtime/file_table.hpp"
 #include "lyra/runtime/gc_ref.hpp"
+#include "lyra/runtime/named_event.hpp"
 #include "lyra/runtime/net.hpp"
 #include "lyra/runtime/scope_program.hpp"
 #include "lyra/runtime/var.hpp"
@@ -42,10 +43,10 @@ struct BorrowedHandle {
 // to its address; what the address means follows the member's storage kind. A
 // borrowed handle is a box holding a pointer the owner does not own -- the
 // storage behind a reference, and the driver a net issued -- so reading the
-// member reads the box; an observable cell and a net's resolution node are the
-// storage itself, which library calls reach through its address and never read
-// out as a value; an inline value is a value the owner owns, whose address is
-// the handle it crosses as.
+// member reads the box; an observable cell, a net's resolution node, and a
+// named event are the storage itself, which library calls reach through its
+// address and never read out as a value; an inline value is a value the owner
+// owns, whose address is the handle it crosses as.
 //
 // The same storage serves a closure value's captures, which are members of the
 // declaration whose invoke reads them: a captured pointer or reference is a
@@ -77,7 +78,7 @@ class MemberStorage {
 
  private:
   std::variant<
-      BorrowedHandle, CancellationTarget, ChannelCancellation,
+      BorrowedHandle, CancellationTarget, ChannelCancellation, NamedEvent,
       Var<value::PackedArray>, Var<value::String>, Var<value::Real>,
       Var<value::ShortReal>, Var<value::RuntimeTuple>, Var<value::RuntimeUnion>,
       Var<value::RuntimeTaggedUnion>, Var<value::RuntimeDynamicArray>,

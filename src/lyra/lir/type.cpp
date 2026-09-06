@@ -218,7 +218,7 @@ auto Type::DerefTarget() const -> std::optional<TypeId> {
 auto Type::IsAddressOnly() const -> bool {
   return Is<ObservableType>() || Is<ResolvedType>() || Is<ObjectType>() ||
          Is<ExternalUnitObjectType>() || Is<CrossUnitClassType>() ||
-         Is<RuntimeClassType>();
+         Is<RuntimeClassType>() || Is<EventType>();
 }
 
 auto Type::IsIntegralPacked() const -> bool {

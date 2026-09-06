@@ -264,7 +264,7 @@ auto lyra_rt_wait_any(void* runtime, LyraSpan triggers) -> bool;
 // answers whether the most recent trigger happened in this time step, which is
 // a comparison of instants rather than a state the event clears.
 void lyra_rt_trigger(void* event, void* runtime);
-void lyra_rt_await(void* event);
+auto lyra_rt_await(void* event) -> bool;
 auto lyra_rt_triggered(const void* event, void* runtime) -> void*;
 
 // LRM 9.6.2 `disable`. A target crosses as its address, and a control effect as
