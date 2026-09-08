@@ -526,8 +526,6 @@ auto EntryNamingOf(support::BuiltinFn fn) -> EntryNaming {
       return NotRealized{.shape = kCrossesAForeignStack};
 
     case support::BuiltinFn::kTrigger:
-    case support::BuiltinFn::kAwait:
-    case support::BuiltinFn::kAwaitQualified:
     case support::BuiltinFn::kTriggered:
     case support::BuiltinFn::kCurrentRuntime:
     case support::BuiltinFn::kSubmitNba:

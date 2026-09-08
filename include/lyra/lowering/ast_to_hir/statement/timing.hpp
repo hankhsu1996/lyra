@@ -23,13 +23,15 @@ class WaitStatement;
 
 namespace lyra::lowering::ast_to_hir {
 
-// LRM 9.4.5 `delay_or_event_control`: the control an assignment carries between
-// its operator and its right-hand side. Both assignment forms read it here --
-// the blocking one to suspend the procedure at it, the nonblocking one to say
-// which slot's NBA region the update lands in.
-auto LowerIntraAssignmentControl(
+// LRM A.6.5 `delay_or_event_control`: the control a statement carries towards
+// deciding when its effect happens. Every position the grammar admits one reads
+// it here -- an assignment between its operator and its right-hand side, a
+// nonblocking event trigger after its operator -- so that a blocking form
+// suspends the procedure at it and a nonblocking one says which slot's NBA
+// region the effect lands in.
+auto LowerDelayOrEventControl(
     ProcessLowerer& proc, WalkFrame frame, const slang::ast::TimingControl& tc,
-    diag::SourceSpan span) -> diag::Result<hir::IntraAssignmentControl>;
+    diag::SourceSpan span) -> diag::Result<hir::DelayOrEventControl>;
 
 // LRM 9.4.5 Table 9-3: a blocking assignment carrying an intra-assignment
 // timing control is the same program as holding the right-hand side in a

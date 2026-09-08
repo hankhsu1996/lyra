@@ -212,10 +212,9 @@ void lyra_rt_submit_nba(void* runtime, void* closure);
 void lyra_rt_submit_postponed(void* runtime, void* closure);
 void lyra_rt_submit_observed(void* runtime, void* closure);
 
-// The NBA commit of an assignment carrying an intra-assignment delay (LRM
-// 9.4.5): the region is the same, the slot is the one `duration` steps of the
-// scope's time unit (`unit_power`) away, read and rounded exactly as a delay
-// control's amount is.
+// The NBA commit of an effect carrying a delay control (LRM 9.4.5): the region
+// is the same, the slot is the one `duration` steps of the scope's time unit
+// (`unit_power`) away, read and rounded exactly as a delay control's amount is.
 void lyra_rt_submit_nba_after(
     void* runtime, const void* duration, const void* unit_power,
     const void* precision_power, void* closure);
@@ -223,12 +222,12 @@ void lyra_rt_submit_nba_after_real(
     void* runtime, const void* duration, const void* unit_power,
     const void* precision_power, void* closure);
 
-// The NBA commit of an assignment carrying an intra-assignment event control
-// (LRM 9.4.5), which cannot name its slot where the statement is reached. What
-// crosses is the execution that waits for the event and then makes the commit
-// in whichever slot it landed in: a handle to a coroutine the building stretch
-// owns, taken the way a fork branch is. It runs apart from every lineage, being
-// an update the standard makes no process of.
+// The NBA commit of an effect carrying an event control (LRM 9.4.5, 15.5.1),
+// which cannot name its slot where the statement is reached. What crosses is
+// the execution that waits for the event and then makes the commit in whichever
+// slot it landed in: a handle to a coroutine the building stretch owns, taken
+// the way a fork branch is. It runs apart from every lineage, being an update
+// the standard makes no process of.
 void lyra_rt_run_detached(void* runtime, void* carrier);
 
 // The region that update is due in, reached by the carrier once the event has
@@ -255,13 +254,14 @@ auto lyra_rt_delay_real(
     void* runtime, const void* duration, const void* unit_power,
     const void* precision_power) -> bool;
 
-// Builds one leaf of a value-change wait: the observable cell it watches, and
-// which bits of that cell's packed encoding it reads, as a `(lsb_bit_offset,
-// bit_width)` pair. Nothing decides beyond being reached, which is the
-// sensitivity the standard gives a construct that names variables rather than
-// an expression (LRM 9.2.2.2.1). The scalars cross as opaque packed values,
-// like every scalar. The trigger is a transient runtime value owned by the
-// current call scope.
+// Builds one leaf of a wait: the place it watches, and which bits of that
+// place's packed encoding it reads, as a `(lsb_bit_offset, bit_width)` pair --
+// a width of zero being the whole of it, which is what a named event's leaf
+// carries. Nothing decides beyond being reached, which is the sensitivity the
+// standard gives a construct that names variables rather than an expression
+// (LRM 9.2.2.2.1), and is also the whole of an unqualified named-event wait
+// (LRM 15.5.1). The scalars cross as opaque packed values, like every scalar.
+// The leaf is a transient runtime value owned by the current call scope.
 auto lyra_rt_make_trigger(
     void* observable, const void* lsb_bit_offset, const void* bit_width)
     -> void*;
@@ -288,23 +288,20 @@ auto lyra_rt_make_qualified_observation(
     void* expression, const void* edge, void* condition) -> void*;
 auto lyra_rt_make_condition_observation(void* condition) -> void*;
 
-// Registers the running process to wake when a change to one of `triggers` is
-// an event for the wait, the registration a value-change wait's suspend edge is
-// preceded by (LRM 9.4.2 / 9.4.2.2 / 9.4.3). An empty span means "never wake
-// up". The wakeup source is the running process itself, read from the runtime;
-// no token crosses the boundary. A value-change wait always parks.
+// Registers the running process to wake when what happens at one of `triggers`
+// is an event for the wait, the registration such a wait's suspend edge is
+// preceded by (LRM 9.4.2 / 9.4.2.2 / 9.4.3 / 15.5.2). An empty span means
+// "never wake up". The wakeup source is the running process itself, read from
+// the runtime; no token crosses the boundary. Such a wait always parks.
 auto lyra_rt_wait_any(void* runtime, LyraSpan triggers) -> bool;
 
 // A named event (LRM 15.5). Triggering records the instant and ends the wait of
-// every process the trigger is an event for; awaiting parks the running
-// process, which the runtime knows without being told, so nothing but the event
-// crosses unless the wait carries an `iff` observation (LRM 9.4.2.3), which
-// decides at the trigger and leaves the wait in place when it does not hold;
-// and `triggered` answers whether the most recent trigger happened in this time
-// step, which is a comparison of instants rather than a state the event clears.
+// every process the trigger is an event for; waiting for one is an ordinary
+// wait naming the event, since the event is a place a wait registers on like
+// any other. `triggered` answers whether the most recent trigger happened in
+// this time step, which is a comparison of instants rather than a state the
+// event clears.
 void lyra_rt_trigger(void* event, void* runtime);
-auto lyra_rt_await(void* event) -> bool;
-auto lyra_rt_await_qualified(void* event, const void* observation) -> bool;
 auto lyra_rt_triggered(const void* event, void* runtime) -> void*;
 
 // LRM 9.6.2 `disable`. A target crosses as its address, and a control effect as

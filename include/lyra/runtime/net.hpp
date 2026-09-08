@@ -7,6 +7,7 @@
 #include <vector>
 
 #include "lyra/base/internal_error.hpp"
+#include "lyra/runtime/observable.hpp"
 #include "lyra/runtime/runtime_effects.hpp"
 #include "lyra/runtime/trigger.hpp"
 #include "lyra/runtime/var.hpp"
@@ -162,14 +163,14 @@ class ResolvedNet : public Observable {
       const bool changed = !resolved_.IsBitIdentical(next);
       resolved_ = std::move(next);
       if (changed) {
-        runtime.TriggerValueChange(
+        runtime.WakeWaitersOf(
             *this, MakePackedProjectionTest(old_val, resolved_));
       }
     } else {
       const bool changed = !resolved_.IsBitIdentical(next);
       resolved_ = std::move(next);
       if (changed) {
-        runtime.TriggerValueChange(*this, MakeWholeValueProjectionTest());
+        runtime.WakeWaitersOf(*this, MakeWholeValueProjectionTest());
       }
     }
   }

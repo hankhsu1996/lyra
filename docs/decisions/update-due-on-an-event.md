@@ -44,8 +44,20 @@ closure and suspends nothing.
 
 ## Consequences
 
+- **The carrier is not about assignment, and the standard says so.** LRM 15.5.1 defines the
+  nonblocking event trigger in the same words -- it "creates a nonblocking assign update event in
+  the time in which the delay control expires or the event control occurs", triggering the event in
+  the NBA region -- and the grammar gives both statements the same `delay_or_event_control`
+  production. So the three placements and this carrier take whatever the effect is: `->> e` submits
+  a closure to this slot's region, `->> #d e` to the region of the slot the delay names, and
+  `->> @(ev) e` is carried the same way an update is. A trigger holds nothing frozen, because a
+  named event reference designates the same storage whenever it is reached.
 - The repeat form (`a <= repeat (n) @(ev) b`) is the same carrier with the wait in a loop, so the
   count is read once where the statement stands and nothing about the count reaches the runtime.
+- **One statement's whole effect is one deferred effect**, however many places it writes. A
+  destructuring left-hand side (LRM 11.4.12) is the case that shows it: every part is frozen into
+  one closure or one carrier, so a control on such an assignment is read once and every part's share
+  lands in the same slot.
 - Every event control the statement form accepts serves here unchanged -- an event list, an edge, a
   named event, an `iff` qualifier -- because what the carrier contains is the same wait a statement
   would have contained.

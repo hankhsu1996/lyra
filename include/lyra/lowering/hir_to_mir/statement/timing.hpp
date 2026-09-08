@@ -1,8 +1,8 @@
 #pragma once
 
 // Lowering of timing-control statements: timed statement `@(...) body` /
-// `#N body` / `@e body` / `@* body` (LRM 9.4), `-> e;` event trigger
-// (LRM 15.5.1), and `wait (cond) body` (LRM 9.4.3).
+// `#N body` / `@e body` / `@* body` (LRM 9.4), the `-> e;` and `->> e;` event
+// triggers (LRM 15.5.1), and `wait (cond) body` (LRM 9.4.3).
 
 #include <optional>
 #include <string>
@@ -16,8 +16,8 @@
 namespace lyra::lowering::hir_to_mir {
 
 // The wait an event control is, built into `block` (LRM 9.4.2, 15.5.2). What a
-// statement's control and an assignment's intra-assignment control share is the
-// wait itself; what differs is only what follows it, so both reach these.
+// statement's control and a deferred effect's `delay_or_event_control` share is
+// the wait itself; what differs is only what follows it, so both reach these.
 auto BuildEventWaitStmt(
     ProcessLowerer& process, WalkFrame frame, mir::Block& block,
     const hir::EventControl& ec) -> diag::Result<mir::Stmt>;

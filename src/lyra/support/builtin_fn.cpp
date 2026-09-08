@@ -260,10 +260,6 @@ auto BuiltinFnName(BuiltinFn id) -> std::string_view {
       return "realtoa";
     case BuiltinFn::kTrigger:
       return "trigger";
-    case BuiltinFn::kAwait:
-      return "await";
-    case BuiltinFn::kAwaitQualified:
-      return "await_qualified";
     case BuiltinFn::kTriggered:
       return "triggered";
     case BuiltinFn::kEnumFirst:

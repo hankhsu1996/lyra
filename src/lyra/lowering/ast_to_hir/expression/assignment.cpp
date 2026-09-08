@@ -28,30 +28,29 @@ namespace lyra::lowering::ast_to_hir {
 
 namespace {
 
-// LRM 9.4.5: which intra-assignment timing control the assignment carries, and
-// what it means for when the update happens. A nonblocking one says which
-// slot's NBA region the update lands in and leaves the procedure running; a
-// blocking one suspends the procedure, which is a statement rather than an
+// LRM 9.4.5: when the update happens. A nonblocking assignment's control says
+// which slot's NBA region the update lands in and leaves the procedure running;
+// a blocking one suspends the procedure, which is a statement rather than an
 // expression, so it is expanded into the equivalent statement sequence before
 // any expression is built.
-auto LowerAssignKind(
+auto LowerAssignTiming(
     ProcessLowerer& proc, WalkFrame frame,
     const slang::ast::AssignmentExpression& as, diag::SourceSpan span)
-    -> diag::Result<hir::AssignKind> {
+    -> diag::Result<hir::EffectTiming> {
   if (as.timingControl == nullptr) {
-    return as.isNonBlocking() ? hir::AssignKind{hir::NonBlockingAssign{}}
-                              : hir::AssignKind{hir::BlockingAssign{}};
+    return as.isNonBlocking() ? hir::EffectTiming{hir::NonBlockingEffect{}}
+                              : hir::EffectTiming{hir::ImmediateEffect{}};
   }
   if (!as.isNonBlocking()) {
     throw InternalError(
-        "LowerAssignKind: a blocking assignment carrying an intra-assignment "
-        "timing control reached expression lowering unexpanded");
+        "LowerAssignTiming: a blocking assignment carrying an "
+        "intra-assignment timing control reached expression lowering "
+        "unexpanded");
   }
-  auto control =
-      LowerIntraAssignmentControl(proc, frame, *as.timingControl, span);
+  auto control = LowerDelayOrEventControl(proc, frame, *as.timingControl, span);
   if (!control) return std::unexpected(std::move(control.error()));
-  return hir::AssignKind{
-      hir::NonBlockingAssign{.control = *std::move(control)}};
+  return hir::EffectTiming{
+      hir::NonBlockingEffect{.control = *std::move(control)}};
 }
 
 }  // namespace
@@ -88,9 +87,9 @@ auto LowerAssignmentExprProc(
   auto type_id = unit_lowerer.InternType(*as.type, span);
   if (!type_id) return std::unexpected(std::move(type_id.error()));
 
-  auto kind_or = LowerAssignKind(proc, frame, as, span);
-  if (!kind_or) return std::unexpected(std::move(kind_or.error()));
-  const hir::AssignKind kind = *std::move(kind_or);
+  auto timing_or = LowerAssignTiming(proc, frame, as, span);
+  if (!timing_or) return std::unexpected(std::move(timing_or.error()));
+  const hir::EffectTiming timing = *std::move(timing_or);
 
   if (!as.op.has_value()) {
     auto rhs_or = proc.LowerExpr(as.right(), frame);
@@ -100,7 +99,7 @@ auto LowerAssignmentExprProc(
         .type = *type_id,
         .data =
             hir::AssignExpr{
-                .kind = kind,
+                .timing = timing,
                 .lhs = lhs_id,
                 .compound_op = std::nullopt,
                 .rhs = rhs_id},
@@ -133,7 +132,7 @@ auto LowerAssignmentExprProc(
       .type = *type_id,
       .data =
           hir::AssignExpr{
-              .kind = kind,
+              .timing = timing,
               .lhs = lhs_id,
               .compound_op = LowerBinaryOp(*as.op),
               .rhs = rhs_id},

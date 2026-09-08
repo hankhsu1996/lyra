@@ -593,7 +593,8 @@ class HirDumper {
   static auto FormatNamedEventControl(const NamedEventControl& n)
       -> std::string {
     return std::format(
-        "NamedEventControl event=Expr[{}]{}", n.event.value,
+        "NamedEventControl event={{{} bits={}}}{}",
+        FormatValueTarget(n.event.ref), FormatFootprint(n.event.footprint),
         FormatCondition(n.condition));
   }
 
@@ -633,8 +634,8 @@ class HirDumper {
         tc);
   }
 
-  static auto FormatIntraAssignmentControl(
-      const IntraAssignmentControl& control) -> std::string {
+  static auto FormatDelayOrEventControl(const DelayOrEventControl& control)
+      -> std::string {
     return std::visit(
         Overloaded{
             [](const DelayControl& d) { return FormatDelayControl(d); },
@@ -649,6 +650,20 @@ class HirDumper {
             },
         },
         control);
+  }
+
+  static auto FormatEffectTiming(const EffectTiming& timing) -> std::string {
+    return std::visit(
+        Overloaded{
+            [](const ImmediateEffect&) -> std::string { return "immediate"; },
+            [](const NonBlockingEffect& nb) -> std::string {
+              return nb.control.has_value()
+                         ? std::format(
+                               "nonblocking control={}",
+                               FormatDelayOrEventControl(*nb.control))
+                         : std::string{"nonblocking"};
+            }},
+        timing);
   }
 
   static auto FormatConversionKind(ConversionKind k) -> std::string_view {
@@ -825,27 +840,14 @@ class HirDumper {
                   c.conditions.size(), c.then_value.value, c.else_value.value);
             },
             [](const AssignExpr& a) -> std::string {
-              const std::string kind_str = std::visit(
-                  Overloaded{
-                      [](const BlockingAssign&) -> std::string {
-                        return "blocking";
-                      },
-                      [](const NonBlockingAssign& nb) -> std::string {
-                        return nb.control.has_value()
-                                   ? std::format(
-                                         "nonblocking control={}",
-                                         FormatIntraAssignmentControl(
-                                             *nb.control))
-                                   : std::string{"nonblocking"};
-                      }},
-                  a.kind);
               const std::string op_str =
                   a.compound_op.has_value()
                       ? std::format(" op={}", FormatBinaryOp(*a.compound_op))
                       : std::string{};
               return std::format(
-                  "AssignExpr kind={}{} lhs=Expr[{}] rhs=Expr[{}]", kind_str,
-                  op_str, a.lhs.value, a.rhs.value);
+                  "AssignExpr timing={}{} lhs=Expr[{}] rhs=Expr[{}]",
+                  FormatEffectTiming(a.timing), op_str, a.lhs.value,
+                  a.rhs.value);
             },
             [](const IncDecExpr& inc) -> std::string {
               const auto* op_str = [&] {
@@ -1952,8 +1954,8 @@ class HirDumper {
             [&](const EventTriggerStmt& et) {
               Line(
                   std::format(
-                      "Stmt[{}] EventTriggerStmt event=Expr[{}]", id.value,
-                      et.event.value));
+                      "Stmt[{}] EventTriggerStmt event=Expr[{}] timing={}",
+                      id.value, et.event.value, FormatEffectTiming(et.timing)));
             },
             [&](const WaitStmt& w) {
               std::string sens = "sensitivity=[";

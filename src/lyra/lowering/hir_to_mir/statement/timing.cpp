@@ -1,5 +1,6 @@
 #include "lyra/lowering/hir_to_mir/statement/timing.hpp"
 
+#include <array>
 #include <cstdint>
 #include <expected>
 #include <optional>
@@ -17,6 +18,7 @@
 #include "lyra/lowering/hir_to_mir/cast_lowering.hpp"
 #include "lyra/lowering/hir_to_mir/closure_builder.hpp"
 #include "lyra/lowering/hir_to_mir/condition.hpp"
+#include "lyra/lowering/hir_to_mir/deferred_effect.hpp"
 #include "lyra/lowering/hir_to_mir/integral_literal.hpp"
 #include "lyra/lowering/hir_to_mir/process_lowerer.hpp"
 #include "lyra/lowering/hir_to_mir/runtime_call.hpp"
@@ -127,6 +129,23 @@ auto BuildObservationLocal(
   return DeclareObservation(unit, frame, block, std::move(arguments));
 }
 
+// What a wait carries where the only thing that can hold it back is an `iff`
+// qualifier (LRM 9.4.2.3): a named event's trigger is the event, so there is no
+// value to have moved. Without a qualifier nothing further decides, and the
+// wait names no observation at all.
+auto BuildQualifierObservationLocal(
+    ProcessLowerer& process, WalkFrame frame, mir::Block& block,
+    std::optional<hir::ExprId> condition)
+    -> diag::Result<std::optional<mir::LocalId>> {
+  if (!condition.has_value()) {
+    return std::optional<mir::LocalId>{std::nullopt};
+  }
+  auto closure = BuildConditionClosure(process, frame, block, *condition);
+  if (!closure) return std::unexpected(std::move(closure.error()));
+  return std::optional<mir::LocalId>{
+      DeclareObservation(process.Owner().Unit(), frame, block, {*closure})};
+}
+
 // LRM 9.4.2.2 `@*`: the standard makes the wait sensitive to the variables the
 // controlled statement reads rather than to the value of an expression, so
 // being reached is the whole of the condition and no observation is built.
@@ -198,6 +217,23 @@ auto BuildDelayWaitStmt(
       .label = std::nullopt, .data = mir::ExprStmt{.expr = await_expr_id}};
 }
 
+// LRM 15.5.1: triggering reaches RuntimeEffects to wake subscribers. The engine
+// handle is a real trailing argument, threaded the same way every runtime
+// effect threads it.
+auto BuildTriggerCallExpr(
+    UnitLowerer& unit_lowerer, mir::Block& block, mir::ExprId event_id)
+    -> mir::Expr {
+  const mir::ExprId runtime_id =
+      block.exprs.Add(BuildCurrentRuntimeCallExpr(unit_lowerer));
+  return mir::Expr{
+      .data =
+          mir::CallExpr{
+              .callee = mir::Direct{.target = support::BuiltinFn::kTrigger},
+              .arguments = {event_id, runtime_id},
+          },
+      .type = unit_lowerer.Unit().builtins.void_type};
+}
+
 }  // namespace
 
 auto BuildEventWaitStmt(
@@ -211,7 +247,7 @@ auto BuildEventWaitStmt(
     }
     for (const hir::SensitivityEntry& leaf : trigger.sensitivity_list) {
       leaves.push_back(
-          ObservedLeaf{.entry = &leaf, .observation = *observation});
+          ObservedLeaf{.entry = leaf, .observation = *observation});
     }
   }
   return BuildEventControlWaitStmt(
@@ -221,37 +257,15 @@ auto BuildEventWaitStmt(
 auto BuildNamedEventWaitStmt(
     ProcessLowerer& process, WalkFrame frame, mir::Block& block,
     const hir::NamedEventControl& nec) -> diag::Result<mir::Stmt> {
-  const auto& builtins = process.Owner().Unit().builtins;
-  auto receiver_or =
-      process.LowerExpr(process.HirBody().exprs.Get(nec.event), frame);
-  if (!receiver_or) return std::unexpected(std::move(receiver_or.error()));
-
-  std::vector<mir::ExprId> arguments{block.exprs.Add(*std::move(receiver_or))};
-  support::BuiltinFn target = support::BuiltinFn::kAwait;
-  if (nec.condition.has_value()) {
-    auto condition =
-        BuildConditionClosure(process, frame, block, *nec.condition);
-    if (!condition) return std::unexpected(std::move(condition.error()));
-    arguments.push_back(block.exprs.Add(
-        mir::MakeLocalRefExpr(
-            DeclareObservation(
-                process.Owner().Unit(), frame, block, {*condition}),
-            builtins.observation)));
-    target = support::BuiltinFn::kAwaitQualified;
-  }
-  const mir::ExprId await_id = block.exprs.Add(
-      mir::Expr{
-          .data =
-              mir::CallExpr{
-                  .callee = mir::Direct{.target = target},
-                  .arguments = std::move(arguments)},
-          .type = builtins.void_type});
-  const mir::ExprId await_expr_id = block.exprs.Add(
-      mir::Expr{
-          .data = mir::AwaitExpr{.awaitable = await_id},
-          .type = builtins.void_type});
-  return mir::Stmt{
-      .label = std::nullopt, .data = mir::ExprStmt{.expr = await_expr_id}};
+  // A trigger is the event itself, so there is nothing to have moved and the
+  // observation carries the `iff` qualifier alone (LRM 9.4.2.3, 15.5).
+  auto observation =
+      BuildQualifierObservationLocal(process, frame, block, nec.condition);
+  if (!observation) return std::unexpected(std::move(observation.error()));
+  const std::array<ObservedLeaf, 1> leaves{
+      ObservedLeaf{.entry = nec.event, .observation = *observation}};
+  return BuildEventControlWaitStmt(
+      block, frame, process.EnclosingScopeLowerer(), leaves);
 }
 
 auto BuildAnyEventWaitStmt(
@@ -293,30 +307,48 @@ auto LowerTimedStmt(
       });
 }
 
-// LRM 15.5.1 `-> e;`.
+// LRM 15.5.1 `-> e;` and `->> [ delay_or_event_control ] e;`. The nonblocking
+// form is the trigger made a deferred effect: nothing about the event is read
+// where the statement stands, since a named event reference designates the same
+// storage whenever it is reached, so what the carrier holds is the way it
+// reaches that storage.
 auto LowerEventTriggerStmt(
     ProcessLowerer& process, WalkFrame frame, std::optional<std::string> label,
     const hir::EventTriggerStmt& et) -> diag::Result<mir::Stmt> {
   auto& block = *frame.current_block;
-  auto receiver_or =
-      process.LowerExpr(process.HirBody().exprs.Get(et.event), frame);
-  if (!receiver_or) return std::unexpected(std::move(receiver_or.error()));
-  const mir::ExprId receiver_id = block.exprs.Add(*std::move(receiver_or));
-  // LRM 15.5.1: triggering reaches RuntimeEffects to wake subscribers. The
-  // engine handle is a real trailing argument, threaded the same way every
-  // runtime effect threads it.
-  const mir::ExprId runtime_id =
-      block.exprs.Add(BuildCurrentRuntimeCallExpr(process.Owner()));
-  mir::Expr call{
-      .data =
-          mir::CallExpr{
-              .callee = mir::Direct{.target = support::BuiltinFn::kTrigger},
-              .arguments = {receiver_id, runtime_id},
+  const hir::Expr& event_hir = process.HirBody().exprs.Get(et.event);
+
+  auto effect_or = std::visit(
+      Overloaded{
+          [&](const hir::ImmediateEffect&) -> diag::Result<mir::Expr> {
+            auto event_or = process.LowerExpr(event_hir, frame);
+            if (!event_or) return std::unexpected(std::move(event_or.error()));
+            return BuildTriggerCallExpr(
+                process.Owner(), block, block.exprs.Add(*std::move(event_or)));
           },
-      .type = process.Owner().Unit().builtins.void_type};
-  const mir::ExprId call_id = block.exprs.Add(std::move(call));
+          [&](const hir::NonBlockingEffect& deferred)
+              -> diag::Result<mir::Expr> {
+            return BuildDeferredEffect(
+                process, frame, deferred.control,
+                [&](ClosureBuilder& closure) -> diag::Result<mir::ExprId> {
+                  auto event_or = process.LowerExpr(event_hir, closure.Frame());
+                  if (!event_or) {
+                    return std::unexpected(std::move(event_or.error()));
+                  }
+                  return closure.Body().exprs.Add(*std::move(event_or));
+                },
+                [&](mir::Block& body, const mir::ExprId& event) {
+                  body.AppendStmt(
+                      mir::ExprStmt{
+                          .expr = body.exprs.Add(BuildTriggerCallExpr(
+                              process.Owner(), body, event))});
+                });
+          }},
+      et.timing);
+  if (!effect_or) return std::unexpected(std::move(effect_or.error()));
   return mir::Stmt{
-      .label = std::move(label), .data = mir::ExprStmt{.expr = call_id}};
+      .label = std::move(label),
+      .data = mir::ExprStmt{.expr = block.exprs.Add(*std::move(effect_or))}};
 }
 
 // LRM 9.4.3 `wait (cond) body`.

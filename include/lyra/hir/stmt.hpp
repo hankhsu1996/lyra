@@ -225,12 +225,14 @@ struct TimedStmt {
   StmtId stmt;
 };
 
-// LRM 15.5.1 `-> e;`. Source-aligned with slang's EventTriggerStatement.
-// HIR -> MIR collapses this onto a method call (`event.Trigger()`) on the
-// named-event data type. The `event` ExprId resolves to a PrimaryExpr of a
-// direct or routed reference pointing at the event variable.
+// LRM 15.5.1 `-> e;` and `->> [ delay_or_event_control ] e;`. The `event`
+// ExprId resolves to a PrimaryExpr of a direct or routed reference pointing at
+// the event variable. `timing` says when the trigger happens: `->` triggers
+// where the statement is reached, and `->>` makes it a nonblocking update event
+// due in the NBA region of the slot its control names.
 struct EventTriggerStmt {
   ExprId event;
+  EffectTiming timing;
 };
 
 // LRM 9.4.3 level-sensitive `wait (cond) body`. `sensitivity_list` is the

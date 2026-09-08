@@ -112,8 +112,13 @@ as rejected under each item, and the conformance gaps at the end.
         on a non-value operand (LRM 9.4.2): only packed-vector / value operands are accepted.
   - [ ] A nested timing control inside an event-list entry: only signal events compose in a list
         today.
-- [ ] T6 -- Event-trigger forms beyond the blocking `-> e`: the non-blocking trigger `->> e` (LRM
-      15.5.2) and a delayed trigger carrying an intra-assignment timing control are rejected.
+- [x] T6 -- The non-blocking event trigger `->> e` (LRM 15.5.1), with and without a control. The
+      statement runs without waiting, and the trigger becomes an update due in the nonblocking
+      assignment region of a slot: this one where the source wrote no control, the one a delay
+      names, or the one an event happens in, in every form an event control takes including a repeat
+      count. A procedure that only reaches the wait later in that slot is still in time for the
+      trigger, since the trigger has not happened when the statement runs. The standard makes no
+      process of such an update, so `wait fork` does not wait for one.
 - [x] T7 -- Intra-assignment timing controls (LRM 9.4.5). An assignment carrying one reads its
       right-hand side where the statement is reached and makes the assignment only once the control
       is satisfied, so a later write to anything that right-hand side read does not reach it --
@@ -128,15 +133,23 @@ as rejected under each item, and the conformance gaps at the end.
       suspend it either: the update becomes due in the NBA region of the slot the event happens in,
       however far off that is, so a procedure the same event wakes reads the value the target held
       before it. Everything the update needs is settled where the statement stands, its target's
-      index included, and two updates to one variable land in the order the statements ran. The
-      standard makes no process of a pending update, so `wait fork` does not wait for one and
-      `disable fork` does not reach one.
+      index included, and two updates to one variable land in the order the statements ran. A
+      concatenation left-hand side (LRM 11.4.12) is one left-hand side, so a control on such an
+      assignment is read once and every member's share lands in the same slot. The standard makes no
+      process of a pending update, so `wait fork` does not wait for one and `disable fork` does not
+      reach one.
 
 ### Synchronisation primitives
 
-- [x] P9 -- Named events (LRM 15.5): `event e;` declaration, `-> e;` trigger, `@e;` await,
-      `e.triggered` query (LRM 15.5.3 same-time-step persistence). `->>` non-blocking trigger,
-      `wait_order(...)`, event aliasing / nullness / comparison are out of scope.
+- [x] P9 -- Named events (LRM 15.5): `event e;` declaration, `-> e;` trigger, `@e;` await, and the
+      `e.triggered` query (LRM 15.5.3 same-time-step persistence), which a `wait` condition may read
+      -- so a procedure unblocks whether it reaches the wait before the trigger or in the same time
+      step as it, and stays blocked if it reaches one in a later step. Waiting for an event and
+      waiting for a value to change are the same wait, differing only in that a trigger carries no
+      value, so an `iff` qualifier is the whole of what can hold one back. `wait_order(...)` and
+      event aliasing / nullness / comparison are out of scope: each wants an event variable to be an
+      assignable handle to a shared synchronization object, which is a question about values rather
+      than about scheduling.
 - [x] P11 -- `wait (cond) body` level-sensitive control (LRM 9.4.3). Sensitivity is precomputed by
       slang's flow analysis on `cond` as a standalone expression. The "skip suspend if cond is
       already true" semantic falls out of the lowering. `wait fork;` (LRM 9.6.1) is a distinct
@@ -166,11 +179,6 @@ cannot run at all is watched by nothing and has to be revisited by hand.
       has already ended. A branch whose own declaration reads it ends the run with a segmentation
       fault. The same declaration reading an ordinary variable the parent writes after the fork is
       right, as is the block-item form, which LRM 9.3.2 initializes before any branch is spawned.
-- [ ] A `wait` whose condition reads an event's triggered state is not accepted, so a program
-      containing one never runs. LRM 15.5.3 keeps that state true for the rest of the time step the
-      trigger happened in, which is what lets `wait (e.triggered)` unblock a procedure reaching it
-      in the same time step as the trigger, where `@e` alone would miss it. Reading `.triggered`
-      anywhere but a wait condition is right.
 
 ## Out of Scope
 

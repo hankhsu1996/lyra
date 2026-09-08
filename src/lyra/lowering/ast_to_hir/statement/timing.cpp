@@ -111,9 +111,28 @@ auto LowerSignalEventTrigger(
   };
 }
 
+// The storage a plain reference designates, for a construct that names a cell
+// rather than reading a value out of one -- a wait registering on it, a trigger
+// occurring at it. Nothing but a bare name reaches storage that way.
+auto AsWatchedStorage(const hir::Expr& expr)
+    -> std::optional<hir::ReferenceRoute> {
+  const auto* primary = std::get_if<hir::PrimaryExpr>(&expr.data);
+  if (primary == nullptr) {
+    return std::nullopt;
+  }
+  if (const auto* direct = std::get_if<hir::DirectMemberRef>(&primary->data)) {
+    return hir::ReferenceRoute{*direct};
+  }
+  if (const auto* routed = std::get_if<hir::RoutedRef>(&primary->data)) {
+    return hir::ReferenceRoute{*routed};
+  }
+  return std::nullopt;
+}
+
 // LRM 15.5.2 `@e;` on a named event. Distinguished from value-change `@(sig)`
-// by the controlled expression's type. Identity-only -- no edge polarity
-// applies, so reject any edge qualifier here.
+// by the controlled expression's type. A trigger is the event itself, so the
+// control watches the event's storage and no value is read from it -- and no
+// edge polarity applies, which is why an edge qualifier is rejected here.
 auto LowerNamedEventControl(
     ProcessLowerer& proc, WalkFrame frame,
     const slang::ast::SignalEventControl& sig, diag::SourceSpan span)
@@ -127,10 +146,8 @@ auto LowerNamedEventControl(
   auto expr_or = proc.LowerExpr(sig.expr, frame);
   if (!expr_or) return std::unexpected(std::move(expr_or.error()));
 
-  const auto* primary = std::get_if<hir::PrimaryExpr>(&expr_or->data);
-  if (primary == nullptr ||
-      !(std::holds_alternative<hir::DirectMemberRef>(primary->data) ||
-        std::holds_alternative<hir::RoutedRef>(primary->data))) {
+  const std::optional<hir::ReferenceRoute> route = AsWatchedStorage(*expr_or);
+  if (!route.has_value()) {
     return diag::Fail(
         span, diag::DiagCode::kUnsupportedEventTriggerForm,
         "named event reference must be a plain structural variable");
@@ -138,7 +155,7 @@ auto LowerNamedEventControl(
   auto condition = LowerEventCondition(proc, frame, sig);
   if (!condition) return std::unexpected(std::move(condition.error()));
   return hir::NamedEventControl{
-      .event = frame.Exprs().Add(*std::move(expr_or)),
+      .event = hir::SensitivityEntry{.ref = *route, .footprint = std::nullopt},
       .condition = AddEventCondition(frame, *std::move(condition)),
   };
 }
@@ -184,8 +201,9 @@ auto LowerEventListControl(
 
 // An `event_control` (LRM 9.4.2), whichever of the two shapes slang gives it:
 // one entry, or a list of them. Every position the grammar admits one -- in
-// front of a statement, inside an assignment, behind a repeat count -- reaches
-// it here, so what an event control is written to mean is settled once.
+// front of a statement, inside an assignment, after a nonblocking trigger's
+// operator, behind a repeat count -- reaches it here, so what an event control
+// is written to mean is settled once.
 auto LowerEventControl(
     ProcessLowerer& proc, WalkFrame frame, const slang::ast::TimingControl& tc,
     diag::SourceSpan span) -> diag::Result<hir::AnyEventControl> {
@@ -241,9 +259,9 @@ auto LowerTimingControl(
           .sensitivity_list = *std::move(sensitivity)}};
     }
     case slang::ast::TimingControlKind::RepeatedEvent:
-      // LRM A.6.5: a repeat event control is only ever an intra-assignment
-      // control -- what prefixes a statement is a delay, an event control, or a
-      // cycle delay -- so the assignment form below is where one is read.
+      // LRM A.6.5: a repeat count stands only inside a whole
+      // `delay_or_event_control` -- what prefixes a statement is a delay, an
+      // event control, or a cycle delay -- so the form that reads one is below.
       throw InternalError(
           "LowerTimingControl: a repeated event control reached statement "
           "timing, where the grammar does not put one");
@@ -254,11 +272,11 @@ auto LowerTimingControl(
   }
 }
 
-// The statement-prefix spelling of an intra-assignment control, for the
-// blocking form, whose control is a suspension of the procedure and so a
-// statement. The repeat form has no such spelling -- it is a count of
-// suspensions rather than one -- and the caller expands it.
-auto AsStatementTiming(const hir::IntraAssignmentControl& control)
+// The statement-prefix spelling of a `delay_or_event_control`, for the blocking
+// form, whose control is a suspension of the procedure and so a statement. The
+// repeat form has no such spelling -- it is a count of suspensions rather than
+// one -- and the caller expands it.
+auto AsStatementTiming(const hir::DelayOrEventControl& control)
     -> hir::TimingControl {
   return std::visit(
       Overloaded{
@@ -275,26 +293,49 @@ auto AsStatementTiming(const hir::IntraAssignmentControl& control)
 // own, so one that cannot collide with a design's is minted here.
 constexpr std::string_view kHeldValueName = "_lyra_intra_assign";
 
+// LRM 15.5.1: when the trigger happens. The grammar puts a control only on the
+// nonblocking form, which is the one whose effect is due in a slot other than
+// where the statement stands, so a blocking form carrying one is a shape the
+// source cannot have written.
+auto LowerTriggerTiming(
+    ProcessLowerer& proc, WalkFrame frame,
+    const slang::ast::EventTriggerStatement& et, diag::SourceSpan span)
+    -> diag::Result<hir::EffectTiming> {
+  if (!et.isNonBlocking) {
+    if (et.timing != nullptr) {
+      throw InternalError(
+          "LowerTriggerTiming: a blocking event trigger carrying a timing "
+          "control reached lowering, where the grammar admits none");
+    }
+    return hir::EffectTiming{hir::ImmediateEffect{}};
+  }
+  if (et.timing == nullptr) {
+    return hir::EffectTiming{hir::NonBlockingEffect{}};
+  }
+  auto control = LowerDelayOrEventControl(proc, frame, *et.timing, span);
+  if (!control) return std::unexpected(std::move(control.error()));
+  return hir::EffectTiming{
+      hir::NonBlockingEffect{.control = *std::move(control)}};
+}
+
 }  // namespace
 
-auto LowerIntraAssignmentControl(
+auto LowerDelayOrEventControl(
     ProcessLowerer& proc, WalkFrame frame, const slang::ast::TimingControl& tc,
-    diag::SourceSpan span) -> diag::Result<hir::IntraAssignmentControl> {
+    diag::SourceSpan span) -> diag::Result<hir::DelayOrEventControl> {
   switch (tc.kind) {
     case slang::ast::TimingControlKind::Delay: {
       auto delay_or =
           LowerDelayControl(proc, frame, tc.as<slang::ast::DelayControl>());
       if (!delay_or) return std::unexpected(std::move(delay_or.error()));
-      return hir::IntraAssignmentControl{*delay_or};
+      return hir::DelayOrEventControl{*delay_or};
     }
     case slang::ast::TimingControlKind::SignalEvent:
     case slang::ast::TimingControlKind::EventList: {
       auto event_or = LowerEventControl(proc, frame, tc, span);
       if (!event_or) return std::unexpected(std::move(event_or.error()));
       return std::visit(
-          [](auto event) {
-            return hir::IntraAssignmentControl{std::move(event)};
-          },
+          [](auto event) { return hir::DelayOrEventControl{std::move(event)}; },
           *std::move(event_or));
     }
     case slang::ast::TimingControlKind::RepeatedEvent: {
@@ -307,13 +348,14 @@ auto LowerIntraAssignmentControl(
       const hir::ExprId count = frame.Exprs().Add(*std::move(count_or));
       auto event_or = LowerEventControl(proc, frame, repeated.event, span);
       if (!event_or) return std::unexpected(std::move(event_or.error()));
-      return hir::IntraAssignmentControl{hir::RepeatedEventControl{
+      return hir::DelayOrEventControl{hir::RepeatedEventControl{
           .count = count, .event = *std::move(event_or)}};
     }
     default:
       return diag::Fail(
           span, diag::DiagCode::kUnsupportedTimingControlKind,
-          "this intra-assignment timing control kind is not yet supported");
+          "this timing control kind is not yet supported where a delay or "
+          "event control may stand");
   }
 }
 
@@ -351,7 +393,7 @@ auto LowerIntraAssignmentStmt(
             .type = type,
             .data =
                 hir::AssignExpr{
-                    .kind = hir::BlockingAssign{},
+                    .timing = hir::ImmediateEffect{},
                     .lhs = lhs,
                     .compound_op = std::nullopt,
                     .rhs = rhs},
@@ -385,8 +427,7 @@ auto LowerIntraAssignmentStmt(
   const hir::StmtId assign =
       store(inner.Exprs().Add(*std::move(lhs_or)), held_ref());
 
-  auto control =
-      LowerIntraAssignmentControl(proc, inner, *as.timingControl, span);
+  auto control = LowerDelayOrEventControl(proc, inner, *as.timingControl, span);
   if (!control) return std::unexpected(std::move(control.error()));
 
   if (const auto* repeated =
@@ -434,38 +475,26 @@ auto LowerTimedStmt(
       .span = span};
 }
 
-// LRM 15.5.1 `-> e;`. Source-aligned with slang's EventTriggerStatement. The
-// `->>` non-blocking form and any delay-or-event-control prefix are deferred.
+// LRM 15.5.1 `-> e;` and `->> [ delay_or_event_control ] e;`.
 auto LowerEventTriggerStmt(
     ProcessLowerer& proc, WalkFrame frame,
     const slang::ast::EventTriggerStatement& et, diag::SourceSpan span)
     -> diag::Result<hir::Stmt> {
-  if (et.isNonBlocking) {
-    return diag::Fail(
-        span, diag::DiagCode::kUnsupportedStatementForm,
-        "non-blocking event trigger `->>` is not yet supported");
-  }
-  if (et.timing != nullptr) {
-    return diag::Fail(
-        span, diag::DiagCode::kUnsupportedStatementForm,
-        "delayed event trigger (with intra-trigger timing control) is not yet "
-        "supported");
-  }
   auto expr_or = proc.LowerExpr(et.target, frame);
   if (!expr_or) return std::unexpected(std::move(expr_or.error()));
-  const auto* primary = std::get_if<hir::PrimaryExpr>(&expr_or->data);
-  if (primary == nullptr ||
-      !(std::holds_alternative<hir::DirectMemberRef>(primary->data) ||
-        std::holds_alternative<hir::RoutedRef>(primary->data))) {
+  if (!AsWatchedStorage(*expr_or).has_value()) {
     return diag::Fail(
         span, diag::DiagCode::kUnsupportedStatementForm,
         "event trigger target must be a plain named-event reference");
   }
+  auto timing_or = LowerTriggerTiming(proc, frame, et, span);
+  if (!timing_or) return std::unexpected(std::move(timing_or.error()));
   return hir::Stmt{
       .label = std::nullopt,
       .data =
           hir::EventTriggerStmt{
               .event = frame.Exprs().Add(*std::move(expr_or)),
+              .timing = *std::move(timing_or),
           },
       .span = span};
 }

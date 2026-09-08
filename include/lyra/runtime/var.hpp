@@ -1,6 +1,5 @@
 #pragma once
 
-#include <algorithm>
 #include <concepts>
 #include <cstdint>
 #include <optional>
@@ -10,9 +9,9 @@
 
 #include "lyra/base/internal_error.hpp"
 #include "lyra/runtime/coroutine.hpp"
+#include "lyra/runtime/observable.hpp"
 #include "lyra/runtime/observation.hpp"
 #include "lyra/runtime/pending_wait.hpp"
-#include "lyra/runtime/registration.hpp"
 #include "lyra/runtime/runtime_effects.hpp"
 #include "lyra/runtime/trigger.hpp"
 #include "lyra/runtime/value_storage_core.hpp"
@@ -20,58 +19,6 @@
 #include "lyra/value/packed_array.hpp"
 
 namespace lyra::runtime {
-
-class Observable {
- public:
-  Observable() = default;
-  Observable(const Observable&) = delete;
-  auto operator=(const Observable&) -> Observable& = delete;
-  Observable(Observable&&) = delete;
-  auto operator=(Observable&&) -> Observable& = delete;
-  ~Observable() = default;
-
-  // Whether anything is currently waiting on a change here. LRM 4.3 makes an
-  // update event matter to what is "considered for evaluation", and what waits
-  // here is the whole of that: nothing else reads a change. So a write to a
-  // cell with nothing waiting has nothing to report, and may skip the work of
-  // describing itself.
-  [[nodiscard]] auto HasWaiter() const noexcept -> bool {
-    return !waiters_.Empty();
-  }
-
-  void Subscribe(
-      CoroutineHandle handle, Observation observation,
-      std::uint64_t lsb_bit_offset, std::uint64_t bit_width) {
-    Registration& reg = handle->Park(waiters_);
-    reg.lsb_bit_offset = lsb_bit_offset;
-    reg.bit_width = bit_width;
-    reg.observation = std::move(observation);
-  }
-
-  // Claims and returns the activations this change is an event for; the rest
-  // stay parked. A wait whose bits the change left alone is passed over without
-  // being asked, and every other one answers for itself -- an event control by
-  // what its expression is worth now, an implicit sensitivity by having been
-  // reached at all (LRM 9.2.2.2.1, 9.4.2).
-  [[nodiscard]] auto TakeFiringWaiters(const ProjectionUnchanged& unchanged)
-      -> std::vector<CoroutineHandle> {
-    std::vector<CoroutineHandle> woken;
-    waiters_.ForEach([&](Registration& reg) {
-      if (reg.bit_width != 0 && unchanged(reg.lsb_bit_offset, reg.bit_width)) {
-        return;
-      }
-      if (!reg.FiresNow()) {
-        return;
-      }
-      reg.Unlink();
-      woken.push_back(reg.activation);
-    });
-    return woken;
-  }
-
- private:
-  RegistrationList waiters_;
-};
 
 // What a partial-write chain writes through (LRM 11.5.1). The chain reaches
 // the owner's storage and lands its part there directly; the owner is told
@@ -244,32 +191,32 @@ class Ref {
   T* plain_ = nullptr;
 };
 
-// Makes `frame` runnable again when a change to one of `triggers` is an event
-// for the wait (LRM 9.4.2 / 9.4.2.2 / 9.4.3). Each subscription registers on
-// the frame's own wait-registration set, so waking or destroying the frame
-// revokes every leaf and the one that wakes it drops the siblings; the engine
-// has no idea what kind of wait this is. Each leaf is copied into the cell's
-// waiter record, so `triggers` is only read for the duration of this call.
+// Makes `frame` runnable again when what happens at one of `triggers` is an
+// event for the wait (LRM 9.4.2 / 9.4.2.2 / 9.4.3 / 15.5.2). Each subscription
+// registers on the frame's own wait-registration set, so waking or destroying
+// the frame revokes every leaf and the one that wakes it drops the siblings;
+// the engine has no idea what kind of wait this is. Each leaf is copied into
+// the target's waiter record, so `triggers` is only read for the duration of
+// this call.
 //
-// An empty trigger set is legal and means "never wake up" -- an `always_comb`
+// An empty leaf set is legal and means "never wake up" -- an `always_comb`
 // whose body reads nothing (`always_comb c = 7;`) runs once, then suspends
 // forever.
-inline void SubscribeValueChange(
+inline void SubscribeToLeaves(
     CoroutineHandle frame, std::span<const Trigger> triggers) {
   for (const Trigger& trigger : triggers) {
     if (trigger.observable == nullptr) {
-      throw InternalError(
-          "SubscribeValueChange: a trigger names no observable cell");
+      throw InternalError("SubscribeToLeaves: a leaf names nothing to wait on");
     }
     trigger.observable->Subscribe(
         frame, trigger.observation, trigger.lsb_bit_offset, trigger.bit_width);
   }
 }
 
-// Suspends the calling frame on a value-change wait. The registration happens
-// in `await_suspend`, where the frame that must be resumed is in hand: a wait
-// inside an enabled task has to resume the task's frame, not the enabling
-// process's, and only the language knows which frame is awaiting.
+// Suspends the calling frame on an event control's wait. The registration
+// happens in `await_suspend`, where the frame that must be resumed is in hand:
+// a wait inside an enabled task has to resume the task's frame, not the
+// enabling process's, and only the language knows which frame is awaiting.
 class EventControlAwaitable : public PendingWait {
  public:
   explicit EventControlAwaitable(std::span<const Trigger> triggers)
@@ -283,7 +230,7 @@ class EventControlAwaitable : public PendingWait {
   template <class P>
   void await_suspend(std::coroutine_handle<P> handle) {
     CoroutineHandle token = &handle.promise();
-    SubscribeValueChange(token, triggers_);
+    SubscribeToLeaves(token, triggers_);
     BlockOn(token);
   }
 
@@ -291,8 +238,8 @@ class EventControlAwaitable : public PendingWait {
     CheckAbortOnResume();
   }
 
-  // An edge / value-change is not a level: a change while the procedure was not
-  // waiting here is missed, so resuming waits for the next one and compares
+  // None of what a leaf reports is a level: what happens while the procedure is
+  // not waiting here is missed, so resuming waits for the next one and compares
   // against what it finds now rather than against what it left. Re-establishing
   // needs no runtime access, but the capability signature carries them
   // uniformly.
@@ -304,7 +251,7 @@ class EventControlAwaitable : public PendingWait {
         observation->Arm();
       }
     }
-    SubscribeValueChange(activation, triggers_);
+    SubscribeToLeaves(activation, triggers_);
     return PendingWaitOutcome::kReblocked;
   }
 
@@ -347,22 +294,16 @@ inline auto MakePackedProjectionTest(
   };
 }
 
-// The answer for a value whose parts are not bit ranges: nothing about a leaf's
-// bits can be shown untouched, so every wait on it is asked.
-inline auto MakeWholeValueProjectionTest() -> ProjectionUnchanged {
-  return [](std::uint64_t, std::uint64_t) -> bool { return false; };
-}
-
 template <value::LyraValue T>
 void Var<T>::PublishTransition(const std::optional<T>& before) {
   if (!before || before->IsBitIdentical(this->Get())) {
     return;
   }
   if constexpr (std::same_as<T, value::PackedArray>) {
-    current_runtime().TriggerValueChange(
+    current_runtime().WakeWaitersOf(
         *this, MakePackedProjectionTest(*before, this->Get()));
   } else {
-    current_runtime().TriggerValueChange(*this, MakeWholeValueProjectionTest());
+    current_runtime().WakeWaitersOf(*this, MakeWholeValueProjectionTest());
   }
 }
 
