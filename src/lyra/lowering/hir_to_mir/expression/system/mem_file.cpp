@@ -59,37 +59,30 @@ auto DescribeMemory(
   return unit_lowerer.Hir().types.Get(mem_type).Visit(
       Overloaded{
           [&](const hir::UnpackedArrayType&) -> diag::Result<MemAddressing> {
-            // Walk the nested unpacked dimensions to the leaf element. Every
-            // dimension's bounds ride as one array, highest dimension first, so
-            // the runtime traverses row-major by ascending address (LRM 21.4.3)
-            // and a one-dimensional memory is the two-element case of the same
-            // traversal.
-            std::vector<hir::UnpackedRange> dims;
-            hir::TypeId cursor = mem_type;
-            while (const auto* nested = unit_lowerer.Hir()
-                                            .types.Get(cursor)
-                                            .As<hir::UnpackedArrayType>()) {
-              dims.push_back(nested->dim);
-              cursor = nested->element_type;
-            }
+            // Every dimension's bounds ride as one array, highest dimension
+            // first, so the runtime traverses row-major by ascending address
+            // (LRM 21.4.3) and a one-dimensional memory is the two-element case
+            // of the same traversal.
+            const hir::UnpackedShape shape =
+                hir::UnpackedShapeOf(unit_lowerer.Hir().types, mem_type);
             std::vector<mir::ExprId> bounds;
-            bounds.reserve(dims.size() * 2);
-            for (const hir::UnpackedRange& dim : dims) {
+            bounds.reserve(shape.dims.size() * 2);
+            for (const hir::UnpackedRange& dim : shape.dims) {
               bounds.push_back(int_literal(dim.left));
               bounds.push_back(int_literal(dim.right));
             }
             const mir::TypeId bounds_type = mir::MachineArrayOf(
                 unit_lowerer.Unit().types, int_type, bounds.size());
             return MemAddressing{
-                .element = cursor,
+                .element = shape.element_type,
                 .operands = {wrapper.exprs.Add(
                     mir::Expr{
                         .data =
                             mir::ArrayLiteralExpr{
                                 .elements = std::move(bounds)},
                         .type = bounds_type})},
-                .lowest_address =
-                    std::min(dims.front().left, dims.front().right)};
+                .lowest_address = std::min(
+                    shape.dims.front().left, shape.dims.front().right)};
           },
           [&](const hir::DynamicArrayType& d) -> diag::Result<MemAddressing> {
             return MemAddressing{

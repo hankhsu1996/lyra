@@ -28,19 +28,12 @@ auto TranslateSignedness(hir::Signedness s) -> mir::Signedness {
                                        : mir::Signedness::kUnsigned;
 }
 
-// Whether what a type stands for is objects rather than values: an object of
-// another unit, or an array bottoming out at one. It is what separates an array
-// a declaration builds from an array a program computes with, which the source
-// spells the same way. Asked of the declared type rather than of what it
-// lowered to, because a referrer that never reaches inside such an object
-// carries no identity for it and so cannot be asked which unit it is.
+// What separates an array a declaration builds from an array a program computes
+// with, which the source spells the same way. Asked of the declared type rather
+// than of what it lowered to, because a referrer that never reaches inside such
+// an object carries no identity for it and so cannot be asked which unit it is.
 auto DeclaresObjects(const hir::TypePool& types, hir::TypeId type) -> bool {
-  const hir::Type& data = types.Get(type);
-  if (data.Is<hir::UnitObjectType>()) {
-    return true;
-  }
-  const auto* array = data.As<hir::UnpackedArrayType>();
-  return array != nullptr && DeclaresObjects(types, array->element_type);
+  return hir::ObjectsBehind(types, type).has_value();
 }
 
 // Projects a recursive HIR packed array onto MIR's flat single-vector shape

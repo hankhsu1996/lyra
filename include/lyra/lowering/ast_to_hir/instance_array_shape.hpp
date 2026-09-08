@@ -1,19 +1,21 @@
 #pragma once
 
-#include <cstdint>
 #include <optional>
 #include <vector>
 
 #include <slang/ast/Symbol.h>
 #include <slang/ast/symbols/InstanceSymbols.h>
+#include <slang/numeric/ConstantValue.h>
 
 namespace lyra::lowering::ast_to_hir {
 
-// The resolved shape of an instance array: per-dimension element counts,
+// The resolved shape of an instance array: the range each dimension declares,
 // outermost first, and the per-element leaf instance that names the target
-// unit.
+// unit. The range is what the declaration states and what the member's type
+// carries; how many elements it has is derived from it, since everything below
+// reaches an element by position.
 struct InstanceArrayShape {
-  std::vector<std::uint32_t> dims;
+  std::vector<slang::ConstantRange> ranges;
   const slang::ast::InstanceSymbol* leaf;
 };
 
@@ -27,18 +29,18 @@ struct InstanceArrayShape {
 inline auto ResolveInstanceArrayShape(
     const slang::ast::InstanceArraySymbol& array)
     -> std::optional<InstanceArrayShape> {
-  std::vector<std::uint32_t> dims;
+  std::vector<slang::ConstantRange> ranges;
   const slang::ast::Symbol* level = &array;
   while (level->kind == slang::ast::SymbolKind::InstanceArray) {
     const auto& arr = level->as<slang::ast::InstanceArraySymbol>();
     if (arr.elements.empty()) {
       return std::nullopt;
     }
-    dims.push_back(static_cast<std::uint32_t>(arr.elements.size()));
+    ranges.push_back(arr.range);
     level = arr.elements.front();
   }
   return InstanceArrayShape{
-      .dims = std::move(dims),
+      .ranges = std::move(ranges),
       .leaf = &level->as<slang::ast::InstanceSymbol>()};
 }
 

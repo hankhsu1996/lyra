@@ -146,6 +146,31 @@ struct RouteTarget {
 struct ScopeRoute {
   hir::RouteHead head;
   std::vector<hir::PathStep> steps;
+  // The unit whose object the last step lands on, where it lands on one. What
+  // the route reaches from there is counted out of that unit's signature, so
+  // the walk states which unit it stopped in; a route that stops on no object
+  // ended at a scope, and nothing past it was promised to anyone.
+  std::optional<std::string> unit_name;
+};
+
+// What a hop of a descent could be, where the unit standing above it published
+// the name: that unit's promise, and the position it gave the member. It
+// becomes a step exactly where the hops above it kept a typed pointer, which is
+// known only once the whole descent is in hand.
+struct PublishedHop {
+  const hir::UnitSignature* signature;
+  hir::PublishedMemberId member;
+  std::string unit_name;
+};
+
+// One hop of a descent: the step it stands as, and the unit whose object it
+// lands on where this unit declares the hop and so names its own child. A hop
+// this unit does not declare lands on whatever the unit above it promised,
+// which is read off that promise rather than recorded here -- and which unit
+// stands above it is known only once the whole descent is in hand.
+struct DescentHop {
+  hir::PathStep step;
+  std::optional<std::string> declared_unit;
 };
 
 // The declarations of one structural scope that a peer may name before the
@@ -309,20 +334,36 @@ class UnitLowerer {
       const slang::ast::ValueSymbol& value, diag::SourceSpan span) const
       -> diag::Result<hir::PublishedStorage>;
 
-  // Which unit's instances the interface port `port` carries. The connection
-  // decides it and the connection is read where this unit's ports are, so the
-  // answer is taken there and read back here rather than reached for a second
-  // time -- what the unit published about the port and the member it builds for
-  // it then cannot describe different interfaces.
-  [[nodiscard]] auto InterfaceUnitOf(const slang::ast::Symbol& port) const
-      -> const std::string& {
-    const auto it = interface_port_units_.find(&port);
-    if (it == interface_port_units_.end()) {
+  // What the interface port `port` stands for: instances of the unit the
+  // connection named, as many as the range it declares. The connection is read
+  // where this unit's ports are published, so the answer is taken there and
+  // read back here rather than reached for a second time -- what the unit
+  // published about the port and the member it builds for it then cannot
+  // describe different interfaces. Everything a name reached through the port
+  // asks -- which unit, how many coordinates reach one instance -- is a
+  // question about this one type.
+  [[nodiscard]] auto InterfacePortType(const slang::ast::Symbol& port) const
+      -> hir::TypeId {
+    const auto it = interface_port_types_.find(&port);
+    if (it == interface_port_types_.end()) {
       throw InternalError(
-          "UnitLowerer::InterfaceUnitOf: a unit publishes every interface port "
-          "it declares before any of its bodies lower");
+          "UnitLowerer::InterfacePortType: a unit publishes every interface "
+          "port it declares before any of its bodies lower");
     }
     return it->second;
+  }
+
+  // Which unit's instances that port carries.
+  [[nodiscard]] auto InterfaceUnitOf(const slang::ast::Symbol& port) const
+      -> std::string {
+    const auto behind =
+        hir::ObjectsBehind(unit_.types, InterfacePortType(port));
+    if (!behind.has_value()) {
+      throw InternalError(
+          "UnitLowerer::InterfaceUnitOf: an interface port stands for "
+          "instances of the unit its connection named");
+    }
+    return std::string{behind->unit_name};
   }
 
   // Whether `internal` is the declaration a `ref` / `const ref` port reaches,
@@ -534,14 +575,6 @@ class UnitLowerer {
   [[nodiscard]] auto ModportAccessorsOf(const slang::ast::Symbol& port) const
       -> ModportAccessors;
 
-  // What a process waiting on a name a modport offers observes: every member
-  // the expression behind that name reads (LRM 25.5.4), each reached through
-  // the interface the reader's own port carries. The name is no storage of its
-  // own, so nothing waits on it directly.
-  auto ObservedThroughModport(
-      const slang::ast::ModportPortSymbol& offered, const WalkFrame& frame)
-      -> diag::Result<std::vector<hir::SensitivityEntry>>;
-
   // Interns this unit's record of a DPI-C import (LRM 35.4), classifying its
   // ABI projection on first sight and answering with the same id every later
   // time. Both the declaration walk and a call site reach an import through
@@ -690,16 +723,15 @@ class UnitLowerer {
       ScopeFrameId slot_owner_frame, hir::RoutedRefDecl decl,
       diag::SourceSpan span) -> hir::Expr;
 
-  // The reference to `value` over a route the caller derived: `head` and
-  // `steps` say how the reader reaches it, and what the route ends at follows
-  // from the steps alone. A reader that can locate the target on the object
-  // tree derives the route from there; one reached through an interface port
-  // has no such position to read -- the port is the only reach -- so that step
-  // is derived at the reference site and handed here.
+  // The reference to `value` over a route the caller derived: the route says
+  // how the reader reaches it, and what the route ends at follows from the
+  // route alone. A reader that can locate the target on the object tree derives
+  // the route from there; one reached through an interface port has no such
+  // position to read -- the port is the only reach -- so that route is derived
+  // at the reference site and handed here.
   [[nodiscard]] auto MakeRoutedRef(
       const slang::ast::ValueSymbol& value, ScopeFrameId slot_owner,
-      hir::RouteHead head, std::vector<hir::PathStep> steps)
-      -> diag::Result<hir::ReferenceRoute>;
+      ScopeRoute route) -> diag::Result<hir::ReferenceRoute>;
 
   // The reference to the object `route` reaches. Reaching an object across an
   // instance boundary seals like reaching a cell there: the route runs once at
@@ -716,8 +748,8 @@ class UnitLowerer {
   // elaborated hierarchy states that. Empty when no route reaches it.
   [[nodiscard]] auto RouteToUnitObject(
       const WalkFrame& frame, const slang::ast::InstanceBodySymbol& body,
-      const slang::ast::HierarchicalReference& reference,
-      diag::SourceSpan span) const -> diag::Result<std::optional<ScopeRoute>>;
+      const slang::ast::HierarchicalReference& reference, diag::SourceSpan span)
+      -> diag::Result<std::optional<ScopeRoute>>;
 
   // Where a named value lives, as this unit reaches it. One answer serves
   // every consumer of a reference -- reading it, writing it, and waiting on it
@@ -740,32 +772,21 @@ class UnitLowerer {
   // connections and hierarchical references share this one walk, so neither
   // reaches across an instance boundary a way the other cannot.
   [[nodiscard]] auto RouteToScope(
-      const WalkFrame& frame, const slang::ast::Scope& target) const
+      const WalkFrame& frame, const slang::ast::Scope& target)
       -> std::optional<ScopeRoute>;
 
-  // How this reader reaches the interface an enclosing scope's `port` carries
-  // (LRM 25.3). The port is the whole route: what stands behind it belongs to a
-  // unit this one reaches no other way, so any other route to the same object
-  // would describe a different design -- which is why the frontend's own
-  // resolution of the port to that object is not what this reads. What the
-  // route ends at is the caller's, so one derivation serves a name read through
-  // the port and a connection handing the port's interface on.
-  [[nodiscard]] auto RouteThroughInterfacePort(
-      const WalkFrame& frame, const slang::ast::Symbol& port,
-      std::vector<std::uint32_t> indices = {}) const -> ScopeRoute;
-
-  // The coordinates a name selected on an interface port before reaching what
-  // it names: the hops between the port and the target are the element
-  // selections a port carrying a range admits (LRM 25.3). Each is already the
-  // position of the instance it picked rather than the coordinate the source
-  // wrote, because resolving the select is what spends the declared range; the
-  // range is read here only for how many coordinates the port admits. Nothing
-  // when a hop is anything else, which is a name descending into what the
-  // interface itself owns rather than selecting one of the instances the port
-  // stands for.
-  [[nodiscard]] static auto InterfacePortCoordinates(
+  // How this reader reaches the object that owns what a name reached through an
+  // interface port names (LRM 25.3). The port is the first step, and each hop
+  // between it and the target is one of two things: a coordinate on the member
+  // the route is standing on -- already the position the select resolved to,
+  // since spending the declared range is what resolving it does -- or a member
+  // the unit standing there published, which the route continues through the
+  // way it would end on one (LRM 25.10). Nothing when a hop names anything
+  // else, which reaches past what that unit promised.
+  [[nodiscard]] auto ReachThroughInterfacePort(
+      const WalkFrame& frame,
       const slang::ast::HierarchicalReference& reference)
-      -> std::optional<std::vector<std::uint32_t>>;
+      -> std::optional<ScopeRoute>;
 
   // The reads of a dependency set that name a cell, as the entries watching it.
   // A read of anything else contributes none, so a constant read alongside a
@@ -782,6 +803,38 @@ class UnitLowerer {
   // into the signature's own pool, so what leaves stands on its own.
   auto PublishSignature() -> diag::Result<void>;
 
+  // How this reader reaches the interface an enclosing scope's `port` carries
+  // (LRM 25.3). The port is the whole route: what stands behind it belongs to a
+  // unit this one reaches no other way, so any other route to the same object
+  // would describe a different design -- which is why the frontend's own
+  // resolution of the port to that object is not what this reads. What the
+  // route ends at is the caller's, so one derivation serves a name read through
+  // the port and a connection handing the port's interface on.
+  [[nodiscard]] auto RouteThroughInterfacePort(
+      const WalkFrame& frame, const slang::ast::Symbol& port) const
+      -> ScopeRoute;
+
+  // What the unit named `unit_name` promised under `name`, where what it
+  // promised is an object of a unit of its own (LRM 25.10). Nothing when it
+  // promised no such name, which leaves the hop one the runtime answers.
+  [[nodiscard]] auto PromisedObjectMember(
+      const std::string& unit_name, std::string_view name) const
+      -> std::optional<PublishedHop>;
+
+  // Fills `route` with the descent `hops` state, turning each hop the unit
+  // standing above it promised into a step through that promise, and stating
+  // which unit the whole route lands on. Both follow the descent forward, since
+  // which unit stands at a hop is what every hop before it decided.
+  void ClassifyDescent(ScopeRoute& route, std::span<DescentHop> hops);
+
+  // What a process waiting on a name a modport offers observes: every member
+  // the expression behind that name reads (LRM 25.5.4), each reached through
+  // the interface the reader's own port carries. The name is no storage of its
+  // own, so nothing waits on it directly.
+  auto ObservedThroughModport(
+      const slang::ast::ModportPortSymbol& offered, const WalkFrame& frame)
+      -> diag::Result<std::vector<hir::SensitivityEntry>>;
+
   // The reader-relative route to a cell in an instantiated scope: a direct
   // member when the target sits on the reader's own scope, a routed reference
   // otherwise -- a typed enclosing climb to a this-unit ancestor member, a
@@ -791,18 +844,17 @@ class UnitLowerer {
       const WalkFrame& frame, const slang::ast::ValueSymbol& value)
       -> diag::Result<std::optional<hir::ReferenceRoute>>;
 
-  // What the route ending in `steps` reaches, and what storage that is.
+  // What `route` reaches, and what storage that is.
   [[nodiscard]] auto ResolveRouteTarget(
-      const slang::ast::ValueSymbol& value,
-      std::span<const hir::PathStep> steps) -> diag::Result<RouteTarget>;
+      const slang::ast::ValueSymbol& value, const ScopeRoute& route)
+      -> diag::Result<RouteTarget>;
 
-  // The same, when the unit owning `value` published its name and the route's
-  // own last step lands on an object of that unit. Empty otherwise, which is
-  // every case where no declaration stands behind the name at the point the
-  // reference is compiled.
+  // The same, when the route lands on an object of a unit that published the
+  // name. Empty otherwise, which is every case where no declaration stands
+  // behind the name at the point the reference is compiled.
   [[nodiscard]] auto PublishedRouteTarget(
-      const slang::ast::ValueSymbol& value,
-      std::span<const hir::PathStep> steps) -> std::optional<RouteTarget>;
+      const slang::ast::ValueSymbol& value, const ScopeRoute& route)
+      -> std::optional<RouteTarget>;
 
   // Reserves an identity for each static-lifetime local one procedural block
   // subtree of `body` declares, and recurses into the blocks nested in it.
@@ -844,9 +896,9 @@ class UnitLowerer {
   // taken while the signature is derived and read back while bodies lower.
   std::unordered_map<const slang::ast::Symbol*, hir::PublishedMemberId>
       published_member_ids_;
-  // Which unit each of this unit's interface ports carries.
-  std::unordered_map<const slang::ast::Symbol*, std::string>
-      interface_port_units_;
+  // What each of this unit's interface ports stands for.
+  std::unordered_map<const slang::ast::Symbol*, hir::TypeId>
+      interface_port_types_;
   // The declarations this unit's `ref` ports reach, under the binding each
   // port's direction states.
   std::unordered_map<const slang::ast::Symbol*, hir::ReferenceBinding>

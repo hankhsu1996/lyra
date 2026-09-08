@@ -309,6 +309,12 @@ the detail lives in the entry itself.
   applies the projection as an ordinary access so no endpoint category is added. A synthesized cell
   per point, carrying the source expression, reading it off the frontend, a member per point, and a
   per-modport member list are rejected.
+- [publishing-an-owned-instance](publishing-an-owned-instance.md) -- an interface publishes the
+  interfaces it instantiates, so a name continues past a port into one; continuing through a
+  published member is the step form of ending on one, a unit may read the signatures it can reach
+  rather than only those it declares, and every route to a published name becomes typed at once.
+  Carrying the inner unit's members inline, recording its object eagerly, walking bodies to bound
+  the read set, and letting the reach fall to a by-name lookup are rejected.
 - [identity-is-not-a-rendering](identity-is-not-a-rendering.md) -- what must distinguish is stored
   as its parts and composed into a name only by whoever knows the spelling rules; an identity splits
   exactly where the layer below it splits; naming another unit's object and holding what it

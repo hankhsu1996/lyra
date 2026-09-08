@@ -4,6 +4,7 @@
 #include <string>
 #include <unordered_map>
 #include <utility>
+#include <vector>
 
 #include "lyra/base/internal_error.hpp"
 #include "lyra/hir/unit_signature.hpp"
@@ -85,17 +86,47 @@ class UnitSignatures {
     }
   }
 
-  // The signatures a unit naming `unit_names` as its dependencies may read. A
-  // name the design compiles no unit for contributes no entry rather than
+  // The signatures a unit naming `unit_names` as its dependencies may read:
+  // those, and the units they publish objects of, however deep the nesting.
+  // A name reached through a published object is reached through what that
+  // object's unit promised, so the set a unit may read is the set it can reach
+  // rather than the set it declares -- which is what a name continuing past a
+  // published member asks for, and nothing more. The walk terminates because
+  // the objects it follows are those of an acyclic instance tree.
+  //
+  // A name the design compiles no unit for contributes no entry rather than
   // failing: a reference to it has nothing to compile against, which is the
   // same answer an unpublished name gets.
   [[nodiscard]] auto Consumed(std::span<const std::string> unit_names) const
       -> ConsumedSignatures {
     std::unordered_map<std::string, const UnitSignature*> consumed;
     consumed.reserve(unit_names.size());
+    std::vector<const UnitSignature*> pending;
+    const auto reach = [&](const std::string& unit_name) {
+      const auto it = by_name_.find(unit_name);
+      if (it == by_name_.end()) {
+        return;
+      }
+      if (consumed.emplace(unit_name, &it->second).second) {
+        pending.push_back(&it->second);
+      }
+    };
     for (const std::string& unit_name : unit_names) {
-      if (const auto it = by_name_.find(unit_name); it != by_name_.end()) {
-        consumed.emplace(unit_name, &it->second);
+      reach(unit_name);
+    }
+    while (!pending.empty()) {
+      const UnitSignature* signature = pending.back();
+      pending.pop_back();
+      if (!signature->instance_class.has_value()) {
+        continue;
+      }
+      for (const PublishedMemberId id :
+           signature->instance_class->members.Ids()) {
+        const auto behind = ObjectsBehind(
+            signature->types, signature->instance_class->members.Get(id).type);
+        if (behind.has_value()) {
+          reach(std::string{behind->unit_name});
+        }
       }
     }
     return ConsumedSignatures(std::move(consumed));

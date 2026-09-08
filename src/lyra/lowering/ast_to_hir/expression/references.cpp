@@ -25,7 +25,6 @@
 #include "lyra/hir/expr_builders.hpp"
 #include "lyra/hir/external_unit_object.hpp"
 #include "lyra/hir/published_modport.hpp"
-#include "lyra/hir/structural_scope.hpp"
 #include "lyra/hir/value_ref.hpp"
 #include "lyra/lowering/ast_to_hir/connected_interface.hpp"
 #include "lyra/lowering/ast_to_hir/constant_value.hpp"
@@ -323,24 +322,17 @@ auto LowerInterfacePortValue(
     const slang::ast::HierarchicalValueExpression& hve,
     const slang::ast::ValueSymbol& declaration, diag::SourceSpan span)
     -> diag::Result<hir::Expr> {
-  const auto path = hve.ref.path;
-  // A path ends at what the name reached, so the hops between the port and the
-  // member are the elements a port carrying a range was selected on. Anything
-  // else there descends into what the interface itself owns, past what the port
-  // promised about the interface it carries.
-  auto indices = UnitLowerer::InterfacePortCoordinates(hve.ref);
-  if (!indices.has_value()) {
+  auto through = unit_lowerer.ReachThroughInterfacePort(frame, hve.ref);
+  if (!through.has_value()) {
     return diag::Fail(
         span, diag::DiagCode::kUnsupportedExpressionForm,
-        "a nested name reached through an interface port is not yet supported");
+        "a name reached through an interface port that the interface did not "
+        "promise is not yet supported");
   }
   auto type_id = unit_lowerer.InternType(*hve.type, span);
   if (!type_id) return std::unexpected(std::move(type_id.error()));
-  auto through = unit_lowerer.RouteThroughInterfacePort(
-      frame, *path[0].symbol, *std::move(indices));
   auto route = unit_lowerer.MakeRoutedRef(
-      declaration, frame.Current(), std::move(through.head),
-      std::move(through.steps));
+      declaration, frame.Current(), *std::move(through));
   if (!route) return std::unexpected(std::move(route.error()));
   return ValueTargetRefExpr(hir::ValueTarget{*route}, *type_id, span);
 }
@@ -350,23 +342,32 @@ auto LowerInterfacePortValue(
 // (LRM 25.5.4), so what it reaches is read out of the view the interface
 // published -- an identifier that carries an expression names no declaration
 // at all and could not be found among the members.
-// What the interface promised about one name a view offers: which of this
-// unit's records of that interface holds it, and the subroutines carrying out
-// the read and, where the view admits one, the write.
+// What a call on such a name takes: the instance the port carries as the
+// receiver, which of this unit's records of that interface holds the promise,
+// and the subroutines carrying out the read and, where the view admits one, the
+// write.
 struct OfferedName {
+  hir::RoutedRef receiver;
   hir::ExternalUnitObjectId object;
   hir::PublishedCallableId getter;
   std::optional<hir::PublishedCallableId> setter;
 };
 
 auto ResolveOfferedName(
-    UnitLowerer& unit_lowerer,
+    UnitLowerer& unit_lowerer, WalkFrame frame,
     const slang::ast::HierarchicalValueExpression& hve, diag::SourceSpan span)
     -> diag::Result<OfferedName> {
-  const slang::ast::Symbol& port = *hve.ref.path[0].symbol;
+  auto through = unit_lowerer.ReachThroughInterfacePort(frame, hve.ref);
+  if (!through.has_value() || !through->unit_name.has_value()) {
+    return diag::Fail(
+        span, diag::DiagCode::kUnsupportedExpressionForm,
+        "a name a view offers, reached past what the interface promised, is "
+        "not yet supported");
+  }
   const slang::ast::ModportSymbol* selected =
-      ConnectedInterfaceOf(
-          port.as<slang::ast::InterfacePortSymbol>().getConnection())
+      ConnectedInterfaceOf(hve.ref.path[0]
+                               .symbol->as<slang::ast::InterfacePortSymbol>()
+                               .getConnection())
           .modport;
   if (selected == nullptr) {
     throw InternalError(
@@ -374,7 +375,7 @@ auto ResolveOfferedName(
         "that selected no view");
   }
   const hir::ExternalUnitObjectId object =
-      unit_lowerer.ExternalUnitObjectOf(unit_lowerer.InterfaceUnitOf(port));
+      unit_lowerer.ExternalUnitObjectOf(*through->unit_name);
   // The record is an arena entry, so what this reference needs comes out of it
   // before anything else can grow the arena.
   const hir::PublishedModport* view = hir::FindModport(
@@ -388,29 +389,14 @@ auto ResolveOfferedName(
         "a name reached through an interface port that its view does not "
         "offer is not yet supported");
   }
-  return OfferedName{
-      .object = object, .getter = offered->getter, .setter = offered->setter};
-}
-
-// The instance the port carries, as the receiver a call on it takes.
-auto MakeOfferedNameReceiver(
-    UnitLowerer& unit_lowerer, WalkFrame frame,
-    const slang::ast::HierarchicalValueExpression& hve, diag::SourceSpan span)
-    -> diag::Result<hir::RoutedRef> {
-  auto indices = UnitLowerer::InterfacePortCoordinates(hve.ref);
-  if (!indices.has_value()) {
-    return diag::Fail(
-        span, diag::DiagCode::kUnsupportedExpressionForm,
-        "a nested name reached through an interface port is not yet supported");
-  }
-  const slang::ast::Symbol& port = *hve.ref.path[0].symbol;
-  auto through =
-      unit_lowerer.RouteThroughInterfacePort(frame, port, *std::move(indices));
   const hir::TypeId object_type = unit_lowerer.Unit().types.Intern(
-      hir::Type{hir::UnitObjectType{
-          .unit_name = unit_lowerer.InterfaceUnitOf(port)}});
-  return unit_lowerer.MakeRoutedObjectRef(
-      frame.Current(), std::move(through), object_type);
+      hir::Type{hir::UnitObjectType{.unit_name = *through->unit_name}});
+  return OfferedName{
+      .receiver = unit_lowerer.MakeRoutedObjectRef(
+          frame.Current(), *std::move(through), object_type),
+      .object = object,
+      .getter = offered->getter,
+      .setter = offered->setter};
 }
 
 // LRM 25.5: reading a name a view offers is the interface evaluating the
@@ -420,22 +406,20 @@ auto LowerModportPortValue(
     UnitLowerer& unit_lowerer, WalkFrame frame,
     const slang::ast::HierarchicalValueExpression& hve, diag::SourceSpan span)
     -> diag::Result<hir::Expr> {
-  auto resolved = ResolveOfferedName(unit_lowerer, hve, span);
+  auto resolved = ResolveOfferedName(unit_lowerer, frame, hve, span);
   if (!resolved) return std::unexpected(std::move(resolved.error()));
   const hir::TypeId result_type =
       unit_lowerer.Unit()
           .external_unit_objects.Get(resolved->object)
           .callables.Get(resolved->getter)
           .result_type;
-  auto receiver = MakeOfferedNameReceiver(unit_lowerer, frame, hve, span);
-  if (!receiver) return std::unexpected(std::move(receiver.error()));
   return hir::Expr{
       .type = result_type,
       .data =
           hir::CallExpr{
               .callee =
                   hir::ExternalUnitMethodRef{
-                      .receiver = *receiver,
+                      .receiver = resolved->receiver,
                       .object = resolved->object,
                       .callable = resolved->getter},
               .arguments = {}},
@@ -479,22 +463,20 @@ auto LowerModportPortWrite(
     UnitLowerer& unit_lowerer, WalkFrame frame,
     const slang::ast::HierarchicalValueExpression& target, hir::ExprId value,
     diag::SourceSpan span) -> diag::Result<hir::Expr> {
-  auto resolved = ResolveOfferedName(unit_lowerer, target, span);
+  auto resolved = ResolveOfferedName(unit_lowerer, frame, target, span);
   if (!resolved) return std::unexpected(std::move(resolved.error()));
   if (!resolved->setter.has_value()) {
     return diag::Fail(
         span, diag::DiagCode::kUnsupportedExpressionForm,
         "a name a view offers only for reading is not assignable");
   }
-  auto receiver = MakeOfferedNameReceiver(unit_lowerer, frame, target, span);
-  if (!receiver) return std::unexpected(std::move(receiver.error()));
   return hir::Expr{
       .type = unit_lowerer.Unit().types.Intern(hir::Type{hir::VoidType{}}),
       .data =
           hir::CallExpr{
               .callee =
                   hir::ExternalUnitMethodRef{
-                      .receiver = *receiver,
+                      .receiver = resolved->receiver,
                       .object = resolved->object,
                       .callable = *resolved->setter},
               .arguments = {value}},

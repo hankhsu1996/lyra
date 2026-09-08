@@ -117,8 +117,11 @@ its changes.
   referrers. Every route's opaque segment is driven by the referrer, which reaches the target by
   name at Resolve; the target only answers by-name queries about its own declarations.
 - A typed segment naming a declaration the target unit did not publish -- an internal member, an
-  internal type, a child it owns. A typed segment stops at what the referrer compiles against; the
-  step that reaches past a signature is opaque by contract.
+  internal type, a child whose name it kept to itself. What decides is publication and never
+  ownership: an interface publishes the interfaces it instantiates (LRM 25.10) while a module
+  publishes no child at all, so one unit kind's owned child is a typed segment and the other's is
+  not. A typed segment stops at what the referrer compiles against; the step that reaches past a
+  signature is opaque by contract.
 - A resolution path for ports that is distinct from the one for hierarchical references. Two
   mechanisms for cross-instance access is the canonical violation.
 - Resolution by flattened symbol-name lookup or a design-global path table that mirrors the object
@@ -164,6 +167,19 @@ cell, and the body and its sensitivity read the sealed endpoint either way.
 belongs to top's unit), `gen.child` is declared (`child` is a member of `gen`'s class in the same
 unit), and `child.x` is opaque (`x` is not on `child`'s signature). The route alternates two typed
 segments and one opaque segment; the SDK is reached only where the route passes a signature.
+
+```mermaid
+flowchart LR
+  O["origin"] -->|"declared: this artifact owns the class"| G["gen"]
+  G -->|"declared: same"| C["child"]
+  C -->|"opaque: x is on no signature this referrer consumes"| X["x"]
+```
+
+Each arrow is classified on its own. Where a segment's target sits on a signature the referrer
+consumes, the same arrow is declared rather than opaque, and the route's shape does not change --
+`child.p` for a port `p` is the same three-hop route with its last arrow typed. Nothing about a
+route is decided by how many units it crosses, by how deep it goes, or by the syntax that named the
+target; every arrow asks the one question and the answers compose.
 
 **Port connections share the routing.** An input or output port is a continuous-assignment edge
 between the two objects' own storage (LRM 23.3.3); the cross-unit side reaches the partner cell

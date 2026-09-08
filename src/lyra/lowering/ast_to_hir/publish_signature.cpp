@@ -3,6 +3,7 @@
 #include <expected>
 #include <optional>
 #include <ranges>
+#include <span>
 #include <string>
 #include <utility>
 #include <vector>
@@ -33,6 +34,7 @@
 #include "lyra/hir/unit_signature.hpp"
 #include "lyra/lowering/ast_to_hir/connected_interface.hpp"
 #include "lyra/lowering/ast_to_hir/expression/slang_atoms.hpp"
+#include "lyra/lowering/ast_to_hir/instance_array_shape.hpp"
 #include "lyra/lowering/ast_to_hir/net_type.hpp"
 #include "lyra/lowering/ast_to_hir/subroutine_decl.hpp"
 #include "lyra/lowering/ast_to_hir/unit_identity.hpp"
@@ -65,10 +67,11 @@ auto SelectCoordinate(const slang::ast::Expression& bound)
   return value->integer().as<std::int32_t>();
 }
 
-// Whether a declaration holds a cell (LRM 6.5). That is what a unit publishes
-// as a member, and what an expression over its declarations can be waited on
-// through; anything else it declares carries a value and no storage.
-auto IsPublishedStorage(const slang::ast::Symbol& symbol) -> bool {
+// Whether a declaration holds a cell (LRM 6.5) -- what an expression over a
+// unit's declarations can be waited on through, and what a member of one is
+// read and written as. A published member need not: an instance holds an
+// object, and nothing waits on it.
+auto HoldsCell(const slang::ast::Symbol& symbol) -> bool {
   return symbol.kind == slang::ast::SymbolKind::Variable ||
          symbol.kind == slang::ast::SymbolKind::Net;
 }
@@ -255,10 +258,10 @@ auto UnitLowerer::PublishSignature() -> diag::Result<void> {
     if (instance == nullptr) {
       return refuse("an unconnected interface port is not yet supported");
     }
-    std::string interface_unit = SpecializationName(*instance);
-    RecordReferencedUnit(interface_unit);
+    RecordReferencedUnit(SpecializationName(*instance));
     hir::TypeId own = unit_.types.Intern(
-        hir::Type{hir::UnitObjectType{.unit_name = interface_unit}});
+        hir::Type{
+            hir::UnitObjectType{.unit_name = SpecializationName(*instance)}});
     // A port carrying a range stands for as many instances as the range has
     // elements (LRM 25.3), which is a fact about what the member is and so
     // travels on its type. The innermost dimension is wrapped first, so the
@@ -270,7 +273,7 @@ auto UnitLowerer::PublishSignature() -> diag::Result<void> {
               .dim =
                   hir::UnpackedRange{.left = dim.left, .right = dim.right}}});
     }
-    interface_port_units_.emplace(&port, std::move(interface_unit));
+    interface_port_types_.emplace(&port, own);
     const hir::PublishedMemberId id = instance_class.members.Add(
         hir::PublishedMember{
             .name = std::string{port.name},
@@ -279,6 +282,54 @@ auto UnitLowerer::PublishSignature() -> diag::Result<void> {
     published_member_ids_.emplace(&port, id);
     return id;
   };
+
+  // A child this unit published takes the position its signature gave it. Its
+  // declaration is already bound when this runs, since a unit walks its own
+  // declarations before it publishes, so the pairing is stated here rather than
+  // where the binding is made.
+  std::vector<std::pair<hir::PublishedMemberId, hir::InstanceMemberId>>
+      published_instances;
+
+  // An interface an interface instantiates (LRM 25.3). Access to the objects an
+  // interface declares is available through a port connection (LRM 25.10), so a
+  // nested instance is on the surface the port reaches and is published like
+  // any other member. What crosses is what an interface port's member carries
+  // -- the unit whose instances belong there, its multiplicity, and that the
+  // member holds a borrowed pointer -- because from the referrer's side the two
+  // are one thing; that this scope builds this one and the parent binds that
+  // one is not a fact a referrer reads.
+  const auto publish_instance_member =
+      [&](const slang::ast::Symbol& member,
+          const slang::ast::InstanceSymbol& leaf,
+          std::span<const slang::ConstantRange> ranges) {
+        std::string instance_unit = SpecializationName(leaf);
+        RecordReferencedUnit(instance_unit);
+        hir::TypeId own = unit_.types.Intern(
+            hir::Type{
+                hir::UnitObjectType{.unit_name = std::move(instance_unit)}});
+        // The innermost dimension is wrapped first, so the range written
+        // leftmost ends up outermost.
+        for (const slang::ConstantRange& dim : std::views::reverse(ranges)) {
+          own = unit_.types.Intern(
+              hir::Type{hir::UnpackedArrayType{
+                  .element_type = own,
+                  .dim = hir::UnpackedRange{
+                      .left = dim.left, .right = dim.right}}});
+        }
+        const auto binding = LookupOwnedChildBinding(member);
+        if (!binding.has_value()) {
+          throw InternalError(
+              "PublishSignature: an instance this unit publishes is a child "
+              "its own declaration walk bound");
+        }
+        published_instances.emplace_back(
+            instance_class.members.Add(
+                hir::PublishedMember{
+                    .name = std::string{member.name},
+                    .type = publish_type(own),
+                    .storage = hir::BorrowedObjectStorage{}}),
+            std::get<hir::InstanceMemberId>(binding->child));
+      };
 
   // The descent a port expression's own selects state, turned from the
   // leaf-first steps a peel collects into the owner-to-leaf order a reader
@@ -437,7 +488,22 @@ auto UnitLowerer::PublishSignature() -> diag::Result<void> {
         if (!published) return std::unexpected(std::move(published.error()));
         continue;
       }
-      if (!IsPublishedStorage(member)) continue;
+      if (member.kind == slang::ast::SymbolKind::Instance) {
+        publish_instance_member(
+            member, member.as<slang::ast::InstanceSymbol>(), {});
+        continue;
+      }
+      if (member.kind == slang::ast::SymbolKind::InstanceArray) {
+        // A dimension with no elements constructs nothing and names no unit,
+        // so the array is no member at all -- the same answer the unit's own
+        // walk reaches through the one predicate both read.
+        const auto shape = ResolveInstanceArrayShape(
+            member.as<slang::ast::InstanceArraySymbol>());
+        if (!shape.has_value()) continue;
+        publish_instance_member(member, *shape->leaf, shape->ranges);
+        continue;
+      }
+      if (!HoldsCell(member)) continue;
       auto id = publish_member(member.as<slang::ast::ValueSymbol>());
       if (!id) return std::unexpected(std::move(id.error()));
     }
@@ -491,7 +557,7 @@ auto UnitLowerer::PublishSignature() -> diag::Result<void> {
       diag::Result<void> read_failure;
       connection->visitSymbolReferences(
           [&](const slang::ast::Expression&, const slang::ast::Symbol& symbol) {
-            if (!read_failure || !IsPublishedStorage(symbol)) return;
+            if (!read_failure || !HoldsCell(symbol)) return;
             auto id = publish_member(symbol.as<slang::ast::ValueSymbol>());
             if (!id) {
               read_failure = std::unexpected(std::move(id.error()));
@@ -530,6 +596,9 @@ auto UnitLowerer::PublishSignature() -> diag::Result<void> {
   // One slot per member published, for the declarations to fill as this unit's
   // own walk reaches them.
   published_members_.resize(instance_class.members.size());
+  for (const auto& [slot, instance] : published_instances) {
+    published_members_[slot.value] = instance;
+  }
   return {};
 }
 

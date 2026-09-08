@@ -57,9 +57,13 @@ struct InterfacePortId {
 
 // A declaration a unit published, named the way the scope that holds it names
 // it. Which arena it lives in is what says how its storage is built: a data
-// object owns a cell the scope installs, an interface port stands for an object
-// the scope neither owns nor builds.
-using PublishedDecl = std::variant<StructuralDataObjectId, InterfacePortId>;
+// object owns a cell the scope installs, an instance member stands for an
+// object the scope builds and owns, and an interface port stands for one the
+// scope neither owns nor builds. The last two promise the same thing -- a
+// borrowed pointer to another unit's object -- and differ only in what this
+// scope does with it.
+using PublishedDecl =
+    std::variant<StructuralDataObjectId, InstanceMemberId, InterfacePortId>;
 
 // A generate block (LRM 27) as a child of the scope that declares it: the
 // generate construct it belongs to, plus which of that construct's elaborated
@@ -117,7 +121,23 @@ struct InterfacePortStep {
   auto operator==(const InterfacePortStep&) const -> bool = default;
 };
 
-using PathStep = std::variant<OwnedChildStep, InterfacePortStep, OpaqueStep>;
+// One navigation step onto a member another unit published, whose type makes it
+// an object of a third unit (LRM 25.3). It is the step form of the leaf that
+// ends on a published member: the same record, the same position counted out of
+// the same signature, reaching a pointer rather than a cell. `indices` pick one
+// object out of a member standing for several. The position is what crosses,
+// never the name -- a name identifies a step only where the route passes a
+// signature, and this step lands on what one promised.
+struct SignatureMemberStep {
+  ExternalUnitObjectId object;
+  PublishedMemberId member;
+  std::vector<std::uint32_t> indices;
+
+  auto operator==(const SignatureMemberStep&) const -> bool = default;
+};
+
+using PathStep = std::variant<
+    OwnedChildStep, InterfacePortStep, SignatureMemberStep, OpaqueStep>;
 
 // Where a route starts. `InUnitHead` anchors at a structural scope of this
 // unit, `hops` typed parent edges out from the referrer (0 being the
