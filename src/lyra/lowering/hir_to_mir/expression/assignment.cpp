@@ -58,6 +58,12 @@ auto TargetOutlivesDeferredUpdate(const mir::Block& block, mir::ExprId expr_id)
             }
             return TargetOutlivesDeferredUpdate(block, m.receiver);
           },
+          // A member of an active-member value lives exactly as long as the
+          // value holding it, so the question passes to that value, the same
+          // way a product's component passes it to the product.
+          [&](const mir::UnionMemberExpr& m) {
+            return TargetOutlivesDeferredUpdate(block, m.union_value);
+          },
           // A name reaches storage of one of two durations: a body's own
           // binding, which goes away when the stretch that holds it returns,
           // and everything a compilation unit declares once -- a
@@ -162,8 +168,8 @@ auto CloneLhsSelectorChainOntoRef(
             return body.exprs.Add(
                 mir::Expr{.data = std::move(rebuilt), .type = type});
           },
-          // A field above the root names no coordinates to snapshot, so only
-          // its receiver is rebuilt.
+          // A field or member above the root names no coordinates to snapshot,
+          // so only the value it is taken from is rebuilt.
           [&](const mir::FieldAccessExpr& m) -> mir::ExprId {
             mir::FieldAccessExpr rebuilt = m;
             const mir::TypeId type = outer_expr.type;
@@ -172,6 +178,14 @@ auto CloneLhsSelectorChainOntoRef(
                 captured_root);
             return body.exprs.Add(
                 mir::Expr{.data = std::move(rebuilt), .type = type});
+          },
+          [&](const mir::UnionMemberExpr& m) -> mir::ExprId {
+            mir::UnionMemberExpr rebuilt = m;
+            const mir::TypeId type = outer_expr.type;
+            rebuilt.union_value = CloneLhsSelectorChainOntoRef(
+                unit_lowerer, outer_frame, closure, rebuilt.union_value,
+                root_id, captured_root);
+            return body.exprs.Add(mir::Expr{.data = rebuilt, .type = type});
           },
           [&](const auto&) -> mir::ExprId {
             throw InternalError(

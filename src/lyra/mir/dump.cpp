@@ -848,6 +848,11 @@ class MirDumper {
                   "TaggedIsExpr union=Expr[{}] tag={}", g.union_value.value,
                   g.tag_index.value);
             },
+            [](const UnionMemberExpr& m) -> std::string {
+              return std::format(
+                  "UnionMemberExpr union=Expr[{}] member={}",
+                  m.union_value.value, m.index.value);
+            },
         },
         e.data);
     return std::format("{} type=Type[{}]", formatted, e.type.value);

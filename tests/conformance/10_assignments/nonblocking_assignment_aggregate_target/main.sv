@@ -1,21 +1,30 @@
 // The target of a nonblocking assignment may be a whole fixed-size unpacked
-// array, a slice of one, a single element, or a member of a structure. The
-// statement does not change the target where it stands: it evaluates the
-// right-hand side and schedules the update, so a read taken afterwards in the
-// same time step still sees the value the target had, and only once the
-// update has been applied does the new value appear. An assignment whose
-// left-hand side is a slice updates that whole slice at once, leaving the
-// elements outside it as they were (LRM 10.4.2, 7.6).
+// array, a slice of one, a single element, or a member of a structure or a
+// union. The statement does not change the target where it stands: it
+// evaluates the right-hand side and schedules the update, so a read taken
+// afterwards in the same time step still sees the value the target had, and
+// only once the update has been applied does the new value appear. An
+// assignment whose left-hand side is a slice updates that whole slice at once,
+// leaving the elements outside it as they were. A union holds one member at a
+// time, so the deferred update makes the member it names the one the union
+// holds, exactly as an immediate write to that member would (LRM 10.4.2, 7.6,
+// 7.3).
 module Top;
   typedef struct {
     int count;
     int spare;
   } entry_t;
 
+  typedef union {
+    int number;
+    logic [15:0] bits;
+  } choice_t;
+
   int whole [3] = '{1, 2, 3};
   int sliced [4] = '{1, 2, 3, 4};
   int element [3] = '{1, 2, 3};
   entry_t record;
+  choice_t choice;
 
   int source [3] = '{70, 80, 90};
   int slice_source [2] = '{77, 88};
@@ -24,20 +33,24 @@ module Top;
   int sliced_before;
   int element_before;
   int record_before;
+  int choice_before;
 
   initial begin
     record.count = 5;
     record.spare = 6;
+    choice.number = 7;
 
     whole <= source;
     sliced[1 +: 2] <= slice_source;
     element[2] <= 99;
     record.count <= 55;
+    choice.number <= 77;
 
     whole_before = whole[0];
     sliced_before = sliced[1];
     element_before = element[2];
     record_before = record.count;
+    choice_before = choice.number;
 
     #1;
   end
@@ -51,6 +64,8 @@ module Top;
       $fatal(1, "element_before was %0d, expected 3", element_before);
     if (record_before !== 5)
       $fatal(1, "record_before was %0d, expected 5", record_before);
+    if (choice_before !== 7)
+      $fatal(1, "choice_before was %0d, expected 7", choice_before);
 
     if (whole[0] !== 70) $fatal(1, "whole[0] was %0d, expected 70", whole[0]);
     if (whole[2] !== 90) $fatal(1, "whole[2] was %0d, expected 90", whole[2]);
@@ -73,6 +88,9 @@ module Top;
       $fatal(1, "record.count was %0d, expected 55", record.count);
     if (record.spare !== 6)
       $fatal(1, "record.spare was %0d, expected 6", record.spare);
+
+    if (choice.number !== 77)
+      $fatal(1, "choice.number was %0d, expected 77", choice.number);
     $display("All checks passed");
   end
 endmodule

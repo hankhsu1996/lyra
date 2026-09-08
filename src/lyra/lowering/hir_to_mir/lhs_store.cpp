@@ -1,7 +1,6 @@
 #include "lyra/lowering/hir_to_mir/lhs_store.hpp"
 
 #include <optional>
-#include <utility>
 #include <variant>
 
 #include "lyra/base/internal_error.hpp"
@@ -13,16 +12,42 @@ namespace lyra::lowering::hir_to_mir {
 
 namespace {
 
-// The object a call in target position reaches its storage through, when `expr`
-// is such a call. Two kinds qualify: a guard, which yields the value it guards,
-// and an access, whose receiver holds the part it reaches. A walk following
-// where storage lives passes through either.
-auto ReachingReceiver(const mir::Expr& expr) -> std::optional<mir::ExprId> {
+// The operand a step in target position reaches its storage through, and
+// nothing where `expr` is not a step at all. A field or member reach is taken
+// from the value below it; so is a call that reaches through the object it
+// dispatches on -- a guard, which yields the value it guards, and an access,
+// whose receiver holds the part it reaches.
+auto StepReceiver(const mir::Expr& expr) -> std::optional<mir::ExprId> {
+  if (const auto* m = std::get_if<mir::FieldAccessExpr>(&expr.data)) {
+    return m->receiver;
+  }
+  if (const auto* m = std::get_if<mir::UnionMemberExpr>(&expr.data)) {
+    return m->union_value;
+  }
   const auto* call = std::get_if<mir::CallExpr>(&expr.data);
   if (call == nullptr || !mir::ReachesThroughReceiver(call->callee)) {
     return std::nullopt;
   }
   return mir::CalleeReceiver(call->callee);
+}
+
+// `expr`'s own form with the operand it steps from replaced. Defined exactly
+// where a step is, so the two agree on which nodes have one.
+auto WithStepReceiver(const mir::Expr& expr, mir::ExprId receiver)
+    -> mir::ExprData {
+  if (const auto* m = std::get_if<mir::FieldAccessExpr>(&expr.data)) {
+    mir::FieldAccessExpr rebuilt = *m;
+    rebuilt.receiver = receiver;
+    return rebuilt;
+  }
+  if (const auto* m = std::get_if<mir::UnionMemberExpr>(&expr.data)) {
+    mir::UnionMemberExpr rebuilt = *m;
+    rebuilt.union_value = receiver;
+    return rebuilt;
+  }
+  auto rebuilt = std::get<mir::CallExpr>(expr.data);
+  std::get<mir::Direct>(rebuilt.callee).receiver = receiver;
+  return rebuilt;
 }
 
 }  // namespace
@@ -42,15 +67,11 @@ auto FindLhsRootId(
     // Every step above the root reaches its storage through the value it is
     // taken from, so the walk is one step per node until something is not a
     // step at all.
-    if (const std::optional<mir::ExprId> receiver = ReachingReceiver(expr)) {
-      lhs_id = *receiver;
-      continue;
+    const std::optional<mir::ExprId> receiver = StepReceiver(expr);
+    if (!receiver) {
+      return lhs_id;
     }
-    if (const auto* m = std::get_if<mir::FieldAccessExpr>(&expr.data)) {
-      lhs_id = m->receiver;
-      continue;
-    }
-    return lhs_id;
+    lhs_id = *receiver;
   }
 }
 
@@ -63,24 +84,19 @@ auto ReplaceLhsRoot(
   if (unit.types.Get(expr.type).IsCapabilityWrapper()) {
     return root_id;
   }
-  // Read the type out before each recursion: it appends to the same arena,
-  // which invalidates the `expr` reference.
-  if (const auto* m = std::get_if<mir::FieldAccessExpr>(&expr.data)) {
-    mir::FieldAccessExpr rebuilt = *m;
-    const mir::TypeId result_ty = expr.type;
-    rebuilt.receiver = ReplaceLhsRoot(unit, block, rebuilt.receiver, root_id);
-    return block.exprs.Add(
-        mir::Expr{.data = std::move(rebuilt), .type = result_ty});
+  const std::optional<mir::ExprId> receiver = StepReceiver(expr);
+  if (!receiver) {
+    return root_id;
   }
-  if (const std::optional<mir::ExprId> receiver = ReachingReceiver(expr)) {
-    auto rebuilt = std::get<mir::CallExpr>(expr.data);
-    const mir::TypeId result_ty = expr.type;
-    std::get<mir::Direct>(rebuilt.callee).receiver =
-        ReplaceLhsRoot(unit, block, *receiver, root_id);
-    return block.exprs.Add(
-        mir::Expr{.data = std::move(rebuilt), .type = result_ty});
-  }
-  return root_id;
+  // Read the type out before the recursion: it appends to the same arena, which
+  // invalidates the `expr` reference.
+  const mir::TypeId result_ty = expr.type;
+  const mir::ExprId rebuilt_receiver =
+      ReplaceLhsRoot(unit, block, *receiver, root_id);
+  return block.exprs.Add(
+      mir::Expr{
+          .data = WithStepReceiver(block.exprs.Get(lhs_id), rebuilt_receiver),
+          .type = result_ty});
 }
 
 auto StoragePlaceOf(

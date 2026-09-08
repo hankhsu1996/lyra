@@ -1,15 +1,16 @@
 ---
-description: Check backend render and MIR-consuming lowering code against the mechanical-translation contract, and report what it finds without changing anything
-allowed-tools: Read, Grep, Glob, Bash(git status:*), Bash(git diff:*), Bash(git log:*), Bash(ls:*), Bash(grep:*), Bash(sed -n:*), Bash(wc:*)
+description: Check backend render and MIR-consuming lowering code against the mechanical-translation contract, and report each problem it finds and where that problem is fixed, without changing any code
+allowed-tools: Read, Grep, Glob, Write, Bash(git status:*), Bash(git diff:*), Bash(git log:*), Bash(ls:*), Bash(grep:*), Bash(sed -n:*), Bash(wc:*)
 ---
 
 # Check Render
 
 Find the places where a consumer of MIR is deciding something MIR did not state, and report them.
 
-**This command changes nothing.** It has no edit tools, and it does not propose patches. Its output
-is a reader's judgement the human acts on. A finding handed over with a fix attached invites the fix
-to be applied at the site, and the site is usually the wrong place -- see Report below.
+**This command changes no code.** The one file it writes is its own report, in the scratchpad. It
+does name the fix, at the root rather than at the site -- which layer states the fact, and what it
+states -- because a finding whose fix nobody can name is not finished being investigated. What it
+never hands over is a patch at the site, because the site is usually the wrong place to apply one.
 
 ## Context
 
@@ -28,6 +29,15 @@ Read these before looking at any code. They hold the test; this file deliberatel
 - `docs/progress/mechanical-translation.md`, if it exists -- the instances already known and being
   worked, so a finding can say whether it is one of them or new. Its absence means the workstream
   finished; the contract still governs.
+- `docs/decisions/`, every record touching the subject. One of them has usually settled the shape
+  already, with the reason; a finding that contradicts a record is either wrong or a reversal that
+  has to be argued as one.
+
+**A record whose mechanism was superseded is not a record whose problem was solved.** Where a later
+record replaced the mechanism, check that the replacement exists in the code before treating the
+earlier defect as closed. A superseded mechanism whose replacement was never built leaves the defect
+live and unowned, and it is the hardest kind to see, because both records read as settled and
+neither one is wrong.
 
 **Do not restate the criteria from memory, and do not carry them in your head from a previous
 session.** They have been wrong before: the contract once said different syntactic shape was the
@@ -47,11 +57,24 @@ reading each file whole so a local edit is judged against its surroundings.
 where the contract's test applies most directly, and say in the report that a survey samples rather
 than audits.
 
+**Whatever the scope, it bounds where you start looking, not what you read.** A finding names a
+root, and a root is only checkable once every place that produces it and every place that consumes
+it has been read -- grep for it, then read those files whole, whether or not the scope named them.
+Stopping earlier yields a finding whose fix cannot be stated, and the fix is the half of the report
+the human actually acts on.
+
 ## 3. Where to look
 
 These are starting points, not criteria. A hit is a candidate; the contract decides.
 
 - A branch inside an entry that emits a value, a statement, or a member.
+- A value-emission entry with a body rather than one composed expression. Length is a cheap first
+  reading -- a tell, never a criterion. Attribute it before reporting: a result assembled in steps
+  or across a branch is usually a decision made a piece at a time, while a hand-rolled list join is
+  only a helper nobody reached for.
+- A condition built from more than one input -- a conjunction, or an entry taking a discriminating
+  parameter beside the node. Each input is its own candidate, and settling one leaves the rest
+  choosing at a site that now reads as done.
 - A closed set whose alternatives differ only in something the surrounding structure already fixes.
 - A predicate answered by a guard (`if (!x.empty())`) where the fact could have been looked up.
 - An absence standing for a kind -- an optional or an empty container read as a discriminator.
@@ -63,23 +86,41 @@ These are starting points, not criteria. A hit is a candidate; the contract deci
 
 ## 4. Report
 
+Two questions are being answered, in this order: **is there a problem**, and **is the fix known**.
+Everything else is the backup that makes those two checkable, and backup does not belong in the
+chat.
+
 Findings only. Most branches in a mature backend are legitimate; a report that flags them is noise
-and will be ignored, which costs more than saying nothing. If nothing is wrong, say so in one line.
+and will be ignored, which costs more than saying nothing. If nothing is wrong, say so in one line
+and stop.
 
-For each finding:
+**The evidence goes to a file; the chat gets the answers.** Write one section per finding into a
+scratchpad file -- where it is, what each arm emits, and how the contract's test lands on it -- so
+the judgement can be checked against the code without being read to get to the point. Then, in the
+chat, give per finding:
 
-1. **Where** -- file and line.
-2. **What each arm emits** -- the evidence, quoted or paraphrased from the code. This is checkable;
-   the verdict below is not, without it.
-3. **The verdict, by the contract's test** -- operation, spelling, or presentation. Name which, and
-   why the test lands there.
-4. **Which layer declined to state the fact.** This is the part that matters most and the part a
-   reader cannot supply. Say what is not stated and where it would be stated. Where the root is
-   upstream, say plainly that fixing it at the site would be wrong -- it moves the decision rather
-   than removing it, and the other consumer still works it out alone.
+1. **The root, in one sentence** -- the fact nobody states, not the site where it surfaced.
+2. **Whether it is a problem**, by the contract's test: operation, spelling, or presentation. One
+   clause of why, not the derivation.
+3. **The fix** -- which layer states the fact, and what it states. Where the root is upstream, say
+   plainly that fixing it at the site would be wrong: it moves the decision rather than removing it,
+   and the other consumer still works it out alone. Where the fix reopens a settled decision, name
+   the record. Where the fix is genuinely not known yet, say so in those words -- that is a real
+   answer, and a better one than a fix that has not been derived.
 
-Then close with what was checked and what was not, so the human knows the report's reach. A survey
-that read six files says six files.
+Then the file path, in full, on its own line.
+
+**Before reporting a fix, write down what the site looks like once it lands.** If a branch of the
+same kind survives -- fewer arms, or the same arms chosen on a different input -- the fix is partial
+and the survivor is a second finding at the same site. This is the check that a report is otherwise
+structurally unable to make: naming one root reads as accounting for the whole branch, and the
+reader has no way to tell that it did not.
 
 Order findings by root, not by file: two sites with one cause are one problem, and reporting them
-apart invites two wrong fixes.
+apart invites two wrong fixes. The inverse is not symmetric and has to be looked for on purpose:
+one site with two causes is two problems, and "one site, one root" is an assumption, never a
+finding.
+
+**Do not close with what was left unread.** A finding ready to report is one read to its edges; one
+that is not is a reason to keep reading, never a caveat to hand over. The single exception is the
+no-argument survey, which samples by construction -- one line saying what it sampled.

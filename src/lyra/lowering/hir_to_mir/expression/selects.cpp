@@ -2,6 +2,7 @@
 
 #include <cstdint>
 #include <expected>
+#include <optional>
 #include <string>
 #include <utility>
 #include <variant>
@@ -197,12 +198,10 @@ auto BuildElementAccessCallExpr(
 // The write-side counterpart: the same access, answering with the element
 // itself so it can be assigned to and further accesses compose onto it.
 auto ProjectElement(
-    UnitLowerer& unit_lowerer, mir::Block& block, mir::Expr base,
+    UnitLowerer& unit_lowerer, mir::Block& block, mir::ExprId base_id,
     mir::ExprId idx_id, mir::TypeId result_type) -> mir::Expr {
-  const mir::TypeId base_type = base.type;
-  const mir::ExprId base_id = block.exprs.Add(std::move(base));
   std::vector<mir::ExprId> args = {idx_id};
-  AppendReceiverRange(unit_lowerer, block, base_type, args);
+  AppendReceiverRange(unit_lowerer, block, block.exprs.Get(base_id).type, args);
   return mir::Expr{
       .data =
           mir::CallExpr{
@@ -295,10 +294,11 @@ auto BuildRangeSliceCallExpr(
 template <typename LowerOne>
 auto ProjectSlice(
     UnitLowerer& unit_lowerer, mir::Block& block,
-    const hir::RangeBounds& bounds, mir::Expr base, mir::TypeId result_type,
-    LowerOne lower_one) -> diag::Result<mir::Expr> {
+    const hir::RangeBounds& bounds, mir::ExprId base_id,
+    mir::TypeId result_type, LowerOne lower_one) -> diag::Result<mir::Expr> {
   auto operands_or = UnfoldRangeSelectOperands(
-      unit_lowerer, block, bounds, base.type, result_type, lower_one);
+      unit_lowerer, block, bounds, block.exprs.Get(base_id).type, result_type,
+      lower_one);
   if (!operands_or) return std::unexpected(std::move(operands_or.error()));
   return mir::Expr{
       .data =
@@ -306,7 +306,7 @@ auto ProjectSlice(
               .callee =
                   mir::Direct{
                       .target = support::BuiltinFn::kSliceRef,
-                      .receiver = block.exprs.Add(std::move(base))},
+                      .receiver = base_id},
               .arguments = *std::move(operands_or)},
       .type = result_type};
 }
@@ -352,7 +352,7 @@ auto BuildFieldSliceCallExpr(
 // The write-side counterpart: a packed aggregate's member reached as the same
 // constant-bounds window, answering with the window itself.
 auto ProjectFieldSlice(
-    UnitLowerer& unit_lowerer, mir::Block& block, mir::Expr base,
+    UnitLowerer& unit_lowerer, mir::Block& block, mir::ExprId base_id,
     std::uint32_t bit_offset, std::uint32_t bit_width, mir::TypeId result_type)
     -> mir::Expr {
   std::vector<mir::ExprId> operands = UnfoldFieldSliceOperands(
@@ -363,7 +363,7 @@ auto ProjectFieldSlice(
               .callee =
                   mir::Direct{
                       .target = support::BuiltinFn::kSliceRef,
-                      .receiver = block.exprs.Add(std::move(base))},
+                      .receiver = base_id},
               .arguments = std::move(operands)},
       .type = result_type};
 }
@@ -473,6 +473,26 @@ auto LowerMemberAccessInner(
       unit_lowerer.Unit(), block, std::move(owned), result_type);
 }
 
+// The member an unpacked aggregate's dot access reaches, and nothing where the
+// base is packed and its member is a window into one bit vector instead.
+// Reaching a product's component and reaching a union's member are different
+// operations: every component of a product is live at once, while a union holds
+// one member at a time and a tagged union carries which (LRM 7.2 / 7.3 /
+// 7.3.2). The aggregate the access is written against is what settles which.
+// Writing a member reaches it the same way reading it does; where the
+// occurrence stands is what makes one of them a write.
+auto UnpackedMemberReach(
+    const hir::Type& base_ty, mir::ExprId base_id, base::ComponentIndex index,
+    mir::TypeId member_type) -> std::optional<mir::Expr> {
+  if (base_ty.Is<hir::UnpackedStructType>()) {
+    return mir::MakeComponentAccessExpr(base_id, index, member_type);
+  }
+  if (base_ty.Is<hir::UnpackedUnionType>()) {
+    return mir::MakeUnionMemberExpr(base_id, index, member_type);
+  }
+  return std::nullopt;
+}
+
 }  // namespace
 
 auto BuildPackedRunRead(
@@ -577,8 +597,7 @@ auto LowerHirRangeSelectExpr(
 // LRM 7.2.1: packed struct / union field access "can be selected as if it
 // were a packed array". HIR -> MIR resolves the field-table index to a
 // concrete `(offset, count)` slice -- the same MIR shape `s[hi:lo]`
-// produces. LRM 7.2 / 7.3: an unpacked struct / union lowers to the generic
-// product / sum-arm selection primitive; a packed one to a bit slice.
+// produces.
 template <ExprLowerer Lowerer>
 auto LowerHirMemberAccessExpr(
     Lowerer& lowerer, WalkFrame frame, const hir::MemberAccessExpr& sel,
@@ -588,22 +607,15 @@ auto LowerHirMemberAccessExpr(
   auto& block = *frame.current_block;
   const auto& base_hir_expr = exprs.Get(sel.base_value);
   const hir::Type& base_ty = unit_lowerer.Hir().types.Get(base_hir_expr.type);
-  // A struct and either union are one field of a structural product, named by
-  // position. What a cross-member read answers with -- the member's default for
-  // an untagged union, a run-time error for a tagged one (LRM 11.9) -- follows
-  // from the value's own type, which is where the two unions already differ.
-  if (base_ty.Is<hir::UnpackedStructType>() ||
-      base_ty.Is<hir::UnpackedUnionType>()) {
-    auto base_or = lowerer.LowerExpr(base_hir_expr, frame);
-    if (!base_or) return std::unexpected(std::move(base_or.error()));
-    const mir::ExprId base_id = block.exprs.Add(*std::move(base_or));
-    return mir::MakeComponentAccessExpr(base_id, sel.field_index, result_type);
-  }
-  const PackedProjection projection = ProjectPackedAggregate(
-      unit_lowerer, unit_lowerer.Hir().types.Get(base_hir_expr.type));
   auto base_or = lowerer.LowerExpr(base_hir_expr, frame);
   if (!base_or) return std::unexpected(std::move(base_or.error()));
   const mir::ExprId base_id = block.exprs.Add(*std::move(base_or));
+  if (std::optional<mir::Expr> member =
+          UnpackedMemberReach(base_ty, base_id, sel.field_index, result_type)) {
+    return *std::move(member);
+  }
+  const PackedProjection projection =
+      ProjectPackedAggregate(unit_lowerer, base_ty);
   return LowerMemberAccessInner(
       unit_lowerer, block, projection, sel.field_index, base_id, result_type);
 }
@@ -639,14 +651,14 @@ auto LowerHirElementSelectExprLhs(
   const auto& hir_base = exprs.Get(sel.base_value);
   auto base_or = lowerer.LowerLhsExpr(hir_base, frame);
   if (!base_or) return std::unexpected(std::move(base_or.error()));
+  const mir::ExprId base_id = block.exprs.Add(*std::move(base_or));
 
   const auto& hir_idx = exprs.Get(sel.index);
   auto idx_or = lowerer.LowerExpr(hir_idx, frame);
   if (!idx_or) return std::unexpected(std::move(idx_or.error()));
   const mir::ExprId idx_id = block.exprs.Add(*std::move(idx_or));
 
-  return ProjectElement(
-      unit_lowerer, block, *std::move(base_or), idx_id, result_type);
+  return ProjectElement(unit_lowerer, block, base_id, idx_id, result_type);
 }
 
 template <ExprLowerer Lowerer>
@@ -660,6 +672,7 @@ auto LowerHirRangeSelectExprLhs(
   const auto& hir_base = exprs.Get(sel.base_value);
   auto base_or = lowerer.LowerLhsExpr(hir_base, frame);
   if (!base_or) return std::unexpected(std::move(base_or.error()));
+  const mir::ExprId base_id = block.exprs.Add(*std::move(base_or));
 
   auto lower_one = [&](hir::ExprId id) -> diag::Result<mir::ExprId> {
     auto lowered = lowerer.LowerExpr(exprs.Get(id), frame);
@@ -667,8 +680,7 @@ auto LowerHirRangeSelectExprLhs(
     return block.exprs.Add(*std::move(lowered));
   };
   return ProjectSlice(
-      unit_lowerer, block, sel.bounds, *std::move(base_or), result_type,
-      lower_one);
+      unit_lowerer, block, sel.bounds, base_id, result_type, lower_one);
 }
 
 template <ExprLowerer Lowerer>
@@ -680,37 +692,28 @@ auto LowerHirMemberAccessExprLhs(
   auto& block = *frame.current_block;
   const auto& base_hir_expr = exprs.Get(sel.base_value);
   const hir::Type& base_ty = unit_lowerer.Hir().types.Get(base_hir_expr.type);
-  // LRM 7.2 / 7.3: writing a member of an unpacked struct or union names the
-  // same field the read side names -- the position decides that this one is
-  // written. What the write means beyond that follows from the value's type: an
-  // untagged union's member write makes that member active, while a tagged
-  // one's requires the member to already be the current tag (LRM 11.9).
-  if (base_ty.Is<hir::UnpackedStructType>() ||
-      base_ty.Is<hir::UnpackedUnionType>()) {
-    auto base_or = lowerer.LowerLhsExpr(base_hir_expr, frame);
-    if (!base_or) return std::unexpected(std::move(base_or.error()));
-    return mir::MakeComponentAccessExpr(
-        block.exprs.Add(*std::move(base_or)), sel.field_index, result_type);
-  }
-  const PackedProjection projection = ProjectPackedAggregate(
-      unit_lowerer, unit_lowerer.Hir().types.Get(base_hir_expr.type));
   auto base_or = lowerer.LowerLhsExpr(base_hir_expr, frame);
   if (!base_or) return std::unexpected(std::move(base_or.error()));
+  mir::ExprId base_id = block.exprs.Add(*std::move(base_or));
+  if (std::optional<mir::Expr> written =
+          UnpackedMemberReach(base_ty, base_id, sel.field_index, result_type)) {
+    return *std::move(written);
+  }
+  const PackedProjection projection =
+      ProjectPackedAggregate(unit_lowerer, base_ty);
   const ProjectedMember& member =
       ProjectedMemberAt(projection, sel.field_index);
-  mir::Expr base = *std::move(base_or);
   // A tagged member's write designates a part of the guard's result, so the
   // guard becomes the designation's owner and the member stays one ordinary
   // window descent step on it.
   if (projection.tag_bits != 0) {
-    const mir::ExprId base_id = block.exprs.Add(std::move(base));
-    base = BuildTagGuard(
+    base_id = block.exprs.Add(BuildTagGuard(
         unit_lowerer, block, base_id, projection, sel.field_index,
         "write to a tagged union member inconsistent with the current tag "
-        "(LRM 11.9)");
+        "(LRM 11.9)"));
   }
   return ProjectFieldSlice(
-      unit_lowerer, block, std::move(base),
+      unit_lowerer, block, base_id,
       static_cast<std::uint32_t>(member.bit_offset),
       static_cast<std::uint32_t>(member.bit_width), result_type);
 }

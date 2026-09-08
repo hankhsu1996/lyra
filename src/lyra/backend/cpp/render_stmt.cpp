@@ -139,22 +139,18 @@ auto BreakLandingLabel(mir::LoopLabelId label) -> std::string {
 auto RenderForStmt(
     const ScopeView& view, const mir::ForStmt& s, std::size_t indent)
     -> std::string {
-  std::string init;
-  for (std::size_t i = 0; i < s.init.size(); ++i) {
-    if (i != 0) init += ", ";
-    init += RenderForInit(view, s.init[i]);
+  std::vector<std::string> init_parts;
+  init_parts.reserve(s.init.size());
+  for (const mir::ForInit& one : s.init) {
+    init_parts.push_back(RenderForInit(view, one));
   }
+  const std::string init = JoinCommaSeparated(init_parts);
   std::string cond;
   if (s.condition.has_value()) {
     const auto& cond_expr = view.Block().exprs.Get(*s.condition);
     cond = RenderExpr(view, cond_expr);
   }
-  std::string step;
-  for (std::size_t i = 0; i < s.step.size(); ++i) {
-    if (i != 0) step += ", ";
-    const auto& step_expr = view.Block().exprs.Get(s.step[i]);
-    step += RenderExpr(view, step_expr);
-  }
+  const std::string step = JoinCommaSeparated(RenderEachExpr(view, s.step));
   const auto& block = view.Block().child_scopes.Get(s.scope);
   std::string result =
       std::format("{}for ({}; {}; {}) {{\n", Indent(indent), init, cond, step);

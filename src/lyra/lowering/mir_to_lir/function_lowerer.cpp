@@ -1199,34 +1199,38 @@ auto FunctionLowerer::MemberRefOf(
       field.field);
 }
 
-// Whether an expression names a part of a value rather than storage. Every such
-// expression is an access whose receiver holds the part it reaches, so the
-// question is answered by that node alone -- reaching further would be asking
-// where a write through it ultimately lands, a different question.
-auto ReachesIntoValue(const mir::Block& block, mir::ExprId target) -> bool {
-  const mir::ExprData& data = block.exprs.Get(target).data;
+// The value a step reaches its part out of, and nothing where the expression
+// names storage instead. Every expression that reaches into a value is an
+// access whose receiver holds the part it reaches, so both questions -- whether
+// it is one, and what it descends through -- are answered by that node alone;
+// reaching further would be asking where a write through it ultimately lands, a
+// different question.
+auto ValuePartReceiver(const mir::Block& block, mir::ExprId step)
+    -> std::optional<mir::ExprId> {
+  const mir::ExprData& data = block.exprs.Get(step).data;
   if (const auto* field = std::get_if<mir::FieldAccessExpr>(&data)) {
-    return std::holds_alternative<mir::ComponentTarget>(field->field);
+    return std::holds_alternative<mir::ComponentTarget>(field->field)
+               ? std::optional{field->receiver}
+               : std::nullopt;
+  }
+  if (const auto* member = std::get_if<mir::UnionMemberExpr>(&data)) {
+    return member->union_value;
   }
   const auto* call = std::get_if<mir::CallExpr>(&data);
   if (call == nullptr) {
-    return false;
+    return std::nullopt;
   }
   const std::optional<support::BuiltinFn> fn = mir::DirectBuiltinFn(*call);
-  return fn == support::BuiltinFn::kElementRef ||
-         fn == support::BuiltinFn::kSliceRef;
+  if (fn != support::BuiltinFn::kElementRef &&
+      fn != support::BuiltinFn::kSliceRef) {
+    return std::nullopt;
+  }
+  return mir::CalleeReceiver(call->callee);
 }
 
-// The value a step reaches its part out of -- what a field access is taken
-// from, and what an access call dispatches on. This is the operand a walk
-// toward the owner continues through.
-auto ValuePartReceiver(const mir::Block& block, mir::ExprId step)
-    -> mir::ExprId {
-  const mir::ExprData& data = block.exprs.Get(step).data;
-  if (const auto* field = std::get_if<mir::FieldAccessExpr>(&data)) {
-    return field->receiver;
-  }
-  return *mir::CalleeReceiver(std::get<mir::CallExpr>(data).callee);
+// Whether an expression names a part of a value rather than storage.
+auto ReachesIntoValue(const mir::Block& block, mir::ExprId target) -> bool {
+  return ValuePartReceiver(block, target).has_value();
 }
 
 // The wrapper a pointer opens, when the pointer is that opening rather than an
@@ -1884,6 +1888,9 @@ auto FunctionLowerer::LowerValuePartSelector(
     return lir::AggregateSelector{lir::Component{
         .index = std::get<mir::ComponentTarget>(field->field).index}};
   }
+  if (const auto* member = std::get_if<mir::UnionMemberExpr>(&data)) {
+    return lir::AggregateSelector{lir::UnionMember{.index = member->index}};
+  }
   const auto& call = std::get<mir::CallExpr>(data);
   std::vector<lir::Operand> operands;
   operands.reserve(call.arguments.size());
@@ -1909,9 +1916,10 @@ auto FunctionLowerer::LowerValuePartUpdate(
   // out in. Composition is the operand chain, so the walk is the path.
   std::vector<mir::ExprId> steps;
   mir::ExprId owner = target;
-  while (ReachesIntoValue(block, owner)) {
+  while (const std::optional<mir::ExprId> receiver =
+             ValuePartReceiver(block, owner)) {
     steps.push_back(owner);
-    owner = ValuePartReceiver(block, owner);
+    owner = *receiver;
   }
   std::ranges::reverse(steps);
 
@@ -1929,16 +1937,23 @@ auto FunctionLowerer::LowerValuePartUpdate(
     selectors.push_back(*std::move(selector));
   }
 
+  // The type of the whole value a level descends from: the owner's at the
+  // outermost level, and the step above it at every deeper one. Both the
+  // descent and the rebuild answer at it.
+  const auto container_type = [&](std::size_t depth) -> lir::TypeId {
+    return unit_->TranslateType(
+        block.exprs.Get(depth == 0 ? owner : steps[depth - 1]).type);
+  };
+
   // The whole value at each level, descending from the owner toward the part.
   std::vector<lir::Operand> containers;
   containers.reserve(steps.size());
   containers.push_back(*std::move(owner_value));
   for (std::size_t depth = 1; depth < steps.size(); ++depth) {
     containers.push_back(Emit(
-        unit_->TranslateType(block.exprs.Get(steps[depth - 1]).type),
-        lir::AggregateExtractInstr{
-            .aggregate = containers[depth - 1],
-            .selector = selectors[depth - 1]}));
+        container_type(depth), lir::AggregateExtractInstr{
+                                   .aggregate = containers[depth - 1],
+                                   .selector = selectors[depth - 1]}));
   }
 
   const std::size_t leaf = steps.size() - 1;
@@ -1960,12 +1975,10 @@ auto FunctionLowerer::LowerValuePartUpdate(
   lir::Operand rebuilt = *std::move(leaf_value);
   for (std::size_t depth = steps.size(); depth-- > 0;) {
     rebuilt = Emit(
-        unit_->TranslateType(
-            block.exprs.Get(ValuePartReceiver(block, steps[depth])).type),
-        lir::AggregateUpdateInstr{
-            .aggregate = containers[depth],
-            .selector = selectors[depth],
-            .replacement = std::move(rebuilt)});
+        container_type(depth), lir::AggregateUpdateInstr{
+                                   .aggregate = containers[depth],
+                                   .selector = selectors[depth],
+                                   .replacement = std::move(rebuilt)});
   }
   return WriteWholeValue(block, owner, std::move(rebuilt));
 }
@@ -2296,10 +2309,10 @@ auto FunctionLowerer::LowerExpr(const mir::Block& block, mir::ExprId id)
                 unit_->TranslateType(type),
                 lir::IntCastInstr{.operand = *std::move(operand)});
           },
-          // A field in a storage arena is read through its place. A structural
-          // product's field is not addressable, so it is extracted from the
-          // product's value instead -- the same read either way, over a
-          // receiver that is storage in one case and a value in the other.
+          // A field in a storage arena is read through its place. A product's
+          // component is not addressable, so it is extracted from the product's
+          // value instead -- the same read either way, over a receiver that is
+          // storage in one case and a value in the other.
           [&](const mir::FieldAccessExpr& field) -> diag::Result<lir::Operand> {
             const auto* component =
                 std::get_if<mir::ComponentTarget>(&field.field);
@@ -2315,6 +2328,21 @@ auto FunctionLowerer::LowerExpr(const mir::Block& block, mir::ExprId id)
                 lir::AggregateExtractInstr{
                     .aggregate = *std::move(receiver),
                     .selector = lir::Component{.index = component->index}});
+          },
+          // Reaching the live member of an active-member value extracts it from
+          // the value, as a product's component is. What reaching a member that
+          // is not live answers with is the value's own semantics, so the entry
+          // its type names is what carries the difference.
+          [&](const mir::UnionMemberExpr& m) -> diag::Result<lir::Operand> {
+            auto union_value = LowerExpr(block, m.union_value);
+            if (!union_value) {
+              return union_value;
+            }
+            return Emit(
+                unit_->TranslateType(type),
+                lir::AggregateExtractInstr{
+                    .aggregate = *std::move(union_value),
+                    .selector = lir::UnionMember{.index = m.index}});
           },
           [&](const mir::DerefExpr&) -> diag::Result<lir::Operand> {
             auto place = LowerPlace(block, id);

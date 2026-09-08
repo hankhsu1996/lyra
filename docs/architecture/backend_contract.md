@@ -65,6 +65,11 @@ will hit the same obstruction. The bug is in MIR, not in render.
    text differs, the branch chose a **spelling**, which is render's own business, provided it
    dispatches on a fact the node or its type states rather than on one it works out.
 
+   A condition with more than one input is more than one branch. A conjunction, and an entry that
+   takes a discriminating parameter beside the node, each carry a decision per input; judge every
+   input on its own, because settling one leaves the rest choosing at the same site and the site
+   then reads as though it were done.
+
    Presentation is neither, and has no claim: a branch that only makes the emitted text shorter or
    avoids a construct a reader would find redundant decides nothing, and the emitted artifact is not
    read for its looks.
@@ -74,6 +79,14 @@ will hit the same obstruction. The bug is in MIR, not in render.
    introduces a virtual slot and one that overrides it, an ordinary return and a coroutine's
    completion -- each is two spellings of one operation, dispatched on a fact MIR states, and each
    is exactly what this entry kind is for.
+
+   Where an occurrence stands -- in value position or in target position -- is structural context,
+   and dispatching on it is a spelling exactly when both readings are one operation seen two ways: a
+   product answers with the component either way, so only the receiver's own form differs. Where
+   they are not one operation -- where writing the part does something reading it does not, such as
+   making the part it names the live one -- position selects an operation, and that is the same
+   defect as selecting one from an operand's type. Run the test on it; "value category" is not a
+   reason to skip running it.
 
 3. **Type mapping is the only entry that names a runtime library type literal.** Every MIR type
    variant maps to a target-language type representation through one dispatch. Value emission

@@ -20,6 +20,11 @@ cross-check predicts. This file owns only which instances are known and what is 
       dispatches on an object is the callee's own receiver, stated once.
 - [x] T4 -- The unary and binary operator sets hold only the operators a node carries. An operator a
       library performs, and one that names no operation at all, is settled before a node is built.
+- [x] T18 -- Reaching the one member an active-member value holds is its own operation, distinct
+      from reaching a component of a product, so no consumer decides what a member reach means by
+      testing what it reaches into. Whether a member that is not the live one answers with a default
+      or with a run-time failure is the value's own semantics and travels with its type, so it needs
+      no second node. The layer below carries the same split, as a selector kind of its own.
 
 ## A runtime entry's declaration
 
@@ -44,13 +49,23 @@ cross-check predicts. This file owns only which instances are known and what is 
 ## An aggregate's members
 
 - [ ] T8 -- An unpacked struct keeps its field names through lowering, so a member access names a
-      field rather than a position in a structural product. Two render decisions fall out with it:
-      choosing an access form by testing the receiver's type, and finding a field's name by walking
-      that type through the kinds that can bear one.
+      field rather than a position in a product. The render decision that falls out with it is
+      finding a field's name by walking the receiver's type through the kinds that can bear one.
 - [ ] T9 -- A field's identity splits exactly where the layer below it splits, and no consumer reads
       how the name resolves. Same shape as T3, one node over.
-- [ ] T10 -- The aggregate-construction nodes that differ in no field are one node; which product is
-      built is already the expression's type.
+- [ ] T10 -- Composing a value out of parts in order is one node, and which value is composed is
+      already the expression's type. Three nodes carry it today -- a product literal, a sequence
+      literal and an element list -- with identical fields and three emission entries that differ
+      only in the field name they loop over; the generic-language vocabulary has one construct here,
+      whose meaning is the type it builds. The active-member build is a second such pair, one node
+      over.
+- [ ] T19 -- The layer that owns storage is where composing a runtime-owned sequence separates from
+      composing a machine aggregate. Today the split is thrown away going into LIR, where one
+      instruction carries both, and the execution backend recovers it by testing the result type --
+      while the other backend never re-derives it, because the nodes above are still apart. So the
+      same question is answered by node kind on one side and by a type test on the other, held in
+      step by nothing. This is the mirror of T10: one layer states a difference it does not own, and
+      the layer that owns it does not state it.
 
 ## Callable and assignment identity
 

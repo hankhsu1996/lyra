@@ -40,36 +40,35 @@ namespace lyra::lowering::hir_to_mir {
 
 namespace {
 
-// Component `index` of `subject`, whose type is `subject_type`. The single step
-// by which a pattern walk descends a level. Reaching a tagged union's component
-// is checked against the tag (LRM 11.9), which the tag test below guards.
-auto SubjectComponent(
+// Member `index` of `subject`, whose type is `subject_type`. The single step by
+// which a pattern walk descends a level. Reaching a tagged union's member is
+// checked against the tag (LRM 11.9), which the tag test below guards, so the
+// walk never takes that failure.
+auto SubjectMember(
     UnitLowerer& owner, mir::Block& block, mir::ExprId subject,
     hir::TypeId subject_type, base::ComponentIndex index) -> mir::ExprId {
   const hir::Type& ty = owner.Hir().types.Get(subject_type);
-  // A struct and a tagged union are reached the same way -- one field of a
-  // structural product, named by position. Only a tagged union is destructured
-  // by a pattern (LRM 12.6): an untagged one has no tag to name the component a
-  // pattern would ask for.
-  const auto unpacked_component =
+  // Only a tagged union is destructured by a pattern (LRM 12.6): an untagged
+  // one has no tag to name the component a pattern would ask for.
+  const auto member_type =
       [&](const std::vector<hir::UnpackedAggregateField>& fields)
-      -> mir::ExprId {
+      -> mir::TypeId {
     if (index.value >= fields.size()) {
-      throw InternalError("SubjectComponent: component index out of range");
+      throw InternalError("SubjectMember: member index out of range");
     }
-    return block.exprs.Add(
-        mir::MakeComponentAccessExpr(
-            subject, index, owner.TranslateType(fields[index.value].type)));
+    return owner.TranslateType(fields[index.value].type);
   };
   if (const auto* s = ty.As<hir::UnpackedStructType>()) {
-    return unpacked_component(s->fields);
+    return block.exprs.Add(
+        mir::MakeComponentAccessExpr(subject, index, member_type(s->fields)));
   }
   if (const auto* u = ty.As<hir::UnpackedUnionType>()) {
-    return unpacked_component(u->fields);
+    return block.exprs.Add(
+        mir::MakeUnionMemberExpr(subject, index, member_type(u->fields)));
   }
   const PackedProjection projection = ProjectPackedAggregate(owner, ty);
   if (index.value >= projection.members.size()) {
-    throw InternalError("SubjectComponent: component index out of range");
+    throw InternalError("SubjectMember: member index out of range");
   }
   return block.exprs.Add(BuildPackedMemberRead(
       owner, block, subject, projection, index,
@@ -166,7 +165,7 @@ void EmitPatternBindings(
             if (!tp.value_pattern.has_value()) return;
             EmitPatternBindings(
                 lowerer, decl_frame, assign_frame,
-                SubjectComponent(
+                SubjectMember(
                     owner, assign_block, subject, pattern.subject_type,
                     tp.member_index),
                 *tp.value_pattern);
@@ -175,7 +174,7 @@ void EmitPatternBindings(
             for (const auto& [field_index, sub_pat_id] : sp.field_patterns) {
               EmitPatternBindings(
                   lowerer, decl_frame, assign_frame,
-                  SubjectComponent(
+                  SubjectMember(
                       owner, assign_block, subject, pattern.subject_type,
                       base::ComponentIndex{
                           static_cast<std::uint32_t>(field_index)}),
@@ -228,7 +227,7 @@ auto BuildPatternPredicate(
             }
             auto inner_or = BuildPatternPredicate(
                 lowerer, frame,
-                SubjectComponent(
+                SubjectMember(
                     owner, enc_block, subject, pattern.subject_type,
                     tp.member_index),
                 *tp.value_pattern);
@@ -246,7 +245,7 @@ auto BuildPatternPredicate(
             for (const auto& [field_index, sub_pat_id] : sp.field_patterns) {
               auto sub_or = BuildPatternPredicate(
                   lowerer, frame,
-                  SubjectComponent(
+                  SubjectMember(
                       owner, enc_block, subject, pattern.subject_type,
                       base::ComponentIndex{
                           static_cast<std::uint32_t>(field_index)}),

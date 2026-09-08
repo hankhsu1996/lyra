@@ -135,9 +135,15 @@ interior moves from "a location realized by a reference" to "a projection throug
 
 ## Migration shape
 
-Every step below has landed: MIR carries the formal write designator and the nested-lvalue encoding
-is gone, so the adapter described in step 1 no longer exists. The sequence is kept for the reasoning
-about why it was staged that way.
+Steps 1 and 2 have landed. Steps 3, 4 and 5 have not: MIR carries no write-designator node, the
+nested-lvalue encoding is what an assignment target still is, and binding a value interior is
+refused on the execution backend. The adapter of step 1 is therefore the current state rather than a
+retired one, and each consumer still recovers the owner boundary by walking the target expression --
+which is this entry's own first rejected alternative.
+
+This paragraph previously said every step had landed. It was wrong, and the cost of that is what
+makes it worth recording: a reader who takes the model as implemented concludes that the encoding
+the model replaces is gone, and reasons from a tree that does not exist.
 
 The change reverses two accepted decisions for value interiors and is cross-cutting, so it lands in
 reviewed cuts rather than one change. The staged shape:

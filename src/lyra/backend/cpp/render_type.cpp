@@ -1,7 +1,7 @@
 #include "lyra/backend/cpp/render_type.hpp"
 
-#include <cstddef>
 #include <format>
+#include <span>
 #include <string>
 #include <string_view>
 #include <variant>
@@ -28,6 +28,17 @@ auto NetResolutionCppLiteral(mir::NetResolution resolution)
       return "lyra::support::NetResolution::kWiredOr";
   }
   throw InternalError("NetResolutionCppLiteral: unknown NetResolution");
+}
+
+auto RenderEachTypeAsCpp(
+    const mir::CompilationUnit& unit, std::span<const mir::TypeId> types)
+    -> std::vector<std::string> {
+  std::vector<std::string> rendered;
+  rendered.reserve(types.size());
+  for (const mir::TypeId type : types) {
+    rendered.push_back(RenderTypeAsCpp(unit, type));
+  }
+  return rendered;
 }
 
 auto RenderTypeAsCpp(const mir::CompilationUnit& unit, mir::TypeId type_id)
@@ -82,13 +93,9 @@ auto RenderTypeAsCpp(const mir::CompilationUnit& unit, mir::TypeId type_id)
                 "std::array<{}, {}>", RenderTypeAsCpp(unit, m.element), m.size);
           },
           [&](const mir::MachineFunctionType& m) -> std::string {
-            std::string params;
-            for (std::size_t i = 0; i < m.params.size(); ++i) {
-              if (i != 0) params += ", ";
-              params += RenderTypeAsCpp(unit, m.params[i]);
-            }
             return std::format(
-                "{} (*)({})", RenderTypeAsCpp(unit, m.result), params);
+                "{} (*)({})", RenderTypeAsCpp(unit, m.result),
+                JoinCommaSeparated(RenderEachTypeAsCpp(unit, m.params)));
           },
           [](const mir::ChandleType&) -> std::string {
             return std::string{"lyra::value::Chandle"};
@@ -267,31 +274,22 @@ auto RenderTypeAsCpp(const mir::CompilationUnit& unit, mir::TypeId type_id)
                 "std::vector<{}>", RenderTypeAsCpp(unit, v.element));
           },
           [&](const mir::TupleType& t) -> std::string {
-            std::string inners;
-            for (std::size_t i = 0; i < t.elements.size(); ++i) {
-              if (i != 0) inners += ", ";
-              inners += RenderTypeAsCpp(unit, t.elements[i]);
-            }
-            return std::format("lyra::value::Tuple<{}>", inners);
+            return std::format(
+                "lyra::value::Tuple<{}>",
+                JoinCommaSeparated(RenderEachTypeAsCpp(unit, t.elements)));
           },
           [&](const mir::UnionType& u) -> std::string {
-            std::string inners;
-            for (std::size_t i = 0; i < u.elements.size(); ++i) {
-              if (i != 0) inners += ", ";
-              inners += RenderTypeAsCpp(unit, u.elements[i]);
-            }
-            return std::format("lyra::value::Union<{}>", inners);
+            return std::format(
+                "lyra::value::Union<{}>",
+                JoinCommaSeparated(RenderEachTypeAsCpp(unit, u.elements)));
           },
           [](const mir::EmptyType&) -> std::string {
             return std::string{"lyra::value::Empty"};
           },
           [&](const mir::TaggedUnionType& u) -> std::string {
-            std::string inners;
-            for (std::size_t i = 0; i < u.elements.size(); ++i) {
-              if (i != 0) inners += ", ";
-              inners += RenderTypeAsCpp(unit, u.elements[i]);
-            }
-            return std::format("lyra::value::TaggedUnion<{}>", inners);
+            return std::format(
+                "lyra::value::TaggedUnion<{}>",
+                JoinCommaSeparated(RenderEachTypeAsCpp(unit, u.elements)));
           },
           [&](const mir::ObservableType& o) -> std::string {
             return std::format(

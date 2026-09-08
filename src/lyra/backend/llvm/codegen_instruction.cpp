@@ -925,18 +925,28 @@ auto CodeGenFunction::LowerAggregateExtract(
     }
     return shape;
   };
+  // A positional part is named by its index alone. Reaching a product's
+  // component and reaching an active-member value's live member ask the same
+  // thing of the value, and the aggregate's own domain is what names the entry
+  // that answers, so one composition serves both.
+  const auto positional = [&](base::ComponentIndex index) -> llvm::Value* {
+    const std::array<llvm::Value*, 2> args{
+        *aggregate,
+        llvm::ConstantInt::get(
+            llvm::Type::getInt64Ty(module_->Context()), index.value)};
+    return builder_.CreateCall(
+        Entry(
+            RuntimeSymbol(*domain, RuntimeOp::kExtract), module_->Types().Ptr(),
+            args),
+        args);
+  };
   return std::visit(
       Overloaded{
           [&](const lir::Component& component) -> diag::Result<llvm::Value*> {
-            const std::array<llvm::Value*, 2> args{
-                *aggregate, llvm::ConstantInt::get(
-                                llvm::Type::getInt64Ty(module_->Context()),
-                                component.index.value)};
-            return builder_.CreateCall(
-                Entry(
-                    RuntimeSymbol(*domain, RuntimeOp::kExtract),
-                    module_->Types().Ptr(), args),
-                args);
+            return positional(component.index);
+          },
+          [&](const lir::UnionMember& member) -> diag::Result<llvm::Value*> {
+            return positional(member.index);
           },
           [&](const lir::ContainerElement& e) -> diag::Result<llvm::Value*> {
             auto shape = coordinates(e.operands);
@@ -988,45 +998,45 @@ auto CodeGenFunction::LowerAggregateUpdate(
     shape.push_back(*replacement);
     return shape;
   };
+  // A positional part is replaced by naming its index and the value that takes
+  // its place; the aggregate's own domain names the entry that performs it.
+  const auto positional = [&](base::ComponentIndex index,
+                              llvm::Value* written) -> llvm::Value* {
+    const std::array<llvm::Value*, 3> args{
+        *aggregate,
+        llvm::ConstantInt::get(
+            llvm::Type::getInt64Ty(module_->Context()), index.value),
+        written};
+    return builder_.CreateCall(
+        Entry(
+            RuntimeSymbol(*domain, RuntimeOp::kUpdate), module_->Types().Ptr(),
+            args),
+        args);
+  };
   return std::visit(
       Overloaded{
           [&](const lir::Component& component) -> diag::Result<llvm::Value*> {
-            // A union keeps no per-member prototype, so the runtime cannot
-            // recover which domain a raw handle is in and the caller states it
-            // by boxing the replacement in the member's own domain. A product
-            // states its components in its own type, so nothing is boxed there.
-            // Which of the two this is follows from the aggregate's type, the
-            // same way the entry that realizes the write does; and whether that
-            // write activates the member (untagged) or faults a mismatched tag
-            // (tagged) follows from the domain the entry is named in.
-            const lir::Type& aggregate_type =
-                module_->Unit().types.Get(container);
-            llvm::Value* written = *replacement;
-            if (aggregate_type.As<lir::UnionType>() != nullptr ||
-                aggregate_type.As<lir::TaggedUnionType>() != nullptr) {
-              auto member_domain =
-                  UnionMemberDomain(container, component.index.value);
-              if (!member_domain) {
-                return std::unexpected(std::move(member_domain.error()));
-              }
-              const std::array<llvm::Value*, 1> box{*replacement};
-              written = builder_.CreateCall(
-                  Entry(
-                      RuntimeSymbol(*member_domain, RuntimeOp::kValueBox),
-                      module_->Types().Ptr(), box),
-                  box);
+            return positional(component.index, *replacement);
+          },
+          [&](const lir::UnionMember& member) -> diag::Result<llvm::Value*> {
+            // An active-member value keeps no per-member prototype, so the
+            // runtime cannot recover which domain a raw handle is in and the
+            // caller states it by boxing the replacement in the member's own
+            // domain. Whether the write then makes the member live or faults a
+            // mismatched tag follows from the domain the entry is named in.
+            auto member_domain =
+                UnionMemberDomain(container, member.index.value);
+            if (!member_domain) {
+              return std::unexpected(std::move(member_domain.error()));
             }
-            const std::array<llvm::Value*, 3> args{
-                *aggregate,
-                llvm::ConstantInt::get(
-                    llvm::Type::getInt64Ty(module_->Context()),
-                    component.index.value),
-                written};
-            return builder_.CreateCall(
-                Entry(
-                    RuntimeSymbol(*domain, RuntimeOp::kUpdate),
-                    module_->Types().Ptr(), args),
-                args);
+            const std::array<llvm::Value*, 1> box{*replacement};
+            return positional(
+                member.index,
+                builder_.CreateCall(
+                    Entry(
+                        RuntimeSymbol(*member_domain, RuntimeOp::kValueBox),
+                        module_->Types().Ptr(), box),
+                    box));
           },
           [&](const lir::ContainerElement& e) -> diag::Result<llvm::Value*> {
             auto shape = coordinates(e.operands);

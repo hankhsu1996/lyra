@@ -23,9 +23,8 @@ inline void AppendSection(std::string& out, const std::string& section) {
   out += section;
 }
 
-// The comma-separated form of already-rendered parts: an argument list, a
-// parameter list, a member-initializer list. Empty parts yield the empty
-// string, which is the form each of those takes when it has none.
+// The comma-separated form of already-rendered parts. Empty parts yield the
+// empty string, which is the form every such list takes when it has none.
 [[nodiscard]] inline auto JoinCommaSeparated(
     const std::vector<std::string>& parts) -> std::string {
   std::string out;
