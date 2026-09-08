@@ -346,6 +346,10 @@ auto BuiltinFnName(BuiltinFn id) -> std::string_view {
       return "submit_postponed";
     case BuiltinFn::kSubmitObserved:
       return "submit_observed";
+    case BuiltinFn::kSubmitDeferredObserved:
+      return "submit_deferred_observed";
+    case BuiltinFn::kSubmitDeferredFinal:
+      return "submit_deferred_final";
     case BuiltinFn::kFiles:
       return "files";
     case BuiltinFn::kCancellationFor:

@@ -225,6 +225,14 @@ enum class BuiltinFn : std::uint16_t {
   kResumeInNbaRegion,
   kSubmitPostponed,
   kSubmitObserved,
+  // LRM 16.4 deferred immediate assertion action commits, each a
+  // `RuntimeEffects` method taking the action closure. The observed (`#0`) form
+  // matures in Observed and runs its action in Reactive; the final form matures
+  // and runs in Postponed. Both ride the executing process's deferred report
+  // queue, which the runtime reads ambiently, so the call carries only the
+  // closure.
+  kSubmitDeferredObserved,
+  kSubmitDeferredFinal,
   // File-IO subsystem accessor and cancellation token operations. `Files`
   // is a `RuntimeEffects` method returning the `FileTable` broker.
   // `CancellationFor` is a `FileTable` method taking a file descriptor and

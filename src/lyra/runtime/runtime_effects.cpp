@@ -42,6 +42,27 @@ auto CurrentRuntimeSlot() -> RuntimeEffects*& {
   return slot;
 }
 
+// What a violation report records where it is created: the executing process's
+// pass and nothing more, which is the whole of the flush-point set LRM 12.4.2.1
+// lists.
+auto ViolationReportValidity(RuntimeProcess& process)
+    -> DeferredReportValidity {
+  return DeferredReportValidity{
+      .pass = std::weak_ptr(process.CurrentDeferredReportEpoch()),
+      .targets = {}};
+}
+
+// What a deferred assertion report records: the same pass, and in addition the
+// disable targets that can withdraw it on their own (LRM 16.4.2, 16.4.4). The
+// two constructs differ in what they record and in nothing else; both act only
+// if everything they recorded still stands.
+auto AssertionReportValidity(RuntimeProcess& process)
+    -> DeferredReportValidity {
+  return DeferredReportValidity{
+      .pass = std::weak_ptr(process.CurrentDeferredReportEpoch()),
+      .targets = process.DeferredReportTargets()};
+}
+
 }  // namespace
 
 auto current_runtime() -> RuntimeEffects& {
@@ -141,20 +162,61 @@ void RuntimeEffects::SubmitObserved(std::function<void()> report) {
   RuntimeProcess* process = AsRuntime(*this).current_process_;
   if (process == nullptr) {
     // A check that fires before any procedure runs -- a static variable's
-    // initializer (LRM 6.8) -- belongs to no process, so LRM 12.4.2.1 has no
-    // violation report queue for a flush point to clear and it always matures.
+    // initializer (LRM 6.8) -- belongs to no process, so there is no deferred
+    // report queue for a flush point to clear and it always matures (LRM
+    // 12.4.2.1).
     Submit(Now(), Region::kObserved, std::move(report));
     return;
   }
   Submit(
       Now(), Region::kObserved,
-      [epoch = std::weak_ptr(process->CurrentViolationReportEpoch()),
+      [validity = ViolationReportValidity(*process),
        report = std::move(report)] {
-        // LRM 12.4.2.1: an expired epoch is a flush point the process reached
-        // before this report could mature.
-        if (!epoch.expired()) {
+        // LRM 12.4.2.1: a pass that no longer stands is a flush point the
+        // process reached before this report could mature.
+        if (validity.Holds()) {
           report();
         }
+      });
+}
+
+void RuntimeEffects::SubmitDeferredObserved(std::function<void()> action) {
+  RuntimeProcess* process = AsRuntime(*this).current_process_;
+  if (process == nullptr) {
+    // A deferred assertion outside any process (a static variable's
+    // initializer, LRM 6.8) belongs to no deferred report queue, so no flush
+    // point can clear it and it always matures.
+    Submit(Now(), Region::kReactive, std::move(action));
+    return;
+  }
+  // LRM 16.4.1: the report is queued now and matures in Observed only if every
+  // source it recorded still stands, then runs its action in the Reactive
+  // region. Maturing discards the record, so the committed Reactive effect is
+  // beyond the reach of any later flush or `disable`.
+  Submit(
+      Now(), Region::kObserved,
+      [this, validity = AssertionReportValidity(*process),
+       action = std::move(action)]() mutable {
+        if (!validity.Holds()) return;
+        Submit(Now(), Region::kReactive, std::move(action));
+      });
+}
+
+void RuntimeEffects::SubmitDeferredFinal(std::function<void()> action) {
+  RuntimeProcess* process = AsRuntime(*this).current_process_;
+  if (process == nullptr) {
+    Submit(Now(), Region::kPostponed, std::move(action));
+    return;
+  }
+  // LRM 16.4.1: a final deferred assertion matures and runs in the Postponed
+  // region, still withdrawn by anything that invalidated a source it recorded
+  // before then. Postponed is non-iterative, so maturing and running are the
+  // one region.
+  Submit(
+      Now(), Region::kPostponed,
+      [validity = AssertionReportValidity(*process),
+       action = std::move(action)] {
+        if (validity.Holds()) action();
       });
 }
 

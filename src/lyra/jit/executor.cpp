@@ -193,6 +193,8 @@ auto DefineRuntimeAbi(llvm::orc::LLJIT& jit) -> std::set<std::string> {
   add("lyra_rt_resume_in_nba_region", &lyra_rt_resume_in_nba_region);
   add("lyra_rt_submit_postponed", &lyra_rt_submit_postponed);
   add("lyra_rt_submit_observed", &lyra_rt_submit_observed);
+  add("lyra_rt_submit_deferred_observed", &lyra_rt_submit_deferred_observed);
+  add("lyra_rt_submit_deferred_final", &lyra_rt_submit_deferred_final);
   add("lyra_rt_delay", &lyra_rt_delay);
   add("lyra_rt_delay_real", &lyra_rt_delay_real);
   add("lyra_rt_make_trigger", &lyra_rt_make_trigger);

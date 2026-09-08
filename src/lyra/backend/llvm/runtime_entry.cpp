@@ -535,6 +535,8 @@ auto EntryNamingOf(support::BuiltinFn fn) -> EntryNaming {
     case support::BuiltinFn::kResumeInNbaRegion:
     case support::BuiltinFn::kSubmitPostponed:
     case support::BuiltinFn::kSubmitObserved:
+    case support::BuiltinFn::kSubmitDeferredObserved:
+    case support::BuiltinFn::kSubmitDeferredFinal:
     case support::BuiltinFn::kFiles:
     case support::BuiltinFn::kCancellationFor:
     case support::BuiltinFn::kIsCancelled:

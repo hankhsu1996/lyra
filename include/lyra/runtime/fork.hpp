@@ -149,8 +149,10 @@ inline auto SpawnAndPark(
   if (!group->NeedsPark()) {
     return false;
   }
+  // Rejoining branches is neither an event control nor a wait statement, so a
+  // join is not a deferred report flush point (LRM 16.4.2).
   runtime.CurrentProcess().RegisterWakeup(
-      [&group](CoroutineHandle parent) { group->ParkParent(parent); });
+      false, [&group](CoroutineHandle parent) { group->ParkParent(parent); });
   return true;
 }
 

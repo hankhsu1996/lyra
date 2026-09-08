@@ -82,7 +82,12 @@ The IDs are stable references and do not imply execution order beyond the depend
       encounter-versus-execution split above: operand capture at encounter, reference actuals bound
       rather than copied, the per-process flush rule, and maturity in Observed (`#0`) or Postponed
       (`final`) with the action running in Reactive or Postponed. Rides on AS1 and on the region
-      scheduler.
+      scheduler. In place for `assert` and `assume` with no action block, on both backends: the
+      expression is evaluated where the statement is reached and the default report is held to
+      Reactive (`#0`) or Postponed (`final`), and it is withdrawn before it matures if the process
+      re-executes, if the assertion's own label is disabled, or if the procedure's outermost scope
+      is (LRM 16.4.2, 16.4.4). What remains is the action block -- a single subroutine call whose
+      by-value actuals are captured at encounter and whose reference actuals bind rather than copy.
 - [ ] AS3 -- Cover statements (LRM 16.7). Inverts the disposition: the interesting path is the
       success one, and a cover with no user action records a hit. How hits are surfaced is a tool
       feature rather than a language one, so the count's reporting form is open.

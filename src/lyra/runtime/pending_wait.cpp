@@ -13,11 +13,15 @@ void PendingWait::BlockOn(CoroutineHandle leaf) {
 
 void ConsumeWait(CoroutineHandle activation) {
   activation->RevokeRegistrations();
-  const PendingWait* wait = activation->pending_wait;
-  if (wait != nullptr && wait->IsReportFlushPoint()) {
-    activation->Process().FlushViolationReports();
+  // Both backends record the parked wait's flush-point status on the frame
+  // where they register the wait, so resuming from one clears the process's
+  // deferred report queue (LRM 16.4.2, 12.4.2.1) without the resume having to
+  // know how the wait was realized.
+  if (activation->wait_is_report_flush_point) {
+    activation->Process().FlushDeferredReports();
   }
   activation->pending_wait = nullptr;
+  activation->wait_is_report_flush_point = false;
 }
 
 void PendingWait::CheckAbortOnResume() const {
