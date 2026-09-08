@@ -112,9 +112,6 @@ auto BuiltinFnCppName(support::BuiltinFn id) -> std::string_view {
       return "WriteMem";
     case support::BuiltinFn::kTrigger:
       return "Trigger";
-    case support::BuiltinFn::kAwait:
-    case support::BuiltinFn::kAwaitQualified:
-      return "Await";
     case support::BuiltinFn::kTriggered:
       return "Triggered";
     case support::BuiltinFn::kIsUnknown:

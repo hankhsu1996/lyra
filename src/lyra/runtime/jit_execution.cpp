@@ -555,7 +555,7 @@ using lyra::runtime::Scope;
 using lyra::runtime::ScopeDefinition;
 using lyra::runtime::SimTimeInUnit;
 using lyra::runtime::STimeInUnit;
-using lyra::runtime::SubscribeValueChange;
+using lyra::runtime::SubscribeToLeaves;
 using lyra::runtime::TakeBranches;
 using lyra::runtime::TakeClosure;
 using lyra::runtime::TakeEvaluator;
@@ -964,6 +964,10 @@ auto lyra_rt_delay_real(
       precision);
 }
 
+// What crosses is the cell's own address -- a variable, a net, a named event --
+// and a `void*` carries no type to adjust by, so it is read here as the address
+// of what waits on that cell. Every such cell names `Observable` as its first
+// base, which is what makes the two addresses one under the platform ABI.
 auto lyra_rt_make_trigger(
     void* observable, const void* lsb_bit_offset, const void* bit_width)
     -> void* {
@@ -1008,7 +1012,7 @@ auto lyra_rt_wait_any(void* runtime, LyraSpan triggers) -> bool {
     collected.push_back(*handle);
   }
   svc.CurrentProcess().RegisterWakeup([&collected](CoroutineHandle token) {
-    SubscribeValueChange(token, collected);
+    SubscribeToLeaves(token, collected);
   });
   return true;
 }
@@ -1029,25 +1033,6 @@ auto lyra_rt_resume_in_nba_region(void* runtime) -> bool {
 void lyra_rt_trigger(void* event, void* runtime) {
   static_cast<NamedEvent*>(event)->Trigger(
       *static_cast<RuntimeEffects*>(runtime));
-}
-
-// A wait names only the event: which process waits is the running one, which
-// the runtime already knows, so nothing about it crosses the boundary. The
-// suspension itself follows this call, the same way it follows every other
-// registration, so the answer is the park flag every registration returns -- a
-// named-event wait always parks, since a trigger is instantaneous and the next
-// one is what it waits for (LRM 15.5).
-auto lyra_rt_await(void* event) -> bool {
-  static_cast<NamedEvent*>(event)->AddWaiter(
-      current_runtime().CurrentProcess().TopHandle());
-  return true;
-}
-
-auto lyra_rt_await_qualified(void* event, const void* observation) -> bool {
-  static_cast<NamedEvent*>(event)->AddWaiter(
-      current_runtime().CurrentProcess().TopHandle(),
-      Read<Observation>(observation));
-  return true;
 }
 
 auto lyra_rt_triggered(const void* event, void* runtime) -> void* {

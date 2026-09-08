@@ -113,13 +113,10 @@ enum class BuiltinFn : std::uint16_t {
   kOcttoa,
   kBintoa,
   kRealtoa,
-  // LRM 15.5 named-event operations. `Trigger` / `Await` arise from
-  // `-> e;` / `@e;` collapsing at HIR -> MIR. `AwaitQualified` is the same
-  // wait carrying the LRM 9.4.2.3 `iff` observation, which decides at the
-  // trigger and leaves the wait in place when it does not hold.
+  // LRM 15.5 named-event operations. `Trigger` arises from `-> e;` collapsing
+  // at HIR -> MIR; waiting for one is the ordinary wait, naming the event as a
+  // leaf. `Triggered` is the LRM 15.5.3 same-time-step query.
   kTrigger,
-  kAwait,
-  kAwaitQualified,
   kTriggered,
   // LRM 6.19.5 enum type-static queries. `constexpr` in the runtime so
   // downstream optimizers fold the call.
@@ -209,21 +206,21 @@ enum class BuiltinFn : std::uint16_t {
   // executing process, which the runtime reads ambiently, so the call carries
   // only the closure.
   kSubmitNba,
-  // LRM 9.4.5: the same NBA commit, into the region of the slot an
-  // intra-assignment delay names (LRM 4.4.2.4). The delay crosses as an amount
-  // in the scope's time unit with that scope's unit and precision powers, the
-  // way a delay control's does, because LRM 9.4.1 reads the amount before any
-  // scaling. One entry per amount representation.
+  // LRM 9.4.5: the same NBA commit, into the region of the slot a delay control
+  // names (LRM 4.4.2.4). The delay crosses as an amount in the scope's time
+  // unit with that scope's unit and precision powers, the way a delay control's
+  // does, because LRM 9.4.1 reads the amount before any scaling. One entry per
+  // amount representation.
   kSubmitNbaAfter,
   kSubmitNbaAfterReal,
-  // LRM 9.4.5: an assignment whose intra-assignment control is an event cannot
-  // say, where the statement is reached, which slot its update lands in, so the
-  // update is carried by an execution that waits for the event and then makes
-  // it. `RunDetached` takes that execution as a coroutine and runs it apart
-  // from every lineage -- the standard makes no process of the update, so
-  // `wait fork` does not wait for it and `disable fork` does not reach it --
-  // and `ResumeInNbaRegion` is how it reaches the region the update is due in
-  // (LRM 4.4.2.4) once the event has named the slot.
+  // LRM 9.4.5, 15.5.1: an effect whose control is an event cannot say, where
+  // the statement is reached, which slot it lands in, so it is carried by an
+  // execution that waits for the event and then applies it. `RunDetached` takes
+  // that execution as a coroutine and runs it apart from every lineage -- the
+  // standard makes no process of the update, so `wait fork` does not wait for
+  // it and `disable fork` does not reach it -- and `ResumeInNbaRegion` is how
+  // it reaches the region the update is due in (LRM 4.4.2.4) once the event has
+  // named the slot.
   kRunDetached,
   kResumeInNbaRegion,
   kSubmitPostponed,

@@ -55,6 +55,14 @@ class RuntimeEffects {
   // disposition rather than a blocked one.
   void Wake(CoroutineHandle activation);
 
+  // Something has happened at `observable` -- a cell took a new value, a named
+  // event was triggered. Every activation waiting there that it is an event for
+  // becomes runnable, and the rest stay parked. `unchanged` bounds what the
+  // occurrence could have reached, and answers `false` throughout where it has
+  // no bits to speak of.
+  void WakeWaitersOf(
+      Observable& observable, const ProjectionUnchanged& unchanged);
+
   // LRM 4.4: place `effect` in `region` of the time slot at `when`. A deferred
   // effect runs where it is placed and never suspends whoever submitted it.
   void Submit(SimTime when, Region region, std::function<void()> effect);
@@ -63,10 +71,10 @@ class RuntimeEffects {
   // construct that writes it fixes the region, and the slot is the current one
   // unless the entry takes a delay.
   void SubmitNba(std::function<void()> closure);
-  // LRM 9.4.5: a non-blocking assignment carrying an intra-assignment delay
-  // schedules its update into the NBA region of the slot that delay names (LRM
-  // 4.4.2.4). `duration` is an amount in the scope's time unit, read exactly as
-  // a delay control reads one.
+  // LRM 9.4.5: a nonblocking effect carrying a delay control schedules its
+  // update into the NBA region of the slot that delay names (LRM 4.4.2.4).
+  // `duration` is an amount in the scope's time unit, read exactly as a delay
+  // control reads one.
   void SubmitNbaAfter(
       const value::PackedArray& duration, const value::PackedArray& unit_power,
       const value::PackedArray& precision_power, std::function<void()> closure);
@@ -78,8 +86,6 @@ class RuntimeEffects {
   // process that raised it reaches a flush point first.
   void SubmitObserved(std::function<void()> report);
 
-  void TriggerValueChange(
-      Observable& observable, const ProjectionUnchanged& unchanged);
   // LRM 20.2 / 20.10: `fatal=true` bumps the eventual `Run()` return to a
   // non-zero exit code.
   void RequestFinish(int level, bool fatal = false);
@@ -89,7 +95,7 @@ class RuntimeEffects {
 
   // Takes `coroutine` on as an execution of no lineage and schedules it: a
   // deferred effect the standard makes no process of, so nothing that names
-  // processes finds it (LRM 9.4.5 against 9.6.1, 9.6.3).
+  // processes finds it (LRM 9.4.5 and 15.5.1 against 9.6.1, 9.6.3).
   void RunDetached(Coroutine<void> coroutine);
 
   // The process whose body is executing right now (LRM 9.5); the observation

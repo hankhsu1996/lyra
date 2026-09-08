@@ -46,29 +46,13 @@ struct ConditionalExpr {
   ExprId else_value;
 };
 
-// LRM 10.4.1: the update happens where the statement is reached.
-struct BlockingAssign {};
-
-// LRM 10.4.2: the update is scheduled into the NBA region of a time slot rather
-// than made on the spot, so the procedure carries on without waiting for it.
-// `control` is the intra-assignment control of LRM 9.4.5, saying which slot's
-// NBA region the update lands in: with none it is the slot the statement is
-// reached in, a delay names a later one (an amount in the scope's time unit,
-// read the way LRM 9.4.1 reads any delay expression), and an event control
-// makes it the slot that event happens in, however far off that is.
-struct NonBlockingAssign {
-  std::optional<IntraAssignmentControl> control = std::nullopt;
-};
-
-using AssignKind = std::variant<BlockingAssign, NonBlockingAssign>;
-
 // `compound_op.has_value()` marks a compound assignment (`+=`, `-=`, etc.):
 // the runtime reads the lvalue, combines with `rhs`, writes back -- the
 // LRM 11.4.1 "evaluate target only once" rule is delegated to the backend's
 // compound-op emit (the C++ proxy's `operator+=` etc.). `rhs` is already
 // typed to match `lhs`; AST -> HIR inserts a `ConversionExpr` if slang's
-// expansion required one. LRM A.6.2 forbids compound on non-blocking, so a
-// non-blocking kind carrying a compound operator is an InternalError.
+// expansion required one. LRM A.6.2 forbids compound on non-blocking, so
+// non-blocking timing carrying a compound operator is an InternalError.
 //
 // `lhs` is an ExprId pointing at any expression whose form is addressable.
 // Allowed forms: a PrimaryExpr var reference, ElementSelectExpr /
@@ -77,7 +61,7 @@ using AssignKind = std::variant<BlockingAssign, NonBlockingAssign>;
 // Lvalue-ness is positional -- determined by appearance in this `lhs`
 // field, not by an extra tag on the expression.
 struct AssignExpr {
-  AssignKind kind;
+  EffectTiming timing;
   ExprId lhs;
   std::optional<BinaryOp> compound_op = std::nullopt;
   ExprId rhs;

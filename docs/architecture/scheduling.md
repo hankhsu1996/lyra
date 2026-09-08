@@ -71,19 +71,28 @@ primitive -- add the primitive, do not teach the engine the construct.
 
 ## Deferred work is a closure submit, not a suspension
 
-When a process needs an effect to happen later -- a non-blocking write to a signal, a postponed
-`$strobe` print -- it does not yield. It snapshots its inputs into a closure (see `mir.md` for the
-MIR-level shape) and submits the closure to a placement, then keeps running. A submit takes the same
-placement a suspension does, which is what lets a nonblocking assignment carrying a delay reach the
-NBA region of a later slot (LRM 4.4.2.4, 10.4.2) with no second mechanism.
+When a process needs an effect to happen later -- a non-blocking write to a signal, a nonblocking
+event trigger, a postponed `$strobe` print -- it does not yield. It snapshots its inputs into a
+closure (see `mir.md` for the MIR-level shape) and submits the closure to a placement, then keeps
+running. A submit takes the same placement a suspension does, which is what lets a nonblocking
+assignment carrying a delay reach the NBA region of a later slot (LRM 4.4.2.4, 10.4.2) with no
+second mechanism.
+
+**What an effect is and when it is due are two questions, and only the second decides the shape.**
+The standard writes the second one the same way wherever it appears: a nonblocking assignment and a
+nonblocking event trigger both name an optional delay-or-event control and both land in the NBA
+region of the slot it names (LRM 9.4.5, 15.5.1). So the deferral is one envelope taking whatever the
+effect is, and a construct that gains a deferred spelling adds no placement machinery of its own.
+One statement's whole effect goes in one of these, however many places it writes, which is what
+makes a control it carries read once rather than once per write.
 
 **Where the placement is not yet knowable, what is handed over is an execution rather than a
-closure.** An update due on an event (LRM 9.4.5) has a region but no slot: which slot it lands in is
-whichever one the event happens in, and nothing where the statement stands can say. So the process
-snapshots its inputs the same way, into an execution that waits for the event and then places itself
-in the region -- and keeps running, exactly as it does for a submit. The waiting is the only part
-that is new; what the update writes, and where, are settled where the statement stands as they are
-for every other deferred effect.
+closure.** An effect due on an event (LRM 9.4.5, 15.5.1) has a region but no slot: which slot it
+lands in is whichever one the event happens in, and nothing where the statement stands can say. So
+the process snapshots its inputs the same way, into an execution that waits for the event and then
+places itself in the region -- and keeps running, exactly as it does for a submit. The waiting is
+the only part that is new; what the effect does, and to what, are settled where the statement stands
+as they are for every other deferred effect.
 
 That execution belongs to no lineage. The standard makes no process of a pending update, so nothing
 that names processes may find it: `wait fork` does not wait for it and `disable fork` does not reach

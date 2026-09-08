@@ -10,7 +10,7 @@
 namespace lyra::runtime {
 
 // Suspends the calling execution until this time slot's NBA region, which is
-// where a nonblocking assignment's update is due (LRM 4.4.2.4).
+// where a nonblocking update is due (LRM 4.4.2.4).
 //
 // Only the execution carrying an event-controlled update reaches the region
 // this way, and only because the slot is unknown until the event has happened

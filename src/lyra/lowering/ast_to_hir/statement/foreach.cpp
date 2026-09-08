@@ -85,7 +85,7 @@ auto BuildIntegerLevel(
             .type = int_type,
             .data =
                 hir::CallExpr{
-                    .callee = std::move(size_callee), .arguments = {*array}},
+                    .callee = std::move(size_callee), .arguments = {array}},
             .span = span});
     const hir::ExprId one_id =
         frame.Exprs().Add(hir::MakeIntLiteral(1, int_type, span));
@@ -208,7 +208,7 @@ auto BuildAssociativeLevel(
           .type = int_type,
           .data =
               hir::AssignExpr{
-                  .kind = hir::BlockingAssign{},
+                  .timing = hir::ImmediateEffect{},
                   .lhs = more_lhs,
                   .compound_op = std::nullopt,
                   .rhs = walk_call(support::BuiltinFn::kAssocNext)},

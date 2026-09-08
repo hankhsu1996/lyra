@@ -27,7 +27,6 @@
 #include "lyra/runtime/diagnostic.hpp"           // IWYU pragma: keep
 #include "lyra/runtime/distribution.hpp"         // IWYU pragma: keep
 #include "lyra/runtime/dpi_context.hpp"          // IWYU pragma: keep
-#include "lyra/runtime/event.hpp"                // IWYU pragma: keep
 #include "lyra/runtime/file_table.hpp"           // IWYU pragma: keep
 #include "lyra/runtime/finish.hpp"               // IWYU pragma: keep
 #include "lyra/runtime/foreign_execution.hpp"    // IWYU pragma: keep
@@ -38,6 +37,7 @@
 #include "lyra/runtime/named_event.hpp"          // IWYU pragma: keep
 #include "lyra/runtime/nba_region.hpp"           // IWYU pragma: keep
 #include "lyra/runtime/net.hpp"                  // IWYU pragma: keep
+#include "lyra/runtime/observable.hpp"           // IWYU pragma: keep
 #include "lyra/runtime/process_control.hpp"      // IWYU pragma: keep
 #include "lyra/runtime/process_kind.hpp"         // IWYU pragma: keep
 #include "lyra/runtime/random.hpp"               // IWYU pragma: keep

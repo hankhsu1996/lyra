@@ -561,7 +561,7 @@ auto StructuralScopeLowerer::PopulateModportMember(
             .type = *crossing,
             .data =
                 hir::AssignExpr{
-                    .kind = hir::AssignKind{hir::BlockingAssign{}},
+                    .timing = hir::ImmediateEffect{},
                     .lhs = write_body.exprs.Add(*std::move(target)),
                     .compound_op = std::nullopt,
                     .rhs = assigned},

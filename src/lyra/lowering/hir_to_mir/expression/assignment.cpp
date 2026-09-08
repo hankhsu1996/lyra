@@ -15,17 +15,13 @@
 #include "lyra/diag/diagnostic.hpp"
 #include "lyra/hir/expr.hpp"
 #include "lyra/hir/procedural_body.hpp"
-#include "lyra/lowering/hir_to_mir/cast_lowering.hpp"
 #include "lyra/lowering/hir_to_mir/closure_builder.hpp"
+#include "lyra/lowering/hir_to_mir/deferred_effect.hpp"
 #include "lyra/lowering/hir_to_mir/expression/operators.hpp"
-#include "lyra/lowering/hir_to_mir/integral_literal.hpp"
 #include "lyra/lowering/hir_to_mir/lhs_store.hpp"
 #include "lyra/lowering/hir_to_mir/process_lowerer.hpp"
-#include "lyra/lowering/hir_to_mir/runtime_call.hpp"
 #include "lyra/lowering/hir_to_mir/self_ref.hpp"
 #include "lyra/lowering/hir_to_mir/snapshot_local.hpp"
-#include "lyra/lowering/hir_to_mir/statement/loops.hpp"
-#include "lyra/lowering/hir_to_mir/statement/timing.hpp"
 #include "lyra/lowering/hir_to_mir/unit_lowerer.hpp"
 #include "lyra/lowering/hir_to_mir/walk_frame.hpp"
 #include "lyra/mir/binary_op.hpp"
@@ -198,239 +194,56 @@ auto FreezeAssignmentInto(
   return frozen;
 }
 
-// Axis B (timing), deferred half: build the closure the NBA region invokes.
-// `effect_fn` is the target's write effect (axis A); this envelope is the only
-// part that knows about deferral. The closure is receiver-less and takes no
-// arguments, holding the frozen place and operands; `effect_fn` then builds the
-// write against those body-side nodes -- the same node it would build for a
-// blocking write, only in the closure body.
-template <typename EffectFn>
-auto BuildDeferredAssignClosure(
-    UnitLowerer& unit_lowerer, WalkFrame frame, mir::ExprId target_in_outer,
-    std::span<const mir::ExprId> operands_in_outer, EffectFn effect_fn)
-    -> mir::Expr {
-  ClosureBuilder closure(unit_lowerer.Unit(), frame);
-  const FrozenAssignment frozen = FreezeAssignmentInto(
-      unit_lowerer, frame, closure, target_in_outer, operands_in_outer);
-  mir::Block& body = closure.Body();
-  const mir::ExprId effect_id = body.exprs.Add(effect_fn(
-      body, frozen.target, std::span<const mir::ExprId>(frozen.operands)));
-  body.AppendStmt(mir::ExprStmt{.expr = effect_id});
-  return closure.BuildVoid();
-}
-
-// The NBA commit of `closure_id` into this slot's region, which is where an
-// assignment carrying no intra-assignment control is due (LRM 10.4.2).
-auto BuildNbaSubmitCall(
-    const mir::CompilationUnit& unit, mir::ExprId runtime_id,
-    mir::ExprId closure_id) -> mir::Expr {
-  return mir::Expr{
-      .data =
-          mir::CallExpr{
-              .callee = mir::Direct{.target = support::BuiltinFn::kSubmitNba},
-              .arguments = {runtime_id, closure_id}},
-      .type = unit.builtins.void_type};
-}
-
-// The same commit into the region of the slot an intra-assignment delay names
-// (LRM 9.4.5). The amount crosses unscaled with its scope's powers, because
-// LRM 9.4.1 reads a delay expression's own value before any scaling.
-auto BuildNbaSubmitAfterCall(
-    ProcessLowerer& process, WalkFrame frame, const hir::DelayControl& delay,
-    mir::ExprId runtime_id, mir::ExprId closure_id) -> diag::Result<mir::Expr> {
-  auto& unit = process.Owner().Unit();
-  auto& block = *frame.current_block;
-  auto duration_or =
-      process.LowerExpr(process.HirBody().exprs.Get(delay.duration), frame);
-  if (!duration_or) return std::unexpected(std::move(duration_or.error()));
-  mir::ExprId duration_id = block.exprs.Add(*std::move(duration_or));
-  const mir::Type& duration_type =
-      unit.types.Get(block.exprs.Get(duration_id).type);
-  const bool is_real = duration_type.IsRealFamily();
-  if (duration_type.Is<mir::ShortRealType>()) {
-    // LRM 6.12.1: `real` and `realtime` are one type, and a `shortreal` differs
-    // from them only in host precision, so the entry takes the wider.
-    duration_id =
-        ConvertToType(unit, block, duration_id, unit.builtins.realtime);
-  }
-  const mir::ExprId unit_power_id = BuildIntLiteral(
-      unit, block, static_cast<std::int64_t>(process.Resolution().unit_power));
-  const mir::ExprId precision_power_id = BuildIntLiteral(
-      unit, block,
-      static_cast<std::int64_t>(process.Resolution().precision_power));
-  return mir::Expr{
-      .data =
-          mir::CallExpr{
-              .callee =
-                  mir::Direct{
-                      .target = is_real
-                                    ? support::BuiltinFn::kSubmitNbaAfterReal
-                                    : support::BuiltinFn::kSubmitNbaAfter},
-              .arguments =
-                  {runtime_id, duration_id, unit_power_id, precision_power_id,
-                   closure_id}},
-      .type = unit.builtins.void_type};
-}
-
-// The wait an intra-assignment event control is, built into the carrier's body.
-// A repeat count is how many occurrences of that event the update waits out;
-// LRM 9.4.5 reads it once where the statement is reached, so it is lowered in
-// the outer frame and carried in, and a count of none reaches the update
-// straight away.
-auto BuildCarrierWaitStmt(
-    ProcessLowerer& process, WalkFrame outer_frame, ClosureBuilder& carrier,
-    const hir::IntraAssignmentControl& control) -> diag::Result<mir::Stmt> {
-  UnitLowerer& unit_lowerer = process.Owner();
-  const WalkFrame carrier_frame = carrier.Frame();
-  mir::Block& body = carrier.Body();
-  return std::visit(
-      Overloaded{
-          [&](const hir::EventControl& ec) -> diag::Result<mir::Stmt> {
-            return BuildEventWaitStmt(process, carrier_frame, body, ec);
-          },
-          [&](const hir::NamedEventControl& nec) -> diag::Result<mir::Stmt> {
-            return BuildNamedEventWaitStmt(process, carrier_frame, body, nec);
-          },
-          [&](const hir::RepeatedEventControl& r) -> diag::Result<mir::Stmt> {
-            auto count_or = process.LowerExpr(
-                process.HirBody().exprs.Get(r.count), outer_frame);
-            if (!count_or) return std::unexpected(std::move(count_or.error()));
-            const mir::ExprId count = SnapshotIntoClosure(
-                unit_lowerer, outer_frame, carrier,
-                outer_frame.current_block->exprs.Add(*std::move(count_or)),
-                "_lyra_nba_count");
-            mir::Block loop_body;
-            const WalkFrame loop_frame = carrier_frame.WithBlock(&loop_body);
-            auto wait_or =
-                BuildAnyEventWaitStmt(process, loop_frame, loop_body, r.event);
-            if (!wait_or) return std::unexpected(std::move(wait_or.error()));
-            loop_body.AppendStmt(*std::move(wait_or));
-            return BuildRepeatLoopStmt(
-                unit_lowerer.Unit(), carrier_frame, body, count,
-                body.child_scopes.Add(std::move(loop_body)));
-          },
-          [](const hir::DelayControl&) -> diag::Result<mir::Stmt> {
-            throw InternalError(
-                "BuildCarrierWaitStmt: a delay names the slot outright, so "
-                "nothing has to wait to find out which one it is");
-          }},
-      control);
-}
-
-// LRM 9.4.5: the update of an assignment whose event has not happened yet. The
-// slot it lands in cannot be named where the statement is reached, so what is
-// built here is the execution that waits for the event, reaches the region the
-// update is due in, and makes it there. What the update writes and where it
-// writes it are frozen into that execution now, exactly as they are for an
-// update due in this slot.
-template <typename EffectFn>
-auto BuildEventDueUpdateCarrier(
-    ProcessLowerer& process, WalkFrame frame,
-    const hir::IntraAssignmentControl& control, mir::ExprId target_in_outer,
-    std::span<const mir::ExprId> operands_in_outer, EffectFn effect_fn)
-    -> diag::Result<mir::Expr> {
-  UnitLowerer& unit_lowerer = process.Owner();
-  mir::CompilationUnit& unit = unit_lowerer.Unit();
-
-  ClosureBuilder carrier(unit, frame);
-  const FrozenAssignment frozen = FreezeAssignmentInto(
-      unit_lowerer, frame, carrier, target_in_outer, operands_in_outer);
-
-  mir::Block& body = carrier.Body();
-  auto wait_or = BuildCarrierWaitStmt(process, frame, carrier, control);
-  if (!wait_or) return std::unexpected(std::move(wait_or.error()));
-  body.AppendStmt(*std::move(wait_or));
-
-  // The event has named the slot; the region within it is the one every
-  // nonblocking update lands in, so the carrier goes there before writing
-  // (LRM 4.4.2.4).
-  const mir::ExprId runtime_id =
-      body.exprs.Add(BuildCurrentRuntimeCallExpr(unit_lowerer));
-  const mir::ExprId region_call_id = body.exprs.Add(
-      mir::Expr{
-          .data =
-              mir::CallExpr{
-                  .callee =
-                      mir::Direct{
-                          .target = support::BuiltinFn::kResumeInNbaRegion},
-                  .arguments = {runtime_id}},
-          .type = unit.builtins.void_type});
-  body.AppendStmt(
-      mir::ExprStmt{
-          .expr = body.exprs.Add(
-              mir::Expr{
-                  .data = mir::AwaitExpr{.awaitable = region_call_id},
-                  .type = unit.builtins.void_type})});
-
-  const mir::ExprId effect_id = body.exprs.Add(effect_fn(
-      body, frozen.target, std::span<const mir::ExprId>(frozen.operands)));
-  body.AppendStmt(mir::ExprStmt{.expr = effect_id});
-  return carrier.BuildCoroutine();
-}
-
-// Axis B (timing): apply a target's write effect now (blocking) or deferred to
-// the NBA region (nonblocking). `effect_fn(block, target, operands)` builds the
-// write into `block`; this is the only place the blocking/deferred choice
-// lives, so every target shares one timing envelope (LRM 10.4).
-template <typename EffectFn>
-auto ApplyAssignEffect(
-    ProcessLowerer& process, WalkFrame frame, const hir::AssignKind& kind,
-    diag::SourceSpan span, mir::ExprId target_in_outer,
-    std::span<const mir::ExprId> operands_in_outer, EffectFn effect_fn)
-    -> diag::Result<mir::Expr> {
-  auto& block = *frame.current_block;
-  const auto* deferred = std::get_if<hir::NonBlockingAssign>(&kind);
-  if (deferred == nullptr) {
-    return effect_fn(block, target_in_outer, operands_in_outer);
-  }
-  // The update runs after the stretch that reached the statement returns, and
-  // it holds a reference to the target's storage until then, so that storage
-  // has to outlive the stretch. LRM 10.4.2 makes the case that fails this
-  // illegal -- "It shall be illegal to make nonblocking assignments to
-  // automatic variables" -- and the front end rejects it, so this stands behind
-  // that rather than in front of it: reaching it means a target was lowered to
-  // storage the source did not name.
+// The update runs after the stretch that reached the statement returns, and it
+// holds a reference to the target's storage until then, so that storage has to
+// outlive the stretch. LRM 10.4.2 makes the case that fails this illegal -- "It
+// shall be illegal to make nonblocking assignments to automatic variables" --
+// and the front end rejects it, so this stands behind that rather than in front
+// of it: reaching it means a target was lowered to storage the source did not
+// name.
+auto CheckTargetOutlivesUpdate(
+    const mir::Block& block, mir::ExprId target_in_outer, diag::SourceSpan span)
+    -> diag::Result<void> {
   if (!TargetOutlivesDeferredUpdate(block, target_in_outer)) {
     return diag::Fail(
         span, diag::DiagCode::kUnsupportedAssignmentTarget,
         "a nonblocking assignment names storage that does not outlive the "
         "statement that reached it (LRM 10.4.2)");
   }
-  const mir::CompilationUnit& unit = process.Owner().Unit();
-  // An event control is the one control whose slot is not knowable here, so it
-  // is the one that needs an execution of its own to find it; every other form
-  // hands the region a closure and is done (LRM 9.4.5, 4.4.2.4).
-  const bool waits_for_an_event =
-      deferred->control.has_value() &&
-      !std::holds_alternative<hir::DelayControl>(*deferred->control);
-  if (waits_for_an_event) {
-    auto carrier = BuildEventDueUpdateCarrier(
-        process, frame, *deferred->control, target_in_outer, operands_in_outer,
-        effect_fn);
-    if (!carrier) return std::unexpected(std::move(carrier.error()));
-    const mir::ExprId carrier_id = block.exprs.Add(*std::move(carrier));
-    const mir::ExprId runtime_id =
-        block.exprs.Add(BuildCurrentRuntimeCallExpr(process.Owner()));
-    return mir::Expr{
-        .data =
-            mir::CallExpr{
-                .callee =
-                    mir::Direct{.target = support::BuiltinFn::kRunDetached},
-                .arguments = {runtime_id, carrier_id}},
-        .type = unit.builtins.void_type};
-  }
+  return {};
+}
 
-  mir::Expr closure = BuildDeferredAssignClosure(
-      process.Owner(), frame, target_in_outer, operands_in_outer, effect_fn);
-  const mir::ExprId closure_id = block.exprs.Add(std::move(closure));
-  const mir::ExprId runtime_id =
-      block.exprs.Add(BuildCurrentRuntimeCallExpr(process.Owner()));
-  if (!deferred->control.has_value()) {
-    return BuildNbaSubmitCall(unit, runtime_id, closure_id);
+// Axis B (timing): apply a target's write effect where the statement is
+// reached, or as an update due later. `effect_fn(block, target, operands)`
+// builds the write into `block`, the same node for either timing, so a target
+// says nothing about when its write happens (LRM 10.4).
+template <typename EffectFn>
+auto ApplyAssignEffect(
+    ProcessLowerer& process, WalkFrame frame, const hir::EffectTiming& timing,
+    diag::SourceSpan span, mir::ExprId target_in_outer,
+    std::span<const mir::ExprId> operands_in_outer, EffectFn effect_fn)
+    -> diag::Result<mir::Expr> {
+  auto& block = *frame.current_block;
+  const auto* deferred = std::get_if<hir::NonBlockingEffect>(&timing);
+  if (deferred == nullptr) {
+    return effect_fn(block, target_in_outer, operands_in_outer);
   }
-  return BuildNbaSubmitAfterCall(
-      process, frame, std::get<hir::DelayControl>(*deferred->control),
-      runtime_id, closure_id);
+  auto outlives = CheckTargetOutlivesUpdate(block, target_in_outer, span);
+  if (!outlives) return std::unexpected(std::move(outlives.error()));
+  return BuildDeferredEffect(
+      process, frame, deferred->control,
+      [&](ClosureBuilder& closure) -> diag::Result<FrozenAssignment> {
+        return FreezeAssignmentInto(
+            process.Owner(), frame, closure, target_in_outer,
+            operands_in_outer);
+      },
+      [&](mir::Block& body, const FrozenAssignment& frozen) {
+        body.AppendStmt(
+            mir::ExprStmt{
+                .expr = body.exprs.Add(effect_fn(
+                    body, frozen.target,
+                    std::span<const mir::ExprId>(frozen.operands)))});
+      });
 }
 
 // Axis A: the store itself, against the storage the target designates.
@@ -453,7 +266,7 @@ auto LowerObservableAssign(
                                 : std::nullopt;
   const std::array<mir::ExprId, 1> operands{rhs_id};
   return ApplyAssignEffect(
-      process, frame, a.kind, span, lhs_id, operands,
+      process, frame, a.timing, span, lhs_id, operands,
       [&](mir::Block& blk, mir::ExprId target,
           std::span<const mir::ExprId> ops) -> mir::Expr {
         return BuildStoreExpr(
@@ -468,9 +281,9 @@ auto LowerHirAssignExprProc(
     ProcessLowerer& process, WalkFrame frame, const hir::AssignExpr& a,
     diag::SourceSpan span, mir::TypeId result_type) -> diag::Result<mir::Expr> {
   if (a.compound_op.has_value() &&
-      std::holds_alternative<hir::NonBlockingAssign>(a.kind)) {
+      std::holds_alternative<hir::NonBlockingEffect>(a.timing)) {
     throw InternalError(
-        "LowerHirAssignExprProc: compound assignment with non-blocking kind "
+        "LowerHirAssignExprProc: compound assignment with non-blocking timing "
         "is not a legal SV form (LRM A.6.2 grammar)");
   }
 
@@ -483,21 +296,37 @@ auto LowerHirAssignExprProc(
   return LowerObservableAssign(process, frame, a, span, result_type);
 }
 
-// Builds the deferred-write closure for an observable assignment, used by the
-// LHS-destructuring desugar where each part is a separate NBA submit. The
-// general timing envelope (`ApplyAssignEffect`) does not fit there because
-// destructuring submits per part inside its own block, so this exposes just
-// the closure-building half over the observable write effect.
-auto BuildNbaSubmitClosureExpr(
-    UnitLowerer& unit_lowerer, WalkFrame frame, mir::ExprId lhs_in_outer,
-    mir::ExprId rhs_id_in_outer, mir::TypeId rhs_type) -> mir::Expr {
-  const std::array<mir::ExprId, 1> operands{rhs_id_in_outer};
-  return BuildDeferredAssignClosure(
-      unit_lowerer, frame, lhs_in_outer, operands,
-      [&](mir::Block& blk, mir::ExprId target,
-          std::span<const mir::ExprId> ops) -> mir::Expr {
-        return BuildStoreExpr(
-            unit_lowerer.Unit(), blk, target, ops[0], std::nullopt, rhs_type);
+auto BuildDestructuredDeferredAssign(
+    ProcessLowerer& process, WalkFrame frame, diag::SourceSpan span,
+    const std::optional<hir::DelayOrEventControl>& control,
+    std::span<const DestructuredPart> parts) -> diag::Result<mir::Expr> {
+  for (const DestructuredPart& part : parts) {
+    auto outlives =
+        CheckTargetOutlivesUpdate(*frame.current_block, part.target, span);
+    if (!outlives) return std::unexpected(std::move(outlives.error()));
+  }
+  return BuildDeferredEffect(
+      process, frame, control,
+      [&](ClosureBuilder& closure)
+          -> diag::Result<std::vector<FrozenAssignment>> {
+        std::vector<FrozenAssignment> frozen;
+        frozen.reserve(parts.size());
+        for (const DestructuredPart& part : parts) {
+          const std::array<mir::ExprId, 1> operands{part.value};
+          frozen.push_back(FreezeAssignmentInto(
+              process.Owner(), frame, closure, part.target, operands));
+        }
+        return frozen;
+      },
+      [&](mir::Block& body, const std::vector<FrozenAssignment>& frozen) {
+        for (std::size_t i = 0; i < frozen.size(); ++i) {
+          body.AppendStmt(
+              mir::ExprStmt{
+                  .expr = body.exprs.Add(BuildStoreExpr(
+                      process.Owner().Unit(), body, frozen[i].target,
+                      frozen[i].operands.front(), std::nullopt,
+                      parts[i].type))});
+        }
       });
 }
 

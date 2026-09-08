@@ -1,75 +1,28 @@
 #pragma once
 
 #include <optional>
-#include <utility>
 
 #include "lyra/base/time.hpp"
-#include "lyra/runtime/event.hpp"
-#include "lyra/runtime/observation.hpp"
-#include "lyra/runtime/pending_wait.hpp"
+#include "lyra/runtime/observable.hpp"
 #include "lyra/runtime/runtime_effects.hpp"
 #include "lyra/value/packed_array.hpp"
 
 namespace lyra::runtime {
 
-// Parks the calling frame on the event's waiter set. The engine never sees a
-// "waiting for an event" state -- the coroutine simply suspends, and the
-// producer schedules it again on trigger through the same construct-neutral
-// verb every other wait uses, so the engine has no event-specific code path.
-class EventAwaitable : public PendingWait {
- public:
-  explicit EventAwaitable(RuntimeEvent& event, Observation observation = {})
-      : event_(&event), observation_(std::move(observation)) {
-  }
-
-  [[nodiscard]] static auto await_ready() noexcept -> bool {
-    return false;
-  }
-
-  template <class P>
-  void await_suspend(std::coroutine_handle<P> handle) {
-    CoroutineHandle token = &handle.promise();
-    event_->AddWaiter(token, observation_);
-    BlockOn(token);
-  }
-
-  void await_resume() const {
-    CheckAbortOnResume();
-  }
-
-  // A named-event trigger is instantaneous (LRM 15.5): a trigger during
-  // suspension is missed, so resume re-subscribes for the next one. No engine
-  // runtime access is needed; the capability signature carries it uniformly.
-  // NOLINTNEXTLINE(readability-named-parameter)
-  auto Reestablish(RuntimeEffects&, CoroutineHandle activation)
-      -> PendingWaitOutcome override {
-    event_->AddWaiter(activation, observation_);
-    return PendingWaitOutcome::kReblocked;
-  }
-
-  // Waiting on a named event is an event control, so resuming from it is a
-  // violation report flush point (LRM 12.4.2.1).
-  [[nodiscard]] auto IsReportFlushPoint() const -> bool override {
-    return true;
-  }
-
- private:
-  RuntimeEvent* event_;
-  Observation observation_;
-};
-
 // SystemVerilog named event (LRM 15.5). A field of this type lives on the
-// module state struct; it owns the waiters list and a timestamp recording
-// when it was last triggered. The "triggered in current time step"
-// semantic (LRM 15.5.3) is realised by comparing `last_triggered_at_`
-// against `runtime.Now()` -- there is no slot bookkeeping in the event
-// or in the engine.
-class NamedEvent {
+// module state struct; it owns the waiters and a timestamp recording when it
+// was last triggered. The "triggered in current time step" semantic (LRM
+// 15.5.3) is realised by comparing that timestamp against the current time --
+// there is no slot bookkeeping in the event or in the engine.
+//
+// A trigger carries no value, so nothing about it can be shown not to have
+// reached a wait: every wait registered here is asked.
+class NamedEvent : public Observable {
  public:
   NamedEvent() = default;
 
-  // Non-movable: subscribing takes pointers into the waiter set, so the address
-  // must be stable once a process has waited here.
+  // Non-movable: waiting here takes pointers into the waiter set, so the
+  // address must be stable once a process has waited.
   NamedEvent(const NamedEvent&) = delete;
   auto operator=(const NamedEvent&) -> NamedEvent& = delete;
   NamedEvent(NamedEvent&&) = delete;
@@ -80,23 +33,7 @@ class NamedEvent {
   // process the trigger is an event for.
   void Trigger(RuntimeEffects& runtime) {
     last_triggered_at_ = runtime.Now();
-    for (CoroutineHandle waiter : event_.TakeFiringWaiters()) {
-      runtime.Wake(waiter);
-    }
-  }
-
-  // LRM 15.5.2: `@e;` blocks until the next trigger. With an `iff` qualifier
-  // (LRM 9.4.2.3) the observation carries it, and a trigger the qualifier holds
-  // back leaves the wait in place.
-  auto Await(Observation observation = {}) -> EventAwaitable {
-    return EventAwaitable{event_, std::move(observation)};
-  }
-
-  // LRM 15.5.2 for a caller that states registration and suspension as two
-  // steps: enrols `waiter` without suspending it, leaving the event holding the
-  // same waiter set the awaitable form would.
-  void AddWaiter(CoroutineHandle waiter, Observation observation = {}) {
-    event_.AddWaiter(waiter, std::move(observation));
+    runtime.WakeWaitersOf(*this, MakeWholeValueProjectionTest());
   }
 
   // LRM 15.5.3: `e.triggered` is true iff the most recent trigger happened
@@ -110,7 +47,6 @@ class NamedEvent {
   }
 
  private:
-  RuntimeEvent event_;
   std::optional<SimTime> last_triggered_at_;
 };
 

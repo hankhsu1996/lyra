@@ -7,7 +7,17 @@
 ## Status
 
 Accepted. The unification -- one shape for every value-change wait, over a per-leaf
-`(observable, bit_range)` set -- stands. Two things it settled no longer hold.
+`(observable, bit_range)` set -- stands, and has since widened past value change. Three things it
+settled no longer hold.
+
+**The wait families are two, not three.** This entry's table put a named event's waiter list beside
+the value-change subscription as a disjoint engine subsystem, on the reasoning that MIR follows the
+execution split rather than the syntactic one. The execution split turned out to be one shape: a
+named event is a place a wait registers on and a trigger is what happens there, differing from a
+variable cell only in that nothing about it has bits, which is a case the per-leaf filtering already
+answers. So `@e` is a wait whose one leaf names the event, and the same wait serves
+`wait (e.triggered)`, whose leaf a value-change-only vocabulary could not express at all. What
+remains disjoint is time.
 
 What carries that shape in MIR is superseded by
 [value-change-wait-as-runtime-call](value-change-wait-as-runtime-call.md): the wait is a runtime

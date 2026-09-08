@@ -25,20 +25,21 @@ namespace lyra::lowering::hir_to_mir {
 
 namespace {
 
-// One leaf of the wait: the observable cell it watches, which bits of that
-// cell's packed encoding it reads, and what decides whether a change there is
-// an event. LRM 9.4.2 / 9.4.2.2 / 9.4.3: a bit-addressed footprint becomes
-// `(lsb, hi - lsb + 1)`; a whole-signal read (no footprint) is width 0, which
-// the runtime reads as the whole cell. A leaf with no observation is an
-// implicit sensitivity, where being reached is the whole condition.
+// One leaf of the wait: the place it watches, which bits of that place's packed
+// encoding it reads, and what decides whether what happens there is an event.
+// LRM 9.4.2 / 9.4.2.2 / 9.4.3: a bit-addressed footprint becomes
+// `(lsb, hi - lsb + 1)`; a read of the whole of it (no footprint) is width 0,
+// which is also what a named event carries, having no bits at all. A leaf with
+// no observation decides by being reached -- an implicit sensitivity, or an
+// unqualified named-event wait (LRM 15.5.1).
 auto BuildTriggerExpr(
     mir::Block& block, const WalkFrame& frame, mir::CompilationUnit& unit,
     const StructuralScopeLowerer& lowerer, const hir::SensitivityEntry& entry,
     std::optional<mir::LocalId> observation) -> mir::ExprId {
   // The leaf watches either an intra-unit cell reached through its route, or a
   // package variable's one program-global cell reached by name (LRM 26.2). Both
-  // resolve to a borrowed pointer to the observable cell the runtime subscribes
-  // to; only the way the cell is reached differs.
+  // resolve to a borrowed pointer to the place the runtime registers the wait
+  // on; only the way that place is reached differs.
   const mir::ExprId observable_ptr = std::visit(
       Overloaded{
           [&](const hir::ReferenceRoute& route) -> mir::ExprId {
@@ -149,7 +150,7 @@ auto BuildEventControlWaitStmt(
   triggers.reserve(leaves.size());
   for (const ObservedLeaf& leaf : leaves) {
     triggers.push_back(BuildTriggerExpr(
-        target_block, frame, unit, lowerer, *leaf.entry, leaf.observation));
+        target_block, frame, unit, lowerer, leaf.entry, leaf.observation));
   }
   return BuildWaitStmt(target_block, lowerer, std::move(triggers));
 }

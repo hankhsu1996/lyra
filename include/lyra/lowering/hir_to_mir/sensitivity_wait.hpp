@@ -1,5 +1,6 @@
 #pragma once
 
+#include <optional>
 #include <span>
 #include <vector>
 
@@ -12,20 +13,22 @@ namespace lyra::lowering::hir_to_mir {
 
 class StructuralScopeLowerer;
 
-// One leaf of an event control's wait: the storage a change is watched on, and
-// the observation that decides whether a change there is an event. The leaves
-// of one event expression name one observation between them, since the value
-// being watched is the expression's.
+// One leaf of an event control's wait: the storage watched, and what decides
+// whether reaching it is an event for the wait. The leaves of one event
+// expression name one observation between them, since the value being watched
+// is the expression's. A leaf that names none decides by being reached, which
+// is what an unqualified named event is: the trigger is the event, and nothing
+// further can hold the wait back (LRM 15.5.1).
 struct ObservedLeaf {
-  const hir::SensitivityEntry* entry;
-  mir::LocalId observation;
+  hir::SensitivityEntry entry;
+  std::optional<mir::LocalId> observation;
 };
 
-// Every SV construct that waits on a signal converges on one awaited runtime
-// call taking one trigger per leaf -- `always_comb` / `always_latch` (LRM
-// 9.2.2.2.1), `@*` (LRM 9.4.2.2), `@(...)` (LRM 9.4.2), `wait (cond)` (LRM
-// 9.4.3), and a continuous assignment -- differing only in what decides that a
-// change to a leaf is an event for them.
+// Every SV construct that waits for something to happen converges on one
+// awaited runtime call taking one trigger per leaf -- `always_comb` /
+// `always_latch` (LRM 9.2.2.2.1), `@*` (LRM 9.4.2.2), `@(...)` (LRM 9.4.2),
+// `@e` (LRM 15.5.2), `wait (cond)` (LRM 9.4.3), and a continuous assignment --
+// differing only in what decides that reaching a leaf is an event for them.
 //
 // Lowering picks the observable-pointer expression per leaf so a backend
 // forwards one stored expression rather than re-deriving the shape from the
@@ -40,9 +43,9 @@ auto BuildValueChangeWaitStmt(
     const StructuralScopeLowerer& lowerer,
     const std::vector<hir::SensitivityEntry>& sensitivity_list) -> mir::Stmt;
 
-// The wait of an event control (LRM 9.4.2), where a change to a watched
-// variable is a candidacy and the leaf's observation says whether it is an
-// event.
+// The wait of an event control (LRM 9.4.2, 15.5.2), where reaching a leaf is a
+// candidacy and the leaf's observation says whether it is an event -- or, where
+// it names none, being reached is the whole of it.
 auto BuildEventControlWaitStmt(
     mir::Block& target_block, const WalkFrame& frame,
     const StructuralScopeLowerer& lowerer, std::span<const ObservedLeaf> leaves)

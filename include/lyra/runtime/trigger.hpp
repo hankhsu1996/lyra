@@ -10,10 +10,11 @@ namespace lyra::runtime {
 
 class Observable;
 
-// One leaf of a wait: an observable cell it watches, which bits of that cell's
-// flat-bit encoding it reads, as `(lsb_bit_offset, bit_width)`, and what
-// decides whether a change there is an event. A width of zero reads the whole
-// cell, which is the form a cell with no bit-addressed parts produces.
+// One leaf of a wait: a place it watches, which bits of that place's flat-bit
+// encoding it reads, as `(lsb_bit_offset, bit_width)`, and what decides whether
+// what happens there is an event. A width of zero reads the whole of it, which
+// is what a place with no bit-addressed parts produces -- a named event among
+// them, since a trigger carries no value at all.
 //
 // Several leaves in one wait are an event list `@(a or posedge b[3])` or one
 // expression over several variables `@({clk_a, clk_b})`; the wait resumes when
@@ -21,11 +22,12 @@ class Observable;
 // observation between them, because the value being watched is the
 // expression's and there is one of it.
 //
-// A leaf that names no observation is an implicit sensitivity -- an
-// `always_comb` / `always_latch` body, an `@*`, a `wait (cond)`, a continuous
-// assignment -- where the standard makes the wait sensitive to the variables
-// read rather than to the value of an expression (LRM 9.2.2.2.1), so being
-// reached is the whole of the condition.
+// A leaf that names no observation decides by being reached. That is an
+// implicit sensitivity -- an `always_comb` / `always_latch` body, an `@*`, a
+// `wait (cond)`, a continuous assignment -- where the standard makes the wait
+// sensitive to the variables read rather than to the value of an expression
+// (LRM 9.2.2.2.1); and it is an unqualified `@e`, where the trigger is the
+// event and nothing further can hold the wait back (LRM 15.5.1).
 struct Trigger {
   Observable* observable = nullptr;
   Observation observation;

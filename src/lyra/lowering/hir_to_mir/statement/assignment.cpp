@@ -24,7 +24,6 @@
 #include "lyra/lowering/hir_to_mir/expression/system/sformat.hpp"
 #include "lyra/lowering/hir_to_mir/lhs_store.hpp"
 #include "lyra/lowering/hir_to_mir/process_lowerer.hpp"
-#include "lyra/lowering/hir_to_mir/runtime_call.hpp"
 #include "lyra/lowering/hir_to_mir/subroutine_call.hpp"
 #include "lyra/lowering/hir_to_mir/walk_frame.hpp"
 #include "lyra/mir/compilation_unit.hpp"
@@ -43,12 +42,13 @@ namespace {
 // AssignExpr whose LHS is a ConcatExpr -- the only context in which
 // destructuring is grammatically legal. Emits a block that snapshots the RHS
 // into a single packed temp then distributes per-part slices to each LHS
-// operand. For NBA (`kind == kNonBlocking`), each per-part assignment goes
-// through the NBA closure machinery.
+// operand. The source wrote one assignment, so a nonblocking one carries every
+// part into one deferred effect: a control on it is read once, and every part's
+// share lands in the same slot.
 auto LowerDestructuringAssign(
     ProcessLowerer& process, WalkFrame frame, std::optional<std::string> label,
-    const hir::AssignExpr& assign, const hir::ConcatExpr& lhs_concat)
-    -> diag::Result<mir::Stmt> {
+    const hir::AssignExpr& assign, const hir::ConcatExpr& lhs_concat,
+    diag::SourceSpan span) -> diag::Result<mir::Stmt> {
   const hir::ProceduralBody& hir_proc = process.HirBody();
   mir::Block wrapper;
   const WalkFrame wrapper_frame = frame.WithBlock(&wrapper);
@@ -114,6 +114,8 @@ auto LowerDestructuringAssign(
 
   // MSB-first per LRM 11.4.12: operands[0] occupies the high bits of the
   // snapshot, operands.back() the low bits.
+  std::vector<DestructuredPart> parts;
+  parts.reserve(lhs_concat.operands.size());
   std::uint64_t offset = total_width;
   for (std::size_t i = 0; i < lhs_concat.operands.size(); ++i) {
     const std::uint64_t w = part_widths[i];
@@ -140,29 +142,28 @@ auto LowerDestructuringAssign(
           process.Owner().Unit(), wrapper, slice_id, part_mir_type));
     }
 
-    mir::ExprId per_part_expr_id{};
-    if (std::holds_alternative<hir::BlockingAssign>(assign.kind)) {
-      const mir::Expr part_assign_expr = BuildStoreExpr(
-          process.Owner().Unit(), wrapper, part_lhs_id, rhs_for_part,
-          std::nullopt, part_mir_type);
-      per_part_expr_id = wrapper.exprs.Add(part_assign_expr);
-    } else {
-      mir::Expr closure_expr = BuildNbaSubmitClosureExpr(
-          process.Owner(), wrapper_frame, part_lhs_id, rhs_for_part,
-          part_mir_type);
-      const mir::ExprId closure_id = wrapper.exprs.Add(std::move(closure_expr));
-      const mir::ExprId runtime_id =
-          wrapper.exprs.Add(BuildCurrentRuntimeCallExpr(process.Owner()));
-      per_part_expr_id = wrapper.exprs.Add(
-          mir::Expr{
-              .data =
-                  mir::CallExpr{
-                      .callee =
-                          mir::Direct{.target = support::BuiltinFn::kSubmitNba},
-                      .arguments = {runtime_id, closure_id}},
-              .type = process.Owner().Unit().builtins.void_type});
+    parts.push_back(
+        DestructuredPart{
+            .target = part_lhs_id,
+            .value = rhs_for_part,
+            .type = part_mir_type});
+  }
+
+  if (const auto* deferred =
+          std::get_if<hir::NonBlockingEffect>(&assign.timing)) {
+    auto effect_or = BuildDestructuredDeferredAssign(
+        process, wrapper_frame, span, deferred->control, parts);
+    if (!effect_or) return std::unexpected(std::move(effect_or.error()));
+    wrapper.AppendStmt(
+        mir::ExprStmt{.expr = wrapper.exprs.Add(*std::move(effect_or))});
+  } else {
+    for (const DestructuredPart& part : parts) {
+      wrapper.AppendStmt(
+          mir::ExprStmt{
+              .expr = wrapper.exprs.Add(BuildStoreExpr(
+                  process.Owner().Unit(), wrapper, part.target, part.value,
+                  std::nullopt, part.type))});
     }
-    wrapper.AppendStmt(mir::ExprStmt{.expr = per_part_expr_id});
   }
 
   const mir::BlockId wrapper_scope_id =
@@ -334,7 +335,7 @@ auto LowerExprStmt(
             "is not a legal SV form (LRM A.6.2 grammar)");
       }
       return LowerDestructuringAssign(
-          process, frame, std::move(label), *assign, *concat);
+          process, frame, std::move(label), *assign, *concat, inner.span);
     }
   }
 
@@ -384,7 +385,7 @@ auto LowerExprStmt(
   }
   if (const auto* assign = std::get_if<hir::AssignExpr>(&inner.data)) {
     if (!assign->compound_op.has_value() &&
-        std::holds_alternative<hir::BlockingAssign>(assign->kind)) {
+        std::holds_alternative<hir::ImmediateEffect>(assign->timing)) {
       // Peek through an implicit conversion wrapper that slang inserts when
       // the call's return type does not match the LHS type bit-for-bit.
       const hir::Expr* call_carrier = &hir_proc.exprs.Get(assign->rhs);
