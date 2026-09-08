@@ -37,10 +37,10 @@ auto LookupLocalName(const ScopeView& view, const mir::LocalRef& ref)
   return view.Local(ref).name;
 }
 
-// The C++ operator token for the SV binary ops that render natively. The
-// method-style ops (shifts, power, xnor, wildcard / case / implication /
-// equivalence) are lifted to `CallExpr` at HIR-to-MIR and never reach this
-// dispatch; reaching one is an MIR-invariant violation.
+// The C++ token for an operator this target applies to two values. A shift has
+// none -- C++ decides between the arithmetic and the logical form from the
+// operand's signedness where SV names it in the operator -- so a shift is
+// reached through the library instead.
 auto BinaryOpToken(mir::BinaryOp op) -> std::string_view {
   switch (op) {
     case mir::BinaryOp::kAdd:
@@ -75,22 +75,12 @@ auto BinaryOpToken(mir::BinaryOp op) -> std::string_view {
       return "&&";
     case mir::BinaryOp::kLogicalOr:
       return "||";
-    case mir::BinaryOp::kPower:
-    case mir::BinaryOp::kBitwiseXnor:
     case mir::BinaryOp::kShiftLeft:
     case mir::BinaryOp::kLogicalShiftRight:
     case mir::BinaryOp::kArithmeticShiftRight:
-    case mir::BinaryOp::kLogicalImplication:
-    case mir::BinaryOp::kLogicalEquivalence:
-    case mir::BinaryOp::kWildcardEquality:
-    case mir::BinaryOp::kWildcardInequality:
-    case mir::BinaryOp::kCaseEquality:
-    case mir::BinaryOp::kCaseInequality:
-    case mir::BinaryOp::kCasezEquality:
-    case mir::BinaryOp::kCasexEquality:
       throw InternalError(
-          "BinaryOpToken: method-style operator reached backend render; "
-          "HIR-to-MIR should have lifted it to a CallExpr");
+          "BinaryOpToken: a shift is performed by a library entry and reaches "
+          "no expression; only a compound assignment names one");
   }
   throw InternalError("BinaryOpToken: unknown MIR BinaryOp");
 }
@@ -103,33 +93,14 @@ auto UnaryOpToken(mir::UnaryOp op) -> std::string_view {
       return "~";
     case mir::UnaryOp::kLogicalNot:
       return "!";
-    case mir::UnaryOp::kPlus:
-      // kPlus has no C++ token: PackedArray / String have no `operator+()`
-      // (LRM 11.4.3 unary plus is a no-op), so render emits the bare
-      // operand instead -- handled separately in `RenderUnaryExpr`.
-    case mir::UnaryOp::kReductionAnd:
-    case mir::UnaryOp::kReductionOr:
-    case mir::UnaryOp::kReductionXor:
-    case mir::UnaryOp::kReductionNand:
-    case mir::UnaryOp::kReductionNor:
-    case mir::UnaryOp::kReductionXnor:
-      throw InternalError(
-          "UnaryOpToken: operator has no native C++ token; "
-          "kPlus is identity (handled by RenderUnaryExpr) and reductions "
-          "lift to CallExpr at HIR-to-MIR");
   }
   throw InternalError("UnaryOpToken: unknown MIR UnaryOp");
 }
 
 auto RenderUnaryExpr(const ScopeView& view, const mir::UnaryExpr& u)
     -> std::string {
-  std::string operand = RenderExpr(view, view.Expr(u.operand));
-  // LRM 11.4.3: unary plus is an identity; no C++ `operator+()` exists on
-  // PackedArray / String / RealValue, so render the operand directly.
-  if (u.op == mir::UnaryOp::kPlus) {
-    return std::format("({})", operand);
-  }
-  return std::format("({}{})", UnaryOpToken(u.op), operand);
+  return std::format(
+      "({}{})", UnaryOpToken(u.op), RenderExpr(view, view.Expr(u.operand)));
 }
 
 auto RenderBinaryExpr(const ScopeView& view, const mir::BinaryExpr& b)
@@ -393,46 +364,50 @@ auto RenderLhsExpr(const ScopeView& view, const mir::Expr& expr)
 
 namespace {
 
-// Render a compound op suffix for the SV `op=` family. Arithmetic /
-// bitwise compounds use the C++ operator tokens directly because
-// `PackedArray`/`PackedArrayRef`/`ScopedMutation` overload `operator+=`,
-// etc. Shifts route through method-style `XxxAssign(rhs)` calls because
-// the binary form is already method-style (no native C++ token for SV's
-// arithmetic / logical shift distinction). Returns either the operator
-// token (e.g. " += ") with caller-supplied rhs appended, or the full
-// method form `.XxxAssign(rhs)`.
+// The library method that applies a shift to the value it is called on. A
+// shift is performed by the library rather than applied by the target, and a
+// compound assignment needs the applying form so its destination is reached
+// once (LRM 11.4.1).
+auto ShiftAssignMethod(mir::BinaryOp op) -> std::string_view {
+  switch (op) {
+    case mir::BinaryOp::kShiftLeft:
+      return "ShiftLeftAssign";
+    case mir::BinaryOp::kLogicalShiftRight:
+      return "LogicalShiftRightAssign";
+    case mir::BinaryOp::kArithmeticShiftRight:
+      return "ArithmeticShiftRightAssign";
+    case mir::BinaryOp::kAdd:
+    case mir::BinaryOp::kSub:
+    case mir::BinaryOp::kMul:
+    case mir::BinaryOp::kDiv:
+    case mir::BinaryOp::kMod:
+    case mir::BinaryOp::kBitwiseAnd:
+    case mir::BinaryOp::kBitwiseOr:
+    case mir::BinaryOp::kBitwiseXor:
+    case mir::BinaryOp::kEquality:
+    case mir::BinaryOp::kInequality:
+    case mir::BinaryOp::kGreaterEqual:
+    case mir::BinaryOp::kGreaterThan:
+    case mir::BinaryOp::kLessEqual:
+    case mir::BinaryOp::kLessThan:
+    case mir::BinaryOp::kLogicalAnd:
+    case mir::BinaryOp::kLogicalOr:
+      break;
+  }
+  throw InternalError(
+      "ShiftAssignMethod: the operator is applied by the target and needs no "
+      "method");
+}
+
+// C++ spells a compound assignment by suffixing the operator it applies, so
+// the two forms differ only in whether the target applies the operator at all.
 auto RenderCompoundAssign(
     mir::BinaryOp op, const std::string& chain, const std::string& rhs)
     -> std::string {
-  switch (op) {
-    case mir::BinaryOp::kAdd:
-      return std::format("{} += {}", chain, rhs);
-    case mir::BinaryOp::kSub:
-      return std::format("{} -= {}", chain, rhs);
-    case mir::BinaryOp::kMul:
-      return std::format("{} *= {}", chain, rhs);
-    case mir::BinaryOp::kDiv:
-      return std::format("{} /= {}", chain, rhs);
-    case mir::BinaryOp::kMod:
-      return std::format("{} %= {}", chain, rhs);
-    case mir::BinaryOp::kBitwiseAnd:
-      return std::format("{} &= {}", chain, rhs);
-    case mir::BinaryOp::kBitwiseOr:
-      return std::format("{} |= {}", chain, rhs);
-    case mir::BinaryOp::kBitwiseXor:
-      return std::format("{} ^= {}", chain, rhs);
-    case mir::BinaryOp::kShiftLeft:
-      return std::format("{}.ShiftLeftAssign({})", chain, rhs);
-    case mir::BinaryOp::kLogicalShiftRight:
-      return std::format("{}.LogicalShiftRightAssign({})", chain, rhs);
-    case mir::BinaryOp::kArithmeticShiftRight:
-      return std::format("{}.ArithmeticShiftRightAssign({})", chain, rhs);
-    default:
-      throw InternalError(
-          "RenderCompoundAssign: BinaryOp is not a legal SV compound "
-          "assignment operator (LRM 11.4 only allows arithmetic, bitwise, "
-          "and shift compounds)");
+  if (mir::BinaryOpAsBuiltinFn(op).has_value()) {
+    return std::format("{}.{}({})", chain, ShiftAssignMethod(op), rhs);
   }
+  return std::format("{} {}= {}", chain, BinaryOpToken(op), rhs);
 }
 
 auto RenderAssignExpr(const ScopeView& view, const mir::AssignExpr& a)

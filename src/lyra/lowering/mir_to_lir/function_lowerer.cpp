@@ -99,12 +99,15 @@ auto TranslateBinaryOp(mir::BinaryOp op) -> std::optional<lir::BinaryOp> {
       return lir::BinaryOp::kLogicalAnd;
     case mir::BinaryOp::kLogicalOr:
       return lir::BinaryOp::kLogicalOr;
-    default:
+    case mir::BinaryOp::kShiftLeft:
+    case mir::BinaryOp::kLogicalShiftRight:
+    case mir::BinaryOp::kArithmeticShiftRight:
       return std::nullopt;
   }
+  throw InternalError("TranslateBinaryOp: unknown MIR BinaryOp");
 }
 
-auto TranslateUnaryOp(mir::UnaryOp op) -> std::optional<lir::UnaryOp> {
+auto TranslateUnaryOp(mir::UnaryOp op) -> lir::UnaryOp {
   switch (op) {
     case mir::UnaryOp::kMinus:
       return lir::UnaryOp::kMinus;
@@ -112,9 +115,8 @@ auto TranslateUnaryOp(mir::UnaryOp op) -> std::optional<lir::UnaryOp> {
       return lir::UnaryOp::kBitwiseNot;
     case mir::UnaryOp::kLogicalNot:
       return lir::UnaryOp::kLogicalNot;
-    default:
-      return std::nullopt;
   }
+  throw InternalError("TranslateUnaryOp: unknown MIR UnaryOp");
 }
 
 auto LocalNamedBy(const mir::Block& block, mir::ExprId id)
@@ -2368,27 +2370,19 @@ auto FunctionLowerer::LowerExpr(const mir::Block& block, mir::ExprId id)
             if (!operand) {
               return operand;
             }
-            // LRM 11.4.3: unary plus is an identity.
-            if (un.op == mir::UnaryOp::kPlus) {
-              return operand;
-            }
-            const std::optional<lir::UnaryOp> op = TranslateUnaryOp(un.op);
-            if (!op) {
-              return Unsupported(
-                  "mir_to_lir: unary operator has no direct realization");
-            }
+            const lir::UnaryOp op = TranslateUnaryOp(un.op);
             // A logical-not over a machine boolean -- the reduced predicate a
             // real- or chandle-family `!` produces before `from_bool` widens it
             // back -- stays a machine boolean; its surface 1-bit type is
             // restored by the enclosing `from_bool`.
             const lir::TypeId result_type =
-                (*op == lir::UnaryOp::kLogicalNot &&
+                (op == lir::UnaryOp::kLogicalNot &&
                  lir::OperandType(fn_, *operand) == unit_->MachineBoolType())
                     ? unit_->MachineBoolType()
                     : unit_->TranslateType(type);
             return Emit(
                 result_type,
-                lir::UnaryInstr{.op = *op, .operand = *std::move(operand)});
+                lir::UnaryInstr{.op = op, .operand = *std::move(operand)});
           },
           [&](const mir::BinaryExpr& bin) -> diag::Result<lir::Operand> {
             const std::optional<lir::BinaryOp> op = TranslateBinaryOp(bin.op);

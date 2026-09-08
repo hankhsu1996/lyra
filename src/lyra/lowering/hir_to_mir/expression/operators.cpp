@@ -48,28 +48,16 @@ auto LowerBinaryOp(hir::BinaryOp op) -> mir::BinaryOp {
       return mir::BinaryOp::kDiv;
     case hir::BinaryOp::kMod:
       return mir::BinaryOp::kMod;
-    case hir::BinaryOp::kPower:
-      return mir::BinaryOp::kPower;
     case hir::BinaryOp::kBitwiseAnd:
       return mir::BinaryOp::kBitwiseAnd;
     case hir::BinaryOp::kBitwiseOr:
       return mir::BinaryOp::kBitwiseOr;
     case hir::BinaryOp::kBitwiseXor:
       return mir::BinaryOp::kBitwiseXor;
-    case hir::BinaryOp::kBitwiseXnor:
-      return mir::BinaryOp::kBitwiseXnor;
     case hir::BinaryOp::kEquality:
       return mir::BinaryOp::kEquality;
     case hir::BinaryOp::kInequality:
       return mir::BinaryOp::kInequality;
-    case hir::BinaryOp::kCaseEquality:
-      return mir::BinaryOp::kCaseEquality;
-    case hir::BinaryOp::kCaseInequality:
-      return mir::BinaryOp::kCaseInequality;
-    case hir::BinaryOp::kWildcardEquality:
-      return mir::BinaryOp::kWildcardEquality;
-    case hir::BinaryOp::kWildcardInequality:
-      return mir::BinaryOp::kWildcardInequality;
     case hir::BinaryOp::kGreaterEqual:
       return mir::BinaryOp::kGreaterEqual;
     case hir::BinaryOp::kGreaterThan:
@@ -82,10 +70,6 @@ auto LowerBinaryOp(hir::BinaryOp op) -> mir::BinaryOp {
       return mir::BinaryOp::kLogicalAnd;
     case hir::BinaryOp::kLogicalOr:
       return mir::BinaryOp::kLogicalOr;
-    case hir::BinaryOp::kLogicalImplication:
-      return mir::BinaryOp::kLogicalImplication;
-    case hir::BinaryOp::kLogicalEquivalence:
-      return mir::BinaryOp::kLogicalEquivalence;
     case hir::BinaryOp::kLogicalShiftLeft:
     case hir::BinaryOp::kArithmeticShiftLeft:
       return mir::BinaryOp::kShiftLeft;
@@ -93,8 +77,19 @@ auto LowerBinaryOp(hir::BinaryOp op) -> mir::BinaryOp {
       return mir::BinaryOp::kLogicalShiftRight;
     case hir::BinaryOp::kArithmeticShiftRight:
       return mir::BinaryOp::kArithmeticShiftRight;
+    case hir::BinaryOp::kPower:
+    case hir::BinaryOp::kBitwiseXnor:
+    case hir::BinaryOp::kCaseEquality:
+    case hir::BinaryOp::kCaseInequality:
+    case hir::BinaryOp::kWildcardEquality:
+    case hir::BinaryOp::kWildcardInequality:
+    case hir::BinaryOp::kLogicalImplication:
+    case hir::BinaryOp::kLogicalEquivalence:
+      break;
   }
-  throw InternalError("LowerBinaryOp: unknown HIR BinaryOp");
+  throw InternalError(
+      "LowerBinaryOp: the operator is performed by a library entry and is "
+      "settled before a binary node is built");
 }
 
 auto BuildMirLogicalAnd(
@@ -106,7 +101,7 @@ auto BuildMirLogicalAnd(
   mir::ExprId acc = tests.front();
   for (const mir::ExprId test : tests.subspan(1)) {
     acc = block.exprs.Add(BuildMirBinaryExpr(
-        unit, block, mir::BinaryOp::kLogicalAnd, acc, test, bit1_type));
+        unit, block, hir::BinaryOp::kLogicalAnd, acc, test, bit1_type));
   }
   return acc;
 }
@@ -120,38 +115,12 @@ auto BuildMirLogicalOr(
   mir::ExprId acc = tests.front();
   for (const mir::ExprId test : tests.subspan(1)) {
     acc = block.exprs.Add(BuildMirBinaryExpr(
-        unit, block, mir::BinaryOp::kLogicalOr, acc, test, bit1_type));
+        unit, block, hir::BinaryOp::kLogicalOr, acc, test, bit1_type));
   }
   return acc;
 }
 
 namespace {
-
-auto LowerUnaryOp(hir::UnaryOp op) -> mir::UnaryOp {
-  switch (op) {
-    case hir::UnaryOp::kPlus:
-      return mir::UnaryOp::kPlus;
-    case hir::UnaryOp::kMinus:
-      return mir::UnaryOp::kMinus;
-    case hir::UnaryOp::kBitwiseNot:
-      return mir::UnaryOp::kBitwiseNot;
-    case hir::UnaryOp::kLogicalNot:
-      return mir::UnaryOp::kLogicalNot;
-    case hir::UnaryOp::kReductionAnd:
-      return mir::UnaryOp::kReductionAnd;
-    case hir::UnaryOp::kReductionOr:
-      return mir::UnaryOp::kReductionOr;
-    case hir::UnaryOp::kReductionXor:
-      return mir::UnaryOp::kReductionXor;
-    case hir::UnaryOp::kReductionNand:
-      return mir::UnaryOp::kReductionNand;
-    case hir::UnaryOp::kReductionNor:
-      return mir::UnaryOp::kReductionNor;
-    case hir::UnaryOp::kReductionXnor:
-      return mir::UnaryOp::kReductionXnor;
-  }
-  throw InternalError("LowerUnaryOp: unknown HIR UnaryOp");
-}
 
 auto LowerIncDecOp(hir::IncDecOp op) -> mir::IncDecOp {
   switch (op) {
@@ -167,23 +136,111 @@ auto LowerIncDecOp(hir::IncDecOp op) -> mir::IncDecOp {
   throw InternalError("LowerIncDecOp: unknown HIR IncDecOp");
 }
 
-auto UnaryOpAsBuiltinFn(mir::UnaryOp op) -> std::optional<support::BuiltinFn> {
+// The operator a target language applies to the operand's value. The other
+// source-level unary operators do not name one: a reduction is an operation
+// over the operand's bits and unary plus changes nothing, so both are settled
+// before a node is built.
+auto ValueOperator(hir::UnaryOp op) -> mir::UnaryOp {
   switch (op) {
-    case mir::UnaryOp::kReductionAnd:
-      return support::BuiltinFn::kReductionAnd;
-    case mir::UnaryOp::kReductionOr:
-      return support::BuiltinFn::kReductionOr;
-    case mir::UnaryOp::kReductionXor:
-      return support::BuiltinFn::kReductionXor;
-    case mir::UnaryOp::kReductionNand:
-      return support::BuiltinFn::kReductionNand;
-    case mir::UnaryOp::kReductionNor:
-      return support::BuiltinFn::kReductionNor;
-    case mir::UnaryOp::kReductionXnor:
-      return support::BuiltinFn::kReductionXnor;
-    default:
+    case hir::UnaryOp::kMinus:
+      return mir::UnaryOp::kMinus;
+    case hir::UnaryOp::kBitwiseNot:
+      return mir::UnaryOp::kBitwiseNot;
+    case hir::UnaryOp::kLogicalNot:
+      return mir::UnaryOp::kLogicalNot;
+    case hir::UnaryOp::kPlus:
+    case hir::UnaryOp::kReductionAnd:
+    case hir::UnaryOp::kReductionOr:
+    case hir::UnaryOp::kReductionXor:
+    case hir::UnaryOp::kReductionNand:
+    case hir::UnaryOp::kReductionNor:
+    case hir::UnaryOp::kReductionXnor:
+      break;
+  }
+  throw InternalError(
+      "ValueOperator: the operator does not apply to a value and is settled "
+      "before a unary node is built");
+}
+
+// The entry that performs a binary operator, for an operator a target cannot
+// apply to two values of one type. Three reasons put one here: its operands are
+// not two values of one type (a shift's amount is sized on its own, LRM
+// 11.4.10); it reads a value's representation rather than its value (the case
+// and wildcard equalities compare x and z as themselves, LRM 11.4.5 / 11.4.6);
+// or it composes several operations into one (power, xnor, implication,
+// equivalence).
+auto BinaryLibraryEntry(hir::BinaryOp op) -> std::optional<support::BuiltinFn> {
+  switch (op) {
+    case hir::BinaryOp::kPower:
+      return support::BuiltinFn::kPow;
+    case hir::BinaryOp::kLogicalShiftLeft:
+    case hir::BinaryOp::kArithmeticShiftLeft:
+      return support::BuiltinFn::kShiftLeft;
+    case hir::BinaryOp::kLogicalShiftRight:
+      return support::BuiltinFn::kLogicalShiftRight;
+    case hir::BinaryOp::kArithmeticShiftRight:
+      return support::BuiltinFn::kArithmeticShiftRight;
+    case hir::BinaryOp::kBitwiseXnor:
+      return support::BuiltinFn::kBitwiseXnor;
+    case hir::BinaryOp::kLogicalImplication:
+      return support::BuiltinFn::kLogicalImplication;
+    case hir::BinaryOp::kLogicalEquivalence:
+      return support::BuiltinFn::kLogicalEquivalence;
+    case hir::BinaryOp::kWildcardEquality:
+      return support::BuiltinFn::kWildcardEquals;
+    // The case family answers at the width the clause fixes rather than at the
+    // one the context asked for, so it is built where that width is stated. A
+    // wildcard `!=` answers with the negation of the comparison beside it, so
+    // the negation is what names it.
+    case hir::BinaryOp::kCaseEquality:
+    case hir::BinaryOp::kCaseInequality:
+    case hir::BinaryOp::kWildcardInequality:
+      return std::nullopt;
+    case hir::BinaryOp::kAdd:
+    case hir::BinaryOp::kSub:
+    case hir::BinaryOp::kMul:
+    case hir::BinaryOp::kDiv:
+    case hir::BinaryOp::kMod:
+    case hir::BinaryOp::kBitwiseAnd:
+    case hir::BinaryOp::kBitwiseOr:
+    case hir::BinaryOp::kBitwiseXor:
+    case hir::BinaryOp::kEquality:
+    case hir::BinaryOp::kInequality:
+    case hir::BinaryOp::kGreaterEqual:
+    case hir::BinaryOp::kGreaterThan:
+    case hir::BinaryOp::kLessEqual:
+    case hir::BinaryOp::kLessThan:
+    case hir::BinaryOp::kLogicalAnd:
+    case hir::BinaryOp::kLogicalOr:
       return std::nullopt;
   }
+  throw InternalError("BinaryLibraryEntry: unknown HIR BinaryOp");
+}
+
+// The entry that performs a reduction (LRM 11.4.9). A reduction's meaning is
+// an operation over the operand's bits, which every peer language reaches
+// through a library call and none spells as an operator on a value.
+auto ReductionBuiltinFn(hir::UnaryOp op) -> std::optional<support::BuiltinFn> {
+  switch (op) {
+    case hir::UnaryOp::kReductionAnd:
+      return support::BuiltinFn::kReductionAnd;
+    case hir::UnaryOp::kReductionOr:
+      return support::BuiltinFn::kReductionOr;
+    case hir::UnaryOp::kReductionXor:
+      return support::BuiltinFn::kReductionXor;
+    case hir::UnaryOp::kReductionNand:
+      return support::BuiltinFn::kReductionNand;
+    case hir::UnaryOp::kReductionNor:
+      return support::BuiltinFn::kReductionNor;
+    case hir::UnaryOp::kReductionXnor:
+      return support::BuiltinFn::kReductionXnor;
+    case hir::UnaryOp::kPlus:
+    case hir::UnaryOp::kMinus:
+    case hir::UnaryOp::kBitwiseNot:
+    case hir::UnaryOp::kLogicalNot:
+      return std::nullopt;
+  }
+  throw InternalError("ReductionBuiltinFn: unknown HIR UnaryOp");
 }
 
 auto MakeBuiltinFnCall(
@@ -223,29 +280,31 @@ auto MakeBoolCast(const mir::CompilationUnit& unit, mir::ExprId operand_id)
 // passes through `bool(...)`, then the host-native logical operator
 // composes them, then `kFromBool` re-shapes to a 1-bit integral.
 auto BuildRealOrStringLogicalLift(
-    const mir::CompilationUnit& unit, mir::Block& block, mir::BinaryOp op,
+    const mir::CompilationUnit& unit, mir::Block& block, hir::BinaryOp op,
     mir::ExprId lhs_id, mir::ExprId rhs_id, mir::TypeId result_type)
     -> mir::Expr {
   const mir::ExprId lhs_bool = block.exprs.Add(MakeBoolCast(unit, lhs_id));
   const mir::ExprId rhs_bool = block.exprs.Add(MakeBoolCast(unit, rhs_id));
   mir::ExprId inner{};
   switch (op) {
-    case mir::BinaryOp::kLogicalAnd:
-    case mir::BinaryOp::kLogicalOr:
-    case mir::BinaryOp::kLogicalEquivalence: {
+    case hir::BinaryOp::kLogicalAnd:
+    case hir::BinaryOp::kLogicalOr:
+    case hir::BinaryOp::kLogicalEquivalence: {
+      // Equivalence over two predicates is their equality, which is what the
+      // host operator composing them already is.
       inner = block.exprs.Add(
           mir::Expr{
               .data =
                   mir::BinaryExpr{
-                      .op = op == mir::BinaryOp::kLogicalEquivalence
+                      .op = op == hir::BinaryOp::kLogicalEquivalence
                                 ? mir::BinaryOp::kEquality
-                                : op,
+                                : LowerBinaryOp(op),
                       .lhs = lhs_bool,
                       .rhs = rhs_bool},
               .type = result_type});
       break;
     }
-    case mir::BinaryOp::kLogicalImplication: {
+    case hir::BinaryOp::kLogicalImplication: {
       // `!lhs || rhs`
       const mir::ExprId not_lhs = block.exprs.Add(
           mir::Expr{
@@ -270,17 +329,23 @@ auto BuildRealOrStringLogicalLift(
   return MakeFromBoolCall(inner, result_type);
 }
 
-}  // namespace
-
+// The MIR a source-level unary operator names. The operand arrives as an
+// expression rather than an id because an operator that names nothing answers
+// with it, and interning it first would leave a node nothing reaches.
 auto BuildMirUnaryExpr(
-    const mir::CompilationUnit& unit, mir::Block& block, mir::UnaryOp op,
-    mir::ExprId operand_id, mir::TypeId result_type) -> mir::Expr {
-  const auto& operand_ty = unit.types.Get(block.exprs.Get(operand_id).type);
+    const mir::CompilationUnit& unit, mir::Block& block, hir::UnaryOp op,
+    mir::Expr operand, mir::TypeId result_type) -> mir::Expr {
+  const mir::Type& operand_ty = unit.types.Get(operand.type);
 
-  // LRM 11.4.9 reduction operators: render as `PackedArray::ReductionX()`,
-  // routed through a `Direct` builtin call so the backend's render path
-  // collapses to mechanical method dispatch.
-  if (auto builtin = UnaryOpAsBuiltinFn(op)) {
+  // Unary plus leaves its operand's value unchanged (LRM 11.4.3), so the
+  // expression it names is the operand itself.
+  if (op == hir::UnaryOp::kPlus) {
+    return operand;
+  }
+
+  const mir::ExprId operand_id = block.exprs.Add(std::move(operand));
+
+  if (auto builtin = ReductionBuiltinFn(op)) {
     return MakeBuiltinFnCall(*builtin, operand_id, {}, result_type);
   }
 
@@ -288,7 +353,7 @@ auto BuildMirUnaryExpr(
   // wrap the host-bool result in `FromBool` so the surface type stays the 1-bit
   // integral the SV semantic prescribes. A chandle's boolean value is 0 when it
   // is null and 1 otherwise.
-  if (op == mir::UnaryOp::kLogicalNot &&
+  if (op == hir::UnaryOp::kLogicalNot &&
       (operand_ty.IsRealFamily() || operand_ty.Is<mir::ChandleType>())) {
     const mir::ExprId operand_bool =
         block.exprs.Add(MakeBoolCast(unit, operand_id));
@@ -302,12 +367,14 @@ auto BuildMirUnaryExpr(
   }
 
   return mir::Expr{
-      .data = mir::UnaryExpr{.op = op, .operand = operand_id},
+      .data = mir::UnaryExpr{.op = ValueOperator(op), .operand = operand_id},
       .type = result_type};
 }
 
+}  // namespace
+
 auto BuildMirBinaryExpr(
-    mir::CompilationUnit& unit, mir::Block& block, mir::BinaryOp op,
+    mir::CompilationUnit& unit, mir::Block& block, hir::BinaryOp op,
     mir::ExprId lhs_id, mir::ExprId rhs_id, mir::TypeId result_type)
     -> mir::Expr {
   const auto& lhs_ty = unit.types.Get(block.exprs.Get(lhs_id).type);
@@ -327,10 +394,12 @@ auto BuildMirBinaryExpr(
     return ty.Is<mir::ManagedRefType>();
   };
   if ((is_handle(lhs_ty) || is_handle(rhs_ty)) &&
-      (op == mir::BinaryOp::kEquality || op == mir::BinaryOp::kInequality)) {
+      (op == hir::BinaryOp::kEquality || op == hir::BinaryOp::kInequality)) {
     const mir::ExprId cmp = block.exprs.Add(
         mir::Expr{
-            .data = mir::BinaryExpr{.op = op, .lhs = lhs_id, .rhs = rhs_id},
+            .data =
+                mir::BinaryExpr{
+                    .op = LowerBinaryOp(op), .lhs = lhs_id, .rhs = rhs_id},
             .type = result_type});
     return MakeFromBoolCall(cmp, result_type);
   }
@@ -344,10 +413,10 @@ auto BuildMirBinaryExpr(
   // 11.3.1, so the plain BinaryExpr render does the right thing.
   if (real_lhs || real_rhs || (string_lhs && string_rhs)) {
     switch (op) {
-      case mir::BinaryOp::kLogicalAnd:
-      case mir::BinaryOp::kLogicalOr:
-      case mir::BinaryOp::kLogicalImplication:
-      case mir::BinaryOp::kLogicalEquivalence:
+      case hir::BinaryOp::kLogicalAnd:
+      case hir::BinaryOp::kLogicalOr:
+      case hir::BinaryOp::kLogicalImplication:
+      case hir::BinaryOp::kLogicalEquivalence:
         return BuildRealOrStringLogicalLift(
             unit, block, op, lhs_id, rhs_id, result_type);
       default:
@@ -360,12 +429,12 @@ auto BuildMirBinaryExpr(
   // known 1'b0 or 1'b1, so the entry answers with a two-state bit whatever its
   // operands carry; the call is stated at that, and a context wanting another
   // representation takes the conversion.
-  if (op == mir::BinaryOp::kCaseEquality ||
-      op == mir::BinaryOp::kCaseInequality) {
+  if (op == hir::BinaryOp::kCaseEquality ||
+      op == hir::BinaryOp::kCaseInequality) {
     const mir::TypeId known = unit.builtins.bit1;
     mir::ExprId answer = block.exprs.Add(MakeBuiltinFnCall(
         support::BuiltinFn::kCaseEqual, lhs_id, {rhs_id}, known));
-    if (op == mir::BinaryOp::kCaseInequality) {
+    if (op == hir::BinaryOp::kCaseInequality) {
       answer = block.exprs.Add(
           mir::Expr{
               .data =
@@ -376,17 +445,16 @@ auto BuildMirBinaryExpr(
     return block.exprs.Get(ConvertToType(unit, block, answer, result_type));
   }
 
-  // LRM 11.4 method-style binary ops (shifts, power, xnor, wildcard /
-  // implication / equivalence): route through a `Direct` builtin call.
-  if (auto builtin = mir::BinaryOpAsBuiltinFn(op)) {
+  if (auto builtin = BinaryLibraryEntry(op)) {
     return MakeBuiltinFnCall(*builtin, lhs_id, {rhs_id}, result_type);
   }
 
-  // LRM 11.4.6 `!=?` lifts to its positive form wrapped in logical NOT, keeping
-  // the backend free of negation knowledge. Unlike case inequality it takes no
-  // conversion: the clause lets the answer be unknown, so it carries the state
-  // class its operands do, which is the one the context asked for.
-  if (op == mir::BinaryOp::kWildcardInequality) {
+  // SV spells `!=?` as an operator of its own, answering with the negation of
+  // the comparison beside it (LRM 11.4.6). Negating here leaves every consumer
+  // free of negation knowledge. Unlike case inequality it takes no conversion:
+  // the clause lets the answer be unknown, so it carries the state class its
+  // operands do, which is the one the context asked for.
+  if (op == hir::BinaryOp::kWildcardInequality) {
     const mir::ExprId inner = block.exprs.Add(MakeBuiltinFnCall(
         support::BuiltinFn::kWildcardEquals, lhs_id, {rhs_id}, result_type));
     return mir::Expr{
@@ -395,7 +463,9 @@ auto BuildMirBinaryExpr(
         .type = result_type};
   }
   return mir::Expr{
-      .data = mir::BinaryExpr{.op = op, .lhs = lhs_id, .rhs = rhs_id},
+      .data =
+          mir::BinaryExpr{
+              .op = LowerBinaryOp(op), .lhs = lhs_id, .rhs = rhs_id},
       .type = result_type};
 }
 
@@ -408,10 +478,8 @@ auto LowerHirUnaryExpr(
   if (!operand_or) {
     return std::unexpected(std::move(operand_or.error()));
   }
-  const mir::ExprId operand_id = block.exprs.Add(*std::move(operand_or));
   return BuildMirUnaryExpr(
-      lowerer.Owner().Unit(), block, LowerUnaryOp(u.op), operand_id,
-      result_type);
+      lowerer.Owner().Unit(), block, u.op, *std::move(operand_or), result_type);
 }
 
 template <ExprLowerer Lowerer>
@@ -426,8 +494,7 @@ auto LowerHirBinaryExpr(
   if (!rhs_or) return std::unexpected(std::move(rhs_or.error()));
   const mir::ExprId rhs_id = block.exprs.Add(*std::move(rhs_or));
   return BuildMirBinaryExpr(
-      lowerer.Owner().Unit(), block, LowerBinaryOp(b.op), lhs_id, rhs_id,
-      result_type);
+      lowerer.Owner().Unit(), block, b.op, lhs_id, rhs_id, result_type);
 }
 
 // LRM 11.4.11 over a predicate whose truth is three-valued: a predicate that

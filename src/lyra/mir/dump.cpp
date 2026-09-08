@@ -457,26 +457,12 @@ class MirDumper {
 
   static auto FormatUnaryOp(UnaryOp op) -> std::string {
     switch (op) {
-      case UnaryOp::kPlus:
-        return "Plus";
       case UnaryOp::kMinus:
         return "Minus";
       case UnaryOp::kBitwiseNot:
         return "BitwiseNot";
       case UnaryOp::kLogicalNot:
         return "LogicalNot";
-      case UnaryOp::kReductionAnd:
-        return "ReductionAnd";
-      case UnaryOp::kReductionOr:
-        return "ReductionOr";
-      case UnaryOp::kReductionXor:
-        return "ReductionXor";
-      case UnaryOp::kReductionNand:
-        return "ReductionNand";
-      case UnaryOp::kReductionNor:
-        return "ReductionNor";
-      case UnaryOp::kReductionXnor:
-        return "ReductionXnor";
     }
     throw InternalError("MirDumper: unknown UnaryOp");
   }
@@ -493,32 +479,16 @@ class MirDumper {
         return "Div";
       case BinaryOp::kMod:
         return "Mod";
-      case BinaryOp::kPower:
-        return "Power";
       case BinaryOp::kBitwiseAnd:
         return "BitwiseAnd";
       case BinaryOp::kBitwiseOr:
         return "BitwiseOr";
       case BinaryOp::kBitwiseXor:
         return "BitwiseXor";
-      case BinaryOp::kBitwiseXnor:
-        return "BitwiseXnor";
       case BinaryOp::kEquality:
         return "Equality";
       case BinaryOp::kInequality:
         return "Inequality";
-      case BinaryOp::kCaseEquality:
-        return "CaseEquality";
-      case BinaryOp::kCaseInequality:
-        return "CaseInequality";
-      case BinaryOp::kWildcardEquality:
-        return "WildcardEquality";
-      case BinaryOp::kWildcardInequality:
-        return "WildcardInequality";
-      case BinaryOp::kCasezEquality:
-        return "CasezEquality";
-      case BinaryOp::kCasexEquality:
-        return "CasexEquality";
       case BinaryOp::kGreaterEqual:
         return "GreaterEqual";
       case BinaryOp::kGreaterThan:
@@ -531,10 +501,6 @@ class MirDumper {
         return "LogicalAnd";
       case BinaryOp::kLogicalOr:
         return "LogicalOr";
-      case BinaryOp::kLogicalImplication:
-        return "LogicalImplication";
-      case BinaryOp::kLogicalEquivalence:
-        return "LogicalEquivalence";
       case BinaryOp::kShiftLeft:
         return "ShiftLeft";
       case BinaryOp::kLogicalShiftRight:

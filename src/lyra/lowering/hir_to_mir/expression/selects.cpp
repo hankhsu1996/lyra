@@ -11,6 +11,7 @@
 #include "lyra/base/internal_error.hpp"
 #include "lyra/base/overloaded.hpp"
 #include "lyra/diag/diagnostic.hpp"
+#include "lyra/hir/binary_op.hpp"
 #include "lyra/hir/expr.hpp"
 #include "lyra/hir/type.hpp"
 #include "lyra/lowering/hir_to_mir/cast_lowering.hpp"
@@ -21,7 +22,6 @@
 #include "lyra/lowering/hir_to_mir/structural_scope_lowerer.hpp"
 #include "lyra/lowering/hir_to_mir/unit_lowerer.hpp"
 #include "lyra/lowering/hir_to_mir/walk_frame.hpp"
-#include "lyra/mir/binary_op.hpp"
 #include "lyra/mir/compilation_unit.hpp"
 #include "lyra/mir/expr.hpp"
 #include "lyra/mir/packed_type_descriptor.hpp"
@@ -514,7 +514,7 @@ auto BuildPackedTagTest(
   const mir::ExprId named =
       BuildIntLiteral(unit, block, static_cast<std::int64_t>(index.value));
   return block.exprs.Add(BuildMirBinaryExpr(
-      unit, block, mir::BinaryOp::kCaseEquality, tag,
+      unit, block, hir::BinaryOp::kCaseEquality, tag,
       ConvertToType(unit, block, named, tag_type), unit.builtins.bit1));
 }
 

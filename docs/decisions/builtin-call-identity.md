@@ -34,17 +34,17 @@ level is preserved; the separate arm encodes the "rewrites away" translation beh
 where it drives mechanical dispatch at HIR-to-MIR.
 
 MIR's callee for a built-in is one shape -- `Direct { target = BuiltinFn, qualification }` -- shared
-with user-method calls, where `target` is the symbol identity (one of `variant<MethodId, BuiltinFn>`
-today; R49 collapses to one `CallableId`) and `qualification` is `Some(TypeQualifier{TypeId})` when
-the call site provides a type-namespace qualifier (e.g. `MyEnum::first`, `PackedArray::FromInt`) or
-`None` otherwise (instance calls, where the receiver is `args[0]`; or runtime helpers with no
-source-level qualifier). The instance / static / free distinction is **not** structural at MIR: at
-the generic-language layer these are one direct invocation, differing only in whether the callee's
-signature declares a self formal (driving the `args[0]`-as-receiver convention at any call site) and
-whether the call site provides a scope qualifier. The split into `BuiltinFnCallee` /
-`BuiltinStaticCallee` / `FreeFnCallee` arms was a backend-convenience pre-classification that
-violated `mir.md` invariant 10 (a field a backend's realization can ignore, restating what the id
-and signature already fix); it retires under refactor R45.
+with user-method calls, where `target` is the symbol identity (several alternatives today, one
+identity space once callable identity is unified) and `qualification` is
+`Some(TypeQualifier{TypeId})` when the call site provides a type-namespace qualifier (e.g.
+`MyEnum::first`, `PackedArray::FromInt`) or `None` otherwise (instance calls, where the receiver is
+`args[0]`; or runtime helpers with no source-level qualifier). The instance / static / free
+distinction is **not** structural at MIR: at the generic-language layer these are one direct
+invocation, differing only in whether the callee's signature declares a self formal (driving the
+`args[0]`-as-receiver convention at any call site) and whether the call site provides a scope
+qualifier. The split into `BuiltinFnCallee` / `BuiltinStaticCallee` / `FreeFnCallee` arms was a
+backend-convenience pre-classification that violated `mir.md` invariant 10 (a field a backend's
+realization can ignore, restating what the id and signature already fix), and is gone.
 
 HIR-to-MIR is a near-identity translation: pass the `BuiltinFn` through as `Direct::target`, and set
 `Direct::qualification` to the SV-type qualifier the source named (when one was named).

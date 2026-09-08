@@ -12,6 +12,7 @@
 #include "lyra/base/internal_error.hpp"
 #include "lyra/base/overloaded.hpp"
 #include "lyra/diag/diagnostic.hpp"
+#include "lyra/hir/binary_op.hpp"
 #include "lyra/hir/pattern.hpp"
 #include "lyra/hir/pattern_id.hpp"
 #include "lyra/hir/type.hpp"
@@ -28,7 +29,6 @@
 #include "lyra/lowering/hir_to_mir/structural_scope_lowerer.hpp"
 #include "lyra/lowering/hir_to_mir/unit_lowerer.hpp"
 #include "lyra/lowering/hir_to_mir/walk_frame.hpp"
-#include "lyra/mir/binary_op.hpp"
 #include "lyra/mir/compilation_unit.hpp"
 #include "lyra/mir/expr.hpp"
 #include "lyra/mir/local.hpp"
@@ -208,7 +208,7 @@ auto BuildPatternPredicate(
             if (!lit_or) return std::unexpected(std::move(lit_or.error()));
             const mir::ExprId lit_id = enc_block.exprs.Add(*std::move(lit_or));
             return enc_block.exprs.Add(BuildMirBinaryExpr(
-                unit, enc_block, mir::BinaryOp::kEquality, subject, lit_id,
+                unit, enc_block, hir::BinaryOp::kEquality, subject, lit_id,
                 bit1_type));
           },
           [&](const hir::VariablePattern&)

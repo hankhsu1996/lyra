@@ -3,10 +3,10 @@
 #include <expected>
 #include <utility>
 
+#include "lyra/hir/binary_op.hpp"
 #include "lyra/lowering/hir_to_mir/expression/operators.hpp"
 #include "lyra/lowering/hir_to_mir/process_lowerer.hpp"
 #include "lyra/lowering/hir_to_mir/structural_scope_lowerer.hpp"
-#include "lyra/mir/binary_op.hpp"
 #include "lyra/mir/stmt.hpp"
 
 namespace lyra::lowering::hir_to_mir {
@@ -37,17 +37,17 @@ auto BuildHirInsideItemPredicate(
     auto hi = lower_id(range->hi);
     if (!hi) return std::unexpected(std::move(hi.error()));
     const mir::ExprId ge_id = block.exprs.Add(BuildMirBinaryExpr(
-        unit, block, mir::BinaryOp::kGreaterEqual, lhs_id, *lo, result_type));
+        unit, block, hir::BinaryOp::kGreaterEqual, lhs_id, *lo, result_type));
     const mir::ExprId le_id = block.exprs.Add(BuildMirBinaryExpr(
-        unit, block, mir::BinaryOp::kLessEqual, lhs_id, *hi, result_type));
+        unit, block, hir::BinaryOp::kLessEqual, lhs_id, *hi, result_type));
     return block.exprs.Add(BuildMirBinaryExpr(
-        unit, block, mir::BinaryOp::kLogicalAnd, ge_id, le_id, result_type));
+        unit, block, hir::BinaryOp::kLogicalAnd, ge_id, le_id, result_type));
   }
 
   auto value = lower_id(item);
   if (!value) return std::unexpected(std::move(value.error()));
   return block.exprs.Add(BuildMirBinaryExpr(
-      unit, block, mir::BinaryOp::kWildcardEquality, lhs_id, *value,
+      unit, block, hir::BinaryOp::kWildcardEquality, lhs_id, *value,
       result_type));
 }
 

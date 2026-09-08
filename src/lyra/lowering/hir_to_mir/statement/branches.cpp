@@ -22,32 +22,35 @@
 #include "lyra/lowering/hir_to_mir/qualified_statement_check.hpp"
 #include "lyra/lowering/hir_to_mir/statement/blocks.hpp"
 #include "lyra/lowering/hir_to_mir/walk_frame.hpp"
-#include "lyra/mir/binary_op.hpp"
 #include "lyra/mir/compilation_unit.hpp"
 #include "lyra/mir/expr.hpp"
 #include "lyra/mir/stmt.hpp"
+#include "lyra/support/builtin_fn.hpp"
 
 namespace lyra::lowering::hir_to_mir {
 
 namespace {
 
-// The equality primitive one case label is tested with. Every condition
-// compares its labels exactly: an x or a z stands for itself and matches
-// itself, where logical equality would answer x and send the whole statement
-// to its default arm (LRM 12.5). The membership condition (LRM 12.5.4) tests
-// its labels a different way and never asks.
-auto CaseCompareOp(hir::CaseCondition condition) -> mir::BinaryOp {
+// The entry that tests one case label. Every condition compares its labels
+// exactly: an x or a z stands for itself and matches itself, where logical
+// equality would answer x and send the whole statement to its default arm
+// (LRM 12.5). Which bits are do-not-care is the condition's own business, so
+// each form has its own entry rather than an operator a target applies. The
+// membership condition (LRM 12.5.4) tests its labels a different way and never
+// asks.
+auto CaseCompareFn(hir::CaseCondition condition) -> support::BuiltinFn {
   switch (condition) {
     case hir::CaseCondition::kNormal:
-      return mir::BinaryOp::kCaseEquality;
+      return support::BuiltinFn::kCaseEqual;
     case hir::CaseCondition::kWildcardJustZ:
-      return mir::BinaryOp::kCasezEquality;
+      return support::BuiltinFn::kCasezEquals;
     case hir::CaseCondition::kWildcardXOrZ:
-      return mir::BinaryOp::kCasexEquality;
+      return support::BuiltinFn::kCasexEquals;
     case hir::CaseCondition::kInside:
       break;
   }
-  throw InternalError("CaseCompareOp: condition has no equality primitive");
+  throw InternalError(
+      "CaseCompareFn: condition tests its labels by membership");
 }
 
 // Turns pre-lowered item bodies into the statement that selects among them.
@@ -249,9 +252,17 @@ auto LowerCaseStmt(
     }
     auto label_or = process.LowerExpr(hir_proc.exprs.Get(label), label_frame);
     if (!label_or) return std::unexpected(std::move(label_or.error()));
-    return label_block.exprs.Add(BuildMirBinaryExpr(
-        unit, label_block, CaseCompareOp(c.condition_kind), sel,
-        label_block.exprs.Add(*std::move(label_or)), bit_type));
+    const mir::ExprId label_id = label_block.exprs.Add(*std::move(label_or));
+    return label_block.exprs.Add(
+        mir::Expr{
+            .data =
+                mir::CallExpr{
+                    .callee =
+                        mir::Direct{
+                            .target = CaseCompareFn(c.condition_kind),
+                            .receiver = sel},
+                    .arguments = {label_id}},
+            .type = bit_type});
   };
 
   // An item is selected when any of its labels matches (LRM 12.5).

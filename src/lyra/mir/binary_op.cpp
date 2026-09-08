@@ -2,37 +2,38 @@
 
 #include <optional>
 
+#include "lyra/base/internal_error.hpp"
 #include "lyra/support/builtin_fn.hpp"
 
 namespace lyra::mir {
 
 auto BinaryOpAsBuiltinFn(BinaryOp op) -> std::optional<support::BuiltinFn> {
   switch (op) {
-    case BinaryOp::kPower:
-      return support::BuiltinFn::kPow;
     case BinaryOp::kShiftLeft:
       return support::BuiltinFn::kShiftLeft;
     case BinaryOp::kLogicalShiftRight:
       return support::BuiltinFn::kLogicalShiftRight;
     case BinaryOp::kArithmeticShiftRight:
       return support::BuiltinFn::kArithmeticShiftRight;
-    case BinaryOp::kBitwiseXnor:
-      return support::BuiltinFn::kBitwiseXnor;
-    case BinaryOp::kLogicalImplication:
-      return support::BuiltinFn::kLogicalImplication;
-    case BinaryOp::kLogicalEquivalence:
-      return support::BuiltinFn::kLogicalEquivalence;
-    case BinaryOp::kWildcardEquality:
-      return support::BuiltinFn::kWildcardEquals;
-    case BinaryOp::kCaseEquality:
-      return support::BuiltinFn::kCaseEqual;
-    case BinaryOp::kCasezEquality:
-      return support::BuiltinFn::kCasezEquals;
-    case BinaryOp::kCasexEquality:
-      return support::BuiltinFn::kCasexEquals;
-    default:
+    case BinaryOp::kAdd:
+    case BinaryOp::kSub:
+    case BinaryOp::kMul:
+    case BinaryOp::kDiv:
+    case BinaryOp::kMod:
+    case BinaryOp::kBitwiseAnd:
+    case BinaryOp::kBitwiseOr:
+    case BinaryOp::kBitwiseXor:
+    case BinaryOp::kEquality:
+    case BinaryOp::kInequality:
+    case BinaryOp::kGreaterEqual:
+    case BinaryOp::kGreaterThan:
+    case BinaryOp::kLessEqual:
+    case BinaryOp::kLessThan:
+    case BinaryOp::kLogicalAnd:
+    case BinaryOp::kLogicalOr:
       return std::nullopt;
   }
+  throw InternalError("BinaryOpAsBuiltinFn: unknown MIR BinaryOp");
 }
 
 }  // namespace lyra::mir
