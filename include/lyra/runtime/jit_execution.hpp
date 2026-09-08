@@ -139,8 +139,8 @@ auto lyra_rt_enter_coroutine_owned_environment(void* closure) -> void*;
 // so it executes in the caller's process (LRM 9.5) rather than as one of its
 // own, and answers whether the caller must park -- which a task that consumed
 // no time makes unnecessary. `release_coroutine` takes the thread back, ends
-// that activation, and raises into the caller any fault the call settled with,
-// since the call is one statement of the calling thread.
+// that activation, and raises into the caller a run-time error the call was
+// left by, since the call is one statement of the calling thread.
 //
 // Neither names the activation once it is handed over: a thread is inside one
 // called activation at a time, so the runtime knows which without being told,
@@ -336,13 +336,14 @@ auto lyra_rt_stime(void* runtime, const void* unit_power) -> void*;
 auto lyra_rt_realtime(void* runtime, const void* unit_power) -> void*;
 
 // Records a request to tear the simulation down once the current time slot
-// completes (LRM 20.2); the fatal form (LRM 20.10) additionally makes the run
-// report a non-zero exit code. Each arranges no resumption at all, so each
-// parks, and the recorded request is what keeps the process from ever being
-// dispatched again. The level crosses as an opaque packed value, like every
-// scalar.
-auto lyra_rt_finish(void* runtime, const void* level) -> bool;
-auto lyra_rt_fatal_finish(void* runtime, const void* level) -> bool;
+// completes, and prints what the level selects about it (LRM 20.2, Table 20-1).
+// Each arranges no resumption at all, so each parks, and the recorded request
+// is what keeps the process from ever being dispatched again. The origin
+// crosses as an opaque string value and the level as an opaque packed value,
+// like every scalar.
+auto lyra_rt_finish(void* runtime, const void* origin, const void* level)
+    -> bool;
+auto lyra_rt_stop(void* runtime, const void* origin, const void* level) -> bool;
 
 // Runs a command line through the host's command processor and yields what it
 // answered; the null form runs nothing and yields whether a command processor

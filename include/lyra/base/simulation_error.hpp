@@ -13,8 +13,10 @@ namespace lyra {
 // separates it from an invariant violation, whose reader can only report a
 // compiler bug.
 //
-// It escapes the process that raised it and unwinds to the host boundary,
-// which reports it and ends the simulation with a failing status.
+// Raising one leaves the body it was raised in, because there is no value the
+// evaluation could have carried on with. What it settles is the run: the
+// activation's landing reports it at the severity the tool chose for the
+// condition and ends the simulation the way `$fatal` does (LRM 20.10).
 class SimulationError final : public std::runtime_error {
  public:
   explicit SimulationError(std::string message);

@@ -3,15 +3,18 @@
 #include <algorithm>
 #include <cstddef>
 #include <cstdint>
+#include <ctime>
+#include <format>
 #include <iostream>
 #include <memory>
 #include <string>
 #include <string_view>
 #include <utility>
+#include <variant>
 #include <vector>
 
 #include "lyra/base/internal_error.hpp"
-#include "lyra/base/simulation_error.hpp"
+#include "lyra/base/overloaded.hpp"
 #include "lyra/base/time.hpp"
 #include "lyra/runtime/design.hpp"
 #include "lyra/runtime/process_kind.hpp"
@@ -21,6 +24,17 @@
 #include "lyra/runtime/stream_dispatcher.hpp"
 
 namespace lyra::runtime {
+
+namespace {
+
+// What the run has cost the processor so far, which is the statistic LRM 20.2
+// Table 20-1's most verbose level asks a tool to report.
+auto ProcessorSeconds() -> double {
+  return static_cast<double>(std::clock()) /
+         static_cast<double>(CLOCKS_PER_SEC);
+}
+
+}  // namespace
 
 auto DefaultRuntimeOptions() -> RuntimeOptions {
   return RuntimeOptions{
@@ -36,6 +50,7 @@ Runtime::Runtime(RuntimeOptions options)
     : stream_(std::move(options.stream_sink)),
       diagnostic_(std::move(options.diagnostic_sink)),
       plusargs_(std::move(options.plusargs)) {
+  diagnostic_.SetContextSource([this] { return ReportContext(); });
 }
 
 Runtime::~Runtime() = default;
@@ -48,13 +63,10 @@ void Runtime::BindDesign(std::unique_ptr<Design> design) {
   design_ = std::move(design);
   // The whole tree already exists: the generated `$root` constructor built
   // the top-level units as its owned children, and each child built its
-  // own subtree. Each phase is one top-down walk from the root that
-  // recurses through the owned-children relation, so the design-wide
-  // barrier holds -- every scope resolves before any initializes, and
-  // every scope initializes before any activates.
+  // own subtree. Resolving is one top-down walk from the root that recurses
+  // through the owned-children relation, so the design-wide barrier holds --
+  // every scope resolves before any initializes.
   WalkResolve(design_->Root());
-  WalkInitialize(design_->Root());
-  WalkActivate(design_->Root());
 }
 
 void Runtime::WalkResolve(Scope& scope) {
@@ -75,28 +87,109 @@ void Runtime::WalkActivate(Scope& scope) {
 auto Runtime::Run() -> int {
   EnsureReadyToRun();
   ResolveGlobalTimePrecision();
-  RegisterProcesses();
-
-  // LRM 4.4: slots run in time order and the simulator never goes backwards,
-  // so the earliest pending slot is always the next one.
-  while (!finished_) {
-    auto slot = slots_.begin();
-    if (slot == slots_.end()) {
-      break;
-    }
-    now_ = slot->first;
-    ExecuteTimeSlot(slot->second);
-    if (finished_) {
-      break;
-    }
-    slots_.erase(slot);
-  }
-
-  ExecuteFinalProcesses();
-
+  RunSimulation();
+  // Owed because the run is over, whichever way it ended: LRM 16.3 asks a tool
+  // with no assertion API to report immediate cover results at the end of
+  // simulation, and a record the design left open is written out rather than
+  // dropped.
   ReportCoverage();
   stream_.Drain();
-  return fatal_finish_ ? 1 : 0;
+  return diagnostic_.ReportedFatal() || tool_failed_ ? 1 : 0;
+}
+
+void Runtime::RunSimulation() {
+  try {
+    // LRM 4: every scope initializes before any activates, so a time-zero
+    // initializer reads sealed endpoints and no process runs before all of
+    // them have.
+    WalkInitialize(design_->Root());
+    WalkActivate(design_->Root());
+    RegisterProcesses();
+
+    // LRM 4.4: slots run in time order and the simulator never goes backwards,
+    // so the earliest pending slot is always the next one.
+    while (std::holds_alternative<Running>(state_)) {
+      auto slot = slots_.begin();
+      if (slot == slots_.end()) {
+        break;
+      }
+      now_ = slot->first;
+      ExecuteTimeSlot(slot->second);
+      if (!std::holds_alternative<Running>(state_)) {
+        break;
+      }
+      slots_.erase(slot);
+    }
+
+    // LRM 9.2.3: a final procedure occurs at the end of simulation time, which
+    // a run reaches by exhausting its work as much as by being asked to end. A
+    // tool that cannot carry the run on has no such end to offer, and running
+    // the design's procedures over a state already known to be wrong is not
+    // one.
+    const bool ends_the_simulation = std::visit(
+        Overloaded{
+            [](const Running&) { return true; },
+            [](const SimulationEnded&) { return true; },
+            [](const ToolStopped&) { return false; }},
+        state_);
+    if (ends_the_simulation) {
+      ExecuteFinalProcesses();
+    }
+  } catch (const std::exception&) {
+    // A control effect is not derived from this hierarchy (LRM 9.6.2), so one
+    // reaching here left its owner: that is a defect of the tool, and it
+    // surfaces rather than being reported as something the design did.
+    ReportRaisedError(*this, std::current_exception());
+  }
+}
+
+void Runtime::RequestSimulationEnd() {
+  ++end_requests_;
+  state_ = SimulationEnded{};
+}
+
+void Runtime::RequestToolStop() {
+  ++end_requests_;
+  state_ = ToolStopped{};
+}
+
+void Runtime::ReportDesignError(std::string_view message) {
+  diagnostic_.Report(Severity::kFatal, message);
+  RequestSimulationEnd();
+}
+
+void Runtime::ReportToolFailure(std::string_view message) {
+  tool_failed_ = true;
+  diagnostic_.Note(std::format("lyra: {}", message));
+  RequestToolStop();
+}
+
+void Runtime::ReportSimulationControl(
+    std::string_view task, std::string_view origin, int level) {
+  if (level <= 0) {
+    return;
+  }
+  std::string line;
+  if (!origin.empty()) {
+    line += origin;
+    line += ": ";
+  }
+  line += std::format("{} at time {}", task, now_);
+  if (level >= 2) {
+    line += std::format(", {:.3f}s of processor time", ProcessorSeconds());
+  }
+  diagnostic_.Note(line);
+}
+
+auto Runtime::ReportContext() const -> std::string {
+  const Scope* scope =
+      current_process_ == nullptr ? nullptr : current_process_->OwningScope();
+  if (scope == nullptr) {
+    return std::format("time {}", now_);
+  }
+  return std::format(
+      "{} at time {}", std::string_view{scope->HierarchicalPath().View()},
+      now_);
 }
 
 void Runtime::ReportCoverage() {
@@ -176,15 +269,16 @@ void Runtime::ExecuteTimeSlot(TimeSlot& slot) {
   while (std::optional<Region> region =
              slot.FirstPending(Region::kActive, Region::kReNba)) {
     if (++passes > kMaxRegionPassesPerSlot) {
-      throw SimulationError(
+      ReportDesignError(
           "the current time slot did not settle: the design keeps "
           "scheduling work without advancing time");
+      return;
     }
     RunRegion(slot, *region);
   }
   RunRegion(slot, Region::kPostponed);
-  if (!finished_ && !slot.Empty()) {
-    throw SimulationError(
+  if (std::holds_alternative<Running>(state_) && !slot.Empty()) {
+    ReportDesignError(
         "the postponed region scheduled work back into the time slot that "
         "ends with it (LRM 4.4.2.9)");
   }
@@ -209,6 +303,7 @@ void Runtime::RunRegion(TimeSlot& slot, Region region) {
 }
 
 void Runtime::ExecuteFinalProcesses() {
+  const std::uint64_t requests_before = end_requests_;
   while (Registration* queued = finals_.PopFront()) {
     CoroutineHandle handle = queued->activation;
     handle->RevokeRegistrations();
@@ -220,16 +315,17 @@ void Runtime::ExecuteFinalProcesses() {
     if (completed) {
       continue;
     }
-    // Suspended: only legal if `$finish` was called (sets `finished_`).
-    // LRM 9.2.3 says any `$finish` in a final ends simulation immediately --
-    // subsequent queued finals shall not run. Any other suspension is a
-    // time-controlling statement, which is forbidden in `final` blocks.
-    if (finished_) {
+    // LRM 9.2.3: a `$finish` reached inside a final procedure ends the
+    // simulation immediately, so the ones still queued do not run. Nothing else
+    // can suspend one, because the statements a final procedure may contain are
+    // those a function may, so a suspension without a further request is a
+    // lowering that admitted one it cannot.
+    if (end_requests_ != requests_before) {
       break;
     }
-    throw SimulationError(
-        "a final block suspended: time-controlling statements are not allowed "
-        "inside `final` (LRM 9.2.3)");
+    throw InternalError(
+        "Runtime::ExecuteFinalProcesses: a final procedure suspended, which "
+        "the statements it may contain cannot do (LRM 9.2.3)");
   }
   finals_.Clear();
 }
@@ -245,10 +341,10 @@ auto Runtime::ResumeProcess(
 }
 
 void Runtime::RunProcess(CoroutineHandle handle) {
-  // Where a `$finish` stops the design: no process resumes after it. Deferred
+  // Where an ending stops the design: no process resumes after one. Deferred
   // effects the slot already holds still run, and a `final` body reaches its
   // statements through its own path.
-  if (finished_) {
+  if (!std::holds_alternative<Running>(state_)) {
     return;
   }
   // No wait dispatch: each awaitable has already arranged its own wakeup path

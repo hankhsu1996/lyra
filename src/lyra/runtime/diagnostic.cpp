@@ -43,54 +43,58 @@ DiagnosticDispatcher::DiagnosticDispatcher(
     : sink_(std::move(sink)), rate_limit_(rate_limit) {
 }
 
+void DiagnosticDispatcher::SetContextSource(ContextSource context) {
+  context_ = std::move(context);
+}
+
 void DiagnosticDispatcher::EmitInfo(
     const lyra::value::String& origin, const lyra::value::String& text) {
-  Emit(
-      DiagnosticRecord{
-          .severity = Severity::kInfo,
-          .origin = std::string{origin.View()},
-          .body = std::string{text.View()}});
+  Emit(Severity::kInfo, origin.View(), text.View());
 }
 
 void DiagnosticDispatcher::EmitWarning(
     const lyra::value::String& origin, const lyra::value::String& text) {
-  Emit(
-      DiagnosticRecord{
-          .severity = Severity::kWarning,
-          .origin = std::string{origin.View()},
-          .body = std::string{text.View()}});
+  Emit(Severity::kWarning, origin.View(), text.View());
 }
 
 void DiagnosticDispatcher::EmitError(
     const lyra::value::String& origin, const lyra::value::String& text) {
-  Emit(
-      DiagnosticRecord{
-          .severity = Severity::kError,
-          .origin = std::string{origin.View()},
-          .body = std::string{text.View()}});
+  Emit(Severity::kError, origin.View(), text.View());
 }
 
 void DiagnosticDispatcher::EmitFatal(
     const lyra::value::String& origin, const lyra::value::String& text) {
-  Emit(
-      DiagnosticRecord{
-          .severity = Severity::kFatal,
-          .origin = std::string{origin.View()},
-          .body = std::string{text.View()}});
+  Emit(Severity::kFatal, origin.View(), text.View());
 }
 
-void DiagnosticDispatcher::Emit(DiagnosticRecord record) {
+void DiagnosticDispatcher::Report(Severity severity, std::string_view body) {
+  Emit(severity, {}, body);
+}
+
+void DiagnosticDispatcher::Note(std::string_view text) {
+  sink_(std::format("{}\n", text));
+}
+
+auto DiagnosticDispatcher::ReportedFatal() const -> bool {
+  return reported_fatal_;
+}
+
+void DiagnosticDispatcher::Emit(
+    Severity severity, std::string_view origin, std::string_view body) {
+  if (severity == Severity::kFatal) {
+    reported_fatal_ = true;
+  }
   if (rate_limit_ > 0) {
-    const CountKey key{.origin = record.origin, .severity = record.severity};
+    const CountKey key{.origin = std::string{origin}, .severity = severity};
     auto& count = emit_counts_[key];
     if (count >= rate_limit_) {
       if (count == rate_limit_) {
         ++count;
-        const std::string note = std::format(
-            "lyra: {}: further messages from this site suppressed after {} "
-            "occurrences\n",
-            SeverityText(record.severity), rate_limit_);
-        sink_(note);
+        sink_(
+            std::format(
+                "lyra: {}: further messages from this site suppressed after {} "
+                "occurrences\n",
+                SeverityText(severity), rate_limit_));
       } else {
         ++count;
       }
@@ -100,13 +104,19 @@ void DiagnosticDispatcher::Emit(DiagnosticRecord record) {
   }
 
   std::string line;
-  if (!record.origin.empty()) {
-    line += record.origin;
+  if (!origin.empty()) {
+    line += origin;
     line += ": ";
   }
-  line += SeverityText(record.severity);
+  line += SeverityText(severity);
   line += ": ";
-  line += record.body;
+  line += body;
+  const std::string context = context_ ? context_() : std::string{};
+  if (!context.empty()) {
+    line += " (";
+    line += context;
+    line += ")";
+  }
   line += "\n";
   sink_(line);
 }

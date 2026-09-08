@@ -589,7 +589,7 @@ auto EntryNamingOf(support::BuiltinFn fn) -> EntryNaming {
     case support::BuiltinFn::kDistT:
     case support::BuiltinFn::kDistErlang:
     case support::BuiltinFn::kFinish:
-    case support::BuiltinFn::kFatalFinish:
+    case support::BuiltinFn::kStop:
     case support::BuiltinFn::kResolveRoot:
     case support::BuiltinFn::kResolveVisibleChild:
     case support::BuiltinFn::kRegisterSignal:

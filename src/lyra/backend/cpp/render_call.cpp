@@ -327,8 +327,8 @@ auto BuiltinFnCppName(support::BuiltinFn id) -> std::string_view {
       return "DistErlang";
     case support::BuiltinFn::kFinish:
       return "Finish";
-    case support::BuiltinFn::kFatalFinish:
-      return "FatalFinish";
+    case support::BuiltinFn::kStop:
+      return "Stop";
     case support::BuiltinFn::kResolveRoot:
       return "ResolveRoot";
     case support::BuiltinFn::kResolveVisibleChild:
@@ -550,7 +550,7 @@ auto BuiltinFnCppNamespace(support::BuiltinFn id) -> std::string_view {
     case support::BuiltinFn::kDistT:
     case support::BuiltinFn::kDistErlang:
     case support::BuiltinFn::kFinish:
-    case support::BuiltinFn::kFatalFinish:
+    case support::BuiltinFn::kStop:
     case support::BuiltinFn::kForkWaitAll:
     case support::BuiltinFn::kForkWaitFirst:
     case support::BuiltinFn::kSpawnAll:

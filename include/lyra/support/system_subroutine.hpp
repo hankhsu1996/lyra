@@ -73,11 +73,14 @@ struct PrintSystemSubroutineInfo {
 };
 
 // LRM 20.2 simulation control tasks ($finish, $stop, $exit). All three end a
-// non-interactive run through the same runtime request; `default_level` is the
-// diagnostic-message selector (0, 1, or 2, Table 20-1) a call takes when it
-// names none.
+// run nothing can resume, and what the tool prints is the whole of what tells
+// them apart, so each names the entry that prints for it. `default_level` is
+// the diagnostic-message selector (0, 1, or 2, Table 20-1) a call takes when it
+// names none. `$exit` makes an implicit call to `$finish` (LRM 24.7), so it
+// names that entry rather than one of its own.
 struct TerminationSystemSubroutineInfo {
   int default_level;
+  BuiltinFn builtin_fn;
 };
 
 // LRM 20.10 severity-fixed diagnostic tasks. The MIR-side identity is the
@@ -484,7 +487,9 @@ inline constexpr std::array kSystemSubroutines = {
         .kind = SystemSubroutineKind::kTask,
         .result_conv = ReturnConvention::kVoid,
         .arg_policy = ArgCountPolicy{.min_args = 0, .max_args = 1},
-        .semantic = TerminationSystemSubroutineInfo{.default_level = 1},
+        .semantic =
+            TerminationSystemSubroutineInfo{
+                .default_level = 1, .builtin_fn = BuiltinFn::kFinish},
         .suspends = true,
     },
     SystemSubroutineDesc{
@@ -1086,7 +1091,9 @@ inline constexpr std::array kSystemSubroutines = {
         .kind = SystemSubroutineKind::kTask,
         .result_conv = ReturnConvention::kVoid,
         .arg_policy = ArgCountPolicy{.min_args = 0, .max_args = 1},
-        .semantic = TerminationSystemSubroutineInfo{.default_level = 1},
+        .semantic =
+            TerminationSystemSubroutineInfo{
+                .default_level = 1, .builtin_fn = BuiltinFn::kStop},
         .suspends = true,
     },
     SystemSubroutineDesc{
@@ -1095,7 +1102,9 @@ inline constexpr std::array kSystemSubroutines = {
         .kind = SystemSubroutineKind::kTask,
         .result_conv = ReturnConvention::kVoid,
         .arg_policy = ArgCountPolicy{.min_args = 0, .max_args = 0},
-        .semantic = TerminationSystemSubroutineInfo{.default_level = 1},
+        .semantic =
+            TerminationSystemSubroutineInfo{
+                .default_level = 1, .builtin_fn = BuiltinFn::kFinish},
         .suspends = true,
     },
 };

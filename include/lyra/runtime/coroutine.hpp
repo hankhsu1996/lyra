@@ -126,32 +126,35 @@ struct PromiseBase {
   }
 };
 
-// The activation was left by a control effect no region claimed (LRM 9.6.2 /
-// 9.7). A separate alternative from a fault because it is not one: what the
-// landing does with it differs, even though both are carried the same way and a
-// frame that is not the landing re-raises either.
+// The activation was left by a control effect no region claimed, which its
+// landing reports as a forced termination (LRM 9.6.2, 9.7).
 struct Cancelled {
   std::exception_ptr effect;
 };
 
-// The single typed terminal outcome an activation settles: a produced value, a
-// cancellation, or a fault. Kept off `PromiseBase` so the scheduler never sees
-// `T` or the outcome. The slot stores the outcome and
-// hands it to the activation's one consumer; whether it is re-raised in place
-// or extracted first and re-raised after the frame is torn down is the
-// consumer's decision, not the slot's. The alternatives are mutually exclusive
-// -- a frame runs `return_value` / `return_void` xor `unhandled_exception` --
-// and the initial monostate is the not-yet-settled state, which is also where
-// an activation cancelled while parked ends: it is released without resuming,
-// so nothing ever settles here.
+// The activation was left by a run-time error -- the design's (LRM 20.10) or
+// the tool's own -- which its landing reports and ends the run on.
+struct Raised {
+  std::exception_ptr error;
+};
+
+// The single typed terminal outcome an activation settles: the value it
+// produced, or the departure that reached its landing in one of the two forms
+// above. Kept off `PromiseBase` so the scheduler never sees `T` or the outcome.
+// The slot stores the outcome and hands it to the activation's one consumer;
+// whether it is re-raised in place or extracted first and re-raised after the
+// frame is torn down is the consumer's decision, not the slot's. The
+// alternatives are mutually exclusive -- a frame runs `return_value` /
+// `return_void` xor `unhandled_exception` -- and the initial monostate is the
+// not-yet-settled state, which is also where an activation cancelled while
+// parked ends: it is released without resuming, so nothing ever settles here.
 //
-// Cancellation and a fault both arrive by unwinding, which is how a body this
-// slot is the promise of is left. Which of the two it was is settled
-// where the effect is raised, while its type can still be read, and reaches
-// this slot already answered -- rather than being re-derived later by raising
-// it again to ask, or carried beside the slot in a flag nothing checks against
-// it. Both alternatives hold the same `exception_ptr`; the one it sits in is
-// what says which it is.
+// Both departures arrive by unwinding, which is how a body this slot is the
+// promise of is left. Which of the two it was is settled where the effect is
+// raised, while its type can still be read, and reaches this slot already
+// answered -- rather than being re-derived later by raising it again to ask, or
+// carried beside the slot in a flag nothing checks against it. Both hold the
+// same `exception_ptr`; the one it sits in is what says which it is.
 template <class T>
 class CompletionSlot {
  public:
@@ -164,16 +167,16 @@ class CompletionSlot {
       outcome_.template emplace<Cancelled>(std::move(unwound.raised));
       return;
     }
-    outcome_.template emplace<std::exception_ptr>(std::move(unwound.raised));
+    outcome_.template emplace<Raised>(std::move(unwound.raised));
   }
-  // An awaiting frame is not the activation's landing: a cancellation and a
-  // fault both carry on past it, which is why both are raised here.
+  // An awaiting frame is not the activation's landing: both departures carry on
+  // past it, which is why both are raised here.
   auto Take() -> T {
     if (const auto* cancelled = std::get_if<Cancelled>(&outcome_)) {
       std::rethrow_exception(cancelled->effect);
     }
-    if (auto* exc = std::get_if<std::exception_ptr>(&outcome_)) {
-      std::rethrow_exception(*exc);
+    if (const auto* raised = std::get_if<Raised>(&outcome_)) {
+      std::rethrow_exception(raised->error);
     }
     return std::move(std::get<Value>(outcome_).held);
   }
@@ -182,7 +185,7 @@ class CompletionSlot {
   struct Value {
     T held;
   };
-  std::variant<std::monostate, Value, Cancelled, std::exception_ptr> outcome_;
+  std::variant<std::monostate, Value, Cancelled, Raised> outcome_;
 };
 
 template <>
@@ -197,37 +200,36 @@ class CompletionSlot<void> {
       outcome_.emplace<Cancelled>(std::move(unwound.raised));
       return;
     }
-    outcome_.emplace<std::exception_ptr>(std::move(unwound.raised));
+    outcome_.emplace<Raised>(std::move(unwound.raised));
   }
   // Whether the body was left by a control effect no region claimed, which its
   // landing reports as a forced termination rather than as an end of body.
   [[nodiscard]] auto WasCancelled() const -> bool {
     return std::holds_alternative<Cancelled>(outcome_);
   }
-  // Hands the fault out without raising it (null unless the activation
-  // faulted), so a consumer that must run its own teardown first can settle and
-  // re-raise afterward.
-  auto TakeFault() -> std::exception_ptr {
-    if (auto* exc = std::get_if<std::exception_ptr>(&outcome_)) {
-      return std::move(*exc);
+  // Hands a raised error out without raising it (null unless one left the
+  // body), so a consumer that must run its own teardown first can settle and
+  // report afterward.
+  auto TakeRaisedError() -> std::exception_ptr {
+    if (auto* raised = std::get_if<Raised>(&outcome_)) {
+      return std::move(raised->error);
     }
     return nullptr;
   }
-  // An awaiting frame is not the activation's landing: a cancellation and a
-  // fault both carry on past it, which is why both are raised here.
+  // An awaiting frame is not the activation's landing: both departures carry on
+  // past it, which is why both are raised here.
   void Take() {
     if (const auto* cancelled = std::get_if<Cancelled>(&outcome_)) {
       std::rethrow_exception(cancelled->effect);
     }
-    if (auto fault = TakeFault()) {
-      std::rethrow_exception(fault);
+    if (auto raised = TakeRaisedError()) {
+      std::rethrow_exception(raised);
     }
   }
 
  private:
   struct Succeeded {};
-  std::variant<std::monostate, Succeeded, Cancelled, std::exception_ptr>
-      outcome_;
+  std::variant<std::monostate, Succeeded, Cancelled, Raised> outcome_;
 };
 
 // A suspendable activation that completes with a value of `T` -- a task body,

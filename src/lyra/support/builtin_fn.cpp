@@ -420,8 +420,8 @@ auto BuiltinFnName(BuiltinFn id) -> std::string_view {
       return "dist_erlang";
     case BuiltinFn::kFinish:
       return "finish";
-    case BuiltinFn::kFatalFinish:
-      return "fatal_finish";
+    case BuiltinFn::kStop:
+      return "stop";
     case BuiltinFn::kResolveRoot:
       return "resolve_root";
     case BuiltinFn::kResolveVisibleChild:

@@ -19,7 +19,6 @@
 #include "lyra/lowering/hir_to_mir/walk_frame.hpp"
 #include "lyra/mir/compilation_unit.hpp"
 #include "lyra/mir/expr.hpp"
-#include "lyra/support/builtin_fn.hpp"
 #include "lyra/support/system_subroutine.hpp"
 
 namespace lyra::lowering::hir_to_mir {
@@ -39,46 +38,55 @@ auto TryExtractLiteralInt(const hir::Expr& expr)
 
 }  // namespace
 
+auto LowerDiagnosticLevel(
+    const hir::Expr& level, std::string_view argument, diag::SourceSpan span)
+    -> diag::Result<int> {
+  const auto literal = TryExtractLiteralInt(level);
+  if (!literal.has_value()) {
+    return diag::Fail(
+        span, diag::DiagCode::kUnsupportedExpressionForm,
+        std::format("{} must be an integer literal", argument));
+  }
+  if (*literal != 0 && *literal != 1 && *literal != 2) {
+    return diag::Fail(
+        span, diag::DiagCode::kUnsupportedExpressionForm,
+        std::format("{} must be 0, 1, or 2", argument));
+  }
+  return static_cast<int>(*literal);
+}
+
 auto LowerTerminationSystemSubroutineCall(
     const ProcessLowerer& process, const WalkFrame& frame,
     const hir::CallExpr& call, std::string_view name,
     const support::TerminationSystemSubroutineInfo& info, diag::SourceSpan span)
     -> diag::Result<mir::Expr> {
-  const auto& hir_proc = process.HirBody();
   int level = info.default_level;
   if (!call.arguments.empty()) {
     if (!call.arguments.front().has_value()) {
       throw InternalError(
           std::format("{} argument unexpectedly elided", std::string{name}));
     }
-    const hir::ExprId arg_id = *call.arguments.front();
-    const hir::Expr& arg_expr = hir_proc.exprs.Get(arg_id);
-    const auto literal = TryExtractLiteralInt(arg_expr);
-    if (!literal.has_value()) {
-      return diag::Fail(
-          span, diag::DiagCode::kUnsupportedExpressionForm,
-          std::format(
-              "{} argument must be an integer literal", std::string{name}));
-    }
-    if (*literal != 0 && *literal != 1 && *literal != 2) {
-      return diag::Fail(
-          span, diag::DiagCode::kUnsupportedExpressionForm,
-          std::format("{} argument must be 0, 1, or 2", std::string{name}));
-    }
-    level = static_cast<int>(*literal);
+    auto level_or = LowerDiagnosticLevel(
+        process.HirBody().exprs.Get(*call.arguments.front()),
+        std::format("{} argument", name), span);
+    if (!level_or) return std::unexpected(std::move(level_or.error()));
+    level = *level_or;
   }
-  const auto& builtins = process.Owner().Unit().builtins;
-  const mir::ExprId runtime_id = frame.current_block->exprs.Add(
-      BuildCurrentRuntimeCallExpr(process.Owner()));
-  const mir::ExprId level_id = BuildIntLiteral(
-      process.Owner().Unit(), *frame.current_block,
-      static_cast<std::int64_t>(level));
+  const auto& unit = process.Owner().Unit();
+  auto& block = *frame.current_block;
+  const mir::ExprId runtime_id =
+      block.exprs.Add(BuildCurrentRuntimeCallExpr(process.Owner()));
+  const mir::ExprId origin_id = BuildStringValueExpr(
+      unit, block,
+      FormatRuntimeOriginString(span, process.Owner().SourceManager()));
+  const mir::ExprId level_id =
+      BuildIntLiteral(unit, block, static_cast<std::int64_t>(level));
   return mir::Expr{
       .data =
           mir::CallExpr{
-              .callee = mir::Direct{.target = support::BuiltinFn::kFinish},
-              .arguments = {runtime_id, level_id}},
-      .type = builtins.void_type};
+              .callee = mir::Direct{.target = info.builtin_fn},
+              .arguments = {runtime_id, origin_id, level_id}},
+      .type = unit.builtins.void_type};
 }
 
 }  // namespace lyra::lowering::hir_to_mir

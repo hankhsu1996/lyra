@@ -6,8 +6,8 @@ The numeric IDs (P1..P16, T1..T7) are stable references and do **not** imply exe
 
 ## Actionable
 
-Every numbered item is closed but P12, P14 and P15. What stays open otherwise is the forms recorded
-as rejected under each item, and the conformance gaps at the end.
+Every numbered item is closed but P12. What stays open otherwise is the forms recorded as rejected
+under each item, and the conformance gaps at the end.
 
 ## Blocked
 
@@ -21,20 +21,26 @@ as rejected under each item, and the conformance gaps at the end.
 
 - [x] P1 -- `initial` (LRM 9.2.1). Runs once at time 0; finishes when the body completes. Coverage
       rides on every other test in the corpus.
-- [x] P2 -- `final` (LRM 9.2.3). Drained at end of simulation. `$finish` inside `final` ends
-      simulation immediately. Time-controlling statements inside `final` are rejected at the runtime
-      boundary because they would suspend a coroutine the engine cannot resume.
-- [ ] P14 -- `$finish` / `$stop` verbosity level (LRM 20.2). The level argument (0 / 1 / 2) is
-      parsed and validated at lowering, but the engine terminates regardless of its value; the
-      level-gated end-of-simulation reporting (nothing / time / time plus statistics) is not
-      implemented.
-- [ ] P15 -- A run-time error Lyra itself raises ends the simulation without running `final`. LRM
-      20.10 makes `$fatal` call `$finish` implicitly, and 9.2.3 makes `final` run on an implicit
-      `$finish` as much as an explicit one, so the two ways a run can end fatally have to walk the
-      same shutdown. Today one of them reaches the tool's top level without the engine seeing it,
-      and a design carrying a `final` block can tell which happened. Settled in
-      `decisions/run-time-failure-is-not-an-outcome.md`; also open per condition is which severity
-      (LRM 20.10 has one that does not end the run) each LRM run-time error should take.
+- [x] P2 -- `final` (LRM 9.2.3). A final procedure occurs at the end of simulation time, which a run
+      reaches by being asked to end and equally by running out of work. A further request to end,
+      made from inside one, ends the simulation immediately, so the ones still queued do not run.
+      What a final procedure may contain is what a function may, so none can consume time.
+- [x] P14 -- `$finish` / `$stop` / `$exit` diagnostic level (LRM 20.2, Table 20-1). The argument
+      selects what the tool prints where the task is reached -- nothing, the call's location with
+      the simulation time, or those plus what the run has cost -- and defaults to 1. The message is
+      also the whole of what tells `$stop` from `$finish` in a run nothing can resume, since neither
+      the ending nor the exit status differs.
+  - [ ] The most verbose level reports the processor time the run has cost and not the memory, which
+        the clause names alongside it. Nothing standard answers for memory, so a figure needs a
+        per-platform query in the library an emitted program links.
+- [x] P15 -- A run-time error Lyra raises for the design ends the simulation the way `$fatal` does.
+      It is reported at the severity chosen for that condition, naming the scope it was raised in
+      and the simulation time, and the run then walks the ending every other ending walks -- so
+      final procedures run, immediate cover results are reported, and buffered output is flushed.
+      Time-zero initialization is inside the simulation, so an error in a variable initializer is
+      one of these rather than something that escapes past the host boundary. Which severity each
+      LRM run-time error takes stays open per condition; what is fixed is that a condition the
+      standard leaves unstated is fatal, and that a report which does not end the run can be made.
 - [x] P3 -- `always` / `always_ff` (LRM 9.2.2). `always_ff` collapses to the same shape as `always`
       because the LRM 9.2.2.4 restrictions are lint-only and the frontend already enforces them.
       Pathological zero-delay loops are caught by the engine's settle limit.

@@ -59,8 +59,8 @@ void RuntimeProcess::PopActivation() {
                       : nested_activations_.back().Token();
 }
 
-auto RuntimeProcess::TakeInnermostFailure() -> std::exception_ptr {
-  return nested_activations_.back().Handle().promise().TakeFault();
+auto RuntimeProcess::TakeInnermostRaisedError() -> std::exception_ptr {
+  return nested_activations_.back().Handle().promise().TakeRaisedError();
 }
 
 void RuntimeProcess::ArmWaitFork(CoroutineHandle waiter) {
@@ -309,27 +309,30 @@ auto RuntimeProcess::ResumeWith(
     return false;
   }
   // The body has settled and its completion slot says how. This frame is the
-  // activation's landing, so a control effect that reached it was claimed by no
+  // activation's landing, so a departure that reached it was claimed by no
   // region and ends the process here, reported KILLED (LRM 9.6.2, 9.7);
-  // anything else ran out its body, which LRM 9.7 reports FINISHED whether or
-  // not a fault ended it.
+  // anything else ran out its body, which LRM 9.7 reports FINISHED.
   //
   // The outcome is read before the frame is released, so a process reaches its
   // terminal state and frees its frame on the same path a successful one does.
-  // A fault is re-raised only afterwards: letting it leave first would skip the
-  // rest of this resumption -- the activations this termination just woke, the
-  // enclosing `wait fork` condition -- with no diagnostic, so the simulation
-  // would hang rather than report. A control effect is never re-raised at all;
-  // it has arrived where it was going.
+  // A raised error is reported only afterwards: acting on it first would skip
+  // the rest of this resumption -- the activations this termination just woke,
+  // the enclosing `wait fork` condition -- so the simulation would hang rather
+  // than end. A control effect needs no such report; it has arrived where it
+  // was going.
   auto& promise = coroutine_.Handle().promise();
   const bool cancelled = promise.WasCancelled();
-  std::exception_ptr fault = promise.TakeFault();
+  std::exception_ptr raised = promise.TakeRaisedError();
   SettleTerminated(
-      cancelled ? ProcessTerminationCause::kKilled
-                : ProcessTerminationCause::kCompleted,
+      (cancelled || raised) ? ProcessTerminationCause::kKilled
+                            : ProcessTerminationCause::kCompleted,
       woken);
-  if (fault) {
-    std::rethrow_exception(fault);
+  if (raised) {
+    // The report is about this process, so it is made under this process's
+    // identity even though its body has stopped: what a report says about where
+    // in the design it was made is the scope the raising body belonged to.
+    const ProcessExecutionGuard reporting(effects, *this);
+    ReportRaisedError(effects, raised);
   }
   return true;
 }
