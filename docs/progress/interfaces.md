@@ -147,13 +147,21 @@ B  The interface port
       23.2.2). The port is one published member whatever its multiplicity, which its type carries;
       the connection binds every instance it supplies at once, in the order the port's coordinates
       count them; and a name selecting an element spends the declared range where it is resolved, so
-      everything below reaches an element by position.
-- [ ] B8 -- A name continues past the port into what the interface itself owns: an interface may
+      everything below reaches an element by position. Forwarding such a port whole into a deeper
+      module's own ranged port is refused: what the name reaches there is the forwarding scope's
+      member, which stands for every instance at once rather than for one of them, and what a
+      connection binds is one instance per point.
+- [x] B8 -- A name continues past the port into what the interface itself owns: an interface may
       instantiate another interface (LRM 25.3), and a port bound to the outer one reaches the inner
-      instance's members and enables its subroutines through that port. What it reaches is the inner
-      instance belonging to whichever outer one the port was bound to, so the reach is the port's
-      and not a name on the elaborated hierarchy -- which is why it refuses today rather than
-      resolving to the instance one binding happens to name.
+      instance's members, enables its subroutines, and connects it to a deeper module's own
+      interface port. What it reaches is the inner instance belonging to whichever outer one the
+      port was bound to, so the reach is the port's and not a name on the elaborated hierarchy. An
+      inner declaration standing for several instances is selected by position like any other
+      interface array, and a process reading such a name re-triggers when it changes. The interface
+      publishes what it instantiates, so a name reaching one from the scope that owns the outer
+      instance resolves against that promise as well, rather than by a name answered while the
+      design elaborates. A name continuing through a generate block the interface declares is
+      refused: the block is a scope of the interface itself rather than an object it publishes.
 - [x] B9 -- Two instantiations of one module whose interface ports carry different interfaces
       compile to distinct units, at any multiplicity. What a port carries is settled by the
       connection (LRM 25.3), so a port declared with a range settles it exactly as one without a

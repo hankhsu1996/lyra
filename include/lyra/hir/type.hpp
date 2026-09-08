@@ -4,6 +4,7 @@
 #include <cstdint>
 #include <optional>
 #include <string>
+#include <string_view>
 #include <utility>
 #include <variant>
 #include <vector>
@@ -346,5 +347,68 @@ class Type {
 // object that fed it and belongs to one unit alone, so nothing in it may rest
 // on a table shared with another unit.
 using TypePool = base::Interner<Type, TypeId, Type::Hash>;
+
+// The unpacked nesting a type wraps around one element: every range it
+// declares, outermost first, and what sits under all of them (LRM 7.4.2). For
+// `logic [7:0] mem [4][2]` that is two ranges and a `logic [7:0]`. A type with
+// no unpacked dimension is the empty case of this rather than a case of its own
+// -- its element is itself.
+//
+// Multiplicity lives in the nesting and nowhere beside it, so a reader that
+// asks about the whole of it asks here. The nesting is a chain, so the question
+// is a walk; stating it once is what keeps the walk from being written again at
+// each reader that wants a different reading of the same chain.
+struct UnpackedShape {
+  TypeId element_type;
+  std::vector<UnpackedRange> dims;
+
+  // How many elements all the dimensions together hold. One where there are
+  // none, which is the same product over an empty list.
+  [[nodiscard]] auto ElementCount() const -> std::uint64_t {
+    std::uint64_t count = 1;
+    for (const UnpackedRange& dim : dims) {
+      count *= dim.ElementCount();
+    }
+    return count;
+  }
+};
+
+[[nodiscard]] inline auto UnpackedShapeOf(const TypePool& types, TypeId type)
+    -> UnpackedShape {
+  UnpackedShape shape{.element_type = type, .dims = {}};
+  while (const auto* array =
+             types.Get(shape.element_type).As<UnpackedArrayType>()) {
+    shape.dims.push_back(array->dim);
+    shape.element_type = array->element_type;
+  }
+  return shape;
+}
+
+// The same reading, for a declaration that stands for objects of another unit
+// rather than for values. An interface's `Inner bank[2]()` publishes a member
+// of type `array[2] of object{Inner}`, and this answers: an `Inner` at the
+// bottom, belonging to unit `Inner`, one coordinate to reach one of them, two
+// in all (LRM 23.2.2, 25.3). Nothing where the bottom is a value -- a
+// declaration no name descends through and no connection binds objects to.
+struct ObjectsBehindType {
+  TypeId element_type;
+  std::string_view unit_name;
+  std::size_t dimensions;
+  std::uint64_t count;
+};
+
+[[nodiscard]] inline auto ObjectsBehind(const TypePool& types, TypeId type)
+    -> std::optional<ObjectsBehindType> {
+  const UnpackedShape shape = UnpackedShapeOf(types, type);
+  const auto* object = types.Get(shape.element_type).As<UnitObjectType>();
+  if (object == nullptr) {
+    return std::nullopt;
+  }
+  return ObjectsBehindType{
+      .element_type = shape.element_type,
+      .unit_name = object->unit_name,
+      .dimensions = shape.dims.size(),
+      .count = shape.ElementCount()};
+}
 
 }  // namespace lyra::hir

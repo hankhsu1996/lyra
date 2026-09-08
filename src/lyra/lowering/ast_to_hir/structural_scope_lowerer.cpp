@@ -705,10 +705,17 @@ auto StructuralScopeLowerer::PopulateInstanceArrayMember(
   if (!shape) {
     return {};
   }
+  // The member holds one object per element, so what it is built from is how
+  // many each dimension has; which element a name reaches is a position.
+  std::vector<std::uint32_t> counts;
+  counts.reserve(shape->ranges.size());
+  for (const slang::ConstantRange& dim : shape->ranges) {
+    counts.push_back(dim.width());
+  }
   frame.current_structural_scope->instance_members.Define(
       ReservedInstanceMember(*owner_, array),
       BuildInstanceMember(
-          *owner_, array.name, *shape->leaf, std::move(shape->dims)));
+          *owner_, array.name, *shape->leaf, std::move(counts)));
   return {};
 }
 

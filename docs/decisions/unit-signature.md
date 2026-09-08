@@ -260,7 +260,9 @@ published cannot move one that it did.
   and consumer derive the signature independently, so its members are identified by name, which both
   derive from the same source.
 - A referrer's artifact naming a unit's internal declaration -- a member the unit did not publish,
-  an internal type, a child it owns. Reaching those is D5's by-name form.
+  an internal type, a child whose name it kept to itself. Reaching those is D5's by-name form. What
+  puts a declaration on that list is publication rather than ownership, which
+  `publishing-an-owned-instance.md` settles for a child a unit owns and publishes.
 
 ## Consequences
 

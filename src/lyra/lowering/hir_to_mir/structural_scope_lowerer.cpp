@@ -532,6 +532,43 @@ auto StepThroughInterfacePort(
   return RouteReceiver{.expr = access, .target = ExternalObject{}};
 }
 
+// Descends one step onto a member another unit published whose type makes it an
+// object of a third unit (LRM 25.3, 25.10): the member access at the position
+// that unit's signature gave it, then one index per coordinate the step names.
+// Which object those positions index is already on the receiver's type, so the
+// access states only the position -- the same reading a route ending on a
+// published member takes, reaching a pointer instead of a cell.
+auto StepToSignatureMember(
+    UnitLowerer& unit_lowerer, mir::Block& block, const RouteReceiver& receiver,
+    const hir::SignatureMemberStep& step) -> RouteReceiver {
+  const mir::TypeId receiver_type = block.exprs.Get(receiver.expr).type;
+  const mir::TypeId pointee = unit_lowerer.Unit()
+                                  .types.Get(receiver_type)
+                                  .Get<mir::PointerType>()
+                                  .pointee;
+  const mir::ExternalUnitObjectType& object =
+      unit_lowerer.Unit().types.Get(pointee).Get<mir::ExternalUnitObjectType>();
+  const mir::FieldId field = UnitLowerer::TranslatePublishedMember(step.member);
+  mir::TypeId reached = unit_lowerer.Unit()
+                            .external_unit_objects.Get(object.object)
+                            .fields.Get(field)
+                            .type;
+  mir::ExprId access =
+      block.exprs.Add(mir::MakeFieldAccessExpr(receiver.expr, field, reached));
+  for (const std::uint32_t coord : step.indices) {
+    reached =
+        unit_lowerer.Unit().types.Get(reached).Get<mir::VectorType>().element;
+    access = block.exprs.Add(
+        mir::Expr{
+            .data =
+                mir::VectorGetExpr{
+                    .vector = access,
+                    .index = BuildSequenceIndex(unit_lowerer, block, coord)},
+            .type = reached});
+  }
+  return RouteReceiver{.expr = access, .target = ExternalObject{}};
+}
+
 // Projects the borrowed-pointer value the slot takes out of a typed receiver:
 // the field access, addressed. Everything a scope's bodies declare with a
 // lifetime longer than an activation is a field of the scope's own class, so
@@ -647,6 +684,10 @@ auto BuildRouteValue(
             [&](const hir::InterfacePortStep& port) {
               return StepThroughInterfacePort(
                   unit_lowerer, block, receiver, port);
+            },
+            [&](const hir::SignatureMemberStep& member) {
+              return StepToSignatureMember(
+                  unit_lowerer, block, receiver, member);
             },
             [&](const hir::OpaqueStep& opaque) {
               return StepToChildByName(
@@ -1120,12 +1161,16 @@ auto StructuralScopeLowerer::DeclareShape() -> diag::Result<mir::ClassId> {
        hir_scope.structural_data_objects.Ids()) {
     append_unpublished(id);
   }
+  for (const hir::InstanceMemberId id : hir_scope.instance_members.Ids()) {
+    append_unpublished(id);
+  }
   for (const hir::InterfacePortId id : hir_scope.interface_ports.Ids()) {
     append_unpublished(id);
   }
 
   std::vector<mir::FieldId> data_object_fields(
       hir_scope.structural_data_objects.size());
+  std::vector<mir::FieldId> instance_fields(hir_scope.instance_members.size());
   std::vector<mir::FieldId> interface_port_fields(
       hir_scope.interface_ports.size());
   for (const hir::PublishedDecl& decl : member_order) {
@@ -1139,6 +1184,21 @@ auto StructuralScopeLowerer::DeclareShape() -> diag::Result<mir::ClassId> {
                       .type = unit_lowerer.MemberCellType(
                           unit_lowerer.TranslateType(d.type),
                           hir::StorageOf(d))});
+            },
+            [&](const hir::InstanceMemberId& id) {
+              // Every instance member keeps one borrowed typed handle on this
+              // class, and that handle's type states the member's cardinality
+              // -- the bare handle for a single instance, one sequence wrapper
+              // per declared dimension for an array (LRM 23.3.2). A route step
+              // projects the handle and indexes it once per dimension, so
+              // reaching an element never has to name the member a second
+              // time.
+              const auto& im = hir_scope.instance_members.Get(id);
+              instance_fields[id.value] = shape.fields.Add(
+                  mir::FieldDecl{
+                      .name = im.instance_name,
+                      .type = MakeInstanceMemberType(
+                          unit_lowerer, im, mir::PointerOwnership::kBorrowed)});
             },
             [&](const hir::InterfacePortId& id) {
               const auto& port = hir_scope.interface_ports.Get(id);
@@ -1164,6 +1224,8 @@ auto StructuralScopeLowerer::DeclareShape() -> diag::Result<mir::ClassId> {
   }
   data_object_fields_ = {
       hir_scope.structural_data_objects.size(), std::move(data_object_fields)};
+  instance_member_fields_ = {
+      hir_scope.instance_members.size(), std::move(instance_fields)};
   interface_port_fields_ = {
       hir_scope.interface_ports.size(), std::move(interface_port_fields)};
 
@@ -1215,26 +1277,6 @@ auto StructuralScopeLowerer::DeclareShape() -> diag::Result<mir::ClassId> {
     generates.emplace_back(gen.child_scopes.size(), std::move(gen_bindings));
   }
   generate_bindings_ = {hir_scope.generates.size(), std::move(generates)};
-
-  // Every instance member keeps one borrowed typed handle on this class, and
-  // that handle's type states the member's cardinality -- the bare handle for a
-  // single instance, one sequence wrapper per declared dimension for an array
-  // (LRM 23.3.2). A layout-visible route step projects the handle and indexes
-  // it once per dimension, so reaching an element never has to name the member
-  // a second time.
-  {
-    std::vector<mir::FieldId> instance_fields;
-    instance_fields.reserve(hir_scope.instance_members.size());
-    for (const auto& im : hir_scope.instance_members) {
-      instance_fields.push_back(shape.fields.Add(
-          mir::FieldDecl{
-              .name = std::format("{}_borrowed_handle", im.instance_name),
-              .type = MakeInstanceMemberType(
-                  unit_lowerer, im, mir::PointerOwnership::kBorrowed)}));
-    }
-    instance_member_fields_ = {
-        hir_scope.instance_members.size(), std::move(instance_fields)};
-  }
 
   // Every procedural scope becomes a name node -- an object carrying the
   // identity a hierarchical path matches -- whatever the source called it and

@@ -84,36 +84,6 @@ auto ConnectedProjection(
       target);
 }
 
-// What a published member's type says it stands for: the object at the bottom
-// of it, how many of them, and whether it holds them as a sequence at all. The
-// last is not the count being one -- a range of one element is still a
-// sequence, and what a route reaches through such a member is that sequence
-// rather than the object inside it.
-//
-// It is a walk because a signature carries a member's multiplicity in its type
-// and in nothing beside it, so every reader that needs the shape reads it back
-// out of the nesting rather than off a field the promise would have to state
-// twice.
-struct MemberObjects {
-  hir::TypeId element_type;
-  std::size_t count;
-  bool sequence;
-};
-
-auto ObjectsBehind(const UnitLowerer& unit_lowerer, hir::TypeId member_type)
-    -> MemberObjects {
-  MemberObjects behind{
-      .element_type = member_type, .count = 1, .sequence = false};
-  while (const auto* array = unit_lowerer.Unit()
-                                 .types.Get(behind.element_type)
-                                 .As<hir::UnpackedArrayType>()) {
-    behind.count *= array->dim.ElementCount();
-    behind.element_type = array->element_type;
-    behind.sequence = true;
-  }
-  return behind;
-}
-
 // Every interface instance a connection supplies, in the order the port's
 // coordinates count them (LRM 23.3.3.5). A connection to a port standing for
 // one instance supplies one, which is the no-dimension case of the same walk;
@@ -150,8 +120,8 @@ auto CollectConnectedInstances(const slang::ast::Symbol& connected)
 // boundary uses.
 auto InterfaceActualRoutes(
     UnitLowerer& unit_lowerer, const slang::ast::PortConnection& conn,
-    MemberObjects behind, diag::SourceSpan span, WalkFrame frame)
-    -> diag::Result<std::vector<hir::RoutedPathRecipe>> {
+    const hir::ObjectsBehindType& behind, diag::SourceSpan span,
+    WalkFrame frame) -> diag::Result<std::vector<hir::RoutedPathRecipe>> {
   // A route ends at one object, so what types a peer is the element the member
   // stands for rather than the member's whole shape.
   const auto recipe = [&](hir::RouteHead head,
@@ -170,29 +140,30 @@ auto InterfaceActualRoutes(
           : actual->as_if<slang::ast::ArbitrarySymbolExpression>();
 
   if (named != nullptr && named->hierRef.isViaIfacePort()) {
-    const auto path = named->hierRef.path;
-    // A path ends at what the name reached, and here that has to be the port
-    // itself: a hop below it selects something inside the interface the port
-    // carries, which is not that interface.
-    if (path.front().symbol != named->hierRef.target) {
-      return PortConnectionUnsupported(
-          span,
-          "an interface reached through part of another interface port is not "
-          "yet supported");
-    }
     // Handing a whole port on names no instance: what the route reaches is the
     // forwarding scope's own member, which for a port carrying a range is
-    // already the sequence rather than one of the objects in it.
-    if (behind.sequence) {
+    // already the sequence rather than one of the objects in it. A range of one
+    // element is still a sequence, so the count is not what decides it.
+    if (behind.dimensions != 0) {
       return PortConnectionUnsupported(
           span,
           "an interface port carrying a range forwarded from another port is "
           "not yet supported");
     }
+    // The actual is the port itself, or an instance the interface it carries
+    // published (LRM 25.10) -- one route reaches either, since continuing past
+    // a published member is a step of the same descent.
     auto through =
-        unit_lowerer.RouteThroughInterfacePort(frame, *path[0].symbol);
+        unit_lowerer.ReachThroughInterfacePort(frame, named->hierRef);
+    if (!through.has_value()) {
+      return PortConnectionUnsupported(
+          span,
+          "an interface reached through a name another interface port did not "
+          "promise is not yet supported");
+    }
     std::vector<hir::RoutedPathRecipe> peers;
-    peers.push_back(recipe(std::move(through.head), std::move(through.steps)));
+    peers.push_back(
+        recipe(std::move(through->head), std::move(through->steps)));
     return peers;
   }
 
@@ -243,15 +214,21 @@ auto ConnectInterfacePort(
   // on a second reading of the frontend.
   const hir::TypeId member_type =
       unit_lowerer.ImportSignatureType(child_signature, member.type);
-  const MemberObjects behind = ObjectsBehind(unit_lowerer, member_type);
-  auto peers = InterfaceActualRoutes(unit_lowerer, conn, behind, span, frame);
+  const auto behind =
+      hir::ObjectsBehind(unit_lowerer.Unit().types, member_type);
+  if (!behind.has_value()) {
+    throw InternalError(
+        "ConnectInterfacePort: an interface port's published type names the "
+        "unit whose instances belong there, which is what makes it one");
+  }
+  auto peers = InterfaceActualRoutes(unit_lowerer, conn, *behind, span, frame);
   if (!peers) return std::unexpected(std::move(peers.error()));
   // How many objects the member stands for is the child's promise; how many the
   // connection supplies is what the parent worked out from the frontend. Each
   // side counts its own and they meet here, because a side that takes the count
   // from the other agrees with it by construction, and the two would then build
   // different layouts with nothing able to say so.
-  if (peers->size() != behind.count) {
+  if (peers->size() != behind->count) {
     return PortConnectionUnsupported(
         span,
         "an interface port bound to a number of interface instances other than "

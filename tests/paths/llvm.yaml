@@ -44,7 +44,6 @@
 21_output/sformat_format_string_need_not_be_a_literal: "a value of type runtime library value has no construct on this backend"
 23_hierarchy/task_enabled_by_hierarchical_name: "a subroutine the declaring unit does not publish is not yet supported"
 23_hierarchy/ref_port_aliases_connected_variable: "mir_to_lir: storage of this kind is not yet lendable by reference"
-25_interfaces/name_reaches_through_a_nested_interface: "a subroutine on an interface reached through another interface port is not yet supported"
 35_dpi/concurrent_context_call_chains_keep_scope: "the scope a DPI-C context import makes current is not yet lowerable to LIR"
 35_dpi/context_import_scope_and_utilities: "the scope a DPI-C context import makes current is not yet lowerable to LIR"
 35_dpi/exported_function_argument_marshaling: "the scope a DPI-C context import makes current is not yet lowerable to LIR"

@@ -1195,7 +1195,15 @@ class HirDumper {
                     owned.child);
               },
               [](const InterfacePortStep& port) {
-                return std::format(" . InterfacePort[{}]", port.port.value);
+                return std::format(
+                    " . InterfacePort[{}]{}", port.port.value,
+                    FormatIndices(port.indices));
+              },
+              [](const SignatureMemberStep& member) {
+                return std::format(
+                    " . ExternalUnitObject[{}].member[{}]{}",
+                    member.object.value, member.member.value,
+                    FormatIndices(member.indices));
               },
               [](const OpaqueStep& opaque) {
                 return std::format(
@@ -1265,6 +1273,9 @@ class HirDumper {
             Overloaded{
                 [](const StructuralDataObjectId& id) {
                   return std::format("StructuralDataObject[{}]", id.value);
+                },
+                [](const InstanceMemberId& id) {
+                  return std::format("InstanceMember[{}]", id.value);
                 },
                 [](const InterfacePortId& id) {
                   return std::format("InterfacePort[{}]", id.value);

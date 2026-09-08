@@ -36,6 +36,43 @@ compile-time and runtime.
 - The details of LLVM lowering and codegen.
 - Runtime scheduling and simulation-engine design.
 
+## The whole run, end to end
+
+The four IR layers are the middle of a longer sequence. Each stage below has a doc that owns it;
+this section owns only their order and where each one's boundary lies, so a reader arrives at those
+docs knowing what stands on either side.
+
+```mermaid
+flowchart TB
+  SRC["SystemVerilog source"] --> FE["frontend elaboration<br/>one graph over the whole design"]
+  FE --> SP["occurrences keyed into specializations<br/>a definition plus the arguments a parent fixed"]
+
+  SP --> D["per unit: derive the signature<br/>from that unit's own declarations"]
+  D --> BAR{{"barrier: every unit's signature exists"}}
+
+  BAR --> U["per unit, with no edge to any other:<br/>AST to HIR to MIR"]
+  U -->|"architectural target"| LIR["MIR to LIR to LLVM IR"]
+  U -->|"transitional"| CPP["MIR to C++ source"]
+  LIR --> LNK["link"]
+  CPP --> LNK
+  LNK --> RUN["Build, Resolve, Seal, then Initialize, Activate"]
+```
+
+| Stage                          | Owned by                    |
+| ------------------------------ | --------------------------- |
+| what a specialization is       | `specialization_model.md`   |
+| what a unit publishes          | `compilation_unit_model.md` |
+| the barrier and what it buys   | `incremental_build.md`      |
+| what each lowering may do      | `lowering_boundaries.md`    |
+| how a reference crosses a unit | `reference_resolution.md`   |
+| the five phases after link     | `elaboration_lifecycle.md`  |
+
+Two properties of the shape carry the north star's constraints, and both are read off the diagram
+rather than argued: **exactly one stage before the barrier looks at the whole design, and exactly
+one after it does** -- the frontend's elaboration, and the link. Everything between is per unit with
+no edge to any other, which is what makes units compilable in isolation, in parallel, and in any
+order. A stage that needs to see another unit belongs before the barrier or it does not belong.
+
 ## Core Invariants
 
 1. The compiler pipeline is HIR -> MIR -> LIR -> LLVM IR. No stage skips a layer.

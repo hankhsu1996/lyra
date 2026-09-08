@@ -8,4 +8,3 @@
 # A case may appear in this file or in the defect record, never both.
 08_classes/constructor_argument_directions: "a constructor with an output / inout / ref argument is not yet supported"
 23_hierarchy/task_enabled_by_hierarchical_name: "a subroutine the declaring unit does not publish is not yet supported"
-25_interfaces/name_reaches_through_a_nested_interface: "reached through another interface port is not yet supported"
