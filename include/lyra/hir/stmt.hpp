@@ -148,14 +148,28 @@ enum class AssertionDirective : std::uint8_t {
   kAssume,
 };
 
-// LRM 16.3 simple immediate assert / assume: the expression is tested where
-// the statement executes, read the way the condition of a procedural if is
-// read. Either arm of the action block may be omitted, and the two omissions
-// mean different things -- with no pass statement a true expression runs
-// nothing, while with no fail statement a false expression still reaches the
-// tool's own failure report.
+// When an immediate assertion's action runs relative to the step that reaches
+// it (LRM 16.3, 16.4). A simple assertion runs its action inline; a deferred
+// one evaluates its expression inline but holds the action for a later region
+// of the same time step, to suppress reports from transient combinational
+// values -- an observed (`#0`) one maturing in Observed and acting in Reactive,
+// a final one maturing and acting in Postponed.
+enum class AssertionTiming : std::uint8_t {
+  kSimple,
+  kObserved,
+  kFinal,
+};
+
+// LRM 16.3 / 16.4 immediate assert / assume: the expression is tested where the
+// statement executes, read the way the condition of a procedural if is read.
+// Either arm of the action block may be omitted, and the two omissions mean
+// different things -- with no pass statement a true expression runs nothing,
+// while with no fail statement a false expression still reaches the tool's own
+// failure report. `timing` says whether that action runs inline or is deferred
+// to a later region of the time step.
 struct AssertStmt {
   AssertionDirective directive;
+  AssertionTiming timing;
   ExprId condition;
   std::optional<StmtId> pass_stmt;
   std::optional<StmtId> fail_stmt;

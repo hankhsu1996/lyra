@@ -377,6 +377,14 @@ the detail lives in the entry itself.
   error is a run-time error rather than an escape. Completes the reversal of `activation.md`
   invariant 2's third alternative. Catching the throw at the engine loop, skipping `final` after
   `$stop`, `$stop` as a failure, a fifth severity, and aborting at the raise site are rejected.
+- [deferred-report-queue](deferred-report-queue.md) -- a pending report stays in the region's own
+  list and withdrawal is a refusal to act, so it records the sources that can withdraw it and acts
+  only if all still stand: two `disable` targets through the accepted cancellation-source
+  generation, and the creating process's execution pass as a liveness token, because a source
+  outlives a report and a process does not. Maturity discards the record, which is the one-way
+  latch; what each construct records is how one queue serves LRM 16.4 and 12.4.2.1 with different
+  flush-point sets. A per-process container the engine enumerates, a single per-process token (which
+  cannot express `disable` of one assertion), and a notify-style cancellation token are rejected.
 
 ### Diagnostics
 

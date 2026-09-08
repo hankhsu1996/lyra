@@ -1,5 +1,6 @@
 #pragma once
 
+#include <algorithm>
 #include <cstdint>
 #include <exception>
 #include <memory>
@@ -41,12 +42,36 @@ enum class ProcessTerminationCause : std::uint8_t {
   kKilled,
 };
 
-// One run of violation reports a process has pending (LRM 12.4.2.1). It stands
-// for nothing but its own existence: a report holds it weakly, a flush point
-// retires it, and an expired one is exactly a report that was flushed. This is
-// what lets a report outlive the process that raised it -- termination is not a
-// flush point, so a check that fired before the body ended still matures.
-struct ViolationReportEpoch {};
+// One run -- one execution pass -- of a process's pending deferred reports: the
+// deferred assertion reports of LRM 16.4.1 and the unique / priority violation
+// reports of LRM 12.4.2.1, which share the one per-process queue. It stands for
+// nothing but its own existence, and a flush point retires it, which is what
+// withdraws that pass's reports together without any of them being found.
+// Termination is not a flush point, so a report queued before the body ended
+// still matures.
+struct DeferredReportEpoch {};
+
+// What a pending deferred report recorded where it was created, and the whole
+// of what it asks before it acts: it acts only if every source it recorded
+// still stands (LRM 16.4.1, 16.4.2, 16.4.4).
+//
+// The two kinds are recorded differently, and the reason is lifetime rather
+// than taste. A disable target is per-instance storage that outlives every
+// report holding it, so a report keeps it and re-reads its generation. A
+// process is not, and a pending report may outlive one, so its pass is held
+// weakly and that hold is itself the answer -- a report never reaches for a
+// process that is gone.
+struct DeferredReportValidity {
+  std::weak_ptr<DeferredReportEpoch> pass;
+  std::vector<CapturedTarget> targets;
+
+  [[nodiscard]] auto Holds() const -> bool {
+    return !pass.expired() &&
+           std::ranges::all_of(targets, [](const CapturedTarget& captured) {
+             return captured.Holds();
+           });
+  }
+};
 
 // A node of the dynamic process lineage (LRM 9.5) and, while its body runs, the
 // owner of the coroutine frame executing it. The two lifetimes are distinct:
@@ -177,6 +202,11 @@ class RuntimeProcess : public std::enable_shared_from_this<RuntimeProcess> {
   void BlockLeaf(CoroutineHandle leaf, PendingWait* wait) {
     current_leaf_ = leaf;
     leaf->pending_wait = wait;
+    // The wait's flush-point status is a constant of its kind (LRM 16.4.2), so
+    // it is read off the awaiter once here and recorded on the frame, the one
+    // place a resume reads it -- the same field the execution backend, which
+    // has no awaiter, sets where it registers its wakeup.
+    leaf->wait_is_report_flush_point = wait->IsReportFlushPoint();
     // The vehicle carrying this thread when it blocks is the vehicle the
     // scheduler must drive to resume it. It is retained past the block (unlike
     // the registration), because resume runs from another process's context
@@ -194,8 +224,13 @@ class RuntimeProcess : public std::enable_shared_from_this<RuntimeProcess> {
   // reason. A construct that registers no wakeup at all -- `$finish`, which
   // parks and is never dispatched again -- reaches neither.
   template <class Park>
-  void RegisterWakeup(Park park) {
+  void RegisterWakeup(bool wait_is_report_flush_point, Park park) {
     const CoroutineHandle leaf = current_leaf_;
+    // The execution backend suspends through the runtime with no awaiter to
+    // carry the wait's flush-point status (LRM 16.4.2), so it is recorded on
+    // the frame here, where the wait kind is known, for the resume to read (LRM
+    // 12.4.2.1).
+    leaf->wait_is_report_flush_point = wait_is_report_flush_point;
     EnrolInEnclosingTargets(leaf);
     park(leaf);
   }
@@ -264,8 +299,7 @@ class RuntimeProcess : public std::enable_shared_from_this<RuntimeProcess> {
   // execution is inside.
   void PushEnclosingTarget(CancellationTarget* target) {
     enclosing_targets_.push_back(
-        EnclosingTarget{
-            .target = target, .captured_generation = target->Generation()});
+        CapturedTarget{.target = target, .generation = target->Generation()});
   }
 
   // Leave a target. Reached on every exit path an execution can take out of
@@ -282,8 +316,8 @@ class RuntimeProcess : public std::enable_shared_from_this<RuntimeProcess> {
   // it entered (LRM 9.6.2), or null when none has. Outermost wins because
   // leaving a target also leaves every target nested within it.
   [[nodiscard]] auto OutermostInvalidatedTarget() const -> CancellationTarget* {
-    for (const EnclosingTarget& enclosing : enclosing_targets_) {
-      if (enclosing.target->Generation() != enclosing.captured_generation) {
+    for (const CapturedTarget& enclosing : enclosing_targets_) {
+      if (!enclosing.Holds()) {
         return enclosing.target;
       }
     }
@@ -314,20 +348,40 @@ class RuntimeProcess : public std::enable_shared_from_this<RuntimeProcess> {
   // bridge.
   void MarkResumed();
 
-  // The epoch a violation report raised by this process right now belongs to
-  // (LRM 12.4.2.1), created on first use because most processes raise none.
-  [[nodiscard]] auto CurrentViolationReportEpoch()
-      -> std::shared_ptr<ViolationReportEpoch> {
-    if (violation_report_epoch_ == nullptr) {
-      violation_report_epoch_ = std::make_shared<ViolationReportEpoch>();
+  // The epoch a deferred report queued by this process right now belongs to
+  // (LRM 16.4.1, 12.4.2.1), created on first use because most processes queue
+  // none.
+  [[nodiscard]] auto CurrentDeferredReportEpoch()
+      -> std::shared_ptr<DeferredReportEpoch> {
+    if (deferred_report_epoch_ == nullptr) {
+      deferred_report_epoch_ = std::make_shared<DeferredReportEpoch>();
     }
-    return violation_report_epoch_;
+    return deferred_report_epoch_;
   }
 
-  // LRM 12.4.2.1: reaching a violation report flush point clears this process's
-  // violation report queue, discarding every report still pending.
-  void FlushViolationReports() noexcept {
-    violation_report_epoch_.reset();
+  // LRM 16.4.2 / 12.4.2.1: reaching a flush point clears this process's
+  // deferred report queue, discarding every report still pending.
+  void FlushDeferredReports() noexcept {
+    deferred_report_epoch_.reset();
+  }
+
+  // The disable targets a report queued right now records (LRM 16.4.4). Two of
+  // the targets this execution is inside can withdraw it and no other can: the
+  // innermost, which is how a `disable` names one assertion, since a statement
+  // label is a named block (LRM 16.3); and the outermost, whose disable is the
+  // flush of the whole queue. Disabling a target between them cancels nothing,
+  // so nothing between them is recorded.
+  [[nodiscard]] auto DeferredReportTargets() const
+      -> std::vector<CapturedTarget> {
+    std::vector<CapturedTarget> recorded;
+    if (enclosing_targets_.empty()) {
+      return recorded;
+    }
+    recorded.push_back(enclosing_targets_.front());
+    if (enclosing_targets_.size() > 1) {
+      recorded.push_back(enclosing_targets_.back());
+    }
+    return recorded;
   }
 
   // True when no immediate child is still executing: the whole live set has
@@ -426,7 +480,7 @@ class RuntimeProcess : public std::enable_shared_from_this<RuntimeProcess> {
   // delay it blocks on. Any one of them releases the wait, and releasing it
   // revokes the rest.
   void EnrolInEnclosingTargets(CoroutineHandle leaf) {
-    for (const EnclosingTarget& enclosing : enclosing_targets_) {
+    for (const CapturedTarget& enclosing : enclosing_targets_) {
       leaf->Park(enclosing.target->CancelWaiters());
     }
   }
@@ -479,9 +533,9 @@ class RuntimeProcess : public std::enable_shared_from_this<RuntimeProcess> {
   // import in this process's foreign call chain. Empty outside any context
   // import.
   std::vector<Scope*> dpi_scope_chain_;
-  // Held by every violation report this process has pending; null when it has
+  // Held by every deferred report this process has pending; null when it has
   // none, which is also the state a flush point leaves it in.
-  std::shared_ptr<ViolationReportEpoch> violation_report_epoch_;
+  std::shared_ptr<DeferredReportEpoch> deferred_report_epoch_;
   ProcessExecutionState execution_state_ = ProcessExecutionState::kCreated;
   ProcessTerminationCause termination_cause_ =
       ProcessTerminationCause::kCompleted;
@@ -490,20 +544,11 @@ class RuntimeProcess : public std::enable_shared_from_this<RuntimeProcess> {
   bool termination_requested_ = false;
   RuntimeProcess* parent_ = nullptr;
   std::vector<std::shared_ptr<RuntimeProcess>> children_;
-  // One disable target this execution is inside (LRM 9.6.2), with the target's
-  // generation captured when it was entered. The capture is what makes the
-  // membership answerable by any frame: comparing it against the target's
-  // current generation says whether the target died while this execution was
-  // inside it, without the frame knowing which target it is.
-  struct EnclosingTarget {
-    CancellationTarget* target;
-    std::uint64_t captured_generation;
-  };
   // The disable targets enclosing this execution, outermost first: those
   // inherited from the spawner, then those entered by this execution's own
   // frames. Entering a target pushes it and leaving pops it. This is the only
   // record of the relation; a target holds no set of the executions inside it.
-  std::vector<EnclosingTarget> enclosing_targets_;
+  std::vector<CapturedTarget> enclosing_targets_;
   // The `wait fork` condition holds at most one activation: the frame that
   // executed `wait fork`.
   RegistrationList parked_wait_fork_;

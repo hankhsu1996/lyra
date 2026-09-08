@@ -503,7 +503,9 @@ auto PowerOf(const void* packed) -> std::int8_t {
 auto ParkForDelayTicks(
     RuntimeEffects& svc, SimDuration ticks, std::int8_t precision_power)
     -> bool {
-  svc.CurrentProcess().RegisterWakeup([&](CoroutineHandle token) {
+  // A delay is neither an event control nor a wait statement, so it is not a
+  // deferred report flush point (LRM 16.4.2).
+  svc.CurrentProcess().RegisterWakeup(false, [&](CoroutineHandle token) {
     ParkForDelay(svc, token, ticks, precision_power);
   });
   return true;
@@ -883,8 +885,11 @@ auto lyra_rt_wait_fork(void* runtime) -> bool {
   if (process.HasNoLiveChild()) {
     return false;
   }
-  process.RegisterWakeup(
-      [&process](CoroutineHandle waiter) { process.ArmWaitFork(waiter); });
+  // `wait fork` is a wait statement, so its resume is a deferred report flush
+  // point (LRM 16.4.2, 9.6.1).
+  process.RegisterWakeup(true, [&process](CoroutineHandle waiter) {
+    process.ArmWaitFork(waiter);
+  });
   return true;
 }
 
@@ -946,6 +951,16 @@ void lyra_rt_submit_postponed(void* runtime, void* closure) {
 
 void lyra_rt_submit_observed(void* runtime, void* closure) {
   static_cast<RuntimeEffects*>(runtime)->SubmitObserved(TakeClosure(closure));
+}
+
+void lyra_rt_submit_deferred_observed(void* runtime, void* closure) {
+  static_cast<RuntimeEffects*>(runtime)->SubmitDeferredObserved(
+      TakeClosure(closure));
+}
+
+void lyra_rt_submit_deferred_final(void* runtime, void* closure) {
+  static_cast<RuntimeEffects*>(runtime)->SubmitDeferredFinal(
+      TakeClosure(closure));
 }
 
 auto lyra_rt_delay(
@@ -1015,9 +1030,13 @@ auto lyra_rt_wait_any(void* runtime, LyraSpan triggers) -> bool {
   for (const Trigger* handle : handles) {
     collected.push_back(*handle);
   }
-  svc.CurrentProcess().RegisterWakeup([&collected](CoroutineHandle token) {
-    SubscribeToLeaves(token, collected);
-  });
+  // An event control, an always_comb / always_latch sensitivity list, or a
+  // `wait` condition -- each a deferred report flush point when it resumes the
+  // process (LRM 16.4.2, 12.4.2.1).
+  svc.CurrentProcess().RegisterWakeup(
+      true, [&collected](CoroutineHandle token) {
+        SubscribeToLeaves(token, collected);
+      });
   return true;
 }
 
@@ -1028,7 +1047,9 @@ auto lyra_rt_wait_any(void* runtime, LyraSpan triggers) -> bool {
 // parks.
 auto lyra_rt_resume_in_nba_region(void* runtime) -> bool {
   auto& svc = *static_cast<RuntimeEffects*>(runtime);
-  svc.CurrentProcess().RegisterWakeup([&svc](CoroutineHandle token) {
+  // An internal region hop for an event-controlled update, not a user wait, so
+  // not a flush point (LRM 4.4.2.4).
+  svc.CurrentProcess().RegisterWakeup(false, [&svc](CoroutineHandle token) {
     svc.Schedule(svc.Now(), Region::kNba, token);
   });
   return true;

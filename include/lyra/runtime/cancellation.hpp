@@ -62,6 +62,22 @@ class CancellationTarget {
   RegistrationList cancel_waiters_;
 };
 
+// A disable target together with the generation it carried when something
+// recorded it (LRM 9.6.2). Whatever recorded it holds only while the two still
+// agree: a `disable` advances the generation, and every record taken before it
+// stops holding at once, without the target keeping any set of them. Recording
+// it is what makes the relation answerable by a frame that does not know which
+// target it is holding, and by an effect that outlives the statement that
+// created it.
+struct CapturedTarget {
+  CancellationTarget* target;
+  std::uint64_t generation;
+
+  [[nodiscard]] auto Holds() const -> bool {
+    return target->Generation() == generation;
+  }
+};
+
 // The control effect that leaves an execution. It is transport, not a report:
 // the execution it leaves is not in error. It travels outward until a region
 // naming its target consumes it and continues past that target; a called task

@@ -87,6 +87,16 @@ class RuntimeEffects {
   // LRM 12.4.2.1: a violation report matures in the Observed region unless the
   // process that raised it reaches a flush point first.
   void SubmitObserved(std::function<void()> report);
+  // LRM 16.4: a deferred immediate assertion's action is queued where the
+  // statement is reached and acts later only if every source that could
+  // withdraw it still stands -- the executing process's pass, and the disable
+  // targets that can name the assertion or flush its queue (16.4.2, 16.4.4). An
+  // observed (`#0`) report matures in the Observed region and acts in Reactive;
+  // a final one matures and acts in Postponed. Maturing discards what it
+  // validated, which is why a matured report can no longer be withdrawn
+  // (16.4.1).
+  void SubmitDeferredObserved(std::function<void()> action);
+  void SubmitDeferredFinal(std::function<void()> action);
 
   // LRM 20.2: a simulation control task ends the run, and its level selects
   // what the tool prints about it (Table 20-1). `task` is the one the design

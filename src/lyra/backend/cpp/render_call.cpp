@@ -55,6 +55,10 @@ auto BuiltinFnCppName(support::BuiltinFn id) -> std::string_view {
       return "SubmitPostponed";
     case support::BuiltinFn::kSubmitObserved:
       return "SubmitObserved";
+    case support::BuiltinFn::kSubmitDeferredObserved:
+      return "SubmitDeferredObserved";
+    case support::BuiltinFn::kSubmitDeferredFinal:
+      return "SubmitDeferredFinal";
     case support::BuiltinFn::kFiles:
       return "Files";
     case support::BuiltinFn::kCancellationFor:

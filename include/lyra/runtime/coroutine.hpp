@@ -41,10 +41,21 @@ struct PromiseBase {
   // The wait this activation is blocked on, if any: a capability, held by the
   // awaiter that suspended this frame, to re-establish the wait on resume (LRM
   // 9.7). Distinct from `registrations`, which is the current enrollment; a
-  // suspend revokes the enrollment but keeps this. Null while runnable,
-  // executing, or terminal. The awaiter is frame-resident, so this points
-  // within the same frame and dies with it.
+  // suspend revokes the enrollment but keeps this. The awaiter is
+  // frame-resident, so this points within the same frame and dies with it.
+  //
+  // Only a body that is a C++ coroutine suspends on such an awaiter. A body
+  // whose backend parks it through a wakeup registration builds none, so this
+  // is null there even while the activation is blocked, and a resume finds no
+  // wait to re-establish -- which is why a fact about the wait that a resume
+  // needs is recorded on the frame rather than read back off this.
   PendingWait* pending_wait = nullptr;
+  // Whether the wait this frame is blocked on is a deferred report flush point
+  // (LRM 16.4.2 / 12.4.2.1). Set where the wait is registered -- the C++
+  // backend copies it off the awaiter, the execution backend passes it in,
+  // since it has no awaiter -- so a resume reads the one field whichever way
+  // the wait was realized.
+  bool wait_is_report_flush_point = false;
   // This execution's value storage: the home of every value whose life exceeds
   // one stretch of generated code, such as a local read after a resumption.
   //

@@ -1682,10 +1682,22 @@ class HirDumper {
         directive = "assume";
         break;
     }
+    std::string_view timing;
+    switch (a.timing) {
+      case AssertionTiming::kSimple:
+        timing = "simple";
+        break;
+      case AssertionTiming::kObserved:
+        timing = "deferred #0";
+        break;
+      case AssertionTiming::kFinal:
+        timing = "deferred final";
+        break;
+    }
     Line(
         std::format(
-            "Stmt[{}] AssertStmt {} cond=Expr[{}]", id.value, directive,
-            a.condition.value));
+            "Stmt[{}] AssertStmt {} [{}] cond=Expr[{}]", id.value, directive,
+            timing, a.condition.value));
     Indent();
     Line(
         std::format(
