@@ -531,7 +531,7 @@ auto BuildRuntimeFormatCallExpr(
       unit.types, unit.builtins.format_arg, operands.size());
   const mir::ExprId operands_array = block.exprs.Add(
       mir::Expr{
-          .data = mir::ArrayLiteralExpr{.elements = std::move(operands)},
+          .data = mir::CompositeExpr{.parts = std::move(operands)},
           .type = operands_type});
 
   // The hierarchical name a `%m` renders and the scope's time unit a `%t`
@@ -578,7 +578,7 @@ auto BuildPrintItemsArray(
   const mir::TypeId array_type =
       mir::MachineArrayOf(unit.types, unit.builtins.print_item, items.size());
   return mir::Expr{
-      .data = mir::ArrayLiteralExpr{.elements = std::move(elements)},
+      .data = mir::CompositeExpr{.parts = std::move(elements)},
       .type = array_type};
 }
 

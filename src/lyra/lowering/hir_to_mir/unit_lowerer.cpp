@@ -279,7 +279,7 @@ void DefineRootFactory(mir::CompilationUnit& unit) {
           .type = unit.builtins.string});
   const mir::ExprId indices = body.exprs.Add(
       mir::Expr{
-          .data = mir::ArrayLiteralExpr{.elements = {}},
+          .data = mir::CompositeExpr{.parts = {}},
           .type = mir::MachineArrayOf(unit.types, unit.builtins.int_type, 0)});
   const mir::ExprId segment = body.exprs.Add(
       mir::Expr{

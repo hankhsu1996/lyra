@@ -168,7 +168,7 @@ auto BuildOwnedInstance(
       unit_lowerer.Unit().types, builtins.int_type, indices.size());
   const mir::ExprId indices_id = block.exprs.Add(
       mir::Expr{
-          .data = mir::ArrayLiteralExpr{.elements = std::move(indices)},
+          .data = mir::CompositeExpr{.parts = std::move(indices)},
           .type = indices_type});
   const mir::ExprId segment_id = block.exprs.Add(
       mir::Expr{
@@ -336,7 +336,7 @@ auto BuildIndicesLiteral(
       unit_lowerer.Unit().types, builtins.int_type, indices.size());
   return block.exprs.Add(
       mir::Expr{
-          .data = mir::ArrayLiteralExpr{.elements = std::move(ids)},
+          .data = mir::CompositeExpr{.parts = std::move(ids)},
           .type = indices_type});
 }
 
@@ -1048,7 +1048,7 @@ void AppendOwnedChildConstruction(
       unit_lowerer.Unit().types, builtins.int_type, index_elems.size());
   const mir::ExprId indices_id = arm_block.exprs.Add(
       mir::Expr{
-          .data = mir::ArrayLiteralExpr{.elements = std::move(index_elems)},
+          .data = mir::CompositeExpr{.parts = std::move(index_elems)},
           .type = indices_type});
   const mir::ExprId segment_id = arm_block.exprs.Add(
       mir::Expr{

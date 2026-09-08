@@ -562,10 +562,10 @@ enough to warrant its own focused review.
 
 - [x] R42 -- Retired `RuntimeNavCallee`. The three by-name scope operations (`kRegisterSignal` /
       `kGetSignal` / `kGetChild`) now ride `BuiltinFnCallee` with the signal / child name as a
-      regular `StringLiteral` argument and the index list as an `ArrayLiteralExpr`. The `kGetSignal`
-      cast is lifted to a new MIR `PointerCastExpr` primitive whose destination type is the call
-      site's slot type; the backend emits `static_cast<T>(...)` mechanically from a stated MIR fact.
-      The `kGetChild` index conversion moved into the runtime (which now accepts
+      regular `StringLiteral` argument and the index list as an element list. The `kGetSignal` cast
+      is lifted to a new MIR `PointerCastExpr` primitive whose destination type is the call site's
+      slot type; the backend emits `static_cast<T>(...)` mechanically from a stated MIR fact. The
+      `kGetChild` index conversion moved into the runtime (which now accepts
       `std::span<const value::PackedArray>` and calls `.ToInt64()` itself), so the render side has
       no `.ToInt64()` injection and no `std::array{...}` wrapper. Every call -- regardless of callee
       variant -- now renders as `fn(rendered_args...)`.

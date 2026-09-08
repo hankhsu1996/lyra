@@ -147,13 +147,13 @@ Unpacked array support follows these invariants:
    `docs/decisions/runtime-shape-and-default-value.md` for the shield contract.
 
 3. **Default initialization emits a `ConstructExpr` whose arguments are the declared range, the
-   canonical-default element, and an `ArrayLiteralExpr` rendered as `std::array<T, N>{...}`.**
+   canonical-default element, and an element list rendered as `std::array<T, N>{...}`.**
 
-   `default_value.cpp` synthesises an `ArrayLiteralExpr` populated with per-element defaults; the
-   backend wraps it in `ConstructExpr` so the wrapper's constructor receives the declared range
-   (from the type's `dim`), the canonical-default seed for the shield slot, and the initial
-   elements. The `std::array<T, N>` rvalue produced by the element list implicitly converts to the
-   ctor's `std::span<const T>` parameter. For `int arr[1:3]`:
+   HIR-to-MIR composes the element list out of per-element defaults; the backend wraps it in
+   `ConstructExpr` so the wrapper's constructor receives the declared range (from the type's `dim`),
+   the canonical-default seed for the shield slot, and the initial elements. The `std::array<T, N>`
+   rvalue produced by the element list implicitly converts to the ctor's `std::span<const T>`
+   parameter. For `int arr[1:3]`:
 
    ```cpp
    lyra::value::UnpackedArray<lyra::value::PackedArray> arr(
@@ -252,8 +252,8 @@ its type is arrived at.
 **Element list as `std::initializer_list<T>` with a backend special-case that strips the type prefix
 when the literal appears inside a `ConstructExpr` argument slot.** Rejected. The backend rendering
 becomes context-dependent (the same MIR primitive renders differently as a standalone expression vs
-as a `ConstructExpr` argument), which couples `RenderArrayLiteralExpr` and `RenderConstructExpr`.
-`std::span<const T>` with `std::array<T, N>{...}` at the call site keeps rendering uniform:
-`ArrayLiteralExpr` always emits `std::array<T, N>{...}`, `std::array` implicitly converts to
+as a `ConstructExpr` argument), which couples the element list's render to the construction's.
+`std::span<const T>` with `std::array<T, N>{...}` at the call site keeps rendering uniform: an
+element list always emits `std::array<T, N>{...}`, `std::array` implicitly converts to
 `std::span<const T>`, and no parent-context inspection is needed. The cost is a slightly longer emit
 string, which has no readability cost for emitted code.

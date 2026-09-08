@@ -25,6 +25,15 @@ cross-check predicts. This file owns only which instances are known and what is 
       testing what it reaches into. Whether a member that is not the live one answers with a default
       or with a run-time failure is the value's own semantics and travels with its type, so it needs
       no second node. The layer below carries the same split, as a selector kind of its own.
+- [x] T10 -- A value that is its own parts is one node, and which value it composes is already the
+      expression's type. Two nodes carried it -- a product literal and an element list -- with
+      identical fields and emission entries that differed only in the field name they looped over,
+      where the generic-language vocabulary has one construct whose meaning is the type it builds.
+      Each of those types has exactly one way to be built, so the type answers completely and no
+      consumer chooses; the layer that owns storage is where the two separate again. The
+      active-member build was a second such pair, one node over, and is now one node too: whether
+      the live member is observable and a mismatched reach fails travels with the type and changes
+      nothing about the build.
 
 ## A runtime entry's declaration
 
@@ -45,6 +54,16 @@ cross-check predicts. This file owns only which instances are known and what is 
 - [ ] T7 -- A designated part of a value is named the same way at every layer. Today an access
       lowered from a call becomes a selector and is turned back into a call to the entry the call
       named, so two layers of vocabulary exist only to be undone. Blocked on T6.
+- [ ] T19 -- A container comes into existence through its own constructor, with the element list
+      among the arguments, and every container does so but one. A sequence is still built by a
+      literal, so the layer below carries one instruction for that and for a machine aggregate
+      alike, and the execution backend tells the two apart by testing the result type -- one arm
+      naming the runtime entry that allocates, which is a render composing a call the IR never
+      stated, while the other backend never re-derives anything because a sequence still has a node
+      of its own. [value-construction-forms](../decisions/value-construction-forms.md) settled this
+      and named this case as its rejected alternative; what stands in the way is that the other
+      backend spells a sequence as a target-language type with no constructor over an element list,
+      so closing it settles how a sequence is named when one is built.
 
 ## An aggregate's members
 
@@ -53,19 +72,12 @@ cross-check predicts. This file owns only which instances are known and what is 
       finding a field's name by walking the receiver's type through the kinds that can bear one.
 - [ ] T9 -- A field's identity splits exactly where the layer below it splits, and no consumer reads
       how the name resolves. Same shape as T3, one node over.
-- [ ] T10 -- Composing a value out of parts in order is one node, and which value is composed is
-      already the expression's type. Three nodes carry it today -- a product literal, a sequence
-      literal and an element list -- with identical fields and three emission entries that differ
-      only in the field name they loop over; the generic-language vocabulary has one construct here,
-      whose meaning is the type it builds. The active-member build is a second such pair, one node
-      over.
-- [ ] T19 -- The layer that owns storage is where composing a runtime-owned sequence separates from
-      composing a machine aggregate. Today the split is thrown away going into LIR, where one
-      instruction carries both, and the execution backend recovers it by testing the result type --
-      while the other backend never re-derives it, because the nodes above are still apart. So the
-      same question is answered by node kind on one side and by a type test on the other, held in
-      step by nothing. This is the mirror of T10: one layer states a difference it does not own, and
-      the layer that owns it does not state it.
+- [ ] T20 -- Making a member the live one is stated, not chosen by where the reach stands. Reaching
+      an active member is one node, which is right, but writing one has to activate it and reading
+      one must not, so the backend picks the activating form from the occurrence's position -- two
+      arms a reader can tell apart by running the program. The write designator is what states it: a
+      write names an owner place and the descent that reaches the part, so the activating form is
+      the descent's own and never travels on a node a read shares.
 
 ## Callable and assignment identity
 

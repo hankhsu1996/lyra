@@ -5,6 +5,7 @@
 #include <format>
 #include <optional>
 #include <set>
+#include <span>
 #include <string>
 #include <string_view>
 #include <utility>
@@ -33,6 +34,17 @@
 namespace lyra::mir {
 
 namespace {
+
+auto FormatExprList(std::span<const ExprId> ids) -> std::string {
+  std::string text;
+  for (const ExprId id : ids) {
+    if (!text.empty()) {
+      text += ", ";
+    }
+    text += std::format("Expr[{}]", id.value);
+  }
+  return text;
+}
 
 class MirDumper {
  public:
@@ -748,15 +760,9 @@ class MirDumper {
                   "IncDecExpr op={} target=Expr[{}]", op_str, inc.target.value);
             },
             [this](const CallExpr& c) -> std::string {
-              std::string args;
-              for (std::size_t i = 0; i < c.arguments.size(); ++i) {
-                if (i != 0) {
-                  args += ", ";
-                }
-                args += std::format("Expr[{}]", c.arguments[i].value);
-              }
               return std::format(
-                  "CallExpr callee={} args=[{}]", FormatCallee(c.callee), args);
+                  "CallExpr callee={} args=[{}]", FormatCallee(c.callee),
+                  FormatExprList(c.arguments));
             },
             [](const FieldAccessExpr& m) -> std::string {
               return std::format(
@@ -794,35 +800,13 @@ class MirDumper {
               return std::format(
                   "ValueCastExpr operand=Expr[{}]", v.operand.value);
             },
-            [](const ArrayLiteralExpr& a) -> std::string {
-              std::string elements;
-              for (std::size_t i = 0; i < a.elements.size(); ++i) {
-                if (i != 0) {
-                  elements += ", ";
-                }
-                elements += std::format("Expr[{}]", a.elements[i].value);
-              }
-              return std::format("ArrayLiteralExpr elements=[{}]", elements);
-            },
-            [](const TupleExpr& t) -> std::string {
-              std::string components;
-              for (std::size_t i = 0; i < t.components.size(); ++i) {
-                if (i != 0) {
-                  components += ", ";
-                }
-                components += std::format("Expr[{}]", t.components[i].value);
-              }
-              return std::format("TupleExpr components=[{}]", components);
+            [](const CompositeExpr& c) -> std::string {
+              return std::format(
+                  "CompositeExpr parts=[{}]", FormatExprList(c.parts));
             },
             [](const VectorExpr& v) -> std::string {
-              std::string elements;
-              for (std::size_t i = 0; i < v.elements.size(); ++i) {
-                if (i != 0) {
-                  elements += ", ";
-                }
-                elements += std::format("Expr[{}]", v.elements[i].value);
-              }
-              return std::format("VectorExpr elements=[{}]", elements);
+              return std::format(
+                  "VectorExpr elements=[{}]", FormatExprList(v.elements));
             },
             [](const AwaitExpr& a) -> std::string {
               return std::format(
@@ -837,11 +821,6 @@ class MirDumper {
               return std::format(
                   "UnionExpr index={} value=Expr[{}]", u.index.value,
                   u.value.value);
-            },
-            [](const TaggedExpr& t) -> std::string {
-              return std::format(
-                  "TaggedExpr tag={} payload=Expr[{}]", t.tag_index.value,
-                  t.payload.value);
             },
             [](const TaggedIsExpr& g) -> std::string {
               return std::format(

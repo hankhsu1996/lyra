@@ -394,7 +394,7 @@ auto ProcessLowerer::BuildReturnPayload(
   }
   return block.exprs.Add(
       mir::Expr{
-          .data = mir::TupleExpr{.components = std::move(components)},
+          .data = mir::CompositeExpr{.parts = std::move(components)},
           .type = payload_type});
 }
 

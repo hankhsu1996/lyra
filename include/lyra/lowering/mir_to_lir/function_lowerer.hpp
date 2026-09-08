@@ -2,6 +2,7 @@
 
 #include <functional>
 #include <optional>
+#include <span>
 #include <string>
 #include <variant>
 #include <vector>
@@ -151,6 +152,10 @@ class FunctionLowerer {
   // no value of its own -- a cell -- has no reading, and is rejected here.
   auto LowerExpr(const mir::Block& block, mir::ExprId id)
       -> diag::Result<lir::Operand>;
+  // The readings of `ids`, in order. An instruction taking a list of them
+  // composes these operands; the walk over the list is not each caller's.
+  auto LowerEachExpr(const mir::Block& block, std::span<const mir::ExprId> ids)
+      -> diag::Result<std::vector<lir::Operand>>;
   // Passes an expression to a callee: a cell crosses as its address, every
   // other value as itself. This is the one use context that addresses a place
   // without an explicit address-of in the source IR.

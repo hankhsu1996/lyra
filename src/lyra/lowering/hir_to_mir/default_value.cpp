@@ -4,6 +4,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <optional>
+#include <span>
 #include <string>
 #include <utility>
 #include <variant>
@@ -100,7 +101,7 @@ auto BuildUnpackedArrayValue(
       element_ids.size());
   const mir::ExprId list_id = block.exprs.Add(
       mir::Expr{
-          .data = mir::ArrayLiteralExpr{.elements = std::move(element_ids)},
+          .data = mir::CompositeExpr{.parts = std::move(element_ids)},
           .type = list_type});
   const mir::ExprId count_id =
       BuildMachineIntLiteral(unit_lowerer.Unit(), block, 1);
@@ -111,9 +112,9 @@ auto BuildUnpackedArrayValue(
 
 // Materialize a folded member-default constant (LRM 7.2.2) as a MIR value of
 // its type. A scalar leaf becomes a literal (a string constructs the runtime
-// String); an unpacked aggregate becomes a TupleExpr (struct) or an array
-// construction (array) over the recursively materialized components, with the
-// type disambiguating a component list as struct members or array elements.
+// String); an unpacked struct is its recursively materialized components, and
+// an unpacked array is the construction that takes them, with the type
+// deciding which of the two a component list is.
 auto MaterializeConstant(
     const UnitLowerer& unit_lowerer, mir::Block& block, hir::TypeId hir_type,
     const hir::ConstantValue& value) -> mir::Expr {
@@ -150,8 +151,7 @@ auto MaterializeConstant(
                     unit_lowerer, block, st->fields[i].type, components[i])));
               }
               return mir::Expr{
-                  .data =
-                      mir::TupleExpr{.components = std::move(component_ids)},
+                  .data = mir::CompositeExpr{.parts = std::move(component_ids)},
                   .type = mir_type};
             }
             if (const auto* ua = hir_ty.As<hir::UnpackedArrayType>()) {
@@ -182,6 +182,22 @@ auto BuildDefaultValueExpr(
   // The type an arm receives is a view into the pool, and building a component
   // default can intern a type and relocate what the pool holds. An arm that
   // recurses therefore reads what it needs out of its type first.
+  //
+  // LRM Table 7-1: an unpacked union defaults to its first member's default.
+  // LRM 11.9 leaves an uninitialized tagged union undefined, and Lyra's
+  // deterministic fallback is that same first member, so one build answers
+  // both. Synthesized at each use rather than stored on the interned type, so
+  // two source declarations with the same component types share one type.
+  const auto first_member_default =
+      [&](std::span<const mir::TypeId> members) -> mir::Expr {
+    return mir::Expr{
+        .data =
+            mir::UnionExpr{
+                .index = base::ComponentIndex{},
+                .value = block.exprs.Add(
+                    BuildDefaultValueExpr(unit, block, members.front()))},
+        .type = type};
+  };
   return ty.Visit(
       Overloaded{
           [&](const mir::PackedArrayType& pa) -> mir::Expr {
@@ -229,10 +245,10 @@ auto BuildDefaultValueExpr(
                 unit, block, type, element_default, {element_default}, size_id);
           },
           // LRM Table 7-1: an unpacked struct defaults member-wise -- each
-          // component takes its own type's default, recursively. Synthesized as
-          // a TupleExpr at each use, never stored on the interned TupleType, so
-          // structs with the same component types but different member
-          // initializers share one type.
+          // component takes its own type's default, recursively. Synthesized at
+          // each use rather than stored on the interned type, so structs with
+          // the same component types but different member initializers share
+          // one type.
           [&](const mir::TupleType& t) -> mir::Expr {
             const std::vector<mir::TypeId> element_types = t.elements;
             std::vector<mir::ExprId> components;
@@ -242,35 +258,14 @@ auto BuildDefaultValueExpr(
                   block.exprs.Add(BuildDefaultValueExpr(unit, block, elem)));
             }
             return mir::Expr{
-                .data = mir::TupleExpr{.components = std::move(components)},
+                .data = mir::CompositeExpr{.parts = std::move(components)},
                 .type = type};
           },
-          // LRM Table 7-1: an unpacked union defaults to its first member's
-          // default. Synthesized as a UnionExpr over component 0 at each use,
-          // never stored on the interned UnionType (same rationale as the
-          // struct's member-wise default).
           [&](const mir::UnionType& u) -> mir::Expr {
-            const mir::ExprId member_default = block.exprs.Add(
-                BuildDefaultValueExpr(unit, block, u.elements.front()));
-            return mir::Expr{
-                .data =
-                    mir::UnionExpr{
-                        .index = base::ComponentIndex{0},
-                        .value = member_default},
-                .type = type};
+            return first_member_default(u.elements);
           },
-          // LRM 11.9: an uninitialized tagged union variable is undefined. The
-          // deterministic Lyra fallback -- same policy as untagged unions --
-          // is tag 0 carrying that member's Table 6-7 default.
           [&](const mir::TaggedUnionType& u) -> mir::Expr {
-            const mir::TypeId first = u.elements.front();
-            return mir::Expr{
-                .data =
-                    mir::TaggedExpr{
-                        .tag_index = base::ComponentIndex{0},
-                        .payload = block.exprs.Add(
-                            BuildDefaultValueExpr(unit, block, first))},
-                .type = type};
+            return first_member_default(u.elements);
           },
           // LRM Table 6-7: a dynamic array's default is the empty array.
           // The wrapper still needs the element type's default supplied at
@@ -396,7 +391,7 @@ auto BuildDefaultValueFromHir(
       components.push_back(component);
     }
     return mir::Expr{
-        .data = mir::TupleExpr{.components = std::move(components)},
+        .data = mir::CompositeExpr{.parts = std::move(components)},
         .type = mir_type};
   }
 
@@ -460,7 +455,7 @@ auto BuildArrayConstructionCall(
       mir::MachineArrayOf(unit.types, element_type, elements.size());
   const mir::ExprId list_id = block.exprs.Add(
       mir::Expr{
-          .data = mir::ArrayLiteralExpr{.elements = std::move(elements)},
+          .data = mir::CompositeExpr{.parts = std::move(elements)},
           .type = list_type});
   const mir::ExprId count_id = BuildMachineIntLiteral(unit, block, 1);
   return BuildContainerFromElements(
@@ -476,7 +471,7 @@ auto BuildArrayRepeatCall(
       repeat_unit.size());
   const mir::ExprId repeat_unit_id = block.exprs.Add(
       mir::Expr{
-          .data = mir::ArrayLiteralExpr{.elements = std::move(repeat_unit)},
+          .data = mir::CompositeExpr{.parts = std::move(repeat_unit)},
           .type = repeat_unit_type});
   return BuildContainerFromElements(
       unit, block, array_type, element_default, repeat_unit_id, count_id);
@@ -503,14 +498,14 @@ auto BuildAssociativeConstructionCall(
   for (const auto& [key_id, value_id] : entries) {
     tuple_ids.push_back(block.exprs.Add(
         mir::Expr{
-            .data = mir::TupleExpr{.components = {key_id, value_id}},
+            .data = mir::CompositeExpr{.parts = {key_id, value_id}},
             .type = tuple_type}));
   }
   const mir::TypeId entries_type =
       mir::MachineArrayOf(unit.types, tuple_type, tuple_ids.size());
   const mir::ExprId entries_id = block.exprs.Add(
       mir::Expr{
-          .data = mir::ArrayLiteralExpr{.elements = std::move(tuple_ids)},
+          .data = mir::CompositeExpr{.parts = std::move(tuple_ids)},
           .type = entries_type});
 
   const mir::ExprId element_default =

@@ -306,7 +306,7 @@ auto LowerScanSystemSubroutineCall(
   }
   const mir::ExprId prototypes_id = scan_body.exprs.Add(
       mir::Expr{
-          .data = mir::TupleExpr{.components = std::move(prototypes)},
+          .data = mir::CompositeExpr{.parts = std::move(prototypes)},
           .type = unit.types.Intern(
               mir::Type{mir::TupleType{.elements = target_types}})});
 

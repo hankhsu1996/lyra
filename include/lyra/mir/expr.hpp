@@ -471,6 +471,16 @@ struct IntCastExpr {
   ExprId operand;
 };
 
+// The same value at another type that structures its bits identically --
+// crossing between an enumeration and its base (LRM 6.19.3) is the case this
+// arises for. Nothing is built and nothing moves; what changes is the type the
+// program ascribes to the value, which is why this is a cast and not a
+// construction. A destination whose representation differs is a reshape, which
+// is a library call and reaches this node already reshaped.
+struct ValueCastExpr {
+  ExprId operand;
+};
+
 // Identity of a class field at an access site: the class whose field arena
 // declares the field, and the slot within that arena. Owner is the declaring
 // class, not the receiver's class; the two coincide when the receiver's class
@@ -550,40 +560,25 @@ struct FieldAccessExpr {
   FieldRef field;
 };
 
-// LRM 10.9.1 array assignment pattern `'{e1, e2, ...}` element list: a value
-// that is its elements and nothing more, which is what makes it a primitive.
-// `Expr::type` is the list's own type -- contiguous storage of a known element
-// count -- because the list is a value in its own right; a container built over
-// one is a separate construction, so this is the same literal whichever one
-// consumes it.
-struct ArrayLiteralExpr {
-  std::vector<ExprId> elements;
-};
-
-// The same value at another type that structures its bits identically --
-// crossing between an enumeration and its base (LRM 6.19.3) is the case this
-// arises for. Nothing is built and nothing moves; what changes is the type the
-// program ascribes to the value, which is why this is a cast and not a
-// construction. A destination whose representation differs is a reshape, which
-// is a library call and reaches this node already reshaped.
-struct ValueCastExpr {
-  ExprId operand;
-};
-
-// A heterogeneous product value built from its component expressions in order
-// (`TupleExpr{key, value}` is a pair). `Expr::type` is the `TupleType`, off
-// which the component types are read at render time. The generic product
-// literal: an associative literal is an `ArrayLiteralExpr` of these.
-struct TupleExpr {
-  std::vector<ExprId> components;
+// A value that is its parts and nothing more, composed from them in order. It
+// decomposes into nothing further, which is what makes it a primitive rather
+// than a call: no entry is named and no library is asked to do anything.
+//
+// Which value is composed is `Expr::type`, the way a brace initializer's
+// meaning is the type it initializes -- a product from its components, a
+// contiguous element list from its elements. Each of those has exactly one way
+// to be built, so the type answers completely and nothing chooses. A value that
+// has more than one way to come into existence is not this node: it is a
+// library type, and it comes into existence through its own constructor with
+// this list among the arguments.
+struct CompositeExpr {
+  std::vector<ExprId> parts;
 };
 
 // A homogeneous sequence value built from its element expressions in order.
 // `Expr::type` is the `VectorType`, off which the element type is read at
-// render time. The generic sequence literal -- the homogeneous counterpart to
-// `TupleExpr`, and the only way a sequence value comes into being, so a
-// sequence is always fully composed at the point it is built rather than
-// grown afterwards.
+// render time. A sequence is composed whole rather than grown afterwards, so
+// its elements are all here.
 struct VectorExpr {
   std::vector<ExprId> elements;
 };
@@ -621,28 +616,21 @@ struct VectorGetExpr {
   ExprId index;
 };
 
-// Builds a union value whose active member is component `index`, carrying
-// `value`. The value-build primitive for `UnionType`, the active-member
-// analogue of `TupleExpr`: a tuple literal lists every component, a union
-// literal names the one live member. Used to construct a union value -- a
-// default-initialized union builds `UnionExpr{0, <member 0 default>}`.
-// `Expr::type` is the `UnionType`.
+// Builds an active-member value whose live member is component `index`,
+// carrying `value`. The active-member counterpart to `CompositeExpr`: a
+// composite lists every part, this one names the single part that is the value.
+// Used wherever such a value comes into being -- a default-initialized union
+// builds `UnionExpr{0, <member 0 default>}`, and SystemVerilog's `tagged Member
+// expr` (LRM 11.9) builds the member it names.
+//
+// `Expr::type` says whether the live member is observable and a mismatched
+// reach fails, or is erased with a cross-member read defaulted; that is the
+// value's own semantics and changes nothing about the build. A member carrying
+// no bits is filled in with its type's value at HIR-to-MIR, so `value` is
+// always present and no consumer decides what an absent one would mean.
 struct UnionExpr {
   base::ComponentIndex index;
   ExprId value;
-};
-
-// Builds a tagged-union value whose active tag is `tag_index`, carrying
-// `payload`. The value-build primitive for `TaggedUnionType` and the tagged
-// analogue of `UnionExpr`: SystemVerilog spells this as `tagged Member expr`
-// (or `tagged Member` for a `void` member, LRM 11.9). Every tag carries a
-// payload here, including a `void` one -- the source's missing operand is
-// filled in with that element type's value at HIR-to-MIR, so a consumer never
-// has to decide what an absent one would mean. `Expr::type` is the
-// `TaggedUnionType`.
-struct TaggedExpr {
-  base::ComponentIndex tag_index;
-  ExprId payload;
 };
 
 // Non-throwing tag check: `1` iff the tagged-union value's active tag equals
@@ -761,9 +749,9 @@ using ExprData = std::variant<
     MachineFloatLiteral, ReferenceExpr, UnaryExpr, BinaryExpr, BoolCastExpr,
     ConditionalExpr, BlockExpr, AssignExpr, IncDecExpr, CallExpr, DerefExpr,
     AddressOfExpr, MachineArrayDataExpr, MoveExpr, PointerCastExpr,
-    FunctionCastExpr, IntCastExpr, FieldAccessExpr, ClosureExpr,
-    ArrayLiteralExpr, ValueCastExpr, TupleExpr, VectorExpr, AwaitExpr,
-    VectorGetExpr, UnionExpr, TaggedExpr, TaggedIsExpr, UnionMemberExpr>;
+    FunctionCastExpr, IntCastExpr, FieldAccessExpr, ClosureExpr, CompositeExpr,
+    ValueCastExpr, VectorExpr, AwaitExpr, VectorGetExpr, UnionExpr,
+    TaggedIsExpr, UnionMemberExpr>;
 
 struct Expr {
   ExprData data;

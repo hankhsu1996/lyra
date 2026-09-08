@@ -77,9 +77,7 @@ auto DescribeMemory(
                 .element = shape.element_type,
                 .operands = {wrapper.exprs.Add(
                     mir::Expr{
-                        .data =
-                            mir::ArrayLiteralExpr{
-                                .elements = std::move(bounds)},
+                        .data = mir::CompositeExpr{.parts = std::move(bounds)},
                         .type = bounds_type})},
                 .lowest_address = std::min(
                     shape.dims.front().left, shape.dims.front().right)};

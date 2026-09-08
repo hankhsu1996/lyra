@@ -83,20 +83,19 @@ namespace lyra::lowering::hir_to_mir {
 // `[element_default, repeat_unit, count]` (plus the LRM 7.10.5 bound for a
 // bounded queue). This is the shape every site that produces an all-default or
 // `'{count{...}}` array value must use, so the value's MIR and emitted text
-// stay O(repeat_unit) rather than O(repeat_unit * count). A distinct-element
-// list uses `BuildArrayConstructionCall` instead.
+// stay O(repeat_unit) rather than O(repeat_unit * count). A list whose elements
+// differ is built by the construction call above instead.
 [[nodiscard]] auto BuildArrayRepeatCall(
     const mir::CompilationUnit& unit, mir::Block& block, mir::TypeId array_type,
     mir::ExprId element_default, std::vector<mir::ExprId> repeat_unit,
     mir::ExprId count_id) -> mir::Expr;
 
 // Builds the construction call for an associative-array literal (LRM 7.9.11).
-// Each (key, value) entry becomes a `TupleExpr`; the entries ride in an
-// aggregate literal of the plain-data array of those tuples, and the
-// constructor arguments are `[element_default, entries, optional
-// user_default]`. `user_default` is the LRM 7.9.11 persistent fallback
-// a read of an absent key returns; when absent the constructor seeds only the
-// element type default.
+// Each (key, value) entry is a pair, and the entries ride in the plain-data
+// array of those pairs, so the constructor arguments are `[element_default,
+// entries, optional user_default]`. `user_default` is the LRM 7.9.11 persistent
+// fallback a read of an absent key returns; when absent the constructor seeds
+// only the element type default.
 [[nodiscard]] auto BuildAssociativeConstructionCall(
     const mir::CompilationUnit& unit, mir::Block& block, mir::TypeId assoc_type,
     std::vector<std::pair<mir::ExprId, mir::ExprId>> entries,

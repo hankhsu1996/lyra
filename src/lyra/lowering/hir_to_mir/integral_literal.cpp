@@ -54,7 +54,7 @@ auto BuildWordPlane(
   }
   return block.exprs.Add(
       mir::Expr{
-          .data = mir::ArrayLiteralExpr{.elements = std::move(elements)},
+          .data = mir::CompositeExpr{.parts = std::move(elements)},
           .type = mir::MachineArrayOf(
               unit.types, unit.builtins.machine_word, count)});
 }

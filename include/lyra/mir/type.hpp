@@ -549,9 +549,9 @@ struct VectorType {
 // A heterogeneous fixed product: an ordered list of component types, each
 // independent. MIR's only heterogeneous aggregate -- the generic-language
 // product type (the Rust / Python tuple, C++ `std::tuple` / `std::pair`),
-// where `VectorType` is the homogeneous one. Built by `TupleExpr`. It is what
-// lets an associative literal be a vector of `(key, value)` pairs instead of
-// two parallel lists, so no associative-specific construction node is needed.
+// where `VectorType` is the homogeneous one. It is what lets an associative
+// literal be a sequence of `(key, value)` pairs instead of two parallel lists,
+// so no associative-specific construction is needed.
 struct TupleType {
   std::vector<TypeId> elements;
 

@@ -329,7 +329,7 @@ auto BuildOpenArrayBounds(
       mir::MachineArrayOf(unit.types, int_type, bounds.size());
   return block.exprs.Add(
       mir::Expr{
-          .data = mir::ArrayLiteralExpr{.elements = std::move(bounds)},
+          .data = mir::CompositeExpr{.parts = std::move(bounds)},
           .type = bounds_type});
 }
 

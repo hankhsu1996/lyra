@@ -196,11 +196,10 @@ auto LowerHirReplicationExpr(
 // lowered from the keys themselves.
 //
 // The shapes differ only in how they package the positional elements: a packed
-// target joins them into one bit plane, because its members share one; an
-// array container (unpacked, dynamic, queue) lands as `ArrayLiteralExpr` slots
-// wrapped by a construction call; and an unpacked struct -- whose members are
-// independent value slots, not a shared bit plane -- folds into a positional
-// `TupleExpr`.
+// target joins them into one bit plane, because its members share one; an array
+// container is a library type and takes the element list as its constructor's
+// argument; and an unpacked struct -- whose members are independent value
+// slots, not a shared bit plane -- is those elements and nothing more.
 template <ExprLowerer Lowerer>
 auto LowerHirAssignmentPatternExpr(
     Lowerer& lowerer, WalkFrame frame, const hir::AssignmentPatternExpr& a,
@@ -221,7 +220,7 @@ auto LowerHirAssignmentPatternExpr(
   }
   if (result_ty.Is<mir::TupleType>()) {
     return mir::Expr{
-        .data = mir::TupleExpr{.components = std::move(element_ids)},
+        .data = mir::CompositeExpr{.parts = std::move(element_ids)},
         .type = result_type};
   }
   return BuildValueConversion(
@@ -445,7 +444,7 @@ auto LowerHirAssignmentPatternReplicationExpr(
       components.push_back(item_ids[i % item_ids.size()]);
     }
     return mir::Expr{
-        .data = mir::TupleExpr{.components = std::move(components)},
+        .data = mir::CompositeExpr{.parts = std::move(components)},
         .type = result_type};
   }
 

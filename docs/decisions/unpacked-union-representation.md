@@ -120,8 +120,8 @@ not a product with a different label.
 
 ## Consequences
 
-- A new MIR type variant (`UnionType`) and three expression primitives: `UnionExpr` (build a whole
-  union value), `UnionGetExpr` (read a member), and `UnionGetRefExpr` (write a member).
+- A new MIR type variant (`UnionType`) and two expression primitives: one that builds a whole union
+  value by naming its live member, and one that reaches that member.
 - A new runtime value type `lyra::value::Union<Ts...>`, composing `LyraValue` from its active
   member.
 - A declared union must default-initialize to be usable, so the first-member default lands together

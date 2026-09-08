@@ -576,39 +576,16 @@ auto RenderClosureExpr(const ScopeView& view, const mir::ClosureExpr& construct)
       "[{}]({}){}{}", captures_text, params_text, return_clause, body);
 }
 
-// The brace form of the aggregate literal's own type, which is always the
-// plain-data array of its elements -- a simulation container is what some
-// enclosing construction builds from the literal, never what the literal is.
-// The type spells itself, so this names no target type of its own and the same
-// string is correct standalone and as a construction argument.
-auto RenderArrayLiteralExpr(
-    const ScopeView& view, const mir::Expr& expr,
-    const mir::ArrayLiteralExpr& a) -> std::string {
-  return std::format(
-      "{}{{{}}}", RenderTypeAsCpp(view.Unit(), expr.type),
-      JoinCommaSeparated(RenderEachExpr(view, a.elements)));
-}
-
-// Render the full `std::tuple<...>{...}` rather than a bare brace list so the
-// tuple's conditionally-explicit converting constructor is never in doubt,
-// including when the tuple is an element of an outer array literal.
-auto RenderTupleExpr(
-    const ScopeView& view, const mir::Expr& expr, const mir::TupleExpr& t)
+// A brace initializer over the parts, naming the type it builds. Naming it
+// rather than leaving a bare brace list is what makes the same string correct
+// standalone and in the position of an argument or an outer literal's part,
+// where a bare list would be resolved against the surrounding type instead.
+auto RenderPartsAsBraceInit(
+    const ScopeView& view, mir::TypeId type, std::span<const mir::ExprId> parts)
     -> std::string {
   return std::format(
-      "{}{{{}}}", RenderTypeAsCpp(view.Unit(), expr.type),
-      JoinCommaSeparated(RenderEachExpr(view, t.components)));
-}
-
-// Render the full `std::vector<...>{...}` rather than a bare brace list, for
-// the same reason a product value does: the element type has to be stated
-// where the sequence appears as an argument or an element of an outer literal.
-auto RenderVectorExpr(
-    const ScopeView& view, const mir::Expr& expr, const mir::VectorExpr& v)
-    -> std::string {
-  return std::format(
-      "{}{{{}}}", RenderTypeAsCpp(view.Unit(), expr.type),
-      JoinCommaSeparated(RenderEachExpr(view, v.elements)));
+      "{}{{{}}}", RenderTypeAsCpp(view.Unit(), type),
+      JoinCommaSeparated(RenderEachExpr(view, parts)));
 }
 
 // A dereference: the storage the operand's pointer stands for.
@@ -753,14 +730,11 @@ auto RenderExpr(const ScopeView& view, const mir::Expr& expr) -> std::string {
           [&](const mir::ValueCastExpr& v) -> std::string {
             return RenderExpr(view, view.Expr(v.operand));
           },
-          [&](const mir::ArrayLiteralExpr& a) -> std::string {
-            return RenderArrayLiteralExpr(view, expr, a);
-          },
-          [&](const mir::TupleExpr& t) -> std::string {
-            return RenderTupleExpr(view, expr, t);
+          [&](const mir::CompositeExpr& c) -> std::string {
+            return RenderPartsAsBraceInit(view, expr.type, c.parts);
           },
           [&](const mir::VectorExpr& v) -> std::string {
-            return RenderVectorExpr(view, expr, v);
+            return RenderPartsAsBraceInit(view, expr.type, v.elements);
           },
           [&](const mir::AwaitExpr& a) -> std::string {
             return std::format(
@@ -775,11 +749,6 @@ auto RenderExpr(const ScopeView& view, const mir::Expr& expr) -> std::string {
             return std::format(
                 "{}::Make<{}>({})", RenderTypeAsCpp(view.Unit(), expr.type),
                 u.index.value, RenderExpr(view, view.Expr(u.value)));
-          },
-          [&](const mir::TaggedExpr& t) -> std::string {
-            return std::format(
-                "{}::Make<{}>({})", RenderTypeAsCpp(view.Unit(), expr.type),
-                t.tag_index.value, RenderExpr(view, view.Expr(t.payload)));
           },
           [&](const mir::TaggedIsExpr& g) -> std::string {
             return std::format(

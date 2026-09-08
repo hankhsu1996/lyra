@@ -6,6 +6,7 @@
 #include <format>
 #include <optional>
 #include <ranges>
+#include <span>
 #include <string>
 #include <utility>
 #include <variant>
@@ -43,6 +44,25 @@ constexpr base::ComponentIndex kMutatingCallResult{1};
 auto Unsupported(std::string message) -> std::unexpected<diag::Diagnostic> {
   return diag::Fail(
       diag::DiagCode::kUnsupportedExpressionForm, std::move(message));
+}
+
+// Which build assembles a composite value follows from the storage its type
+// names, which is what translating the type has just settled: a product's
+// components each keep a type of their own, while an element list is one
+// element type laid down a known number of times. A type reaching here that
+// names neither is a producer that built a composite of something that is not
+// composed from parts.
+auto AssembledFrom(const lir::Type& built, std::vector<lir::Operand> parts)
+    -> lir::InstrData {
+  if (built.Is<lir::TupleType>()) {
+    return lir::ProductInstr{.components = std::move(parts)};
+  }
+  if (built.Is<lir::MachineArrayType>()) {
+    return lir::ArrayInstr{.elements = std::move(parts)};
+  }
+  throw InternalError(
+      "mir_to_lir: a composite's type names storage that is not assembled "
+      "from parts");
 }
 
 // The place a place local names: its own storage, with nothing projected off
@@ -1502,6 +1522,21 @@ auto FunctionLowerer::LowerArgument(const mir::Block& block, mir::ExprId id)
       lir::AddrOfInstr{.place = *std::move(place)});
 }
 
+auto FunctionLowerer::LowerEachExpr(
+    const mir::Block& block, std::span<const mir::ExprId> ids)
+    -> diag::Result<std::vector<lir::Operand>> {
+  std::vector<lir::Operand> operands;
+  operands.reserve(ids.size());
+  for (const mir::ExprId id : ids) {
+    auto lowered = LowerExpr(block, id);
+    if (!lowered) {
+      return std::unexpected(std::move(lowered.error()));
+    }
+    operands.push_back(*std::move(lowered));
+  }
+  return operands;
+}
+
 auto FunctionLowerer::LowerCallOperands(
     const mir::Block& block, const mir::CallExpr& call)
     -> diag::Result<std::vector<lir::Operand>> {
@@ -2187,47 +2222,25 @@ auto FunctionLowerer::LowerExpr(const mir::Block& block, mir::ExprId id)
                 unit_->TranslateType(type),
                 lir::ValueCastInstr{.operand = *std::move(operand)});
           },
-          [&](const mir::ArrayLiteralExpr& lit) -> diag::Result<lir::Operand> {
-            std::vector<lir::Operand> elements;
-            elements.reserve(lit.elements.size());
-            for (const mir::ExprId elem : lit.elements) {
-              auto lowered = LowerExpr(block, elem);
-              if (!lowered) {
-                return std::unexpected(std::move(lowered.error()));
-              }
-              elements.push_back(*std::move(lowered));
+          [&](const mir::CompositeExpr& composite)
+              -> diag::Result<lir::Operand> {
+            auto parts = LowerEachExpr(block, composite.parts);
+            if (!parts) {
+              return std::unexpected(std::move(parts.error()));
             }
+            const lir::TypeId built = unit_->TranslateType(type);
             return Emit(
-                unit_->TranslateType(type),
-                lir::ArrayInstr{.elements = std::move(elements)});
-          },
-          [&](const mir::TupleExpr& tuple) -> diag::Result<lir::Operand> {
-            std::vector<lir::Operand> components;
-            components.reserve(tuple.components.size());
-            for (const mir::ExprId component : tuple.components) {
-              auto lowered = LowerExpr(block, component);
-              if (!lowered) {
-                return std::unexpected(std::move(lowered.error()));
-              }
-              components.push_back(*std::move(lowered));
-            }
-            return Emit(
-                unit_->TranslateType(type),
-                lir::ProductInstr{.components = std::move(components)});
+                built,
+                AssembledFrom(unit_->Types().Get(built), *std::move(parts)));
           },
           [&](const mir::VectorExpr& vec) -> diag::Result<lir::Operand> {
-            std::vector<lir::Operand> elements;
-            elements.reserve(vec.elements.size());
-            for (const mir::ExprId element : vec.elements) {
-              auto lowered = LowerExpr(block, element);
-              if (!lowered) {
-                return std::unexpected(std::move(lowered.error()));
-              }
-              elements.push_back(*std::move(lowered));
+            auto elements = LowerEachExpr(block, vec.elements);
+            if (!elements) {
+              return std::unexpected(std::move(elements.error()));
             }
             return Emit(
                 unit_->TranslateType(type),
-                lir::ArrayInstr{.elements = std::move(elements)});
+                lir::ArrayInstr{.elements = *std::move(elements)});
           },
           [&](const mir::VectorGetExpr& get) -> diag::Result<lir::Operand> {
             auto vector = LowerExpr(block, get.vector);
@@ -2528,16 +2541,6 @@ auto FunctionLowerer::LowerExpr(const mir::Block& block, mir::ExprId id)
             return Emit(
                 unit_->TranslateType(type),
                 lir::UnionInstr{.index = u.index, .value = *std::move(value)});
-          },
-          [&](const mir::TaggedExpr& t) -> diag::Result<lir::Operand> {
-            auto payload = LowerExpr(block, t.payload);
-            if (!payload) {
-              return payload;
-            }
-            return Emit(
-                unit_->TranslateType(type),
-                lir::UnionInstr{
-                    .index = t.tag_index, .value = *std::move(payload)});
           },
           [&](const mir::TaggedIsExpr& g) -> diag::Result<lir::Operand> {
             // The non-throwing guard a pattern match tests: whether the value's
