@@ -1,637 +1,840 @@
 #include "lyra/support/builtin_fn.hpp"
 
-#include <cstddef>
-#include <optional>
+#include <string_view>
 
 #include "lyra/base/internal_error.hpp"
 
 namespace lyra::support {
 
-auto IsMutatingBuiltinFn(BuiltinFn id) -> bool {
-  switch (id) {
-    case BuiltinFn::kPutc:
-    case BuiltinFn::kItoa:
-    case BuiltinFn::kHextoa:
-    case BuiltinFn::kOcttoa:
-    case BuiltinFn::kBintoa:
-    case BuiltinFn::kRealtoa:
-    case BuiltinFn::kDelete:
-    case BuiltinFn::kDeleteIndex:
-    case BuiltinFn::kReverse:
-    case BuiltinFn::kSort:
-    case BuiltinFn::kRsort:
-    case BuiltinFn::kInsert:
-    case BuiltinFn::kPopFront:
-    case BuiltinFn::kPopBack:
-    case BuiltinFn::kPushFront:
-    case BuiltinFn::kPushBack:
-      return true;
-    default:
-      return false;
-  }
-}
+namespace {
 
-auto ReachesThroughReceiverBuiltinFn(BuiltinFn id) -> bool {
-  switch (id) {
-    case BuiltinFn::kRequire:
-    case BuiltinFn::kElementRef:
-    case BuiltinFn::kSliceRef:
-      return true;
-    default:
-      return false;
-  }
-}
+// LRM 6.19.5 enum queries and methods are answered from the enumeration's own
+// declared members: the type-static queries become constants and the instance
+// methods become callables synthesized over the member list, both where the
+// source is read. No library over the shared packed representation could see
+// those members, so none declares an entry for them.
+constexpr std::string_view kAnsweredFromEnumMembers =
+    "an enumeration's declared members answer it where the source is read";
 
-auto ArrayMethodTakesClosure(BuiltinFn id) -> bool {
-  switch (id) {
-    case BuiltinFn::kSort:
-    case BuiltinFn::kRsort:
-    case BuiltinFn::kSum:
-    case BuiltinFn::kProduct:
-    case BuiltinFn::kAnd:
-    case BuiltinFn::kOr:
-    case BuiltinFn::kXor:
-    case BuiltinFn::kFind:
-    case BuiltinFn::kFindIndex:
-    case BuiltinFn::kFindFirst:
-    case BuiltinFn::kFindFirstIndex:
-    case BuiltinFn::kFindLast:
-    case BuiltinFn::kFindLastIndex:
-    case BuiltinFn::kMin:
-    case BuiltinFn::kMax:
-    case BuiltinFn::kUnique:
-    case BuiltinFn::kUniqueIndex:
-    case BuiltinFn::kMap:
-      return true;
-    default:
-      return false;
-  }
-}
+}  // namespace
 
-auto BuiltinFnTakesResultPrototype(BuiltinFn id) -> bool {
-  switch (id) {
-    case BuiltinFn::kAssocMinIndex:
-    case BuiltinFn::kAssocMaxIndex:
-    case BuiltinFn::kSum:
-    case BuiltinFn::kProduct:
-    case BuiltinFn::kAnd:
-    case BuiltinFn::kOr:
-    case BuiltinFn::kXor:
-    case BuiltinFn::kFind:
-    case BuiltinFn::kFindIndex:
-    case BuiltinFn::kFindFirst:
-    case BuiltinFn::kFindFirstIndex:
-    case BuiltinFn::kFindLast:
-    case BuiltinFn::kFindLastIndex:
-    case BuiltinFn::kMin:
-    case BuiltinFn::kMax:
-    case BuiltinFn::kUnique:
-    case BuiltinFn::kUniqueIndex:
-    case BuiltinFn::kMap:
-      return true;
-    default:
-      return false;
-  }
-}
-
-auto IsAssociativeTraversalFn(BuiltinFn id) -> bool {
-  switch (id) {
-    case BuiltinFn::kAssocFirst:
-    case BuiltinFn::kAssocLast:
-    case BuiltinFn::kAssocNext:
-    case BuiltinFn::kAssocPrev:
-      return true;
-    default:
-      return false;
-  }
-}
-
-auto ContainerIndexOperand(BuiltinFn id) -> std::optional<std::size_t> {
-  switch (id) {
-    // The receiver leads, and the index it selects by follows.
-    case BuiltinFn::kElement:
-    case BuiltinFn::kExists:
-    // LRM 7.9.3 / 7.10.2.3: the index naming the one entry that goes.
-    case BuiltinFn::kDeleteIndex:
-    // LRM 7.9.4 -- 7.9.7: the index the traversal starts from, which it also
-    // answers with when there is no neighbour to move to.
-    case BuiltinFn::kAssocFirst:
-    case BuiltinFn::kAssocLast:
-    case BuiltinFn::kAssocNext:
-    case BuiltinFn::kAssocPrev:
-      return 1;
-    default:
-      return std::nullopt;
-  }
-}
-
-auto SpreadPartOperand(BuiltinFn id) -> std::optional<std::size_t> {
-  switch (id) {
-    // LRM 10.10: the accumulating array leads, and the spread part whose
-    // elements it appends follows. The part is a container of any domain, which
-    // the appending entry cannot name, so it crosses erased -- boxed into a
-    // runtime value in its own domain and read back element by element.
-    case BuiltinFn::kArrayConcatSpread:
-      return 1;
-    default:
-      return std::nullopt;
-  }
-}
-
-auto BuiltinFnName(BuiltinFn id) -> std::string_view {
+auto RuntimeEntryOf(BuiltinFn id) -> RuntimeEntry {
   switch (id) {
     case BuiltinFn::kElement:
-      return "element";
+      return {
+          .name = "element",
+          .declaration = Method{"Element"},
+          .index_operand = 1};
     case BuiltinFn::kSlice:
-      return "slice";
+      return {.name = "slice", .declaration = Method{"Slice"}};
     case BuiltinFn::kElementRef:
-      return "element_ref";
+      return {
+          .name = "element_ref",
+          .declaration = Method{"ElementRef"},
+          .reaches_through_receiver = true};
     case BuiltinFn::kSliceRef:
-      return "slice_ref";
+      return {
+          .name = "slice_ref",
+          .declaration = Method{"SliceRef"},
+          .reaches_through_receiver = true};
     case BuiltinFn::kRequire:
-      return "require";
+      return {
+          .name = "require",
+          .declaration = FreeFunction{"lyra::value::Require"},
+          .reaches_through_receiver = true};
     case BuiltinFn::kSize:
-      return "size";
+      return {.name = "size", .declaration = Method{"Size"}};
     case BuiltinFn::kLen:
-      return "len";
+      return {.name = "len", .declaration = Method{"Len"}};
     case BuiltinFn::kBitstreamWidth:
-      return "bitstream_width";
+      return {
+          .name = "bitstream_width", .declaration = Method{"BitstreamWidth"}};
     case BuiltinFn::kToOwned:
-      return "to_owned";
+      return {.name = "to_owned", .declaration = Method{"ToOwned"}};
     case BuiltinFn::kDelete:
-      return "delete";
+      return {
+          .name = "delete",
+          .declaration = Method{"Delete"},
+          .mutates_receiver = true};
     case BuiltinFn::kDeleteIndex:
-      return "delete_index";
+      return {
+          .name = "delete_index",
+          .declaration = Method{"DeleteIndex"},
+          .mutates_receiver = true,
+          .index_operand = 1};
     case BuiltinFn::kReverse:
-      return "reverse";
+      return {
+          .name = "reverse",
+          .declaration = Method{"Reverse"},
+          .mutates_receiver = true};
     case BuiltinFn::kSort:
-      return "sort";
+      return {
+          .name = "sort",
+          .declaration = Method{"Sort"},
+          .mutates_receiver = true,
+          .takes_closure = true};
     case BuiltinFn::kRsort:
-      return "rsort";
+      return {
+          .name = "rsort",
+          .declaration = Method{"Rsort"},
+          .mutates_receiver = true,
+          .takes_closure = true};
     case BuiltinFn::kSum:
-      return "sum";
+      return {
+          .name = "sum",
+          .declaration = Method{"Sum"},
+          .takes_closure = true,
+          .takes_result_prototype = true};
     case BuiltinFn::kProduct:
-      return "product";
+      return {
+          .name = "product",
+          .declaration = Method{"Product"},
+          .takes_closure = true,
+          .takes_result_prototype = true};
     case BuiltinFn::kAnd:
-      return "and";
+      return {
+          .name = "and",
+          .declaration = Method{"And"},
+          .takes_closure = true,
+          .takes_result_prototype = true};
     case BuiltinFn::kOr:
-      return "or";
+      return {
+          .name = "or",
+          .declaration = Method{"Or"},
+          .takes_closure = true,
+          .takes_result_prototype = true};
     case BuiltinFn::kXor:
-      return "xor";
+      return {
+          .name = "xor",
+          .declaration = Method{"Xor"},
+          .takes_closure = true,
+          .takes_result_prototype = true};
     case BuiltinFn::kFind:
-      return "find";
+      return {
+          .name = "find",
+          .declaration = Method{"Find"},
+          .takes_closure = true,
+          .takes_result_prototype = true};
     case BuiltinFn::kFindIndex:
-      return "find_index";
+      return {
+          .name = "find_index",
+          .declaration = Method{"FindIndex"},
+          .takes_closure = true,
+          .takes_result_prototype = true};
     case BuiltinFn::kFindFirst:
-      return "find_first";
+      return {
+          .name = "find_first",
+          .declaration = Method{"FindFirst"},
+          .takes_closure = true,
+          .takes_result_prototype = true};
     case BuiltinFn::kFindFirstIndex:
-      return "find_first_index";
+      return {
+          .name = "find_first_index",
+          .declaration = Method{"FindFirstIndex"},
+          .takes_closure = true,
+          .takes_result_prototype = true};
     case BuiltinFn::kFindLast:
-      return "find_last";
+      return {
+          .name = "find_last",
+          .declaration = Method{"FindLast"},
+          .takes_closure = true,
+          .takes_result_prototype = true};
     case BuiltinFn::kFindLastIndex:
-      return "find_last_index";
+      return {
+          .name = "find_last_index",
+          .declaration = Method{"FindLastIndex"},
+          .takes_closure = true,
+          .takes_result_prototype = true};
     case BuiltinFn::kMin:
-      return "min";
+      return {
+          .name = "min",
+          .declaration = Method{"Min"},
+          .takes_closure = true,
+          .takes_result_prototype = true};
     case BuiltinFn::kMax:
-      return "max";
+      return {
+          .name = "max",
+          .declaration = Method{"Max"},
+          .takes_closure = true,
+          .takes_result_prototype = true};
     case BuiltinFn::kUnique:
-      return "unique";
+      return {
+          .name = "unique",
+          .declaration = Method{"Unique"},
+          .takes_closure = true,
+          .takes_result_prototype = true};
     case BuiltinFn::kUniqueIndex:
-      return "unique_index";
+      return {
+          .name = "unique_index",
+          .declaration = Method{"UniqueIndex"},
+          .takes_closure = true,
+          .takes_result_prototype = true};
     case BuiltinFn::kMap:
-      return "map";
+      return {
+          .name = "map",
+          .declaration = Method{"Map"},
+          .takes_closure = true,
+          .takes_result_prototype = true};
     case BuiltinFn::kInsert:
-      return "insert";
+      return {
+          .name = "insert",
+          .declaration = Method{"Insert"},
+          .mutates_receiver = true};
     case BuiltinFn::kPopFront:
-      return "pop_front";
+      return {
+          .name = "pop_front",
+          .declaration = Method{"PopFront"},
+          .mutates_receiver = true};
     case BuiltinFn::kPopBack:
-      return "pop_back";
+      return {
+          .name = "pop_back",
+          .declaration = Method{"PopBack"},
+          .mutates_receiver = true};
     case BuiltinFn::kPushFront:
-      return "push_front";
+      return {
+          .name = "push_front",
+          .declaration = Method{"PushFront"},
+          .mutates_receiver = true};
     case BuiltinFn::kPushBack:
-      return "push_back";
+      return {
+          .name = "push_back",
+          .declaration = Method{"PushBack"},
+          .mutates_receiver = true};
     case BuiltinFn::kExists:
-      return "exists";
+      return {
+          .name = "exists",
+          .declaration = Method{"Exists"},
+          .index_operand = 1};
     case BuiltinFn::kAssocFirst:
-      return "assoc_first";
+      return {
+          .name = "assoc_first",
+          .declaration = Method{"First"},
+          .writes_the_index_back = true,
+          .index_operand = 1};
     case BuiltinFn::kAssocLast:
-      return "assoc_last";
+      return {
+          .name = "assoc_last",
+          .declaration = Method{"Last"},
+          .writes_the_index_back = true,
+          .index_operand = 1};
     case BuiltinFn::kAssocNext:
-      return "assoc_next";
+      return {
+          .name = "assoc_next",
+          .declaration = Method{"Next"},
+          .writes_the_index_back = true,
+          .index_operand = 1};
     case BuiltinFn::kAssocPrev:
-      return "assoc_prev";
+      return {
+          .name = "assoc_prev",
+          .declaration = Method{"Prev"},
+          .writes_the_index_back = true,
+          .index_operand = 1};
     case BuiltinFn::kAssocMinIndex:
-      return "assoc_min_index";
+      return {
+          .name = "assoc_min_index",
+          .declaration = Method{"MinIndex"},
+          .takes_result_prototype = true};
     case BuiltinFn::kAssocMaxIndex:
-      return "assoc_max_index";
+      return {
+          .name = "assoc_max_index",
+          .declaration = Method{"MaxIndex"},
+          .takes_result_prototype = true};
     case BuiltinFn::kGetc:
-      return "getc";
+      return {.name = "getc", .declaration = Method{"Getc"}};
     case BuiltinFn::kPutc:
-      return "putc";
+      return {
+          .name = "putc",
+          .declaration = Method{"Putc"},
+          .mutates_receiver = true};
     case BuiltinFn::kToupper:
-      return "toupper";
+      return {.name = "toupper", .declaration = Method{"Toupper"}};
     case BuiltinFn::kTolower:
-      return "tolower";
+      return {.name = "tolower", .declaration = Method{"Tolower"}};
     case BuiltinFn::kCompare:
-      return "compare";
+      return {.name = "compare", .declaration = Method{"Compare"}};
     case BuiltinFn::kIcompare:
-      return "icompare";
+      return {.name = "icompare", .declaration = Method{"Icompare"}};
     case BuiltinFn::kSubstr:
-      return "substr";
+      return {.name = "substr", .declaration = Method{"Substr"}};
     case BuiltinFn::kAtoi:
-      return "atoi";
+      return {.name = "atoi", .declaration = Method{"Atoi"}};
     case BuiltinFn::kAtohex:
-      return "atohex";
+      return {.name = "atohex", .declaration = Method{"Atohex"}};
     case BuiltinFn::kAtooct:
-      return "atooct";
+      return {.name = "atooct", .declaration = Method{"Atooct"}};
     case BuiltinFn::kAtobin:
-      return "atobin";
+      return {.name = "atobin", .declaration = Method{"Atobin"}};
     case BuiltinFn::kAtoreal:
-      return "atoreal";
+      return {.name = "atoreal", .declaration = Method{"Atoreal"}};
     case BuiltinFn::kItoa:
-      return "itoa";
+      return {
+          .name = "itoa",
+          .declaration = Method{"Itoa"},
+          .mutates_receiver = true};
     case BuiltinFn::kHextoa:
-      return "hextoa";
+      return {
+          .name = "hextoa",
+          .declaration = Method{"Hextoa"},
+          .mutates_receiver = true};
     case BuiltinFn::kOcttoa:
-      return "octtoa";
+      return {
+          .name = "octtoa",
+          .declaration = Method{"Octtoa"},
+          .mutates_receiver = true};
     case BuiltinFn::kBintoa:
-      return "bintoa";
+      return {
+          .name = "bintoa",
+          .declaration = Method{"Bintoa"},
+          .mutates_receiver = true};
     case BuiltinFn::kRealtoa:
-      return "realtoa";
+      return {
+          .name = "realtoa",
+          .declaration = Method{"Realtoa"},
+          .mutates_receiver = true};
     case BuiltinFn::kTrigger:
-      return "trigger";
+      return {.name = "trigger", .declaration = Method{"Trigger"}};
     case BuiltinFn::kTriggered:
-      return "triggered";
+      return {.name = "triggered", .declaration = Method{"Triggered"}};
     case BuiltinFn::kEnumFirst:
-      return "enum_first";
+      return {
+          .name = "enum_first",
+          .declaration = NotDeclared{kAnsweredFromEnumMembers}};
     case BuiltinFn::kEnumLast:
-      return "enum_last";
+      return {
+          .name = "enum_last",
+          .declaration = NotDeclared{kAnsweredFromEnumMembers}};
     case BuiltinFn::kEnumNum:
-      return "enum_num";
+      return {
+          .name = "enum_num",
+          .declaration = NotDeclared{kAnsweredFromEnumMembers}};
     case BuiltinFn::kEnumName:
-      return "enum_name";
+      return {
+          .name = "enum_name",
+          .declaration = NotDeclared{kAnsweredFromEnumMembers}};
     case BuiltinFn::kEnumNext:
-      return "enum_next";
+      return {
+          .name = "enum_next",
+          .declaration = NotDeclared{kAnsweredFromEnumMembers}};
     case BuiltinFn::kEnumPrev:
-      return "enum_prev";
+      return {
+          .name = "enum_prev",
+          .declaration = NotDeclared{kAnsweredFromEnumMembers}};
     case BuiltinFn::kIsUnknown:
-      return "is_unknown";
+      return {.name = "is_unknown", .declaration = Method{"IsUnknown"}};
     case BuiltinFn::kCountBits:
-      return "count_bits";
+      return {.name = "count_bits", .declaration = Method{"CountBits"}};
     case BuiltinFn::kClog2:
-      return "clog2";
+      return {.name = "clog2", .declaration = Method{"Clog2"}};
     case BuiltinFn::kLn:
-      return "ln";
+      return {.name = "ln", .declaration = Method{"Ln"}};
     case BuiltinFn::kLog10:
-      return "log10";
+      return {.name = "log10", .declaration = Method{"Log10"}};
     case BuiltinFn::kExp:
-      return "exp";
+      return {.name = "exp", .declaration = Method{"Exp"}};
     case BuiltinFn::kSqrt:
-      return "sqrt";
+      return {.name = "sqrt", .declaration = Method{"Sqrt"}};
     case BuiltinFn::kFloor:
-      return "floor";
+      return {.name = "floor", .declaration = Method{"Floor"}};
     case BuiltinFn::kCeil:
-      return "ceil";
+      return {.name = "ceil", .declaration = Method{"Ceil"}};
     case BuiltinFn::kSin:
-      return "sin";
+      return {.name = "sin", .declaration = Method{"Sin"}};
     case BuiltinFn::kCos:
-      return "cos";
+      return {.name = "cos", .declaration = Method{"Cos"}};
     case BuiltinFn::kTan:
-      return "tan";
+      return {.name = "tan", .declaration = Method{"Tan"}};
     case BuiltinFn::kAsin:
-      return "asin";
+      return {.name = "asin", .declaration = Method{"Asin"}};
     case BuiltinFn::kAcos:
-      return "acos";
+      return {.name = "acos", .declaration = Method{"Acos"}};
     case BuiltinFn::kAtan:
-      return "atan";
+      return {.name = "atan", .declaration = Method{"Atan"}};
     case BuiltinFn::kAtan2:
-      return "atan2";
+      return {.name = "atan2", .declaration = Method{"Atan2"}};
     case BuiltinFn::kHypot:
-      return "hypot";
+      return {.name = "hypot", .declaration = Method{"Hypot"}};
     case BuiltinFn::kSinh:
-      return "sinh";
+      return {.name = "sinh", .declaration = Method{"Sinh"}};
     case BuiltinFn::kCosh:
-      return "cosh";
+      return {.name = "cosh", .declaration = Method{"Cosh"}};
     case BuiltinFn::kTanh:
-      return "tanh";
+      return {.name = "tanh", .declaration = Method{"Tanh"}};
     case BuiltinFn::kAsinh:
-      return "asinh";
+      return {.name = "asinh", .declaration = Method{"Asinh"}};
     case BuiltinFn::kAcosh:
-      return "acosh";
+      return {.name = "acosh", .declaration = Method{"Acosh"}};
     case BuiltinFn::kAtanh:
-      return "atanh";
+      return {.name = "atanh", .declaration = Method{"Atanh"}};
     case BuiltinFn::kInitialize:
-      return "initialize";
+      return {.name = "initialize", .declaration = Method{"Initialize"}};
     case BuiltinFn::kLoad:
-      return "load";
+      return {.name = "load", .declaration = Method{"Get"}};
     case BuiltinFn::kStore:
-      return "store";
+      return {.name = "store", .declaration = Method{"Set"}};
     case BuiltinFn::kSampledLoad:
-      return "sampled_load";
+      return {.name = "sampled_load", .declaration = Method{"SampledGet"}};
     case BuiltinFn::kArmSampling:
-      return "arm_sampling";
+      return {.name = "arm_sampling", .declaration = Method{"ArmSampling"}};
     case BuiltinFn::kOpenForWrite:
-      return "open_for_write";
+      return {.name = "open_for_write", .declaration = Method{"Mutate"}};
     case BuiltinFn::kAttachDriver:
-      return "attach_driver";
+      return {.name = "attach_driver", .declaration = Method{"AttachDriver"}};
     case BuiltinFn::kCurrentRuntime:
-      return "current_runtime";
+      return {
+          .name = "current_runtime",
+          .declaration = FreeFunction{"lyra::runtime::current_runtime"}};
     case BuiltinFn::kSubmitNba:
-      return "submit_nba";
+      return {.name = "submit_nba", .declaration = Method{"SubmitNba"}};
     case BuiltinFn::kSubmitNbaAfter:
-      return "submit_nba_after";
+      return {
+          .name = "submit_nba_after", .declaration = Method{"SubmitNbaAfter"}};
     case BuiltinFn::kSubmitNbaAfterReal:
-      return "submit_nba_after_real";
+      return {
+          .name = "submit_nba_after_real",
+          .declaration = Method{"SubmitNbaAfterReal"}};
     case BuiltinFn::kRunDetached:
-      return "run_detached";
+      return {.name = "run_detached", .declaration = Method{"RunDetached"}};
     case BuiltinFn::kResumeInNbaRegion:
-      return "resume_in_nba_region";
+      return {
+          .name = "resume_in_nba_region",
+          .declaration = FreeFunction{"lyra::runtime::ResumeInNbaRegion"}};
     case BuiltinFn::kSubmitPostponed:
-      return "submit_postponed";
+      return {
+          .name = "submit_postponed", .declaration = Method{"SubmitPostponed"}};
     case BuiltinFn::kSubmitObserved:
-      return "submit_observed";
+      return {
+          .name = "submit_observed", .declaration = Method{"SubmitObserved"}};
     case BuiltinFn::kSubmitDeferredObserved:
-      return "submit_deferred_observed";
+      return {
+          .name = "submit_deferred_observed",
+          .declaration = Method{"SubmitDeferredObserved"}};
     case BuiltinFn::kSubmitDeferredFinal:
-      return "submit_deferred_final";
+      return {
+          .name = "submit_deferred_final",
+          .declaration = Method{"SubmitDeferredFinal"}};
     case BuiltinFn::kFiles:
-      return "files";
+      return {.name = "files", .declaration = Method{"Files"}};
     case BuiltinFn::kCancellationFor:
-      return "cancellation_for";
+      return {
+          .name = "cancellation_for", .declaration = Method{"CancellationFor"}};
     case BuiltinFn::kIsCancelled:
-      return "is_cancelled";
+      return {.name = "is_cancelled", .declaration = Method{"IsCancelled"}};
     case BuiltinFn::kFormat:
-      return "format";
+      return {
+          .name = "format", .declaration = FreeFunction{"lyra::value::Format"}};
     case BuiltinFn::kFormatRuntime:
-      return "format_runtime";
+      return {
+          .name = "format_runtime",
+          .declaration = FreeFunction{"lyra::value::FormatRuntime"}};
     case BuiltinFn::kWrite:
-      return "write";
+      return {.name = "write", .declaration = Method{"Write"}};
     case BuiltinFn::kWriteln:
-      return "writeln";
-    case BuiltinFn::kScanString:
-      return "scan_string";
-    case BuiltinFn::kScanFile:
-      return "scan_file";
-    case BuiltinFn::kPeekBuffered:
-      return "peek_buffered";
-    case BuiltinFn::kAdvanceFd:
-      return "advance_fd";
-    case BuiltinFn::kTestPlusargs:
-      return "test_plusargs";
-    case BuiltinFn::kValuePlusargs:
-      return "value_plusargs";
-    case BuiltinFn::kRunHostCommand:
-      return "run_host_command";
-    case BuiltinFn::kRunNullHostCommand:
-      return "run_null_host_command";
-    case BuiltinFn::kReadMemWithin:
-      return "read_mem_within";
-    case BuiltinFn::kWriteMemWithin:
-      return "write_mem_within";
-    case BuiltinFn::kReadMem:
-      return "read_mem";
-    case BuiltinFn::kWriteMem:
-      return "write_mem";
-    case BuiltinFn::kDelay:
-      return "delay";
-    case BuiltinFn::kDelayReal:
-      return "delay_real";
-    case BuiltinFn::kWaitAny:
-      return "wait_any";
-    case BuiltinFn::kSimTime:
-      return "sim_time";
-    case BuiltinFn::kSTime:
-      return "stime";
-    case BuiltinFn::kRealTime:
-      return "realtime";
-    case BuiltinFn::kUrandom:
-      return "urandom";
-    case BuiltinFn::kUrandomSeeded:
-      return "urandom_seeded";
-    case BuiltinFn::kUrandomRange:
-      return "urandom_range";
-    case BuiltinFn::kRandom:
-      return "random";
-    case BuiltinFn::kDistUniform:
-      return "dist_uniform";
-    case BuiltinFn::kDistNormal:
-      return "dist_normal";
-    case BuiltinFn::kDistExponential:
-      return "dist_exponential";
-    case BuiltinFn::kDistPoisson:
-      return "dist_poisson";
-    case BuiltinFn::kDistChiSquare:
-      return "dist_chi_square";
-    case BuiltinFn::kDistT:
-      return "dist_t";
-    case BuiltinFn::kDistErlang:
-      return "dist_erlang";
-    case BuiltinFn::kFinish:
-      return "finish";
-    case BuiltinFn::kStop:
-      return "stop";
-    case BuiltinFn::kResolveRoot:
-      return "resolve_root";
-    case BuiltinFn::kResolveVisibleChild:
-      return "resolve_visible_child";
-    case BuiltinFn::kRegisterSignal:
-      return "register_signal";
-    case BuiltinFn::kAddOwnedChild:
-      return "add_owned_child";
-    case BuiltinFn::kGetSignal:
-      return "get_signal";
-    case BuiltinFn::kGetChild:
-      return "get_child";
-    case BuiltinFn::kForkWaitAll:
-      return "fork_wait_all";
-    case BuiltinFn::kForkWaitFirst:
-      return "fork_wait_first";
-    case BuiltinFn::kSpawnAll:
-      return "spawn_all";
-    case BuiltinFn::kWaitFork:
-      return "wait_fork";
-    case BuiltinFn::kDisableFork:
-      return "disable_fork";
-    case BuiltinFn::kDisable:
-      return "disable";
-    case BuiltinFn::kEnterTarget:
-      return "enter_target";
-    case BuiltinFn::kLeaveTarget:
-      return "leave_target";
-    case BuiltinFn::kEffectNamesTarget:
-      return "effect_names_target";
-    case BuiltinFn::kRegisterInitial:
-      return "register_initial";
-    case BuiltinFn::kRegisterFinal:
-      return "register_final";
-    case BuiltinFn::kParent:
-      return "parent";
-    case BuiltinFn::kSelfHandle:
-      return "self_handle";
-    case BuiltinFn::kFileOpen:
-      return "file_open";
-    case BuiltinFn::kFileOpenMode:
-      return "file_open_mode";
-    case BuiltinFn::kFileClose:
-      return "file_close";
-    case BuiltinFn::kFileGetc:
-      return "file_getc";
-    case BuiltinFn::kFileUngetc:
-      return "file_ungetc";
-    case BuiltinFn::kFileGets:
-      return "file_gets";
-    case BuiltinFn::kFileRead:
-      return "file_read";
-    case BuiltinFn::kFileReadMemory:
-      return "file_read_memory";
-    case BuiltinFn::kFileSeek:
-      return "file_seek";
-    case BuiltinFn::kFileRewind:
-      return "file_rewind";
-    case BuiltinFn::kFileTell:
-      return "file_tell";
-    case BuiltinFn::kFileEof:
-      return "file_eof";
-    case BuiltinFn::kFileError:
-      return "file_error";
-    case BuiltinFn::kFileFlush:
-      return "file_flush";
-    case BuiltinFn::kFileFlushAll:
-      return "file_flush_all";
+      return {.name = "writeln", .declaration = Method{"Writeln"}};
     case BuiltinFn::kDiagnostic:
-      return "diagnostic";
+      return {.name = "diagnostic", .declaration = Method{"Diagnostic"}};
     case BuiltinFn::kEmitInfo:
-      return "emit_info";
+      return {.name = "emit_info", .declaration = Method{"EmitInfo"}};
     case BuiltinFn::kEmitWarning:
-      return "emit_warning";
+      return {.name = "emit_warning", .declaration = Method{"EmitWarning"}};
     case BuiltinFn::kEmitError:
-      return "emit_error";
+      return {.name = "emit_error", .declaration = Method{"EmitError"}};
     case BuiltinFn::kEmitFatal:
-      return "emit_fatal";
+      return {.name = "emit_fatal", .declaration = Method{"EmitFatal"}};
     case BuiltinFn::kRecordCoverage:
-      return "record_coverage";
+      return {
+          .name = "record_coverage", .declaration = Method{"RecordCoverage"}};
     case BuiltinFn::kTimeFormat:
-      return "time_format";
+      return {.name = "time_format", .declaration = Method{"TimeFormat"}};
     case BuiltinFn::kSetTimeFormat:
-      return "set_time_format";
+      return {
+          .name = "set_time_format", .declaration = Method{"SetTimeFormat"}};
     case BuiltinFn::kResetTimeFormat:
-      return "reset_time_format";
+      return {
+          .name = "reset_time_format",
+          .declaration = Method{"ResetTimeFormat"}};
+    case BuiltinFn::kScanString:
+      return {
+          .name = "scan_string",
+          .declaration = FreeFunction{"lyra::value::ScanString"}};
+    case BuiltinFn::kScanFile:
+      return {
+          .name = "scan_file",
+          .declaration = FreeFunction{"lyra::value::ScanFile"}};
+    case BuiltinFn::kPeekBuffered:
+      return {.name = "peek_buffered", .declaration = Method{"PeekBuffered"}};
+    case BuiltinFn::kAdvanceFd:
+      return {.name = "advance_fd", .declaration = Method{"AdvanceFd"}};
+    case BuiltinFn::kFileOpen:
+      return {.name = "file_open", .declaration = Method{"Open"}};
+    case BuiltinFn::kFileOpenMode:
+      return {.name = "file_open_mode", .declaration = Method{"OpenWithMode"}};
+    case BuiltinFn::kFileClose:
+      return {.name = "file_close", .declaration = Method{"Close"}};
+    case BuiltinFn::kFileGetc:
+      return {.name = "file_getc", .declaration = Method{"Getc"}};
+    case BuiltinFn::kFileUngetc:
+      return {.name = "file_ungetc", .declaration = Method{"Ungetc"}};
+    case BuiltinFn::kFileGets:
+      return {.name = "file_gets", .declaration = Method{"Gets"}};
+    case BuiltinFn::kFileRead:
+      return {.name = "file_read", .declaration = Method{"Read"}};
+    case BuiltinFn::kFileReadMemory:
+      return {.name = "file_read_memory", .declaration = Method{"ReadMemory"}};
+    case BuiltinFn::kFileSeek:
+      return {.name = "file_seek", .declaration = Method{"Seek"}};
+    case BuiltinFn::kFileRewind:
+      return {.name = "file_rewind", .declaration = Method{"Rewind"}};
+    case BuiltinFn::kFileTell:
+      return {.name = "file_tell", .declaration = Method{"Tell"}};
+    case BuiltinFn::kFileEof:
+      return {.name = "file_eof", .declaration = Method{"Eof"}};
+    case BuiltinFn::kFileError:
+      return {.name = "file_error", .declaration = Method{"Error"}};
+    case BuiltinFn::kFileFlush:
+      return {.name = "file_flush", .declaration = Method{"Flush"}};
+    case BuiltinFn::kFileFlushAll:
+      return {.name = "file_flush_all", .declaration = Method{"FlushAll"}};
+    case BuiltinFn::kTestPlusargs:
+      return {
+          .name = "test_plusargs",
+          .declaration = FreeFunction{"lyra::runtime::TestPlusargs"}};
+    case BuiltinFn::kValuePlusargs:
+      return {
+          .name = "value_plusargs",
+          .declaration = FreeFunction{"lyra::runtime::ValuePlusargs"}};
+    case BuiltinFn::kRunHostCommand:
+      return {
+          .name = "run_host_command",
+          .declaration = FreeFunction{"lyra::runtime::RunHostCommand"}};
+    case BuiltinFn::kRunNullHostCommand:
+      return {
+          .name = "run_null_host_command",
+          .declaration = FreeFunction{"lyra::runtime::RunNullHostCommand"}};
+    case BuiltinFn::kReadMem:
+      return {
+          .name = "read_mem",
+          .declaration = FreeFunction{"lyra::runtime::ReadMem"}};
+    case BuiltinFn::kReadMemWithin:
+      return {
+          .name = "read_mem_within",
+          .declaration = FreeFunction{"lyra::runtime::ReadMemWithin"}};
+    case BuiltinFn::kWriteMem:
+      return {
+          .name = "write_mem",
+          .declaration = FreeFunction{"lyra::runtime::WriteMem"}};
+    case BuiltinFn::kWriteMemWithin:
+      return {
+          .name = "write_mem_within",
+          .declaration = FreeFunction{"lyra::runtime::WriteMemWithin"}};
+    case BuiltinFn::kDelay:
+      return {
+          .name = "delay", .declaration = FreeFunction{"lyra::runtime::Delay"}};
+    case BuiltinFn::kDelayReal:
+      return {
+          .name = "delay_real",
+          .declaration = FreeFunction{"lyra::runtime::DelayReal"}};
+    case BuiltinFn::kWaitAny:
+      return {
+          .name = "wait_any",
+          .declaration = FreeFunction{"lyra::runtime::WaitAny"}};
+    case BuiltinFn::kSimTime:
+      return {
+          .name = "sim_time",
+          .declaration = FreeFunction{"lyra::runtime::SimTimeInUnit"}};
+    case BuiltinFn::kSTime:
+      return {
+          .name = "stime",
+          .declaration = FreeFunction{"lyra::runtime::STimeInUnit"}};
+    case BuiltinFn::kRealTime:
+      return {
+          .name = "realtime",
+          .declaration = FreeFunction{"lyra::runtime::RealTimeInUnit"}};
+    case BuiltinFn::kUrandom:
+      return {
+          .name = "urandom",
+          .declaration = FreeFunction{"lyra::runtime::Urandom"}};
+    case BuiltinFn::kUrandomSeeded:
+      return {
+          .name = "urandom_seeded",
+          .declaration = FreeFunction{"lyra::runtime::UrandomSeeded"}};
+    case BuiltinFn::kUrandomRange:
+      return {
+          .name = "urandom_range",
+          .declaration = FreeFunction{"lyra::runtime::UrandomRange"}};
+    case BuiltinFn::kRandom:
+      return {
+          .name = "random",
+          .declaration = FreeFunction{"lyra::runtime::Random"}};
+    case BuiltinFn::kDistUniform:
+      return {
+          .name = "dist_uniform",
+          .declaration = FreeFunction{"lyra::runtime::DistUniform"}};
+    case BuiltinFn::kDistNormal:
+      return {
+          .name = "dist_normal",
+          .declaration = FreeFunction{"lyra::runtime::DistNormal"}};
+    case BuiltinFn::kDistExponential:
+      return {
+          .name = "dist_exponential",
+          .declaration = FreeFunction{"lyra::runtime::DistExponential"}};
+    case BuiltinFn::kDistPoisson:
+      return {
+          .name = "dist_poisson",
+          .declaration = FreeFunction{"lyra::runtime::DistPoisson"}};
+    case BuiltinFn::kDistChiSquare:
+      return {
+          .name = "dist_chi_square",
+          .declaration = FreeFunction{"lyra::runtime::DistChiSquare"}};
+    case BuiltinFn::kDistT:
+      return {
+          .name = "dist_t",
+          .declaration = FreeFunction{"lyra::runtime::DistT"}};
+    case BuiltinFn::kDistErlang:
+      return {
+          .name = "dist_erlang",
+          .declaration = FreeFunction{"lyra::runtime::DistErlang"}};
+    case BuiltinFn::kFinish:
+      return {
+          .name = "finish",
+          .declaration = FreeFunction{"lyra::runtime::Finish"}};
+    case BuiltinFn::kStop:
+      return {
+          .name = "stop", .declaration = FreeFunction{"lyra::runtime::Stop"}};
+    case BuiltinFn::kResolveRoot:
+      return {.name = "resolve_root", .declaration = Method{"ResolveRoot"}};
+    case BuiltinFn::kResolveVisibleChild:
+      return {
+          .name = "resolve_visible_child",
+          .declaration = Method{"ResolveVisibleChild"}};
+    case BuiltinFn::kRegisterSignal:
+      return {
+          .name = "register_signal", .declaration = Method{"RegisterSignal"}};
+    case BuiltinFn::kAddOwnedChild:
+      return {
+          .name = "add_owned_child", .declaration = Method{"AddOwnedChild"}};
+    case BuiltinFn::kGetSignal:
+      return {.name = "get_signal", .declaration = Method{"GetSignal"}};
+    case BuiltinFn::kGetChild:
+      return {.name = "get_child", .declaration = Method{"GetChild"}};
+    case BuiltinFn::kForkWaitAll:
+      return {
+          .name = "fork_wait_all",
+          .declaration = FreeFunction{"lyra::runtime::ForkWaitAll"}};
+    case BuiltinFn::kForkWaitFirst:
+      return {
+          .name = "fork_wait_first",
+          .declaration = FreeFunction{"lyra::runtime::ForkWaitFirst"}};
+    case BuiltinFn::kSpawnAll:
+      return {
+          .name = "spawn_all",
+          .declaration = FreeFunction{"lyra::runtime::SpawnAll"}};
+    case BuiltinFn::kWaitFork:
+      return {
+          .name = "wait_fork",
+          .declaration = FreeFunction{"lyra::runtime::WaitFork"}};
+    case BuiltinFn::kDisableFork:
+      return {
+          .name = "disable_fork",
+          .declaration = FreeFunction{"lyra::runtime::DisableFork"}};
+    case BuiltinFn::kDisable:
+      return {
+          .name = "disable",
+          .declaration = FreeFunction{"lyra::runtime::Disable"}};
+    case BuiltinFn::kEnterTarget:
+      return {
+          .name = "enter_target",
+          .declaration =
+              FreeFunction{"lyra::runtime::EnterCancellationTarget"}};
+    case BuiltinFn::kLeaveTarget:
+      return {
+          .name = "leave_target",
+          .declaration =
+              FreeFunction{"lyra::runtime::LeaveCancellationTarget"}};
+    case BuiltinFn::kEffectNamesTarget:
+      return {
+          .name = "effect_names_target",
+          .declaration = FreeFunction{"lyra::runtime::EffectNamesTarget"}};
+    case BuiltinFn::kRegisterInitial:
+      return {
+          .name = "register_initial",
+          .declaration = FreeFunction{"lyra::runtime::RegisterInitialProcess"}};
+    case BuiltinFn::kRegisterFinal:
+      return {
+          .name = "register_final",
+          .declaration = FreeFunction{"lyra::runtime::RegisterFinalProcess"}};
     case BuiltinFn::kToInt64:
-      return "to_int64";
+      return {.name = "to_int64", .declaration = Method{"ToInt64"}};
     case BuiltinFn::kRound:
-      return "round";
+      return {.name = "round", .declaration = Method{"Round"}};
     case BuiltinFn::kTruncate:
-      return "truncate";
+      return {.name = "truncate", .declaration = Method{"Truncate"}};
     case BuiltinFn::kToBits:
-      return "to_bits";
+      return {.name = "to_bits", .declaration = Method{"ToBits"}};
     case BuiltinFn::kFromBits:
-      return "from_bits";
+      return {.name = "from_bits", .declaration = StaticFactory{"FromBits"}};
     case BuiltinFn::kRealValue:
-      return "real_value";
+      return {.name = "real_value", .declaration = Method{"Value"}};
     case BuiltinFn::kStringCStr:
-      return "string_cstr";
+      return {.name = "string_cstr", .declaration = Method{"CStr"}};
     case BuiltinFn::kChandlePtr:
-      return "chandle_ptr";
+      return {.name = "chandle_ptr", .declaration = Method{"Ptr"}};
     case BuiltinFn::kToSvLogic:
-      return "to_sv_logic";
-    case BuiltinFn::kReadCanonicalBitVec:
-      return "read_canonical_bit_vec";
-    case BuiltinFn::kReadCanonicalLogicVec:
-      return "read_canonical_logic_vec";
-    case BuiltinFn::kWriteCanonicalBitVec:
-      return "write_canonical_bit_vec";
-    case BuiltinFn::kWriteCanonicalLogicVec:
-      return "write_canonical_logic_vec";
-    case BuiltinFn::kDpiBufferData:
-      return "dpi_buffer_data";
-    case BuiltinFn::kDpiOpenArrayHandle:
-      return "dpi_open_array_handle";
-    case BuiltinFn::kDpiOpenArrayValue:
-      return "dpi_open_array_value";
-    case BuiltinFn::kRunForeignTaskOnFiber:
-      return "run_foreign_task_on_fiber";
-    case BuiltinFn::kRunExportedTaskToCompletion:
-      return "run_exported_task_to_completion";
-    case BuiltinFn::kCurrentExportScope:
-      return "current_export_scope";
-    case BuiltinFn::kFindExportEntry:
-      return "find_export_entry";
+      return {
+          .name = "to_sv_logic",
+          .declaration = FreeFunction{"lyra::value::ToSvLogic"}};
     case BuiltinFn::kFromSvLogic:
-      return "from_sv_logic";
+      return {
+          .name = "from_sv_logic",
+          .declaration = FreeFunction{"lyra::value::FromSvLogic"}};
+    case BuiltinFn::kReadCanonicalBitVec:
+      return {
+          .name = "read_canonical_bit_vec",
+          .declaration = FreeFunction{"lyra::value::ReadCanonicalBitVec"}};
+    case BuiltinFn::kReadCanonicalLogicVec:
+      return {
+          .name = "read_canonical_logic_vec",
+          .declaration = FreeFunction{"lyra::value::ReadCanonicalLogicVec"}};
+    case BuiltinFn::kWriteCanonicalBitVec:
+      return {
+          .name = "write_canonical_bit_vec",
+          .declaration = FreeFunction{"lyra::value::WriteCanonicalBitVec"}};
+    case BuiltinFn::kWriteCanonicalLogicVec:
+      return {
+          .name = "write_canonical_logic_vec",
+          .declaration = FreeFunction{"lyra::value::WriteCanonicalLogicVec"}};
+    case BuiltinFn::kDpiBufferData:
+      return {.name = "dpi_buffer_data", .declaration = Method{"Data"}};
+    case BuiltinFn::kDpiOpenArrayHandle:
+      return {.name = "dpi_open_array_handle", .declaration = Method{"Handle"}};
+    case BuiltinFn::kDpiOpenArrayValue:
+      return {.name = "dpi_open_array_value", .declaration = Method{"ToValue"}};
+    case BuiltinFn::kRunForeignTaskOnFiber:
+      return {
+          .name = "run_foreign_task_on_fiber",
+          .declaration = FreeFunction{"lyra::runtime::RunForeignTaskOnFiber"}};
+    case BuiltinFn::kRunExportedTaskToCompletion:
+      return {
+          .name = "run_exported_task_to_completion",
+          .declaration =
+              FreeFunction{"lyra::runtime::RunExportedTaskToCompletion"}};
+    case BuiltinFn::kCurrentExportScope:
+      return {
+          .name = "current_export_scope",
+          .declaration = FreeFunction{"lyra::runtime::CurrentExportScope"}};
+    case BuiltinFn::kFindExportEntry:
+      return {
+          .name = "find_export_entry",
+          .declaration = FreeFunction{"lyra::runtime::FindExportEntry"}};
     case BuiltinFn::kFromInt:
-      return "from_int";
+      return {.name = "from_int", .declaration = StaticFactory{"FromInt"}};
     case BuiltinFn::kFromWords:
-      return "from_words";
+      return {.name = "from_words", .declaration = StaticFactory{"FromWords"}};
     case BuiltinFn::kConvertFrom:
-      return "convert_from";
+      return {
+          .name = "convert_from", .declaration = StaticFactory{"ConvertFrom"}};
     case BuiltinFn::kFromPackedArray:
-      return "from_packed_array";
+      return {
+          .name = "from_packed_array",
+          .declaration = StaticFactory{"FromPackedArray"}};
     case BuiltinFn::kFromByteArray:
-      return "from_byte_array";
+      return {
+          .name = "from_byte_array",
+          .declaration = StaticFactory{"FromByteArray"}};
     case BuiltinFn::kFromString:
-      return "from_string";
+      return {
+          .name = "from_string", .declaration = StaticFactory{"FromString"}};
     case BuiltinFn::kFromArray:
-      return "from_array";
+      return {
+          .name = "from_array", .declaration = StaticFactory{"FromArray"}};
     case BuiltinFn::kConformBound:
-      return "conform_bound";
+      return {.name = "conform_bound", .declaration = Method{"ConformBound"}};
     case BuiltinFn::kArrayConcatElement:
-      return "concat_element";
+      return {.name = "concat_element", .declaration = Method{"ConcatElement"}};
     case BuiltinFn::kArrayConcatSpread:
-      return "concat_spread";
+      return {
+          .name = "concat_spread",
+          .declaration = Method{"ConcatSpread"},
+          .spread_operand = 1};
     case BuiltinFn::kArrayConformSize:
-      return "conform_size";
+      return {
+          .name = "conform_size", .declaration = StaticFactory{"ConformSize"}};
     case BuiltinFn::kMakeDynamicArrayDefault:
-      return "make_dynamic_array_default";
+      return {
+          .name = "make_dynamic_array_default",
+          .declaration = StaticFactory{"Default"}};
     case BuiltinFn::kMakeDynamicArrayNew:
-      return "make_dynamic_array_new";
+      return {
+          .name = "make_dynamic_array_new",
+          .declaration = StaticFactory{"New"}};
     case BuiltinFn::kMakeDynamicArrayNewCopy:
-      return "make_dynamic_array_new_copy";
+      return {
+          .name = "make_dynamic_array_new_copy",
+          .declaration = StaticFactory{"NewCopy"}};
     case BuiltinFn::kConcat:
-      return "concat";
+      return {.name = "concat", .declaration = Method{"Concat"}};
     case BuiltinFn::kReplicate:
-      return "replicate";
+      return {.name = "replicate", .declaration = Method{"Replicate"}};
     case BuiltinFn::kPow:
-      return "pow";
+      return {.name = "pow", .declaration = Method{"Pow"}};
     case BuiltinFn::kShiftLeft:
-      return "shift_left";
+      return {.name = "shift_left", .declaration = Method{"ShiftLeft"}};
     case BuiltinFn::kLogicalShiftRight:
-      return "logical_shift_right";
+      return {
+          .name = "logical_shift_right",
+          .declaration = Method{"LogicalShiftRight"}};
     case BuiltinFn::kArithmeticShiftRight:
-      return "arithmetic_shift_right";
+      return {
+          .name = "arithmetic_shift_right",
+          .declaration = Method{"ArithmeticShiftRight"}};
     case BuiltinFn::kBitwiseXnor:
-      return "bitwise_xnor";
+      return {.name = "bitwise_xnor", .declaration = Method{"BitwiseXnor"}};
     case BuiltinFn::kLogicalImplication:
-      return "logical_implication";
+      return {
+          .name = "logical_implication",
+          .declaration = Method{"LogicalImplication"}};
     case BuiltinFn::kLogicalEquivalence:
-      return "logical_equivalence";
+      return {
+          .name = "logical_equivalence",
+          .declaration = Method{"LogicalEquivalence"}};
     case BuiltinFn::kWildcardEquals:
-      return "wildcard_equals";
+      return {
+          .name = "wildcard_equals", .declaration = Method{"WildcardEquals"}};
     case BuiltinFn::kCaseEqual:
-      return "case_equal";
+      return {.name = "case_equal", .declaration = Method{"CaseEqual"}};
     case BuiltinFn::kCasezEquals:
-      return "casez_equals";
+      return {.name = "casez_equals", .declaration = Method{"CasezEquals"}};
     case BuiltinFn::kCasexEquals:
-      return "casex_equals";
+      return {.name = "casex_equals", .declaration = Method{"CasexEquals"}};
     case BuiltinFn::kMergeConditional:
-      return "merge_conditional";
+      return {
+          .name = "merge_conditional",
+          .declaration = Method{"MergeConditional"}};
     case BuiltinFn::kReductionAnd:
-      return "reduction_and";
+      return {.name = "reduction_and", .declaration = Method{"ReductionAnd"}};
     case BuiltinFn::kReductionOr:
-      return "reduction_or";
+      return {.name = "reduction_or", .declaration = Method{"ReductionOr"}};
     case BuiltinFn::kReductionXor:
-      return "reduction_xor";
+      return {.name = "reduction_xor", .declaration = Method{"ReductionXor"}};
     case BuiltinFn::kReductionNand:
-      return "reduction_nand";
+      return {.name = "reduction_nand", .declaration = Method{"ReductionNand"}};
     case BuiltinFn::kReductionNor:
-      return "reduction_nor";
+      return {.name = "reduction_nor", .declaration = Method{"ReductionNor"}};
     case BuiltinFn::kReductionXnor:
-      return "reduction_xnor";
+      return {.name = "reduction_xnor", .declaration = Method{"ReductionXnor"}};
     case BuiltinFn::kFromBool:
-      return "from_bool";
+      return {.name = "from_bool", .declaration = StaticFactory{"FromBool"}};
+    case BuiltinFn::kParent:
+      return {.name = "parent", .declaration = Method{"Parent"}};
+    case BuiltinFn::kSelfHandle:
+      return {
+          .name = "self_handle",
+          .declaration = FreeFunction{"lyra::runtime::SelfHandle"}};
     case BuiltinFn::kHierarchicalPath:
-      return "hierarchical_path";
+      return {
+          .name = "hierarchical_path",
+          .declaration = Method{"HierarchicalPath"}};
   }
-  throw InternalError("BuiltinFnName: unknown BuiltinFn");
+  throw InternalError("RuntimeEntryOf: unknown BuiltinFn");
 }
 
 }  // namespace lyra::support

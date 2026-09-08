@@ -148,7 +148,8 @@ class RuntimeQueue {
   // LRM 7.10.2.3: a copy emptied, or a copy with the element at `index`
   // removed. An invalid index leaves the queue unchanged.
   [[nodiscard]] auto Delete() const -> RuntimeQueue;
-  [[nodiscard]] auto Delete(const PackedArray& index) const -> RuntimeQueue;
+  [[nodiscard]] auto DeleteIndex(const PackedArray& index) const
+      -> RuntimeQueue;
 
   // LRM 11.4.5 `==` / `!=` (Any data type): a size check then an element-wise
   // reduction that propagates X / Z through each element's own equality.

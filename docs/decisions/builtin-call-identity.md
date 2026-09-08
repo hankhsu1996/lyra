@@ -148,8 +148,8 @@ LRM 7.12.
 
 ## Backend rendering
 
-The identity decision (flat `BuiltinFn`) is orthogonal to how each backend spells the call in its
-target. Two shapes were considered for the C++ backend:
+The identity decision (flat `BuiltinFn`) is orthogonal to the shape a backend renders a call in. Two
+shapes were considered for the C++ backend:
 
 - **X -- C++ method-call syntax.** `recv.Name(args)` for value receivers, `recv->Name(args)` for
   pointer receivers. The receiver's MIR type carries pointer-vs-value; the backend reads it and
@@ -187,12 +187,27 @@ The MIR result type of `kIsUnknown` is a 1-bit `PackedArray` (the SV `$isunknown
 implementations use, but is not what the backend names. The render emits `(x).IsUnknown()` uniformly
 with every other instance-form builtin -- no host-to-SV bridge step.
 
+### Where an entry's properties live
+
+The shape is the backend's; the properties it reads are not. What the runtime library calls an
+entry, whether it declares it as a free function, a method on the object the entry acts on, or a
+factory on the type it builds, and what the entry does with the operands it is given are facts about
+the library, and one library serves both backends. So they are stated once, beside the identity, and
+each backend renders from them.
+
+They were once a table per property, each with its own default arm for the entries it did not list,
+and that shape cost what a scattered declaration costs: adding an entry meant editing every table
+and nothing said which, six entries that are answered where the source is read were refused by one
+backend and given a live entry by the other, and five pairs of entries shared one target-language
+name and let overload resolution over the argument list stand in for the identity the pair already
+carried.
+
 ### Adding an entry
 
 Adding a new builtin runtime entry is: one `support::BuiltinFn` enum value; one entry in the
-receiver-type name table at AST-to-HIR; one C++ method on the receiver type whose name matches the
-backend's `BuiltinFnMemberName` table; and a `Mutating` / `ContainerAccess` predicate entry if
-applicable. No render-side special case for any entry.
+receiver-type name table at AST-to-HIR; one row in the entry declaration, which the build refuses
+until it is written and which names every property the entry has; and the library method or function
+that row names. No render-side special case for any entry.
 
 ## Consequences
 
@@ -206,9 +221,10 @@ applicable. No render-side special case for any entry.
   `support::BuiltinFn` directly. Adding a new receiver type (e.g. user-defined class methods) is a
   new name table, not a new HIR-level enum or variant arm.
 - The backend reads `BuiltinFn` plus receiver MIR type and renders without any family-axis switch.
-  Predicates on the flat enum (`IsStaticBuiltinFn`, `IsMutatingBuiltinFn`, `IsContainerAccessFn`,
-  `ArrayMethodTakesClosure`, `IsAssociativeTraversalFn`) all live in `support/builtin_fn.hpp`, so
-  classification of a built-in identity has one source of truth.
+  Every property of an entry -- what the library calls it, how a call site reaches it, whether it
+  updates the object it acts on or hands it back, which operands carry an index, a spread part, a
+  closure, or a result prototype -- is one row of one declaration in the support layer, so a
+  consumer reads the property it needs and no consumer lists the entries that have it.
 - Neither layer carries a per-family variant arm or per-family enum. The per-family scaffolding (one
   `*MethodKind` enum and one `*MethodInfo` wrapper per LRM chapter) is gone from both HIR and MIR;
   the LRM-chapter organization survives only as comment-level grouping inside the flat

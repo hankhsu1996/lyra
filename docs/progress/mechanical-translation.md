@@ -10,7 +10,7 @@ function of one MIR node and chooses a spelling rather than an operation) and
 never re-derives one). Those two own how an item here is judged -- the test, and the failure the
 cross-check predicts. This file owns only which instances are known and what is left.
 
-## Facts now stated on the node
+## Facts now stated once
 
 - [x] T1 -- A call states the object it dispatches on, so no consumer works out which of its
       operands is a receiver, and the argument list holds exactly what the source wrote.
@@ -34,17 +34,16 @@ cross-check predicts. This file owns only which instances are known and what is 
       active-member build was a second such pair, one node over, and is now one node too: whether
       the live member is observable and a mismatched reach fails travels with the type and changes
       nothing about the build.
-
-## A runtime entry's declaration
-
-- [ ] T5 -- Every property of a runtime entry is read off one declaration of it: the name each
-      backend spells it with, whether the target reaches it as a free function or through the object
-      it acts on, whether it updates that object, whether it hands its argument back, what shape it
-      takes as a trailing prototype, and the rest. Today each property is a separate table with its
-      own default arm, so adding an entry means editing every one of them and nothing says which.
-      One consequence is already a divergence: two entries share one target-language name in the C++
-      backend and let its overload resolution re-decide which operation runs, while the execution
-      backend emits a distinct symbol for each.
+- [x] T5 -- Every property of a runtime entry is read off one declaration of it: what the library
+      calls it, whether a call site reaches it as a free function, as a method on the object it acts
+      on, or as a factory on the type it builds, whether it updates that object or hands it back,
+      and which of its operands carry an index, a spread part, a closure, or a result prototype. It
+      had been a table per property, each with its own default arm for the entries it did not list,
+      so adding an entry meant editing every one of them and nothing said which. Two divergences the
+      scattering had hidden went with it: six entries that are answered where the source is read
+      were refused by one backend and given a live entry by the other, and five pairs of entries
+      shared one target-language name, leaving overload resolution over the argument list to stand
+      in for an identity the pair already carried.
 
 ## What MIR can ask a backend to perform
 
@@ -98,6 +97,14 @@ cross-check predicts. This file owns only which instances are known and what is 
       [compound-assignment-write-location](../decisions/compound-assignment-write-location.md)
       settled -- one compound node whose "evaluate the target once" is each backend's mechanical job
       -- so it is a decision to revisit, not a defect to fix under it.
+- [ ] T21 -- An operation no layer below the front end can meet is not in the vocabulary those
+      layers share. Six enumeration queries and methods are answered from the enumeration's own
+      declared members where the source is read, yet they sit in the closed set every later layer
+      switches over, so each of those layers carries an arm for an alternative it can never see and
+      the runtime-entry declaration has to say that no library declares them.
+      [builtin-call-identity](../decisions/builtin-call-identity.md) rejected exactly this shape for
+      the one other front-end-only operation, and gave that one a vocabulary of its own; these six
+      were never held to the same rule.
 
 ## Exhaustiveness
 

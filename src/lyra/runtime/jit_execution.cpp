@@ -552,6 +552,7 @@ using lyra::runtime::Read;
 using lyra::runtime::RealTimeInUnit;
 using lyra::runtime::Region;
 using lyra::runtime::RunHostCommand;
+using lyra::runtime::RunNullHostCommand;
 using lyra::runtime::RuntimeEffects;
 using lyra::runtime::Scope;
 using lyra::runtime::ScopeDefinition;
@@ -619,7 +620,7 @@ auto lyra_rt_file_open(void* files, const void* name) -> void* {
 auto lyra_rt_file_open_mode(void* files, const void* name, const void* mode)
     -> void* {
   return Own(
-      static_cast<FileTable*>(files)->Open(
+      static_cast<FileTable*>(files)->OpenWithMode(
           Read<String>(name), Read<String>(mode)));
 }
 
@@ -702,7 +703,7 @@ void lyra_rt_file_flush(void* files, const void* descriptor) {
 }
 
 void lyra_rt_file_flush_all(void* files) {
-  static_cast<FileTable*>(files)->Flush();
+  static_cast<FileTable*>(files)->FlushAll();
 }
 
 auto lyra_rt_peek_buffered(void* files, const void* fd) -> void* {
@@ -1139,7 +1140,7 @@ auto lyra_rt_run_host_command(void* runtime, const void* command) -> void* {
 }
 
 auto lyra_rt_run_null_host_command() -> void* {
-  return Own(RunHostCommand());
+  return Own(RunNullHostCommand());
 }
 
 auto lyra_rt_test_plusargs(void* runtime, const void* user_string) -> void* {
@@ -3086,7 +3087,7 @@ auto lyra_rt_queue_delete(const void* queue) -> void* {
 }
 
 auto lyra_rt_queue_delete_index(const void* queue, const void* index) -> void* {
-  return Own(Read<RuntimeQueue>(queue).Delete(Read<PackedArray>(index)));
+  return Own(Read<RuntimeQueue>(queue).DeleteIndex(Read<PackedArray>(index)));
 }
 
 auto lyra_rt_queue_eq(const void* lhs, const void* rhs) -> void* {
@@ -3203,7 +3204,8 @@ auto lyra_rt_assocarray_delete(const void* array) -> void* {
 auto lyra_rt_assocarray_delete_index(const void* array, const void* index)
     -> void* {
   return Own(
-      Read<RuntimeAssociativeArray>(array).Delete(Read<RuntimeValue>(index)));
+      Read<RuntimeAssociativeArray>(array).DeleteIndex(
+          Read<RuntimeValue>(index)));
 }
 
 auto lyra_rt_assocarray_eq(const void* lhs, const void* rhs) -> void* {

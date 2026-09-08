@@ -246,7 +246,7 @@ class LirDumper {
     return std::visit(
         Overloaded{
             [](const BuiltinTarget& b) -> std::string {
-              const std::string name{support::BuiltinFnName(b.fn)};
+              const std::string name{support::RuntimeEntryOf(b.fn).name};
               if (!b.qualifier.has_value()) {
                 return name;
               }

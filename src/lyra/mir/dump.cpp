@@ -557,7 +557,8 @@ class MirDumper {
                   callable.name);
             },
             [](const support::BuiltinFn& id) -> std::string {
-              return std::format("builtin=\"{}\"", support::BuiltinFnName(id));
+              return std::format(
+                  "builtin=\"{}\"", support::RuntimeEntryOf(id).name);
             },
             [](const ImportedRuntimeCallTarget& i) -> std::string {
               return std::format(

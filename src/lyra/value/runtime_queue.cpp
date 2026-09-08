@@ -283,7 +283,7 @@ auto RuntimeQueue::Delete() const -> RuntimeQueue {
   return result;
 }
 
-auto RuntimeQueue::Delete(const PackedArray& index) const -> RuntimeQueue {
+auto RuntimeQueue::DeleteIndex(const PackedArray& index) const -> RuntimeQueue {
   RuntimeQueue result(*this);
   if (IsInvalidIndex(index)) {
     return result;

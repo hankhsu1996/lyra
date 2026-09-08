@@ -212,16 +212,17 @@ class AssociativeArray {
     return PackedArray::Int(data_.contains(key) ? 1 : 0);
   }
 
-  // LRM 7.9.2: delete a single entry (no warning if absent) or, via the
-  // no-argument overload, clear the whole array. An invalid key is a no-op.
-  auto Delete(const K& key) -> void {
+  // LRM 7.9.2: clearing the whole array and deleting the one element a key
+  // names (no warning if absent) are two requests the source spells with one
+  // word, so each has a name of its own. An invalid key is a no-op.
+  auto Delete() -> void {
+    data_.clear();
+  }
+  auto DeleteIndex(const K& key) -> void {
     if (IsInvalidKey(key)) {
       return;
     }
     data_.erase(key);
-  }
-  auto Delete() -> void {
-    data_.clear();
   }
 
   // LRM Table 6-7: an associative array's default is empty. When this container

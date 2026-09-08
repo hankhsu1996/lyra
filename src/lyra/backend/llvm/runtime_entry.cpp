@@ -4,6 +4,7 @@
 #include <optional>
 #include <string>
 #include <string_view>
+#include <variant>
 
 #include "lyra/base/internal_error.hpp"
 #include "lyra/base/overloaded.hpp"
@@ -124,6 +125,21 @@ auto RuntimeOpName(RuntimeOp op) -> std::string_view {
       return "make_format_spec_of_kind";
   }
   throw InternalError("llvm codegen: unknown runtime operation");
+}
+
+// Why an entry no library declares at all has no ABI entry either. The reason
+// is the declaration's own, so a refusal here and the refusal every other
+// consumer makes cannot come apart.
+auto UndeclaredShape(support::BuiltinFn fn) -> std::string_view {
+  const support::RuntimeEntry entry = support::RuntimeEntryOf(fn);
+  const auto* undeclared =
+      std::get_if<support::NotDeclared>(&entry.declaration);
+  if (undeclared == nullptr) {
+    throw InternalError(
+        "llvm codegen: an entry the library declares was refused as one it "
+        "does not");
+  }
+  return undeclared->reason;
 }
 
 }  // namespace
@@ -262,12 +278,12 @@ auto RuntimeSymbol(support::ValueDomain domain, lir::ValueCellTarget::Op op)
 }
 
 auto RuntimeSymbol(support::BuiltinFn fn) -> std::string {
-  return Symbol(support::BuiltinFnName(fn));
+  return Symbol(support::RuntimeEntryOf(fn).name);
 }
 
 auto RuntimeSymbol(support::ValueDomain domain, support::BuiltinFn fn)
     -> std::string {
-  return Symbol(domain, support::BuiltinFnName(fn));
+  return Symbol(domain, support::RuntimeEntryOf(fn).name);
 }
 
 auto RuntimeSymbol(
@@ -275,7 +291,7 @@ auto RuntimeSymbol(
     support::ValueDomain source) -> std::string {
   return Symbol(
       destination, std::format(
-                       "{}_{}", support::BuiltinFnName(fn),
+                       "{}_{}", support::RuntimeEntryOf(fn).name,
                        support::ValueDomainName(source)));
 }
 
@@ -321,11 +337,6 @@ auto InstallOpOf(WrapperKind kind) -> RuntimeOp {
 }
 
 auto EntryNamingOf(support::BuiltinFn fn) -> EntryNaming {
-  // An enumeration's own entries read its declared members, which no library
-  // over the packed representation can answer. They belong to the enumeration's
-  // generated artifact, not to the value domain its representation shares.
-  constexpr std::string_view kReadsDeclaredMembers =
-      "reads an enumeration's declared members";
   // A foreign call that can suspend runs the SV side on a stack the runtime did
   // not create (LRM 35.5.6, 35.8), which the value library reaches only through
   // types the host compiler laid out for it. Nothing crosses a C ABI that
@@ -399,8 +410,6 @@ auto EntryNamingOf(support::BuiltinFn fn) -> EntryNaming {
     case support::BuiltinFn::kOcttoa:
     case support::BuiltinFn::kBintoa:
     case support::BuiltinFn::kRealtoa:
-    case support::BuiltinFn::kEnumNext:
-    case support::BuiltinFn::kEnumPrev:
     case support::BuiltinFn::kIsUnknown:
     case support::BuiltinFn::kCountBits:
     case support::BuiltinFn::kClog2:
@@ -527,7 +536,9 @@ auto EntryNamingOf(support::BuiltinFn fn) -> EntryNaming {
     case support::BuiltinFn::kEnumLast:
     case support::BuiltinFn::kEnumNum:
     case support::BuiltinFn::kEnumName:
-      return NotRealized{.shape = kReadsDeclaredMembers};
+    case support::BuiltinFn::kEnumNext:
+    case support::BuiltinFn::kEnumPrev:
+      return NotRealized{.shape = UndeclaredShape(fn)};
 
     // The runtime, then the user string, then the destination whose
     // representation names the entry.

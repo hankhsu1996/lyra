@@ -415,12 +415,13 @@ class Queue {
     EnforceBound();
   }
 
-  // LRM 7.10.2.3: with no index, clear the queue; with an index, remove that
-  // element. An x/z, negative, or `>= size` index is a no-op.
+  // LRM 7.10.2.3: clearing the queue and removing the element an index names
+  // are two requests the source spells with one word, so each has a name of
+  // its own. An x/z, negative, or `>= size` index is a no-op.
   auto Delete() -> void {
     data_.clear();
   }
-  auto Delete(const PackedArray& index) -> void {
+  auto DeleteIndex(const PackedArray& index) -> void {
     if (IsInvalidIndex(index)) {
       return;
     }

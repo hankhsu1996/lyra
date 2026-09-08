@@ -78,9 +78,17 @@ one, the diagnostic-code table, and A014 holds every code to an entry in it.
 
 - **Forbid a `default:` arm on a switch over an alternative set.** It is the same opt-out in another
   disguise, and where the set is a large open registry -- the builtin table, the format specifiers
-  -- a default arm is the only workable shape. A rule that fires on those is noise, so the ban is
-  not written; a default arm that silently routes a new alternative somewhere plausible remains a
-  judgement call at review.
+  -- a default arm looks like the only workable shape, since asking one yes-or-no question of two
+  hundred entries by listing them is worse than the opt-out. A rule that fires on those is noise, so
+  the ban is not written; a default arm that silently routes a new alternative somewhere plausible
+  remains a judgement call at review.
+
+  That judgement has since been made for one of the two, and the answer was neither the ban nor the
+  default arm. What made a default arm look necessary was asking each question of the whole registry
+  separately; one declaration per entry, holding every property at once, asks nothing separately and
+  is total with no arm to opt out through. Where a registry's questions are all about the same
+  subject, that is the shape, and the ban stays unwritten because it would have fired on the shape
+  rather than on what was wrong with it.
 
 ## Consequences
 

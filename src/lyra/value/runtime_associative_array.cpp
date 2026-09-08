@@ -161,7 +161,7 @@ auto RuntimeAssociativeArray::Delete() const -> RuntimeAssociativeArray {
   return result;
 }
 
-auto RuntimeAssociativeArray::Delete(const RuntimeValue& index) const
+auto RuntimeAssociativeArray::DeleteIndex(const RuntimeValue& index) const
     -> RuntimeAssociativeArray {
   RuntimeAssociativeArray result(*this);
   if (const std::optional<std::size_t> position = result.Find(index)) {

@@ -124,15 +124,21 @@ auto LowerAssociativeTraversal(
       body, completion, payload_type, kTraversalFound, result_type));
 }
 
+// True iff the library declares the entry on the type it builds, so the call
+// dispatches on no object and names that type as its qualifier instead.
+auto IsStaticFactory(const support::RuntimeEntry& entry) -> bool {
+  return std::holds_alternative<support::StaticFactory>(entry.declaration);
+}
+
 // Translates a HIR builtin-method ref to its MIR callee. The identifier is the
-// flat `support::BuiltinFn`; what varies is what the call dispatches on -- a
-// type for a type-namespace-qualified static call (e.g. `MyEnum::first()`), and
-// the receiver value for every other.
+// flat `support::BuiltinFn`; what varies is what the call dispatches on -- the
+// type a factory builds, which the call site qualifies it with, and the
+// receiver value for every other entry.
 auto MakeBuiltinMirCallee(
     const UnitLowerer& unit_lowerer, const hir::BuiltinMethodRef& b,
-    hir::TypeId hir_dispatch_type, std::optional<mir::ExprId> receiver)
-    -> mir::Direct {
-  if (support::IsStaticBuiltinFn(b.method)) {
+    const support::RuntimeEntry& entry, hir::TypeId hir_dispatch_type,
+    std::optional<mir::ExprId> receiver) -> mir::Direct {
+  if (IsStaticFactory(entry)) {
     return mir::Direct{
         .target = b.method,
         .qualification = mir::TypeQualifier{
@@ -414,10 +420,11 @@ auto LowerBuiltinMethodCall(
     throw InternalError(
         "BuiltinMethodRef receiver / type-bearer unexpectedly elided");
   }
+  const support::RuntimeEntry entry = support::RuntimeEntryOf(b.method);
   // LRM 7.9.4 -- 7.9.7 traversal answers with two values and has to place one
   // of them, so it is not the plain member call the generic path below builds
   // for every other associative method.
-  if (support::IsAssociativeTraversalFn(b.method)) {
+  if (entry.writes_the_index_back) {
     return LowerAssociativeTraversal(lowerer, frame, c, b.method, result_type);
   }
   // LRM 6.19.5 `first` / `last` / `num` are compile-time constants of the enum
@@ -454,8 +461,8 @@ auto LowerBuiltinMethodCall(
   // method body operates on a snapshot the proxy commits back; a non-mutating
   // method consumes a value, so the ordinary value path applies.
   std::optional<mir::ExprId> receiver;
-  if (!support::IsStaticBuiltinFn(b.method)) {
-    if (support::IsMutatingBuiltinFn(b.method)) {
+  if (!IsStaticFactory(entry)) {
+    if (entry.mutates_receiver) {
       auto recv_or =
           lowerer.LowerLhsExpr(hir_exprs.Get(*c.arguments.front()), frame);
       if (!recv_or) return std::unexpected(std::move(recv_or.error()));
@@ -469,7 +476,7 @@ auto LowerBuiltinMethodCall(
     }
   }
   const mir::Direct mir_callee =
-      MakeBuiltinMirCallee(unit_lowerer, b, hir_dispatch_type, receiver);
+      MakeBuiltinMirCallee(unit_lowerer, b, entry, hir_dispatch_type, receiver);
 
   std::vector<mir::ExprId> args;
   args.reserve(c.arguments.size());
@@ -489,7 +496,7 @@ auto LowerBuiltinMethodCall(
   // defines the default as `with (item)`, which HIR-to-MIR synthesises so
   // MIR always carries the closure argument and downstream consumers see
   // one uniform shape per kind.
-  if (support::ArrayMethodTakesClosure(b.method)) {
+  if (entry.takes_closure) {
     auto closure_or = BuildArrayMethodClosure(
         lowerer, frame, hir_dispatch_type,
         c.with_clause.has_value() ? &*c.with_clause : nullptr);
@@ -505,7 +512,7 @@ auto LowerBuiltinMethodCall(
   // does not determine the result's shape -- an LRM 7.12 index locator's key, a
   // map's chosen element, an empty reduction's zero, or the index an empty
   // associative dimension reports (LRM 20.7).
-  if (support::BuiltinFnTakesResultPrototype(b.method)) {
+  if (entry.takes_result_prototype) {
     const mir::TypeId proto_type =
         ResultPrototypeType(unit_lowerer, result_type);
     args.push_back(block.exprs.Add(

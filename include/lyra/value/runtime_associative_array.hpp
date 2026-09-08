@@ -99,7 +99,7 @@ class RuntimeAssociativeArray {
   // LRM 7.9.3 `delete`: a copy emptied, or a copy without the entry under
   // `index`. An index with no entry leaves the array unchanged.
   [[nodiscard]] auto Delete() const -> RuntimeAssociativeArray;
-  [[nodiscard]] auto Delete(const RuntimeValue& index) const
+  [[nodiscard]] auto DeleteIndex(const RuntimeValue& index) const
       -> RuntimeAssociativeArray;
 
   // LRM 7.9.4 -- 7.9.7 traversal: the smallest and largest indices the array

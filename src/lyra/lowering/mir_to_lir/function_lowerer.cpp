@@ -1611,7 +1611,7 @@ auto FunctionLowerer::LowerCall(
   // semantics forbid changing what a copy of the receiver would share, so it is
   // a functional operation whose result is stored back through the owner.
   if (const auto fn = mir::DirectBuiltinFn(call);
-      fn.has_value() && support::IsMutatingBuiltinFn(*fn)) {
+      fn.has_value() && support::RuntimeEntryOf(*fn).mutates_receiver) {
     return LowerMutatingCall(block, call, *fn, type);
   }
 

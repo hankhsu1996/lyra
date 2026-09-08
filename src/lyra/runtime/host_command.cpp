@@ -18,7 +18,7 @@ namespace {
 // would surface after the command's own output, and a file the design just
 // wrote would reach the command incomplete.
 void PublishPendingOutput(RuntimeEffects& runtime) {
-  runtime.Files().Flush();
+  runtime.Files().FlushAll();
   std::fflush(nullptr);
 }
 
@@ -31,7 +31,7 @@ auto RunHostCommand(RuntimeEffects& runtime, const value::String& command)
   return value::PackedArray::Int(std::system(terminal_command_line.c_str()));
 }
 
-auto RunHostCommand() -> value::PackedArray {
+auto RunNullHostCommand() -> value::PackedArray {
   return value::PackedArray::Int(std::system(nullptr));
 }
 

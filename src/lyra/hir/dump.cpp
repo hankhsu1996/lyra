@@ -720,7 +720,7 @@ class HirDumper {
             },
             [](const BuiltinMethodRef& b) -> std::string {
               return std::format(
-                  "BuiltinFn \"{}\"", support::BuiltinFnName(b.method));
+                  "BuiltinFn \"{}\"", support::RuntimeEntryOf(b.method).name);
             },
             [this](const ForeignImportRef& f) -> std::string {
               const auto& decl = unit_->foreign_imports.Get(f.id);

@@ -203,12 +203,14 @@ class FileTable {
       const lyra::value::PackedArray& descriptor,
       const lyra::value::String& text);
 
-  // LRM 21.3.1 $fopen. The no-mode overload returns a multichannel
-  // descriptor (MCD form); the mode overload returns a single file
-  // descriptor (FD form). On failure both return 0 (file cannot be
-  // opened, all MCD slots in use, or unknown mode string).
+  // LRM 21.3.1 $fopen. Opening without a mode yields a multichannel
+  // descriptor (MCD form) and opening with one yields a single file
+  // descriptor (FD form), so each has a name of its own. On failure both
+  // return 0 (file cannot be opened, all MCD slots in use, or unknown mode
+  // string).
   auto Open(const lyra::value::String& name) -> lyra::value::PackedArray;
-  auto Open(const lyra::value::String& name, const lyra::value::String& mode)
+  auto OpenWithMode(
+      const lyra::value::String& name, const lyra::value::String& mode)
       -> lyra::value::PackedArray;
 
   // LRM 21.3.1 $fclose. No-op for 0 / pre-bound stdio FDs; for an MCD
@@ -245,7 +247,7 @@ class FileTable {
   // `count`, materializing the lowest declared index and the whole remaining
   // range where the SV call leaves them out, so one entry serves every form
   // the source may write.
-  auto Read(
+  auto ReadMemory(
       lyra::value::UnpackedArray<lyra::value::PackedArray> dest,
       const lyra::value::PackedArray& fd,
       const lyra::value::PackedArray& declared_left,
@@ -275,9 +277,10 @@ class FileTable {
   // and its textual message. The slot's error state is cleared after the read.
   auto Error(const lyra::value::PackedArray& fd) -> TextRead;
 
-  // LRM 21.3.6 $fflush. No-arg form flushes every open file; the
-  // addressed form flushes a single FD or every set-bit MCD channel.
-  void Flush();
+  // LRM 21.3.6 $fflush. Flushing every open file and flushing the channels a
+  // descriptor addresses -- a single FD, or every set-bit MCD channel -- are
+  // two requests, so each has a name of its own.
+  void FlushAll();
   void Flush(const lyra::value::PackedArray& descriptor);
 
  private:

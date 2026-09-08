@@ -1271,7 +1271,7 @@ auto CodeGenFunction::BuiltinCallee(
                 std::format(
                     "llvm codegen: the {} builtin {} and the library has no "
                     "entry of that shape",
-                    support::BuiltinFnName(target.fn), unrealized.shape));
+                    support::RuntimeEntryOf(target.fn).name, unrealized.shape));
           }},
       EntryNamingOf(target.fn));
 }
@@ -1555,8 +1555,8 @@ auto CodeGenFunction::ResultShapeOperand(const lir::CallInstr& call) const
   // itself needs. Its representation follows the `with` clause rather than the
   // receiver, so one entry over a receiver of one representation still meets
   // prototypes of several.
-  if (support::ArrayMethodTakesClosure(builtin->fn) &&
-      support::BuiltinFnTakesResultPrototype(builtin->fn)) {
+  const support::RuntimeEntry entry = support::RuntimeEntryOf(builtin->fn);
+  if (entry.takes_closure && entry.takes_result_prototype) {
     return call.args.size() - 1;
   }
   return std::nullopt;
@@ -1575,8 +1575,8 @@ auto CodeGenFunction::ErasedOperand(const lir::CallInstr& call) const
   if (builtin == nullptr) {
     return std::nullopt;
   }
-  if (const std::optional<std::size_t> part =
-          support::SpreadPartOperand(builtin->fn);
+  const support::RuntimeEntry entry = support::RuntimeEntryOf(builtin->fn);
+  if (const std::optional<std::size_t> part = entry.spread_operand;
       part.has_value() && *part < call.args.size()) {
     auto domain = DomainOf(OperandType(call.args.at(*part)));
     if (!domain) {
@@ -1584,8 +1584,7 @@ auto CodeGenFunction::ErasedOperand(const lir::CallInstr& call) const
     }
     return ErasedArgument{.position = *part, .domain = *domain};
   }
-  const std::optional<std::size_t> index =
-      support::ContainerIndexOperand(builtin->fn);
+  const std::optional<std::size_t> index = entry.index_operand;
   if (!index.has_value() || *index >= call.args.size()) {
     return std::nullopt;
   }
