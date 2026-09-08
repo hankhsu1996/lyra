@@ -6,7 +6,7 @@
 namespace lyra {
 
 SimulationError::SimulationError(std::string message)
-    : std::runtime_error("runtime error: " + std::move(message)) {
+    : std::runtime_error(std::move(message)) {
 }
 
 }  // namespace lyra

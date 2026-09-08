@@ -33,11 +33,11 @@ enum class ProcessExecutionState : std::uint8_t {
 // KILLED through a surviving handle. Every terminal path settles one of these,
 // and the execution state stays outcome-neutral (`kTerminated`).
 enum class ProcessTerminationCause : std::uint8_t {
-  // Ran to the end of its body -- normally or via an unhandled fault. LRM 9.7
-  // reports this as FINISHED.
+  // Ran to the end of its body. LRM 9.7 reports this as FINISHED.
   kCompleted,
-  // Forcibly terminated by `kill` (LRM 9.7) or `disable` (LRM 9.6). Reported as
-  // KILLED.
+  // Left by a departure rather than by reaching the end: `kill` (LRM 9.7), a
+  // `disable` (LRM 9.6), or a run-time error the body had no way to carry on
+  // from. Reported as KILLED.
   kKilled,
 };
 
@@ -208,15 +208,13 @@ class RuntimeProcess : public std::enable_shared_from_this<RuntimeProcess> {
   auto PushActivation(Coroutine<void> nested) -> CoroutineHandle;
   void PopActivation();
 
-  // The failure that left the innermost activation's body, if any. A failure is
-  // not something an activation settles -- SystemVerilog has no spelling that
-  // could read one -- but a driver written as a coroutine stores whatever
-  // leaves the body it drives, because that is what the language does with an
-  // escaping exception. This takes it back out so it can continue on its way.
-  // A control effect is not a failure and does not come back this way: it names
-  // a target this thread is inside, which the thread answers for itself
-  // wherever it regains control.
-  [[nodiscard]] auto TakeInnermostFailure() -> std::exception_ptr;
+  // The run-time error that left the innermost activation's body, if any. A
+  // driver written as a coroutine stores whatever leaves the body it drives,
+  // because that is what the language does with an escaping exception; this
+  // takes it back out so it can continue on its way to a landing. A control
+  // effect does not come back this way: it names a target this thread is
+  // inside, which the thread answers for itself wherever it regains control.
+  [[nodiscard]] auto TakeInnermostRaisedError() -> std::exception_ptr;
 
   [[nodiscard]] auto CurrentLeaf() const -> CoroutineHandle {
     return current_leaf_;

@@ -487,4 +487,65 @@ TEST(LyraDesignManifest, ReportsNoInputAndWhyThereIsNone) {
       << declared.stderr_text;
 }
 
+// A run-time error of the design ends the simulation the way $fatal does (LRM
+// 20.10), so the run reaches the end of simulation time and its final
+// procedures execute there (LRM 9.2.3). The corpus cannot state this: a case
+// passes on a zero exit status, and this run has to fail.
+TEST(LyraRun, ADesignErrorEndsTheRunThroughItsFinalProcedures) {
+  const auto lyra = ResolveLyra();
+  ASSERT_TRUE(std::filesystem::exists(lyra)) << lyra.string();
+  auto tmp_or = MakeScratchDir();
+  ASSERT_TRUE(tmp_or.has_value()) << tmp_or.error();
+
+  const auto src = *tmp_or / "test.sv";
+  std::ofstream(src) << "module Test;\n"
+                     << "  int dyn[];\n"
+                     << "  initial begin\n"
+                     << "    #5;\n"
+                     << "    dyn = new[-1];\n"
+                     << "  end\n"
+                     << "  final $display(\"reached the end\");\n"
+                     << "endmodule\n";
+
+  const std::vector<std::string> args = {"run", "--top", "Test", src.string()};
+  const auto run = RunChildProcess(lyra, args, 120s);
+  ASSERT_EQ(run.termination, TerminationKind::kExitedNonZero)
+      << run.stdout_text << run.stderr_text;
+  EXPECT_NE(run.stderr_text.find("size operand is negative"), std::string::npos)
+      << run.stderr_text;
+  EXPECT_NE(run.stdout_text.find("reached the end"), std::string::npos)
+      << "stdout: " << run.stdout_text;
+}
+
+// Variable initialization is simulation activity at time zero (LRM 4), not
+// construction, so an error raised by an initializer is a run-time error of the
+// design and is reported as one. Before the simulation's boundary followed the
+// elaboration phases it left the emitted program entirely, which aborted.
+TEST(LyraRun, AnErrorInTimeZeroInitializationIsReported) {
+  const auto lyra = ResolveLyra();
+  ASSERT_TRUE(std::filesystem::exists(lyra)) << lyra.string();
+  auto tmp_or = MakeScratchDir();
+  ASSERT_TRUE(tmp_or.has_value()) << tmp_or.error();
+
+  const auto src = *tmp_or / "test.sv";
+  std::ofstream(src) << "module Test;\n"
+                     << "  typedef union tagged packed {\n"
+                     << "    bit [7:0] a;\n"
+                     << "    bit [7:0] b;\n"
+                     << "  } U;\n"
+                     << "  U src;\n"
+                     << "  bit [7:0] v = src.b;\n"
+                     << "  initial $display(\"v=%0d\", v);\n"
+                     << "endmodule\n";
+
+  const std::vector<std::string> args = {"run", "--top", "Test", src.string()};
+  const auto run = RunChildProcess(lyra, args, 120s);
+  EXPECT_EQ(run.termination, TerminationKind::kExitedNonZero)
+      << run.stdout_text << run.stderr_text;
+  EXPECT_NE(
+      run.stderr_text.find("inconsistent with the current tag"),
+      std::string::npos)
+      << run.stderr_text;
+}
+
 }  // namespace

@@ -62,7 +62,7 @@ class CancellationTarget {
   RegistrationList cancel_waiters_;
 };
 
-// The control effect that leaves an execution. It is transport, not a fault:
+// The control effect that leaves an execution. It is transport, not a report:
 // the execution it leaves is not in error. It travels outward until a region
 // naming its target consumes it and continues past that target; a called task
 // merely passes it on. An effect no region claims runs out the whole body, and
@@ -91,12 +91,12 @@ struct ControlEffect {
 // the driver once the body has run its last statement.
 [[noreturn]] void RaiseControlEffect(CancellationTarget* target);
 
-// What came out of a body that did not return: a control effect, or a fault. A
-// body left by unwinding delivers the two identically, so one shape carries
-// either.
+// What came out of a body that did not return: a control effect, or a run-time
+// error. A body left by unwinding delivers the two identically, so one shape
+// carries either.
 struct Unwound {
-  // False for a fault. A frame that is not the effect's landing re-raises it
-  // either way; only a landing needs to tell them apart.
+  // False for a run-time error. A frame that is not the landing carries either
+  // outward unchanged; only a landing acts on which it was.
   bool control_effect;
   std::exception_ptr raised;
 };

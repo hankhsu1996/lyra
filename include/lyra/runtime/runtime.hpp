@@ -5,6 +5,8 @@
 #include <map>
 #include <memory>
 #include <string>
+#include <string_view>
+#include <variant>
 #include <vector>
 
 #include "lyra/base/time.hpp"
@@ -40,9 +42,9 @@ struct RuntimeOptions {
 
 // The concrete simulation runtime. Owns every mutable piece of simulator
 // state -- time, region queues, execution ambient, I/O sinks, the attached
-// design, the process registry -- and drives the elaboration walks and the
-// region loop. Generated code sees only the `RuntimeEffects` view; the host
-// boundary here (BindDesign, Run) is not visible through that view.
+// design, the process registry -- and drives the resolve walk and the run.
+// Generated code sees only the `RuntimeEffects` view; the host boundary here
+// (BindDesign, Run) is not visible through that view.
 class Runtime final : public RuntimeEffects {
  public:
   Runtime();
@@ -54,12 +56,36 @@ class Runtime final : public RuntimeEffects {
   auto operator=(Runtime&&) -> Runtime& = delete;
   ~Runtime();
 
-  // Takes ownership of the elaborated `design`, then walks its scope tree in
-  // three top-down passes (resolve state, initialize state, create processes).
-  // Design-wide barrier per phase: every scope resolves before any
-  // initializes; every scope initializes before any activates.
+  // Takes ownership of the elaborated `design` and resolves every scope's
+  // cross-instance references, which is the last of elaboration (LRM 3.12).
+  // Initializing state and creating processes are simulation activity at time
+  // zero, so they belong to the run rather than to binding.
   void BindDesign(std::unique_ptr<Design> design);
   auto Run() -> int;
+
+  // The simulation reached its end -- the design asked (LRM 20.2), or a
+  // run-time error of its own ended it the way `$fatal` does (LRM 20.10) -- so
+  // the run walks the whole of what it owes.
+  void RequestSimulationEnd();
+  // The tool cannot carry the run on, so the design's end-of-simulation
+  // procedures do not run: the state they would read is already known to be
+  // wrong.
+  void RequestToolStop();
+
+  // A run-time error of the design: the fatal report LRM 20.10 asks a tool to
+  // make for it, and the implicit `$finish` that follows one.
+  void ReportDesignError(std::string_view message);
+
+  // A failure of the tool itself, which no SystemVerilog construct can express
+  // and no severity describes, so it is stated plainly and ends the run
+  // without the design's own ending.
+  void ReportToolFailure(std::string_view message);
+
+  // LRM 20.2, Table 20-1: what a simulation control task prints, chosen by its
+  // level argument, where `task` names the one that was called and `origin` is
+  // its source location.
+  void ReportSimulationControl(
+      std::string_view task, std::string_view origin, int level);
 
   // Push `process` onto the primary registry and the by-scope index in
   // lockstep. The by-scope index is a set of raw back-pointers keyed by the
@@ -74,6 +100,13 @@ class Runtime final : public RuntimeEffects {
   friend class RuntimeEffects;
   friend class CurrentRuntimeGuard;
   friend class ProcessExecutionGuard;
+
+  // The run has not been asked to end. Leaving the region loop in this state
+  // means it ran out of work, which is an end of simulation like any other.
+  struct Running {};
+  struct SimulationEnded {};
+  struct ToolStopped {};
+  using RunState = std::variant<Running, SimulationEnded, ToolStopped>;
 
   // How many times one slot may re-enter its regions before the design is
   // declared unable to settle. A design that keeps scheduling work at the
@@ -109,6 +142,12 @@ class Runtime final : public RuntimeEffects {
   void ExecuteTimeSlot(TimeSlot& slot);
   void RunRegion(TimeSlot& slot, Region region);
   void ExecuteFinalProcesses();
+  // LRM 4: variable initialization and process activation are simulation
+  // activity at time zero, so a run-time error raised by either is the design's
+  // and ends the run the same way one raised later does.
+  void RunSimulation();
+  // LRM 20.10: where in the design and when a report is being made.
+  [[nodiscard]] auto ReportContext() const -> std::string;
   // LRM 16.3 requires a tool to report immediate cover results at the end of
   // simulation where it offers no assertion API to ask for them on demand.
   void ReportCoverage();
@@ -141,10 +180,14 @@ class Runtime final : public RuntimeEffects {
   SimTime now_ = 0;
   std::int8_t global_precision_power_ = kDefaultTimePrecisionPower;
   value::TimeFormat time_format_;
+  RunState state_ = Running{};
+  // Every request that the run end, counted, because LRM 9.2.3 has a `$finish`
+  // from within a `final` procedure end the simulation immediately and the tail
+  // that would obey it is already running under an earlier request.
+  std::uint64_t end_requests_ = 0;
   bool bound_ = false;
   bool ran_ = false;
-  bool finished_ = false;
-  bool fatal_finish_ = false;
+  bool tool_failed_ = false;
 };
 
 // Reached by generated `RegisterInitial` / `RegisterFinal` builtins: creates a

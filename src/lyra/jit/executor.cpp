@@ -216,7 +216,7 @@ auto DefineRuntimeAbi(llvm::orc::LLJIT& jit) -> std::set<std::string> {
   add("lyra_rt_stime", &lyra_rt_stime);
   add("lyra_rt_realtime", &lyra_rt_realtime);
   add("lyra_rt_finish", &lyra_rt_finish);
-  add("lyra_rt_fatal_finish", &lyra_rt_fatal_finish);
+  add("lyra_rt_stop", &lyra_rt_stop);
   add("lyra_rt_run_host_command", &lyra_rt_run_host_command);
   add("lyra_rt_run_null_host_command", &lyra_rt_run_null_host_command);
   add("lyra_rt_test_plusargs", &lyra_rt_test_plusargs);

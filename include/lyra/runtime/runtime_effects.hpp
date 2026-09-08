@@ -1,7 +1,9 @@
 #pragma once
 
 #include <cstdint>
+#include <exception>
 #include <functional>
+#include <string_view>
 
 #include "lyra/base/time.hpp"
 #include "lyra/runtime/coroutine.hpp"
@@ -86,9 +88,13 @@ class RuntimeEffects {
   // process that raised it reaches a flush point first.
   void SubmitObserved(std::function<void()> report);
 
-  // LRM 20.2 / 20.10: `fatal=true` bumps the eventual `Run()` return to a
-  // non-zero exit code.
-  void RequestFinish(int level, bool fatal = false);
+  // LRM 20.2: a simulation control task ends the run, and its level selects
+  // what the tool prints about it (Table 20-1). `task` is the one the design
+  // called, which is the whole of what a run nothing can resume has to tell
+  // `$stop` and `$finish` apart by.
+  void EndRun(
+      std::string_view task, const value::String& origin,
+      const value::PackedArray& level);
   // Adopts `coroutine` as a spawned child of the executing process's
   // lineage (LRM 9.5) and schedules it.
   void Spawn(Coroutine<void> coroutine);
@@ -129,6 +135,14 @@ class RuntimeEffects {
   RuntimeEffects() = default;
   ~RuntimeEffects() = default;
 };
+
+// Reports a run-time error that left a body or a time-zero phase, and asks the
+// run to end. A design's error is the fatal report LRM 20.10 asks a tool to
+// make for it and ends the simulation as `$fatal` does, so every `final`
+// procedure still runs (LRM 9.2.3); a failure of the tool itself is not a
+// language event and ends the run without them.
+void ReportRaisedError(
+    RuntimeEffects& effects, const std::exception_ptr& raised);
 
 // The `RuntimeEffects` view of the Runtime attached to this thread. Reached
 // without a receiver, so every body kind -- module process, class method,

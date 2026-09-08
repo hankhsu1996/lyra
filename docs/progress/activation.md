@@ -14,14 +14,14 @@ or incomplete relative to the contract.
 
 ## Items
 
-- [x] **The terminal outcome is unified.** Contract invariant 2: an activation settles one
-      completion slot holding `Succeeded(T)` / `Faulted(exception)` / `Cancelled`, and the
-      scheduler-visible execution core carries none of it. The value and the exception now travel
-      together in one typed completion slot held off the scheduler-visible core; a consumer reads
-      the whole outcome once, which re-raises a fault or yields the value. The execution core the
-      scheduler sees is purely suspend / resume / wait state / identity. The `Cancelled` slot
-      alternative is not present: as the cancellation item below settles, killed-ness is realized as
-      a persistent fact of the process node, read by `status()` / `await()`, not as a slot value.
+- [x] **The terminal outcome is unified.** Contract invariant 2: a body is left in exactly two ways,
+      so an activation settles one completion slot holding either the value it produced or the
+      departure that reached its landing, and the scheduler-visible execution core carries none of
+      it. A consumer reads the whole outcome once, which yields the value or carries the departure
+      on past a frame that is not the landing. The execution core the scheduler sees is purely
+      suspend / resume / wait state / identity. Killed-ness is separately a persistent fact of the
+      process node, read by `status()` / `await()`, because a process killed while parked is
+      released without its slot ever being read.
 
 - [x] **Registrations are revocable.** Contract invariant 4: every external reference to a parked
       activation -- a region queue slot, a delay slot, an event waiter entry, a value-change

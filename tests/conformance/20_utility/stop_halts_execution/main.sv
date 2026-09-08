@@ -1,14 +1,27 @@
-// $stop suspends simulation (LRM 20.2), so in a non-interactive run the
-// calling process does not continue past the call. Its optional argument (0,
-// 1, or 2) selects which diagnostic message a tool prints and changes nothing
-// else (LRM 20.2, Table 20-1). The subject here is that execution does not
-// continue, so the case prints the sentinel and then places a $fatal past the
-// call where nothing should reach: if execution wrongly continues, the
-// non-zero exit fails the case before the sentinel is read.
+// @reports: $stop
+//
+// $stop suspends simulation (LRM 20.2), so the calling process does not
+// continue past the call, and a run nothing can resume ends there. Its
+// optional argument selects which diagnostic message the tool prints and
+// changes nothing else (LRM 20.2, Table 20-1); that message is what says which
+// of the two simulation control tasks was reached, so the claim above is that
+// one is written naming this one.
 module Top;
+  int reached_after_stop;
+  int completed;
+
   initial begin
-    $display("All checks passed");
+    completed = 3;
+    reached_after_stop = 7;
+    completed = 1;
     $stop(2);
-    $fatal(1, "execution continued past $stop");
+    reached_after_stop = 1;
+  end
+
+  final begin
+    if (completed !== 1) $fatal(1, "completed was %0d, expected 1", completed);
+    if (reached_after_stop !== 7)
+      $fatal(1, "reached_after_stop was %0d, expected 7", reached_after_stop);
+    $display("All checks passed");
   end
 endmodule

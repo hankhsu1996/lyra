@@ -1,11 +1,16 @@
 #include "lyra/runtime/runtime_effects.hpp"
 
 #include <cstdint>
+#include <exception>
+#include <format>
 #include <functional>
+#include <new>
 #include <string>
+#include <string_view>
 #include <utility>
 
 #include "lyra/base/internal_error.hpp"
+#include "lyra/base/simulation_error.hpp"
 #include "lyra/runtime/coroutine.hpp"
 #include "lyra/runtime/delay.hpp"
 #include "lyra/runtime/observable.hpp"
@@ -160,12 +165,34 @@ void RuntimeEffects::WakeWaitersOf(
   }
 }
 
-void RuntimeEffects::RequestFinish(
-    int,  // NOLINT(readability-named-parameter)
-    bool fatal) {
+void RuntimeEffects::EndRun(
+    std::string_view task, const value::String& origin,
+    const value::PackedArray& level) {
   Runtime& rt = AsRuntime(*this);
-  rt.finished_ = true;
-  if (fatal) rt.fatal_finish_ = true;
+  rt.ReportSimulationControl(
+      task, origin.View(), static_cast<int>(level.ToInt64()));
+  rt.RequestSimulationEnd();
+}
+
+void ReportRaisedError(
+    RuntimeEffects& effects, const std::exception_ptr& raised) {
+  Runtime& rt = AsRuntime(effects);
+  // Asked rather than looked at: an exception put away as an `exception_ptr`
+  // answers what it is only by being raised again into a handler. A control
+  // effect is not derived from this hierarchy (LRM 9.6.2), so one arriving here
+  // left its owner: that is a defect of the tool, and it surfaces rather than
+  // being reported as something the design did.
+  try {
+    std::rethrow_exception(raised);
+  } catch (const SimulationError& error) {
+    rt.ReportDesignError(error.what());
+  } catch (const InternalError& error) {
+    rt.ReportToolFailure(std::format("internal error: {}", error.what()));
+  } catch (const std::bad_alloc&) {
+    rt.ReportToolFailure("out of memory");
+  } catch (const std::exception& error) {
+    rt.ReportToolFailure(std::format("unexpected error: {}", error.what()));
+  }
 }
 
 void RuntimeEffects::Spawn(Coroutine<void> coroutine) {

@@ -366,6 +366,17 @@ the detail lives in the entry itself.
   walks `$finish`'s tail so `final` procedures execute (9.2.3). Reverses the third alternative of
   `activation.md` invariant 2; the awaiter-side delivery every async runtime uses, a Rust-style
   error value, and a check after every fallible operation are rejected.
+- [ending-a-run](ending-a-run.md) -- a report, a stop, and an unclaimable departure are three
+  primitives, and every ending composes them; a design's run-time error is a report Lyra writes for
+  the design rather than a failure crossing the engine. `final` procedures run when the simulation
+  reached its end -- exhaustion, the design asking, or such an error -- and not when the tool could
+  not carry on, while the cover report, the output drain and the exit status are owed either way.
+  `$stop` ends the run where nothing can resume it and the Table 20-1 diagnostic is the whole of
+  what separates it from `$finish`; that diagnostic prints where the task executes and carries no
+  severity. The simulation's boundary follows the elaboration phases, so a time-zero initializer's
+  error is a run-time error rather than an escape. Completes the reversal of `activation.md`
+  invariant 2's third alternative. Catching the throw at the engine loop, skipping `final` after
+  `$stop`, `$stop` as a failure, a fifth severity, and aborting at the raise site are rejected.
 
 ### Diagnostics
 

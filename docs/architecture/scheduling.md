@@ -9,7 +9,7 @@ engine, and continues running. The engine invokes those closures when their owni
 where the slot to run in is not yet knowable, what is handed over is an execution that finds it.
 
 This doc covers the decisions behind the engine itself: process model, suspension protocol, region
-structure, deferred work, `$finish` semantics, and the MIR boundary. Sensitivity tracking, change
+structure, deferred work, how a run ends, and the MIR boundary. Sensitivity tracking, change
 detection, and edge detection are separate runtime subsystems.
 
 ## Processes and tasks are coroutines
@@ -149,19 +149,30 @@ already-pending active work finish first, then come back at this same simulation
 `#0`-suspended processes to the back of Active would let them re-enter ahead of work that arrived
 earlier, defeating the intent.
 
-## `$finish`
+## How a run ends
 
-`$finish` reaches the engine's stop verb, which sets a stop flag. No process resumes after it: the
-flag is read where a process would be entered, so whatever is still parked in the in-progress slot
-is drained without running a statement.
+A simulation control task (LRM 20.2) reaches the engine's stop verb, which records that the run is
+over. No process resumes after that: the record is read where a process would be entered, so
+whatever is still parked in the in-progress slot is drained without running a statement.
 
 Deferred effects already submitted for that slot do still run, so a nonblocking write issued before
-the `$finish` commits and a `final` procedure can read it. LRM 20.2 says only that `$finish` makes
-the simulator exit and does not say how much of the in-progress slot still happens, so this is a
-choice rather than a requirement -- which is why the corpus does not hold a case for it.
+the request commits and a `final` procedure can read it. LRM 20.2 says only that `$finish` makes the
+simulator exit and does not say how much of the in-progress slot still happens, so this is a choice
+rather than a requirement -- which is why the corpus does not hold a case for it.
 
-Registered `final` actions then run in registration order. A `$finish` raised from inside a `final`
-aborts the remaining finals (LRM 9.2.3).
+Registered `final` actions then run in registration order, because a `final` procedure occurs at the
+end of simulation time (LRM 9.2.3), which a run reaches by being asked to end and equally by running
+out of work. A further request from inside a `final` ends the simulation immediately, so the ones
+still queued do not run.
+
+The one ending that runs none of them is the tool being unable to carry the run on: a `final`
+procedure is design code, and the state it would read is already known to be wrong. What the engine
+owes either way -- the immediate cover report (LRM 16.3), the output drain, the exit status -- is
+owed because the run is over, not because of how it ended.
+
+A run-time error of the design is not a separate ending. It is reported where the activation it left
+lands, and asks for the ending `$fatal` asks for, so the same tail runs and the engine sees a
+request rather than a failure.
 
 ## Closure capture lifetime
 
@@ -175,8 +186,7 @@ two have different lifetime rules:
   indefinitely.
 - **By-reference capture of a `ProceduralVarRef`** is safe only if the closure fires while the
   process's coroutine frame is still alive. The procedural frame is destroyed when the process body
-  returns or when `$finish` tears down the simulation; references into the frame are invalid after
-  either event.
+  returns and when the run ends; references into the frame are invalid after either event.
 
 The third case is the one a lowering pass must reason about. A lowering that emits a closure
 capturing a procedural lvalue is responsible for establishing the fire-before-frame-dies guarantee,

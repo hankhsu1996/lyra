@@ -839,13 +839,6 @@ auto lyra_rt_await_coroutine(void* runtime, void* activation) -> bool {
   // waited for it, and the caller is still on the stack below, so nothing
   // continues it and it must not park.
   if (called->self.done()) {
-    // A failure that left the body was stored rather than allowed to travel,
-    // because a coroutine's promise stores whatever escapes the body it drives.
-    // Nothing settled it and nothing here reads it, so it continues outward
-    // from the point the body stopped.
-    if (std::exception_ptr failure = process.TakeInnermostFailure(); failure) {
-      std::rethrow_exception(failure);
-    }
     return false;
   }
   called->continuation = caller->self;
@@ -853,7 +846,18 @@ auto lyra_rt_await_coroutine(void* runtime, void* activation) -> bool {
 }
 
 void lyra_rt_release_coroutine(void* runtime) {
-  static_cast<RuntimeEffects*>(runtime)->CurrentProcess().PopActivation();
+  lyra::runtime::RuntimeProcess& process =
+      static_cast<RuntimeEffects*>(runtime)->CurrentProcess();
+  // A run-time error that left the called body was stored rather than allowed
+  // to travel, because a coroutine's promise stores whatever escapes the body
+  // it drives. The call is one statement of this thread, so it continues from
+  // here -- taken before the activation is released, which destroys the promise
+  // holding it.
+  std::exception_ptr raised = process.TakeInnermostRaisedError();
+  process.PopActivation();
+  if (raised) {
+    std::rethrow_exception(raised);
+  }
 }
 
 void lyra_rt_spawn_all(void* runtime, LyraSpan branches) {
@@ -1094,15 +1098,17 @@ auto lyra_rt_realtime(void* runtime, const void* unit_power) -> void* {
       *static_cast<RuntimeEffects*>(runtime), Read<PackedArray>(unit_power)));
 }
 
-auto lyra_rt_finish(void* runtime, const void* level) -> bool {
-  static_cast<RuntimeEffects*>(runtime)->RequestFinish(
-      static_cast<int>(Read<PackedArray>(level).ToInt64()));
+auto lyra_rt_finish(void* runtime, const void* origin, const void* level)
+    -> bool {
+  static_cast<RuntimeEffects*>(runtime)->EndRun(
+      "$finish", Read<String>(origin), Read<PackedArray>(level));
   return true;
 }
 
-auto lyra_rt_fatal_finish(void* runtime, const void* level) -> bool {
-  static_cast<RuntimeEffects*>(runtime)->RequestFinish(
-      static_cast<int>(Read<PackedArray>(level).ToInt64()), true);
+auto lyra_rt_stop(void* runtime, const void* origin, const void* level)
+    -> bool {
+  static_cast<RuntimeEffects*>(runtime)->EndRun(
+      "$stop", Read<String>(origin), Read<PackedArray>(level));
   return true;
 }
 

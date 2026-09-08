@@ -27,8 +27,9 @@ using RootBuilder = std::function<std::unique_ptr<Scope>()>;
 // with those tokens, invokes `builder` to allocate the design's `$root`
 // (whose generated constructor elaborates the design), binds the built
 // tree, and drives the scheduler to completion. Returns the simulation's
-// exit code, mapping any escaping C++ exception to EXIT_FAILURE the same
-// way `RunSimulation` does. Never throws.
+// exit code. Elaboration precedes the simulation (LRM 3.12), so a failure
+// while the design is built or resolved is reported here and the run never
+// starts; everything from time-zero initialization onward is the run's own.
 //
 // This is the entry the emitted `main` calls. Consolidating every
 // host-boundary concern here -- argv parsing, engine construction, bind,
@@ -55,18 +56,16 @@ auto RunDesign(int argc, char** argv, std::string_view root_name) -> int {
   });
 }
 
-// Boundary between a host program and the simulation Runtime. Drives a
-// bound Runtime to completion and converts any escaping C++ exception
-// (an InternalError, std::bad_alloc, or other std::exception) into
-// EXIT_FAILURE. Never throws.
+// Boundary between a host program and the simulation Runtime. Drives a bound
+// Runtime to completion and reports whatever the run could not itself account
+// for, mapping it to a failing exit code.
 //
-// Runtime::Run is the scheduler proper -- its body describes the LRM
-// region order and may throw on invariant violation or allocation
-// failure. This function is the host-process boundary that catches
-// such exceptions and maps them to an exit code. A host program that
-// wants to construct its own Runtime and drive its own root allocation
-// (an embedding API, a differential test) calls this directly instead
-// of RunDesignHost.
+// The run accounts for a design's own run-time error and for a failure of the
+// tool discovered while it is under way, so what reaches here is what happened
+// outside that -- an invariant the engine established for itself, or the host
+// running out of memory before the first initializer. A host program that wants
+// to construct its own Runtime and drive its own root allocation (an embedding
+// API, a differential test) calls this directly instead of RunDesignHost.
 auto RunSimulation(Runtime& runtime) -> int;
 
 }  // namespace lyra::runtime

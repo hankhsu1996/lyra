@@ -3,18 +3,14 @@
 #include <cstddef>
 #include <cstdint>
 #include <expected>
-#include <optional>
 #include <utility>
-#include <variant>
 
 #include "lyra/base/internal_error.hpp"
-#include "lyra/diag/diag_code.hpp"
 #include "lyra/diag/diagnostic.hpp"
 #include "lyra/diag/source_span.hpp"
 #include "lyra/hir/expr.hpp"
-#include "lyra/hir/integral_constant.hpp"
-#include "lyra/hir/primary.hpp"
 #include "lyra/hir/procedural_body.hpp"
+#include "lyra/lowering/hir_to_mir/expression/system/control.hpp"
 #include "lyra/lowering/hir_to_mir/integral_literal.hpp"
 #include "lyra/lowering/hir_to_mir/print_items.hpp"
 #include "lyra/lowering/hir_to_mir/process_lowerer.hpp"
@@ -26,21 +22,6 @@
 #include "lyra/support/system_subroutine.hpp"
 
 namespace lyra::lowering::hir_to_mir {
-
-namespace {
-
-auto TryExtractLiteralInt(const hir::Expr& expr)
-    -> std::optional<std::int64_t> {
-  const auto* primary = std::get_if<hir::PrimaryExpr>(&expr.data);
-  if (primary == nullptr) return std::nullopt;
-  const auto* lit = std::get_if<hir::IntegerLiteral>(&primary->data);
-  if (lit == nullptr) return std::nullopt;
-  const auto& c = lit->value;
-  if (c.state_kind == hir::IntegralStateKind::kFourState) return std::nullopt;
-  return static_cast<std::int64_t>(c.value_words[0]);
-}
-
-}  // namespace
 
 auto LowerDiagnosticSystemSubroutineCall(
     ProcessLowerer& process, WalkFrame frame, const hir::CallExpr& call,
@@ -62,20 +43,11 @@ auto LowerDiagnosticSystemSubroutineCall(
     if (!call.arguments.front().has_value()) {
       throw InternalError("$fatal finish_number argument unexpectedly elided");
     }
-    const hir::Expr& level_expr =
-        process.HirBody().exprs.Get(*call.arguments.front());
-    const auto literal = TryExtractLiteralInt(level_expr);
-    if (!literal.has_value()) {
-      return diag::Fail(
-          span, diag::DiagCode::kUnsupportedExpressionForm,
-          "$fatal first argument (finish_number) must be an integer literal");
-    }
-    if (*literal != 0 && *literal != 1 && *literal != 2) {
-      return diag::Fail(
-          span, diag::DiagCode::kUnsupportedExpressionForm,
-          "$fatal finish_number must be 0, 1, or 2");
-    }
-    finish_level = static_cast<int>(*literal);
+    auto level_or = LowerDiagnosticLevel(
+        process.HirBody().exprs.Get(*call.arguments.front()),
+        "$fatal finish_number", span);
+    if (!level_or) return std::unexpected(std::move(level_or.error()));
+    finish_level = *level_or;
     items_offset = 1;
   }
 
@@ -118,13 +90,16 @@ auto LowerDiagnosticSystemSubroutineCall(
 
   const mir::ExprId finish_runtime_id =
       block.exprs.Add(BuildCurrentRuntimeCallExpr(process.Owner()));
-  const mir::ExprId level_id = BuildIntLiteral(
-      process.Owner().Unit(), block, static_cast<std::int64_t>(finish_level));
+  const mir::ExprId finish_origin_id = BuildStringValueExpr(
+      unit, block,
+      FormatRuntimeOriginString(span, process.Owner().SourceManager()));
+  const mir::ExprId level_id =
+      BuildIntLiteral(unit, block, static_cast<std::int64_t>(finish_level));
   return mir::Expr{
       .data =
           mir::CallExpr{
-              .callee = mir::Direct{.target = support::BuiltinFn::kFatalFinish},
-              .arguments = {finish_runtime_id, level_id}},
+              .callee = mir::Direct{.target = support::BuiltinFn::kFinish},
+              .arguments = {finish_runtime_id, finish_origin_id, level_id}},
       .type = unit.builtins.void_type};
 }
 

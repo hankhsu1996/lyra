@@ -403,13 +403,14 @@ enum class BuiltinFn : std::uint16_t {
   kDistChiSquare,
   kDistT,
   kDistErlang,
-  // LRM 20.2 simulation termination. Takes the runtime handle and the LRM
-  // diagnostic level (0 / 1 / 2). The call suspends and never resumes; the
-  // runtime drops the process at the next dispatch. `kFatalFinish` is the
-  // $fatal sibling (LRM 20.10): same shutdown protocol, but marks the
-  // termination as a fatal error so the runtime returns a non-zero exit code.
+  // LRM 20.2 simulation control. Takes the runtime handle, the call's origin,
+  // and the diagnostic level (0 / 1 / 2) that selects what the tool prints
+  // about it (Table 20-1). The call suspends and never resumes; the runtime
+  // drops the process at the next dispatch. `$stop` suspends the simulation
+  // where `$finish` exits it, and a run nothing can resume tells the two apart
+  // only in what it prints, so each names the entry that prints for it.
   kFinish,
-  kFatalFinish,
+  kStop,
   // Ancestor-scope resolution for a hierarchical reference whose route starts
   // above the referrer (LRM 23.6 / 23.8). Called once per reference in the
   // resolve phase against the referrer's own scope handle (`args[0]`).
