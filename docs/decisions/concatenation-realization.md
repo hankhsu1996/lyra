@@ -26,11 +26,11 @@ if (result is packed) return "PackedArray::Concat({...})";
 if (result is string) return "(a + b)";
 ```
 
-That is the shape `backend_contract.md` invariant 2 names as the canonical render-side defect -- an
-`if` in a value-emission entry whose arms produce different syntactic shapes -- and the same doc
-says what it means: the missing statement is upstream, and any second backend meets the same
-obstruction. It did. MIR-to-LIR could write no arm for the node at all, and every case that reached
-one stopped there.
+That is the shape `backend_contract.md` invariant 2 names as the canonical render-side defect -- a
+value-emission branch whose arms differ in what the program does, bits composed one way or
+characters another -- and the same doc says what it means: the missing statement is upstream, and
+any second backend meets the same obstruction. It did. MIR-to-LIR could write no arm for the node at
+all, and every case that reached one stopped there.
 
 The replication node under-stated a second thing. Its multiplier was an operand, so the C++ render
 read the operand's type to decide whether to insert a `.ToInt64()` -- a value reshape invented at

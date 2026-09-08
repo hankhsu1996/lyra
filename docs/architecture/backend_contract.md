@@ -12,11 +12,11 @@ through MIR's semantic model (`compiler_overview.md`).
 
 The transitional status does **not** loosen the mechanical-translation discipline. The contract in
 this doc is exactly the discipline an eventual LLVM IR backend will need: every render rule is a
-fixed function of one MIR node. If the C++ backend's render needs any decision logic -- an `if` on a
-node's payload, a ternary inferring construction shape, a switch on type variant inside a
-value-emission entry rather than in the dispatch entry that owns that variance -- the LLVM IR
-backend will need the same logic in its target. Both backends pay the cost; the cost is a MIR design
-failure visible from the backend side.
+fixed function of one MIR node. If the C++ backend's render has to work out which operation a node
+names -- inferring a construction shape from a payload, matching on what an operand happens to be,
+reading past the node for something the node did not say -- the LLVM IR backend has to work it out
+too, and the two answers are held in step by nothing. Both backends pay the cost; the cost is a MIR
+design failure visible from the backend side.
 
 The C++ backend's render therefore serves as the cross-check on MIR shape today: any place where its
 render is not a mechanical single-node translation is a place where the next stage (LIR / LLVM IR)
@@ -58,12 +58,22 @@ will hit the same obstruction. The bug is in MIR, not in render.
    with the same structural fields produce the same target-language output, every time, in every
    backend.
 
-2. **Any decision logic inside a value-emission entry is a MIR design failure.** An `if`-branch,
-   ternary, or switch whose arms produce different syntactic shape in a value-emission entry is
-   render making a semantic decision. Render does not decide; it translates. If a render needs to
-   branch, MIR is not stating something the program needs to say, and HIR-to-MIR's output is leaving
-   render to fabricate it. The fix is upstream: extend MIR to state the missing semantic explicitly,
-   then render becomes uniform.
+2. **A value-emission entry chooses a spelling, never an operation.** Write down what each arm of a
+   branch emits. If a reader could tell the arms apart by running the program, the branch chose an
+   **operation** -- a semantic decision MIR failed to state, which HIR-to-MIR then left render to
+   fabricate. The fix is upstream: state it, and render becomes uniform. If only the target-language
+   text differs, the branch chose a **spelling**, which is render's own business, provided it
+   dispatches on a fact the node or its type states rather than on one it works out.
+
+   Presentation is neither, and has no claim: a branch that only makes the emitted text shorter or
+   avoids a construct a reader would find redundant decides nothing, and the emitted artifact is not
+   read for its looks.
+
+   Different syntactic shape is therefore not the test, and reading it as one condemns the
+   mechanical cases. A member reached through a pointer and one reached inline, a declaration that
+   introduces a virtual slot and one that overrides it, an ordinary return and a coroutine's
+   completion -- each is two spellings of one operation, dispatched on a fact MIR states, and each
+   is exactly what this entry kind is for.
 
 3. **Type mapping is the only entry that names a runtime library type literal.** Every MIR type
    variant maps to a target-language type representation through one dispatch. Value emission
@@ -94,11 +104,17 @@ will hit the same obstruction. The bug is in MIR, not in render.
    members are no exception: any per-member construction state arrives later as ordinary MIR
    expressions in the constructor body, never as type payload that member render reads.
 
-6. **The LLVM IR backend is the canonical cross-check.** When the C++ backend's render needs an
-   `if`-branch or a payload-driven shape decision, ask: could a mechanical LLVM IR backend translate
-   the same MIR node without that decision? If not, the MIR shape is wrong. The C++ backend's
-   transitional status does not relax this check; it sharpens it, because the C++ backend's output
-   is how MIR's correctness is currently observed.
+6. **The LLVM IR backend is the canonical cross-check.** When invariant 2 leaves a branch in doubt,
+   ask: could a mechanical LLVM IR backend translate the same MIR node without working out what the
+   node means? If not, the MIR shape is wrong. The C++ backend's transitional status does not relax
+   this check; it sharpens it, because the C++ backend's output is how MIR's correctness is
+   currently observed.
+
+   What the check predicts is the failure a fact MIR declines to state always produces: each
+   consumer works it out alone, from whatever is nearest to hand, and the answers agree until the
+   day one of them does not. Nothing holds them in step, and the consumer that answers differently
+   is a wrong answer no reader is positioned to see -- which is why the search worth running is not
+   "where does render branch" but "which question is answered in more than one place".
 
 7. **The set of backends consuming MIR is open.** No MIR primitive and no contract entry is
    specialized for one backend. A new backend reads the same MIR; the only thing it brings is its
@@ -122,10 +138,15 @@ will hit the same obstruction. The bug is in MIR, not in render.
 
 ## Forbidden Shapes
 
-- **An `if`-branch, ternary, or switch in a value-emission entry whose arms produce different
-  syntactic shapes.** This is the canonical render-side defect: render is making a decision that
-  should be a MIR-level distinction. The fix is upstream, never inside render. There is no
-  exception, a literal included -- see Notes.
+- **A value-emission branch whose arms differ in what the program does.** This is the canonical
+  render-side defect: render deciding what should be a MIR-level distinction. The fix is upstream,
+  never inside render.
+
+- **A value-emission branch that exists only to shape the emitted text** -- collapsing a construct
+  the producer built, avoiding one a reader would call redundant, shortening a form. It decides
+  nothing and states nothing, so what it costs is a branch that must be read and kept correct, and
+  what it buys is not something the artifact is for. Where the collapsed form is the right one, the
+  producer is what states it.
 
 - A value-emission entry that composes a target-language type literal as a string. Every
   target-language type literal a backend emits comes from the type-mapping dispatch.
@@ -213,9 +234,11 @@ its own bits, and reading them is a lowering decision made once, in one place, o
 lowering already holds; a render that made it instead would be reading the same bits in every
 backend to reach the same answer. What survives to render is an ordinary call.
 
-A value-emission entry may not read another node's type -- an enclosing declaration, a call
-qualification, an expected destination -- to synthesize operands or pick a form; that is the
-forbidden shape, with no exception.
+A value-emission entry may not read _past_ its node to synthesize operands or pick a form: not an
+enclosing declaration, not a sibling, not an expected destination, not a node reached by matching on
+what an operand happens to be. Its own operands are a different matter and are named by invariant 1
+as structural context -- an access asking whether the value it reaches is held through a pointer is
+reading the input it was handed, not looking around.
 
 The shape a conversion or factory call must hand the runtime therefore travels as an ordinary MIR
 operand: a node that names the type whose shape it is, and whose own type is that type's runtime

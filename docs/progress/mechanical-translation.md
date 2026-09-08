@@ -4,28 +4,11 @@ The render refactoring: MIR states each semantic fact once, and every consumer -
 the MIR-to-LIR lowering, the dump -- reads it rather than working it out. Done when no backend entry
 decides anything the node did not state, and no closed set holds an alternative no node carries.
 
-The contracts this answers are `../architecture/backend_contract.md` (a render entry is a fixed
-function of one MIR node, with no decision logic in value emission) and `../architecture/mir.md`
-(every semantic decision is explicit in MIR's structure, and a backend never re-derives one).
-
-## How an item is decided
-
-**The test.** Write down what each branch emits. If a reader could tell the arms apart by running
-the program, the branch chose an **operation**, and the choice belongs upstream of the backend. If
-only the target-language text differs, it chose a **spelling**, and it belongs where it is.
-Presentation -- layout, naming, ordering, punctuation -- is never on that list, so a branch that
-only makes the emitted text nicer is neither and comes out.
-
-**The signature to look for.** The same question answered in two places with nothing holding the
-answers in step. Two backends consume one MIR, so a fact MIR declines to state is one each works out
-alone, and the one that works it out differently is a wrong answer nobody is positioned to see. Both
-wrong-code paths this workstream has found had that shape, and in both the two answers had agreed
-for years before diverging.
-
-**The greppable tells.** A closed set whose alternatives differ only in a fact the surrounding
-structure already fixes. A predicate answered by a guard rather than by a lookup. An absence
-standing for a kind. A default arm that picks a real answer instead of refusing. A set whose members
-no node carries.
+The contracts this answers are `../architecture/backend_contract.md` (a backend entry is a fixed
+function of one MIR node and chooses a spelling rather than an operation) and
+`../architecture/mir.md` (every semantic decision is explicit in MIR's structure, and a backend
+never re-derives one). Those two own how an item here is judged -- the test, and the failure the
+cross-check predicts. This file owns only which instances are known and what is left.
 
 ## Facts now stated on the node
 
@@ -73,8 +56,13 @@ no node carries.
 
 - [ ] T11 -- Callable identity is one space whose entries name a declaration carrying signature,
       implementation form, receiver convention and per-backend spelling, so a call names one
-      identity and nothing branches on origin. **Gated on** the external callable form and a
-      co-design with the foreign-symbol contract, which needs the same declaration shape.
+      identity and nothing branches on origin. Implementation form is the half already costing
+      something: with no field saying what a declaration is, four sites across the two backends read
+      an absent body and each attaches its own meaning -- one calls a class callable with none a
+      pure virtual and emits the marker that makes its class abstract, another concludes only that
+      no code identity is needed. They agree today because the inputs make both right. **Gated on**
+      the external callable form and a co-design with the foreign-symbol contract, which needs the
+      same declaration shape.
 - [ ] T12 -- A compound assignment states the operation it applies rather than the operator, so the
       lift from operator to library entry happens once where the assignment is built and the
       operator set is exactly what a node carries. Today three shift operators sit in that set

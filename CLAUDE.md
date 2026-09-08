@@ -96,6 +96,12 @@ binding contract.
 
 Headers in `include/lyra/`, implementations in `src/lyra/`.
 
+**Before writing or changing anything that consumes MIR -- a backend render, the MIR-to-LIR lowering
+-- read `docs/architecture/backend_contract.md`.** It holds the test that separates a spelling a
+backend may choose from an operation only MIR may state, and the difference is not visible from the
+code you are editing. `/check-render` runs that test over a change or an area and reports what it
+finds.
+
 ## Testing
 
 Nearly every test is a conformance case under `tests/conformance/`: a self-checking SystemVerilog

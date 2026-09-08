@@ -55,10 +55,11 @@ belongs to whichever layer already held what the property was computed from.
    fixed by the node's kind. The two backends represent the same node differently (a coroutine
    method versus an LLVM coroutine frame) yet realize the same behaviour, which holds only because
    neither adds, infers, or re-derives a semantic fact. **Both backends are mechanical at the same
-   discipline.** The C++ backend's transitional status does not loosen this -- if its render needs
-   decision logic in value emission (an `if` whose arms produce different syntactic shapes), the MIR
-   is wrong, and the LIR/LLVM path would face the same obstruction. The C++ backend's render is
-   therefore the cross-check on MIR shape today (`backend_contract.md`).
+   discipline.** The C++ backend's transitional status does not loosen this -- if its render has to
+   choose between arms a reader could tell apart by running the program, the MIR is wrong, and the
+   LIR/LLVM path would face the same obstruction. Two spellings of one operation are not that, and
+   are what a backend is for. The C++ backend's render is therefore the cross-check on MIR shape
+   today (`backend_contract.md`).
 8. A lowering translates node by node, with no preliminary pass over its input. Each input node's
    output follows from that node and its own subtree; every input node produces output, whether or
    not it declares anything. A step that needs to know a property of the whole input before it can
@@ -112,7 +113,7 @@ MIR in a non-CFG form, or the lowering is doing MIR-to-LIR's work.
 
 When extending HIR-to-MIR, the lowering's output is also validated against `backend_contract.md`'s
 mechanical-translation invariant: the produced MIR must be translatable by a mechanical LLVM IR
-backend without payload-driven branches in value emission. The C++ backend's transitional status as
-the current observation surface for MIR makes this check operational today -- if the C++ render
-would need decision logic to consume a proposed MIR shape, the MIR is wrong, and the lowering is
-what produced it.
+backend without that backend having to work out which operation the node names. The C++ backend's
+transitional status as the current observation surface for MIR makes this check operational today --
+if consuming a proposed MIR shape would leave a render choosing between arms that behave
+differently, the MIR is wrong, and the lowering is what produced it.
