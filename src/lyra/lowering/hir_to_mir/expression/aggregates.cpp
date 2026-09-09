@@ -30,11 +30,6 @@ namespace lyra::lowering::hir_to_mir {
 
 namespace {
 
-auto IsArrayContainerType(const mir::Type& ty) -> bool {
-  return ty.Is<mir::UnpackedArrayType>() || ty.Is<mir::DynamicArrayType>() ||
-         ty.Is<mir::QueueType>();
-}
-
 // The value a run repeated `count_id` times denotes, landing in the type given
 // (LRM 11.4.12). What the run is made of -- bits or characters -- is the
 // entry's own question, so the same call serves both.
@@ -63,7 +58,7 @@ auto BuildUnpackedConcatChain(
     const std::vector<mir::ExprId>& operand_ids) -> mir::Expr {
   auto& block = *frame.current_block;
   const mir::CompilationUnit& unit = owner.Unit();
-  mir::Expr acc = BuildArrayConstructionCall(owner, frame, acc_type, {});
+  mir::Expr acc = BuildArrayConstructionCall(unit, block, acc_type, {});
   for (const mir::ExprId part : operand_ids) {
     const bool spread =
         IsArrayContainerType(unit.types.Get(block.exprs.Get(part).type));
@@ -145,7 +140,7 @@ auto LowerHirConcatExpr(
         });
     if (!has_spread) {
       return BuildArrayConstructionCall(
-          lowerer.Owner(), frame, result_type, std::move(operand_ids));
+          unit, block, result_type, std::move(operand_ids));
     }
     const mir::TypeId dyn_type = unit.types.Intern(
         mir::Type{mir::DynamicArrayType{
@@ -215,7 +210,7 @@ auto LowerHirAssignmentPatternExpr(
   const auto& result_ty = unit.types.Get(result_type);
   if (IsArrayContainerType(result_ty)) {
     return BuildArrayConstructionCall(
-        lowerer.Owner(), frame, result_type, std::move(element_ids));
+        unit, block, result_type, std::move(element_ids));
   }
   if (result_ty.Is<mir::TupleType>()) {
     return mir::Expr{
@@ -349,7 +344,7 @@ auto LowerHirAssignmentPatternKeyedExpr(
       elements.push_back(block.exprs.Add(*std::move(element)));
     }
     return BuildArrayConstructionCall(
-        lowerer.Owner(), frame, result_type, std::move(elements));
+        unit, block, result_type, std::move(elements));
   }
 
   const mir::TypeId element_type = ArrayContainerElementType(unit, result_type);
@@ -359,12 +354,12 @@ auto LowerHirAssignmentPatternKeyedExpr(
         lowerer.LowerExpr(lowerer.HirExprs().Get(*k.default_value), at);
     if (!value) return std::unexpected(std::move(value.error()));
     const mir::ExprId value_id = target.exprs.Add(*std::move(value));
-    const mir::ExprId element_default = target.exprs.Add(
-        BuildDefaultValueExpr(lowerer.Owner(), at, element_type));
+    const mir::ExprId element_default =
+        target.exprs.Add(BuildDefaultValueExpr(unit, target, element_type));
     const mir::ExprId size_id = BuildMachineIntLiteral(
         unit, target, static_cast<std::int64_t>(array_ty.dim.ElementCount()));
     return BuildArrayRepeatCall(
-        lowerer.Owner(), at, result_type, element_default, {value_id}, size_id);
+        unit, target, result_type, element_default, {value_id}, size_id);
   };
 
   if (k.entries.empty()) {
@@ -453,11 +448,11 @@ auto LowerHirAssignmentPatternReplicationExpr(
   if (IsArrayContainerType(result_ty)) {
     const mir::TypeId element_type =
         ArrayContainerElementType(unit, result_type);
-    const mir::ExprId element_default = block.exprs.Add(
-        BuildDefaultValueExpr(lowerer.Owner(), frame, element_type));
+    const mir::ExprId element_default =
+        block.exprs.Add(BuildDefaultValueExpr(unit, block, element_type));
     return BuildArrayRepeatCall(
-        lowerer.Owner(), frame, result_type, element_default,
-        std::move(item_ids), count_id);
+        unit, block, result_type, element_default, std::move(item_ids),
+        count_id);
   }
   const mir::ExprId inner_id = BuildPackedConcat(unit, block, item_ids);
   const mir::PackedArrayType& inner_pa =
@@ -477,23 +472,25 @@ auto LowerHirAssignmentPatternReplicationExpr(
 // runtime ctor populates new slots without re-querying the type, and the
 // optional copy source feeds the LRM 7.5.1 truncate / pad behaviour on
 // `new[N](other)`.
-auto LowerHirDynamicArrayNewExprProc(
-    ProcessLowerer& process, WalkFrame frame, const hir::DynamicArrayNewExpr& n,
+template <ExprLowerer Lowerer>
+auto LowerHirDynamicArrayNewExpr(
+    Lowerer& lowerer, WalkFrame frame, const hir::DynamicArrayNewExpr& n,
     hir::TypeId hir_result_type, mir::TypeId result_type)
     -> diag::Result<mir::Expr> {
   auto& block = *frame.current_block;
-  auto size_or = process.LowerExpr(process.HirExprs().Get(n.size), frame);
+  auto size_or = lowerer.LowerExpr(lowerer.HirExprs().Get(n.size), frame);
   if (!size_or) return std::unexpected(std::move(size_or.error()));
   const mir::ExprId size_id = block.exprs.Add(*std::move(size_or));
 
-  const auto& hir_result_ty = process.Owner().Hir().types.Get(hir_result_type);
+  const hir::Type& hir_result_ty =
+      lowerer.Owner().Hir().types.Get(hir_result_type);
   const auto* hir_da = hir_result_ty.As<hir::DynamicArrayType>();
   if (hir_da == nullptr) {
     throw InternalError(
-        "LowerHirDynamicArrayNewExprProc: result type is not DynamicArrayType");
+        "LowerHirDynamicArrayNewExpr: result type is not DynamicArrayType");
   }
   const mir::ExprId prototype_id = block.exprs.Add(
-      BuildDefaultValueFromHir(process.Owner(), frame, hir_da->element_type));
+      BuildDefaultValueFromHir(lowerer.Owner(), block, hir_da->element_type));
 
   std::vector<mir::ExprId> args;
   args.reserve(n.initializer.has_value() ? 3U : 2U);
@@ -501,7 +498,7 @@ auto LowerHirDynamicArrayNewExprProc(
   args.push_back(prototype_id);
   if (n.initializer.has_value()) {
     auto init_or =
-        process.LowerExpr(process.HirExprs().Get(*n.initializer), frame);
+        lowerer.LowerExpr(lowerer.HirExprs().Get(*n.initializer), frame);
     if (!init_or) return std::unexpected(std::move(init_or.error()));
     args.push_back(block.exprs.Add(*std::move(init_or)));
   }
@@ -549,7 +546,8 @@ auto LowerHirAssociativeAssignmentPatternExpr(
     user_default = block.exprs.Add(*std::move(default_or));
   }
   return BuildAssociativeConstructionCall(
-      lowerer.Owner(), frame, result_type, std::move(entries), user_default);
+      lowerer.Owner().Unit(), block, result_type, std::move(entries),
+      user_default);
 }
 
 // One concrete instantiation per pass class. The handler templates are defined
@@ -582,6 +580,12 @@ template auto LowerHirAssignmentPatternKeyedExpr(
     const StructuralScopeLowerer&, WalkFrame,
     const hir::AssignmentPatternKeyedExpr&, hir::TypeId, mir::TypeId)
     -> diag::Result<mir::Expr>;
+template auto LowerHirDynamicArrayNewExpr(
+    ProcessLowerer&, WalkFrame, const hir::DynamicArrayNewExpr&, hir::TypeId,
+    mir::TypeId) -> diag::Result<mir::Expr>;
+template auto LowerHirDynamicArrayNewExpr(
+    const StructuralScopeLowerer&, WalkFrame, const hir::DynamicArrayNewExpr&,
+    hir::TypeId, mir::TypeId) -> diag::Result<mir::Expr>;
 template auto LowerHirAssociativeAssignmentPatternExpr(
     ProcessLowerer&, WalkFrame, const hir::AssociativeAssignmentPatternExpr&,
     mir::TypeId) -> diag::Result<mir::Expr>;

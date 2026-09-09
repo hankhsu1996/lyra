@@ -548,4 +548,66 @@ TEST(LyraRun, AnErrorInTimeZeroInitializationIsReported) {
       << run.stderr_text;
 }
 
+// LRM 8.4 leaves the result of reaching a member through a null object handle
+// indeterminate and lets a tool issue an error, so the corpus cannot state
+// this: a case is valid under any conforming simulator and this asks for one
+// tool's choice. The choice is the error policy's -- the access depends on a
+// value the design computed, so it is the design's own failure and owes a
+// report. What separates a report from the signal death it replaces is that the
+// output the design had already produced survives.
+TEST(LyraRun, ReachingThroughANullObjectHandleIsReported) {
+  const auto lyra = ResolveLyra();
+  ASSERT_TRUE(std::filesystem::exists(lyra)) << lyra.string();
+  auto tmp_or = MakeScratchDir();
+  ASSERT_TRUE(tmp_or.has_value()) << tmp_or.error();
+
+  const auto user_class = *tmp_or / "user_class.sv";
+  std::ofstream(user_class) << "class C;\n"
+                            << "  int x;\n"
+                            << "endclass\n"
+                            << "module Test;\n"
+                            << "  initial begin\n"
+                            << "    C h;\n"
+                            << "    $display(\"reached the access\");\n"
+                            << "    h.x = 5;\n"
+                            << "  end\n"
+                            << "endmodule\n";
+
+  const std::vector<std::string> class_args = {
+      "run", "--top", "Test", user_class.string()};
+  const auto through_class = RunChildProcess(lyra, class_args, 120s);
+  EXPECT_EQ(through_class.termination, TerminationKind::kExitedNonZero)
+      << through_class.stdout_text << through_class.stderr_text;
+  EXPECT_NE(
+      through_class.stderr_text.find("null object handle"), std::string::npos)
+      << through_class.stderr_text;
+  EXPECT_NE(
+      through_class.stdout_text.find("reached the access"), std::string::npos)
+      << "stdout: " << through_class.stdout_text;
+
+  // A `process` handle is an object handle of a class the runtime library
+  // provides (LRM 9.7), so it answers to the same rule, and it reaches the
+  // object by a different operator than a member access does.
+  const auto builtin_class = *tmp_or / "builtin_class.sv";
+  std::ofstream(builtin_class) << "module Test;\n"
+                               << "  initial begin\n"
+                               << "    process p;\n"
+                               << "    $display(\"reached the access\");\n"
+                               << "    p.kill();\n"
+                               << "  end\n"
+                               << "endmodule\n";
+
+  const std::vector<std::string> process_args = {
+      "run", "--top", "Test", builtin_class.string()};
+  const auto through_process = RunChildProcess(lyra, process_args, 120s);
+  EXPECT_EQ(through_process.termination, TerminationKind::kExitedNonZero)
+      << through_process.stdout_text << through_process.stderr_text;
+  EXPECT_NE(
+      through_process.stderr_text.find("null object handle"), std::string::npos)
+      << through_process.stderr_text;
+  EXPECT_NE(
+      through_process.stdout_text.find("reached the access"), std::string::npos)
+      << "stdout: " << through_process.stdout_text;
+}
+
 }  // namespace

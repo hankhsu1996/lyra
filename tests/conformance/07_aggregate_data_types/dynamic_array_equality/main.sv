@@ -19,6 +19,9 @@ module Top;
   logic [3:0] with_x [] = '{4'b1010, 4'b10x0, 4'b1111};
   logic [3:0] same_x [] = '{4'b1010, 4'b10x0, 4'b1111};
   logic [3:0] without_x [] = '{4'b1010, 4'b1010, 4'b1111};
+  logic [3:0] shorter_x [] = '{4'b1010, 4'b10x0};
+  logic [3:0] empty_x [];
+  logic [3:0] also_empty_x [];
 
   int resized [];
 
@@ -34,6 +37,8 @@ module Top;
   logic equal_x_and_same_x;
   logic equal_x_and_known;
   logic unequal_x_and_known;
+  logic equal_x_and_shorter_x;
+  logic equal_empty_x;
   logic case_equal_same;
   logic case_unequal_same;
   logic case_equal_diverging;
@@ -58,6 +63,8 @@ module Top;
     equal_x_and_same_x = (with_x == same_x);
     equal_x_and_known = (with_x == without_x);
     unequal_x_and_known = (with_x != without_x);
+    equal_x_and_shorter_x = (with_x == shorter_x);
+    equal_empty_x = (empty_x == also_empty_x);
 
     case_equal_same = (values === same_values);
     case_unequal_same = (values !== same_values);
@@ -104,6 +111,11 @@ module Top;
     if (unequal_x_and_known !== 1'bx)
       $fatal(1, "unequal_x_and_known was %b, expected x",
              unequal_x_and_known);
+    if (equal_x_and_shorter_x !== 1'b0)
+      $fatal(1, "equal_x_and_shorter_x was %b, expected 0",
+             equal_x_and_shorter_x);
+    if (equal_empty_x !== 1'b1)
+      $fatal(1, "equal_empty_x was %b, expected 1", equal_empty_x);
 
     if (case_equal_same !== 1'b1)
       $fatal(1, "case_equal_same was %b, expected 1", case_equal_same);

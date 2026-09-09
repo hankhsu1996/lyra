@@ -23,8 +23,8 @@ auto SnapshotExprToLocal(
                 *origin, mir::LocalDecl{.name = std::move(name), .type = type})
           : frame.bindings->DeclareAnonymous(
                 mir::LocalDecl{.name = std::move(name), .type = type});
-  const mir::ExprId default_init =
-      wrapper.exprs.Add(BuildDefaultValueExpr(unit_lowerer, frame, type));
+  const mir::ExprId default_init = wrapper.exprs.Add(
+      BuildDefaultValueExpr(unit_lowerer.Unit(), wrapper, type));
   wrapper.AppendStmt(
       mir::LocalDeclStmt{.target = snap_var, .init = default_init});
 

@@ -446,8 +446,8 @@ auto BuildBoundaryReadback(
           [&](const support::OpenArrayCarrier&) {
             return read(
                 support::BuiltinFn::kDpiOpenArrayValue, object,
-                block.exprs.Add(
-                    BuildDefaultValueExpr(unit_lowerer, frame, sv_type)));
+                block.exprs.Add(BuildDefaultValueExpr(
+                    unit_lowerer.Unit(), block, sv_type)));
           }},
       carrier);
 }

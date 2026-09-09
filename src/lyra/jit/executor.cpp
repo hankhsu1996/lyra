@@ -523,6 +523,9 @@ auto DefineRuntimeAbi(llvm::orc::LLJIT& jit) -> std::set<std::string> {
   add("lyra_rt_make_dynamic_array_new_copy",
       &lyra_rt_make_dynamic_array_new_copy);
   add("lyra_rt_dynarray_from_literal", &lyra_rt_dynarray_from_literal);
+  add("lyra_rt_dynarray_from_array_unpackedarray",
+      &lyra_rt_dynarray_from_array_unpackedarray);
+  add("lyra_rt_dynarray_from_array_queue", &lyra_rt_dynarray_from_array_queue);
   add("lyra_rt_dynarray_element", &lyra_rt_dynarray_element);
   add("lyra_rt_dynarray_concat_element", &lyra_rt_dynarray_concat_element);
   add("lyra_rt_dynarray_concat_spread", &lyra_rt_dynarray_concat_spread);
@@ -547,6 +550,10 @@ auto DefineRuntimeAbi(llvm::orc::LLJIT& jit) -> std::set<std::string> {
       &lyra_rt_unpackedarray_from_literal);
   add("lyra_rt_unpackedarray_conform_size",
       &lyra_rt_unpackedarray_conform_size);
+  add("lyra_rt_unpackedarray_from_array_dynarray",
+      &lyra_rt_unpackedarray_from_array_dynarray);
+  add("lyra_rt_unpackedarray_from_array_queue",
+      &lyra_rt_unpackedarray_from_array_queue);
   add("lyra_rt_unpackedarray_from_string", &lyra_rt_unpackedarray_from_string);
   add("lyra_rt_queue_default", &lyra_rt_queue_default);
   add("lyra_rt_queue_default_bounded", &lyra_rt_queue_default_bounded);
@@ -554,6 +561,9 @@ auto DefineRuntimeAbi(llvm::orc::LLJIT& jit) -> std::set<std::string> {
   add("lyra_rt_queue_from_literal_bounded",
       &lyra_rt_queue_from_literal_bounded);
   add("lyra_rt_queue_conform_bound", &lyra_rt_queue_conform_bound);
+  add("lyra_rt_queue_from_array_unpackedarray",
+      &lyra_rt_queue_from_array_unpackedarray);
+  add("lyra_rt_queue_from_array_dynarray", &lyra_rt_queue_from_array_dynarray);
   add("lyra_rt_queue_element", &lyra_rt_queue_element);
   add("lyra_rt_queue_with_element", &lyra_rt_queue_with_element);
   add("lyra_rt_queue_slice", &lyra_rt_queue_slice);

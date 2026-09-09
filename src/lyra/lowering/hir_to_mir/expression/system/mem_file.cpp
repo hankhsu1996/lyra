@@ -112,7 +112,7 @@ auto DescribeMemory(
             std::vector<mir::ExprId> operands;
             if (!is_store) {
               operands.push_back(wrapper.exprs.Add(
-                  BuildDefaultValueExpr(unit_lowerer, wrapper_frame, key)));
+                  BuildDefaultValueExpr(unit_lowerer.Unit(), wrapper, key)));
             }
             return MemAddressing{
                 .element = a.element_type,

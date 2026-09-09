@@ -36,7 +36,7 @@ auto IntegrateStaticInitializer(
   // installation and needs no store.
   if (target_is_observable_cell) {
     const mir::ExprId prototype = init_block.exprs.Add(
-        BuildDefaultValueFromHir(process.Owner(), init_frame, decl.type));
+        BuildDefaultValueFromHir(process.Owner(), init_block, decl.type));
     init_block.AppendStmt(
         mir::ExprStmt{
             .expr = init_block.exprs.Add(
@@ -54,7 +54,7 @@ auto IntegrateStaticInitializer(
     init_value = init_block.exprs.Add(*std::move(init_or));
   } else {
     init_value = init_block.exprs.Add(
-        BuildDefaultValueFromHir(process.Owner(), init_frame, decl.type));
+        BuildDefaultValueFromHir(process.Owner(), init_block, decl.type));
   }
 
   const mir::Expr assign_expr = BuildStoreExpr(

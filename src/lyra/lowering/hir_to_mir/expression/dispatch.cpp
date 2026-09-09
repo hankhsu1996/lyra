@@ -147,15 +147,8 @@ auto LowerExprImpl(L& lowerer, const hir::Expr& expr, WalkFrame frame)
                 lowerer, frame, k, expr.type, result_type);
           },
           [&](const hir::DynamicArrayNewExpr& n) -> diag::Result<mir::Expr> {
-            if constexpr (kProcedural) {
-              return LowerHirDynamicArrayNewExprProc(
-                  lowerer, frame, n, expr.type, result_type);
-            } else {
-              throw InternalError(
-                  "structural expression lowering: HIR DynamicArrayNewExpr is "
-                  "unreachable; dynamic-array new[] is rejected in structural "
-                  "context at AST-to-HIR (LRM 7.5.1)");
-            }
+            return LowerHirDynamicArrayNewExpr(
+                lowerer, frame, n, expr.type, result_type);
           },
           [&](const hir::AssociativeAssignmentPatternExpr& a)
               -> diag::Result<mir::Expr> {

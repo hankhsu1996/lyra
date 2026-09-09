@@ -1,16 +1,21 @@
-// A structure collects data of several types under member names, and each
-// member is referenced through the structure by its name. A member is a
-// variable of its own declared type and nothing less: it is an operand
-// wherever a value of that type is one, it is the target of an assignment
-// including a read-modify-write, a bit-select or part-select reaches into it
-// when it is a vector, and when it is itself a structure or an array the next
-// select applies to it in turn. That holds for a structure reached through an
-// array element as much as for one named directly (LRM 7.2, 7.4.6).
+// A structure collects data types under member names, and each member is
+// referenced through the structure by its name. A member is a variable of its
+// own declared type and nothing less: it is an operand wherever a value of that
+// type is one, it is the target of an assignment including a read-modify-write,
+// a bit-select or part-select reaches into it when it is a vector, and when it
+// is itself a structure or an array the next select applies to it in turn. That
+// holds for a structure reached through an array element as much as for one
+// named directly, and for a structure of one member as much as for one of
+// several (LRM 7.2, 7.4.6).
 module Top;
   typedef struct {
     int count;
     logic [7:0] flags;
   } entry_t;
+
+  typedef struct {
+    int only;
+  } single_t;
 
   typedef struct {
     entry_t entry;
@@ -20,6 +25,7 @@ module Top;
 
   record_t record;
   entry_t entries [2];
+  single_t singles [2];
 
   int read_count;
   logic [7:0] read_flags;
@@ -31,6 +37,8 @@ module Top;
   int count_in_expression;
   int first_entry_count;
   int second_entry_count;
+  int written_single;
+  int untouched_single;
 
   initial begin
     record.entry.count = 42;
@@ -53,6 +61,10 @@ module Top;
     entries[1].count = 22;
     first_entry_count = entries[0].count;
     second_entry_count = entries[1].count;
+
+    singles[1].only = 33;
+    written_single = singles[1].only;
+    untouched_single = singles[0].only;
   end
 
   final begin
@@ -83,6 +95,11 @@ module Top;
     if (second_entry_count !== 22)
       $fatal(1, "second_entry_count was %0d, expected 22",
              second_entry_count);
+
+    if (written_single !== 33)
+      $fatal(1, "written_single was %0d, expected 33", written_single);
+    if (untouched_single !== 0)
+      $fatal(1, "untouched_single was %0d, expected 0", untouched_single);
     $display("All checks passed");
   end
 endmodule

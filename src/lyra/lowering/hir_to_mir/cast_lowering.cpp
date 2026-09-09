@@ -1,7 +1,10 @@
 #include "lyra/lowering/hir_to_mir/cast_lowering.hpp"
 
 #include <cstdint>
+#include <utility>
+#include <vector>
 
+#include "lyra/lowering/hir_to_mir/default_value.hpp"
 #include "lyra/lowering/hir_to_mir/integral_literal.hpp"
 #include "lyra/mir/expr.hpp"
 #include "lyra/mir/expr_id.hpp"
@@ -13,6 +16,47 @@
 namespace lyra::lowering::hir_to_mir {
 
 namespace {
+
+// LRM 7.10.5: the maximum index a queue's type declares, as the operand a
+// runtime entry takes for it. A bound below zero is the unbounded queue, so one
+// operand covers both and a queue declaring no bound is not a second form.
+auto BuildQueueBoundOperand(
+    const mir::CompilationUnit& unit, mir::Block& block,
+    const mir::QueueType& queue) -> mir::ExprId {
+  return BuildIntLiteral(
+      unit, block,
+      queue.max_bound.has_value() ? static_cast<std::int64_t>(*queue.max_bound)
+                                  : -1);
+}
+
+// `Container::FromArray(src, element_default, ...)` -- the static factory that
+// builds an array container out of another one's elements. LRM 7.6 makes the
+// element shape, the element count a fixed-size array declares, and a queue's
+// bound properties of the destination variable, so each is read from
+// `dst_type`.
+auto BuildArrayFromArrayCall(
+    const mir::CompilationUnit& unit, mir::Block& block, mir::ExprId src_id,
+    mir::TypeId dst_type) -> mir::Expr {
+  std::vector<mir::ExprId> arguments = {
+      src_id, block.exprs.Add(BuildDefaultValueExpr(
+                  unit, block, ArrayContainerElementType(unit, dst_type)))};
+  const mir::Type& destination = unit.types.Get(dst_type);
+  if (const auto* fixed_size = destination.As<mir::UnpackedArrayType>()) {
+    arguments.push_back(BuildMachineIntLiteral(
+        unit, block, static_cast<std::int64_t>(fixed_size->Size())));
+  } else if (const auto* queue = destination.As<mir::QueueType>()) {
+    arguments.push_back(BuildQueueBoundOperand(unit, block, *queue));
+  }
+  return mir::Expr{
+      .data =
+          mir::CallExpr{
+              .callee =
+                  mir::Direct{
+                      .target = support::BuiltinFn::kFromArray,
+                      .qualification = mir::TypeQualifier{.type = dst_type}},
+              .arguments = std::move(arguments)},
+      .type = dst_type};
+}
 
 // The destination real type's own factory, named for which conversion this is:
 // landing a machine integer (LRM 6.12.1) and reshaping across precisions are
@@ -249,6 +293,15 @@ auto BuildValueConversion(
         .type = dst_type};
   }
 
+  // Between two of the three array container kinds (LRM 7.6): the kinds hold
+  // their elements differently, so the destination is built out of the source's
+  // elements rather than taking its value whole. The clause admits the
+  // assignment only where the element types are equivalent, so the elements
+  // themselves cross as they stand.
+  if (CrossesArrayContainerKinds(src_ty, dst_ty)) {
+    return BuildArrayFromArrayCall(unit, block, operand_id, dst_type);
+  }
+
   // Unpacked -> unpacked: assignment requires equivalent element types and the
   // same element count (LRM 7.6), so the element representation already matches
   // and a whole-array store is a plain ordinal-payload copy. The declared range
@@ -263,11 +316,7 @@ auto BuildValueConversion(
   // property of the destination variable.
   if (const auto* dst_q = dst_ty.As<mir::QueueType>();
       dst_q != nullptr && src_ty.Is<mir::QueueType>()) {
-    const std::int64_t bound =
-        dst_q->max_bound.has_value()
-            ? static_cast<std::int64_t>(*dst_q->max_bound)
-            : -1;
-    const mir::ExprId bound_id = BuildIntLiteral(unit, block, bound);
+    const mir::ExprId bound_id = BuildQueueBoundOperand(unit, block, *dst_q);
     return mir::Expr{
         .data =
             mir::CallExpr{

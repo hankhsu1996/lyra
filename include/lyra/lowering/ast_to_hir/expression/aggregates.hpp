@@ -25,8 +25,6 @@ class StructuredAssignmentPatternExpression;
 
 namespace lyra::lowering::ast_to_hir {
 
-class ProcessLowerer;
-
 // An aggregate's value-construction is independent of the enclosing scope, so
 // one template over the pass class serves both the procedural and structural
 // contexts; explicit instantiations live in the implementation file.
@@ -75,13 +73,15 @@ auto LowerReplicationExpr(
     const slang::ast::ReplicationExpression& rp, diag::SourceSpan span)
     -> diag::Result<hir::Expr>;
 
-// The dynamic-array constructor `new[N]` (LRM 7.5.1) allocates simulation-time
-// storage, which a constructor-time structural expression cannot do, so it
-// stays a procedural-only handler.
-auto LowerNewArrayExprProc(
-    ProcessLowerer& proc, WalkFrame frame,
-    const slang::ast::NewArrayExpression& na, diag::SourceSpan span)
-    -> diag::Result<hir::Expr>;
+// The dynamic-array constructor `new[N]` (LRM 7.5.1), which the clause admits
+// on the right-hand side of a variable declaration assignment as well as a
+// blocking procedural one -- and a declaration's initializer runs at time zero
+// with the rest of them, so the storage it allocates is simulation-time
+// storage either way.
+template <ExprLowerer Lowerer>
+auto LowerNewArrayExpr(
+    Lowerer& lowerer, WalkFrame frame, const slang::ast::NewArrayExpression& na,
+    diag::SourceSpan span) -> diag::Result<hir::Expr>;
 
 // The class constructor `new` (LRM 8.5) yields a handle; the construction is
 // independent of the enclosing scope, so one template over the pass class

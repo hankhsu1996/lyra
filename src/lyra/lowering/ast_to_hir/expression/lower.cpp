@@ -300,16 +300,8 @@ auto LowerExprImpl(
           expr.as<slang::ast::ReplicatedAssignmentPatternExpression>(), span);
 
     case slang::ast::ExpressionKind::NewArray:
-      if constexpr (kProcedural) {
-        return LowerNewArrayExprProc(
-            lowerer, frame, expr.as<slang::ast::NewArrayExpression>(), span);
-      } else {
-        return diag::Fail(
-            span, diag::DiagCode::kUnsupportedStructuralExpressionForm,
-            "sizing a dynamic array with new[] outside a procedural "
-            "assignment is not yet supported; size it in an initial or "
-            "always procedure instead");
-      }
+      return LowerNewArrayExpr(
+          lowerer, frame, expr.as<slang::ast::NewArrayExpression>(), span);
 
     case slang::ast::ExpressionKind::NewClass:
       return LowerNewClassExpr(

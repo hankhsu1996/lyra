@@ -35,6 +35,13 @@ struct LifetimeExtendedCollector
     if (s.symbol.lifetime == slang::ast::VariableLifetime::Automatic) {
       declared_index.emplace(&s.symbol, declared_count++);
     }
+    // A declaration's initializer is one of the expressions the body evaluates,
+    // and it hangs off the declared symbol rather than under the statement, so
+    // the walk reaches it only by descending through the symbol. LRM 9.3.2
+    // makes that the interesting position: a branch's own declaration is
+    // initialized when the branch starts running, so an enclosing automatic it
+    // names has to outlive the scope that declared it.
+    s.symbol.visit(*this);
     visitDefault(s);
   }
 

@@ -68,8 +68,7 @@ class Queue {
   // the maximum index N is recorded so growth past N+1 elements is discarded
   // with a warning. The bound arrives as a PackedArray construction argument.
   Queue(T element_default, const PackedArray& max_bound)
-      : shield_(std::move(element_default)),
-        max_bound_(static_cast<std::uint64_t>(max_bound.ToInt64())) {
+      : shield_(std::move(element_default)), max_bound_(BoundOf(max_bound)) {
   }
 
   // LRM 7.10.5 bounded queue initialized by an assignment pattern: take the
@@ -78,7 +77,7 @@ class Queue {
       T element_default, std::span<const T> init, const PackedArray& max_bound)
       : shield_(std::move(element_default)),
         data_(init.begin(), init.end()),
-        max_bound_(static_cast<std::uint64_t>(max_bound.ToInt64())) {
+        max_bound_(BoundOf(max_bound)) {
     EnforceBound();
   }
 
@@ -87,12 +86,34 @@ class Queue {
   Queue(
       T element_default, std::span<const T> unit, std::size_t count,
       const PackedArray& max_bound)
-      : shield_(std::move(element_default)),
-        max_bound_(static_cast<std::uint64_t>(max_bound.ToInt64())) {
+      : shield_(std::move(element_default)), max_bound_(BoundOf(max_bound)) {
     for (std::size_t i = 0; i < count; ++i) {
       data_.insert(data_.end(), unit.begin(), unit.end());
     }
     EnforceBound();
+  }
+
+  // LRM 7.6: a queue assigned an array of any of the three unpacked kinds is
+  // resized to the source's element count and takes its elements in
+  // left-to-right order. The clause admits the assignment only where the
+  // element types are equivalent, so each element crosses as it stands, and the
+  // element default is the destination's own -- the element shape is a declared
+  // property of the variable being written, which the source has no say in. LRM
+  // 7.10.5 makes the bound another such property, and a bound below zero is the
+  // unbounded queue, so one form covers both and the trimming is the same
+  // trimming any other write gets. Named because the argument list cannot tell
+  // it from building over an element list.
+  template <OrdinalElements C>
+  [[nodiscard]] static auto FromArray(
+      const C& source, T element_default, const PackedArray& max_bound)
+      -> Queue {
+    Queue result(std::move(element_default));
+    result.max_bound_ = BoundOf(max_bound);
+    for (std::size_t i = 0; i < source.RawSize(); ++i) {
+      result.data_.push_back(source.RawAt(i));
+    }
+    result.EnforceBound();
+    return result;
   }
 
   Queue(const Queue&) = default;
@@ -109,11 +130,8 @@ class Queue {
   // value means unbounded) and this queue's element shape and contents, trimmed
   // to the bound.
   [[nodiscard]] auto ConformBound(const PackedArray& bound) const -> Queue {
-    const std::int64_t b = bound.ToInt64();
     Queue result = *this;
-    result.max_bound_ =
-        b < 0 ? std::nullopt
-              : std::optional<std::uint64_t>(static_cast<std::uint64_t>(b));
+    result.max_bound_ = BoundOf(bound);
     result.EnforceBound();
     return result;
   }
@@ -140,14 +158,19 @@ class Queue {
   // (LRM is silent on both, matching industry convention). `==` / `!=`
   // propagate X / Z; `CaseEqual` matches X / Z as values and is deterministic.
   [[nodiscard]] auto operator==(const Queue& other) const -> PackedArray {
+    // LRM 11.4.5: the answer carries the state class an element's own equality
+    // produces, because that is what a run of them reduces to. Reading the
+    // class off the element shape rather than off a first element leaves an
+    // empty queue no case of its own -- it is the run of no elements -- and
+    // leaves a size mismatch, which is definitely unequal, answering in the
+    // same class as every other comparison of this queue.
+    const bool four_state =
+        (shield_.Default() == shield_.Default()).IsFourState();
     if (data_.size() != other.data_.size()) {
-      return PackedArray::FromInt(0, 1, false, false);
+      return PackedArray::FromInt(0, 1, false, four_state);
     }
-    if (data_.empty()) {
-      return PackedArray::FromInt(1, 1, false, false);
-    }
-    PackedArray result = data_[0] == other.data_[0];
-    for (std::size_t i = 1; i < data_.size(); ++i) {
+    PackedArray result = PackedArray::FromInt(1, 1, false, four_state);
+    for (std::size_t i = 0; i < data_.size(); ++i) {
       result = result && (data_[i] == other.data_[i]);
     }
     return result;
@@ -538,6 +561,19 @@ class Queue {
                         static_cast<std::uint64_t>(data_.size());
   }
 
+  // A bound is the greatest index the queue may hold (LRM 7.10.5). A queue with
+  // no bound spells that as a negative one, so a bound and its absence reach
+  // every construction and every store as the same operand rather than as two
+  // argument lists.
+  [[nodiscard]] static auto BoundOf(const PackedArray& max_bound)
+      -> std::optional<std::uint64_t> {
+    const std::int64_t bound = max_bound.ToInt64();
+    if (bound < 0) {
+      return std::nullopt;
+    }
+    return static_cast<std::uint64_t>(bound);
+  }
+
   // LRM 7.10.5: a bounded queue holds no element whose index exceeds the bound,
   // so once a write grows it past `max_bound_ + 1` elements the overflow is
   // discarded and a warning is issued. A no-op for an unbounded queue.
@@ -589,5 +625,6 @@ static_assert(Ownable<Queue<PackedArray>>);
 static_assert(Defaultable<Queue<PackedArray>>);
 static_assert(ConditionallyMergeable<Queue<PackedArray>>);
 static_assert(Sortable<Queue<PackedArray>>);
+static_assert(OrdinalElements<Queue<PackedArray>>);
 
 }  // namespace lyra::value

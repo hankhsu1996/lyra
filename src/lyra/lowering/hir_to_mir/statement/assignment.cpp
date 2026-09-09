@@ -86,7 +86,7 @@ auto LowerDestructuringAssign(
       process.Owner().Unit().types, total_width, state_kind);
 
   const mir::ExprId temp_default_init = wrapper.exprs.Add(
-      BuildDefaultValueExpr(process.Owner(), wrapper_frame, temp_type));
+      BuildDefaultValueExpr(process.Owner().Unit(), wrapper, temp_type));
   const mir::LocalId snapshot_var = wrapper_frame.bindings->DeclareAnonymous(
       mir::LocalDecl{.name = "_lyra_destruct_rhs", .type = temp_type});
   wrapper.AppendStmt(

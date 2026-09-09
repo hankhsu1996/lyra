@@ -1527,6 +1527,7 @@ auto CodeGenFunction::ResultShapeOperand(const lir::CallInstr& call) const
       return 0;
     case support::BuiltinFn::kMakeDynamicArrayNew:
     case support::BuiltinFn::kMakeDynamicArrayNewCopy:
+    case support::BuiltinFn::kFromArray:
       return 1;
     default:
       break;

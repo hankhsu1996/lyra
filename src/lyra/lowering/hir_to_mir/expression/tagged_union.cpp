@@ -39,8 +39,7 @@ auto BuildPackedTaggedValue(
     Lowerer& lowerer, WalkFrame frame, const PackedProjection& layout,
     const hir::TaggedUnionExpr& t, std::optional<mir::ExprId> payload,
     mir::TypeId result_type) -> mir::Expr {
-  auto& owner = lowerer.Owner();
-  auto& unit = owner.Unit();
+  auto& unit = lowerer.Owner().Unit();
   auto& block = *frame.current_block;
   const auto member_width = layout.members[t.member_index.value].bit_width;
   const auto gap_width = layout.bit_width - layout.tag_bits - member_width;
@@ -60,7 +59,7 @@ auto BuildPackedTaggedValue(
   }
   if (gap_width > 0) {
     runs.push_back(block.exprs.Add(BuildDefaultValueExpr(
-        owner, frame, mir::PackedVectorOf(unit.types, gap_width, state_kind))));
+        unit, block, mir::PackedVectorOf(unit.types, gap_width, state_kind))));
   }
   if (payload.has_value()) {
     runs.push_back(ConvertToType(
@@ -104,7 +103,7 @@ auto LowerHirTaggedUnionExpr(
     const mir::TypeId component = TaggedComponentType(
         lowerer.Owner().Unit(), result_type, t.member_index);
     payload = block.exprs.Add(
-        BuildDefaultValueExpr(lowerer.Owner(), frame, component));
+        BuildDefaultValueExpr(lowerer.Owner().Unit(), block, component));
   }
   return mir::Expr{
       .data = mir::TaggedExpr{.tag_index = t.member_index, .payload = *payload},

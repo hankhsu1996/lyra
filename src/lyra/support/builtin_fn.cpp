@@ -566,6 +566,8 @@ auto BuiltinFnName(BuiltinFn id) -> std::string_view {
       return "from_byte_array";
     case BuiltinFn::kFromString:
       return "from_string";
+    case BuiltinFn::kFromArray:
+      return "from_array";
     case BuiltinFn::kConformBound:
       return "conform_bound";
     case BuiltinFn::kArrayConcatElement:

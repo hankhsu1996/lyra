@@ -370,7 +370,7 @@ auto LowerSystemSubroutineCall(
           [&](const support::DistributionSystemSubroutineInfo& distribution)
               -> diag::Result<mir::Expr> {
             return LowerDistributionSystemSubroutineCall(
-                lowerer, frame, call, distribution, span);
+                lowerer, frame, call, distribution);
           },
           [&](const support::MemFileSystemSubroutineInfo&)
               -> diag::Result<mir::Expr> {
@@ -509,7 +509,7 @@ auto LowerBuiltinMethodCall(
     const mir::TypeId proto_type =
         ResultPrototypeType(unit_lowerer, result_type);
     args.push_back(block.exprs.Add(
-        BuildDefaultValueExpr(unit_lowerer, frame, proto_type)));
+        BuildDefaultValueExpr(unit_lowerer.Unit(), block, proto_type)));
   }
 
   // LRM 15.5.3: `e.triggered` reads the triggered flag out of

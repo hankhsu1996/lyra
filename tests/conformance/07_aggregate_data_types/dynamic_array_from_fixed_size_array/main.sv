@@ -2,10 +2,6 @@
 // array of a compatible element type: the target is resized to the source's
 // element count and the elements are copied across, so the clause's own example
 // `int A[100:1]; int B[]; B = A;` leaves B with 100 elements (LRM 7.6).
-//
-// Parked: the emitted project does not compile, the assignment reaching no
-// conversion from a fixed-size array, so this case cannot reach a check to fail
-// at.
 module Top;
   int fixed [3] = '{7, 8, 9};
   int shrunk [];

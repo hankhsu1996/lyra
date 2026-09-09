@@ -118,6 +118,14 @@ class RuntimeDynamicArray {
   [[nodiscard]] auto ConcatSpread(const RuntimeValue& part) const
       -> RuntimeDynamicArray;
 
+  // LRM 7.6: a dynamic array assigned an array of any of the three unpacked
+  // kinds is resized to the source's element count and takes its elements in
+  // left-to-right order. The element default is the destination's own, the
+  // element shape being a declared property of the variable being written.
+  [[nodiscard]] static auto FromArray(
+      const RuntimeValue& source, RuntimeValue element_default)
+      -> RuntimeDynamicArray;
+
   // LRM 11.4.5 `==` / `!=` (Any data type): a size check then an element-wise
   // reduction that propagates X / Z through each element's own equality.
   [[nodiscard]] auto operator==(const RuntimeDynamicArray& other) const

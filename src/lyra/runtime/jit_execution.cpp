@@ -2540,6 +2540,22 @@ auto lyra_rt_dynarray_from_literal(
       RuntimeDynamicArray(std::move(element_default), std::move(elements)));
 }
 
+auto lyra_rt_dynarray_from_array_unpackedarray(
+    const void* source, void* prototype) -> void* {
+  return Own(
+      RuntimeDynamicArray::FromArray(
+          RuntimeValue{Read<RuntimeUnpackedArray>(source)},
+          lyra::runtime::ErasedValue(prototype)));
+}
+
+auto lyra_rt_dynarray_from_array_queue(const void* source, void* prototype)
+    -> void* {
+  return Own(
+      RuntimeDynamicArray::FromArray(
+          RuntimeValue{Read<RuntimeQueue>(source)},
+          lyra::runtime::ErasedValue(prototype)));
+}
+
 // Reads element `index`, copying it out across the opaque-handle boundary as a
 // handle of the element's own domain (a chandle's handle is the pointer it
 // carries). An out-of-range index reads the element default (LRM 7.4.5).
@@ -2677,6 +2693,22 @@ auto lyra_rt_unpackedarray_conform_size(const void* parts, std::int64_t count)
   return Own(RuntimeUnpackedArray(
       source.ElementDefault(), std::move(elements),
       static_cast<std::size_t>(1)));
+}
+
+auto lyra_rt_unpackedarray_from_array_dynarray(
+    const void* source, void* prototype, std::int64_t declared) -> void* {
+  return Own(
+      RuntimeUnpackedArray::FromArray(
+          RuntimeValue{Read<RuntimeDynamicArray>(source)},
+          lyra::runtime::ErasedValue(prototype), declared));
+}
+
+auto lyra_rt_unpackedarray_from_array_queue(
+    const void* source, void* prototype, std::int64_t declared) -> void* {
+  return Own(
+      RuntimeUnpackedArray::FromArray(
+          RuntimeValue{Read<RuntimeQueue>(source)},
+          lyra::runtime::ErasedValue(prototype), declared));
 }
 
 auto lyra_rt_unpackedarray_merge_conditional(const void* lhs, const void* rhs)
@@ -2965,6 +2997,22 @@ auto lyra_rt_queue_conform_bound(const void* queue, const void* max_bound)
     -> void* {
   return Own(
       Read<RuntimeQueue>(queue).ConformBound(Read<PackedArray>(max_bound)));
+}
+
+auto lyra_rt_queue_from_array_unpackedarray(
+    const void* source, void* prototype, const void* max_bound) -> void* {
+  return Own(
+      RuntimeQueue::FromArray(
+          RuntimeValue{Read<RuntimeUnpackedArray>(source)},
+          lyra::runtime::ErasedValue(prototype), Read<PackedArray>(max_bound)));
+}
+
+auto lyra_rt_queue_from_array_dynarray(
+    const void* source, void* prototype, const void* max_bound) -> void* {
+  return Own(
+      RuntimeQueue::FromArray(
+          RuntimeValue{Read<RuntimeDynamicArray>(source)},
+          lyra::runtime::ErasedValue(prototype), Read<PackedArray>(max_bound)));
 }
 
 auto lyra_rt_queue_element(const void* queue, const void* index) -> void* {

@@ -5,7 +5,19 @@
 #include <type_traits>
 #include <utility>
 
+#include "lyra/base/simulation_error.hpp"
+
 namespace lyra::runtime {
+
+// LRM 8.4: reaching a non-static member or a virtual method through a null
+// object handle is illegal, and the result is indeterminate. Which handle a
+// variable holds is a value the design computed, so the access is the design's
+// own failure and answers to the run rather than to the host.
+[[noreturn]] inline void RaiseNullObjectHandleAccess() {
+  throw SimulationError(
+      "a member reached through a null object handle "
+      "(LRM 8.4)");
+}
 
 // A managed reference to a class object (LRM 8.3): a handle that refers to a
 // heap object whose lifetime the simulator owns. Null is a legal value, copies
@@ -36,11 +48,22 @@ class GcRef {
   }
 
   auto operator->() const -> T* {
+    if (ptr_ == nullptr) {
+      RaiseNullObjectHandleAccess();
+    }
     return ptr_.get();
   }
   auto operator*() const -> T& {
+    if (ptr_ == nullptr) {
+      RaiseNullObjectHandleAccess();
+    }
     return *ptr_;
   }
+
+  // The address the handle holds, which reaches no object: comparing two
+  // handles and testing one against null are what read it, and both are legal
+  // on a null handle (LRM 8.4 admits null as a value and forbids only reaching
+  // through it).
   [[nodiscard]] auto Get() const -> T* {
     return ptr_.get();
   }

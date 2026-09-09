@@ -6,10 +6,11 @@
 
 #include "lyra/hir/type_id.hpp"
 #include "lyra/lowering/hir_to_mir/unit_lowerer.hpp"
-#include "lyra/lowering/hir_to_mir/walk_frame.hpp"
+#include "lyra/mir/compilation_unit.hpp"
 #include "lyra/mir/expr.hpp"
 #include "lyra/mir/expr_id.hpp"
 #include "lyra/mir/integral_constant.hpp"
+#include "lyra/mir/stmt.hpp"
 #include "lyra/mir/type.hpp"
 #include "lyra/mir/type_id.hpp"
 
@@ -25,8 +26,8 @@ namespace lyra::lowering::hir_to_mir {
 // Builds a primitive MIR expression evaluating to the LRM Table 6-7 default
 // value of `type`, returning the top node detached for the caller to intern.
 // A composite default registers the child expressions it references into
-// `frame.current_block` before returning the outer node, so interning the
-// result yields a self-contained subtree of arena entries.
+// `block` before returning the outer node, so interning the result yields a
+// self-contained subtree of arena entries.
 //
 // `int x;` and `int x = 0;` are different in SV source -- HIR preserves that
 // distinction via `optional<initializer>`. By MIR every variable has an
@@ -34,7 +35,7 @@ namespace lyra::lowering::hir_to_mir {
 // sugar is decomposed into a primitive Expr at the HIR-to-MIR boundary so
 // downstream layers see one shape (an Expr) instead of two.
 [[nodiscard]] auto BuildDefaultValueExpr(
-    const UnitLowerer& unit_lowerer, WalkFrame frame, mir::TypeId type)
+    const mir::CompilationUnit& unit, mir::Block& block, mir::TypeId type)
     -> mir::Expr;
 
 // Default-construct a value from its source (HIR) type, honoring
@@ -45,38 +46,48 @@ namespace lyra::lowering::hir_to_mir {
 // serves only placeholder and transient-product defaults, where the source
 // initializer does not apply.
 [[nodiscard]] auto BuildDefaultValueFromHir(
-    const UnitLowerer& unit_lowerer, WalkFrame frame, hir::TypeId hir_type)
+    const UnitLowerer& unit_lowerer, mir::Block& block, hir::TypeId hir_type)
     -> mir::Expr;
+
+// Whether a type is one of the three array container types (unpacked, dynamic,
+// or queue), which is what a caller asks before reaching for its element type.
+[[nodiscard]] auto IsArrayContainerType(const mir::Type& type) -> bool;
+
+// Whether an assignment between the two types crosses from one of those three
+// kinds to another. Two containers of one kind hold their elements the same
+// way, so a value crosses between them as it stands.
+[[nodiscard]] auto CrossesArrayContainerKinds(
+    const mir::Type& source, const mir::Type& destination) -> bool;
 
 // The element type of an array container type (unpacked, dynamic, or queue).
 // Throws `InternalError` if `array_type` is not one of those.
 [[nodiscard]] auto ArrayContainerElementType(
     const mir::CompilationUnit& unit, mir::TypeId array_type) -> mir::TypeId;
 
-// Wraps a list of element ExprIds destined for an array container constructor
-// (`UnpackedArrayType` or `DynamicArrayType`) in a construction call whose
-// arguments are `[element_default, elements]`. This is the construction shape
-// every site that produces an array-container value must use: the
-// canonical-default element the wrapper's runtime ctor requires is supplied
-// here from the element type, and the elements ride as an aggregate literal of
-// the plain-data array of that element -- the container is what the
+// Wraps a list of element ExprIds destined for any array container's
+// constructor in a construction call whose arguments are `[element_default,
+// elements, count]`, plus the LRM 7.10.5 bound for a bounded queue. This is the
+// construction shape every site that produces an array-container value must
+// use: the canonical-default element the wrapper's runtime ctor requires is
+// supplied here from the element type, and the elements ride as an aggregate
+// literal of the plain-data array of that element -- the container is what the
 // construction produces, never what the literal itself claims to be.
 [[nodiscard]] auto BuildArrayConstructionCall(
-    const UnitLowerer& unit_lowerer, WalkFrame frame, mir::TypeId array_type,
+    const mir::CompilationUnit& unit, mir::Block& block, mir::TypeId array_type,
     std::vector<mir::ExprId> elements) -> mir::Expr;
 
 // Builds the construction call for a uniform array-container value: `count`
-// replications of the repeat unit `unit`, seeded with `element_default` (the
-// wrapper's OOB / discard source). The unit rides as an aggregate literal and
-// the count as a machine scalar, so the constructor arguments are
-// `[element_default, unit, count]` (plus the LRM 7.10.5 bound for a bounded
-// queue). This is the shape every site that produces an all-default or
+// replications of `repeat_unit`, seeded with `element_default` (the wrapper's
+// OOB / discard source). The repeat unit rides as an aggregate literal and the
+// count as a machine scalar, so the constructor arguments are
+// `[element_default, repeat_unit, count]` (plus the LRM 7.10.5 bound for a
+// bounded queue). This is the shape every site that produces an all-default or
 // `'{count{...}}` array value must use, so the value's MIR and emitted text
-// stay O(unit) rather than O(unit * count). A distinct-element list uses
-// `BuildArrayConstructionCall` instead.
+// stay O(repeat_unit) rather than O(repeat_unit * count). A distinct-element
+// list uses `BuildArrayConstructionCall` instead.
 [[nodiscard]] auto BuildArrayRepeatCall(
-    const UnitLowerer& unit_lowerer, WalkFrame frame, mir::TypeId array_type,
-    mir::ExprId element_default, std::vector<mir::ExprId> unit,
+    const mir::CompilationUnit& unit, mir::Block& block, mir::TypeId array_type,
+    mir::ExprId element_default, std::vector<mir::ExprId> repeat_unit,
     mir::ExprId count_id) -> mir::Expr;
 
 // Builds the construction call for an associative-array literal (LRM 7.9.11).
@@ -87,7 +98,7 @@ namespace lyra::lowering::hir_to_mir {
 // a read of an absent key returns; when absent the constructor seeds only the
 // element type default.
 [[nodiscard]] auto BuildAssociativeConstructionCall(
-    const UnitLowerer& unit_lowerer, WalkFrame frame, mir::TypeId assoc_type,
+    const mir::CompilationUnit& unit, mir::Block& block, mir::TypeId assoc_type,
     std::vector<std::pair<mir::ExprId, mir::ExprId>> entries,
     std::optional<mir::ExprId> user_default) -> mir::Expr;
 

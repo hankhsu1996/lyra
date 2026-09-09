@@ -109,6 +109,26 @@ class DynamicArray {
     return DynamicArray(n, std::move(element_default), src);
   }
 
+  // LRM 7.6: a dynamic array assigned an array of any of the three unpacked
+  // kinds is resized to the source's element count and takes its elements in
+  // left-to-right order. The clause admits the assignment only where the
+  // element types are equivalent, so each element crosses as it stands, and the
+  // element default is the destination's own -- the element shape is a declared
+  // property of the variable being written, which the source has no say in.
+  // Named rather than left a constructor because an argument list of an element
+  // default and one more operand does not say which of the run-time-sized forms
+  // it is, and a target with no overload resolution has nothing else to read.
+  template <OrdinalElements C>
+  [[nodiscard]] static auto FromArray(const C& source, T element_default)
+      -> DynamicArray {
+    DynamicArray result(std::move(element_default));
+    result.data_.reserve(source.RawSize());
+    for (std::size_t i = 0; i < source.RawSize(); ++i) {
+      result.data_.push_back(source.RawAt(i));
+    }
+    return result;
+  }
+
   DynamicArray(const DynamicArray&) = default;
   DynamicArray(DynamicArray&&) noexcept = default;
   auto operator=(const DynamicArray&) -> DynamicArray& = default;
@@ -195,14 +215,19 @@ class DynamicArray {
   // comparisons; `CaseEqual` matches X / Z as values and is deterministic.
   [[nodiscard]] auto operator==(const DynamicArray& other) const
       -> PackedArray {
+    // LRM 11.4.5: the answer carries the state class an element's own equality
+    // produces, because that is what a run of them reduces to. Reading the
+    // class off the element shape rather than off a first element leaves an
+    // empty container no case of its own -- it is the run of no elements -- and
+    // leaves a size mismatch, which is definitely unequal, answering in the
+    // same class as every other comparison of this container.
+    const bool four_state =
+        (shield_.Default() == shield_.Default()).IsFourState();
     if (data_.size() != other.data_.size()) {
-      return PackedArray::FromInt(0, 1, false, false);
+      return PackedArray::FromInt(0, 1, false, four_state);
     }
-    if (data_.empty()) {
-      return PackedArray::FromInt(1, 1, false, false);
-    }
-    PackedArray result = data_[0] == other.data_[0];
-    for (std::size_t i = 1; i < data_.size(); ++i) {
+    PackedArray result = PackedArray::FromInt(1, 1, false, four_state);
+    for (std::size_t i = 0; i < data_.size(); ++i) {
       result = result && (data_[i] == other.data_[i]);
     }
     return result;
@@ -474,5 +499,6 @@ static_assert(SliceableRef<DynamicArray<PackedArray>>);
 static_assert(Ownable<DynamicArray<PackedArray>>);
 static_assert(Defaultable<DynamicArray<PackedArray>>);
 static_assert(Sortable<DynamicArray<PackedArray>>);
+static_assert(OrdinalElements<DynamicArray<PackedArray>>);
 
 }  // namespace lyra::value

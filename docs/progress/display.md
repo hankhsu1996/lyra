@@ -181,14 +181,17 @@ sanctions; the runtime-parsed path continues silently.
 ## Conformance gaps the corpus records
 
 Behaviour the corpus asks for and does not get. Each is a case that runs and keeps every check it
-makes, recorded against the path it answers wrongly on; the day the answer becomes right the case
-passes and that record fails until its entry goes. What is written here is what the standard
-requires.
+makes, recorded per path as the wrong answer or the refusal that path gives; the day a path answers
+right the case passes there and that record fails until its entry goes. What is written here is what
+the standard requires.
 
-- [ ] **`%p` of an enumeration prints the integer** (LRM 21.2.1.6), where the clause requires the
-      enumeration name whenever the value is one the type declares and the base type's rendering
-      otherwise. The rule reaches every singular element an aggregate is traversed down to, not only
-      an operand written as one, so an array of an enumeration is covered by the same requirement.
+- [ ] **`%p` of an enumeration inside an aggregate prints the integer** (LRM 21.2.1.6), where the
+      clause requires the enumeration name for every singular element an aggregate is traversed down
+      to, not only for an operand written as one. An operand written as one is right. What holds the
+      element is that a value's declared names are the compiler's to answer for, while the traversal
+      that reaches an element belongs to the formatter, and a print item states a value and a
+      conversion but no way to render an element -- so the two never meet. Closing it means a print
+      item that carries how its elements render.
 
 ## Out of Scope
 

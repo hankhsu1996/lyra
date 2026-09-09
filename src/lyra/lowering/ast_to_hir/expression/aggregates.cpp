@@ -357,18 +357,18 @@ auto LowerReplicatedAssignmentPatternExpr(
 // is the dynamic array type slang resolved for the expression; the optional
 // initializer is `(other)` -- the LRM 7.5.1 source array for the copy-with-
 // pad-or-truncate form.
-auto LowerNewArrayExprProc(
-    ProcessLowerer& proc, WalkFrame frame,
-    const slang::ast::NewArrayExpression& na, diag::SourceSpan span)
-    -> diag::Result<hir::Expr> {
-  auto type_id = proc.Owner().InternType(*na.type, span);
+template <ExprLowerer Lowerer>
+auto LowerNewArrayExpr(
+    Lowerer& lowerer, WalkFrame frame, const slang::ast::NewArrayExpression& na,
+    diag::SourceSpan span) -> diag::Result<hir::Expr> {
+  auto type_id = lowerer.Owner().InternType(*na.type, span);
   if (!type_id) return std::unexpected(std::move(type_id.error()));
-  auto size_or = proc.LowerExpr(na.sizeExpr(), frame);
+  auto size_or = lowerer.LowerExpr(na.sizeExpr(), frame);
   if (!size_or) return std::unexpected(std::move(size_or.error()));
   const hir::ExprId size_id = frame.Exprs().Add(*std::move(size_or));
   std::optional<hir::ExprId> initializer_id;
   if (na.initExpr() != nullptr) {
-    auto init_or = proc.LowerExpr(*na.initExpr(), frame);
+    auto init_or = lowerer.LowerExpr(*na.initExpr(), frame);
     if (!init_or) return std::unexpected(std::move(init_or.error()));
     initializer_id = frame.Exprs().Add(*std::move(init_or));
   }
@@ -479,6 +479,12 @@ template auto LowerReplicationExpr(
     StructuralScopeLowerer&, WalkFrame,
     const slang::ast::ReplicationExpression&, diag::SourceSpan)
     -> diag::Result<hir::Expr>;
+template auto LowerNewArrayExpr(
+    ProcessLowerer&, WalkFrame, const slang::ast::NewArrayExpression&,
+    diag::SourceSpan) -> diag::Result<hir::Expr>;
+template auto LowerNewArrayExpr(
+    StructuralScopeLowerer&, WalkFrame, const slang::ast::NewArrayExpression&,
+    diag::SourceSpan) -> diag::Result<hir::Expr>;
 template auto LowerNewClassExpr(
     ProcessLowerer&, WalkFrame, const slang::ast::NewClassExpression&,
     diag::SourceSpan) -> diag::Result<hir::Expr>;

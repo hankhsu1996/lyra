@@ -6,8 +6,21 @@
 // the array empty. Constructing over an array that already held elements is
 // destructive and keeps none of them, and size() reports the number of
 // elements the array has now, or zero for one that was never constructed
-// (LRM 7.5, 7.5.1, 7.5.2, Table 7-1).
+// The constructor may stand as the right-hand side of a variable declaration
+// assignment as well as of a procedural one, and a declaration's initializer
+// runs at time zero, so an array sized that way is already its declared size
+// when the first procedure reads it (LRM 7.5, 7.5.1, 7.5.2, 10.5, Table 7-1).
 module Top;
+  int declared [] = new [3];
+  int declared_over [3] = '{4, 5, 6};
+  int declared_copy [] = new [2] (declared_over);
+
+  int size_declared = 77;
+  int declared2 = 77;
+  int size_declared_copy = 77;
+  int declared_copy0 = 77;
+  int declared_copy1 = 77;
+
   int never_constructed [];
   int refilled [];
   logic [7:0] four_state [];
@@ -29,6 +42,12 @@ module Top;
   logic [7:0] four_state2 = 8'h5A;
 
   initial begin
+    size_declared = declared.size();
+    declared2 = declared[2];
+    size_declared_copy = declared_copy.size();
+    declared_copy0 = declared_copy[0];
+    declared_copy1 = declared_copy[1];
+
     size_never_constructed = never_constructed.size();
 
     refilled = new[3];
@@ -57,6 +76,17 @@ module Top;
   end
 
   final begin
+    if (size_declared !== 3)
+      $fatal(1, "size_declared was %0d, expected 3", size_declared);
+    if (declared2 !== 0)
+      $fatal(1, "declared2 was %0d, expected 0", declared2);
+    if (size_declared_copy !== 2)
+      $fatal(1, "size_declared_copy was %0d, expected 2", size_declared_copy);
+    if (declared_copy0 !== 4)
+      $fatal(1, "declared_copy0 was %0d, expected 4", declared_copy0);
+    if (declared_copy1 !== 5)
+      $fatal(1, "declared_copy1 was %0d, expected 5", declared_copy1);
+
     if (size_never_constructed !== 0)
       $fatal(1, "size_never_constructed was %0d, expected 0",
              size_never_constructed);
