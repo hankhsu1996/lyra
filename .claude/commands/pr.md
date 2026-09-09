@@ -26,7 +26,9 @@ change in front of you.
 
 ### House style
 
-- Title starts with a verb, capitalized. No colon format ("Fix: xxx").
+- Title starts with a verb, capitalized. No comma and no colon anywhere in it -- not the "Fix: xxx"
+  prefix, and not a clause break. A title reaching for either is carrying two ideas; cut it to the
+  one a reviewer scans for.
 - Body opens with `## Summary` as a paragraph, not bullets.
 - Backticks for signal, module, and symbol names.
 
