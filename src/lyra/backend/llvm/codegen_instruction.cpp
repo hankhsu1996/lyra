@@ -1120,7 +1120,7 @@ auto CodeGenFunction::LowerIntConst(const lir::IntConst& constant)
             module_->Unit().types.Get(constant.type).KindName()));
   }
   return llvm::ConstantInt::get(
-      llvm::IntegerType::get(module_->Context(), machine->bit_width),
+      llvm::cast<llvm::IntegerType>(module_->Types().Map(constant.type)),
       constant.value.value_words.front(),
       machine->signedness == lir::Signedness::kSigned);
 }
@@ -1182,9 +1182,7 @@ auto CodeGenFunction::LowerRealConst(const lir::RealConst& constant)
             module_->Unit().types.Get(constant.type).KindName()));
   }
   return llvm::ConstantFP::get(
-      machine->bit_width == 32 ? llvm::Type::getFloatTy(module_->Context())
-                               : llvm::Type::getDoubleTy(module_->Context()),
-      constant.value);
+      module_->Types().Map(constant.type), constant.value);
 }
 
 // A null value is the host null pointer, a native LLVM constant. Every

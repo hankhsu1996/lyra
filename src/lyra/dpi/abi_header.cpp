@@ -29,21 +29,27 @@ auto RenderTypeAsC(const mir::CompilationUnit& unit, mir::TypeId id)
       Overloaded{
           [](const mir::VoidType&) -> std::string { return "void"; },
           [](const mir::MachineIntType& m) -> std::string {
-            return std::format(
-                "{}int{}_t",
-                m.signedness == mir::Signedness::kUnsigned ? "u" : "",
-                m.bit_width);
+            const bool is_signed = m.signedness == mir::Signedness::kSigned;
+            switch (m.width) {
+              case mir::MachineIntWidth::k8:
+                return is_signed ? "int8_t" : "uint8_t";
+              case mir::MachineIntWidth::k16:
+                return is_signed ? "int16_t" : "uint16_t";
+              case mir::MachineIntWidth::k32:
+                return is_signed ? "int32_t" : "uint32_t";
+              case mir::MachineIntWidth::k64:
+                return is_signed ? "int64_t" : "uint64_t";
+            }
+            throw InternalError("RenderTypeAsC: unknown MachineIntWidth");
           },
           [](const mir::MachineFloatType& f) -> std::string {
-            if (f.bit_width == 32) {
-              return "float";
+            switch (f.width) {
+              case mir::MachineFloatWidth::k32:
+                return "float";
+              case mir::MachineFloatWidth::k64:
+                return "double";
             }
-            if (f.bit_width == 64) {
-              return "double";
-            }
-            throw InternalError(
-                "RenderTypeAsC: no C floating type of this width crosses the "
-                "DPI-C boundary");
+            throw InternalError("RenderTypeAsC: unknown MachineFloatWidth");
           },
           [](const mir::MachineCStringType&) -> std::string {
             return "const char*";

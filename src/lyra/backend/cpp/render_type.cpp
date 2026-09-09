@@ -64,29 +64,27 @@ auto RenderTypeAsCpp(const mir::CompilationUnit& unit, mir::TypeId type_id)
             return std::string{"bool"};
           },
           [](const mir::MachineIntType& m) -> std::string {
-            const std::string_view sign =
-                m.signedness == mir::Signedness::kSigned ? "" : "u";
-            switch (m.bit_width) {
-              case 8:
-              case 16:
-              case 32:
-              case 64:
-                return std::format("std::{}int{}_t", sign, m.bit_width);
-              default:
-                throw InternalError(
-                    "RenderTypeAsCpp: unsupported MachineIntType width");
+            const bool is_signed = m.signedness == mir::Signedness::kSigned;
+            switch (m.width) {
+              case mir::MachineIntWidth::k8:
+                return is_signed ? "std::int8_t" : "std::uint8_t";
+              case mir::MachineIntWidth::k16:
+                return is_signed ? "std::int16_t" : "std::uint16_t";
+              case mir::MachineIntWidth::k32:
+                return is_signed ? "std::int32_t" : "std::uint32_t";
+              case mir::MachineIntWidth::k64:
+                return is_signed ? "std::int64_t" : "std::uint64_t";
             }
+            throw InternalError("RenderTypeAsCpp: unknown MachineIntWidth");
           },
           [](const mir::MachineFloatType& m) -> std::string {
-            switch (m.bit_width) {
-              case 32:
+            switch (m.width) {
+              case mir::MachineFloatWidth::k32:
                 return std::string{"float"};
-              case 64:
+              case mir::MachineFloatWidth::k64:
                 return std::string{"double"};
-              default:
-                throw InternalError(
-                    "RenderTypeAsCpp: unsupported MachineFloatType width");
             }
+            throw InternalError("RenderTypeAsCpp: unknown MachineFloatWidth");
           },
           [&](const mir::MachineArrayType& m) -> std::string {
             return std::format(

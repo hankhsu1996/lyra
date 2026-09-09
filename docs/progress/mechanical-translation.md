@@ -54,6 +54,14 @@ cross-check predicts. This file owns only which instances are known and what is 
       too, and what a call site reaches is again a closed set of three, every member of which the
       library declares. The record of the earlier one described a mechanism the code had since
       replaced, so that account is corrected in the same change.
+- [x] T17 -- A machine scalar's width is one of a closed set its type names, so every consumer says
+      what each width means and gaining one breaks the build. It had been an open integer, which
+      left each consumer to decide for itself what a width it does not recognize means: two refused
+      it as a compiler bug, where what they lack is only a spelling and nothing about the program is
+      wrong, and the execution backend answered an unrecognized float width with the wider of the
+      two it knows, silently. That backend was also composing a target type out of the width where
+      its own type mapping already answers that, once for each constant needing one; a constant now
+      asks the mapping, the way every other value does.
 
 ## What MIR can ask a backend to perform
 
@@ -108,6 +116,12 @@ cross-check predicts. This file owns only which instances are known and what is 
       write names an owner place and the descent that reaches the part, so the activating form is
       the descent's own and never travels on a node a read shares.
 
+      Blocked on that designator, which MIR does not carry: an assignment target is a chain of
+      access nodes rooted at an opened place, and every consumer finds the owner by walking it.
+      Naming the activating reach on the node instead -- as the write-side container accesses
+      already are -- is the first rejected alternative of the record that settled the designator, so
+      this waits on that migration rather than extending the shape it replaces.
+
 ## Callable and assignment identity
 
 - [ ] T11 -- Callable identity is one space whose entries name a declaration carrying signature,
@@ -159,8 +173,6 @@ cross-check predicts. This file owns only which instances are known and what is 
       policy prescribes rather than reporting a compiler bug.
 - [ ] T16 -- No peephole in a render. Where one collapses a shape the producer built, the producer
       is what states the collapsed form.
-- [ ] T17 -- A closed numeric set is closed in the type rather than left open with a refusing
-      default.
 
 ## Cross-references
 

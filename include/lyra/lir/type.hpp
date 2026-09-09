@@ -142,8 +142,22 @@ struct MachineBoolType {
   auto operator==(const MachineBoolType&) const -> bool = default;
 };
 
+// The widths a machine scalar comes in. Machine data is what crosses to a
+// target on the target's own terms -- a foreign call's by-value argument, a
+// table the runtime reads as raw storage -- so the widths are the ones a C
+// type system names outright.
+enum class MachineIntWidth : std::uint8_t { k8, k16, k32, k64 };
+
+enum class MachineFloatWidth : std::uint8_t { k32, k64 };
+
+// The width as a number, for a target that parameterizes its integer type by a
+// bit count rather than naming a type per width.
+[[nodiscard]] auto BitsOf(MachineIntWidth width) -> std::uint32_t;
+
+// A primitive machine integer (C `intN_t`): a fixed-width 2-state scalar,
+// distinct from the four-state `PackedArrayType`.
 struct MachineIntType {
-  std::uint32_t bit_width;
+  MachineIntWidth width;
   Signedness signedness;
 
   auto operator==(const MachineIntType&) const -> bool = default;
@@ -152,7 +166,7 @@ struct MachineIntType {
 // A primitive machine float (C `float` / `double`), distinct from `RealType`,
 // which is a simulation value reached through a value wrapper.
 struct MachineFloatType {
-  std::uint32_t bit_width;
+  MachineFloatWidth width;
 
   auto operator==(const MachineFloatType&) const -> bool = default;
 };

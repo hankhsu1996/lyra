@@ -113,57 +113,6 @@ struct BlockExpr {
   ExprId value;
 };
 
-// One step of a descent into a value. The set is closed and coordinate-facing:
-// a step names a subvalue by the source-level coordinate that names it, and
-// never by a rebased position, a storage offset, or a resolved index.
-//
-// A component is one part of a product, every part of which is live at once. A
-// union member is the one part an active-member value holds at a time, so an
-// update through it makes that part the live one (LRM 7.3). An element is one
-// coordinate into a homogeneous or keyed value and a slice a fixed-width window
-// over one; each carries the source coordinates followed by whatever the
-// value's family takes from its static type rather than from the value -- a
-// declared range, a declared result shape.
-struct ComponentStep {
-  base::ComponentIndex index;
-};
-
-struct UnionMemberStep {
-  base::ComponentIndex index;
-};
-
-struct ElementStep {
-  std::vector<ExprId> operands;
-};
-
-struct SliceStep {
-  std::vector<ExprId> operands;
-};
-
-using DesignationStep =
-    std::variant<ComponentStep, UnionMemberStep, ElementStep, SliceStep>;
-
-// A part of a value designated for writing: the place owning the whole value,
-// and the non-empty path of steps reaching the part inside it, owner to leaf.
-// Writing it leaves the owner holding a value equal to what it held but for the
-// designated part; the owner and every step evaluate exactly once.
-//
-// The node kind is the classification, so a consumer reads which kind of write
-// it has from which node stands at the target, and never by walking a chain to
-// find where the place prefix ends. Nothing here asserts the designated part is
-// separately addressable: a value aggregate has no interior to name, which is
-// why a write through one is stated against the owner rather than against the
-// part.
-//
-// The path never crosses a dereference. Where a chain re-enters storage -- a
-// handle held inside a value aggregate -- the dereference terminates the path,
-// so the owner is the dereferenced referent and whatever reaches the handle
-// stands inside `owner` as an ordinary read.
-struct ValueProjectionExpr {
-  ExprId owner;
-  std::vector<DesignationStep> path;
-};
-
 // `compound_op.has_value()` marks the assignment as `target op= value`;
 // `nullopt` is a simple write. `value` is already typed to match `target`.
 //

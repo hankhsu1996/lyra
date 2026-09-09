@@ -610,6 +610,25 @@ auto RenderPointerCastExpr(
          RenderExpr(view, view.Expr(cast.operand)) + ")";
 }
 
+// How a machine float literal is written so the target reads back the value it
+// was given: the digit count is the IEEE 754 minimum that round-trips the
+// width, and a single-precision literal carries the suffix that keeps it
+// single.
+struct MachineFloatSpelling {
+  int digits;
+  std::string_view suffix;
+};
+
+auto FloatSpellingOf(mir::MachineFloatWidth width) -> MachineFloatSpelling {
+  switch (width) {
+    case mir::MachineFloatWidth::k32:
+      return {.digits = 9, .suffix = "f"};
+    case mir::MachineFloatWidth::k64:
+      return {.digits = 17, .suffix = ""};
+  }
+  throw InternalError("FloatSpellingOf: unknown MachineFloatWidth");
+}
+
 }  // namespace
 
 auto RenderEachExpr(
@@ -636,20 +655,17 @@ auto RenderExpr(const ScopeView& view, const mir::Expr& expr) -> std::string {
             return std::string{b.value ? "true" : "false"};
           },
           [&](const mir::MachineFloatLiteral& f) -> std::string {
-            // A machine float is spelled at the precision its own type is
-            // read back at: 9 significant digits round-trip a `float` and 17 a
-            // `double`, the IEEE 754 minimum representable-pair widths, and a
-            // single-precision literal carries the suffix that keeps it one.
             // `g` drops a trailing decimal point, which the C++ lexer rejects
             // before a suffix, so a whole number gets one back.
             const auto& machine =
                 view.Unit().types.Get(expr.type).Get<mir::MachineFloatType>();
-            const bool single = machine.bit_width == 32;
-            std::string body = std::format("{:.{}g}", f.value, single ? 9 : 17);
+            const MachineFloatSpelling spelling =
+                FloatSpellingOf(machine.width);
+            std::string body = std::format("{:.{}g}", f.value, spelling.digits);
             if (body.find_first_of(".eE") == std::string::npos) {
               body += ".0";
             }
-            body += single ? "f" : "";
+            body += spelling.suffix;
             return body;
           },
           [&](const mir::MachineIntLiteral& h) -> std::string {

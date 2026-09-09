@@ -271,11 +271,11 @@ class MirDumper {
             },
             [](const MachineIntType& m) -> std::string {
               return std::format(
-                  "MachineInt(width={}, signed={})", m.bit_width,
+                  "MachineInt(width={}, signed={})", BitsOf(m.width),
                   m.signedness == Signedness::kSigned ? "true" : "false");
             },
             [](const MachineFloatType& m) -> std::string {
-              return std::format("MachineFloat(width={})", m.bit_width);
+              return std::format("MachineFloat(width={})", BitsOf(m.width));
             },
             [](const MachineArrayType& m) -> std::string {
               return std::format(

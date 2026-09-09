@@ -2,6 +2,7 @@
 
 #include <llvm/IR/LLVMContext.h>
 
+#include "lyra/base/internal_error.hpp"
 #include "lyra/base/overloaded.hpp"
 #include "lyra/lir/compilation_unit.hpp"
 #include "lyra/lir/type.hpp"
@@ -32,11 +33,16 @@ auto CodeGenTypes::Map(lir::TypeId id) -> llvm::Type* {
             return llvm::Type::getInt1Ty(*ctx_);
           },
           [&](const lir::MachineIntType& m) -> llvm::Type* {
-            return llvm::IntegerType::get(*ctx_, m.bit_width);
+            return llvm::IntegerType::get(*ctx_, lir::BitsOf(m.width));
           },
           [&](const lir::MachineFloatType& m) -> llvm::Type* {
-            return m.bit_width == 32 ? llvm::Type::getFloatTy(*ctx_)
-                                     : llvm::Type::getDoubleTy(*ctx_);
+            switch (m.width) {
+              case lir::MachineFloatWidth::k32:
+                return llvm::Type::getFloatTy(*ctx_);
+              case lir::MachineFloatWidth::k64:
+                return llvm::Type::getDoubleTy(*ctx_);
+            }
+            throw InternalError("llvm codegen: unknown MachineFloatWidth");
           },
           [&](const lir::MachineArrayType& m) -> llvm::Type* {
             return llvm::ArrayType::get(Map(m.element), m.size);

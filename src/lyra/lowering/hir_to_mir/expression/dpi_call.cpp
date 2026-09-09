@@ -67,25 +67,27 @@ auto CarrierTypeId(
             .kind = vec->four_state ? mir::RuntimeLibraryKind::kDpiLogicBuffer
                                     : mir::RuntimeLibraryKind::kDpiBitBuffer}});
   }
-  const auto machine_int = [&](std::uint32_t bits, mir::Signedness sign) {
+  const auto machine_int = [&](mir::MachineIntWidth width,
+                               mir::Signedness sign) {
     return unit.types.Intern(
-        mir::Type{mir::MachineIntType{.bit_width = bits, .signedness = sign}});
+        mir::Type{mir::MachineIntType{.width = width, .signedness = sign}});
   };
   switch (std::get<support::ScalarCarrier>(carrier).abi) {
     case support::DpiScalarAbi::kBitScalar:
     case support::DpiScalarAbi::kLogicScalar:
-      return machine_int(8, mir::Signedness::kUnsigned);
+      return machine_int(mir::MachineIntWidth::k8, mir::Signedness::kUnsigned);
     case support::DpiScalarAbi::kByte:
-      return machine_int(8, mir::Signedness::kSigned);
+      return machine_int(mir::MachineIntWidth::k8, mir::Signedness::kSigned);
     case support::DpiScalarAbi::kShortInt:
-      return machine_int(16, mir::Signedness::kSigned);
+      return machine_int(mir::MachineIntWidth::k16, mir::Signedness::kSigned);
     case support::DpiScalarAbi::kInt:
-      return machine_int(32, mir::Signedness::kSigned);
+      return machine_int(mir::MachineIntWidth::k32, mir::Signedness::kSigned);
     case support::DpiScalarAbi::kLongInt:
-      return machine_int(64, mir::Signedness::kSigned);
+      return machine_int(mir::MachineIntWidth::k64, mir::Signedness::kSigned);
     case support::DpiScalarAbi::kReal:
       return unit.types.Intern(
-          mir::Type{mir::MachineFloatType{.bit_width = 64}});
+          mir::Type{
+              mir::MachineFloatType{.width = mir::MachineFloatWidth::k64}});
     case support::DpiScalarAbi::kString:
       return unit.types.Intern(mir::Type{mir::MachineCStringType{}});
     case support::DpiScalarAbi::kChandle:
