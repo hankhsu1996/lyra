@@ -10,19 +10,25 @@ auto RuntimeEntryOf(BuiltinFn id) -> RuntimeEntry {
       return {
           .name = "element",
           .declaration = Method{"Element"},
-          .index_operand = 1};
+          .index_operand = 1,
+          .aggregate_step = AggregateStep::kCoordinate};
     case BuiltinFn::kSlice:
-      return {.name = "slice", .declaration = Method{"Slice"}};
+      return {
+          .name = "slice",
+          .declaration = Method{"Slice"},
+          .aggregate_step = AggregateStep::kWindow};
     case BuiltinFn::kElementRef:
       return {
           .name = "element_ref",
           .declaration = Method{"ElementRef"},
-          .reaches_through_receiver = true};
+          .reaches_through_receiver = true,
+          .aggregate_step = AggregateStep::kCoordinate};
     case BuiltinFn::kSliceRef:
       return {
           .name = "slice_ref",
           .declaration = Method{"SliceRef"},
-          .reaches_through_receiver = true};
+          .reaches_through_receiver = true,
+          .aggregate_step = AggregateStep::kWindow};
     case BuiltinFn::kRequire:
       return {
           .name = "require",

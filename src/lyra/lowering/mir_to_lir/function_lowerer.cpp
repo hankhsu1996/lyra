@@ -1333,6 +1333,16 @@ auto FunctionLowerer::MemberRefOf(
       field.field);
 }
 
+// Which step of a value aggregate a call names, and nothing for a call that
+// names none. It is the entry's own property, so a read and the write that
+// descends through the same step agree without either listing the entries.
+auto AggregateStepOf(const mir::CallExpr& call)
+    -> std::optional<support::AggregateStep> {
+  const std::optional<support::BuiltinFn> fn = mir::DirectBuiltinFn(call);
+  return fn.has_value() ? support::RuntimeEntryOf(*fn).aggregate_step
+                        : std::nullopt;
+}
+
 // The value a step reaches its part out of, and nothing where the expression
 // names storage instead. Every expression that reaches into a value is an
 // access whose receiver holds the part it reaches, so both questions -- whether
@@ -1354,9 +1364,7 @@ auto ValuePartReceiver(const mir::Block& block, mir::ExprId step)
   if (call == nullptr) {
     return std::nullopt;
   }
-  const std::optional<support::BuiltinFn> fn = mir::DirectBuiltinFn(*call);
-  if (fn != support::BuiltinFn::kElementRef &&
-      fn != support::BuiltinFn::kSliceRef) {
+  if (!AggregateStepOf(*call).has_value()) {
     return std::nullopt;
   }
   return mir::CalleeReceiver(call->callee);
@@ -1780,6 +1788,15 @@ auto FunctionLowerer::LowerCall(
     return LowerMutatingCall(block, call, *fn, type);
   }
 
+  // A part of a value is reached by a step naming which subvalue it is, and one
+  // step serves both directions: reading a part is the extract a write through
+  // the same step already descends by. The aggregate crosses as a handle a copy
+  // may alias, so a part of it is no storage a load could name.
+  if (const std::optional<support::AggregateStep> step =
+          AggregateStepOf(call)) {
+    return LowerValuePartRead(block, call, *step, type);
+  }
+
   // A reference is the address of the cell it binds, so building one is the
   // ordinary address-of over the referent's place. No runtime value stands
   // between the holder and that cell; reading and writing through the reference
@@ -2080,21 +2097,55 @@ auto FunctionLowerer::LowerValuePartSelector(
     return lir::AggregateSelector{lir::UnionMember{.index = member->index}};
   }
   const auto& call = std::get<mir::CallExpr>(data);
-  std::vector<lir::Operand> operands;
-  operands.reserve(call.arguments.size());
-  for (const mir::ExprId argument : call.arguments) {
-    auto operand = LowerExpr(block, argument);
-    if (!operand) {
-      return std::unexpected(std::move(operand.error()));
-    }
-    operands.push_back(*std::move(operand));
+  const std::optional<support::AggregateStep> step_kind = AggregateStepOf(call);
+  if (!step_kind.has_value()) {
+    throw InternalError(
+        "mir_to_lir: a step into a value says which subvalue it names, and "
+        "this call says none -- please report this as a bug");
   }
-  if (mir::DirectBuiltinFn(call) == support::BuiltinFn::kSliceRef) {
-    return lir::AggregateSelector{
-        lir::ContainerSlice{.operands = std::move(operands)}};
+  return LowerContainerSelector(block, call, *step_kind);
+}
+
+auto FunctionLowerer::LowerContainerSelector(
+    const mir::Block& block, const mir::CallExpr& call,
+    support::AggregateStep step) -> diag::Result<lir::AggregateSelector> {
+  auto operands = LowerEachExpr(block, call.arguments);
+  if (!operands) {
+    return std::unexpected(std::move(operands.error()));
   }
-  return lir::AggregateSelector{
-      lir::ContainerElement{.operands = std::move(operands)}};
+  switch (step) {
+    case support::AggregateStep::kCoordinate:
+      return lir::AggregateSelector{
+          lir::ContainerElement{.operands = *std::move(operands)}};
+    case support::AggregateStep::kWindow:
+      return lir::AggregateSelector{
+          lir::ContainerSlice{.operands = *std::move(operands)}};
+  }
+  throw InternalError("mir_to_lir: unknown value-aggregate step");
+}
+
+auto FunctionLowerer::LowerValuePartRead(
+    const mir::Block& block, const mir::CallExpr& call,
+    support::AggregateStep step, mir::TypeId type)
+    -> diag::Result<lir::Operand> {
+  const std::optional<mir::ExprId> receiver = mir::CalleeReceiver(call.callee);
+  if (!receiver.has_value()) {
+    throw InternalError(
+        "mir_to_lir: a step into a value names the value it reaches into, and "
+        "this call names none -- please report this as a bug");
+  }
+  auto aggregate = LowerExpr(block, *receiver);
+  if (!aggregate) {
+    return std::unexpected(std::move(aggregate.error()));
+  }
+  auto selector = LowerContainerSelector(block, call, step);
+  if (!selector) {
+    return std::unexpected(std::move(selector.error()));
+  }
+  return Emit(
+      unit_->TranslateType(type), lir::AggregateExtractInstr{
+                                      .aggregate = *std::move(aggregate),
+                                      .selector = *std::move(selector)});
 }
 
 auto FunctionLowerer::LowerValuePartUpdate(

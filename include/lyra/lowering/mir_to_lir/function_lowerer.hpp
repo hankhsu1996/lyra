@@ -174,9 +174,10 @@ class FunctionLowerer {
   // without an explicit address-of in the source IR.
   auto LowerArgument(const mir::Block& block, mir::ExprId id)
       -> diag::Result<lir::Operand>;
-  // Every operand a call carries, in the order the runtime library takes them.
-  // The object the call dispatches on leads, because a library entry is a free
-  // function and takes what it acts on as its first parameter.
+  // Every operand a call carries, in the order the boundary takes them. The
+  // object the call dispatches on leads, because that boundary takes what an
+  // operation acts on as its first parameter, whichever way the library
+  // declares the entry to a call site that writes it out.
   auto LowerCallOperands(const mir::Block& block, const mir::CallExpr& call)
       -> diag::Result<std::vector<lir::Operand>>;
   auto LowerPlace(const mir::Block& block, mir::ExprId id)
@@ -195,10 +196,10 @@ class FunctionLowerer {
       -> diag::Result<lir::Operand>;
   // The storage a capability wrapper stands for. A wrapper that is itself
   // storage continues the chain that reached it; one that refers to storage
-  // elsewhere opens a new chain at what it refers to. This is the whole of how
-  // an access through a wrapper is realized here, so reading its contents,
-  // replacing them, and reaching a part of them all come through it and none of
-  // them asks the question a second time.
+  // elsewhere opens a new chain at what it refers to. Naming that storage is
+  // what a write descending into it and a reference lent over it both ask for,
+  // and asking it here once is what keeps the two from disagreeing about where
+  // the contents live.
   auto WrapperContentsPlace(const mir::Block& block, mir::ExprId wrapper)
       -> diag::Result<lir::Place>;
   // Which member a field access names. A class field names its declaring class,
@@ -291,6 +292,19 @@ class FunctionLowerer {
   // share them.
   auto LowerValuePartSelector(const mir::Block& block, mir::ExprId step)
       -> diag::Result<lir::AggregateSelector>;
+  // The same selector for a step a call names, whose coordinates are its
+  // arguments and whose kind the entry states.
+  auto LowerContainerSelector(
+      const mir::Block& block, const mir::CallExpr& call,
+      support::AggregateStep step) -> diag::Result<lir::AggregateSelector>;
+  // Reading the part a step names. It is the extract half of the pair a value
+  // aggregate is reached by, so a read and the descent of a write through the
+  // same step produce the same instruction rather than two shapes for one
+  // operation.
+  auto LowerValuePartRead(
+      const mir::Block& block, const mir::CallExpr& call,
+      support::AggregateStep step, mir::TypeId type)
+      -> diag::Result<lir::Operand>;
   // The shared realization of every write that reaches part of a value: read
   // the owner's whole value, descend the steps, transform the part, rebuild the
   // whole value outward, store it back. A value crosses to the generated side
@@ -305,9 +319,7 @@ class FunctionLowerer {
   // A receiver-mutating value-container method (`arr.delete()`). The container
   // value cannot be mutated in place through a shared handle, so the method is
   // a functional operation whose result is stored back through the receiver's
-  // owner, the same whole-value read / update / write as an element write. That
-  // updated container is the entry's one result, so a method that also states a
-  // result of its own has no realization in this form.
+  // owner, the same whole-value read / update / write as an element write.
   auto LowerMutatingCall(
       const mir::Block& block, const mir::CallExpr& call, support::BuiltinFn fn,
       mir::TypeId type) -> diag::Result<lir::Operand>;

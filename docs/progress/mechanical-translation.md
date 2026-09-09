@@ -97,16 +97,22 @@ cross-check predicts. This file owns only which instances are known and what is 
       what decides a namespace is the highest layer that can state its members, and folding a
       below-MIR realization into the shared one would give the front end a name for an operation it
       can never write -- the shape T21 measured from the other side.
+- [x] T7 -- A designated part of a value is named the same way at every layer. A container element
+      and a packed slice were reached one way to read and another to write: a read stayed the call
+      MIR states it as, while a write descended through the step the layer below states, so one
+      operation had two shapes and which one it took was settled by the path that built it. The read
+      a write performs on its way down took the second, so the same read appeared both ways in one
+      body. That layer's own vocabulary is one extract and one update over a step naming which
+      subvalue is reached -- which a product's component already used and these two did not -- so a
+      read now lowers to the same extract its write descends by. Which step an entry names is the
+      entry's own property rather than a list each side keeps; there had been one list per side,
+      held in step by nothing but their both being short. What this leaves: neither form of either
+      step reaches the dispatch that says how the library publishes an entry any more -- the reading
+      pair is spelled from the step itself, and the designating pair, which that dispatch used to
+      refuse, no longer arrives there at all -- so what it answers for those four is unread.
 
 ## What MIR can ask a backend to perform
 
-- [ ] T7 -- A designated part of a value is named the same way at every layer. Today an access
-      lowered from a call becomes a selector and is turned back into a call to the entry the call
-      named, so two layers of vocabulary exist only to be undone. It is the last place the two
-      runtime-operation namespaces cross, and which way it resolves is not settled: the read half
-      reaches into the shared namespace while its write half is one backend's own, and the fix is
-      either to lift the write half or to leave both to the backend, depending on whether reaching a
-      container element survives as an operation the layer below MIR states.
 - [ ] T22 -- Which operand carries the shape a call's result takes is stated on the entry's own
       declaration. Two of the three "which operand plays this role" facts already are -- the index
       one, and the erased spread part -- and this one is not, so the execution backend answers it

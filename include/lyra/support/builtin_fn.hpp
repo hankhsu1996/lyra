@@ -720,6 +720,12 @@ struct StaticFactory {
 // answered where the source is read and no layer below meets it.
 using EntryDeclaration = std::variant<FreeFunction, Method, StaticFactory>;
 
+// Which step of a value aggregate an entry names. A value's parts are not
+// independently addressable, so reaching one is a step saying which subvalue it
+// is rather than an address: one coordinate into a homogeneous or keyed value,
+// or one fixed-width window of one.
+enum class AggregateStep : std::uint8_t { kCoordinate, kWindow };
+
 // Every property of one runtime entry: what the library calls it, how a call
 // site reaches it, and what it does with the operands it is given. A consumer
 // asking any of those reads the field for it, never a list of its own, so an
@@ -774,6 +780,11 @@ struct RuntimeEntry {
   // it boxes into a runtime value in that domain and is read back element by
   // element. Absent for an entry that has none.
   std::optional<std::size_t> spread_operand = std::nullopt;
+  // Which step of a value aggregate the entry names, absent for an entry that
+  // names none. Reaching a part of a value to read it and designating one to
+  // write it name the same step, so a pair of entries differing only in which
+  // of the two they do carries the same one here.
+  std::optional<AggregateStep> aggregate_step = std::nullopt;
 };
 
 // The one declaration of `id`. Total over the entry set, so an entry added
