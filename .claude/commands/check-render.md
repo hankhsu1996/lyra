@@ -1,16 +1,16 @@
 ---
 description: Check backend render and MIR-consuming lowering code against the mechanical-translation contract, and report each problem it finds and where that problem is fixed, without changing any code
-allowed-tools: Read, Grep, Glob, Write, Bash(git status:*), Bash(git diff:*), Bash(git log:*), Bash(ls:*), Bash(grep:*), Bash(sed -n:*), Bash(wc:*)
+allowed-tools: Read, Grep, Glob, Bash(git status:*), Bash(git diff:*), Bash(git log:*), Bash(ls:*), Bash(grep:*), Bash(sed -n:*), Bash(wc:*)
 ---
 
 # Check Render
 
 Find the places where a consumer of MIR is deciding something MIR did not state, and report them.
 
-**This command changes no code.** The one file it writes is its own report, in the scratchpad. It
-does name the fix, at the root rather than at the site -- which layer states the fact, and what it
-states -- because a finding whose fix nobody can name is not finished being investigated. What it
-never hands over is a patch at the site, because the site is usually the wrong place to apply one.
+**This command changes no code, and writes no file.** It does name the fix, at the root rather than
+at the site -- which layer states the fact, and what it states -- because a finding whose fix nobody
+can name is not finished being investigated. What it never hands over is a patch at the site,
+because the site is usually the wrong place to apply one.
 
 ## Context
 
@@ -94,10 +94,9 @@ Findings only. Most branches in a mature backend are legitimate; a report that f
 and will be ignored, which costs more than saying nothing. If nothing is wrong, say so in one line
 and stop.
 
-**The evidence goes to a file; the chat gets the answers.** Write one section per finding into a
-scratchpad file -- where it is, what each arm emits, and how the contract's test lands on it -- so
-the judgement can be checked against the code without being read to get to the point. Then, in the
-chat, give per finding:
+**The whole report goes in the chat.** A finding that does not fit there is not finished being
+investigated, and the room a second document buys is room to sound certain in rather than room to
+check in. Give per finding:
 
 1. **The root, in one sentence** -- the fact nobody states, not the site where it surfaced.
 2. **Whether it is a problem**, by the contract's test: operation, spelling, or presentation. One
@@ -108,7 +107,14 @@ chat, give per finding:
    the record. Where the fix is genuinely not known yet, say so in those words -- that is a real
    answer, and a better one than a fix that has not been derived.
 
-Then the file path, in full, on its own line.
+   A fix counts as derived only when what it changes has been read to its edges. If naming it needed
+   an assumption about how something downstream behaves, it is not derived, and the honest report is
+   the open question rather than the fix -- the more so where a wrong answer would be silent, such as
+   what crosses a foreign ABI, because there the build does not catch the guess.
+
+4. **Whether it is closable now, or blocked, and on what.** This is what the next step reads. A
+   finding taken up in the same session needs nothing written down; one that is not belongs in the
+   queue the progress docs keep, where a reviewer sees it.
 
 **Before reporting a fix, write down what the site looks like once it lands.** If a branch of the
 same kind survives -- fewer arms, or the same arms chosen on a different input -- the fix is partial
