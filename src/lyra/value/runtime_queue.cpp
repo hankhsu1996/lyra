@@ -42,6 +42,13 @@ RuntimeQueue::RuntimeQueue(RuntimeValue element_default)
 }
 
 RuntimeQueue::RuntimeQueue(
+    RuntimeValue element_default, const PackedArray& max_bound)
+    : element_default_(
+          std::make_unique<RuntimeValue>(std::move(element_default))),
+      max_bound_(BoundOf(max_bound)) {
+}
+
+RuntimeQueue::RuntimeQueue(
     RuntimeValue element_default, std::vector<RuntimeValue> elements)
     : element_default_(
           std::make_unique<RuntimeValue>(std::move(element_default))),

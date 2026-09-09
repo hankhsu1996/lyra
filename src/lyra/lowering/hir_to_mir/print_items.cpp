@@ -162,8 +162,11 @@ auto BuildEnumPatternItem(
       mir::Expr{
           .data =
               mir::CallExpr{
-                  .callee = mir::Direct{.target = support::BuiltinFn::kLen},
-                  .arguments = {name_id}},
+                  .callee =
+                      mir::Direct{
+                          .target = support::BuiltinFn::kLen,
+                          .receiver = name_id},
+                  .arguments = {}},
           .type = unit.builtins.int_type});
   const mir::ExprId has_name = block.exprs.Add(
       mir::Expr{

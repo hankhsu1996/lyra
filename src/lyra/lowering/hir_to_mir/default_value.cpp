@@ -190,12 +190,13 @@ auto BuildDefaultValueExpr(
   // two source declarations with the same component types share one type.
   const auto first_member_default =
       [&](std::span<const mir::TypeId> members) -> mir::Expr {
+    constexpr base::ComponentIndex kFirstMember{0};
     return mir::Expr{
         .data =
             mir::UnionExpr{
-                .index = base::ComponentIndex{},
-                .value = block.exprs.Add(
-                    BuildDefaultValueExpr(unit, block, members.front()))},
+                .index = kFirstMember,
+                .value = block.exprs.Add(BuildDefaultValueExpr(
+                    unit, block, members[kFirstMember.value]))},
         .type = type};
   };
   return ty.Visit(

@@ -87,8 +87,7 @@ auto BuildNbaSubmitAfterCall(
                                     : support::BuiltinFn::kSubmitNbaAfter,
                       .receiver = runtime_id},
               .arguments =
-                  {duration_id, unit_power_id, precision_power_id,
-                   closure_id}},
+                  {duration_id, unit_power_id, precision_power_id, closure_id}},
       .type = unit.builtins.void_type};
 }
 
@@ -196,8 +195,11 @@ auto RunCarrierDetached(
   return mir::Expr{
       .data =
           mir::CallExpr{
-              .callee = mir::Direct{.target = support::BuiltinFn::kRunDetached},
-              .arguments = {runtime_id, carrier_id}},
+              .callee =
+                  mir::Direct{
+                      .target = support::BuiltinFn::kRunDetached,
+                      .receiver = runtime_id},
+              .arguments = {carrier_id}},
       .type = process.Owner().Unit().builtins.void_type};
 }
 

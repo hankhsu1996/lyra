@@ -706,8 +706,7 @@ auto RuntimeEntryOf(BuiltinFn id) -> RuntimeEntry {
       return {
           .name = "from_string", .declaration = StaticFactory{"FromString"}};
     case BuiltinFn::kFromArray:
-      return {
-          .name = "from_array", .declaration = StaticFactory{"FromArray"}};
+      return {.name = "from_array", .declaration = StaticFactory{"FromArray"}};
     case BuiltinFn::kConformBound:
       return {.name = "conform_bound", .declaration = Method{"ConformBound"}};
     case BuiltinFn::kArrayConcatElement:

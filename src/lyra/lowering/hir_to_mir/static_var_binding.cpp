@@ -134,16 +134,21 @@ auto BuildStaticStorageAccess(
           [&](const ClassCellHome& cls) {
             return mir::Expr{
                 .data =
-                    mir::StaticPropertyRef{
-                        .owner = frame.current_class_id, .prop = cls.property},
+                    mir::ReferenceExpr{
+                        .target =
+                            mir::StaticPropertyRef{
+                                .owner = frame.current_class_id,
+                                .prop = cls.property}},
                 .type = cell_type};
           },
           [&](const UnitCellHome& namespace_cell) {
             return mir::Expr{
                 .data =
-                    mir::ExternalUnitVariableRef{
-                        .unit_name = unit.name,
-                        .variable_name = namespace_cell.name},
+                    mir::ReferenceExpr{
+                        .target =
+                            mir::ExternalUnitVariableRef{
+                                .unit_name = unit.name,
+                                .variable_name = namespace_cell.name}},
                 .type = cell_type};
           }},
       home);

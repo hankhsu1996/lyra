@@ -45,6 +45,10 @@ class RuntimeQueue {
   // carries the exact element representation.
   explicit RuntimeQueue(RuntimeValue element_default);
 
+  // The same, holding no element whose index exceeds `max_bound`
+  // (LRM 7.10.5).
+  RuntimeQueue(RuntimeValue element_default, const PackedArray& max_bound);
+
   // LRM 10.9.1 assignment-pattern construction: the element list, with the
   // element default seeded for later out-of-range reads. The bounded form
   // discards on entry every element past its bound (LRM 7.10.5); a negative

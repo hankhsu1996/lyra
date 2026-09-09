@@ -39,8 +39,7 @@ auto BuildArrayFromArrayCall(
     mir::TypeId dst_type) -> mir::Expr {
   std::vector<mir::ExprId> arguments = {
       src_id, block.exprs.Add(BuildDefaultValueExpr(
-                  unit, block,
-                  RequiredContainerElementType(unit, dst_type)))};
+                  unit, block, RequiredContainerElementType(unit, dst_type)))};
   const mir::Type& destination = unit.types.Get(dst_type);
   if (const auto* fixed_size = destination.As<mir::UnpackedArrayType>()) {
     arguments.push_back(BuildMachineIntLiteral(

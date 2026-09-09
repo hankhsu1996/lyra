@@ -135,8 +135,10 @@ auto BuildDeferredReportSubmit(
           .data =
               mir::CallExpr{
                   .callee =
-                      mir::Direct{.target = DeferredSubmitBuiltin(timing)},
-                  .arguments = {runtime_id, closure_id}},
+                      mir::Direct{
+                          .target = DeferredSubmitBuiltin(timing),
+                          .receiver = runtime_id},
+                  .arguments = {closure_id}},
           .type = unit.builtins.void_type});
   scope.AppendStmt(mir::ExprStmt{.expr = submit_id});
   return scope;

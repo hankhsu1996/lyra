@@ -824,8 +824,11 @@ struct Expr {
   return Expr{
       .data =
           CallExpr{
-              .callee = Direct{.target = support::BuiltinFn::kSampledLoad},
-              .arguments = {cell}},
+              .callee =
+                  Direct{
+                      .target = support::BuiltinFn::kSampledLoad,
+                      .receiver = cell},
+              .arguments = {}},
       .type = value};
 }
 
@@ -838,8 +841,11 @@ struct Expr {
   return Expr{
       .data =
           CallExpr{
-              .callee = Direct{.target = support::BuiltinFn::kArmSampling},
-              .arguments = {cell}},
+              .callee =
+                  Direct{
+                      .target = support::BuiltinFn::kArmSampling,
+                      .receiver = cell},
+              .arguments = {}},
       .type = void_type};
 }
 

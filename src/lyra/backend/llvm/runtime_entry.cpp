@@ -511,7 +511,6 @@ auto EntryNamingOf(support::BuiltinFn fn) -> EntryNaming {
     case support::BuiltinFn::kSelfHandle:
       return NotRealized{.shape = kRecoversAHandleFromItsObject};
 
-
     // The runtime, then the user string, then the destination whose
     // representation names the entry.
     case support::BuiltinFn::kValuePlusargs:
