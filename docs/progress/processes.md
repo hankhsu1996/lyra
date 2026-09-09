@@ -41,6 +41,17 @@ under each item, and the conformance gaps at the end.
       one of these rather than something that escapes past the host boundary. Which severity each
       LRM run-time error takes stays open per condition; what is fixed is that a condition the
       standard leaves unstated is fatal, and that a report which does not end the run can be made.
+- [ ] P17 -- An ending task written inside a function. `$finish`, `$stop`, `$exit` and `$fatal` are
+      refused there, because ending the run is carried as an execution that does not continue while
+      a function is compiled as one that always returns to its caller. LRM 13.4's restriction does
+      not reach them: it is a closed list of time-controlling statements -- `#`, `##`, `@`, the
+      `fork-join` family, `wait`, `wait fork`, `wait_order`, `expect` -- and rule (c) of the same
+      clause positively admits a function that kills the current process, which is no less final. So
+      this is legal SystemVerilog, and it is the natural shape of a checking helper: a severity task
+      under an `if`, called from several places, which is how a self-checking design states its
+      expectation once instead of at every call site. It surfaces as a host compile error against
+      generated code rather than as a diagnostic naming the construct, which is a second gap, and
+      the one that makes it read as a compiler fault.
 - [x] P3 -- `always` / `always_ff` (LRM 9.2.2). `always_ff` collapses to the same shape as `always`
       because the LRM 9.2.2.4 restrictions are lint-only and the frontend already enforces them.
       Pathological zero-delay loops are caught by the engine's settle limit.

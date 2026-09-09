@@ -744,6 +744,16 @@ class HirDumper {
               return std::format(
                   "EnumMethod \"{}\"", FormatEnumMethod(e.method));
             },
+            [](const PastValueRef& p) -> std::string {
+              return std::format(
+                  "PastValue history={} ticks_back={}", p.history.value,
+                  p.ticks_back);
+            },
+            [](const ValueChangeRef& v) -> std::string {
+              return std::format(
+                  "ValueChange history={} reading={}", v.history.value,
+                  support::ValueChangeReadingName(v.reading));
+            },
             [this](const ForeignImportRef& f) -> std::string {
               const auto& decl = unit_->foreign_imports.Get(f.id);
               return std::format(
@@ -1319,6 +1329,16 @@ class HirDumper {
       Dedent();
     }
     DumpPatterns(s.patterns);
+    for (const SampledHistoryId id : s.sampled_histories.Ids()) {
+      const auto& h = s.sampled_histories.Get(id);
+      Line(
+          std::format(
+              "SampledHistory[{}] subject=Expr[{}] depth={}", id.value,
+              h.subject.value, h.depth));
+      Indent();
+      Line(std::format("clock: {}", FormatEventControl(h.clock)));
+      Dedent();
+    }
     for (const auto& p : s.processes) {
       DumpProcess(p, s.procedural_scopes);
     }

@@ -302,6 +302,11 @@ auto RenderTypeAsCpp(const mir::CompilationUnit& unit, mir::TypeId type_id)
             return std::format(
                 "lyra::runtime::Driver<{}>", RenderTypeAsCpp(unit, d.value));
           },
+          [&](const mir::SampledHistoryType& h) -> std::string {
+            return std::format(
+                "lyra::runtime::SampledHistory<{}>",
+                RenderTypeAsCpp(unit, h.value));
+          },
           [](const auto&) -> std::string {
             throw InternalError(
                 "RenderTypeAsCpp: MIR type not yet supported in the C++ "

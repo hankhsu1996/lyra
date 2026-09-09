@@ -32,6 +32,7 @@
 #include "lyra/lowering/hir_to_mir/package_initialization.hpp"
 #include "lyra/lowering/hir_to_mir/process_lowerer.hpp"
 #include "lyra/lowering/hir_to_mir/runtime_call.hpp"
+#include "lyra/lowering/hir_to_mir/sampled_history.hpp"
 #include "lyra/lowering/hir_to_mir/self_ref.hpp"
 #include "lyra/lowering/hir_to_mir/sensitivity_wait.hpp"
 #include "lyra/lowering/hir_to_mir/static_var_binding.hpp"
@@ -1232,6 +1233,27 @@ auto StructuralScopeLowerer::DeclareShape() -> diag::Result<mir::ClassId> {
   }
   data_object_fields_ = {
       hir_scope.structural_data_objects.size(), std::move(data_object_fields)};
+
+  // A history is storage nothing outside this scope names, so it takes no
+  // place in the published member order: what reaches it is the scope's own
+  // activation, its sampler, and the reads that asked for it (LRM 16.9.3). Its
+  // value type is the subject's own, because what a tick keeps is what that
+  // expression settled.
+  std::vector<mir::FieldId> sampled_history_fields;
+  sampled_history_fields.reserve(hir_scope.sampled_histories.size());
+  for (const hir::SampledHistoryId id : hir_scope.sampled_histories.Ids()) {
+    const hir::SampledHistoryDecl& history =
+        hir_scope.sampled_histories.Get(id);
+    const mir::TypeId value_type =
+        unit_lowerer.TranslateType(hir_scope.exprs.Get(history.subject).type);
+    sampled_history_fields.push_back(shape.fields.Add(
+        mir::FieldDecl{
+            .name = std::format("sampled_history_{}", id.value),
+            .type = unit_lowerer.Unit().types.Intern(
+                mir::Type{mir::SampledHistoryType{.value = value_type}})}));
+  }
+  sampled_history_fields_ = {
+      hir_scope.sampled_histories.size(), std::move(sampled_history_fields)};
   instance_member_fields_ = {
       hir_scope.instance_members.size(), std::move(instance_fields)};
   interface_port_fields_ = {
@@ -2048,6 +2070,21 @@ auto StructuralScopeLowerer::PopulateBodies(WalkFrame parent_frame)
     AppendProcessRegistration(unit_lowerer, activate_frame, body, false);
   }
 
+  // One sampler per history, not one per clocking event. Two histories under
+  // one event could share the wait, but deciding that two clocks are the same
+  // event means comparing lowered expressions for equality -- and a wrong
+  // answer there records one expression's ticks against another's clock, which
+  // no test would obviously catch. What sharing would save is a wait.
+  for (const hir::SampledHistoryId id : hir_scope.sampled_histories.Ids()) {
+    auto sampler_or = LowerSampledHistorySampler(
+        *this, ctor_frame, std::format("sampled_history_{}__sampler", id.value),
+        id, hir_scope.sampled_histories.Get(id));
+    if (!sampler_or) return std::unexpected(std::move(sampler_or.error()));
+    const mir::CallableId body =
+        mir_class.callables.Add(std::move(*sampler_or));
+    AppendProcessRegistration(unit_lowerer, activate_frame, body, false);
+  }
+
   // Recurse into descendants. Every class's shape is already published, so a
   // body that names a peer's member resolves through the existing identity
   // model regardless of which sibling lowers next.
@@ -2083,6 +2120,31 @@ auto StructuralScopeLowerer::PopulateBodies(WalkFrame parent_frame)
         mir::ExprStmt{
             .expr = activate_block.exprs.Add(
                 mir::MakeCellArmSamplingCallExpr(cell, void_type))});
+  }
+
+  // Every history is filled here, once its subject's cells are armed above.
+  // What the subject evaluates to now is the expression's default sampled value
+  // (LRM 16.5.1), which is the answer the standard requires of a read that
+  // reaches further back than the ticks that have happened -- so a history that
+  // starts full has no empty case and keeps no count of them.
+  for (const hir::SampledHistoryId id : hir_scope.sampled_histories.Ids()) {
+    const hir::SampledHistoryDecl& history =
+        hir_scope.sampled_histories.Get(id);
+    auto subject_or = LowerExpr(
+        hir_scope.exprs.Get(history.subject),
+        activate_frame.WithReadsAsOf(ReadsAsOf::kPreponed));
+    if (!subject_or) return std::unexpected(std::move(subject_or.error()));
+    const mir::ExprId value = activate_block.exprs.Add(*std::move(subject_or));
+    const mir::ExprId depth = BuildIntLiteral(
+        unit_lowerer.Unit(), activate_block,
+        static_cast<std::int64_t>(history.depth));
+    activate_block.AppendStmt(
+        mir::ExprStmt{
+            .expr = activate_block.exprs.Add(
+                mir::MakeSampledHistoryInstallCallExpr(
+                    BuildSampledHistoryExpr(
+                        activate_block, activate_frame, *this, id),
+                    value, depth, void_type))});
   }
 
   ctor_code.params.clear();

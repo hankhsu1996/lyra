@@ -650,6 +650,22 @@ struct ResolvedType {
   auto operator==(const ResolvedType&) const -> bool = default;
 };
 
+// What the ticks of one clocking event have settled for one expression (LRM
+// 16.9.3). Declares that a member's storage keeps sampled values of the inner
+// value type: filled where the design activates, appended to at each tick, and
+// read by naming how far back the reader reaches.
+//
+// How deep it reaches is not part of the type. It is fixed by filling the
+// storage rather than by constructing it, so two histories of one value type
+// that reach back different distances are one type here and one realization
+// below -- which is what keeps a distinction with no realization behind it out
+// of the type pool.
+struct SampledHistoryType {
+  TypeId value;
+
+  auto operator==(const SampledHistoryType&) const -> bool = default;
+};
+
 // The drive capability for a net: a handle to one of a `ResolvedType` net's
 // contributions. A driver updates only its own contribution; the net resolves,
 // so a driver carries the same resolution its net does.
@@ -680,8 +696,8 @@ class Type {
       CrossUnitClassType, RuntimeClassType, RuntimeEffectsType, FilesType,
       DiagnosticType, RuntimeLibraryType, CoroutineType, RefType, PointerType,
       ManagedRefType, VectorType, TupleType, UnionType, TaggedUnionType,
-      EmptyType, ObservableType, ResolvedType, DriverType, StructType,
-      ClosureType>;
+      EmptyType, ObservableType, ResolvedType, DriverType, SampledHistoryType,
+      StructType, ClosureType>;
 
  public:
   explicit Type(Data data) : data_(std::move(data)) {

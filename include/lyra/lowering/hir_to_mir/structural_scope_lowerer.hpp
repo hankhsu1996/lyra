@@ -191,6 +191,14 @@ class StructuralScopeLowerer {
         hir::StructuralHops{.value = hops.value - 1});
   }
 
+  // The MIR field the history of one sampled expression became (LRM 16.9.3).
+  // It takes no hop count: a history is recorded on the scope whose process
+  // reads it, so the reader and the storage are always the same scope.
+  [[nodiscard]] auto TranslateSampledHistory(hir::SampledHistoryId hir_id) const
+      -> mir::FieldId {
+    return sampled_history_fields_.Get(hir_id);
+  }
+
   // The MIR field a structural data object became, in the scope `hops`
   // enclosing edges out from this one.
   [[nodiscard]] auto TranslateStructuralDataObject(
@@ -338,6 +346,8 @@ class StructuralScopeLowerer {
   PackageInitializationPlan package_init_plan_;
   base::Translation<hir::StructuralDataObjectId, mir::FieldId>
       data_object_fields_;
+  base::Translation<hir::SampledHistoryId, mir::FieldId>
+      sampled_history_fields_;
   base::Translation<hir::InterfacePortId, mir::FieldId> interface_port_fields_;
   base::Translation<hir::RoutedRefId, RoutedRefMeta> routed_ref_targets_;
   base::Translation<hir::GenerateId, GenerateBindings> generate_bindings_;

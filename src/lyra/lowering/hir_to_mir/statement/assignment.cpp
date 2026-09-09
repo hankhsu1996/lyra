@@ -217,6 +217,10 @@ auto CallStatementSuspends(
           // An enumerated type method (LRM 6.19.5) is answered from the member
           // table, either as a constant or by a synthesized non-task callable.
           [](const hir::EnumMethodRef&) { return false; },
+          // A sampled value function reads state a clocking event's ticks have
+          // already settled (LRM 16.9.3), so it waits for nothing.
+          [](const hir::PastValueRef&) { return false; },
+          [](const hir::ValueChangeRef&) { return false; },
       },
       call.callee);
 }
@@ -311,6 +315,14 @@ auto LowerSystemSubroutineCallStmtForm(
             // Reading a sampled value settles nothing outside the value it
             // answers with, so a statement-position call has no form of its own
             // and lowers as the expression it is.
+            return std::nullopt;
+          },
+          [](const support::ValueChangeSystemSubroutineInfo&)
+              -> std::optional<diag::Result<mir::Stmt>> {
+            return std::nullopt;
+          },
+          [](const support::PastValueSystemSubroutineInfo&)
+              -> std::optional<diag::Result<mir::Stmt>> {
             return std::nullopt;
           },
           [&](const support::MemFileSystemSubroutineInfo& mem_file)

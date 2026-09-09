@@ -8,6 +8,7 @@
 #include "lyra/runtime/gc_ref.hpp"
 #include "lyra/runtime/named_event.hpp"
 #include "lyra/runtime/net.hpp"
+#include "lyra/runtime/sampled_history.hpp"
 #include "lyra/runtime/scope_program.hpp"
 #include "lyra/runtime/var.hpp"
 #include "lyra/value/chandle.hpp"
@@ -100,7 +101,15 @@ class MemberStorage {
       ActivationValueCell<value::RuntimeAssociativeArray>,
       ResolvedNet<value::PackedArray>, ResolvedNet<value::RuntimeTuple>,
       ResolvedNet<value::RuntimeUnion>,
-      ResolvedNet<value::RuntimeUnpackedArray>>
+      ResolvedNet<value::RuntimeUnpackedArray>,
+      SampledHistory<value::PackedArray>, SampledHistory<value::String>,
+      SampledHistory<value::Real>, SampledHistory<value::ShortReal>,
+      SampledHistory<value::RuntimeTuple>, SampledHistory<value::RuntimeUnion>,
+      SampledHistory<value::RuntimeTaggedUnion>,
+      SampledHistory<value::RuntimeDynamicArray>,
+      SampledHistory<value::RuntimeUnpackedArray>,
+      SampledHistory<value::RuntimeQueue>,
+      SampledHistory<value::RuntimeAssociativeArray>>
       object_;
 };
 

@@ -61,13 +61,14 @@ auto LowerTimedWaitWrapper(
 // (LRM 12.4) has already decided, because that rule is the language's and
 // belongs where the expression is compiled rather than in the runtime that
 // reads the answer.
+template <ExprLowerer Lowerer>
 auto BuildConditionClosure(
-    ProcessLowerer& process, WalkFrame frame, mir::Block& block,
-    hir::ExprId condition) -> diag::Result<mir::ExprId> {
-  auto& unit = process.Owner().Unit();
+    Lowerer& lowerer, WalkFrame frame, mir::Block& block, hir::ExprId condition)
+    -> diag::Result<mir::ExprId> {
+  auto& unit = lowerer.Owner().Unit();
   ClosureBuilder closure(unit, frame);
-  auto cond_or = process.LowerExpr(
-      process.HirBody().exprs.Get(condition), closure.Frame());
+  auto cond_or =
+      lowerer.LowerExpr(lowerer.HirExprs().Get(condition), closure.Frame());
   if (!cond_or) return std::unexpected(std::move(cond_or.error()));
   mir::Block& body = closure.Body();
   const mir::ExprId raw_id = body.exprs.Add(*std::move(cond_or));
@@ -106,14 +107,15 @@ auto DeclareObservation(
 // worth here, and the `iff` qualifier where the source wrote one. It is one
 // value every leaf of that expression names, since the value being watched is
 // the expression's and there is one of it.
+template <ExprLowerer Lowerer>
 auto BuildObservationLocal(
-    ProcessLowerer& process, WalkFrame frame, mir::Block& block,
+    Lowerer& lowerer, WalkFrame frame, mir::Block& block,
     const hir::EventTrigger& trigger) -> diag::Result<mir::LocalId> {
-  auto& unit = process.Owner().Unit();
+  auto& unit = lowerer.Owner().Unit();
 
   ClosureBuilder closure(unit, frame);
-  auto value_or = process.LowerExpr(
-      process.HirBody().exprs.Get(trigger.signal), closure.Frame());
+  auto value_or = lowerer.LowerExpr(
+      lowerer.HirExprs().Get(trigger.signal), closure.Frame());
   if (!value_or) return std::unexpected(std::move(value_or.error()));
   const mir::ExprId value_id = closure.Body().exprs.Add(*std::move(value_or));
 
@@ -122,7 +124,7 @@ auto BuildObservationLocal(
       BuildIntLiteral(unit, block, static_cast<std::int64_t>(trigger.edge))};
   if (trigger.condition.has_value()) {
     auto condition =
-        BuildConditionClosure(process, frame, block, *trigger.condition);
+        BuildConditionClosure(lowerer, frame, block, *trigger.condition);
     if (!condition) return std::unexpected(std::move(condition.error()));
     arguments.push_back(*condition);
   }
@@ -239,12 +241,13 @@ auto BuildTriggerCallExpr(
 
 }  // namespace
 
+template <ExprLowerer Lowerer>
 auto BuildEventWaitStmt(
-    ProcessLowerer& process, WalkFrame frame, mir::Block& block,
-    const hir::EventControl& ec) -> diag::Result<mir::Stmt> {
+    Lowerer& lowerer, const StructuralScopeLowerer& scope, WalkFrame frame,
+    mir::Block& block, const hir::EventControl& ec) -> diag::Result<mir::Stmt> {
   std::vector<ObservedLeaf> leaves;
   for (const hir::EventTrigger& trigger : ec.triggers) {
-    auto observation = BuildObservationLocal(process, frame, block, trigger);
+    auto observation = BuildObservationLocal(lowerer, frame, block, trigger);
     if (!observation) {
       return std::unexpected(std::move(observation.error()));
     }
@@ -253,9 +256,15 @@ auto BuildEventWaitStmt(
           ObservedLeaf{.entry = leaf, .observation = *observation});
     }
   }
-  return BuildEventControlWaitStmt(
-      block, frame, process.EnclosingScopeLowerer(), leaves);
+  return BuildEventControlWaitStmt(block, frame, scope, leaves);
 }
+
+template auto BuildEventWaitStmt(
+    ProcessLowerer&, const StructuralScopeLowerer&, WalkFrame, mir::Block&,
+    const hir::EventControl&) -> diag::Result<mir::Stmt>;
+template auto BuildEventWaitStmt(
+    const StructuralScopeLowerer&, const StructuralScopeLowerer&, WalkFrame,
+    mir::Block&, const hir::EventControl&) -> diag::Result<mir::Stmt>;
 
 auto BuildNamedEventWaitStmt(
     ProcessLowerer& process, WalkFrame frame, mir::Block& block,
@@ -277,7 +286,8 @@ auto BuildAnyEventWaitStmt(
   return std::visit(
       Overloaded{
           [&](const hir::EventControl& ec) {
-            return BuildEventWaitStmt(process, frame, block, ec);
+            return BuildEventWaitStmt(
+                process, process.EnclosingScopeLowerer(), frame, block, ec);
           },
           [&](const hir::NamedEventControl& nec) {
             return BuildNamedEventWaitStmt(process, frame, block, nec);
@@ -297,7 +307,9 @@ auto LowerTimedStmt(
                   return BuildDelayWaitStmt(process, inner, block, d);
                 },
                 [&](const hir::EventControl& ec) {
-                  return BuildEventWaitStmt(process, inner, block, ec);
+                  return BuildEventWaitStmt(
+                      process, process.EnclosingScopeLowerer(), inner, block,
+                      ec);
                 },
                 [&](const hir::NamedEventControl& nec) {
                   return BuildNamedEventWaitStmt(process, inner, block, nec);

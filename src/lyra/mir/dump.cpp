@@ -464,6 +464,10 @@ class MirDumper {
                   "Driver(value=Type[{}], resolution={})", d.value.value,
                   FormatNetResolution(d.resolution));
             },
+            [](const SampledHistoryType& h) -> std::string {
+              return std::format(
+                  "SampledHistory(value=Type[{}])", h.value.value);
+            },
         });
   }
 

@@ -119,6 +119,14 @@ enum class BuiltinFn : std::uint16_t {
   // leaf. `Triggered` is the LRM 15.5.3 same-time-step query.
   kTrigger,
   kTriggered,
+  // LRM 16.9.3 sampled value history operations, all reached through the
+  // history's own address. `Install` fills it with the expression's default
+  // sampled value and fixes how far back it reaches, which the design does
+  // where it activates; `Push` records what a tick settled; `At` answers with
+  // what the tick a read names settled, counting back from the most recent.
+  kSampledHistoryInstall,
+  kSampledHistoryPush,
+  kSampledHistoryAt,
   // LRM 20.9 / 21.3.4.3. 2-state packed types return false; downstream
   // constant-folds those calls.
   kIsUnknown,

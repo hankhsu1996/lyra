@@ -256,6 +256,50 @@ struct DistributionSystemSubroutineInfo {
 // of a clocking event answer from more than that, and carry it.
 struct SampledValueSystemSubroutineInfo {};
 
+// What a value change function reports about the sampled value it compares
+// against the most recent strictly prior tick's (LRM 16.9.3). `$rose` and
+// `$fell` read only the least significant bit of each; `$stable` and `$changed`
+// read the whole value, and are each other's negation.
+enum class ValueChangeReading : std::uint8_t {
+  kRoseToOne,
+  kFellToZero,
+  kUnchanged,
+  kChanged,
+};
+
+// The reading decides which of the four functions a call is, so the name it
+// prints under follows from it rather than being carried beside it.
+[[nodiscard]] constexpr auto ValueChangeReadingName(ValueChangeReading reading)
+    -> std::string_view {
+  switch (reading) {
+    case ValueChangeReading::kRoseToOne:
+      return "$rose";
+    case ValueChangeReading::kFellToZero:
+      return "$fell";
+    case ValueChangeReading::kUnchanged:
+      return "$stable";
+    case ValueChangeReading::kChanged:
+      return "$changed";
+  }
+  return "";
+}
+
+// A sampled value function whose answer is a comparison across two ticks of a
+// clocking event (LRM 16.9.3): `$rose`, `$fell`, `$stable`, `$changed`. Both
+// comparands are sampled values -- the one for the current time step, which is
+// what `$sampled` answers with, and the one the clocking event's most recent
+// strictly prior tick settled.
+struct ValueChangeSystemSubroutineInfo {
+  ValueChangeReading reading;
+};
+
+// `$past` (LRM 16.9.3): the sampled value of its first argument at the kth
+// strictly prior tick of a clocking event, and that expression's default
+// sampled value where that many prior ticks have not happened. It carries no
+// axis of its own -- which tick it reaches is the call's own argument, and an
+// absent one is the 1 the standard defaults it to.
+struct PastValueSystemSubroutineInfo {};
+
 using SystemSubroutineSemantic = std::variant<
     PrintSystemSubroutineInfo, TerminationSystemSubroutineInfo,
     DiagnosticSystemSubroutineInfo, FileIOSystemSubroutineInfo,
@@ -264,7 +308,8 @@ using SystemSubroutineSemantic = std::variant<
     PrintTimescaleSystemSubroutineInfo, PlusargsSystemSubroutineInfo,
     MemFileSystemSubroutineInfo, BitVectorSystemSubroutineInfo,
     HostCommandSystemSubroutineInfo, RandomSystemSubroutineInfo,
-    DistributionSystemSubroutineInfo, SampledValueSystemSubroutineInfo>;
+    DistributionSystemSubroutineInfo, SampledValueSystemSubroutineInfo,
+    ValueChangeSystemSubroutineInfo, PastValueSystemSubroutineInfo>;
 
 struct SystemSubroutineDesc {
   SystemSubroutineId id;
@@ -1126,6 +1171,62 @@ inline constexpr std::array kSystemSubroutines = {
         .result_conv = ReturnConvention::kOperandType,
         .arg_policy = ArgCountPolicy{.min_args = 1, .max_args = 1},
         .semantic = SampledValueSystemSubroutineInfo{},
+    },
+    // The four value change functions take the expression and, where the source
+    // wrote one, the clocking event to count ticks of (LRM 16.9.3). Each
+    // answers with the 1'b1 / 1'b0 the standard states rather than with a value
+    // of the expression's own type.
+    SystemSubroutineDesc{
+        .id = SystemSubroutineId{79},
+        .name = "$rose",
+        .kind = SystemSubroutineKind::kFunction,
+        .result_conv = ReturnConvention::kBit,
+        .arg_policy = ArgCountPolicy{.min_args = 1, .max_args = 2},
+        .semantic =
+            ValueChangeSystemSubroutineInfo{
+                .reading = ValueChangeReading::kRoseToOne},
+    },
+    SystemSubroutineDesc{
+        .id = SystemSubroutineId{80},
+        .name = "$fell",
+        .kind = SystemSubroutineKind::kFunction,
+        .result_conv = ReturnConvention::kBit,
+        .arg_policy = ArgCountPolicy{.min_args = 1, .max_args = 2},
+        .semantic =
+            ValueChangeSystemSubroutineInfo{
+                .reading = ValueChangeReading::kFellToZero},
+    },
+    SystemSubroutineDesc{
+        .id = SystemSubroutineId{81},
+        .name = "$stable",
+        .kind = SystemSubroutineKind::kFunction,
+        .result_conv = ReturnConvention::kBit,
+        .arg_policy = ArgCountPolicy{.min_args = 1, .max_args = 2},
+        .semantic =
+            ValueChangeSystemSubroutineInfo{
+                .reading = ValueChangeReading::kUnchanged},
+    },
+    SystemSubroutineDesc{
+        .id = SystemSubroutineId{82},
+        .name = "$changed",
+        .kind = SystemSubroutineKind::kFunction,
+        .result_conv = ReturnConvention::kBit,
+        .arg_policy = ArgCountPolicy{.min_args = 1, .max_args = 2},
+        .semantic =
+            ValueChangeSystemSubroutineInfo{
+                .reading = ValueChangeReading::kChanged},
+    },
+    // `$past` takes the expression, the tick count, the expression gating the
+    // clocking event, and that event -- the last three optional and elided
+    // positionally, so an omitted one arrives as an absent argument rather than
+    // shortening the list (LRM 16.9.3).
+    SystemSubroutineDesc{
+        .id = SystemSubroutineId{83},
+        .name = "$past",
+        .kind = SystemSubroutineKind::kFunction,
+        .result_conv = ReturnConvention::kOperandType,
+        .arg_policy = ArgCountPolicy{.min_args = 1, .max_args = 4},
+        .semantic = PastValueSystemSubroutineInfo{},
     },
 };
 

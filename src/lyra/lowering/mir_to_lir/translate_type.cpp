@@ -292,6 +292,9 @@ auto UnitLowerer::TranslateType(const mir::Type& ty) -> lir::Type {
             return lir::Type{
                 lir::ObservableType{.value = TranslateType(ob.value)}};
           },
+          [&](const mir::SampledHistoryType&) -> lir::Type {
+            return RecordUnsupportedType("a sampled value history");
+          },
           [&](const mir::StructType& s) -> lir::Type {
             return lir::Type{
                 lir::StructType{.struct_id = StructDeclaration(s.struct_id)}};

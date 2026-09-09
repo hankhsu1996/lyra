@@ -347,6 +347,12 @@ auto EntryNamingOf(support::BuiltinFn fn) -> EntryNaming {
   // it needs an entry per value domain, which the library does not carry.
   constexpr std::string_view kAnswersFromStateBesideTheContents =
       "answers from state a cell keeps beside its contents";
+  // A history is member storage holding one value per tick of a clocking event
+  // (LRM 16.9.3), so filling it, appending to it, and reading the tick a read
+  // names are each an operation on that storage rather than on a value. Each
+  // needs an entry per value domain, which the library does not carry.
+  constexpr std::string_view kKeepsAValuePerTick =
+      "keeps one value per tick of a clocking event";
 
   switch (fn) {
     case support::BuiltinFn::kElement:
@@ -502,6 +508,11 @@ auto EntryNamingOf(support::BuiltinFn fn) -> EntryNaming {
     case support::BuiltinFn::kSampledLoad:
     case support::BuiltinFn::kArmSampling:
       return NotRealized{.shape = kAnswersFromStateBesideTheContents};
+
+    case support::BuiltinFn::kSampledHistoryInstall:
+    case support::BuiltinFn::kSampledHistoryPush:
+    case support::BuiltinFn::kSampledHistoryAt:
+      return NotRealized{.shape = kKeepsAValuePerTick};
 
     case support::BuiltinFn::kElementRef:
     case support::BuiltinFn::kSliceRef:

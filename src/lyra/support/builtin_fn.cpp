@@ -281,6 +281,13 @@ auto RuntimeEntryOf(BuiltinFn id) -> RuntimeEntry {
       return {.name = "trigger", .declaration = Method{"Trigger"}};
     case BuiltinFn::kTriggered:
       return {.name = "triggered", .declaration = Method{"Triggered"}};
+    case BuiltinFn::kSampledHistoryInstall:
+      return {
+          .name = "sampled_history_install", .declaration = Method{"Install"}};
+    case BuiltinFn::kSampledHistoryPush:
+      return {.name = "sampled_history_push", .declaration = Method{"Push"}};
+    case BuiltinFn::kSampledHistoryAt:
+      return {.name = "sampled_history_at", .declaration = Method{"At"}};
     case BuiltinFn::kIsUnknown:
       return {.name = "is_unknown", .declaration = Method{"IsUnknown"}};
     case BuiltinFn::kCountBits:
