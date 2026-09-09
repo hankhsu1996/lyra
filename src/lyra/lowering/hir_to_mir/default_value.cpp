@@ -429,26 +429,42 @@ auto CrossesArrayContainerKinds(
          !same_kind;
 }
 
-auto ArrayContainerElementType(
-    const mir::CompilationUnit& unit, mir::TypeId array_type) -> mir::TypeId {
-  return unit.types.Get(array_type).Visit([](const auto& t) -> mir::TypeId {
-    using TyT = std::decay_t<decltype(t)>;
-    if constexpr (
-        std::same_as<TyT, mir::UnpackedArrayType> ||
-        std::same_as<TyT, mir::DynamicArrayType> ||
-        std::same_as<TyT, mir::QueueType>) {
-      return t.element_type;
-    } else {
-      throw InternalError(
-          "ArrayContainerElementType: type is not an array container");
-    }
-  });
+auto ContainerElementType(const mir::CompilationUnit& unit, mir::TypeId type)
+    -> std::optional<mir::TypeId> {
+  using Element = std::optional<mir::TypeId>;
+  return unit.types.Get(type).Visit(
+      Overloaded{
+          [](const mir::UnpackedArrayType& t) -> Element {
+            return t.element_type;
+          },
+          [](const mir::DynamicArrayType& t) -> Element {
+            return t.element_type;
+          },
+          [](const mir::QueueType& t) -> Element { return t.element_type; },
+          [](const mir::AssociativeArrayType& t) -> Element {
+            return t.element_type;
+          },
+          [](const auto&) -> Element { return std::nullopt; }});
+}
+
+auto RequiredContainerElementType(
+    const mir::CompilationUnit& unit, mir::TypeId container) -> mir::TypeId {
+  const std::optional<mir::TypeId> element =
+      ContainerElementType(unit, container);
+  if (!element.has_value()) {
+    throw InternalError(
+        "RequiredContainerElementType: the type holds no elements, and the "
+        "caller reached it only because its own construction said it would -- "
+        "please report this as a bug");
+  }
+  return *element;
 }
 
 auto BuildArrayConstructionCall(
     const mir::CompilationUnit& unit, mir::Block& block, mir::TypeId array_type,
     std::vector<mir::ExprId> elements) -> mir::Expr {
-  const mir::TypeId element_type = ArrayContainerElementType(unit, array_type);
+  const mir::TypeId element_type =
+      RequiredContainerElementType(unit, array_type);
   const mir::ExprId element_default =
       block.exprs.Add(BuildDefaultValueExpr(unit, block, element_type));
   const mir::TypeId list_type =
@@ -467,7 +483,7 @@ auto BuildArrayRepeatCall(
     mir::ExprId element_default, std::vector<mir::ExprId> repeat_unit,
     mir::ExprId count_id) -> mir::Expr {
   const mir::TypeId repeat_unit_type = mir::MachineArrayOf(
-      unit.types, ArrayContainerElementType(unit, array_type),
+      unit.types, RequiredContainerElementType(unit, array_type),
       repeat_unit.size());
   const mir::ExprId repeat_unit_id = block.exprs.Add(
       mir::Expr{

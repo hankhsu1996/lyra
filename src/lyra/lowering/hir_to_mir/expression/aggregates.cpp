@@ -30,6 +30,34 @@ namespace lyra::lowering::hir_to_mir {
 
 namespace {
 
+// LRM 10.10: an unpacked concatenation part that contributes its elements in
+// order rather than contributing itself as one element. The array being built
+// is what settles it: a part of the element type is one element however
+// array-shaped that type is, and any other container spreads. Where the
+// element type is itself a container, both readings fit the part's own type
+// and only the destination tells them apart.
+auto ContributesItsElements(
+    const mir::CompilationUnit& unit, mir::TypeId part, mir::TypeId element)
+    -> bool {
+  if (part == element) {
+    return false;
+  }
+  return ContainerElementType(unit, part).has_value();
+}
+
+// A container whose value is built from a positional list of its elements,
+// which is every array-shaped one. An associative array holds elements of one
+// type like the rest and is still not among them: LRM 7.9.11 builds it from
+// key-value entries, so there is no list to lay down or to repeat.
+//
+// What an operand contributes and what a result can be assembled as are two
+// questions whose answers coincide over these three kinds and whose LRM clauses
+// are not the same, so neither one stands in for the other.
+auto BuildsFromAnElementList(const mir::Type& ty) -> bool {
+  return ty.Is<mir::UnpackedArrayType>() || ty.Is<mir::DynamicArrayType>() ||
+         ty.Is<mir::QueueType>();
+}
+
 // The value a run repeated `count_id` times denotes, landing in the type given
 // (LRM 11.4.12). What the run is made of -- bits or characters -- is the
 // entry's own question, so the same call serves both.
@@ -61,10 +89,11 @@ auto BuildUnpackedConcatChain(
     const std::vector<mir::ExprId>& operand_ids) -> mir::Expr {
   auto& block = *frame.current_block;
   const mir::CompilationUnit& unit = owner.Unit();
+  const mir::TypeId element_type = RequiredContainerElementType(unit, acc_type);
   mir::Expr acc = BuildArrayConstructionCall(unit, block, acc_type, {});
   for (const mir::ExprId part : operand_ids) {
     const bool spread =
-        IsArrayContainerType(unit.types.Get(block.exprs.Get(part).type));
+        ContributesItsElements(unit, block.exprs.Get(part).type, element_type);
     const mir::ExprId acc_id = block.exprs.Add(std::move(acc));
     acc = mir::Expr{
         .data =
@@ -125,10 +154,8 @@ auto LowerHirConcatExpr(
     return join(lhs, operand_ids.back());
   }
   // A queue or a dynamic array is grown from the parts directly, the chain
-  // building at the destination's own type. A part whose value is itself a
-  // container is spread and contributes its elements in order; the same value
-  // would be one element if the destination's element type were a container, so
-  // the role is the program's fact, not the operand type's.
+  // building at the destination's own type -- which is also what decides what
+  // each part contributes.
   if (result_ty.Is<mir::QueueType>() || result_ty.Is<mir::DynamicArrayType>()) {
     return BuildUnpackedConcatChain(
         lowerer.Owner(), frame, result_type, operand_ids);
@@ -140,18 +167,19 @@ auto LowerHirConcatExpr(
   // when the counts differ (LRM 10.10). The front end has already rejected a
   // spread-free mismatch, so only the spread form can reach the run-time check.
   if (result_ty.Is<mir::UnpackedArrayType>()) {
+    const mir::TypeId element_type =
+        RequiredContainerElementType(unit, result_type);
     const bool has_spread =
         std::ranges::any_of(operand_ids, [&](mir::ExprId part) {
-          return IsArrayContainerType(
-              unit.types.Get(block.exprs.Get(part).type));
+          return ContributesItsElements(
+              unit, block.exprs.Get(part).type, element_type);
         });
     if (!has_spread) {
       return BuildArrayConstructionCall(
           unit, block, result_type, std::move(operand_ids));
     }
     const mir::TypeId dyn_type = unit.types.Intern(
-        mir::Type{mir::DynamicArrayType{
-            .element_type = ArrayContainerElementType(unit, result_type)}});
+        mir::Type{mir::DynamicArrayType{.element_type = element_type}});
     const mir::ExprId dyn_id = block.exprs.Add(BuildUnpackedConcatChain(
         lowerer.Owner(), frame, dyn_type, operand_ids));
     const mir::ExprId count_id = BuildMachineIntLiteral(
@@ -214,7 +242,7 @@ auto LowerHirAssignmentPatternExpr(
   }
   mir::CompilationUnit& unit = lowerer.Owner().Unit();
   const auto& result_ty = unit.types.Get(result_type);
-  if (IsArrayContainerType(result_ty)) {
+  if (BuildsFromAnElementList(result_ty)) {
     return BuildArrayConstructionCall(
         unit, block, result_type, std::move(element_ids));
   }
@@ -353,7 +381,7 @@ auto LowerHirAssignmentPatternKeyedExpr(
         unit, block, result_type, std::move(elements));
   }
 
-  const mir::TypeId element_type = ArrayContainerElementType(unit, result_type);
+  const mir::TypeId element_type = array_ty.element_type;
   const auto build_filled = [&](WalkFrame at) -> diag::Result<mir::Expr> {
     auto& target = *at.current_block;
     auto value =
@@ -453,9 +481,9 @@ auto LowerHirAssignmentPatternReplicationExpr(
   const mir::ExprId count_value = block.exprs.Add(*std::move(count_or));
   const mir::ExprId count_id =
       block.exprs.Add(MakeToInt64Call(unit, count_value));
-  if (IsArrayContainerType(result_ty)) {
+  if (BuildsFromAnElementList(result_ty)) {
     const mir::TypeId element_type =
-        ArrayContainerElementType(unit, result_type);
+        RequiredContainerElementType(unit, result_type);
     const mir::ExprId element_default =
         block.exprs.Add(BuildDefaultValueExpr(unit, block, element_type));
     return BuildArrayRepeatCall(

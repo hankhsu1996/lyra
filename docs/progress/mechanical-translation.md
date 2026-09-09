@@ -114,6 +114,19 @@ cross-check predicts. This file owns only which instances are known and what is 
       rest of this file -- extension safety rather than decision-making -- and it is why several of
       the others went unnoticed: a set that lost a member kept compiling.
 
+      What separates the twenty such arms is whether the arm's answer can be told from a real one.
+      An absent answer can, and a caller that has to decide what absence means then says so at its
+      own site; a substituted value cannot, and every caller inherits a guess. Three functions asked
+      one container's element type three ways -- one covering three container kinds and refusing the
+      fourth, one covering four and answering with the container itself, one over the other layer's
+      types answering with absence -- which is the whole failure in miniature. That is now one
+      question with one answer.
+
+      What is left needs an answer this file does not have: the remaining substituting arms all walk
+      a type's or a node's parts, and each carries its own idea of what has parts. One question --
+      the components of a type, the child expressions of a node -- asked once would retire the whole
+      class, and no per-arm enumeration reaches it.
+
 ## Small and mechanical
 
 - [ ] T14 -- One visit over the expression set decides how an expression is rendered; value position

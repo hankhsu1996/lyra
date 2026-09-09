@@ -172,16 +172,8 @@ auto ArrayMethodReceiverElementType(const hir::Type& ty)
 // as the prototype; a scalar result is its own prototype.
 auto ResultPrototypeType(
     const UnitLowerer& unit_lowerer, mir::TypeId result_type) -> mir::TypeId {
-  return unit_lowerer.Unit()
-      .types.Get(result_type)
-      .Visit(
-          Overloaded{
-              [](const mir::UnpackedArrayType& t) { return t.element_type; },
-              [](const mir::DynamicArrayType& t) { return t.element_type; },
-              [](const mir::QueueType& t) { return t.element_type; },
-              [](const mir::AssociativeArrayType& t) { return t.element_type; },
-              [result_type](const auto&) { return result_type; },
-          });
+  return ContainerElementType(unit_lowerer.Unit(), result_type)
+      .value_or(result_type);
 }
 
 // LRM 7.12.1 / 7.12.2 / 7.12.3 with-clause closure synthesis. The element and
