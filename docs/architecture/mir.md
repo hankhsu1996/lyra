@@ -209,9 +209,10 @@ suspect, not the analysis (`lowering_organization.md` states this discipline in 
     replaces what the storage holds and publishes that change to whatever the wrapper relates to in
     the object graph. Both are ordinary calls against the wrapper's API, alongside the other
     operations that act on the wrapper as an object -- installing its declared representation,
-    attaching it to the object graph. A write names its destination among its operands: a place
-    where it replaces the whole of the storage, a designator where it replaces a part, which is one
-    operation at two path lengths. Nothing any of these calls yields stands for a place.
+    attaching it to the object graph. Replacing a part is not the same operation at a longer path:
+    it acts on the value the storage holds and reaches the wrapper only to name where that value
+    lives, so it is an assignment to a designator rather than a call. Nothing any of these calls
+    yields stands for a place.
 
     _Programming-language consequence: this is the distinction every generic language draws between
     `p` and `*p`, applied to every type that represents storage, together with the one every

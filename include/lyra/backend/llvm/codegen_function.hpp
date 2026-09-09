@@ -190,21 +190,23 @@ class CodeGenFunction {
   [[nodiscard]] auto MemberValueCellDomain(
       const lir::Place& place, lir::TypeId value) const
       -> std::optional<support::ValueDomain>;
-  // The wrapper a reference addresses and the domain its storage is realized
-  // in, for an operation that acts on the wrapper itself rather than reaching
-  // through it. It is the same classification `WrapperPlaceOf` makes, reached
-  // through a reference instead of a place.
+  // The wrapper an operand reaches and the domain its storage is realized in,
+  // for an operation that acts on the wrapper itself rather than reaching
+  // through it. A wrapper classifies the same way whether it arrives as an
+  // operand or as a place; an operand addresses the wrapper where this target
+  // holds one as storage, and is the wrapper itself where it holds one as a
+  // handle.
   struct WrapperBehindRef {
     support::ValueDomain domain{};
     WrapperKind kind{};
   };
-  [[nodiscard]] auto WrapperBehind(lir::TypeId reference) const
+  [[nodiscard]] auto WrapperBehind(lir::TypeId operand) const
       -> diag::Result<WrapperBehindRef>;
   // Place access: the capability wrapper a place names the storage of, which
   // wrapper it is, and the domain that representation picks its library entries
-  // by; nothing when the place names ordinary addressable storage. This is the
-  // one entry that decides how an access through a wrapper is realized, so no
-  // other site asks which wrapper a place reaches through.
+  // by; nothing when the place names ordinary addressable storage. It is the
+  // one site that asks that of a place, so however deep the chain is an access
+  // through a wrapper is classified once.
   struct WrapperPlace {
     support::ValueDomain domain{};
     WrapperKind kind{};

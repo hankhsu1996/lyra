@@ -1585,7 +1585,8 @@ auto FunctionLowerer::LowerPlace(const mir::Block& block, mir::ExprId id)
           },
           [&](const mir::DerefExpr& deref) -> diag::Result<lir::Place> {
             // Opening a wrapper for writing names the storage it stands for,
-            // which is the same storage reading its contents names.
+            // which a bare dereference of the wrapper names too, so the open
+            // adds no step and the two forms reach one place.
             if (const std::optional<mir::ExprId> wrapper =
                     OpenedWrapper(block, deref.pointer)) {
               return WrapperContentsPlace(block, *wrapper);
@@ -1779,31 +1780,10 @@ auto FunctionLowerer::LowerCall(
     return LowerMutatingCall(block, call, *fn, type);
   }
 
-  // Reading what a wrapper holds and replacing it are operations on the
-  // wrapper, which this target realizes through the storage the wrapper stands
-  // for rather than through an entry of its own -- the same storage a write
-  // reaching one part of it descends into, so the two cannot disagree about
-  // where the contents live.
-  if (const auto fn = mir::DirectBuiltinFn(call);
-      fn == support::BuiltinFn::kLoad || fn == support::BuiltinFn::kStore) {
-    auto place = WrapperContentsPlace(block, *mir::CalleeReceiver(call.callee));
-    if (!place) {
-      return std::unexpected(std::move(place.error()));
-    }
-    if (fn == support::BuiltinFn::kLoad) {
-      return Load(*std::move(place), unit_->TranslateType(type));
-    }
-    auto value = LowerExpr(block, call.arguments.back());
-    if (!value) {
-      return std::unexpected(std::move(value.error()));
-    }
-    return Store(*std::move(place), *std::move(value));
-  }
-
-  // A reference is the address of the storage it binds, and reading or writing
-  // through one reaches that storage directly. No runtime value stands between
-  // the holder and the referent, so the three operations are the ordinary
-  // address-of, load, and store over the referent's place.
+  // A reference is the address of the cell it binds, so building one is the
+  // ordinary address-of over the referent's place. No runtime value stands
+  // between the holder and that cell; reading and writing through the reference
+  // are the cell's own access, reached the way every other call is.
   if (BindsReference(unit_->Mir().types, call, type)) {
     return LowerReferenceBind(block, call, type);
   }

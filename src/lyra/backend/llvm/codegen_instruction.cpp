@@ -191,8 +191,9 @@ auto CodeGenFunction::LowerLoad(
   const std::array<llvm::Value*, 1> args{*address};
   return builder_.CreateCall(
       Entry(
-          RuntimeSymbol(through.domain, LoadOpOf(through.kind)), result_type,
-          args),
+          RuntimeSymbol(
+              through.domain, through.kind, support::BuiltinFn::kLoad),
+          result_type, args),
       args);
 }
 
@@ -227,7 +228,6 @@ auto CodeGenFunction::LowerStore(const lir::StoreInstr& store)
     return builder_.CreateStore(*value, *address);
   }
   const WrapperPlace& through = **wrapper;
-  const RuntimeOp op = StoreOpOf(through.kind);
   auto address = ResolvePlaceAddress(through.wrapper);
   if (!address) {
     return std::unexpected(std::move(address.error()));
@@ -238,7 +238,10 @@ auto CodeGenFunction::LowerStore(const lir::StoreInstr& store)
   }
   const std::array<llvm::Value*, 2> args{*address, *value};
   return builder_.CreateCall(
-      Entry(RuntimeSymbol(through.domain, op), module_->Types().Void(), args),
+      Entry(
+          RuntimeSymbol(
+              through.domain, through.kind, support::BuiltinFn::kStore),
+          module_->Types().Void(), args),
       args);
 }
 
@@ -1254,14 +1257,13 @@ auto CodeGenFunction::BuiltinCallee(
           [&](const NamedByValue& named) -> diag::Result<llvm::FunctionCallee> {
             return over(DomainOf(acted_on(named.operand)));
           },
-          [&](const NamedByWrapperInstall&)
-              -> diag::Result<llvm::FunctionCallee> {
+          [&](const NamedByWrapper&) -> diag::Result<llvm::FunctionCallee> {
             auto wrapper = WrapperBehind(OperandType(call.args.at(0)));
             if (!wrapper) {
               return std::unexpected(std::move(wrapper.error()));
             }
             return Entry(
-                RuntimeSymbol(wrapper->domain, InstallOpOf(wrapper->kind)),
+                RuntimeSymbol(wrapper->domain, wrapper->kind, target.fn),
                 result_type, args);
           },
           [&](const NamedByWrapperDomain&)
@@ -1349,19 +1351,18 @@ auto CodeGenFunction::CapturePlaceOf(const lir::Place& place) const
       .index = lir::MemberPosition(module_->Unit(), member->member)};
 }
 
-auto CodeGenFunction::WrapperBehind(lir::TypeId reference) const
+auto CodeGenFunction::WrapperBehind(lir::TypeId operand) const
     -> diag::Result<CodeGenFunction::WrapperBehindRef> {
   const lir::TypePool& types = module_->Unit().types;
-  const std::optional<lir::TypeId> pointee = types.Get(reference).Pointee();
-  if (!pointee) {
-    throw InternalError(
-        "llvm codegen: an operation on a wrapper needs its address");
-  }
+  // A wrapper this target holds as storage arrives as its address; one it holds
+  // as a handle -- a driver, which names a contribution the net owns -- arrives
+  // as itself, and either way the operand reaches exactly one wrapper.
+  const std::optional<lir::TypeId> pointee = types.Get(operand).Pointee();
   const std::optional<std::pair<WrapperKind, lir::TypeId>> reached =
-      WrapperOf(types.Get(*pointee));
+      WrapperOf(types.Get(pointee.value_or(operand)));
   if (!reached.has_value()) {
     throw InternalError(
-        "llvm codegen: an operation on a wrapper needs a wrapper's address");
+        "llvm codegen: an operation on a wrapper needs one to act on");
   }
   auto domain = DomainOf(reached->second);
   if (!domain) {

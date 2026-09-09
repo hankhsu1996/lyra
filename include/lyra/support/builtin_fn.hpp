@@ -726,8 +726,8 @@ using EntryDeclaration = std::variant<FreeFunction, Method, StaticFactory>;
 // entry gains a property by saying so here and nowhere else.
 struct RuntimeEntry {
   // The entry's stable spelling. It aligns with the SV method spelling where
-  // one exists (LRM 6.16 / 7.9 / 7.10 / 7.12 / 15.5) and is descriptive where
-  // there is no SV-side surface (`get` / `set` / `mutate` / `runtime`).
+  // one exists (LRM 6.16 / 7.9 / 7.10 / 7.12 / 15.5) and with what the library
+  // calls it where there is no SV-side surface (`get` / `set` / `initialize`).
   //
   // This is an interface contract, not a display string. It names the entry in
   // a dump and in a diagnostic, and it is the suffix of the runtime-library

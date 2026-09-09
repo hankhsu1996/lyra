@@ -81,8 +81,9 @@ the detail lives in the entry itself.
   objects (facts, registries, builders, walk frame).
 - [storage-access-as-place-formation](storage-access-as-place-formation.md) -- a dereference of a
   capability wrapper's place names the storage it represents, and each backend supplies the protocol
-  from the place's type; reading it is never a call, and its write side is superseded by
-  [owner-transition-and-observation](owner-transition-and-observation.md).
+  from the place's type; naming it that way is never a call, while reading it and replacing the
+  whole of it are, per [owner-transition-and-observation](owner-transition-and-observation.md),
+  which supersedes both of those answers here.
 - [declarations-before-bodies](declarations-before-bodies.md) -- every structural declaration's
   identity and shape is CU-global and queryable before any executable lowering begins.
 - [foreach-lowering](foreach-lowering.md) -- the lowering shape of `foreach`.

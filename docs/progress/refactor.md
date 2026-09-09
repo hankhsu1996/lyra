@@ -614,16 +614,18 @@ enough to warrant its own focused review.
       `ConversionKind`) retires; HIR's `ConversionExpr` + `ConversionKind` stay as SV vocab in HIR
       and collapse into these primitives at HIR-to-MIR.
 
-- [x] R51 -- Reaching a capability wrapper's storage is place formation, not a call. A bare wrapper
-      place denotes the wrapper and a dereference of it denotes the storage it represents, so an
-      observable read is a read, a whole or partial write is a store, and a by-reference lending
-      lends that storage -- while rebinding a reference stays a store into the bare place,
-      structurally distinct from writing through it where before only the choice of lowering path
-      told them apart. The mutation proxy a partial write interposed is gone, and with it the
-      execution backend's pattern-match that recovered the destination it stood for. Each backend
-      now supplies the access protocol from the place's type through one dispatch. The store no
-      longer carries a runtime handle, which removes the handle from the deferred-assignment
-      closure, from the package initializer, and from the cell store the execution ABI exposes.
+- [x] R51 -- Naming a capability wrapper's storage is place formation, not a call. A bare wrapper
+      place denotes the wrapper and a dereference of it denotes the storage it represents, so a
+      write that descends into a part starts from that dereference and a by-reference lending lends
+      that storage -- while rebinding a reference stays a store into the bare place, structurally
+      distinct from writing through it where before only the choice of lowering path told them
+      apart. Reading what a wrapper holds and replacing the whole of it act on the wrapper rather
+      than naming its storage, so each stays an ordinary call. The mutation proxy a partial write
+      interposed is gone, and with it the execution backend's pattern-match that recovered the
+      destination it stood for. Each backend now supplies the access protocol from the place's type
+      through one dispatch. The store no longer carries a runtime handle, which removes the handle
+      from the deferred-assignment closure, from the package initializer, and from the cell store
+      the execution ABI exposes.
 
 - [ ] R47 -- The object model is designed: a module instance, a generate scope, and a SystemVerilog
       class are one generic nominal object type, differing only in which base they extend, which

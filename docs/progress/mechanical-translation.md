@@ -80,15 +80,33 @@ cross-check predicts. This file owns only which instances are known and what is 
       answer stopped being an optional whose absence stood for the element default -- which also
       settled a disagreement between the two realizations of that type about whether the answer is
       part of the value a change is detected against.
+- [x] T6 -- A runtime operation is named once, in the namespace of the layer that states it. A
+      second namespace sat beside the shared one, private to the execution backend, and seven of its
+      entries were second names for the three accesses a capability wrapper defines. MIR states
+      reading what a wrapper holds, replacing the whole of it, and installing its declared
+      representation as calls; what unmade them was a lowering still realizing them the way a
+      superseded decision had, flattening each call into an access, after which the backend had
+      nothing left to call it by and named it again per wrapper. Two of the three then stood in the
+      shared declaration as entries that backend does not realize, while it realized every one of
+      them under another name. The other backend never left the call, so one question was answered
+      in two places with nothing holding the answers in step -- and the answer that would have
+      drifted was the one no reader is positioned to see. The lowering now leaves the call alone,
+      and both backends spell it from the one declaration. What the second namespace holds after
+      that is one backend's realization of the instructions and constructions the layer below MIR
+      states, which no other backend shares and no layer above can name, so it stays where it is:
+      what decides a namespace is the highest layer that can state its members, and folding a
+      below-MIR realization into the shared one would give the front end a name for an operation it
+      can never write -- the shape T21 measured from the other side.
 
 ## What MIR can ask a backend to perform
 
-- [ ] T6 -- One namespace names every runtime operation. A second one exists beside it holding
-      operations the first does not, so MIR cannot state the realization it asks a backend to
-      perform, and reaching one of them needs a node kind rather than a call.
 - [ ] T7 -- A designated part of a value is named the same way at every layer. Today an access
       lowered from a call becomes a selector and is turned back into a call to the entry the call
-      named, so two layers of vocabulary exist only to be undone. Blocked on T6.
+      named, so two layers of vocabulary exist only to be undone. It is the last place the two
+      runtime-operation namespaces cross, and which way it resolves is not settled: the read half
+      reaches into the shared namespace while its write half is one backend's own, and the fix is
+      either to lift the write half or to leave both to the backend, depending on whether reaching a
+      container element survives as an operation the layer below MIR states.
 - [ ] T22 -- Which operand carries the shape a call's result takes is stated on the entry's own
       declaration. Two of the three "which operand plays this role" facts already are -- the index
       one, and the erased spread part -- and this one is not, so the execution backend answers it

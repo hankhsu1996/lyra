@@ -36,20 +36,6 @@ auto RuntimeOpName(RuntimeOp op) -> std::string_view {
   switch (op) {
     case RuntimeOp::kCellAlloc:
       return "cell_alloc";
-    case RuntimeOp::kCellInitialize:
-      return "cell_initialize";
-    case RuntimeOp::kCellGet:
-      return "cell_get";
-    case RuntimeOp::kCellSet:
-      return "cell_set";
-    case RuntimeOp::kNetInitialize:
-      return "net_initialize";
-    case RuntimeOp::kNetGet:
-      return "net_get";
-    case RuntimeOp::kDriverGet:
-      return "driver_get";
-    case RuntimeOp::kDriverSet:
-      return "driver_set";
     case RuntimeOp::kMemberAddress:
       return "member_addr";
     case RuntimeOp::kSequenceMake:
@@ -391,43 +377,31 @@ auto RuntimeSymbol(
                        support::ValueDomainName(source)));
 }
 
-auto LoadOpOf(WrapperKind kind) -> RuntimeOp {
-  switch (kind) {
+auto RuntimeSymbol(
+    support::ValueDomain domain, WrapperKind wrapper, support::BuiltinFn fn)
+    -> std::string {
+  const auto spelled = [&](std::string_view family) -> std::string {
+    return Symbol(
+        domain, std::format("{}_{}", family, support::RuntimeEntryOf(fn).name));
+  };
+  switch (wrapper) {
     case WrapperKind::kCell:
-      return RuntimeOp::kCellGet;
+      return spelled("cell");
     case WrapperKind::kNet:
-      return RuntimeOp::kNetGet;
+      if (fn == support::BuiltinFn::kStore) {
+        throw InternalError(
+            "llvm codegen: a net's resolved value takes no store; a value "
+            "reaches a net through one of its drivers");
+      }
+      return spelled("net");
     case WrapperKind::kDriver:
-      return RuntimeOp::kDriverGet;
-  }
-  throw InternalError("llvm codegen: unknown capability wrapper");
-}
-
-auto StoreOpOf(WrapperKind kind) -> RuntimeOp {
-  switch (kind) {
-    case WrapperKind::kCell:
-      return RuntimeOp::kCellSet;
-    case WrapperKind::kNet:
-      throw InternalError(
-          "llvm codegen: a net's resolved value takes no store; a value "
-          "reaches a net through one of its drivers");
-    case WrapperKind::kDriver:
-      return RuntimeOp::kDriverSet;
-  }
-  throw InternalError("llvm codegen: unknown capability wrapper");
-}
-
-auto InstallOpOf(WrapperKind kind) -> RuntimeOp {
-  switch (kind) {
-    case WrapperKind::kCell:
-      return RuntimeOp::kCellInitialize;
-    case WrapperKind::kNet:
-      return RuntimeOp::kNetInitialize;
-    case WrapperKind::kDriver:
-      throw InternalError(
-          "llvm codegen: a driver installs no representation of its own; what "
-          "it contributes before it drives is the identity the net gave it "
-          "when it attached");
+      if (fn == support::BuiltinFn::kInitialize) {
+        throw InternalError(
+            "llvm codegen: a driver installs no representation of its own; "
+            "what it contributes before it drives is the identity the net "
+            "gave it when it attached");
+      }
+      return spelled("driver");
   }
   throw InternalError("llvm codegen: unknown capability wrapper");
 }
@@ -446,12 +420,6 @@ auto EntryNamingOf(support::BuiltinFn fn) -> EntryNaming {
   // the parts rather than reaching for an entry here.
   constexpr std::string_view kAnswersWithPartOfAValue =
       "answers with part of a value rather than its contents";
-  // Reading what a wrapper holds and replacing it reach the storage it stands
-  // for, which this target already names as a place; the lowering realizes them
-  // there rather than asking for an entry, so one site decides how an access
-  // through a wrapper happens and reaching one here means it did not.
-  constexpr std::string_view kReachesStorageAWrapperStandsFor =
-      "reaches the storage a capability wrapper stands for";
   // Recovering a handle from the object it refers to is what a shared-owner
   // realization needs and a traced one does not, since there the handle is the
   // pointer a body already holds. So this target owes no entry: it owes the
@@ -460,8 +428,9 @@ auto EntryNamingOf(support::BuiltinFn fn) -> EntryNaming {
       "answers with the handle referring to the object a body runs on";
   // A sampled value is state a cell keeps beside its contents, and producing
   // one is the cell's own decision about which of the two to answer with (LRM
-  // 16.5.1) -- not a read of the storage this backend names as a place. Serving
-  // it needs an entry per value domain, which the library does not carry.
+  // 16.5.1). It reaches a cell the way an ordinary read does and differs only
+  // in which state answers, so what it needs is an entry per value domain of
+  // its own, which the library does not carry.
   constexpr std::string_view kAnswersFromStateBesideTheContents =
       "answers from state a cell keeps beside its contents";
   // A history is member storage holding one value per tick of a clocking event
@@ -610,17 +579,18 @@ auto EntryNamingOf(support::BuiltinFn fn) -> EntryNaming {
     case support::BuiltinFn::kFromArray:
       return NamedByConversion{};
 
+    // The three accesses a capability wrapper defines. Which wrapper the call
+    // acts on decides both which family answers and which representation it
+    // answers in, so neither half is the call's own.
     case support::BuiltinFn::kInitialize:
-      return NamedByWrapperInstall{};
+    case support::BuiltinFn::kLoad:
+    case support::BuiltinFn::kStore:
+      return NamedByWrapper{};
 
     // A driver is attached by the net that issues it, so what names the entry
     // is the representation that net resolves in.
     case support::BuiltinFn::kAttachDriver:
       return NamedByWrapperDomain{};
-
-    case support::BuiltinFn::kLoad:
-    case support::BuiltinFn::kStore:
-      return NotRealized{.shape = kReachesStorageAWrapperStandsFor};
 
     case support::BuiltinFn::kSampledLoad:
     case support::BuiltinFn::kArmSampling:

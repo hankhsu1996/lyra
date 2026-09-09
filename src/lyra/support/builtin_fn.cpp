@@ -337,9 +337,9 @@ auto RuntimeEntryOf(BuiltinFn id) -> RuntimeEntry {
     case BuiltinFn::kInitialize:
       return {.name = "initialize", .declaration = Method{"Initialize"}};
     case BuiltinFn::kLoad:
-      return {.name = "load", .declaration = Method{"Get"}};
+      return {.name = "get", .declaration = Method{"Get"}};
     case BuiltinFn::kStore:
-      return {.name = "store", .declaration = Method{"Set"}};
+      return {.name = "set", .declaration = Method{"Set"}};
     case BuiltinFn::kSampledLoad:
       return {.name = "sampled_load", .declaration = Method{"SampledGet"}};
     case BuiltinFn::kArmSampling:
