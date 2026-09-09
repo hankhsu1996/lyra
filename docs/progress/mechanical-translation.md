@@ -62,6 +62,24 @@ cross-check predicts. This file owns only which instances are known and what is 
       two it knows, silently. That backend was also composing a target type out of the width where
       its own type mapping already answers that, once for each constant needing one; a constant now
       asks the mapping, the way every other value does.
+- [x] T19 -- A construction states which value it builds and in which form, so no consumer works
+      either out. Two things were left for one to work out. A sequence -- the handles a declaration
+      standing for several objects holds -- was built by a literal of its own rather than through
+      its constructor, so the layer below carried one instruction for it and for a plain-data
+      element list alike, and the execution backend told the two apart by testing the result type,
+      one arm composing the allocating call the IR never stated. And three constructions were told
+      apart by how many operands arrived: a queue's four forms, an associative array's three, and a
+      format specification's two, each a partial form whose missing operands the consumer read back
+      from the count. An operand a form appeared to omit is that operand at the value the omission
+      meant -- a container holding nothing is its own element list with nothing in it, a directive
+      writing no modifiers writes each at its default, and a literal with no `default:` clause
+      answers a read of an absent key with the element type's own default (LRM 7.8.6) -- so every
+      construction of a kind now carries the same operands. The one axis a value cannot state, a
+      bounded queue's declared maximum (LRM 7.10.5), is read from the type that declares it. The
+      runtime lost the entries those partial forms named, and an associative array's absent-key
+      answer stopped being an optional whose absence stood for the element default -- which also
+      settled a disagreement between the two realizations of that type about whether the answer is
+      part of the value a change is detected against.
 
 ## What MIR can ask a backend to perform
 
@@ -71,36 +89,22 @@ cross-check predicts. This file owns only which instances are known and what is 
 - [ ] T7 -- A designated part of a value is named the same way at every layer. Today an access
       lowered from a call becomes a selector and is turned back into a call to the entry the call
       named, so two layers of vocabulary exist only to be undone. Blocked on T6.
-- [ ] T19 -- A container comes into existence through its own constructor, with the element list
-      among the arguments, and every container does so but one. A sequence is still built by a
-      literal, so the layer below carries one instruction for that and for a machine aggregate
-      alike, and the execution backend tells the two apart by testing the result type -- one arm
-      naming the runtime entry that allocates, which is a render composing a call the IR never
-      stated, while the other backend never re-derives anything because a sequence still has a node
-      of its own. [value-construction-forms](../decisions/value-construction-forms.md) settled this
-      and named this case as its rejected alternative; what stands in the way is that the other
-      backend spells a sequence as a target-language type with no constructor over an element list,
-      so closing it settles how a sequence is named when one is built.
 - [ ] T22 -- Which operand carries the shape a call's result takes is stated on the entry's own
       declaration. Two of the three "which operand plays this role" facts already are -- the index
       one, and the erased spread part -- and this one is not, so the execution backend answers it
-      itself, twice over: from a hand-kept list of the three container-construction entries, and
-      from a conjunction of two unrelated property flags standing in for "is this the LRM 7.12
-      family". The other backend never asks, because its target language answers from the named
-      type, so nothing holds a second answer in step and a container-construction entry added
-      anywhere returns "no shape operand" here in silence.
+      itself, twice over: from a hand-kept list of the container-construction entries, and from a
+      conjunction of two unrelated property flags standing in for "is this the LRM 7.12 family". The
+      other backend never asks, because its target language answers from the named type, so nothing
+      holds a second answer in step and a container-construction entry added anywhere returns "no
+      shape operand" here in silence.
 
-      The three container rows are a plain relocation. What is not derived yet is what the LRM 7.12
+      The container rows are a plain relocation. What is not derived yet is what the LRM 7.12
       row should say: the operand it wants is the trailing prototype rather than a fixed position,
       and settling that means first establishing whether the two associative index queries -- which
       carry a prototype the conjunction deliberately excludes, and so cross the boundary unerased
       today -- are right to, or are a latent defect the conjunction is hiding. That question is about
       what crosses a C ABI, where a wrong answer is silent rather than a build failure, so it is
       settled before anything here is moved.
-
-      This meets T19 at one site, and the two must not be folded together: T19 owns the branch that
-      reads the result type because a construction has no entry to read, and closing this one leaves
-      that branch standing.
 
 ## An aggregate's members
 

@@ -30,12 +30,8 @@ auto SameIndex(const RuntimeValue& a, const RuntimeValue& b) -> bool {
 }  // namespace
 
 RuntimeAssociativeArray::RuntimeAssociativeArray()
-    : element_default_(std::make_unique<RuntimeValue>()) {
-}
-
-RuntimeAssociativeArray::RuntimeAssociativeArray(RuntimeValue element_default)
-    : element_default_(
-          std::make_unique<RuntimeValue>(std::move(element_default))) {
+    : element_default_(std::make_unique<RuntimeValue>()),
+      user_default_(std::make_unique<RuntimeValue>()) {
 }
 
 RuntimeAssociativeArray::RuntimeAssociativeArray(
@@ -48,10 +44,7 @@ RuntimeAssociativeArray::RuntimeAssociativeArray(
 RuntimeAssociativeArray::RuntimeAssociativeArray(
     const RuntimeAssociativeArray& other)
     : element_default_(std::make_unique<RuntimeValue>(*other.element_default_)),
-      user_default_(
-          other.user_default_ == nullptr
-              ? nullptr
-              : std::make_unique<RuntimeValue>(*other.user_default_)),
+      user_default_(std::make_unique<RuntimeValue>(*other.user_default_)),
       data_(other.data_) {
 }
 
@@ -62,9 +55,7 @@ auto RuntimeAssociativeArray::operator=(const RuntimeAssociativeArray& other)
     -> RuntimeAssociativeArray& {
   if (this != &other) {
     element_default_ = std::make_unique<RuntimeValue>(*other.element_default_);
-    user_default_ = other.user_default_ == nullptr
-                        ? nullptr
-                        : std::make_unique<RuntimeValue>(*other.user_default_);
+    user_default_ = std::make_unique<RuntimeValue>(*other.user_default_);
     data_ = other.data_;
   }
   return *this;
@@ -111,12 +102,16 @@ auto RuntimeAssociativeArray::Exists(const RuntimeValue& index) const
   return PackedArray::Int(Find(index).has_value() ? 1 : 0);
 }
 
+auto RuntimeAssociativeArray::AbsentIndexValue() const -> const RuntimeValue& {
+  return *user_default_;
+}
+
 auto RuntimeAssociativeArray::Element(const RuntimeValue& index) const
     -> const RuntimeValue& {
   if (const std::optional<std::size_t> position = Find(index)) {
     return data_[*position].element;
   }
-  return user_default_ == nullptr ? *element_default_ : *user_default_;
+  return *user_default_;
 }
 
 auto RuntimeAssociativeArray::IndexAt(std::size_t position) const
@@ -246,6 +241,11 @@ auto RuntimeAssociativeArray::CaseEqual(
 
 auto RuntimeAssociativeArray::IsBitIdentical(
     const RuntimeAssociativeArray& other) const -> bool {
+  // What a read of an absent index answers with is part of the array's value,
+  // so an array differing only in that differs (LRM 9.4.2).
+  if (!RuntimeValueBitIdentical(*user_default_, *other.user_default_)) {
+    return false;
+  }
   if (data_.size() != other.data_.size()) {
     return false;
   }

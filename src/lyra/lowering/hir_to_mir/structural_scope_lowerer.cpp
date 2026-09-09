@@ -237,10 +237,8 @@ auto BuildInstanceMemberValue(
   }
   const mir::TypeId type = SequenceOver(
       unit_lowerer, borrowed, member.array_dims.size() - coords.size());
-  return block.exprs.Add(
-      mir::Expr{
-          .data = mir::VectorExpr{.elements = std::move(elements)},
-          .type = type});
+  return block.exprs.Add(BuildSequenceConstructionCall(
+      unit_lowerer.Unit(), block, type, std::move(elements)));
 }
 
 // Emits the constructor-body construction for every object the scope's instance
@@ -817,12 +815,12 @@ auto ComposeBoundObjects(
     elements.push_back(ComposeBoundObjects(
         unit_lowerer, block, array->element_type, handles, next));
   }
-  return block.exprs.Add(
-      mir::Expr{
-          .data = mir::VectorExpr{.elements = std::move(elements)},
-          .type = unit_lowerer.MemberCellType(
-              unit_lowerer.TranslateType(member_type),
-              hir::BorrowedObjectStorage{})});
+  return block.exprs.Add(BuildSequenceConstructionCall(
+      unit_lowerer.Unit(), block,
+      unit_lowerer.MemberCellType(
+          unit_lowerer.TranslateType(member_type),
+          hir::BorrowedObjectStorage{}),
+      std::move(elements)));
 }
 
 // Binds a child's interface port to the interface instances the connection

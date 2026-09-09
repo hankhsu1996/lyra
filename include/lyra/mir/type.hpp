@@ -554,6 +554,12 @@ struct ManagedRefType {
   auto operator==(const ManagedRefType&) const -> bool = default;
 };
 
+// A homogeneous sequence: one element type, laid down as many times as the
+// declaration standing for several objects covers (LRM 23.3.2). Composed whole
+// and never grown afterwards. Unlike `MachineArrayType`, which is the plain
+// data an element list is, this is a library type whose representation the
+// target owns -- so one comes into existence through its own constructor, with
+// that element list among the arguments.
 struct VectorType {
   TypeId element;
 

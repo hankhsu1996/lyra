@@ -524,14 +524,6 @@ struct CompositeExpr {
   std::vector<ExprId> parts;
 };
 
-// A homogeneous sequence value built from its element expressions in order.
-// `Expr::type` is the `VectorType`, off which the element type is read at
-// render time. A sequence is composed whole rather than grown afterwards, so
-// its elements are all here.
-struct VectorExpr {
-  std::vector<ExprId> elements;
-};
-
 // The suspension protocol applied to an awaitable: entering it yields control
 // until the awaitable completes, then resumes with its completion value
 // (LRM 9.4 timing controls, 13.5 task enable). `Expr::type` is that value's
@@ -553,13 +545,13 @@ struct AwaitExpr {
   ExprId awaitable;
 };
 
-// Projects one element out of a sequence value by position. The inverse of
-// `VectorExpr`. The position is an operand rather than part of the node
-// because a sequence is homogeneous: which element is named cannot change the
-// element's type, so nothing about the projection has to be known at compile
-// time. Like every value-aggregate sub-access this extracts the element from
-// the sequence value; a sequence of storage is reached through the indirection
-// its elements already carry, not by addressing into the sequence itself.
+// Projects one element out of a sequence value by position. The position is an
+// operand rather than part of the node because a sequence is homogeneous:
+// which element is named cannot change the element's type, so nothing about
+// the projection has to be known at compile time. Like every value-aggregate
+// sub-access this extracts the element from the sequence value; a sequence of
+// storage is reached through the indirection its elements already carry, not by
+// addressing into the sequence itself.
 struct VectorGetExpr {
   ExprId vector;
   ExprId index;
@@ -699,8 +691,8 @@ using ExprData = std::variant<
     ConditionalExpr, BlockExpr, AssignExpr, IncDecExpr, CallExpr, DerefExpr,
     AddressOfExpr, MachineArrayDataExpr, MoveExpr, PointerCastExpr,
     FunctionCastExpr, IntCastExpr, FieldAccessExpr, ClosureExpr, CompositeExpr,
-    ValueCastExpr, VectorExpr, AwaitExpr, VectorGetExpr, UnionExpr,
-    TaggedIsExpr, UnionMemberExpr>;
+    ValueCastExpr, AwaitExpr, VectorGetExpr, UnionExpr, TaggedIsExpr,
+    UnionMemberExpr>;
 
 struct Expr {
   ExprData data;

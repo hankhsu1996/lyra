@@ -2233,15 +2233,6 @@ auto FunctionLowerer::LowerExpr(const mir::Block& block, mir::ExprId id)
                 built,
                 AssembledFrom(unit_->Types().Get(built), *std::move(parts)));
           },
-          [&](const mir::VectorExpr& vec) -> diag::Result<lir::Operand> {
-            auto elements = LowerEachExpr(block, vec.elements);
-            if (!elements) {
-              return std::unexpected(std::move(elements.error()));
-            }
-            return Emit(
-                unit_->TranslateType(type),
-                lir::ArrayInstr{.elements = *std::move(elements)});
-          },
           [&](const mir::VectorGetExpr& get) -> diag::Result<lir::Operand> {
             auto vector = LowerExpr(block, get.vector);
             if (!vector) {

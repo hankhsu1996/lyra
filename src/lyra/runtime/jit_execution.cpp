@@ -1859,10 +1859,6 @@ auto lyra_rt_string_ge(const void* lhs, const void* rhs) -> void* {
   return Own(Read<String>(lhs) >= Read<String>(rhs));
 }
 
-auto lyra_rt_make_format_spec_of_kind(const void* kind) -> void* {
-  return Own(FormatSpec(Read<PackedArray>(kind)));
-}
-
 auto lyra_rt_make_format_spec(
     const void* kind, const void* width, const void* precision,
     const void* zero_pad, const void* left_align, const void* timeunit_power)
@@ -2965,16 +2961,6 @@ auto lyra_rt_unpackedarray_value_cell_load(const void* cell) -> void* {
           ->Get());
 }
 
-auto lyra_rt_queue_default(void* prototype) -> void* {
-  return Own(RuntimeQueue(lyra::runtime::ErasedValue(prototype)));
-}
-
-auto lyra_rt_queue_default_bounded(void* prototype, const void* max_bound)
-    -> void* {
-  return Own(RuntimeQueue(
-      lyra::runtime::ErasedValue(prototype), Read<PackedArray>(max_bound)));
-}
-
 auto lyra_rt_queue_from_literal(
     void* prototype, LyraSpan unit, std::int64_t count) -> void* {
   RuntimeValue element_default = lyra::runtime::ErasedValue(prototype);
@@ -3149,22 +3135,10 @@ auto lyra_rt_queue_value_cell_load(const void* cell) -> void* {
       static_cast<const ActivationValueCell<RuntimeQueue>*>(cell)->Get());
 }
 
-auto lyra_rt_assocarray_default(void* prototype) -> void* {
-  return Own(RuntimeAssociativeArray(lyra::runtime::ErasedValue(prototype)));
-}
-
 // LRM 7.9.11 `'{index: value, ...}`: each entry crosses as the product of the
 // index and the element it stores. A product already holds its components
 // erased, which is the form a keyed container needs both of them in: it knows
 // the representation of neither in advance.
-auto lyra_rt_assocarray_from_entries(void* prototype, LyraSpan entries)
-    -> void* {
-  return Own(
-      lyra::runtime::SeedAssociativeEntries(
-          RuntimeAssociativeArray(lyra::runtime::ErasedValue(prototype)),
-          entries));
-}
-
 auto lyra_rt_assocarray_from_entries_default(
     void* prototype, LyraSpan entries, void* user_default) -> void* {
   RuntimeValue element_default = lyra::runtime::ErasedValue(prototype);

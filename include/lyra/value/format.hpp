@@ -61,7 +61,6 @@ struct FormatSpec {
   // Each field arrives as a PackedArray literal -- the value model routes
   // compile-time scalars as SV values, the same way the file-IO runtime entries
   // take their int args -- and converts to its native field type here.
-  explicit FormatSpec(const PackedArray& kind);
   FormatSpec(
       const PackedArray& kind, const PackedArray& width,
       const PackedArray& precision, const PackedArray& zero_pad,

@@ -100,12 +100,21 @@ namespace lyra::lowering::hir_to_mir {
     mir::ExprId element_default, std::vector<mir::ExprId> repeat_unit,
     mir::ExprId count_id) -> mir::Expr;
 
+// Builds the construction call for a sequence: the values it holds, in order.
+// A sequence seeds no default and repeats nothing, so the element list is the
+// constructor's one argument, and a sequence holding nothing is that list with
+// no elements rather than a second form of the call.
+[[nodiscard]] auto BuildSequenceConstructionCall(
+    const mir::CompilationUnit& unit, mir::Block& block,
+    mir::TypeId sequence_type, std::vector<mir::ExprId> elements) -> mir::Expr;
+
 // Builds the construction call for an associative-array literal (LRM 7.9.11).
 // Each (key, value) entry is a pair, and the entries ride in the plain-data
 // array of those pairs, so the constructor arguments are `[element_default,
-// entries, optional user_default]`. `user_default` is the LRM 7.9.11 persistent
-// fallback a read of an absent key returns; when absent the constructor seeds
-// only the element type default.
+// entries, absent_key_answer]`. `user_default` is the LRM 7.9.11 persistent
+// fallback a read of an absent key returns; a literal that writes no `default:`
+// clause answers such a read with the element type's own default, so that is
+// what stands there instead, and the operand is never missing.
 [[nodiscard]] auto BuildAssociativeConstructionCall(
     const mir::CompilationUnit& unit, mir::Block& block, mir::TypeId assoc_type,
     std::vector<std::pair<mir::ExprId, mir::ExprId>> entries,

@@ -10,6 +10,7 @@
 
 #include "lyra/base/internal_error.hpp"
 #include "lyra/value/packed_array.hpp"
+#include "lyra/value/queue_bound.hpp"
 #include "lyra/value/runtime_value.hpp"
 #include "lyra/value/slice_selector.hpp"
 
@@ -38,13 +39,6 @@ RuntimeQueue::RuntimeQueue()
 RuntimeQueue::RuntimeQueue(RuntimeValue element_default)
     : element_default_(
           std::make_unique<RuntimeValue>(std::move(element_default))) {
-}
-
-RuntimeQueue::RuntimeQueue(
-    RuntimeValue element_default, const PackedArray& max_bound)
-    : element_default_(
-          std::make_unique<RuntimeValue>(std::move(element_default))),
-      max_bound_(BoundOf(max_bound)) {
 }
 
 RuntimeQueue::RuntimeQueue(
@@ -97,6 +91,7 @@ void RuntimeQueue::EnforceBound() {
   const std::size_t limit = static_cast<std::size_t>(*max_bound_) + 1;
   if (data_.size() > limit) {
     data_.resize(limit);
+    ReportBoundOverflow();
   }
 }
 

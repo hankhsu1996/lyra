@@ -56,42 +56,6 @@ auto WrapperOf(const lir::Type& type)
   return std::nullopt;
 }
 
-// Which form a construction is. A queue is built empty or over an element list,
-// and either way with or without the LRM 7.10.5 bound it was declared with; an
-// associative array is built empty, over its entries, or over its entries and a
-// default; a format specification is built from a conversion kind alone or from
-// that kind and the fields written with it. The call does not say which --
-// these read it back from how many operands arrived, which is what a
-// construction stating its own form would settle instead.
-auto QueueConstruction(std::size_t argument_count) -> RuntimeOp {
-  switch (argument_count) {
-    case 1:
-      return RuntimeOp::kDefault;
-    case 2:
-      return RuntimeOp::kDefaultBounded;
-    case 3:
-      return RuntimeOp::kFromLiteral;
-    default:
-      return RuntimeOp::kFromLiteralBounded;
-  }
-}
-
-auto AssociativeConstruction(std::size_t argument_count) -> RuntimeOp {
-  switch (argument_count) {
-    case 1:
-      return RuntimeOp::kDefault;
-    case 2:
-      return RuntimeOp::kFromEntries;
-    default:
-      return RuntimeOp::kFromEntriesDefault;
-  }
-}
-
-auto FormatSpecConstruction(std::size_t argument_count) -> RuntimeOp {
-  return argument_count == 1 ? RuntimeOp::kMakeFormatSpecOfKind
-                             : RuntimeOp::kMakeFormatSpec;
-}
-
 // A leaf of a wait carries the observation that decides what a change there
 // means only where an event control is what waits (LRM 9.4.2); an implicit
 // sensitivity names none and supplies the cell and its bit range alone.
@@ -689,15 +653,10 @@ auto CodeGenFunction::SpanOver(
 auto CodeGenFunction::LowerArray(
     const lir::ArrayInstr& array, lir::TypeId result_type)
     -> diag::Result<llvm::Value*> {
-  // A fixed-size machine aggregate and a sequence of handles are both composed
-  // from their elements in order, and both start as a span over them; where the
-  // element type is read from, and whether the span is the value or is handed
-  // to the runtime to keep, are what differ.
-  const lir::Type& result = module_->Unit().types.Get(result_type);
-  const lir::TypeId element_type =
-      result.Is<lir::VectorType>()
-          ? result.Get<lir::VectorType>().element
-          : result.Get<lir::MachineArrayType>().element;
+  const lir::TypeId element_type = module_->Unit()
+                                       .types.Get(result_type)
+                                       .Get<lir::MachineArrayType>()
+                                       .element;
   std::vector<llvm::Value*> elements;
   elements.reserve(array.elements.size());
   for (const lir::Operand& element : array.elements) {
@@ -707,20 +666,7 @@ auto CodeGenFunction::LowerArray(
     }
     elements.push_back(*lowered);
   }
-  llvm::Value* span = SpanOver(elements, module_->Types().Map(element_type));
-  if (!result.Is<lir::VectorType>()) {
-    return span;
-  }
-  // A sequence outlives the stretch that built it -- the owner keeps its
-  // address, and a dimension above it keeps that address as an ordinary element
-  // -- so the runtime takes the handles rather than the span standing as the
-  // value.
-  const std::array<llvm::Value*, 1> args{span};
-  return builder_.CreateCall(
-      Entry(
-          RuntimeSymbol(RuntimeOp::kSequenceMake), module_->Types().Ptr(),
-          args),
-      args);
+  return SpanOver(elements, module_->Types().Map(element_type));
 }
 
 // A product value is assembled by boxing each component into the erased
@@ -1422,16 +1368,27 @@ auto CodeGenFunction::ConstructCallee(
             return entry(RuntimeSymbol(
                 support::ValueDomain::kUnpackedArray, RuntimeOp::kFromLiteral));
           },
-          [&](const lir::QueueType&) -> diag::Result<llvm::FunctionCallee> {
+          // LRM 7.10.5: a bounded queue enforces a maximum index, which its own
+          // type declares, so which of the two entries builds one follows from
+          // the type being built.
+          [&](const lir::QueueType& q) -> diag::Result<llvm::FunctionCallee> {
             return entry(RuntimeSymbol(
                 support::ValueDomain::kQueue,
-                QueueConstruction(call.args.size())));
+                q.max_bound.has_value() ? RuntimeOp::kFromLiteralBounded
+                                        : RuntimeOp::kFromLiteral));
           },
           [&](const lir::AssociativeArrayType&)
               -> diag::Result<llvm::FunctionCallee> {
             return entry(RuntimeSymbol(
                 support::ValueDomain::kAssocArray,
-                AssociativeConstruction(call.args.size())));
+                RuntimeOp::kFromEntriesDefault));
+          },
+          // A sequence outlives the stretch that built it -- the owner keeps
+          // its address, and a dimension above it keeps that address as an
+          // ordinary element -- so the runtime takes the handles rather than
+          // the element list standing as the value.
+          [&](const lir::VectorType&) -> diag::Result<llvm::FunctionCallee> {
+            return entry(RuntimeSymbol(RuntimeOp::kSequenceMake));
           },
           [&](const lir::RuntimeLibraryType& r)
               -> diag::Result<llvm::FunctionCallee> {
@@ -1447,8 +1404,7 @@ auto CodeGenFunction::ConstructCallee(
                 return entry(
                     RuntimeSymbol(ObservationConstruction(call.args.size())));
               case lir::RuntimeLibraryKind::kFormatSpec:
-                return entry(
-                    RuntimeSymbol(FormatSpecConstruction(call.args.size())));
+                return entry(RuntimeSymbol(RuntimeOp::kMakeFormatSpec));
               case lir::RuntimeLibraryKind::kPackedRange:
                 return entry(RuntimeSymbol(RuntimeOp::kMakePackedRange));
               case lir::RuntimeLibraryKind::kPackedType:

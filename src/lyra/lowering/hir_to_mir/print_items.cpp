@@ -355,27 +355,22 @@ auto TryGetHirStringLiteral(
 // LRM 21.2.1.3: a %t directive scales by the enclosing scope's time unit, known
 // only at lowering -- so its power is materialized here as the spec's sixth
 // field rather than read from the directive like the others. Fields pass as
-// `int` literals the runtime FormatSpec constructor converts; the modifier
-// fields are omitted when none differs from its default.
+// `int` literals the runtime FormatSpec constructor converts, every field
+// stated -- a directive that writes no modifiers states each at its default.
 auto BuildFormatSpecExpr(
     mir::CompilationUnit& unit, mir::Block& block, const mir::FormatSpec& spec,
     std::int64_t time_unit_power) -> mir::Expr {
   const auto int_lit = [&](std::int64_t v) {
     return BuildIntLiteral(unit, block, v);
   };
-  std::vector<mir::ExprId> args;
-  args.push_back(int_lit(static_cast<std::int64_t>(spec.kind)));
   const bool is_time = spec.kind == value::FormatKind::kTime;
-  const bool all_default =
-      spec.modifiers.width == -1 && spec.modifiers.precision == -1 &&
-      !spec.modifiers.zero_pad && !spec.modifiers.left_align && !is_time;
-  if (!all_default) {
-    args.push_back(int_lit(spec.modifiers.width));
-    args.push_back(int_lit(spec.modifiers.precision));
-    args.push_back(int_lit(spec.modifiers.zero_pad ? 1 : 0));
-    args.push_back(int_lit(spec.modifiers.left_align ? 1 : 0));
-    args.push_back(int_lit(is_time ? time_unit_power : 0));
-  }
+  std::vector<mir::ExprId> args = {
+      int_lit(static_cast<std::int64_t>(spec.kind)),
+      int_lit(spec.modifiers.width),
+      int_lit(spec.modifiers.precision),
+      int_lit(spec.modifiers.zero_pad ? 1 : 0),
+      int_lit(spec.modifiers.left_align ? 1 : 0),
+      int_lit(is_time ? time_unit_power : 0)};
   return mir::Expr{
       .data =
           mir::CallExpr{

@@ -240,10 +240,6 @@ auto Formatter<float>::Format(
       FormatRealBody(spec, static_cast<double>(value)), spec);
 }
 
-FormatSpec::FormatSpec(const PackedArray& kind)
-    : kind(static_cast<FormatKind>(kind.ToInt64())) {
-}
-
 FormatSpec::FormatSpec(
     const PackedArray& kind, const PackedArray& width,
     const PackedArray& precision, const PackedArray& zero_pad,

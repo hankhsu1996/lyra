@@ -338,6 +338,13 @@ auto RenderTypeConstructionAsCpp(
             return std::format(
                 "lyra::runtime::GcNew<{}>", RenderTypeAsCpp(unit, m.pointee));
           },
+          // The target type a sequence is kept in takes no element list of its
+          // own, so what names its construction is the library entry that does.
+          [&](const mir::VectorType& v) -> std::string {
+            return std::format(
+                "lyra::runtime::MakeSequence<{}>",
+                RenderTypeAsCpp(unit, v.element));
+          },
           // Every other type is built by naming itself.
           [&](const auto&) -> std::string {
             return RenderTypeAsCpp(unit, type_id);

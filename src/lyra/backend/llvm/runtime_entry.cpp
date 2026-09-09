@@ -86,14 +86,10 @@ auto RuntimeOpName(RuntimeOp op) -> std::string_view {
       return "with_slice";
     case RuntimeOp::kDefault:
       return "default";
-    case RuntimeOp::kDefaultBounded:
-      return "default_bounded";
     case RuntimeOp::kFromLiteral:
       return "from_literal";
     case RuntimeOp::kFromLiteralBounded:
       return "from_literal_bounded";
-    case RuntimeOp::kFromEntries:
-      return "from_entries";
     case RuntimeOp::kFromEntriesDefault:
       return "from_entries_default";
     case RuntimeOp::kMakeScope:
@@ -120,8 +116,6 @@ auto RuntimeOpName(RuntimeOp op) -> std::string_view {
       return "make_print_value_item";
     case RuntimeOp::kMakeFormatSpec:
       return "make_format_spec";
-    case RuntimeOp::kMakeFormatSpecOfKind:
-      return "make_format_spec_of_kind";
   }
   throw InternalError("llvm codegen: unknown runtime operation");
 }

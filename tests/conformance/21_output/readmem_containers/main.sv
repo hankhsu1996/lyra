@@ -2,7 +2,11 @@
 // bits, so a memory of packed structs loads exactly as a memory of vectors of
 // the same width does. Loading a dynamic array or a queue leaves its current
 // size alone rather than resizing it, and loading an address of an associative
-// array creates an element at that index if none was there (LRM 21.4.1).
+// array creates an element at that index if none was there (LRM 21.4.1). A load
+// replaces the entries the file addresses and nothing else, so what a read of
+// an index the array holds no entry for answers with -- the persistent default
+// a `default:` clause names (LRM 7.8.6, 7.9.11) -- is the same after it as
+// before.
 module Top;
   typedef struct packed {
     logic [3:0] hi;
@@ -13,11 +17,14 @@ module Top;
   bit [7:0] elements[];
   bit [15:0] items[$];
   bit [7:0] sparse[int];
+  bit [7:0] seeded[int] = '{default: 8'h77};
 
   int element_count;
   int item_count;
   int sparse_count;
   bit three_exists;
+  bit [7:0] seeded_miss_before;
+  bit [7:0] seeded_miss_after;
 
   int fd;
 
@@ -47,6 +54,13 @@ module Top;
     $readmemh("sparse.hex", sparse);
     sparse_count = sparse.num();
     three_exists = sparse.exists(3);
+
+    seeded_miss_before = seeded[9];
+    fd = $fopen("seeded.hex", "w");
+    $fwrite(fd, "@1\n11\n");
+    $fclose(fd);
+    $readmemh("seeded.hex", seeded);
+    seeded_miss_after = seeded[9];
   end
 
   final begin
@@ -85,6 +99,15 @@ module Top;
       $fatal(1, "sparse[5] was %h, expected bb", sparse[5]);
     if (three_exists !== 1'b0)
       $fatal(1, "the load created an entry at an index the file never named");
+
+    if (seeded_miss_before !== 8'h77)
+      $fatal(1, "before the load an unnamed index read %h, expected 77",
+             seeded_miss_before);
+    if (seeded[1] !== 8'h11)
+      $fatal(1, "seeded[1] was %h, expected 11", seeded[1]);
+    if (seeded_miss_after !== 8'h77)
+      $fatal(1, "after the load an unnamed index read %h, expected 77",
+             seeded_miss_after);
     $display("All checks passed");
   end
 endmodule

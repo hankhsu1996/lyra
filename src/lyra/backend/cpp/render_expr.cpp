@@ -749,9 +749,6 @@ auto RenderExpr(const ScopeView& view, const mir::Expr& expr) -> std::string {
           [&](const mir::CompositeExpr& c) -> std::string {
             return RenderPartsAsBraceInit(view, expr.type, c.parts);
           },
-          [&](const mir::VectorExpr& v) -> std::string {
-            return RenderPartsAsBraceInit(view, expr.type, v.elements);
-          },
           [&](const mir::AwaitExpr& a) -> std::string {
             return std::format(
                 "co_await {}", RenderExpr(view, view.Expr(a.awaitable)));

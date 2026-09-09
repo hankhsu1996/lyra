@@ -985,19 +985,16 @@ void lyra_rt_unpackedarray_driver_set(void* driver, const void* value);
 
 // The queue domain (LRM 7.10): a run-time-sized ordered container whose
 // elements are added and removed at either end, carried behind an opaque handle
-// and owning its elements by value. `default` and `from_literal` mirror the
-// dynamic array's constructors, and each has a bounded form because a declared
-// bound (LRM 7.10.5) is a value the constructor takes rather than one it can
-// derive. The bound belongs to the variable, not to the value written, so
+// and owning its elements by value. A queue is built over an element list,
+// empty or not, and a declared bound (LRM 7.10.5) is a value its constructor
+// takes rather than one it can derive -- so a bounded queue has an entry of its
+// own. The bound belongs to the variable, not to the value written, so
 // `conform_bound` is what a semantic store into a bounded queue passes its
 // right-hand side through. An element write appends when its index is the
 // queue's size and is discarded at any other invalid index (LRM 7.10.1); every
 // apparent mutation -- an element write, a push, an insert, a delete -- yields
 // a new queue rather than writing in place, so value semantics hold even when
 // the queue is shared.
-auto lyra_rt_queue_default(void* prototype) -> void*;
-auto lyra_rt_queue_default_bounded(void* prototype, const void* max_bound)
-    -> void*;
 auto lyra_rt_queue_from_literal(
     void* prototype, LyraSpan unit, std::int64_t count) -> void*;
 auto lyra_rt_queue_from_literal_bounded(
@@ -1048,16 +1045,14 @@ auto lyra_rt_queue_value_cell_load(const void* cell) -> void*;
 
 // The associative-array domain (LRM 7.8): a sparse lookup table allocated entry
 // by entry and held in index order, carried behind an opaque handle. Its
-// element default is what a read of an index with no entry yields (LRM 7.8.6),
-// and it crosses erased at construction like every other container's. An index
+// element default carries the element shape and crosses erased at construction
+// like every other container's; what a read of an index with no entry yields
+// (LRM 7.8.6) is a second value the construction takes. An index
 // crosses erased too, and for a reason of its own: the array holds no prototype
 // for one, so nothing here could know the representation the program wrote it
 // in. An element beside an index still crosses bare, since the element default
 // names its domain. Every apparent mutation yields a new array rather than
 // writing in place, so value semantics hold even when the array is shared.
-auto lyra_rt_assocarray_default(void* prototype) -> void*;
-auto lyra_rt_assocarray_from_entries(void* prototype, LyraSpan entries)
-    -> void*;
 auto lyra_rt_assocarray_from_entries_default(
     void* prototype, LyraSpan entries, void* user_default) -> void*;
 auto lyra_rt_assocarray_element(const void* array, const void* index) -> void*;
@@ -1345,7 +1340,6 @@ auto lyra_rt_unpackedarray_count_bits(
 // Builds one conversion's format specification, and the print item that pairs a
 // value with it. Each field arrives as a packed value, as the value model
 // routes every compile-time scalar.
-auto lyra_rt_make_format_spec_of_kind(const void* kind) -> void*;
 auto lyra_rt_make_format_spec(
     const void* kind, const void* width, const void* precision,
     const void* zero_pad, const void* left_align, const void* timeunit_power)

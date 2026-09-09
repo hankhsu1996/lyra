@@ -368,7 +368,6 @@ auto DefineRuntimeAbi(llvm::orc::LLJIT& jit) -> std::set<std::string> {
   add("lyra_rt_string_le", &lyra_rt_string_le);
   add("lyra_rt_string_gt", &lyra_rt_string_gt);
   add("lyra_rt_string_ge", &lyra_rt_string_ge);
-  add("lyra_rt_make_format_spec_of_kind", &lyra_rt_make_format_spec_of_kind);
   add("lyra_rt_make_format_spec", &lyra_rt_make_format_spec);
   add("lyra_rt_packed_make_print_value_item",
       &lyra_rt_packed_make_print_value_item);
@@ -555,8 +554,6 @@ auto DefineRuntimeAbi(llvm::orc::LLJIT& jit) -> std::set<std::string> {
   add("lyra_rt_unpackedarray_from_array_queue",
       &lyra_rt_unpackedarray_from_array_queue);
   add("lyra_rt_unpackedarray_from_string", &lyra_rt_unpackedarray_from_string);
-  add("lyra_rt_queue_default", &lyra_rt_queue_default);
-  add("lyra_rt_queue_default_bounded", &lyra_rt_queue_default_bounded);
   add("lyra_rt_queue_from_literal", &lyra_rt_queue_from_literal);
   add("lyra_rt_queue_from_literal_bounded",
       &lyra_rt_queue_from_literal_bounded);
@@ -590,8 +587,6 @@ auto DefineRuntimeAbi(llvm::orc::LLJIT& jit) -> std::set<std::string> {
   add("lyra_rt_queue_value_cell_alloc", &lyra_rt_queue_value_cell_alloc);
   add("lyra_rt_queue_value_cell_store", &lyra_rt_queue_value_cell_store);
   add("lyra_rt_queue_value_cell_load", &lyra_rt_queue_value_cell_load);
-  add("lyra_rt_assocarray_default", &lyra_rt_assocarray_default);
-  add("lyra_rt_assocarray_from_entries", &lyra_rt_assocarray_from_entries);
   add("lyra_rt_assocarray_from_entries_default",
       &lyra_rt_assocarray_from_entries_default);
   add("lyra_rt_assocarray_element", &lyra_rt_assocarray_element);

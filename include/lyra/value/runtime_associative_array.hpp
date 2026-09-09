@@ -44,14 +44,11 @@ class RuntimeAssociativeArray {
   // overwrites it with the real element default.
   RuntimeAssociativeArray();
 
-  // LRM Table 6-7: the default associative array is empty. `element_default`
-  // is what a read of an index with no entry yields (LRM 7.8.6) and the seed
-  // an entry a write allocates starts from (LRM 7.8.7).
-  explicit RuntimeAssociativeArray(RuntimeValue element_default);
-
-  // LRM 7.9.11 `'{..., default: v}`: the persistent fallback a read of an
-  // index with no entry answers with, in place of the element type's own
-  // default, and the value an entry a later write allocates starts from.
+  // `element_default` carries the element shape a caller boxes an incoming
+  // value against; `user_default` is what a read of an index with no entry
+  // answers with (LRM 7.8.6) and the value an entry a later write allocates
+  // starts from (LRM 7.8.7), which a `default:` clause names (LRM 7.9.11) and
+  // which is otherwise the element type's own default.
   RuntimeAssociativeArray(
       RuntimeValue element_default, RuntimeValue user_default);
 
@@ -70,6 +67,11 @@ class RuntimeAssociativeArray {
   // representation reads the target domain from here. An index has no such
   // prototype, which is why one crosses already erased.
   [[nodiscard]] auto ElementDefault() const -> const RuntimeValue&;
+
+  // What a read of an index with no entry answers with (LRM 7.8.6). It is part
+  // of the array's value rather than of its shape, so anything rebuilding an
+  // array from another carries it over.
+  [[nodiscard]] auto AbsentIndexValue() const -> const RuntimeValue&;
 
   // LRM 7.9.1 `exists`: whether the array holds an entry under `index`, as the
   // SV `int` the method answers with. An index carrying x or z names no entry.
@@ -154,9 +156,8 @@ class RuntimeAssociativeArray {
   [[nodiscard]] auto LowerBound(const RuntimeValue& index) const -> std::size_t;
 
   // Indirect because `RuntimeValue` closes over this type: a by-value member
-  // would need `RuntimeValue` complete here, which it is not. The user default
-  // is absent unless the array was written with one, and its absence is what
-  // sends a miss to the element type's own default instead.
+  // would need `RuntimeValue` complete here, which it is not. Neither is ever
+  // null.
   std::unique_ptr<RuntimeValue> element_default_;
   std::unique_ptr<RuntimeValue> user_default_;
   std::vector<RuntimeAssociativeEntry> data_;

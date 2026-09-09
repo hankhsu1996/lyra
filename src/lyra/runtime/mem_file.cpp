@@ -370,9 +370,14 @@ void WriteFlatErased(
 // The monomorphized keyed memory an erased one holds, and the erased one built
 // back from it. The two are the same table -- an integral index and a packed
 // word (LRM 21.4.1) -- so the key-addressed core runs over the erased memory
-// unchanged.
+// unchanged. Each direction carries the whole of the array's value: the entries
+// it holds, and what a read of an index it holds none for answers with, which a
+// load addressing only some indices leaves as it was.
 auto KeyedMemoryOf(const value::RuntimeAssociativeArray& memory) -> AssocMem {
-  AssocMem table{value::MemoryWordOf(memory.ElementDefault())};
+  AssocMem table{
+      value::MemoryWordOf(memory.ElementDefault()),
+      {},
+      value::MemoryWordOf(memory.AbsentIndexValue())};
   const auto size = static_cast<std::size_t>(memory.Size().ToInt64());
   for (std::size_t position = 0; position < size; ++position) {
     table.ElementRef(value::MemoryWordOf(memory.IndexAt(position))) =
@@ -384,7 +389,8 @@ auto KeyedMemoryOf(const value::RuntimeAssociativeArray& memory) -> AssocMem {
 auto ErasedMemoryOf(
     const value::RuntimeAssociativeArray& shape, const AssocMem& table)
     -> value::RuntimeAssociativeArray {
-  value::RuntimeAssociativeArray memory(shape.ElementDefault());
+  value::RuntimeAssociativeArray memory(
+      shape.ElementDefault(), shape.AbsentIndexValue());
   table.ForEachEntry(
       [&memory](const value::PackedArray& key, const value::PackedArray& word) {
         memory = memory.WithElement(

@@ -286,40 +286,21 @@ auto BuildDefaultValueExpr(
                         .arguments = {element_default}},
                 .type = type};
           },
-          // LRM Table 6-7: a queue's default is the empty queue. Same emit
-          // chain as the dynamic array -- the element default seeds the
-          // wrapper's shield slot while storage starts empty.
-          [&](const mir::QueueType& q) -> mir::Expr {
-            const mir::ExprId element_default = block.exprs.Add(
-                BuildDefaultValueExpr(unit, block, q.element_type));
-            std::vector<mir::ExprId> args = {element_default};
-            AppendBoundedQueueMax(unit, block, args, type);
-            return mir::Expr{
-                .data =
-                    mir::CallExpr{
-                        .callee = mir::Construct{},
-                        .arguments = std::move(args)},
-                .type = type};
+          // LRM Table 6-7: a queue's default is the empty queue, which its own
+          // constructor builds from a list of no elements.
+          [&](const mir::QueueType&) -> mir::Expr {
+            return BuildArrayConstructionCall(unit, block, type, {});
           },
-          // LRM Table 6-7: an associative array's default is empty. The element
-          // default seeds the wrapper's shield slot (the source of nonexistent-
-          // entry reads, LRM 7.8.6) while storage starts empty.
-          [&](const mir::AssociativeArrayType& a) -> mir::Expr {
-            const mir::ExprId element_default = block.exprs.Add(
-                BuildDefaultValueExpr(unit, block, a.element_type));
-            return mir::Expr{
-                .data =
-                    mir::CallExpr{
-                        .callee = mir::Construct{},
-                        .arguments = {element_default}},
-                .type = type};
+          // LRM Table 6-7: an associative array's default is empty, which is
+          // its literal over no entries and no `default:` clause.
+          [&](const mir::AssociativeArrayType&) -> mir::Expr {
+            return BuildAssociativeConstructionCall(
+                unit, block, type, {}, std::nullopt);
           },
-          // Types whose runtime default is the C++ language-level default
-          // (named-event handle, child module instance, `unique_ptr<Child>`,
-          // `vector<Child>`). The constructor scope is the real populator
-          // for the object family; named-events have no SV initializer
-          // grammar at all. An empty-argument construction call renders as
-          // `T()` and invokes the type's default ctor.
+          // Types whose default is what their own constructor makes of no
+          // arguments: a named event, which SV gives no initializer grammar at
+          // all, and an object, whose members the constructor scope is what
+          // populates.
           [&](const mir::EventType&) -> mir::Expr {
             return mir::Expr{
                 .data =
@@ -344,11 +325,10 @@ auto BuildDefaultValueExpr(
           [&](const mir::ChandleType&) -> mir::Expr {
             return mir::Expr{.data = mir::NullLiteral{}, .type = type};
           },
+          // A declaration standing for no object holds a sequence of nothing,
+          // which its own constructor builds from a list of no elements.
           [&](const mir::VectorType&) -> mir::Expr {
-            return mir::Expr{
-                .data =
-                    mir::CallExpr{.callee = mir::Construct{}, .arguments = {}},
-                .type = type};
+            return BuildSequenceConstructionCall(unit, block, type, {});
           },
           // A type carrying no information has exactly one value, so that
           // value is its default.
@@ -493,6 +473,22 @@ auto BuildArrayRepeatCall(
       unit, block, array_type, element_default, repeat_unit_id, count_id);
 }
 
+auto BuildSequenceConstructionCall(
+    const mir::CompilationUnit& unit, mir::Block& block,
+    mir::TypeId sequence_type, std::vector<mir::ExprId> elements) -> mir::Expr {
+  const mir::TypePool& types = unit.types;
+  const mir::TypeId list_type = mir::MachineArrayOf(
+      types, types.Get(sequence_type).Get<mir::VectorType>().element,
+      elements.size());
+  const mir::ExprId list_id = block.exprs.Add(
+      mir::Expr{
+          .data = mir::CompositeExpr{.parts = std::move(elements)},
+          .type = list_type});
+  return mir::Expr{
+      .data = mir::CallExpr{.callee = mir::Construct{}, .arguments = {list_id}},
+      .type = sequence_type};
+}
+
 auto BuildAssociativeConstructionCall(
     const mir::CompilationUnit& unit, mir::Block& block, mir::TypeId assoc_type,
     std::vector<std::pair<mir::ExprId, mir::ExprId>> entries,
@@ -526,17 +522,17 @@ auto BuildAssociativeConstructionCall(
 
   const mir::ExprId element_default =
       block.exprs.Add(BuildDefaultValueExpr(unit, block, element_type));
-  std::vector<mir::ExprId> args;
-  args.reserve(user_default.has_value() ? 3U : 2U);
-  args.push_back(element_default);
-  args.push_back(entries_id);
-  if (user_default.has_value()) {
-    args.push_back(*user_default);
-  }
+  // Every associative array answers a read of an absent key with something
+  // (LRM 7.8.6), so that answer is always an operand: a `default:` clause names
+  // it, and a literal without one names the element type's own default, which
+  // is what such a read returns.
   return mir::Expr{
       .data =
           mir::CallExpr{
-              .callee = mir::Construct{}, .arguments = std::move(args)},
+              .callee = mir::Construct{},
+              .arguments =
+                  {element_default, entries_id,
+                   user_default.value_or(element_default)}},
       .type = assoc_type};
 }
 
