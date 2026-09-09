@@ -160,13 +160,13 @@ auto ToHirSubroutineKind(slang::ast::SubroutineKind k) -> hir::SubroutineKind {
 }
 
 auto LowerEnumMethodName(std::string_view name)
-    -> std::optional<support::BuiltinFn> {
-  if (name == "first") return support::BuiltinFn::kEnumFirst;
-  if (name == "last") return support::BuiltinFn::kEnumLast;
-  if (name == "num") return support::BuiltinFn::kEnumNum;
-  if (name == "next") return support::BuiltinFn::kEnumNext;
-  if (name == "prev") return support::BuiltinFn::kEnumPrev;
-  if (name == "name") return support::BuiltinFn::kEnumName;
+    -> std::optional<hir::EnumMethod> {
+  if (name == "first") return hir::EnumMethod::kFirst;
+  if (name == "last") return hir::EnumMethod::kLast;
+  if (name == "num") return hir::EnumMethod::kNum;
+  if (name == "next") return hir::EnumMethod::kNext;
+  if (name == "prev") return hir::EnumMethod::kPrev;
+  if (name == "name") return hir::EnumMethod::kName;
   return std::nullopt;
 }
 

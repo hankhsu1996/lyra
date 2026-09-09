@@ -5,6 +5,7 @@
 #include <variant>
 
 #include "lyra/hir/class_ref.hpp"
+#include "lyra/hir/enum_method.hpp"
 #include "lyra/hir/expr_id.hpp"
 #include "lyra/hir/external_callee.hpp"
 #include "lyra/hir/external_unit_object.hpp"
@@ -105,12 +106,19 @@ struct SystemSubroutineRef {
   support::SystemSubroutineId id;
 };
 
-// Calls a built-in runtime method (LRM 6.16 string, 6.19.5 enum, 7.9
-// associative, 7.10 queue, 7.12 unpacked-array shared family, 15.5 named
-// event). The id is the flat closed namespace `support::BuiltinFn`, shared
-// with MIR.
+// Calls a built-in runtime method (LRM 6.16 string, 7.9 associative, 7.10
+// queue, 7.12 unpacked-array shared family, 15.5 named event). The id is the
+// flat closed namespace `support::BuiltinFn`, shared with MIR.
 struct BuiltinMethodRef {
   support::BuiltinFn method;
+};
+
+// Calls a method LRM 6.19.5 defines on an enumerated type. The enumeration is
+// the type of the leading argument, the same way every other built-in method
+// call carries the type it dispatches on; what separates the two is that no
+// runtime library declares these, so nothing below this layer names one.
+struct EnumMethodRef {
+  EnumMethod method;
 };
 
 // Calls a method the runtime library provides for an imported class (LRM 9.7
@@ -162,7 +170,7 @@ struct StaticMethodCallRef {
 
 using SubroutineRef = std::variant<
     StructuralSubroutineRef, MethodCallRef, StaticMethodCallRef,
-    SystemSubroutineRef, BuiltinMethodRef, ForeignImportRef, ImportedMethodRef,
-    ExternalUnitSubroutineRef, ExternalUnitMethodRef>;
+    SystemSubroutineRef, BuiltinMethodRef, EnumMethodRef, ForeignImportRef,
+    ImportedMethodRef, ExternalUnitSubroutineRef, ExternalUnitMethodRef>;
 
 }  // namespace lyra::hir

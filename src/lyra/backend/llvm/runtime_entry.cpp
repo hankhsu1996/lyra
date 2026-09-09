@@ -4,7 +4,6 @@
 #include <optional>
 #include <string>
 #include <string_view>
-#include <variant>
 
 #include "lyra/base/internal_error.hpp"
 #include "lyra/base/overloaded.hpp"
@@ -127,21 +126,6 @@ auto RuntimeOpName(RuntimeOp op) -> std::string_view {
   throw InternalError("llvm codegen: unknown runtime operation");
 }
 
-// Why an entry no library declares at all has no ABI entry either. The reason
-// is the declaration's own, so a refusal here and the refusal every other
-// consumer makes cannot come apart.
-auto UndeclaredShape(support::BuiltinFn fn) -> std::string_view {
-  const support::RuntimeEntry entry = support::RuntimeEntryOf(fn);
-  const auto* undeclared =
-      std::get_if<support::NotDeclared>(&entry.declaration);
-  if (undeclared == nullptr) {
-    throw InternalError(
-        "llvm codegen: an entry the library declares was refused as one it "
-        "does not");
-  }
-  return undeclared->reason;
-}
-
 }  // namespace
 
 auto DeclaredIndexType(const lir::CompilationUnit& unit, lir::TypeId container)
@@ -174,8 +158,9 @@ auto ValueDomainOf(const lir::CompilationUnit& unit, lir::TypeId type)
           [](const lir::PackedArrayType&) -> Domain {
             return support::ValueDomain::kPacked;
           },
-          // An enumeration is a packed value at runtime; only its own entries,
-          // which read its declared members, need more than that.
+          // An enumeration is a packed value at runtime. What its declared
+          // members answer (LRM 6.19.5) is settled where the source is read,
+          // so nothing reaching this layer needs more than the packed value.
           [](const lir::EnumType&) -> Domain {
             return support::ValueDomain::kPacked;
           },
@@ -532,13 +517,6 @@ auto EntryNamingOf(support::BuiltinFn fn) -> EntryNaming {
     case support::BuiltinFn::kSelfHandle:
       return NotRealized{.shape = kRecoversAHandleFromItsObject};
 
-    case support::BuiltinFn::kEnumFirst:
-    case support::BuiltinFn::kEnumLast:
-    case support::BuiltinFn::kEnumNum:
-    case support::BuiltinFn::kEnumName:
-    case support::BuiltinFn::kEnumNext:
-    case support::BuiltinFn::kEnumPrev:
-      return NotRealized{.shape = UndeclaredShape(fn)};
 
     // The runtime, then the user string, then the destination whose
     // representation names the entry.

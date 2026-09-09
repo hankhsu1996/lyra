@@ -119,14 +119,6 @@ enum class BuiltinFn : std::uint16_t {
   // leaf. `Triggered` is the LRM 15.5.3 same-time-step query.
   kTrigger,
   kTriggered,
-  // LRM 6.19.5 enum type-static queries.
-  kEnumFirst,
-  kEnumLast,
-  kEnumNum,
-  // LRM 6.19.5 enum instance methods.
-  kEnumName,
-  kEnumNext,
-  kEnumPrev,
   // LRM 20.9 / 21.3.4.3. 2-state packed types return false; downstream
   // constant-folds those calls.
   kIsUnknown,
@@ -715,18 +707,10 @@ struct StaticFactory {
   std::string_view identifier;
 };
 
-// The library declares nothing, because the entry is answered before any
-// backend can meet it and `reason` says what answers it. The source language
-// still spells the operation, which is why it has an identity here at all.
-struct NotDeclared {
-  std::string_view reason;
-};
-
-// How a call site reaches the entry. Every entry answers with exactly one of
-// these, so an entry the library does not declare cannot also carry an
-// identifier to spell it with.
-using EntryDeclaration =
-    std::variant<FreeFunction, Method, StaticFactory, NotDeclared>;
+// How a call site reaches the entry. Every entry is one of these, because an
+// operation no runtime library carries out is not named here at all: it is
+// answered where the source is read and no layer below meets it.
+using EntryDeclaration = std::variant<FreeFunction, Method, StaticFactory>;
 
 // Every property of one runtime entry: what the library calls it, how a call
 // site reaches it, and what it does with the operands it is given. A consumer
@@ -734,8 +718,8 @@ using EntryDeclaration =
 // entry gains a property by saying so here and nowhere else.
 struct RuntimeEntry {
   // The entry's stable spelling. It aligns with the SV method spelling where
-  // one exists (LRM 6.16 / 7.9 / 7.12 / 6.19.5) and is descriptive where there
-  // is no SV-side surface (`get` / `set` / `mutate` / `runtime`).
+  // one exists (LRM 6.16 / 7.9 / 7.10 / 7.12 / 15.5) and is descriptive where
+  // there is no SV-side surface (`get` / `set` / `mutate` / `runtime`).
   //
   // This is an interface contract, not a display string. It names the entry in
   // a dump and in a diagnostic, and it is the suffix of the runtime-library

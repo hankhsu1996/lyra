@@ -23,15 +23,26 @@ same pattern that `support::SystemSubroutineId` already follows for `$xxx` calls
 HIR's callee for a built-in method is `BuiltinMethodRef` carrying `support::BuiltinFn`. The struct
 is a one-field wrapper, symmetric with `SystemSubroutineRef { id }`.
 
-LRM 7.12.4 `item.index` is a built-in method in the SV sense (LRM names it "the iterator index
-querying method"), but it is structurally distinct from runtime-backed built-in methods at the
-compiler level: the receiver value is discarded and the call resolves to the enclosing with-clause
-closure's index parameter (closures over LRM 7.12 array methods always carry both `item` and `index`
-as parameters, supplied by the runtime per iteration). No runtime function exists; HIR-to-MIR
-rewrites it to a `LocalRef` and no MIR `CallExpr` survives. HIR keeps the method-call shape (with a
-dedicated `IteratorIndexRef` arm in `SubroutineRef`, beside `BuiltinMethodRef`) so the SV grammar
-level is preserved; the separate arm encodes the "rewrites away" translation behaviour in the type,
-where it drives mechanical dispatch at HIR-to-MIR.
+What the namespace holds is every built-in the runtime library carries out, and nothing else. An
+operation the front end answers outright is not one: naming it here would make MIR carry a name for
+something it can never hold, and every layer below carry an arm for an alternative it can never see.
+The LRM defines two such operations as built-in methods, and each keeps its identity at the layer
+that still holds what answers it.
+
+LRM 7.12.4 `item.index` is answered by the with-clause binding it names. The receiver is discarded
+and the value is the enclosing closure's index parameter -- a closure over an LRM 7.12 array method
+carries both `item` and `index`, supplied per iteration -- so nothing is left to call, and
+AST-to-HIR resolves it to the same iteration-binding reference `item` itself resolves to, differing
+in which of the two roles it names. HIR therefore holds one shape for the pair the LRM defines
+together, and no callee names it.
+
+LRM 6.19.5's enumerated type methods are answered from the enumeration's declared members: `first` /
+`last` / `num` are constants of that member table, and `name` / `next` / `prev` are a search through
+it, which HIR-to-MIR emits as a callable synthesized once per enumeration. Here a call does survive
+to HIR, because answering one needs the members in their lowered form and a class for the
+synthesized callable to home on, and neither exists where names are resolved. So these keep the call
+shape the source wrote, carried by a `SubroutineRef` arm of their own over a six-valued HIR-local
+identity. Nothing below HIR names them.
 
 MIR's callee for a built-in is one shape -- `Direct { target = BuiltinFn, qualification }` -- shared
 with user-method calls, where `target` is the symbol identity (several alternatives today, one
@@ -50,9 +61,10 @@ HIR-to-MIR is a near-identity translation: pass the `BuiltinFn` through as `Dire
 `Direct::qualification` to the SV-type qualifier the source named (when one was named).
 
 AST-to-HIR still dispatches by receiver type to choose which name-to-id lookup table to query --
-`first` on an enum receiver resolves to `kEnumFirst`, `first` on an associative array resolves to
-`kAssocFirst`. The receiver-type dispatch is unaffected by the identifier shape; only the lookup
-table's return type changes.
+`first` on an associative array resolves to `kAssocFirst`, and `first` on an enumeration resolves to
+no runtime entry at all. The receiver-type dispatch is unaffected by the identifier shape; only the
+lookup table's return type changes, and one of those tables now returns an identity of the front
+end's own.
 
 ## Why flat
 
@@ -123,28 +135,28 @@ LRM 7.12.
   parse choice (a `KnownSystemName::Index` system subroutine, syntactic-method-call form) was
   carried into HIR without re-examination. Rejected because two structurally different things shared
   one callee slot: `support::BuiltinFn` enumerates runtime entries (lower as identity-preserving
-  `CallExpr`), while `IteratorMethodKind::kIndex` is HIR-only sugar that rewrites to a `LocalRef`.
-  The HIR-to-MIR visitor had to switch on the inner kind to pick the translation path, and the
-  runtime-callee translation carried an unreachable "should have been rewritten" throw to handle the
-  case it could never see. Splitting `IteratorIndexRef` out as its own `SubroutineRef` arm makes the
-  dispatch decision pattern-match directly on the type with no inner case analysis.
+  `CallExpr`), while `IteratorMethodKind::kIndex` names no entry at all. The HIR-to-MIR visitor had
+  to switch on the inner kind to pick the translation path, and the runtime-callee translation
+  carried an unreachable "should have been rewritten" throw to handle the case it could never see.
+  Taking it out of the callee entirely is what removes both.
 
-- **`item.index` as an HIR `Primary` (leaf-grammar arm).** Considered briefly to make HIR-to-MIR's
-  lowering particularly direct -- `Primary` already carries leaf references and the translation to
-  `LocalRef` was a one-arm visitor. Rejected because it over-flattens the SV grammar level: LRM 7.12
-  (Syntax 7-5) classifies `item.index` as an `array_method_call` (`expression . array_method_name`),
-  one level above LRM 11.2.1's primary atoms. Placing it in `Primary` would make it look identical
-  to `IntegerLiteral` / `StructuralVarRef` in HIR dumps and consumer visitors, violating HIR's
-  "preserve LRM-level constructs without flattening" identity (`hir.md` Core Invariant 3). The
-  dedicated `SubroutineRef` arm keeps it at its real grammar level.
+- **`item.index` among the leaf primary atoms.** The objection is HIR's "preserve LRM-level
+  constructs without flattening" identity: LRM 7.12 (Syntax 7-5) classifies `item.index` as an
+  `array_method_call` (`expression . array_method_name`), one level above LRM 11.2.1's primary
+  atoms, and a reference indistinguishable from `IntegerLiteral` / `StructuralVarRef` in a dump or a
+  consumer visitor loses that. What answers it is that a primary of its own -- one naming the
+  with-clause it belongs to and which of the clause's two bindings it is -- is neither a leaf atom
+  nor a call. The construct LRM 7.12 defines is the pair of bindings a closure carries, `item` and
+  `index` together, and one HIR shape carrying both at their real grammar level is what preserves
+  it; a callee arm would have named half the pair and called it a call besides.
 
-- **Folding `item.index` into the flat enum.** Considered as a way to keep "every built-in identity
-  in one place". Rejected because `item.index` is HIR-only -- it is rewritten at HIR-to-MIR into a
-  `LocalRef` on the array-method closure's index binding (LRM 7.12.4 binding rule) and never appears
-  in MIR. Putting an HIR-only entry in a shared support enum would mean MIR carries a name for a
-  value it cannot represent, and every MIR consumer (dump, backend, future LIR pass) would need a
-  dead `case kIteratorIndex` arm. Keeping it as a separate HIR `SubroutineRef` arm scopes the
-  identity to the layer that actually uses it.
+- **Folding a front-end-answered operation into the flat enum.** Considered as a way to keep "every
+  built-in identity in one place". Rejected because the shared namespace would then carry a name for
+  something MIR cannot represent, and every consumer below -- dump, both backends, the MIR-to-LIR
+  lowering -- would need a dead arm for an alternative no node can hold. `item.index` was the case
+  that established this; the LRM 6.19.5 enumerated type methods were folded in anyway and cost
+  exactly what the rejection predicted, including a divergence where one backend refused them and
+  the other gave them live entries. Both are now named at the layer that answers them.
 
 ## Backend rendering
 
@@ -197,10 +209,10 @@ each backend renders from them.
 
 They were once a table per property, each with its own default arm for the entries it did not list,
 and that shape cost what a scattered declaration costs: adding an entry meant editing every table
-and nothing said which, six entries that are answered where the source is read were refused by one
-backend and given a live entry by the other, and five pairs of entries shared one target-language
-name and let overload resolution over the argument list stand in for the identity the pair already
-carried.
+and nothing said which, the enumerated type methods the namespace no longer holds were refused by
+one backend and given a live entry by the other, and five pairs of entries shared one
+target-language name and let overload resolution over the argument list stand in for the identity
+the pair already carried.
 
 ### Adding an entry
 
@@ -211,8 +223,10 @@ that row names. No render-side special case for any entry.
 
 ## Consequences
 
-- One closed-namespace enum (`support::BuiltinFn`) names every built-in runtime entry. The two
-  layers (HIR, MIR) and every backend reference the same identity.
+- One closed-namespace enum (`support::BuiltinFn`) names every built-in runtime entry, and only
+  those. The two layers (HIR, MIR) and every backend reference the same identity, so a layer never
+  carries an arm for an operation it cannot meet; an operation the front end answers is named where
+  it is answered instead.
 - HIR-to-MIR's built-in method translation is near-identity: it passes the `BuiltinFn` id through as
   `Direct::target` and sets `Direct::qualification` only for a type-static builtin; the instance /
   static / free distinction is read from the id and its signature at render, not carried as a Callee

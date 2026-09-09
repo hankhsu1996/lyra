@@ -393,12 +393,12 @@ auto LowerSystemSubroutineCall(
       desc.semantic);
 }
 
-// Built-in method dispatch (LRM 6.16 / 6.19.5 / 7.9 / 7.10 / 7.12 / 15.5).
+// Built-in method dispatch (LRM 6.16 / 7.9 / 7.10 / 7.12 / 15.5).
 // AST -> HIR puts a type-bearing expression at `c.arguments[0]`: for an
-// instance call it is the receiver itself, for a type-namespace static
-// call (`MyEnum::first()`) it is a discardable bearer whose type supplies
-// the static callee's `type_qual`. Either way, the for-loop below skips
-// index 0 and starts the real user-argument scan at index 1.
+// instance call it is the receiver itself, for a call on a factory of the type
+// it builds it is a discardable bearer, and that type is what the callee
+// qualifies the factory with. Either way, the for-loop below skips index 0 and
+// starts the real user-argument scan at index 1.
 template <ExprLowerer Lowerer>
 auto LowerBuiltinMethodCall(
     Lowerer& lowerer, WalkFrame frame, const hir::CallExpr& c,
@@ -418,20 +418,6 @@ auto LowerBuiltinMethodCall(
   // for every other associative method.
   if (entry.writes_the_index_back) {
     return LowerAssociativeTraversal(lowerer, frame, c, b.method, result_type);
-  }
-  // LRM 6.19.5 `first` / `last` / `num` are compile-time constants of the enum
-  // type; they fold here rather than surviving as a runtime call.
-  if (b.method == support::BuiltinFn::kEnumFirst ||
-      b.method == support::BuiltinFn::kEnumLast ||
-      b.method == support::BuiltinFn::kEnumNum) {
-    return LowerEnumConstantMethod(lowerer, frame, c, b, result_type);
-  }
-  // LRM 6.19.5 `name` / `next` / `prev` lower to a synthesized per-enum
-  // callable.
-  if (b.method == support::BuiltinFn::kEnumName ||
-      b.method == support::BuiltinFn::kEnumNext ||
-      b.method == support::BuiltinFn::kEnumPrev) {
-    return LowerEnumMethodCall(lowerer, frame, c, b, result_type);
   }
   // LRM 20.5 conversions answer in a machine integer, which the destination's
   // declared representation then has to land, so each is a pair of steps
@@ -614,6 +600,9 @@ auto LowerHirCallExpr(
           },
           [&](const hir::BuiltinMethodRef& b) -> diag::Result<mir::Expr> {
             return LowerBuiltinMethodCall(lowerer, frame, c, b, result_type);
+          },
+          [&](const hir::EnumMethodRef& e) -> diag::Result<mir::Expr> {
+            return LowerEnumMethod(lowerer, frame, c, e, result_type);
           },
           [&](const hir::ForeignImportRef& imp) -> diag::Result<mir::Expr> {
             return LowerForeignImportCall(lowerer, frame, c, imp, result_type);

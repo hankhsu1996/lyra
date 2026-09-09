@@ -298,6 +298,7 @@ auto PlanSubroutineCall(
             return std::nullopt;
           },
           [](const hir::BuiltinMethodRef&) -> Planned { return std::nullopt; },
+          [](const hir::EnumMethodRef&) -> Planned { return std::nullopt; },
           [](const hir::ForeignImportRef&) -> Planned { return std::nullopt; },
           [](const hir::ImportedMethodRef&) -> Planned {
             return std::nullopt;

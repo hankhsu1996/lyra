@@ -44,6 +44,16 @@ cross-check predicts. This file owns only which instances are known and what is 
       were refused by one backend and given a live entry by the other, and five pairs of entries
       shared one target-language name, leaving overload resolution over the argument list to stand
       in for an identity the pair already carried.
+- [x] T21 -- An operation no layer below the front end can meet is not in the vocabulary those
+      layers share. Six enumerated type methods are answered from the enumeration's own declared
+      members where the source is read, and they had been sitting in the closed set every later
+      layer switches over, so each of those layers carried an arm for an alternative it can never
+      see and the runtime-entry declaration had to carry a way of saying that no library declares
+      them. The one other front-end-answered operation had already been given a vocabulary of its
+      own for exactly this reason and these six were never held to the same rule; they now have one
+      too, and what a call site reaches is again a closed set of three, every member of which the
+      library declares. The record of the earlier one described a mechanism the code had since
+      replaced, so that account is corrected in the same change.
 
 ## What MIR can ask a backend to perform
 
@@ -63,6 +73,26 @@ cross-check predicts. This file owns only which instances are known and what is 
       and named this case as its rejected alternative; what stands in the way is that the other
       backend spells a sequence as a target-language type with no constructor over an element list,
       so closing it settles how a sequence is named when one is built.
+- [ ] T22 -- Which operand carries the shape a call's result takes is stated on the entry's own
+      declaration. Two of the three "which operand plays this role" facts already are -- the index
+      one, and the erased spread part -- and this one is not, so the execution backend answers it
+      itself, twice over: from a hand-kept list of the three container-construction entries, and
+      from a conjunction of two unrelated property flags standing in for "is this the LRM 7.12
+      family". The other backend never asks, because its target language answers from the named
+      type, so nothing holds a second answer in step and a container-construction entry added
+      anywhere returns "no shape operand" here in silence.
+
+      The three container rows are a plain relocation. What is not derived yet is what the LRM 7.12
+      row should say: the operand it wants is the trailing prototype rather than a fixed position,
+      and settling that means first establishing whether the two associative index queries -- which
+      carry a prototype the conjunction deliberately excludes, and so cross the boundary unerased
+      today -- are right to, or are a latent defect the conjunction is hiding. That question is about
+      what crosses a C ABI, where a wrong answer is silent rather than a build failure, so it is
+      settled before anything here is moved.
+
+      This meets T19 at one site, and the two must not be folded together: T19 owns the branch that
+      reads the result type because a construction has no entry to read, and closing this one leaves
+      that branch standing.
 
 ## An aggregate's members
 
@@ -97,14 +127,6 @@ cross-check predicts. This file owns only which instances are known and what is 
       [compound-assignment-write-location](../decisions/compound-assignment-write-location.md)
       settled -- one compound node whose "evaluate the target once" is each backend's mechanical job
       -- so it is a decision to revisit, not a defect to fix under it.
-- [ ] T21 -- An operation no layer below the front end can meet is not in the vocabulary those
-      layers share. Six enumeration queries and methods are answered from the enumeration's own
-      declared members where the source is read, yet they sit in the closed set every later layer
-      switches over, so each of those layers carries an arm for an alternative it can never see and
-      the runtime-entry declaration has to say that no library declares them.
-      [builtin-call-identity](../decisions/builtin-call-identity.md) rejected exactly this shape for
-      the one other front-end-only operation, and gave that one a vocabulary of its own; these six
-      were never held to the same rule.
 
 ## Exhaustiveness
 
@@ -118,9 +140,11 @@ cross-check predicts. This file owns only which instances are known and what is 
       An absent answer can, and a caller that has to decide what absence means then says so at its
       own site; a substituted value cannot, and every caller inherits a guess. Three functions asked
       one container's element type three ways -- one covering three container kinds and refusing the
-      fourth, one covering four and answering with the container itself, one over the other layer's
-      types answering with absence -- which is the whole failure in miniature. That is now one
-      question with one answer.
+      fourth, one covering four and answering with the container itself, one over the front end's
+      own types answering with absence -- which is the whole failure in miniature. The two over the
+      lowered types are now one question with one answer. The third stays separate, because the two
+      layers name types in different universes and no single function spans both; it already answers
+      with absence, which is the shape this item asks for.
 
       What is left needs an answer this file does not have: the remaining substituting arms all walk
       a type's or a node's parts, and each carries its own idea of what has parts. One question --

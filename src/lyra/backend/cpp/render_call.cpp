@@ -112,13 +112,6 @@ auto ResolveBuiltinSpelling(
                     "{}::{}", RenderTypeAsCpp(view.Unit(), tq.type),
                     s.identifier),
                 .placement = ReceiverPlacement::kIntoCalleeName};
-          },
-          [&](const support::NotDeclared& n) -> CalleeSpelling {
-            throw InternalError(
-                std::format(
-                    "Direct builtin call: no library declares an entry for "
-                    "`{}`, because {}; please report this as a bug",
-                    entry.name, n.reason));
           }},
       entry.declaration);
 }

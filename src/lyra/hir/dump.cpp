@@ -683,6 +683,24 @@ class HirDumper {
     throw InternalError("HirDumper::FormatConversionKind: unknown kind");
   }
 
+  static auto FormatEnumMethod(EnumMethod m) -> std::string_view {
+    switch (m) {
+      case EnumMethod::kFirst:
+        return "first";
+      case EnumMethod::kLast:
+        return "last";
+      case EnumMethod::kNum:
+        return "num";
+      case EnumMethod::kName:
+        return "name";
+      case EnumMethod::kNext:
+        return "next";
+      case EnumMethod::kPrev:
+        return "prev";
+    }
+    throw InternalError("HirDumper::FormatEnumMethod: unknown method");
+  }
+
   [[nodiscard]] auto FormatSubroutineRef(const SubroutineRef& callee) const
       -> std::string {
     return std::visit(
@@ -721,6 +739,10 @@ class HirDumper {
             [](const BuiltinMethodRef& b) -> std::string {
               return std::format(
                   "BuiltinFn \"{}\"", support::RuntimeEntryOf(b.method).name);
+            },
+            [](const EnumMethodRef& e) -> std::string {
+              return std::format(
+                  "EnumMethod \"{}\"", FormatEnumMethod(e.method));
             },
             [this](const ForeignImportRef& f) -> std::string {
               const auto& decl = unit_->foreign_imports.Get(f.id);

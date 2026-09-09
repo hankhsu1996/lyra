@@ -1,22 +1,8 @@
 #include "lyra/support/builtin_fn.hpp"
 
-#include <string_view>
-
 #include "lyra/base/internal_error.hpp"
 
 namespace lyra::support {
-
-namespace {
-
-// LRM 6.19.5 enum queries and methods are answered from the enumeration's own
-// declared members: the type-static queries become constants and the instance
-// methods become callables synthesized over the member list, both where the
-// source is read. No library over the shared packed representation could see
-// those members, so none declares an entry for them.
-constexpr std::string_view kAnsweredFromEnumMembers =
-    "an enumeration's declared members answer it where the source is read";
-
-}  // namespace
 
 auto RuntimeEntryOf(BuiltinFn id) -> RuntimeEntry {
   switch (id) {
@@ -295,30 +281,6 @@ auto RuntimeEntryOf(BuiltinFn id) -> RuntimeEntry {
       return {.name = "trigger", .declaration = Method{"Trigger"}};
     case BuiltinFn::kTriggered:
       return {.name = "triggered", .declaration = Method{"Triggered"}};
-    case BuiltinFn::kEnumFirst:
-      return {
-          .name = "enum_first",
-          .declaration = NotDeclared{kAnsweredFromEnumMembers}};
-    case BuiltinFn::kEnumLast:
-      return {
-          .name = "enum_last",
-          .declaration = NotDeclared{kAnsweredFromEnumMembers}};
-    case BuiltinFn::kEnumNum:
-      return {
-          .name = "enum_num",
-          .declaration = NotDeclared{kAnsweredFromEnumMembers}};
-    case BuiltinFn::kEnumName:
-      return {
-          .name = "enum_name",
-          .declaration = NotDeclared{kAnsweredFromEnumMembers}};
-    case BuiltinFn::kEnumNext:
-      return {
-          .name = "enum_next",
-          .declaration = NotDeclared{kAnsweredFromEnumMembers}};
-    case BuiltinFn::kEnumPrev:
-      return {
-          .name = "enum_prev",
-          .declaration = NotDeclared{kAnsweredFromEnumMembers}};
     case BuiltinFn::kIsUnknown:
       return {.name = "is_unknown", .declaration = Method{"IsUnknown"}};
     case BuiltinFn::kCountBits:
