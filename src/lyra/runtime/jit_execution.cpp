@@ -34,6 +34,7 @@
 #include "lyra/runtime/managed_object.hpp"
 #include "lyra/runtime/named_event.hpp"
 #include "lyra/runtime/plusargs.hpp"
+#include "lyra/runtime/process_control.hpp"
 #include "lyra/runtime/random.hpp"
 #include "lyra/runtime/runtime.hpp"
 #include "lyra/runtime/runtime_effects.hpp"
@@ -45,6 +46,7 @@
 #include "lyra/value/chandle.hpp"
 #include "lyra/value/empty.hpp"
 #include "lyra/value/format.hpp"
+#include "lyra/value/managed_ref.hpp"
 #include "lyra/value/packed_array.hpp"
 #include "lyra/value/real.hpp"
 #include "lyra/value/runtime_array_manipulation.hpp"
@@ -262,6 +264,16 @@ auto NetOf(void* net) -> ResolvedNet<T>& {
 template <typename T>
 auto DriverOf(void* driver) -> Driver<T>& {
   return *static_cast<Driver<T>*>(driver);
+}
+
+// The process a `process` handle names (LRM 9.7), recovered from the erased
+// share the managed-reference domain carries. Taking a typed owner is what
+// keeps the node alive for the length of the call: the entry is the one place
+// that knows which object the share is of, which is what erasing it costs and
+// all it costs.
+auto ProcessOf(const void* handle) -> GcRef<RuntimeProcess> {
+  return GcRef<RuntimeProcess>(std::static_pointer_cast<RuntimeProcess>(
+      Read<value::ManagedRef>(handle).Share()));
 }
 
 // Takes over the erased value a boxed handle carries. A value crosses this way
@@ -547,6 +559,14 @@ using lyra::runtime::Own;
 using lyra::runtime::PackedValuesOf;
 using lyra::runtime::ParkForDelayTicks;
 using lyra::runtime::PowerOf;
+using lyra::runtime::ProcessAwait;
+using lyra::runtime::ProcessAwaitAwaitable;
+using lyra::runtime::ProcessKill;
+using lyra::runtime::ProcessOf;
+using lyra::runtime::ProcessResume;
+using lyra::runtime::ProcessSelf;
+using lyra::runtime::ProcessStatus;
+using lyra::runtime::ProcessSuspend;
 using lyra::runtime::ProgramLifetime;
 using lyra::runtime::Read;
 using lyra::runtime::RealTimeInUnit;
@@ -554,6 +574,7 @@ using lyra::runtime::Region;
 using lyra::runtime::RunHostCommand;
 using lyra::runtime::RunNullHostCommand;
 using lyra::runtime::RuntimeEffects;
+using lyra::runtime::RuntimeProcess;
 using lyra::runtime::Scope;
 using lyra::runtime::ScopeDefinition;
 using lyra::runtime::SimTimeInUnit;
@@ -568,6 +589,7 @@ using lyra::runtime::Var;
 using lyra::value::Chandle;
 using lyra::value::Format;
 using lyra::value::FormatSpec;
+using lyra::value::ManagedRef;
 using lyra::value::PackedArray;
 using lyra::value::PackedRange;
 using lyra::value::PackedType;
@@ -898,6 +920,45 @@ void lyra_rt_disable_fork(void* runtime) {
   lyra::runtime::DisableFork(*static_cast<RuntimeEffects*>(runtime));
 }
 
+auto lyra_rt_process_self(void* runtime) -> void* {
+  return Own(
+      ManagedRef{ProcessSelf(*static_cast<RuntimeEffects*>(runtime)).Share()});
+}
+
+auto lyra_rt_process_status(const void* self) -> void* {
+  return Own(ProcessStatus(ProcessOf(self)));
+}
+
+void lyra_rt_process_kill(const void* self, void* runtime) {
+  ProcessKill(ProcessOf(self), *static_cast<RuntimeEffects*>(runtime));
+}
+
+auto lyra_rt_process_await(const void* self, void* runtime) -> bool {
+  auto& svc = *static_cast<RuntimeEffects*>(runtime);
+  const GcRef<RuntimeProcess> target = ProcessOf(self);
+  // LRM 9.7's precondition and readiness rule come from the operation rather
+  // than being restated: forming the wait is what rejects awaiting the caller,
+  // and a target that has already terminated leaves nothing to wait for.
+  const ProcessAwaitAwaitable wait = ProcessAwait(target, svc);
+  if (wait.await_ready()) {
+    return false;
+  }
+  // Termination is not a report flush point (LRM 16.4.2): awaiting a process
+  // is a method call rather than an event control or a wait statement.
+  svc.CurrentProcess().RegisterWakeup(false, [&target](CoroutineHandle waiter) {
+    target->ArmTerminatedWaiter(waiter);
+  });
+  return true;
+}
+
+void lyra_rt_process_suspend(const void* self, void* runtime) {
+  ProcessSuspend(ProcessOf(self), *static_cast<RuntimeEffects*>(runtime));
+}
+
+void lyra_rt_process_resume(const void* self, void* runtime) {
+  ProcessResume(ProcessOf(self), *static_cast<RuntimeEffects*>(runtime));
+}
+
 auto lyra_rt_closure_make(const void* definition, LyraSpan captures) -> void* {
   return GeneratedCallScope::Current().Arena().New<ClosureValue>(
       static_cast<const ClosureDefinition*>(definition),
@@ -918,7 +979,7 @@ auto lyra_rt_object_make(const void* definition) -> void* {
     GeneratedCallScope scope;
     object->Construct();
   }
-  return Own(std::move(object));
+  return Own(ManagedRef{object.Share()});
 }
 
 void lyra_rt_submit_nba(void* runtime, void* closure) {
@@ -1314,12 +1375,11 @@ auto lyra_rt_sequence_element(const void* sequence, std::int64_t index)
 }
 
 auto lyra_rt_object_deref(void* handle) -> void* {
-  const auto& object = Read<GcRef<ManagedObject>>(handle);
-  if (object.Get() == nullptr) {
-    throw lyra::SimulationError(
-        "a class handle referring to no object was dereferenced");
+  const auto& object = Read<ManagedRef>(handle);
+  if (!static_cast<bool>(object)) {
+    lyra::runtime::RaiseNullObjectHandleAccess();
   }
-  return object.Get();
+  return object.Share().get();
 }
 
 auto lyra_rt_object_member_addr(void* object, std::uint32_t index) -> void* {
@@ -2208,6 +2268,59 @@ auto lyra_rt_chandle_case_equal(void* lhs, void* rhs) -> void* {
 
 auto lyra_rt_chandle_to_bool(void* operand) -> bool {
   return static_cast<bool>(Chandle{operand});
+}
+
+// A handle referring to nothing (LRM 8.4). It is a value of the domain like any
+// other, so it crosses as a handle to one; the value is immutable from the
+// generated side, so every null in the run names the same one and nothing is
+// allocated for it.
+auto lyra_rt_managedref_default() -> void* {
+  static ManagedRef null_handle;
+  return &null_handle;
+}
+
+// Comparing two handles is a machine predicate, not a value operation: the
+// answer is whether they name one object, and the call site widens it to the
+// 1-bit SystemVerilog result (LRM 11.4.5).
+auto lyra_rt_managedref_eq(const void* lhs, const void* rhs) -> bool {
+  return Read<ManagedRef>(lhs).Share().get() ==
+         Read<ManagedRef>(rhs).Share().get();
+}
+
+auto lyra_rt_managedref_ne(const void* lhs, const void* rhs) -> bool {
+  return Read<ManagedRef>(lhs).Share().get() !=
+         Read<ManagedRef>(rhs).Share().get();
+}
+
+// LRM 11.4.5: `===` on a handle carries the same meaning as `==`. Unlike those,
+// it answers with the 1-bit value directly, because the clause makes the result
+// always known and the call is stated at that rather than widened from a
+// predicate.
+auto lyra_rt_managedref_case_equal(const void* lhs, const void* rhs) -> void* {
+  return Own(Read<ManagedRef>(lhs).CaseEqual(Read<ManagedRef>(rhs)));
+}
+
+auto lyra_rt_managedref_to_bool(const void* operand) -> bool {
+  return static_cast<bool>(Read<ManagedRef>(operand));
+}
+
+auto lyra_rt_managedref_value_cell_alloc() -> void* {
+  return GeneratedCallScope::Current()
+      .ActivationValues()
+      .New<ActivationValueCell<ManagedRef>>();
+}
+
+// Storing copies the handle's share of ownership with it, which is what keeps
+// the object alive once the stretch that produced the handle has returned and
+// released its arena; loading copies one back out, so the reader owns what it
+// was handed for as long as it holds it.
+void lyra_rt_managedref_value_cell_store(void* cell, const void* value) {
+  static_cast<ActivationValueCell<ManagedRef>*>(cell)->Store(
+      Read<ManagedRef>(value));
+}
+
+auto lyra_rt_managedref_value_cell_load(const void* cell) -> void* {
+  return Own(static_cast<const ActivationValueCell<ManagedRef>*>(cell)->Get());
 }
 
 // Boxes a value-domain handle into a type-erased `RuntimeValue`. A value

@@ -37,7 +37,11 @@ auto StaticVariableSymbol(
 // holds no reference to the MIR it was lowered from.
 class UnitLowerer {
  public:
+  // The unit being produced carries its source's name from the moment it
+  // exists: it is the one thing about the output that is settled before any
+  // lowering happens, and everything else here is minted as the pass runs.
   explicit UnitLowerer(const mir::CompilationUnit& mir) : mir_(&mir) {
+    out_.name = mir.name;
   }
 
   auto Run() -> diag::Result<lir::CompilationUnit>;
@@ -86,6 +90,13 @@ class UnitLowerer {
   // virtual has no implementation here, so neither is a function of this unit.
   [[nodiscard]] auto MethodFunction(
       mir::ClassId owner, mir::CallableId callable) const -> lir::FunctionId;
+
+  // The LIR function a class's constructor lowers to. Every class defines its
+  // own construction, so every one of them has this function, and it is named
+  // before any body is lowered -- which is what lets a derived class enter its
+  // base's whichever order the two are lowered in.
+  [[nodiscard]] auto ConstructorFunction(mir::ClassId cls) const
+      -> lir::FunctionId;
 
  private:
   // The declaration a closure's captures are members of, and the function its

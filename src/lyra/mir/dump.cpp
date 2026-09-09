@@ -50,7 +50,11 @@ class MirDumper {
  public:
   auto Dump(const CompilationUnit& unit) -> std::string {
     unit_ = &unit;
-    Line("CompilationUnit");
+    // Named, because a dump of a design carries several units and every id
+    // below indexes the pool of the one it sits in. Two units number their
+    // types from zero, so an id read without knowing which unit it belongs to
+    // resolves against the wrong pool and answers anyway.
+    Line(std::format("CompilationUnit \"{}\"", unit.name));
     Indent();
     Line("Types:");
     Indent();
@@ -906,14 +910,11 @@ class MirDumper {
 
     Line("Constructor:");
     Indent();
-    if (s.constructor.base_init.has_value()) {
-      Line("BaseInit:");
+    if (!s.constructor.base_args.empty()) {
+      Line("BaseArgs:");
       Indent();
-      for (std::size_t i = 0; i < s.constructor.base_init->args.size(); ++i) {
-        Line(
-            std::format(
-                "[{}] arg=Expr[{}]", i,
-                s.constructor.base_init->args[i].value));
+      for (std::size_t i = 0; i < s.constructor.base_args.size(); ++i) {
+        Line(std::format("[{}] Expr[{}]", i, s.constructor.base_args[i].value));
       }
       Dedent();
     }

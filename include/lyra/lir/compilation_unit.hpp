@@ -114,6 +114,11 @@ struct StaticStorage {
 // identity a call names. A class reaches its own bodies the same way any other
 // caller does.
 struct CompilationUnit {
+  // The unit's own name, carried from the program this one was lowered from.
+  // Every identity below indexes a pool this unit owns and numbers from zero,
+  // so a reader holding two units needs the pool named to know which one an id
+  // belongs to.
+  std::string name;
   TypePool types;
   base::Registry<Class, ClassId> classes;
   base::Registry<Closure, ClosureId> closures;

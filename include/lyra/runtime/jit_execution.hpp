@@ -167,6 +167,19 @@ auto lyra_rt_fork_wait_first(void* runtime, LyraSpan branches) -> bool;
 auto lyra_rt_wait_fork(void* runtime) -> bool;
 void lyra_rt_disable_fork(void* runtime);
 
+// LRM 9.7 process control. The receiver is a handle of the managed-reference
+// domain naming a process node; `self` builds one for the calling process,
+// which the engine already owns, so nothing is constructed here. `await` is the
+// one that blocks, and it answers the way every registration does -- whether
+// the caller must park at all -- since a target that has already terminated
+// leaves nothing to wait for.
+auto lyra_rt_process_self(void* runtime) -> void*;
+auto lyra_rt_process_status(const void* self) -> void*;
+void lyra_rt_process_kill(const void* self, void* runtime);
+auto lyra_rt_process_await(const void* self, void* runtime) -> bool;
+void lyra_rt_process_suspend(const void* self, void* runtime);
+void lyra_rt_process_resume(const void* self, void* runtime);
+
 // Builds a callable the runtime runs later: `definition` is an opaque
 // cross-artifact reference naming both the body and the storage its captures
 // need, and `captures` supplies one handle per capture in declaration order,
@@ -749,6 +762,24 @@ auto lyra_rt_chandle_eq(void* lhs, void* rhs) -> void*;
 auto lyra_rt_chandle_ne(void* lhs, void* rhs) -> void*;
 auto lyra_rt_chandle_case_equal(void* lhs, void* rhs) -> void*;
 auto lyra_rt_chandle_to_bool(void* operand) -> bool;
+
+// The managed-reference domain (LRM 8.3, and the LRM 9.7 `process` a handle
+// names). Unlike a chandle, an operand here is a handle to a runtime-owned
+// value: what a handle carries is the object's address together with a share of
+// its ownership, and a share cannot be recovered from an address alone, so the
+// two travel together and a store copies both. LRM Table 11-1's "Any data type"
+// row is the whole operator surface -- the equality family, which yields a
+// packed 1-bit, and the boolean test. A null handle is the domain's default
+// value rather than a null pointer, because a null pointer would be a second
+// shape for the operand every entry would then have to tell apart.
+auto lyra_rt_managedref_default() -> void*;
+auto lyra_rt_managedref_eq(const void* lhs, const void* rhs) -> bool;
+auto lyra_rt_managedref_ne(const void* lhs, const void* rhs) -> bool;
+auto lyra_rt_managedref_case_equal(const void* lhs, const void* rhs) -> void*;
+auto lyra_rt_managedref_to_bool(const void* operand) -> bool;
+auto lyra_rt_managedref_value_cell_alloc() -> void*;
+void lyra_rt_managedref_value_cell_store(void* cell, const void* value);
+auto lyra_rt_managedref_value_cell_load(const void* cell) -> void*;
 
 // Boxes a value-domain handle into a type-erased `RuntimeValue`, the form in
 // which an aggregate holds its parts. A value crosses this way exactly where it

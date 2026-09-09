@@ -35,6 +35,13 @@ enum class ImportedRuntimeMethod : std::uint8_t {
 auto ImportedRuntimeMethodSymbol(ImportedRuntimeMethod method)
     -> std::string_view;
 
+// The operation half of the runtime-library entry a backend calling through the
+// C ABI reaches instead. It is what the two sides must agree on, so it is
+// stated once here rather than composed on each; changing it renames a linked
+// symbol, so change it only to correct the operation's identity.
+auto ImportedRuntimeMethodEntryName(ImportedRuntimeMethod method)
+    -> std::string_view;
+
 // Whether the runtime symbol takes the runtime handle. Every method
 // needs it except `status`, a pure read of the process node: `self` and
 // `suspend` identify the calling process through it, while `kill`, `await`, and

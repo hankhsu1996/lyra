@@ -138,10 +138,9 @@ struct ObservableCellStorage {
   support::ValueDomain domain;
 };
 
-// A value the owner takes a copy of once and never writes again -- a chandle
-// (LRM 6.14), and every value a closure snapshots into a capture. Reading it
-// hands back the storage itself, which is safe exactly because nothing writes
-// it afterwards.
+// A value the owner takes a copy of once and never writes again -- every value
+// a closure snapshots into a capture. Reading it hands back the storage itself,
+// which is safe exactly because nothing writes it afterwards.
 struct InlineValueStorage {
   support::ValueDomain domain;
 };

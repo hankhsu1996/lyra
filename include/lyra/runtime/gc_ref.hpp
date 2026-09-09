@@ -68,6 +68,14 @@ class GcRef {
     return ptr_.get();
   }
 
+  // The share of ownership the handle holds, which is what a handle carries
+  // besides the address. A boundary that erases the object's type carries this
+  // rather than the address, so the object outlives the call that produced the
+  // handle.
+  [[nodiscard]] auto Share() const -> const std::shared_ptr<T>& {
+    return ptr_;
+  }
+
   friend auto operator==(const GcRef& a, const GcRef& b) -> bool {
     return a.ptr_.get() == b.ptr_.get();
   }

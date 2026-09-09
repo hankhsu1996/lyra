@@ -384,23 +384,36 @@ auto BuildMirBinaryExpr(
   const bool string_lhs = lhs_ty.Is<mir::StringType>();
   const bool string_rhs = rhs_ty.Is<mir::StringType>();
 
-  // LRM 8.4: class-handle equality compares object identity and yields a 1-bit
-  // value. A class handle's `==` / `!=` produces a host bool, reshaped to the
-  // SV 1-bit integral by `FromBool` so the result carries the value type a
-  // 1-bit signal assignment expects. A chandle is not in this family: it is a
-  // value type whose `==` already yields the 1-bit integral directly, like a
-  // string or a real, so it renders as a plain binary operator.
+  // LRM 8.4: class-handle equality asks which object each handle names, which
+  // is a machine predicate; the 1-bit value LRM 11.4.5 gives the operator is
+  // that predicate widened, so the two are stated separately -- the same shape
+  // a real- or string-family logical operator takes. A chandle is compared as
+  // the value it is (LRM 6.14) and needs neither step.
   const auto is_handle = [](const mir::Type& ty) {
     return ty.Is<mir::ManagedRefType>();
   };
   if ((is_handle(lhs_ty) || is_handle(rhs_ty)) &&
       (op == hir::BinaryOp::kEquality || op == hir::BinaryOp::kInequality)) {
+    // LRM 8.4 admits `null` as one operand. A comparison states no destination,
+    // so the front end leaves such an operand at the null type and the handle's
+    // type is what it is being compared at; converting says that once, in the
+    // one place a value crossing to another type is materialized.
+    const mir::TypeId handle_type = is_handle(lhs_ty)
+                                        ? block.exprs.Get(lhs_id).type
+                                        : block.exprs.Get(rhs_id).type;
+    const auto at_handle_type = [&](mir::ExprId operand) -> mir::ExprId {
+      return ConvertToType(unit, block, operand, handle_type);
+    };
+    // The comparison is typed at the host bool it produces; the 1-bit result is
+    // what the widening around it yields.
     const mir::ExprId cmp = block.exprs.Add(
         mir::Expr{
             .data =
                 mir::BinaryExpr{
-                    .op = LowerBinaryOp(op), .lhs = lhs_id, .rhs = rhs_id},
-            .type = result_type});
+                    .op = LowerBinaryOp(op),
+                    .lhs = at_handle_type(lhs_id),
+                    .rhs = at_handle_type(rhs_id)},
+            .type = unit.builtins.machine_bool});
     return MakeFromBoolCall(cmp, result_type);
   }
 

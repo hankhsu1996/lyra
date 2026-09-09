@@ -12,6 +12,7 @@
 #include "lyra/lir/type_id.hpp"
 #include "lyra/lowering/mir_to_lir/unit_lowerer.hpp"
 #include "lyra/mir/callable_code.hpp"
+#include "lyra/mir/class.hpp"
 #include "lyra/mir/closure_decl.hpp"
 #include "lyra/mir/expr.hpp"
 #include "lyra/mir/expr_id.hpp"
@@ -32,6 +33,10 @@ class FunctionLowerer {
  public:
   FunctionLowerer(
       UnitLowerer& unit, const mir::CallableCode& code, std::string name);
+  // Lowers a class's constructor. The base is constructed before the body runs
+  // (LRM 8.7), and what base that is belongs to the class rather than to the
+  // body, so the class comes with the code it constructs from.
+  FunctionLowerer(UnitLowerer& unit, const mir::Class& cls, std::string name);
   // Lowers a closure's invoke. Its signature leads with the receiver naming the
   // storage the captures live in, and the body reads each of them as a member
   // of it.
@@ -70,8 +75,8 @@ class FunctionLowerer {
   // child scopes hold it. It is lowered afresh at each way out, because a CFG
   // reaches an extent's end by as many edges as there are ways to leave it.
   struct PendingCleanup {
-    const mir::Block* owner;
-    mir::BlockId cleanup;
+    const mir::Block* owner = nullptr;
+    mir::BlockId cleanup{};
   };
 
   // Where a control effect leaving a region's body lands: the block that runs
@@ -106,6 +111,14 @@ class FunctionLowerer {
   };
   using LocalBinding = std::variant<
       PlaceBinding, ValueBinding, ActivationValueBinding, CellBinding>;
+
+  // Enters the base's constructor on this same object, ahead of the body (LRM
+  // 8.7). The base's members sit ahead of this class's in one shared
+  // numbering, so the base initializes its own through the receiver it is
+  // handed. A base the runtime library defines comes into existence with the
+  // object itself and is entered by whatever builds it, so nothing is called
+  // for one here.
+  auto ConstructBase() -> diag::Result<void>;
 
   auto LowerBlockInto(const mir::Block& block) -> diag::Result<void>;
   auto LowerStmtInto(const mir::Block& block, const mir::Stmt& stmt)
@@ -361,6 +374,7 @@ class FunctionLowerer {
 
   UnitLowerer* unit_;
   const mir::CallableCode* code_;
+  const mir::Class* constructed_class_;
   const mir::ClosureDecl* closure_;
   const mir::PackedTypeDescription* description_;
   std::string name_;

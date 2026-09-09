@@ -33,6 +33,25 @@ auto ImportedRuntimeMethodSymbol(ImportedRuntimeMethod method)
   throw InternalError("ImportedRuntimeMethodSymbol: unknown method");
 }
 
+auto ImportedRuntimeMethodEntryName(ImportedRuntimeMethod method)
+    -> std::string_view {
+  switch (method) {
+    case ImportedRuntimeMethod::kProcessSelf:
+      return "process_self";
+    case ImportedRuntimeMethod::kProcessStatus:
+      return "process_status";
+    case ImportedRuntimeMethod::kProcessKill:
+      return "process_kill";
+    case ImportedRuntimeMethod::kProcessAwait:
+      return "process_await";
+    case ImportedRuntimeMethod::kProcessSuspend:
+      return "process_suspend";
+    case ImportedRuntimeMethod::kProcessResume:
+      return "process_resume";
+  }
+  throw InternalError("ImportedRuntimeMethodEntryName: unknown method");
+}
+
 auto ImportedRuntimeMethodTakesServices(ImportedRuntimeMethod method) -> bool {
   switch (method) {
     case ImportedRuntimeMethod::kProcessSelf:

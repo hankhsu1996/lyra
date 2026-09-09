@@ -52,16 +52,6 @@ struct StaticPropertyDecl {
   TypeId type;
 };
 
-// A constructor's invocation of its base's constructor. Every arg evaluates in
-// the enclosing constructor's local scope. The callee identity is implicit --
-// it is the base declared on the class this ConstructorDecl belongs to; there
-// is exactly one base and exactly one constructor per class, so restating the
-// callee here would duplicate structure the class already fixes. Absent when
-// the class extends nothing.
-struct BaseInit {
-  std::vector<ExprId> args;
-};
-
 // The class's construction protocol. The constructor is a bare body block the
 // class owns directly, not a member of the callable arena: it is never a call
 // target and never dispatches, so it carries no callable identity. `code` runs
@@ -75,7 +65,10 @@ struct ConstructorDecl {
   // A class always defines its own construction, so this code is always a
   // definition; an empty body is a class that constructs nothing.
   CallableCode code = CallableCode::Defined();
-  std::optional<BaseInit> base_init;
+  // What the base's constructor is entered with (LRM 8.7), each argument
+  // evaluated in this constructor's own local scope. Which base that is, and
+  // whether the class has one, is the class's own declaration.
+  std::vector<ExprId> base_args;
 };
 
 struct Class {
@@ -90,8 +83,6 @@ struct Class {
   // minimum (LRM 3.14.3) and so delays scale to it.
   TimeResolution time_resolution;
   base::Arena<FieldDecl, FieldId> fields;
-  // The class's construction protocol: the constructor body together with the
-  // base and per-field initialization not expressible in that body.
   ConstructorDecl constructor;
   // The classes this one structurally owns -- the children it builds. Each
   // names a registry identity, in construction order. Ownership of the

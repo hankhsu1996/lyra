@@ -273,11 +273,10 @@ auto LowerCallTarget(
                       return lir::CallTarget{ExternalMethodSymbol(
                           t.unit_name, t.class_name, t.method_name)};
                     },
-                    [&](const mir::ImportedRuntimeCallTarget&)
+                    [&](const mir::ImportedRuntimeCallTarget& t)
                         -> diag::Result<lir::CallTarget> {
-                      return Unsupported(
-                          "mir_to_lir: an imported runtime-library method call "
-                          "is not yet lowerable to LIR");
+                      return lir::CallTarget{
+                          lir::ImportedRuntimeTarget{.method = t.method}};
                     }},
                 d.target);
           },
@@ -303,6 +302,7 @@ FunctionLowerer::FunctionLowerer(
     UnitLowerer& unit, const mir::CallableCode& code, std::string name)
     : unit_(&unit),
       code_(&code),
+      constructed_class_(nullptr),
       closure_(nullptr),
       description_(nullptr),
       name_(std::move(name)),
@@ -313,9 +313,24 @@ FunctionLowerer::FunctionLowerer(
 }
 
 FunctionLowerer::FunctionLowerer(
+    UnitLowerer& unit, const mir::Class& cls, std::string name)
+    : unit_(&unit),
+      code_(&cls.constructor.code),
+      constructed_class_(&cls),
+      closure_(nullptr),
+      description_(nullptr),
+      name_(std::move(name)),
+      placed_(cls.constructor.code.locals.size(), false),
+      activation_value_local_(cls.constructor.code.locals.size(), false),
+      cell_local_(cls.constructor.code.locals.size(), false),
+      locals_(cls.constructor.code.locals.size(), std::nullopt) {
+}
+
+FunctionLowerer::FunctionLowerer(
     UnitLowerer& unit, const mir::ClosureDecl& closure, std::string name)
     : unit_(&unit),
       code_(&closure.invoke),
+      constructed_class_(nullptr),
       closure_(&closure),
       description_(nullptr),
       name_(std::move(name)),
@@ -330,6 +345,7 @@ FunctionLowerer::FunctionLowerer(
     std::string name)
     : unit_(&unit),
       code_(nullptr),
+      constructed_class_(nullptr),
       closure_(nullptr),
       description_(&description),
       name_(std::move(name)) {
@@ -474,6 +490,11 @@ auto FunctionLowerer::Run() -> diag::Result<lir::Function> {
     }
   }
 
+  auto based = ConstructBase();
+  if (!based) {
+    return std::unexpected(std::move(based.error()));
+  }
+
   auto lowered = LowerBlockInto(code_->Body());
   if (!lowered) {
     return std::unexpected(std::move(lowered.error()));
@@ -501,6 +522,58 @@ auto FunctionLowerer::Run() -> diag::Result<lir::Function> {
             .terminator = *std::move(block.terminator)});
   }
   return std::move(fn_);
+}
+
+auto FunctionLowerer::ConstructBase() -> diag::Result<void> {
+  if (constructed_class_ == nullptr || !constructed_class_->base.has_value()) {
+    return {};
+  }
+  return std::visit(
+      Overloaded{
+          [&](const mir::IntraUnitClassRef& intra) -> diag::Result<void> {
+            const std::vector<mir::ExprId>& stated =
+                constructed_class_->constructor.base_args;
+            std::vector<lir::Operand> args;
+            args.reserve(stated.size() + 1);
+            // The base is entered on the object being constructed, which leads
+            // its arguments the way a receiver leads any body's parameters.
+            args.emplace_back(lir::Use{.value = fn_.params.front()});
+            for (const mir::ExprId arg : stated) {
+              auto lowered = LowerArgument(code_->Body(), arg);
+              if (!lowered) {
+                return std::unexpected(std::move(lowered.error()));
+              }
+              args.push_back(*std::move(lowered));
+            }
+            // What the call states is all it carries, so a base constructor
+            // declaring a formal the call leaves out cannot be entered: a
+            // default value belongs to the declaration and is filled in where
+            // the call is written (LRM 13.5.3), which an implicit forward
+            // never is.
+            const mir::Class& base = unit_->Mir().GetClass(intra.class_id);
+            if (base.constructor.code.params.size() != args.size()) {
+              return Unsupported(
+                  "mir_to_lir: entering a base constructor that declares a "
+                  "formal the forwarding call leaves to its default is not "
+                  "yet supported");
+            }
+            Emit(
+                unit_->TranslateType(unit_->Mir().builtins.void_type),
+                lir::CallInstr{
+                    .target =
+                        lir::FunctionTarget{
+                            .function =
+                                unit_->ConstructorFunction(intra.class_id)},
+                    .args = std::move(args)});
+            return {};
+          },
+          [](const mir::CrossUnitClassRef&) -> diag::Result<void> {
+            return Unsupported(
+                "mir_to_lir: constructing a class whose base another "
+                "compilation unit declares is not yet supported");
+          },
+          [](const mir::RuntimeClassRef&) -> diag::Result<void> { return {}; }},
+      *constructed_class_->base);
 }
 
 auto FunctionLowerer::NewBlock() -> lir::BlockId {

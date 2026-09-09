@@ -68,8 +68,10 @@ ownership, or native in-frame layout) for every value.
       domain: the value is the pointer itself, carried inline rather than behind a handle to a
       runtime-owned object. A chandle defaults to null, assigns from null and from another chandle,
       takes the equality and case-equality families and the boolean test, and lives in a member slot
-      as an owned inline value (not an observable cell, since no process subscribes to it). This is
-      the first bare-pointer value domain; a class handle later reuses the shape.
+      as a variable of its own. This is the one value domain whose value is the handle itself: it
+      owns nothing, so nothing is lost by carrying it as the bare pointer. A class handle does not
+      share the shape -- it carries a share of ownership beside the address, so it is a value living
+      in storage like every other.
 - [x] **The unpacked struct** (LRM 7.2) -- realized on the execution backend as a product value
       domain: a runtime-owned product that owns its components by value and crosses as an opaque
       handle, so the generated side never inspects a component's representation. It default-
@@ -150,9 +152,17 @@ ownership, or native in-frame layout) for every value.
       (LRM 12.6) rides on the tagged form. One corner stays deferred: reading an untagged union
       member other than the one last written -- undefined in SV (LRM 7.3) -- is reported rather than
       returning that member's default, because only the live member is stored.
-- [ ] **A managed value (class handle) across a suspension.** A traceable frame and precise
-      reclamation, none of which is implemented: the managed reference is realized as a
-      reference-counted handle that does not reclaim cycles, and only in the C++ backend. Contract:
+- [x] **The managed reference** (LRM 8.3, and the LRM 9.7 `process` a handle names) -- realized on
+      the execution backend as a value domain: the object's address together with a share of its
+      ownership, with the object's type erased, so one representation serves every object a handle
+      can name. It defaults to null, copies as a value and so keeps its referent alive, takes the
+      equality and case-equality families and the boolean test, and lives in a member slot as a
+      variable written and read through its own storage. LRM 9.7 process control is what exercises
+      it, since a handle to a process reaches the domain without building anything on the managed
+      heap.
+- [ ] **A managed value across a suspension, and its reclamation.** A traceable frame and precise
+      reclamation, neither of which is implemented: what a handle keeps alive it keeps by shared
+      ownership, so an unreachable cycle is not reclaimed on either backend. Contract:
       `../architecture/object_lifetime.md`.
 - [ ] **A reference argument aliasing storage that is not a cell.** A reference binds the cell its
       referent lives in, so a signal is lent by taking the address of the cell it already is, and a
@@ -335,11 +345,22 @@ each meets the same lifetime question above.
       extending it and an addition a base does not publish moves nothing. Settled in
       `../decisions/inherited-member-reference.md`.
 - [ ] Calling an inherited method, and constructing the base. The receiver crosses without being
-      re-typed to the class that declares the body; and a constructor lowers as an ordinary
-      function, so a class that initializes its base runs a constructor that does not -- the one
-      place this backend drops rather than refuses. The C++ backend never had to answer either,
-      because the host language answers them. Both are unreachable end to end today, since
-      constructing an object is itself refused here.
+      re-typed to the class that declares the body, so an inherited method reaches the storage the
+      object holds for what that body names; and constructing enters the base's construction first,
+      on that same object, so what the base establishes is in place before any property initializer
+      or constructor statement of the extending class can read it (LRM 8.7). The C++ backend never
+      had to answer either, because the host language answers them. Neither is reachable end to end,
+      because building the object is refused first: an object is built by an entry that takes the
+      class's definition and nothing else, so a constructor with anywhere to receive an argument has
+      none -- which is every class a scope declares, since such a class is constructed with the
+      instance declaring it. Two narrower refusals sit behind that one: a base another compilation
+      unit declares, on the boundary every cross-unit class reference meets here, and a base
+      constructor formal the forwarding call leaves to its default, since nothing fills a default in
+      where no call is written.
+- [ ] Building an object whose constructor takes arguments, which is what the item above waits on.
+      The entry that builds an object runs the constructor inside the runtime, so the arguments have
+      no way across; carrying them means the runtime builds the storage and the generated code
+      enters the constructor, which is how it already enters a base's.
 - [ ] `compile` end to end against this backend, so a design becomes a program that outlives the
       session. `dump llvm` and `run` already go through it; what neither produces is an artifact
       that can be handed on, which is what the CI job below waits on as well.

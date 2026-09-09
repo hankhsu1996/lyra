@@ -206,17 +206,17 @@ auto RenderAbiAdapterDef(
 
 // The C++ construction shell, split the way every other member is: the class
 // body declares the constructor and its `init` helper, and the definitions
-// carry the base-init clause and the body -- which is what lets a constructor
-// build a child whose own body reaches back into this class.
+// carry the base's initializer clause and the body -- which is what lets a
+// constructor build a child whose own body reaches back into this class.
 //
 // The C++ ctor is composed from the class's construction protocol: the ctor's
 // own callable carries the signature (with `self` at position 0 per MIR
 // contract -- omitted from the C++ list because C++ makes `this` implicit), and
-// the base-init phase carries the args to forward to the base ctor. Property
-// initialization is not a phase here: it arrives as statements at the head of
-// the ctor's own body, already in the order LRM 8.7 requires. The body is
-// threaded through a static `init(self, ...)` helper so a body-local `self`
-// reference resolves the same way it does in every other method render.
+// the protocol carries what the base is entered with. Property initialization
+// needs nothing here: it arrives as statements at the head of the ctor's own
+// body, already in the order LRM 8.7 requires. The body is threaded through a
+// static `init(self, ...)` helper so a body-local `self` reference resolves the
+// same way it does in every other method render.
 struct ConstructorText {
   std::string declaration;
   std::string definitions;
@@ -242,10 +242,10 @@ auto RenderConstructor(const mir::CompilationUnit& unit, const mir::Class& s)
   }
 
   std::optional<std::string> base_clause;
-  if (s.constructor.base_init.has_value()) {
+  if (s.base.has_value()) {
     std::vector<std::string> base_args_rendered;
-    base_args_rendered.reserve(s.constructor.base_init->args.size());
-    for (const mir::ExprId arg : s.constructor.base_init->args) {
+    base_args_rendered.reserve(s.constructor.base_args.size());
+    for (const mir::ExprId arg : s.constructor.base_args) {
       base_args_rendered.push_back(
           RenderExpr(scope_view, scope_view.Expr(arg)));
     }
