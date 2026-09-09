@@ -43,6 +43,16 @@ struct EnclosingScopeReceiver {
   mir::EnclosingHops hops;
 };
 
+// The same scope, handed to a callee that dispatches on nothing: a
+// receiver-less callable of a class that scope declares reaches what the class
+// keeps for itself, which is that instance's, and has no object to reach it
+// through (LRM 6.22, 8.10). It is the same value as the receiver above and a
+// different fact about the call, which is why it is a separate origin rather
+// than the same one read two ways.
+struct DeclaringScopeArgument {
+  mir::EnclosingHops hops;
+};
+
 // The runtime the calling process runs under, which every effect entry takes.
 struct AmbientRuntimeHandle {};
 
@@ -59,7 +69,8 @@ struct SealedObject {
   hir::RoutedRef reference;
 };
 using AmbientHandle = std::variant<
-    EnclosingScopeReceiver, AmbientRuntimeHandle, CalledObject, SealedObject>;
+    EnclosingScopeReceiver, DeclaringScopeArgument, AmbientRuntimeHandle,
+    CalledObject, SealedObject>;
 
 // Whether the value an origin names is the object the callee dispatches on. A
 // scope, a called object, and a sealed endpoint each name one; the engine
@@ -70,6 +81,7 @@ auto BindsAsReceiver(const AmbientHandle& handle) -> bool {
           [](const EnclosingScopeReceiver&) { return true; },
           [](const CalledObject&) { return true; },
           [](const SealedObject&) { return true; },
+          [](const DeclaringScopeArgument&) { return false; },
           [](const AmbientRuntimeHandle&) { return false; }},
       handle);
 }
@@ -190,6 +202,7 @@ auto ReadMethodCallee(
 auto PlanClassMethodCall(
     UnitLowerer& unit_lowerer, const hir::MethodCallee& callee,
     const std::optional<hir::MethodReceiver>& receiver,
+    std::optional<hir::StructuralHops> declaring_scope_hops,
     std::optional<mir::TypeId> result_type) -> SubroutineCallee {
   MethodCalleeFacts facts = ReadMethodCallee(unit_lowerer, callee);
   const bool through_super =
@@ -208,9 +221,20 @@ auto PlanClassMethodCall(
                 .receiver = *receiver, .slot = *std::move(facts.slot)}}
           : CalleeForm{NamedCallee{
                 .callee = std::move(facts.direct),
-                .handle = receiver.transform([](const hir::MethodReceiver& r) {
-                  return AmbientHandle{CalledObject{.source = r}};
-                })}};
+                // An instance method leads with the object the source named. A
+                // receiver-less one of a class a structural scope declares
+                // leads with that scope's instance instead: it reaches what the
+                // class keeps for itself, which is that instance's, and has no
+                // object to reach it through (LRM 6.22, 8.10).
+                .handle =
+                    receiver.has_value()
+                        ? std::optional<AmbientHandle>{CalledObject{
+                              .source = *receiver}}
+                        : declaring_scope_hops.transform(
+                              [](hir::StructuralHops hops) {
+                                return AmbientHandle{DeclaringScopeArgument{
+                                    .hops = mir::EnclosingHops{hops.value}}};
+                              })}};
   return plan;
 }
 
@@ -288,11 +312,13 @@ auto PlanSubroutineCall(
           },
           [&](const hir::MethodCallRef& ref) -> Planned {
             return PlanClassMethodCall(
-                unit_lowerer, ref.callee, ref.receiver, result_type);
+                unit_lowerer, ref.callee, ref.receiver, std::nullopt,
+                result_type);
           },
           [&](const hir::StaticMethodCallRef& ref) -> Planned {
             return PlanClassMethodCall(
-                unit_lowerer, ref.callee, std::nullopt, result_type);
+                unit_lowerer, ref.callee, std::nullopt,
+                ref.declaring_scope_hops, result_type);
           },
           [](const hir::SystemSubroutineRef&) -> Planned {
             return std::nullopt;
@@ -380,6 +406,10 @@ auto BuildAmbientHandle(
           [&](const EnclosingScopeReceiver& r) -> diag::Result<mir::ExprId> {
             return BuildEnclosingScopeReceiver(
                 frame, lowerer.Owner().Unit(), r.hops);
+          },
+          [&](const DeclaringScopeArgument& a) -> diag::Result<mir::ExprId> {
+            return BuildEnclosingScopeReceiver(
+                frame, lowerer.Owner().Unit(), a.hops);
           },
           [&](const AmbientRuntimeHandle&) -> diag::Result<mir::ExprId> {
             return frame.current_block->exprs.Add(

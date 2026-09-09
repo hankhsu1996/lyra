@@ -9,6 +9,7 @@
 #include "lyra/base/translation.hpp"
 #include "lyra/hir/field_id.hpp"
 #include "lyra/hir/static_property_id.hpp"
+#include "lyra/lowering/hir_to_mir/static_var_binding.hpp"
 #include "lyra/mir/callable_id.hpp"
 #include "lyra/mir/class.hpp"
 #include "lyra/mir/class_id.hpp"
@@ -67,7 +68,12 @@ struct ClassShape {
   // of a method invalidates -- so a declaration's position in a pool is not its
   // HIR position.
   base::Translation<hir::FieldId, mir::FieldId> field_translation;
-  base::Translation<hir::StaticPropertyId, mir::StaticPropertyId>
+  // Where each static property's cell was placed. It is a home rather than a
+  // slot because which pool holds it follows from what replicates the class
+  // declaration: a class a namespace unit declares owns its cells, and one a
+  // structural scope declares is replicated with that scope, so its cells are
+  // fields of the instance (LRM 6.22, 8.9).
+  base::Translation<hir::StaticPropertyId, StaticStorageHome>
       static_property_translation;
   std::vector<mir::ClassId> contained;
   // Whether the class is final (LRM 8.13). A structural class always is; an SV

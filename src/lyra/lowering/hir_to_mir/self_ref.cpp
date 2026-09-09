@@ -1,7 +1,9 @@
 #include "lyra/lowering/hir_to_mir/self_ref.hpp"
 
 #include <cstdint>
+#include <variant>
 
+#include "lyra/base/overloaded.hpp"
 #include "lyra/lowering/hir_to_mir/callable_bindings.hpp"
 #include "lyra/mir/class.hpp"
 #include "lyra/mir/compilation_unit.hpp"
@@ -29,8 +31,36 @@ auto BuildEnclosingScopeReceiver(
     const WalkFrame& frame, const mir::CompilationUnit& unit,
     mir::EnclosingHops hops) -> mir::ExprId {
   mir::Block& block = *frame.current_block;
-  mir::ExprId nav = block.exprs.Add(
-      MakeSelfRefExpr(frame, frame.current_class->self_pointer_type));
+  // Where the structural scope this body counts from sits: the body itself is
+  // that scope, or it was handed the instance its class belongs to.
+  mir::ExprId nav = std::visit(
+      Overloaded{
+          [&](const ScopeIsSelf&) {
+            return block.exprs.Add(
+                MakeSelfRefExpr(frame, frame.current_class->self_pointer_type));
+          },
+          [&](const ScopeThroughMember& through) {
+            const mir::ExprId self = block.exprs.Add(
+                MakeSelfRefExpr(frame, frame.current_class->self_pointer_type));
+            return block.exprs.Add(
+                mir::MakeFieldAccessExpr(
+                    self,
+                    mir::FieldTarget{
+                        .owner = frame.current_class_id,
+                        .slot = through.member},
+                    frame.EnclosingClassAtHops(mir::EnclosingHops{0})
+                        .cls->self_pointer_type));
+          },
+          [&](const ScopeThroughParameter& through) {
+            return block.exprs.Add(
+                mir::Expr{
+                    .data =
+                        mir::ReferenceExpr{
+                            .target = mir::LocalRef{.var = through.local}},
+                    .type = frame.EnclosingClassAtHops(mir::EnclosingHops{0})
+                                .cls->self_pointer_type});
+          }},
+      frame.structural_base);
   if (hops.value == 0) {
     return nav;
   }

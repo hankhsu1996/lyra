@@ -2,11 +2,15 @@
 
 #include <cstdint>
 #include <optional>
+#include <utility>
+#include <variant>
 
 #include "lyra/base/internal_error.hpp"
+#include "lyra/base/overloaded.hpp"
 #include "lyra/mir/class_id.hpp"
 #include "lyra/mir/enclosing_hops.hpp"
 #include "lyra/mir/field.hpp"
+#include "lyra/mir/local.hpp"
 
 namespace lyra::mir {
 struct Class;
@@ -25,6 +29,27 @@ struct EnclosingClass {
   const mir::Class* cls = nullptr;
   mir::ClassId id{};
 };
+
+// How a body reaches the instance of the structural scope its outward
+// references count from. A body of the scope is that instance. A body of a
+// class the scope declares belongs to one instance of it (LRM 6.22) and reaches
+// that instance through what it was handed: the member the object records it
+// in, or -- where the body has no object, a receiver-less callable of such a
+// class -- the parameter its callers supply. The three are one closed set
+// because they answer one question, and every consumer that needs the instance
+// asks it once.
+struct ScopeIsSelf {};
+
+struct ScopeThroughMember {
+  mir::FieldId member;
+};
+
+struct ScopeThroughParameter {
+  mir::LocalId local;
+};
+
+using StructuralBase =
+    std::variant<ScopeIsSelf, ScopeThroughMember, ScopeThroughParameter>;
 
 // Singly-linked node carrying a class's parent chain so a leaf reference
 // can read the declared type of a member at `hops > 0`. Each node lives on
@@ -102,6 +127,23 @@ struct WalkFrame {
   // the name.
   std::optional<mir::FieldId> scope_name_borrowed_handle;
 
+  // How this body reaches the instance of the structural scope its outward
+  // references count from. Settled once where the body's frame is built, so
+  // nothing that resolves a reference asks what kind of body it is in.
+  StructuralBase structural_base;
+
+  // How far out of `self` that instance sits, in class-chain steps. Answered
+  // per alternative rather than by testing for one, so a body that reaches its
+  // instance some further way has to say how far out it sits.
+  [[nodiscard]] auto StructuralBaseHops() const -> std::uint32_t {
+    return std::visit(
+        Overloaded{
+            [](const ScopeIsSelf&) -> std::uint32_t { return 0; },
+            [](const ScopeThroughMember&) -> std::uint32_t { return 1; },
+            [](const ScopeThroughParameter&) -> std::uint32_t { return 1; }},
+        structural_base);
+  }
+
   // Pushes `cls` as the current class and links the previous `current_class`
   // into the outer chain through `chain_node`, which the caller stack-allocates
   // so its lifetime spans the descent.
@@ -130,8 +172,9 @@ struct WalkFrame {
   // and the identity it was minted under. One answer, because a member
   // reference needs both: the declaration to read the member's type off, and
   // the owner to qualify the target with.
-  [[nodiscard]] auto EnclosingClassAtHops(mir::EnclosingHops hops) const
+  [[nodiscard]] auto EnclosingClassAtHops(mir::EnclosingHops raw_hops) const
       -> EnclosingClass {
+    const mir::EnclosingHops hops{raw_hops.value + StructuralBaseHops()};
     if (hops.value == 0) {
       if (current_class == nullptr) {
         throw InternalError(
@@ -179,6 +222,15 @@ struct WalkFrame {
       -> WalkFrame {
     WalkFrame next = *this;
     next.bindings = callable_bindings;
+    return next;
+  }
+
+  // Enters a body of a class the enclosing structural scope declares, stating
+  // how that body reaches the instance it counts from.
+  [[nodiscard]] auto WithStructuralBase(StructuralBase base) const
+      -> WalkFrame {
+    WalkFrame next = *this;
+    next.structural_base = std::move(base);
     return next;
   }
 };

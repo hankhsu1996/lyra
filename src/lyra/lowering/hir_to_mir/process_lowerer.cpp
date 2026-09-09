@@ -227,6 +227,7 @@ auto ProcessLowerer::Run(const hir::SubroutineDecl& src)
   // never derived from whether the body happens to use it, so no call site
   // re-derives the signature.
   const bool has_receiver = parent.current_class != nullptr && !src.is_static;
+  StructuralBase base = parent.structural_base;
   if (has_receiver) {
     params.push_back(bindings.Declare(
         BindingOriginId::Receiver(),
@@ -237,6 +238,19 @@ auto ProcessLowerer::Run(const hir::SubroutineDecl& src)
         BindingOriginId::Runtime(),
         mir::LocalDecl{
             .name = "runtime", .type = owner_->Unit().builtins.effects}));
+  } else if (std::holds_alternative<ScopeThroughMember>(base)) {
+    // A static method of a class a structural scope declares still reaches what
+    // that class keeps for itself, and that is the instance's (LRM 6.22). It
+    // has no object to reach the instance through, so the instance is its
+    // leading parameter -- a value the callable needs, not a receiver standing
+    // in for an object it does not have.
+    const mir::LocalId declaring = bindings.DeclareAnonymous(
+        mir::LocalDecl{
+            .name = "declaring_scope",
+            .type = parent.EnclosingClassAtHops(mir::EnclosingHops{})
+                        .cls->self_pointer_type});
+    params.push_back(declaring);
+    base = ScopeThroughParameter{.local = declaring};
   }
   // A task or function is a scope the source named (LRM 23.9), so the body
   // starts in that scope's own name node and `%m` inside it reports the task,
@@ -244,6 +258,7 @@ auto ProcessLowerer::Run(const hir::SubroutineDecl& src)
   const WalkFrame body_frame =
       parent.WithBlock(&code.Body())
           .WithBindings(&bindings)
+          .WithStructuralBase(std::move(base))
           .WithScopeNameBorrowedHandle(RootScope().NameBorrowedHandle());
 
   // Formals normalize into the signature's data flow (LRM 13.5). Every formal

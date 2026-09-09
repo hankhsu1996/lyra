@@ -449,26 +449,11 @@ auto UnitLowerer::PublishUnitDeclarations() -> diag::Result<void> {
     unit_.callables.Add(MakeForeignImportDecl(unit_, import));
   }
 
-  // The remaining two stages. The first settles every class's declaration so a
-  // peer body reads any cross-class fact from the unit's declarations rather
-  // than from a sibling lowerer's in-progress state. The second composes each
-  // class's executable form and commits it to the unit. Neither stage observes
-  // any order: everything a declaration names of another was taken above.
-  std::vector<ClassDeclLowerer> class_lowerers;
-  class_lowerers.reserve(hir_->classes.size());
-  for (const hir::ClassId hir_id : hir_->classes.Ids()) {
-    class_lowerers.emplace_back(
-        *this, hir_id, TranslateClass(hir_id), ClassObjectType(hir_id),
-        hir_->classes.Get(hir_id));
-  }
-  for (ClassDeclLowerer& class_lowerer : class_lowerers) {
-    auto r = class_lowerer.DeclareShape();
-    if (!r) return std::unexpected(std::move(r.error()));
-  }
-  for (ClassDeclLowerer& class_lowerer : class_lowerers) {
-    auto r = class_lowerer.PopulateBodies();
-    if (!r) return std::unexpected(std::move(r.error()));
-  }
+  // Every class this unit declares is declared by one of its structural scopes
+  // (LRM 23.9), which settles that class's shape and lowers its bodies -- so a
+  // class body stands where the scope stands and reaches what it reaches. A
+  // class identity is minted on first reference, which a scope's own shape may
+  // be, so nothing is minted ahead of the walk.
   return {};
 }
 
@@ -528,7 +513,7 @@ auto UnitLowerer::RunNamespace() -> diag::Result<mir::CompilationUnit> {
   const hir::StructuralScope& scope = hir_->root_scope;
   const DeclaredScopes package_scope_nodes = ScopesOwningDisableTargets(
       scope.procedural_scopes,
-      UnitStorage{.variables = &unit_.static_variables},
+      UnitStorage{.variables = &unit_.static_variables}, "",
       unit_.types.Intern(
           mir::Type{mir::RuntimeLibraryType{
               .kind = mir::RuntimeLibraryKind::kCancellationTarget}}));
@@ -540,6 +525,28 @@ auto UnitLowerer::RunNamespace() -> diag::Result<mir::CompilationUnit> {
         *this, scope.procedural_scopes,
         UnitStorage{.variables = &unit_.static_variables}, src.body,
         SignatureBoundVars(src), src.name));
+  }
+
+  // The classes this unit declares. A namespace replicates nothing, so an
+  // object of one belongs to no instance and its bodies name no scope's
+  // declarations -- which is the same relation a module's scope carries, with
+  // the instance absent rather than a second arrangement.
+  std::vector<ClassDeclLowerer> class_lowerers;
+  class_lowerers.reserve(scope.declared_classes.size());
+  for (const hir::ClassId hir_class : scope.declared_classes) {
+    class_lowerers.emplace_back(
+        *this, hir_class, TranslateClass(hir_class), ClassObjectType(hir_class),
+        hir_->classes.Get(hir_class), nullptr);
+  }
+  for (ClassDeclLowerer& class_lowerer : class_lowerers) {
+    if (auto r = class_lowerer.DeclareShape(nullptr); !r) {
+      return std::unexpected(std::move(r.error()));
+    }
+  }
+  for (ClassDeclLowerer& class_lowerer : class_lowerers) {
+    if (auto r = class_lowerer.PopulateBodies(WalkFrame{}, WalkFrame{}); !r) {
+      return std::unexpected(std::move(r.error()));
+    }
   }
 
   // The callable each package subroutine lowered to, recorded where it is

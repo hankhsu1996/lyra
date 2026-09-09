@@ -192,8 +192,16 @@ struct ExternalUnitMethodRef {
 // Under inheritance, `Derived::inherited_static()` still names the base -- the
 // method lives on the base's arena -- mirroring the owner-qualified rule for
 // inherited instance access.
+// `declaring_scope_hops` is how far out of this body's own structural scope the
+// scope that declares the class sits, present exactly where one does. A class a
+// structural scope declares is a type of that scope's instance (LRM 6.22), so
+// what it keeps for itself is that instance's; a receiver-less method reaching
+// any of it is handed the instance, since it has no object to reach one
+// through. Absent for a class a namespace unit declares, which no instance
+// replicates.
 struct StaticMethodCallRef {
   MethodCallee callee;
+  std::optional<StructuralHops> declaring_scope_hops;
 };
 
 using SubroutineRef = std::variant<

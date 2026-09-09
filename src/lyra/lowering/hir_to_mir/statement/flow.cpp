@@ -92,11 +92,11 @@ auto LowerVarDeclStmt(
     return LowerPromotedVarDeclStmt(
         process, frame, std::move(label), v, hir_local, type);
   }
-  // LRM 6.21: a static-lifetime body local keeps one cell that outlives every
+  // LRM 6.21: a static-lifetime body local keeps a cell that outlives every
   // activation, so its storage and its binding are both settled before the body
-  // lowers and its declaration assignment runs once, before any process starts.
-  // Reaching the declaration is therefore not an event: it binds nothing and
-  // emits nothing.
+  // lowers and its declaration assignment runs where that cell is brought up,
+  // before any process starts. Reaching the declaration is therefore not an
+  // event: it binds nothing and emits nothing.
   if (hir_local.lifetime == hir::VariableLifetime::kStatic) {
     return mir::Stmt{.label = std::move(label), .data = mir::EmptyStmt{}};
   }

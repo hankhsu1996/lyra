@@ -15,6 +15,7 @@
 #include "lyra/hir/structural_data_object.hpp"
 #include "lyra/hir/structural_hops.hpp"
 #include "lyra/hir/structural_scope.hpp"
+#include "lyra/lowering/hir_to_mir/class_decl_lowerer.hpp"
 #include "lyra/lowering/hir_to_mir/declared_callable.hpp"
 #include "lyra/lowering/hir_to_mir/declared_scope.hpp"
 #include "lyra/lowering/hir_to_mir/package_initialization.hpp"
@@ -362,6 +363,11 @@ class StructuralScopeLowerer {
   base::Translation<hir::ProcessId, StaticVarBindings> process_static_bindings_;
   mir::ClassId class_id_{};
   std::vector<std::unique_ptr<StructuralScopeLowerer>> children_;
+  // The classes this scope declares (LRM 23.9). A class declared here is a type
+  // of this scope's instance (LRM 6.22), so the scope both settles its shape
+  // and lowers its bodies -- which is what gives a class body the reach a
+  // process of the scope has, and the instance to record.
+  std::vector<ClassDeclLowerer> class_lowerers_;
 };
 
 }  // namespace lyra::lowering::hir_to_mir

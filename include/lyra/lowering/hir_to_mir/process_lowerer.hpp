@@ -70,8 +70,11 @@ using ProceduralVarBinding =
 class ProcessLowerer {
  public:
   // `enclosing_scope_lowerer` resolves every reference to a declaration of the
-  // structural scope this body sits inside, and is null for a body that sits
-  // inside none -- a class method reaches its owner through `self` instead.
+  // structural scope this body counts its hops from, and is null for a body
+  // that counts from none -- a callable of a namespace unit, whose names
+  // resolve against the unit rather than an instance. A method of a class the
+  // scope declares counts from that scope like any body of it, reaching the
+  // instance through what the object records rather than through `self`.
   // `callable_name` names the artifacts the body emits, never the declaration
   // the caller wraps this code in; that declaration's own name and visibility
   // are the caller's to attach, since what is produced here is code and not a
@@ -195,9 +198,9 @@ class ProcessLowerer {
       -> const StructuralScopeLowerer& {
     if (enclosing_scope_lowerer_ == nullptr) {
       throw InternalError(
-          "ProcessLowerer::EnclosingScopeLowerer: this body has no enclosing "
-          "structural scope; reaching an enclosing structural declaration from "
-          "a package callable or a class method body is a compiler bug");
+          "ProcessLowerer::EnclosingScopeLowerer: this body counts its hops "
+          "from no structural scope; a namespace unit replicates nothing, so a "
+          "callable of one reaches its declarations by name");
     }
     return *enclosing_scope_lowerer_;
   }

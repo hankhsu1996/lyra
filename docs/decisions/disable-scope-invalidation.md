@@ -26,13 +26,16 @@ carries one monotonic **generation**. An execution entering the scope captures t
 
 There is one source per thing that replicates the target, which is what the standard's static
 identity means in each declaration scope. A scope of the design hierarchy is replicated with its
-instance, so `u1.blk` and `u2.blk` are separately nameable and each instance keeps its own. A class
-replicates nothing of the kind: LRM 8.6 makes every method automatic, and LRM 9.6.2 disables a block
-inside an automatic task "for all concurrent executions of the task", so the class holds one source
-and a `disable` in one object's method ends the block in every other object running it. A package
-subroutine's is one for the program (LRM 26.2). This is the same rule that places any other
-static-lifetime state of a body (LRM 6.21), and it is placed by that rule rather than by one of its
-own.
+instance, so `u1.blk` and `u2.blk` are separately nameable and each instance keeps its own. An
+object of a class replicates nothing of the kind: LRM 8.6 makes every method automatic, and LRM
+9.6.2 disables a block inside an automatic task "for all concurrent executions of the task", so
+however many objects exist they share one source and a `disable` in one object's method ends the
+block in every other object running it. What does replicate a class is whatever replicates its
+declaration -- LRM 6.22 gives an instance with a type declared inside it a type of its own -- so a
+class a structural scope declares holds one source per instance of that scope, and one a package or
+the compilation-unit scope declares holds one for the program (LRM 26.2). This is the same rule that
+places any other static-lifetime state of a body (LRM 6.21), and it is placed by that rule rather
+than by one of its own.
 
 An activation has, at any instant, exactly one **next-resume entitlement** -- the single live means
 by which it will run its next statement (activation.md). It is held by whichever part of the

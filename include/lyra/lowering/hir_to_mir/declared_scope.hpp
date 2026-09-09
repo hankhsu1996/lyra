@@ -78,11 +78,16 @@ using DeclaredScopes = base::Translation<hir::ProceduralScopeId, DeclaredScope>;
 // scope answers for a name there, and a scope the source named owns the target
 // a `disable` invalidates. Every scope still has an entry, so a body there
 // reads its answer the same way a body anywhere else does.
+//
+// `pool_prefix` distinguishes what several declaration scopes put in one pool:
+// a source name is unique among one declaration scope's own scopes and not
+// among a pool that several of them share, which is what a structural scope's
+// is once it declares more than one class.
 [[nodiscard]] inline auto ScopesOwningDisableTargets(
     const base::Registry<hir::ProceduralScopeDecl, hir::ProceduralScopeId>&
         scopes,
-    const StaticStorageOwner& owner, mir::TypeId target_type)
-    -> DeclaredScopes {
+    const StaticStorageOwner& owner, std::string_view pool_prefix,
+    mir::TypeId target_type) -> DeclaredScopes {
   std::vector<DeclaredScope> declared;
   declared.reserve(scopes.size());
   for (const hir::ProceduralScopeId id : scopes.Ids()) {
@@ -90,7 +95,9 @@ using DeclaredScopes = base::Translation<hir::ProceduralScopeId, DeclaredScope>;
     std::optional<StaticStorageHome> target;
     if (scope.source_name.has_value()) {
       target = DeclareStaticCell(
-          owner, std::format("{}__cancel_{}", *scope.source_name, id.value),
+          owner,
+          std::format(
+              "{}{}__cancel_{}", pool_prefix, *scope.source_name, id.value),
           target_type);
     }
     declared.push_back(

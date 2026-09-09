@@ -16,6 +16,7 @@
 #include "lyra/hir/pattern.hpp"
 #include "lyra/hir/primary.hpp"
 #include "lyra/hir/range_bounds.hpp"
+#include "lyra/hir/structural_hops.hpp"
 #include "lyra/hir/subroutine_ref.hpp"
 #include "lyra/hir/timing.hpp"
 #include "lyra/hir/unary_op.hpp"
@@ -207,9 +208,18 @@ struct DynamicArrayNewExpr {
 // reference against another unit's signature when the class is declared
 // elsewhere. `Expr::type` is the class handle type. `arguments` are the
 // constructor actuals (LRM 8.7), empty for the default `new`.
+//
+// `declaring_scope_hops` is how far out of this body's own structural scope the
+// scope that declares the class sits: a class declared in a structural scope is
+// a type of that scope's instance (LRM 6.22), so the object records which
+// instance it belongs to and construction is where that is supplied. Absent
+// where the class is declared by a namespace unit, which no instance
+// replicates. The construction site is where the answer is known, which is why
+// it travels on the expression rather than being re-derived from the class.
 struct ClassNewExpr {
   ClassRef class_ref;
   std::vector<ExprId> arguments;
+  std::optional<StructuralHops> declaring_scope_hops;
 };
 
 // LRM 11.9 tagged union expression `tagged Member primary`. `member_index` is

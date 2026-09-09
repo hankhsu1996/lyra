@@ -31,7 +31,8 @@ auto IntegrateStaticInitializer(
     auto& install_block = *install_frame.current_block;
     const mir::ExprId installed =
         install_block.exprs.Add(BuildStaticStorageAccess(
-            unit, install_frame, binding.home, binding.cell_type));
+            unit, install_frame, binding.home, binding.cell_type,
+            mir::EnclosingHops{}));
     const mir::ExprId prototype = install_block.exprs.Add(
         BuildDefaultValueFromHir(process.Owner(), install_block, decl.type));
     install_block.AppendStmt(
@@ -45,7 +46,8 @@ auto IntegrateStaticInitializer(
   }
 
   const mir::ExprId target = value_block.exprs.Add(BuildStaticStorageAccess(
-      unit, value_frame, binding.home, binding.cell_type));
+      unit, value_frame, binding.home, binding.cell_type,
+      mir::EnclosingHops{}));
   mir::ExprId init_value{};
   if (decl.init.has_value()) {
     auto init_or = process.LowerExpr(body.exprs.Get(*decl.init), value_frame);

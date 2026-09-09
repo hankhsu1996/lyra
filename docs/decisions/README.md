@@ -213,6 +213,12 @@ the detail lives in the entry itself.
   interning into a top-down `InternLocalClass` (never asks "which CU?") and a boundary
   `ResolveClassRef` (walks slang's parent chain only when a class is not already cached);
   design-wide precomputed maps and single-conflated interning are rejected.
+- [class-declared-in-a-structural-scope](class-declared-in-a-structural-scope.md) -- a class a
+  module, interface, or generate block declares is a type of that scope's instance (LRM 6.22, 23.9),
+  so the object records which instance it belongs to and construction supplies it; the reference
+  vocabulary is untouched because the hop is resolved once per body rather than once per reference.
+  Putting the object in the runtime tree, reaching the scope by lexical capture, and refusing a
+  construction reached through another unit's generic are rejected.
 - [unit-scope-naming](unit-scope-naming.md) -- the anonymous `$unit` scope (LRM 3.12.1) is a
   namespace unit named by its compilation-unit input identity, recomputed table-free by producer and
   consumer; a design-wide unit id, a fixed name, a collection ordinal, and a content digest are all

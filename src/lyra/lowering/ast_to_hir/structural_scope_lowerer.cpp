@@ -106,6 +106,7 @@ auto StructuralScopeLowerer::Run(WalkFrame parent_frame)
   scope.processes = std::move(declarations.processes);
   scope.generates = std::move(declarations.generates);
   scope.instance_members = std::move(declarations.instance_members);
+  scope.declared_classes = owner_->TakeDeclaredClasses(*slang_scope_);
   const WalkFrame frame =
       parent_frame.WithStructuralFrame(frame_, slang_scope_, &scope)
           .WithProceduralScopeOwner(&scope.procedural_scopes);
@@ -147,6 +148,13 @@ auto StructuralScopeLowerer::Run(WalkFrame parent_frame)
     auto r = PopulateMember(member, frame);
     if (!r) return std::unexpected(std::move(r.error()));
   }
+
+  // The classes this scope declares, lowered where a process of the scope is:
+  // every declaration a class body may name is bound by now, and the references
+  // it records against this scope are recorded before the scope takes them.
+  auto classes = owner_->PopulateClassBodiesDeclaredIn(*slang_scope_);
+  if (!classes) return std::unexpected(std::move(classes.error()));
+
   for (const auto& member : slang_scope_->members()) {
     if (member.kind != slang::ast::SymbolKind::ProceduralBlock &&
         member.kind != slang::ast::SymbolKind::ContinuousAssign) {
