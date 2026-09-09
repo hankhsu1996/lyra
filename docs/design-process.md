@@ -58,6 +58,12 @@ producer knew and did not write down. Do not add the missing case -- carry the f
 downstream consumer handles two cases, and the case a consumer forgets is a defect the other case
 hides. Find the one shape that covers both.
 
+Its tell at the producer is a conditional where a value is _built_ -- a ternary deciding whether a
+field or an argument is there at all. That reads as a construction detail and is not one: it says
+the type being built covers two shapes, each of whose fields means something on only one of them. So
+the fix is never at the construction site. Split the type, and the branch goes with it, along with
+the discriminator every consumer was reaching for to tell the two apart.
+
 **3. A pass that runs before the real work to compute a property.** The property is a decision, and
 it is being made at the layer that has the least information about it. Move it to the layer that
 already held the inputs, or discover it was never a decision at all.

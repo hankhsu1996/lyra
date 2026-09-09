@@ -849,6 +849,54 @@ struct Expr {
       .type = void_type};
 }
 
+// Filling a history with the expression's default sampled value and fixing how
+// far back it reaches (LRM 16.9.3). Runs where the design activates, for the
+// same reason arming does: what the subject evaluates to there is the value
+// every declaration assigned, which is what the standard makes the answer
+// before the kth prior tick exists.
+[[nodiscard]] inline auto MakeSampledHistoryInstallCallExpr(
+    ExprId history, ExprId default_value, ExprId depth, TypeId void_type)
+    -> Expr {
+  return Expr{
+      .data =
+          CallExpr{
+              .callee =
+                  Direct{
+                      .target = support::BuiltinFn::kSampledHistoryInstall,
+                      .receiver = history},
+              .arguments = {default_value, depth}},
+      .type = void_type};
+}
+
+// Recording what one tick of the clocking event settled (LRM 16.9.3).
+[[nodiscard]] inline auto MakeSampledHistoryPushCallExpr(
+    ExprId history, ExprId value, TypeId void_type) -> Expr {
+  return Expr{
+      .data =
+          CallExpr{
+              .callee =
+                  Direct{
+                      .target = support::BuiltinFn::kSampledHistoryPush,
+                      .receiver = history},
+              .arguments = {value}},
+      .type = void_type};
+}
+
+// What the tick `ticks_back` ticks before this one settled, counting from 1 for
+// the most recent (LRM 16.9.3).
+[[nodiscard]] inline auto MakeSampledHistoryAtCallExpr(
+    ExprId history, ExprId ticks_back, TypeId value) -> Expr {
+  return Expr{
+      .data =
+          CallExpr{
+              .callee =
+                  Direct{
+                      .target = support::BuiltinFn::kSampledHistoryAt,
+                      .receiver = history},
+              .arguments = {ticks_back}},
+      .type = value};
+}
+
 // `wrapper.Initialize(prototype)` -- fixes the declared representation (and
 // default contents) once at construction. `prototype` is a value of that
 // declared type; only its representation is used. No runtime handle: it runs

@@ -16,6 +16,7 @@ namespace slang::ast {
 class Expression;
 class Statement;
 class Symbol;
+class TimingControl;
 class ValueSymbol;
 class ProceduralBlockSymbol;
 }  // namespace slang::ast
@@ -77,6 +78,20 @@ class SensitivityAnalyzer {
       const slang::ast::ProceduralBlockSymbol& proc)
       -> const std::vector<SensitivityRead>&;
 
+  // The clocking event a sampled value function written in this procedure
+  // counts ticks of when it names none itself: the clock the procedure settles
+  // (LRM 16.14.6), and otherwise the enclosing scope's default clocking (LRM
+  // 14.12). Those are the two of LRM 16.9.3's five ordered rules that reach a
+  // call outside an assertion, and the front end applies both -- so this
+  // reports the answer rather than the inputs to it, and nothing below repeats
+  // the rule. Absent where neither yields a clock, which is what makes a call
+  // naming no event of its own the error the standard requires.
+  //
+  // The result points into the AST, so it outlives the analysis that found it.
+  [[nodiscard]] auto AnalyzeProcedureClock(
+      const slang::ast::ProceduralBlockSymbol& proc)
+      -> const slang::ast::TimingControl*;
+
  private:
   std::unique_ptr<slang::analysis::AnalysisManager> manager_;
   std::unique_ptr<slang::analysis::AnalysisContext> context_;
@@ -88,6 +103,10 @@ class SensitivityAnalyzer {
   std::unordered_map<
       const slang::ast::ProceduralBlockSymbol*, std::vector<SensitivityRead>>
       procedure_cache_;
+  std::unordered_map<
+      const slang::ast::ProceduralBlockSymbol*,
+      const slang::ast::TimingControl*>
+      procedure_clock_cache_;
 };
 
 }  // namespace lyra::lowering::ast_to_hir

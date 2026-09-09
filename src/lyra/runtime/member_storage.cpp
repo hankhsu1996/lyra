@@ -6,6 +6,7 @@
 #include "lyra/base/overloaded.hpp"
 #include "lyra/runtime/named_event.hpp"
 #include "lyra/runtime/net.hpp"
+#include "lyra/runtime/sampled_history.hpp"
 #include "lyra/runtime/scope_program.hpp"
 #include "lyra/support/net_resolution.hpp"
 #include "lyra/support/value_domain.hpp"
@@ -69,6 +70,57 @@ void EmplaceResolvedNet(
   throw InternalError("MemberStorage: unknown value domain");
 }
 
+// Realizes the history of one sampled expression over the domain its value is
+// realized in. What a tick settles is an ordinary value, so every domain a cell
+// can answer for reaches here -- and the three that no cell holds cannot, since
+// an expression whose leaves cannot be armed has no sampled value to keep (LRM
+// 16.5.1).
+template <typename Object>
+void EmplaceSampledHistory(Object& object, support::ValueDomain domain) {
+  switch (domain) {
+    case support::ValueDomain::kPacked:
+      object.template emplace<SampledHistory<value::PackedArray>>();
+      return;
+    case support::ValueDomain::kString:
+      object.template emplace<SampledHistory<value::String>>();
+      return;
+    case support::ValueDomain::kReal:
+      object.template emplace<SampledHistory<value::Real>>();
+      return;
+    case support::ValueDomain::kShortReal:
+      object.template emplace<SampledHistory<value::ShortReal>>();
+      return;
+    case support::ValueDomain::kTuple:
+      object.template emplace<SampledHistory<value::RuntimeTuple>>();
+      return;
+    case support::ValueDomain::kUnion:
+      object.template emplace<SampledHistory<value::RuntimeUnion>>();
+      return;
+    case support::ValueDomain::kTaggedUnion:
+      object.template emplace<SampledHistory<value::RuntimeTaggedUnion>>();
+      return;
+    case support::ValueDomain::kDynArray:
+      object.template emplace<SampledHistory<value::RuntimeDynamicArray>>();
+      return;
+    case support::ValueDomain::kUnpackedArray:
+      object.template emplace<SampledHistory<value::RuntimeUnpackedArray>>();
+      return;
+    case support::ValueDomain::kQueue:
+      object.template emplace<SampledHistory<value::RuntimeQueue>>();
+      return;
+    case support::ValueDomain::kAssocArray:
+      object.template emplace<SampledHistory<value::RuntimeAssociativeArray>>();
+      return;
+    case support::ValueDomain::kChandle:
+    case support::ValueDomain::kManagedRef:
+    case support::ValueDomain::kEmpty:
+      throw InternalError(
+          "MemberStorage: this value domain has no observable cell, so an "
+          "expression of it has no sampled value to keep");
+  }
+  throw InternalError("MemberStorage: unknown value domain");
+}
+
 }  // namespace
 
 MemberStorage::MemberStorage(MemberStorageDescriptor descriptor) {
@@ -84,6 +136,9 @@ MemberStorage::MemberStorage(MemberStorageDescriptor descriptor) {
             object_.emplace<ChannelCancellation>();
           },
           [this](const NamedEventStorage&) { object_.emplace<NamedEvent>(); },
+          [this](const SampledHistoryStorage& history) {
+            EmplaceSampledHistory(object_, history.domain);
+          },
           [this](const ObservableCellStorage& cell) {
             switch (cell.domain) {
               case support::ValueDomain::kPacked:
@@ -279,6 +334,14 @@ auto MemberStorage::HeldValue() -> void* {
                 "MemberStorage: a net's resolved value is read through its own "
                 "access, never handed back in place");
           },
+          // A history holds one value per tick it kept, so which of them is
+          // wanted is part of the read (LRM 16.9.3) and there is no single
+          // contents to hand back.
+          []<typename T>(SampledHistory<T>&) -> void* {
+            throw InternalError(
+                "MemberStorage: a sampled history answers for the tick a read "
+                "names, never with contents of its own");
+          },
           [](auto& object) -> void* { return &object; }},
       object_);
 }
@@ -318,6 +381,14 @@ void MemberStorage::AdoptFrom(void* handle) {
             throw InternalError(
                 "MemberStorage: a net takes no store; a value reaches it only "
                 "through one of its drivers");
+          },
+          // A history is filled where the design activates and appended to at
+          // each tick, both through its own access, so nothing copies one into
+          // storage.
+          []<typename T>(SampledHistory<T>&) {
+            throw InternalError(
+                "MemberStorage: a sampled history is filled and appended to "
+                "through its own access, never copied into storage");
           },
           [&]<typename T>(T& value) { value = Read<T>(handle); }},
       object_);

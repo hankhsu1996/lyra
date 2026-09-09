@@ -33,6 +33,15 @@ auto LowerDelayOrEventControl(
     ProcessLowerer& proc, WalkFrame frame, const slang::ast::TimingControl& tc,
     diag::SourceSpan span) -> diag::Result<hir::DelayOrEventControl>;
 
+// An `event_control` (LRM 9.4.2) in whichever of its two forms the source
+// wrote. A clocking event is one of these wherever it came from -- written at a
+// sampled value function, inferred from the procedure, or taken from a default
+// clocking -- because the front end resolves all three to the same timing
+// control, so counting its ticks needs no second vocabulary (LRM 16.9.3).
+auto LowerEventControl(
+    ProcessLowerer& proc, WalkFrame frame, const slang::ast::TimingControl& tc,
+    diag::SourceSpan span) -> diag::Result<hir::AnyEventControl>;
+
 // LRM 9.4.5 Table 9-3: a blocking assignment carrying an intra-assignment
 // timing control is the same program as holding the right-hand side in a
 // temporary, applying the control, and then assigning.

@@ -199,24 +199,6 @@ auto LowerEventListControl(
   return hir::EventControl{.triggers = std::move(triggers)};
 }
 
-// An `event_control` (LRM 9.4.2), whichever of the two shapes slang gives it:
-// one entry, or a list of them. Every position the grammar admits one -- in
-// front of a statement, inside an assignment, after a nonblocking trigger's
-// operator, behind a repeat count -- reaches it here, so what an event control
-// is written to mean is settled once.
-auto LowerEventControl(
-    ProcessLowerer& proc, WalkFrame frame, const slang::ast::TimingControl& tc,
-    diag::SourceSpan span) -> diag::Result<hir::AnyEventControl> {
-  if (tc.kind == slang::ast::TimingControlKind::EventList) {
-    auto list_or = LowerEventListControl(
-        proc, frame, tc.as<slang::ast::EventListControl>(), span);
-    if (!list_or) return std::unexpected(std::move(list_or.error()));
-    return *std::move(list_or);
-  }
-  return LowerEventEntry(
-      proc, frame, tc.as<slang::ast::SignalEventControl>(), span);
-}
-
 // LRM 9.4.1 `#N`. The amount is an ordinary expression, read where the control
 // is, so nothing about the scope's time unit is decided here.
 auto LowerDelayControl(
@@ -319,6 +301,23 @@ auto LowerTriggerTiming(
 }
 
 }  // namespace
+
+// Every position the grammar admits an event control -- in front of a
+// statement, inside an assignment, after a nonblocking trigger's operator,
+// behind a repeat count, and as the event a sampled value function counts ticks
+// of -- reaches it here, so what one is written to mean is settled once.
+auto LowerEventControl(
+    ProcessLowerer& proc, WalkFrame frame, const slang::ast::TimingControl& tc,
+    diag::SourceSpan span) -> diag::Result<hir::AnyEventControl> {
+  if (tc.kind == slang::ast::TimingControlKind::EventList) {
+    auto list_or = LowerEventListControl(
+        proc, frame, tc.as<slang::ast::EventListControl>(), span);
+    if (!list_or) return std::unexpected(std::move(list_or.error()));
+    return *std::move(list_or);
+  }
+  return LowerEventEntry(
+      proc, frame, tc.as<slang::ast::SignalEventControl>(), span);
+}
 
 auto LowerDelayOrEventControl(
     ProcessLowerer& proc, WalkFrame frame, const slang::ast::TimingControl& tc,

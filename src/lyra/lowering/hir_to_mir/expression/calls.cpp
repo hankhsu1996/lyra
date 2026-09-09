@@ -44,6 +44,7 @@
 #include "lyra/lowering/hir_to_mir/lhs_store.hpp"
 #include "lyra/lowering/hir_to_mir/process_lowerer.hpp"
 #include "lyra/lowering/hir_to_mir/runtime_call.hpp"
+#include "lyra/lowering/hir_to_mir/sampled_history.hpp"
 #include "lyra/lowering/hir_to_mir/subroutine_call.hpp"
 #include "lyra/lowering/hir_to_mir/walk_frame.hpp"
 #include "lyra/mir/compilation_unit.hpp"
@@ -378,6 +379,20 @@ auto LowerSystemSubroutineCall(
             // value is and one handler serves both contexts.
             return LowerSampledValueSystemSubroutineCall(lowerer, frame, call);
           },
+          [](const support::ValueChangeSystemSubroutineInfo&)
+              -> diag::Result<mir::Expr> {
+            throw InternalError(
+                "LowerSystemSubroutineCall: a call answering across the ticks "
+                "of a clocking event names the history it answers from, so it "
+                "is planned before this dispatch");
+          },
+          [](const support::PastValueSystemSubroutineInfo&)
+              -> diag::Result<mir::Expr> {
+            throw InternalError(
+                "LowerSystemSubroutineCall: a call answering across the ticks "
+                "of a clocking event names the history it answers from, so it "
+                "is planned before this dispatch");
+          },
           [&](const support::MemFileSystemSubroutineInfo&)
               -> diag::Result<mir::Expr> {
             // A void task (LRM 21.4 / 21.5) has no value, so the frontend
@@ -603,6 +618,13 @@ auto LowerHirCallExpr(
           },
           [&](const hir::EnumMethodRef& e) -> diag::Result<mir::Expr> {
             return LowerEnumMethod(lowerer, frame, c, e, result_type);
+          },
+          [&](const hir::PastValueRef& p) -> diag::Result<mir::Expr> {
+            return LowerPastValueCall(lowerer, frame, p);
+          },
+          [&](const hir::ValueChangeRef& v) -> diag::Result<mir::Expr> {
+            return LowerValueChangeCall(
+                lowerer, frame, c, v, result_type, span);
           },
           [&](const hir::ForeignImportRef& imp) -> diag::Result<mir::Expr> {
             return LowerForeignImportCall(lowerer, frame, c, imp, result_type);

@@ -112,4 +112,20 @@ auto SensitivityAnalyzer::AnalyzeProcedureSensitivity(
   return inserted_it->second;
 }
 
+auto SensitivityAnalyzer::AnalyzeProcedureClock(
+    const slang::ast::ProceduralBlockSymbol& proc)
+    -> const slang::ast::TimingControl* {
+  if (const auto it = procedure_clock_cache_.find(&proc);
+      it != procedure_clock_cache_.end()) {
+    return it->second;
+  }
+  slang::analysis::DefaultDFA dfa(*context_, proc, false);
+  dfa.run();
+  const slang::analysis::AnalyzedProcedure analyzed(
+      *context_, proc, nullptr, dfa);
+  const auto* clock = analyzed.getInferredClock();
+  procedure_clock_cache_.emplace(&proc, clock);
+  return clock;
+}
+
 }  // namespace lyra::lowering::ast_to_hir

@@ -11,6 +11,7 @@
 #include "lyra/hir/external_unit_object.hpp"
 #include "lyra/hir/foreign_import_id.hpp"
 #include "lyra/hir/published_callable.hpp"
+#include "lyra/hir/sampled_history.hpp"
 #include "lyra/hir/structural_hops.hpp"
 #include "lyra/hir/subroutine_id.hpp"
 #include "lyra/hir/value_ref.hpp"
@@ -121,6 +122,33 @@ struct EnumMethodRef {
   EnumMethod method;
 };
 
+// The two shapes a sampled value function that reaches across the ticks of a
+// clocking event takes (LRM 16.9.3). Both name a history, because which event's
+// ticks the call counts is settled where the source is -- written at the call,
+// inferred from the procedure (LRM 16.14.6), or taken from the scope's default
+// clocking (LRM 14.12) -- and none of that survives into a lower layer.
+//
+// `$sampled` is neither. It names no event, so it reads the cell directly and
+// stays an ordinary system subroutine call.
+
+// `$past`: the value one tick of that event settled, and nothing of the time
+// step the call stands in -- so it takes no argument. `ticks_back` is how far
+// back it reaches, which the standard requires to be an elaboration-time
+// constant and defaults to 1.
+struct PastValueRef {
+  SampledHistoryId history;
+  std::uint32_t ticks_back = 1;
+};
+
+// `$rose`, `$fell`, `$stable`, `$changed`: a comparison between the sampled
+// value of the current time step and the one the most recent strictly prior
+// tick settled. The current side is still evaluated where the call stands, so
+// this one keeps the operand as its argument.
+struct ValueChangeRef {
+  SampledHistoryId history;
+  support::ValueChangeReading reading = support::ValueChangeReading::kRoseToOne;
+};
+
 // Calls a method the runtime library provides for an imported class (LRM 9.7
 // `process`). A bodyless external callable named by its library identity; the
 // receiver is present for an instance method and absent for a static one.
@@ -170,7 +198,8 @@ struct StaticMethodCallRef {
 
 using SubroutineRef = std::variant<
     StructuralSubroutineRef, MethodCallRef, StaticMethodCallRef,
-    SystemSubroutineRef, BuiltinMethodRef, EnumMethodRef, ForeignImportRef,
-    ImportedMethodRef, ExternalUnitSubroutineRef, ExternalUnitMethodRef>;
+    SystemSubroutineRef, BuiltinMethodRef, EnumMethodRef, PastValueRef,
+    ValueChangeRef, ForeignImportRef, ImportedMethodRef,
+    ExternalUnitSubroutineRef, ExternalUnitMethodRef>;
 
 }  // namespace lyra::hir

@@ -70,8 +70,8 @@ auto ObservableCellOf(const TypePool& types, TypeId value_type) -> TypeId {
           // diagnostics, a runtime-library type), a coroutine result, a machine
           // primitive (a plain boolean, integer, float, C string, array, or
           // code address), a compiler-generated promoted scope struct or
-          // closure, an internal index, `void`, and the observable / net-cell
-          // wrappers themselves, which are already storage cells.
+          // closure, an internal index, `void`, and the observable, net-cell
+          // and sampled-history wrappers themselves, which are already storage.
           [&](const WildcardIndexType&) { return bare(); },
           [&](const MachineCStringType&) { return bare(); },
           [&](const MachineBoolType&) { return bare(); },
@@ -98,6 +98,7 @@ auto ObservableCellOf(const TypePool& types, TypeId value_type) -> TypeId {
           [&](const ObservableType&) { return bare(); },
           [&](const ResolvedType&) { return bare(); },
           [&](const DriverType&) { return bare(); },
+          [&](const SampledHistoryType&) { return bare(); },
           [&](const StructType&) { return bare(); },
           [&](const ClosureType&) { return bare(); },
       });

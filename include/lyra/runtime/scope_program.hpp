@@ -181,10 +181,20 @@ struct ChannelCancellationStorage {};
 // carries none.
 struct NamedEventStorage {};
 
+// What the ticks of one clocking event have settled for one expression (LRM
+// 16.9.3). The owner holds it and it is reached only through its address: the
+// design fills it where it activates, a tick pushes what it settled, and a read
+// names how far back it reaches. It names the domain the expression's value is
+// realized in, which is what decides the type built here; how deep it reaches
+// is not, because that is fixed by filling it rather than by constructing it.
+struct SampledHistoryStorage {
+  support::ValueDomain domain;
+};
+
 using MemberStorageDescriptor = std::variant<
     BorrowedHandleStorage, ObservableCellStorage, InlineValueStorage,
     ValueCellStorage, CancellationTargetStorage, ChannelCancellationStorage,
-    NamedEventStorage, ResolvedNetStorage>;
+    NamedEventStorage, SampledHistoryStorage, ResolvedNetStorage>;
 
 // One declaration's member storage schema, in its own member order: what a
 // generic value of it must realize for each member the declaration holds. It

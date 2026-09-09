@@ -1,6 +1,8 @@
 #include "lyra/lowering/ast_to_hir/expression/calls.hpp"
 
+#include <concepts>
 #include <cstddef>
+#include <cstdint>
 #include <expected>
 #include <optional>
 #include <string>
@@ -13,9 +15,11 @@
 #include <slang/ast/Expression.h>
 #include <slang/ast/Scope.h>
 #include <slang/ast/SystemSubroutine.h>
+#include <slang/ast/TimingControl.h>
 #include <slang/ast/expressions/AssignmentExpressions.h>
 #include <slang/ast/expressions/CallExpression.h>
 #include <slang/ast/expressions/MiscExpressions.h>
+#include <slang/ast/symbols/BlockSymbols.h>
 #include <slang/ast/symbols/ClassSymbols.h>
 #include <slang/ast/symbols/CompilationUnitSymbols.h>
 #include <slang/ast/symbols/InstanceSymbols.h>
@@ -28,6 +32,7 @@
 #include "lyra/diag/diag_code.hpp"
 #include "lyra/hir/external_unit_object.hpp"
 #include "lyra/hir/published_callable.hpp"
+#include "lyra/hir/sampled_history.hpp"
 #include "lyra/hir/subroutine_ref.hpp"
 #include "lyra/hir/type.hpp"
 #include "lyra/hir/type_id.hpp"
@@ -37,6 +42,7 @@
 #include "lyra/lowering/ast_to_hir/expression/references.hpp"
 #include "lyra/lowering/ast_to_hir/expression/slang_atoms.hpp"
 #include "lyra/lowering/ast_to_hir/process_lowerer.hpp"
+#include "lyra/lowering/ast_to_hir/statement/timing.hpp"
 #include "lyra/lowering/ast_to_hir/structural_scope_lowerer.hpp"
 #include "lyra/lowering/ast_to_hir/subroutine_decl.hpp"
 #include "lyra/lowering/ast_to_hir/unit_identity.hpp"
@@ -129,6 +135,243 @@ auto RecordSampledCells(
     sampled.push_back(std::move(entry));
   }
   return {};
+}
+
+// The clocking event a sampled value function counts ticks of. The source may
+// write one at the call; where it does not, the front end has already applied
+// the two of LRM 16.9.3's ordered rules that reach a call outside an assertion
+// -- the clock the procedure settles (LRM 16.14.6), and then the enclosing
+// scope's default clocking (LRM 14.12) -- so this reads that answer rather than
+// working the ordering out a second time. A context settling neither is
+// refused, which is the error the standard requires; sampling against a guess
+// would answer wrongly rather than not at all.
+template <typename Lowerer>
+auto ResolveClockingEvent(
+    Lowerer& lowerer, const slang::ast::CallExpression& call,
+    std::size_t clock_arg, std::string_view name, diag::SourceSpan span)
+    -> diag::Result<const slang::ast::TimingControl*> {
+  const auto& args = call.arguments();
+  if (args.size() > clock_arg &&
+      args[clock_arg]->kind == slang::ast::ExpressionKind::ClockingEvent) {
+    return &args[clock_arg]
+                ->as<slang::ast::ClockingEventExpression>()
+                .timingControl;
+  }
+  if constexpr (std::same_as<Lowerer, ProcessLowerer>) {
+    const auto* proc = lowerer.ContainingSymbol()
+                           .template as_if<slang::ast::ProceduralBlockSymbol>();
+    if (proc != nullptr) {
+      const auto* clock =
+          lowerer.Owner().Sensitivity().AnalyzeProcedureClock(*proc);
+      if (clock != nullptr) {
+        return clock;
+      }
+    }
+  }
+  return diag::Fail(
+      span, diag::DiagCode::kUnsupportedExpressionForm,
+      std::string{"'"} + std::string{name} +
+          "' names no clocking event and none is settled where it is written, "
+          "so there is no event whose ticks it could count");
+}
+
+// How far back a call reaches: the most recent prior tick for a value change
+// function, and for `$past` the count it names, which the standard requires to
+// be an elaboration-time constant and defaults to 1 (LRM 16.9.3). An elided
+// count arrives as an absent argument rather than a shorter list, because the
+// arguments behind it are positional.
+auto PastTicksBack(
+    const slang::ast::CallExpression& call, diag::SourceSpan span)
+    -> diag::Result<std::uint32_t> {
+  const auto& args = call.arguments();
+  if (args.size() < 2 ||
+      args[1]->kind == slang::ast::ExpressionKind::EmptyArgument) {
+    return 1;
+  }
+  const slang::ConstantValue* ticks = args[1]->getConstant();
+  const std::optional<std::int64_t> count =
+      ticks != nullptr && *ticks ? ticks->integer().as<std::int64_t>()
+                                 : std::nullopt;
+  if (!count.has_value()) {
+    return diag::Fail(
+        span, diag::DiagCode::kUnsupportedExpressionForm,
+        "'$past' needs a tick count it can read before the program runs (LRM "
+        "16.9.3)");
+  }
+  return static_cast<std::uint32_t>(*count);
+}
+
+// `$past`'s third argument, where the source wrote one: the expression gating
+// the clocking event (LRM 16.9.3). Absent where the position was elided.
+auto PastGateExpression(const slang::ast::CallExpression& call)
+    -> const slang::ast::Expression* {
+  if (call.arguments().size() < 3) {
+    return nullptr;
+  }
+  const slang::ast::Expression* gate = call.arguments()[2];
+  if (gate->kind == slang::ast::ExpressionKind::EmptyArgument) {
+    return nullptr;
+  }
+  return gate;
+}
+
+// What a sampled value function needs from the scope it is read in. Its
+// expression's cells have to be armed, because a tick settles that expression
+// over their sampled values; and the scope has to keep a history of it under
+// the event this call counts ticks of. The call then names that history, since
+// which event it is was settled here.
+//
+// The subject and the event are lowered into the scope's own arena rather than
+// the reader's: nothing the source wrote evaluates them, and what does is a
+// process synthesized a layer down, the way a continuous assignment's
+// expression is already carried.
+template <typename Lowerer>
+auto RecordSampledHistory(
+    Lowerer& lowerer, const WalkFrame& frame,
+    const slang::ast::CallExpression& call, std::size_t clock_arg,
+    std::uint32_t ticks_back, const slang::ast::Expression* gate,
+    std::string_view name, diag::SourceSpan span)
+    -> diag::Result<hir::SampledHistoryId> {
+  // Arming is the same requirement `$sampled` has, and the same check reports
+  // an expression reading storage this scope cannot name.
+  if (auto armed = RecordSampledCells(lowerer, frame, call, span); !armed) {
+    return std::unexpected(std::move(armed.error()));
+  }
+  auto clock_or = ResolveClockingEvent(lowerer, call, clock_arg, name, span);
+  if (!clock_or) return std::unexpected(std::move(clock_or.error()));
+
+  WalkFrame scope_frame = frame;
+  scope_frame.current_exprs = &frame.current_structural_scope->exprs;
+
+  auto subject_or = lowerer.LowerExpr(*call.arguments()[0], scope_frame);
+  if (!subject_or) return std::unexpected(std::move(subject_or.error()));
+
+  if constexpr (!std::same_as<Lowerer, ProcessLowerer>) {
+    return diag::Fail(
+        span, diag::DiagCode::kUnsupportedStructuralExpressionForm,
+        std::string{"'"} + std::string{name} +
+            "' is not yet supported outside a procedure");
+  } else {
+    auto event_or = LowerEventControl(lowerer, scope_frame, **clock_or, span);
+    if (!event_or) return std::unexpected(std::move(event_or.error()));
+    auto* value_change = std::get_if<hir::EventControl>(&*event_or);
+    if (value_change == nullptr) {
+      return diag::Fail(
+          span, diag::DiagCode::kUnsupportedExpressionForm,
+          std::string{"'"} + std::string{name} +
+              "' counting ticks of a named event is not yet supported");
+    }
+    // The gate belongs to the event, and the event already carries a qualifier
+    // of exactly that shape -- the LRM 9.4.2.3 `iff`, read where the change
+    // happens -- so it composes with whatever the event stated rather than
+    // needing a place of its own. A trigger the source already qualified admits
+    // a tick only where both hold, and each trigger reads the gate for itself.
+    if (gate != nullptr) {
+      for (hir::EventTrigger& trigger : value_change->triggers) {
+        auto gate_or = lowerer.LowerExpr(*gate, scope_frame);
+        if (!gate_or) return std::unexpected(std::move(gate_or.error()));
+        const hir::ExprId gate_id =
+            scope_frame.Exprs().Add(*std::move(gate_or));
+        if (!trigger.condition.has_value()) {
+          trigger.condition = gate_id;
+          continue;
+        }
+        trigger.condition = scope_frame.Exprs().Add(
+            hir::Expr{
+                .type = lowerer.Owner().Unit().builtins.scalar_bit,
+                .data =
+                    hir::BinaryExpr{
+                        .op = hir::BinaryOp::kLogicalAnd,
+                        .lhs = *trigger.condition,
+                        .rhs = gate_id},
+                .span = span,
+            });
+      }
+    }
+    return frame.current_structural_scope->sampled_histories.Add(
+        hir::SampledHistoryDecl{
+            .subject = scope_frame.Exprs().Add(*std::move(subject_or)),
+            .clock = *value_change,
+            .depth = ticks_back,
+        });
+  }
+}
+
+// A sampled value function that reaches across the ticks of a clocking event
+// (LRM 16.9.3), where the call is one. Absent for everything else.
+//
+// It answers from a history the scope keeps rather than from the cell, so the
+// call names that history, and which of the two shapes it is decides what else
+// it carries. That also decides which of the source's arguments are values at
+// all: the tick count, the gate and the event are read where the history is
+// declared rather than evaluated where the call stands, and `$past` evaluates
+// nothing there at all. So this resolves before the generic argument loop and
+// lowers the one operand a value change function still reads, for the same
+// reason the LRM 20.6 / 20.7 queries do.
+template <ExprLowerer Lowerer>
+auto LowerSampledHistoryExpr(
+    Lowerer& lowerer, const WalkFrame& frame,
+    const slang::ast::CallExpression& call, diag::SourceSpan span)
+    -> diag::Result<std::optional<hir::Expr>> {
+  if (!call.isSystemCall()) {
+    return std::optional<hir::Expr>{std::nullopt};
+  }
+  const std::string_view name = call.getSubroutineName();
+  const auto* desc = support::FindSystemSubroutine(name);
+  if (desc == nullptr) {
+    return std::optional<hir::Expr>{std::nullopt};
+  }
+
+  if (std::holds_alternative<support::PastValueSystemSubroutineInfo>(
+          desc->semantic)) {
+    auto ticks_or = PastTicksBack(call, span);
+    if (!ticks_or) return std::unexpected(std::move(ticks_or.error()));
+    // `$past` takes its event fourth, behind the tick count and the gate.
+    auto history_or = RecordSampledHistory(
+        lowerer, frame, call, 3, *ticks_or, PastGateExpression(call), name,
+        span);
+    if (!history_or) return std::unexpected(std::move(history_or.error()));
+    // The result follows the operand's type, and the operand that survives is
+    // the history's subject -- the same expression, lowered where the process
+    // that settles it will read it.
+    const hir::StructuralScope& scope = *frame.current_structural_scope;
+    return std::optional<hir::Expr>{hir::Expr{
+        .type =
+            scope.exprs.Get(scope.sampled_histories.Get(*history_or).subject)
+                .type,
+        .data =
+            hir::CallExpr{
+                .callee =
+                    hir::PastValueRef{
+                        .history = *history_or, .ticks_back = *ticks_or},
+                .arguments = {}},
+        .span = span,
+    }};
+  }
+
+  const auto* change =
+      std::get_if<support::ValueChangeSystemSubroutineInfo>(&desc->semantic);
+  if (change == nullptr) {
+    return std::optional<hir::Expr>{std::nullopt};
+  }
+  // A value change function takes its event second and gates nothing: only
+  // `$past` carries a gating expression (LRM 16.9.3).
+  auto history_or =
+      RecordSampledHistory(lowerer, frame, call, 1, 1, nullptr, name, span);
+  if (!history_or) return std::unexpected(std::move(history_or.error()));
+  auto operand_or = lowerer.LowerExpr(*call.arguments()[0], frame);
+  if (!operand_or) return std::unexpected(std::move(operand_or.error()));
+  return std::optional<hir::Expr>{hir::Expr{
+      .type = lowerer.Owner().Unit().builtins.scalar_bit,
+      .data =
+          hir::CallExpr{
+              .callee =
+                  hir::ValueChangeRef{
+                      .history = *history_or, .reading = change->reading},
+              .arguments = {frame.Exprs().Add(*std::move(operand_or))},
+          },
+      .span = span,
+  }};
 }
 
 // Maps a frontend ReturnConvention to the builtin HIR TypeId that represents
@@ -313,6 +556,10 @@ auto LowerCallExpr(
   if (!query) return std::unexpected(std::move(query.error()));
   if (query->has_value()) return *std::move(*query);
 
+  auto sampled = LowerSampledHistoryExpr(lowerer, frame, call, span);
+  if (!sampled) return std::unexpected(std::move(sampled.error()));
+  if (sampled->has_value()) return *std::move(*sampled);
+
   std::vector<std::optional<hir::ExprId>> arg_ids;
   arg_ids.reserve(call.arguments().size());
   std::optional<hir::TypeId> receiver_type;
@@ -334,6 +581,14 @@ auto LowerCallExpr(
     // per-subroutine HIR-to-MIR handler can decide whether elision is valid
     // at this position; positions stay aligned with slang's arg list.
     if (arg->kind == slang::ast::ExpressionKind::EmptyArgument) {
+      arg_ids.emplace_back(std::nullopt);
+      continue;
+    }
+    // A clocking event names an event rather than standing for a value, so
+    // there is nothing here to read (LRM 16.9.3). What it settles -- which
+    // event's ticks a sampled value function counts -- is taken from the call
+    // itself, where the rest of the rule for finding it also applies.
+    if (arg->kind == slang::ast::ExpressionKind::ClockingEvent) {
       arg_ids.emplace_back(std::nullopt);
       continue;
     }

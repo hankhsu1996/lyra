@@ -20,6 +20,7 @@
 #include "lyra/hir/procedural_scope.hpp"
 #include "lyra/hir/process.hpp"
 #include "lyra/hir/published_member.hpp"
+#include "lyra/hir/sampled_history.hpp"
 #include "lyra/hir/structural_data_object.hpp"
 #include "lyra/hir/structural_hops.hpp"
 #include "lyra/hir/subroutine.hpp"
@@ -373,6 +374,12 @@ struct StructuralScope {
   // every read answers with until a later time slot first changes it, so it
   // happens once every variable initializer in the design has run.
   std::vector<SensitivityEntry> sampled_cells;
+  // What something in this scope reads across the ticks of a clocking event
+  // (LRM 16.9.3). A history's subject is an expression rather than a reference,
+  // so it lives in this scope's own arena the way a continuous assignment's
+  // does: nothing the user wrote evaluates it, and the process that does is
+  // synthesized a layer down.
+  base::Registry<SampledHistoryDecl, SampledHistoryId> sampled_histories;
   // Body-bearing SV subroutines only. A bodyless DPI-C import never enters this
   // arena; the unit owns it, because its foreign symbol is program-global and
   // belongs to no scope (LRM 35.4).
