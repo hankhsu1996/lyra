@@ -75,6 +75,19 @@ auto StructuralScopeLowerer::LowerContinuousAssign(
   auto lhs_or = LowerExpr(assign.left(), frame);
   if (!lhs_or) return std::unexpected(std::move(lhs_or.error()));
 
+  // LRM 7.5.1 admits `new[]` on the right-hand side of a variable declaration
+  // assignment and of a blocking procedural assignment, and a continuous
+  // assignment is neither: it states a value its target follows for the whole
+  // run, which sizing an array once cannot be.
+  if (assign.right().kind == slang::ast::ExpressionKind::NewArray) {
+    return diag::Fail(
+        mapper.SpanOf(assign.right().sourceRange),
+        diag::DiagCode::kUnsupportedContinuousAssignForm,
+        "sizing a dynamic array with new[] is not legal in a continuous "
+        "assignment (LRM 7.5.1); size it where the array is declared or in a "
+        "procedural assignment");
+  }
+
   auto rhs_or = LowerExpr(assign.right(), frame);
   if (!rhs_or) return std::unexpected(std::move(rhs_or.error()));
 

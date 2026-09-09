@@ -581,6 +581,15 @@ enum class BuiltinFn : std::uint16_t {
   // reaches it as an operand naming its type (plus an element count for the
   // array).
   kFromString,
+  // LRM 7.6: one unpacked array kind taking another's elements. The three kinds
+  // differ in what the destination declares and the source cannot supply -- a
+  // fixed-size array its element count, a queue its bound -- so the destination
+  // qualifies the call and states those as operands, while the elements
+  // themselves cross unchanged because the clause admits the assignment only
+  // where the element types are equivalent. Named rather than left to the
+  // type's own construction because building over an element list carries the
+  // same operand count.
+  kFromArray,
   // Conforms a queue value to a destination's LRM 7.10.5 bound (a negative
   // argument means unbounded): the store boundary brings a differently-bounded
   // source to the destination's declared bound. An instance method on the
@@ -684,7 +693,8 @@ enum class BuiltinFn : std::uint16_t {
   return id == BuiltinFn::kFromInt || id == BuiltinFn::kFromWords ||
          id == BuiltinFn::kConvertFrom || id == BuiltinFn::kFromPackedArray ||
          id == BuiltinFn::kFromByteArray || id == BuiltinFn::kFromBool ||
-         id == BuiltinFn::kFromString || id == BuiltinFn::kFromBits ||
+         id == BuiltinFn::kFromString || id == BuiltinFn::kFromArray ||
+         id == BuiltinFn::kFromBits ||
          id == BuiltinFn::kMakeDynamicArrayDefault ||
          id == BuiltinFn::kMakeDynamicArrayNew ||
          id == BuiltinFn::kMakeDynamicArrayNewCopy ||

@@ -19,6 +19,8 @@
 #include "lyra/hir/expr.hpp"
 #include "lyra/hir/primary.hpp"
 #include "lyra/lowering/hir_to_mir/cast_lowering.hpp"
+#include "lyra/lowering/hir_to_mir/condition.hpp"
+#include "lyra/lowering/hir_to_mir/expression/enum_method.hpp"
 #include "lyra/lowering/hir_to_mir/integral_literal.hpp"
 #include "lyra/lowering/hir_to_mir/process_lowerer.hpp"
 #include "lyra/lowering/hir_to_mir/runtime_call.hpp"
@@ -122,6 +124,68 @@ auto LowerFormatOperand(Lowerer& lowerer, WalkFrame frame, hir::ExprId hir_arg)
   return lowered;
 }
 
+// LRM 21.2.1.6: an enumeration prints the name its type declares for the value,
+// and the base type's own rendering -- decimal for this family of tasks -- for
+// a value the type declares no name for. `name` answers with the empty string
+// in exactly that case (LRM 6.19.5), so the length of its answer is what
+// chooses between the two. The text prints unquoted, a quoted element being
+// what the clause asks of a string rather than of an enumeration.
+template <ExprLowerer Lowerer>
+auto BuildEnumPatternItem(
+    Lowerer& lowerer, WalkFrame frame, mir::Expr value, diag::SourceSpan span)
+    -> diag::Result<mir::RuntimePrintItem> {
+  auto& unit = lowerer.Owner().Unit();
+  auto& block = *frame.current_block;
+  const mir::TypeId enum_type = value.type;
+  const mir::ExprId value_id = block.exprs.Add(std::move(value));
+
+  auto name_or =
+      BuildEnumNameCallExpr(lowerer, frame, value_id, enum_type, span);
+  if (!name_or) return std::unexpected(std::move(name_or.error()));
+  const mir::ExprId name_id = block.exprs.Add(*std::move(name_or));
+
+  // An element of an assignment pattern occupies no field of its own, so the
+  // base rendering states a width of none rather than the natural one a
+  // directive would otherwise ask for.
+  const std::vector<mir::RuntimePrintItem> base_items = {mir::RuntimePrintValue(
+      value_id, enum_type,
+      mir::FormatSpec(
+          value::FormatKind::kDecimal, mir::FormatModifiers{.width = 0}))};
+  const mir::ExprId base_array =
+      block.exprs.Add(BuildPrintItemsArray(unit, block, base_items, 0));
+  const mir::ExprId runtime_id =
+      block.exprs.Add(BuildCurrentRuntimeCallExpr(lowerer.Owner()));
+  const mir::ExprId base_text =
+      block.exprs.Add(BuildFormatCallExpr(unit, block, runtime_id, base_array));
+
+  const mir::ExprId name_length = block.exprs.Add(
+      mir::Expr{
+          .data =
+              mir::CallExpr{
+                  .callee = mir::Direct{.target = support::BuiltinFn::kLen},
+                  .arguments = {name_id}},
+          .type = unit.builtins.int_type});
+  const mir::ExprId has_name = block.exprs.Add(
+      mir::Expr{
+          .data =
+              mir::BinaryExpr{
+                  .op = mir::BinaryOp::kInequality,
+                  .lhs = name_length,
+                  .rhs = BuildIntLiteral(unit, block, 0)},
+          .type = unit.builtins.bit1});
+  const mir::ExprId text = block.exprs.Add(
+      mir::Expr{
+          .data =
+              mir::ConditionalExpr{
+                  .condition = ReduceToCondition(unit, block, has_name),
+                  .then_value = name_id,
+                  .else_value = base_text},
+          .type = unit.builtins.string});
+  return mir::RuntimePrintValue(
+      text, unit.builtins.string,
+      mir::FormatSpec(value::FormatKind::kString, mir::FormatModifiers{}));
+}
+
 template <ExprLowerer Lowerer>
 auto BuildPrintValueItem(
     Lowerer& lowerer, WalkFrame frame, hir::ExprId hir_arg,
@@ -131,17 +195,29 @@ auto BuildPrintValueItem(
   if (!lowered_or) return std::unexpected(std::move(lowered_or.error()));
   mir::Expr lowered = *std::move(lowered_or);
 
+  // What the operand is, taken as facts rather than held as a reference into
+  // the type pool, which the lift below may move by interning.
+  const mir::Type& value_type = lowerer.Owner().Unit().types.Get(lowered.type);
+  const bool is_string = value_type.Is<mir::StringType>();
+  const bool is_integral_packed = value_type.IsIntegralPacked();
+  const bool is_enumeration = value_type.Is<mir::EnumType>();
+
   // %s formats by operand type (LRM 21.2.1.7): a String and a packed value
   // each format directly, without building a string value. Only an unpacked
   // byte array is not directly formattable, so it lifts to a string value
   // here.
-  const mir::Type& value_type = lowerer.Owner().Unit().types.Get(lowered.type);
-  if (spec.kind == value::FormatKind::kString &&
-      !value_type.Is<mir::StringType>() && !value_type.IsIntegralPacked()) {
+  if (spec.kind == value::FormatKind::kString && !is_string &&
+      !is_integral_packed) {
     const mir::ExprId inner = block.exprs.Add(std::move(lowered));
     lowered = BuildValueConversion(
         lowerer.Owner().Unit(), block, inner,
         lowerer.Owner().Unit().builtins.string);
+  }
+
+  if (spec.kind == value::FormatKind::kAssignmentPattern && is_enumeration) {
+    return BuildEnumPatternItem(
+        lowerer, frame, std::move(lowered),
+        lowerer.HirExprs().Get(hir_arg).span);
   }
 
   const mir::TypeId type = lowered.type;

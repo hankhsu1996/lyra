@@ -31,7 +31,7 @@ auto LowerRandomSystemSubroutineCall(
 template <ExprLowerer Lowerer>
 auto LowerDistributionSystemSubroutineCall(
     Lowerer& lowerer, WalkFrame frame, const hir::CallExpr& call,
-    const support::DistributionSystemSubroutineInfo& info,
-    diag::SourceSpan span) -> diag::Result<mir::Expr>;
+    const support::DistributionSystemSubroutineInfo& info)
+    -> diag::Result<mir::Expr>;
 
 }  // namespace lyra::lowering::hir_to_mir

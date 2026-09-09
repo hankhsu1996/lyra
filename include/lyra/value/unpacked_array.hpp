@@ -256,6 +256,32 @@ class UnpackedArray {
     return UnpackedArray(parts.ElementDefault(), std::span<const T>(elements));
   }
 
+  // LRM 7.6: a fixed-size unpacked array assigned an array of another unpacked
+  // kind takes its elements in left-to-right order, and how many elements it
+  // has is a declared property of the variable being written rather than
+  // anything the source decides -- so a source of another size is a run-time
+  // error and the assignment does not happen. The count arrives as an operand
+  // because the value carries no declared range of its own. Named because the
+  // argument list cannot tell it from building over an element list.
+  template <OrdinalElements C>
+  [[nodiscard]] static auto FromArray(
+      const C& source, T element_default, std::int64_t declared)
+      -> UnpackedArray {
+    if (static_cast<std::int64_t>(source.RawSize()) != declared) {
+      throw SimulationError(
+          std::format(
+              "a fixed-size unpacked array of {} elements cannot be assigned "
+              "an array of {} (LRM 7.6)",
+              declared, source.RawSize()));
+    }
+    UnpackedArray result(std::move(element_default));
+    result.data_.reserve(source.RawSize());
+    for (std::size_t i = 0; i < source.RawSize(); ++i) {
+      result.data_.push_back(source.RawAt(i));
+    }
+    return result;
+  }
+
   UnpackedArray(const UnpackedArray&) = default;
   UnpackedArray(UnpackedArray&&) noexcept = default;
   auto operator=(const UnpackedArray&) -> UnpackedArray& = default;
@@ -370,8 +396,13 @@ class UnpackedArray {
   // `==` / `!=` propagate X / Z; `CaseEqual` returns a deterministic 0/1.
   [[nodiscard]] auto operator==(const UnpackedArray& other) const
       -> PackedArray {
-    PackedArray result = data_[0] == other.data_[0];
-    for (std::size_t i = 1; i < data_.size(); ++i) {
+    // LRM 11.4.5: the answer carries the state class an element's own equality
+    // produces, because that is what a run of them reduces to. Reading the
+    // class off the element shape rather than off a first element is what lets
+    // the run start at the identity, so no length is a case of its own.
+    PackedArray result = PackedArray::FromInt(
+        1, 1, false, (shield_.Default() == shield_.Default()).IsFourState());
+    for (std::size_t i = 0; i < data_.size(); ++i) {
       result = result && (data_[i] == other.data_[i]);
     }
     return result;
@@ -714,5 +745,6 @@ static_assert(ConditionallyMergeable<UnpackedArray<PackedArray>>);
 static_assert(Sortable<UnpackedArray<PackedArray>>);
 static_assert(NetResolvable<UnpackedArray<PackedArray>>);
 static_assert(NetResolvable<UnpackedArray<UnpackedArray<PackedArray>>>);
+static_assert(OrdinalElements<UnpackedArray<PackedArray>>);
 
 }  // namespace lyra::value

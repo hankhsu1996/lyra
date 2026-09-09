@@ -154,22 +154,6 @@ case holds it is one nothing watches.
       assignment outdates every element reference, and a removal outdates only what it removed. So a
       reference held across a `push_front` must still name the element it named before, though every
       position has moved. Nothing implements any of this, and no case holds it.
-- [ ] A dynamic array cannot be sized by its own declaration assignment. LRM 7.5.1 permits `new[]`
-      "in place of the right-hand side expression of variable declaration assignments and blocking
-      procedural assignments", and gives four declaration examples, so `int data[] = new [2];` is a
-      legal program Lyra refuses. Sizing the array in a procedure is the only spelling that works.
-      No case holds this one, because it is a refusal rather than a wrong answer.
-- [ ] A dynamic array cannot be assigned a fixed-size unpacked array. LRM 7.6 resizes the target to
-      the source's element count and copies the elements across; its example
-      `int A[100:1]; int B[]; B = A;` is legal and leaves B with 100 elements. The program does not
-      build instead, so a design containing one never runs. A dynamic-array source of any size,
-      longer or shorter than the target, is copied correctly.
-- [ ] Comparing two aggregates of different sizes answers with a two-state bit even when the
-      elements are four-state. The result's state class follows the elements, so `===` over a
-      four-state array must yield a four-state result whatever the sizes are; the length-mismatch
-      and both-empty answers are built as two-state regardless. No case holds this one: every
-      comparison the corpus makes reaches an element-by-element path, where the class is right. It
-      is recorded because a wrong answer is worse than a refusal, and this one is silent.
 - [ ] A product of two `shortreal` operands assigned to a `real` keeps double precision instead of
       rounding to single. LRM 11.3.1 makes the result type operand-driven, so the product is
       `shortreal` and narrows before it reaches the wider destination. The front end propagates the

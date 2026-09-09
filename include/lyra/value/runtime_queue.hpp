@@ -122,6 +122,15 @@ class RuntimeQueue {
   [[nodiscard]] auto ConcatSpread(const RuntimeValue& part) const
       -> RuntimeQueue;
 
+  // LRM 7.6: a queue assigned an array of any of the three unpacked kinds is
+  // resized to the source's element count and takes its elements in
+  // left-to-right order. The element default and the LRM 7.10.5 bound are the
+  // destination's own declared properties; a bound below zero is the unbounded
+  // queue, so one form covers both and the contents are trimmed to it.
+  [[nodiscard]] static auto FromArray(
+      const RuntimeValue& source, RuntimeValue element_default,
+      const PackedArray& max_bound) -> RuntimeQueue;
+
   // LRM 7.10.2.4 / 7.10.2.5 pop, as its two halves: the element at the front
   // or the back, and the queue left once it is gone. An empty queue has none
   // to remove, so it reads the element default and stays as it is.

@@ -316,7 +316,7 @@ auto LowerEnumConstantMethod(
   const mir::TypeId enum_tid =
       unit_lowerer.TranslateType(hir_exprs.Get(*c.arguments.front()).type);
   const mir::Type& enum_type = unit.types.Get(enum_tid);
-  const mir::EnumType& enum_ty = enum_type.Get<mir::EnumType>();
+  const auto& enum_ty = enum_type.Get<mir::EnumType>();
   if (enum_ty.members.empty()) {
     throw InternalError("LowerEnumConstantMethod: enum has no members");
   }
@@ -339,6 +339,37 @@ auto LowerEnumConstantMethod(
 }
 
 template <ExprLowerer Lowerer>
+auto BuildEnumNameCallExpr(
+    Lowerer& lowerer, WalkFrame frame, mir::ExprId value_id,
+    mir::TypeId enum_type, diag::SourceSpan span) -> diag::Result<mir::Expr> {
+  auto& unit_lowerer = lowerer.Owner();
+  const auto& unit = unit_lowerer.Unit();
+
+  // The callable homes on a class the intra-unit call can name; a package
+  // namespace has none.
+  if (frame.current_class == nullptr) {
+    return diag::Fail(
+        span, diag::DiagCode::kUnsupportedExpressionForm,
+        "the name of an enumeration value in a package context is not yet "
+        "supported");
+  }
+  const mir::Type& enum_ty = unit.types.Get(enum_type);
+  const mir::PackedArrayType base = enum_ty.Get<mir::EnumType>().base;
+  const std::vector<mir::EnumMember> members =
+      enum_ty.Get<mir::EnumType>().members;
+  if (members.empty()) {
+    throw InternalError("BuildEnumNameCallExpr: enum has no members");
+  }
+  const mir::CallableTarget target =
+      ResolveEnumNameHelper(unit_lowerer, frame, enum_type, base, members);
+  return mir::Expr{
+      .data =
+          mir::CallExpr{
+              .callee = mir::Direct{.target = target}, .arguments = {value_id}},
+      .type = unit.builtins.string};
+}
+
+template <ExprLowerer Lowerer>
 auto LowerEnumMethodCall(
     Lowerer& lowerer, WalkFrame frame, const hir::CallExpr& c,
     const hir::BuiltinMethodRef& b, mir::TypeId result_type)
@@ -353,14 +384,6 @@ auto LowerEnumMethodCall(
   }
   const hir::Expr& receiver_hir = hir_exprs.Get(*c.arguments.front());
   const mir::TypeId enum_tid = unit_lowerer.TranslateType(receiver_hir.type);
-
-  // The step callable homes on a class the intra-unit call can name; a package
-  // namespace has none, so those contexts are not yet supported.
-  if (frame.current_class == nullptr) {
-    return diag::Fail(
-        receiver_hir.span, diag::DiagCode::kUnsupportedExpressionForm,
-        "enum name / next / prev in a package context is not yet supported");
-  }
 
   // Copy the shape and member table before lowering the receiver below, which
   // may intern new types and invalidate a reference into the type pool.
@@ -378,14 +401,16 @@ auto LowerEnumMethodCall(
   const mir::ExprId value_id = block.exprs.Add(*std::move(recv_or));
 
   if (b.method == support::BuiltinFn::kEnumName) {
-    const mir::CallableTarget target =
-        ResolveEnumNameHelper(unit_lowerer, frame, enum_tid, base, members);
-    return mir::Expr{
-        .data =
-            mir::CallExpr{
-                .callee = mir::Direct{.target = target},
-                .arguments = {value_id}},
-        .type = result_type};
+    return BuildEnumNameCallExpr(
+        lowerer, frame, value_id, enum_tid, receiver_hir.span);
+  }
+
+  // The step callable homes on a class the intra-unit call can name; a package
+  // namespace has none, so those contexts are not yet supported.
+  if (frame.current_class == nullptr) {
+    return diag::Fail(
+        receiver_hir.span, diag::DiagCode::kUnsupportedExpressionForm,
+        "enum next / prev in a package context is not yet supported");
   }
 
   // next / prev share one step callable; prev negates the step.
@@ -429,6 +454,12 @@ template auto LowerEnumConstantMethod(
 template auto LowerEnumConstantMethod(
     const StructuralScopeLowerer&, WalkFrame, const hir::CallExpr&,
     const hir::BuiltinMethodRef&, mir::TypeId) -> diag::Result<mir::Expr>;
+template auto BuildEnumNameCallExpr(
+    ProcessLowerer&, WalkFrame, mir::ExprId, mir::TypeId, diag::SourceSpan)
+    -> diag::Result<mir::Expr>;
+template auto BuildEnumNameCallExpr(
+    const StructuralScopeLowerer&, WalkFrame, mir::ExprId, mir::TypeId,
+    diag::SourceSpan) -> diag::Result<mir::Expr>;
 template auto LowerEnumMethodCall(
     ProcessLowerer&, WalkFrame, const hir::CallExpr&,
     const hir::BuiltinMethodRef&, mir::TypeId) -> diag::Result<mir::Expr>;

@@ -172,12 +172,29 @@ auto RuntimeDynamicArray::ConcatSpread(const RuntimeValue& part) const
   return result;
 }
 
+auto RuntimeDynamicArray::FromArray(
+    const RuntimeValue& source, RuntimeValue element_default)
+    -> RuntimeDynamicArray {
+  RuntimeDynamicArray result(std::move(element_default));
+  const std::size_t count = RuntimeValueContainerSize(source);
+  for (std::size_t i = 0; i < count; ++i) {
+    result.data_.push_back(RuntimeValueContainerElementAt(source, i));
+  }
+  return result;
+}
+
 auto RuntimeDynamicArray::operator==(const RuntimeDynamicArray& other) const
     -> PackedArray {
+  // LRM 11.4.5: the answer carries the state class an element's own equality
+  // produces, because that is what a run of them reduces to. Reading the class
+  // off the element shape leaves an empty array no case of its own, and leaves
+  // a size mismatch answering in the same class as every other comparison.
+  const bool four_state =
+      RuntimeValueEqual(ElementDefault(), ElementDefault()).IsFourState();
   if (data_.size() != other.data_.size()) {
-    return PackedArray::Bit(false);
+    return PackedArray::FromInt(0, 1, false, four_state);
   }
-  PackedArray result = PackedArray::Bit(true);
+  PackedArray result = PackedArray::FromInt(1, 1, false, four_state);
   for (std::size_t i = 0; i < data_.size(); ++i) {
     result = result && RuntimeValueEqual(data_[i], other.data_[i]);
   }

@@ -4,9 +4,6 @@
 // the loop variable as it stands once the branch runs, which is after the loop
 // has already ended, so it sees the value the control variable was left at
 // (LRM 9.3.2, 12.7.1).
-//
-// Parked: a declaration inside the branch reading the loop variable aborts the
-// run, so this case cannot reach a check to fail at.
 module Top;
   int tag_seen[5];
   int after_loop_is_four;

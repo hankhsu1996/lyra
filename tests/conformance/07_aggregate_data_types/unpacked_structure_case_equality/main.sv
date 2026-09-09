@@ -3,10 +3,6 @@
 // always yields a known bit -- 1 or 0, never x, however many unknown bits the
 // members hold. The comparison descends into a member that is itself a
 // structure or an array (LRM 11.4.5, 7.2).
-//
-// Parked: the known bit such a comparison produces cannot be stored, and the
-// run aborts reporting that a required conversion was not emitted, so this case
-// cannot reach a check to fail at.
 module Top;
   typedef struct {
     int count;

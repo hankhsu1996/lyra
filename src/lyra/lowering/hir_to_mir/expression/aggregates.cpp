@@ -477,23 +477,25 @@ auto LowerHirAssignmentPatternReplicationExpr(
 // runtime ctor populates new slots without re-querying the type, and the
 // optional copy source feeds the LRM 7.5.1 truncate / pad behaviour on
 // `new[N](other)`.
-auto LowerHirDynamicArrayNewExprProc(
-    ProcessLowerer& process, WalkFrame frame, const hir::DynamicArrayNewExpr& n,
+template <ExprLowerer Lowerer>
+auto LowerHirDynamicArrayNewExpr(
+    Lowerer& lowerer, WalkFrame frame, const hir::DynamicArrayNewExpr& n,
     hir::TypeId hir_result_type, mir::TypeId result_type)
     -> diag::Result<mir::Expr> {
   auto& block = *frame.current_block;
-  auto size_or = process.LowerExpr(process.HirExprs().Get(n.size), frame);
+  auto size_or = lowerer.LowerExpr(lowerer.HirExprs().Get(n.size), frame);
   if (!size_or) return std::unexpected(std::move(size_or.error()));
   const mir::ExprId size_id = block.exprs.Add(*std::move(size_or));
 
-  const auto& hir_result_ty = process.Owner().Hir().types.Get(hir_result_type);
+  const hir::Type& hir_result_ty =
+      lowerer.Owner().Hir().types.Get(hir_result_type);
   const auto* hir_da = hir_result_ty.As<hir::DynamicArrayType>();
   if (hir_da == nullptr) {
     throw InternalError(
-        "LowerHirDynamicArrayNewExprProc: result type is not DynamicArrayType");
+        "LowerHirDynamicArrayNewExpr: result type is not DynamicArrayType");
   }
   const mir::ExprId prototype_id = block.exprs.Add(
-      BuildDefaultValueFromHir(process.Owner(), frame, hir_da->element_type));
+      BuildDefaultValueFromHir(lowerer.Owner(), frame, hir_da->element_type));
 
   std::vector<mir::ExprId> args;
   args.reserve(n.initializer.has_value() ? 3U : 2U);
@@ -501,7 +503,7 @@ auto LowerHirDynamicArrayNewExprProc(
   args.push_back(prototype_id);
   if (n.initializer.has_value()) {
     auto init_or =
-        process.LowerExpr(process.HirExprs().Get(*n.initializer), frame);
+        lowerer.LowerExpr(lowerer.HirExprs().Get(*n.initializer), frame);
     if (!init_or) return std::unexpected(std::move(init_or.error()));
     args.push_back(block.exprs.Add(*std::move(init_or)));
   }
@@ -582,6 +584,12 @@ template auto LowerHirAssignmentPatternKeyedExpr(
     const StructuralScopeLowerer&, WalkFrame,
     const hir::AssignmentPatternKeyedExpr&, hir::TypeId, mir::TypeId)
     -> diag::Result<mir::Expr>;
+template auto LowerHirDynamicArrayNewExpr(
+    ProcessLowerer&, WalkFrame, const hir::DynamicArrayNewExpr&, hir::TypeId,
+    mir::TypeId) -> diag::Result<mir::Expr>;
+template auto LowerHirDynamicArrayNewExpr(
+    const StructuralScopeLowerer&, WalkFrame, const hir::DynamicArrayNewExpr&,
+    hir::TypeId, mir::TypeId) -> diag::Result<mir::Expr>;
 template auto LowerHirAssociativeAssignmentPatternExpr(
     ProcessLowerer&, WalkFrame, const hir::AssociativeAssignmentPatternExpr&,
     mir::TypeId) -> diag::Result<mir::Expr>;

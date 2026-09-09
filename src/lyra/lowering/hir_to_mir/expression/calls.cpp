@@ -370,7 +370,7 @@ auto LowerSystemSubroutineCall(
           [&](const support::DistributionSystemSubroutineInfo& distribution)
               -> diag::Result<mir::Expr> {
             return LowerDistributionSystemSubroutineCall(
-                lowerer, frame, call, distribution, span);
+                lowerer, frame, call, distribution);
           },
           [&](const support::MemFileSystemSubroutineInfo&)
               -> diag::Result<mir::Expr> {

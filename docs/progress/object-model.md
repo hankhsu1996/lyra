@@ -215,11 +215,6 @@ this list is what remembers.
       the target language is left to decide the call. The case stating construction ordering is
       parked on this, and its own subject is argument defaulting rather than construction ordering,
       which runs correctly where every argument is stated.
-- [ ] Reaching a member through a null handle crashes the simulation instead of reporting it. The
-      access is the design's own failure, so it owes the run a diagnostic naming what was
-      dereferenced; today the process dies on a signal and says nothing. Reachable from an
-      unassigned handle, and from any construct whose defined answer is null -- a conditional
-      operator whose condition is ambiguous among them (LRM Table 7-1).
 
 ## Open Questions and Deferred Choices
 

@@ -1,13 +1,18 @@
 #include "lyra/lowering/hir_to_mir/expression/system/random.hpp"
 
 #include <cstddef>
+#include <cstdint>
 #include <expected>
+#include <limits>
 #include <optional>
 #include <utility>
+#include <variant>
 #include <vector>
 
+#include "lyra/base/arena.hpp"
 #include "lyra/base/component_index.hpp"
 #include "lyra/base/internal_error.hpp"
+#include "lyra/hir/expr.hpp"
 #include "lyra/hir/expr_id.hpp"
 #include "lyra/lowering/hir_to_mir/block_builder.hpp"
 #include "lyra/lowering/hir_to_mir/call_operands.hpp"
@@ -45,13 +50,26 @@ auto ProcessDrawEntry(support::RandomKind kind, std::size_t argument_count)
   throw InternalError("ProcessDrawEntry: unknown RandomKind");
 }
 
+// The variable a seed argument names (LRM 20.14.1: the seed "shall be an
+// integral variable"). A seed whose declared type is not the one the argument
+// position takes arrives read through a conversion; the variable the draw
+// advances is what that conversion reads.
+auto SeedVariable(
+    const base::Arena<hir::Expr, hir::ExprId>& exprs, hir::ExprId seed)
+    -> hir::ExprId {
+  const auto* conversion =
+      std::get_if<hir::ConversionExpr>(&exprs.Get(seed).data);
+  return conversion == nullptr ? seed : conversion->operand;
+}
+
 // The runtime entry each LRM 20.14.2 distribution function generates through.
 auto DistributionEntry(support::DistributionKind kind) -> support::BuiltinFn {
   switch (kind) {
+    // LRM Annex N Table N.1 lists a seeded `$random` as the uniform draw over
+    // the whole signed range, so it is that entry rather than one of its own;
+    // what tells them apart is the bounds the call carries, not the algorithm.
     case support::DistributionKind::kRandom:
-      throw InternalError(
-          "DistributionEntry: $random is answered before any distribution "
-          "entry is chosen");
+      return support::BuiltinFn::kDistUniform;
     case support::DistributionKind::kUniform:
       return support::BuiltinFn::kDistUniform;
     case support::DistributionKind::kNormal:
@@ -116,24 +134,13 @@ auto LowerRandomSystemSubroutineCall(
 template <ExprLowerer Lowerer>
 auto LowerDistributionSystemSubroutineCall(
     Lowerer& lowerer, WalkFrame frame, const hir::CallExpr& call,
-    const support::DistributionSystemSubroutineInfo& info,
-    diag::SourceSpan span) -> diag::Result<mir::Expr> {
+    const support::DistributionSystemSubroutineInfo& info)
+    -> diag::Result<mir::Expr> {
   const std::vector<hir::ExprId> operands = RequiredOperands(call);
   const auto& hir_exprs = lowerer.HirExprs();
   auto& unit_lowerer = lowerer.Owner();
   auto& unit = unit_lowerer.Unit();
   const mir::TypeId int_type = unit.builtins.int_type;
-
-  // Advancing a seed needs the seed to arrive as a place to store back into,
-  // and a seeded `$random` reaches lowering with its argument already read as a
-  // value. The same draw is available through `$dist_uniform` (LRM Annex N,
-  // Table N.1), which does carry its seed as a place.
-  if (info.kind == support::DistributionKind::kRandom && !operands.empty()) {
-    return diag::Fail(
-        span, diag::DiagCode::kUnsupportedSubroutineArgument,
-        "$random with a seed argument is not yet supported; "
-        "$dist_uniform(seed, -2147483648, 2147483647) is the same draw");
-  }
 
   // LRM 20.14.1 makes `$random`'s seed optional, and a call that omits one
   // names no stream to advance, so it draws where LRM 18.13.1 does.
@@ -167,6 +174,15 @@ auto LowerDistributionSystemSubroutineCall(
     // the design declared it, and the generator works in 32 signed bits.
     arguments.push_back(ConvertToType(unit, body, raw, int_type));
   }
+  // LRM Annex N Table N.1: a seeded `$random` is the uniform draw bounded by
+  // the whole signed range, which the source writes as one operand and the
+  // entry takes as three.
+  if (info.kind == support::DistributionKind::kRandom) {
+    arguments.push_back(
+        BuildIntLiteral(unit, body, std::numeric_limits<std::int32_t>::min()));
+    arguments.push_back(
+        BuildIntLiteral(unit, body, std::numeric_limits<std::int32_t>::max()));
+  }
 
   const mir::TypeId payload_type =
       CompletionPayloadType(unit, {int_type, int_type});
@@ -181,7 +197,14 @@ auto LowerDistributionSystemSubroutineCall(
       mir::LocalDecl{.name = "_lyra_draw", .type = payload_type});
   body.AppendStmt(mir::LocalDeclStmt{.target = completion, .init = draw_call});
 
-  const hir::Expr& hir_seed = hir_exprs.Get(operands[0]);
+  // LRM 20.14.1 / 20.14.2 make the seed an integral variable the draw advances,
+  // so what the store writes back to is that variable. A seed declared as
+  // something other than the entry's own operand type is read through a
+  // conversion, and the variable is what the conversion reads -- the store then
+  // lands the advanced value in the declared type, which is what the design
+  // reads next.
+  const hir::Expr& hir_seed =
+      hir_exprs.Get(SeedVariable(hir_exprs, operands[0]));
   const mir::TypeId seed_type = unit_lowerer.TranslateType(hir_seed.type);
   auto seed_place_or = lowerer.LowerLhsExpr(hir_seed, step_frame);
   if (!seed_place_or) {
@@ -211,11 +234,11 @@ template auto LowerRandomSystemSubroutineCall(
 
 template auto LowerDistributionSystemSubroutineCall(
     ProcessLowerer&, WalkFrame, const hir::CallExpr&,
-    const support::DistributionSystemSubroutineInfo&, diag::SourceSpan)
+    const support::DistributionSystemSubroutineInfo&)
     -> diag::Result<mir::Expr>;
 template auto LowerDistributionSystemSubroutineCall(
     const StructuralScopeLowerer&, WalkFrame, const hir::CallExpr&,
-    const support::DistributionSystemSubroutineInfo&, diag::SourceSpan)
+    const support::DistributionSystemSubroutineInfo&)
     -> diag::Result<mir::Expr>;
 
 }  // namespace lyra::lowering::hir_to_mir

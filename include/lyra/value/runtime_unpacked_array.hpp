@@ -52,6 +52,15 @@ class RuntimeUnpackedArray {
       RuntimeValue element_default, std::vector<RuntimeValue> unit,
       std::size_t count);
 
+  // LRM 7.6: a fixed-size unpacked array assigned an array of another unpacked
+  // kind takes its elements in left-to-right order, and how many elements it
+  // has is a declared property of the variable being written rather than
+  // anything the source decides -- so a source of another size is a run-time
+  // error and the assignment does not happen.
+  [[nodiscard]] static auto FromArray(
+      const RuntimeValue& source, RuntimeValue element_default,
+      std::int64_t declared) -> RuntimeUnpackedArray;
+
   // LRM 5.9 / 21.3.3: a string value assigned to an unpacked array of bytes is
   // left-justified -- the first character lands at the array's left bound and
   // runs toward the right bound, an element past the end of the text keeps the

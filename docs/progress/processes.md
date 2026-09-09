@@ -172,20 +172,6 @@ under each item, and the conformance gaps at the end.
 - [ ] P12 -- Process generate (`generate` / `if generate` / `for generate` containing procedural
       blocks). Largely a frontend elaboration concern; the lowered processes ride on P1..P11.
 
-## Conformance gaps the corpus records
-
-Behaviour the corpus asks for and does not get. What holds each one differs, and so does whether
-anything notices when it is fixed: a case whose wrong answer or refusal is recorded fails the run
-the day that answer becomes right, so the record is what remembers, while a case parked because it
-cannot run at all is watched by nothing and has to be revisited by hand.
-
-- [ ] A variable declared inside a fork branch cannot read the enclosing loop's variable. LRM 9.3.2
-      initializes such a declaration when the branch starts running rather than when the fork is
-      reached, so a branch spawned in a loop sees the value the loop variable holds once the loop
-      has already ended. A branch whose own declaration reads it ends the run with a segmentation
-      fault. The same declaration reading an ordinary variable the parent writes after the fork is
-      right, as is the block-item form, which LRM 9.3.2 initializes before any branch is spawned.
-
 ## Out of Scope
 
 - Scheduler-region behaviour (Active / Inactive / NBA / Observed / Reactive / Postponed). Each

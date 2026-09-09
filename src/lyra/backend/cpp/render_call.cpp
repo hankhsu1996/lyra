@@ -423,6 +423,8 @@ auto BuiltinFnCppName(support::BuiltinFn id) -> std::string_view {
       return "FromByteArray";
     case support::BuiltinFn::kFromString:
       return "FromString";
+    case support::BuiltinFn::kFromArray:
+      return "FromArray";
     case support::BuiltinFn::kConformBound:
       return "ConformBound";
     case support::BuiltinFn::kArrayConcatElement:

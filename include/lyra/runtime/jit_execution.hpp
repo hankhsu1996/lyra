@@ -868,6 +868,13 @@ auto lyra_rt_make_dynamic_array_new_copy(
     const void* size, void* prototype, const void* src) -> void*;
 auto lyra_rt_dynarray_from_literal(
     void* prototype, LyraSpan unit, std::int64_t count) -> void*;
+// LRM 7.6: one unpacked array kind taking another's elements. The entry names
+// both representations because the source is read through the one it has and
+// the result is built in the one the destination declares.
+auto lyra_rt_dynarray_from_array_unpackedarray(
+    const void* source, void* prototype) -> void*;
+auto lyra_rt_dynarray_from_array_queue(const void* source, void* prototype)
+    -> void*;
 auto lyra_rt_dynarray_element(const void* array, const void* index) -> void*;
 auto lyra_rt_dynarray_concat_element(const void* array, void* item) -> void*;
 auto lyra_rt_dynarray_concat_spread(const void* array, const void* part)
@@ -900,6 +907,10 @@ auto lyra_rt_unpackedarray_from_literal(
     void* prototype, LyraSpan unit, std::int64_t count) -> void*;
 auto lyra_rt_unpackedarray_conform_size(const void* parts, std::int64_t count)
     -> void*;
+auto lyra_rt_unpackedarray_from_array_dynarray(
+    const void* source, void* prototype, std::int64_t declared) -> void*;
+auto lyra_rt_unpackedarray_from_array_queue(
+    const void* source, void* prototype, std::int64_t declared) -> void*;
 auto lyra_rt_unpackedarray_element(
     const void* array, const void* index, const void* left, const void* right)
     -> void*;
@@ -994,6 +1005,10 @@ auto lyra_rt_queue_from_literal_bounded(
     -> void*;
 auto lyra_rt_queue_conform_bound(const void* queue, const void* max_bound)
     -> void*;
+auto lyra_rt_queue_from_array_unpackedarray(
+    const void* source, void* prototype, const void* max_bound) -> void*;
+auto lyra_rt_queue_from_array_dynarray(
+    const void* source, void* prototype, const void* max_bound) -> void*;
 auto lyra_rt_queue_element(const void* queue, const void* index) -> void*;
 auto lyra_rt_queue_with_element(
     const void* queue, const void* index, void* value) -> void*;

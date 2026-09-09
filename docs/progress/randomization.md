@@ -5,8 +5,7 @@ Two workstreams share this name, and separating them is the first thing this fil
 **Part one, random number generation**, is a seeded RNG carrying the stability model of LRM 18.14,
 plus the system functions, the array method, and the statements that draw from it. It is the first
 state a system function consumes that is not a pure function of its arguments, so it also settles
-how that state reaches a call site. Only one item is blocked, and on the front end rather than on
-anything here.
+how that state reaches a call site. Nothing in it is blocked.
 
 **Part two, constraint-based randomization**, is `rand` and `randc` members, constraint blocks, and
 `randomize()`. It needs a constraint solver and it needs the object model finished, so its items
@@ -56,13 +55,6 @@ Done when:
       only under it. A mean, degree of freedom, or stage count that is not positive is the design's
       own failure and ends the simulation rather than answering with a number the distribution
       cannot produce.
-
-- [ ] `$random`, whose seed the caller owns (LRM 20.14.1). The unseeded form works and draws from
-      the calling process, which the standard leaves open. The seeded form is refused: it is Annex
-      N's uniform draw over the whole signed range (Table N.1), but the front end reads its argument
-      as a value rather than as the variable the draw advances, so the seed to store back into does
-      not reach lowering. `$dist_uniform(seed, -2147483648, 2147483647)` is the same draw and does
-      carry its seed, which is what the refusal points a design at.
 
 - [ ] `shuffle()` on every unpacked container -- dynamic array, queue, and fixed unpacked array (LRM
       7.12.2). The array manipulation family is otherwise complete; this is the one member held

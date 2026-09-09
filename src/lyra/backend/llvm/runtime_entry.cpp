@@ -486,7 +486,11 @@ auto EntryNamingOf(support::BuiltinFn fn) -> EntryNaming {
     case support::BuiltinFn::kMap:
       return NamedByValue{};
 
+    // LRM 7.6 assignment between unpacked array kinds crosses two container
+    // representations and reads the source through the one it actually has, so
+    // neither side alone names the entry.
     case support::BuiltinFn::kConvertFrom:
+    case support::BuiltinFn::kFromArray:
       return NamedByConversion{};
 
     case support::BuiltinFn::kInitialize:

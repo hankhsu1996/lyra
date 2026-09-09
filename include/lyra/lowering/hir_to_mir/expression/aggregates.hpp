@@ -1,15 +1,13 @@
 #pragma once
 
 // Lowering of value-build aggregate expressions (LRM 11.4.12 concatenation,
-// replication, and LRM 10.9 assignment patterns). Includes
-// `DynamicArrayNewExpr` (LRM 7.5.1) -- its single-statement-only constraint
-// is enforced separately, but the expression form is a constructor-style
-// build that fits this family naturally.
+// replication, and LRM 10.9 assignment patterns), and the dynamic-array
+// constructor (LRM 7.5.1), whose expression form is a constructor-style build
+// of the same family.
 
 #include "lyra/diag/diagnostic.hpp"
 #include "lyra/hir/expr.hpp"
 #include "lyra/lowering/hir_to_mir/expression/expr_lowerer.hpp"
-#include "lyra/lowering/hir_to_mir/process_lowerer.hpp"
 #include "lyra/lowering/hir_to_mir/walk_frame.hpp"
 #include "lyra/mir/expr.hpp"
 #include "lyra/mir/type_id.hpp"
@@ -57,11 +55,14 @@ auto LowerHirReplicationExpr(
     Lowerer& lowerer, WalkFrame frame, const hir::ReplicationExpr& r,
     mir::TypeId result_type) -> diag::Result<mir::Expr>;
 
-// The dynamic-array constructor `new[]` (LRM 7.5.1) allocates simulation-time
-// storage, which a constructor-time structural expression cannot do, so it
-// stays a procedural-only handler.
-auto LowerHirDynamicArrayNewExprProc(
-    ProcessLowerer& process, WalkFrame frame, const hir::DynamicArrayNewExpr& n,
+// The dynamic-array constructor `new[]` (LRM 7.5.1), which the clause admits on
+// the right-hand side of a variable declaration assignment as well as a
+// blocking procedural one -- and a declaration's initializer runs at time zero
+// with the rest of them, so the storage it allocates is simulation-time storage
+// either way.
+template <ExprLowerer Lowerer>
+auto LowerHirDynamicArrayNewExpr(
+    Lowerer& lowerer, WalkFrame frame, const hir::DynamicArrayNewExpr& n,
     hir::TypeId hir_result_type, mir::TypeId result_type)
     -> diag::Result<mir::Expr>;
 

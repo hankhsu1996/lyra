@@ -167,8 +167,89 @@ auto LowerIncDecOp(hir::IncDecOp op) -> mir::IncDecOp {
   throw InternalError("LowerIncDecOp: unknown HIR IncDecOp");
 }
 
-auto IsArrayContainerType(const mir::Type& ty) -> bool {
-  return ty.Is<mir::UnpackedArrayType>() || ty.Is<mir::DynamicArrayType>();
+// Assigning one unpacked array kind to another (LRM 7.6): the destination is
+// built from the source's elements rather than taking the source's value whole,
+// because every property the destination has and the source cannot supply
+// belongs to the variable being written -- its element shape, the element count
+// a fixed-size array declares, the bound a queue declares. The clause admits
+// the assignment only where the element types are equivalent, so the elements
+// themselves cross as they stand.
+//
+// Answers with nothing where the two are the same kind, arrays of one kind
+// holding their elements the same way, and where either side is no unpacked
+// array at all.
+template <ExprLowerer Lowerer>
+auto BuildUnpackedArrayAdoption(
+    Lowerer& lowerer, WalkFrame frame, mir::ExprId source_id,
+    mir::TypeId result_type) -> std::optional<mir::Expr> {
+  const auto& unit = lowerer.Owner().Unit();
+  mir::Block& block = *frame.current_block;
+
+  // What each side is, taken as facts rather than held as references into the
+  // type pool: building the operands below interns types, and an interning may
+  // move what such a reference points at.
+  struct UnpackedKind {
+    bool fixed_size;
+    bool dynamic;
+    bool queue;
+
+    [[nodiscard]] auto IsUnpackedArray() const -> bool {
+      return fixed_size || dynamic || queue;
+    }
+    [[nodiscard]] auto SameKindAs(const UnpackedKind& other) const -> bool {
+      return (fixed_size && other.fixed_size) || (dynamic && other.dynamic) ||
+             (queue && other.queue);
+    }
+  };
+  const auto kind_of = [&](mir::TypeId type) {
+    const mir::Type& ty = unit.types.Get(type);
+    return UnpackedKind{
+        .fixed_size = ty.Is<mir::UnpackedArrayType>(),
+        .dynamic = ty.Is<mir::DynamicArrayType>(),
+        .queue = ty.Is<mir::QueueType>()};
+  };
+  const UnpackedKind source = kind_of(block.exprs.Get(source_id).type);
+  const UnpackedKind destination = kind_of(result_type);
+  if (!source.IsUnpackedArray() || !destination.IsUnpackedArray() ||
+      source.SameKindAs(destination)) {
+    return std::nullopt;
+  }
+
+  // The two declared properties a source cannot supply, read before anything
+  // interns. LRM 7.10.5: a bound below zero is the unbounded queue, so the
+  // operand is always there and an unbounded destination is not a second form.
+  const mir::Type& destination_ty = unit.types.Get(result_type);
+  const std::int64_t declared_count =
+      destination.fixed_size
+          ? static_cast<std::int64_t>(
+                destination_ty.Get<mir::UnpackedArrayType>().Size())
+          : 0;
+  const std::optional<std::uint64_t> declared_bound =
+      destination.queue ? destination_ty.Get<mir::QueueType>().max_bound
+                        : std::nullopt;
+
+  std::vector<mir::ExprId> arguments = {
+      source_id, block.exprs.Add(BuildDefaultValueExpr(
+                     lowerer.Owner(), frame,
+                     ArrayContainerElementType(unit, result_type)))};
+  if (destination.fixed_size) {
+    arguments.push_back(BuildMachineIntLiteral(unit, block, declared_count));
+  }
+  if (destination.queue) {
+    arguments.push_back(BuildIntLiteral(
+        unit, block,
+        declared_bound.has_value() ? static_cast<std::int64_t>(*declared_bound)
+                                   : -1));
+  }
+  return mir::Expr{
+      .data =
+          mir::CallExpr{
+              .callee =
+                  mir::Direct{
+                      .target = support::BuiltinFn::kFromArray,
+                      .qualification = mir::TypeQualifier{.type = result_type}},
+              .arguments = std::move(arguments)},
+      .type = result_type};
 }
 
 auto UnaryOpAsBuiltinFn(mir::UnaryOp op) -> std::optional<support::BuiltinFn> {
@@ -359,33 +440,37 @@ auto BuildMirBinaryExpr(
     }
   }
 
-  // LRM 11.2.2 / 11.4.5 aggregate `===` / `!==`: routed as `kCaseEqual`
-  // (with a wrapping `!` for the inequality form).
-  if (IsArrayContainerType(lhs_ty) && IsArrayContainerType(rhs_ty)) {
-    if (op == mir::BinaryOp::kCaseEquality) {
-      return MakeBuiltinFnCall(
-          support::BuiltinFn::kCaseEqual, {lhs_id, rhs_id}, result_type);
-    }
+  // LRM 11.4.5 `===` / `!==` over any data type, including an aggregate, with a
+  // wrapping `!` for the inequality form. The clause makes the result always a
+  // known 1'b0 or 1'b1, so the entry answers with a two-state bit whatever its
+  // operands carry; the call is stated at that, and a context wanting another
+  // representation takes the conversion.
+  if (op == mir::BinaryOp::kCaseEquality ||
+      op == mir::BinaryOp::kCaseInequality) {
+    const mir::TypeId known = unit.builtins.bit1;
+    mir::ExprId answer = block.exprs.Add(MakeBuiltinFnCall(
+        support::BuiltinFn::kCaseEqual, {lhs_id, rhs_id}, known));
     if (op == mir::BinaryOp::kCaseInequality) {
-      const mir::ExprId inner = block.exprs.Add(MakeBuiltinFnCall(
-          support::BuiltinFn::kCaseEqual, {lhs_id, rhs_id}, result_type));
-      return mir::Expr{
-          .data =
-              mir::UnaryExpr{.op = mir::UnaryOp::kLogicalNot, .operand = inner},
-          .type = result_type};
+      answer = block.exprs.Add(
+          mir::Expr{
+              .data =
+                  mir::UnaryExpr{
+                      .op = mir::UnaryOp::kLogicalNot, .operand = answer},
+              .type = known});
     }
-    // kEquality / kInequality on arrays render natively (operator==),
-    // so fall through to the BinaryExpr path.
+    return block.exprs.Get(ConvertToType(unit, block, answer, result_type));
   }
 
   // LRM 11.4 method-style binary ops (shifts, power, xnor, wildcard /
-  // case / implication / equivalence): route through a `Direct` builtin call.
+  // implication / equivalence): route through a `Direct` builtin call.
   if (auto builtin = mir::BinaryOpAsBuiltinFn(op)) {
     return MakeBuiltinFnCall(*builtin, {lhs_id, rhs_id}, result_type);
   }
 
-  // The `!=` siblings of wildcard / case equality lift to a positive form
-  // wrapped in logical NOT, keeping the backend free of negation knowledge.
+  // LRM 11.4.6 `!=?` lifts to its positive form wrapped in logical NOT, keeping
+  // the backend free of negation knowledge. Unlike case inequality it takes no
+  // conversion: the clause lets the answer be unknown, so it carries the state
+  // class its operands do, which is the one the context asked for.
   if (op == mir::BinaryOp::kWildcardInequality) {
     const mir::ExprId inner = block.exprs.Add(MakeBuiltinFnCall(
         support::BuiltinFn::kWildcardEquals, {lhs_id, rhs_id}, result_type));
@@ -394,15 +479,6 @@ auto BuildMirBinaryExpr(
             mir::UnaryExpr{.op = mir::UnaryOp::kLogicalNot, .operand = inner},
         .type = result_type};
   }
-  if (op == mir::BinaryOp::kCaseInequality) {
-    const mir::ExprId inner = block.exprs.Add(MakeBuiltinFnCall(
-        support::BuiltinFn::kCaseEqual, {lhs_id, rhs_id}, result_type));
-    return mir::Expr{
-        .data =
-            mir::UnaryExpr{.op = mir::UnaryOp::kLogicalNot, .operand = inner},
-        .type = result_type};
-  }
-
   return mir::Expr{
       .data = mir::BinaryExpr{.op = op, .lhs = lhs_id, .rhs = rhs_id},
       .type = result_type};
@@ -690,9 +766,16 @@ auto LowerHirConversionExpr(
     // An assignment extends its right-hand side by that side's own signedness
     // (LRM 11.8.3), and a cast converts the operand to the casting type without
     // restating its signedness first (LRM 6.24.1), so both take the widening
-    // every non-propagated context takes.
+    // every non-propagated context takes. Crossing between the unpacked array
+    // kinds is the one conversion whose result the destination has to be built
+    // for rather than reshaped into, so it is answered here, where the
+    // destination's declared properties are still reachable.
     case hir::ConversionKind::kImplicit:
     case hir::ConversionKind::kExplicit:
+      if (auto adopted = BuildUnpackedArrayAdoption(
+              lowerer, frame, operand_id, result_type)) {
+        return *std::move(adopted);
+      }
       return BuildValueConversion(unit, block, operand_id, result_type);
     // LRM 6.24.3 reinterprets the operand as a bit stream and repacks it into
     // the casting type, which is a different operation from reshaping one

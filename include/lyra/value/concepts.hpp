@@ -319,6 +319,19 @@ concept IndexTraversal = requires(const T& t, const Index& probe) {
   { t.PrevIndex(probe) } -> std::same_as<std::optional<Index>>;
 };
 
+// OrdinalElements: the unpacked family's own elements, read by storage ordinal.
+// LRM 7.6 pairs two arrays for assignment by the left-to-right order of their
+// elements, which is that ordinal and is the one coordinate a fixed-size array,
+// a dynamic array, and a queue all answer to -- a declared range belongs to the
+// static type at a select, and a queue has no declared range at all. Reading a
+// container this way is therefore what lets one be built from another without
+// either naming the other's kind.
+template <typename T>
+concept OrdinalElements = requires(const T& t, std::size_t ordinal) {
+  { t.RawSize() } -> std::same_as<std::size_t>;
+  { t.RawAt(ordinal) };
+};
+
 // EntryWalkable: the LRM 7.12 entry stream, read by position. A method of that
 // clause visits every entry of its receiver in the container's own order, and
 // the position is the one coordinate every container answers to -- an ordinally

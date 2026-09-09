@@ -36,4 +36,15 @@ auto LowerEnumMethodCall(
     const hir::BuiltinMethodRef& b, mir::TypeId result_type)
     -> diag::Result<mir::Expr>;
 
+// The declared name of an enumeration value, as the string `name` answers with
+// (LRM 6.19.5): the member's name where the type declares one for the value,
+// and the empty string where it does not. Shared with the assignment-pattern
+// rendering of an enumeration (LRM 21.2.1.6), which prints that name when there
+// is one, so both reach one synthesized callable per enum rather than each
+// building its own.
+template <ExprLowerer Lowerer>
+auto BuildEnumNameCallExpr(
+    Lowerer& lowerer, WalkFrame frame, mir::ExprId value_id,
+    mir::TypeId enum_type, diag::SourceSpan span) -> diag::Result<mir::Expr>;
+
 }  // namespace lyra::lowering::hir_to_mir

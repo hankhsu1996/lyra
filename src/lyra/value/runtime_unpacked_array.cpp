@@ -35,6 +35,25 @@ RuntimeUnpackedArray::RuntimeUnpackedArray(
   }
 }
 
+auto RuntimeUnpackedArray::FromArray(
+    const RuntimeValue& source, RuntimeValue element_default,
+    std::int64_t declared) -> RuntimeUnpackedArray {
+  const std::size_t count = RuntimeValueContainerSize(source);
+  if (static_cast<std::int64_t>(count) != declared) {
+    throw SimulationError(
+        std::format(
+            "a fixed-size unpacked array of {} elements cannot be assigned an "
+            "array of {} (LRM 7.6)",
+            declared, count));
+  }
+  RuntimeUnpackedArray result(std::move(element_default), {}, 0);
+  result.data_.reserve(count);
+  for (std::size_t i = 0; i < count; ++i) {
+    result.data_.push_back(RuntimeValueContainerElementAt(source, i));
+  }
+  return result;
+}
+
 RuntimeUnpackedArray::RuntimeUnpackedArray(const RuntimeUnpackedArray& other)
     : element_default_(std::make_unique<RuntimeValue>(*other.element_default_)),
       data_(other.data_) {
@@ -197,7 +216,12 @@ auto RuntimeUnpackedArray::WithSlice(
 // the compiler-internal empty array from indexing storage that is not there.
 auto RuntimeUnpackedArray::operator==(const RuntimeUnpackedArray& other) const
     -> PackedArray {
-  PackedArray result = PackedArray::Bit(true);
+  // LRM 11.4.5: the answer carries the state class an element's own equality
+  // produces, because that is what a run of them reduces to, and reading the
+  // class off the element shape is what lets the run start at the identity.
+  PackedArray result = PackedArray::FromInt(
+      1, 1, false,
+      RuntimeValueEqual(ElementDefault(), ElementDefault()).IsFourState());
   for (std::size_t i = 0; i < data_.size(); ++i) {
     result = result && RuntimeValueEqual(data_[i], other.data_[i]);
   }
