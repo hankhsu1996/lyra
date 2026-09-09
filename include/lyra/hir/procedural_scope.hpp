@@ -8,12 +8,13 @@
 #include <vector>
 
 #include "lyra/base/internal_error.hpp"
+#include "lyra/base/pool_id.hpp"
 #include "lyra/hir/procedural_var.hpp"
 
 namespace lyra::hir {
 
 struct ProceduralScopeId {
-  std::uint32_t value;
+  std::uint32_t value = base::kUnassignedId;
 
   auto operator<=>(const ProceduralScopeId&) const
       -> std::strong_ordering = default;

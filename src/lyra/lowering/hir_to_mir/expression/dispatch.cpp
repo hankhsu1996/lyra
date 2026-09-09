@@ -185,6 +185,13 @@ auto LowerExprImpl(L& lowerer, const hir::Expr& expr, WalkFrame frame)
   if (lowerer.Owner().Unit().types.Get(raw_or->type).IsCapabilityWrapper()) {
     const mir::ExprId cell_id =
         frame.current_block->exprs.Add(*std::move(raw_or));
+    // The sampled value of an expression is the expression over the sampled
+    // values of the variables it reads (LRM 16.5.1), so the whole of what
+    // reading one changes is which value each leaf answers with -- here, where
+    // every leaf read is built.
+    if (frame.reads_as_of == ReadsAsOf::kPreponed) {
+      return mir::MakeCellSampledLoadCallExpr(cell_id, result_type);
+    }
     return mir::MakeCellLoadCallExpr(cell_id, result_type);
   }
   return raw_or;

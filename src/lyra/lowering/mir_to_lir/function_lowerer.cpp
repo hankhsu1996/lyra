@@ -2263,6 +2263,20 @@ auto FunctionLowerer::LowerExpr(const mir::Block& block, mir::ExprId id)
             return Load(*std::move(place), unit_->TranslateType(type));
           },
           [&](const mir::AddressOfExpr& addr) -> diag::Result<lir::Operand> {
+            // Opening a reference names the cell it binds, and this target
+            // reaches the value that cell holds in one step instead -- so the
+            // cell in between is not a place here, and nothing can take its
+            // address.
+            if (const auto* opened = std::get_if<mir::DerefExpr>(
+                    &block.exprs.Get(addr.operand).data);
+                opened != nullptr &&
+                unit_->Mir()
+                    .types.Get(block.exprs.Get(opened->pointer).type)
+                    .Is<mir::RefType>()) {
+              return Unsupported(
+                  "mir_to_lir: the cell a reference binds is not yet nameable "
+                  "on this backend");
+            }
             auto place = LowerPlace(block, addr.operand);
             if (!place) {
               return std::unexpected(std::move(place.error()));

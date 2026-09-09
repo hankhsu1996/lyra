@@ -5,6 +5,7 @@
 #include <string>
 #include <vector>
 
+#include "lyra/base/pool_id.hpp"
 #include "lyra/hir/external_callee.hpp"
 #include "lyra/hir/subroutine_kind.hpp"
 #include "lyra/hir/type_id.hpp"
@@ -15,7 +16,7 @@ namespace lyra::hir {
 // reached by the symbol its declaring unit emits it under rather than by a
 // position in an object, so this orders the promise and nothing else.
 struct PublishedCallableId {
-  std::uint32_t value;
+  std::uint32_t value = base::kUnassignedId;
 
   auto operator<=>(const PublishedCallableId&) const
       -> std::strong_ordering = default;

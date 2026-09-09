@@ -183,6 +183,17 @@ enum class BuiltinFn : std::uint16_t {
   // is the store boundary's job upstream, not this entry's.
   kLoad,
   kStore,
+  // Reading what a cell held in the Preponed region of the current time slot --
+  // its value before anything in that slot ran (LRM 4.4.2.1, 16.5.1). The same
+  // operation on the wrapper as an ordinary read and it carries no handle for
+  // the same reason; the two differ only in which of the values the cell holds
+  // is asked for.
+  kSampledLoad,
+  // Arming a cell to answer for a sampled value at all, and installing the one
+  // every read answers with until some later slot first changes the cell (LRM
+  // 16.5.1). A cell nothing samples is never armed and carries neither the
+  // storage nor the work of maintaining it.
+  kArmSampling,
   // Asking a cell for its storage as somewhere to write, which is an operation
   // on the wrapper for the same reason the two above are: which storage it
   // currently stands for is a fact about the wrapper, not about the place

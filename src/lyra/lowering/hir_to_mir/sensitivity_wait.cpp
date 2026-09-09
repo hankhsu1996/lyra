@@ -23,7 +23,62 @@
 
 namespace lyra::lowering::hir_to_mir {
 
+auto BuildObservableCellExpr(
+    mir::Block& block, const WalkFrame& frame, mir::CompilationUnit& unit,
+    const StructuralScopeLowerer& lowerer, const hir::SensitivityEntry& entry)
+    -> mir::ExprId {
+  return std::visit(
+      Overloaded{
+          [&](const hir::ReferenceRoute& route) -> mir::ExprId {
+            return block.exprs.Add(EndpointCellExpr(
+                frame, unit, BindEndpoint(lowerer, frame, route)));
+          },
+          [&](const hir::ExternalUnitValueRef& pkg) -> mir::ExprId {
+            unit.AddExternalReferencedUnit(pkg.unit_name);
+            const mir::TypeId cell_type = mir::ObservableCellOf(
+                unit.types, lowerer.Owner().TranslateType(pkg.value_type));
+            return block.exprs.Add(
+                mir::Expr{
+                    .data =
+                        mir::ExternalUnitVariableRef{
+                            .unit_name = pkg.unit_name,
+                            .variable_name = pkg.variable_name},
+                    .type = cell_type});
+          },
+      },
+      entry.ref);
+}
+
 namespace {
+
+// The same storage as a borrowed pointer, which is the form a registration
+// hands the runtime. A route answers for this form itself, because an endpoint
+// that reached out of the unit already holds a pointer and composing one from
+// the cell would send that case through a dereference and back. A package
+// variable is named as its cell alone, so its pointer is that name's address.
+auto BuildObservablePtrExpr(
+    mir::Block& block, const WalkFrame& frame, mir::CompilationUnit& unit,
+    const StructuralScopeLowerer& lowerer, const hir::SensitivityEntry& entry)
+    -> mir::ExprId {
+  return std::visit(
+      Overloaded{
+          [&](const hir::ReferenceRoute& route) -> mir::ExprId {
+            return EndpointObservablePtr(
+                block, frame, unit, BindEndpoint(lowerer, frame, route));
+          },
+          [&](const hir::ExternalUnitValueRef&) -> mir::ExprId {
+            const mir::ExprId cell =
+                BuildObservableCellExpr(block, frame, unit, lowerer, entry);
+            const mir::TypeId ptr_type = unit.types.Intern(
+                mir::Type{mir::PointerType{
+                    .pointee = block.exprs.Get(cell).type,
+                    .ownership = mir::PointerOwnership::kBorrowed,
+                    .mutability = mir::Mutability::kMutable}});
+            return block.exprs.Add(mir::MakeAddressOfExpr(cell, ptr_type));
+          },
+      },
+      entry.ref);
+}
 
 // One leaf of the wait: the place it watches, which bits of that place's packed
 // encoding it reads, and what decides whether what happens there is an event.
@@ -36,36 +91,8 @@ auto BuildTriggerExpr(
     mir::Block& block, const WalkFrame& frame, mir::CompilationUnit& unit,
     const StructuralScopeLowerer& lowerer, const hir::SensitivityEntry& entry,
     std::optional<mir::LocalId> observation) -> mir::ExprId {
-  // The leaf watches either an intra-unit cell reached through its route, or a
-  // package variable's one program-global cell reached by name (LRM 26.2). Both
-  // resolve to a borrowed pointer to the place the runtime registers the wait
-  // on; only the way that place is reached differs.
-  const mir::ExprId observable_ptr = std::visit(
-      Overloaded{
-          [&](const hir::ReferenceRoute& route) -> mir::ExprId {
-            return EndpointObservablePtr(
-                block, frame, unit, BindEndpoint(lowerer, frame, route));
-          },
-          [&](const hir::ExternalUnitValueRef& pkg) -> mir::ExprId {
-            unit.AddExternalReferencedUnit(pkg.unit_name);
-            const mir::TypeId cell_type = mir::ObservableCellOf(
-                unit.types, lowerer.Owner().TranslateType(pkg.value_type));
-            const mir::ExprId cell = block.exprs.Add(
-                mir::Expr{
-                    .data =
-                        mir::ExternalUnitVariableRef{
-                            .unit_name = pkg.unit_name,
-                            .variable_name = pkg.variable_name},
-                    .type = cell_type});
-            const mir::TypeId ptr_type = unit.types.Intern(
-                mir::Type{mir::PointerType{
-                    .pointee = cell_type,
-                    .ownership = mir::PointerOwnership::kBorrowed,
-                    .mutability = mir::Mutability::kMutable}});
-            return block.exprs.Add(mir::MakeAddressOfExpr(cell, ptr_type));
-          },
-      },
-      entry.ref);
+  const mir::ExprId observable_ptr =
+      BuildObservablePtrExpr(block, frame, unit, lowerer, entry);
   const std::int64_t lsb_bit_offset =
       entry.footprint.has_value()
           ? static_cast<std::int64_t>(entry.footprint->first)

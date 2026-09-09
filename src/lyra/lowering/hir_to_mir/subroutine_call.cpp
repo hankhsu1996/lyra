@@ -9,7 +9,6 @@
 #include <variant>
 #include <vector>
 
-#include "lyra/base/component_index.hpp"
 #include "lyra/base/internal_error.hpp"
 #include "lyra/base/overloaded.hpp"
 #include "lyra/hir/expr.hpp"
@@ -579,8 +578,8 @@ auto LowerWritingBackCall(
   auto bound = EmitWritingBackSteps(lowerer, steps.Frame(), call, plan);
   if (!bound) return std::unexpected(std::move(bound.error()));
   return steps.Build(ProjectCompletionComponent(
-      steps.Body(), bound->completion, bound->payload_type,
-      base::ComponentIndex{}, *plan.result_type));
+      steps.Body(), bound->completion, bound->payload_type, kCompletionResult,
+      *plan.result_type));
 }
 
 }  // namespace
@@ -648,7 +647,7 @@ auto LowerSubroutineCall(
   mir::Block& block = *frame.current_block;
   const mir::ExprId completion = block.exprs.Add(std::move(emitted->call));
   return diag::Result<mir::Expr>{mir::MakeComponentAccessExpr(
-      completion, base::ComponentIndex{}, *callee.result_type)};
+      completion, kCompletionResult, *callee.result_type)};
 }
 
 template auto LowerSubroutineCall(

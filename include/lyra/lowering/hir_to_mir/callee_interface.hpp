@@ -43,6 +43,11 @@ auto CompletionPayloadType(
     mir::CompilationUnit& unit, const std::vector<mir::TypeId>& components)
     -> mir::TypeId;
 
+// Where a completion carries the callee's result: ahead of every component a
+// formal receives (LRM 13.5), which is the order the layout is built in. A
+// caller reading a result names this rather than spelling the position again.
+inline constexpr base::ComponentIndex kCompletionResult{0};
+
 // Reads one payload component out of a completion value bound to `completion`.
 auto ProjectCompletionComponent(
     mir::Block& block, mir::LocalId completion, mir::TypeId payload_type,

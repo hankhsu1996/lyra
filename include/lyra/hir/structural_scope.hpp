@@ -8,6 +8,7 @@
 #include <vector>
 
 #include "lyra/base/arena.hpp"
+#include "lyra/base/pool_id.hpp"
 #include "lyra/base/registry.hpp"
 #include "lyra/base/time.hpp"
 #include "lyra/hir/continuous_assign.hpp"
@@ -29,27 +30,27 @@ namespace lyra::hir {
 struct StructuralScope;
 
 struct GenerateId {
-  std::uint32_t value;
+  std::uint32_t value = base::kUnassignedId;
 
   auto operator<=>(const GenerateId&) const -> std::strong_ordering = default;
 };
 
 struct StructuralScopeId {
-  std::uint32_t value;
+  std::uint32_t value = base::kUnassignedId;
 
   auto operator<=>(const StructuralScopeId&) const
       -> std::strong_ordering = default;
 };
 
 struct InstanceMemberId {
-  std::uint32_t value;
+  std::uint32_t value = base::kUnassignedId;
 
   auto operator<=>(const InstanceMemberId&) const
       -> std::strong_ordering = default;
 };
 
 struct InterfacePortId {
-  std::uint32_t value;
+  std::uint32_t value = base::kUnassignedId;
 
   auto operator<=>(const InterfacePortId&) const
       -> std::strong_ordering = default;
@@ -287,7 +288,7 @@ struct PortCellEndpoint {
 using PortEndpoint = std::variant<PortCellEndpoint, RoutedPathRecipe>;
 
 struct PortConnectionId {
-  std::uint32_t value;
+  std::uint32_t value = base::kUnassignedId;
 
   auto operator<=>(const PortConnectionId&) const
       -> std::strong_ordering = default;
@@ -365,6 +366,13 @@ struct StructuralScope {
   base::Arena<InterfacePortDecl, InterfacePortId> interface_ports;
   base::Arena<PortConnection, PortConnectionId> port_connections;
   base::Arena<RoutedRefDecl, RoutedRefId> routed_refs;
+  // The cells something in this scope reads a sampled value of (LRM 16.5.1),
+  // each named the way an event control names what it watches -- so one reached
+  // across an instance boundary is carried by its route like any other. A cell
+  // answers for a sampled value only once armed, and arming installs the value
+  // every read answers with until a later time slot first changes it, so it
+  // happens once every variable initializer in the design has run.
+  std::vector<SensitivityEntry> sampled_cells;
   // Body-bearing SV subroutines only. A bodyless DPI-C import never enters this
   // arena; the unit owns it, because its foreign symbol is program-global and
   // belongs to no scope (LRM 35.4).

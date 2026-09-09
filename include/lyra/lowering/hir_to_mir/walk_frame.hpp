@@ -39,6 +39,15 @@ struct ScopeChainNode {
   const ScopeChainNode* parent = nullptr;
 };
 
+// Which of a variable's two values a read of it answers with. The sampled value
+// of an expression is defined over the sampled values of the variables it reads
+// (LRM 16.5.1), so lowering an operand under `kPreponed` is that definition
+// applied at the one site a leaf read is built.
+enum class ReadsAsOf : std::uint8_t {
+  kNow,
+  kPreponed,
+};
+
 // Per-recursion traversal context for HIR-to-MIR. Carried by value through
 // every dispatcher method and per-kind handler. Walk-invariant facts (the
 // compilation unit being constructed, builtins) live on the Lowerer class,
@@ -71,6 +80,12 @@ struct WalkFrame {
   // entered via `WithBlock`. Null outside a block. A block places statements
   // and exprs; it does not resolve a reference to its binding.
   mir::Block* current_block = nullptr;
+
+  // Which value a read of an observable cell answers with while this subtree is
+  // lowered. Set for the operand of a construct that reads sampled values (LRM
+  // 16.5.1); the frame is carried by value, so it reaches that operand and
+  // nothing beside it.
+  ReadsAsOf reads_as_of = ReadsAsOf::kNow;
 
   // The binding-resolution context of the callable body being lowered: a
   // reference resolves to a binding through it, and entering a closure body
@@ -146,6 +161,12 @@ struct WalkFrame {
       ++hops;
     }
     return mir::EnclosingHops{hops};
+  }
+
+  [[nodiscard]] auto WithReadsAsOf(ReadsAsOf when) const -> WalkFrame {
+    WalkFrame next = *this;
+    next.reads_as_of = when;
+    return next;
   }
 
   [[nodiscard]] auto WithBlock(mir::Block* block) const -> WalkFrame {

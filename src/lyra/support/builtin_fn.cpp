@@ -326,6 +326,10 @@ auto BuiltinFnName(BuiltinFn id) -> std::string_view {
       return "load";
     case BuiltinFn::kStore:
       return "store";
+    case BuiltinFn::kSampledLoad:
+      return "sampled_load";
+    case BuiltinFn::kArmSampling:
+      return "arm_sampling";
     case BuiltinFn::kOpenForWrite:
       return "open_for_write";
     case BuiltinFn::kAttachDriver:

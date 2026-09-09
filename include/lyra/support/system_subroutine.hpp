@@ -9,12 +9,13 @@
 #include <variant>
 
 #include "lyra/base/internal_error.hpp"
+#include "lyra/base/pool_id.hpp"
 #include "lyra/support/builtin_fn.hpp"
 
 namespace lyra::support {
 
 struct SystemSubroutineId {
-  std::uint16_t value;
+  std::uint32_t value = base::kUnassignedId;
 
   auto operator<=>(const SystemSubroutineId&) const
       -> std::strong_ordering = default;
@@ -42,6 +43,9 @@ enum class ReturnConvention : std::uint8_t {
   kString,
   kTime64,
   kRealTime,
+  // The result is the operand's own type rather than a fixed one, so the type
+  // comes from the operand and no builtin names it.
+  kOperandType,
 };
 
 struct ArgCountPolicy {
@@ -244,6 +248,14 @@ struct DistributionSystemSubroutineInfo {
   DistributionKind kind;
 };
 
+// A sampled value function whose whole answer is the sampled value itself (LRM
+// 16.9.3). `$sampled` is the member that names no clocking event: it answers
+// with the value its operand had in the Preponed region of the current time
+// step, which is that operand read over its variables' sampled values (LRM
+// 16.5.1) and nothing else. The members that compare or index across the ticks
+// of a clocking event answer from more than that, and carry it.
+struct SampledValueSystemSubroutineInfo {};
+
 using SystemSubroutineSemantic = std::variant<
     PrintSystemSubroutineInfo, TerminationSystemSubroutineInfo,
     DiagnosticSystemSubroutineInfo, FileIOSystemSubroutineInfo,
@@ -252,7 +264,7 @@ using SystemSubroutineSemantic = std::variant<
     PrintTimescaleSystemSubroutineInfo, PlusargsSystemSubroutineInfo,
     MemFileSystemSubroutineInfo, BitVectorSystemSubroutineInfo,
     HostCommandSystemSubroutineInfo, RandomSystemSubroutineInfo,
-    DistributionSystemSubroutineInfo>;
+    DistributionSystemSubroutineInfo, SampledValueSystemSubroutineInfo>;
 
 struct SystemSubroutineDesc {
   SystemSubroutineId id;
@@ -1106,6 +1118,14 @@ inline constexpr std::array kSystemSubroutines = {
             TerminationSystemSubroutineInfo{
                 .default_level = 1, .builtin_fn = BuiltinFn::kFinish},
         .suspends = true,
+    },
+    SystemSubroutineDesc{
+        .id = SystemSubroutineId{78},
+        .name = "$sampled",
+        .kind = SystemSubroutineKind::kFunction,
+        .result_conv = ReturnConvention::kOperandType,
+        .arg_policy = ArgCountPolicy{.min_args = 1, .max_args = 1},
+        .semantic = SampledValueSystemSubroutineInfo{},
     },
 };
 

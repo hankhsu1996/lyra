@@ -11,7 +11,6 @@
 #include <utility>
 #include <vector>
 
-#include "lyra/base/component_index.hpp"
 #include "lyra/base/internal_error.hpp"
 #include "lyra/diag/diag_code.hpp"
 #include "lyra/diag/diagnostic.hpp"
@@ -168,7 +167,7 @@ auto BuildTextRead(
           process, steps.Frame(), builtin_fn, std::move(operands), payload),
       payload, writebacks);
   return steps.Build(ProjectCompletionComponent(
-      steps.Body(), completion, payload, base::ComponentIndex{}, count_type));
+      steps.Body(), completion, payload, kCompletionResult, count_type));
 }
 
 // $fgets(str, fd) -- LRM 21.3.4.2.
@@ -295,8 +294,7 @@ auto LowerFileReadCall(
           std::move(operands), payload),
       payload, writebacks);
   return steps.Build(ProjectCompletionComponent(
-      body, completion, payload, base::ComponentIndex{},
-      unit.builtins.int_type));
+      body, completion, payload, kCompletionResult, unit.builtins.int_type));
 }
 
 // $ferror(fd, str) -- LRM 21.3.7.

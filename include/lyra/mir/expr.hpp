@@ -778,6 +778,34 @@ struct Expr {
       .type = value};
 }
 
+// Reading what a capability wrapper's storage held in the Preponed region of
+// the current time slot (LRM 16.5.1). The same operation on the wrapper as an
+// ordinary read; which of the two values the wrapper produces is the whole
+// difference.
+[[nodiscard]] inline auto MakeCellSampledLoadCallExpr(ExprId cell, TypeId value)
+    -> Expr {
+  return Expr{
+      .data =
+          CallExpr{
+              .callee = Direct{.target = support::BuiltinFn::kSampledLoad},
+              .arguments = {cell}},
+      .type = value};
+}
+
+// Arming a capability wrapper to answer for a sampled value (LRM 16.5.1), and
+// installing the one it answers with until a later slot first changes it. Runs
+// once the design's variable initializers have, so what it installs is the
+// value a declaration assigned.
+[[nodiscard]] inline auto MakeCellArmSamplingCallExpr(
+    ExprId cell, TypeId void_type) -> Expr {
+  return Expr{
+      .data =
+          CallExpr{
+              .callee = Direct{.target = support::BuiltinFn::kArmSampling},
+              .arguments = {cell}},
+      .type = void_type};
+}
+
 // `wrapper.Initialize(prototype)` -- fixes the declared representation (and
 // default contents) once at construction. `prototype` is a value of that
 // declared type; only its representation is used. No runtime handle: it runs

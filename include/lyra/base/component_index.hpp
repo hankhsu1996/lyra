@@ -3,6 +3,8 @@
 #include <compare>
 #include <cstdint>
 
+#include "lyra/base/pool_id.hpp"
+
 namespace lyra::base {
 
 // Which member of a structural aggregate: the declaration-order position of a
@@ -27,7 +29,7 @@ namespace lyra::base {
 // two must not share a spelling that lets either be passed where the other is
 // meant.
 struct ComponentIndex {
-  std::uint32_t value;
+  std::uint32_t value = kUnassignedId;
 
   auto operator<=>(const ComponentIndex&) const
       -> std::strong_ordering = default;

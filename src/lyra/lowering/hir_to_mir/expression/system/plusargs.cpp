@@ -6,7 +6,6 @@
 #include <span>
 #include <utility>
 
-#include "lyra/base/component_index.hpp"
 #include "lyra/base/internal_error.hpp"
 #include "lyra/hir/expr.hpp"
 #include "lyra/hir/expr_id.hpp"
@@ -115,8 +114,7 @@ auto LowerValuePlusargs(
           .type = payload},
       payload, writebacks);
   return steps.Build(ProjectCompletionComponent(
-      body, completion, payload, base::ComponentIndex{},
-      unit.builtins.int_type));
+      body, completion, payload, kCompletionResult, unit.builtins.int_type));
 }
 
 }  // namespace

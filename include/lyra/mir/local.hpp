@@ -4,12 +4,13 @@
 #include <cstdint>
 #include <string>
 
+#include "lyra/base/pool_id.hpp"
 #include "lyra/mir/type_id.hpp"
 
 namespace lyra::mir {
 
 struct LocalId {
-  std::uint32_t value;
+  std::uint32_t value = base::kUnassignedId;
 
   auto operator<=>(const LocalId&) const -> std::strong_ordering = default;
 };

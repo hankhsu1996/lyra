@@ -36,6 +36,7 @@
 #include "lyra/lowering/hir_to_mir/expression/system/plusargs.hpp"
 #include "lyra/lowering/hir_to_mir/expression/system/print.hpp"
 #include "lyra/lowering/hir_to_mir/expression/system/random.hpp"
+#include "lyra/lowering/hir_to_mir/expression/system/sampled_value.hpp"
 #include "lyra/lowering/hir_to_mir/expression/system/scan.hpp"
 #include "lyra/lowering/hir_to_mir/expression/system/sformat.hpp"
 #include "lyra/lowering/hir_to_mir/expression/system/time.hpp"
@@ -371,6 +372,12 @@ auto LowerSystemSubroutineCall(
               -> diag::Result<mir::Expr> {
             return LowerDistributionSystemSubroutineCall(
                 lowerer, frame, call, distribution);
+          },
+          [&](const support::SampledValueSystemSubroutineInfo&)
+              -> diag::Result<mir::Expr> {
+            // Reads state and sequences nothing, so it is legal wherever a
+            // value is and one handler serves both contexts.
+            return LowerSampledValueSystemSubroutineCall(lowerer, frame, call);
           },
           [&](const support::MemFileSystemSubroutineInfo&)
               -> diag::Result<mir::Expr> {

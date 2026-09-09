@@ -235,11 +235,13 @@ surface at a time; export and tasks follow once the C++-backend items fix their 
       (`execution-backend.md`).
 - [ ] D11 -- General and 4-state / wide import marshaling on the execution backend: the D2 and D3
       surface -- `output` / `inout` copy-back, `chandle`, and canonical `svBitVecVal*` /
-      `svLogicVecVal*` buffers. Blocked on closures reaching that backend: a by-pointer argument is
-      marshaled by a sequence of statements in expression position, which MIR expresses as a
-      closure, so nothing on this path lowers today. The DPI-specific remainder once that lands is
-      the buffer constructors and the canonical-plane marshaling primitives. A `real` import rides
-      on the real value domain, not on this item.
+      `svLogicVecVal*` buffers. What held this back was a sequence of statements standing in
+      expression position, which MIR used to express as a closure the backend could not lower; MIR
+      now states that as a block expression and the foreign-import boundary builds one, so the
+      sequencing is no longer the obstacle. What refuses today is the marshaling itself: the
+      canonical buffer a by-pointer argument crosses in has no construct on this backend, and the
+      scope a `context` import makes current does not lower to LIR. A `real` import rides on the
+      real value domain, not on this item.
 - [ ] D12 -- Export and DPI tasks on the execution backend, once the C++-backend export and task
       items (D4-D6c) define the shape.
 

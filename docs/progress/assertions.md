@@ -88,13 +88,24 @@ The IDs are stable references and do not imply execution order beyond the depend
       re-executes, if the assertion's own label is disabled, or if the procedure's outermost scope
       is (LRM 16.4.2, 16.4.4). What remains is the action block -- a single subroutine call whose
       by-value actuals are captured at encounter and whose reference actuals bind rather than copy.
-- [ ] AS3 -- Cover statements (LRM 16.7). Inverts the disposition: the interesting path is the
-      success one, and a cover with no user action records a hit. How hits are surfaced is a tool
-      feature rather than a language one, so the count's reporting form is open.
+- [ ] AS3 -- The deferred cover statement (LRM 16.7 with a timing qualifier). The immediate form
+      rides on AS1: the disposition is inverted, a cover with no user action records a hit, and the
+      hits are reported one line per cover statement at the end of a run. What is left is the same
+      statement carrying `#0` or `final`, which is refused rather than lowered -- a hit is recorded
+      where the statement is reached but the action it selects is held to a later region, so it
+      needs the withdrawal model AS2 established and the inverted disposition at once.
 - [ ] AS4 -- Sampled value functions (`$past`, `$stable`, `$rose`, `$fell`, `$changed`, `$sampled`,
       LRM 16.9.3) used as ordinary logic, outside any assertion. These read a value as of the
       Preponed region, so they need sampling to exist independently of the assertion machinery.
       Inside an assertion they disappear with it, which is why this item is separable from AS5.
+      `$sampled` is in place on the C++ backend: an observable cell may be armed to answer for the
+      value it held before the current time slot first changed it, so a read is unaffected by
+      whatever else that slot has already done to the variable, and an expression's sampled value is
+      that expression over its variables' sampled ones. What remains is the rest of the family,
+      which differ by comparing or indexing across the ticks of a clocking event rather than by
+      reading a different value -- and so need that event, which is where a clocking declaration
+      (LRM 14) enters. The execution backend refuses a sampled read, needing an entry per value
+      domain that its library does not carry.
 - [ ] AS5 -- Concurrent assertions (LRM 16.5-16.13): sequences, properties, their named
       declarations, `disable iff`, and the clocking a property is evaluated against. Evaluation is
       multi-cycle and against sampled values, which makes this the one form whose semantics are not

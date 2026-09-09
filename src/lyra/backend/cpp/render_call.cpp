@@ -39,6 +39,10 @@ auto BuiltinFnCppName(support::BuiltinFn id) -> std::string_view {
       return "Get";
     case support::BuiltinFn::kStore:
       return "Set";
+    case support::BuiltinFn::kSampledLoad:
+      return "SampledGet";
+    case support::BuiltinFn::kArmSampling:
+      return "ArmSampling";
     case support::BuiltinFn::kOpenForWrite:
       return "Mutate";
     case support::BuiltinFn::kAttachDriver:

@@ -242,7 +242,7 @@ auto BuildHierarchicalNameExpr(Lowerer& lowerer, const WalkFrame& frame)
   const mir::ExprId receiver_id =
       frame.scope_name_borrowed_handle.has_value()
           ? block.exprs.Add(BuildStructuralFieldAccessExpr(
-                frame, unit, mir::EnclosingHops{},
+                frame, unit, mir::EnclosingHops{0},
                 *frame.scope_name_borrowed_handle))
           : block.exprs.Add(
                 MakeSelfRefExpr(frame, frame.current_class->self_pointer_type));

@@ -10,6 +10,7 @@
 
 #include "lyra/base/arena.hpp"
 #include "lyra/base/internal_error.hpp"
+#include "lyra/base/pool_id.hpp"
 #include "lyra/base/registry.hpp"
 #include "lyra/hir/expr_id.hpp"
 #include "lyra/hir/loop_label_id.hpp"
@@ -36,7 +37,8 @@ namespace lyra::lowering::ast_to_hir {
 // assigned by UnitLowerer when a scope is entered; never reused; never
 // stored in HIR. Used to compute structural hops between scopes.
 struct ScopeFrameId {
-  std::uint32_t value;
+  std::uint32_t value = base::kUnassignedId;
+
   auto operator<=>(const ScopeFrameId&) const -> std::strong_ordering = default;
 };
 
