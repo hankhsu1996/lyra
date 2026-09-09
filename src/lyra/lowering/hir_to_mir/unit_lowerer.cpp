@@ -100,7 +100,6 @@ auto PopulatePackageStaticVariables(
   mir::CallableCode install_code = mir::CallableCode::Defined();
   install_code.result_type = unit.builtins.void_type;
   mir::Block& install_block = install_code.Body();
-  const WalkFrame install_frame = WalkFrame{}.WithBlock(&install_block);
 
   mir::CallableCode value_code = mir::CallableCode::Defined();
   value_code.result_type = unit.builtins.void_type;
@@ -150,7 +149,7 @@ auto PopulatePackageStaticVariables(
 
     // Phase 1: install the cell's declared representation and default.
     const mir::ExprId prototype = install_block.exprs.Add(
-        BuildDefaultValueFromHir(unit_lowerer, install_frame, d.type));
+        BuildDefaultValueFromHir(unit_lowerer, install_block, d.type));
     install_block.AppendStmt(
         mir::ExprStmt{
             .expr = install_block.exprs.Add(

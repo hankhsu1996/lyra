@@ -296,7 +296,7 @@ auto LowerScanSystemSubroutineCall(
   prototypes.reserve(target_types.size());
   for (const mir::TypeId target_type : target_types) {
     prototypes.push_back(scan_body.exprs.Add(
-        BuildDefaultValueExpr(unit_lowerer, scan_frame, target_type)));
+        BuildDefaultValueExpr(unit_lowerer.Unit(), scan_body, target_type)));
   }
   const mir::ExprId prototypes_id = scan_body.exprs.Add(
       mir::Expr{

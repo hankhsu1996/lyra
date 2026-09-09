@@ -149,8 +149,9 @@ void EmitPatternBindings(
                 mir::LocalDecl{.name = v.name, .type = local_type});
 
             auto& decl_block = *decl_frame.current_block;
-            const mir::ExprId default_id = decl_block.exprs.Add(
-                BuildDefaultValueExpr(lowerer.Owner(), decl_frame, local_type));
+            const mir::ExprId default_id =
+                decl_block.exprs.Add(BuildDefaultValueExpr(
+                    lowerer.Owner().Unit(), decl_block, local_type));
             decl_block.AppendStmt(
                 mir::LocalDeclStmt{.target = local_id, .init = default_id});
 

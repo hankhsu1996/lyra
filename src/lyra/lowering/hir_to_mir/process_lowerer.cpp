@@ -261,7 +261,7 @@ auto ProcessLowerer::Run(const hir::SubroutineDecl& src)
 
     if (!param_type.has_value()) {
       const mir::ExprId default_init = code.Body().exprs.Add(
-          BuildDefaultValueFromHir(*owner_, body_frame, hir_var.type));
+          BuildDefaultValueFromHir(*owner_, code.Body(), hir_var.type));
       const mir::LocalId local = bindings.Declare(
           BindingOriginId::Procedural(param.var),
           mir::LocalDecl{.name = hir_var.name, .type = value_type});
@@ -292,7 +292,7 @@ auto ProcessLowerer::Run(const hir::SubroutineDecl& src)
   if (src.result_var.has_value()) {
     const mir::TypeId ret_type = owner_->TranslateType(src.result_type);
     const mir::ExprId default_init = code.Body().exprs.Add(
-        BuildDefaultValueFromHir(*owner_, body_frame, src.result_type));
+        BuildDefaultValueFromHir(*owner_, code.Body(), src.result_type));
     const mir::LocalId result_local = bindings.Declare(
         BindingOriginId::Procedural(*src.result_var),
         mir::LocalDecl{.name = "_lyra_result", .type = ret_type});

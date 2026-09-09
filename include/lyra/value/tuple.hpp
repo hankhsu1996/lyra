@@ -24,13 +24,12 @@ class Tuple {
  public:
   Tuple() = default;
 
-  // Deduced rather than taking `Ts...` directly so that the component list may
-  // be empty: a product of no components is a value like any other, and a
-  // non-template constructor over an empty pack would collide with the default
-  // one instead of simply taking no arguments.
-  template <typename... Us>
-    requires(sizeof...(Us) == sizeof...(Ts))
-  explicit Tuple(Us&&... values) : data_(std::forward<Us>(values)...) {
+  // A product of no components is a value like any other and its only form is
+  // the default one, so the constructor that takes components is declared only
+  // where there are components to take.
+  explicit Tuple(Ts... values)
+    requires(sizeof...(Ts) > 0)
+      : data_(std::move(values)...) {
   }
 
   // Component access by declaration-order index. The reference qualifier tracks

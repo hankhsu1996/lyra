@@ -333,7 +333,7 @@ auto ClassDeclLowerer::PopulateBodies() -> diag::Result<void> {
       value_id = ctor_block.exprs.Add(*std::move(value_or));
     } else {
       value_id = ctor_block.exprs.Add(
-          BuildDefaultValueFromHir(unit_lowerer, frame, field.type));
+          BuildDefaultValueFromHir(unit_lowerer, ctor_block, field.type));
     }
     const mir::ExprId self_ref =
         ctor_block.exprs.Add(MakeSelfRefExpr(frame, shape.self_pointer_type));

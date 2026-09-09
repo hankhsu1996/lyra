@@ -546,7 +546,7 @@ auto StepToSignatureMember(
                                   .types.Get(receiver_type)
                                   .Get<mir::PointerType>()
                                   .pointee;
-  const mir::ExternalUnitObjectType& object =
+  const auto& object =
       unit_lowerer.Unit().types.Get(pointee).Get<mir::ExternalUnitObjectType>();
   const mir::FieldId field = UnitLowerer::TranslatePublishedMember(step.member);
   mir::TypeId reached = unit_lowerer.Unit()
@@ -1693,7 +1693,7 @@ auto StructuralScopeLowerer::PopulateBodies(WalkFrame parent_frame)
       // installs its representation through an ordinary store of the default.
       if (unit_lowerer.Unit().types.Get(mir_field_type).IsCapabilityWrapper()) {
         const mir::ExprId prototype = initialize_block.exprs.Add(
-            BuildDefaultValueFromHir(unit_lowerer, init_frame, d.type));
+            BuildDefaultValueFromHir(unit_lowerer, initialize_block, d.type));
         append_stmt(
             mir::MakeCapabilityInitializeCallExpr(
                 init_target, prototype,
@@ -1713,7 +1713,7 @@ auto StructuralScopeLowerer::PopulateBodies(WalkFrame parent_frame)
           value_id = initialize_block.exprs.Add(*std::move(value_or));
         } else {
           value_id = initialize_block.exprs.Add(
-              BuildDefaultValueFromHir(unit_lowerer, init_frame, d.type));
+              BuildDefaultValueFromHir(unit_lowerer, initialize_block, d.type));
         }
         emit_value_store(value_id);
       }
@@ -1731,7 +1731,7 @@ auto StructuralScopeLowerer::PopulateBodies(WalkFrame parent_frame)
               self_read(), mir::FieldTarget{.owner = class_id_, .slot = mir_id},
               mir_field_type));
       const mir::ExprId prototype = ctor_block.exprs.Add(
-          BuildDefaultValueFromHir(unit_lowerer, ctor_frame, d.type));
+          BuildDefaultValueFromHir(unit_lowerer, ctor_block, d.type));
       ctor_block.AppendStmt(
           mir::Stmt{
               .label = std::nullopt,

@@ -509,7 +509,7 @@ auto LowerBuiltinMethodCall(
     const mir::TypeId proto_type =
         ResultPrototypeType(unit_lowerer, result_type);
     args.push_back(block.exprs.Add(
-        BuildDefaultValueExpr(unit_lowerer, frame, proto_type)));
+        BuildDefaultValueExpr(unit_lowerer.Unit(), block, proto_type)));
   }
 
   // LRM 15.5.3: `e.triggered` reads the triggered flag out of

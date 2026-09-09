@@ -39,7 +39,7 @@ auto LowerAutomaticVarDeclStmt(
     init_value = block.exprs.Add(*std::move(init_or));
   } else {
     init_value = block.exprs.Add(
-        BuildDefaultValueFromHir(process.Owner(), frame, hir_local.type));
+        BuildDefaultValueFromHir(process.Owner(), block, hir_local.type));
   }
   init_value = ConvertToType(process.Owner().Unit(), block, init_value, type);
 
@@ -72,7 +72,7 @@ auto LowerPromotedVarDeclStmt(
     init_value = block.exprs.Add(*std::move(init_or));
   } else {
     init_value = block.exprs.Add(
-        BuildDefaultValueFromHir(process.Owner(), frame, hir_local.type));
+        BuildDefaultValueFromHir(process.Owner(), block, hir_local.type));
   }
   init_value = ConvertToType(process.Owner().Unit(), block, init_value, type);
   const mir::ExprId assign =

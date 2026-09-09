@@ -68,8 +68,7 @@ class Queue {
   // the maximum index N is recorded so growth past N+1 elements is discarded
   // with a warning. The bound arrives as a PackedArray construction argument.
   Queue(T element_default, const PackedArray& max_bound)
-      : shield_(std::move(element_default)),
-        max_bound_(static_cast<std::uint64_t>(max_bound.ToInt64())) {
+      : shield_(std::move(element_default)), max_bound_(BoundOf(max_bound)) {
   }
 
   // LRM 7.10.5 bounded queue initialized by an assignment pattern: take the
@@ -78,7 +77,7 @@ class Queue {
       T element_default, std::span<const T> init, const PackedArray& max_bound)
       : shield_(std::move(element_default)),
         data_(init.begin(), init.end()),
-        max_bound_(static_cast<std::uint64_t>(max_bound.ToInt64())) {
+        max_bound_(BoundOf(max_bound)) {
     EnforceBound();
   }
 
@@ -87,8 +86,7 @@ class Queue {
   Queue(
       T element_default, std::span<const T> unit, std::size_t count,
       const PackedArray& max_bound)
-      : shield_(std::move(element_default)),
-        max_bound_(static_cast<std::uint64_t>(max_bound.ToInt64())) {
+      : shield_(std::move(element_default)), max_bound_(BoundOf(max_bound)) {
     for (std::size_t i = 0; i < count; ++i) {
       data_.insert(data_.end(), unit.begin(), unit.end());
     }
@@ -110,10 +108,7 @@ class Queue {
       const C& source, T element_default, const PackedArray& max_bound)
       -> Queue {
     Queue result(std::move(element_default));
-    const std::int64_t bound = max_bound.ToInt64();
-    if (bound >= 0) {
-      result.max_bound_ = static_cast<std::uint64_t>(bound);
-    }
+    result.max_bound_ = BoundOf(max_bound);
     for (std::size_t i = 0; i < source.RawSize(); ++i) {
       result.data_.push_back(source.RawAt(i));
     }
@@ -135,11 +130,8 @@ class Queue {
   // value means unbounded) and this queue's element shape and contents, trimmed
   // to the bound.
   [[nodiscard]] auto ConformBound(const PackedArray& bound) const -> Queue {
-    const std::int64_t b = bound.ToInt64();
     Queue result = *this;
-    result.max_bound_ =
-        b < 0 ? std::nullopt
-              : std::optional<std::uint64_t>(static_cast<std::uint64_t>(b));
+    result.max_bound_ = BoundOf(bound);
     result.EnforceBound();
     return result;
   }
@@ -567,6 +559,19 @@ class Queue {
     const auto v = idx.ToInt64();
     return v < 0 || static_cast<std::uint64_t>(v) >=
                         static_cast<std::uint64_t>(data_.size());
+  }
+
+  // A bound is the greatest index the queue may hold (LRM 7.10.5). A queue with
+  // no bound spells that as a negative one, so a bound and its absence reach
+  // every construction and every store as the same operand rather than as two
+  // argument lists.
+  [[nodiscard]] static auto BoundOf(const PackedArray& max_bound)
+      -> std::optional<std::uint64_t> {
+    const std::int64_t bound = max_bound.ToInt64();
+    if (bound < 0) {
+      return std::nullopt;
+    }
+    return static_cast<std::uint64_t>(bound);
   }
 
   // LRM 7.10.5: a bounded queue holds no element whose index exceeds the bound,
