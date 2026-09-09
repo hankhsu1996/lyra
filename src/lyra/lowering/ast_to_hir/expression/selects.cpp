@@ -16,6 +16,7 @@
 #include "lyra/hir/expr.hpp"
 #include "lyra/hir/expr_builders.hpp"
 #include "lyra/hir/subroutine_ref.hpp"
+#include "lyra/lowering/ast_to_hir/expression/references.hpp"
 #include "lyra/lowering/ast_to_hir/process_lowerer.hpp"
 #include "lyra/lowering/ast_to_hir/structural_scope_lowerer.hpp"
 #include "lyra/lowering/ast_to_hir/unit_lowerer.hpp"
@@ -41,7 +42,7 @@ auto LowerUnboundedLiteralProc(
               hir::CallExpr{
                   .callee = hir::SubroutineRef{hir::BuiltinMethodRef{
                       .method = support::BuiltinFn::kSize}},
-                  .arguments = {*frame.dollar_base}},
+                  .arguments = {frame.dollar_base}},
           .span = span});
   const hir::ExprId one_id =
       frame.Exprs().Add(hir::MakeIntLiteral(1, int_type, span));
@@ -169,6 +170,13 @@ auto LowerMemberAccessExpr(
     Lowerer& lowerer, WalkFrame frame,
     const slang::ast::MemberAccessExpression& sel, diag::SourceSpan span)
     -> diag::Result<hir::Expr> {
+  // LRM 8.11: qualifying with `this` names the same member an unqualified name
+  // reaches, so it resolves against the enclosing method's own receiver rather
+  // than by evaluating a base -- there is no handle to evaluate.
+  if (NamesCurrentInstance(sel.value())) {
+    return LowerCurrentInstanceMember(
+        lowerer.Owner(), frame, sel.member, *sel.type, span);
+  }
   auto base_or = lowerer.LowerExpr(sel.value(), frame);
   if (!base_or) return std::unexpected(std::move(base_or.error()));
   const hir::ExprId base_id = frame.Exprs().Add(*std::move(base_or));

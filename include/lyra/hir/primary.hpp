@@ -24,6 +24,14 @@ struct RealLiteral {
 // class handle type it is compared or assigned against.
 struct NullLiteral {};
 
+// LRM 8.11 `this`: the handle referring to the object the subroutine it appears
+// in was invoked on -- a constructor as much as a method. The other
+// class-handle primary, and the counterpart of `null`: one names no object,
+// this one names the object running. It appears only where the source asks for
+// the object itself; qualifying a member with `this` names what the bare name
+// names and never reaches here.
+struct ThisHandle {};
+
 // Primary mirrors LRM 11.2.1 - the atomic leaf level of the expression
 // grammar. Refs are listed directly here so the same DirectMemberRef /
 // ProceduralVarRef value appears identically when the expression is read and
@@ -32,8 +40,8 @@ struct NullLiteral {};
 // the same shape under `BinaryExpr.lhs` is a read), not by an extra type
 // tag.
 using Primary = std::variant<
-    IntegerLiteral, StringLiteral, RealLiteral, NullLiteral, DirectMemberRef,
-    ProceduralVarRef, ClassPropertyRef, StaticPropertyRef, RoutedRef,
-    IterationBindingRef, PatternVarRef, ExternalUnitValueRef>;
+    IntegerLiteral, StringLiteral, RealLiteral, NullLiteral, ThisHandle,
+    DirectMemberRef, ProceduralVarRef, ClassPropertyRef, StaticPropertyRef,
+    RoutedRef, IterationBindingRef, PatternVarRef, ExternalUnitValueRef>;
 
 }  // namespace lyra::hir

@@ -462,6 +462,8 @@ auto BuiltinFnName(BuiltinFn id) -> std::string_view {
       return "register_final";
     case BuiltinFn::kParent:
       return "parent";
+    case BuiltinFn::kSelfHandle:
+      return "self_handle";
     case BuiltinFn::kFileOpen:
       return "file_open";
     case BuiltinFn::kFileOpenMode:

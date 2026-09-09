@@ -4,10 +4,11 @@
 // HierarchicalValue (LRM 23.6 hierarchical references). Where a named value's
 // cell is gets settled once, for every consumer of a name; this file turns
 // that answer -- together with the forms that have no cell at all, a folded
-// constant, a class property, a pattern binding -- into an Expr. Which
-// declaration a name reaches is the step before that, and it is settled here
-// as well, because consumers that build no Expr -- a check on what may be
-// written, a read a process is sensitive to -- ask the same question.
+// constant, a class property, a pattern binding, the object a subroutine was
+// invoked on -- into an Expr. Which declaration a name reaches is the step
+// before that, and it is settled here as well, because consumers that build no
+// Expr -- a check on what may be written, a read a process is sensitive to --
+// ask the same question.
 
 #include "lyra/diag/diagnostic.hpp"
 #include "lyra/hir/expr.hpp"
@@ -19,6 +20,7 @@ namespace slang::ast {
 class HierarchicalValueExpression;
 class NamedValueExpression;
 class Symbol;
+class Type;
 class ValueSymbol;
 }  // namespace slang::ast
 
@@ -34,6 +36,23 @@ namespace lyra::lowering::ast_to_hir {
 auto ResolveNamedDeclaration(
     const slang::ast::ValueSymbol& value, diag::SourceSpan span)
     -> diag::Result<const slang::ast::ValueSymbol*>;
+
+// True when `expr` is the `this` keyword (LRM 8.11) -- the handle to the object
+// the subroutine it appears in was invoked on. The front end spells it as an
+// ordinary variable reference, so a consumer that treats every variable
+// reference as storage reaches for a cell that does not exist.
+auto NamesCurrentInstance(const slang::ast::Expression& expr) -> bool;
+
+// A member of the current instance reached through `this` (LRM 8.11). The
+// keyword qualifies what an unqualified name already reaches -- a property of
+// the invoking object, or a value parameter of its specialization -- so the
+// qualified spelling lowers to whatever the unqualified one lowers to and no
+// handle is formed. A method is not reached here: a call states its receiver
+// rather than evaluating one.
+auto LowerCurrentInstanceMember(
+    UnitLowerer& unit_lowerer, WalkFrame frame,
+    const slang::ast::Symbol& member, const slang::ast::Type& type,
+    diag::SourceSpan span) -> diag::Result<hir::Expr>;
 
 // `expr` as a name offered by the modport an interface port selected, or
 // nothing when it is anything else. Such a name stands for an expression the

@@ -84,6 +84,22 @@ auto LowerHirNullLiteral(mir::TypeId type) -> mir::Expr {
   return mir::Expr{.data = mir::NullLiteral{}, .type = type};
 }
 
+// LRM 8.11 `this`: the handle referring to the object the subroutine was
+// invoked on. The body holds a borrowed pointer to that object, which serves
+// every member access, and a handle is not something that pointer can be read
+// as -- so it is produced by an operation taking the receiver rather than by
+// loading anything through it.
+auto LowerHirThisHandle(const WalkFrame& frame, mir::TypeId type) -> mir::Expr {
+  const mir::ExprId self_ref = frame.current_block->exprs.Add(
+      MakeSelfRefExpr(frame, frame.current_class->self_pointer_type));
+  return mir::Expr{
+      .data =
+          mir::CallExpr{
+              .callee = mir::Direct{.target = support::BuiltinFn::kSelfHandle},
+              .arguments = {self_ref}},
+      .type = type};
+}
+
 auto LowerHirRealLiteral(
     const UnitLowerer& unit_lowerer, const WalkFrame& frame,
     const hir::RealLiteral& r, mir::TypeId type) -> mir::Expr {
@@ -245,6 +261,9 @@ auto LowerHirPrimaryExprProc(
           [&](const hir::NullLiteral&) -> mir::Expr {
             return LowerHirNullLiteral(result_type);
           },
+          [&](const hir::ThisHandle&) -> mir::Expr {
+            return LowerHirThisHandle(frame, result_type);
+          },
           [&](const hir::DirectMemberRef& m) -> mir::Expr {
             return LowerReferenceRouteExpr(
                 process.EnclosingScopeLowerer(), frame, hir::ReferenceRoute{m});
@@ -301,6 +320,11 @@ auto LowerHirPrimaryExprStructural(
           },
           [&](const hir::NullLiteral&) -> mir::Expr {
             return LowerHirNullLiteral(result_type);
+          },
+          [](const hir::ThisHandle&) -> mir::Expr {
+            throw InternalError(
+                "LowerHirPrimaryExprStructural: HIR ThisHandle does not appear "
+                "in structural expressions");
           },
           [&](const hir::DirectMemberRef& m) -> mir::Expr {
             return LowerReferenceRouteExpr(

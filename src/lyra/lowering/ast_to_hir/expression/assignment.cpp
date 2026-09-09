@@ -184,6 +184,12 @@ auto ValidateAssignableImpl(
       if (sym.kind == slang::ast::SymbolKind::ClassProperty) {
         return {};
       }
+      // `this` (LRM 8.11) reaches this walk only as the base a member write
+      // qualifies, never as the target: the front end refuses an assignment to
+      // the handle itself, and what decides a member write is the member.
+      if (NamesCurrentInstance(nv)) {
+        return {};
+      }
       if (sym.kind == slang::ast::SymbolKind::Net) {
         // A net is driven only by a continuous assignment (LRM 6.5); a
         // procedural write to a net is illegal.

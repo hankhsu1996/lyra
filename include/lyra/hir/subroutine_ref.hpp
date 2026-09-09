@@ -44,15 +44,16 @@ struct ForeignImportRef {
   std::optional<StructuralHops> declaring_scope;
 };
 
-// The receiver form of an instance-method call (LRM 8.6, 8.15). The three
-// SV source spellings each map to one arm; none combines with another.
+// Which object an instance-method call runs against (LRM 8.6, 8.11, 8.15).
+// The arms are the answers, not the source spellings, so two spellings that
+// name one object share one arm.
 //
 // - `HandleReceiver` -- LRM 8.6 qualified `h.foo()`: the source supplied a
 //   class-handle expression the call dispatches through, and the call obeys
 //   the callee's own virtual role.
-// - `ImplicitSelfReceiver` -- LRM 8.6 unqualified `foo()` from inside a
-//   class method: the receiver is the enclosing method's own self, and the
-//   call obeys the callee's virtual role.
+// - `SelfReceiver` -- the object the enclosing method was invoked on, which
+//   an unqualified `foo()` names (LRM 8.6) and which `this.foo()` names
+//   explicitly (LRM 8.11). The call obeys the callee's virtual role.
 // - `SuperReceiver` -- LRM 8.15 `super.foo()`: the receiver is still the
 //   enclosing method's self, but the source demands the base's
 //   implementation and the call must skip dynamic dispatch regardless of
@@ -65,11 +66,11 @@ struct ForeignImportRef {
 struct HandleReceiver {
   ExprId expr;
 };
-struct ImplicitSelfReceiver {};
+struct SelfReceiver {};
 struct SuperReceiver {};
 
 using MethodReceiver =
-    std::variant<HandleReceiver, ImplicitSelfReceiver, SuperReceiver>;
+    std::variant<HandleReceiver, SelfReceiver, SuperReceiver>;
 
 // Calls a class method whose declaring class is in another compilation unit.
 // Beside naming the callee it carries the facts this unit cannot look up about
@@ -91,8 +92,8 @@ struct ExternalMethodCallee {
 // carries what the call would have read off one.
 using MethodCallee = std::variant<LocalClassMethodTarget, ExternalMethodCallee>;
 
-// Calls an instance method (LRM 8.6). `receiver` states which of the three
-// LRM-defined source forms reached this call site.
+// Calls an instance method (LRM 8.6). `receiver` states which object the call
+// runs against, whichever source form named it.
 struct MethodCallRef {
   MethodReceiver receiver;
   MethodCallee callee;
@@ -149,12 +150,12 @@ struct ExternalUnitMethodRef {
 };
 
 // Calls a static class method (LRM 8.10). Distinct from `MethodCallRef`
-// because a static method has no receiver -- neither an explicit handle, an
-// implicit self, nor a super qualifier -- and encoding it as a receiver-
-// optional variant of `MethodCallRef` would admit an invalid state. Under
-// inheritance, `Derived::inherited_static()` still names the base -- the method
-// lives on the base's arena -- mirroring the owner-qualified rule for inherited
-// instance access.
+// because a static method has no receiver -- neither an explicit handle, the
+// enclosing method's own object, nor a super qualifier -- and encoding it as a
+// receiver-optional variant of `MethodCallRef` would admit an invalid state.
+// Under inheritance, `Derived::inherited_static()` still names the base -- the
+// method lives on the base's arena -- mirroring the owner-qualified rule for
+// inherited instance access.
 struct StaticMethodCallRef {
   MethodCallee callee;
 };

@@ -6,7 +6,7 @@
 namespace lyra::hir {
 
 struct StructuralHops {
-  std::uint32_t value;
+  std::uint32_t value = 0;
 
   auto operator<=>(const StructuralHops&) const
       -> std::strong_ordering = default;

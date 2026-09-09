@@ -155,6 +155,19 @@ each stage establishes, not how.
       block still dispatches to the override a derived class defines the same way, and a return type
       the class declares is named through the class scope.
 
+- [x] The `this` keyword (LRM 8.11): a property of the current instance -- one replicated per object
+      or one the class owns -- a value parameter, or a method of it is named through `this`, in an
+      instance method, a constructor, and a property initializer alike, and `type(this)` names its
+      type. The qualified spelling names what the unqualified one names, so it reaches a property
+      inherited from a base class and survives a suspension the same way, and where a subroutine
+      argument or a local declaration shadows a property it is what still reaches the property. Used
+      as a value in its own right the keyword yields the handle referring to the invoking object, so
+      returning it, passing it, and comparing it all name the object the caller already holds a
+      handle to. Where a handle is realized as a shared owner rather than as a traced pointer, an
+      object can answer with one only by recording which owner refers to it, so every object carries
+      that record; under a traced realization the record is unnecessary, because the handle is the
+      pointer the body already holds.
+
 - [ ] Constructor argument directions (LRM 8.7): a constructor declared with an `output`, `inout`,
       or `ref` formal is rejected. The standard gives it the argument conventions of any other
       subroutine call, but a construction yields the object it built and carries nothing a value

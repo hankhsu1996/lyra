@@ -662,6 +662,12 @@ enum class BuiltinFn : std::uint16_t {
   // owns the enclosing class's layout); distinct from the by-name `kGetSignal`
   // / `kGetChild` cross-unit navigation.
   kParent,
+  // LRM 8.11 `this`: the handle referring to the object the running subroutine
+  // was invoked on. A body reaches its own object through a borrowed pointer,
+  // which serves every member access; the source asks for a handle instead when
+  // it returns, passes, or compares the object itself, and how a target answers
+  // with one follows from how that target realizes a handle.
+  kSelfHandle,
   // LRM 21.2.1.5 `%m` source: yields the receiver scope's hierarchical name as
   // an SV `string`. Walks `Parent()` from the receiver up to the implicit root
   // and joins the name of each scope a path can reach with `.`. `%m` lowering

@@ -15,6 +15,7 @@
 #include <slang/ast/symbols/MemberSymbols.h>
 #include <slang/ast/symbols/ParameterSymbols.h>
 #include <slang/ast/symbols/PortSymbols.h>
+#include <slang/ast/symbols/SubroutineSymbols.h>
 #include <slang/ast/symbols/VariableSymbols.h>
 #include <slang/ast/types/AllTypes.h>
 #include <slang/numeric/ConstantValue.h>
@@ -24,6 +25,7 @@
 #include "lyra/diag/diag_code.hpp"
 #include "lyra/hir/expr_builders.hpp"
 #include "lyra/hir/external_unit_object.hpp"
+#include "lyra/hir/primary.hpp"
 #include "lyra/hir/published_modport.hpp"
 #include "lyra/hir/value_ref.hpp"
 #include "lyra/lowering/ast_to_hir/connected_interface.hpp"
@@ -37,20 +39,45 @@ namespace {
 
 // What a value reference to a symbol lowers to, independent of whether the
 // reference is written by simple name or by a hierarchical path (LRM 6, 8.4,
-// 23.6). A parameter or enum value is a compile-time constant whose value does
-// not depend on the path used to reach it; a variable or net binds to a runtime
-// storage cell; a class property reaches the invoking object's field. One
-// classification serves every reference-lowering entry so a symbol cannot be
-// read as a constant through one syntax and rejected through another.
+// 8.11, 23.6). A parameter or enum value is a compile-time constant whose value
+// does not depend on the path used to reach it; a variable or net binds to a
+// runtime storage cell; a class property reaches the invoking object's field;
+// `this` is that object itself, which is no cell at all. One classification
+// serves every reference-lowering entry so a symbol cannot be read as a
+// constant through one syntax and rejected through another.
 enum class Referent {
   kPatternBinding,
   kParameterConstant,
   kEnumConstant,
   kClassProperty,
+  kThisHandle,
   kVariableStorage,
   kNetStorage,
   kUnsupported,
 };
+
+// True when the symbol is the `this` handle (LRM 8.11) of the scope that
+// declares it. The front end synthesizes one such variable per scope that can
+// name the current instance -- a non-static method, a constraint block, and
+// the class itself, whose property initializers may name it -- and which
+// variable it is, is that scope's own answer.
+auto IsCurrentInstanceHandle(const slang::ast::Symbol& sym) -> bool {
+  const auto* variable = sym.as_if<slang::ast::VariableSymbol>();
+  if (variable == nullptr) return false;
+  const slang::ast::Scope* scope = sym.getParentScope();
+  if (scope == nullptr) return false;
+  const slang::ast::Symbol& declaring = scope->asSymbol();
+  if (const auto* sub = declaring.as_if<slang::ast::SubroutineSymbol>()) {
+    return sub->thisVar == variable;
+  }
+  if (const auto* cls = declaring.as_if<slang::ast::ClassType>()) {
+    return cls->thisVar == variable;
+  }
+  if (const auto* con = declaring.as_if<slang::ast::ConstraintBlockSymbol>()) {
+    return con->thisVar == variable;
+  }
+  return false;
+}
 
 // Total over slang's symbol kinds with no `default`: a kind that ought to lower
 // to a real referent must not hide in a catch-all and surface as a spurious
@@ -68,7 +95,13 @@ auto ClassifyReferent(const slang::ast::Symbol& sym) -> Referent {
       return Referent::kEnumConstant;
     case SymbolKind::ClassProperty:
       return Referent::kClassProperty;
+    // One front-end kind, two referents: a variable a body declares, and the
+    // handle to the object a method was invoked on (LRM 8.11), which declares
+    // no storage and reaches no cell. Being total over the front end's kinds
+    // cannot tell these apart, because the front end does not separate them.
     case SymbolKind::Variable:
+      return IsCurrentInstanceHandle(sym) ? Referent::kThisHandle
+                                          : Referent::kVariableStorage;
     case SymbolKind::FormalArgument:
     case SymbolKind::Iterator:
       return Referent::kVariableStorage;
@@ -272,6 +305,29 @@ auto MakeClassPropertyRefExpr(
       *type_id, span);
 }
 
+// LRM 8.11 `this` standing on its own: the source asks for the object itself
+// rather than for something reached through it. Every qualifying use is
+// answered where the qualification is lowered, so what arrives here is the
+// handle, which is a primary of the expression grammar exactly as `null` is.
+auto MakeCurrentInstanceHandleExpr(
+    UnitLowerer& unit_lowerer, const slang::ast::Type& type,
+    diag::SourceSpan span) -> diag::Result<hir::Expr> {
+  auto type_id = unit_lowerer.InternType(type, span);
+  if (!type_id) return std::unexpected(std::move(type_id.error()));
+  return hir::MakeRefExpr(hir::ThisHandle{}, *type_id, span);
+}
+
+// The same keyword where no object is running. A structural expression and a
+// hierarchical path both reach a scope rather than an invocation, so there is
+// no receiver for the handle to refer to.
+auto FailOnCurrentInstanceHandle(diag::SourceSpan span)
+    -> diag::Result<hir::Expr> {
+  return diag::Fail(
+      span, diag::DiagCode::kUnsupportedExpressionForm,
+      "`this` names the object a method was invoked on, which this context "
+      "has none of (LRM 8.11)");
+}
+
 // Wraps a resolved value target as a reference Expr. Every way of reaching a
 // cell -- a direct member of the reader's own scope, a routed reference sealed
 // to a per-instance endpoint, a namespace unit's cell named across the boundary
@@ -297,9 +353,9 @@ auto ValueTargetRefExpr(
 // Lowers a reference to a value that has a cell -- a variable or a net --
 // wherever that cell lives, through the one resolver. Shared by every
 // named-value entry once each has ruled out the forms its context admits that
-// have no cell. A storage referent always resolves here: a simple name is
-// lexically enclosing and a hierarchical path is fully elaborated by the
-// frontend, so absence is a compiler-bug invariant.
+// have no cell, and that ruling out is the whole of what makes the resolution
+// total. Absence here therefore says a referent that reaches no cell was
+// classified as storage, never that a name failed to resolve.
 auto LowerValueRef(
     UnitLowerer& unit_lowerer, WalkFrame frame,
     const slang::ast::ValueSymbol& value, const slang::ast::Type& type,
@@ -451,6 +507,30 @@ auto ResolveNamedDeclaration(
   return item;
 }
 
+auto NamesCurrentInstance(const slang::ast::Expression& expr) -> bool {
+  const auto* named = expr.as_if<slang::ast::NamedValueExpression>();
+  return named != nullptr && IsCurrentInstanceHandle(named->symbol);
+}
+
+auto LowerCurrentInstanceMember(
+    UnitLowerer& unit_lowerer, WalkFrame frame,
+    const slang::ast::Symbol& member, const slang::ast::Type& type,
+    diag::SourceSpan span) -> diag::Result<hir::Expr> {
+  if (member.kind == slang::ast::SymbolKind::ClassProperty) {
+    return MakeClassPropertyRefExpr(unit_lowerer, member, type, span);
+  }
+  // A value parameter of a parameterized class (LRM 8.25) is fixed by the
+  // specialization the enclosing method belongs to, so the qualification names
+  // a value already known and folds exactly as the bare name does.
+  if (member.kind == slang::ast::SymbolKind::Parameter) {
+    return MakeParameterConstantExpr(unit_lowerer, frame, member, type, span);
+  }
+  return diag::Fail(
+      span, diag::DiagCode::kUnsupportedExpressionForm,
+      "`this` qualifies a property, a value parameter, or a method of the "
+      "current instance (LRM 8.11), and this member is none of them");
+}
+
 auto NameOfferedByModport(const slang::ast::Expression& expr)
     -> const slang::ast::HierarchicalValueExpression* {
   const auto* hve = expr.as_if<slang::ast::HierarchicalValueExpression>();
@@ -506,6 +586,8 @@ auto LowerNamedValueProc(
     // receiver, so it lowers to a receiver-relative property reference.
     case Referent::kClassProperty:
       return MakeClassPropertyRefExpr(unit_lowerer, sym, *named.type, span);
+    case Referent::kThisHandle:
+      return MakeCurrentInstanceHandleExpr(unit_lowerer, *named.type, span);
     case Referent::kPatternBinding:
       return MakePatternVarRefExpr(
           unit_lowerer, sym.as<slang::ast::PatternVarSymbol>(), *named.type,
@@ -576,6 +658,8 @@ auto LowerHierarchicalValue(
       return diag::Fail(
           span, diag::DiagCode::kUnsupportedExpressionForm,
           "hierarchical reference to a class property is not yet supported");
+    case Referent::kThisHandle:
+      return FailOnCurrentInstanceHandle(span);
     case Referent::kUnsupported:
       return diag::Fail(
           span, diag::DiagCode::kUnsupportedExpressionForm,
@@ -645,6 +729,8 @@ auto LowerNamedValueStructural(
           "an instance class property is reachable only through a receiver, "
           "which a structural expression has none of");
     }
+    case Referent::kThisHandle:
+      return FailOnCurrentInstanceHandle(span);
     case Referent::kUnsupported:
       return diag::Fail(
           span, diag::DiagCode::kUnsupportedNonVariableNamedReference,

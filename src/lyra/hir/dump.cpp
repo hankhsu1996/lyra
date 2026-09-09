@@ -475,6 +475,7 @@ class HirDumper {
               return std::format("RealLiteral({})", lit.value);
             },
             [](const NullLiteral&) -> std::string { return "NullLiteral"; },
+            [](const ThisHandle&) -> std::string { return "ThisHandle"; },
             [](const DirectMemberRef& r) -> std::string {
               return std::format("DirectMember[{}]", r.var.value);
             },
@@ -699,9 +700,7 @@ class HirDumper {
                       [](const HandleReceiver& h) {
                         return std::format("Expr[{}]", h.expr.value);
                       },
-                      [](const ImplicitSelfReceiver&) {
-                        return std::string{"<self>"};
-                      },
+                      [](const SelfReceiver&) { return std::string{"<self>"}; },
                       [](const SuperReceiver&) {
                         return std::string{"<super>"};
                       }},

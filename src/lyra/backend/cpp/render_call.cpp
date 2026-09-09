@@ -29,6 +29,8 @@ auto BuiltinFnCppName(support::BuiltinFn id) -> std::string_view {
   switch (id) {
     case support::BuiltinFn::kParent:
       return "Parent";
+    case support::BuiltinFn::kSelfHandle:
+      return "SelfHandle";
     case support::BuiltinFn::kCurrentRuntime:
       return "current_runtime";
     case support::BuiltinFn::kInitialize:
@@ -576,6 +578,7 @@ auto BuiltinFnCppNamespace(support::BuiltinFn id) -> std::string_view {
     case support::BuiltinFn::kRunExportedTaskToCompletion:
     case support::BuiltinFn::kCurrentExportScope:
     case support::BuiltinFn::kFindExportEntry:
+    case support::BuiltinFn::kSelfHandle:
       return "lyra::runtime";
     default:
       return "";
