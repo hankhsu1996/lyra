@@ -351,6 +351,12 @@ auto EntryNamingOf(support::BuiltinFn fn) -> EntryNaming {
   // tracing that makes the recovery unnecessary.
   constexpr std::string_view kRecoversAHandleFromItsObject =
       "answers with the handle referring to the object a body runs on";
+  // A sampled value is state a cell keeps beside its contents, and producing
+  // one is the cell's own decision about which of the two to answer with (LRM
+  // 16.5.1) -- not a read of the storage this backend names as a place. Serving
+  // it needs an entry per value domain, which the library does not carry.
+  constexpr std::string_view kAnswersFromStateBesideTheContents =
+      "answers from state a cell keeps beside its contents";
 
   switch (fn) {
     case support::BuiltinFn::kElement:
@@ -504,6 +510,10 @@ auto EntryNamingOf(support::BuiltinFn fn) -> EntryNaming {
     case support::BuiltinFn::kLoad:
     case support::BuiltinFn::kStore:
       return NotRealized{.shape = kReachesStorageAWrapperStandsFor};
+
+    case support::BuiltinFn::kSampledLoad:
+    case support::BuiltinFn::kArmSampling:
+      return NotRealized{.shape = kAnswersFromStateBesideTheContents};
 
     case support::BuiltinFn::kElementRef:
     case support::BuiltinFn::kSliceRef:

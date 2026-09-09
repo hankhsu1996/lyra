@@ -7,6 +7,7 @@
 #include <variant>
 #include <vector>
 
+#include "lyra/base/pool_id.hpp"
 #include "lyra/diag/source_span.hpp"
 #include "lyra/hir/expr_id.hpp"
 #include "lyra/hir/loop_label_id.hpp"
@@ -18,7 +19,7 @@
 namespace lyra::hir {
 
 struct StmtId {
-  std::uint32_t value;
+  std::uint32_t value = base::kUnassignedId;
 
   auto operator<=>(const StmtId&) const -> std::strong_ordering = default;
 };

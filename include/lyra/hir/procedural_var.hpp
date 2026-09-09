@@ -5,13 +5,14 @@
 #include <optional>
 #include <string>
 
+#include "lyra/base/pool_id.hpp"
 #include "lyra/hir/expr_id.hpp"
 #include "lyra/hir/type_id.hpp"
 
 namespace lyra::hir {
 
 struct ProceduralVarId {
-  std::uint32_t value;
+  std::uint32_t value = base::kUnassignedId;
 
   auto operator<=>(const ProceduralVarId&) const
       -> std::strong_ordering = default;

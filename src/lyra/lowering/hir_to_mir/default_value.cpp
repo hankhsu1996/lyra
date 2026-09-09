@@ -255,7 +255,7 @@ auto BuildDefaultValueExpr(
             return mir::Expr{
                 .data =
                     mir::UnionExpr{
-                        .index = base::ComponentIndex{},
+                        .index = base::ComponentIndex{0},
                         .value = member_default},
                 .type = type};
           },
@@ -267,7 +267,7 @@ auto BuildDefaultValueExpr(
             return mir::Expr{
                 .data =
                     mir::TaggedExpr{
-                        .tag_index = base::ComponentIndex{},
+                        .tag_index = base::ComponentIndex{0},
                         .payload = block.exprs.Add(
                             BuildDefaultValueExpr(unit, block, first))},
                 .type = type};

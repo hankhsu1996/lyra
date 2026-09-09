@@ -303,6 +303,13 @@ auto LowerSystemSubroutineCallStmtForm(
             // lowering, so a statement-position call needs nothing extra.
             return std::nullopt;
           },
+          [](const support::SampledValueSystemSubroutineInfo&)
+              -> std::optional<diag::Result<mir::Stmt>> {
+            // Reading a sampled value settles nothing outside the value it
+            // answers with, so a statement-position call has no form of its own
+            // and lowers as the expression it is.
+            return std::nullopt;
+          },
           [&](const support::MemFileSystemSubroutineInfo& mem_file)
               -> std::optional<diag::Result<mir::Stmt>> {
             // A void task (LRM 21.4 / 21.5): its only form is a statement, so

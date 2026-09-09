@@ -13,6 +13,7 @@
 #include "lyra/base/arena.hpp"
 #include "lyra/base/component_index.hpp"
 #include "lyra/base/internal_error.hpp"
+#include "lyra/base/pool_id.hpp"
 #include "lyra/lir/function_id.hpp"
 #include "lyra/lir/integral_constant.hpp"
 #include "lyra/lir/operator.hpp"
@@ -24,13 +25,13 @@ namespace lyra::lir {
 // An SSA-style value: a function parameter or the result of one instruction.
 // Values are numbered per function in the function's value arena.
 struct ValueId {
-  std::uint32_t value;
+  std::uint32_t value = base::kUnassignedId;
 
   auto operator<=>(const ValueId&) const -> std::strong_ordering = default;
 };
 
 struct BlockId {
-  std::uint32_t value;
+  std::uint32_t value = base::kUnassignedId;
 
   auto operator<=>(const BlockId&) const -> std::strong_ordering = default;
 };
@@ -352,7 +353,7 @@ struct TagTestInstr {
 // unrelated to slot 0 of another -- which is why every use of one names the
 // declaration beside it. Never a physical index or byte offset.
 struct MemberSlot {
-  std::uint32_t value;
+  std::uint32_t value = base::kUnassignedId;
 
   auto operator<=>(const MemberSlot&) const -> std::strong_ordering = default;
 };
@@ -371,7 +372,7 @@ struct DerefProjection {};
 // by the object it runs on (LRM 8.14).
 struct MemberRef {
   TypeId declared_by;
-  MemberSlot slot{};
+  MemberSlot slot;
 
   auto operator==(const MemberRef&) const -> bool = default;
 };

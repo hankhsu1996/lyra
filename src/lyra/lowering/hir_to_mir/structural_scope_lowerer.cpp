@@ -33,6 +33,7 @@
 #include "lyra/lowering/hir_to_mir/process_lowerer.hpp"
 #include "lyra/lowering/hir_to_mir/runtime_call.hpp"
 #include "lyra/lowering/hir_to_mir/self_ref.hpp"
+#include "lyra/lowering/hir_to_mir/sensitivity_wait.hpp"
 #include "lyra/lowering/hir_to_mir/static_var_binding.hpp"
 #include "lyra/lowering/hir_to_mir/walk_frame.hpp"
 #include "lyra/mir/class.hpp"
@@ -466,7 +467,7 @@ auto StepToOwnedChild(
   const StructuralScopeLowerer& scope =
       OwnScopeOf(receiver, "StepToOwnedChild");
   const OwnedChildAnchor anchor =
-      scope.TranslateOwnedChild(hir::StructuralHops{}, step.child);
+      scope.TranslateOwnedChild(hir::StructuralHops{0}, step.child);
   const mir::ClassId receiver_class = scope.ClassId();
   mir::TypeId reached = unit_lowerer.GetClassShape(receiver_class)
                             .fields.Get(anchor.borrowed_handle)
@@ -511,7 +512,7 @@ auto StepThroughInterfacePort(
       OwnScopeOf(receiver, "StepThroughInterfacePort");
   const mir::ClassId receiver_class = scope.ClassId();
   const mir::FieldId field =
-      scope.TranslateInterfacePort(hir::StructuralHops{}, step.port);
+      scope.TranslateInterfacePort(hir::StructuralHops{0}, step.port);
   mir::TypeId reached =
       unit_lowerer.GetClassShape(receiver_class).fields.Get(field).type;
   mir::ExprId access = block.exprs.Add(
@@ -654,7 +655,7 @@ auto MaterializeLeaf(
     return AddressTypedLeaf(
         unit_lowerer, block, receiver, scope.ClassId(),
         scope.TranslateStructuralDataObject(
-            hir::StructuralHops{}, object->object),
+            hir::StructuralHops{0}, object->object),
         slot_type);
   }
 
@@ -2053,6 +2054,22 @@ auto StructuralScopeLowerer::PopulateBodies(WalkFrame parent_frame)
   auto port_conn_r = InstallPortConnections(
       *this, ctor_frame, resolve_frame, init_frame, activate_frame);
   if (!port_conn_r) return std::unexpected(std::move(port_conn_r.error()));
+
+  // A cell answers for a sampled value only once armed, and what arming
+  // installs is the value every read answers with until a later time slot
+  // first changes the cell -- for a static variable, the value its declaration
+  // assigns (LRM 16.5.1). That value is in the cell once every initializer in
+  // the design has run, which is what puts this here rather than beside the
+  // initializer itself: a cell reached across an instance boundary is one this
+  // scope cannot order itself against.
+  for (const hir::SensitivityEntry& sampled : hir_scope.sampled_cells) {
+    const mir::ExprId cell = BuildObservableCellExpr(
+        activate_block, activate_frame, unit_lowerer.Unit(), *this, sampled);
+    activate_block.AppendStmt(
+        mir::ExprStmt{
+            .expr = activate_block.exprs.Add(
+                mir::MakeCellArmSamplingCallExpr(cell, void_type))});
+  }
 
   ctor_code.params.clear();
   ctor_code.params.reserve(1 + ctor_prefix_local_ids.size());

@@ -4,14 +4,15 @@
 #include <cstdint>
 #include <vector>
 
+#include "lyra/base/pool_id.hpp"
 #include "lyra/diag/source_span.hpp"
 #include "lyra/hir/expr_id.hpp"
-#include "lyra/hir/stmt.hpp"
+#include "lyra/hir/timing.hpp"
 
 namespace lyra::hir {
 
 struct ContinuousAssignId {
-  std::uint32_t value;
+  std::uint32_t value = base::kUnassignedId;
 
   auto operator<=>(const ContinuousAssignId&) const
       -> std::strong_ordering = default;

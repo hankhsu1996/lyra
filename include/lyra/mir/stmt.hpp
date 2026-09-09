@@ -9,6 +9,7 @@
 #include <vector>
 
 #include "lyra/base/arena.hpp"
+#include "lyra/base/pool_id.hpp"
 #include "lyra/mir/block_id.hpp"
 #include "lyra/mir/expr.hpp"
 #include "lyra/mir/local.hpp"
@@ -19,7 +20,7 @@ struct Stmt;
 struct Block;
 
 struct StmtId {
-  std::uint32_t value;
+  std::uint32_t value = base::kUnassignedId;
 
   auto operator<=>(const StmtId&) const -> std::strong_ordering = default;
 };
@@ -29,7 +30,7 @@ struct StmtId {
 // backend renders it as a `goto` to a label after the loop, an LLVM backend as
 // a branch.
 struct LoopLabelId {
-  std::uint32_t value;
+  std::uint32_t value = base::kUnassignedId;
 
   auto operator<=>(const LoopLabelId&) const -> std::strong_ordering = default;
 };

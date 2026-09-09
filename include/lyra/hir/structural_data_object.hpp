@@ -6,13 +6,14 @@
 #include <string>
 #include <variant>
 
+#include "lyra/base/pool_id.hpp"
 #include "lyra/hir/expr_id.hpp"
 #include "lyra/hir/type_id.hpp"
 
 namespace lyra::hir {
 
 struct StructuralDataObjectId {
-  std::uint32_t value;
+  std::uint32_t value = base::kUnassignedId;
 
   auto operator<=>(const StructuralDataObjectId&) const
       -> std::strong_ordering = default;

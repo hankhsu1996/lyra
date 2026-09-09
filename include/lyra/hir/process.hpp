@@ -4,14 +4,15 @@
 #include <cstdint>
 #include <vector>
 
+#include "lyra/base/pool_id.hpp"
 #include "lyra/diag/source_span.hpp"
 #include "lyra/hir/procedural_body.hpp"
-#include "lyra/hir/stmt.hpp"
+#include "lyra/hir/timing.hpp"
 
 namespace lyra::hir {
 
 struct ProcessId {
-  std::uint32_t value;
+  std::uint32_t value = base::kUnassignedId;
 
   auto operator<=>(const ProcessId&) const -> std::strong_ordering = default;
 };

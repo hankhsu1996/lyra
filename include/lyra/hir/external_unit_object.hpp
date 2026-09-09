@@ -8,6 +8,7 @@
 #include <vector>
 
 #include "lyra/base/arena.hpp"
+#include "lyra/base/pool_id.hpp"
 #include "lyra/hir/published_callable.hpp"
 #include "lyra/hir/published_member.hpp"
 #include "lyra/hir/published_modport.hpp"
@@ -15,7 +16,7 @@
 namespace lyra::hir {
 
 struct ExternalUnitObjectId {
-  std::uint32_t value;
+  std::uint32_t value = base::kUnassignedId;
 
   auto operator<=>(const ExternalUnitObjectId&) const
       -> std::strong_ordering = default;

@@ -231,7 +231,13 @@ Unlocks `refs/hierarchical_refs`, `refs/upward_refs`, and `instantiation/hierarc
       read in the child's own variable initializer and a `ref` forwarded through intermediate
       modules to a deeper child (every reference on the chain denotes the same variable). A
       `const ref` port (read-only through the reference) is rejected with a clean diagnostic and
-      waits for its own cut.
+      waits for its own cut. A process waits on the port's own name as it waits on anything else: an
+      edge or value-change event control, the implicit sensitivity of an `always_comb` or `@*` that
+      reads it, and a `wait` condition over it all watch the connected variable. Reading and waiting
+      reach that variable differently, and the difference belongs to the reference: every operation
+      on a cell -- a read, a write, a sampled read -- answers through the reference, while a wait
+      needs the cell as storage in its own right, because a registration names storage. The
+      execution backend refuses the second, having no way there to name the cell a reference binds.
 - [x] E8 -- An input port left unconnected takes its declared default value (LRM 23.2.2.4). A
       declared default is a constant expression whose names resolve in the module that declares the
       port, not the instantiating scope; like a default argument at a call site, its value is

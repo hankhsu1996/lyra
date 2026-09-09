@@ -391,6 +391,16 @@ the detail lives in the entry itself.
   latch; what each construct records is how one queue serves LRM 16.4 and 12.4.2.1 with different
   flush-point sets. A per-process container the engine enumerates, a single per-process token (which
   cannot express `disable` of one assertion), and a notify-style cancellation token are rejected.
+- [sampled-value-and-its-clock](sampled-value-and-its-clock.md) -- what a sampled value function
+  reads is retained by the cell at the transition boundary every mutation already reports through,
+  armed per instance at Activate, so cost follows changes rather than time slots and the time-zero
+  rule falls out of the value the cell is armed with. The clocking event is the trigger set a
+  value-change wait already builds and the front end resolves which one it is, so LRM 16.9.3's
+  ordering and 16.14.6's conditions are not restated here. The sampler is a synthesized process
+  because a history must record every tick, not only the ticks something waited for, and it commits
+  in Postponed so that "strictly prior" holds by construction rather than by ordering. A Preponed
+  scan, per-leaf history with replay, a second implementation of the clock inference, a node kind
+  for the sampled read, and an armed observation are rejected.
 
 ### Diagnostics
 

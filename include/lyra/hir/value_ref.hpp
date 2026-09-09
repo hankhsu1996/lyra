@@ -5,6 +5,7 @@
 #include <string>
 #include <variant>
 
+#include "lyra/base/pool_id.hpp"
 #include "lyra/hir/class_ref.hpp"
 #include "lyra/hir/pattern_id.hpp"
 #include "lyra/hir/procedural_var.hpp"
@@ -26,7 +27,7 @@ struct DirectMemberRef {
 };
 
 struct RoutedRefId {
-  std::uint32_t value;
+  std::uint32_t value = base::kUnassignedId;
 
   auto operator<=>(const RoutedRefId&) const -> std::strong_ordering = default;
 };
@@ -88,7 +89,7 @@ struct StaticPropertyRef {
 // when the reference sits inside a deeper clause's closure body.
 struct IterationBindingRef {
   WithClauseId clause;
-  IterationBindingRole role;
+  IterationBindingRole role = IterationBindingRole::kElement;
 
   auto operator==(const IterationBindingRef&) const -> bool = default;
 };

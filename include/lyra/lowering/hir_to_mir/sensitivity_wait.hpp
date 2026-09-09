@@ -6,6 +6,7 @@
 
 #include "lyra/hir/timing.hpp"
 #include "lyra/lowering/hir_to_mir/walk_frame.hpp"
+#include "lyra/mir/compilation_unit.hpp"
 #include "lyra/mir/local.hpp"
 #include "lyra/mir/stmt.hpp"
 
@@ -23,6 +24,16 @@ struct ObservedLeaf {
   hir::SensitivityEntry entry;
   std::optional<mir::LocalId> observation;
 };
+
+// The observable storage one leaf names, as the place an operation on the cell
+// acts through. A leaf reaches either a cell of this design through its route
+// or a package variable's one program-global cell by name (LRM 26.2); that
+// classification is made here rather than by everything needing to name what a
+// leaf watches.
+[[nodiscard]] auto BuildObservableCellExpr(
+    mir::Block& block, const WalkFrame& frame, mir::CompilationUnit& unit,
+    const StructuralScopeLowerer& lowerer, const hir::SensitivityEntry& entry)
+    -> mir::ExprId;
 
 // Every SV construct that waits for something to happen converges on one
 // awaited runtime call taking one trigger per leaf -- `always_comb` /

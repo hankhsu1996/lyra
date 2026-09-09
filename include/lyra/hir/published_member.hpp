@@ -6,6 +6,7 @@
 #include <variant>
 
 #include "lyra/base/overloaded.hpp"
+#include "lyra/base/pool_id.hpp"
 #include "lyra/hir/structural_data_object.hpp"
 #include "lyra/hir/type_id.hpp"
 
@@ -15,7 +16,7 @@ namespace lyra::hir {
 // is the signature's own order, so the unit that publishes and the unit that
 // reads both count it out of the same list and neither states it to the other.
 struct PublishedMemberId {
-  std::uint32_t value;
+  std::uint32_t value = base::kUnassignedId;
 
   auto operator<=>(const PublishedMemberId&) const
       -> std::strong_ordering = default;

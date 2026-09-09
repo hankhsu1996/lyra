@@ -83,6 +83,54 @@ auto ClassifyMethodReceiver(
       .expr = frame.Exprs().Add(*std::move(receiver_or))};
 }
 
+// Records the cells a sampled value function's operand reads, so each is armed
+// to answer for one (LRM 16.5.1). The sampled value of an expression is
+// composed from the sampled values of the variables it reads, which makes those
+// variables exactly what has to answer -- and they are the same set an event
+// control watches, taken from the same analysis.
+//
+// The set only ever has to cover them: a cell armed that nothing samples holds
+// a value nobody reads, while one left unarmed cannot answer at all. So a
+// coarser read set is safe here in a way it is not for a wake-up.
+template <typename Lowerer>
+auto RecordSampledCells(
+    Lowerer& lowerer, const WalkFrame& frame,
+    const slang::ast::CallExpression& call, diag::SourceSpan span)
+    -> diag::Result<void> {
+  if (call.arguments().empty()) {
+    throw InternalError(
+        "AST->HIR sampled value: no operand to take a sampled value of");
+  }
+  if (frame.current_structural_scope == nullptr ||
+      frame.reader_scope == nullptr) {
+    return diag::Fail(
+        span, diag::DiagCode::kUnsupportedExpressionForm,
+        "a sampled value read outside a design element's scope is not yet "
+        "supported");
+  }
+  auto& unit_lowerer = lowerer.Owner();
+  const auto& reads = unit_lowerer.Sensitivity().AnalyzeReads(
+      *call.arguments()[0], frame.reader_scope->asSymbol());
+  auto entries = unit_lowerer.TranslateSensitivityReads(reads, frame);
+  if (!entries) return std::unexpected(std::move(entries.error()));
+  // Every variable the operand reads has to be armed, so a read the translation
+  // could not name as a cell of this design leaves one that can never answer.
+  // The reachable case is a `ref` formal (LRM 13.5.2): which cell it binds is
+  // settled per call, so the scope holding the read cannot name it.
+  if (entries->size() < reads.size()) {
+    return diag::Fail(
+        span, diag::DiagCode::kUnsupportedExpressionForm,
+        "a sampled value of storage reached through a subroutine's reference "
+        "argument is not yet supported");
+  }
+  std::vector<hir::SensitivityEntry>& sampled =
+      frame.current_structural_scope->sampled_cells;
+  for (hir::SensitivityEntry& entry : *entries) {
+    sampled.push_back(std::move(entry));
+  }
+  return {};
+}
+
 // Maps a frontend ReturnConvention to the builtin HIR TypeId that represents
 // it. Local to the calls subsystem (system subroutines are the only consumer).
 auto MakeReturnConventionType(
@@ -105,6 +153,10 @@ auto MakeReturnConventionType(
       return builtins.time;
     case support::ReturnConvention::kRealTime:
       return builtins.realtime;
+    case support::ReturnConvention::kOperandType:
+      throw InternalError(
+          "MakeReturnConventionType: a result that follows its operand has no "
+          "type of its own, so the caller reads it off the operand");
   }
   throw InternalError("MakeReturnConventionType: unknown ReturnConvention");
 }
@@ -608,8 +660,29 @@ auto LowerCallExpr(
           std::string{name} + "'");
     }
 
-    const auto result_type = MakeReturnConventionType(
-        unit_lowerer.Unit().builtins, desc->result_conv);
+    if (std::holds_alternative<support::SampledValueSystemSubroutineInfo>(
+            desc->semantic)) {
+      if (auto recorded = RecordSampledCells(lowerer, frame, call, span);
+          !recorded) {
+        return std::unexpected(std::move(recorded.error()));
+      }
+    }
+
+    // A result that follows its operand reads its type off that operand rather
+    // than off a builtin, which is what lets one entry serve every type its
+    // argument may have (LRM 16.9.3 `$sampled`).
+    const auto result_type = [&] {
+      if (desc->result_conv != support::ReturnConvention::kOperandType) {
+        return MakeReturnConventionType(
+            unit_lowerer.Unit().builtins, desc->result_conv);
+      }
+      if (arg_ids.empty() || !arg_ids.front().has_value()) {
+        throw InternalError(
+            std::string{"AST->HIR call: '"} + std::string{name} +
+            "' takes its result type from an operand it was not given");
+      }
+      return frame.Exprs().Get(*arg_ids.front()).type;
+    }();
     return hir::Expr{
         .type = result_type,
         .data =

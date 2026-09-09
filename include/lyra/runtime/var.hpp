@@ -8,6 +8,8 @@
 #include <vector>
 
 #include "lyra/base/internal_error.hpp"
+#include "lyra/base/simulation_error.hpp"
+#include "lyra/base/time.hpp"
 #include "lyra/runtime/coroutine.hpp"
 #include "lyra/runtime/observable.hpp"
 #include "lyra/runtime/observation.hpp"
@@ -96,12 +98,48 @@ class Var : public Observable, public ValueStorageCore<T> {
   void Set(const T& new_val);
 
   // The before-image a transition is computed against, held only where
-  // something waiting here will read the answer. With nothing waiting there is
-  // no question to answer, which is what lets an unobserved cell take a plain
-  // store.
+  // something will read the answer: a wait parked here, or a retained sampled
+  // value the current time slot has not moved away from yet (LRM 16.5.1). With
+  // neither there is no question to answer, which is what lets an unobserved
+  // cell take a plain store.
   [[nodiscard]] auto CaptureTransitionBase() const -> std::optional<T> {
-    if (!this->HasWaiter()) {
+    if (!this->HasWaiter() && !retained_.has_value()) {
       return std::nullopt;
+    }
+    return this->Get();
+  }
+
+  // Arms the cell to answer for its sampled value (LRM 16.5.1) and installs the
+  // one every read answers with until the first change of some later slot.
+  //
+  // A static variable's default sampled value is the value its declaration
+  // assigns (LRM 16.5.1), which is in the cell once time-zero initialization
+  // has run (LRM 10.5), so arming takes what it finds there. Stamping it at
+  // time zero is what makes the whole of time zero answer with it: a write then
+  // finds the slot already current and leaves the retained value alone.
+  //
+  // More than one read may name one cell, and they all want the same answer, so
+  // arming an armed cell is not an error and changes nothing.
+  void ArmSampling() {
+    if (retained_.has_value()) {
+      return;
+    }
+    retained_ = this->Get();
+    retained_slot_ = SimTime{};
+  }
+
+  // What the cell held in the Preponed region of the current time slot -- its
+  // value before anything in that slot ran (LRM 4.4.2.1, 16.5.1). Once the slot
+  // has changed the cell that value is the retained one; until then the cell
+  // still holds it.
+  [[nodiscard]] auto SampledGet() const -> const T& {
+    if (!retained_.has_value()) {
+      throw InternalError(
+          "Var::SampledGet: a sampled value was read from a cell nothing armed "
+          "to answer for one");
+    }
+    if (retained_slot_ == current_runtime().Now()) {
+      return *retained_;
     }
     return this->Get();
   }
@@ -119,6 +157,29 @@ class Var : public Observable, public ValueStorageCore<T> {
   // full-expression temporary lifetime -- the handle is non-copyable and
   // non-movable, so storing it past the statement is rejected at compile time.
   auto Mutate() -> ScopedMutation<Ref<T>>;
+
+ private:
+  // Keeps the value a slot is about to move away from, once per slot. The first
+  // change in a slot is the one whose before-image is that slot's Preponed
+  // value (LRM 4.4.2.1); every later change moves away from a value the slot
+  // itself produced.
+  void RetainPreponed(const T& before) {
+    if (!retained_.has_value()) {
+      return;
+    }
+    const SimTime now = current_runtime().Now();
+    if (retained_slot_ == now) {
+      return;
+    }
+    retained_ = before;
+    retained_slot_ = now;
+  }
+
+  // The sampled value (LRM 16.5.1) and the time slot it belongs to. Engaged
+  // exactly while the cell is armed to answer for one, so a cell nothing
+  // samples carries neither the storage nor the work of maintaining it.
+  std::optional<T> retained_;
+  SimTime retained_slot_ = SimTime{};
 };
 
 // A reference to a variable cell. Transparently views one of two backings: an
@@ -180,6 +241,39 @@ class Ref {
     }
     return signal_->CaptureTransitionBase();
   }
+
+  // A reference denotes the storage it binds (LRM 23.3.3.2), so the operations
+  // on a cell answer through it. Only an observable cell keeps the value a time
+  // slot moved away from, so a plain backing has none to answer with -- and
+  // answering with its current value would be a different value whenever the
+  // slot has already written it.
+  void ArmSampling() const {
+    if (signal_ != nullptr) {
+      signal_->ArmSampling();
+    }
+  }
+  [[nodiscard]] auto SampledGet() const -> const T& {
+    if (signal_ == nullptr) {
+      throw SimulationError(
+          "a sampled value of storage lent by reference is only available "
+          "where that storage is an observable cell");
+    }
+    return signal_->SampledGet();
+  }
+
+  // Opening the reference: the cell it binds (LRM 23.3.3.2). What a wait
+  // registers on, and what an operation on the cell acts through, is that cell
+  // and never the reference standing for it. A plain backing is storage no cell
+  // stands for, so there is nothing to open.
+  [[nodiscard]] auto operator*() const -> Var<T>& {
+    if (signal_ == nullptr) {
+      throw SimulationError(
+          "storage lent by reference can only be reached as a cell where that "
+          "storage is an observable cell");
+    }
+    return *signal_;
+  }
+
   void PublishTransition(const std::optional<T>& before) const {
     if (signal_ != nullptr) {
       signal_->PublishTransition(before);
@@ -299,6 +393,7 @@ void Var<T>::PublishTransition(const std::optional<T>& before) {
   if (!before || before->IsBitIdentical(this->Get())) {
     return;
   }
+  this->RetainPreponed(*before);
   if constexpr (std::same_as<T, value::PackedArray>) {
     current_runtime().WakeWaitersOf(
         *this, MakePackedProjectionTest(*before, this->Get()));
