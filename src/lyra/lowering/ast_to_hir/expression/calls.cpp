@@ -34,6 +34,7 @@
 #include "lyra/hir/value_ref.hpp"
 #include "lyra/lowering/ast_to_hir/expression/expr_lowerer.hpp"
 #include "lyra/lowering/ast_to_hir/expression/query.hpp"
+#include "lyra/lowering/ast_to_hir/expression/references.hpp"
 #include "lyra/lowering/ast_to_hir/expression/slang_atoms.hpp"
 #include "lyra/lowering/ast_to_hir/process_lowerer.hpp"
 #include "lyra/lowering/ast_to_hir/structural_scope_lowerer.hpp"
@@ -60,22 +61,26 @@ auto CallReachesInstanceMethod(
          parent->asSymbol().kind == slang::ast::SymbolKind::ClassType;
 }
 
-// Classifies the three LRM-defined receiver forms of an instance-method call
-// into a MethodReceiver arm. Super takes precedence over an accompanying
-// `thisClass`, because `this.super.foo()` reaches the base through the `super`
-// qualifier while still naming the outer `this` as the object.
+// Classifies which object an instance-method call runs against into a
+// MethodReceiver arm. Super takes precedence over an accompanying `thisClass`,
+// because `this.super.foo()` reaches the base through the `super` qualifier
+// while still naming the outer `this` as the object. A receiver written as
+// `this` (LRM 8.11) names the object the enclosing method was invoked on --
+// the same object an unqualified call names -- so it takes the self arm and no
+// handle is evaluated.
 template <ExprLowerer Lowerer>
 auto ClassifyMethodReceiver(
     Lowerer& lowerer, WalkFrame frame, const slang::ast::CallExpression& call)
     -> diag::Result<hir::MethodReceiver> {
   if (call.lookupInfo.viaSuper) return hir::SuperReceiver{};
-  if (const auto* this_class = call.thisClass(); this_class != nullptr) {
-    auto receiver_or = lowerer.LowerExpr(*this_class, frame);
-    if (!receiver_or) return std::unexpected(std::move(receiver_or.error()));
-    return hir::HandleReceiver{
-        .expr = frame.Exprs().Add(*std::move(receiver_or))};
+  const auto* this_class = call.thisClass();
+  if (this_class == nullptr || NamesCurrentInstance(*this_class)) {
+    return hir::SelfReceiver{};
   }
-  return hir::ImplicitSelfReceiver{};
+  auto receiver_or = lowerer.LowerExpr(*this_class, frame);
+  if (!receiver_or) return std::unexpected(std::move(receiver_or.error()));
+  return hir::HandleReceiver{
+      .expr = frame.Exprs().Add(*std::move(receiver_or))};
 }
 
 // Maps a frontend ReturnConvention to the builtin HIR TypeId that represents
@@ -682,11 +687,11 @@ auto LowerCallExpr(
     };
   }
 
-  // Instance-method call (LRM 8.6): three source shapes -- `h.foo()`,
-  // implicit-`this` `foo()` from inside a class body, and `super.foo()` --
-  // all lower to one `MethodCallRef` distinguished by which `MethodReceiver`
-  // arm the classifier picks. The declaring class comes from slang's
-  // resolved callee, which already accounts for inheritance and super
+  // Instance-method call (LRM 8.6): every source shape -- `h.foo()`, an
+  // unqualified `foo()` from inside a class body, `this.foo()`, and
+  // `super.foo()` -- lowers to one `MethodCallRef`, distinguished by which
+  // object the classifier says it runs against. The declaring class comes from
+  // slang's resolved callee, which already accounts for inheritance and super
   // resolution.
   if (CallReachesInstanceMethod(call, *sym)) {
     auto receiver_or = ClassifyMethodReceiver(lowerer, frame, call);

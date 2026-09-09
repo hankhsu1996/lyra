@@ -48,8 +48,8 @@ struct EnclosingScopeReceiver {
 // The runtime the calling process runs under, which every effect entry takes.
 struct AmbientRuntimeHandle {};
 
-// The object the source named a method on (LRM 8.6), in whichever of the three
-// receiver forms it wrote.
+// The object the source named a method on (LRM 8.6), in whichever receiver
+// form it wrote.
 struct CalledObject {
   hir::MethodReceiver source;
 };
@@ -334,9 +334,10 @@ struct ResolvedCallee {
 
 // The borrowed pointer an instance method's body reads as its `self`. An
 // explicit handle evaluates and then derefs the managed wrapper to reach the
-// object; an implicit self and a `super` qualifier both read the enclosing
-// method's own self binding, which is already such a pointer -- the three
-// differ in which implementation runs, not in where the receiver comes from.
+// object; a receiver that is the enclosing method's own object and a `super`
+// qualifier both read its self binding, which is already such a pointer -- the
+// three differ in which implementation runs, not in where the receiver comes
+// from.
 template <ExprLowerer Lowerer>
 auto BuildReceiverPointer(
     Lowerer& lowerer, const WalkFrame& frame,

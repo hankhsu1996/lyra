@@ -345,6 +345,12 @@ auto EntryNamingOf(support::BuiltinFn fn) -> EntryNaming {
   // through a wrapper happens and reaching one here means it did not.
   constexpr std::string_view kReachesStorageAWrapperStandsFor =
       "reaches the storage a capability wrapper stands for";
+  // Recovering a handle from the object it refers to is what a shared-owner
+  // realization needs and a traced one does not, since there the handle is the
+  // pointer a body already holds. So this target owes no entry: it owes the
+  // tracing that makes the recovery unnecessary.
+  constexpr std::string_view kRecoversAHandleFromItsObject =
+      "answers with the handle referring to the object a body runs on";
 
   switch (fn) {
     case support::BuiltinFn::kElement:
@@ -499,6 +505,9 @@ auto EntryNamingOf(support::BuiltinFn fn) -> EntryNaming {
     case support::BuiltinFn::kSliceRef:
     case support::BuiltinFn::kOpenForWrite:
       return NotRealized{.shape = kAnswersWithPartOfAValue};
+
+    case support::BuiltinFn::kSelfHandle:
+      return NotRealized{.shape = kRecoversAHandleFromItsObject};
 
     case support::BuiltinFn::kEnumFirst:
     case support::BuiltinFn::kEnumLast:

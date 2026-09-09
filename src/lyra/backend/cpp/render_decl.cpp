@@ -396,6 +396,15 @@ auto RenderClass(const mir::CompilationUnit& unit, const mir::Class& s)
   };
   if (s.base.has_value()) {
     append_base(RenderClassRefAsCpp(unit, *s.base));
+  } else if (!s.is_interface_class) {
+    // A class extending nothing roots an SV class hierarchy, and only such an
+    // object is ever asked for a handle to itself (LRM 8.11) -- a scope names a
+    // runtime base and so took the branch above. Realizing that handle as a
+    // shared owner means the object has to record which owner refers to it, so
+    // the root carries the record and everything under it inherits one. An
+    // interface class declares no storage and is never constructed (LRM 8.26),
+    // so nothing asks it.
+    append_base("lyra::runtime::GcObject");
   }
   for (const mir::ClassRef& iface : s.implements) {
     append_base(RenderClassRefAsCpp(unit, iface));
