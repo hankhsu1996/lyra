@@ -101,6 +101,9 @@ auto CodeGenModule::DefinitionRef(lir::TypeId type)
           [&](const lir::ClosureType& c) -> diag::Result<std::string> {
             return unit_->closures.Get(c.closure_id).name;
           },
+          [&](const lir::StructType& s) -> diag::Result<std::string> {
+            return unit_->structs.Get(s.struct_id).name;
+          },
           [&](const auto&) -> diag::Result<std::string> {
             return diag::Fail(
                 diag::DiagCode::kUnsupportedExpressionForm,

@@ -17,27 +17,25 @@
 
 namespace lyra::lowering::hir_to_mir {
 
-// Translation table from HIR binary-op enum to MIR binary-op enum. Shared
-// with compound assignment lowering, which routes its `compound_op` field
-// through this same mapping (the AST-to-HIR validator rejects comparison /
-// logical compound ops upstream, so by the time we get here every `BinaryOp`
-// is a legitimate target).
+// The operator a target applies to two values of one type, for a source
+// operator that names one. A compound assignment routes its operator through
+// this too: LRM 11.4.1 admits only arithmetic, bitwise and shift compounds, so
+// every operator that can reach it names one.
 auto LowerBinaryOp(hir::BinaryOp op) -> mir::BinaryOp;
 
 // HIR-to-MIR binary-operator realization. Takes the lowered operand ids
-// (already in `block`) and dispatches on `(op, lhs_type, rhs_type)`:
-// method-style operators (LRM 11.4 shifts / power / xnor / wildcard / case /
-// implication / equivalence) lift to a `CallExpr` against the matching
-// `BuiltinFn` realization on the receiver value type; real / string
-// comparison and logical operators wrap in `kFromBool` (with `BoolCastExpr`
-// around the operands for the logical family); the rest produce a native
-// `BinaryExpr` for the backend to render mechanically. The single producer of a
-// binary operator, so it is also the one place that guarantees a word-parallel
-// operator's operands share a storage domain (LRM 11.6.1), inserting the
-// reconciling conversion any synthesized site would otherwise have to remember.
-// `unit` is mutable because reconciling may intern the operands' common type.
+// (already in `block`) and dispatches on `(op, lhs_type, rhs_type)`: an
+// operator a library performs lifts to a `CallExpr` against the entry that
+// performs it; real / string comparison and logical operators wrap in
+// `kFromBool` (with `BoolCastExpr` around the operands for the logical
+// family); the rest produce a native `BinaryExpr` for the backend to render
+// mechanically. The single producer of a binary operator, so it is also the one
+// place that guarantees a word-parallel operator's operands share a storage
+// domain (LRM 11.6.1), inserting the reconciling conversion any synthesized
+// site would otherwise have to remember. `unit` is mutable because reconciling
+// may intern the operands' common type.
 auto BuildMirBinaryExpr(
-    mir::CompilationUnit& unit, mir::Block& block, mir::BinaryOp op,
+    mir::CompilationUnit& unit, mir::Block& block, hir::BinaryOp op,
     mir::ExprId lhs_id, mir::ExprId rhs_id, mir::TypeId result_type)
     -> mir::Expr;
 
@@ -56,13 +54,6 @@ auto BuildMirLogicalAnd(
 auto BuildMirLogicalOr(
     mir::CompilationUnit& unit, mir::Block& block, mir::TypeId bit1_type,
     std::span<const mir::ExprId> tests) -> mir::ExprId;
-
-// Symmetric helper for unary operators: reduction ops lift to a `CallExpr`
-// against `BuiltinFn`, a real `kLogicalNot` wraps in `kFromBool`, every
-// other op produces a native `UnaryExpr`.
-auto BuildMirUnaryExpr(
-    const mir::CompilationUnit& unit, mir::Block& block, mir::UnaryOp op,
-    mir::ExprId operand_id, mir::TypeId result_type) -> mir::Expr;
 
 // An operator's meaning is independent of the enclosing scope, so one template
 // over the pass class serves both the procedural and structural contexts. The

@@ -286,13 +286,21 @@ struct UnionInstr {
   Operand value;
 };
 
-// Names a subvalue within an aggregate value. A `Component` selects one by its
-// declaration-order position, carrying no operands because the position is the
-// whole coordinate. What selecting it means -- one of several parts that
-// coexist, or the one a union holds at a time, so that an update makes it the
-// live one -- follows from the aggregate's type, the same way the entry that
-// realizes a coordinate step does.
+// Names a subvalue within an aggregate value. A `Component` selects one part of
+// a product by its declaration-order position, carrying no operands because the
+// position is the whole coordinate. Every part of a product coexists, so
+// selecting one neither depends on nor disturbs which others are readable.
 struct Component {
+  base::ComponentIndex index;
+};
+
+// Names the single member an active-member value holds at a time, by its
+// declaration-order position. An update through it makes that member the live
+// one. What a read of a member that is not live answers with -- a default, or a
+// run-time failure where the value carries a tag -- follows from the
+// aggregate's type, the same way the entry that realizes a coordinate step
+// does.
+struct UnionMember {
   base::ComponentIndex index;
 };
 
@@ -311,7 +319,7 @@ struct ContainerSlice {
 };
 
 using AggregateSelector =
-    std::variant<Component, ContainerElement, ContainerSlice>;
+    std::variant<Component, UnionMember, ContainerElement, ContainerSlice>;
 
 // Extracts a subvalue of an aggregate value, named by `selector`. The aggregate
 // is a value, reached by value: the subvalue is copied out, not aliased. This

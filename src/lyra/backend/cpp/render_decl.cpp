@@ -478,15 +478,16 @@ auto RenderFreeCallableSignature(
     const mir::CompilationUnit& unit, const mir::CallableDecl& callable)
     -> std::string {
   const mir::CallableCode& code = callable.code;
-  std::string params;
-  for (std::size_t i = 0; i < code.params.size(); ++i) {
-    if (i != 0) params += ", ";
-    params += RenderCallableParam(unit, code.locals.Get(code.params[i]));
+  std::vector<std::string> params;
+  params.reserve(code.params.size());
+  for (const mir::LocalId param : code.params) {
+    params.push_back(RenderCallableParam(unit, code.locals.Get(param)));
   }
   return std::format(
       "{} auto {}({}) -> {}",
       callable.foreign.has_value() ? R"(extern "C")" : "inline",
-      callable.LinkedName(), params, RenderTypeAsCpp(unit, code.result_type));
+      callable.LinkedName(), JoinCommaSeparated(params),
+      RenderTypeAsCpp(unit, code.result_type));
 }
 
 // A callable the unit owns directly, rendered as a free function definition:

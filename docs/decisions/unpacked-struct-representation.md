@@ -42,7 +42,7 @@ product, not the object model.
 
 3. **Default initialization is synthesized at HIR-to-MIR as an ordered product literal, never stored
    on the type.** Per-member defaults (LRM Table 7-1, with a member's own declaration initializer
-   taking precedence per LRM 7.2.2) are lowered into a `TupleExpr` at each site that default-
+   taking precedence per LRM 7.2.2) are composed into a product value at each site that default-
    constructs the struct. The interned `TupleType` carries component types only: two source structs
    with identical member types but different member initializers share one `TupleType`, so storing
    defaults on the type would break canonicalization and leak source-level initialization into

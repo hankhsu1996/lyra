@@ -40,9 +40,11 @@ auto BuildObservableCellExpr(
             return block.exprs.Add(
                 mir::Expr{
                     .data =
-                        mir::ExternalUnitVariableRef{
-                            .unit_name = pkg.unit_name,
-                            .variable_name = pkg.variable_name},
+                        mir::ReferenceExpr{
+                            .target =
+                                mir::ExternalUnitVariableRef{
+                                    .unit_name = pkg.unit_name,
+                                    .variable_name = pkg.variable_name}},
                     .type = cell_type});
           },
       },
@@ -129,7 +131,7 @@ auto BuildWaitStmt(
       mir::MachineArrayOf(unit.types, unit.builtins.trigger, triggers.size());
   const mir::ExprId triggers_id = target_block.exprs.Add(
       mir::Expr{
-          .data = mir::ArrayLiteralExpr{.elements = std::move(triggers)},
+          .data = mir::CompositeExpr{.parts = std::move(triggers)},
           .type = triggers_type});
 
   const mir::ExprId runtime_id =

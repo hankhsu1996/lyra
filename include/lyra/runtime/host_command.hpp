@@ -17,6 +17,6 @@ auto RunHostCommand(RuntimeEffects& runtime, const value::String& command)
 // null command: it runs nothing and reports whether a command processor exists
 // at all. Running nothing is also why it needs no engine: it observes the host
 // and neither reads nor disturbs anything the design has done.
-auto RunHostCommand() -> value::PackedArray;
+auto RunNullHostCommand() -> value::PackedArray;
 
 }  // namespace lyra::runtime

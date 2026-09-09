@@ -20,7 +20,9 @@ auto RuntimeRecordBuilder::FunctionRef(const Class& cls, AbiAdapterId adapter)
   }
   return Add(
       Expr{
-          .data = lyra::mir::FunctionRef{.adapter = adapter},
+          .data =
+              ReferenceExpr{
+                  .target = lyra::mir::FunctionRef{.adapter = adapter}},
           .type = unit_->types.Intern(
               mir::Type{MachineFunctionType{
                   .params = std::move(params), .result = code.result_type}})});

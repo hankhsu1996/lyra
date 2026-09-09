@@ -7,8 +7,8 @@ on:
     branches: [main]
 
 jobs:
-  style:
-    name: Check style
+  format:
+    name: clang-format
     runs-on: ubuntu-latest
     steps:
       - name: Checkout code
@@ -24,6 +24,15 @@ jobs:
       - name: Check formatting
         run: |
           find src include tests -name '*.cpp' -o -name '*.hpp' | xargs clang-format --dry-run --Werror
+
+  policy:
+    name: Check C++ style policy
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
 
       - name: Check C++ style policy
         run: python3 tools/policy/check_cpp_style.py

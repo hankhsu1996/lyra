@@ -4,8 +4,14 @@
 // in order, and the results lay out left to right. The list with no items is
 // the dynamic array with no elements. Assigning such a concatenation back to the
 // array that appears inside it grows or reseeds it, and a fixed-size array
-// operand spreads its elements the same way a dynamic one does (LRM 10.10).
+// operand spreads its elements the same way a dynamic one does. Which of the
+// two an operand does is decided against the element type of the array being
+// built, not by the operand being an array: where the element type is itself an
+// array, an operand of that type contributes itself and only an array of it
+// spreads (LRM 10.10).
 module Top;
+  typedef int ints [];
+
   int grown [] = '{1, 2, 3};
   int prepended [] = '{1, 2, 3};
   int low [] = '{10, 20};
@@ -16,6 +22,10 @@ module Top;
   int reseeded [] = '{7, 8};
   int fixed_src [2] = '{100, 200};
   int from_fixed [];
+  ints leaf_a = '{1, 2};
+  ints leaf_b = '{3};
+  ints nested [];
+  ints regrown [];
 
   initial begin
     grown = {grown, 4};
@@ -26,6 +36,8 @@ module Top;
     reseeded = {};
     reseeded = {reseeded, 5};
     from_fixed = {fixed_src, 300};
+    nested = {leaf_a, leaf_b};
+    regrown = {nested, leaf_b};
   end
 
   final begin
@@ -69,6 +81,24 @@ module Top;
       $fatal(1, "from_fixed[1] was %0d, expected 200", from_fixed[1]);
     if (from_fixed[2] !== 300)
       $fatal(1, "from_fixed[2] was %0d, expected 300", from_fixed[2]);
+
+    if (nested.size() !== 2)
+      $fatal(1, "nested.size() was %0d, expected 2", nested.size());
+    if (nested[0].size() !== 2)
+      $fatal(1, "nested[0].size() was %0d, expected 2", nested[0].size());
+    if (nested[0][1] !== 2)
+      $fatal(1, "nested[0][1] was %0d, expected 2", nested[0][1]);
+    if (nested[1].size() !== 1)
+      $fatal(1, "nested[1].size() was %0d, expected 1", nested[1].size());
+    if (nested[1][0] !== 3)
+      $fatal(1, "nested[1][0] was %0d, expected 3", nested[1][0]);
+
+    if (regrown.size() !== 3)
+      $fatal(1, "regrown.size() was %0d, expected 3", regrown.size());
+    if (regrown[2].size() !== 1)
+      $fatal(1, "regrown[2].size() was %0d, expected 1", regrown[2].size());
+    if (regrown[2][0] !== 3)
+      $fatal(1, "regrown[2][0] was %0d, expected 3", regrown[2][0]);
     $display("All checks passed");
   end
 endmodule

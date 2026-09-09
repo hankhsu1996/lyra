@@ -43,17 +43,13 @@ auto BuildFileIoCall(
     support::BuiltinFn builtin_fn, std::vector<mir::ExprId> operands,
     mir::TypeId result_type) -> mir::Expr {
   auto& block = *frame.current_block;
-  std::vector<mir::ExprId> args;
-  args.reserve(operands.size() + 1);
-  args.push_back(block.exprs.Add(BuildFilesCallExpr(process.Owner(), block)));
-  for (const mir::ExprId operand : operands) {
-    args.push_back(operand);
-  }
+  const mir::ExprId files =
+      block.exprs.Add(BuildFilesCallExpr(process.Owner(), block));
   return mir::Expr{
       .data =
           mir::CallExpr{
-              .callee = mir::Direct{.target = builtin_fn},
-              .arguments = std::move(args)},
+              .callee = mir::Direct{.target = builtin_fn, .receiver = files},
+              .arguments = std::move(operands)},
       .type = result_type};
 }
 

@@ -409,7 +409,8 @@ auto FileTable::Open(const value::String& name) -> value::PackedArray {
   return MakeInt(Open(name.View(), std::nullopt));
 }
 
-auto FileTable::Open(const value::String& name, const value::String& mode)
+auto FileTable::OpenWithMode(
+    const value::String& name, const value::String& mode)
     -> value::PackedArray {
   return MakeInt(Open(name.View(), mode.View()));
 }
@@ -622,7 +623,7 @@ auto ReadMemoryWords(
   return static_cast<std::int32_t>(total_bytes);
 }
 
-auto FileTable::Read(
+auto FileTable::ReadMemory(
     value::UnpackedArray<value::PackedArray> dest, const value::PackedArray& fd,
     const value::PackedArray& declared_left,
     const value::PackedArray& declared_right,
@@ -722,7 +723,7 @@ auto FileTable::Error(const value::PackedArray& fd_pa) -> TextRead {
   return completion;
 }
 
-void FileTable::Flush() {
+void FileTable::FlushAll() {
   // LRM 21.3.1 makes standard output channel 0 of a multichannel descriptor,
   // so it is one of the open files LRM 21.3.6 reaches.
   stream_->Drain();

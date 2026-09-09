@@ -70,8 +70,10 @@ void AppendDefaultReport(
           .data =
               mir::CallExpr{
                   .callee =
-                      mir::Direct{.target = support::BuiltinFn::kEmitError},
-                  .arguments = {diagnostic_id, origin_id, text_id}},
+                      mir::Direct{
+                          .target = support::BuiltinFn::kEmitError,
+                          .receiver = diagnostic_id},
+                  .arguments = {origin_id, text_id}},
           .type = unit.builtins.void_type});
   block.AppendStmt(mir::ExprStmt{.expr = emit_id});
 }
@@ -133,8 +135,10 @@ auto BuildDeferredReportSubmit(
           .data =
               mir::CallExpr{
                   .callee =
-                      mir::Direct{.target = DeferredSubmitBuiltin(timing)},
-                  .arguments = {runtime_id, closure_id}},
+                      mir::Direct{
+                          .target = DeferredSubmitBuiltin(timing),
+                          .receiver = runtime_id},
+                  .arguments = {closure_id}},
           .type = unit.builtins.void_type});
   scope.AppendStmt(mir::ExprStmt{.expr = submit_id});
   return scope;
@@ -233,8 +237,9 @@ auto LowerCoverStmt(
               mir::CallExpr{
                   .callee =
                       mir::Direct{
-                          .target = support::BuiltinFn::kRecordCoverage},
-                  .arguments = {runtime_id, site_id, outcome_id}},
+                          .target = support::BuiltinFn::kRecordCoverage,
+                          .receiver = runtime_id},
+                  .arguments = {site_id, outcome_id}},
           .type = unit.builtins.void_type});
   block.AppendStmt(mir::ExprStmt{.expr = record_id});
 

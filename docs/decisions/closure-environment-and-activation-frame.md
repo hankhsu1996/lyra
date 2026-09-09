@@ -186,8 +186,8 @@ is never rewritten when the layout is canonicalized.
   and the promoted locals it stands in for are written into it as ordinary field assignments -- a
   scope frame comes into existence empty and is filled, so no aggregate literal over it is built and
   none is stated. A named-field literal is vocabulary this decision left room for and nothing ever
-  needed; an unpacked struct of the source language is a `TupleType` and its literal is a
-  `TupleExpr`, which is the structural product, not this nominal one.
+  needed; an unpacked struct of the source language is a `TupleType`, and composing one is the
+  structural product's literal, not a nominal one.
 - The binding / capture contract (`binding_and_capture.md`) keeps its origin identity and
   forwarding; the materialized capture is a `ClosureDecl` field.
 

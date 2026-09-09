@@ -34,9 +34,9 @@ auto LowerTimeFormatSystemSubroutineCall(
         "$timeformat takes either no arguments or exactly four (LRM 20.4.3)");
   }
 
+  const mir::ExprId runtime_id =
+      body.exprs.Add(BuildCurrentRuntimeCallExpr(process.Owner()));
   std::vector<mir::ExprId> call_args;
-  call_args.push_back(
-      body.exprs.Add(BuildCurrentRuntimeCallExpr(process.Owner())));
   for (const auto& arg : args) {
     if (!arg.has_value()) {
       throw InternalError(
@@ -53,7 +53,7 @@ auto LowerTimeFormatSystemSubroutineCall(
   return mir::Expr{
       .data =
           mir::CallExpr{
-              .callee = mir::Direct{.target = builtin},
+              .callee = mir::Direct{.target = builtin, .receiver = runtime_id},
               .arguments = std::move(call_args)},
       .type = process.Owner().Unit().builtins.void_type};
 }
@@ -91,8 +91,11 @@ auto LowerPrintTimescaleSystemSubroutineCall(
   return mir::Expr{
       .data =
           mir::CallExpr{
-              .callee = mir::Direct{.target = support::BuiltinFn::kWriteln},
-              .arguments = {files_id, fd_id, text_id}},
+              .callee =
+                  mir::Direct{
+                      .target = support::BuiltinFn::kWriteln,
+                      .receiver = files_id},
+              .arguments = {fd_id, text_id}},
       .type = builtins.void_type};
 }
 

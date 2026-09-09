@@ -86,11 +86,11 @@ struct ForeignExportEntry {
 };
 
 // Builds that adaptation: C-ABI parameters marshal to the exported subroutine's
-// SV arguments, the subroutine is called through the entry's leading context
-// argument, and the result marshals back. `target` is the call the body makes
-// -- a subroutine of a scope takes a `self` receiver, which the entry takes as
-// its own first parameter; any other target is a receiver-less package free
-// function taking the run's effects -- so it also fixes that leading argument.
+// SV arguments, the subroutine is called through the context the entry
+// recovers, and the result marshals back. `target` is the call the body makes
+// -- a subroutine of a scope dispatches on a `self`, which the entry takes as
+// its own first parameter; any other target is a package free function taking
+// the run's effects -- so it also fixes what that context is.
 // `context_frame` supplies the enclosing class for a receiver (a bare frame
 // otherwise); `result_type` is the exported subroutine's result type the
 // writeback destructures.

@@ -79,10 +79,8 @@ enum class RuntimeOp : std::uint8_t {
   kWithElement,
   kWithSlice,
   kDefault,
-  kDefaultBounded,
   kFromLiteral,
   kFromLiteralBounded,
-  kFromEntries,
   kFromEntriesDefault,
   kMakeScope,
   kMakeSegment,
@@ -96,7 +94,6 @@ enum class RuntimeOp : std::uint8_t {
   kMakePrintLiteralItem,
   kMakePrintValueItem,
   kMakeFormatSpec,
-  kMakeFormatSpecOfKind,
 };
 
 // Which capability wrapper a place reaches storage through. The wrappers share

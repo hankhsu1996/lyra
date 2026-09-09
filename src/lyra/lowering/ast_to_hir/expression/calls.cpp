@@ -352,19 +352,19 @@ auto LowerCallExpr(
 
     if (receiver_type.has_value() &&
         types.Get(*receiver_type).Is<hir::EnumType>()) {
-      if (auto kind = LowerEnumMethodName(name); kind.has_value()) {
+      if (auto enum_method = LowerEnumMethodName(name);
+          enum_method.has_value()) {
         // `next` / `prev` have an optional `int unsigned step = 1` (LRM
-        // 6.19.5.3/4). When the user omits the step, the lowering hands the
-        // backend a single-argument call and lets the backend's intrinsic
-        // mechanism supply the default (C++ default-argument; LLVM constant
-        // 1; etc.). No synthesized literal is injected at the HIR boundary.
+        // 6.19.5.3/4). When the user omits the step, the call keeps the one
+        // argument the source wrote and the default is supplied where the
+        // method is answered, so no literal is injected here.
         auto type_id = unit_lowerer.InternType(*call.type, span);
         if (!type_id) return std::unexpected(std::move(type_id.error()));
         return hir::Expr{
             .type = *type_id,
             .data =
                 hir::CallExpr{
-                    .callee = hir::BuiltinMethodRef{.method = *kind},
+                    .callee = hir::EnumMethodRef{.method = *enum_method},
                     .arguments = std::move(arg_ids),
                 },
             .span = span,

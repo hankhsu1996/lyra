@@ -214,6 +214,9 @@ auto CallStatementSuspends(
           // A built-in method (LRM 6.16 / 7.9 / 7.12 / 15.5) computes a value
           // against a library type and never yields.
           [](const hir::BuiltinMethodRef&) { return false; },
+          // An enumerated type method (LRM 6.19.5) is answered from the member
+          // table, either as a constant or by a synthesized non-task callable.
+          [](const hir::EnumMethodRef&) { return false; },
       },
       call.callee);
 }

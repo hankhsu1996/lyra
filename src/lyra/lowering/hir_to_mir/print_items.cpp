@@ -162,8 +162,11 @@ auto BuildEnumPatternItem(
       mir::Expr{
           .data =
               mir::CallExpr{
-                  .callee = mir::Direct{.target = support::BuiltinFn::kLen},
-                  .arguments = {name_id}},
+                  .callee =
+                      mir::Direct{
+                          .target = support::BuiltinFn::kLen,
+                          .receiver = name_id},
+                  .arguments = {}},
           .type = unit.builtins.int_type});
   const mir::ExprId has_name = block.exprs.Add(
       mir::Expr{
@@ -252,8 +255,9 @@ auto BuildHierarchicalNameExpr(Lowerer& lowerer, const WalkFrame& frame)
               mir::CallExpr{
                   .callee =
                       mir::Direct{
-                          .target = support::BuiltinFn::kHierarchicalPath},
-                  .arguments = {receiver_id}},
+                          .target = support::BuiltinFn::kHierarchicalPath,
+                          .receiver = receiver_id},
+                  .arguments = {}},
           .type = unit.builtins.string});
 }
 
@@ -354,27 +358,22 @@ auto TryGetHirStringLiteral(
 // LRM 21.2.1.3: a %t directive scales by the enclosing scope's time unit, known
 // only at lowering -- so its power is materialized here as the spec's sixth
 // field rather than read from the directive like the others. Fields pass as
-// `int` literals the runtime FormatSpec constructor converts; the modifier
-// fields are omitted when none differs from its default.
+// `int` literals the runtime FormatSpec constructor converts, every field
+// stated -- a directive that writes no modifiers states each at its default.
 auto BuildFormatSpecExpr(
     mir::CompilationUnit& unit, mir::Block& block, const mir::FormatSpec& spec,
     std::int64_t time_unit_power) -> mir::Expr {
   const auto int_lit = [&](std::int64_t v) {
     return BuildIntLiteral(unit, block, v);
   };
-  std::vector<mir::ExprId> args;
-  args.push_back(int_lit(static_cast<std::int64_t>(spec.kind)));
   const bool is_time = spec.kind == value::FormatKind::kTime;
-  const bool all_default =
-      spec.modifiers.width == -1 && spec.modifiers.precision == -1 &&
-      !spec.modifiers.zero_pad && !spec.modifiers.left_align && !is_time;
-  if (!all_default) {
-    args.push_back(int_lit(spec.modifiers.width));
-    args.push_back(int_lit(spec.modifiers.precision));
-    args.push_back(int_lit(spec.modifiers.zero_pad ? 1 : 0));
-    args.push_back(int_lit(spec.modifiers.left_align ? 1 : 0));
-    args.push_back(int_lit(is_time ? time_unit_power : 0));
-  }
+  std::vector<mir::ExprId> args = {
+      int_lit(static_cast<std::int64_t>(spec.kind)),
+      int_lit(spec.modifiers.width),
+      int_lit(spec.modifiers.precision),
+      int_lit(spec.modifiers.zero_pad ? 1 : 0),
+      int_lit(spec.modifiers.left_align ? 1 : 0),
+      int_lit(is_time ? time_unit_power : 0)};
   return mir::Expr{
       .data =
           mir::CallExpr{
@@ -530,7 +529,7 @@ auto BuildRuntimeFormatCallExpr(
       unit.types, unit.builtins.format_arg, operands.size());
   const mir::ExprId operands_array = block.exprs.Add(
       mir::Expr{
-          .data = mir::ArrayLiteralExpr{.elements = std::move(operands)},
+          .data = mir::CompositeExpr{.parts = std::move(operands)},
           .type = operands_type});
 
   // The hierarchical name a `%m` renders and the scope's time unit a `%t`
@@ -545,8 +544,10 @@ auto BuildRuntimeFormatCallExpr(
           .data =
               mir::CallExpr{
                   .callee =
-                      mir::Direct{.target = support::BuiltinFn::kTimeFormat},
-                  .arguments = {runtime_id}},
+                      mir::Direct{
+                          .target = support::BuiltinFn::kTimeFormat,
+                          .receiver = runtime_id},
+                  .arguments = {}},
           .type = unit.builtins.time_format});
   const mir::ExprId time_unit_power = BuildIntLiteral(
       unit, block, static_cast<std::int64_t>(lowerer.Resolution().unit_power));
@@ -575,7 +576,7 @@ auto BuildPrintItemsArray(
   const mir::TypeId array_type =
       mir::MachineArrayOf(unit.types, unit.builtins.print_item, items.size());
   return mir::Expr{
-      .data = mir::ArrayLiteralExpr{.elements = std::move(elements)},
+      .data = mir::CompositeExpr{.parts = std::move(elements)},
       .type = array_type};
 }
 

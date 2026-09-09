@@ -181,13 +181,27 @@ struct MachineBoolType {
   auto operator==(const MachineBoolType&) const -> bool = default;
 };
 
+// The widths a machine scalar comes in. Machine data is what crosses to a
+// target on the target's own terms -- a foreign call's by-value argument, a
+// table the runtime reads as raw storage -- so the widths are the ones a C
+// type system names outright.
+enum class MachineIntWidth : std::uint8_t { k8, k16, k32, k64 };
+
+enum class MachineFloatWidth : std::uint8_t { k32, k64 };
+
+// The width as a number. A target names the type it has for each width rather
+// than spelling one from a count, so this is for a reader of the width and not
+// for composing a type name.
+[[nodiscard]] auto BitsOf(MachineIntWidth width) -> std::uint32_t;
+[[nodiscard]] auto BitsOf(MachineFloatWidth width) -> std::uint32_t;
+
 // A primitive machine integer (the generic-language `iN` / `uN`, C `intN_t`):
 // a fixed-width 2-state scalar, distinct from the 4-state SV `PackedArrayType`.
 // It is plain machine data, not a simulation value, and lowers to a raw target
 // integer rather than a value wrapper -- a scope's time precision power
 // (LRM 3.14.2), a foreign call's by-value integer argument.
 struct MachineIntType {
-  std::uint32_t bit_width;
+  MachineIntWidth width;
   Signedness signedness;
 
   auto operator==(const MachineIntType&) const -> bool = default;
@@ -197,7 +211,7 @@ struct MachineIntType {
 // plain machine data, distinct from the SV `RealType`, which is a simulation
 // value reached through a value wrapper. It lowers to a raw target float.
 struct MachineFloatType {
-  std::uint32_t bit_width;
+  MachineFloatWidth width;
 
   auto operator==(const MachineFloatType&) const -> bool = default;
 };
@@ -540,6 +554,12 @@ struct ManagedRefType {
   auto operator==(const ManagedRefType&) const -> bool = default;
 };
 
+// A homogeneous sequence: one element type, laid down as many times as the
+// declaration standing for several objects covers (LRM 23.3.2). Composed whole
+// and never grown afterwards. Unlike `MachineArrayType`, which is the plain
+// data an element list is, this is a library type whose representation the
+// target owns -- so one comes into existence through its own constructor, with
+// that element list among the arguments.
 struct VectorType {
   TypeId element;
 
@@ -549,9 +569,9 @@ struct VectorType {
 // A heterogeneous fixed product: an ordered list of component types, each
 // independent. MIR's only heterogeneous aggregate -- the generic-language
 // product type (the Rust / Python tuple, C++ `std::tuple` / `std::pair`),
-// where `VectorType` is the homogeneous one. Built by `TupleExpr`. It is what
-// lets an associative literal be a vector of `(key, value)` pairs instead of
-// two parallel lists, so no associative-specific construction node is needed.
+// where `VectorType` is the homogeneous one. It is what lets an associative
+// literal be a sequence of `(key, value)` pairs instead of two parallel lists,
+// so no associative-specific construction is needed.
 struct TupleType {
   std::vector<TypeId> elements;
 

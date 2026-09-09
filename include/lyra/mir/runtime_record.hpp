@@ -70,7 +70,7 @@ class RuntimeRecordBuilder {
     const auto size = static_cast<std::uint32_t>(elements.size());
     return Add(
         Expr{
-            .data = ArrayLiteralExpr{.elements = std::move(elements)},
+            .data = CompositeExpr{.parts = std::move(elements)},
             .type = MachineArrayOf(unit_->types, element, size)});
   }
 

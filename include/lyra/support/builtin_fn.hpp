@@ -4,6 +4,7 @@
 #include <cstdint>
 #include <optional>
 #include <string_view>
+#include <variant>
 
 namespace lyra::support {
 
@@ -118,15 +119,6 @@ enum class BuiltinFn : std::uint16_t {
   // leaf. `Triggered` is the LRM 15.5.3 same-time-step query.
   kTrigger,
   kTriggered,
-  // LRM 6.19.5 enum type-static queries. `constexpr` in the runtime so
-  // downstream optimizers fold the call.
-  kEnumFirst,
-  kEnumLast,
-  kEnumNum,
-  // LRM 6.19.5 enum instance methods.
-  kEnumName,
-  kEnumNext,
-  kEnumPrev,
   // LRM 20.9 / 21.3.4.3. 2-state packed types return false; downstream
   // constant-folds those calls.
   kIsUnknown,
@@ -140,10 +132,10 @@ enum class BuiltinFn : std::uint16_t {
   kClog2,
   // LRM 20.8.2 Table 20-4: real-valued mathematics, each entry cross-listed
   // with the C standard math library function whose behavior the standard
-  // defines it to have. Instance methods on the real receiver (`args[0]`),
-  // with the two-argument forms taking the second operand after it. The
-  // table's `$pow` row has no entry of its own: it asks for exactly what LRM
-  // 11.4.3 `**` asks for, and one entry serves both spellings.
+  // defines it to have. Each dispatches on the real it operates on, and the
+  // two-argument forms carry the second operand as an argument. The table's
+  // `$pow` row has no entry of its own: it asks for exactly what LRM 11.4.3
+  // `**` asks for, and one entry serves both spellings.
   kLn,
   kLog10,
   kExp,
@@ -345,12 +337,13 @@ enum class BuiltinFn : std::uint16_t {
   // return an SV `int` (1 on prefix match, 0 otherwise).
   kTestPlusargs,
   kValuePlusargs,
-  // LRM 20.17.1 $system. Free functions on `lyra::runtime` taking the runtime
-  // handle; the commanded form additionally takes the SV `string` to execute,
-  // while the null form asks whether a command processor exists at all. Running
-  // a command and asking after the processor are different requests, so each is
-  // its own entry rather than one whose meaning depends on how many arguments
-  // it was given. Both return an SV `int` carrying what the host reported.
+  // LRM 20.17.1 $system. Running a command and asking after the processor are
+  // different requests, so each is its own entry rather than one whose meaning
+  // depends on how many arguments it was given. The commanded form takes the
+  // runtime handle and the SV `string` to execute, and publishes whatever the
+  // design has written before the command inherits the output. The null form
+  // runs nothing, so it observes the host and needs no handle at all. Both
+  // return an SV `int` carrying what the host reported.
   kRunHostCommand,
   kRunNullHostCommand,
   // LRM 21.4 $readmemh / $readmemb and LRM 21.5 $writememh / $writememb. Free
@@ -432,15 +425,15 @@ enum class BuiltinFn : std::uint16_t {
   kStop,
   // Ancestor-scope resolution for a hierarchical reference whose route starts
   // above the referrer (LRM 23.6 / 23.8). Called once per reference in the
-  // resolve phase against the referrer's own scope handle (`args[0]`).
+  // resolve phase, dispatching on the referrer's own scope handle.
   // `kResolveRoot` climbs to the parent-less `$root` anchor; the descent
   // suffix (`kGetChild` / `kGetSignal`) starts strictly below it.
   // `kResolveVisibleChild` walks the enclosing chain and matches a child by
-  // its canonical instance name and per-axis index (`args[1]`, `args[2]`);
+  // the canonical instance name and per-axis index it carries as arguments;
   // the descent suffix starts below the matched child.
   kResolveRoot,
   kResolveVisibleChild,
-  // The scope handle's runtime ABI, reached on `args[0]`. A constructor
+  // The scope handle's runtime ABI, each entry dispatching on it. A constructor
   // registers a signal by name, looks a signal or child up by name, or hands
   // a freshly-built child to its parent to own. `kRegisterSignal` and
   // `kGetSignal` carry the signal name as a regular argument; `kGetChild`
@@ -491,8 +484,8 @@ enum class BuiltinFn : std::uint16_t {
   // Lifecycle activation registration (LRM 9.2): binds a process body's
   // coroutine to the scope's startup (`kRegisterInitial`) or shutdown
   // (`kRegisterFinal`) lifecycle. Distinct callees, not one tagged call --
-  // initial and final are different registrations. Instance methods on the
-  // scope handle (`args[0]`); the coroutine to register is a regular argument.
+  // initial and final are different registrations. Each dispatches on the
+  // scope handle; the coroutine to register is a regular argument.
   kRegisterInitial,
   kRegisterFinal,
   // The inner step of a value conversion: reading the source out as a machine
@@ -516,7 +509,7 @@ enum class BuiltinFn : std::uint16_t {
   // `kRealValue` reads a `Real` / `ShortReal` out as its machine float;
   // `kStringCStr` borrows a `String` as a NUL-terminated C string valid for the
   // owning string's lifetime; `kChandlePtr` reads a `Chandle` out as the opaque
-  // pointer it carries. Instance methods on the receiver (`args[0]`).
+  // pointer it carries. Each dispatches on the value it reads out of.
   kRealValue,
   kStringCStr,
   kChandlePtr,
@@ -548,9 +541,9 @@ enum class BuiltinFn : std::uint16_t {
   // `kDpiOpenArrayHandle`
   // reads the opaque handle the foreign side receives in place of the actual;
   // `kDpiOpenArrayValue` reads the image back as an SV value shaped like the
-  // prototype it takes (`args[1]`), which is what an `output` / `inout` open
-  // array stores into its actual. Instance methods on the image (`args[0]`),
-  // which the call site builds from the actual before the foreign call.
+  // prototype it carries as an argument, which is what an `output` / `inout`
+  // open array stores into its actual. Each dispatches on the image, which the
+  // call site builds from the actual before the foreign call.
   kDpiOpenArrayHandle,
   kDpiOpenArrayValue,
   // Runs a DPI-C import task's foreign call (LRM 35.5.2) on a fiber whose
@@ -651,9 +644,9 @@ enum class BuiltinFn : std::uint16_t {
   // entries, so the backend renders every operator mechanically: native
   // forms (`+`, `==`, ...) collapse to a single formatter, method forms
   // route through the call path. The shift / power / xnor / wildcard /
-  // case / implication / equivalence ids are instance methods on the
-  // receiver (`args[0]`); the reduction ids likewise take the operand as
-  // `args[0]`. `kFromBool` is a static factory that wraps a host bool
+  // case / implication / equivalence ids dispatch on their left operand,
+  // and the reduction ids likewise dispatch on the operand they fold.
+  // `kFromBool` is a static factory that wraps a host bool
   // into a 1-bit `PackedArray` (used to shape the result of a real /
   // string comparison or logical operator into the LRM 11.3 / 11.4 1-bit
   // integral result type).
@@ -696,80 +689,88 @@ enum class BuiltinFn : std::uint16_t {
   kHierarchicalPath,
 };
 
-// True iff `id` is a type-namespace-qualified static call -- no receiver, the
-// qualifier (the destination type of a cast / conversion) rides on the call
-// site as the `Direct::qualification`. Used by HIR-to-MIR to decide whether to
-// attach a qualification to the call.
-[[nodiscard]] constexpr auto IsStaticBuiltinFn(BuiltinFn id) -> bool {
-  return id == BuiltinFn::kFromInt || id == BuiltinFn::kFromWords ||
-         id == BuiltinFn::kConvertFrom || id == BuiltinFn::kFromPackedArray ||
-         id == BuiltinFn::kFromByteArray || id == BuiltinFn::kFromBool ||
-         id == BuiltinFn::kFromString || id == BuiltinFn::kFromArray ||
-         id == BuiltinFn::kFromBits ||
-         id == BuiltinFn::kMakeDynamicArrayDefault ||
-         id == BuiltinFn::kMakeDynamicArrayNew ||
-         id == BuiltinFn::kMakeDynamicArrayNewCopy ||
-         id == BuiltinFn::kArrayConformSize;
-}
+// A function the library declares in a scope of its own, named here as a call
+// site writes it. The object the entry acts on, where it has one, is its
+// leading argument, because a free function binds nothing.
+struct FreeFunction {
+  std::string_view qualified_name;
+};
 
-// True iff the function updates its receiver, so the receiver names a place
-// rather than a value -- which is what makes a receiver reaching through a
-// capability wrapper reach its write access. Where the update lands and how it
-// gets there is each target's own answer.
-[[nodiscard]] auto IsMutatingBuiltinFn(BuiltinFn id) -> bool;
+// A method on the object the entry acts on, reached through that object.
+struct Method {
+  std::string_view identifier;
+};
 
-// True iff the function's result stands for storage its first argument names,
-// so a call to it stands for whatever that argument stands for -- a value where
-// the argument is a value, and a place where the argument is a place. Two kinds
-// qualify: one that hands the argument back unchanged, and one that answers
-// with a part of it. A consumer following where storage lives passes through
-// such a call rather than stopping at it.
-[[nodiscard]] auto ReachesThroughReceiverBuiltinFn(BuiltinFn id) -> bool;
+// A factory on the type the entry builds. There is no object to act on, and
+// the call site names that type as the call's qualifier.
+struct StaticFactory {
+  std::string_view identifier;
+};
 
-// True iff the LRM 7.12 method takes a `with`-clause closure as its second
-// argument. The other LRM 7.5 / 7.10 array entries (`size`, `delete`,
-// `reverse`) take no closure.
-[[nodiscard]] auto ArrayMethodTakesClosure(BuiltinFn id) -> bool;
+// How a call site reaches the entry. Every entry is one of these, because an
+// operation no runtime library carries out is not named here at all: it is
+// answered where the source is read and no layer below meets it.
+using EntryDeclaration = std::variant<FreeFunction, Method, StaticFactory>;
 
-// True iff the entry yields a value whose shape the call site must supply as a
-// trailing prototype argument, because the receiver does not determine it: the
-// LRM 7.12 reduction, locator, and map families (an index locator's key, a
-// map's chosen element, an empty reduction's zero) and the associative index
-// queries (the value an unallocated dimension reports). The LRM 7.12 ordering
-// family
-// (`sort` / `rsort` / `reverse`) mutates in place and yields no value.
-[[nodiscard]] auto BuiltinFnTakesResultPrototype(BuiltinFn id) -> bool;
+// Every property of one runtime entry: what the library calls it, how a call
+// site reaches it, and what it does with the operands it is given. A consumer
+// asking any of those reads the field for it, never a list of its own, so an
+// entry gains a property by saying so here and nowhere else.
+struct RuntimeEntry {
+  // The entry's stable spelling. It aligns with the SV method spelling where
+  // one exists (LRM 6.16 / 7.9 / 7.10 / 7.12 / 15.5) and is descriptive where
+  // there is no SV-side surface (`get` / `set` / `mutate` / `runtime`).
+  //
+  // This is an interface contract, not a display string. It names the entry in
+  // a dump and in a diagnostic, and it is the suffix of the runtime-library
+  // symbol a generated module calls, so changing it renames a linked symbol.
+  // Change it only to correct the entry's identity, never to improve how a
+  // dump reads.
+  std::string_view name;
+  // Where the library declares the entry, and what a call site writes to reach
+  // it.
+  EntryDeclaration declaration;
+  // Whether the entry updates the object it acts on, so that object names a
+  // place rather than a value -- which is what makes a receiver reaching
+  // through a capability wrapper reach its write access. Where the update
+  // lands and how it gets there is each target's own answer.
+  bool mutates_receiver = false;
+  // Whether the entry's result stands for storage its first argument names, so
+  // a call to it stands for whatever that argument stands for -- a value where
+  // the argument is a value, and a place where the argument is a place. Two
+  // kinds qualify: one that hands the argument back unchanged, and one that
+  // answers with a part of it. A consumer following where storage lives passes
+  // through such a call rather than stopping at it.
+  bool reaches_through_receiver = false;
+  // Whether the LRM 7.12 method takes a `with`-clause closure as its second
+  // argument. The other LRM 7.5 / 7.10 array entries (`size`, `delete`,
+  // `reverse`) take none.
+  bool takes_closure = false;
+  // Whether the entry yields a value whose shape the call site must supply as
+  // a trailing prototype argument, because the object it acts on does not
+  // determine it: the LRM 7.12 reduction, locator, and map families (an index
+  // locator's key, a map's chosen element, an empty reduction's zero) and the
+  // associative index queries (the value an unallocated dimension reports).
+  bool takes_result_prototype = false;
+  // Whether the entry answers with an index by writing it into the variable
+  // the source named (LRM 7.9.4 -- 7.9.7), so the call lowers to a block
+  // expression: binding the answer and writing it back are steps rather than
+  // one expression.
+  bool writes_the_index_back = false;
+  // Which operand is an index, absent for an entry that names none. It covers
+  // the index a traversal searches from as well as the one a select names,
+  // since both cross the boundary the same way.
+  std::optional<std::size_t> index_operand = std::nullopt;
+  // Which operand is a whole container crossing erased -- a spread
+  // concatenation part (LRM 10.10) whose own domain the entry cannot name, so
+  // it boxes into a runtime value in that domain and is read back element by
+  // element. Absent for an entry that has none.
+  std::optional<std::size_t> spread_operand = std::nullopt;
+};
 
-// True iff `id` is an associative-array traversal entry (LRM 7.9.4 -- 7.9.7).
-// The family lowers to a block expression, because the index it answers with
-// reaches the variable the source named through that variable's own write, and
-// binding the answer and writing it back are steps rather than expressions.
-[[nodiscard]] auto IsAssociativeTraversalFn(BuiltinFn id) -> bool;
-
-// Which operand of a container entry is an index, absent for an entry that
-// names none. A consumer that must know how an index reaches the entry -- which
-// representation it crosses in, whether it is present at all -- asks here
-// rather than listing the entries itself. It covers the index a traversal
-// searches from as well as the one a select names, since both cross the same
-// way.
-[[nodiscard]] auto ContainerIndexOperand(BuiltinFn id)
-    -> std::optional<std::size_t>;
-
-// Which operand of an entry is a whole container crossing erased -- a spread
-// concatenation part (LRM 10.10) whose own domain the entry cannot name, so it
-// boxes into a runtime value in that domain and is read back element by
-// element. Absent for an entry that has none.
-[[nodiscard]] auto SpreadPartOperand(BuiltinFn id)
-    -> std::optional<std::size_t>;
-
-// The id's stable spelling. It aligns with the SV method spelling where one
-// exists (LRM 6.16 / 7.9 / 7.12 / 6.19.5) and is descriptive where there is no
-// SV-side surface (`get` / `set` / `mutate` / `runtime`).
-//
-// This is an interface contract, not a display string. It names the entry in a
-// dump and in a diagnostic, and it is the suffix of the runtime-library symbol
-// a generated module calls, so changing it renames a linked symbol. Change it
-// only to correct the entry's identity, never to improve how a dump reads.
-[[nodiscard]] auto BuiltinFnName(BuiltinFn id) -> std::string_view;
+// The one declaration of `id`. Total over the entry set, so an entry added
+// anywhere in the pipeline fails to build until every property it has is
+// written down here.
+[[nodiscard]] auto RuntimeEntryOf(BuiltinFn id) -> RuntimeEntry;
 
 }  // namespace lyra::support

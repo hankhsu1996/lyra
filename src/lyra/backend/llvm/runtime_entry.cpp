@@ -86,14 +86,10 @@ auto RuntimeOpName(RuntimeOp op) -> std::string_view {
       return "with_slice";
     case RuntimeOp::kDefault:
       return "default";
-    case RuntimeOp::kDefaultBounded:
-      return "default_bounded";
     case RuntimeOp::kFromLiteral:
       return "from_literal";
     case RuntimeOp::kFromLiteralBounded:
       return "from_literal_bounded";
-    case RuntimeOp::kFromEntries:
-      return "from_entries";
     case RuntimeOp::kFromEntriesDefault:
       return "from_entries_default";
     case RuntimeOp::kMakeScope:
@@ -120,8 +116,6 @@ auto RuntimeOpName(RuntimeOp op) -> std::string_view {
       return "make_print_value_item";
     case RuntimeOp::kMakeFormatSpec:
       return "make_format_spec";
-    case RuntimeOp::kMakeFormatSpecOfKind:
-      return "make_format_spec_of_kind";
   }
   throw InternalError("llvm codegen: unknown runtime operation");
 }
@@ -158,8 +152,9 @@ auto ValueDomainOf(const lir::CompilationUnit& unit, lir::TypeId type)
           [](const lir::PackedArrayType&) -> Domain {
             return support::ValueDomain::kPacked;
           },
-          // An enumeration is a packed value at runtime; only its own entries,
-          // which read its declared members, need more than that.
+          // An enumeration is a packed value at runtime. What its declared
+          // members answer (LRM 6.19.5) is settled where the source is read,
+          // so nothing reaching this layer needs more than the packed value.
           [](const lir::EnumType&) -> Domain {
             return support::ValueDomain::kPacked;
           },
@@ -262,12 +257,12 @@ auto RuntimeSymbol(support::ValueDomain domain, lir::ValueCellTarget::Op op)
 }
 
 auto RuntimeSymbol(support::BuiltinFn fn) -> std::string {
-  return Symbol(support::BuiltinFnName(fn));
+  return Symbol(support::RuntimeEntryOf(fn).name);
 }
 
 auto RuntimeSymbol(support::ValueDomain domain, support::BuiltinFn fn)
     -> std::string {
-  return Symbol(domain, support::BuiltinFnName(fn));
+  return Symbol(domain, support::RuntimeEntryOf(fn).name);
 }
 
 auto RuntimeSymbol(
@@ -275,7 +270,7 @@ auto RuntimeSymbol(
     support::ValueDomain source) -> std::string {
   return Symbol(
       destination, std::format(
-                       "{}_{}", support::BuiltinFnName(fn),
+                       "{}_{}", support::RuntimeEntryOf(fn).name,
                        support::ValueDomainName(source)));
 }
 
@@ -321,11 +316,6 @@ auto InstallOpOf(WrapperKind kind) -> RuntimeOp {
 }
 
 auto EntryNamingOf(support::BuiltinFn fn) -> EntryNaming {
-  // An enumeration's own entries read its declared members, which no library
-  // over the packed representation can answer. They belong to the enumeration's
-  // generated artifact, not to the value domain its representation shares.
-  constexpr std::string_view kReadsDeclaredMembers =
-      "reads an enumeration's declared members";
   // A foreign call that can suspend runs the SV side on a stack the runtime did
   // not create (LRM 35.5.6, 35.8), which the value library reaches only through
   // types the host compiler laid out for it. Nothing crosses a C ABI that
@@ -399,8 +389,6 @@ auto EntryNamingOf(support::BuiltinFn fn) -> EntryNaming {
     case support::BuiltinFn::kOcttoa:
     case support::BuiltinFn::kBintoa:
     case support::BuiltinFn::kRealtoa:
-    case support::BuiltinFn::kEnumNext:
-    case support::BuiltinFn::kEnumPrev:
     case support::BuiltinFn::kIsUnknown:
     case support::BuiltinFn::kCountBits:
     case support::BuiltinFn::kClog2:
@@ -522,12 +510,6 @@ auto EntryNamingOf(support::BuiltinFn fn) -> EntryNaming {
 
     case support::BuiltinFn::kSelfHandle:
       return NotRealized{.shape = kRecoversAHandleFromItsObject};
-
-    case support::BuiltinFn::kEnumFirst:
-    case support::BuiltinFn::kEnumLast:
-    case support::BuiltinFn::kEnumNum:
-    case support::BuiltinFn::kEnumName:
-      return NotRealized{.shape = kReadsDeclaredMembers};
 
     // The runtime, then the user string, then the destination whose
     // representation names the entry.

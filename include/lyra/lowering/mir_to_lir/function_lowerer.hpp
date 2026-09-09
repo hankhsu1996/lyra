@@ -152,16 +152,34 @@ class FunctionLowerer {
   // no value of its own -- a cell -- has no reading, and is rejected here.
   auto LowerExpr(const mir::Block& block, mir::ExprId id)
       -> diag::Result<lir::Operand>;
+  // The readings of `ids`, in order. An instruction taking a list of them
+  // composes these operands; the walk over the list is not each caller's.
+  auto LowerEachExpr(const mir::Block& block, std::span<const mir::ExprId> ids)
+      -> diag::Result<std::vector<lir::Operand>>;
   // Passes an expression to a callee: a cell crosses as its address, every
   // other value as itself. This is the one use context that addresses a place
   // without an explicit address-of in the source IR.
   auto LowerArgument(const mir::Block& block, mir::ExprId id)
       -> diag::Result<lir::Operand>;
-  auto LowerArguments(
-      const mir::Block& block, std::span<const mir::ExprId> arguments)
+  // Every operand a call carries, in the order the runtime library takes them.
+  // The object the call dispatches on leads, because a library entry is a free
+  // function and takes what it acts on as its first parameter.
+  auto LowerCallOperands(const mir::Block& block, const mir::CallExpr& call)
       -> diag::Result<std::vector<lir::Operand>>;
   auto LowerPlace(const mir::Block& block, mir::ExprId id)
       -> diag::Result<lir::Place>;
+  // The storage a reference names, or why the referent has none. Whether a
+  // referent has storage is the target's own fact, so the place side owns that
+  // answer and a use in value position reads it.
+  auto ReferencePlace(const mir::ReferenceTarget& target, mir::TypeId type)
+      -> diag::Result<lir::Place>;
+  // The value naming a referent yields, whether that is the reference itself --
+  // a descriptor, a function, a local bound to a value that never had storage
+  // -- or what the storage it names holds.
+  auto ReferenceValue(
+      const mir::Block& block, mir::ExprId id,
+      const mir::ReferenceTarget& target, mir::TypeId type)
+      -> diag::Result<lir::Operand>;
   // The storage a capability wrapper stands for. A wrapper that is itself
   // storage continues the chain that reached it; one that refers to storage
   // elsewhere opens a new chain at what it refers to. This is the whole of how

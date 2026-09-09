@@ -60,10 +60,15 @@ the result type, from the operand count, or from an operand's type.**
 
 ### D1. A value that is its own parts is a primitive; a container built from one is not
 
-A product is its components: a `TupleExpr` lowers to LIR's `ProductInstr`, and codegen assembles the
-value itself, naming no entry. An element list is its elements the same way: an `ArrayLiteralExpr`
-lowers to an `ArrayInstr`, contiguous storage named by a span. Both have a smaller decomposition
-into nothing, which is what makes them primitives.
+A product is its components; an element list is its elements the same way. Both decompose no
+further, which is what makes them primitives, and one node carries both -- which value is composed
+is the composition's own type, the way a brace initializer's meaning is the type it initializes.
+Each of these types has exactly one way to be built, so the type answers completely and no consumer
+chooses.
+
+Where they separate is the layer that owns storage: a `ProductInstr` whose components each keep a
+type of their own, an `ArrayInstr` naming contiguous storage by a span. Codegen assembles the value
+itself either way, naming no entry.
 
 A container holding that list is not its elements. It is a library type, with a representation the
 library owns, and it comes into existence the way every library type does -- through its own
@@ -79,9 +84,9 @@ IR states and composes nothing, so a render that has to compose a call is lookin
 This is also what keeps the realization question a backend's own. `jit-aggregate-realization.md`
 settles that an aggregate on the execution backend is realized by erasure, and that the decision "is
 entirely below LIR" -- LIR's aggregate operations are "realization-agnostic logical value
-operations". The list is such an operation: the same `ArrayInstr` becomes a span today and a
-physical layout later, with no consumer changing. What the container does with the list is the
-container's own, and naming its type is what names it.
+operations". The list is such an operation: the same instruction becomes a span today and a physical
+layout later, with no consumer changing. What the container does with the list is the container's
+own, and naming its type is what names it.
 
 ### D2. A library operation names its entry
 

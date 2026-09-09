@@ -168,7 +168,7 @@ auto BuildOwnedInstance(
       unit_lowerer.Unit().types, builtins.int_type, indices.size());
   const mir::ExprId indices_id = block.exprs.Add(
       mir::Expr{
-          .data = mir::ArrayLiteralExpr{.elements = std::move(indices)},
+          .data = mir::CompositeExpr{.parts = std::move(indices)},
           .type = indices_type});
   const mir::ExprId segment_id = block.exprs.Add(
       mir::Expr{
@@ -198,8 +198,10 @@ auto BuildOwnedInstance(
           .data =
               mir::CallExpr{
                   .callee =
-                      mir::Direct{.target = support::BuiltinFn::kAddOwnedChild},
-                  .arguments = {parent_self, ctor_call_id}},
+                      mir::Direct{
+                          .target = support::BuiltinFn::kAddOwnedChild,
+                          .receiver = parent_self},
+                  .arguments = {ctor_call_id}},
           .type = builtins.scope_ptr});
   return block.exprs.Add(
       mir::Expr{
@@ -235,10 +237,8 @@ auto BuildInstanceMemberValue(
   }
   const mir::TypeId type = SequenceOver(
       unit_lowerer, borrowed, member.array_dims.size() - coords.size());
-  return block.exprs.Add(
-      mir::Expr{
-          .data = mir::VectorExpr{.elements = std::move(elements)},
-          .type = type});
+  return block.exprs.Add(BuildSequenceConstructionCall(
+      unit_lowerer.Unit(), block, type, std::move(elements)));
 }
 
 // Emits the constructor-body construction for every object the scope's instance
@@ -334,7 +334,7 @@ auto BuildIndicesLiteral(
       unit_lowerer.Unit().types, builtins.int_type, indices.size());
   return block.exprs.Add(
       mir::Expr{
-          .data = mir::ArrayLiteralExpr{.elements = std::move(ids)},
+          .data = mir::CompositeExpr{.parts = std::move(ids)},
           .type = indices_type});
 }
 
@@ -393,9 +393,11 @@ auto StepToChildByName(
           .data =
               mir::CallExpr{
                   .callee =
-                      mir::Direct{.target = support::BuiltinFn::kGetChild},
+                      mir::Direct{
+                          .target = support::BuiltinFn::kGetChild,
+                          .receiver = receiver},
                   .arguments =
-                      {receiver, BuildStringLiteral(unit_lowerer, block, name),
+                      {BuildStringLiteral(unit_lowerer, block, name),
                        BuildIndicesLiteral(unit_lowerer, block, indices)}},
           .type = unit_lowerer.Unit().builtins.scope_ptr});
   return RouteReceiver{.expr = step, .target = ScopeBase{}};
@@ -429,8 +431,10 @@ auto BuildRouteAnchor(
             .data =
                 mir::CallExpr{
                     .callee =
-                        mir::Direct{.target = support::BuiltinFn::kResolveRoot},
-                    .arguments = {self_ref}},
+                        mir::Direct{
+                            .target = support::BuiltinFn::kResolveRoot,
+                            .receiver = self_ref},
+                    .arguments = {}},
             .type = scope_ptr_type});
     return RouteReceiver{.expr = root, .target = ScopeBase{}};
   }
@@ -443,10 +447,10 @@ auto BuildRouteAnchor(
               mir::CallExpr{
                   .callee =
                       mir::Direct{
-                          .target = support::BuiltinFn::kResolveVisibleChild},
+                          .target = support::BuiltinFn::kResolveVisibleChild,
+                          .receiver = self_ref},
                   .arguments =
-                      {self_ref,
-                       BuildStringLiteral(unit_lowerer, block, vc.head_name),
+                      {BuildStringLiteral(unit_lowerer, block, vc.head_name),
                        BuildIndicesLiteral(
                            unit_lowerer, block, vc.head_indices)}},
           .type = scope_ptr_type});
@@ -638,11 +642,11 @@ auto MaterializeLeaf(
             .data =
                 mir::CallExpr{
                     .callee =
-                        mir::Direct{.target = support::BuiltinFn::kGetSignal},
-                    .arguments =
-                        {receiver.expr,
-                         BuildStringLiteral(
-                             unit_lowerer, block, opaque->name)}},
+                        mir::Direct{
+                            .target = support::BuiltinFn::kGetSignal,
+                            .receiver = receiver.expr},
+                    .arguments = {BuildStringLiteral(
+                        unit_lowerer, block, opaque->name)}},
             .type = void_ptr_type});
     return block.exprs.Add(
         mir::Expr{
@@ -763,8 +767,9 @@ void AppendProcessRegistration(
                           .target =
                               mir::CallableTarget{
                                   .owner = activate_frame.current_class_id,
-                                  .slot = body}},
-                  .arguments = {body_self}},
+                                  .slot = body},
+                          .receiver = body_self},
+                  .arguments = {}},
           .type = unit_lowerer.Unit().builtins.coroutine_void});
   const mir::ExprId reg_self =
       block.exprs.Add(MakeSelfRefExpr(activate_frame, self_ptr_type));
@@ -810,12 +815,12 @@ auto ComposeBoundObjects(
     elements.push_back(ComposeBoundObjects(
         unit_lowerer, block, array->element_type, handles, next));
   }
-  return block.exprs.Add(
-      mir::Expr{
-          .data = mir::VectorExpr{.elements = std::move(elements)},
-          .type = unit_lowerer.MemberCellType(
-              unit_lowerer.TranslateType(member_type),
-              hir::BorrowedObjectStorage{})});
+  return block.exprs.Add(BuildSequenceConstructionCall(
+      unit_lowerer.Unit(), block,
+      unit_lowerer.MemberCellType(
+          unit_lowerer.TranslateType(member_type),
+          hir::BorrowedObjectStorage{}),
+      std::move(elements)));
 }
 
 // Binds a child's interface port to the interface instances the connection
@@ -1041,7 +1046,7 @@ void AppendOwnedChildConstruction(
       unit_lowerer.Unit().types, builtins.int_type, index_elems.size());
   const mir::ExprId indices_id = arm_block.exprs.Add(
       mir::Expr{
-          .data = mir::ArrayLiteralExpr{.elements = std::move(index_elems)},
+          .data = mir::CompositeExpr{.parts = std::move(index_elems)},
           .type = indices_type});
   const mir::ExprId segment_id = arm_block.exprs.Add(
       mir::Expr{
@@ -1073,8 +1078,10 @@ void AppendOwnedChildConstruction(
           .data =
               mir::CallExpr{
                   .callee =
-                      mir::Direct{.target = support::BuiltinFn::kAddOwnedChild},
-                  .arguments = {parent_read(), ctor_call_id}},
+                      mir::Direct{
+                          .target = support::BuiltinFn::kAddOwnedChild,
+                          .receiver = parent_read()},
+                  .arguments = {ctor_call_id}},
           .type = builtins.scope_ptr});
   const mir::TypeId handle_type = owner_class.fields.Get(handle_field).type;
   const mir::ExprId typed_handle = arm_block.exprs.Add(
@@ -1422,8 +1429,8 @@ auto InstallGeneratedDefinition(
     code.params = {self};
     code.result_type = void_type;
     if (body.has_value()) {
-      const mir::ExprId self_ref = code.Body().exprs.Add(
-          mir::Expr{.data = mir::LocalRef{.var = self}, .type = scope_ptr});
+      const mir::ExprId self_ref =
+          code.Body().exprs.Add(mir::MakeLocalRefExpr(self, scope_ptr));
       const mir::ExprId typed = code.Body().exprs.Add(
           mir::Expr{
               .data = mir::PointerCastExpr{.operand = self_ref},
@@ -1436,8 +1443,9 @@ auto InstallGeneratedDefinition(
                           mir::Direct{
                               .target =
                                   mir::CallableTarget{
-                                      .owner = cls_id, .slot = *body}},
-                      .arguments = {typed}},
+                                      .owner = cls_id, .slot = *body},
+                              .receiver = typed},
+                      .arguments = {}},
               .type = void_type});
       code.Body().AppendStmt(mir::ExprStmt{.expr = call});
     }
@@ -1487,7 +1495,9 @@ auto InstallGeneratedDefinition(
   mir::RuntimeRecordBuilder definition(unit, def.body.exprs);
   const mir::ExprId exports_ref = definition.Add(
       mir::Expr{
-          .data = mir::StaticConstantRef{.constant = exports_id},
+          .data =
+              mir::ReferenceExpr{
+                  .target = mir::StaticConstantRef{.constant = exports_id}},
           .type = exports_type});
   const mir::ExprId exports_data = definition.Add(
       mir::Expr{
@@ -1524,7 +1534,9 @@ auto InstallGeneratedDefinition(
   auto& cex = ctor_code.Body().exprs;
   const mir::ExprId ref = cex.Add(
       mir::Expr{
-          .data = mir::StaticConstantRef{.constant = def_id},
+          .data =
+              mir::ReferenceExpr{
+                  .target = mir::StaticConstantRef{.constant = def_id}},
           .type = const_type});
   const mir::ExprId addr = cex.Add(
       mir::Expr{
@@ -1551,8 +1563,8 @@ void FinalizeConstructor(
     base_args.reserve(prefix_local_ids.size() + base_trailing_args.size());
     for (const mir::LocalId id : prefix_local_ids) {
       const mir::TypeId ty = ctor_code.locals.Get(id).type;
-      const mir::ExprId local_ref = ctor_code.Body().exprs.Add(
-          mir::Expr{.data = mir::LocalRef{.var = id}, .type = ty});
+      const mir::ExprId local_ref =
+          ctor_code.Body().exprs.Add(mir::MakeLocalRefExpr(id, ty));
       if (unit.types.Get(ty).IsAliasHandle()) {
         base_args.push_back(local_ref);
       } else {
@@ -1772,8 +1784,9 @@ auto StructuralScopeLowerer::PopulateBodies(WalkFrame parent_frame)
                   mir::CallExpr{
                       .callee =
                           mir::Direct{
-                              .target = support::BuiltinFn::kRegisterSignal},
-                      .arguments = {self_read(), name_id, addr_id}},
+                              .target = support::BuiltinFn::kRegisterSignal,
+                              .receiver = self_read()},
+                      .arguments = {name_id, addr_id}},
               .type = void_type});
       ctor_block.AppendStmt(mir::ExprStmt{.expr = call});
     }
@@ -1922,8 +1935,9 @@ auto StructuralScopeLowerer::PopulateBodies(WalkFrame parent_frame)
                               .callee =
                                   mir::Direct{
                                       .target =
-                                          support::BuiltinFn::kRegisterSignal},
-                              .arguments = {node, name_lit, addr}},
+                                          support::BuiltinFn::kRegisterSignal,
+                                      .receiver = node},
+                              .arguments = {name_lit, addr}},
                       .type = void_type})});
     }
   };

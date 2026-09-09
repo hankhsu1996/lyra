@@ -46,6 +46,7 @@
 #include "lyra/runtime/runtime_process.hpp"      // IWYU pragma: keep
 #include "lyra/runtime/scope.hpp"                // IWYU pragma: keep
 #include "lyra/runtime/scope_exit.hpp"           // IWYU pragma: keep
+#include "lyra/runtime/sequence.hpp"             // IWYU pragma: keep
 #include "lyra/runtime/sim_time.hpp"             // IWYU pragma: keep
 #include "lyra/runtime/simulation_entry.hpp"     // IWYU pragma: keep
 #include "lyra/runtime/stream_dispatcher.hpp"    // IWYU pragma: keep

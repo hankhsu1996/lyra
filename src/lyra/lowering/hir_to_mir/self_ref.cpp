@@ -40,8 +40,10 @@ auto BuildEnclosingScopeReceiver(
             .data =
                 mir::CallExpr{
                     .callee =
-                        mir::Direct{.target = support::BuiltinFn::kParent},
-                    .arguments = {nav}},
+                        mir::Direct{
+                            .target = support::BuiltinFn::kParent,
+                            .receiver = nav},
+                    .arguments = {}},
             .type = unit.builtins.scope_ptr});
   }
   return block.exprs.Add(

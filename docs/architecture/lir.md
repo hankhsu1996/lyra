@@ -54,9 +54,10 @@ below LIR, at LIR-to-LLVM.
   is reached through the indirection its elements already carry.
 - The transient-value vocabulary: a computed value with a pure dataflow origin, not backed by a
   named memory location.
-- The value-aggregate selector vocabulary: which subvalue a step names -- a component slot, a
-  runtime coordinate, a fixed-width window. One extract and one update carry every step; the
-  selector never says how the step is realized.
+- The value-aggregate selector vocabulary: which subvalue a step names -- a product's component
+  slot, the one member an active-member value holds at a time, a runtime coordinate, a fixed-width
+  window. One extract and one update carry every step; the selector never says how the step is
+  realized.
 - Logical storage topology: which local, member, element, or referent a place names, and the logical
   identity of every class member and callable a node refers to. A member step reaches a class this
   unit compiles or the published prefix of an object another unit defines; both are member-bearing
@@ -266,15 +267,16 @@ real, not because one is a special case of the other. The same principle governs
 value-aggregate family: a packed slice, a container element, and a union member are value
 sub-accesses, so a sub-write is a functional whole-value update, never a store into an independently
 addressable sub-place. One extract and one update carry every one of them, and the selector says
-only which subvalue is named -- a component slot, a runtime coordinate, a fixed-width window. Which
-library entry realizes a step, and whether it is an instruction or a call at all, is a realization
-question answered below LIR; it never decides which node the step is expressed as. A whole-value
-mutating method on a value receiver -- a container's `delete`, a queue's `push` -- follows the same
-rule: it is realized as a functional operation whose result is stored back through the receiver's
-owner, not an in-place mutation of the value. How a target keeps value semantics for such a store is
-below LIR: a target with language-level value copies may fulfill it by mutating a private copy in
-place, while one whose container value is reached through a shared handle must produce a new value,
-so the model LIR states -- a new whole value written back to the owner -- holds for both.
+only which subvalue is named -- a product's component slot, the one member an active-member value
+holds at a time, a runtime coordinate, a fixed-width window. Which library entry realizes a step,
+and whether it is an instruction or a call at all, is a realization question answered below LIR; it
+never decides which node the step is expressed as. A whole-value mutating method on a value receiver
+-- a container's `delete`, a queue's `push` -- follows the same rule: it is realized as a functional
+operation whose result is stored back through the receiver's owner, not an in-place mutation of the
+value. How a target keeps value semantics for such a store is below LIR: a target with
+language-level value copies may fulfill it by mutating a private copy in place, while one whose
+container value is reached through a shared handle must produce a new value, so the model LIR states
+-- a new whole value written back to the owner -- holds for both.
 
 LIR carries the fact that a packed value is two-state or four-state; it does not carry how a
 four-state value is stored. The canonical encoding of a four-state value -- value bits plus a state

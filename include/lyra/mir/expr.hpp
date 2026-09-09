@@ -116,8 +116,8 @@ struct BlockExpr {
 // `compound_op.has_value()` marks the assignment as `target op= value`;
 // `nullopt` is a simple write. `value` is already typed to match `target`.
 //
-// `target` is anything that names storage or a part of a value: a place, a
-// field of a product, an element or window of a container. What settles that a
+// `target` is a place, whose write is a store, or a designated part of a value,
+// whose write leaves the owner holding an updated whole. What settles that a
 // write is meant is this position, not the target's own node kind. A join in
 // target position (LRM 11.4.12 destructuring LHS) is desugared upstream into a
 // snapshot + per-part assignment sequence, so render does not encounter it.
@@ -174,7 +174,9 @@ struct CallableTarget {
 // class (LRM 9.7 `process`). A bodyless external callable whose implementation
 // is a runtime symbol; the identity names the method, and the backend renders
 // the call mechanically to that symbol -- no per-unit declaration and no
-// per-method backend branch. A receiver, if the method has one, is `args[0]`.
+// per-method backend branch. An instance method of such a class dispatches on
+// its handle, which the library takes positionally because a runtime symbol has
+// no receiver of its own to bind.
 struct ImportedRuntimeCallTarget {
   support::ImportedRuntimeMethod method;
 
@@ -208,13 +210,14 @@ struct ExternalUnitCallableTarget {
   auto operator==(const ExternalUnitCallableTarget&) const -> bool = default;
 };
 
-// Identity of an instance method another compilation unit declares (LRM 8.6) --
-// on a class the referring unit reaches by name, or on the object that unit's
-// instances are (LRM 25.7). The declaring class carries no unit-local id here,
-// so the target names the declaring unit, the class's canonical
-// (specialization) name, and the method's source name, resolved against that
-// unit's signature at link time. The receiver leads the arguments like any
-// instance method's.
+// Identity of a method another compilation unit declares on a class -- an
+// instance method (LRM 8.6), including one on the object that unit's instances
+// are (LRM 25.7), or a type-associated method (LRM 8.10). The declaring class
+// carries no unit-local id here, so the target names the declaring unit, the
+// class's canonical (specialization) name, and the method's source name,
+// resolved against that unit's signature at link time. Whether the call
+// dispatches on an object is the presence of the callee's receiver, so the two
+// LRM forms are one identity here.
 struct ExternalUnitClassMethodTarget {
   std::string unit_name;
   std::string class_name;
@@ -223,47 +226,35 @@ struct ExternalUnitClassMethodTarget {
   auto operator==(const ExternalUnitClassMethodTarget&) const -> bool = default;
 };
 
-// Identity of a type-associated method another compilation unit declares (LRM
-// 8.10), named the same three ways. It has no receiver, which is what separates
-// it from the instance form: the two take different argument lists.
-struct ExternalUnitStaticMethodTarget {
-  std::string unit_name;
-  std::string class_name;
-  std::string method_name;
-
-  auto operator==(const ExternalUnitStaticMethodTarget&) const
-      -> bool = default;
-};
-
-// The target of a `Direct` call -- the symbol identity. The identity spaces: an
-// owner-qualified callable of this unit (`CallableTarget` -- an instance method
-// or a receiver-less static callable, one arena), a built-in runtime entry
-// (closed-namespace `BuiltinFn`), a method the runtime library provides for an
-// imported class (`ImportedRuntimeCallTarget`, LRM 9.7), a receiver-less
-// callable of another compilation unit (`ExternalUnitCallableTarget`, named
-// across the unit boundary), an instance method of another compilation unit
-// (`ExternalUnitClassMethodTarget`) and a type-associated one
-// (`ExternalUnitStaticMethodTarget`), both class-qualified across the unit
-// boundary, and a name in the DPI-C name space (`ForeignSymbolTarget`, LRM
-// 35.4). None is recovered from the receiver's runtime type.
+// The target of a `Direct` call -- the symbol identity. Each alternative is one
+// identity space, told apart by the table that resolves the name: this unit's
+// own callable arena (`CallableTarget`), the closed set of runtime library
+// entries (`BuiltinFn`, and `ImportedRuntimeCallTarget` for the methods the
+// library provides for an imported class, LRM 9.7), another compilation unit's
+// namespace (`ExternalUnitCallableTarget`) or one of its classes
+// (`ExternalUnitClassMethodTarget`), and the DPI-C name space
+// (`ForeignSymbolTarget`, LRM 35.4). Nothing here says whether the call
+// dispatches on an object -- that is the callee's receiver -- and none is
+// recovered from the receiver's runtime type.
 using DirectTarget = std::variant<
     CallableTarget, support::BuiltinFn, ImportedRuntimeCallTarget,
     ExternalUnitCallableTarget, ExternalUnitClassMethodTarget,
-    ExternalUnitStaticMethodTarget, ForeignSymbolTarget>;
+    ForeignSymbolTarget>;
 
-// A direct call to a named symbol. The single shape for every direct
-// invocation -- user method, built-in instance method, type-qualified
-// static, runtime free function. The render mode (instance form
-// `recv.name(rest)`, type-qualified `Q::name(args)`, or free
-// `ns::name(args)`) is a fixed function of the target's signature and
-// whether `qualification` is present; it is not encoded as a separate arm.
+// A direct call to a named symbol -- the code is found by name at compile
+// time. The single shape for every direct invocation: a user method, a
+// built-in, another compilation unit's subroutine, a name in the DPI-C space.
 //
-// Receiver, when the target's signature declares one, is `args[0]` -- an
-// instance method reaches its receiver explicitly as the first argument,
-// never through implicit context. Instance and static dispatch differ only in
-// whether the signature has a `self` formal, not in MIR's call shape.
+// The object the call dispatches on rides here, distinct from user-supplied
+// `CallExpr::arguments`, so the call carries exactly the arguments the SV
+// source wrote and the receiver is not conflated with them. It is absent for a
+// call that dispatches on nothing -- a type-associated method (LRM 8.10), a
+// package subroutine (LRM 26.3), a runtime entry the program reaches by name.
+// The target says where the code is found and this says what it is applied to,
+// so the two vary independently.
 struct Direct {
   DirectTarget target;
+  std::optional<ExprId> receiver = std::nullopt;
   std::optional<ScopeQualifier> qualification = std::nullopt;
 };
 
@@ -429,6 +420,16 @@ struct IntCastExpr {
   ExprId operand;
 };
 
+// The same value at another type that structures its bits identically --
+// crossing between an enumeration and its base (LRM 6.19.3) is the case this
+// arises for. Nothing is built and nothing moves; what changes is the type the
+// program ascribes to the value, which is why this is a cast and not a
+// construction. A destination whose representation differs is a reshape, which
+// is a library call and reaches this node already reshaped.
+struct ValueCastExpr {
+  ExprId operand;
+};
+
 // Identity of a class field at an access site: the class whose field arena
 // declares the field, and the slot within that arena. Owner is the declaring
 // class, not the receiver's class; the two coincide when the receiver's class
@@ -454,10 +455,11 @@ struct ExternalFieldTarget {
   auto operator==(const ExternalFieldTarget&) const -> bool = default;
 };
 
-// One field of a structural product, named by its position. A tuple, a union
-// and a tagged union declare their fields nowhere: the type is the field list,
-// so a position is the whole of the identity and there is no arena to qualify
-// it with.
+// One component of a product value, named by its position. A product declares
+// its components nowhere -- the type is the component list -- so a position is
+// the whole of the identity and there is no arena to qualify it with. Every
+// component of a product is live at once, which is what lets reading one and
+// writing one be the same operation seen two ways.
 struct ComponentTarget {
   base::ComponentIndex index;
 
@@ -484,16 +486,16 @@ struct ComponentTarget {
 //   chain, so the arena is uniquely determined by the receiver's type; stating
 //   it again would restate what the structural context already fixes.
 //
-// - `ComponentTarget` is used when the receiver is a structural product -- a
-//   tuple, a union, a tagged union -- whose fields are its type and are named
-//   by position rather than declared anywhere. There is no arena to name.
+// - `ComponentTarget` is used when the receiver is a product value, whose
+//   components are its type and are named by position rather than declared
+//   anywhere. There is no arena to name.
 using FieldRef =
     std::variant<FieldTarget, FieldId, ExternalFieldTarget, ComponentTarget>;
 
 // Field access through an explicit receiver expression: `receiver.field`. The
 // receiver is a field-bearing value -- a class instance, a closure, a
-// promoted-scope handle, a tuple, a union -- reached by pointer or held
-// directly, which is the receiver expression's business and not this node's.
+// promoted-scope handle, a product -- reached by pointer or held directly,
+// which is the receiver expression's business and not this node's.
 // The receiver is explicit, so a backend never asks "what is the current
 // receiver?"; and for a class receiver the field is owner-qualified, so a
 // backend never derives which class arena to search from the receiver's type.
@@ -507,42 +509,19 @@ struct FieldAccessExpr {
   FieldRef field;
 };
 
-// LRM 10.9.1 array assignment pattern `'{e1, e2, ...}` element list: a value
-// that is its elements and nothing more, which is what makes it a primitive.
-// `Expr::type` is the list's own type -- contiguous storage of a known element
-// count -- because the list is a value in its own right; a container built over
-// one is a separate construction, so this is the same literal whichever one
-// consumes it.
-struct ArrayLiteralExpr {
-  std::vector<ExprId> elements;
-};
-
-// The same value at another type that structures its bits identically --
-// crossing between an enumeration and its base (LRM 6.19.3) is the case this
-// arises for. Nothing is built and nothing moves; what changes is the type the
-// program ascribes to the value, which is why this is a cast and not a
-// construction. A destination whose representation differs is a reshape, which
-// is a library call and reaches this node already reshaped.
-struct ValueCastExpr {
-  ExprId operand;
-};
-
-// A heterogeneous product value built from its component expressions in order
-// (`TupleExpr{key, value}` is a pair). `Expr::type` is the `TupleType`, off
-// which the component types are read at render time. The generic product
-// literal: an associative literal is an `ArrayLiteralExpr` of these.
-struct TupleExpr {
-  std::vector<ExprId> components;
-};
-
-// A homogeneous sequence value built from its element expressions in order.
-// `Expr::type` is the `VectorType`, off which the element type is read at
-// render time. The generic sequence literal -- the homogeneous counterpart to
-// `TupleExpr`, and the only way a sequence value comes into being, so a
-// sequence is always fully composed at the point it is built rather than
-// grown afterwards.
-struct VectorExpr {
-  std::vector<ExprId> elements;
+// A value that is its parts and nothing more, composed from them in order. It
+// decomposes into nothing further, which is what makes it a primitive rather
+// than a call: no entry is named and no library is asked to do anything.
+//
+// Which value is composed is `Expr::type`, the way a brace initializer's
+// meaning is the type it initializes -- a product from its components, a
+// contiguous element list from its elements. Each of those has exactly one way
+// to be built, so the type answers completely and nothing chooses. A value that
+// has more than one way to come into existence is not this node: it is a
+// library type, and it comes into existence through its own constructor with
+// this list among the arguments.
+struct CompositeExpr {
+  std::vector<ExprId> parts;
 };
 
 // The suspension protocol applied to an awaitable: entering it yields control
@@ -566,50 +545,63 @@ struct AwaitExpr {
   ExprId awaitable;
 };
 
-// Projects one element out of a sequence value by position. The inverse of
-// `VectorExpr`. The position is an operand rather than part of the node
-// because a sequence is homogeneous: which element is named cannot change the
-// element's type, so nothing about the projection has to be known at compile
-// time. Like every value-aggregate sub-access this extracts the element from
-// the sequence value; a sequence of storage is reached through the indirection
-// its elements already carry, not by addressing into the sequence itself.
+// Projects one element out of a sequence value by position. The position is an
+// operand rather than part of the node because a sequence is homogeneous:
+// which element is named cannot change the element's type, so nothing about
+// the projection has to be known at compile time. Like every value-aggregate
+// sub-access this extracts the element from the sequence value; a sequence of
+// storage is reached through the indirection its elements already carry, not by
+// addressing into the sequence itself.
 struct VectorGetExpr {
   ExprId vector;
   ExprId index;
 };
 
-// Builds a union value whose active member is component `index`, carrying
-// `value`. The value-build primitive for `UnionType`, the active-member
-// analogue of `TupleExpr`: a tuple literal lists every component, a union
-// literal names the one live member. Used to construct a union value -- a
-// default-initialized union builds `UnionExpr{0, <member 0 default>}`.
-// `Expr::type` is the `UnionType`.
+// Builds an active-member value whose live member is component `index`,
+// carrying `value`. The active-member counterpart to `CompositeExpr`: a
+// composite lists every part, this one names the single part that is the value.
+// Used wherever such a value comes into being -- a default-initialized union
+// builds `UnionExpr{0, <member 0 default>}`, and SystemVerilog's `tagged Member
+// expr` (LRM 11.9) builds the member it names.
+//
+// `Expr::type` says whether the live member is observable and a mismatched
+// reach fails, or is erased with a cross-member read defaulted; that is the
+// value's own semantics and changes nothing about the build. A member carrying
+// no bits is filled in with its type's value at HIR-to-MIR, so `value` is
+// always present and no consumer decides what an absent one would mean.
 struct UnionExpr {
   base::ComponentIndex index;
   ExprId value;
 };
 
-// Builds a tagged-union value whose active tag is `tag_index`, carrying
-// `payload`. The value-build primitive for `TaggedUnionType` and the tagged
-// analogue of `UnionExpr`: SystemVerilog spells this as `tagged Member expr`
-// (or `tagged Member` for a `void` member, LRM 11.9). Every tag carries a
-// payload here, including a `void` one -- the source's missing operand is
-// filled in with that element type's value at HIR-to-MIR, so a consumer never
-// has to decide what an absent one would mean. `Expr::type` is the
-// `TaggedUnionType`.
-struct TaggedExpr {
-  base::ComponentIndex tag_index;
-  ExprId payload;
-};
-
 // Non-throwing tag check: `1` iff the tagged-union value's active tag equals
 // `tag_index`. `Expr::type` is a 1-bit packed vector (the `bool`-shaped result
 // that `if` and `?:` consume). Pattern-matching desugar emits this as the
-// guard preceding every `TaggedGetExpr` (LRM 12.6), keeping the run-time
-// mismatch error path reserved for the direct dot-access surface.
+// guard preceding every member reach (LRM 12.6), keeping the run-time mismatch
+// error path reserved for the direct dot-access surface.
 struct TaggedIsExpr {
   ExprId union_value;
   base::ComponentIndex tag_index;
+};
+
+// One member of an active-member value, named by its declaration-order
+// position. Only one member is live at a time, so reaching the named member
+// answers with its value when it is the live one and writing it makes it the
+// live one.
+//
+// What reaching a member that is not the live one answers with is the value's
+// own semantics and travels with its type: an untagged union answers with that
+// member's default, since LRM 7.3 leaves the read undefined and a deterministic
+// stand-in is what no program may depend on, while a tagged one raises a
+// run-time error (LRM 7.3.2, 11.9). No consumer chooses between the two --
+// each reaches the entry its operand's type names, which is where every value
+// operation's realization comes from.
+//
+// `Expr::type` is the member's type, and where the occurrence stands settles
+// which of the two readings it is.
+struct UnionMemberExpr {
+  ExprId union_value;
+  base::ComponentIndex index;
 };
 
 // Used where a runtime callback surface takes a bare function value with no
@@ -676,16 +668,31 @@ struct ExternalStaticPropertyRef {
   std::string property_name;
 };
 
+// Which declared thing a reference names. The alternatives differ in the table
+// that resolves the name -- a body's own bindings, a class's arena, another
+// unit's signature, the descriptors this unit generates -- and that is the
+// referent's business: every one of them reaches storage or code that exists
+// whether or not this expression names it.
+using ReferenceTarget = std::variant<
+    LocalRef, FunctionRef, StaticConstantRef, PackedTypeRef, StaticPropertyRef,
+    ExternalUnitVariableRef, ExternalStaticPropertyRef>;
+
+// Names a declared thing. Reading it loads what the name reaches, assigning to
+// it stores there, and taking its address yields a pointer to it -- one node
+// for all of that, because which of them an occurrence is follows from where it
+// stands, exactly as it does for a field access.
+struct ReferenceExpr {
+  ReferenceTarget target;
+};
+
 using ExprData = std::variant<
     StringLiteral, NullLiteral, MachineBoolLiteral, MachineIntLiteral,
-    MachineFloatLiteral, LocalRef, UnaryExpr, BinaryExpr, BoolCastExpr,
+    MachineFloatLiteral, ReferenceExpr, UnaryExpr, BinaryExpr, BoolCastExpr,
     ConditionalExpr, BlockExpr, AssignExpr, IncDecExpr, CallExpr, DerefExpr,
     AddressOfExpr, MachineArrayDataExpr, MoveExpr, PointerCastExpr,
-    FunctionCastExpr, IntCastExpr, FieldAccessExpr, ClosureExpr,
-    ArrayLiteralExpr, ValueCastExpr, TupleExpr, VectorExpr, AwaitExpr,
-    VectorGetExpr, UnionExpr, TaggedExpr, TaggedIsExpr, FunctionRef,
-    StaticConstantRef, PackedTypeRef, StaticPropertyRef,
-    ExternalUnitVariableRef, ExternalStaticPropertyRef>;
+    FunctionCastExpr, IntCastExpr, FieldAccessExpr, ClosureExpr, CompositeExpr,
+    ValueCastExpr, AwaitExpr, VectorGetExpr, UnionExpr, TaggedIsExpr,
+    UnionMemberExpr>;
 
 struct Expr {
   ExprData data;
@@ -693,7 +700,20 @@ struct Expr {
 };
 
 [[nodiscard]] inline auto MakeLocalRefExpr(LocalId var, TypeId type) -> Expr {
-  return Expr{.data = LocalRef{.var = var}, .type = type};
+  return Expr{
+      .data = ReferenceExpr{.target = LocalRef{.var = var}}, .type = type};
+}
+
+// The local a reference names, for a consumer following where storage lives;
+// absent for a reference to anything a body does not bind.
+[[nodiscard]] inline auto ReferencedLocal(const ExprData& data)
+    -> std::optional<LocalId> {
+  const auto* reference = std::get_if<ReferenceExpr>(&data);
+  if (reference == nullptr) {
+    return std::nullopt;
+  }
+  const auto* local = std::get_if<LocalRef>(&reference->target);
+  return local != nullptr ? std::optional{local->var} : std::nullopt;
 }
 
 // The library entry a call names outright, if it names one. A call whose callee
@@ -722,15 +742,22 @@ struct Expr {
       .data = AssignExpr{.target = target, .value = value}, .type = type};
 }
 
+// The object the call dispatches on, absent for a call that dispatches on
+// nothing. The one place the question is answered, so no consumer works out
+// which operand a receiver is from a signature, a namespace, or an operand's
+// type.
+[[nodiscard]] auto CalleeReceiver(const Callee& callee)
+    -> std::optional<ExprId>;
+
 // Whether the call's receiver is mutated by the dispatch. True only for a
 // direct call to a built-in whose id is in the mutating set; everything
 // else (direct call to a user method, indirect, construct) is false.
 [[nodiscard]] auto IsMutatingCallee(const Callee& callee) -> bool;
 
-// Whether the call reaches into what `args[0]` names, so a consumer that wants
-// the call as a place wants that argument as one too. True only for a direct
-// call to a built-in whose id is in the reaching set; everything else (direct
-// call to a user method, indirect, construct) is false.
+// Whether the call reaches into what its receiver names, so a consumer that
+// wants the call as a place wants the receiver as one too. True only for a
+// direct call to a built-in whose id is in the reaching set; everything else
+// (direct call to a user method, indirect, construct) is false.
 [[nodiscard]] auto ReachesThroughReceiver(const Callee& callee) -> bool;
 
 // `lyra::runtime::current_runtime()` -- reaches the attached Runtime's
@@ -754,7 +781,7 @@ struct Expr {
   return Expr{.data = DerefExpr{.pointer = place}, .type = referent_type};
 }
 
-// `receiver.index` -- one field of a structural product, named by position.
+// `receiver.index` -- one component of a product value, named by position.
 [[nodiscard]] inline auto MakeComponentAccessExpr(
     ExprId receiver, base::ComponentIndex index, TypeId component) -> Expr {
   return Expr{
@@ -762,6 +789,15 @@ struct Expr {
           FieldAccessExpr{
               .receiver = receiver, .field = ComponentTarget{.index = index}},
       .type = component};
+}
+
+// `union_value.index` -- one member of an active-member value, named by
+// position.
+[[nodiscard]] inline auto MakeUnionMemberExpr(
+    ExprId union_value, base::ComponentIndex index, TypeId member) -> Expr {
+  return Expr{
+      .data = UnionMemberExpr{.union_value = union_value, .index = index},
+      .type = member};
 }
 
 // Reading what a capability wrapper's storage holds. An operation on the
@@ -773,8 +809,9 @@ struct Expr {
   return Expr{
       .data =
           CallExpr{
-              .callee = Direct{.target = support::BuiltinFn::kLoad},
-              .arguments = {cell}},
+              .callee =
+                  Direct{.target = support::BuiltinFn::kLoad, .receiver = cell},
+              .arguments = {}},
       .type = value};
 }
 
@@ -787,8 +824,11 @@ struct Expr {
   return Expr{
       .data =
           CallExpr{
-              .callee = Direct{.target = support::BuiltinFn::kSampledLoad},
-              .arguments = {cell}},
+              .callee =
+                  Direct{
+                      .target = support::BuiltinFn::kSampledLoad,
+                      .receiver = cell},
+              .arguments = {}},
       .type = value};
 }
 
@@ -801,8 +841,11 @@ struct Expr {
   return Expr{
       .data =
           CallExpr{
-              .callee = Direct{.target = support::BuiltinFn::kArmSampling},
-              .arguments = {cell}},
+              .callee =
+                  Direct{
+                      .target = support::BuiltinFn::kArmSampling,
+                      .receiver = cell},
+              .arguments = {}},
       .type = void_type};
 }
 
@@ -815,8 +858,11 @@ struct Expr {
   return Expr{
       .data =
           CallExpr{
-              .callee = Direct{.target = support::BuiltinFn::kInitialize},
-              .arguments = {wrapper, prototype}},
+              .callee =
+                  Direct{
+                      .target = support::BuiltinFn::kInitialize,
+                      .receiver = wrapper},
+              .arguments = {prototype}},
       .type = void_type};
 }
 
@@ -827,8 +873,11 @@ struct Expr {
   return Expr{
       .data =
           CallExpr{
-              .callee = Direct{.target = support::BuiltinFn::kAttachDriver},
-              .arguments = {net}},
+              .callee =
+                  Direct{
+                      .target = support::BuiltinFn::kAttachDriver,
+                      .receiver = net},
+              .arguments = {}},
       .type = driver_type};
 }
 

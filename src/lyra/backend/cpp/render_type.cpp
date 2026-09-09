@@ -1,7 +1,7 @@
 #include "lyra/backend/cpp/render_type.hpp"
 
-#include <cstddef>
 #include <format>
+#include <span>
 #include <string>
 #include <string_view>
 #include <variant>
@@ -30,6 +30,17 @@ auto NetResolutionCppLiteral(mir::NetResolution resolution)
   throw InternalError("NetResolutionCppLiteral: unknown NetResolution");
 }
 
+auto RenderEachTypeAsCpp(
+    const mir::CompilationUnit& unit, std::span<const mir::TypeId> types)
+    -> std::vector<std::string> {
+  std::vector<std::string> rendered;
+  rendered.reserve(types.size());
+  for (const mir::TypeId type : types) {
+    rendered.push_back(RenderTypeAsCpp(unit, type));
+  }
+  return rendered;
+}
+
 auto RenderTypeAsCpp(const mir::CompilationUnit& unit, mir::TypeId type_id)
     -> std::string {
   return unit.types.Get(type_id).Visit(
@@ -53,42 +64,36 @@ auto RenderTypeAsCpp(const mir::CompilationUnit& unit, mir::TypeId type_id)
             return std::string{"bool"};
           },
           [](const mir::MachineIntType& m) -> std::string {
-            const std::string_view sign =
-                m.signedness == mir::Signedness::kSigned ? "" : "u";
-            switch (m.bit_width) {
-              case 8:
-              case 16:
-              case 32:
-              case 64:
-                return std::format("std::{}int{}_t", sign, m.bit_width);
-              default:
-                throw InternalError(
-                    "RenderTypeAsCpp: unsupported MachineIntType width");
+            const bool is_signed = m.signedness == mir::Signedness::kSigned;
+            switch (m.width) {
+              case mir::MachineIntWidth::k8:
+                return is_signed ? "std::int8_t" : "std::uint8_t";
+              case mir::MachineIntWidth::k16:
+                return is_signed ? "std::int16_t" : "std::uint16_t";
+              case mir::MachineIntWidth::k32:
+                return is_signed ? "std::int32_t" : "std::uint32_t";
+              case mir::MachineIntWidth::k64:
+                return is_signed ? "std::int64_t" : "std::uint64_t";
             }
+            throw InternalError("RenderTypeAsCpp: unknown MachineIntWidth");
           },
           [](const mir::MachineFloatType& m) -> std::string {
-            switch (m.bit_width) {
-              case 32:
+            switch (m.width) {
+              case mir::MachineFloatWidth::k32:
                 return std::string{"float"};
-              case 64:
+              case mir::MachineFloatWidth::k64:
                 return std::string{"double"};
-              default:
-                throw InternalError(
-                    "RenderTypeAsCpp: unsupported MachineFloatType width");
             }
+            throw InternalError("RenderTypeAsCpp: unknown MachineFloatWidth");
           },
           [&](const mir::MachineArrayType& m) -> std::string {
             return std::format(
                 "std::array<{}, {}>", RenderTypeAsCpp(unit, m.element), m.size);
           },
           [&](const mir::MachineFunctionType& m) -> std::string {
-            std::string params;
-            for (std::size_t i = 0; i < m.params.size(); ++i) {
-              if (i != 0) params += ", ";
-              params += RenderTypeAsCpp(unit, m.params[i]);
-            }
             return std::format(
-                "{} (*)({})", RenderTypeAsCpp(unit, m.result), params);
+                "{} (*)({})", RenderTypeAsCpp(unit, m.result),
+                JoinCommaSeparated(RenderEachTypeAsCpp(unit, m.params)));
           },
           [](const mir::ChandleType&) -> std::string {
             return std::string{"lyra::value::Chandle"};
@@ -267,31 +272,22 @@ auto RenderTypeAsCpp(const mir::CompilationUnit& unit, mir::TypeId type_id)
                 "std::vector<{}>", RenderTypeAsCpp(unit, v.element));
           },
           [&](const mir::TupleType& t) -> std::string {
-            std::string inners;
-            for (std::size_t i = 0; i < t.elements.size(); ++i) {
-              if (i != 0) inners += ", ";
-              inners += RenderTypeAsCpp(unit, t.elements[i]);
-            }
-            return std::format("lyra::value::Tuple<{}>", inners);
+            return std::format(
+                "lyra::value::Tuple<{}>",
+                JoinCommaSeparated(RenderEachTypeAsCpp(unit, t.elements)));
           },
           [&](const mir::UnionType& u) -> std::string {
-            std::string inners;
-            for (std::size_t i = 0; i < u.elements.size(); ++i) {
-              if (i != 0) inners += ", ";
-              inners += RenderTypeAsCpp(unit, u.elements[i]);
-            }
-            return std::format("lyra::value::Union<{}>", inners);
+            return std::format(
+                "lyra::value::Union<{}>",
+                JoinCommaSeparated(RenderEachTypeAsCpp(unit, u.elements)));
           },
           [](const mir::EmptyType&) -> std::string {
             return std::string{"lyra::value::Empty"};
           },
           [&](const mir::TaggedUnionType& u) -> std::string {
-            std::string inners;
-            for (std::size_t i = 0; i < u.elements.size(); ++i) {
-              if (i != 0) inners += ", ";
-              inners += RenderTypeAsCpp(unit, u.elements[i]);
-            }
-            return std::format("lyra::value::TaggedUnion<{}>", inners);
+            return std::format(
+                "lyra::value::TaggedUnion<{}>",
+                JoinCommaSeparated(RenderEachTypeAsCpp(unit, u.elements)));
           },
           [&](const mir::ObservableType& o) -> std::string {
             return std::format(
@@ -341,6 +337,13 @@ auto RenderTypeConstructionAsCpp(
           [&](const mir::ManagedRefType& m) -> std::string {
             return std::format(
                 "lyra::runtime::GcNew<{}>", RenderTypeAsCpp(unit, m.pointee));
+          },
+          // The target type a sequence is kept in takes no element list of its
+          // own, so what names its construction is the library entry that does.
+          [&](const mir::VectorType& v) -> std::string {
+            return std::format(
+                "lyra::runtime::MakeSequence<{}>",
+                RenderTypeAsCpp(unit, v.element));
           },
           // Every other type is built by naming itself.
           [&](const auto&) -> std::string {

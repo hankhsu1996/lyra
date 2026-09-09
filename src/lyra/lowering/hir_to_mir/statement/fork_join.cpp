@@ -133,7 +133,7 @@ auto LowerForkStmt(
       process.Owner().Unit().types, builtins.coroutine_void, branches.size());
   const mir::ExprId branches_id = fork_block.exprs.Add(
       mir::Expr{
-          .data = mir::ArrayLiteralExpr{.elements = std::move(branches)},
+          .data = mir::CompositeExpr{.parts = std::move(branches)},
           .type = branches_type});
 
   const JoinDispatch dispatch = DispatchForJoinMode(f.mode);

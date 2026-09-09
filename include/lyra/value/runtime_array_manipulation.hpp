@@ -337,7 +337,11 @@ template <typename Container>
 [[nodiscard]] inline auto RuntimeArrayMap(
     const RuntimeAssociativeArray& receiver, const ArrayMethodBody& body,
     RuntimeValue prototype) -> RuntimeAssociativeArray {
-  RuntimeAssociativeArray projected(std::move(prototype));
+  // The projected element type answers a miss as well as naming the shape:
+  // mapping produces no `default:` clause of its own, so the absent-key answer
+  // is that type's own default.
+  RuntimeValue miss = prototype;
+  RuntimeAssociativeArray projected(std::move(prototype), std::move(miss));
   for (const detail::ErasedEntry& entry : detail::ErasedEntriesOf(receiver)) {
     projected =
         projected.WithElement(entry.index, body(*entry.element, entry.index));

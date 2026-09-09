@@ -148,41 +148,28 @@ struct Formatter<WildcardKey> {
 // iteration and `%p` formatting follow the LRM 7.8 key ordering and stay
 // deterministic.
 //
-// The element default and the invalid-key discard target are carried by an
-// `OobShield`. A read of a nonexistent or invalid key (LRM 7.8.6) returns the
-// element default unless `user_default_` overrides it (LRM 7.9.11). There is no
-// boundary trigger as in an indexed array -- an associative array has no index
-// bounds -- so the shield fires on a missing or invalid key instead.
+// The element shape and the invalid-key discard target are carried by an
+// `OobShield`; there is no boundary trigger as in an indexed array -- an
+// associative array has no index bounds -- so the shield fires on a missing or
+// invalid key instead. What a read of a nonexistent or invalid key answers with
+// (LRM 7.8.6) is its own persistent value, which a `default:` clause names
+// (LRM 7.9.11) and which is otherwise the element type's default.
 template <typename K, typename V>
 class AssociativeArray {
  public:
   using KeyType = K;
   using ElementType = V;
 
-  // Sentinel "uninitialized" form -- empty map with a default-constructed
-  // shield, used as the declared default state of an associative field before
-  // the constructor scope seeds the element shape.
+  // Sentinel "uninitialized" form -- an empty map holding no element shape yet,
+  // used as the declared default state of an associative field before the
+  // constructor scope seeds it.
   AssociativeArray() = default;
 
-  // Empty map with the shield seeded, used for declarations like
-  // `int m[string];` where the element shape is known at lowering time.
-  explicit AssociativeArray(V element_default)
-      : shield_(std::move(element_default)) {
-  }
-
   // LRM 7.9.11 associative literal `'{key: value, ...}`: seed the map from the
-  // (key, value) entries. The shield still carries the element-type default for
-  // a read of an absent key.
-  AssociativeArray(V element_default, std::span<const Tuple<K, V>> entries)
-      : shield_(std::move(element_default)) {
-    for (const auto& entry : entries) {
-      data_.insert_or_assign(entry.template Get<0>(), entry.template Get<1>());
-    }
-  }
-
-  // LRM 7.9.11 with an explicit `default:`: the persistent fallback that a read
-  // of an absent key returns (LRM 7.8.6) and the seed for an entry allocated on
-  // a later write (LRM 7.8.7).
+  // (key, value) entries. The shield carries the element shape; `user_default`
+  // is what a read of an absent key returns (LRM 7.8.6) and the seed for an
+  // entry a later write allocates (LRM 7.8.7), which a `default:` clause names
+  // and which is otherwise the element type's own default.
   AssociativeArray(
       V element_default, std::span<const Tuple<K, V>> entries, V user_default)
       : shield_(std::move(element_default)),
@@ -212,16 +199,17 @@ class AssociativeArray {
     return PackedArray::Int(data_.contains(key) ? 1 : 0);
   }
 
-  // LRM 7.9.2: delete a single entry (no warning if absent) or, via the
-  // no-argument overload, clear the whole array. An invalid key is a no-op.
-  auto Delete(const K& key) -> void {
+  // LRM 7.9.2: clearing the whole array and deleting the one element a key
+  // names (no warning if absent) are two requests the source spells with one
+  // word, so each has a name of its own. An invalid key is a no-op.
+  auto Delete() -> void {
+    data_.clear();
+  }
+  auto DeleteIndex(const K& key) -> void {
     if (IsInvalidKey(key)) {
       return;
     }
     data_.erase(key);
-  }
-  auto Delete() -> void {
-    data_.clear();
   }
 
   // LRM Table 6-7: an associative array's default is empty. When this container
@@ -255,11 +243,7 @@ class AssociativeArray {
     }
     auto it = data_.find(key);
     if (it == data_.end()) {
-      it = data_
-               .emplace(
-                   key, user_default_.has_value() ? *user_default_
-                                                  : shield_.Default())
-               .first;
+      it = data_.emplace(key, user_default_).first;
     }
     return it->second;
   }
@@ -434,8 +418,11 @@ class AssociativeArray {
     for (const auto& [k, v] : data_) {
       pairs.emplace_back(k, closure(v, k));
     }
+    // Mapping writes no `default:` clause of its own, so what a read of an
+    // absent key answers with is the projected element type's own default.
+    U miss = proto;
     return AssociativeArray<K, U>(
-        std::move(proto), std::span<const Tuple<K, U>>{pairs});
+        std::move(proto), std::span<const Tuple<K, U>>{pairs}, std::move(miss));
   }
 
   // LRM 11.2.2 aggregate equality / 11.4.5: same key set and each paired value
@@ -489,11 +476,7 @@ class AssociativeArray {
   // default is part of the value, so changing it alone is an observable change.
   [[nodiscard]] auto IsBitIdentical(const AssociativeArray& other) const
       -> bool {
-    if (user_default_.has_value() != other.user_default_.has_value()) {
-      return false;
-    }
-    if (user_default_.has_value() &&
-        !user_default_->IsBitIdentical(*other.user_default_)) {
+    if (!user_default_.IsBitIdentical(other.user_default_)) {
       return false;
     }
     if (data_.size() != other.data_.size()) {
@@ -570,10 +553,9 @@ class AssociativeArray {
   }
 
   // The value a read of an absent or invalid key yields (LRM 7.8.6 / 7.9.11):
-  // the persistent user default when one was set, otherwise the element-type
-  // default the shield carries.
+  // the persistent default the array was built with.
   [[nodiscard]] auto MissValue() const -> const V& {
-    return user_default_.has_value() ? *user_default_ : shield_.Default();
+    return user_default_;
   }
 
   // The LRM 7.12 entry stream: a
@@ -588,7 +570,7 @@ class AssociativeArray {
   }
 
   detail::OobShield<V> shield_;
-  std::optional<V> user_default_;
+  V user_default_;
   std::map<K, V, typename AssocKeyTraits<K>::Less> data_;
 };
 

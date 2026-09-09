@@ -32,6 +32,31 @@ auto TranslateSignedness(mir::Signedness s) -> lir::Signedness {
                                        : lir::Signedness::kUnsigned;
 }
 
+auto TranslateMachineIntWidth(mir::MachineIntWidth w) -> lir::MachineIntWidth {
+  switch (w) {
+    case mir::MachineIntWidth::k8:
+      return lir::MachineIntWidth::k8;
+    case mir::MachineIntWidth::k16:
+      return lir::MachineIntWidth::k16;
+    case mir::MachineIntWidth::k32:
+      return lir::MachineIntWidth::k32;
+    case mir::MachineIntWidth::k64:
+      return lir::MachineIntWidth::k64;
+  }
+  throw InternalError("TranslateMachineIntWidth: unknown MachineIntWidth");
+}
+
+auto TranslateMachineFloatWidth(mir::MachineFloatWidth w)
+    -> lir::MachineFloatWidth {
+  switch (w) {
+    case mir::MachineFloatWidth::k32:
+      return lir::MachineFloatWidth::k32;
+    case mir::MachineFloatWidth::k64:
+      return lir::MachineFloatWidth::k64;
+  }
+  throw InternalError("TranslateMachineFloatWidth: unknown MachineFloatWidth");
+}
+
 auto TranslateNetResolution(mir::NetResolution r) -> lir::NetResolution {
   switch (r) {
     case mir::NetResolution::kTriState:
@@ -137,11 +162,12 @@ auto UnitLowerer::TranslateType(const mir::Type& ty) -> lir::Type {
           },
           [](const mir::MachineIntType& mi) -> lir::Type {
             return lir::Type{lir::MachineIntType{
-                .bit_width = mi.bit_width,
+                .width = TranslateMachineIntWidth(mi.width),
                 .signedness = TranslateSignedness(mi.signedness)}};
           },
           [](const mir::MachineFloatType& mf) -> lir::Type {
-            return lir::Type{lir::MachineFloatType{.bit_width = mf.bit_width}};
+            return lir::Type{lir::MachineFloatType{
+                .width = TranslateMachineFloatWidth(mf.width)}};
           },
           [&](const mir::MachineArrayType& ma) -> lir::Type {
             return lir::Type{lir::MachineArrayType{
@@ -266,8 +292,9 @@ auto UnitLowerer::TranslateType(const mir::Type& ty) -> lir::Type {
             return lir::Type{
                 lir::ObservableType{.value = TranslateType(ob.value)}};
           },
-          [&](const mir::StructType&) -> lir::Type {
-            return RecordUnsupportedType("a nominal struct");
+          [&](const mir::StructType& s) -> lir::Type {
+            return lir::Type{
+                lir::StructType{.struct_id = StructDeclaration(s.struct_id)}};
           },
           [&](const mir::ClosureType& c) -> lir::Type {
             return lir::Type{lir::ClosureType{

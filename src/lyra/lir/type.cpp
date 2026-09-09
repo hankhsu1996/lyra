@@ -57,6 +57,20 @@ void Combine(std::size_t& seed, const PackedArrayType& packed) {
 
 }  // namespace
 
+auto BitsOf(MachineIntWidth width) -> std::uint32_t {
+  switch (width) {
+    case MachineIntWidth::k8:
+      return 8;
+    case MachineIntWidth::k16:
+      return 16;
+    case MachineIntWidth::k32:
+      return 32;
+    case MachineIntWidth::k64:
+      return 64;
+  }
+  throw InternalError("lir: unknown MachineIntWidth");
+}
+
 auto Type::Hash::operator()(const Type& type) const -> std::size_t {
   std::size_t seed = std::hash<std::size_t>{}(type.data_.index());
   type.Visit(
@@ -88,10 +102,10 @@ auto Type::Hash::operator()(const Type& type) const -> std::size_t {
           [](const MachineCStringType&) {},
           [](const MachineBoolType&) {},
           [&](const MachineIntType& t) {
-            Combine(seed, t.bit_width);
+            Combine(seed, t.width);
             Combine(seed, t.signedness);
           },
-          [&](const MachineFloatType& t) { Combine(seed, t.bit_width); },
+          [&](const MachineFloatType& t) { Combine(seed, t.width); },
           [&](const MachineArrayType& t) {
             Combine(seed, t.element);
             Combine(seed, t.size);
@@ -113,6 +127,7 @@ auto Type::Hash::operator()(const Type& type) const -> std::size_t {
           },
           [&](const RuntimeClassType& t) { Combine(seed, t.symbol); },
           [&](const ClosureType& t) { Combine(seed, t.closure_id.value); },
+          [&](const StructType& t) { Combine(seed, t.struct_id.value); },
           [](const RuntimeEffectsType&) {},
           [](const FilesType&) {},
           [](const DiagnosticType&) {},
@@ -172,6 +187,7 @@ auto Type::KindName() const -> std::string_view {
           [](const CrossUnitClassType&) { return "cross-unit class"; },
           [](const RuntimeClassType&) { return "runtime class"; },
           [](const ClosureType&) { return "closure"; },
+          [](const StructType&) { return "struct"; },
           [](const RuntimeEffectsType&) { return "runtime services"; },
           [](const FilesType&) { return "file table"; },
           [](const DiagnosticType&) { return "diagnostic dispatcher"; },

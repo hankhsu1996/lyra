@@ -145,10 +145,11 @@ _Rejected alternatives:_
 - The pattern extends naturally to queue, associative array, packed-struct collection,
   unpacked-struct collection, and any future wrapper whose element type requires runtime
   construction parameters. Each new wrapper introduces `element_default_` / `discard_sink_` members
-  following the same shape and implements its own `ResetToDefault`. (Associative array names its
-  immutable default `element_default_` too, paired with the LRM 7.9.11 `user_default_` override.)
-  Associative array's "auto-allocate on write" rule (LRM 7.8.7) is a different element-access
-  contract and requires its own design when that workstream opens.
+  following the same shape and implements its own `ResetToDefault`. (Associative array carries the
+  same immutable shape prototype, paired with the value a read of an absent index answers with,
+  which a LRM 7.9.11 `default:` clause names and which is otherwise that prototype.) Associative
+  array's "auto-allocate on write" rule (LRM 7.8.7) is a different element-access contract and
+  requires its own design when that workstream opens.
 
 - Shape uniformity within a collection is enforced by convention -- lowering supplies the same
   canonical default for all writes and never mixes shapes in one container -- not by the C++ type

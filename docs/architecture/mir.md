@@ -157,8 +157,8 @@ suspect, not the analysis (`lowering_organization.md` states this discipline in 
     primitives, so if it is missing, HIR-to-MIR is incomplete and should emit that combination
     instead. The primitive set does grow, but only for a genuinely new generic-language concept,
     never to model a backend / library / sugar shape (see Owns). The backend-side consequence is
-    owned by `backend_contract.md`: render is mechanical (a fixed function of one MIR node, no
-    decision logic in value emission), and the canonical falsifier for a MIR shape is "could a
+    owned by `backend_contract.md`: a backend entry is a fixed function of one MIR node and chooses
+    a spelling rather than an operation, and the canonical falsifier for a MIR shape is "could a
     mechanical LLVM IR backend translate this without decisions?" When designing or extending a MIR
     primitive, every binding `mir.md` invariant cross-checks against `backend_contract.md`'s
     mechanical-translation invariant; the two are halves of the same contract. _Programming-
@@ -238,13 +238,13 @@ suspect, not the analysis (`lowering_organization.md` states this discipline in 
   realizes per-unit MIR as target-language source: type mapping (one dispatch per MIR type variant
   returning a target-language type representation) and value emission (mechanical translation of MIR
   primitives, with no runtime library names appearing outside the type-mapping dispatch, and no
-  decision logic anywhere). A render that needs anything beyond the node's structural fields is
-  reading something MIR has not stated; the fix is upstream of render, never inside it. **Any MIR
-  design decision is validated against the backend contract**: if the proposed shape forces a
-  backend to branch in value emission (an `if` in render whose arms produce different syntactic
-  shapes, a payload-driven decision, a fabricated expression), the MIR design is wrong even if the
-  C++ backend can express it. The canonical check is "could a mechanical LLVM IR backend translate
-  this without decisions?".
+  entry choosing which operation a node names). A render that needs anything beyond the node's
+  structural fields is reading something MIR has not stated; the fix is upstream of render, never
+  inside it. **Any MIR design decision is validated against the backend contract**: if the proposed
+  shape leaves a backend choosing between arms a reader could tell apart by running the program, or
+  fabricating an expression, the MIR design is wrong even if the C++ backend can express it. Two
+  spellings of one operation are not that. The canonical check is "could a mechanical LLVM IR
+  backend translate this without deciding what the node means?".
 
 ## Forbidden Shapes
 
@@ -327,9 +327,11 @@ implies; the diagnostic for any new forbidden shape is "what identity property d
   _value_ (integral resize, real <-> integral, packed <-> string) is a library call, never a cast
   node. (A primitive means one thing; a backend does not re-derive semantics MIR declined to state.)
 - A backend that recovers a semantic fact MIR does not state by inferring it from a node's body
-  contents or any side signal, instead of reading it from an explicit node or reference. Reading
-  which node consumes a value is reading structure and is allowed; scanning a body to decide what it
-  must be is re-deriving. If two backends could infer a fact differently, it is not yet in MIR and
+  contents or any side signal, instead of reading it from an explicit node or reference. A node's
+  own structural context is not a side signal: the type of an operand it was handed, and the node
+  that consumes it, are the input, and reading either is reading structure. Scanning a body to
+  decide what it must be, or matching on what an operand happens to be in order to take a different
+  path, is re-deriving. If two backends could infer a fact differently, it is not yet in MIR and
   belongs there -- expressed through the existing primitive set.
 - A node field that no backend's realization reads, or that restates what the node's structural
   context -- the nodes it references, or the node that consumes it -- already fixes. A node's fields

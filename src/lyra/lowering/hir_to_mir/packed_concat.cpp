@@ -43,8 +43,10 @@ auto BuildPackedConcat(
             .data =
                 mir::CallExpr{
                     .callee =
-                        mir::Direct{.target = support::BuiltinFn::kConcat},
-                    .arguments = {joined, runs[i]}},
+                        mir::Direct{
+                            .target = support::BuiltinFn::kConcat,
+                            .receiver = joined},
+                    .arguments = {runs[i]}},
             .type = mir::PackedVectorOf(unit.types, width, state_kind)});
   }
   return joined;

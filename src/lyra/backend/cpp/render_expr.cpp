@@ -1,9 +1,9 @@
 #include "lyra/backend/cpp/render_expr.hpp"
 
-#include <cstddef>
 #include <cstdint>
 #include <format>
 #include <optional>
+#include <span>
 #include <string>
 #include <string_view>
 #include <variant>
@@ -37,10 +37,10 @@ auto LookupLocalName(const ScopeView& view, const mir::LocalRef& ref)
   return view.Local(ref).name;
 }
 
-// The C++ operator token for the SV binary ops that render natively. The
-// method-style ops (shifts, power, xnor, wildcard / case / implication /
-// equivalence) are lifted to `CallExpr` at HIR-to-MIR and never reach this
-// dispatch; reaching one is an MIR-invariant violation.
+// The C++ token for an operator this target applies to two values. A shift has
+// none -- C++ decides between the arithmetic and the logical form from the
+// operand's signedness where SV names it in the operator -- so a shift is
+// reached through the library instead.
 auto BinaryOpToken(mir::BinaryOp op) -> std::string_view {
   switch (op) {
     case mir::BinaryOp::kAdd:
@@ -75,22 +75,12 @@ auto BinaryOpToken(mir::BinaryOp op) -> std::string_view {
       return "&&";
     case mir::BinaryOp::kLogicalOr:
       return "||";
-    case mir::BinaryOp::kPower:
-    case mir::BinaryOp::kBitwiseXnor:
     case mir::BinaryOp::kShiftLeft:
     case mir::BinaryOp::kLogicalShiftRight:
     case mir::BinaryOp::kArithmeticShiftRight:
-    case mir::BinaryOp::kLogicalImplication:
-    case mir::BinaryOp::kLogicalEquivalence:
-    case mir::BinaryOp::kWildcardEquality:
-    case mir::BinaryOp::kWildcardInequality:
-    case mir::BinaryOp::kCaseEquality:
-    case mir::BinaryOp::kCaseInequality:
-    case mir::BinaryOp::kCasezEquality:
-    case mir::BinaryOp::kCasexEquality:
       throw InternalError(
-          "BinaryOpToken: method-style operator reached backend render; "
-          "HIR-to-MIR should have lifted it to a CallExpr");
+          "BinaryOpToken: a shift is performed by a library entry and reaches "
+          "no expression; only a compound assignment names one");
   }
   throw InternalError("BinaryOpToken: unknown MIR BinaryOp");
 }
@@ -103,33 +93,14 @@ auto UnaryOpToken(mir::UnaryOp op) -> std::string_view {
       return "~";
     case mir::UnaryOp::kLogicalNot:
       return "!";
-    case mir::UnaryOp::kPlus:
-      // kPlus has no C++ token: PackedArray / String have no `operator+()`
-      // (LRM 11.4.3 unary plus is a no-op), so render emits the bare
-      // operand instead -- handled separately in `RenderUnaryExpr`.
-    case mir::UnaryOp::kReductionAnd:
-    case mir::UnaryOp::kReductionOr:
-    case mir::UnaryOp::kReductionXor:
-    case mir::UnaryOp::kReductionNand:
-    case mir::UnaryOp::kReductionNor:
-    case mir::UnaryOp::kReductionXnor:
-      throw InternalError(
-          "UnaryOpToken: operator has no native C++ token; "
-          "kPlus is identity (handled by RenderUnaryExpr) and reductions "
-          "lift to CallExpr at HIR-to-MIR");
   }
   throw InternalError("UnaryOpToken: unknown MIR UnaryOp");
 }
 
 auto RenderUnaryExpr(const ScopeView& view, const mir::UnaryExpr& u)
     -> std::string {
-  std::string operand = RenderExpr(view, view.Expr(u.operand));
-  // LRM 11.4.3: unary plus is an identity; no C++ `operator+()` exists on
-  // PackedArray / String / RealValue, so render the operand directly.
-  if (u.op == mir::UnaryOp::kPlus) {
-    return std::format("({})", operand);
-  }
-  return std::format("({}{})", UnaryOpToken(u.op), operand);
+  return std::format(
+      "({}{})", UnaryOpToken(u.op), RenderExpr(view, view.Expr(u.operand)));
 }
 
 auto RenderBinaryExpr(const ScopeView& view, const mir::BinaryExpr& b)
@@ -226,12 +197,11 @@ auto ResolveFieldAccess(const ScopeView& view, const mir::FieldAccessExpr& m)
             // resolves against the receiver's static type.
             return FieldAccess{.name = t.field_name, .through_receiver = true};
           },
-          // A structural product's field is a position rather than a name in an
-          // arena, so its access composes before this dispatch is reached.
+          // A product's component is a position rather than a name in an arena,
+          // so its access composes before this dispatch is reached.
           [](const mir::ComponentTarget&) -> FieldAccess {
             throw InternalError(
-                "ResolveFieldAccess: a structural product's field has no arena "
-                "name");
+                "ResolveFieldAccess: a product's component has no arena name");
           },
           [&](const mir::FieldId& id) -> FieldAccess {
             const mir::TypeId recv_type = view.Expr(m.receiver).type;
@@ -278,29 +248,40 @@ auto ResolveFieldAccess(const ScopeView& view, const mir::FieldAccessExpr& m)
 // the rest, which is what value category means.
 enum class FieldPosition : std::uint8_t { kValue, kTarget };
 
-// A structural product's field, reached by position. A product answers with the
-// component itself, so one spelling serves both readings; a union answers with
-// the component's value when read and makes the member active when written
-// (LRM 7.3), which is two operations rather than one seen two ways.
+// A product's component, reached by position. Every component is live at once,
+// so the component itself answers both readings and only the receiver's own
+// form tells them apart.
 auto RenderComponentAccess(
-    const ScopeView& view, const mir::FieldAccessExpr& m,
-    base::ComponentIndex index, FieldPosition position) -> std::string {
-  const mir::Expr& receiver = view.Expr(m.receiver);
-  const bool activates =
-      position == FieldPosition::kTarget &&
-      !view.Unit().types.Get(receiver.type).Is<mir::TupleType>();
+    const ScopeView& view, mir::ExprId product, base::ComponentIndex index,
+    FieldPosition position) -> std::string {
+  const mir::Expr& receiver = view.Expr(product);
+  return std::format(
+      "({}).template Get<{}>()",
+      position == FieldPosition::kTarget ? RenderLhsExpr(view, receiver)
+                                         : RenderExpr(view, receiver),
+      index.value);
+}
+
+// A member of an active-member value, reached by its declaration-order
+// position. A read takes the member's value and a write takes a reference to
+// it; what either means for a member that is not the live one belongs to the
+// value's own type, so the same pair of forms serves a union and a tagged one.
+auto RenderActiveMemberAccess(
+    const ScopeView& view, mir::ExprId union_value, base::ComponentIndex index,
+    FieldPosition position) -> std::string {
+  const mir::Expr& receiver = view.Expr(union_value);
   return std::format(
       "({}).template {}<{}>()",
       position == FieldPosition::kTarget ? RenderLhsExpr(view, receiver)
                                          : RenderExpr(view, receiver),
-      activates ? "GetRef" : "Get", index.value);
+      position == FieldPosition::kTarget ? "GetRef" : "Get", index.value);
 }
 
 auto RenderFieldAccessExpr(
     const ScopeView& view, const mir::FieldAccessExpr& m,
     FieldPosition position) -> std::string {
   if (const auto* c = std::get_if<mir::ComponentTarget>(&m.field)) {
-    return RenderComponentAccess(view, m, c->index, position);
+    return RenderComponentAccess(view, m.receiver, c->index, position);
   }
   const FieldAccess field = ResolveFieldAccess(view, m);
   if (!field.through_receiver) {
@@ -310,20 +291,23 @@ auto RenderFieldAccessExpr(
       "{}->{}", RenderExpr(view, view.Expr(m.receiver)), field.name);
 }
 
-// LHS expression render: produces a write-target reference (a name, a
-// dereference, or a chain of container-access `CallExpr`s whose runtime
-// overloads return write-through references). A dereference of a capability
-// wrapper is where the wrapper's own write protocol enters, supplied by the
-// place-access dispatch on the wrapper's type.
-auto RenderLhsExpr(const ScopeView& view, const mir::Expr& expr)
-    -> std::string {
+// The C++ text a reference names. Every alternative comes out as a name, or a
+// scope and a name joined; what differs is which table the strings are read out
+// of, which is the whole of what separates one referent from another. A
+// function is named by its address, since C++ spells a bare function name as a
+// call.
+auto RenderReferenceExpr(
+    const ScopeView& view, const mir::ReferenceExpr& reference) -> std::string {
   return std::visit(
       Overloaded{
-          [&](const mir::FieldAccessExpr& m) -> std::string {
-            return RenderFieldAccessExpr(view, m, FieldPosition::kTarget);
-          },
           [&](const mir::LocalRef& l) -> std::string {
             return LookupLocalName(view, l);
+          },
+          [&](const mir::FunctionRef& fr) -> std::string {
+            const mir::Class& cls = view.Class();
+            return std::format(
+                "&{}::{}", ToCppName(cls.name),
+                cls.abi_adapters.Get(fr.adapter).name);
           },
           [&](const mir::StaticConstantRef& r) -> std::string {
             const mir::Class& cls = view.Class();
@@ -348,12 +332,39 @@ auto RenderLhsExpr(const ScopeView& view, const mir::Expr& expr)
             return std::format(
                 "{}::{}::{}", ToCppName(r.unit_name), ToCppName(r.class_name),
                 r.property_name);
+          }},
+      reference.target);
+}
+
+// LHS expression render: produces a write-target reference (a name, a
+// dereference, or a chain of container-access `CallExpr`s whose runtime
+// overloads return write-through references). A dereference of a capability
+// wrapper is where the wrapper's own write protocol enters, supplied by the
+// place-access dispatch on the wrapper's type.
+//
+// Only an access into a value aggregate spells differently in target position;
+// every other addressable form is the expression as it reads. The forms are
+// listed rather than defaulted, so what a target may be is stated here and
+// nothing else reaches a write.
+auto RenderLhsExpr(const ScopeView& view, const mir::Expr& expr)
+    -> std::string {
+  return std::visit(
+      Overloaded{
+          [&](const mir::FieldAccessExpr& m) -> std::string {
+            return RenderFieldAccessExpr(view, m, FieldPosition::kTarget);
           },
-          [&](const mir::CallExpr& c) -> std::string {
-            return RenderLhsCallExpr(view, c, expr.type);
+          [&](const mir::UnionMemberExpr& m) -> std::string {
+            return RenderActiveMemberAccess(
+                view, m.union_value, m.index, FieldPosition::kTarget);
           },
-          [&](const mir::DerefExpr& d) -> std::string {
-            return RenderDerefExpr(view, d);
+          [&](const mir::ReferenceExpr&) -> std::string {
+            return RenderExpr(view, expr);
+          },
+          [&](const mir::CallExpr&) -> std::string {
+            return RenderExpr(view, expr);
+          },
+          [&](const mir::DerefExpr&) -> std::string {
+            return RenderExpr(view, expr);
           },
           [&](const auto&) -> std::string {
             throw InternalError(
@@ -367,46 +378,50 @@ auto RenderLhsExpr(const ScopeView& view, const mir::Expr& expr)
 
 namespace {
 
-// Render a compound op suffix for the SV `op=` family. Arithmetic /
-// bitwise compounds use the C++ operator tokens directly because
-// `PackedArray`/`PackedArrayRef`/`ScopedMutation` overload `operator+=`,
-// etc. Shifts route through method-style `XxxAssign(rhs)` calls because
-// the binary form is already method-style (no native C++ token for SV's
-// arithmetic / logical shift distinction). Returns either the operator
-// token (e.g. " += ") with caller-supplied rhs appended, or the full
-// method form `.XxxAssign(rhs)`.
+// The library method that applies a shift to the value it is called on. A
+// shift is performed by the library rather than applied by the target, and a
+// compound assignment needs the applying form so its destination is reached
+// once (LRM 11.4.1).
+auto ShiftAssignMethod(mir::BinaryOp op) -> std::string_view {
+  switch (op) {
+    case mir::BinaryOp::kShiftLeft:
+      return "ShiftLeftAssign";
+    case mir::BinaryOp::kLogicalShiftRight:
+      return "LogicalShiftRightAssign";
+    case mir::BinaryOp::kArithmeticShiftRight:
+      return "ArithmeticShiftRightAssign";
+    case mir::BinaryOp::kAdd:
+    case mir::BinaryOp::kSub:
+    case mir::BinaryOp::kMul:
+    case mir::BinaryOp::kDiv:
+    case mir::BinaryOp::kMod:
+    case mir::BinaryOp::kBitwiseAnd:
+    case mir::BinaryOp::kBitwiseOr:
+    case mir::BinaryOp::kBitwiseXor:
+    case mir::BinaryOp::kEquality:
+    case mir::BinaryOp::kInequality:
+    case mir::BinaryOp::kGreaterEqual:
+    case mir::BinaryOp::kGreaterThan:
+    case mir::BinaryOp::kLessEqual:
+    case mir::BinaryOp::kLessThan:
+    case mir::BinaryOp::kLogicalAnd:
+    case mir::BinaryOp::kLogicalOr:
+      break;
+  }
+  throw InternalError(
+      "ShiftAssignMethod: the operator is applied by the target and needs no "
+      "method");
+}
+
+// C++ spells a compound assignment by suffixing the operator it applies, so
+// the two forms differ only in whether the target applies the operator at all.
 auto RenderCompoundAssign(
     mir::BinaryOp op, const std::string& chain, const std::string& rhs)
     -> std::string {
-  switch (op) {
-    case mir::BinaryOp::kAdd:
-      return std::format("{} += {}", chain, rhs);
-    case mir::BinaryOp::kSub:
-      return std::format("{} -= {}", chain, rhs);
-    case mir::BinaryOp::kMul:
-      return std::format("{} *= {}", chain, rhs);
-    case mir::BinaryOp::kDiv:
-      return std::format("{} /= {}", chain, rhs);
-    case mir::BinaryOp::kMod:
-      return std::format("{} %= {}", chain, rhs);
-    case mir::BinaryOp::kBitwiseAnd:
-      return std::format("{} &= {}", chain, rhs);
-    case mir::BinaryOp::kBitwiseOr:
-      return std::format("{} |= {}", chain, rhs);
-    case mir::BinaryOp::kBitwiseXor:
-      return std::format("{} ^= {}", chain, rhs);
-    case mir::BinaryOp::kShiftLeft:
-      return std::format("{}.ShiftLeftAssign({})", chain, rhs);
-    case mir::BinaryOp::kLogicalShiftRight:
-      return std::format("{}.LogicalShiftRightAssign({})", chain, rhs);
-    case mir::BinaryOp::kArithmeticShiftRight:
-      return std::format("{}.ArithmeticShiftRightAssign({})", chain, rhs);
-    default:
-      throw InternalError(
-          "RenderCompoundAssign: BinaryOp is not a legal SV compound "
-          "assignment operator (LRM 11.4 only allows arithmetic, bitwise, "
-          "and shift compounds)");
+  if (mir::BinaryOpAsBuiltinFn(op).has_value()) {
+    return std::format("{}.{}({})", chain, ShiftAssignMethod(op), rhs);
   }
+  return std::format("{} {}= {}", chain, BinaryOpToken(op), rhs);
 }
 
 auto RenderAssignExpr(const ScopeView& view, const mir::AssignExpr& a)
@@ -561,54 +576,16 @@ auto RenderClosureExpr(const ScopeView& view, const mir::ClosureExpr& construct)
       "[{}]({}){}{}", captures_text, params_text, return_clause, body);
 }
 
-// The brace form of the aggregate literal's own type, which is always the
-// plain-data array of its elements -- a simulation container is what some
-// enclosing construction builds from the literal, never what the literal is.
-// The type spells itself, so this names no target type of its own and the same
-// string is correct standalone and as a construction argument.
-auto RenderArrayLiteralExpr(
-    const ScopeView& view, const mir::Expr& expr,
-    const mir::ArrayLiteralExpr& a) -> std::string {
-  std::string out =
-      std::format("{}{{", RenderTypeAsCpp(view.Unit(), expr.type));
-  for (std::size_t i = 0; i < a.elements.size(); ++i) {
-    if (i != 0) out += ", ";
-    out += RenderExpr(view, view.Expr(a.elements[i]));
-  }
-  out += "}";
-  return out;
-}
-
-// Render the full `std::tuple<...>{...}` rather than a bare brace list so the
-// tuple's conditionally-explicit converting constructor is never in doubt,
-// including when the tuple is an element of an outer array literal.
-auto RenderTupleExpr(
-    const ScopeView& view, const mir::Expr& expr, const mir::TupleExpr& t)
+// A brace initializer over the parts, naming the type it builds. Naming it
+// rather than leaving a bare brace list is what makes the same string correct
+// standalone and in the position of an argument or an outer literal's part,
+// where a bare list would be resolved against the surrounding type instead.
+auto RenderPartsAsBraceInit(
+    const ScopeView& view, mir::TypeId type, std::span<const mir::ExprId> parts)
     -> std::string {
-  std::string out =
-      std::format("{}{{", RenderTypeAsCpp(view.Unit(), expr.type));
-  for (std::size_t i = 0; i < t.components.size(); ++i) {
-    if (i != 0) out += ", ";
-    out += RenderExpr(view, view.Expr(t.components[i]));
-  }
-  out += "}";
-  return out;
-}
-
-// Render the full `std::vector<...>{...}` rather than a bare brace list, for
-// the same reason a product value does: the element type has to be stated
-// where the sequence appears as an argument or an element of an outer literal.
-auto RenderVectorExpr(
-    const ScopeView& view, const mir::Expr& expr, const mir::VectorExpr& v)
-    -> std::string {
-  std::string out =
-      std::format("{}{{", RenderTypeAsCpp(view.Unit(), expr.type));
-  for (std::size_t i = 0; i < v.elements.size(); ++i) {
-    if (i != 0) out += ", ";
-    out += RenderExpr(view, view.Expr(v.elements[i]));
-  }
-  out += "}";
-  return out;
+  return std::format(
+      "{}{{{}}}", RenderTypeAsCpp(view.Unit(), type),
+      JoinCommaSeparated(RenderEachExpr(view, parts)));
 }
 
 // A dereference: the storage the operand's pointer stands for.
@@ -617,21 +594,10 @@ auto RenderDerefExpr(const ScopeView& view, const mir::DerefExpr& d)
   return std::format("(*{})", RenderExpr(view, view.Expr(d.pointer)));
 }
 
-// `&place` emitted as the C++ address-of operator. Backend-side
-// canonicalization: `&(*p)` collapses to `p` directly when `p` is a borrowed
-// pointer, avoiding a no-op round-trip; dereferencing a managed handle yields
-// the object, whose address is a distinct borrowed pointer, so that case does
-// not collapse.
+// `&place` emitted as the C++ address-of operator.
 auto RenderAddressOfExpr(const ScopeView& view, const mir::AddressOfExpr& a)
     -> std::string {
-  const mir::Expr& operand_expr = view.Expr(a.operand);
-  if (const auto* deref = std::get_if<mir::DerefExpr>(&operand_expr.data)) {
-    const mir::Expr& inner = view.Expr(deref->pointer);
-    if (view.Unit().types.Get(inner.type).Is<mir::PointerType>()) {
-      return RenderExpr(view, inner);
-    }
-  }
-  return std::format("&{}", RenderLhsExpr(view, operand_expr));
+  return std::format("&{}", RenderLhsExpr(view, view.Expr(a.operand)));
 }
 
 // Re-types a reference as the reference type the expression's `type` states.
@@ -644,7 +610,37 @@ auto RenderPointerCastExpr(
          RenderExpr(view, view.Expr(cast.operand)) + ")";
 }
 
+// How a machine float literal is written so the target reads back the value it
+// was given: the digit count is the IEEE 754 minimum that round-trips the
+// width, and a single-precision literal carries the suffix that keeps it
+// single.
+struct MachineFloatSpelling {
+  int digits;
+  std::string_view suffix;
+};
+
+auto FloatSpellingOf(mir::MachineFloatWidth width) -> MachineFloatSpelling {
+  switch (width) {
+    case mir::MachineFloatWidth::k32:
+      return {.digits = 9, .suffix = "f"};
+    case mir::MachineFloatWidth::k64:
+      return {.digits = 17, .suffix = ""};
+  }
+  throw InternalError("FloatSpellingOf: unknown MachineFloatWidth");
+}
+
 }  // namespace
+
+auto RenderEachExpr(
+    const ScopeView& view, std::span<const mir::ExprId> operands)
+    -> std::vector<std::string> {
+  std::vector<std::string> rendered;
+  rendered.reserve(operands.size());
+  for (const mir::ExprId operand : operands) {
+    rendered.push_back(RenderExpr(view, view.Expr(operand)));
+  }
+  return rendered;
+}
 
 auto RenderExpr(const ScopeView& view, const mir::Expr& expr) -> std::string {
   return std::visit(
@@ -659,20 +655,17 @@ auto RenderExpr(const ScopeView& view, const mir::Expr& expr) -> std::string {
             return std::string{b.value ? "true" : "false"};
           },
           [&](const mir::MachineFloatLiteral& f) -> std::string {
-            // A machine float is spelled at the precision its own type is
-            // read back at: 9 significant digits round-trip a `float` and 17 a
-            // `double`, the IEEE 754 minimum representable-pair widths, and a
-            // single-precision literal carries the suffix that keeps it one.
             // `g` drops a trailing decimal point, which the C++ lexer rejects
             // before a suffix, so a whole number gets one back.
             const auto& machine =
                 view.Unit().types.Get(expr.type).Get<mir::MachineFloatType>();
-            const bool single = machine.bit_width == 32;
-            std::string body = std::format("{:.{}g}", f.value, single ? 9 : 17);
+            const MachineFloatSpelling spelling =
+                FloatSpellingOf(machine.width);
+            std::string body = std::format("{:.{}g}", f.value, spelling.digits);
             if (body.find_first_of(".eE") == std::string::npos) {
               body += ".0";
             }
-            body += single ? "f" : "";
+            body += spelling.suffix;
             return body;
           },
           [&](const mir::MachineIntLiteral& h) -> std::string {
@@ -688,8 +681,8 @@ auto RenderExpr(const ScopeView& view, const mir::Expr& expr) -> std::string {
             }
             return std::format("{}LL", h.value);
           },
-          [&](const mir::LocalRef& l) -> std::string {
-            return LookupLocalName(view, l);
+          [&](const mir::ReferenceExpr& r) -> std::string {
+            return RenderReferenceExpr(view, r);
           },
           [&](const mir::UnaryExpr& u) -> std::string {
             return RenderUnaryExpr(view, u);
@@ -744,36 +737,6 @@ auto RenderExpr(const ScopeView& view, const mir::Expr& expr) -> std::string {
           [&](const mir::FieldAccessExpr& m) -> std::string {
             return RenderFieldAccessExpr(view, m, FieldPosition::kValue);
           },
-          [&](const mir::FunctionRef& fr) -> std::string {
-            const mir::Class& cls = view.Class();
-            return std::format(
-                "&{}::{}", ToCppName(cls.name),
-                cls.abi_adapters.Get(fr.adapter).name);
-          },
-          [&](const mir::StaticConstantRef& r) -> std::string {
-            const mir::Class& cls = view.Class();
-            return std::format(
-                "{}::{}", ToCppName(cls.name),
-                cls.static_constants.Get(r.constant).name);
-          },
-          [&](const mir::PackedTypeRef& r) -> std::string {
-            return mir::PackedTypeDescriptionName(r.integral);
-          },
-          [&](const mir::StaticPropertyRef& r) -> std::string {
-            const mir::Class& owner_cls = view.Unit().GetClass(r.owner);
-            return std::format(
-                "{}::{}", ToCppName(owner_cls.name),
-                owner_cls.static_properties.Get(r.prop).name);
-          },
-          [&](const mir::ExternalUnitVariableRef& r) -> std::string {
-            return std::format(
-                "{}::{}", ToCppName(r.unit_name), r.variable_name);
-          },
-          [&](const mir::ExternalStaticPropertyRef& r) -> std::string {
-            return std::format(
-                "{}::{}::{}", ToCppName(r.unit_name), ToCppName(r.class_name),
-                r.property_name);
-          },
           [&](const mir::ClosureExpr& cl) -> std::string {
             return RenderClosureExpr(view, cl);
           },
@@ -783,14 +746,8 @@ auto RenderExpr(const ScopeView& view, const mir::Expr& expr) -> std::string {
           [&](const mir::ValueCastExpr& v) -> std::string {
             return RenderExpr(view, view.Expr(v.operand));
           },
-          [&](const mir::ArrayLiteralExpr& a) -> std::string {
-            return RenderArrayLiteralExpr(view, expr, a);
-          },
-          [&](const mir::TupleExpr& t) -> std::string {
-            return RenderTupleExpr(view, expr, t);
-          },
-          [&](const mir::VectorExpr& v) -> std::string {
-            return RenderVectorExpr(view, expr, v);
+          [&](const mir::CompositeExpr& c) -> std::string {
+            return RenderPartsAsBraceInit(view, expr.type, c.parts);
           },
           [&](const mir::AwaitExpr& a) -> std::string {
             return std::format(
@@ -806,15 +763,14 @@ auto RenderExpr(const ScopeView& view, const mir::Expr& expr) -> std::string {
                 "{}::Make<{}>({})", RenderTypeAsCpp(view.Unit(), expr.type),
                 u.index.value, RenderExpr(view, view.Expr(u.value)));
           },
-          [&](const mir::TaggedExpr& t) -> std::string {
-            return std::format(
-                "{}::Make<{}>({})", RenderTypeAsCpp(view.Unit(), expr.type),
-                t.tag_index.value, RenderExpr(view, view.Expr(t.payload)));
-          },
           [&](const mir::TaggedIsExpr& g) -> std::string {
             return std::format(
                 "({}).template IsTagged<{}>()",
                 RenderExpr(view, view.Expr(g.union_value)), g.tag_index.value);
+          },
+          [&](const mir::UnionMemberExpr& m) -> std::string {
+            return RenderActiveMemberAccess(
+                view, m.union_value, m.index, FieldPosition::kValue);
           },
       },
       expr.data);

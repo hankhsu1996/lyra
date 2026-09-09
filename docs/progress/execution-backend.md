@@ -118,8 +118,9 @@ ownership, or native in-frame layout) for every value.
       them and the call site stores the queue back and takes the element as the call's value.
 - [x] **The associative array** (LRM 7.8) -- realized on the execution backend as a keyed container
       value domain, the first container whose coordinates are values rather than ordinals. It
-      defaults to empty, builds from a list of entries with or without the miss value a `default:`
-      states (LRM 7.9.11), copies with value semantics, takes the equality and case-equality
+      defaults to empty, builds from a list of entries and the miss value a read of an absent index
+      answers with -- which a `default:` states (LRM 7.9.11) and which is otherwise the element
+      type's own default -- copies with value semantics, takes the equality and case-equality
       families, reports how many entries it holds and its bit-stream width and count, reads an index
       with no entry as the element default, allocates an entry on a write, reports whether an index
       has one, drops the entry an index names or empties entirely (LRM 7.9.3), answers the smallest

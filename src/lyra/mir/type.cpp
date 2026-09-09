@@ -36,6 +36,30 @@ auto PackedArrayType::BitWidth() const -> std::uint64_t {
   return width;
 }
 
+auto BitsOf(MachineIntWidth width) -> std::uint32_t {
+  switch (width) {
+    case MachineIntWidth::k8:
+      return 8;
+    case MachineIntWidth::k16:
+      return 16;
+    case MachineIntWidth::k32:
+      return 32;
+    case MachineIntWidth::k64:
+      return 64;
+  }
+  throw InternalError("mir: unknown MachineIntWidth");
+}
+
+auto BitsOf(MachineFloatWidth width) -> std::uint32_t {
+  switch (width) {
+    case MachineFloatWidth::k32:
+      return 32;
+    case MachineFloatWidth::k64:
+      return 64;
+  }
+  throw InternalError("mir: unknown MachineFloatWidth");
+}
+
 namespace {
 
 void HashCombine(std::size_t& seed, std::size_t value) {
@@ -100,10 +124,10 @@ auto Type::Hash::operator()(const Type& type) const -> std::size_t {
     } else if constexpr (std::is_same_v<T, RuntimeClassType>) {
       HashField(seed, t.symbol);
     } else if constexpr (std::is_same_v<T, MachineIntType>) {
-      HashField(seed, t.bit_width);
+      HashCombine(seed, std::hash<int>{}(static_cast<int>(t.width)));
       HashCombine(seed, std::hash<int>{}(static_cast<int>(t.signedness)));
     } else if constexpr (std::is_same_v<T, MachineFloatType>) {
-      HashField(seed, t.bit_width);
+      HashCombine(seed, std::hash<int>{}(static_cast<int>(t.width)));
     } else if constexpr (std::is_same_v<T, MachineArrayType>) {
       HashId(seed, t.element);
       HashField(seed, t.size);

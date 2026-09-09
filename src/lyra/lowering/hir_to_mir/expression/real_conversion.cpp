@@ -56,8 +56,9 @@ auto LowerRealConversionCall(
       mir::Expr{
           .data =
               mir::CallExpr{
-                  .callee = mir::Direct{.target = b.method},
-                  .arguments = {operand_id}},
+                  .callee =
+                      mir::Direct{.target = b.method, .receiver = operand_id},
+                  .arguments = {}},
           .type = machine_int});
   const mir::ExprId packed_type =
       mir::BuildPackedTypeRef(unit_lowerer.Unit(), block, result_type);

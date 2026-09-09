@@ -3,7 +3,6 @@
 #include <optional>
 #include <string>
 #include <utility>
-#include <variant>
 #include <vector>
 
 #include "lyra/base/arena.hpp"
@@ -217,14 +216,16 @@ struct CompilationUnit {
             .machine_bool = types.Intern(Type{MachineBoolType{}}),
             .machine_int64 = types.Intern(
                 Type{MachineIntType{
-                    .bit_width = 64, .signedness = Signedness::kSigned}}),
+                    .width = MachineIntWidth::k64,
+                    .signedness = Signedness::kSigned}}),
             .machine_word = types.Intern(
                 Type{MachineIntType{
-                    .bit_width = 64, .signedness = Signedness::kUnsigned}}),
-            .machine_float32 =
-                types.Intern(Type{MachineFloatType{.bit_width = 32}}),
-            .machine_float64 =
-                types.Intern(Type{MachineFloatType{.bit_width = 64}}),
+                    .width = MachineIntWidth::k64,
+                    .signedness = Signedness::kUnsigned}}),
+            .machine_float32 = types.Intern(
+                Type{MachineFloatType{.width = MachineFloatWidth::k32}}),
+            .machine_float64 = types.Intern(
+                Type{MachineFloatType{.width = MachineFloatWidth::k64}}),
             .string = types.Intern(Type{StringType{}}),
             .void_type = types.Intern(Type{VoidType{}}),
             .realtime = types.Intern(Type{RealTimeType{}}),
@@ -236,10 +237,10 @@ struct CompilationUnit {
             .effects = types.Intern(Type{RuntimeEffectsType{}}),
             .scope_ptr = types.Intern(
                 Type{PointerType{
-                    types.Intern(
+                    .pointee = types.Intern(
                         Type{RuntimeClassType{
                             .symbol = "lyra::runtime::Scope"}}),
-                    PointerOwnership::kBorrowed}}),
+                    .ownership = PointerOwnership::kBorrowed}}),
             .process_object = types.Intern(
                 Type{RuntimeClassType{
                     .symbol = "lyra::runtime::RuntimeProcess"}}),

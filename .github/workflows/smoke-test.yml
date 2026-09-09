@@ -8,7 +8,7 @@ on:
 
 jobs:
   changes:
-    name: Detect Changes
+    name: Detect Changes (smoke)
     runs-on: ubuntu-latest
     permissions:
       pull-requests: read

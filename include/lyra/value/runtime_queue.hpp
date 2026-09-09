@@ -39,19 +39,21 @@ class RuntimeQueue {
   // with the real element default.
   RuntimeQueue();
 
-  // LRM Table 6-7: the default queue is empty. `element_default` is the shape
-  // source for out-of-range reads (LRM 7.4.5) and for the slot an append
-  // creates, so it carries the exact element representation.
+  // An empty queue of a known element shape, which a functional operation
+  // yielding no element starts from. `element_default` is the shape source for
+  // out-of-range reads (LRM 7.4.5) and for the slot an append creates, so it
+  // carries the exact element representation.
   explicit RuntimeQueue(RuntimeValue element_default);
 
-  // LRM 7.10.5 `int q[$:N]`: the same empty start, holding no element whose
-  // index exceeds `max_bound`. A negative bound is no bound at all, which is
-  // how a queue with none states it wherever a bound is spelled.
+  // The same, holding no element whose index exceeds `max_bound`
+  // (LRM 7.10.5).
   RuntimeQueue(RuntimeValue element_default, const PackedArray& max_bound);
 
   // LRM 10.9.1 assignment-pattern construction: the element list, with the
-  // element default seeded for later out-of-range reads. Elements past a bound
-  // are discarded on entry (LRM 7.10.5).
+  // element default seeded for later out-of-range reads. The bounded form
+  // discards on entry every element past its bound (LRM 7.10.5); a negative
+  // bound is no bound at all, which is how a queue with none states it wherever
+  // a bound is spelled.
   RuntimeQueue(
       RuntimeValue element_default, std::vector<RuntimeValue> elements);
   RuntimeQueue(
@@ -148,7 +150,8 @@ class RuntimeQueue {
   // LRM 7.10.2.3: a copy emptied, or a copy with the element at `index`
   // removed. An invalid index leaves the queue unchanged.
   [[nodiscard]] auto Delete() const -> RuntimeQueue;
-  [[nodiscard]] auto Delete(const PackedArray& index) const -> RuntimeQueue;
+  [[nodiscard]] auto DeleteIndex(const PackedArray& index) const
+      -> RuntimeQueue;
 
   // LRM 11.4.5 `==` / `!=` (Any data type): a size check then an element-wise
   // reduction that propagates X / Z through each element's own equality.

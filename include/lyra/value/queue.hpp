@@ -5,7 +5,6 @@
 #include <cstdint>
 #include <deque>
 #include <functional>
-#include <iostream>
 #include <optional>
 #include <ranges>
 #include <span>
@@ -18,6 +17,7 @@
 #include "lyra/value/format.hpp"
 #include "lyra/value/oob_shield.hpp"
 #include "lyra/value/packed_array.hpp"
+#include "lyra/value/queue_bound.hpp"
 #include "lyra/value/slice_selector.hpp"
 
 namespace lyra::value {
@@ -41,9 +41,8 @@ class Queue {
   // only for the default-constructed slots STL containers require.
   Queue() = default;
 
-  // Empty queue with the shield seeded. Used for declarations like `int q[$];`
-  // where the queue starts empty but the element shape is known at lowering
-  // time.
+  // An empty queue of a known element shape, which a functional operation
+  // yielding no element starts from.
   explicit Queue(T element_default) : shield_(std::move(element_default)) {
   }
 
@@ -62,13 +61,6 @@ class Queue {
     for (std::size_t i = 0; i < count; ++i) {
       data_.insert(data_.end(), unit.begin(), unit.end());
     }
-  }
-
-  // LRM 7.10.5 bounded queue `int q[$:N]`: the empty start is unchanged, but
-  // the maximum index N is recorded so growth past N+1 elements is discarded
-  // with a warning. The bound arrives as a PackedArray construction argument.
-  Queue(T element_default, const PackedArray& max_bound)
-      : shield_(std::move(element_default)), max_bound_(BoundOf(max_bound)) {
   }
 
   // LRM 7.10.5 bounded queue initialized by an assignment pattern: take the
@@ -415,12 +407,13 @@ class Queue {
     EnforceBound();
   }
 
-  // LRM 7.10.2.3: with no index, clear the queue; with an index, remove that
-  // element. An x/z, negative, or `>= size` index is a no-op.
+  // LRM 7.10.2.3: clearing the queue and removing the element an index names
+  // are two requests the source spells with one word, so each has a name of
+  // its own. An x/z, negative, or `>= size` index is a no-op.
   auto Delete() -> void {
     data_.clear();
   }
-  auto Delete(const PackedArray& index) -> void {
+  auto DeleteIndex(const PackedArray& index) -> void {
     if (IsInvalidIndex(index)) {
       return;
     }
@@ -584,8 +577,7 @@ class Queue {
     const std::size_t cap = static_cast<std::size_t>(*max_bound_) + 1;
     if (data_.size() > cap) {
       data_.resize(cap);
-      std::cerr << "warning: bounded queue exceeded its declared bound; "
-                   "elements beyond the bound were discarded (LRM 7.10.5)\n";
+      ReportBoundOverflow();
     }
   }
 

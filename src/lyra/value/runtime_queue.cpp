@@ -10,6 +10,7 @@
 
 #include "lyra/base/internal_error.hpp"
 #include "lyra/value/packed_array.hpp"
+#include "lyra/value/queue_bound.hpp"
 #include "lyra/value/runtime_value.hpp"
 #include "lyra/value/slice_selector.hpp"
 
@@ -97,6 +98,7 @@ void RuntimeQueue::EnforceBound() {
   const std::size_t limit = static_cast<std::size_t>(*max_bound_) + 1;
   if (data_.size() > limit) {
     data_.resize(limit);
+    ReportBoundOverflow();
   }
 }
 
@@ -283,7 +285,7 @@ auto RuntimeQueue::Delete() const -> RuntimeQueue {
   return result;
 }
 
-auto RuntimeQueue::Delete(const PackedArray& index) const -> RuntimeQueue {
+auto RuntimeQueue::DeleteIndex(const PackedArray& index) const -> RuntimeQueue {
   RuntimeQueue result(*this);
   if (IsInvalidIndex(index)) {
     return result;

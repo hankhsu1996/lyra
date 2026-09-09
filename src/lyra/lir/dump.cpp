@@ -246,7 +246,7 @@ class LirDumper {
     return std::visit(
         Overloaded{
             [](const BuiltinTarget& b) -> std::string {
-              const std::string name{support::BuiltinFnName(b.fn)};
+              const std::string name{support::RuntimeEntryOf(b.fn).name};
               if (!b.qualifier.has_value()) {
                 return name;
               }
@@ -305,6 +305,9 @@ class LirDumper {
         Overloaded{
             [](const Component& c) -> std::string {
               return std::format("component {}", c.index.value);
+            },
+            [](const UnionMember& m) -> std::string {
+              return std::format("member {}", m.index.value);
             },
             [&](const ContainerElement& e) -> std::string {
               return std::format("element({})", FormatOperands(e.operands));

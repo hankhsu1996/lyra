@@ -552,6 +552,7 @@ using lyra::runtime::Read;
 using lyra::runtime::RealTimeInUnit;
 using lyra::runtime::Region;
 using lyra::runtime::RunHostCommand;
+using lyra::runtime::RunNullHostCommand;
 using lyra::runtime::RuntimeEffects;
 using lyra::runtime::Scope;
 using lyra::runtime::ScopeDefinition;
@@ -619,7 +620,7 @@ auto lyra_rt_file_open(void* files, const void* name) -> void* {
 auto lyra_rt_file_open_mode(void* files, const void* name, const void* mode)
     -> void* {
   return Own(
-      static_cast<FileTable*>(files)->Open(
+      static_cast<FileTable*>(files)->OpenWithMode(
           Read<String>(name), Read<String>(mode)));
 }
 
@@ -702,7 +703,7 @@ void lyra_rt_file_flush(void* files, const void* descriptor) {
 }
 
 void lyra_rt_file_flush_all(void* files) {
-  static_cast<FileTable*>(files)->Flush();
+  static_cast<FileTable*>(files)->FlushAll();
 }
 
 auto lyra_rt_peek_buffered(void* files, const void* fd) -> void* {
@@ -1139,7 +1140,7 @@ auto lyra_rt_run_host_command(void* runtime, const void* command) -> void* {
 }
 
 auto lyra_rt_run_null_host_command() -> void* {
-  return Own(RunHostCommand());
+  return Own(RunNullHostCommand());
 }
 
 auto lyra_rt_test_plusargs(void* runtime, const void* user_string) -> void* {
@@ -1856,10 +1857,6 @@ auto lyra_rt_string_gt(const void* lhs, const void* rhs) -> void* {
 
 auto lyra_rt_string_ge(const void* lhs, const void* rhs) -> void* {
   return Own(Read<String>(lhs) >= Read<String>(rhs));
-}
-
-auto lyra_rt_make_format_spec_of_kind(const void* kind) -> void* {
-  return Own(FormatSpec(Read<PackedArray>(kind)));
 }
 
 auto lyra_rt_make_format_spec(
@@ -2964,16 +2961,6 @@ auto lyra_rt_unpackedarray_value_cell_load(const void* cell) -> void* {
           ->Get());
 }
 
-auto lyra_rt_queue_default(void* prototype) -> void* {
-  return Own(RuntimeQueue(lyra::runtime::ErasedValue(prototype)));
-}
-
-auto lyra_rt_queue_default_bounded(void* prototype, const void* max_bound)
-    -> void* {
-  return Own(RuntimeQueue(
-      lyra::runtime::ErasedValue(prototype), Read<PackedArray>(max_bound)));
-}
-
 auto lyra_rt_queue_from_literal(
     void* prototype, LyraSpan unit, std::int64_t count) -> void* {
   RuntimeValue element_default = lyra::runtime::ErasedValue(prototype);
@@ -3086,7 +3073,7 @@ auto lyra_rt_queue_delete(const void* queue) -> void* {
 }
 
 auto lyra_rt_queue_delete_index(const void* queue, const void* index) -> void* {
-  return Own(Read<RuntimeQueue>(queue).Delete(Read<PackedArray>(index)));
+  return Own(Read<RuntimeQueue>(queue).DeleteIndex(Read<PackedArray>(index)));
 }
 
 auto lyra_rt_queue_eq(const void* lhs, const void* rhs) -> void* {
@@ -3148,22 +3135,10 @@ auto lyra_rt_queue_value_cell_load(const void* cell) -> void* {
       static_cast<const ActivationValueCell<RuntimeQueue>*>(cell)->Get());
 }
 
-auto lyra_rt_assocarray_default(void* prototype) -> void* {
-  return Own(RuntimeAssociativeArray(lyra::runtime::ErasedValue(prototype)));
-}
-
 // LRM 7.9.11 `'{index: value, ...}`: each entry crosses as the product of the
 // index and the element it stores. A product already holds its components
 // erased, which is the form a keyed container needs both of them in: it knows
 // the representation of neither in advance.
-auto lyra_rt_assocarray_from_entries(void* prototype, LyraSpan entries)
-    -> void* {
-  return Own(
-      lyra::runtime::SeedAssociativeEntries(
-          RuntimeAssociativeArray(lyra::runtime::ErasedValue(prototype)),
-          entries));
-}
-
 auto lyra_rt_assocarray_from_entries_default(
     void* prototype, LyraSpan entries, void* user_default) -> void* {
   RuntimeValue element_default = lyra::runtime::ErasedValue(prototype);
@@ -3203,7 +3178,8 @@ auto lyra_rt_assocarray_delete(const void* array) -> void* {
 auto lyra_rt_assocarray_delete_index(const void* array, const void* index)
     -> void* {
   return Own(
-      Read<RuntimeAssociativeArray>(array).Delete(Read<RuntimeValue>(index)));
+      Read<RuntimeAssociativeArray>(array).DeleteIndex(
+          Read<RuntimeValue>(index)));
 }
 
 auto lyra_rt_assocarray_eq(const void* lhs, const void* rhs) -> void* {

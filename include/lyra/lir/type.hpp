@@ -12,6 +12,7 @@
 #include "lyra/lir/class_id.hpp"
 #include "lyra/lir/closure_id.hpp"
 #include "lyra/lir/external_unit_object_id.hpp"
+#include "lyra/lir/struct_id.hpp"
 #include "lyra/lir/type_id.hpp"
 
 namespace lyra::lir {
@@ -141,8 +142,22 @@ struct MachineBoolType {
   auto operator==(const MachineBoolType&) const -> bool = default;
 };
 
+// The widths a machine scalar comes in. Machine data is what crosses to a
+// target on the target's own terms -- a foreign call's by-value argument, a
+// table the runtime reads as raw storage -- so the widths are the ones a C
+// type system names outright.
+enum class MachineIntWidth : std::uint8_t { k8, k16, k32, k64 };
+
+enum class MachineFloatWidth : std::uint8_t { k32, k64 };
+
+// The width as a number, for a target that parameterizes its integer type by a
+// bit count rather than naming a type per width.
+[[nodiscard]] auto BitsOf(MachineIntWidth width) -> std::uint32_t;
+
+// A primitive machine integer (C `intN_t`): a fixed-width 2-state scalar,
+// distinct from the four-state `PackedArrayType`.
 struct MachineIntType {
-  std::uint32_t bit_width;
+  MachineIntWidth width;
   Signedness signedness;
 
   auto operator==(const MachineIntType&) const -> bool = default;
@@ -151,7 +166,7 @@ struct MachineIntType {
 // A primitive machine float (C `float` / `double`), distinct from `RealType`,
 // which is a simulation value reached through a value wrapper.
 struct MachineFloatType {
-  std::uint32_t bit_width;
+  MachineFloatWidth width;
 
   auto operator==(const MachineFloatType&) const -> bool = default;
 };
@@ -233,6 +248,17 @@ struct ClosureType {
   ClosureId closure_id;
 
   auto operator==(const ClosureType&) const -> bool = default;
+};
+
+// Member-bearing storage of one struct declaration, carrying no code of its
+// own: nothing dispatches on it, nothing constructs it, and a field is reached
+// by a member projection the way every other member-bearing storage's is. What
+// separates it from the others is only what they carry beyond their members --
+// a class its methods, a closure its invoke.
+struct StructType {
+  StructId struct_id;
+
+  auto operator==(const StructType&) const -> bool = default;
 };
 
 struct RuntimeEffectsType {
@@ -348,7 +374,7 @@ class Type {
       MachineBoolType, MachineIntType, MachineFloatType, MachineArrayType,
       EventType, RealType, ShortRealType, RealTimeType, ChandleType, VoidType,
       EmptyType, ObjectType, ExternalUnitObjectType, CrossUnitClassType,
-      RuntimeClassType, ClosureType, RuntimeEffectsType, FilesType,
+      RuntimeClassType, ClosureType, StructType, RuntimeEffectsType, FilesType,
       DiagnosticType, RuntimeLibraryType, CoroutineType, RefType, PointerType,
       ManagedRefType, VectorType, TupleType, UnionType, TaggedUnionType,
       ResolvedType, DriverType, ObservableType>;

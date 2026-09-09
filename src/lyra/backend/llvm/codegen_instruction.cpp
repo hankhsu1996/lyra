@@ -56,42 +56,6 @@ auto WrapperOf(const lir::Type& type)
   return std::nullopt;
 }
 
-// Which form a construction is. A queue is built empty or over an element list,
-// and either way with or without the LRM 7.10.5 bound it was declared with; an
-// associative array is built empty, over its entries, or over its entries and a
-// default; a format specification is built from a conversion kind alone or from
-// that kind and the fields written with it. The call does not say which --
-// these read it back from how many operands arrived, which is what a
-// construction stating its own form would settle instead.
-auto QueueConstruction(std::size_t argument_count) -> RuntimeOp {
-  switch (argument_count) {
-    case 1:
-      return RuntimeOp::kDefault;
-    case 2:
-      return RuntimeOp::kDefaultBounded;
-    case 3:
-      return RuntimeOp::kFromLiteral;
-    default:
-      return RuntimeOp::kFromLiteralBounded;
-  }
-}
-
-auto AssociativeConstruction(std::size_t argument_count) -> RuntimeOp {
-  switch (argument_count) {
-    case 1:
-      return RuntimeOp::kDefault;
-    case 2:
-      return RuntimeOp::kFromEntries;
-    default:
-      return RuntimeOp::kFromEntriesDefault;
-  }
-}
-
-auto FormatSpecConstruction(std::size_t argument_count) -> RuntimeOp {
-  return argument_count == 1 ? RuntimeOp::kMakeFormatSpecOfKind
-                             : RuntimeOp::kMakeFormatSpec;
-}
-
 // A leaf of a wait carries the observation that decides what a change there
 // means only where an event control is what waits (LRM 9.4.2); an implicit
 // sensitivity names none and supplies the cell and its bit range alone.
@@ -353,13 +317,13 @@ auto CodeGenFunction::OpenedReferent(llvm::Value* reference, lir::TypeId type)
       args);
 }
 
-// Which entry answers the address of a member of what `owner` names. Every
-// owner holds a block of storage described the same way, so what an entry
-// differs in is the runtime type the address it is handed names.
 auto CodeGenFunction::IsHandleSequence(lir::TypeId type) const -> bool {
   return module_->Unit().types.Get(type).Is<lir::VectorType>();
 }
 
+// Which entry answers the address of a member of what `owner` names. Every
+// owner holds a block of storage described the same way, so what an entry
+// differs in is the runtime type the address it is handed names.
 auto CodeGenFunction::MemberAddressOp(lir::TypeId owner) const -> RuntimeOp {
   const lir::Type& type = module_->Unit().types.Get(owner);
   if (const auto* object = type.As<lir::ObjectType>()) {
@@ -370,6 +334,11 @@ auto CodeGenFunction::MemberAddressOp(lir::TypeId owner) const -> RuntimeOp {
   // What another unit published is an object of its own tree.
   if (type.Is<lir::ExternalUnitObjectType>()) {
     return RuntimeOp::kMemberAddress;
+  }
+  // A struct's fields are the same storage block a heap object's properties
+  // are, reached through the same handle.
+  if (type.Is<lir::StructType>()) {
+    return RuntimeOp::kObjectMemberAddress;
   }
   throw InternalError(
       std::format(
@@ -684,15 +653,10 @@ auto CodeGenFunction::SpanOver(
 auto CodeGenFunction::LowerArray(
     const lir::ArrayInstr& array, lir::TypeId result_type)
     -> diag::Result<llvm::Value*> {
-  // A fixed-size machine aggregate and a sequence of handles are both composed
-  // from their elements in order, and both start as a span over them; where the
-  // element type is read from, and whether the span is the value or is handed
-  // to the runtime to keep, are what differ.
-  const lir::Type& result = module_->Unit().types.Get(result_type);
-  const lir::TypeId element_type =
-      result.Is<lir::VectorType>()
-          ? result.Get<lir::VectorType>().element
-          : result.Get<lir::MachineArrayType>().element;
+  const lir::TypeId element_type = module_->Unit()
+                                       .types.Get(result_type)
+                                       .Get<lir::MachineArrayType>()
+                                       .element;
   std::vector<llvm::Value*> elements;
   elements.reserve(array.elements.size());
   for (const lir::Operand& element : array.elements) {
@@ -702,20 +666,7 @@ auto CodeGenFunction::LowerArray(
     }
     elements.push_back(*lowered);
   }
-  llvm::Value* span = SpanOver(elements, module_->Types().Map(element_type));
-  if (!result.Is<lir::VectorType>()) {
-    return span;
-  }
-  // A sequence outlives the stretch that built it -- the owner keeps its
-  // address, and a dimension above it keeps that address as an ordinary element
-  // -- so the runtime takes the handles rather than the span standing as the
-  // value.
-  const std::array<llvm::Value*, 1> args{span};
-  return builder_.CreateCall(
-      Entry(
-          RuntimeSymbol(RuntimeOp::kSequenceMake), module_->Types().Ptr(),
-          args),
-      args);
+  return SpanOver(elements, module_->Types().Map(element_type));
 }
 
 // A product value is assembled by boxing each component into the erased
@@ -920,18 +871,28 @@ auto CodeGenFunction::LowerAggregateExtract(
     }
     return shape;
   };
+  // A positional part is named by its index alone. Reaching a product's
+  // component and reaching an active-member value's live member ask the same
+  // thing of the value, and the aggregate's own domain is what names the entry
+  // that answers, so one composition serves both.
+  const auto positional = [&](base::ComponentIndex index) -> llvm::Value* {
+    const std::array<llvm::Value*, 2> args{
+        *aggregate,
+        llvm::ConstantInt::get(
+            llvm::Type::getInt64Ty(module_->Context()), index.value)};
+    return builder_.CreateCall(
+        Entry(
+            RuntimeSymbol(*domain, RuntimeOp::kExtract), module_->Types().Ptr(),
+            args),
+        args);
+  };
   return std::visit(
       Overloaded{
           [&](const lir::Component& component) -> diag::Result<llvm::Value*> {
-            const std::array<llvm::Value*, 2> args{
-                *aggregate, llvm::ConstantInt::get(
-                                llvm::Type::getInt64Ty(module_->Context()),
-                                component.index.value)};
-            return builder_.CreateCall(
-                Entry(
-                    RuntimeSymbol(*domain, RuntimeOp::kExtract),
-                    module_->Types().Ptr(), args),
-                args);
+            return positional(component.index);
+          },
+          [&](const lir::UnionMember& member) -> diag::Result<llvm::Value*> {
+            return positional(member.index);
           },
           [&](const lir::ContainerElement& e) -> diag::Result<llvm::Value*> {
             auto shape = coordinates(e.operands);
@@ -983,45 +944,45 @@ auto CodeGenFunction::LowerAggregateUpdate(
     shape.push_back(*replacement);
     return shape;
   };
+  // A positional part is replaced by naming its index and the value that takes
+  // its place; the aggregate's own domain names the entry that performs it.
+  const auto positional = [&](base::ComponentIndex index,
+                              llvm::Value* written) -> llvm::Value* {
+    const std::array<llvm::Value*, 3> args{
+        *aggregate,
+        llvm::ConstantInt::get(
+            llvm::Type::getInt64Ty(module_->Context()), index.value),
+        written};
+    return builder_.CreateCall(
+        Entry(
+            RuntimeSymbol(*domain, RuntimeOp::kUpdate), module_->Types().Ptr(),
+            args),
+        args);
+  };
   return std::visit(
       Overloaded{
           [&](const lir::Component& component) -> diag::Result<llvm::Value*> {
-            // A union keeps no per-member prototype, so the runtime cannot
-            // recover which domain a raw handle is in and the caller states it
-            // by boxing the replacement in the member's own domain. A product
-            // states its components in its own type, so nothing is boxed there.
-            // Which of the two this is follows from the aggregate's type, the
-            // same way the entry that realizes the write does; and whether that
-            // write activates the member (untagged) or faults a mismatched tag
-            // (tagged) follows from the domain the entry is named in.
-            const lir::Type& aggregate_type =
-                module_->Unit().types.Get(container);
-            llvm::Value* written = *replacement;
-            if (aggregate_type.As<lir::UnionType>() != nullptr ||
-                aggregate_type.As<lir::TaggedUnionType>() != nullptr) {
-              auto member_domain =
-                  UnionMemberDomain(container, component.index.value);
-              if (!member_domain) {
-                return std::unexpected(std::move(member_domain.error()));
-              }
-              const std::array<llvm::Value*, 1> box{*replacement};
-              written = builder_.CreateCall(
-                  Entry(
-                      RuntimeSymbol(*member_domain, RuntimeOp::kValueBox),
-                      module_->Types().Ptr(), box),
-                  box);
+            return positional(component.index, *replacement);
+          },
+          [&](const lir::UnionMember& member) -> diag::Result<llvm::Value*> {
+            // An active-member value keeps no per-member prototype, so the
+            // runtime cannot recover which domain a raw handle is in and the
+            // caller states it by boxing the replacement in the member's own
+            // domain. Whether the write then makes the member live or faults a
+            // mismatched tag follows from the domain the entry is named in.
+            auto member_domain =
+                UnionMemberDomain(container, member.index.value);
+            if (!member_domain) {
+              return std::unexpected(std::move(member_domain.error()));
             }
-            const std::array<llvm::Value*, 3> args{
-                *aggregate,
-                llvm::ConstantInt::get(
-                    llvm::Type::getInt64Ty(module_->Context()),
-                    component.index.value),
-                written};
-            return builder_.CreateCall(
-                Entry(
-                    RuntimeSymbol(*domain, RuntimeOp::kUpdate),
-                    module_->Types().Ptr(), args),
-                args);
+            const std::array<llvm::Value*, 1> box{*replacement};
+            return positional(
+                member.index,
+                builder_.CreateCall(
+                    Entry(
+                        RuntimeSymbol(*member_domain, RuntimeOp::kValueBox),
+                        module_->Types().Ptr(), box),
+                    box));
           },
           [&](const lir::ContainerElement& e) -> diag::Result<llvm::Value*> {
             auto shape = coordinates(e.operands);
@@ -1105,7 +1066,7 @@ auto CodeGenFunction::LowerIntConst(const lir::IntConst& constant)
             module_->Unit().types.Get(constant.type).KindName()));
   }
   return llvm::ConstantInt::get(
-      llvm::IntegerType::get(module_->Context(), machine->bit_width),
+      llvm::cast<llvm::IntegerType>(module_->Types().Map(constant.type)),
       constant.value.value_words.front(),
       machine->signedness == lir::Signedness::kSigned);
 }
@@ -1167,9 +1128,7 @@ auto CodeGenFunction::LowerRealConst(const lir::RealConst& constant)
             module_->Unit().types.Get(constant.type).KindName()));
   }
   return llvm::ConstantFP::get(
-      machine->bit_width == 32 ? llvm::Type::getFloatTy(module_->Context())
-                               : llvm::Type::getDoubleTy(module_->Context()),
-      constant.value);
+      module_->Types().Map(constant.type), constant.value);
 }
 
 // A null value is the host null pointer, a native LLVM constant. Every
@@ -1256,7 +1215,7 @@ auto CodeGenFunction::BuiltinCallee(
                 std::format(
                     "llvm codegen: the {} builtin {} and the library has no "
                     "entry of that shape",
-                    support::BuiltinFnName(target.fn), unrealized.shape));
+                    support::RuntimeEntryOf(target.fn).name, unrealized.shape));
           }},
       EntryNamingOf(target.fn));
 }
@@ -1409,16 +1368,27 @@ auto CodeGenFunction::ConstructCallee(
             return entry(RuntimeSymbol(
                 support::ValueDomain::kUnpackedArray, RuntimeOp::kFromLiteral));
           },
-          [&](const lir::QueueType&) -> diag::Result<llvm::FunctionCallee> {
+          // LRM 7.10.5: a bounded queue enforces a maximum index, which its own
+          // type declares, so which of the two entries builds one follows from
+          // the type being built.
+          [&](const lir::QueueType& q) -> diag::Result<llvm::FunctionCallee> {
             return entry(RuntimeSymbol(
                 support::ValueDomain::kQueue,
-                QueueConstruction(call.args.size())));
+                q.max_bound.has_value() ? RuntimeOp::kFromLiteralBounded
+                                        : RuntimeOp::kFromLiteral));
           },
           [&](const lir::AssociativeArrayType&)
               -> diag::Result<llvm::FunctionCallee> {
             return entry(RuntimeSymbol(
                 support::ValueDomain::kAssocArray,
-                AssociativeConstruction(call.args.size())));
+                RuntimeOp::kFromEntriesDefault));
+          },
+          // A sequence outlives the stretch that built it -- the owner keeps
+          // its address, and a dimension above it keeps that address as an
+          // ordinary element -- so the runtime takes the handles rather than
+          // the element list standing as the value.
+          [&](const lir::VectorType&) -> diag::Result<llvm::FunctionCallee> {
+            return entry(RuntimeSymbol(RuntimeOp::kSequenceMake));
           },
           [&](const lir::RuntimeLibraryType& r)
               -> diag::Result<llvm::FunctionCallee> {
@@ -1434,8 +1404,7 @@ auto CodeGenFunction::ConstructCallee(
                 return entry(
                     RuntimeSymbol(ObservationConstruction(call.args.size())));
               case lir::RuntimeLibraryKind::kFormatSpec:
-                return entry(
-                    RuntimeSymbol(FormatSpecConstruction(call.args.size())));
+                return entry(RuntimeSymbol(RuntimeOp::kMakeFormatSpec));
               case lir::RuntimeLibraryKind::kPackedRange:
                 return entry(RuntimeSymbol(RuntimeOp::kMakePackedRange));
               case lir::RuntimeLibraryKind::kPackedType:
@@ -1452,14 +1421,17 @@ auto CodeGenFunction::ConstructCallee(
                 return no_construct();
             }
           },
-          // A wrapper that owns an object brings the object into existence with
+          // A wrapper that owns storage brings that storage into existence with
           // itself. The runtime owns the object tree, so it is the runtime that
-          // builds a node of it; a shared owner has no realization here yet.
+          // builds a node of it. A shared owner instead keeps its storage alive
+          // for as long as anything holds one, which takes a slot the collector
+          // can see, and generated storage is not yet visible to it.
           [&](const lir::PointerType& p) -> diag::Result<llvm::FunctionCallee> {
             if (p.ownership != lir::PointerOwnership::kUnique) {
               return Unsupported(
-                  "llvm codegen: building an object under a shared owner is "
-                  "not yet supported on this backend");
+                  "llvm codegen: storage kept alive by a shared owner needs a "
+                  "slot the collector can see, which generated storage is not "
+                  "yet");
             }
             return entry(RuntimeSymbol(RuntimeOp::kMakeScope));
           },
@@ -1537,8 +1509,8 @@ auto CodeGenFunction::ResultShapeOperand(const lir::CallInstr& call) const
   // itself needs. Its representation follows the `with` clause rather than the
   // receiver, so one entry over a receiver of one representation still meets
   // prototypes of several.
-  if (support::ArrayMethodTakesClosure(builtin->fn) &&
-      support::BuiltinFnTakesResultPrototype(builtin->fn)) {
+  const support::RuntimeEntry entry = support::RuntimeEntryOf(builtin->fn);
+  if (entry.takes_closure && entry.takes_result_prototype) {
     return call.args.size() - 1;
   }
   return std::nullopt;
@@ -1557,8 +1529,8 @@ auto CodeGenFunction::ErasedOperand(const lir::CallInstr& call) const
   if (builtin == nullptr) {
     return std::nullopt;
   }
-  if (const std::optional<std::size_t> part =
-          support::SpreadPartOperand(builtin->fn);
+  const support::RuntimeEntry entry = support::RuntimeEntryOf(builtin->fn);
+  if (const std::optional<std::size_t> part = entry.spread_operand;
       part.has_value() && *part < call.args.size()) {
     auto domain = DomainOf(OperandType(call.args.at(*part)));
     if (!domain) {
@@ -1566,8 +1538,7 @@ auto CodeGenFunction::ErasedOperand(const lir::CallInstr& call) const
     }
     return ErasedArgument{.position = *part, .domain = *domain};
   }
-  const std::optional<std::size_t> index =
-      support::ContainerIndexOperand(builtin->fn);
+  const std::optional<std::size_t> index = entry.index_operand;
   if (!index.has_value() || *index >= call.args.size()) {
     return std::nullopt;
   }

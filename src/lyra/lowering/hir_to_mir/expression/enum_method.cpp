@@ -33,6 +33,11 @@ namespace lyra::lowering::hir_to_mir {
 
 namespace {
 
+// LRM 6.19.5.3 / 6.19.5.4: `next` and `prev` are one traversal of the member
+// order taken in either direction, so they share one callable and differ only
+// in the sign of the step it is given.
+enum class StepDirection : std::uint8_t { kForward, kBackward };
+
 // An enum member value, materialized as a 2-state-known constant at the enum's
 // base packed shape. Enum member values are compile-time constants (LRM 6.19),
 // so a 4-state base still carries an all-known (zero) state plane.
@@ -115,8 +120,10 @@ auto CaseEq(
           .data =
               mir::CallExpr{
                   .callee =
-                      mir::Direct{.target = support::BuiltinFn::kCaseEqual},
-                  .arguments = {lhs, rhs}},
+                      mir::Direct{
+                          .target = support::BuiltinFn::kCaseEqual,
+                          .receiver = lhs},
+                  .arguments = {rhs}},
           .type = bit_ty});
 }
 
@@ -298,45 +305,107 @@ auto ResolveEnumStepHelper(
   return target;
 }
 
-}  // namespace
+// The enumeration the called method belongs to, and the operand that bore it:
+// for an instance call that operand is the value the method is applied to, for
+// a type-static one a bearer the source names the enumeration through. The
+// shape and member table are copied out because lowering any expression
+// afterwards may intern a type and invalidate a reference into the pool.
+struct OwningEnum {
+  hir::ExprId bearer;
+  mir::TypeId type;
+  mir::PackedArrayType base;
+  std::vector<mir::EnumMember> members;
+};
 
 template <ExprLowerer Lowerer>
-auto LowerEnumConstantMethod(
-    Lowerer& lowerer, WalkFrame frame, const hir::CallExpr& c,
-    const hir::BuiltinMethodRef& b, mir::TypeId result_type)
-    -> diag::Result<mir::Expr> {
-  const auto& unit_lowerer = lowerer.Owner();
-  const auto& unit = unit_lowerer.Unit();
-  const auto& hir_exprs = lowerer.HirExprs();
-  mir::Block& block = *frame.current_block;
+auto ResolveOwningEnum(Lowerer& lowerer, const hir::CallExpr& c) -> OwningEnum {
   if (c.arguments.empty() || !c.arguments.front().has_value()) {
     throw InternalError(
-        "LowerEnumConstantMethod: missing enum type-bearer argument");
+        "an enumerated type method reached lowering without the argument "
+        "bearing its enumeration -- please report this as a bug");
   }
+  const hir::ExprId bearer = *c.arguments.front();
   const mir::TypeId enum_tid =
-      unit_lowerer.TranslateType(hir_exprs.Get(*c.arguments.front()).type);
-  const mir::Type& enum_type = unit.types.Get(enum_tid);
-  const auto& enum_ty = enum_type.Get<mir::EnumType>();
+      lowerer.Owner().TranslateType(lowerer.HirExprs().Get(bearer).type);
+  const mir::CompilationUnit& unit = lowerer.Owner().Unit();
+  const auto& enum_ty = unit.types.Get(enum_tid).Get<mir::EnumType>();
   if (enum_ty.members.empty()) {
-    throw InternalError("LowerEnumConstantMethod: enum has no members");
+    throw InternalError(
+        "an enumerated type method reached lowering against a type with no "
+        "members -- please report this as a bug");
   }
-  switch (b.method) {
-    case support::BuiltinFn::kEnumNum:
-      return block.exprs.Get(BuildIntLiteral(
-          unit, block, static_cast<std::int64_t>(enum_ty.members.size())));
-    case support::BuiltinFn::kEnumFirst:
-      return block.exprs.Get(BuildIntegralLiteral(
-          unit, block, result_type,
-          MemberValueConstant(enum_ty.base, enum_ty.members.front().value)));
-    case support::BuiltinFn::kEnumLast:
-      return block.exprs.Get(BuildIntegralLiteral(
-          unit, block, result_type,
-          MemberValueConstant(enum_ty.base, enum_ty.members.back().value)));
-    default:
-      throw InternalError(
-          "LowerEnumConstantMethod: not a constant enum method");
-  }
+  return OwningEnum{
+      .bearer = bearer,
+      .type = enum_tid,
+      .base = enum_ty.base,
+      .members = enum_ty.members};
 }
+
+// A searched answer needs two things a constant one does not: a class to home
+// the synthesized callable on, and the receiver as a value to pass it. A
+// package namespace has no class an intra-unit call can name, so those
+// contexts are not yet supported.
+template <ExprLowerer Lowerer>
+auto LowerCallReceiver(
+    Lowerer& lowerer, WalkFrame frame, const hir::Expr& receiver_hir)
+    -> diag::Result<mir::Expr> {
+  if (frame.current_class == nullptr) {
+    return diag::Fail(
+        receiver_hir.span, diag::DiagCode::kUnsupportedExpressionForm,
+        "enum name / next / prev in a package context is not yet supported");
+  }
+  return lowerer.LowerExpr(receiver_hir, frame);
+}
+
+// LRM 6.19.5.3 `next` and 6.19.5.4 `prev`, whose step count the source may
+// omit and which then moves by one.
+template <ExprLowerer Lowerer>
+auto LowerStepCall(
+    Lowerer& lowerer, WalkFrame frame, const hir::CallExpr& c,
+    const OwningEnum& enumeration, StepDirection direction,
+    mir::TypeId result_type) -> diag::Result<mir::Expr> {
+  auto value_or = LowerCallReceiver(
+      lowerer, frame, lowerer.HirExprs().Get(enumeration.bearer));
+  if (!value_or) return std::unexpected(std::move(value_or.error()));
+
+  const mir::CompilationUnit& unit = lowerer.Owner().Unit();
+  auto& block = *frame.current_block;
+  const mir::ExprId value_id = block.exprs.Add(*std::move(value_or));
+  const mir::CallableTarget target = ResolveEnumStepHelper(
+      lowerer.Owner(), frame, enumeration.type, enumeration.base,
+      enumeration.members);
+
+  const mir::TypeId int_ty = unit.builtins.int_type;
+  const bool backward = direction == StepDirection::kBackward;
+  mir::ExprId step_id{};
+  if (const std::optional<hir::ExprId> step = OptionalOperand(c, 1)) {
+    auto step_or = lowerer.LowerExpr(lowerer.HirExprs().Get(*step), frame);
+    if (!step_or) return std::unexpected(std::move(step_or.error()));
+    const mir::ExprId raw = block.exprs.Add(*std::move(step_or));
+    if (backward) {
+      const mir::ExprId zero = BuildIntLiteral(unit, block, 0);
+      step_id = block.exprs.Add(
+          mir::Expr{
+              .data =
+                  mir::BinaryExpr{
+                      .op = mir::BinaryOp::kSub, .lhs = zero, .rhs = raw},
+              .type = int_ty});
+    } else {
+      step_id = raw;
+    }
+  } else {
+    step_id = BuildIntLiteral(unit, block, backward ? -1 : 1);
+  }
+
+  return mir::Expr{
+      .data =
+          mir::CallExpr{
+              .callee = mir::Direct{.target = target},
+              .arguments = {value_id, step_id}},
+      .type = result_type};
+}
+
+}  // namespace
 
 template <ExprLowerer Lowerer>
 auto BuildEnumNameCallExpr(
@@ -370,101 +439,57 @@ auto BuildEnumNameCallExpr(
 }
 
 template <ExprLowerer Lowerer>
-auto LowerEnumMethodCall(
+auto LowerEnumMethod(
     Lowerer& lowerer, WalkFrame frame, const hir::CallExpr& c,
-    const hir::BuiltinMethodRef& b, mir::TypeId result_type)
+    hir::EnumMethodRef ref, mir::TypeId result_type)
     -> diag::Result<mir::Expr> {
-  auto& unit_lowerer = lowerer.Owner();
-  const auto& unit = unit_lowerer.Unit();
-  const auto& hir_exprs = lowerer.HirExprs();
-  auto& block = *frame.current_block;
-
-  if (c.arguments.empty() || !c.arguments.front().has_value()) {
-    throw InternalError("LowerEnumMethodCall: missing enum receiver argument");
-  }
-  const hir::Expr& receiver_hir = hir_exprs.Get(*c.arguments.front());
-  const mir::TypeId enum_tid = unit_lowerer.TranslateType(receiver_hir.type);
-
-  // Copy the shape and member table before lowering the receiver below, which
-  // may intern new types and invalidate a reference into the type pool.
-  const mir::Type& enum_type = unit.types.Get(enum_tid);
-  const mir::PackedArrayType base = enum_type.Get<mir::EnumType>().base;
-  const std::vector<mir::EnumMember> members =
-      enum_type.Get<mir::EnumType>().members;
-  if (members.empty()) {
-    throw InternalError("LowerEnumMethodCall: enum has no members");
-  }
-
-  // The lowered receiver value is the first call argument.
-  auto recv_or = lowerer.LowerExpr(receiver_hir, frame);
-  if (!recv_or) return std::unexpected(std::move(recv_or.error()));
-  const mir::ExprId value_id = block.exprs.Add(*std::move(recv_or));
-
-  if (b.method == support::BuiltinFn::kEnumName) {
-    return BuildEnumNameCallExpr(
-        lowerer, frame, value_id, enum_tid, receiver_hir.span);
-  }
-
-  // The step callable homes on a class the intra-unit call can name; a package
-  // namespace has none, so those contexts are not yet supported.
-  if (frame.current_class == nullptr) {
-    return diag::Fail(
-        receiver_hir.span, diag::DiagCode::kUnsupportedExpressionForm,
-        "enum next / prev in a package context is not yet supported");
-  }
-
-  // next / prev share one step callable; prev negates the step.
-  const mir::CallableTarget target =
-      ResolveEnumStepHelper(unit_lowerer, frame, enum_tid, base, members);
-
-  const mir::TypeId int_ty = unit.builtins.int_type;
-  const bool is_prev = b.method == support::BuiltinFn::kEnumPrev;
-  mir::ExprId step_id{};
-  // `next` / `prev` take an optional step count (LRM 6.19.5).
-  if (const std::optional<hir::ExprId> step = OptionalOperand(c, 1)) {
-    auto step_or = lowerer.LowerExpr(hir_exprs.Get(*step), frame);
-    if (!step_or) return std::unexpected(std::move(step_or.error()));
-    const mir::ExprId raw = block.exprs.Add(*std::move(step_or));
-    if (is_prev) {
-      const mir::ExprId zero = BuildIntLiteral(unit, block, 0);
-      step_id = block.exprs.Add(
-          mir::Expr{
-              .data =
-                  mir::BinaryExpr{
-                      .op = mir::BinaryOp::kSub, .lhs = zero, .rhs = raw},
-              .type = int_ty});
-    } else {
-      step_id = raw;
+  const OwningEnum enumeration = ResolveOwningEnum(lowerer, c);
+  const mir::CompilationUnit& unit = lowerer.Owner().Unit();
+  mir::Block& block = *frame.current_block;
+  switch (ref.method) {
+    case hir::EnumMethod::kNum:
+      return block.exprs.Get(BuildIntLiteral(
+          unit, block, static_cast<std::int64_t>(enumeration.members.size())));
+    case hir::EnumMethod::kFirst:
+      return block.exprs.Get(BuildIntegralLiteral(
+          unit, block, result_type,
+          MemberValueConstant(
+              enumeration.base, enumeration.members.front().value)));
+    case hir::EnumMethod::kLast:
+      return block.exprs.Get(BuildIntegralLiteral(
+          unit, block, result_type,
+          MemberValueConstant(
+              enumeration.base, enumeration.members.back().value)));
+    case hir::EnumMethod::kName: {
+      const hir::Expr& bearer = lowerer.HirExprs().Get(enumeration.bearer);
+      auto value_or = LowerCallReceiver(lowerer, frame, bearer);
+      if (!value_or) return std::unexpected(std::move(value_or.error()));
+      const mir::ExprId value_id = block.exprs.Add(*std::move(value_or));
+      return BuildEnumNameCallExpr(
+          lowerer, frame, value_id, enumeration.type, bearer.span);
     }
-  } else {
-    step_id = BuildIntLiteral(unit, block, is_prev ? -1 : 1);
+    case hir::EnumMethod::kNext:
+      return LowerStepCall(
+          lowerer, frame, c, enumeration, StepDirection::kForward, result_type);
+    case hir::EnumMethod::kPrev:
+      return LowerStepCall(
+          lowerer, frame, c, enumeration, StepDirection::kBackward,
+          result_type);
   }
-
-  return mir::Expr{
-      .data =
-          mir::CallExpr{
-              .callee = mir::Direct{.target = target},
-              .arguments = {value_id, step_id}},
-      .type = result_type};
+  throw InternalError("LowerEnumMethod: unknown enumerated type method");
 }
 
-template auto LowerEnumConstantMethod(
-    ProcessLowerer&, WalkFrame, const hir::CallExpr&,
-    const hir::BuiltinMethodRef&, mir::TypeId) -> diag::Result<mir::Expr>;
-template auto LowerEnumConstantMethod(
+template auto LowerEnumMethod(
+    ProcessLowerer&, WalkFrame, const hir::CallExpr&, hir::EnumMethodRef,
+    mir::TypeId) -> diag::Result<mir::Expr>;
+template auto LowerEnumMethod(
     const StructuralScopeLowerer&, WalkFrame, const hir::CallExpr&,
-    const hir::BuiltinMethodRef&, mir::TypeId) -> diag::Result<mir::Expr>;
+    hir::EnumMethodRef, mir::TypeId) -> diag::Result<mir::Expr>;
 template auto BuildEnumNameCallExpr(
     ProcessLowerer&, WalkFrame, mir::ExprId, mir::TypeId, diag::SourceSpan)
     -> diag::Result<mir::Expr>;
 template auto BuildEnumNameCallExpr(
     const StructuralScopeLowerer&, WalkFrame, mir::ExprId, mir::TypeId,
     diag::SourceSpan) -> diag::Result<mir::Expr>;
-template auto LowerEnumMethodCall(
-    ProcessLowerer&, WalkFrame, const hir::CallExpr&,
-    const hir::BuiltinMethodRef&, mir::TypeId) -> diag::Result<mir::Expr>;
-template auto LowerEnumMethodCall(
-    const StructuralScopeLowerer&, WalkFrame, const hir::CallExpr&,
-    const hir::BuiltinMethodRef&, mir::TypeId) -> diag::Result<mir::Expr>;
 
 }  // namespace lyra::lowering::hir_to_mir

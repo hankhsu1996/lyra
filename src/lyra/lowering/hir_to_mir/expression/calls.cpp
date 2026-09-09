@@ -103,8 +103,8 @@ auto LowerAssociativeTraversal(
       mir::Expr{
           .data =
               mir::CallExpr{
-                  .callee = mir::Direct{.target = fn},
-                  .arguments = {map_read_id, idx_read_id}},
+                  .callee = mir::Direct{.target = fn, .receiver = map_read_id},
+                  .arguments = {idx_read_id}},
           .type = payload_type});
   const mir::LocalId completion = steps.Bindings().DeclareAnonymous(
       mir::LocalDecl{.name = "_lyra_trav", .type = payload_type});
@@ -124,20 +124,27 @@ auto LowerAssociativeTraversal(
       body, completion, payload_type, kTraversalFound, result_type));
 }
 
-// Translates a HIR builtin-method ref to its MIR `Callee`. The identifier
-// is the flat `support::BuiltinFn`; the only decision here is whether the
-// id names a type-namespace-qualified static call (e.g. `MyEnum::first()`)
-// or an instance call.
+// True iff the library declares the entry on the type it builds, so the call
+// dispatches on no object and names that type as its qualifier instead.
+auto IsStaticFactory(const support::RuntimeEntry& entry) -> bool {
+  return std::holds_alternative<support::StaticFactory>(entry.declaration);
+}
+
+// Translates a HIR builtin-method ref to its MIR callee. The identifier is the
+// flat `support::BuiltinFn`; what varies is what the call dispatches on -- the
+// type a factory builds, which the call site qualifies it with, and the
+// receiver value for every other entry.
 auto MakeBuiltinMirCallee(
     const UnitLowerer& unit_lowerer, const hir::BuiltinMethodRef& b,
-    hir::TypeId hir_dispatch_type) -> mir::Callee {
-  if (support::IsStaticBuiltinFn(b.method)) {
+    const support::RuntimeEntry& entry, hir::TypeId hir_dispatch_type,
+    std::optional<mir::ExprId> receiver) -> mir::Direct {
+  if (IsStaticFactory(entry)) {
     return mir::Direct{
         .target = b.method,
         .qualification = mir::TypeQualifier{
             .type = unit_lowerer.TranslateType(hir_dispatch_type)}};
   }
-  return mir::Direct{.target = b.method};
+  return mir::Direct{.target = b.method, .receiver = receiver};
 }
 
 // The LRM 7.12 family shares one closure shape across every unpacked-array
@@ -165,16 +172,8 @@ auto ArrayMethodReceiverElementType(const hir::Type& ty)
 // as the prototype; a scalar result is its own prototype.
 auto ResultPrototypeType(
     const UnitLowerer& unit_lowerer, mir::TypeId result_type) -> mir::TypeId {
-  return unit_lowerer.Unit()
-      .types.Get(result_type)
-      .Visit(
-          Overloaded{
-              [](const mir::UnpackedArrayType& t) { return t.element_type; },
-              [](const mir::DynamicArrayType& t) { return t.element_type; },
-              [](const mir::QueueType& t) { return t.element_type; },
-              [](const mir::AssociativeArrayType& t) { return t.element_type; },
-              [result_type](const auto&) { return result_type; },
-          });
+  return ContainerElementType(unit_lowerer.Unit(), result_type)
+      .value_or(result_type);
 }
 
 // LRM 7.12.1 / 7.12.2 / 7.12.3 with-clause closure synthesis. The element and
@@ -394,12 +393,12 @@ auto LowerSystemSubroutineCall(
       desc.semantic);
 }
 
-// Built-in method dispatch (LRM 6.16 / 6.19.5 / 7.9 / 7.10 / 7.12 / 15.5).
+// Built-in method dispatch (LRM 6.16 / 7.9 / 7.10 / 7.12 / 15.5).
 // AST -> HIR puts a type-bearing expression at `c.arguments[0]`: for an
-// instance call it is the receiver itself, for a type-namespace static
-// call (`MyEnum::first()`) it is a discardable bearer whose type supplies
-// the static callee's `type_qual`. Either way, the for-loop below skips
-// index 0 and starts the real user-argument scan at index 1.
+// instance call it is the receiver itself, for a call on a factory of the type
+// it builds it is a discardable bearer, and that type is what the callee
+// qualifies the factory with. Either way, the for-loop below skips index 0 and
+// starts the real user-argument scan at index 1.
 template <ExprLowerer Lowerer>
 auto LowerBuiltinMethodCall(
     Lowerer& lowerer, WalkFrame frame, const hir::CallExpr& c,
@@ -413,25 +412,12 @@ auto LowerBuiltinMethodCall(
     throw InternalError(
         "BuiltinMethodRef receiver / type-bearer unexpectedly elided");
   }
+  const support::RuntimeEntry entry = support::RuntimeEntryOf(b.method);
   // LRM 7.9.4 -- 7.9.7 traversal answers with two values and has to place one
   // of them, so it is not the plain member call the generic path below builds
   // for every other associative method.
-  if (support::IsAssociativeTraversalFn(b.method)) {
+  if (entry.writes_the_index_back) {
     return LowerAssociativeTraversal(lowerer, frame, c, b.method, result_type);
-  }
-  // LRM 6.19.5 `first` / `last` / `num` are compile-time constants of the enum
-  // type; they fold here rather than surviving as a runtime call.
-  if (b.method == support::BuiltinFn::kEnumFirst ||
-      b.method == support::BuiltinFn::kEnumLast ||
-      b.method == support::BuiltinFn::kEnumNum) {
-    return LowerEnumConstantMethod(lowerer, frame, c, b, result_type);
-  }
-  // LRM 6.19.5 `name` / `next` / `prev` lower to a synthesized per-enum
-  // callable.
-  if (b.method == support::BuiltinFn::kEnumName ||
-      b.method == support::BuiltinFn::kEnumNext ||
-      b.method == support::BuiltinFn::kEnumPrev) {
-    return LowerEnumMethodCall(lowerer, frame, c, b, result_type);
   }
   // LRM 20.5 conversions answer in a machine integer, which the destination's
   // declared representation then has to land, so each is a pair of steps
@@ -446,44 +432,36 @@ auto LowerBuiltinMethodCall(
   auto& block = *frame.current_block;
   const hir::TypeId hir_dispatch_type =
       hir_exprs.Get(*c.arguments.front()).type;
-  std::vector<mir::ExprId> args;
-  args.reserve(c.arguments.size() + 1);
-
-  // Translate the callee up front so the same trait (`mir::IsMutatingCallee`)
-  // drives both lowering and backend rendering.
-  const mir::Callee mir_callee =
-      MakeBuiltinMirCallee(unit_lowerer, b, hir_dispatch_type);
-
-  // A static call has no value receiver -- `args[0]` is the discardable
-  // type-bearer, the type-namespace qualifier rides on the callee. An
-  // instance call lowers `args[0]` as the receiver, routing through the
-  // partial-write proxy when the method mutates and the LHS roots in a
-  // capability wrapper, so the method body operates on a snapshot the proxy
-  // commits back; non-mutating methods consume a value, so the ordinary value
-  // path applies.
-  const auto* direct = std::get_if<mir::Direct>(&mir_callee);
-  const bool has_receiver =
-      direct != nullptr && !direct->qualification.has_value();
-  if (has_receiver) {
-    const bool method_mutates = mir::IsMutatingCallee(mir_callee);
-    mir::ExprId receiver_id{};
-    if (method_mutates) {
+  // A static call dispatches on a type, so `args[0]` is a discardable
+  // type-bearer and the type-namespace qualifier rides on the callee. Every
+  // other call dispatches on `args[0]`, routed through the partial-write proxy
+  // when the method mutates and the LHS roots in a capability wrapper, so the
+  // method body operates on a snapshot the proxy commits back; a non-mutating
+  // method consumes a value, so the ordinary value path applies.
+  std::optional<mir::ExprId> receiver;
+  if (!IsStaticFactory(entry)) {
+    if (entry.mutates_receiver) {
       auto recv_or =
           lowerer.LowerLhsExpr(hir_exprs.Get(*c.arguments.front()), frame);
       if (!recv_or) return std::unexpected(std::move(recv_or.error()));
-      receiver_id = block.exprs.Add(*std::move(recv_or));
-      receiver_id = StoragePlaceOf(lowerer.Owner().Unit(), block, receiver_id);
+      receiver = StoragePlaceOf(
+          lowerer.Owner().Unit(), block, block.exprs.Add(*std::move(recv_or)));
     } else {
       auto recv_or =
           lowerer.LowerExpr(hir_exprs.Get(*c.arguments.front()), frame);
       if (!recv_or) return std::unexpected(std::move(recv_or.error()));
-      receiver_id = block.exprs.Add(*std::move(recv_or));
+      receiver = block.exprs.Add(*std::move(recv_or));
     }
-    args.push_back(receiver_id);
   }
+  const mir::Direct mir_callee =
+      MakeBuiltinMirCallee(unit_lowerer, b, entry, hir_dispatch_type, receiver);
 
-  // Skip args[0] -- it was either pushed above as the lowered receiver
-  // (instance call) or discarded as the type-bearer (static call).
+  std::vector<mir::ExprId> args;
+  args.reserve(c.arguments.size());
+
+  // The scan starts past the type-bearing expression: it is the receiver for an
+  // instance call and discardable for a static one, and either way it is not an
+  // argument the callee takes.
   const std::vector<hir::ExprId> operands = RequiredOperands(c);
   for (std::size_t i = 1; i < operands.size(); ++i) {
     auto arg_or = lowerer.LowerExpr(hir_exprs.Get(operands[i]), frame);
@@ -496,7 +474,7 @@ auto LowerBuiltinMethodCall(
   // defines the default as `with (item)`, which HIR-to-MIR synthesises so
   // MIR always carries the closure argument and downstream consumers see
   // one uniform shape per kind.
-  if (support::ArrayMethodTakesClosure(b.method)) {
+  if (entry.takes_closure) {
     auto closure_or = BuildArrayMethodClosure(
         lowerer, frame, hir_dispatch_type,
         c.with_clause.has_value() ? &*c.with_clause : nullptr);
@@ -512,7 +490,7 @@ auto LowerBuiltinMethodCall(
   // does not determine the result's shape -- an LRM 7.12 index locator's key, a
   // map's chosen element, an empty reduction's zero, or the index an empty
   // associative dimension reports (LRM 20.7).
-  if (support::BuiltinFnTakesResultPrototype(b.method)) {
+  if (entry.takes_result_prototype) {
     const mir::TypeId proto_type =
         ResultPrototypeType(unit_lowerer, result_type);
     args.push_back(block.exprs.Add(
@@ -538,10 +516,10 @@ auto LowerBuiltinMethodCall(
 
 // A call to a method the runtime library provides for an imported class (LRM
 // 9.7 `process`) lowers to a direct call on the library symbol. An instance
-// method passes its receiver handle as the leading argument; whether the
-// runtime handle follows is a per-method fact. The receiver is passed
-// as the managed handle itself, not a borrowed object pointer -- the runtime
-// reads the process identity from the handle. A suspending method (`await`) is
+// method dispatches on its handle; whether the runtime handle is also taken is
+// a per-method fact. The call dispatches on the managed handle itself, not on a
+// borrowed object pointer -- the runtime reads the process identity from the
+// handle. A suspending method (`await`) is
 // wrapped in an await by the statement lowering, the same as a task enable.
 template <ExprLowerer Lowerer>
 auto LowerImportedMethodCall(
@@ -552,11 +530,12 @@ auto LowerImportedMethodCall(
   std::vector<mir::ExprId> args;
   args.reserve(c.arguments.size() + 1);
 
+  std::optional<mir::ExprId> receiver;
   if (m.receiver.has_value()) {
     auto receiver_or =
         lowerer.LowerExpr(lowerer.HirExprs().Get(*m.receiver), frame);
     if (!receiver_or) return std::unexpected(std::move(receiver_or.error()));
-    args.push_back(block.exprs.Add(*std::move(receiver_or)));
+    receiver = block.exprs.Add(*std::move(receiver_or));
   }
   // A static method (no receiver) threads the runtime handle as its leading
   // argument; an instance method threads it after the receiver when the method
@@ -582,6 +561,7 @@ auto LowerImportedMethodCall(
                   mir::Direct{
                       .target =
                           mir::ImportedRuntimeCallTarget{.method = m.method},
+                      .receiver = receiver,
                       .qualification = std::nullopt},
               .arguments = std::move(args)},
       .type = result_type};
@@ -620,6 +600,9 @@ auto LowerHirCallExpr(
           },
           [&](const hir::BuiltinMethodRef& b) -> diag::Result<mir::Expr> {
             return LowerBuiltinMethodCall(lowerer, frame, c, b, result_type);
+          },
+          [&](const hir::EnumMethodRef& e) -> diag::Result<mir::Expr> {
+            return LowerEnumMethod(lowerer, frame, c, e, result_type);
           },
           [&](const hir::ForeignImportRef& imp) -> diag::Result<mir::Expr> {
             return LowerForeignImportCall(lowerer, frame, c, imp, result_type);

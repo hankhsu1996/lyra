@@ -562,10 +562,10 @@ enough to warrant its own focused review.
 
 - [x] R42 -- Retired `RuntimeNavCallee`. The three by-name scope operations (`kRegisterSignal` /
       `kGetSignal` / `kGetChild`) now ride `BuiltinFnCallee` with the signal / child name as a
-      regular `StringLiteral` argument and the index list as an `ArrayLiteralExpr`. The `kGetSignal`
-      cast is lifted to a new MIR `PointerCastExpr` primitive whose destination type is the call
-      site's slot type; the backend emits `static_cast<T>(...)` mechanically from a stated MIR fact.
-      The `kGetChild` index conversion moved into the runtime (which now accepts
+      regular `StringLiteral` argument and the index list as an element list. The `kGetSignal` cast
+      is lifted to a new MIR `PointerCastExpr` primitive whose destination type is the call site's
+      slot type; the backend emits `static_cast<T>(...)` mechanically from a stated MIR fact. The
+      `kGetChild` index conversion moved into the runtime (which now accepts
       `std::span<const value::PackedArray>` and calls `.ToInt64()` itself), so the render side has
       no `.ToInt64()` injection and no `std::array{...}` wrapper. Every call -- regardless of callee
       variant -- now renders as `fn(rendered_args...)`.
@@ -590,19 +590,17 @@ enough to warrant its own focused review.
       the C++ backend, instance-form / free-form is a per-id render fact, not structure. Landed as:
       `Callee = variant<Direct, Indirect, Construct>`, where
       `Direct { target, qualification: optional<ScopeQualifier> }`. `target` is the symbol identity,
-      which R49 unifies into one space, and `qualification` names the scope a source-level `::`
-      resolved through. `MethodRef`'s `hops` field retires -- the receiver becomes explicit
-      (`Deref(LocalRef(self_at_hops))` in `args[0]`), the receiver's type pins the enclosing class
-      whose `methods` arena names the `MethodId`. Render mode is read off the callee's signature: a
-      self formal (built-in: per-`BuiltinFn` metadata table; user method:
-      `MethodDecl.code.params[0]`) drives `args[0].name(rest)`; a qualification drives
-      `Q::name(args)`; neither drives `<backend_ns>::name(args)`, where `<backend_ns>` is per-id
-      backend metadata (the C++ namespace a runtime helper lives in, no MIR-level meaning). The
-      `decisions/builtin-call-identity.md` paragraph that justified the instance / static / free
-      split as "structural at MIR" for backend convenience is rewritten -- the split was an
-      invariant-10 violation, not a structural fact. Reserves the seat for `Virtual` (R8e) without
-      inventing it now: gated on R47, a future `Virtual { slot, static_receiver_type }` arm slots in
-      as an additional `Callee` arm with no change to the others.
+      which `mechanical-translation.md` T11 unifies into one space, and `qualification` names the
+      scope a source-level `::` resolved through. `MethodRef`'s `hops` field retires -- the receiver
+      becomes an explicit expression the call carries, and its type pins the enclosing class whose
+      arena names the callable. Render mode follows the callee: a receiver drives the instance form,
+      a qualification the type-qualified one, and neither the free form, whose namespace is per-id
+      backend metadata with no MIR-level meaning. The `decisions/builtin-call-identity.md` paragraph
+      that justified the instance / static / free split as "structural at MIR" for backend
+      convenience is rewritten -- the split was an invariant-10 violation, not a structural fact.
+      Reserves the seat for `Virtual` (R8e) without inventing it now: gated on R47, a future
+      `Virtual { slot, static_receiver_type }` arm slots in as an additional `Callee` arm with no
+      change to the others.
 
 - [x] R46 -- MIR's cast vocabulary is a set of single-meaning primitives, each carrying no kind axis
       because each _is_ one kind: `BoolCastExpr` reduces a value to a machine boolean,
@@ -615,17 +613,6 @@ enough to warrant its own focused review.
       is a library call, not a cast node. `mir::ConversionExpr` (mirroring HIR's LRM-defined
       `ConversionKind`) retires; HIR's `ConversionExpr` + `ConversionKind` stay as SV vocab in HIR
       and collapse into these primitives at HIR-to-MIR.
-
-- [ ] R49 -- Unify callable identity. A direct call's target is a variant with one arm per origin --
-      a built-in, a user method, an imported runtime entry, a callable in another unit, a method on
-      another unit's class -- so each origin carries its own identity space, and every new kind of
-      callable adds an arm rather than an entry. Each arm is a place a consumer must branch, and the
-      branch says nothing about the call: what differs between origins is where the declaration
-      lives and how it is reached, not what a call to it means. The target is one identity space
-      whose entries name a declaration carrying signature, implementation form (internal body,
-      external symbol, built-in intrinsic), receiver convention, and per-backend render metadata; a
-      call names one identity and nothing branches on origin. **Gated on**: R8e (external callable
-      form) and a co-design with DPI's symbol contract, which needs the same declaration shape.
 
 - [x] R51 -- Reaching a capability wrapper's storage is place formation, not a call. A bare wrapper
       place denotes the wrapper and a dereference of it denotes the storage it represents, so an
@@ -1053,5 +1040,6 @@ enough to warrant its own focused review.
 ## Out of Scope
 
 - Per-feature workstreams. Those live in the dedicated feature files (`operators.md`,
-  `processes.md`, etc.).
+  `processes.md`, `mechanical-translation.md`, etc.). Making MIR state each semantic fact once, so
+  that no backend re-derives one, is tracked there rather than here.
 - One-PR cleanups with no architectural shift. Those land directly without a tracking entry.

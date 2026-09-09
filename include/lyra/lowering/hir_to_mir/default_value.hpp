@@ -59,19 +59,29 @@ namespace lyra::lowering::hir_to_mir {
 [[nodiscard]] auto CrossesArrayContainerKinds(
     const mir::Type& source, const mir::Type& destination) -> bool;
 
-// The element type of an array container type (unpacked, dynamic, or queue).
-// Throws `InternalError` if `array_type` is not one of those.
-[[nodiscard]] auto ArrayContainerElementType(
-    const mir::CompilationUnit& unit, mir::TypeId array_type) -> mir::TypeId;
+// The element type of a container that holds elements of one type, absent for
+// a type that holds none. Which types those are is stated here and nowhere
+// else; a caller that must decide what a non-container means says so at its
+// own site.
+[[nodiscard]] auto ContainerElementType(
+    const mir::CompilationUnit& unit, mir::TypeId type)
+    -> std::optional<mir::TypeId>;
 
-// Wraps a list of element ExprIds destined for any array container's
-// constructor in a construction call whose arguments are `[element_default,
-// elements, count]`, plus the LRM 7.10.5 bound for a bounded queue. This is the
-// construction shape every site that produces an array-container value must
-// use: the canonical-default element the wrapper's runtime ctor requires is
-// supplied here from the element type, and the elements ride as an aggregate
-// literal of the plain-data array of that element -- the container is what the
-// construction produces, never what the literal itself claims to be.
+// The same, for a caller whose own construction guarantees a container. Where
+// that guarantee did not hold, the producer built something it should not
+// have, so this reports a compiler bug rather than answering.
+[[nodiscard]] auto RequiredContainerElementType(
+    const mir::CompilationUnit& unit, mir::TypeId container) -> mir::TypeId;
+
+// Builds a container from an explicit element list, laid down once, whose
+// constructor arguments are `[element_default, elements, count]` plus the LRM
+// 7.10.5 bound for a bounded queue. This is the construction shape every site
+// producing such a value must use: the canonical-default element the
+// container's constructor requires is supplied here from the element type, and
+// the elements ride as one literal of the plain-data array of that element --
+// so the container is what the construction produces, never what the literal
+// itself claims to be. A uniform value is built by the repeat call below
+// instead.
 [[nodiscard]] auto BuildArrayConstructionCall(
     const mir::CompilationUnit& unit, mir::Block& block, mir::TypeId array_type,
     std::vector<mir::ExprId> elements) -> mir::Expr;
@@ -83,20 +93,28 @@ namespace lyra::lowering::hir_to_mir {
 // `[element_default, repeat_unit, count]` (plus the LRM 7.10.5 bound for a
 // bounded queue). This is the shape every site that produces an all-default or
 // `'{count{...}}` array value must use, so the value's MIR and emitted text
-// stay O(repeat_unit) rather than O(repeat_unit * count). A distinct-element
-// list uses `BuildArrayConstructionCall` instead.
+// stay O(repeat_unit) rather than O(repeat_unit * count). A list whose elements
+// differ is built by the construction call above instead.
 [[nodiscard]] auto BuildArrayRepeatCall(
     const mir::CompilationUnit& unit, mir::Block& block, mir::TypeId array_type,
     mir::ExprId element_default, std::vector<mir::ExprId> repeat_unit,
     mir::ExprId count_id) -> mir::Expr;
 
+// Builds the construction call for a sequence: the values it holds, in order.
+// A sequence seeds no default and repeats nothing, so the element list is the
+// constructor's one argument, and a sequence holding nothing is that list with
+// no elements rather than a second form of the call.
+[[nodiscard]] auto BuildSequenceConstructionCall(
+    const mir::CompilationUnit& unit, mir::Block& block,
+    mir::TypeId sequence_type, std::vector<mir::ExprId> elements) -> mir::Expr;
+
 // Builds the construction call for an associative-array literal (LRM 7.9.11).
-// Each (key, value) entry becomes a `TupleExpr`; the entries ride in an
-// aggregate literal of the plain-data array of those tuples, and the
-// constructor arguments are `[element_default, entries, optional
-// user_default]`. `user_default` is the LRM 7.9.11 persistent fallback
-// a read of an absent key returns; when absent the constructor seeds only the
-// element type default.
+// Each (key, value) entry is a pair, and the entries ride in the plain-data
+// array of those pairs, so the constructor arguments are `[element_default,
+// entries, absent_key_answer]`. `user_default` is the LRM 7.9.11 persistent
+// fallback a read of an absent key returns; a literal that writes no `default:`
+// clause answers such a read with the element type's own default, so that is
+// what stands there instead, and the operand is never missing.
 [[nodiscard]] auto BuildAssociativeConstructionCall(
     const mir::CompilationUnit& unit, mir::Block& block, mir::TypeId assoc_type,
     std::vector<std::pair<mir::ExprId, mir::ExprId>> entries,

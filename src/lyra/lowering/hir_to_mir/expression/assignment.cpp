@@ -58,10 +58,30 @@ auto TargetOutlivesDeferredUpdate(const mir::Block& block, mir::ExprId expr_id)
             }
             return TargetOutlivesDeferredUpdate(block, m.receiver);
           },
-          [](const mir::StaticPropertyRef&) { return true; },
-          [](const mir::ExternalStaticPropertyRef&) { return true; },
-          [](const mir::ExternalUnitVariableRef&) { return true; },
-          [](const mir::LocalRef&) { return false; },
+          // A member of an active-member value lives exactly as long as the
+          // value holding it, so the question passes to that value, the same
+          // way a product's component passes it to the product.
+          [&](const mir::UnionMemberExpr& m) {
+            return TargetOutlivesDeferredUpdate(block, m.union_value);
+          },
+          // A name reaches storage of one of two durations: a body's own
+          // binding, which goes away when the stretch that holds it returns,
+          // and everything a compilation unit declares once -- a
+          // type-associated cell, a namespace variable, a generated descriptor
+          // -- which the whole program shares and so outlives any stretch.
+          [](const mir::ReferenceExpr& r) {
+            return std::visit(
+                Overloaded{
+                    [](const mir::LocalRef&) { return false; },
+                    [](const mir::StaticConstantRef&) { return true; },
+                    [](const mir::StaticPropertyRef&) { return true; },
+                    [](const mir::PackedTypeRef&) { return true; },
+                    [](const mir::FunctionRef&) { return true; },
+                    [](const mir::ExternalUnitVariableRef&) { return true; },
+                    [](const mir::ExternalStaticPropertyRef&) { return true; },
+                },
+                r.target);
+          },
           // A sealed endpoint reaches a structural cell through a borrowed
           // pointer stored on this object: a routed reference (an enclosing,
           // sibling, or cross-unit target) dereferences its slot member. The
@@ -71,18 +91,25 @@ auto TargetOutlivesDeferredUpdate(const mir::Block& block, mir::ExprId expr_id)
           [&](const mir::DerefExpr& d) {
             return TargetOutlivesDeferredUpdate(block, d.pointer);
           },
-          // A join stands for the destructuring LHS it came from, which writes
-          // each run through that run's own root, so the whole outlives the
-          // update exactly when every run does. Any other call in target
-          // position names a place through its receiver, its first argument.
+          // A call in target position names a place through the object it
+          // dispatches on. A join stands for the destructuring LHS it came
+          // from, which writes each run through that run's own root, so the
+          // whole outlives the update exactly when every run does.
           [&](const mir::CallExpr& c) {
-            if (mir::DirectBuiltinFn(c) == support::BuiltinFn::kConcat) {
-              return std::ranges::all_of(c.arguments, [&](mir::ExprId op) {
-                return TargetOutlivesDeferredUpdate(block, op);
-              });
+            const std::optional<mir::ExprId> receiver =
+                mir::CalleeReceiver(c.callee);
+            if (!receiver.has_value()) {
+              return false;
             }
-            return !c.arguments.empty() &&
-                   TargetOutlivesDeferredUpdate(block, c.arguments[0]);
+            if (!TargetOutlivesDeferredUpdate(block, *receiver)) {
+              return false;
+            }
+            if (mir::DirectBuiltinFn(c) != support::BuiltinFn::kConcat) {
+              return true;
+            }
+            return std::ranges::all_of(c.arguments, [&](mir::ExprId op) {
+              return TargetOutlivesDeferredUpdate(block, op);
+            });
           },
           [](const auto&) -> bool {
             throw InternalError(
@@ -114,20 +141,26 @@ auto CloneLhsSelectorChainOntoRef(
   const auto& outer_expr = outer_block.exprs.Get(outer_id);
   return std::visit(
       Overloaded{
-          // An access above the root: its receiver is rebuilt onto the
-          // body-side
-          // reference and its coordinates are snapshotted by value, so the body
-          // writes the part the statement named at submit time. Copy the call
-          // up front -- the recursion and snapshots below append to
-          // `outer_block`, which can reallocate and dangle `outer_expr`.
+          // An access above the root: the object it dispatches on is rebuilt
+          // onto the body-side reference and its coordinates are snapshotted by
+          // value, so the body writes the part the statement named at submit
+          // time. Copy the call up front -- the recursion and snapshots below
+          // append to `outer_block`, which can reallocate and dangle
+          // `outer_expr`.
           [&](const mir::CallExpr& c) -> mir::ExprId {
             const mir::TypeId type = outer_expr.type;
             mir::CallExpr rebuilt = c;
-            rebuilt.arguments.front() = CloneLhsSelectorChainOntoRef(
-                unit_lowerer, outer_frame, closure, rebuilt.arguments.front(),
-                root_id, captured_root);
-            for (mir::ExprId& coordinate :
-                 std::span(rebuilt.arguments).subspan(1)) {
+            auto* callee = std::get_if<mir::Direct>(&rebuilt.callee);
+            if (callee == nullptr || !callee->receiver.has_value()) {
+              throw InternalError(
+                  "CloneLhsSelectorChainOntoRef: a selector above the root "
+                  "reaches it through the object it dispatches on, and this "
+                  "call names none -- please report this as a bug");
+            }
+            callee->receiver = CloneLhsSelectorChainOntoRef(
+                unit_lowerer, outer_frame, closure, *callee->receiver, root_id,
+                captured_root);
+            for (mir::ExprId& coordinate : rebuilt.arguments) {
               coordinate = SnapshotIntoClosure(
                   unit_lowerer, outer_frame, closure, coordinate,
                   "_lyra_nba_arg");
@@ -135,8 +168,8 @@ auto CloneLhsSelectorChainOntoRef(
             return body.exprs.Add(
                 mir::Expr{.data = std::move(rebuilt), .type = type});
           },
-          // A field above the root names no coordinates to snapshot, so only
-          // its receiver is rebuilt.
+          // A field or member above the root names no coordinates to snapshot,
+          // so only the value it is taken from is rebuilt.
           [&](const mir::FieldAccessExpr& m) -> mir::ExprId {
             mir::FieldAccessExpr rebuilt = m;
             const mir::TypeId type = outer_expr.type;
@@ -145,6 +178,14 @@ auto CloneLhsSelectorChainOntoRef(
                 captured_root);
             return body.exprs.Add(
                 mir::Expr{.data = std::move(rebuilt), .type = type});
+          },
+          [&](const mir::UnionMemberExpr& m) -> mir::ExprId {
+            mir::UnionMemberExpr rebuilt = m;
+            const mir::TypeId type = outer_expr.type;
+            rebuilt.union_value = CloneLhsSelectorChainOntoRef(
+                unit_lowerer, outer_frame, closure, rebuilt.union_value,
+                root_id, captured_root);
+            return body.exprs.Add(mir::Expr{.data = rebuilt, .type = type});
           },
           [&](const auto&) -> mir::ExprId {
             throw InternalError(

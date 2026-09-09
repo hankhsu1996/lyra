@@ -10,6 +10,7 @@
 
 #include "lyra/hir/binary_op.hpp"
 #include "lyra/hir/conversion.hpp"
+#include "lyra/hir/enum_method.hpp"
 #include "lyra/hir/inc_dec_op.hpp"
 #include "lyra/hir/subroutine_kind.hpp"
 #include "lyra/hir/unary_op.hpp"
@@ -40,7 +41,7 @@ auto FromSlangSubroutineKind(slang::ast::SubroutineKind k)
 auto ToHirSubroutineKind(slang::ast::SubroutineKind k) -> hir::SubroutineKind;
 
 auto LowerEnumMethodName(std::string_view name)
-    -> std::optional<support::BuiltinFn>;
+    -> std::optional<hir::EnumMethod>;
 
 auto LowerStringMethodName(std::string_view name)
     -> std::optional<support::BuiltinFn>;

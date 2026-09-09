@@ -46,6 +46,25 @@ auto Unsupported(std::string message) -> std::unexpected<diag::Diagnostic> {
       diag::DiagCode::kUnsupportedExpressionForm, std::move(message));
 }
 
+// Which build assembles a composite value follows from the storage its type
+// names, which is what translating the type has just settled: a product's
+// components each keep a type of their own, while an element list is one
+// element type laid down a known number of times. A type reaching here that
+// names neither is a producer that built a composite of something that is not
+// composed from parts.
+auto AssembledFrom(const lir::Type& built, std::vector<lir::Operand> parts)
+    -> lir::InstrData {
+  if (built.Is<lir::TupleType>()) {
+    return lir::ProductInstr{.components = std::move(parts)};
+  }
+  if (built.Is<lir::MachineArrayType>()) {
+    return lir::ArrayInstr{.elements = std::move(parts)};
+  }
+  throw InternalError(
+      "mir_to_lir: a composite's type names storage that is not assembled "
+      "from parts");
+}
+
 // The place a place local names: its own storage, with nothing projected off
 // it.
 auto LocalPlace(lir::ValueId local) -> lir::Place {
@@ -100,12 +119,15 @@ auto TranslateBinaryOp(mir::BinaryOp op) -> std::optional<lir::BinaryOp> {
       return lir::BinaryOp::kLogicalAnd;
     case mir::BinaryOp::kLogicalOr:
       return lir::BinaryOp::kLogicalOr;
-    default:
+    case mir::BinaryOp::kShiftLeft:
+    case mir::BinaryOp::kLogicalShiftRight:
+    case mir::BinaryOp::kArithmeticShiftRight:
       return std::nullopt;
   }
+  throw InternalError("TranslateBinaryOp: unknown MIR BinaryOp");
 }
 
-auto TranslateUnaryOp(mir::UnaryOp op) -> std::optional<lir::UnaryOp> {
+auto TranslateUnaryOp(mir::UnaryOp op) -> lir::UnaryOp {
   switch (op) {
     case mir::UnaryOp::kMinus:
       return lir::UnaryOp::kMinus;
@@ -113,16 +135,13 @@ auto TranslateUnaryOp(mir::UnaryOp op) -> std::optional<lir::UnaryOp> {
       return lir::UnaryOp::kBitwiseNot;
     case mir::UnaryOp::kLogicalNot:
       return lir::UnaryOp::kLogicalNot;
-    default:
-      return std::nullopt;
   }
+  throw InternalError("TranslateUnaryOp: unknown MIR UnaryOp");
 }
 
-// The local a place-position expression names, if it names one directly.
-auto PlacedLocal(const mir::Block& block, mir::ExprId id)
+auto LocalNamedBy(const mir::Block& block, mir::ExprId id)
     -> std::optional<mir::LocalId> {
-  const auto* ref = std::get_if<mir::LocalRef>(&block.exprs.Get(id).data);
-  return ref != nullptr ? std::optional{ref->var} : std::nullopt;
+  return mir::ReferencedLocal(block.exprs.Get(id).data);
 }
 
 // A value type whose runtime realization is an opaque handle into transient
@@ -165,24 +184,24 @@ void CollectStorageLocals(
     std::visit(
         Overloaded{
             [&](const mir::AssignExpr& e) {
-              mark(PlacedLocal(block, e.target));
+              mark(LocalNamedBy(block, e.target));
             },
             [&](const mir::IncDecExpr& e) {
-              mark(PlacedLocal(block, e.target));
+              mark(LocalNamedBy(block, e.target));
             },
             [&](const mir::AddressOfExpr& e) {
-              mark(PlacedLocal(block, e.operand));
+              mark(LocalNamedBy(block, e.operand));
             },
             // Building a reference over a local binds that local's storage, so
             // the local needs an address for the same reason an explicit
             // address-of gives it one.
             [&](const mir::CallExpr& e) {
               if (BindsReference(types, e, expr.type)) {
-                mark_lent(PlacedLocal(block, e.arguments[0]));
+                mark_lent(LocalNamedBy(block, e.arguments[0]));
               }
             },
             [&](const mir::MachineArrayDataExpr& e) {
-              mark(PlacedLocal(block, e.array));
+              mark(LocalNamedBy(block, e.array));
             },
             [](const auto&) {}},
         expr.data);
@@ -250,11 +269,6 @@ auto LowerCallTarget(
                               "{}.{}", t.unit_name, t.callable_name)}};
                     },
                     [&](const mir::ExternalUnitClassMethodTarget& t)
-                        -> diag::Result<lir::CallTarget> {
-                      return lir::CallTarget{ExternalMethodSymbol(
-                          t.unit_name, t.class_name, t.method_name)};
-                    },
-                    [&](const mir::ExternalUnitStaticMethodTarget& t)
                         -> diag::Result<lir::CallTarget> {
                       return lir::CallTarget{ExternalMethodSymbol(
                           t.unit_name, t.class_name, t.method_name)};
@@ -656,12 +670,12 @@ auto FunctionLowerer::ReferencedValue(lir::Operand reference) -> lir::Place {
 
 auto FunctionLowerer::ActivationValueHandleForTarget(
     const mir::Block& block, mir::ExprId id) -> std::optional<lir::Operand> {
-  const auto* ref = std::get_if<mir::LocalRef>(&block.exprs.Get(id).data);
-  if (ref == nullptr || !locals_[ref->var.value].has_value()) {
+  const std::optional<mir::LocalId> ref =
+      mir::ReferencedLocal(block.exprs.Get(id).data);
+  if (!ref.has_value() || !locals_[ref->value].has_value()) {
     return std::nullopt;
   }
-  const auto* slot =
-      std::get_if<ActivationValueBinding>(&*locals_[ref->var.value]);
+  const auto* slot = std::get_if<ActivationValueBinding>(&*locals_[ref->value]);
   return slot != nullptr ? std::optional{slot->handle} : std::nullopt;
 }
 
@@ -1205,33 +1219,38 @@ auto FunctionLowerer::MemberRefOf(
       field.field);
 }
 
-// Whether an expression names a part of a value rather than storage. Every such
-// expression is an access whose receiver holds the part it reaches, so the
-// question is answered by that node alone -- reaching further would be asking
-// where a write through it ultimately lands, a different question.
-auto ReachesIntoValue(const mir::Block& block, mir::ExprId target) -> bool {
-  const mir::ExprData& data = block.exprs.Get(target).data;
+// The value a step reaches its part out of, and nothing where the expression
+// names storage instead. Every expression that reaches into a value is an
+// access whose receiver holds the part it reaches, so both questions -- whether
+// it is one, and what it descends through -- are answered by that node alone;
+// reaching further would be asking where a write through it ultimately lands, a
+// different question.
+auto ValuePartReceiver(const mir::Block& block, mir::ExprId step)
+    -> std::optional<mir::ExprId> {
+  const mir::ExprData& data = block.exprs.Get(step).data;
   if (const auto* field = std::get_if<mir::FieldAccessExpr>(&data)) {
-    return std::holds_alternative<mir::ComponentTarget>(field->field);
+    return std::holds_alternative<mir::ComponentTarget>(field->field)
+               ? std::optional{field->receiver}
+               : std::nullopt;
+  }
+  if (const auto* member = std::get_if<mir::UnionMemberExpr>(&data)) {
+    return member->union_value;
   }
   const auto* call = std::get_if<mir::CallExpr>(&data);
   if (call == nullptr) {
-    return false;
+    return std::nullopt;
   }
   const std::optional<support::BuiltinFn> fn = mir::DirectBuiltinFn(*call);
-  return fn == support::BuiltinFn::kElementRef ||
-         fn == support::BuiltinFn::kSliceRef;
+  if (fn != support::BuiltinFn::kElementRef &&
+      fn != support::BuiltinFn::kSliceRef) {
+    return std::nullopt;
+  }
+  return mir::CalleeReceiver(call->callee);
 }
 
-// The value a step reaches its part out of. Every such step names it first, so
-// this is the operand a walk toward the owner continues through.
-auto ValuePartReceiver(const mir::Block& block, mir::ExprId step)
-    -> mir::ExprId {
-  const mir::ExprData& data = block.exprs.Get(step).data;
-  if (const auto* field = std::get_if<mir::FieldAccessExpr>(&data)) {
-    return field->receiver;
-  }
-  return std::get<mir::CallExpr>(data).arguments.front();
+// Whether an expression names a part of a value rather than storage.
+auto ReachesIntoValue(const mir::Block& block, mir::ExprId target) -> bool {
+  return ValuePartReceiver(block, target).has_value();
 }
 
 // The wrapper a pointer opens, when the pointer is that opening rather than an
@@ -1242,11 +1261,11 @@ auto ValuePartReceiver(const mir::Block& block, mir::ExprId step)
 auto OpenedWrapper(const mir::Block& block, mir::ExprId pointer)
     -> std::optional<mir::ExprId> {
   const auto* call = std::get_if<mir::CallExpr>(&block.exprs.Get(pointer).data);
-  if (call == nullptr || call->arguments.empty() ||
+  if (call == nullptr ||
       mir::DirectBuiltinFn(*call) != support::BuiltinFn::kOpenForWrite) {
     return std::nullopt;
   }
-  return call->arguments.front();
+  return mir::CalleeReceiver(call->callee);
 }
 
 auto FunctionLowerer::WrapperContentsPlace(
@@ -1282,19 +1301,68 @@ auto FunctionLowerer::WrapperContentsPlace(
       .chain = {lir::Projection{lir::DerefProjection{}}}};
 }
 
-auto FunctionLowerer::LowerPlace(const mir::Block& block, mir::ExprId id)
+auto FunctionLowerer::ReferenceValue(
+    const mir::Block& block, mir::ExprId id, const mir::ReferenceTarget& target,
+    mir::TypeId type) -> diag::Result<lir::Operand> {
+  return std::visit(
+      Overloaded{
+          [&](const mir::LocalRef& ref) -> diag::Result<lir::Operand> {
+            const std::optional<LocalBinding>& binding = locals_[ref.var.value];
+            if (!binding.has_value()) {
+              return Unsupported("mir_to_lir: reference to an unlowered local");
+            }
+            return std::visit(
+                Overloaded{
+                    [&](const PlaceBinding& place)
+                        -> diag::Result<lir::Operand> {
+                      return Load(
+                          LocalPlace(place.slot),
+                          fn_.values.Get(place.slot).type);
+                    },
+                    [](const ValueBinding& value)
+                        -> diag::Result<lir::Operand> { return value.value; },
+                    [&](const ActivationValueBinding& frame)
+                        -> diag::Result<lir::Operand> {
+                      return LoadActivationValue(
+                          frame.handle, unit_->TranslateType(type));
+                    },
+                    [&](const CellBinding& cell) -> diag::Result<lir::Operand> {
+                      return Load(
+                          ReferencedValue(cell.reference),
+                          unit_->TranslateType(type));
+                    }},
+                *binding);
+          },
+          [&](const mir::PackedTypeRef& ref) -> diag::Result<lir::Operand> {
+            return lir::Operand{lir::PackedTypeRef{
+                .integral = unit_->TranslateType(ref.integral),
+                .type = unit_->TranslateType(type)}};
+          },
+          [](const mir::FunctionRef&) -> diag::Result<lir::Operand> {
+            return Unsupported(
+                "mir_to_lir: a code address as a value is not yet lowerable to "
+                "LIR");
+          },
+          [&](const mir::ExternalUnitVariableRef&)
+              -> diag::Result<lir::Operand> {
+            return ReadPlace(block, id, unit_->TranslateType(type));
+          },
+          [&](const mir::StaticConstantRef&) -> diag::Result<lir::Operand> {
+            return ReadPlace(block, id, unit_->TranslateType(type));
+          },
+          [&](const mir::StaticPropertyRef&) -> diag::Result<lir::Operand> {
+            return ReadPlace(block, id, unit_->TranslateType(type));
+          },
+          [&](const mir::ExternalStaticPropertyRef&)
+              -> diag::Result<lir::Operand> {
+            return ReadPlace(block, id, unit_->TranslateType(type));
+          }},
+      target);
+}
+
+auto FunctionLowerer::ReferencePlace(
+    const mir::ReferenceTarget& target, mir::TypeId type)
     -> diag::Result<lir::Place> {
-  const mir::Expr& expr = block.exprs.Get(id);
-  // A part of a value is a position in it rather than a slot in storage: the
-  // value crosses to the generated side as a handle a copy may alias, so the
-  // part has no storage of its own for anything to bind. A write through one
-  // still has a realization -- read the whole, replace the part, store it back
-  // -- because nothing there has to outlive the expression.
-  if (ReachesIntoValue(block, id)) {
-    return Unsupported(
-        "mir_to_lir: binding part of a value rather than writing it is not yet "
-        "lowerable to LIR");
-  }
   return std::visit(
       Overloaded{
           [&](const mir::LocalRef& ref) -> diag::Result<lir::Place> {
@@ -1314,6 +1382,77 @@ auto FunctionLowerer::LowerPlace(const mir::Block& block, mir::ExprId id)
                   "mir_to_lir: local is not addressable storage");
             }
             return LocalPlace(place->slot);
+          },
+          // A variable of a unit's namespace is one cell for the whole program
+          // that no instance holds, so it is reached by the symbol it links
+          // under rather than through a receiver -- by the unit that declares
+          // it exactly as by any other, since a namespace has no instance. The
+          // symbol names the cell's address, so the place opens there and
+          // dereferences it, the same shape a member place has once its
+          // receiver is resolved.
+          [&](const mir::ExternalUnitVariableRef& ref)
+              -> diag::Result<lir::Place> {
+            return lir::Place{
+                .base =
+                    lir::StaticRef{
+                        .symbol = StaticVariableSymbol(
+                            ref.unit_name, ref.variable_name),
+                        .type = unit_->Types().Intern(
+                            lir::Type{lir::PointerType{
+                                .pointee = unit_->TranslateType(type),
+                                .ownership = lir::PointerOwnership::kBorrowed,
+                                .mutability = lir::Mutability::kMutable}})},
+                .chain = {lir::Projection{lir::DerefProjection{}}}};
+          },
+          // Each of the following does name storage, reached by a name rather
+          // than through a receiver, and what it lacks is the storage itself:
+          // nothing yet builds a cell for a class's type-associated
+          // declarations, so no symbol names one.
+          [](const mir::StaticConstantRef&) -> diag::Result<lir::Place> {
+            return Unsupported(
+                "mir_to_lir: a class's static constant is not yet reachable on "
+                "this backend");
+          },
+          [](const mir::StaticPropertyRef&) -> diag::Result<lir::Place> {
+            return Unsupported(
+                "mir_to_lir: a class's static property is not yet reachable on "
+                "this backend");
+          },
+          [](const mir::ExternalStaticPropertyRef&)
+              -> diag::Result<lir::Place> {
+            return Unsupported(
+                "mir_to_lir: a static property of a class another compilation "
+                "unit declares is not yet reachable on this backend");
+          },
+          // A descriptor and a function are values the unit generates, not
+          // storage anything writes through.
+          [](const mir::PackedTypeRef&) -> diag::Result<lir::Place> {
+            return Unsupported(
+                "mir_to_lir: a type's runtime descriptor names no place");
+          },
+          [](const mir::FunctionRef&) -> diag::Result<lir::Place> {
+            return Unsupported("mir_to_lir: a function names no place");
+          }},
+      target);
+}
+
+auto FunctionLowerer::LowerPlace(const mir::Block& block, mir::ExprId id)
+    -> diag::Result<lir::Place> {
+  const mir::Expr& expr = block.exprs.Get(id);
+  // A part of a value is a position in it rather than a slot in storage: the
+  // value crosses to the generated side as a handle a copy may alias, so the
+  // part has no storage of its own for anything to bind. A write through one
+  // still has a realization -- read the whole, replace the part, store it back
+  // -- because nothing there has to outlive the expression.
+  if (ReachesIntoValue(block, id)) {
+    return Unsupported(
+        "mir_to_lir: binding part of a value rather than writing it is not yet "
+        "lowerable to LIR");
+  }
+  return std::visit(
+      Overloaded{
+          [&](const mir::ReferenceExpr& reference) -> diag::Result<lir::Place> {
+            return ReferencePlace(reference.target, expr.type);
           },
           [&](const mir::FieldAccessExpr& field) -> diag::Result<lir::Place> {
             auto member = MemberRefOf(block, field);
@@ -1338,47 +1477,6 @@ auto FunctionLowerer::LowerPlace(const mir::Block& block, mir::ExprId id)
               return WrapperContentsPlace(block, *wrapper);
             }
             return WrapperContentsPlace(block, deref.pointer);
-          },
-          // A variable of a unit's namespace is one cell for the whole program
-          // that no instance holds, so it is reached by the symbol it links
-          // under rather than through a receiver -- by the unit that declares
-          // it exactly as by any other, since a namespace has no instance. The
-          // symbol names the cell's address, so the place opens there and
-          // dereferences it, the same shape a member place has once its
-          // receiver is resolved.
-          [&](const mir::ExternalUnitVariableRef& ref)
-              -> diag::Result<lir::Place> {
-            return lir::Place{
-                .base =
-                    lir::StaticRef{
-                        .symbol = StaticVariableSymbol(
-                            ref.unit_name, ref.variable_name),
-                        .type = unit_->Types().Intern(
-                            lir::Type{lir::PointerType{
-                                .pointee = unit_->TranslateType(expr.type),
-                                .ownership = lir::PointerOwnership::kBorrowed,
-                                .mutability = lir::Mutability::kMutable}})},
-                .chain = {lir::Projection{lir::DerefProjection{}}}};
-          },
-          // Each of the following does name storage, reached by a name rather
-          // than through a receiver, and what it lacks is the storage itself:
-          // nothing yet builds a cell for a class's type-associated
-          // declarations, so no symbol names one.
-          [](const mir::StaticConstantRef&) -> diag::Result<lir::Place> {
-            return Unsupported(
-                "mir_to_lir: a class's static constant is not yet reachable on "
-                "this backend");
-          },
-          [](const mir::StaticPropertyRef&) -> diag::Result<lir::Place> {
-            return Unsupported(
-                "mir_to_lir: a class's static property is not yet reachable on "
-                "this backend");
-          },
-          [](const mir::ExternalStaticPropertyRef&)
-              -> diag::Result<lir::Place> {
-            return Unsupported(
-                "mir_to_lir: a static property of a class another compilation "
-                "unit declares is not yet reachable on this backend");
           },
           [](const auto&) -> diag::Result<lir::Place> {
             return Unsupported("mir_to_lir: expression form names no place");
@@ -1424,17 +1522,44 @@ auto FunctionLowerer::LowerArgument(const mir::Block& block, mir::ExprId id)
       lir::AddrOfInstr{.place = *std::move(place)});
 }
 
-auto FunctionLowerer::LowerArguments(
-    const mir::Block& block, std::span<const mir::ExprId> arguments)
+auto FunctionLowerer::LowerEachExpr(
+    const mir::Block& block, std::span<const mir::ExprId> ids)
+    -> diag::Result<std::vector<lir::Operand>> {
+  std::vector<lir::Operand> operands;
+  operands.reserve(ids.size());
+  for (const mir::ExprId id : ids) {
+    auto lowered = LowerExpr(block, id);
+    if (!lowered) {
+      return std::unexpected(std::move(lowered.error()));
+    }
+    operands.push_back(*std::move(lowered));
+  }
+  return operands;
+}
+
+auto FunctionLowerer::LowerCallOperands(
+    const mir::Block& block, const mir::CallExpr& call)
     -> diag::Result<std::vector<lir::Operand>> {
   std::vector<lir::Operand> args;
-  args.reserve(arguments.size());
-  for (const mir::ExprId argument : arguments) {
-    auto lowered = LowerArgument(block, argument);
+  args.reserve(call.arguments.size() + 1);
+  const auto lower_into = [&](mir::ExprId id) -> diag::Result<void> {
+    auto lowered = LowerArgument(block, id);
     if (!lowered) {
       return std::unexpected(std::move(lowered.error()));
     }
     args.push_back(*std::move(lowered));
+    return {};
+  };
+  if (const std::optional<mir::ExprId> receiver =
+          mir::CalleeReceiver(call.callee)) {
+    if (auto lowered = lower_into(*receiver); !lowered) {
+      return std::unexpected(std::move(lowered.error()));
+    }
+  }
+  for (const mir::ExprId argument : call.arguments) {
+    if (auto lowered = lower_into(argument); !lowered) {
+      return std::unexpected(std::move(lowered.error()));
+    }
   }
   return args;
 }
@@ -1463,10 +1588,9 @@ auto FunctionLowerer::LowerCellPlace(
   if (unit_->Mir().types.Get(expr.type).Is<mir::ObservableType>()) {
     return LowerPlace(block, referent);
   }
-  if (const auto* local = std::get_if<mir::LocalRef>(&expr.data);
-      local != nullptr && locals_[local->var.value].has_value()) {
-    if (const auto* cell =
-            std::get_if<CellBinding>(&*locals_[local->var.value])) {
+  if (const std::optional<mir::LocalId> local = mir::ReferencedLocal(expr.data);
+      local.has_value() && locals_[local->value].has_value()) {
+    if (const auto* cell = std::get_if<CellBinding>(&*locals_[local->value])) {
       return ReferencedCell(cell->reference);
     }
   }
@@ -1487,8 +1611,7 @@ auto FunctionLowerer::LowerCall(
   // semantics forbid changing what a copy of the receiver would share, so it is
   // a functional operation whose result is stored back through the owner.
   if (const auto fn = mir::DirectBuiltinFn(call);
-      fn.has_value() && support::IsMutatingBuiltinFn(*fn) &&
-      !call.arguments.empty()) {
+      fn.has_value() && support::RuntimeEntryOf(*fn).mutates_receiver) {
     return LowerMutatingCall(block, call, *fn, type);
   }
 
@@ -1499,7 +1622,7 @@ auto FunctionLowerer::LowerCall(
   // where the contents live.
   if (const auto fn = mir::DirectBuiltinFn(call);
       fn == support::BuiltinFn::kLoad || fn == support::BuiltinFn::kStore) {
-    auto place = WrapperContentsPlace(block, call.arguments.front());
+    auto place = WrapperContentsPlace(block, *mir::CalleeReceiver(call.callee));
     if (!place) {
       return std::unexpected(std::move(place.error()));
     }
@@ -1527,7 +1650,7 @@ auto FunctionLowerer::LowerCall(
     return EnterCoroutine(block, call, type, std::nullopt);
   }
 
-  auto args = LowerArguments(block, call.arguments);
+  auto args = LowerCallOperands(block, call);
   if (!args) {
     return std::unexpected(std::move(args.error()));
   }
@@ -1537,7 +1660,7 @@ auto FunctionLowerer::LowerCall(
 auto FunctionLowerer::EnterCoroutine(
     const mir::Block& block, const mir::CallExpr& call, mir::TypeId type,
     std::optional<lir::Operand> completion) -> diag::Result<lir::Operand> {
-  auto args = LowerArguments(block, call.arguments);
+  auto args = LowerCallOperands(block, call);
   if (!args) {
     return std::unexpected(std::move(args.error()));
   }
@@ -1592,7 +1715,7 @@ auto FunctionLowerer::EmitCall(
 auto FunctionLowerer::LowerRegistration(
     const mir::Block& block, const mir::CallExpr& call)
     -> diag::Result<lir::Operand> {
-  auto args = LowerArguments(block, call.arguments);
+  auto args = LowerCallOperands(block, call);
   if (!args) {
     return std::unexpected(std::move(args.error()));
   }
@@ -1800,11 +1923,14 @@ auto FunctionLowerer::LowerValuePartSelector(
     return lir::AggregateSelector{lir::Component{
         .index = std::get<mir::ComponentTarget>(field->field).index}};
   }
+  if (const auto* member = std::get_if<mir::UnionMemberExpr>(&data)) {
+    return lir::AggregateSelector{lir::UnionMember{.index = member->index}};
+  }
   const auto& call = std::get<mir::CallExpr>(data);
   std::vector<lir::Operand> operands;
-  operands.reserve(call.arguments.size() - 1);
-  for (std::size_t i = 1; i < call.arguments.size(); ++i) {
-    auto operand = LowerExpr(block, call.arguments[i]);
+  operands.reserve(call.arguments.size());
+  for (const mir::ExprId argument : call.arguments) {
+    auto operand = LowerExpr(block, argument);
     if (!operand) {
       return std::unexpected(std::move(operand.error()));
     }
@@ -1825,9 +1951,10 @@ auto FunctionLowerer::LowerValuePartUpdate(
   // out in. Composition is the operand chain, so the walk is the path.
   std::vector<mir::ExprId> steps;
   mir::ExprId owner = target;
-  while (ReachesIntoValue(block, owner)) {
+  while (const std::optional<mir::ExprId> receiver =
+             ValuePartReceiver(block, owner)) {
     steps.push_back(owner);
-    owner = ValuePartReceiver(block, owner);
+    owner = *receiver;
   }
   std::ranges::reverse(steps);
 
@@ -1845,16 +1972,23 @@ auto FunctionLowerer::LowerValuePartUpdate(
     selectors.push_back(*std::move(selector));
   }
 
+  // The type of the whole value a level descends from: the owner's at the
+  // outermost level, and the step above it at every deeper one. Both the
+  // descent and the rebuild answer at it.
+  const auto container_type = [&](std::size_t depth) -> lir::TypeId {
+    return unit_->TranslateType(
+        block.exprs.Get(depth == 0 ? owner : steps[depth - 1]).type);
+  };
+
   // The whole value at each level, descending from the owner toward the part.
   std::vector<lir::Operand> containers;
   containers.reserve(steps.size());
   containers.push_back(*std::move(owner_value));
   for (std::size_t depth = 1; depth < steps.size(); ++depth) {
     containers.push_back(Emit(
-        unit_->TranslateType(block.exprs.Get(steps[depth - 1]).type),
-        lir::AggregateExtractInstr{
-            .aggregate = containers[depth - 1],
-            .selector = selectors[depth - 1]}));
+        container_type(depth), lir::AggregateExtractInstr{
+                                   .aggregate = containers[depth - 1],
+                                   .selector = selectors[depth - 1]}));
   }
 
   const std::size_t leaf = steps.size() - 1;
@@ -1876,12 +2010,10 @@ auto FunctionLowerer::LowerValuePartUpdate(
   lir::Operand rebuilt = *std::move(leaf_value);
   for (std::size_t depth = steps.size(); depth-- > 0;) {
     rebuilt = Emit(
-        unit_->TranslateType(
-            block.exprs.Get(ValuePartReceiver(block, steps[depth])).type),
-        lir::AggregateUpdateInstr{
-            .aggregate = containers[depth],
-            .selector = selectors[depth],
-            .replacement = std::move(rebuilt)});
+        container_type(depth), lir::AggregateUpdateInstr{
+                                   .aggregate = containers[depth],
+                                   .selector = selectors[depth],
+                                   .replacement = std::move(rebuilt)});
   }
   return WriteWholeValue(block, owner, std::move(rebuilt));
 }
@@ -1895,24 +2027,29 @@ auto FunctionLowerer::LowerValuePartUpdate(
 auto FunctionLowerer::LowerMutatingCall(
     const mir::Block& block, const mir::CallExpr& call, support::BuiltinFn fn,
     mir::TypeId type) -> diag::Result<lir::Operand> {
-  const mir::ExprId receiver = call.arguments[0];
+  const std::optional<mir::ExprId> receiver = mir::CalleeReceiver(call.callee);
+  if (!receiver.has_value()) {
+    throw InternalError(
+        "mir_to_lir: a method that updates what it is applied to names that "
+        "object, and this call names none -- please report this as a bug");
+  }
   const lir::TypeId container_type =
-      unit_->TranslateType(block.exprs.Get(receiver).type);
+      unit_->TranslateType(block.exprs.Get(*receiver).type);
   const bool yields_result = type != unit_->Mir().builtins.void_type;
   const lir::TypeId call_type =
       yields_result
           ? unit_->ProductOf({container_type, unit_->TranslateType(type)})
           : container_type;
 
-  auto value = LowerExpr(block, receiver);
+  auto value = LowerExpr(block, *receiver);
   if (!value) {
     return std::unexpected(std::move(value.error()));
   }
   std::vector<lir::Operand> args;
-  args.reserve(call.arguments.size());
+  args.reserve(call.arguments.size() + 1);
   args.push_back(*std::move(value));
-  for (std::size_t i = 1; i < call.arguments.size(); ++i) {
-    auto arg = LowerArgument(block, call.arguments[i]);
+  for (const mir::ExprId argument : call.arguments) {
+    auto arg = LowerArgument(block, argument);
     if (!arg) {
       return std::unexpected(std::move(arg.error()));
     }
@@ -1925,7 +2062,7 @@ auto FunctionLowerer::LowerMutatingCall(
           .target = lir::BuiltinTarget{.fn = fn, .qualifier = std::nullopt},
           .args = std::move(args)});
   if (!yields_result) {
-    return WriteWholeValue(block, receiver, std::move(completion));
+    return WriteWholeValue(block, *receiver, std::move(completion));
   }
 
   lir::Operand updated = Emit(
@@ -1933,7 +2070,7 @@ auto FunctionLowerer::LowerMutatingCall(
       lir::AggregateExtractInstr{
           .aggregate = completion,
           .selector = lir::Component{.index = kUpdatedReceiver}});
-  auto stored = WriteWholeValue(block, receiver, std::move(updated));
+  auto stored = WriteWholeValue(block, *receiver, std::move(updated));
   if (!stored) {
     return std::unexpected(std::move(stored.error()));
   }
@@ -2061,10 +2198,9 @@ auto FunctionLowerer::LowerExpr(const mir::Block& block, mir::ExprId id)
             return lir::Operand{lir::BoolConst{
                 .value = lit.value, .type = unit_->TranslateType(type)}};
           },
-          [&](const mir::PackedTypeRef& ref) -> diag::Result<lir::Operand> {
-            return lir::Operand{lir::PackedTypeRef{
-                .integral = unit_->TranslateType(ref.integral),
-                .type = unit_->TranslateType(type)}};
+          [&](const mir::ReferenceExpr& reference)
+              -> diag::Result<lir::Operand> {
+            return ReferenceValue(block, id, reference.target, type);
           },
           [&](const mir::MachineIntLiteral& lit) -> diag::Result<lir::Operand> {
             return lir::Operand{lir::IntConst{
@@ -2073,33 +2209,6 @@ auto FunctionLowerer::LowerExpr(const mir::Block& block, mir::ExprId id)
                         .value_words = {static_cast<std::uint64_t>(lit.value)},
                         .state_words = {}},
                 .type = unit_->TranslateType(type)}};
-          },
-          [&](const mir::LocalRef& ref) -> diag::Result<lir::Operand> {
-            const std::optional<LocalBinding>& binding = locals_[ref.var.value];
-            if (!binding.has_value()) {
-              return Unsupported("mir_to_lir: reference to an unlowered local");
-            }
-            return std::visit(
-                Overloaded{
-                    [&](const PlaceBinding& place)
-                        -> diag::Result<lir::Operand> {
-                      return Load(
-                          LocalPlace(place.slot),
-                          fn_.values.Get(place.slot).type);
-                    },
-                    [](const ValueBinding& value)
-                        -> diag::Result<lir::Operand> { return value.value; },
-                    [&](const ActivationValueBinding& frame)
-                        -> diag::Result<lir::Operand> {
-                      return LoadActivationValue(
-                          frame.handle, unit_->TranslateType(type));
-                    },
-                    [&](const CellBinding& cell) -> diag::Result<lir::Operand> {
-                      return Load(
-                          ReferencedValue(cell.reference),
-                          unit_->TranslateType(type));
-                    }},
-                *binding);
           },
           [&](const mir::CallExpr& call) -> diag::Result<lir::Operand> {
             return LowerCall(block, call, type);
@@ -2113,47 +2222,16 @@ auto FunctionLowerer::LowerExpr(const mir::Block& block, mir::ExprId id)
                 unit_->TranslateType(type),
                 lir::ValueCastInstr{.operand = *std::move(operand)});
           },
-          [&](const mir::ArrayLiteralExpr& lit) -> diag::Result<lir::Operand> {
-            std::vector<lir::Operand> elements;
-            elements.reserve(lit.elements.size());
-            for (const mir::ExprId elem : lit.elements) {
-              auto lowered = LowerExpr(block, elem);
-              if (!lowered) {
-                return std::unexpected(std::move(lowered.error()));
-              }
-              elements.push_back(*std::move(lowered));
+          [&](const mir::CompositeExpr& composite)
+              -> diag::Result<lir::Operand> {
+            auto parts = LowerEachExpr(block, composite.parts);
+            if (!parts) {
+              return std::unexpected(std::move(parts.error()));
             }
+            const lir::TypeId built = unit_->TranslateType(type);
             return Emit(
-                unit_->TranslateType(type),
-                lir::ArrayInstr{.elements = std::move(elements)});
-          },
-          [&](const mir::TupleExpr& tuple) -> diag::Result<lir::Operand> {
-            std::vector<lir::Operand> components;
-            components.reserve(tuple.components.size());
-            for (const mir::ExprId component : tuple.components) {
-              auto lowered = LowerExpr(block, component);
-              if (!lowered) {
-                return std::unexpected(std::move(lowered.error()));
-              }
-              components.push_back(*std::move(lowered));
-            }
-            return Emit(
-                unit_->TranslateType(type),
-                lir::ProductInstr{.components = std::move(components)});
-          },
-          [&](const mir::VectorExpr& vec) -> diag::Result<lir::Operand> {
-            std::vector<lir::Operand> elements;
-            elements.reserve(vec.elements.size());
-            for (const mir::ExprId element : vec.elements) {
-              auto lowered = LowerExpr(block, element);
-              if (!lowered) {
-                return std::unexpected(std::move(lowered.error()));
-              }
-              elements.push_back(*std::move(lowered));
-            }
-            return Emit(
-                unit_->TranslateType(type),
-                lir::ArrayInstr{.elements = std::move(elements)});
+                built,
+                AssembledFrom(unit_->Types().Get(built), *std::move(parts)));
           },
           [&](const mir::VectorGetExpr& get) -> diag::Result<lir::Operand> {
             auto vector = LowerExpr(block, get.vector);
@@ -2235,10 +2313,10 @@ auto FunctionLowerer::LowerExpr(const mir::Block& block, mir::ExprId id)
                 unit_->TranslateType(type),
                 lir::IntCastInstr{.operand = *std::move(operand)});
           },
-          // A field in a storage arena is read through its place. A structural
-          // product's field is not addressable, so it is extracted from the
-          // product's value instead -- the same read either way, over a
-          // receiver that is storage in one case and a value in the other.
+          // A field in a storage arena is read through its place. A product's
+          // component is not addressable, so it is extracted from the product's
+          // value instead -- the same read either way, over a receiver that is
+          // storage in one case and a value in the other.
           [&](const mir::FieldAccessExpr& field) -> diag::Result<lir::Operand> {
             const auto* component =
                 std::get_if<mir::ComponentTarget>(&field.field);
@@ -2254,6 +2332,21 @@ auto FunctionLowerer::LowerExpr(const mir::Block& block, mir::ExprId id)
                 lir::AggregateExtractInstr{
                     .aggregate = *std::move(receiver),
                     .selector = lir::Component{.index = component->index}});
+          },
+          // Reaching the live member of an active-member value extracts it from
+          // the value, as a product's component is. What reaching a member that
+          // is not live answers with is the value's own semantics, so the entry
+          // its type names is what carries the difference.
+          [&](const mir::UnionMemberExpr& m) -> diag::Result<lir::Operand> {
+            auto union_value = LowerExpr(block, m.union_value);
+            if (!union_value) {
+              return union_value;
+            }
+            return Emit(
+                unit_->TranslateType(type),
+                lir::AggregateExtractInstr{
+                    .aggregate = *std::move(union_value),
+                    .selector = lir::UnionMember{.index = m.index}});
           },
           [&](const mir::DerefExpr&) -> diag::Result<lir::Operand> {
             auto place = LowerPlace(block, id);
@@ -2309,27 +2402,19 @@ auto FunctionLowerer::LowerExpr(const mir::Block& block, mir::ExprId id)
             if (!operand) {
               return operand;
             }
-            // LRM 11.4.3: unary plus is an identity.
-            if (un.op == mir::UnaryOp::kPlus) {
-              return operand;
-            }
-            const std::optional<lir::UnaryOp> op = TranslateUnaryOp(un.op);
-            if (!op) {
-              return Unsupported(
-                  "mir_to_lir: unary operator has no direct realization");
-            }
+            const lir::UnaryOp op = TranslateUnaryOp(un.op);
             // A logical-not over a machine boolean -- the reduced predicate a
             // real- or chandle-family `!` produces before `from_bool` widens it
             // back -- stays a machine boolean; its surface 1-bit type is
             // restored by the enclosing `from_bool`.
             const lir::TypeId result_type =
-                (*op == lir::UnaryOp::kLogicalNot &&
+                (op == lir::UnaryOp::kLogicalNot &&
                  lir::OperandType(fn_, *operand) == unit_->MachineBoolType())
                     ? unit_->MachineBoolType()
                     : unit_->TranslateType(type);
             return Emit(
                 result_type,
-                lir::UnaryInstr{.op = *op, .operand = *std::move(operand)});
+                lir::UnaryInstr{.op = op, .operand = *std::move(operand)});
           },
           [&](const mir::BinaryExpr& bin) -> diag::Result<lir::Operand> {
             const std::optional<lir::BinaryOp> op = TranslateBinaryOp(bin.op);
@@ -2448,16 +2533,6 @@ auto FunctionLowerer::LowerExpr(const mir::Block& block, mir::ExprId id)
                 unit_->TranslateType(type),
                 lir::UnionInstr{.index = u.index, .value = *std::move(value)});
           },
-          [&](const mir::TaggedExpr& t) -> diag::Result<lir::Operand> {
-            auto payload = LowerExpr(block, t.payload);
-            if (!payload) {
-              return payload;
-            }
-            return Emit(
-                unit_->TranslateType(type),
-                lir::UnionInstr{
-                    .index = t.tag_index, .value = *std::move(payload)});
-          },
           [&](const mir::TaggedIsExpr& g) -> diag::Result<lir::Operand> {
             // The non-throwing guard a pattern match tests: whether the value's
             // active tag is the one the pattern names (LRM 12.6). The runtime
@@ -2478,35 +2553,7 @@ auto FunctionLowerer::LowerExpr(const mir::Block& block, mir::ExprId id)
                 "mir_to_lir: naming a code address as another function type is "
                 "not yet lowerable to LIR");
           },
-          [](const mir::FunctionRef&) -> diag::Result<lir::Operand> {
-            return Unsupported(
-                "mir_to_lir: a code address as a value is not yet lowerable to "
-                "LIR");
-          },
-          [&](const mir::ExternalUnitVariableRef&)
-              -> diag::Result<lir::Operand> {
-            return ReadPlace(block, id, unit_->TranslateType(type));
-          },
-          // Each of the following names storage rather than reaching it
-          // through a receiver, and nothing yet builds a cell for a class's
-          // type-associated declarations, so there is no place to read one
-          // from.
-          [](const mir::StaticConstantRef&) -> diag::Result<lir::Operand> {
-            return Unsupported(
-                "mir_to_lir: a class's static constant is not yet reachable on "
-                "this backend");
-          },
-          [](const mir::StaticPropertyRef&) -> diag::Result<lir::Operand> {
-            return Unsupported(
-                "mir_to_lir: a class's static property is not yet reachable on "
-                "this backend");
-          },
-          [](const mir::ExternalStaticPropertyRef&)
-              -> diag::Result<lir::Operand> {
-            return Unsupported(
-                "mir_to_lir: a static property of a class another compilation "
-                "unit declares is not yet reachable on this backend");
-          }},
+      },
       expr.data);
 }
 
