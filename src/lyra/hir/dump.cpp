@@ -3,6 +3,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <format>
+#include <map>
 #include <optional>
 #include <string>
 #include <string_view>
@@ -802,6 +803,31 @@ class HirDumper {
     return *scope_stack_[scope_stack_.size() - 1 - hops.value];
   }
 
+  // Records, for every class the unit declares, the structural nesting its
+  // bodies resolve outward names against -- the chain ending at the scope that
+  // declares it (LRM 23.9). Classes are printed before the scope tree, so the
+  // walk that would have supplied the chain has not run when one is dumped.
+  //
+  // A class identity is the declaring unit's, so the record is that unit's
+  // too: one dumper prints several units and their identities share a range.
+  void RecordClassScopeChains(const StructuralScope& root) {
+    class_scope_chains_.clear();
+    RecordClassScopeChainsIn(root);
+  }
+
+  void RecordClassScopeChainsIn(const StructuralScope& scope) {
+    scope_stack_.push_back(&scope);
+    for (const ClassId id : scope.declared_classes) {
+      class_scope_chains_.emplace(id, scope_stack_);
+    }
+    for (const auto& g : scope.generates) {
+      for (const auto& child : g.child_scopes) {
+        RecordClassScopeChainsIn(child);
+      }
+    }
+    scope_stack_.pop_back();
+  }
+
   static auto FormatInsideExprNode(const InsideExpr& in) -> std::string {
     std::string items;
     for (std::size_t i = 0; i < in.items.size(); ++i) {
@@ -1108,6 +1134,7 @@ class HirDumper {
       DumpForeignImport(id.value, u.foreign_imports.Get(id));
     }
 
+    RecordClassScopeChains(u.root_scope);
     if (u.classes.size() > 0) {
       Line("Classes:");
       Indent();
@@ -1116,7 +1143,7 @@ class HirDumper {
           Line(std::format("[{}] <declared>", id.value));
           continue;
         }
-        DumpClass(id.value, u.classes.Get(id));
+        DumpClass(id, u.classes.Get(id));
       }
       Dedent();
     }
@@ -1150,9 +1177,20 @@ class HirDumper {
     Dedent();
   }
 
-  void DumpClass(std::size_t index, const ClassDecl& c) {
+  void DumpClass(ClassId id, const ClassDecl& c) {
+    // A class body's outward references count hops from the scope that
+    // declares the class, so the chain that scope sits on is what resolves
+    // them -- the same reading a process of that scope gets from the walk.
+    const auto chain = class_scope_chains_.find(id);
+    if (chain == class_scope_chains_.end()) {
+      throw InternalError(
+          "HirDumper::DumpClass: every class a unit declares is named by one "
+          "of its scopes");
+    }
+    const std::vector<const StructuralScope*> outer =
+        std::exchange(scope_stack_, chain->second);
     const std::string kind = c.is_interface_class ? "interface class" : "class";
-    Line(std::format("[{}] {} \"{}\"", index, kind, c.name));
+    Line(std::format("[{}] {} \"{}\"", id.value, kind, c.name));
     Indent();
     if (c.base.has_value()) {
       Line(std::format("Extends: {}", FormatClassRef(*c.base)));
@@ -1183,6 +1221,7 @@ class HirDumper {
       Line(std::format("BaseCall: ({})", args));
     }
     Dedent();
+    scope_stack_ = outer;
   }
 
   static auto FormatIndices(const std::vector<std::uint32_t>& indices)
@@ -2075,6 +2114,7 @@ class HirDumper {
   std::string out_;
   int indent_ = 0;
   std::vector<const StructuralScope*> scope_stack_;
+  std::map<ClassId, std::vector<const StructuralScope*>> class_scope_chains_;
   const CompilationUnit* unit_ = nullptr;
 };
 

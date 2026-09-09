@@ -11,6 +11,7 @@
 #include "lyra/base/pool_id.hpp"
 #include "lyra/base/registry.hpp"
 #include "lyra/base/time.hpp"
+#include "lyra/hir/class_id.hpp"
 #include "lyra/hir/continuous_assign.hpp"
 #include "lyra/hir/expr.hpp"
 #include "lyra/hir/external_unit_object.hpp"
@@ -384,6 +385,14 @@ struct StructuralScope {
   // arena; the unit owns it, because its foreign symbol is program-global and
   // belongs to no scope (LRM 35.4).
   base::Registry<SubroutineDecl, StructuralSubroutineId> structural_subroutines;
+  // The classes this scope declares (LRM 23.9 lists a class among the elements
+  // that define a scope). A class declared here is a type of this scope's
+  // instance (LRM 6.22), so an object of it belongs to the one instance it was
+  // created in and its bodies name that instance's declarations; stating the
+  // relation on the scope is what lets the instance be supplied where it is
+  // known. Every class a unit declares is named by exactly one scope, the
+  // namespace unit's root scope included, so nothing is reached by elimination.
+  std::vector<ClassId> declared_classes;
   std::vector<ForeignExportDecl> foreign_exports;
   // Every scope's identity is minted before any body is lowered, so a `disable`
   // naming one (LRM 9.6.2) -- possibly from another process lowered first --

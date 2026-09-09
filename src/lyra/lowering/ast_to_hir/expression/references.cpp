@@ -278,9 +278,9 @@ auto MakeIterationElementRefExpr(
 }
 
 auto MakeClassPropertyRefExpr(
-    UnitLowerer& unit_lowerer, const slang::ast::Symbol& sym,
-    const slang::ast::Type& type, diag::SourceSpan span)
-    -> diag::Result<hir::Expr> {
+    UnitLowerer& unit_lowerer, const WalkFrame& frame,
+    const slang::ast::Symbol& sym, const slang::ast::Type& type,
+    diag::SourceSpan span) -> diag::Result<hir::Expr> {
   auto type_id = unit_lowerer.InternType(type, span);
   if (!type_id) return std::unexpected(std::move(type_id.error()));
   const auto& prop = sym.as<slang::ast::ClassPropertySymbol>();
@@ -288,15 +288,22 @@ auto MakeClassPropertyRefExpr(
       sym.getParentScope()->asSymbol().as<slang::ast::ClassType>();
   auto owner_ref = unit_lowerer.ResolveClassRef(owner_class, span);
   if (!owner_ref) return std::unexpected(std::move(owner_ref.error()));
-  // LRM 8.9: a static-lifetime property is one cell owned by the class, so
-  // its reference form carries neither the enclosing method's receiver nor
-  // a fabricated stand-in -- a type-associated cell has no per-instance
-  // context to reach. Instance properties and static properties take
+  // LRM 8.9: a static-lifetime property belongs to the type rather than to any
+  // object of it, so its reference form carries neither the enclosing method's
+  // receiver nor a fabricated stand-in. What it does carry is how far out the
+  // instance replicating the class sits, where one does -- reaching a cell is
+  // not reaching an object. Instance properties and static properties take
   // structurally disjoint reference primaries.
   if (prop.lifetime == slang::ast::VariableLifetime::Static) {
+    auto declaring_hops =
+        unit_lowerer.DeclaringScopeHopsFrom(owner_class, frame, span);
+    if (!declaring_hops) {
+      return std::unexpected(std::move(declaring_hops.error()));
+    }
     return hir::MakeRefExpr(
         hir::StaticPropertyRef{
-            .target = unit_lowerer.MakeStaticPropertyTarget(*owner_ref, prop)},
+            .target = unit_lowerer.MakeStaticPropertyTarget(*owner_ref, prop),
+            .declaring_scope_hops = *declaring_hops},
         *type_id, span);
   }
   return hir::MakeRefExpr(
@@ -517,7 +524,7 @@ auto LowerCurrentInstanceMember(
     const slang::ast::Symbol& member, const slang::ast::Type& type,
     diag::SourceSpan span) -> diag::Result<hir::Expr> {
   if (member.kind == slang::ast::SymbolKind::ClassProperty) {
-    return MakeClassPropertyRefExpr(unit_lowerer, member, type, span);
+    return MakeClassPropertyRefExpr(unit_lowerer, frame, member, type, span);
   }
   // A value parameter of a parameterized class (LRM 8.25) is fixed by the
   // specialization the enclosing method belongs to, so the qualification names
@@ -585,7 +592,8 @@ auto LowerNamedValueProc(
     // handle (LRM 8.4) reaches the invoking object through the method's
     // receiver, so it lowers to a receiver-relative property reference.
     case Referent::kClassProperty:
-      return MakeClassPropertyRefExpr(unit_lowerer, sym, *named.type, span);
+      return MakeClassPropertyRefExpr(
+          unit_lowerer, frame, sym, *named.type, span);
     case Referent::kThisHandle:
       return MakeCurrentInstanceHandleExpr(unit_lowerer, *named.type, span);
     case Referent::kPatternBinding:
@@ -715,14 +723,17 @@ auto LowerNamedValueStructural(
       return LowerValueRef(
           unit_lowerer, frame, sym.as<slang::ast::ValueSymbol>(), *named.type,
           span);
-    // A static property (LRM 8.9) is one cell owned by the class, reached
-    // without a receiver, so it reads here exactly as it does in a process. An
-    // instance property is reachable only through a receiver, which a
-    // structural expression has none of.
+    // A static property (LRM 8.9) belongs to the type rather than to an object
+    // of it, so it is reached without a receiver and reads here exactly as it
+    // does in a process -- a structural expression stands in the same scope a
+    // process of it does, so it counts the same distance to the instance
+    // replicating the class. An instance property is reachable only through a
+    // receiver, which a structural expression has none of.
     case Referent::kClassProperty: {
       const auto& prop = sym.as<slang::ast::ClassPropertySymbol>();
       if (prop.lifetime == slang::ast::VariableLifetime::Static) {
-        return MakeClassPropertyRefExpr(unit_lowerer, sym, *named.type, span);
+        return MakeClassPropertyRefExpr(
+            unit_lowerer, frame, sym, *named.type, span);
       }
       return diag::Fail(
           span, diag::DiagCode::kUnsupportedStructuralExpressionForm,

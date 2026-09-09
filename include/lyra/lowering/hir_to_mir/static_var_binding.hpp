@@ -14,6 +14,7 @@
 #include "lyra/hir/subroutine.hpp"
 #include "lyra/mir/class.hpp"
 #include "lyra/mir/compilation_unit.hpp"
+#include "lyra/mir/enclosing_hops.hpp"
 #include "lyra/mir/expr.hpp"
 #include "lyra/mir/field.hpp"
 #include "lyra/mir/static_property_id.hpp"
@@ -35,6 +36,11 @@ struct WalkFrame;
 // automatic (LRM 8.6) governs its ordinary locals rather than this one. A
 // package subroutine's belongs to the unit's namespace, which owns one
 // program-global cell (LRM 26.2).
+//
+// "One cell for the class" is one cell per class declaration, which is not the
+// same as one for the program: a class declared inside a structural scope is a
+// type of that scope's instance (LRM 6.22), so it is replicated with it and
+// each instance carries the class's cells as fields of its own.
 struct InstanceFieldHome {
   mir::FieldId field;
 };
@@ -119,12 +125,16 @@ auto BindBodyStatics(
     std::span<const hir::ProceduralVarId> signature_bound,
     std::string_view callable_name) -> StaticVarBindings;
 
-// The expression a body reaches one of its static-lifetime cells through. Each
-// home is one access from where the body stands: a field off the body's own
-// `self`, the cell its class owns, or the cell the unit's namespace owns.
+// The expression a body reaches one of these cells through. Each home is one
+// access from where the body stands: a field off the instance `hops` out from
+// the one this body counts from, the cell its class owns, or the cell the
+// unit's namespace owns. A body reaching its own declaration scope's cell
+// passes no hops; a body naming another scope's class passes the distance to
+// that scope, which is what the reference states.
 [[nodiscard]] auto BuildStaticStorageAccess(
     const mir::CompilationUnit& unit, const WalkFrame& frame,
-    const StaticStorageHome& home, mir::TypeId cell_type) -> mir::Expr;
+    const StaticStorageHome& home, mir::TypeId cell_type,
+    mir::EnclosingHops hops) -> mir::Expr;
 
 // The field a static of a body in the design hierarchy took. Such a body is
 // replicated with its instance, so its cells are that instance's fields and no

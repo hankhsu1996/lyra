@@ -671,6 +671,36 @@ class UnitLowerer {
   [[nodiscard]] auto LookupScopeFrame(const slang::ast::Scope& scope) const
       -> ScopeFrameId;
 
+  // The structural nesting a body declared in `scope` resolves outward names
+  // against: every enclosing structural frame, outermost first. A class is a
+  // scope of the name tree (LRM 23.9), so a body it declares reaches an
+  // enclosing declaration the same way a process of the declaring scope does,
+  // and this is what puts that scope at the start of the walk.
+  [[nodiscard]] auto DeclaringScopeChain(const slang::ast::Scope& scope) const
+      -> std::vector<ScopeFrameId>;
+
+  // The structural scope whose instance `cls` is a type of (LRM 6.22). A class
+  // nested inside another class is a type of the same instance the outer one
+  // is, since SystemVerilog gives it no reach into the outer object.
+  [[nodiscard]] auto DeclaringStructuralScope(
+      const slang::ast::ClassType& cls) const -> const slang::ast::Scope&;
+
+  // How far out of `frame`'s own structural scope the instance an object of
+  // `cls` would belong to sits, for a construction written there. Absent where
+  // the class is a namespace unit's, which no instance replicates. A class this
+  // unit does not declare is reached through its unit's signature, which
+  // carries no such instance, and is refused rather than answered wrongly.
+  [[nodiscard]] auto DeclaringScopeHopsFrom(
+      const slang::ast::ClassType& cls, const WalkFrame& frame,
+      diag::SourceSpan span)
+      -> diag::Result<std::optional<hir::StructuralHops>>;
+
+  // Hands a structural scope the classes it declares, once. Every class the
+  // unit declares is named by exactly one scope, so a scope that declares none
+  // takes the empty list rather than being absent from the relation.
+  [[nodiscard]] auto TakeDeclaredClasses(const slang::ast::Scope& scope)
+      -> std::vector<hir::ClassId>;
+
   // Records the identity a declaration scope minted for one of its procedural
   // scopes, keyed by the symbol slang records the scope as.
   void DeclareProceduralScope(
@@ -726,7 +756,38 @@ class UnitLowerer {
   // body lowering so the unit's class registry is complete before any
   // reference resolves; a specialization reached only from another unit
   // still lands here, in its declaring unit.
-  auto InternOwnClassDeclarations() -> diag::Result<void>;
+  auto InternOwnClassDeclarations(const slang::ast::Scope& scope)
+      -> diag::Result<void>;
+
+  // A class whose declarations are settled and whose bodies are not. A class
+  // body names what encloses the class the way any other body does, so it
+  // lowers once every structural scope has bound its own declarations; what is
+  // carried here is what the declaration half already settled.
+  struct PendingClassBody {
+    const slang::ast::ClassType* cls;
+    hir::ClassId id;
+    diag::SourceSpan span;
+    const slang::ast::Scope* declaring_scope;
+    // Held by pointer because its identity is its address: the procedural
+    // scopes a body may name are minted into `decl->procedural_scopes` in the
+    // declaration half and looked up by the registry they belong to, so the
+    // registry may not move between the two halves.
+    std::unique_ptr<hir::ClassDecl> decl;
+    std::vector<const slang::ast::SubroutineSymbol*> defined_methods;
+    std::vector<const slang::ast::MethodPrototypeSymbol*> pure_prototypes;
+    const slang::ast::SubroutineSymbol* constructor_sym;
+  };
+
+  // Lowers the body half of every class `scope` declares: each method, the
+  // constructor, and every property initializer. Called while that scope is
+  // lowered, so a class body has the reach a process of the scope has.
+  auto PopulateClassBodiesDeclaredIn(const slang::ast::Scope& scope)
+      -> diag::Result<void>;
+  auto PopulateClassBody(PendingClassBody& pending) -> diag::Result<void>;
+
+  // Every class a unit declares is declared by one of its structural scopes,
+  // and every such scope lowers what it declares, so nothing is left over.
+  void RequireEveryClassBodyLowered() const;
 
   // Builds a HIR Expr referring to the leaf `decl` navigates to.
   // `slot_owner_frame` is the frame whose routed-reference arena holds the
@@ -928,6 +989,8 @@ class UnitLowerer {
   // class per unit; a second reference to the same slang `ClassType` reads
   // the answer, whether it is Local or External.
   std::unordered_map<const slang::ast::ClassType*, hir::ClassRef> class_cache_;
+  std::unordered_map<const slang::ast::Scope*, std::vector<PendingClassBody>>
+      pending_class_bodies_;
   std::unordered_map<const slang::ast::SubroutineSymbol*, hir::MethodId>
       method_cache_;
   std::unordered_map<const slang::ast::ClassPropertySymbol*, hir::FieldId>
@@ -958,6 +1021,8 @@ class UnitLowerer {
   std::unordered_map<const slang::ast::PatternVarSymbol*, hir::PatternId>
       pattern_var_bindings_;
   std::unordered_map<const slang::ast::Scope*, ScopeFrameId> scope_frames_;
+  std::unordered_map<const slang::ast::Scope*, std::vector<hir::ClassId>>
+      classes_by_scope_;
   std::map<ScopeFrameId, base::Arena<hir::RoutedRefDecl, hir::RoutedRefId>>
       routed_refs_by_frame_;
   std::uint32_t next_scope_frame_ = 0;

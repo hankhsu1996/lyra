@@ -123,20 +123,41 @@ each stage establishes, not how.
       a name bound to another are two bindings wherever a type is chosen, including where a type
       parameter selects between them.
 
+- [x] A class body reaches the declarations of the scope that declares it (LRM 23.9, 6.22). A class
+      is a scope of the name tree, so a method of one declared inside a module, an interface, or a
+      generate block reads and writes that scope's variables and calls its subroutines by name, the
+      way a task of the scope does. Which copy it reaches follows from each instance with a type
+      declared inside it creating a unique type: an object belongs to the one instance it was
+      created in, records it, and reaches that instance and no other -- so two instances of one
+      module carry two unrelated sets of objects. Construction is where the instance is supplied.
+      Constructing such a class from another compilation unit is refused, since what crosses a unit
+      boundary is that unit's signature and no instance of a scope inside it is on one.
+
+- [x] Type-associated storage of a class a structural scope declares is one cell per instance of
+      that scope, not one for the program: the static property, the static-lifetime locals of its
+      methods, and the target a `disable` naming one of its blocks invalidates all follow what
+      replicates the class declaration. Their initializers run where that instance brings up its own
+      storage -- once per instance, before any process. A receiver-less method of such a class is
+      handed the instance, having no object to reach it through, and a derived class forwards it to
+      its base. Still open: a derived class records the instance a second time rather than reading
+      the one its base already holds; both answer alike, so this costs a word per object.
+
 - [x] Type-associated static storage and static methods (LRM 8.9 / 8.10): a static property is one
       cell owned by the type, distinct from a per-instance field replicated on every object; a
       static method has no receiver and cannot be virtual. Each layer keeps the two categories in
       disjoint arenas -- an instance member and a type-associated one never share identity space --
-      and the initializer of a static property runs once at design init (LRM 10.5), before any
-      initial or always procedure, from a class-level body separate from the per-instance
-      constructor. Because a static property needs no receiver, it also reads from a structural
-      expression (a continuous-assignment right-hand side), which re-evaluates when the cell
-      changes; an instance property has no structural form, having no receiver to reach it through.
+      and the initializer of a static property runs once per cell, before any initial or always
+      procedure (LRM 10.5), rather than on each construction. Because a static property needs no
+      receiver, it also reads from a structural expression (a continuous-assignment right-hand
+      side), which re-evaluates when the cell changes; an instance property has no structural form,
+      having no receiver to reach it through.
 
-- [x] A static-lifetime local of a method (LRM 6.21): a variable a method declares `static` is one
-      cell for the class, not one per object, so every call reaches the same cell however many
-      objects the class has, and its initializer is applied once before any process starts rather
-      than on each construction. A static method's own is the same one cell, and two sibling blocks
+- [x] A static-lifetime local of a method (LRM 6.21): a variable a method declares `static` belongs
+      to the class rather than to an object of it, so every call reaches the same cell however many
+      objects exist, and its initializer is applied once per cell before any process starts rather
+      than on each construction. How many cells that is follows the class's own replication, so a
+      class a namespace unit declares keeps one and a class a structural scope declares keeps one
+      per instance of that scope. A static method's own is the same cell, and two sibling blocks
       that each declare a static under one name still get one cell each. The method itself stays
       automatic (LRM 8.6), which governs its ordinary locals and not this one.
 

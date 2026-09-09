@@ -919,17 +919,27 @@ auto UnitLowerer::InternLocalClass(
   const hir::ClassId id = unit_.classes.Declare();
   class_cache_.emplace(&cls, hir::ClassRef{hir::LocalClassRef{.class_id = id}});
 
-  hir::ClassDecl decl;
+  auto decl_owner = std::make_unique<hir::ClassDecl>();
+  hir::ClassDecl& decl = *decl_owner;
   decl.name = SpecializationName(cls);
   decl.is_interface_class = cls.isInterface;
 
   // A class is the declaration scope that owns the lexical scopes of every
   // body it declares, so that ownership is stated once here and each method,
-  // prototype, and property initializer below lowers under it. A class does
-  // not route structurally from whatever encloses its declaration, so the
-  // frame starts empty rather than descending from an outer one.
+  // prototype, and property initializer below lowers under it.
+  //
+  // The frame descends from the structural scope that declares the class,
+  // because a class is a scope of the name tree (LRM 23.9) and its bodies name
+  // what encloses it the same way a process of that scope does. That scope's
+  // instance is what they name it against: the declaration is replicated with
+  // it, so each instance has a type of its own (LRM 6.22).
+  const slang::ast::Scope& declaring_scope = DeclaringStructuralScope(cls);
+  classes_by_scope_[&declaring_scope].push_back(id);
   const WalkFrame class_frame =
-      WalkFrame{}.WithProceduralScopeOwner(&decl.procedural_scopes);
+      WalkFrame{}
+          .WithDeclaringScope(
+              DeclaringScopeChain(declaring_scope), &declaring_scope)
+          .WithProceduralScopeOwner(&decl.procedural_scopes);
   DeclareProceduralScopes(cls, *this, decl.procedural_scopes);
 
   // Concrete base class (LRM 8.13). Only a regular class may extend a
@@ -973,10 +983,12 @@ auto UnitLowerer::InternLocalClass(
     auto prop_type = InternType(prop.getType(), span);
     if (!prop_type) return std::unexpected(std::move(prop_type.error()));
     // LRM 8.9 / 8.10 keyword position: `static <T> x` marks a type-associated
-    // property, whose storage is one cell owned by the class rather than a
-    // per-instance member. Instance properties and static properties live in
-    // disjoint arenas because their identity spaces do not overlap and each
-    // downstream reference form names one or the other.
+    // property, whose storage the type owns rather than each object of it.
+    // How many such cells exist is a separate question, answered by how many
+    // times the class declaration is replicated, and not one HIR settles.
+    // Instance properties and static properties live in disjoint arenas because
+    // their identity spaces do not overlap and each downstream reference form
+    // names one or the other.
     if (prop.lifetime == slang::ast::VariableLifetime::Static) {
       const hir::StaticPropertyId static_id = decl.static_properties.Add(
           hir::ClassStaticProperty{
@@ -1046,6 +1058,63 @@ auto UnitLowerer::InternLocalClass(
   for (const auto* proto : pure_prototypes) {
     RegisterMethodId(*proto->getSubroutine(), decl.methods.Declare());
   }
+
+  pending_class_bodies_[&declaring_scope].push_back(
+      UnitLowerer::PendingClassBody{
+          .cls = &cls,
+          .id = id,
+          .span = span,
+          .declaring_scope = &declaring_scope,
+          .decl = std::move(decl_owner),
+          .defined_methods = std::move(defined_methods),
+          .pure_prototypes = std::move(pure_prototypes),
+          .constructor_sym = constructor_sym});
+  return id;
+}
+
+auto UnitLowerer::PopulateClassBodiesDeclaredIn(const slang::ast::Scope& scope)
+    -> diag::Result<void> {
+  // A class body reaches the declarations of the scope that declares it and
+  // records its routed references against that scope's frame, so it lowers
+  // while that scope is being lowered -- with the same reach a process of the
+  // scope has, and before the scope takes the references recorded against it.
+  const auto pending = pending_class_bodies_.find(&scope);
+  if (pending == pending_class_bodies_.end()) return {};
+  std::vector<PendingClassBody> batch = std::move(pending->second);
+  pending_class_bodies_.erase(pending);
+  for (PendingClassBody& body : batch) {
+    if (auto r = PopulateClassBody(body); !r) {
+      return std::unexpected(std::move(r.error()));
+    }
+  }
+  return {};
+}
+
+void UnitLowerer::RequireEveryClassBodyLowered() const {
+  if (!pending_class_bodies_.empty()) {
+    throw InternalError(
+        "UnitLowerer::RequireEveryClassBodyLowered: every class this unit "
+        "declares is declared by a structural scope of it, and every such "
+        "scope lowers the classes it declares");
+  }
+}
+
+auto UnitLowerer::PopulateClassBody(PendingClassBody& pending)
+    -> diag::Result<void> {
+  const slang::ast::ClassType& cls = *pending.cls;
+  const diag::SourceSpan span = pending.span;
+  hir::ClassDecl& decl = *pending.decl;
+  const std::vector<const slang::ast::SubroutineSymbol*>& defined_methods =
+      pending.defined_methods;
+  const std::vector<const slang::ast::MethodPrototypeSymbol*>& pure_prototypes =
+      pending.pure_prototypes;
+  const slang::ast::SubroutineSymbol* constructor_sym = pending.constructor_sym;
+  const WalkFrame class_frame =
+      WalkFrame{}
+          .WithDeclaringScope(
+              DeclaringScopeChain(*pending.declaring_scope),
+              pending.declaring_scope)
+          .WithProceduralScopeOwner(&decl.procedural_scopes);
 
   for (const auto* method : defined_methods) {
     auto method_decl =
@@ -1172,8 +1241,8 @@ auto UnitLowerer::InternLocalClass(
   }
   decl.constructor = std::move(constructor);
 
-  unit_.classes.Define(id, std::move(decl));
-  return id;
+  unit_.classes.Define(pending.id, std::move(*pending.decl));
+  return {};
 }
 
 auto UnitLowerer::AddComposedType(hir::Type type) const -> hir::TypeId {

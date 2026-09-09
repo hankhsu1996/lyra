@@ -94,15 +94,17 @@ now visible in code shape, not just in individual call-site comments.
 ## Consequences
 
 - Cross-unit-class classification decisions are made in exactly one place (`ResolveClassRef`).
-- The pre-pass (`InternOwnClassDeclarations`) is textually walk-free -- every own class is minted
-  via `InternLocalClass`, which trusts context.
+- The pre-pass mints every own class through the one minting operation, which trusts context and
+  never asks which unit a class belongs to.
 - The class cache stores the full classification, not just local ids, so an external reference walks
   the slang tree at most once per unit and thereafter is O(1).
 - Recursive base-class references from `InternLocalClass` route through `ResolveClassRef`, correctly
   handling `Derived extends pkg::Base` where the base is external.
-- A class textually local to this unit but not caught by the pre-pass (e.g. nested inside a generate
-  block) is minted lazily by `ResolveClassRef` at first reference, funnelling through
-  `InternLocalClass` -- both routes converge on the same minting operation.
+- The pre-pass reaches every scope of the unit that can declare a class -- a generate block, and a
+  class, both being scopes of the name tree (LRM 23.9) -- so which scope declares a class is settled
+  before any body lowers rather than by whichever reference reaches it first. A reference still
+  funnels through the same minting operation and finds the class already minted, so the two routes
+  converge as before without the order of references deciding anything.
 
 ## Relation to existing decisions
 

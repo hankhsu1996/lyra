@@ -78,9 +78,12 @@ struct BaseCall {
 
 // A SystemVerilog class declaration (LRM 8). The class's properties and its
 // instance methods; references to a class name resolve to this declaration's
-// id. A class is reached through a handle, so it carries no structural
-// position of its own. Each method (LRM 8.6) is a subroutine reached through
-// the instance, reading the receiver and the class's properties through it. A
+// id. A class is a scope of the name tree (LRM 23.9), and the scope that
+// declares it says so -- a class declared inside a structural scope is a type
+// of that scope's instance (LRM 6.22), so its bodies name that instance's
+// declarations and count their hops from it. Each method (LRM 8.6) is a
+// subroutine reached through the object, reading the receiver and the class's
+// properties through it. A
 // method's identity exists before its lowered form does: one method's body may
 // name another the source declared later (LRM 13.7), and a method declared
 // `extern` has its body outside the class body entirely (LRM 8.24).

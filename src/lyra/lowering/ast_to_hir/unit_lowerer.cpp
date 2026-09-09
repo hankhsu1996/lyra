@@ -48,7 +48,7 @@ auto UnitLowerer::Declare() -> diag::Result<void> {
   if (auto r = DeclareStructuralIdentities(*scope_); !r) {
     return std::unexpected(std::move(r.error()));
   }
-  if (auto r = InternOwnClassDeclarations(); !r) {
+  if (auto r = InternOwnClassDeclarations(*scope_); !r) {
     return std::unexpected(std::move(r.error()));
   }
   return PublishSignature();
@@ -74,6 +74,7 @@ auto UnitLowerer::LowerBodies(hir::ConsumedSignatures signatures)
     return std::unexpected(std::move(root_scope_or.error()));
   }
   unit_.root_scope = *std::move(root_scope_or);
+  RequireEveryClassBodyLowered();
   unit_.root_scope.published_members.reserve(published_members_.size());
   for (const auto& decl : published_members_) {
     if (!decl.has_value()) {
@@ -86,21 +87,31 @@ auto UnitLowerer::LowerBodies(hir::ConsumedSignatures signatures)
   return std::move(unit_);
 }
 
-auto UnitLowerer::InternOwnClassDeclarations() -> diag::Result<void> {
-  // A class is owned by the compilation unit that declares it. Slang exposes
-  // this unit's class declarations at scope level as one of two kinds: a
-  // `ClassType` for a non-parameterized declaration (LRM 8.3), or a
-  // `GenericClassDefSymbol` for a parameterized one (LRM 8.25), which carries
-  // one `ClassType` per live specialization slang deduplicated during
-  // elaboration. Minting them here before any body lowers keeps class
-  // identity queryable through the unit's registry from the moment any body
-  // resolves a reference, and gives a specialization reached only from
-  // another unit its home in the declaring unit.
-  for (const auto& member : scope_->members()) {
+auto UnitLowerer::InternOwnClassDeclarations(const slang::ast::Scope& scope)
+    -> diag::Result<void> {
+  // A class is owned by the compilation unit that declares it. Slang exposes a
+  // class declaration at scope level as one of two kinds: a `ClassType` for a
+  // non-parameterized declaration (LRM 8.3), or a `GenericClassDefSymbol` for a
+  // parameterized one (LRM 8.25), which carries one `ClassType` per live
+  // specialization slang deduplicated during elaboration. Minting them before
+  // any body lowers keeps class identity queryable through the unit's registry
+  // from the moment any body resolves a reference, and gives a specialization
+  // reached only from another unit its home in the declaring unit.
+  //
+  // The walk descends every structural scope, so which scope declares a class
+  // is settled before any body lowers rather than by whichever reference
+  // reaches the class first (LRM 23.9 makes a class a scope of the name tree,
+  // and a generate block declares its own).
+  for (const auto& member : scope.members()) {
     if (member.kind == slang::ast::SymbolKind::ClassType) {
       const auto& cls = member.as<slang::ast::ClassType>();
       const diag::SourceSpan span = SourceMapper().PointSpanOf(cls.location);
       if (auto r = InternLocalClass(cls, span); !r) {
+        return std::unexpected(std::move(r.error()));
+      }
+      // A class is itself a scope, so a class it declares is reached by the
+      // same walk (LRM 8.3 admits a class declaration as a class item).
+      if (auto r = InternOwnClassDeclarations(cls); !r) {
         return std::unexpected(std::move(r.error()));
       }
     } else if (member.kind == slang::ast::SymbolKind::GenericClassDef) {
@@ -109,6 +120,22 @@ auto UnitLowerer::InternOwnClassDeclarations() -> diag::Result<void> {
       for (const auto& spec : def.specializations()) {
         const auto& cls = spec.getCanonicalType().as<slang::ast::ClassType>();
         if (auto r = InternLocalClass(cls, span); !r) {
+          return std::unexpected(std::move(r.error()));
+        }
+        if (auto r = InternOwnClassDeclarations(cls); !r) {
+          return std::unexpected(std::move(r.error()));
+        }
+      }
+    } else if (member.kind == slang::ast::SymbolKind::GenerateBlock) {
+      const auto& block = member.as<slang::ast::GenerateBlockSymbol>();
+      if (block.isUninstantiated) continue;
+      if (auto r = InternOwnClassDeclarations(block); !r) {
+        return std::unexpected(std::move(r.error()));
+      }
+    } else if (member.kind == slang::ast::SymbolKind::GenerateBlockArray) {
+      const auto& array = member.as<slang::ast::GenerateBlockArraySymbol>();
+      for (const auto* entry : array.entries) {
+        if (auto r = InternOwnClassDeclarations(*entry); !r) {
           return std::unexpected(std::move(r.error()));
         }
       }
@@ -292,6 +319,78 @@ auto UnitLowerer::LookupScopeFrame(const slang::ast::Scope& scope) const
         "body lowering");
   }
   return it->second;
+}
+
+auto UnitLowerer::DeclaringStructuralScope(
+    const slang::ast::ClassType& cls) const -> const slang::ast::Scope& {
+  // A class nested in another class adds no level: SystemVerilog gives the
+  // inner one no access to the outer object, so what its bodies reach is the
+  // enclosing structural scope's instance and nothing between. Walking to the
+  // nearest scope the declaration pass assigned a frame is what states that.
+  for (const slang::ast::Scope* level = cls.getParentScope(); level != nullptr;
+       level = level->asSymbol().getParentScope()) {
+    if (scope_frames_.contains(level)) return *level;
+  }
+  throw InternalError(
+      "UnitLowerer::DeclaringStructuralScope: a class of this unit is declared "
+      "inside a structural scope of it");
+}
+
+auto UnitLowerer::DeclaringScopeChain(const slang::ast::Scope& scope) const
+    -> std::vector<ScopeFrameId> {
+  // Walking outward and reversing, rather than descending, because the walk
+  // starts from the declaration and the enclosing chain is what slang already
+  // holds. A scope the declaration pass assigned no frame is not a structural
+  // scope and contributes no level, which is the same reading the pass itself
+  // applied when it chose which members to descend into.
+  std::vector<ScopeFrameId> chain;
+  for (const slang::ast::Scope* level = &scope; level != nullptr;
+       level = level->asSymbol().getParentScope()) {
+    if (const auto it = scope_frames_.find(level); it != scope_frames_.end()) {
+      chain.push_back(it->second);
+    }
+  }
+  std::ranges::reverse(chain);
+  return chain;
+}
+
+auto UnitLowerer::DeclaringScopeHopsFrom(
+    const slang::ast::ClassType& cls, const WalkFrame& frame,
+    diag::SourceSpan span) -> diag::Result<std::optional<hir::StructuralHops>> {
+  // A namespace unit -- a package or the `$unit` scope (LRM 26.2, 3.12.1) --
+  // replicates nothing, so an object of a class it declares belongs to no
+  // instance and construction supplies none. Which unit declares the class
+  // decides this, not which unit is being lowered: a package class reached
+  // from a module needs no instance either.
+  const slang::ast::Symbol& decl_unit = DeclaringCompilationUnit(cls);
+  if (decl_unit.kind != slang::ast::SymbolKind::InstanceBody) {
+    return std::nullopt;
+  }
+  if (&decl_unit != &scope_->asSymbol()) {
+    // A module or interface declares the class, so an object of it belongs to
+    // one instance -- and what crosses a unit boundary is that unit's
+    // signature, which carries no instance of a scope inside it.
+    return diag::Fail(
+        span, diag::DiagCode::kUnsupportedClassFeature,
+        "constructing a class another compilation unit declares inside one of "
+        "its scopes is not yet supported");
+  }
+  const slang::ast::Scope& declaring = DeclaringStructuralScope(cls);
+  const auto hops = frame.HopsTo(LookupScopeFrame(declaring));
+  if (!hops.has_value()) {
+    return diag::Fail(
+        span, diag::DiagCode::kUnsupportedClassFeature,
+        "constructing a class declared in a scope this body does not stand "
+        "inside is not yet supported");
+  }
+  return *hops;
+}
+
+auto UnitLowerer::TakeDeclaredClasses(const slang::ast::Scope& scope)
+    -> std::vector<hir::ClassId> {
+  const auto it = classes_by_scope_.find(&scope);
+  if (it == classes_by_scope_.end()) return {};
+  return std::move(it->second);
 }
 
 void UnitLowerer::MapStructuralDataObjectBinding(

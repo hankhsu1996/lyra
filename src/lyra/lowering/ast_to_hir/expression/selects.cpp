@@ -209,10 +209,16 @@ auto LowerMemberAccessExpr(
     // it, and fabricating a receiver to stand in for "no instance" would
     // conflict with the receiver-of-instance-methods-only rule.
     if (prop.lifetime == slang::ast::VariableLifetime::Static) {
+      auto declaring_hops =
+          lowerer.Owner().DeclaringScopeHopsFrom(declaring_class, frame, span);
+      if (!declaring_hops) {
+        return std::unexpected(std::move(declaring_hops.error()));
+      }
       return hir::MakeRefExpr(
           hir::StaticPropertyRef{
               .target =
-                  lowerer.Owner().MakeStaticPropertyTarget(*owner_ref, prop)},
+                  lowerer.Owner().MakeStaticPropertyTarget(*owner_ref, prop),
+              .declaring_scope_hops = *declaring_hops},
           *type_id, span);
     }
     return hir::Expr{

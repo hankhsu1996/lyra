@@ -2,6 +2,7 @@
 
 #include <compare>
 #include <cstdint>
+#include <optional>
 #include <string>
 #include <variant>
 
@@ -10,6 +11,7 @@
 #include "lyra/hir/pattern_id.hpp"
 #include "lyra/hir/procedural_var.hpp"
 #include "lyra/hir/structural_data_object.hpp"
+#include "lyra/hir/structural_hops.hpp"
 #include "lyra/hir/type_id.hpp"
 #include "lyra/hir/with_clause_id.hpp"
 
@@ -70,15 +72,24 @@ struct ClassPropertyRef {
 // A reference to a class static property (LRM 8.9). `target` names the
 // declaring class and the slot within its static-property arena. A static
 // property is one cell owned by the type, not a member replicated into each
-// instance, so this reference carries no receiver: the source form
+// object of it, so this reference carries no receiver: the source form
 // `Cls::prop`, an unqualified use inside a method of the same class, and
 // `p.prop` where the resolved target happens to be static all resolve to the
 // same cell and the same reference shape. Under inheritance,
 // `Derived::inherited_prop` still names the base class -- the property lives
 // on the base's arena. The external arm is used when the declaring class
 // lives in another compilation unit.
+//
+// How many such cells exist follows from how many times the class declaration
+// is replicated. `declaring_scope_hops` is how far out of this body's own
+// structural scope the scope that declares the class sits, present exactly
+// where one does: each instance with a type declared inside it has a type of
+// its own (LRM 6.22), so it has that type's cell of its own, reached through
+// that instance. Absent for a class a namespace unit declares, whose one cell
+// is the program's.
 struct StaticPropertyRef {
   StaticPropertyTarget target;
+  std::optional<StructuralHops> declaring_scope_hops;
 
   auto operator==(const StaticPropertyRef&) const -> bool = default;
 };

@@ -128,8 +128,8 @@ auto CancellationTarget(
   mir::CompilationUnit& unit = process.Owner().Unit();
   mir::Block& block = *frame.current_block;
   const mir::TypeId target_type = CancellationTargetType(unit);
-  const mir::ExprId member = block.exprs.Add(
-      BuildStaticStorageAccess(unit, frame, target, target_type));
+  const mir::ExprId member = block.exprs.Add(BuildStaticStorageAccess(
+      unit, frame, target, target_type, mir::EnclosingHops{}));
   return block.exprs.Add(
       mir::Expr{
           .data = mir::AddressOfExpr{.operand = member},

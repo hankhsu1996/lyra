@@ -1003,12 +1003,19 @@ auto LowerCallExpr(
     if (!static_result_type) {
       return std::unexpected(std::move(static_result_type.error()));
     }
+    auto declaring_hops =
+        unit_lowerer.DeclaringScopeHopsFrom(declaring_class, frame, span);
+    if (!declaring_hops) {
+      return std::unexpected(std::move(declaring_hops.error()));
+    }
     return hir::Expr{
         .type = *static_result_type,
         .data =
             hir::CallExpr{
                 .callee =
-                    hir::StaticMethodCallRef{.callee = *std::move(callee)},
+                    hir::StaticMethodCallRef{
+                        .callee = *std::move(callee),
+                        .declaring_scope_hops = *declaring_hops},
                 .arguments = std::move(arg_ids),
             },
         .span = span,

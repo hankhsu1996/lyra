@@ -17,6 +17,7 @@
 #include "lyra/lowering/hir_to_mir/expression/selects.hpp"
 #include "lyra/lowering/hir_to_mir/expression/tagged_union.hpp"
 #include "lyra/lowering/hir_to_mir/process_lowerer.hpp"
+#include "lyra/lowering/hir_to_mir/self_ref.hpp"
 #include "lyra/lowering/hir_to_mir/structural_scope_lowerer.hpp"
 #include "lyra/lowering/hir_to_mir/walk_frame.hpp"
 #include "lyra/mir/expr.hpp"
@@ -160,7 +161,16 @@ auto LowerExprImpl(L& lowerer, const hir::Expr& expr, WalkFrame frame)
             // construction whose result type (a managed reference) names what
             // to build; the actuals flow to the constructor's formals.
             std::vector<mir::ExprId> args;
-            args.reserve(n.arguments.size());
+            args.reserve(n.arguments.size() + 1);
+            // A class declared in a structural scope is a type of that scope's
+            // instance (LRM 6.22), so the object records which instance it
+            // belongs to and construction is where that arrives -- ahead of
+            // the source actuals, the way every construction prefix does.
+            if (n.declaring_scope_hops.has_value()) {
+              args.push_back(BuildEnclosingScopeReceiver(
+                  frame, lowerer.Owner().Unit(),
+                  mir::EnclosingHops{n.declaring_scope_hops->value}));
+            }
             for (const hir::ExprId arg_hid : n.arguments) {
               auto arg_or =
                   lowerer.LowerExpr(lowerer.HirExprs().Get(arg_hid), frame);

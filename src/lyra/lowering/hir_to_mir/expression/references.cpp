@@ -163,7 +163,8 @@ auto LowerProceduralVarRefExpr(
           // one access.
           [&](const StaticVarBinding& binding) {
             return BuildStaticStorageAccess(
-                process.Owner().Unit(), frame, binding.home, binding.cell_type);
+                process.Owner().Unit(), frame, binding.home, binding.cell_type,
+                mir::EnclosingHops{});
           },
           // A lifetime-extended automatic (LRM 6.21) lives in a shared
           // activation object; the read reaches its field through the handle,
@@ -218,25 +219,29 @@ auto LowerHirIntegralConstant(const hir::IntegralConstant& c)
       .value_words = c.value_words, .state_words = c.state_words};
 }
 
-// A static property (LRM 8.9) is one cell owned by the class, reached without a
-// receiver, so its reference is a function of the unit alone -- the same in a
-// process body and in a structural expression.
+// A static property (LRM 8.9) belongs to the type rather than to an object of
+// it, so it is reached without a receiver. Where its cell sits follows from
+// what replicates the class declaration, which the shape settled; the reference
+// states how far out of this body that replication sits, where one exists.
 auto LowerStaticPropertyRefExpr(
-    UnitLowerer& unit_lowerer, const hir::StaticPropertyRef& r,
-    mir::TypeId result_type) -> mir::Expr {
+    UnitLowerer& unit_lowerer, const WalkFrame& frame,
+    const hir::StaticPropertyRef& r, mir::TypeId result_type) -> mir::Expr {
   if (const auto* local =
           std::get_if<hir::LocalStaticPropertyTarget>(&r.target)) {
     const mir::ClassId owner = unit_lowerer.TranslateClass(local->owner);
-    return mir::Expr{
-        .data =
-            mir::ReferenceExpr{
-                .target =
-                    mir::StaticPropertyRef{
-                        .owner = owner,
-                        .prop =
-                            unit_lowerer.GetClassShape(owner)
-                                .static_property_translation.Get(local->prop)}},
-        .type = result_type};
+    const StaticStorageHome& home =
+        unit_lowerer.GetClassShape(owner).static_property_translation.Get(
+            local->prop);
+    // The hops answer where the instance is, and a cell the class itself owns
+    // or the unit's namespace owns is reached without one -- so the climb to an
+    // instance has no steps to take rather than an unknown number of them. The
+    // two facts arrive from different places and cannot disagree: a cell lands
+    // on an instance exactly when a structural scope replicates the class, and
+    // that is the same condition the reference records its hops under.
+    return BuildStaticStorageAccess(
+        unit_lowerer.Unit(), frame, home, result_type,
+        mir::EnclosingHops{
+            r.declaring_scope_hops.value_or(hir::StructuralHops{}).value});
   }
   return mir::Expr{
       .data =
@@ -292,7 +297,8 @@ auto LowerHirPrimaryExprProc(
                 result_type);
           },
           [&](const hir::StaticPropertyRef& r) -> mir::Expr {
-            return LowerStaticPropertyRefExpr(process.Owner(), r, result_type);
+            return LowerStaticPropertyRefExpr(
+                process.Owner(), frame, r, result_type);
           },
           [&](const hir::RoutedRef& c) -> mir::Expr {
             return LowerReferenceRouteExpr(
@@ -351,7 +357,8 @@ auto LowerHirPrimaryExprStructural(
                 "appear in structural expressions");
           },
           [&](const hir::StaticPropertyRef& r) -> mir::Expr {
-            return LowerStaticPropertyRefExpr(lowerer.Owner(), r, result_type);
+            return LowerStaticPropertyRefExpr(
+                lowerer.Owner(), frame, r, result_type);
           },
           [&](const hir::RoutedRef& c) -> mir::Expr {
             return LowerReferenceRouteExpr(

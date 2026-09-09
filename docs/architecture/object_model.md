@@ -134,10 +134,14 @@ reference -- destroys a distinction a consumer has to read.
    object"._
 
 8. **Type-associated state is not an instance member.** A static property and a static method belong
-   to the type's associated namespace, shared across instances, not to each instance's field or
-   method set. The instance member is a (name, type) pair; type-associated storage is a separate
-   category. _Object-model consequence: a static property is one cell owned by the type, never a
-   field replicated into every instance._
+   to the type's associated namespace, shared across every object of the type, not to each object's
+   field or method set. The instance member is a (name, type) pair; type-associated storage is a
+   separate category. How many such cells exist is a different question, answered by how many times
+   the declaration is replicated: a type a compilation unit declares outright has one, and a type
+   declared inside something that is instantiated has one per instantiation. _Object-model
+   consequence: a static property is one cell owned by the type, never a field replicated into every
+   object of it; and "one cell" is never read as "one cell in the program" unless the type itself is
+   one._
 
 9. **Managed reachability is realized by precise tracing.** A managed object is retained while
    reachable and reclaimed by a precise tracing collector; an unreachable cycle is reclaimed by
@@ -207,7 +211,9 @@ reference -- destroys a distinction a consumer has to read.
   stated at the call site. (Invariant 6.)
 - A type-associated function carrying a receiver, or a fabricated receiver standing in for "no
   instance". (Invariant 7.)
-- A static property modeled as an instance field replicated per object. (Invariant 8.)
+- A static property modeled as an instance field replicated per object of its type. (Invariant 8.)
+- Type-associated storage placed program-globally for a type that is itself replicated, so two
+  instantiations of the declaring entity share one cell. (Invariant 8.)
 - MIR stating a reference-counted realization, or the absence of cyclic reclamation, as the meaning
   of a managed reference rather than as a realization detail. (Invariant 9.)
 - Two declaration-storage systems -- one for module and generate-scope objects, another for classes.

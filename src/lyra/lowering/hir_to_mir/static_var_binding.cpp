@@ -124,12 +124,13 @@ auto InstanceFieldOf(const StaticVarBinding& binding) -> mir::FieldId {
 
 auto BuildStaticStorageAccess(
     const mir::CompilationUnit& unit, const WalkFrame& frame,
-    const StaticStorageHome& home, mir::TypeId cell_type) -> mir::Expr {
+    const StaticStorageHome& home, mir::TypeId cell_type,
+    mir::EnclosingHops hops) -> mir::Expr {
   return std::visit(
       Overloaded{
           [&](const InstanceFieldHome& instance) {
             return BuildStructuralFieldAccessExpr(
-                frame, unit, mir::EnclosingHops{}, instance.field);
+                frame, unit, hops, instance.field);
           },
           [&](const ClassCellHome& cls) {
             return mir::Expr{

@@ -251,6 +251,22 @@ struct WalkFrame {
     return next;
   }
 
+  // Positions a class's bodies in the structural nesting of the scope that
+  // declares the class. A class is a scope of the name tree (LRM 23.9), so its
+  // bodies resolve an outward name against the same chain a process of that
+  // scope resolves it against; the chain's innermost entry is that scope,
+  // which is the instance the class's declaration is replicated with (LRM
+  // 6.22). No structural write target is set: a class body writes into the
+  // class's own arenas, never into a scope's.
+  [[nodiscard]] auto WithDeclaringScope(
+      std::vector<ScopeFrameId> chain,
+      const slang::ast::Scope* slang_scope) const -> WalkFrame {
+    WalkFrame next = *this;
+    next.structural_chain = std::move(chain);
+    next.reader_scope = slang_scope;
+    return next;
+  }
+
   // Makes a procedural body the write target, for the whole of a process or
   // subroutine walk: nested control flow does not push a second body, because
   // HIR's procedural body is flat. Its arenas come off the body for the same
