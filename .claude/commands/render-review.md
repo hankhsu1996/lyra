@@ -3,7 +3,7 @@ description: Check backend render and MIR-consuming lowering code against the me
 allowed-tools: Read, Grep, Glob, Bash(git status:*), Bash(git diff:*), Bash(git log:*), Bash(ls:*), Bash(grep:*), Bash(sed -n:*), Bash(wc:*)
 ---
 
-# Check Render
+# Render Review
 
 Find the places where a consumer of MIR is deciding something MIR did not state, and report them.
 

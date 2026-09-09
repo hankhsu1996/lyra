@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """C++ style policy.
 
-Style rules sit here, separate from architecture rules. Both scripts run
-under the central C++ Style/Policy CI step.
+Style rules sit here, separate from architecture rules. Formatting is not one
+of them: clang-format decides it, and this script never reads what it decides.
 
 Rules:
 
