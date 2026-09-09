@@ -1,7 +1,9 @@
 #include "lyra/lowering/hir_to_mir/statement/blocks.hpp"
 
 #include <cstddef>
+#include <cstdint>
 #include <expected>
+#include <format>
 #include <optional>
 #include <span>
 #include <string>
@@ -18,6 +20,7 @@
 #include "lyra/lowering/hir_to_mir/process_lowerer.hpp"
 #include "lyra/lowering/hir_to_mir/runtime_call.hpp"
 #include "lyra/lowering/hir_to_mir/self_ref.hpp"
+#include "lyra/lowering/hir_to_mir/static_var_binding.hpp"
 #include "lyra/lowering/hir_to_mir/walk_frame.hpp"
 #include "lyra/mir/compilation_unit.hpp"
 #include "lyra/mir/expr.hpp"
@@ -116,45 +119,31 @@ auto CancellationTargetType(mir::CompilationUnit& unit) -> mir::TypeId {
           .kind = mir::RuntimeLibraryKind::kCancellationTarget}});
 }
 
-// The target of a block a `disable` can name (LRM 9.6.2), absent when it is
-// none. A `disable` reaches its target by naming it, so an unnamed block is one
-// no `disable` can reach and it needs no region -- which is what owning no
-// target says.
-auto BlockCancellationTarget(
-    const ProcessLowerer& process, const hir::BlockStmt& b)
-    -> std::optional<mir::FieldId> {
-  // A target is per-instance storage read off the body's own object, so a body
-  // that reaches none can hold none.
-  if (!process.BodyHasReceiver()) {
-    return std::nullopt;
-  }
-  return process.Scopes().Get(b.scope).cancellation_target;
-}
-
 // The expression reaching the target a region claims and a `disable`
-// invalidates (LRM 9.6.2). A target is storage the enclosing instance owns
-// rather than a value, so what every operation on one takes is its address.
+// invalidates (LRM 9.6.2). A target is storage rather than a value, so what
+// every operation on one takes is its address.
 auto CancellationTarget(
-    ProcessLowerer& process, const WalkFrame& frame, mir::FieldId target)
-    -> mir::ExprId {
+    ProcessLowerer& process, const WalkFrame& frame,
+    const StaticStorageHome& target) -> mir::ExprId {
   mir::CompilationUnit& unit = process.Owner().Unit();
   mir::Block& block = *frame.current_block;
-  const mir::ExprId member = block.exprs.Add(BuildStructuralFieldAccessExpr(
-      frame, unit, mir::EnclosingHops{}, target));
+  const mir::TypeId target_type = CancellationTargetType(unit);
+  const mir::ExprId member = block.exprs.Add(
+      BuildStaticStorageAccess(unit, frame, target, target_type));
   return block.exprs.Add(
       mir::Expr{
           .data = mir::AddressOfExpr{.operand = member},
           .type = unit.types.Intern(
               mir::Type{mir::PointerType{
-                  .pointee = CancellationTargetType(unit),
+                  .pointee = target_type,
                   .ownership = mir::PointerOwnership::kBorrowed}})});
 }
 
 // Appends one end of a target's extent -- entering it or leaving it -- as a
 // statement of `frame`'s block.
 void EmitTargetBracket(
-    ProcessLowerer& process, const WalkFrame& frame, mir::FieldId target,
-    support::BuiltinFn bracket) {
+    ProcessLowerer& process, const WalkFrame& frame,
+    const StaticStorageHome& target, support::BuiltinFn bracket) {
   UnitLowerer& unit_lowerer = process.Owner();
   mir::CompilationUnit& unit = unit_lowerer.Unit();
   mir::Block& block = *frame.current_block;
@@ -176,7 +165,7 @@ void EmitTargetBracket(
 
 auto BuildCancellableRegion(
     ProcessLowerer& process, const WalkFrame& frame, mir::Block&& body,
-    mir::FieldId target) -> mir::TryStmt {
+    const StaticStorageHome& target) -> mir::TryStmt {
   UnitLowerer& unit_lowerer = process.Owner();
   mir::CompilationUnit& unit = unit_lowerer.Unit();
   mir::Block& block = *frame.current_block;
@@ -203,12 +192,11 @@ auto BuildCancellableRegion(
   const mir::TypeId effect_type = unit.types.Intern(
       mir::Type{mir::RuntimeLibraryType{
           .kind = mir::RuntimeLibraryKind::kControlEffect}});
-  const BindingOriginId origin =
-      BindingOriginId::Synthesized(unit_lowerer.NextSynthesizedSite(), 0);
+  const std::uint32_t site = unit_lowerer.NextSynthesizedSite();
+  const BindingOriginId origin = BindingOriginId::Synthesized(site, 0);
   const mir::LocalId caught = frame.bindings->Declare(
       origin, mir::LocalDecl{
-                  .name = "effect_" + std::to_string(target.value),
-                  .type = effect_type});
+                  .name = std::format("effect_{}", site), .type = effect_type});
 
   // The handler is a scope of its own, so its test and its raise are lowered
   // through a frame whose current block is that scope.
@@ -271,10 +259,11 @@ auto LowerBlockStmt(
 
   // A named block (LRM 9.6.2) is a region that consumes the effect naming it:
   // an execution anywhere inside it -- including inside a callable it invoked
-  // -- leaves the block and resumes just past it. An unnamed block is an
-  // ordinary one and needs nothing.
-  const std::optional<mir::FieldId> cancel_target =
-      BlockCancellationTarget(process, b);
+  // -- leaves the block and resumes just past it. A `disable` reaches its
+  // target by naming it, so an unnamed block is one none can reach and it needs
+  // no region -- which is what owning no target says.
+  const std::optional<StaticStorageHome>& cancel_target =
+      process.Scopes().Get(b.scope).cancellation_target;
 
   const hir::ProceduralBody& hir_proc = process.HirBody();
   for (const hir::StmtId child_hir_id : b.statements) {
@@ -304,16 +293,7 @@ auto LowerDisableStmt(
   mir::CompilationUnit& unit = unit_lowerer.Unit();
   mir::Block& block = *frame.current_block;
 
-  // Reaching a target means projecting its per-instance storage from the
-  // disabling body's own object; a body that reaches none -- a package callable
-  // (LRM 26.3), a static class method (LRM 8.10) -- cannot name a target.
-  if (!process.BodyHasReceiver()) {
-    return diag::Fail(
-        diag::SourceSpan{}, diag::DiagCode::kUnsupportedStatementForm,
-        "disable from a body that has no enclosing instance is not yet "
-        "supported");
-  }
-  const std::optional<mir::FieldId> target =
+  const std::optional<StaticStorageHome>& target =
       process.Scopes().Get(d.target).cancellation_target;
   if (!target.has_value()) {
     throw InternalError(

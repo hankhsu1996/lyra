@@ -274,7 +274,8 @@ struct DisableForkStmt {};
 // LRM 9.6.2 `disable <named block or task>`: terminate the activity of the
 // named scope so execution resumes at the statement following it. `target` is a
 // typed reference to that scope's declaration -- selected by static identity,
-// so the target may sit in another process. How the termination is realized --
+// so the target may sit in another process, and it indexes the registry of the
+// declaration scope this body belongs to. How the termination is realized --
 // the scope's runtime endpoint, the resumption gate, the unwind -- is
 // synthesized at HIR-to-MIR, not carried here.
 struct DisableStmt {

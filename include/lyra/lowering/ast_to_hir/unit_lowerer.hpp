@@ -130,6 +130,15 @@ struct ProceduralStaticBinding {
 using ProceduralStaticBindings =
     std::unordered_map<const slang::ast::Symbol*, ProceduralStaticBinding>;
 
+// One procedural scope's minted identity, together with the registry it indexes
+// -- the one belonging to the declaration scope that owns the body it was
+// written in. The pair is what makes the identity meaningful to a reader: an id
+// alone is a position in whichever registry the reader happens to hold.
+struct MintedProceduralScope {
+  const base::Registry<hir::ProceduralScopeDecl, hir::ProceduralScopeId>* owner;
+  hir::ProceduralScopeId scope;
+};
+
 // What a route ends at, and what storage that is. A published member states its
 // own type and its own storage on the signature that carries it; every other
 // target is described the way the referrer already knows it.
@@ -665,8 +674,12 @@ class UnitLowerer {
   // Records the identity a declaration scope minted for one of its procedural
   // scopes, keyed by the symbol slang records the scope as.
   void DeclareProceduralScope(
-      const slang::ast::Symbol& symbol, hir::ProceduralScopeId scope) {
-    procedural_scopes_.emplace(&symbol, scope);
+      const slang::ast::Symbol& symbol,
+      const base::Registry<hir::ProceduralScopeDecl, hir::ProceduralScopeId>&
+          owner,
+      hir::ProceduralScopeId scope) {
+    procedural_scopes_.emplace(
+        &symbol, MintedProceduralScope{.owner = &owner, .scope = scope});
   }
 
   // The identity minted for `symbol`'s procedural scope. Every procedural scope
@@ -682,23 +695,22 @@ class UnitLowerer {
           "UnitLowerer::LookupProceduralScope: a procedural scope was not "
           "declared before its body lowered");
     }
-    return it->second;
+    return it->second.scope;
   }
 
-  // The structural scope `symbol` belongs to -- the nearest enclosing slang
-  // scope the declaration pass minted a frame for -- or nullopt when the symbol
-  // sits outside any (a class member). A `disable` compares this against its
-  // own frame to tell a same-scope target from a cross-scope one, which needs
-  // the hierarchical addressing that is not yet built.
-  [[nodiscard]] auto OwningScopeFrame(const slang::ast::Symbol& symbol) const
-      -> std::optional<ScopeFrameId> {
-    for (const slang::ast::Scope* s = symbol.getParentScope(); s != nullptr;
-         s = s->asSymbol().getParentScope()) {
-      if (const auto it = scope_frames_.find(s); it != scope_frames_.end()) {
-        return it->second;
-      }
+  // The identity minted for `symbol`, if `owner` is the registry that minted
+  // it. A scope's identity indexes the registry of the declaration scope that
+  // owns it, so it means nothing against another one; a body naming a scope
+  // therefore asks whether the target is its own before it may carry the id.
+  [[nodiscard]] auto LookupProceduralScopeIn(
+      const slang::ast::Symbol& symbol,
+      const base::Registry<hir::ProceduralScopeDecl, hir::ProceduralScopeId>&
+          owner) const -> std::optional<hir::ProceduralScopeId> {
+    const auto it = procedural_scopes_.find(&symbol);
+    if (it == procedural_scopes_.end() || it->second.owner != &owner) {
+      return std::nullopt;
     }
-    return std::nullopt;
+    return it->second.scope;
   }
 
   [[nodiscard]] auto NextScopeFrameId() -> ScopeFrameId;
@@ -950,7 +962,7 @@ class UnitLowerer {
       routed_refs_by_frame_;
   std::uint32_t next_scope_frame_ = 0;
   std::uint32_t next_with_clause_ = 0;
-  std::unordered_map<const slang::ast::Symbol*, hir::ProceduralScopeId>
+  std::unordered_map<const slang::ast::Symbol*, MintedProceduralScope>
       procedural_scopes_;
 };
 

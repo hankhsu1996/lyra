@@ -203,8 +203,9 @@ scratch.
 
 A callable's function-local set is small: the receiver `self` and the compiler temporaries the
 lowering introduces. A source-level variable with static lifetime is not a function local; it is a
-member of the enclosing class, reached through `self` as a place. The bulk of a program's state is
-member storage reached through receivers, not locals on a frame.
+cell of whatever its declaration belongs to, which for a body of the design hierarchy is a member of
+the enclosing class reached through `self` as a place. The bulk of a program's state is member
+storage reached through receivers, not locals on a frame.
 
 LIR is not an SSA form. A local is either a transient -- computed once, consumed, with a pure
 dataflow origin -- or a place, which is storage on the frame. Which one a local is follows a

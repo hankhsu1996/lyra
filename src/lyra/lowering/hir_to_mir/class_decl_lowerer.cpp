@@ -2,6 +2,7 @@
 
 #include <expected>
 #include <optional>
+#include <span>
 #include <string>
 #include <string_view>
 #include <unordered_map>
@@ -95,16 +96,28 @@ auto CanonicalizeVirtualDispatch(
   return std::nullopt;
 }
 
+// One body of the class and the static-lifetime locals it declared, paired so
+// the design-init body can apply each initializer in the arena the expression
+// was written in.
+struct BodyStatics {
+  const hir::ProceduralBody* body;
+  std::string_view name;
+  std::span<const StaticVarBinding> statics;
+};
+
 // Lowers the class's design-init body (LRM 8.9 / 10.5): a receiver-less,
 // formal-less callable code the runtime invokes once at program startup,
-// before any initial or always procedure runs. Each source-written static
-// property initializer lowers to an `AssignExpr(StaticPropertyRef, value)`
-// statement in declaration order; a static property without a source
-// initializer takes its type's Table 7-1 default and gets no statement here.
+// before any initial or always procedure runs. Everything the class owns for
+// itself is brought up here. Each source-written static property initializer
+// lowers to an `AssignExpr(StaticPropertyRef, value)` statement in declaration
+// order; a static property without a source initializer takes its type's Table
+// 7-1 default and gets no statement here. A static-lifetime local of a body
+// follows, its cell being the class's for the same reason.
 auto LowerStaticInit(
     UnitLowerer& unit_lowerer, const hir::ClassDecl& hir_class,
     const ClassShape& shape, mir::Class& mir_class, mir::ClassId class_id,
-    const DeclaredScopes& scopes) -> diag::Result<mir::CallableCode> {
+    const DeclaredScopes& scopes, std::span<const BodyStatics> body_statics)
+    -> diag::Result<mir::CallableCode> {
   mir::CallableCode code = mir::CallableCode::Defined();
   CallableBindings bindings(unit_lowerer.Unit(), code);
   code.params = {};
@@ -137,6 +150,21 @@ auto LowerStaticInit(
     const mir::ExprId assign =
         block.exprs.Add(mir::MakeAssignExpr(target, value_id, prop_type));
     block.AppendStmt(mir::ExprStmt{.expr = assign});
+  }
+
+  // LRM 6.21 applies such an initializer once before any process starts, rather
+  // than on each entry to the body that declares it. Each body is lowered
+  // against its own statics, since a declaration's identity is scoped to the
+  // body's arena.
+  for (const BodyStatics& body : body_statics) {
+    ProcessLowerer body_lowerer(
+        unit_lowerer, nullptr, mir_class.time_resolution, *body.body,
+        std::string{body.name}, frame, scopes, body.statics);
+    for (const StaticVarBinding& binding : body.statics) {
+      auto integ = IntegrateStaticInitializer(
+          body_lowerer, *body.body, frame, frame, binding);
+      if (!integ) return std::unexpected(std::move(integ.error()));
+    }
   }
   return code;
 }
@@ -179,10 +207,9 @@ auto ClassDeclLowerer::DeclareShape() -> diag::Result<void> {
       .is_final = false,
       .is_interface_class = hir_class.is_interface_class};
 
-  // A property (LRM 8.4) becomes one field of the class, and the class's field
-  // arena also takes the static-lifetime storage its bodies declare (LRM
-  // 13.3.1), so where a property lands is a fact only this loop knows. It is
-  // recorded as the loop goes; nothing downstream recomputes it.
+  // A property (LRM 8.4) becomes one field of the class, so where a property
+  // lands is a fact only this loop knows. It is recorded as the loop goes;
+  // nothing downstream recomputes it.
   shape.field_translation =
       base::Translation<hir::FieldId, mir::FieldId>{hir_class.fields.size()};
   for (const auto& field : hir_class.fields) {
@@ -192,7 +219,9 @@ auto ClassDeclLowerer::DeclareShape() -> diag::Result<void> {
   }
 
   // Static properties (LRM 8.9) enter the shape's type-associated arena in
-  // declaration order, recorded the same way and for the same reason.
+  // declaration order, recorded the same way and for the same reason. That
+  // arena also takes what the class's bodies keep for the whole class, so a
+  // property's position in it is not its position in the source.
   shape.static_property_translation =
       base::Translation<hir::StaticPropertyId, mir::StaticPropertyId>{
           hir_class.static_properties.size()};
@@ -205,9 +234,9 @@ auto ClassDeclLowerer::DeclareShape() -> diag::Result<void> {
   const auto bind_statics = [&](const hir::SubroutineDecl& decl,
                                 std::string_view callable_name) {
     return BindBodyStatics(
-        unit_lowerer, hir_class.procedural_scopes, shape.fields,
-        ObservedStorage::kNo, decl.body, SignatureBoundVars(decl),
-        callable_name);
+        unit_lowerer, hir_class.procedural_scopes,
+        ClassStorage{.properties = &shape.static_properties}, decl.body,
+        SignatureBoundVars(decl), callable_name);
   };
 
   // Everything a peer may need about a method before its body exists is
@@ -216,9 +245,8 @@ auto ClassDeclLowerer::DeclareShape() -> diag::Result<void> {
   // bodies reach (LRM 13.7), and the signature published alongside it is the
   // method's canonical dispatch role, which a peer reads to pick between
   // direct and virtual invocation with no cross-class MIR read. Its
-  // static-lifetime locals take their per-instance slots on this same shape,
-  // appended after the properties, so a static write from a body routes to the
-  // exact field slot the shape declares.
+  // static-lifetime locals take their cells on this same shape, so a static
+  // write from a body routes to the exact cell the shape declares.
   std::vector<DeclaredCallable> declared_methods;
   declared_methods.reserve(hir_class.methods.size());
   std::vector<CallableSignature> signatures;
@@ -238,6 +266,20 @@ auto ClassDeclLowerer::DeclareShape() -> diag::Result<void> {
   declared_methods_ = {hir_class.methods.size(), std::move(declared_methods)};
   ctor_static_bindings_ = bind_statics(hir_class.constructor, "<ctor>");
 
+  // No lexical scope of a method body answers for a name: a class object is
+  // reached by member select rather than by scope name (LRM 23.7), so no
+  // hierarchical path names a block inside a method. A `disable` written inside
+  // one still names it, and what such a target belongs to is the class: a
+  // method is automatic (LRM 8.6), and LRM 9.6.2 disables a block inside an
+  // automatic task for every concurrent execution of it, so one cell serves
+  // every object of the class.
+  scopes_ = ScopesOwningDisableTargets(
+      hir_class.procedural_scopes,
+      ClassStorage{.properties = &shape.static_properties},
+      unit_lowerer.Unit().types.Intern(
+          mir::Type{mir::RuntimeLibraryType{
+              .kind = mir::RuntimeLibraryKind::kCancellationTarget}}));
+
   unit_lowerer.DefineClassShape(class_id_, std::move(shape));
   return {};
 }
@@ -246,12 +288,6 @@ auto ClassDeclLowerer::PopulateBodies() -> diag::Result<void> {
   UnitLowerer& unit_lowerer = *owner_;
   const hir::ClassDecl& hir_class = *hir_class_;
   const ClassShape& shape = unit_lowerer.GetClassShape(class_id_);
-  // No lexical scope of a method body owns anything at run time: a class object
-  // is reached by member select rather than by scope name (LRM 23.7), so no
-  // hierarchical path names a block inside a method. Every body still reads its
-  // answer, the same way a body in the design hierarchy does.
-  const DeclaredScopes scopes =
-      ScopesOwningNothing(hir_class.procedural_scopes.size());
 
   mir::Class mir_class = shape.OpenClass();
 
@@ -270,7 +306,7 @@ auto ClassDeclLowerer::PopulateBodies() -> diag::Result<void> {
   const hir::SubroutineDecl& ctor = hir_class.constructor;
   ProcessLowerer ctor_lowerer(
       unit_lowerer, nullptr, mir_class.time_resolution, ctor.body, "<ctor>",
-      frame, scopes, ctor_static_bindings_);
+      frame, scopes_, ctor_static_bindings_);
 
   // Register the ctor formals early so a base-constructor arg (LRM 8.7) can
   // reference them: `super.new(a * 2)` in the derived ctor reads its own `a`
@@ -350,10 +386,7 @@ auto ClassDeclLowerer::PopulateBodies() -> diag::Result<void> {
   // Each instance method (LRM 8.6) is lowered as a callable this class owns: it
   // resolves the body's `self` to the managed handle, and the method's
   // callable identity is the one the shape handed out, so a call site that
-  // resolved before this body lowered reaches this method. SV classes have no
-  // separate Initialize lifecycle phase, so a method's pending static
-  // initializers integrate into this class's constructor block, matching the
-  // per-instance storage shape used for class-method statics.
+  // resolved before this body lowered reaches this method.
   //
   // A pure virtual prototype (LRM 8.21) has no source-defined body to walk;
   // its MIR record still carries the signature -- receiver, named parameters,
@@ -403,7 +436,7 @@ auto ClassDeclLowerer::PopulateBodies() -> diag::Result<void> {
         WalkFrame{}.WithClass(&mir_class, class_id_, method_link);
     ProcessLowerer method_lowerer(
         unit_lowerer, nullptr, mir_class.time_resolution, method.body,
-        method.name, method_owner_frame, scopes, declared.statics);
+        method.name, method_owner_frame, scopes_, declared.statics);
     auto method_code_or = method_lowerer.Run(method);
     if (!method_code_or) {
       return std::unexpected(std::move(method_code_or.error()));
@@ -414,11 +447,6 @@ auto ClassDeclLowerer::PopulateBodies() -> diag::Result<void> {
                                .code = *std::move(method_code_or),
                                .foreign = std::nullopt,
                                .virtual_dispatch = method_dispatch});
-    for (const StaticVarBinding& binding : declared.statics) {
-      auto integ = IntegrateStaticInitializer(
-          method_lowerer, method.body, frame, binding);
-      if (!integ) return std::unexpected(std::move(integ.error()));
-    }
   }
 
   // The constructor body statements (LRM 8.7) run after base construction
@@ -426,19 +454,31 @@ auto ClassDeclLowerer::PopulateBodies() -> diag::Result<void> {
   // and the base-call arg evaluation already emitted into the ctor block.
   auto body_or = ctor_lowerer.LowerConstructorBodyInto(frame);
   if (!body_or) return std::unexpected(std::move(body_or.error()));
-  for (const StaticVarBinding& binding : ctor_static_bindings_) {
-    auto integ =
-        IntegrateStaticInitializer(ctor_lowerer, ctor.body, frame, binding);
-    if (!integ) return std::unexpected(std::move(integ.error()));
-  }
 
   ctor_code.params = std::move(ctor_params);
   ctor_code.result_type = unit_lowerer.Unit().builtins.void_type;
   mir_class.constructor = mir::ConstructorDecl{
       .code = std::move(ctor_code), .base_init = std::move(base_init)};
 
+  std::vector<BodyStatics> body_statics;
+  body_statics.reserve(hir_class.methods.size() + 1);
+  for (const hir::MethodId method_id : hir_class.methods.Ids()) {
+    const auto& method = hir_class.methods.Get(method_id);
+    body_statics.push_back(
+        BodyStatics{
+            .body = &method.body,
+            .name = method.name,
+            .statics = declared_methods_.Get(method_id).statics});
+  }
+  body_statics.push_back(
+      BodyStatics{
+          .body = &ctor.body,
+          .name = "<ctor>",
+          .statics = ctor_static_bindings_});
+
   auto static_init_or = LowerStaticInit(
-      unit_lowerer, hir_class, shape, mir_class, class_id_, scopes);
+      unit_lowerer, hir_class, shape, mir_class, class_id_, scopes_,
+      body_statics);
   if (!static_init_or)
     return std::unexpected(std::move(static_init_or.error()));
   mir_class.static_init = *std::move(static_init_or);

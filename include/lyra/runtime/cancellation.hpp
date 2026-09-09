@@ -10,7 +10,7 @@ namespace lyra::runtime {
 class RuntimeEffects;
 class RuntimeProcess;
 
-// The per-instance cancellation state of a procedural scope (LRM 9.6.2
+// The cancellation state of a procedural scope (LRM 9.6.2
 // `disable`). It is a reusable cancellation token: one monotonic
 // generation plus the set of activations currently blocked inside the target.
 // An execution entering the target captures the current generation; where it
@@ -22,10 +22,12 @@ class RuntimeProcess;
 // `always`); an entry after a disable captures the newer generation and is
 // unaffected, which a boolean could not express.
 //
-// This is the cancellation token of async runtimes, made reusable. It is per
-// instance of the enclosing structural scope -- shared by every concurrent
-// execution inside it -- so it outlives any single execution and is stored as a
-// member of that instance. It is not an execution scope: it owns no
+// This is the cancellation token of async runtimes, made reusable. There is one
+// per thing that replicates the scope -- a module instance, and nothing at all
+// for a class method or a package subroutine, where one serves the whole class
+// or the whole program -- and it is shared by every concurrent execution inside
+// the target, so it outlives any single execution and is stored as a cell of
+// whatever owns it. It is not an execution scope: it owns no
 // activation's lifetime, and the waiters it holds are revocable registrations
 // the activations themselves own, exactly as an event's are. Where a runtime
 // with a separate token factory would have two objects, this is one, and it is

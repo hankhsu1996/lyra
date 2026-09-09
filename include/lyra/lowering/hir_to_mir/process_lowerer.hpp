@@ -54,8 +54,8 @@ struct PromotedVarBinding {
 
 // Where one HIR procedural var of this body keeps its storage: an in-frame
 // local for an automatic, a field of a shared activation object for a
-// lifetime-extended automatic (LRM 6.21), or a field that outlives every
-// activation for a static-lifetime local (LRM 13.3.1). Every var the body
+// lifetime-extended automatic, or a cell that outlives every activation for a
+// static-lifetime local (LRM 6.21). Every var the body
 // reaches has exactly one of these, so a reader visits the answer rather than
 // probing one registry and falling back to another.
 using ProceduralVarBinding =
@@ -297,13 +297,6 @@ class ProcessLowerer {
     return scopes_->Get(hir_body_->root_scope);
   }
 
-  // Whether the body being lowered reaches an object of its own. Per-instance
-  // storage is projected from that object, so a body without one -- a package
-  // callable (LRM 26.3) or a static class method (LRM 8.10) -- can reach none.
-  [[nodiscard]] auto BodyHasReceiver() const -> bool {
-    return body_has_receiver_;
-  }
-
   // Assembles the completion-payload value a `return` should carry in the
   // subroutine being lowered: the product of the function's explicit return
   // value (or its implicit result variable when a `return` supplies none)
@@ -327,9 +320,6 @@ class ProcessLowerer {
   // Owned by the enclosing declaration scope's lowerer; borrowed here for the
   // body lowering's lifetime.
   const DeclaredScopes* scopes_;
-  // A process body always runs on the scope object that owns it; a subroutine
-  // body sets this from its own form when it lowers.
-  bool body_has_receiver_ = true;
   base::SymbolTable<hir::ProceduralVarId, ProceduralVarBinding> bindings_;
 
   // The result type of the body being lowered, set before its body walks. It

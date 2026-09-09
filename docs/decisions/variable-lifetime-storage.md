@@ -1,6 +1,7 @@
 # Variable lifetime storage (static-lifetime body locals)
 
-Date: 2026-06-08 Status: accepted
+Date: 2026-06-08 Status: accepted; revised 2026-09-09 for a body outside the design hierarchy, where
+"per instance" names nothing (see "What replicates the declaration", below).
 
 ## Context
 
@@ -45,8 +46,9 @@ C++ local at its source position.** A process and a method use the identical mec
 
 - Per-instance is what the lifetime says, and the instance is the object the body already runs on,
   so the member sits there whichever block of the body declared it. A static inside a method lives
-  on the SV class for the same reason. What the declaring block decides is the name a hierarchical
-  path reaches the member by (`procedural-storage-scope.md`), never where the member sits.
+  on the SV class, one cell for the class rather than one per object (see the revision below). What
+  the declaring block decides is the name a hierarchical path reaches the member by
+  (`procedural-storage-scope.md`), never where the member sits.
 - The body reaches the static local by the same scoped reference it uses for any local; the backend
   resolves that reference to the per-instance member.
 - The per-instance member is a flat member on the owner class's member arena -- not a sub-struct
@@ -91,6 +93,39 @@ is out.
   final value).
 - **Whole-program static indexed by instance id.** Global mutable state; rejected against the
   independently-compilable-unit invariant (`north_star.md`).
+
+## What replicates the declaration (revision, 2026-09-09)
+
+The decision above says "per-instance", and for a module body that is right: a module instance is an
+elaboration of the declaration, so `u1.blk.x` and `u2.blk.x` are separately nameable cells. The
+sentence extending it to a class -- "A static inside a method lives on the SV class for the same
+reason" -- carried "per instance" across an analogy that does not hold, and the code took it to mean
+one cell per object. That answers wrongly: with two objects each calling a method that keeps a
+counter, each saw its own.
+
+LRM 6.21 decides it. A variable explicitly declared `static` inside an automatic subroutine has
+static lifetime and is "roughly equivalent to C static variables declared within a function" -- one
+cell for the declaration. A class object is not an elaboration of the method's code, so nothing
+about it replicates the declaration; a class method is automatic by LRM 8.6, which governs its
+ordinary locals and says nothing about one it declares static. So the rule is not "per instance" but
+**one cell per thing that replicates the declaration**, and the three declaration scopes answer it
+differently:
+
+| The body sits in     | Replicated by | The cell is                      |
+| -------------------- | ------------- | -------------------------------- |
+| the design hierarchy | the instance  | a field of that instance's class |
+| a class              | nothing       | one cell the class owns          |
+| a package (LRM 26.2) | nothing       | one program-global cell          |
+
+The original reasoning is untouched where it was reasoning about modules, including every rejected
+alternative: whole-program storage is still wrong for a module body, for exactly the reason given.
+What is corrected is that "the object the body runs on" is the answer only where that object is what
+replicates the code.
+
+This is the same rule that places what a `disable` naming a block invalidates
+(`disable-scope-invalidation.md`), which is static-lifetime state of the scope and nothing else --
+so a class method's block has one target for the class, which is what LRM 9.6.2 requires when it
+disables a block inside an automatic task for every concurrent execution of it.
 
 ## Consequences
 

@@ -4,6 +4,7 @@
 #include "lyra/diag/diagnostic.hpp"
 #include "lyra/hir/class_decl.hpp"
 #include "lyra/lowering/hir_to_mir/declared_callable.hpp"
+#include "lyra/lowering/hir_to_mir/declared_scope.hpp"
 #include "lyra/lowering/hir_to_mir/static_var_binding.hpp"
 #include "lyra/lowering/hir_to_mir/unit_lowerer.hpp"
 #include "lyra/mir/class_id.hpp"
@@ -65,6 +66,7 @@ class ClassDeclLowerer {
 
   base::Translation<hir::MethodId, DeclaredCallable> declared_methods_;
   StaticVarBindings ctor_static_bindings_;
+  DeclaredScopes scopes_;
 };
 
 }  // namespace lyra::lowering::hir_to_mir

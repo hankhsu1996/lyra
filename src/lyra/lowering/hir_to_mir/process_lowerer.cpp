@@ -227,7 +227,6 @@ auto ProcessLowerer::Run(const hir::SubroutineDecl& src)
   // never derived from whether the body happens to use it, so no call site
   // re-derives the signature.
   const bool has_receiver = parent.current_class != nullptr && !src.is_static;
-  body_has_receiver_ = has_receiver;
   if (has_receiver) {
     params.push_back(bindings.Declare(
         BindingOriginId::Receiver(),
@@ -315,11 +314,9 @@ auto ProcessLowerer::Run(const hir::SubroutineDecl& src)
   // there, so the enabling statement resumes and the completion payload is
   // still produced (the LRM leaves a disabled task's output values
   // unspecified). A function cannot be named and never suspends, so it needs
-  // no region, and neither does a body with no object to reach the target
-  // through.
-  const std::optional<mir::FieldId> cancel_target =
-      owner_->Unit().types.Get(result_type).Is<mir::CoroutineType>() &&
-              has_receiver
+  // no region.
+  const std::optional<StaticStorageHome> cancel_target =
+      owner_->Unit().types.Get(result_type).Is<mir::CoroutineType>()
           ? RootScope().cancellation_target
           : std::nullopt;
   if (cancel_target.has_value()) {

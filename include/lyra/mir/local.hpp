@@ -14,12 +14,12 @@ struct LocalId {
   auto operator<=>(const LocalId&) const -> std::strong_ordering = default;
 };
 
-// Static-lifetime (LRM 13.3.1) body locals do not live here -- HIR-to-MIR
-// realizes them as members on the enclosing class. A pass-by-reference
-// binding (LRM 13.5.2, a `ref` formal or a by-reference capture) carries no
-// flag here: its `type` is a `RefType`, so a reference to it reaches the place
-// that reference stands for by dereferencing it, the same as an observable
-// cell.
+// Static-lifetime (LRM 6.21) body locals do not live here -- HIR-to-MIR
+// realizes each as a cell of whatever its declaration belongs to. A
+// pass-by-reference binding (LRM 13.5.2, a `ref` formal or a by-reference
+// capture) carries no flag here: its `type` is a `RefType`, so a reference to
+// it reaches the place that reference stands for by dereferencing it, the same
+// as an observable cell.
 struct LocalDecl {
   std::string name;
   TypeId type;

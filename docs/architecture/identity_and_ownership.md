@@ -48,6 +48,14 @@ references another; ownership is which entity holds a given piece of state.
    later pass will build never keeps a private counter, a parallel table, or an
    append-in-the-right-order agreement checked after the fact -- it takes the identity from the pool
    that will answer to it, or, where that pool does not exist yet, from a typed allocator for it._
+9. An identity that is meaningful only within a scope travels with that scope wherever it can meet
+   another one. Invariant 6 makes an identity sufficient for resolution within its scope, which says
+   nothing about what it means outside; so code that may be handed one from elsewhere has to be able
+   to ask whether this one is its own, and it can ask only if the identity arrives paired with what
+   it indexes. _Consequence: the pass that mints such an identity records what it indexes alongside
+   it, and a consumer's "is this mine" is an equality against that, never a property of the target
+   reconstructed from its surroundings. Where every such identity in a layer is unit-wide, this
+   costs nothing and states itself._
 
 ## Boundary to Adjacent Layers
 
@@ -74,6 +82,11 @@ references another; ownership is which entity holds a given piece of state.
 - An identity scheme where inserting, removing, or reordering one node shifts the identity of
   unrelated nodes.
 - Identity derived from traversal order rather than ownership structure.
+- A test for whether an identity belongs to the asking code's own scope, answered by walking outward
+  from the target to something near it -- an enclosing scope, a frame, a parent. Such a test is a
+  correlate of the question rather than the question: it agrees with the true answer for the case it
+  was written against and diverges silently everywhere else, and no test written from the covered
+  case can show the difference.
 - A raw integer standing in for an identity anywhere between the pass that reserves it and the pool
   that answers to it. The counter a pass keeps to predict a later pass's insertion positions is an
   identity allocator with its type erased; erasing the type is what lets the two drift until a

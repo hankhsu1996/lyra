@@ -3,7 +3,9 @@
 Date: 2026-07-18. Status: accepted; realized in both backends for a named block, a named fork, and a
 task, including nested scopes, tasks called from within a scope, and activities spawned within one.
 Both backends now reach the cases that need a second activation as well, since a fork branch and a
-call into a task both lower on the execution backend.
+call into a task both lower on the execution backend. A target declared in a class method, a static
+method, or a package subroutine is reached the same way, its source living where that declaration
+scope keeps static-lifetime state.
 
 ## Why this decision matters
 
@@ -19,9 +21,18 @@ running, waiting, or runnable" has taken on the scheduler's placement job.
 
 ## The model
 
-A **cancellation source** is the per-instance runtime endpoint of a disable-target named block or
-task. It carries one monotonic **generation**. An execution entering the scope captures the
-generation.
+A **cancellation source** is the runtime endpoint of a disable-target named block or task. It
+carries one monotonic **generation**. An execution entering the scope captures the generation.
+
+There is one source per thing that replicates the target, which is what the standard's static
+identity means in each declaration scope. A scope of the design hierarchy is replicated with its
+instance, so `u1.blk` and `u2.blk` are separately nameable and each instance keeps its own. A class
+replicates nothing of the kind: LRM 8.6 makes every method automatic, and LRM 9.6.2 disables a block
+inside an automatic task "for all concurrent executions of the task", so the class holds one source
+and a `disable` in one object's method ends the block in every other object running it. A package
+subroutine's is one for the program (LRM 26.2). This is the same rule that places any other
+static-lifetime state of a body (LRM 6.21), and it is placed by that rule rather than by one of its
+own.
 
 An activation has, at any instant, exactly one **next-resume entitlement** -- the single live means
 by which it will run its next statement (activation.md). It is held by whichever part of the
@@ -185,9 +196,11 @@ Three interface contracts carry the model into the implementation and are where 
    resumption boundary, each awaited call's return, and a spawned branch's entry -- reading the
    process's enclosing targets with the generation each captured on entry.
 
-One case is not yet reached: a disable whose target is in another module instance or generate scope,
-which needs hierarchical addressing to the owning instance's cancellation source; it is a located
-diagnostic until then.
+One case is not yet reached: a disable whose target another module instance, generate scope, or
+package declares, which needs the hierarchical path to reach that source; it is a located diagnostic
+until then. A target the statement's own declaration scope declares needs no such reach, whichever
+kind of scope that is, and a scope's identity is only meaningful against that scope's own registry
+-- which is what the statement tests before it may carry one.
 
 ## Cross-references
 
