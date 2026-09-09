@@ -592,12 +592,13 @@ void DeclareProceduralScopes(
     }
     const ScopeContribution contribution = ContributionOf(member, owner);
     if (contribution.minted != nullptr) {
-      owner.DeclareProceduralScope(*contribution.minted, scopes.Declare());
+      owner.DeclareProceduralScope(
+          *contribution.minted, scopes, scopes.Declare());
     }
     for (const auto* block : contribution.blocks) {
       const ScopeContribution owned = ContributionOf(*block, owner);
       if (owned.minted != nullptr) {
-        owner.DeclareProceduralScope(*owned.minted, scopes.Declare());
+        owner.DeclareProceduralScope(*owned.minted, scopes, scopes.Declare());
       }
       DeclareProceduralScopes(*block, owner, scopes);
     }

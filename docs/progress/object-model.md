@@ -133,6 +133,13 @@ each stage establishes, not how.
       expression (a continuous-assignment right-hand side), which re-evaluates when the cell
       changes; an instance property has no structural form, having no receiver to reach it through.
 
+- [x] A static-lifetime local of a method (LRM 6.21): a variable a method declares `static` is one
+      cell for the class, not one per object, so every call reaches the same cell however many
+      objects the class has, and its initializer is applied once before any process starts rather
+      than on each construction. A static method's own is the same one cell, and two sibling blocks
+      that each declare a static under one name still get one cell each. The method itself stays
+      automatic (LRM 8.6), which governs its ordinary locals and not this one.
+
 - [x] Class-method argument directions beyond `input` (LRM 13.5): an instance method and a static
       method carry an `output`, `inout`, `ref`, or `const ref` formal back to the caller's actual in
       every position the LRM allows, through a direct call and through a virtual override alike. A

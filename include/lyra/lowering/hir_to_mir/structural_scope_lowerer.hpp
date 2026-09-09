@@ -268,13 +268,13 @@ class StructuralScopeLowerer {
     return class_id_;
   }
 
-  // The storage one of this scope's static-lifetime body locals was given, and
-  // the scope that names it. A reference names the declaration rather than the
-  // blocks around it, and the storage is this class's own field, so a
-  // referrer standing on this object is already standing on the cell.
-  [[nodiscard]] auto ProceduralStaticBinding(
+  // The field one of this scope's static-lifetime body locals was given. A
+  // reference names the declaration rather than the blocks around it, and the
+  // storage is this class's own field, so a referrer standing on this object is
+  // already standing on the cell.
+  [[nodiscard]] auto ProceduralStaticField(
       const hir::ProceduralBodyRef& body, hir::ProceduralVarId var) const
-      -> StaticVarBinding {
+      -> mir::FieldId {
     const StaticVarBindings& statics = std::visit(
         Overloaded{
             [&](hir::ProcessId id) -> const StaticVarBindings& {
@@ -285,10 +285,10 @@ class StructuralScopeLowerer {
             }},
         body);
     for (const StaticVarBinding& binding : statics) {
-      if (binding.var == var) return binding;
+      if (binding.var == var) return InstanceFieldOf(binding);
     }
     throw InternalError(
-        "StructuralScopeLowerer::ProceduralStaticBinding: the var was given no "
+        "StructuralScopeLowerer::ProceduralStaticField: the var was given no "
         "persistent storage, so it is not a static-lifetime local of that "
         "body");
   }

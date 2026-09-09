@@ -661,7 +661,7 @@ auto MaterializeLeaf(
   const auto& static_leaf = std::get<hir::ProceduralStaticLeaf>(leaf);
   return AddressTypedLeaf(
       unit_lowerer, block, receiver, scope.ClassId(),
-      scope.ProceduralStaticBinding(static_leaf.body, static_leaf.var).field,
+      scope.ProceduralStaticField(static_leaf.body, static_leaf.var),
       slot_type);
 }
 
@@ -1338,16 +1338,16 @@ auto StructuralScopeLowerer::DeclareShape() -> diag::Result<mir::ClassId> {
         .cancellation_target = std::nullopt};
 
     // What a `disable` of this scope invalidates (LRM 9.6.2). Its targets are
-    // the blocks and tasks a name reaches, which is the same set a hierarchical
-    // path reaches, so a scope the source named owns one for that reason alone
-    // and one it did not owns none -- no pass has to first find out which
-    // scopes some `disable` names. It is one cell per instance shared by every
-    // activation of the scope, which is what makes it a field here.
+    // the blocks and tasks a name reaches, so a scope the source named owns one
+    // for that reason alone and one it did not owns none -- no pass has to
+    // first find out which scopes some `disable` names. A scope of this
+    // hierarchy is replicated with its instance, so the cell is one per
+    // instance, shared by every activation of the scope.
     if (scope.source_name.has_value()) {
-      node.cancellation_target = shape.fields.Add(
-          mir::FieldDecl{
-              .name = std::format("{}__cancel_{}", segment, scope_id.value),
-              .type = cancellation_target_type});
+      node.cancellation_target = DeclareStaticCell(
+          InstanceStorage{.fields = &shape.fields},
+          std::format("{}__cancel_{}", segment, scope_id.value),
+          cancellation_target_type);
     }
     scopes.push_back(node);
   }
@@ -1372,8 +1372,9 @@ auto StructuralScopeLowerer::DeclareShape() -> diag::Result<mir::ClassId> {
         DeclaredCallable{
             .callable = subroutine_ids.Take(),
             .statics = BindBodyStatics(
-                unit_lowerer, hir_scope.procedural_scopes, shape.fields,
-                ObservedStorage::kYes, s.body, SignatureBoundVars(s), s.name)});
+                unit_lowerer, hir_scope.procedural_scopes,
+                InstanceStorage{.fields = &shape.fields}, s.body,
+                SignatureBoundVars(s), s.name)});
   }
   shape.callable_signatures = {
       hir_scope.structural_subroutines.size(), std::move(signatures)};
@@ -1384,9 +1385,9 @@ auto StructuralScopeLowerer::DeclareShape() -> diag::Result<mir::ClassId> {
   process_statics.reserve(hir_scope.processes.size());
   for (const hir::ProcessId id : hir_scope.processes.Ids()) {
     process_statics.push_back(BindBodyStatics(
-        unit_lowerer, hir_scope.procedural_scopes, shape.fields,
-        ObservedStorage::kYes, hir_scope.processes.Get(id).body, {},
-        ProcessCallableName(id)));
+        unit_lowerer, hir_scope.procedural_scopes,
+        InstanceStorage{.fields = &shape.fields},
+        hir_scope.processes.Get(id).body, {}, ProcessCallableName(id)));
   }
   process_static_bindings_ = {
       hir_scope.processes.size(), std::move(process_statics)};
@@ -1887,17 +1888,16 @@ auto StructuralScopeLowerer::PopulateBodies(WalkFrame parent_frame)
     for (const StaticVarBinding& binding : statics) {
       const auto& scope = hir_scope.procedural_scopes.Get(binding.scope);
       if (!scope.source_name.has_value()) continue;
-      const mir::TypeId cell_type = mir_class.fields.Get(binding.field).type;
+      const mir::FieldId field = InstanceFieldOf(binding);
       const mir::ExprId cell = ctor_block.exprs.Add(
           mir::MakeFieldAccessExpr(
-              self_read(),
-              mir::FieldTarget{.owner = class_id_, .slot = binding.field},
-              cell_type));
+              self_read(), mir::FieldTarget{.owner = class_id_, .slot = field},
+              binding.cell_type));
       const mir::ExprId addr = ctor_block.exprs.Add(
           mir::MakeAddressOfExpr(
               cell, unit_lowerer.Unit().types.Intern(
                         mir::Type{mir::PointerType{
-                            .pointee = cell_type,
+                            .pointee = binding.cell_type,
                             .ownership = mir::PointerOwnership::kBorrowed}})));
       const mir::FieldId borrowed_handle =
           scopes_.Get(binding.scope).name_node->borrowed_handle;
@@ -1959,7 +1959,7 @@ auto StructuralScopeLowerer::PopulateBodies(WalkFrame parent_frame)
     subroutine_callables.push_back(declared.callable);
     for (const StaticVarBinding& binding : declared.statics) {
       auto integ = IntegrateStaticInitializer(
-          subroutine_lowerer, src.body, init_frame, binding);
+          subroutine_lowerer, src.body, init_frame, init_frame, binding);
       if (!integ) return std::unexpected(std::move(integ.error()));
     }
   }
@@ -2012,7 +2012,7 @@ auto StructuralScopeLowerer::PopulateBodies(WalkFrame parent_frame)
         unit_lowerer, activate_frame, body, p.kind == hir::ProcessKind::kFinal);
     for (const StaticVarBinding& binding : statics) {
       auto integ = IntegrateStaticInitializer(
-          process_lowerer, p.body, init_frame, binding);
+          process_lowerer, p.body, init_frame, init_frame, binding);
       if (!integ) return std::unexpected(std::move(integ.error()));
     }
   }

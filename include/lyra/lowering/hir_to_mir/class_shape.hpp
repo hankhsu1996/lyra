@@ -61,9 +61,11 @@ struct ClassShape {
   // declaration, so the scope settles them itself.
   base::Translation<mir::CallableId, CallableSignature> callable_signatures;
   // Where each of the class's HIR declarations landed in the pools above. The
-  // two id spaces are separate: the MIR field pool also takes the
-  // static-lifetime storage the class's bodies declare (LRM 13.3.1), so a
-  // property's position in it is not its HIR position.
+  // two id spaces are separate, and neither pool holds only what the source
+  // wrote: the static pool also takes what the class's bodies keep for the
+  // whole class -- a static-lifetime local, and what a `disable` naming a block
+  // of a method invalidates -- so a declaration's position in a pool is not its
+  // HIR position.
   base::Translation<hir::FieldId, mir::FieldId> field_translation;
   base::Translation<hir::StaticPropertyId, mir::StaticPropertyId>
       static_property_translation;

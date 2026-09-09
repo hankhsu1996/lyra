@@ -212,22 +212,22 @@ auto LowerStatement(
       }
       const slang::ast::Symbol& target =
           *dis.target.as<slang::ast::ArbitrarySymbolExpression>().symbol;
-      // The target resolves to the identity its own structural scope minted.
-      // A class method body is inside none, and a target in another instance
-      // or generate scope belongs to a different one; reaching either is a
-      // hierarchical reference this statement does not yet route.
-      if (frame.current_structural_scope == nullptr ||
-          proc.Owner().OwningScopeFrame(target) != frame.Current()) {
+      // A scope's identity indexes the registry of the declaration scope that
+      // declared it, so it says nothing against another one. A target this body
+      // shares no declaration scope with is reached by a hierarchical path,
+      // which this statement does not yet route.
+      const std::optional<hir::ProceduralScopeId> scope =
+          proc.Owner().LookupProceduralScopeIn(
+              target, frame.ProceduralScopes());
+      if (!scope.has_value()) {
         return diag::Fail(
             span, diag::DiagCode::kUnsupportedStatementForm,
-            "disable of a block or task outside the enclosing structural scope "
-            "is not yet supported");
+            "disable of a block or task declared outside the enclosing module, "
+            "class, or package is not yet supported");
       }
       return hir::Stmt{
           .label = std::nullopt,
-          .data =
-              hir::DisableStmt{
-                  .target = proc.Owner().LookupProceduralScope(target)},
+          .data = hir::DisableStmt{.target = *scope},
           .span = span};
     }
 

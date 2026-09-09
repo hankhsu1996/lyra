@@ -17,6 +17,7 @@
 #include "lyra/lowering/hir_to_mir/process_lowerer.hpp"
 #include "lyra/lowering/hir_to_mir/runtime_call.hpp"
 #include "lyra/lowering/hir_to_mir/statement/blocks.hpp"
+#include "lyra/lowering/hir_to_mir/static_var_binding.hpp"
 #include "lyra/lowering/hir_to_mir/walk_frame.hpp"
 #include "lyra/mir/stmt.hpp"
 #include "lyra/mir/type_builders.hpp"
@@ -81,8 +82,8 @@ auto LowerForkStmt(
   // target's membership at the spawn. The region brackets the whole fork, so
   // the target is entered before any branch spawns and all of them are inside
   // it.
-  const std::optional<mir::FieldId> cancel_target =
-      process.BodyHasReceiver() ? fork_scope.cancellation_target : std::nullopt;
+  const std::optional<StaticStorageHome>& cancel_target =
+      fork_scope.cancellation_target;
 
   // A branch snapshots the fork's own block-item declarations by value and
   // aliases any deeper-enclosing variable it reads (LRM 6.21 / 9.3.2). The

@@ -17,6 +17,7 @@
 #include "lyra/lowering/hir_to_mir/process_lowerer.hpp"
 #include "lyra/lowering/hir_to_mir/real_literal.hpp"
 #include "lyra/lowering/hir_to_mir/self_ref.hpp"
+#include "lyra/lowering/hir_to_mir/static_var_binding.hpp"
 #include "lyra/lowering/hir_to_mir/structural_scope_lowerer.hpp"
 #include "lyra/lowering/hir_to_mir/unit_lowerer.hpp"
 #include "lyra/lowering/hir_to_mir/walk_frame.hpp"
@@ -154,13 +155,12 @@ auto LowerProceduralVarRefExpr(
     const hir::ProceduralVarRef& l, mir::TypeId type) -> mir::Expr {
   return std::visit(
       Overloaded{
-          // Storage that outlives every activation (LRM 13.3.1) is one cell per
-          // instance, so it is a field of the enclosing class like any other
-          // and the body reads it off its own `self`.
+          // Storage that outlives every activation (LRM 6.21) sits wherever the
+          // declaration belongs, which the binding settled; the read is that
+          // one access.
           [&](const StaticVarBinding& binding) {
-            return BuildStructuralFieldAccessExpr(
-                frame, process.Owner().Unit(), mir::EnclosingHops{},
-                binding.field);
+            return BuildStaticStorageAccess(
+                process.Owner().Unit(), frame, binding.home, binding.cell_type);
           },
           // A lifetime-extended automatic (LRM 6.21) lives in a shared
           // activation object; the read reaches its field through the handle,

@@ -63,14 +63,16 @@ callable-bearing part of PK4 reuse; PK1 is independent of it.
       another unit and the package's own function agree on the by-name form, since neither has a
       receiver), and a process may wake on its change. A package function or task both reads and
       writes the variable, and a package task enabled from another unit suspends its caller until it
-      completes. Initialization (LRM 10.5) runs at time zero, driven by the design root before the
-      top modules initialize, in two design-wide passes: every package's cells are installed with
-      their declared type and default first, then every package's value initializers run, so an
-      initializer that reads another package's variable always reaches installed storage. The
-      relative order of initializers is unspecified by the LRM; the design root picks a stable,
-      best-effort order (a dependency before its dependent where a direct read makes it known) as a
-      quality-of-implementation choice, and an unknown or cyclic dependency degrades to reading a
-      default, never a crash.
+      completes. A static-lifetime local such a subroutine declares (LRM 6.21) is the same storage
+      for the same reason -- one program-global cell, keeping its value from one call to the next,
+      its initializer applied once at time zero rather than on each entry. Initialization (LRM 10.5)
+      runs at time zero, driven by the design root before the top modules initialize, in two
+      design-wide passes: every package's cells are installed with their declared type and default
+      first, then every package's value initializers run, so an initializer that reads another
+      package's variable always reaches installed storage. The relative order of initializers is
+      unspecified by the LRM; the design root picks a stable, best-effort order (a dependency before
+      its dependent where a direct read makes it known) as a quality-of-implementation choice, and
+      an unknown or cyclic dependency degrades to reading a default, never a crash.
   - [ ] An initializer read reached through a called function contributes to the preferred
         initialization order.
   - [ ] Two packages that reference each other's symbols emit non-circular headers (a header-only

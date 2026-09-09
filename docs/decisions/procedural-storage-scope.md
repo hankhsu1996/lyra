@@ -119,11 +119,12 @@ MIR storage            = a field of the class enclosing the body
 
 The lexical tree preserves SV semantics (visibility, shadowing, and `disable`, which names a scope
 by static declaration identity). The object graph has the same shape as that tree. Storage does not:
-a static-lifetime local is one cell per instance (LRM 13.3.1), which says how many cells exist and
-how long they live, and says nothing about which object holds one. Reachability is the separate
-question, and the LRM answers it separately -- LRM 6.21 lets a hierarchical reference name any
-static variable except one declared inside an unnamed block, so a path descends through the named
-blocks to reach the cell.
+a static-lifetime local of a body in this hierarchy is one cell per instance (LRM 6.21, and
+`variable-lifetime-storage.md` for what decides that count elsewhere), which says how many cells
+exist and how long they live, and says nothing about which object holds one. Reachability is the
+separate question, and the LRM answers it separately -- LRM 6.21 lets a hierarchical reference name
+any static variable except one declared inside an unnamed block, so a path descends through the
+named blocks to reach the cell.
 
 Serving both with one mechanism -- putting the cell inside the block's object -- makes the first pay
 for the second. Every read from the body then walks one object per enclosing block, and, because the
@@ -302,9 +303,9 @@ operand a parsed-at-compile-time one does.
 - The HIR-to-MIR shape phase reads a small tree (the procedural scope tree is sparse compared to the
   statement tree) and dispatches on scope kind, never on statement variant; the number of
   statement-tree kinds it has to handle is zero.
-- Every per-instance cell a body owns -- a static, a cancellation source -- is a field of the class
-  enclosing the body, so it shares one declaration form, one access shape, and one render path with
-  the scope's own variables.
+- Every cell a body of this hierarchy owns beyond an activation -- a static, a cancellation source
+  -- is a field of the class enclosing the body, so it shares one declaration form, one access
+  shape, and one render path with the scope's own variables.
 - The owned-child binding registry carries an enlarged set of head kinds; the lookup path is
   unchanged.
 - Every procedural scope contributes a class and one object per instance, built once at elaboration.

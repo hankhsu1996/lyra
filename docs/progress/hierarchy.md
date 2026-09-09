@@ -268,10 +268,6 @@ Unlocks the port-connection surface.
   named connections in the frontend; whether any need distinct handling is open. Positional and
   explicit named connections are both supported.
 
-- A `disable` naming a block inside a class method is rejected by the frontend. A class object is
-  reached by member select rather than by scope name (LRM 23.7), so the target is never named from
-  outside the method, but LRM 9.6.2 still admits the same-method form.
-
 ## Out of Scope
 
 - Interfaces and modports, tracked in `interfaces.md`. An interface is a compilation-unit kind that

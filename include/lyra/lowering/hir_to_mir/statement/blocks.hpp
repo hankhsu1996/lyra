@@ -26,11 +26,11 @@ auto LowerEmptyStmt(std::optional<std::string> label)
 // target among the ones that execution is inside -- and binds the effect
 // leaving the body, ending it here when it names this target, so execution
 // continues past the region, and raising it again for the region that does name
-// its target. `target` is a field of the class enclosing this body; a named
-// block, a named fork, and a task each build one alike.
+// its target. `target` is the cell the scope owns; a named block, a named fork,
+// and a task each build one alike.
 auto BuildCancellableRegion(
     ProcessLowerer& process, const WalkFrame& frame, mir::Block&& body,
-    mir::FieldId target) -> mir::TryStmt;
+    const StaticStorageHome& target) -> mir::TryStmt;
 
 auto LowerBlockStmt(
     ProcessLowerer& process, WalkFrame frame, std::optional<std::string> label,

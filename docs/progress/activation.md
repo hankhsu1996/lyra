@@ -94,12 +94,22 @@ or incomplete relative to the contract.
       that way, and the one whose bodies cannot asks, at those same points, whether a target it is
       inside has been disabled. Which targets an execution is inside is the execution's own state,
       so a spawned branch is enclosed by the targets its spawner was inside even though its body
-      states no region, and a `disable` of a named `fork` reaches a branch parked on a delay. Two
-      cases remain, both a located diagnostic until then: a target in another module instance or
-      generate scope needs hierarchical addressing to the owning instance's scope, and a class
-      method body is inside no structural scope that mints one. Disabling a task is the one form
-      still waiting on the backend that has no exceptions, because enabling one there is an await on
-      a body that completes as a coroutine.
+      states no region, and a `disable` of a named `fork` reaches a branch parked on a delay. Where
+      the target lives follows what replicates it: a scope of the design hierarchy is replicated per
+      instance and keeps one target per instance, while a class method's block is one target for the
+      class -- a method is automatic (LRM 8.6) and LRM 9.6.2 disables a block inside an automatic
+      task for every concurrent execution of it, so one object's `disable` ends the block in every
+      other object running it -- and a package subroutine's is one for the program. Disabling a task
+      is the one form still waiting on the backend that has no exceptions, because enabling one
+      there is an await on a body that completes as a coroutine.
+  - [ ] A `disable` whose target another module instance, generate scope, or package declares --
+        `disable u.blk`, `disable g.blk`, `disable pkg::t` -- naming it by a hierarchical path (LRM
+        23.9). A located diagnostic until then. What a name reaches there is an object on the design
+        hierarchy, which every other cross-instance reference already reaches through one route
+        mechanism, so what is missing is the target's own place in that vocabulary rather than a
+        second way to address one; a package's target is on no such object at all and is reached by
+        name. Nothing about the model changes: which source a `disable` invalidates and what leaving
+        it does are already settled.
 
 - [ ] **Runtime vocabulary trails the model.** The execution code names the activation and its core
       in coroutine-implementation terms; the contract's vocabulary is activation / completion slot /

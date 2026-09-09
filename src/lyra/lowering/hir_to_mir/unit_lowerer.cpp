@@ -24,6 +24,7 @@
 #include "lyra/hir/unit_signature.hpp"
 #include "lyra/lowering/hir_to_mir/callable_bindings.hpp"
 #include "lyra/lowering/hir_to_mir/class_decl_lowerer.hpp"
+#include "lyra/lowering/hir_to_mir/declaration_initializer.hpp"
 #include "lyra/lowering/hir_to_mir/declared_scope.hpp"
 #include "lyra/lowering/hir_to_mir/default_value.hpp"
 #include "lyra/lowering/hir_to_mir/expression/dpi_call.hpp"
@@ -31,6 +32,7 @@
 #include "lyra/lowering/hir_to_mir/package_initialization.hpp"
 #include "lyra/lowering/hir_to_mir/process_lowerer.hpp"
 #include "lyra/lowering/hir_to_mir/runtime_call.hpp"
+#include "lyra/lowering/hir_to_mir/static_var_binding.hpp"
 #include "lyra/lowering/hir_to_mir/structural_scope_lowerer.hpp"
 #include "lyra/lowering/hir_to_mir/walk_frame.hpp"
 #include "lyra/mir/callable.hpp"
@@ -81,25 +83,29 @@ auto UnitsReadBy(const mir::Block& body, std::string_view own_unit)
   return units;
 }
 
-// Lowers a package's variables (LRM 26.2) into unit-level static storage and
-// synthesizes the two receiver-less callables that bring them up at time zero:
-// `Install` installs every cell's declared representation and default, and
-// `Initialize` runs each LRM 10.5 value initializer through its cell. Neither
-// takes a parameter: a package has no `self`, and neither operation needs one.
-// The design root installs every package before initializing any, so a value
-// initializer always reaches installed storage. A package variable
-// is reached by name (`unit::name`), so a variable initializer's references
-// to sibling or other-package variables lower through the same by-name path
-// with no enclosing scope or receiver; the other-package reads are recorded
-// as the unit's initializer dependency.
-auto PopulatePackageStaticVariables(
-    UnitLowerer& unit_lowerer, const hir::StructuralScope& scope)
-    -> diag::Result<void> {
+// Synthesizes the two receiver-less callables that bring a package's cells up
+// at time zero: `Install` installs every cell's declared representation and
+// default, and `Initialize` runs each LRM 10.5 value initializer through its
+// cell. What they cover is everything the namespace owns -- its variables (LRM
+// 26.2) and the static-lifetime locals its subroutines declare, which are the
+// same one-program-global-cell storage. Neither callable takes a parameter: a
+// package has no `self`, and neither operation needs one. The design root
+// installs every package before initializing any, so a value initializer always
+// reaches installed storage. Such a cell is reached by name (`unit::name`), so
+// an initializer's references to sibling or other-package variables lower
+// through the same by-name path with no enclosing scope or receiver; the
+// other-package reads are recorded as the unit's initializer dependency.
+auto PopulatePackageStaticStorage(
+    UnitLowerer& unit_lowerer, const hir::StructuralScope& scope,
+    const base::Translation<hir::StructuralSubroutineId, StaticVarBindings>&
+        subroutine_statics,
+    const DeclaredScopes& scope_nodes) -> diag::Result<void> {
   mir::CompilationUnit& unit = unit_lowerer.Unit();
 
   mir::CallableCode install_code = mir::CallableCode::Defined();
   install_code.result_type = unit.builtins.void_type;
   mir::Block& install_block = install_code.Body();
+  const WalkFrame install_frame = WalkFrame{}.WithBlock(&install_block);
 
   mir::CallableCode value_code = mir::CallableCode::Defined();
   value_code.result_type = unit.builtins.void_type;
@@ -168,6 +174,24 @@ auto PopulatePackageStaticVariables(
               .expr = value_block.exprs.Add(BuildStoreExpr(
                   unit, value_block, make_cell(value_block, d.name, cell_type),
                   value_id, std::nullopt, value_type))});
+    }
+  }
+
+  // A static-lifetime local of a package subroutine is one program-global cell
+  // like the package's own variables (LRM 6.21, 26.2), so it comes up in these
+  // same two bodies -- once before any process starts, rather than on each
+  // entry to the subroutine that declares it.
+  for (const hir::StructuralSubroutineId id :
+       scope.structural_subroutines.Ids()) {
+    const hir::SubroutineDecl& src = scope.structural_subroutines.Get(id);
+    const StaticVarBindings& statics = subroutine_statics.Get(id);
+    ProcessLowerer body_lowerer(
+        unit_lowerer, nullptr, scope.time_resolution, src.body, src.name,
+        WalkFrame{}, scope_nodes, statics);
+    for (const StaticVarBinding& binding : statics) {
+      auto integ = IntegrateStaticInitializer(
+          body_lowerer, src.body, install_frame, value_frame, binding);
+      if (!integ) return std::unexpected(std::move(integ.error()));
     }
   }
 
@@ -489,23 +513,38 @@ auto UnitLowerer::RunNamespace() -> diag::Result<mir::CompilationUnit> {
   // variables, functions, and tasks (LRM 26.2). Each function and task lowers
   // to a receiver-less callable, and each variable to unit-level static
   // storage, so a package produces no root class and never enters the
-  // structural-scope body machinery. A package function reaches no static
-  // storage and no enclosing scope, so it lowers against no enclosing-scope
-  // lowerer and is given nothing. The frame has no owner class, so the produced
-  // body carries no `self` -- and with no object to hang one under, none of its
-  // scopes owns a name node or a `disable` target either.
+  // structural-scope body machinery. A body's own static-lifetime locals take
+  // the same unit-level storage its variables do, being one program-global cell
+  // each. The frame has no owner class, so the produced body carries no `self`
+  // -- and with no object to hang one under, none of its scopes owns a name
+  // node.
   const hir::StructuralScope& scope = hir_->root_scope;
-  const DeclaredScopes package_scope_nodes =
-      ScopesOwningNothing(scope.procedural_scopes.size());
+  const DeclaredScopes package_scope_nodes = ScopesOwningDisableTargets(
+      scope.procedural_scopes,
+      UnitStorage{.variables = &unit_.static_variables},
+      unit_.types.Intern(
+          mir::Type{mir::RuntimeLibraryType{
+              .kind = mir::RuntimeLibraryKind::kCancellationTarget}}));
+
+  base::Translation<hir::StructuralSubroutineId, StaticVarBindings>
+      subroutine_statics{scope.structural_subroutines.size()};
+  for (const hir::SubroutineDecl& src : scope.structural_subroutines) {
+    subroutine_statics.Append(BindBodyStatics(
+        *this, scope.procedural_scopes,
+        UnitStorage{.variables = &unit_.static_variables}, src.body,
+        SignatureBoundVars(src), src.name));
+  }
 
   // The callable each package subroutine lowered to, recorded where it is
   // created so an export below names its own by identity.
   base::Translation<hir::StructuralSubroutineId, mir::CallableId>
       subroutine_callables{scope.structural_subroutines.size()};
-  for (const hir::SubroutineDecl& src : scope.structural_subroutines) {
+  for (const hir::StructuralSubroutineId id :
+       scope.structural_subroutines.Ids()) {
+    const hir::SubroutineDecl& src = scope.structural_subroutines.Get(id);
     ProcessLowerer subroutine_lowerer(
         *this, nullptr, scope.time_resolution, src.body, src.name, WalkFrame{},
-        package_scope_nodes, {});
+        package_scope_nodes, subroutine_statics.Get(id));
     auto code_or = subroutine_lowerer.Run(src);
     if (!code_or) return std::unexpected(std::move(code_or.error()));
     subroutine_callables.Append(unit_.callables.Add(
@@ -546,7 +585,9 @@ auto UnitLowerer::RunNamespace() -> diag::Result<mir::CompilationUnit> {
             .virtual_dispatch = std::nullopt});
   }
 
-  if (auto vars = PopulatePackageStaticVariables(*this, scope); !vars) {
+  if (auto vars = PopulatePackageStaticStorage(
+          *this, scope, subroutine_statics, package_scope_nodes);
+      !vars) {
     return std::unexpected(std::move(vars.error()));
   }
 
