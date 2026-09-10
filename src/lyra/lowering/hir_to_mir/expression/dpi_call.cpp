@@ -269,6 +269,15 @@ auto MarshalCarrierToSv(
                       : support::BuiltinFn::kReadCanonicalBitVec;
 }
 
+// The chunk-pointer builtin for a canonical-vector carrier: 4-state and 2-state
+// are separate buffer types, reached through separate C pointer types (Annex
+// H.10.2).
+[[nodiscard]] auto VectorDataBuiltin(const support::VectorCarrier& v)
+    -> support::BuiltinFn {
+  return v.four_state ? support::BuiltinFn::kDpiLogicBufferData
+                      : support::BuiltinFn::kDpiBitBufferData;
+}
+
 // The writable canonical chunk pointer of a boundary buffer, `(buf).Data()`. It
 // feeds both the foreign call (which writes through it) and the copy-back read.
 // The result type is a borrowed pointer for bookkeeping only: value emission
@@ -276,14 +285,15 @@ auto MarshalCarrierToSv(
 // pointer type itself.
 auto BuildBufferDataCall(
     mir::CompilationUnit& unit, mir::Block& block, mir::ExprId buffer_ref,
-    mir::TypeId carrier_type) -> mir::ExprId {
+    mir::TypeId carrier_type, const support::VectorCarrier& carrier)
+    -> mir::ExprId {
   return block.exprs.Add(
       mir::Expr{
           .data =
               mir::CallExpr{
                   .callee =
                       mir::Direct{
-                          .target = support::BuiltinFn::kDpiBufferData,
+                          .target = VectorDataBuiltin(carrier),
                           .receiver = buffer_ref},
                   .arguments = {}},
           .type = unit.types.Intern(
@@ -361,10 +371,12 @@ auto BuildBoundaryInit(
           },
           [&](const support::VectorCarrier&) { return construct({seed_sv}); },
           [&](const support::OpenArrayCarrier& open) {
-            const mir::ExprId addressable = BuildMachineIntLiteral(
-                unit, block,
-                static_cast<std::int64_t>(
-                    open.element_crosses_as_canonical_vector));
+            const mir::ExprId addressable = block.exprs.Add(
+                mir::Expr{
+                    .data =
+                        mir::MachineBoolLiteral{
+                            .value = open.element_crosses_as_canonical_vector},
+                    .type = unit.builtins.machine_bool});
             return construct(
                 {seed_sv, BuildOpenArrayBounds(unit, block, open, actual_type),
                  addressable});
@@ -391,8 +403,9 @@ auto BuildBoundaryArgument(
                             .pointee = carrier_type,
                             .ownership = mir::PointerOwnership::kBorrowed}})));
           },
-          [&](const support::VectorCarrier&) {
-            return BuildBufferDataCall(unit, block, object, carrier_type);
+          [&](const support::VectorCarrier& vector) {
+            return BuildBufferDataCall(
+                unit, block, object, carrier_type, vector);
           },
           [&](const support::OpenArrayCarrier&) {
             return block.exprs.Add(
@@ -452,7 +465,7 @@ auto BuildBoundaryReadback(
           [&](const support::VectorCarrier& vector) {
             return read(
                 mir::Direct{.target = VectorReadBuiltin(vector)},
-                {BuildBufferDataCall(unit, block, object, carrier_type),
+                {BuildBufferDataCall(unit, block, object, carrier_type, vector),
                  mir::BuildPackedTypeRef(unit, block, sv_type)});
           },
           [&](const support::OpenArrayCarrier&) {

@@ -93,6 +93,15 @@ alternative, not retroactively make the erased object wrong.
 - Aggregate operations are runtime-library calls; a struct field access is a call, not a native
   `extractvalue`. This is the accepted baseline cost, the aggregate counterpart of every scalar
   operation being a runtime call on the execution backend.
+- **Whatever the monomorphized container gets from its type parameters, the erased one has to be
+  given.** A template parameterized on its element and key types ends a walk at the leaf type and
+  picks a comparator from the key type without anyone writing either down; the erased container's
+  elements and indices are type-erased values, so an operation phrased over them has nothing to end
+  at and nothing to choose by, and it does not exist there at all. It is not a missing entry --
+  there is nothing for an entry to call -- and it stays invisible until a feature needs it: imaging
+  an array across the DPI-C boundary, formatting an aggregate, and ordering the entries of a
+  wildcard-indexed array each found it separately. Expect a whole-container operation stated over
+  its elements or its indices to owe the erased half a mechanism of its own.
 - The physical-layout path, if pursued, is adopted for the whole value model and swaps the codegen
   realization of the unchanged LIR aggregate operations; it does not begin as a per-aggregate
   hybrid.

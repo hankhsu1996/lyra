@@ -570,7 +570,7 @@ enum class BuiltinFn : std::uint16_t {
   // `kRealValue` reads a `Real` / `ShortReal` out as its machine float;
   // `kStringCStr` borrows a `String` as a NUL-terminated C string valid for the
   // owning string's lifetime; `kChandlePtr` reads a `Chandle` out as the opaque
-  // pointer it carries. Each dispatches on the value it reads out of.
+  // pointer it carries. Each takes that value as its receiver.
   kRealValue,
   kStringCStr,
   kChandlePtr,
@@ -580,31 +580,33 @@ enum class BuiltinFn : std::uint16_t {
   // destination's declared representation (`args[0]` the byte, `args[1]` the
   // type). The `kReadCanonical*` helpers build an SV value from a canonical
   // buffer in that representation (`args[0]` the buffer pointer, `args[1]` the
-  // type);
-  // the `kWriteCanonical*` helpers are their inverse, writing an SV value out
-  // into a canonical buffer (`args[0]` the buffer pointer, `args[1]` the SV
-  // value), as an export's C entry point does through the foreign caller's
-  // pointer. These are free functions in `lyra::value`. An import's packed
-  // copy-in is not a builtin: the boundary buffer is a `DpiBitBuffer` /
-  // `DpiLogicBuffer` value
-  // constructed from the SV value, and `kDpiBufferData` (an instance method)
-  // reads its writable chunk pointer for the foreign call and the copy-back
-  // read. `Bit` carries a 2-state (aval-only) buffer, `Logic` a 4-state buffer
-  // whose `aval` is the value plane and `bval` the unknown plane.
+  // type); the `kWriteCanonical*` helpers are their inverse, writing an SV
+  // value out into a canonical buffer (`args[0]` the buffer pointer, `args[1]`
+  // the SV value), as an export's C entry point does through the foreign
+  // caller's pointer. These are free functions in `lyra::value`. An import's
+  // packed copy-in is not a builtin: the boundary buffer is a `DpiBitBuffer` /
+  // `DpiLogicBuffer` value constructed from the SV value, and the
+  // `kDpi*BufferData` pair reads its writable chunk pointer for the foreign
+  // call and the copy-back read, taking that buffer as its receiver. `Bit`
+  // carries a 2-state (aval-only) buffer, `Logic` a 4-state buffer whose `aval`
+  // is the value plane and `bval` the unknown plane. The two are separate
+  // library types the foreign side reaches through separate C pointer types
+  // (Annex H.10.2), so which of them a read is on is named here.
   kToSvLogic,
   kFromSvLogic,
   kReadCanonicalBitVec,
   kReadCanonicalLogicVec,
   kWriteCanonicalBitVec,
   kWriteCanonicalLogicVec,
-  kDpiBufferData,
+  kDpiBitBufferData,
+  kDpiLogicBufferData,
   // The open-array boundary image (LRM 35.5.6.1, Annex H.12).
-  // `kDpiOpenArrayHandle`
-  // reads the opaque handle the foreign side receives in place of the actual;
-  // `kDpiOpenArrayValue` reads the image back as an SV value shaped like the
-  // prototype it carries as an argument, which is what an `output` / `inout`
-  // open array stores into its actual. Each dispatches on the image, which the
-  // call site builds from the actual before the foreign call.
+  // `kDpiOpenArrayHandle` reads the opaque handle the foreign side receives in
+  // place of the actual; `kDpiOpenArrayValue` reads the image back as an SV
+  // value shaped like the prototype it carries as an argument, which is what an
+  // `output` / `inout` open array stores into its actual. Each takes as its
+  // receiver the image, which the call site builds from the actual before the
+  // foreign call.
   kDpiOpenArrayHandle,
   kDpiOpenArrayValue,
   // Runs a DPI-C import task's foreign call (LRM 35.5.2) on a fiber whose

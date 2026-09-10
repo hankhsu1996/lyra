@@ -755,7 +755,7 @@ auto lyra_rt_string_from_byte_array(const void* bytes) -> void*;
 // The C string a `string` crosses the DPI-C boundary as (LRM 35.5.6). It points
 // into the SV value, which outlives the call, so the foreign side may read it
 // for the call's duration.
-auto lyra_rt_string_string_cstr(const void* value) -> const char*;
+auto lyra_rt_string_cstr(const void* value) -> const char*;
 auto lyra_rt_string_len(const void* value) -> void*;
 auto lyra_rt_string_getc(const void* value, const void* index) -> void*;
 // Positional access (LRM 6.16.2). `element` reads the character; `with_element`
@@ -871,6 +871,7 @@ void lyra_rt_real_value_cell_store(void* cell, const void* value);
 auto lyra_rt_real_value_cell_load(const void* cell) -> void*;
 auto lyra_rt_real_make_print_value_item(const void* value, const void* spec)
     -> void*;
+auto lyra_rt_real_make_format_arg(const void* value) -> void*;
 
 // The `shortreal` host-float value domain, the single-precision peer of the
 // real domain above.
@@ -901,17 +902,25 @@ void lyra_rt_shortreal_value_cell_store(void* cell, const void* value);
 auto lyra_rt_shortreal_value_cell_load(const void* cell) -> void*;
 auto lyra_rt_shortreal_make_print_value_item(
     const void* value, const void* spec) -> void*;
+auto lyra_rt_shortreal_make_format_arg(const void* value) -> void*;
 
 // The `chandle` domain (LRM 6.14). A chandle is a pointer, so the domain
 // carries its value inline: each operand IS the chandle value, not a handle to
 // a runtime-owned value object. LRM 6.14 admits only the equality family (which
 // yields a packed 1-bit) and the boolean test; there is no arithmetic, no
-// ordering, no format entry, and no runtime constructor -- a null chandle is
-// the host null pointer, a native constant.
+// ordering and no format entry. A null chandle is the host null pointer, a
+// native constant; a chandle that names something came from a foreign call, and
+// both directions of that crossing are entries so that which bits the value is
+// stays the runtime's own answer.
+auto lyra_rt_chandle_make(void* pointer) -> void*;
+auto lyra_rt_chandle_ptr(void* operand) -> void*;
 auto lyra_rt_chandle_eq(void* lhs, void* rhs) -> void*;
 auto lyra_rt_chandle_ne(void* lhs, void* rhs) -> void*;
 auto lyra_rt_chandle_case_equal(void* lhs, void* rhs) -> void*;
 auto lyra_rt_chandle_to_bool(void* operand) -> bool;
+auto lyra_rt_chandle_value_cell_alloc() -> void*;
+void lyra_rt_chandle_value_cell_store(void* cell, void* value);
+auto lyra_rt_chandle_value_cell_load(const void* cell) -> void*;
 
 // The managed-reference domain (LRM 8.3, and the LRM 9.7 `process` a handle
 // names). Unlike a chandle, an operand here is a handle to a runtime-owned
@@ -1542,4 +1551,56 @@ auto lyra_rt_packed_make_print_value_item(const void* value, const void* spec)
     -> void*;
 auto lyra_rt_string_make_print_value_item(const void* value, const void* spec)
     -> void*;
+
+// A format performed at run time (LRM 21.3.3), where the format string is not a
+// literal and so no print item could be built for it at compile time: the text
+// is parsed against the arguments as it is rendered. Each argument borrows the
+// value it formats, which holds because both are transients of the generated
+// entry that performs the format. The hierarchical name a `%m` renders and the
+// time scale a `%t` is read against are facts of the call site, so they arrive
+// as operands rather than being reached from here.
+auto lyra_rt_format_runtime(
+    const void* format, LyraSpan args, const void* scope_path,
+    const void* time_format, const void* timeunit_power) -> void*;
+auto lyra_rt_packed_make_format_arg(const void* value) -> void*;
+auto lyra_rt_string_make_format_arg(const void* value) -> void*;
+
+// The DPI-C boundary temporaries (LRM 35.5.6, Annex H.7.7, H.10). None of these
+// is an SV value: each exists inside one lowered call window, holding an image
+// of an actual in the canonical form the C side reads and writes. So each entry
+// is one function rather than a family -- what a canonical buffer, an `svLogic`
+// scalar and an open-array image hold is fixed by the C ABI, and the SV value
+// on the far side of one is always a packed value.
+//
+// A buffer sizes itself from the value it images and hands the foreign side the
+// writable chunk pointer; the read entries rebuild an SV value, in the declared
+// shape `type` names, from what the call left there. `bit` carries the value
+// plane only, `logic` both planes. What the foreign side writes through points
+// into the buffer, so it stays writable for exactly as long as the buffer does.
+auto lyra_rt_make_dpi_bit_buffer(const void* sv) -> void*;
+auto lyra_rt_make_dpi_logic_buffer(const void* sv) -> void*;
+auto lyra_rt_dpi_bit_buffer_data(void* buffer) -> void*;
+auto lyra_rt_dpi_logic_buffer_data(void* buffer) -> void*;
+auto lyra_rt_read_canonical_bit_vec(const void* src, const void* type) -> void*;
+auto lyra_rt_read_canonical_logic_vec(const void* src, const void* type)
+    -> void*;
+
+// A 1-bit 4-state value's `svLogic` scalar encoding (Annex H.10.1.1), which
+// crosses as the machine byte the C side declares rather than as a handle.
+auto lyra_rt_to_sv_logic(const void* sv) -> std::uint8_t;
+auto lyra_rt_from_sv_logic(std::uint8_t encoded, const void* type) -> void*;
+
+// The open-array image (LRM 35.5.6.1, Annex H.12). The value it images crosses
+// erased, because an image is element-type-independent and nothing on this side
+// could read that representation off anything else; `bounds` is the declared
+// `(left, right)` pair of each unpacked dimension, outermost first, and
+// `addressable_elements` says an individual value of the element type crosses
+// in the same canonical form the image holds it in (Annex H.12.4). The handle
+// is what the foreign side receives in place of the actual, and the value entry
+// rebuilds one SV value shaped like the prototype a write-back direction hands
+// it.
+auto lyra_rt_make_dpi_open_array(
+    void* sv, LyraSpan bounds, bool addressable_elements) -> void*;
+auto lyra_rt_dpi_open_array_handle(void* image) -> void*;
+auto lyra_rt_dpi_open_array_value(const void* image, void* prototype) -> void*;
 }

@@ -55,6 +55,55 @@ void Combine(std::size_t& seed, const PackedArrayType& packed) {
   }
 }
 
+// Which runtime-library value this is. A reader that could not handle one needs
+// to know which of them it met, and the kind is the whole of what separates
+// them.
+auto RuntimeLibraryKindName(RuntimeLibraryKind kind) -> const char* {
+  switch (kind) {
+    case RuntimeLibraryKind::kPackedType:
+      return "packed type descriptor";
+    case RuntimeLibraryKind::kPackedRange:
+      return "packed range";
+    case RuntimeLibraryKind::kPrintItem:
+      return "print item";
+    case RuntimeLibraryKind::kPrintLiteralItem:
+      return "print literal item";
+    case RuntimeLibraryKind::kPrintValueItem:
+      return "print value item";
+    case RuntimeLibraryKind::kFormatSpec:
+      return "format specification";
+    case RuntimeLibraryKind::kFormatArg:
+      return "format argument";
+    case RuntimeLibraryKind::kChannelCancellation:
+      return "channel cancellation";
+    case RuntimeLibraryKind::kTimeFormat:
+      return "time format";
+    case RuntimeLibraryKind::kHierarchySegment:
+      return "hierarchy segment";
+    case RuntimeLibraryKind::kDpiBitBuffer:
+      return "DPI canonical bit buffer";
+    case RuntimeLibraryKind::kDpiLogicBuffer:
+      return "DPI canonical logic buffer";
+    case RuntimeLibraryKind::kDpiBitChunk:
+      return "DPI bit chunk";
+    case RuntimeLibraryKind::kDpiLogicChunk:
+      return "DPI logic chunk";
+    case RuntimeLibraryKind::kDpiOpenArray:
+      return "DPI open array";
+    case RuntimeLibraryKind::kDpiOpenArrayHandle:
+      return "DPI open array handle";
+    case RuntimeLibraryKind::kTrigger:
+      return "trigger";
+    case RuntimeLibraryKind::kObservation:
+      return "observation";
+    case RuntimeLibraryKind::kCancellationTarget:
+      return "cancellation target";
+    case RuntimeLibraryKind::kControlEffect:
+      return "control effect";
+  }
+  throw InternalError("lir::RuntimeLibraryKindName: unknown kind");
+}
+
 }  // namespace
 
 auto BitsOf(MachineIntWidth width) -> std::uint32_t {
@@ -200,7 +249,9 @@ auto Type::KindName() const -> std::string_view {
           [](const RuntimeEffectsType&) { return "runtime services"; },
           [](const FilesType&) { return "file table"; },
           [](const DiagnosticType&) { return "diagnostic dispatcher"; },
-          [](const RuntimeLibraryType&) { return "runtime library value"; },
+          [](const RuntimeLibraryType& t) {
+            return RuntimeLibraryKindName(t.kind);
+          },
           [](const CoroutineType&) { return "coroutine"; },
           [](const RefType&) { return "reference"; },
           [](const PointerType&) { return "pointer"; },

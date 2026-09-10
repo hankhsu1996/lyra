@@ -46,6 +46,8 @@
 #include "lyra/runtime/sim_time.hpp"
 #include "lyra/runtime/var.hpp"
 #include "lyra/value/chandle.hpp"
+#include "lyra/value/dpi_canonical.hpp"
+#include "lyra/value/dpi_open_array.hpp"
 #include "lyra/value/empty.hpp"
 #include "lyra/value/format.hpp"
 #include "lyra/value/managed_ref.hpp"
@@ -591,8 +593,13 @@ using lyra::runtime::TestPlusargs;
 using lyra::runtime::Trigger;
 using lyra::runtime::Var;
 using lyra::value::Chandle;
+using lyra::value::DpiBitBuffer;
+using lyra::value::DpiLogicBuffer;
+using lyra::value::DpiOpenArray;
 using lyra::value::Format;
+using lyra::value::FormatArg;
 using lyra::value::FormatSpec;
+using lyra::value::MakeFormatArg;
 using lyra::value::ManagedRef;
 using lyra::value::PackedArray;
 using lyra::value::PackedRange;
@@ -2068,7 +2075,7 @@ auto lyra_rt_string_from_byte_array(const void* bytes) -> void* {
   return Own(Read<RuntimeUnpackedArray>(bytes).ToByteString());
 }
 
-auto lyra_rt_string_string_cstr(const void* value) -> const char* {
+auto lyra_rt_string_cstr(const void* value) -> const char* {
   return Read<String>(value).CStr();
 }
 
@@ -2455,6 +2462,10 @@ auto lyra_rt_real_make_print_value_item(const void* value, const void* spec)
       PrintItem(PrintValueItem(Read<Real>(value), Read<FormatSpec>(spec))));
 }
 
+auto lyra_rt_real_make_format_arg(const void* value) -> void* {
+  return Own(MakeFormatArg(Read<Real>(value)));
+}
+
 auto lyra_rt_shortreal_add(const void* lhs, const void* rhs) -> void* {
   return Own(Read<ShortReal>(lhs) + Read<ShortReal>(rhs));
 }
@@ -2568,6 +2579,22 @@ auto lyra_rt_shortreal_make_print_value_item(
       PrintValueItem(Read<ShortReal>(value), Read<FormatSpec>(spec))));
 }
 
+auto lyra_rt_shortreal_make_format_arg(const void* value) -> void* {
+  return Own(MakeFormatArg(Read<ShortReal>(value)));
+}
+
+// A chandle's value is the pointer it carries, so both directions of the
+// boundary are that pointer. They are entries because which bits a domain's
+// value is stays the runtime's answer: a generated body asks for a chandle and
+// is handed whatever one is.
+auto lyra_rt_chandle_make(void* pointer) -> void* {
+  return Chandle{pointer}.Ptr();
+}
+
+auto lyra_rt_chandle_ptr(void* operand) -> void* {
+  return Chandle{operand}.Ptr();
+}
+
 auto lyra_rt_chandle_eq(void* lhs, void* rhs) -> void* {
   return Own(Chandle{lhs} == Chandle{rhs});
 }
@@ -2582,6 +2609,22 @@ auto lyra_rt_chandle_case_equal(void* lhs, void* rhs) -> void* {
 
 auto lyra_rt_chandle_to_bool(void* operand) -> bool {
   return static_cast<bool>(Chandle{operand});
+}
+
+// A chandle's own storage. What a load hands back is the pointer rather than
+// the address of a copy, because for this domain the pointer is the value.
+auto lyra_rt_chandle_value_cell_alloc() -> void* {
+  return GeneratedCallScope::Current()
+      .ActivationValues()
+      .New<ActivationValueCell<Chandle>>();
+}
+
+void lyra_rt_chandle_value_cell_store(void* cell, void* value) {
+  static_cast<ActivationValueCell<Chandle>*>(cell)->Store(Chandle{value});
+}
+
+auto lyra_rt_chandle_value_cell_load(const void* cell) -> void* {
+  return static_cast<const ActivationValueCell<Chandle>*>(cell)->Get().Ptr();
 }
 
 // A handle referring to nothing (LRM 8.4). It is a value of the domain like any
@@ -4508,5 +4551,106 @@ void lyra_rt_assocarray_write_mem_within(
       Read<RuntimeAssociativeArray>(memory), Read<String>(name),
       Read<PackedArray>(base), Read<PackedArray>(start),
       Read<PackedArray>(finish).ToInt64());
+}
+
+auto lyra_rt_format_runtime(
+    const void* format, LyraSpan args, const void* scope_path,
+    const void* time_format, const void* timeunit_power) -> void* {
+  const std::span<const void* const> handles{
+      static_cast<const void* const*>(args.data), args.count};
+  std::vector<FormatArg> arguments(handles.size());
+  std::ranges::transform(handles, arguments.begin(), [](const void* handle) {
+    return *static_cast<const FormatArg*>(handle);
+  });
+  return Own(
+      lyra::value::FormatRuntime(
+          Read<String>(format), arguments, Read<String>(scope_path),
+          Read<TimeFormat>(time_format), Read<PackedArray>(timeunit_power)));
+}
+
+auto lyra_rt_packed_make_format_arg(const void* value) -> void* {
+  return Own(MakeFormatArg(Read<PackedArray>(value)));
+}
+
+auto lyra_rt_string_make_format_arg(const void* value) -> void* {
+  return Own(MakeFormatArg(Read<String>(value)));
+}
+
+auto lyra_rt_make_dpi_bit_buffer(const void* sv) -> void* {
+  return Own(DpiBitBuffer(Read<PackedArray>(sv)));
+}
+
+auto lyra_rt_make_dpi_logic_buffer(const void* sv) -> void* {
+  return Own(DpiLogicBuffer(Read<PackedArray>(sv)));
+}
+
+auto lyra_rt_dpi_bit_buffer_data(void* buffer) -> void* {
+  return static_cast<DpiBitBuffer*>(buffer)->Data();
+}
+
+auto lyra_rt_dpi_logic_buffer_data(void* buffer) -> void* {
+  return static_cast<DpiLogicBuffer*>(buffer)->Data();
+}
+
+auto lyra_rt_read_canonical_bit_vec(const void* src, const void* type)
+    -> void* {
+  return Own(
+      lyra::value::ReadCanonicalBitVec(
+          static_cast<const svBitVecVal*>(src), Read<PackedType>(type)));
+}
+
+auto lyra_rt_read_canonical_logic_vec(const void* src, const void* type)
+    -> void* {
+  return Own(
+      lyra::value::ReadCanonicalLogicVec(
+          static_cast<const svLogicVecVal*>(src), Read<PackedType>(type)));
+}
+
+auto lyra_rt_to_sv_logic(const void* sv) -> std::uint8_t {
+  return lyra::value::ToSvLogic(Read<PackedArray>(sv));
+}
+
+auto lyra_rt_from_sv_logic(std::uint8_t encoded, const void* type) -> void* {
+  return Own(lyra::value::FromSvLogic(encoded, Read<PackedType>(type)));
+}
+
+// The image takes the actual erased, because it is element-type-independent and
+// nothing here could read that representation off anything else. Imaging one
+// walks the actual down to its leaves, which a monomorphized array does by
+// instantiating the walk at the element type and an erased one cannot: its
+// elements are type-erased values, so the walk has no leaf type to end at. A
+// single packed actual is therefore what images, and an array of them says so.
+auto lyra_rt_make_dpi_open_array(
+    void* sv, LyraSpan bounds, bool addressable_elements) -> void* {
+  const std::span<const void* const> handles{
+      static_cast<const void* const*>(bounds.data), bounds.count};
+  std::vector<PackedArray> declared(handles.size());
+  std::ranges::transform(handles, declared.begin(), [](const void* handle) {
+    return *static_cast<const PackedArray*>(handle);
+  });
+  const RuntimeValue actual = lyra::runtime::ErasedValue(sv);
+  const auto* packed = std::get_if<PackedArray>(&actual.value);
+  if (packed == nullptr) {
+    throw lyra::SimulationError(
+        "an unpacked array crossing the DPI-C boundary as an open array is "
+        "not yet imaged on this backend; please open an issue asking for "
+        "support");
+  }
+  return Own(DpiOpenArray(*packed, declared, addressable_elements));
+}
+
+auto lyra_rt_dpi_open_array_handle(void* image) -> void* {
+  return static_cast<DpiOpenArray*>(image)->Handle();
+}
+
+auto lyra_rt_dpi_open_array_value(const void* image, void* prototype) -> void* {
+  const RuntimeValue shape = lyra::runtime::ErasedValue(prototype);
+  const auto* packed = std::get_if<PackedArray>(&shape.value);
+  if (packed == nullptr) {
+    throw lyra::SimulationError(
+        "an unpacked array read back from a DPI-C open array is not yet "
+        "rebuilt on this backend; please open an issue asking for support");
+  }
+  return Own(static_cast<const DpiOpenArray*>(image)->ToValue(*packed));
 }
 }

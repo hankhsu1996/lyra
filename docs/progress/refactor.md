@@ -1079,12 +1079,13 @@ enough to warrant its own focused review.
 
 - [ ] R73 -- The runtime ABI is named mechanically and defined by hand. Which symbol an operation
       publishes comes from the closed sets that already spell it, so a symbol cannot be composed
-      from a string; the definition behind that symbol is written out one function at a time. Of 664
-      entries, 532 differ from a sibling only in which value representation they name -- each a
-      cast, a read, and one call -- so an operation added to a family costs a function per
-      representation, and a representation added to the set costs one per operation of every family
-      that names one. The sampled-state work added 66 in a change whose whole subject was three
-      storages.
+      from a string; the definition behind that symbol is written out one function at a time. Of the
+      688 entries the check counts, 520 lead with a value representation and differ from a sibling
+      only in which one -- each a cast, a read, and one call -- so an operation added to a family
+      costs a function per representation, and a representation added to the set costs one per
+      operation of every family that names one. The sampled-state work added 66 in a change whose
+      whole subject was three storages, and the DPI-marshaling work 21 in front of code the C++
+      backend was already calling.
 
       The count alone is not the argument, since the functions are short and a check holds each
       entry's prototype, definition and binding to the other two, which is what makes the shape

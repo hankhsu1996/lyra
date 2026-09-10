@@ -42,11 +42,12 @@ simulation time (D5, D6, D6b, D6d), the `svdpi` context surface (D7), and the ge
 with link-input orchestration (D9). What remains is the disable protocol across the boundary (D6c)
 and the element types Annex H.7.3 puts in C-compatible representation.
 
-On the execution backend scalar import (D10) is in: a foreign call lowers to an external-linkage
-symbol and the by-value carriers marshal. The rest of the import surface (D11) is blocked, and not
-by anything DPI owns: by-pointer marshaling is expressed as a closure, which that backend does not
-yet lower at all (`execution-backend.md`). Export and tasks there (D12) follow once the C++-backend
-items fix their shape.
+On the execution backend scalar import (D10) is in, and by-pointer marshaling with it: a foreign
+call lowers to an external-linkage symbol, the by-value carriers marshal, and a canonical buffer
+carries a packed value across in either direction. What is left of the import surface (D11) is an
+open array whose actual is an unpacked array, and the scope a `context` import makes current;
+neither is blocked by anything DPI owns (`execution-backend.md`). Export and tasks there (D12)
+follow once the C++-backend items fix their shape.
 
 ## Sub-Steps
 
@@ -235,13 +236,15 @@ surface at a time; export and tasks follow once the C++-backend items fix their 
       (`execution-backend.md`).
 - [ ] D11 -- General and 4-state / wide import marshaling on the execution backend: the D2 and D3
       surface -- `output` / `inout` copy-back, `chandle`, and canonical `svBitVecVal*` /
-      `svLogicVecVal*` buffers. What held this back was a sequence of statements standing in
-      expression position, which MIR used to express as a closure the backend could not lower; MIR
-      now states that as a block expression and the foreign-import boundary builds one, so the
-      sequencing is no longer the obstacle. What refuses today is the marshaling itself: the
-      canonical buffer a by-pointer argument crosses in has no construct on this backend, and the
-      scope a `context` import makes current does not lower to LIR. A `real` import rides on the
-      real value domain, not on this item.
+      `svLogicVecVal*` buffers. The marshaling itself is in: a canonical buffer images the actual
+      and hands the foreign side the chunk pointer it reads and writes through, a copy-back
+      direction rebuilds the SV value from it, a 1-bit 4-state value crosses as its `svLogic`
+      scalar, and a `chandle` crosses in either direction and round-trips its identity. An open
+      array images a single packed actual; one whose actual is an unpacked array is refused, and not
+      by anything DPI owns -- imaging walks the actual down to its leaves, which the erased value
+      layer has no walk for (`execution-backend.md`). What is left of this item is that walk and the
+      scope a `context` import makes current, which does not lower to LIR. A `real` import rides on
+      the real value domain, not on this item.
 - [ ] D12 -- Export and DPI tasks on the execution backend, once the C++-backend export and task
       items (D4-D6c) define the shape.
 

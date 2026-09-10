@@ -738,8 +738,10 @@ auto RuntimeEntryOf(BuiltinFn id) -> RuntimeEntry {
       return {
           .name = "write_canonical_logic_vec",
           .declaration = FreeFunction{"lyra::value::WriteCanonicalLogicVec"}};
-    case BuiltinFn::kDpiBufferData:
-      return {.name = "dpi_buffer_data", .declaration = Method{"Data"}};
+    case BuiltinFn::kDpiBitBufferData:
+      return {.name = "dpi_bit_buffer_data", .declaration = Method{"Data"}};
+    case BuiltinFn::kDpiLogicBufferData:
+      return {.name = "dpi_logic_buffer_data", .declaration = Method{"Data"}};
     case BuiltinFn::kDpiOpenArrayHandle:
       return {.name = "dpi_open_array_handle", .declaration = Method{"Handle"}};
     case BuiltinFn::kDpiOpenArrayValue:

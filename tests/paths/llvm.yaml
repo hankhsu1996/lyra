@@ -6,8 +6,7 @@
 # the record of what this path does not yet cover.
 #
 # A case may appear in this file or in the defect record, never both.
-06_data_types/chandle_value_and_comparison: "a value of type chandle has no construct on this backend"
-07_aggregate_data_types/associative_array_wildcard_index: "a value of type wildcard index has no runtime library realization"
+07_aggregate_data_types/associative_array_wildcard_index: "an associative array indexed by a wildcard index type is not yet ordered on this backend"
 07_aggregate_data_types/unpacked_structure_whole_assignment: "local is not addressable storage"
 08_classes/constructor_argument_directions: "a constructor with an output / inout / ref argument is not yet supported"
 08_classes/interface_class_implements: "constructing a class whose base another compilation unit declares is not yet supported"
@@ -25,7 +24,6 @@
 13_tasks_and_functions/task_enables_subroutine: "storage of this kind is not yet lendable by reference"
 16_assertions/procedural_concurrent_assertion_queues_where_it_runs: "a concurrent assertion embedded in a procedure is not yet lowered"
 21_output/assignment_pattern_format_of_enumeration_elements: "the runtime library publishes no entry named lyra_rt_unpackedarray_make_print_value_item"
-21_output/sformat_format_string_need_not_be_a_literal: "a value of type runtime library value has no construct on this backend"
 23_hierarchy/ref_port_is_waited_on: "the cell a reference binds is not yet nameable on this backend"
 23_hierarchy/ref_port_aliases_connected_variable: "mir_to_lir: storage of this kind is not yet lendable by reference"
 23_hierarchy/downward_name_reaches_each_declaration_kind: "is on no promise this unit can read through"
@@ -37,10 +35,7 @@
 35_dpi/exported_subroutine_runs_in_current_scope: "the scope a DPI-C context import makes current is not yet lowerable to LIR"
 35_dpi/exported_task_called_from_imported_task: "the scope a DPI-C context import makes current is not yet lowerable to LIR"
 35_dpi/import_declaration_scope_is_name_resolution: "the scope a DPI-C context import makes current is not yet lowerable to LIR"
-35_dpi/imported_function_packed_arguments: "a value of type runtime library value has no construct on this backend"
-35_dpi/imported_function_small_value_types: "llvm codegen: a value of type machine integer has no runtime library realization"
 35_dpi/imported_task_argument_writeback: "the run_foreign_task_on_fiber builtin carries an execution across a stack the runtime does not own"
 35_dpi/imported_task_consumes_simulation_time: "the scope a DPI-C context import makes current is not yet lowerable to LIR"
-35_dpi/open_array_element_access: "a value of type runtime library value has no construct on this backend"
-35_dpi/open_array_formal_accepts_any_actual: "a value of type runtime library value has no construct on this backend"
-35_dpi/open_array_unsized_packed_dimension: "a value of type runtime library value has no construct on this backend"
+35_dpi/open_array_element_access: "an unpacked array crossing the DPI-C boundary as an open array is not yet imaged on this backend"
+35_dpi/open_array_formal_accepts_any_actual: "an unpacked array crossing the DPI-C boundary as an open array is not yet imaged on this backend"

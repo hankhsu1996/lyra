@@ -104,20 +104,23 @@ auto RuntimeOpName(RuntimeOp op) -> std::string_view {
       return "make_print_value_item";
     case RuntimeOp::kMakeFormatSpec:
       return "make_format_spec";
+    case RuntimeOp::kMakeFormatArg:
+      return "make_format_arg";
+    case RuntimeOp::kMakeDpiBitBuffer:
+      return "make_dpi_bit_buffer";
+    case RuntimeOp::kMakeDpiLogicBuffer:
+      return "make_dpi_logic_buffer";
+    case RuntimeOp::kMakeDpiOpenArray:
+      return "make_dpi_open_array";
   }
   throw InternalError("llvm codegen: unknown runtime operation");
 }
 
 }  // namespace
 
-auto DeclaredIndexType(const lir::CompilationUnit& unit, lir::TypeId container)
-    -> std::optional<lir::TypeId> {
-  const auto* associative =
-      unit.types.Get(container).As<lir::AssociativeArrayType>();
-  if (associative == nullptr) {
-    return std::nullopt;
-  }
-  return associative->key_type;
+auto SelectsByStatedIndex(
+    const lir::CompilationUnit& unit, lir::TypeId container) -> bool {
+  return unit.types.Get(container).Is<lir::AssociativeArrayType>();
 }
 
 auto NetResolutionOf(lir::NetResolution resolution) -> support::NetResolution {
@@ -309,12 +312,35 @@ auto MemberStorageKindOf(
                 return MemberStorageKind::kChannelCancellation;
               // An integral type's descriptor, held once per type for the whole
               // run, so a member that names one points at storage outliving
-              // every closure that reads it rather than owning a copy.
+              // every closure that reads it rather than owning a copy. What a
+              // range inside that descriptor is reached through is the
+              // descriptor, so a member names the whole and never a part.
               case lir::RuntimeLibraryKind::kPackedType:
                 return MemberStorageKind::kBorrowedHandle;
-              default:
+              // The rest are transients of one call -- what a print or a format
+              // is assembled from, what a boundary object images an argument
+              // in, what a wait registers and what another entry answers with.
+              // An owner holds none of them past the call that made one.
+              case lir::RuntimeLibraryKind::kPackedRange:
+              case lir::RuntimeLibraryKind::kPrintItem:
+              case lir::RuntimeLibraryKind::kPrintLiteralItem:
+              case lir::RuntimeLibraryKind::kPrintValueItem:
+              case lir::RuntimeLibraryKind::kFormatSpec:
+              case lir::RuntimeLibraryKind::kFormatArg:
+              case lir::RuntimeLibraryKind::kTimeFormat:
+              case lir::RuntimeLibraryKind::kHierarchySegment:
+              case lir::RuntimeLibraryKind::kDpiBitBuffer:
+              case lir::RuntimeLibraryKind::kDpiLogicBuffer:
+              case lir::RuntimeLibraryKind::kDpiBitChunk:
+              case lir::RuntimeLibraryKind::kDpiLogicChunk:
+              case lir::RuntimeLibraryKind::kDpiOpenArray:
+              case lir::RuntimeLibraryKind::kDpiOpenArrayHandle:
+              case lir::RuntimeLibraryKind::kTrigger:
+              case lir::RuntimeLibraryKind::kObservation:
+              case lir::RuntimeLibraryKind::kControlEffect:
                 return std::nullopt;
             }
+            throw InternalError("llvm codegen: unknown runtime library kind");
           },
           [](const lir::EventType&) -> std::optional<MemberStorageKind> {
             return MemberStorageKind::kNamedEvent;
@@ -530,17 +556,6 @@ auto EntryNamingOf(support::BuiltinFn fn) -> EntryNaming {
     case support::BuiltinFn::kToBits:
     case support::BuiltinFn::kFromBits:
     case support::BuiltinFn::kRealValue:
-    case support::BuiltinFn::kStringCStr:
-    case support::BuiltinFn::kChandlePtr:
-    case support::BuiltinFn::kToSvLogic:
-    case support::BuiltinFn::kFromSvLogic:
-    case support::BuiltinFn::kReadCanonicalBitVec:
-    case support::BuiltinFn::kReadCanonicalLogicVec:
-    case support::BuiltinFn::kWriteCanonicalBitVec:
-    case support::BuiltinFn::kWriteCanonicalLogicVec:
-    case support::BuiltinFn::kDpiBufferData:
-    case support::BuiltinFn::kDpiOpenArrayHandle:
-    case support::BuiltinFn::kDpiOpenArrayValue:
     case support::BuiltinFn::kFromInt:
     case support::BuiltinFn::kFromPackedArray:
     case support::BuiltinFn::kFromByteArray:
@@ -754,6 +769,28 @@ auto EntryNamingOf(support::BuiltinFn fn) -> EntryNaming {
     case support::BuiltinFn::kEvaluationAttemptsStep:
     case support::BuiltinFn::kEvaluationAttemptsSeed:
     case support::BuiltinFn::kEvaluationAttemptsSettle:
+    // Reading the host representation a value carries. Only one domain carries
+    // each of these -- a C string is a string's, a host pointer a chandle's --
+    // so the operation's own name is the whole of what a symbol needs, where
+    // reading a host float out of a value serves two and takes the domain to
+    // tell them apart.
+    case support::BuiltinFn::kStringCStr:
+    case support::BuiltinFn::kChandlePtr:
+    // The DPI-C boundary marshaling (LRM 35.5.6, Annex H.7.7, H.10). Each of
+    // these is one library function and not a family: what a canonical buffer,
+    // an `svLogic` scalar and an open-array image hold is fixed by the C ABI,
+    // so the SV value on the far side of one is always a packed value and the
+    // buffer itself belongs to no value domain at all.
+    case support::BuiltinFn::kToSvLogic:
+    case support::BuiltinFn::kFromSvLogic:
+    case support::BuiltinFn::kReadCanonicalBitVec:
+    case support::BuiltinFn::kReadCanonicalLogicVec:
+    case support::BuiltinFn::kWriteCanonicalBitVec:
+    case support::BuiltinFn::kWriteCanonicalLogicVec:
+    case support::BuiltinFn::kDpiBitBufferData:
+    case support::BuiltinFn::kDpiLogicBufferData:
+    case support::BuiltinFn::kDpiOpenArrayHandle:
+    case support::BuiltinFn::kDpiOpenArrayValue:
       return NamedAlone{};
   }
   throw InternalError("llvm codegen: unknown builtin");

@@ -224,6 +224,21 @@ auto CodeGenFunction::OperandType(const lir::Operand& operand) const
 
 auto CodeGenFunction::DomainOf(lir::TypeId type) const
     -> diag::Result<support::ValueDomain> {
+  // A wildcard index type (LRM 7.8.1) admits an index of any width and orders
+  // the entries by unsigned numerical value with leading zeros removed, so how
+  // two indices compare is a rule the container's declaration fixes rather than
+  // anything the indices carry. The erased container reads that order off the
+  // indices themselves, which answers every other index type and cannot answer
+  // this one, so it is refused here rather than ordered wrongly.
+  if (const auto* keyed =
+          module_->Unit().types.Get(type).As<lir::AssociativeArrayType>();
+      keyed != nullptr &&
+      module_->Unit().types.Get(keyed->key_type).Is<lir::WildcardIndexType>()) {
+    return diag::Fail(
+        diag::DiagCode::kUnsupportedTypeKind,
+        "llvm codegen: an associative array indexed by a wildcard index type "
+        "is not yet ordered on this backend");
+  }
   const std::optional<support::ValueDomain> domain =
       ValueDomainOf(module_->Unit(), type);
   if (!domain) {
