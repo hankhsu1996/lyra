@@ -661,11 +661,11 @@ enum class BuiltinFn : std::uint16_t {
   kCurrentExportScope,
   kFindExportEntry,
   // The outer step of a value conversion: the static factory that lands a
-  // machine-level result in the destination's declared representation, which
-  // the call site names as the qualifier. `kFromInt` builds a target-shape
-  // vector from a machine integer and `kConvertFrom` reshapes another packed
-  // vector; `kFromPackedArray` and `kFromByteArray` build a string from packed
-  // bits (LRM 6.16) or from a byte unpacked array (LRM 21.3.4.3).
+  // machine-level result in the destination's declared representation, which is
+  // the type the call answers with. `kFromInt` builds a target-shape vector
+  // from a machine integer and `kConvertFrom` reshapes another packed vector;
+  // `kFromPackedArray` and `kFromByteArray` build a string from packed bits
+  // (LRM 6.16) or from a byte unpacked array (LRM 21.3.4.3).
   kFromInt,
   kFromWords,
   kConvertFrom,
@@ -674,16 +674,15 @@ enum class BuiltinFn : std::uint16_t {
   // The opposite direction, under the LRM 5.9 string-literal assignment rules:
   // an integral destination takes the text right-justified, an unpacked byte
   // array takes it left-justified. One factory named on whichever destination
-  // the call qualifies it with; that destination's declared representation
-  // reaches it as an operand naming its type (plus an element count for the
-  // array).
+  // the call answers with; that destination's declared representation reaches
+  // it as an operand naming its type (plus an element count for the array).
   kFromString,
   // LRM 7.6: one unpacked array kind taking another's elements. The three kinds
   // differ in what the destination declares and the source cannot supply -- a
-  // fixed-size array its element count, a queue its bound -- so the destination
-  // qualifies the call and states those as operands, while the elements
-  // themselves cross unchanged because the clause admits the assignment only
-  // where the element types are equivalent. Named rather than left to the
+  // fixed-size array its element count, a queue its bound -- so the call states
+  // those as operands, while the elements themselves cross unchanged because
+  // the clause admits the assignment only where the element types are
+  // equivalent. Named rather than left to the
   // type's own construction because building over an element list carries the
   // same operand count.
   kFromArray,
@@ -708,9 +707,9 @@ enum class BuiltinFn : std::uint16_t {
   // The step that fits a concatenation's parts to a fixed-size unpacked array
   // (LRM 10.10): the parts, accumulated into a dynamic array by the two steps
   // above, adopted into a target whose element count is fixed, which is an
-  // error when the counts differ. The target's type qualifies the call, as it
-  // does for any static factory, so the entry is named for the array it builds
-  // and not for the dynamic array it reads.
+  // error when the counts differ. The call answers with that target, as it does
+  // for any static factory, so the entry is named for the array it builds and
+  // not for the dynamic array it reads.
   kArrayConformSize,
   // A dynamic array sized at run time: empty at its declared element shape,
   // `new[N]`, and `new[N](src)` (LRM 7.5.1). Each is named because the
@@ -718,8 +717,8 @@ enum class BuiltinFn : std::uint16_t {
   // list both carry two operands -- so a target that cannot resolve overloads
   // would have nothing to read. Building one from an element list is not among
   // them: every container builds from a list the same way, so its own type
-  // names that factory. The array's type qualifies the call, as it does for
-  // any static factory.
+  // names that factory. The call answers with the array, as it does for any
+  // static factory.
   kMakeDynamicArrayDefault,
   kMakeDynamicArrayNew,
   kMakeDynamicArrayNewCopy,
@@ -803,7 +802,7 @@ struct Method {
 };
 
 // A factory on the type the entry builds. There is no object to act on, and
-// the call site names that type as the call's qualifier.
+// the type it is reached on is the type of the value the call answers with.
 struct StaticFactory {
   std::string_view identifier;
 };

@@ -103,9 +103,9 @@ result may carry `EnumType` as its MIR type while its runtime representation is 
   value flowing through generic runtime code as a non-`PackedArray` `T`.
 - A backend value renderer that inspects a value's type to decide its runtime representation is
   `EnumType` (the projection to base is already explicit through the integral machinery).
-- A backend render that reads a call's receiver/qualification type to discover which enum it came
-  from, find a descriptor, and synthesize a different call. The call site must already name the
-  intended operation/artifact before rendering (`backend_contract.md`).
+- A backend render that reads the type a call is made at to discover which enum it came from, find a
+  descriptor, and synthesize a different call. The call site must already name the intended
+  operation/artifact before rendering (`backend_contract.md`).
 - An opaque runtime-library helper as the semantic implementation of an enum method
   (`EnumName(value, table)`, `EnumNext(value, table, step)`). That moves enum lowering into the
   library and hides it from LIR/LLVM optimization (`mir.md`).

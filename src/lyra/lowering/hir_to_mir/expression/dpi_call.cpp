@@ -216,11 +216,7 @@ auto MarshalCarrierToSv(
       return mir::Expr{
           .data =
               mir::CallExpr{
-                  .callee =
-                      mir::Direct{
-                          .target = support::BuiltinFn::kFromInt,
-                          .qualification =
-                              mir::TypeQualifier{.type = result_type}},
+                  .callee = mir::Direct{.target = support::BuiltinFn::kFromInt},
                   .arguments = {machine_int, packed_type}},
           .type = result_type};
     }

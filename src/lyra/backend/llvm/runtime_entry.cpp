@@ -474,7 +474,6 @@ auto EntryNamingOf(support::BuiltinFn fn) -> EntryNaming {
     case support::BuiltinFn::kPart:
     case support::BuiltinFn::kPartRef:
     case support::BuiltinFn::kTagMatches:
-    case support::BuiltinFn::kMakeActiveMember:
     case support::BuiltinFn::kRequire:
     case support::BuiltinFn::kSize:
     case support::BuiltinFn::kLen:
@@ -540,16 +539,10 @@ auto EntryNamingOf(support::BuiltinFn fn) -> EntryNaming {
     case support::BuiltinFn::kRound:
     case support::BuiltinFn::kTruncate:
     case support::BuiltinFn::kToBits:
-    case support::BuiltinFn::kFromBits:
     case support::BuiltinFn::kRealValue:
-    case support::BuiltinFn::kFromInt:
-    case support::BuiltinFn::kFromPackedArray:
-    case support::BuiltinFn::kFromByteArray:
-    case support::BuiltinFn::kFromString:
     case support::BuiltinFn::kConformBound:
     case support::BuiltinFn::kArrayConcatElement:
     case support::BuiltinFn::kArrayConcatSpread:
-    case support::BuiltinFn::kArrayConformSize:
     case support::BuiltinFn::kConcat:
     case support::BuiltinFn::kReplicate:
     case support::BuiltinFn::kPow:
@@ -573,8 +566,6 @@ auto EntryNamingOf(support::BuiltinFn fn) -> EntryNaming {
     case support::BuiltinFn::kReductionNand:
     case support::BuiltinFn::kReductionNor:
     case support::BuiltinFn::kReductionXnor:
-    case support::BuiltinFn::kFromBool:
-    case support::BuiltinFn::kFromWords:
     case support::BuiltinFn::kReverse:
     case support::BuiltinFn::kSort:
     case support::BuiltinFn::kRsort:
@@ -595,6 +586,21 @@ auto EntryNamingOf(support::BuiltinFn fn) -> EntryNaming {
     case support::BuiltinFn::kUniqueIndex:
     case support::BuiltinFn::kMap:
       return NamedByValue{};
+
+    // The factories. Each builds a value out of operands that are the material
+    // of one -- a machine integer, a byte array, the text of a string, the
+    // member a union is to hold -- so none of them carries the representation
+    // the entry is realized for, and only what the call answers with does.
+    case support::BuiltinFn::kMakeActiveMember:
+    case support::BuiltinFn::kFromBits:
+    case support::BuiltinFn::kFromInt:
+    case support::BuiltinFn::kFromWords:
+    case support::BuiltinFn::kFromPackedArray:
+    case support::BuiltinFn::kFromByteArray:
+    case support::BuiltinFn::kFromString:
+    case support::BuiltinFn::kFromBool:
+    case support::BuiltinFn::kArrayConformSize:
+      return NamedByResult{};
 
     // LRM 7.6 assignment between unpacked array kinds crosses two container
     // representations and reads the source through the one it actually has, so

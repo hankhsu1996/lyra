@@ -270,28 +270,15 @@ auto ExternalMethodSymbol(
 }  // namespace
 
 auto FunctionLowerer::LowerCallTarget(
-    const mir::Block& block, const mir::Callee& callee, lir::TypeId result_type)
+    const mir::Block& block, const mir::Callee& callee)
     -> diag::Result<lir::CallTarget> {
   return std::visit(
       Overloaded{
           [&](const mir::Direct& d) -> diag::Result<lir::CallTarget> {
-            std::optional<lir::TypeId> qualifier;
-            if (d.qualification.has_value()) {
-              qualifier = std::visit(
-                  Overloaded{[&](const mir::TypeQualifier& q) -> lir::TypeId {
-                    return unit_->TranslateType(q.type);
-                  }},
-                  *d.qualification);
-            }
             return std::visit(
                 Overloaded{
                     [&](const mir::CallableTarget& t)
                         -> diag::Result<lir::CallTarget> {
-                      if (qualifier.has_value()) {
-                        return Unsupported(
-                            "mir_to_lir: a qualified method call is not yet "
-                            "lowerable to LIR");
-                      }
                       return lir::CallTarget{lir::FunctionTarget{
                           .function = unit_->MethodFunction(t.owner, t.slot)}};
                     },
@@ -306,10 +293,8 @@ auto FunctionLowerer::LowerCallTarget(
                     },
                     [&](const support::BuiltinFn& fn)
                         -> diag::Result<lir::CallTarget> {
-                      return lir::CallTarget{lir::BuiltinTarget{
-                          .fn = fn,
-                          .qualifier = qualifier,
-                          .position = d.position}};
+                      return lir::CallTarget{
+                          lir::BuiltinTarget{.fn = fn, .position = d.position}};
                     },
                     [&](const mir::ExternalUnitCallableTarget& t)
                         -> diag::Result<lir::CallTarget> {
@@ -332,8 +317,8 @@ auto FunctionLowerer::LowerCallTarget(
                     }},
                 d.target);
           },
-          [&](const mir::Construct&) -> diag::Result<lir::CallTarget> {
-            return lir::CallTarget{lir::ConstructTarget{.result = result_type}};
+          [](const mir::Construct&) -> diag::Result<lir::CallTarget> {
+            return lir::CallTarget{lir::ConstructTarget{}};
           },
           [&](const mir::Indirect& i) -> diag::Result<lir::CallTarget> {
             auto code = LowerExpr(block, i.code);
@@ -816,9 +801,7 @@ auto FunctionLowerer::AllocateCell(lir::TypeId value_type) -> lir::Operand {
   const lir::TypeId reference = lir::ReferenceToCellOf(
       unit_->Types(), value_type, lir::Mutability::kMutable);
   return Emit(
-      reference,
-      lir::CallInstr{
-          .target = lir::ConstructTarget{.result = reference}, .args = {}});
+      reference, lir::CallInstr{.target = lir::ConstructTarget{}, .args = {}});
 }
 
 auto FunctionLowerer::InitializeCell(lir::Operand reference, lir::Operand value)
@@ -826,9 +809,7 @@ auto FunctionLowerer::InitializeCell(lir::Operand reference, lir::Operand value)
   return Emit(
       unit_->Types().Intern(lir::Type{lir::VoidType{}}),
       lir::CallInstr{
-          .target =
-              lir::BuiltinTarget{
-                  .fn = support::BuiltinFn::kInitialize, .qualifier = {}},
+          .target = lir::BuiltinTarget{.fn = support::BuiltinFn::kInitialize},
           .args = {std::move(reference), std::move(value)}});
 }
 
@@ -1186,9 +1167,7 @@ auto FunctionLowerer::CurrentRuntime() -> lir::Operand {
       unit_->TranslateType(unit_->Mir().builtins.effects),
       lir::CallInstr{
           .target =
-              lir::BuiltinTarget{
-                  .fn = support::BuiltinFn::kCurrentRuntime,
-                  .qualifier = std::nullopt},
+              lir::BuiltinTarget{.fn = support::BuiltinFn::kCurrentRuntime},
           .args = {}});
 }
 
@@ -1731,8 +1710,7 @@ auto FunctionLowerer::LowerObjectConstruction(
   const lir::TypeId handle_type = unit_->TranslateType(type);
   const lir::Operand handle = Emit(
       handle_type,
-      lir::CallInstr{
-          .target = lir::ConstructTarget{.result = handle_type}, .args = {}});
+      lir::CallInstr{.target = lir::ConstructTarget{}, .args = {}});
 
   // A construction carries every argument its constructor takes -- the source
   // wrote the call, so the front end bound it against the declaration and
@@ -1906,7 +1884,7 @@ auto FunctionLowerer::EmitCall(
     const mir::Block& block, const mir::CallExpr& call,
     std::vector<lir::Operand> args, lir::TypeId result_type)
     -> diag::Result<lir::Operand> {
-  auto target = LowerCallTarget(block, call.callee, result_type);
+  auto target = LowerCallTarget(block, call.callee);
   if (!target) {
     return std::unexpected(std::move(target.error()));
   }
@@ -2223,8 +2201,7 @@ auto FunctionLowerer::LowerMutatingCall(
     lir::Operand completion = Emit(
         call_type,
         lir::CallInstr{
-            .target = lir::BuiltinTarget{.fn = fn, .qualifier = std::nullopt},
-            .args = std::move(args)});
+            .target = lir::BuiltinTarget{.fn = fn}, .args = std::move(args)});
     if (!yields_result) {
       return completion;
     }
@@ -2417,10 +2394,9 @@ auto FunctionLowerer::LowerExpr(const mir::Block& block, mir::ExprId id)
             const lir::TypeId closure_type =
                 unit_->ClosureValueType(cl.closure);
             const lir::Operand value = Emit(
-                closure_type,
-                lir::CallInstr{
-                    .target = lir::ConstructTarget{.result = closure_type},
-                    .args = std::move(captures)});
+                closure_type, lir::CallInstr{
+                                  .target = lir::ConstructTarget{},
+                                  .args = std::move(captures)});
             if (!unit_->Mir().types.Get(type).Is<mir::CoroutineType>()) {
               return value;
             }

@@ -154,13 +154,18 @@ struct NamedAlone {};
 
 // The library realizes the operation once per representation of one of the
 // values the call carries, because `size` on a string and `size` on a dynamic
-// array are different code. That value is the one the call qualifies itself
-// with; where it qualifies itself with nothing, `operand` says which argument
-// carries it -- the receiver for an operation on a value, and the destination
-// for one that answers through an argument the call names.
+// array are different code. `operand` says which argument carries it -- the
+// receiver for an operation on a value, and the destination for one that
+// answers through an argument the call names.
 struct NamedByValue {
   std::size_t operand = 0;
 };
+
+// The library realizes the operation once per representation likewise, but the
+// value whose representation names it is the one the call builds: a factory
+// acts on no object and takes no destination, so nothing it is handed carries
+// the representation and only its own result does.
+struct NamedByResult {};
 
 // The operation acts on the capability wrapper an argument reaches rather than
 // on a value it is handed, and the wrappers each define it -- reading what one
@@ -178,8 +183,8 @@ struct NamedByWrapper {};
 struct NamedByStorageDomain {};
 
 // A conversion crosses two representations and its realization depends on both,
-// so neither alone names it: the destination is the one the call qualifies
-// itself with, and the source is its operand's.
+// so neither alone names it: the destination is the value the call builds, and
+// the source is its operand's.
 struct NamedByConversion {};
 
 // The operation has a shape this ABI cannot express, and carries which shape,
@@ -190,8 +195,8 @@ struct NotRealized {
 };
 
 using EntryNaming = std::variant<
-    NamedAlone, NamedByValue, NamedByWrapper, NamedByStorageDomain,
-    NamedByConversion, NotRealized>;
+    NamedAlone, NamedByValue, NamedByResult, NamedByWrapper,
+    NamedByStorageDomain, NamedByConversion, NotRealized>;
 
 // How the entry behind a builtin is named. Total over the builtin set: what the
 // library realizes for a builtin, and what it does not, is a property of the

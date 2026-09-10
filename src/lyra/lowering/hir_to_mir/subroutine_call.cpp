@@ -178,8 +178,7 @@ auto ReadMethodCallee(
         .formals = CalleeFormalsOf(unit_lowerer, ext->interface),
         .direct =
             mir::Direct{
-                .target = unit_lowerer.MakeExternalMethodTarget(ext->target),
-                .qualification = std::nullopt},
+                .target = unit_lowerer.MakeExternalMethodTarget(ext->target)},
         .slot = std::nullopt};
     if (ext->slot.has_value()) {
       facts.slot = unit_lowerer.MakeExternalVirtualSlot(*ext->slot);
@@ -201,8 +200,7 @@ auto ReadMethodCallee(
       .formals = CalleeFormalsOf(unit_lowerer, decl),
       .direct =
           mir::Direct{
-              .target = mir::CallableTarget{.owner = owner, .slot = slot},
-              .qualification = std::nullopt},
+              .target = mir::CallableTarget{.owner = owner, .slot = slot}},
       .slot = signature.virtual_dispatch.transform(
           [&](const mir::VirtualDispatchRole& role) {
             return CanonicalVirtualSlot(owner, slot, role);
@@ -520,9 +518,7 @@ auto EmitSubroutineCall(
             return ResolvedCallee{
                 .callee =
                     mir::Direct{
-                        .target = named.callee.target,
-                        .receiver = *handle_or,
-                        .qualification = named.callee.qualification},
+                        .target = named.callee.target, .receiver = *handle_or},
                 .leading = std::nullopt};
           },
           [&](const DispatchedCallee& dispatched)

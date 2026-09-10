@@ -335,16 +335,17 @@ enough to warrant its own focused review.
       `RenderExprNatural` split and `ProducesPackedArrayRef` predicate are gone.
 
 - [x] R25 -- **Closed: both carve-outs resolved.** The two value-query families this entry set aside
-      as not fitting the generic `(receiver).name(args)` member-call rule are both settled. Enum
-      type-static methods (`first` / `last` / `num`, no receiver -- the type qualifier is part of
-      the symbol identity) lower to the `BuiltinStaticCallee` arm R29 introduced and render as
-      `Enum::method(args)`. `$isunknown` needs no special type-static / constant-fold path: it is
-      the generic instance built-in call `(x).IsUnknown()` returning the SV `bit` type (1-bit
-      `PackedArray`, LRM 20.9), now wired end to end -- recognized at AST-to-HIR by
-      `KnownSystemName::IsUnknown`, lowered through the context-free call family in both procedural
-      and continuous-assign positions (`../decisions/context-free-call-lowering.md`). The
-      cross-cutting value-model (SV-typed runtime signatures, the representation bridge inside the
-      method body, the backend reading the stated result type) is settled.
+      as not fitting the generic `(receiver).name(args)` member-call rule are both settled. An
+      enumerated type's methods (`first` / `last` / `num`, no receiver) are answered from the
+      enumeration's own declared members rather than by a runtime entry, so the call the source
+      wrote reaches a body the lowering synthesizes for that enumeration. `$isunknown` needs no
+      special type-associated or constant-fold path: it is the generic instance built-in call
+      `(x).IsUnknown()` returning the SV `bit` type (1-bit `PackedArray`, LRM 20.9), now wired end
+      to end -- recognized at AST-to-HIR by `KnownSystemName::IsUnknown`, lowered through the
+      context-free call family in both procedural and continuous-assign positions
+      (`../decisions/context-free-call-lowering.md`). The cross-cutting value-model (SV-typed
+      runtime signatures, the representation bridge inside the method body, the backend reading the
+      stated result type) is settled.
 
 - [x] R26 -- Runtime container protocols are pinned as explicit C++20 concepts in a single
       value-layer concept header; each container `static_assert`s every protocol it satisfies. Slice
@@ -365,10 +366,9 @@ enough to warrant its own focused review.
       separate `Writable` concept: the pair belongs with the read-side concept it shadows.
 
 - [x] R29 -- Built-in method calls and runtime entries carry one flat closed-namespace identifier
-      shared between HIR and MIR. Two MIR callee arms (instance, type-namespace-qualified static)
-      replace the per-family variant. The receiver's MIR type drives backend calling-convention
-      mechanically; SV-side `$isunknown` returns the SV `bit` type so no host-bool lift survives at
-      the backend. See `decisions/builtin-call-identity.md`.
+      shared between HIR and MIR, replacing the per-family variant. The receiver's MIR type drives
+      backend calling-convention mechanically; SV-side `$isunknown` returns the SV `bit` type so no
+      host-bool lift survives at the backend. See `decisions/builtin-call-identity.md`.
 
 - [x] R30 -- **Runtime effects as generic calls: the closure-bearing subset** (carve-out of R20,
       same decision). The `$strobe` family and the synthesized non-blocking-assignment and
@@ -588,17 +588,16 @@ enough to warrant its own focused review.
       field that no backend's realization reads, or that restates what the node's structural context
       already fixes") be violated -- the LLVM backend's realization does not consult the arm; for
       the C++ backend, instance-form / free-form is a per-id render fact, not structure. Landed as:
-      `Callee = variant<Direct, Indirect, Construct>`, where
-      `Direct { target, qualification: optional<ScopeQualifier> }`. `target` is the symbol identity,
-      which `mechanical-translation.md` T11 unifies into one space, and `qualification` names the
-      scope a source-level `::` resolved through. `MethodRef`'s `hops` field retires -- the receiver
-      becomes an explicit expression the call carries, and its type pins the enclosing class whose
-      arena names the callable. Render mode follows the callee: a receiver drives the instance form,
-      a qualification the type-qualified one, and neither the free form, whose namespace is per-id
-      backend metadata with no MIR-level meaning. The `decisions/builtin-call-identity.md` paragraph
-      that justified the instance / static / free split as "structural at MIR" for backend
-      convenience is rewritten -- the split was an invariant-10 violation, not a structural fact.
-      Reserves the seat for `Virtual` (R8e) without inventing it now: gated on R47, a future
+      `Callee = variant<Direct, Indirect, Construct>`, where a direct call carries the symbol
+      identity -- which `mechanical-translation.md` T11 unifies into one space -- and the object it
+      dispatches on, where it has one. `MethodRef`'s `hops` field retires -- the receiver becomes an
+      explicit expression the call carries, and its type pins the enclosing class whose arena names
+      the callable. Render mode follows the callee: a receiver drives the instance form, and a
+      callee that binds no object is spelled from its own declaration, which is per-id backend
+      metadata with no MIR-level meaning. The `decisions/builtin-call-identity.md` paragraph that
+      justified the instance / static / free split as "structural at MIR" for backend convenience is
+      rewritten -- the split was an invariant-10 violation, not a structural fact. Reserves the seat
+      for `Virtual` (R8e) without inventing it now: gated on R47, a future
       `Virtual { slot, static_receiver_type }` arm slots in as an additional `Callee` arm with no
       change to the others.
 

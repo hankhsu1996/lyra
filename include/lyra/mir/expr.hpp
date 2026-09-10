@@ -144,20 +144,6 @@ struct IncDecExpr {
   ExprId target;
 };
 
-// A spelling / scope qualifier the call site provides at the point of
-// invocation -- the namespace path a direct call resolves through, exactly
-// the role `MyEnum::` plays in `MyEnum::first()` or `PackedArray::` in
-// `PackedArray::FromInt(...)`. Distinct from the symbol's declaration owner
-// (which the target's metadata knows): a qualifier is a property of this
-// call, not of the symbol. A qualifier is a path in general -- a package name
-// (LRM 26), or a package and then a type -- of which only the type form is
-// lowered, which is why one arm carries it.
-struct TypeQualifier {
-  TypeId type;
-};
-
-using ScopeQualifier = std::variant<TypeQualifier>;
-
 // Identity of a concrete callable at a call site: the class whose callable
 // arena declares (or implements) it, and the slot within that arena. Owner is
 // the declaring class, not the receiver's class; the two coincide when the
@@ -270,7 +256,6 @@ using DirectTarget = std::variant<
 struct Direct {
   DirectTarget target;
   std::optional<ExprId> receiver = std::nullopt;
-  std::optional<ScopeQualifier> qualification = std::nullopt;
   std::optional<base::ComponentIndex> position = std::nullopt;
 };
 
@@ -784,8 +769,7 @@ struct Expr {
 }
 
 // An active-member value whose live member is the one at `index`, carrying
-// `value`. Reached on the type it builds, which is what the call qualifies
-// itself with.
+// `value`.
 [[nodiscard]] inline auto MakeActiveMemberExpr(
     ExprId value, base::ComponentIndex index, TypeId built) -> Expr {
   return Expr{
@@ -794,7 +778,6 @@ struct Expr {
               .callee =
                   Direct{
                       .target = support::BuiltinFn::kMakeActiveMember,
-                      .qualification = TypeQualifier{.type = built},
                       .position = index},
               .arguments = {value}},
       .type = built};

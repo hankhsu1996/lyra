@@ -366,8 +366,30 @@ cross-check predicts. This file owns only which instances are known and what is 
 
 ## Small and mechanical
 
-- [ ] T15 -- A backend meeting IR it has not implemented returns the recoverable failure the error
-      policy prescribes rather than reporting a compiler bug.
+- [x] T15 -- A backend meeting IR it has not implemented returns the recoverable failure the error
+      policy prescribes rather than reporting a compiler bug. Of the sixty-two refusals the two
+      backends and the MIR-to-LIR lowering carry between them, sixty-one state an invariant the
+      compiler itself established and are compiler-bug reports correctly. The one that named an
+      operation not yet carried out was not an unimplemented case either: it guarded a state MIR has
+      no producer for, and both consumers of that state guarded it, one calling it a bug and the
+      other a refusal -- which is the cross-check's own signature, and here it was pointing at
+      something neither of them could see.
+
+      A call carried the scope its callee is reached on beside the type of the value it answers
+      with. Every producer of that scope named a static factory, which the runtime declares on the
+      type it builds -- so the two were one type, stated twice, and each backend chose which of them
+      to read. The second statement is gone from both IR layers, along with three refusals over
+      states nothing reaches: two that policed a scope against a target that never carries one, and
+      one that answered an absent scope on a factory that always has a type. The execution backend
+      had a fourth, inside a rule reading "the value the call qualifies itself with, or an argument
+      where it qualifies itself with nothing" -- one question answered twice at one site, now the
+      naming set's own alternative, since a factory takes no object and no destination and is named
+      by what it builds.
+
+      The absent producer was itself a finding. The builtin-method lowering branched on whether the
+      entry was a factory to decide which scope to state, and the front end mints exactly one
+      factory, which is routed to a conversion path before that branch is reached -- so the branch
+      had never run. It went with the scope it existed to state.
 
 ## Cross-references
 

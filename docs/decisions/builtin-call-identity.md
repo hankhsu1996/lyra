@@ -44,21 +44,23 @@ synthesized callable to home on, and neither exists where names are resolved. So
 shape the source wrote, carried by a `SubroutineRef` arm of their own over a six-valued HIR-local
 identity. Nothing below HIR names them.
 
-MIR's callee for a built-in is one shape -- `Direct { target = BuiltinFn, qualification }` -- shared
-with user-method calls, where `target` is the symbol identity (several alternatives today, one
-identity space once callable identity is unified) and `qualification` is
-`Some(TypeQualifier{TypeId})` when the call site provides a type-namespace qualifier (e.g.
-`MyEnum::first`, `PackedArray::FromInt`) or `None` otherwise (instance calls, where the receiver is
-`args[0]`; or runtime helpers with no source-level qualifier). The instance / static / free
-distinction is **not** structural at MIR: at the generic-language layer these are one direct
-invocation, differing only in whether the callee's signature declares a self formal (driving the
-`args[0]`-as-receiver convention at any call site) and whether the call site provides a scope
-qualifier. The split into `BuiltinFnCallee` / `BuiltinStaticCallee` / `FreeFnCallee` arms was a
-backend-convenience pre-classification that violated `mir.md` invariant 10 (a field a backend's
-realization can ignore, restating what the id and signature already fix), and is gone.
+MIR's callee for a built-in is one shape -- `Direct { target = BuiltinFn }` -- shared with
+user-method calls, where `target` is the symbol identity (several alternatives today, one identity
+space once callable identity is unified). The instance / static / free distinction is **not**
+structural at MIR: at the generic-language layer these are one direct invocation, differing only in
+whether the callee binds an object. The split into `BuiltinFnCallee` / `BuiltinStaticCallee` /
+`FreeFnCallee` arms was a backend-convenience pre-classification that violated `mir.md` invariant 10
+(a field a backend's realization can ignore, restating what the id and signature already fix), and
+is gone.
 
-HIR-to-MIR is a near-identity translation: pass the `BuiltinFn` through as `Direct::target`, and set
-`Direct::qualification` to the SV-type qualifier the source named (when one was named).
+The scope a static entry is reached on is not carried either, for the same reason. A factory is
+declared on the type it builds, and the value a call to it answers with is of that type, so the
+call's own type already states it -- a second statement at the call site is a fact with two
+producers and nothing keeping them in step. No source-level qualifier survives to MIR to be carried
+instead: the one construct that writes one, an enumerated type's methods, is answered above MIR
+entirely.
+
+HIR-to-MIR is a near-identity translation: pass the `BuiltinFn` through as `Direct::target`.
 
 AST-to-HIR still dispatches by receiver type to choose which name-to-id lookup table to query --
 `first` on an associative array resolves to `kAssocFirst`, and `first` on an enumeration resolves to
@@ -228,9 +230,8 @@ that row names. No render-side special case for any entry.
   carries an arm for an operation it cannot meet; an operation the front end answers is named where
   it is answered instead.
 - HIR-to-MIR's built-in method translation is near-identity: it passes the `BuiltinFn` id through as
-  `Direct::target` and sets `Direct::qualification` only for a type-static builtin; the instance /
-  static / free distinction is read from the id and its signature at render, not carried as a Callee
-  arm.
+  `Direct::target`; the instance / static / free distinction is read from the id and its signature
+  at render, not carried as a Callee arm.
 - AST-to-HIR keeps its receiver-type dispatch. The per-receiver name tables return
   `support::BuiltinFn` directly. Adding a new receiver type (e.g. user-defined class methods) is a
   new name table, not a new HIR-level enum or variant arm.

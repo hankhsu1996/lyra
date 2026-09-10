@@ -297,10 +297,7 @@ auto MakeFromBoolCall(mir::ExprId bool_expr_id, mir::TypeId result_type)
   return mir::Expr{
       .data =
           mir::CallExpr{
-              .callee =
-                  mir::Direct{
-                      .target = support::BuiltinFn::kFromBool,
-                      .qualification = mir::TypeQualifier{.type = result_type}},
+              .callee = mir::Direct{.target = support::BuiltinFn::kFromBool},
               .arguments = {bool_expr_id}},
       .type = result_type};
 }

@@ -95,10 +95,7 @@ auto BuildTagTest(
     return mir::Expr{
         .data =
             mir::CallExpr{
-                .callee =
-                    mir::Direct{
-                        .target = support::BuiltinFn::kFromBool,
-                        .qualification = mir::TypeQualifier{.type = bit1}},
+                .callee = mir::Direct{.target = support::BuiltinFn::kFromBool},
                 .arguments = {is_tagged}},
         .type = bit1};
   }

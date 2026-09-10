@@ -192,9 +192,7 @@ auto LowerHirConcatExpr(
             mir::CallExpr{
                 .callee =
                     mir::Direct{
-                        .target = support::BuiltinFn::kArrayConformSize,
-                        .qualification =
-                            mir::TypeQualifier{.type = result_type}},
+                        .target = support::BuiltinFn::kArrayConformSize},
                 .arguments = {dyn_id, count_id}},
         .type = result_type};
   }
@@ -541,10 +539,7 @@ auto LowerHirDynamicArrayNewExpr(
   return mir::Expr{
       .data =
           mir::CallExpr{
-              .callee =
-                  mir::Direct{
-                      .target = form,
-                      .qualification = mir::TypeQualifier{.type = result_type}},
+              .callee = mir::Direct{.target = form},
               .arguments = std::move(args)},
       .type = result_type};
 }

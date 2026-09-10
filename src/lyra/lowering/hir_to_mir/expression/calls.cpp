@@ -123,26 +123,9 @@ auto LowerAssociativeTraversal(
 }
 
 // True iff the library declares the entry on the type it builds, so the call
-// dispatches on no object and names that type as its qualifier instead.
+// dispatches on no object at all.
 auto IsStaticFactory(const support::RuntimeEntry& entry) -> bool {
   return std::holds_alternative<support::StaticFactory>(entry.declaration);
-}
-
-// Translates a HIR builtin-method ref to its MIR callee. The identifier is the
-// flat `support::BuiltinFn`; what varies is what the call dispatches on -- the
-// type a factory builds, which the call site qualifies it with, and the
-// receiver value for every other entry.
-auto MakeBuiltinMirCallee(
-    const UnitLowerer& unit_lowerer, const hir::BuiltinMethodRef& b,
-    const support::RuntimeEntry& entry, hir::TypeId hir_dispatch_type,
-    std::optional<mir::ExprId> receiver) -> mir::Direct {
-  if (IsStaticFactory(entry)) {
-    return mir::Direct{
-        .target = b.method,
-        .qualification = mir::TypeQualifier{
-            .type = unit_lowerer.TranslateType(hir_dispatch_type)}};
-  }
-  return mir::Direct{.target = b.method, .receiver = receiver};
 }
 
 // The LRM 7.12 family shares one closure shape across every unpacked-array
@@ -407,10 +390,10 @@ auto LowerSystemSubroutineCall(
 
 // Built-in method dispatch (LRM 6.16 / 7.9 / 7.10 / 7.12 / 15.5).
 // AST -> HIR puts a type-bearing expression at `c.arguments[0]`: for an
-// instance call it is the receiver itself, for a call on a factory of the type
-// it builds it is a discardable bearer, and that type is what the callee
-// qualifies the factory with. Either way, the for-loop below skips index 0 and
-// starts the real user-argument scan at index 1.
+// instance call it is the receiver itself, and for a call on a factory of the
+// type it builds it is a discardable bearer, the built type being the call's
+// own. Either way, the for-loop below skips index 0 and starts the real
+// user-argument scan at index 1.
 template <ExprLowerer Lowerer>
 auto LowerBuiltinMethodCall(
     Lowerer& lowerer, WalkFrame frame, const hir::CallExpr& c,
@@ -446,10 +429,10 @@ auto LowerBuiltinMethodCall(
 
   auto& block = *frame.current_block;
   // A static call dispatches on a type, so `args[0]` is a discardable
-  // type-bearer and the type-namespace qualifier rides on the callee. Every
-  // other call dispatches on `args[0]`: a method that changes the object it
-  // acts on takes the place that object stands in, so the change lands where
-  // the source named it, and one that does not consumes a value.
+  // type-bearer and nothing is lowered from it. Every other call dispatches on
+  // `args[0]`: a method that changes the object it acts on takes the place that
+  // object stands in, so the change lands where the source named it, and one
+  // that does not consumes a value.
   std::optional<mir::ExprId> receiver;
   if (!IsStaticFactory(entry)) {
     if (entry.mutates_receiver) {
@@ -464,8 +447,7 @@ auto LowerBuiltinMethodCall(
       receiver = block.exprs.Add(*std::move(recv_or));
     }
   }
-  const mir::Direct mir_callee =
-      MakeBuiltinMirCallee(unit_lowerer, b, entry, hir_dispatch_type, receiver);
+  const mir::Direct mir_callee{.target = b.method, .receiver = receiver};
 
   std::vector<mir::ExprId> args;
   args.reserve(c.arguments.size());
@@ -571,8 +553,7 @@ auto LowerImportedMethodCall(
                   mir::Direct{
                       .target =
                           mir::ImportedRuntimeCallTarget{.method = m.method},
-                      .receiver = receiver,
-                      .qualification = std::nullopt},
+                      .receiver = receiver},
               .arguments = std::move(args)},
       .type = result_type};
 }

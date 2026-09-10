@@ -50,10 +50,7 @@ auto BuildArrayFromArrayCall(
   return mir::Expr{
       .data =
           mir::CallExpr{
-              .callee =
-                  mir::Direct{
-                      .target = support::BuiltinFn::kFromArray,
-                      .qualification = mir::TypeQualifier{.type = dst_type}},
+              .callee = mir::Direct{.target = support::BuiltinFn::kFromArray},
               .arguments = std::move(arguments)},
       .type = dst_type};
 }
@@ -67,10 +64,7 @@ auto MakeRealFactoryCall(
   return mir::Expr{
       .data =
           mir::CallExpr{
-              .callee =
-                  mir::Direct{
-                      .target = entry,
-                      .qualification = mir::TypeQualifier{.type = dst_type}},
+              .callee = mir::Direct{.target = entry},
               .arguments = {operand_id}},
       .type = dst_type};
 }
@@ -99,10 +93,7 @@ auto BuildPackedArrayFromInt(
   return mir::Expr{
       .data =
           mir::CallExpr{
-              .callee =
-                  mir::Direct{
-                      .target = support::BuiltinFn::kFromInt,
-                      .qualification = mir::TypeQualifier{.type = dst_type}},
+              .callee = mir::Direct{.target = support::BuiltinFn::kFromInt},
               .arguments = {int_value, packed_type}},
       .type = dst_type};
 }
@@ -118,10 +109,7 @@ auto BuildPackedArrayConvertFrom(
   return mir::Expr{
       .data =
           mir::CallExpr{
-              .callee =
-                  mir::Direct{
-                      .target = support::BuiltinFn::kConvertFrom,
-                      .qualification = mir::TypeQualifier{.type = dst_type}},
+              .callee = mir::Direct{.target = support::BuiltinFn::kConvertFrom},
               .arguments = {src_id, packed_type}},
       .type = dst_type};
 }
@@ -134,12 +122,7 @@ auto MakeStringFromFactory(
   return mir::Expr{
       .data =
           mir::CallExpr{
-              .callee =
-                  mir::Direct{
-                      .target = id,
-                      .qualification =
-                          mir::TypeQualifier{.type = unit.builtins.string}},
-              .arguments = {src_id}},
+              .callee = mir::Direct{.target = id}, .arguments = {src_id}},
       .type = unit.builtins.string};
 }
 
@@ -254,9 +237,7 @@ auto BuildValueConversion(
         .data =
             mir::CallExpr{
                 .callee =
-                    mir::Direct{
-                        .target = support::BuiltinFn::kFromString,
-                        .qualification = mir::TypeQualifier{.type = dst_type}},
+                    mir::Direct{.target = support::BuiltinFn::kFromString},
                 .arguments = {operand_id, packed_type}},
         .type = dst_type};
   }
@@ -277,9 +258,7 @@ auto BuildValueConversion(
         .data =
             mir::CallExpr{
                 .callee =
-                    mir::Direct{
-                        .target = support::BuiltinFn::kFromString,
-                        .qualification = mir::TypeQualifier{.type = dst_type}},
+                    mir::Direct{.target = support::BuiltinFn::kFromString},
                 .arguments = {operand_id, element_type, count}},
         .type = dst_type};
   }
@@ -300,9 +279,7 @@ auto BuildValueConversion(
         .data =
             mir::CallExpr{
                 .callee =
-                    mir::Direct{
-                        .target = support::BuiltinFn::kFromPackedArray,
-                        .qualification = mir::TypeQualifier{.type = dst_type}},
+                    mir::Direct{.target = support::BuiltinFn::kFromPackedArray},
                 .arguments = {operand_id, element_type, count}},
         .type = dst_type};
   }

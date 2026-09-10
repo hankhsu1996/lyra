@@ -278,9 +278,7 @@ auto BuildDefaultValueExpr(
                         .callee =
                             mir::Direct{
                                 .target = support::BuiltinFn::
-                                    kMakeDynamicArrayDefault,
-                                .qualification =
-                                    mir::TypeQualifier{.type = type}},
+                                    kMakeDynamicArrayDefault},
                         .arguments = {element_default}},
                 .type = type};
           },

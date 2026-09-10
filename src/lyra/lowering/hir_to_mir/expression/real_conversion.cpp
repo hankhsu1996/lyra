@@ -40,11 +40,7 @@ auto LowerRealConversionCall(
     return mir::Expr{
         .data =
             mir::CallExpr{
-                .callee =
-                    mir::Direct{
-                        .target = support::BuiltinFn::kFromBits,
-                        .qualification =
-                            mir::TypeQualifier{.type = result_type}},
+                .callee = mir::Direct{.target = support::BuiltinFn::kFromBits},
                 .arguments = {bits}},
         .type = result_type};
   }
@@ -65,10 +61,7 @@ auto LowerRealConversionCall(
   return mir::Expr{
       .data =
           mir::CallExpr{
-              .callee =
-                  mir::Direct{
-                      .target = support::BuiltinFn::kFromInt,
-                      .qualification = mir::TypeQualifier{.type = result_type}},
+              .callee = mir::Direct{.target = support::BuiltinFn::kFromInt},
               .arguments = {read_out, packed_type}},
       .type = result_type};
 }

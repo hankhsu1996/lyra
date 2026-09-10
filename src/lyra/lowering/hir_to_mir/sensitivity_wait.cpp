@@ -130,12 +130,7 @@ auto DeclareObservation(
       mir::Expr{
           .data =
               mir::CallExpr{
-                  .callee =
-                      mir::Direct{
-                          .target = entry,
-                          .qualification =
-                              mir::TypeQualifier{
-                                  .type = unit.builtins.observation}},
+                  .callee = mir::Direct{.target = entry},
                   .arguments = std::move(arguments)},
           .type = unit.builtins.observation});
   const mir::LocalId local = frame.bindings->DeclareAnonymous(

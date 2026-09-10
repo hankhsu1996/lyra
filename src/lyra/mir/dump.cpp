@@ -568,18 +568,6 @@ class MirDumper {
         target);
   }
 
-  [[nodiscard]] static auto FormatQualification(
-      const std::optional<ScopeQualifier>& q) -> std::string {
-    if (!q.has_value()) return "";
-    return std::visit(
-        Overloaded{
-            [](const TypeQualifier& tq) -> std::string {
-              return std::format(", qualification=Type[{}]", tq.type.value);
-            },
-        },
-        *q);
-  }
-
   [[nodiscard]] auto FormatCallee(const Callee& callee) const -> std::string {
     return std::visit(
         Overloaded{
@@ -593,8 +581,8 @@ class MirDumper {
                       ? std::format(" at={}", d.position->value)
                       : std::string{};
               return std::format(
-                  "Direct[{}{}{}{}]", FormatDirectTarget(d.target), receiver,
-                  position, FormatQualification(d.qualification));
+                  "Direct[{}{}{}]", FormatDirectTarget(d.target), receiver,
+                  position);
             },
             [](const Indirect& i) -> std::string {
               return std::format("Indirect[code=Expr[{}]]", i.code.value);

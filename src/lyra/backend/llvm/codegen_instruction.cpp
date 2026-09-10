@@ -596,7 +596,7 @@ auto CodeGenFunction::LowerCall(
   // The entry is resolved against what it is actually handed, so this target's
   // own encoding of the call is already in the argument list by the time the
   // entry's signature is read off it.
-  auto args = CallArgs(call, std::move(operands));
+  auto args = CallArgs(call, result_type, std::move(operands));
   if (!args) {
     return std::unexpected(std::move(args.error()));
   }
@@ -624,9 +624,10 @@ auto CodeGenFunction::Entry(
 }
 
 auto CodeGenFunction::CallArgs(
-    const lir::CallInstr& call, std::vector<llvm::Value*> operands)
+    const lir::CallInstr& call, lir::TypeId result_type,
+    std::vector<llvm::Value*> operands)
     -> diag::Result<std::vector<llvm::Value*>> {
-  auto encoding = EncodingOf(call);
+  auto encoding = EncodingOf(call, result_type);
   if (!encoding) {
     return std::unexpected(std::move(encoding.error()));
   }
@@ -739,13 +740,13 @@ auto CodeGenFunction::ResolveCallee(
             return llvm::FunctionCallee(
                 CallSignature(module_->Types().Map(result_type), args), body);
           },
-          [&](const lir::ConstructTarget& t)
+          [&](const lir::ConstructTarget&)
               -> diag::Result<llvm::FunctionCallee> {
-            auto construction = ConstructionOf(call, t.result);
+            auto construction = ConstructionOf(call, result_type);
             if (!construction) {
               return std::unexpected(std::move(construction.error()));
             }
-            return Entry(construction->symbol, t.result, args);
+            return Entry(construction->symbol, result_type, args);
           },
           // A foreign symbol is declared, never defined: the host resolves it.
           // The boundary already marshaled its operands and result to the
@@ -1316,26 +1317,14 @@ auto CodeGenFunction::LowerNullConst(const lir::NullConst& constant)
 
 // The entry behind a builtin. What names it is the operation, plus -- where the
 // library realizes an operation once per value representation -- the
-// representation of the value it acts on. Which of those the builtin takes is
-// the builtin's own property, so it is read from its identity.
+// representation of a value the call carries, which is one it is handed for an
+// operation on a value and the one it answers with for a factory. Which of
+// those the builtin takes is the builtin's own property, so it is read from its
+// identity.
 auto CodeGenFunction::BuiltinCallee(
     const lir::BuiltinTarget& target, const lir::CallInstr& call,
     lir::TypeId result_type, std::span<llvm::Value* const> args)
     -> diag::Result<llvm::FunctionCallee> {
-  // The value that names an entry is the one the call qualifies itself with,
-  // or the argument at the position the builtin states where it qualifies
-  // itself with nothing.
-  const auto acted_on = [&](std::size_t operand) -> lir::TypeId {
-    if (target.qualifier.has_value()) {
-      return *target.qualifier;
-    }
-    if (operand >= call.args.size()) {
-      throw InternalError(
-          "llvm codegen: an entry named by a value names it through a "
-          "qualifier or an argument, and this call has neither");
-    }
-    return OperandType(call.args.at(operand));
-  };
   const auto over = [&](diag::Result<support::ValueDomain> domain)
       -> diag::Result<llvm::FunctionCallee> {
     if (!domain) {
@@ -1349,7 +1338,10 @@ auto CodeGenFunction::BuiltinCallee(
             return Entry(RuntimeSymbol(target.fn), result_type, args);
           },
           [&](const NamedByValue& named) -> diag::Result<llvm::FunctionCallee> {
-            return over(DomainOf(acted_on(named.operand)));
+            return over(DomainOf(OperandType(call.args.at(named.operand))));
+          },
+          [&](const NamedByResult&) -> diag::Result<llvm::FunctionCallee> {
+            return over(DomainOf(result_type));
           },
           [&](const NamedByWrapper&) -> diag::Result<llvm::FunctionCallee> {
             auto wrapper = WrapperBehind(OperandType(call.args.at(0)));
@@ -1365,7 +1357,7 @@ auto CodeGenFunction::BuiltinCallee(
             return over(StorageDomainBehind(OperandType(call.args.at(0))));
           },
           [&](const NamedByConversion&) -> diag::Result<llvm::FunctionCallee> {
-            auto destination = DomainOf(acted_on(0));
+            auto destination = DomainOf(result_type);
             if (!destination) {
               return std::unexpected(std::move(destination.error()));
             }
@@ -1729,16 +1721,17 @@ auto CodeGenFunction::InItsOwnDomain(
 }
 
 auto CodeGenFunction::BuiltinErasedOperand(
-    const lir::BuiltinTarget& target, const lir::CallInstr& call) const
+    const lir::BuiltinTarget& target, const lir::CallInstr& call,
+    lir::TypeId result_type) const
     -> diag::Result<std::optional<ErasedArgument>> {
   const support::RuntimeEntry entry = support::RuntimeEntryOf(target.fn);
   // A value put into a positional part crosses in the domain the part states,
   // where the value it goes into holds no prototype for that part. It is the
   // call's last operand, everything before it naming which part. The value it
-  // goes into is the type the call is qualified with, because an entry that
-  // builds one takes no object to read it from.
+  // goes into is what the call answers with, because an entry that builds one
+  // takes no object to read it from.
   if (target.fn == support::BuiltinFn::kMakeActiveMember) {
-    auto part = PartDomain(*target.qualifier, *target.position);
+    auto part = PartDomain(result_type, *target.position);
     if (!part) {
       return std::unexpected(std::move(part.error()));
     }
@@ -1763,7 +1756,8 @@ auto CodeGenFunction::BuiltinErasedOperand(
   return InItsOwnDomain(call, *entry.index_operand);
 }
 
-auto CodeGenFunction::EncodingOf(const lir::CallInstr& call) const
+auto CodeGenFunction::EncodingOf(
+    const lir::CallInstr& call, lir::TypeId result_type) const
     -> diag::Result<CallEncoding> {
   using Encoded = diag::Result<CallEncoding>;
   // Only a target named by something other than a signature encodes anything: a
@@ -1775,14 +1769,14 @@ auto CodeGenFunction::EncodingOf(const lir::CallInstr& call) const
   return std::visit(
       Overloaded{
           [&](const lir::BuiltinTarget& t) -> Encoded {
-            auto erased = BuiltinErasedOperand(t, call);
+            auto erased = BuiltinErasedOperand(t, call, result_type);
             if (!erased) {
               return std::unexpected(std::move(erased.error()));
             }
             return CallEncoding{.erased = *erased};
           },
-          [&](const lir::ConstructTarget& t) -> Encoded {
-            auto construction = ConstructionOf(call, t.result);
+          [&](const lir::ConstructTarget&) -> Encoded {
+            auto construction = ConstructionOf(call, result_type);
             if (!construction) {
               return std::unexpected(std::move(construction.error()));
             }

@@ -163,7 +163,9 @@ class CodeGenFunction {
 
   // What a call's entry is handed, given the operands the call states. Nothing
   // here is anything the call means; it is this target's encoding of it.
-  auto CallArgs(const lir::CallInstr& call, std::vector<llvm::Value*> operands)
+  auto CallArgs(
+      const lir::CallInstr& call, lir::TypeId result_type,
+      std::vector<llvm::Value*> operands)
       -> diag::Result<std::vector<llvm::Value*>>;
 
   // The operands a call states, put into the form its entry takes them in.
@@ -189,14 +191,16 @@ class CodeGenFunction {
     std::optional<ErasedArgument> erased = std::nullopt;
     OperandForm operand_form = OperandsAsStated{};
   };
-  [[nodiscard]] auto EncodingOf(const lir::CallInstr& call) const
+  [[nodiscard]] auto EncodingOf(
+      const lir::CallInstr& call, lir::TypeId result_type) const
       -> diag::Result<CallEncoding>;
 
   // The erased operand of a call on a library entry, which is the one target
   // whose three roles -- a result prototype, a spread part, a coordinate -- are
   // read off the entry's own declaration.
   [[nodiscard]] auto BuiltinErasedOperand(
-      const lir::BuiltinTarget& target, const lir::CallInstr& call) const
+      const lir::BuiltinTarget& target, const lir::CallInstr& call,
+      lir::TypeId result_type) const
       -> diag::Result<std::optional<ErasedArgument>>;
 
   // The operand at one position, boxed into the domain its own type names.

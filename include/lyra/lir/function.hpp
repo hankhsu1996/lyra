@@ -133,18 +133,13 @@ using Operand = std::variant<
     Use, IntConst, StrConst, RealConst, NullConst, BoolConst, PackedTypeRef,
     FuncRef, StaticRef>;
 
-// A runtime-library entry. A static factory is named by its type namespace as
-// well as its function -- `String::FromPackedArray` and `PackedArray::FromInt`
-// are different entries of one `fn` -- so the qualifying type rides the target.
-// It is absent for an entry that takes a receiver, whose type the receiver
-// already names.
-// `position` names the part the entry acts on where the call itself fixes it,
-// carried on the callee rather than among the arguments because the part named
-// has a type of its own. A target whose calls take only values writes it as one
-// more argument; one that resolves types writes it where it resolves them.
+// A runtime-library entry. `position` names the part the entry acts on where
+// the call itself fixes it, carried on the callee rather than among the
+// arguments because the part named has a type of its own. A target whose calls
+// take only values writes it as one more argument; one that resolves types
+// writes it where it resolves them.
 struct BuiltinTarget {
   support::BuiltinFn fn;
-  std::optional<TypeId> qualifier;
   std::optional<base::ComponentIndex> position = std::nullopt;
 };
 
@@ -200,13 +195,12 @@ struct IndirectTarget {
   Operand callee;
 };
 
-// The type the call builds a value of, which is the whole identity: a type has
-// one way to come into existence, so naming it names the entry. A wrapper that
-// owns what it points at brings the pointee into existence along with itself,
-// which is the same one way seen from the owner.
-struct ConstructTarget {
-  TypeId result;
-};
+// The one way the value's type comes into existence, which is the whole
+// identity -- and that type is what the call answers with, so the target names
+// nothing further. A wrapper that owns what it points at brings the pointee
+// into existence along with itself, which is that same one way seen from the
+// owner.
+struct ConstructTarget {};
 
 // A function this unit does not compile, called by its linkage name -- a body
 // another compilation unit emits, or a DPI-C import's foreign symbol (LRM
