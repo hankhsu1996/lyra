@@ -44,6 +44,7 @@ class HierarchicalReference;
 class InterfacePortSymbol;
 class ModportPortSymbol;
 class Scope;
+class TimingControl;
 }  // namespace slang::ast
 
 namespace lyra::lowering::ast_to_hir {
@@ -526,6 +527,17 @@ class UnitLowerer {
   [[nodiscard]] auto Sensitivity() const -> SensitivityAnalyzer& {
     return facts_.Sensitivity();
   }
+
+  // The clocking event settled where `containing` is written, for a construct
+  // that names none of its own -- the clock the enclosing procedure settles
+  // (LRM 16.14.6), and otherwise that scope's default clocking (LRM 14.12).
+  // Only a procedure settles one, so a construct written anywhere else has
+  // none, which is what a sampled value function and a concurrent assertion
+  // both read before reporting the error the standard requires.
+  [[nodiscard]] auto InferredProcedureClock(
+      const slang::ast::Symbol& containing) const
+      -> const slang::ast::TimingControl*;
+
   [[nodiscard]] auto ForeignExportName(const slang::ast::SubroutineSymbol& sub)
       const -> std::optional<std::string_view> {
     return facts_.ForeignExportName(sub);
@@ -537,12 +549,7 @@ class UnitLowerer {
   // design contains is one answer, so every pass that enumerates processes
   // reads it here rather than restating the condition.
   [[nodiscard]] auto Contains(
-      const slang::ast::ProceduralBlockSymbol& proc) const -> bool {
-    if (!proc.isFromAssertion) {
-      return true;
-    }
-    return !support::ElidesAssertions(AssertionPolicy());
-  }
+      const slang::ast::ProceduralBlockSymbol& proc) const -> bool;
 
   [[nodiscard]] auto AssertionPolicy() const -> support::AssertionPolicy {
     return facts_.AssertionPolicy();

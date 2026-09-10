@@ -37,6 +37,7 @@
 #include "lyra/lowering/ast_to_hir/instance_array_shape.hpp"
 #include "lyra/lowering/ast_to_hir/net_type.hpp"
 #include "lyra/lowering/ast_to_hir/process_lowerer.hpp"
+#include "lyra/lowering/ast_to_hir/statement/assertions.hpp"
 #include "lyra/lowering/ast_to_hir/subroutine_decl.hpp"
 #include "lyra/lowering/ast_to_hir/time_resolution.hpp"
 #include "lyra/lowering/ast_to_hir/unit_identity.hpp"
@@ -220,12 +221,20 @@ auto StructuralScopeLowerer::PopulateMember(
           "general member walk, which runs after instance declarations are "
           "already bound");
 
-    // LRM 16 assertion declarations and LRM 17 checkers observe the design
-    // and never drive it, so a design with them removed behaves identically
-    // and the policy may drop them whole. Without it they are reported, so
-    // no design is quietly reduced to one that checks nothing.
+    // A named sequence or property declares no storage and no behavior: what
+    // an instance of one stands for is its body with the actual arguments
+    // substituted, and the front end hands over that expansion at the instance
+    // (LRM 16.8, 16.12). So the declaration itself needs nothing here, and its
+    // ports and local variables are members of its own scope rather than of
+    // this one.
     case SymbolKind::Sequence:
     case SymbolKind::Property:
+      return {};
+
+    // LRM 17 checkers observe the design and never drive it, so a design with
+    // them removed behaves identically and the policy may drop them whole.
+    // Without it they are reported, so no design is quietly reduced to one that
+    // checks nothing.
     case SymbolKind::AssertionPort:
     case SymbolKind::LocalAssertionVar:
     case SymbolKind::Checker:
@@ -520,7 +529,7 @@ auto StructuralScopeLowerer::PopulateModportMember(
         *connection,
         frame.WithProceduralBody(&read_body).WithOpenScope(&read_root));
     if (!value) return std::unexpected(std::move(value.error()));
-    read_body.root_stmt = read_body.stmts.Add(
+    const hir::StmtId read_root_stmt = read_body.stmts.Add(
         hir::Stmt{
             .label = std::nullopt,
             .data =
@@ -536,6 +545,7 @@ auto StructuralScopeLowerer::PopulateModportMember(
                               .params = {},
                               .result_var = result_var,
                               .body = std::move(read_body),
+                              .root_stmt = read_root_stmt,
                               .is_virtual = false,
                               .is_prototype = false,
                               .is_static = false,
@@ -574,7 +584,7 @@ auto StructuralScopeLowerer::PopulateModportMember(
                     .compound_op = std::nullopt,
                     .rhs = assigned},
             .span = span});
-    write_body.root_stmt = write_body.stmts.Add(
+    const hir::StmtId write_root_stmt = write_body.stmts.Add(
         hir::Stmt{
             .label = std::nullopt,
             .data = hir::ExprStmt{.expr = assign},
@@ -591,6 +601,7 @@ auto StructuralScopeLowerer::PopulateModportMember(
                 .var = arg, .direction = hir::ParamDirection::kInput}},
             .result_var = std::nullopt,
             .body = std::move(write_body),
+            .root_stmt = write_root_stmt,
             .is_virtual = false,
             .is_prototype = false,
             .is_static = false,
@@ -642,6 +653,15 @@ auto StructuralScopeLowerer::PopulateProceduralBlockMember(
     const slang::ast::ProceduralBlockSymbol& proc, WalkFrame frame)
     -> diag::Result<void> {
   if (!owner_->Contains(proc)) {
+    return {};
+  }
+  if (const StaticConcurrentAssertion found = StaticConcurrentAssertionOf(proc);
+      found.assertion != nullptr) {
+    ProcessLowerer assertion_lowerer(*owner_, proc);
+    auto decl = assertion_lowerer.RunConcurrentAssertion(
+        proc, *found.assertion, found.named_block, frame);
+    if (!decl) return std::unexpected(std::move(decl.error()));
+    frame.current_structural_scope->concurrent_assertions.Add(*std::move(decl));
     return {};
   }
   ProcessLowerer proc_lowerer(*owner_, proc);

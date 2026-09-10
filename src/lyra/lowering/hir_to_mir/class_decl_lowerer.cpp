@@ -122,7 +122,7 @@ auto LowerStaticInitInto(
   mir::Block& block = *frame.current_block;
   ProcessLowerer lowerer(
       unit_lowerer, declaring_scope, mir_class.time_resolution,
-      hir_class.static_init, "<static_init>", frame, scopes, {});
+      hir_class.static_init, std::nullopt, "<static_init>", frame, scopes, {});
 
   for (const hir::StaticPropertyInit& init : hir_class.static_property_inits) {
     const hir::Expr& hir_value = hir_class.static_init.exprs.Get(init.value);
@@ -148,7 +148,7 @@ auto LowerStaticInitInto(
   for (const BodyStatics& body : body_statics) {
     ProcessLowerer body_lowerer(
         unit_lowerer, declaring_scope, mir_class.time_resolution, *body.body,
-        std::string{body.name}, frame, scopes, body.statics);
+        std::nullopt, std::string{body.name}, frame, scopes, body.statics);
     for (const StaticVarBinding& binding : body.statics) {
       auto integ = IntegrateStaticInitializer(
           body_lowerer, *body.body, frame, frame, binding);
@@ -362,7 +362,7 @@ auto ClassDeclLowerer::PopulateBodies(
   const hir::SubroutineDecl& ctor = hir_class.constructor;
   ProcessLowerer ctor_lowerer(
       unit_lowerer, declaring_scope_, mir_class.time_resolution, ctor.body,
-      "<ctor>", frame, scopes_, ctor_static_bindings_);
+      ctor.root_stmt, "<ctor>", frame, scopes_, ctor_static_bindings_);
 
   // Register the ctor formals early so a base-constructor arg (LRM 8.7) can
   // reference them: `super.new(a * 2)` in the derived ctor reads its own `a`
@@ -526,7 +526,8 @@ auto ClassDeclLowerer::PopulateBodies(
         BodyFrame(declaring_frame, mir_class, method_link);
     ProcessLowerer method_lowerer(
         unit_lowerer, declaring_scope_, mir_class.time_resolution, method.body,
-        method.name, method_owner_frame, scopes_, declared.statics);
+        method.root_stmt, method.name, method_owner_frame, scopes_,
+        declared.statics);
     auto method_code_or = method_lowerer.Run(method);
     if (!method_code_or) {
       return std::unexpected(std::move(method_code_or.error()));

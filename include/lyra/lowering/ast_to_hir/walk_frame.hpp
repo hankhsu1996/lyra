@@ -120,6 +120,15 @@ struct WalkFrame {
   // one handler serves both and appends here (LRM 12.6).
   base::Arena<hir::Pattern, hir::PatternId>* current_patterns = nullptr;
 
+  // The current sequence and property write targets, set on the same entries
+  // and for the same reason as the two above: a concurrent assertion means the
+  // same thing wherever it is written, and its trees belong beside the
+  // expressions they read.
+  base::Arena<hir::SequenceExpr, hir::SequenceExprId>* current_sequence_exprs =
+      nullptr;
+  base::Arena<hir::PropertyExpr, hir::PropertyExprId>* current_property_exprs =
+      nullptr;
+
   // The current structural-scope write target for member and generate handlers.
   // Set when a StructuralScope task constructs its scope on the stack and
   // entered via `WithStructuralFrame`. Null outside structural-scope handlers.
@@ -211,6 +220,22 @@ struct WalkFrame {
     return *current_patterns;
   }
 
+  [[nodiscard]] auto SequenceExprs() const
+      -> base::Arena<hir::SequenceExpr, hir::SequenceExprId>& {
+    if (current_sequence_exprs == nullptr) {
+      throw InternalError("WalkFrame::SequenceExprs: no sequence write target");
+    }
+    return *current_sequence_exprs;
+  }
+
+  [[nodiscard]] auto PropertyExprs() const
+      -> base::Arena<hir::PropertyExpr, hir::PropertyExprId>& {
+    if (current_property_exprs == nullptr) {
+      throw InternalError("WalkFrame::PropertyExprs: no property write target");
+    }
+    return *current_property_exprs;
+  }
+
   // The registry a body's lexical scopes are sealed into. Every frame that
   // lowers procedural-body content has one; reaching it without one is a caller
   // bug.
@@ -277,6 +302,8 @@ struct WalkFrame {
     next.current_procedural_body = body;
     next.current_exprs = &body->exprs;
     next.current_patterns = &body->patterns;
+    next.current_sequence_exprs = &body->sequence_exprs;
+    next.current_property_exprs = &body->property_exprs;
     return next;
   }
 

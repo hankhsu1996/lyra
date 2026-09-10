@@ -158,14 +158,10 @@ auto ResolveClockingEvent(
                 .timingControl;
   }
   if constexpr (std::same_as<Lowerer, ProcessLowerer>) {
-    const auto* proc = lowerer.ContainingSymbol()
-                           .template as_if<slang::ast::ProceduralBlockSymbol>();
-    if (proc != nullptr) {
-      const auto* clock =
-          lowerer.Owner().Sensitivity().AnalyzeProcedureClock(*proc);
-      if (clock != nullptr) {
-        return clock;
-      }
+    const auto* clock =
+        lowerer.Owner().InferredProcedureClock(lowerer.ContainingSymbol());
+    if (clock != nullptr) {
+      return clock;
     }
   }
   return diag::Fail(

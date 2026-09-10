@@ -305,15 +305,25 @@ auto LowerStatement(
           proc, frame, stmt.as<slang::ast::ImmediateAssertionStatement>(),
           span);
 
-    case slang::ast::StatementKind::ConcurrentAssertion:
+    case slang::ast::StatementKind::ConcurrentAssertion: {
       if (support::ElidesAssertions(proc.Owner().AssertionPolicy())) {
         return LowerEmptyStmt(span);
       }
-      return diag::Fail(
-          span, diag::DiagCode::kUnsupportedStatementForm,
-          "a concurrent assertion is evaluated against values sampled across "
-          "clock ticks, which is not yet supported; pass --assertions skip to "
-          "elide it");
+      auto assertion_or = LowerConcurrentAssertion(
+          proc, frame, stmt.as<slang::ast::ConcurrentAssertionStatement>(),
+          span);
+      if (!assertion_or) {
+        return std::unexpected(std::move(assertion_or.error()));
+      }
+      return std::visit(
+          [&](auto form) {
+            return hir::Stmt{
+                .label = std::nullopt,
+                .data = hir::StmtData{std::move(form)},
+                .span = span};
+          },
+          *std::move(assertion_or));
+    }
 
     default:
       return diag::Fail(
