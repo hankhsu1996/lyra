@@ -439,6 +439,12 @@ auto EntryNamingOf(support::BuiltinFn fn) -> EntryNaming {
   // stands for one.
   constexpr std::string_view kCrossesAForeignStack =
       "carries an execution across a stack the runtime does not own";
+  // What a scope answers a name with is a code address, and a call through one
+  // is what this target does not yet make (a routed callable, and a DPI-C
+  // export reached the same way). Nothing here stands for the entry itself, so
+  // there is no entry to name until the call exists.
+  constexpr std::string_view kAnswersWithACodeAddress =
+      "answers with a code address this target cannot yet call through";
   // A value crosses this boundary as a handle a copy may alias, so nothing here
   // may answer with the part of one: a write through such an answer would be
   // visible through every copy. What this backend needs instead is the
@@ -646,6 +652,9 @@ auto EntryNamingOf(support::BuiltinFn fn) -> EntryNaming {
     case support::BuiltinFn::kFindExportEntry:
       return NotRealized{.shape = kCrossesAForeignStack};
 
+    case support::BuiltinFn::kFindSubroutine:
+      return NotRealized{.shape = kAnswersWithACodeAddress};
+
     case support::BuiltinFn::kTrigger:
     case support::BuiltinFn::kTriggered:
     case support::BuiltinFn::kCurrentRuntime:
@@ -718,8 +727,8 @@ auto EntryNamingOf(support::BuiltinFn fn) -> EntryNaming {
     case support::BuiltinFn::kResolveVisibleChild:
     case support::BuiltinFn::kRegisterSignal:
     case support::BuiltinFn::kAddOwnedChild:
-    case support::BuiltinFn::kGetSignal:
-    case support::BuiltinFn::kGetChild:
+    case support::BuiltinFn::kFindSignal:
+    case support::BuiltinFn::kFindChild:
     case support::BuiltinFn::kForkWaitAll:
     case support::BuiltinFn::kForkWaitFirst:
     case support::BuiltinFn::kSpawnAll:

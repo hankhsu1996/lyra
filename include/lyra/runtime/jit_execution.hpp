@@ -463,11 +463,12 @@ auto lyra_rt_add_owned_child(void* parent, void* child) -> void*;
 // nearest enclosing child a name matches, then a descent by name from there. A
 // name crosses as a plain C string, since it is fixed where the reference is
 // compiled, and its per-axis indices as a span of machine integers, since one
-// name may stand for an array of instances. A step matching nothing answers
-// null.
+// name may stand for an array of instances. A step matching nothing fails the
+// run, naming the scope and the name.
 auto lyra_rt_resolve_visible_child(
     void* self, const void* head_name, LyraSpan head_indices) -> void*;
-auto lyra_rt_get_child(void* self, const void* name, LyraSpan indices) -> void*;
+auto lyra_rt_find_child(void* self, const void* name, LyraSpan indices)
+    -> void*;
 
 // The address of a generic instance's member storage, by its position in the
 // storage that instance owns.
@@ -488,7 +489,7 @@ auto lyra_rt_sequence_element(const void* sequence, std::int64_t index)
 // layout of the body the name lives in (LRM 23.6). Both names cross as a plain
 // C string, since a source-level name is fixed at compile time.
 void lyra_rt_register_signal(void* self, const void* name, void* cell);
-auto lyra_rt_get_signal(void* self, const void* name) -> void*;
+auto lyra_rt_find_signal(void* self, const void* name) -> void*;
 
 // Observable storage cell operations, reached through the cell's address. The
 // entry names the cell's value domain; the runtime never inspects a type tag.

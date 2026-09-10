@@ -41,6 +41,11 @@ auto MachineArrayOf(const TypePool& types, TypeId element, std::size_t size)
 // table spells, so erasing and restoring cannot drift apart.
 auto ErasedFunction(const TypePool& types) -> TypeId;
 
+// Whether `id` is that type. Answered against the builder above rather than by
+// restating the shape, so a consumer recognizing an erased entry and a producer
+// making one cannot describe it differently.
+auto IsErasedFunction(const TypePool& types, TypeId id) -> bool;
+
 // The observable-cell type for a variable of `value_type`: a SystemVerilog
 // value-storage data object (LRM 6.5) is an observable cell, so its writes fire
 // subscribers and its value is reached through the cell; any other type -- a

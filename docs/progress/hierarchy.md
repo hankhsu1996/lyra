@@ -175,8 +175,11 @@ consume. Coverage is demonstrated through Stage D and Stage E.
       un-indexed `"loop"`. The walk stops at the implicit `$root` so multi-top output reads `Top.x`
       rather than `$root.Top.x`. Closure-deferred prints (`$strobe`) capture `self` via the closure
       builder, so the path printed is the issuing scope's, not whatever scope is active when the
-      postponed region drains. VPI-style scope queries (`$scope`, `$function`) stay out of scope --
-      they belong to the assertion/debug workstream.
+      postponed region drains. A top stands under the identifier its module was declared with: one
+      module compiles to one artifact per parameterization, and an artifact's name is not a name the
+      design shows, so a parameterized top prints and is climbed to under its plain identifier like
+      any other. VPI-style scope queries (`$scope`, `$function`) stay out of scope -- they belong to
+      the assertion/debug workstream.
 - [x] D6 -- A hierarchical path that indexes an instance array (`c[i].x`) resolves to the selected
       element, including multi-dimensional arrays (`c[i][j].x`).
 - [x] D7 -- A hierarchical reference crosses a generate-block scope boundary. A by-name reference
@@ -195,16 +198,107 @@ consume. Coverage is demonstrated through Stage D and Stage E.
       only after the whole object tree exists, so a sibling not yet constructed when the referrer's
       own construction runs still resolves; no instance is dereferenced across the boundary during
       construction. The intra-unit, indexed extension of the sibling reads in D2d.
-- [ ] D9 -- Hierarchical-reference target forms beyond a signal in an instance. A hierarchical path
-      reaching a class property (LRM 8.4), an interface port, or a declaration kind other than a
-      variable / net is rejected. Only a variable or net reached across the instance boundary
-      resolves today, and a subroutine of an interface, which that unit publishes.
 
-      A task or function of a module enabled by hierarchical name (LRM 23.6) is the one target form
-      whose obstacle is not the reference model. A module publishes only its ports, so such a name
-      was never promised and resolves while the design elaborates -- and what answers a name then
-      yields a scope or a signal, never a callable. Closing it is a runtime capability rather than a
-      new route, which is why it does not follow from an interface's subroutines being callable.
+#### What a hierarchical name reaches, by declaration kind and by route
+
+The two axes of Stage D, and the only statement of this workstream's coverage that can be checked
+rather than believed. Rows are the declaration kinds LRM 23.8's Syntax 23-8 enumerates, plus the
+three LRM 23.9 adds by making a block, a task and a class define scopes. Columns are what
+`reference_resolution.md` classifies a route by -- not the spellings, of which there are many, but
+the four answers the classification gives, since `c.x`, `g[i].x` and `$root.Top.g.x` differ in
+spelling and not in what each segment is.
+
+Legend: **ok** runs end to end -- **ref** refused with a located diagnostic -- **def** answers
+wrongly or crashes, recorded in `tests/paths/*.defects.yaml` -- **?** nobody has measured this cell.
+
+A cell is what the name reaches, which is a question the front end answers, so it reads the better
+of the two backends: a target one backend carries and the other has no realization for is that
+backend's gap and is recorded against it, not against the route.
+
+| Declaration kind (LRM 23.8, 23.9) | in this unit | into a child instance | out of this unit | through an interface |
+| --------------------------------- | ------------ | --------------------- | ---------------- | -------------------- |
+| variable                          | ok           | ok                    | ok               | ok                   |
+| net                               | ok           | ok                    | **ref**          | ok                   |
+| parameter                         | ok           | ok                    | ok               | ok                   |
+| port                              | ok           | ok                    | ?                | ok                   |
+| enum value                        | ok           | ok                    | ?                | ?                    |
+| named event                       | ok           | ok                    | ok               | ok                   |
+| static of a named block           | ok           | ok                    | ok               | ok                   |
+| static of a subroutine body       | ok           | **def**               | ?                | ?                    |
+| class property, through a handle  | ok           | ok                    | **def**          | ?                    |
+| function or task                  | ok           | ok                    | ok               | ok                   |
+| block or task, as a `disable`     | **ref**      | **ref**               | **ref**          | **ref**              |
+
+**Read the rows, not the cells.** A failure is never one cell: it is a whole row, because what a
+route reaches is stated by its leaf alone and the head and steps that got there are the same ones
+every other kind uses. So a kind that fails fails on every route, and a kind that works works on all
+of them -- which is why closing the callable row closed four cells at once, and why the one row
+still open is one missing thing rather than four. A `disable` reaches its target only where the
+route to it is empty, which is the zero case of the row and not a fifth answer.
+
+**Two cells are defects rather than gaps**, and they are not on those rows. A static of a subroutine
+body crashes where a static of a named block resolves, though LRM 23.9 puts a task on the path
+exactly as it puts a block; and a class property reached out of the unit names a type the reader's
+artifact was never given, which no diagnostic reports. Both are D12 below.
+
+**A `?` is work, not a blank.** It marks a cell nobody has run, and the corpus is what turns one
+into a letter -- so a `?` is a case to write before it is a feature to build.
+
+- [x] D9 -- The declaration kinds a hierarchical name may end at. LRM 23.8 enumerates them -- a
+      variable, a net, a parameter, a port, a named block, a function, a task -- and LRM 23.6
+      enumerates what a name may do with one: be read, be written (by assignment or as an actual a
+      subroutine writes through), be triggered off, and name a subroutine. Every kind but the last
+      two resolves, over every route stages D1 through D8 carry and in every direction, with reading
+      and writing and waiting sharing the one route: a variable, a net reached downward, a value or
+      type parameter (including in a context that elaborates, such as a width), a port, an enum
+      value, a named event triggered and waited on, a static a named block declares, a static a
+      static task declares, a static a named block inside a static task declares, a property reached
+      through a class handle, a member of a generate block, and an element of an instance array. The
+      two the language names and this stage does not carry each have their own item below.
+
+- [x] D10 -- A subroutine a hierarchical name enables (LRM 23.6, 23.8.1). A call is the same route a
+      read of a declaration takes, ending at the callable instead of at storage, so every spelling a
+      read reaches by an enable reaches too: downward (`c.fn()`, `c[i].fn()`), into a child's
+      generate block (`c[i].blk.fn()`), upward (`Top.fn()`), through a sibling of an ancestor
+      (`Top.s.fn()`), through an absolute path, and through an interface port. A task suspends the
+      enabling process until it completes exactly as an intra-unit enable does.
+
+      What differs between them is only what answers the name. An interface promises its whole
+      declared surface, so a call against one compiles against that promise. A module promises its
+      parameters and ports, so a subroutine of one was promised to nobody: the route reaches the
+      object and the scope answers the name with its own entry while the design elaborates, from the
+      same record it already answers a signal query from. **Promising it instead is not the
+      answer** -- an upward enable would make a child depend on its parent while the parent already
+      depends on the child, and the dependency between units has to stay acyclic, so both directions
+      take the answered-by-name arm and the asymmetry against an interface stands
+      (`docs/decisions/hierarchical-callable-dispatch.md`).
+
+      The execution backend refuses the answered-by-name arm: a call through a code address is not
+      yet something it makes. The promised arm and every intra-unit call run there unchanged.
+
+- [ ] D12 -- Two cells of the table that answer wrongly rather than refusing, both found by running
+      the corpus rather than by a design reading, and neither on the two open rows.
+
+      A static-lifetime local of a **subroutine body** reached by a hierarchical name crashes, where
+      the same declaration inside a named block resolves. LRM 23.9 puts a task and a function on the
+      path exactly as it puts a named block, and LRM 23.6 excludes only what an *automatic*
+      subroutine declares, so the two owe one answer. What differs is that the name is attributed to
+      the scope the declaration sits in, and a subroutine body's statements sit in a block the source
+      never wrote -- so the side that answers a name and the side that registers one disagree about
+      which scope owns it. Parked, because it crashes before it can fail usefully.
+
+      A **class property reached out of this unit** emits code naming a type the reader's artifact
+      was never given: a module publishes its parameters and ports, so a class it declares is not on
+      its signature, and the reference materializes that class in the reader anyway. It is refused on
+      the execution backend and silently miscompiled on the other, which is why only compiling the
+      emitted text finds it.
+
+- [ ] D11 -- An upward hierarchical reference whose target is a net. A net reached downward reads
+      and is waited on like a variable; the same net reached upward is refused where it is declared,
+      because what answers a name past this unit's layout is a cell and a net's drivers fold into a
+      resolution node instead. Nothing about the net model is missing here -- the downward direction
+      proves that -- so this is the upward route not carrying one target kind the downward route
+      does.
 
 Unlocks `refs/hierarchical_refs`, `refs/upward_refs`, and `instantiation/hierarchical_sensitivity`.
 
@@ -303,5 +397,7 @@ Unlocks the port-connection surface.
 - Net resolution and net merging: multi-driver resolved nets and net collapsing across ports. A
   single-driver net port behaves as a continuous assignment and is in scope; multi-driver net
   resolution is a separate design-global concern. `inout` ports are bidirectional net connections in
-  this same deferred net domain. A hierarchical reference whose target is a net-typed (non-variable)
-  signal follows net value support, which is not yet established in any scope.
+  this same deferred net domain. A hierarchical reference whose target is a net is **not** in this
+  deferred domain and used to be listed here as though it were: a single-driver net reached downward
+  reads and is waited on today, and the upward direction is D11 above rather than a question about
+  nets.

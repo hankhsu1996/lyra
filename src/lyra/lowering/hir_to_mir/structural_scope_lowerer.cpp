@@ -292,23 +292,35 @@ auto DeclareRoutedRefSlots(StructuralScopeLowerer& lowerer, ClassShape& shape)
   slots.reserve(hir_scope.routed_refs.size());
   for (const auto& cu : hir_scope.routed_refs) {
     std::string member_name = "ep" + std::to_string(slots.size());
-    if (std::holds_alternative<hir::NetStorage>(cu.target_storage) &&
-        !std::holds_alternative<hir::InUnitHead>(cu.recipe.head)) {
-      throw InternalError(
-          "DeclareRoutedRefSlots: an upward routed reference to a net is not "
-          "yet supported");
-    }
-    // What the endpoint points at: the cell the target's own unit says its
-    // storage is, or the object itself where the route ends on one, an object
-    // being reached by a pointer to it with no cell in between.
+    const hir::Endpoint holds = hir::EndpointOf(cu.recipe.leaf);
+    // What the slot is typed by is what the endpoint holds. A cell and an
+    // object are each reached by a pointer to them; an entry is a code address,
+    // which is one already.
     const mir::TypeId reached = unit_lowerer.TranslateType(cu.recipe.type);
-    const mir::TypeId leaf =
-        std::holds_alternative<hir::ScopeLeaf>(cu.recipe.leaf)
-            ? reached
-            : unit_lowerer.MemberCellType(reached, cu.target_storage);
-    const mir::TypeId slot_type = unit_lowerer.Unit().types.Intern(
-        mir::Type{mir::PointerType{
-            .pointee = leaf, .ownership = mir::PointerOwnership::kBorrowed}});
+    mir::TypePool& types = unit_lowerer.Unit().types;
+    const auto borrowed = [&](mir::TypeId pointee) {
+      return types.Intern(
+          mir::Type{mir::PointerType{
+              .pointee = pointee,
+              .ownership = mir::PointerOwnership::kBorrowed}});
+    };
+    const mir::TypeId slot_type = std::visit(
+        Overloaded{
+            [&](const hir::EndpointCell& cell) {
+              if (std::holds_alternative<hir::NetStorage>(cell.storage) &&
+                  !std::holds_alternative<hir::InUnitHead>(cu.recipe.head)) {
+                throw InternalError(
+                    "DeclareRoutedRefSlots: an upward routed reference to a "
+                    "net is not yet supported");
+              }
+              return borrowed(
+                  unit_lowerer.MemberCellType(reached, cell.storage));
+            },
+            [&](const hir::EndpointObject&) { return borrowed(reached); },
+            [&](const hir::EndpointEntry&) {
+              return mir::ErasedFunction(types);
+            }},
+        holds);
     slots.push_back(
         RoutedRefMeta{
             .target = shape.fields.Add(
@@ -396,7 +408,7 @@ auto StepToChildByName(
               mir::CallExpr{
                   .callee =
                       mir::Direct{
-                          .target = support::BuiltinFn::kGetChild,
+                          .target = support::BuiltinFn::kFindChild,
                           .receiver = receiver},
                   .arguments =
                       {BuildStringLiteral(unit_lowerer, block, name),
@@ -634,6 +646,24 @@ auto MaterializeLeaf(
             .type = slot_type});
   }
 
+  // A callable reached past a signature is answered the same way a cell is,
+  // in the same phase, from the scope's own record of what it declares -- what
+  // differs is only which of the two namespaces the name is looked up in and
+  // that the answer is already a code address rather than something to cast.
+  if (const auto* callable = std::get_if<hir::OpaqueCallableLeaf>(&leaf)) {
+    return block.exprs.Add(
+        mir::Expr{
+            .data =
+                mir::CallExpr{
+                    .callee =
+                        mir::Direct{
+                            .target = support::BuiltinFn::kFindSubroutine,
+                            .receiver = receiver.expr},
+                    .arguments = {BuildStringLiteral(
+                        unit_lowerer, block, callable->name)}},
+            .type = slot_type});
+  }
+
   if (const auto* opaque = std::get_if<hir::OpaqueLeaf>(&leaf)) {
     const mir::TypeId void_ptr_type = unit.types.Intern(
         mir::Type{mir::PointerType{
@@ -645,7 +675,7 @@ auto MaterializeLeaf(
                 mir::CallExpr{
                     .callee =
                         mir::Direct{
-                            .target = support::BuiltinFn::kGetSignal,
+                            .target = support::BuiltinFn::kFindSignal,
                             .receiver = receiver.expr},
                     .arguments = {BuildStringLiteral(
                         unit_lowerer, block, opaque->name)}},
@@ -1462,6 +1492,87 @@ auto StructuralScopeLowerer::DeclareShape() -> diag::Result<mir::ClassId> {
   return class_id_;
 }
 
+namespace {
+
+// Builds the entry a scope answers an SV name with: a free function taking the
+// generic scope as its receiver, downcasting it to the declaring class, and
+// forwarding the formals to the subroutine. A caller reaching one has no
+// declaration to compile against, so the entry's prototype is erased in the
+// table and restored at the call site from the same declaration this is built
+// from -- which is what makes a caller and this agree without a promise
+// between them.
+auto SynthesizeSubroutineEntry(
+    mir::CompilationUnit& unit, const mir::Class& cls, mir::ClassId cls_id,
+    mir::CallableId subroutine) -> mir::CallableCode {
+  const mir::CallableCode& target = cls.callables.Get(subroutine).code;
+  mir::CallableCode code = mir::CallableCode::Defined();
+  const mir::LocalId self = code.locals.Add(
+      mir::LocalDecl{.name = "self", .type = unit.builtins.scope_ptr});
+  code.params.push_back(self);
+  // The subroutine's own receiver leads its params, and the entry supplies it
+  // from the scope it was handed rather than forwarding one; what the entry
+  // takes beyond that are the formals the source wrote.
+  const std::span<const mir::LocalId> formals =
+      std::span{target.params}.subspan(
+          target.HasReceiver(cls.self_pointer_type) ? 1 : 0);
+  std::vector<mir::ExprId> arguments;
+  arguments.reserve(formals.size());
+  for (const mir::LocalId formal : formals) {
+    const mir::LocalDecl& decl = target.locals.Get(formal);
+    const mir::LocalId param =
+        code.locals.Add(mir::LocalDecl{.name = decl.name, .type = decl.type});
+    code.params.push_back(param);
+    arguments.push_back(
+        code.Body().exprs.Add(mir::MakeLocalRefExpr(param, decl.type)));
+  }
+  code.result_type = target.result_type;
+
+  const mir::ExprId self_ref = code.Body().exprs.Add(
+      mir::MakeLocalRefExpr(self, unit.builtins.scope_ptr));
+  const mir::ExprId typed = code.Body().exprs.Add(
+      mir::Expr{
+          .data = mir::PointerCastExpr{.operand = self_ref},
+          .type = cls.self_pointer_type});
+  const mir::ExprId call = code.Body().exprs.Add(
+      mir::Expr{
+          .data =
+              mir::CallExpr{
+                  .callee =
+                      mir::Direct{
+                          .target =
+                              mir::CallableTarget{
+                                  .owner = cls_id, .slot = subroutine},
+                          .receiver = typed},
+                  .arguments = std::move(arguments)},
+          .type = target.result_type});
+  // A task suspends its caller until it completes (LRM 13.3), so the entry
+  // suspends too: it awaits the body and hands back the completion, which is
+  // what the enabling process awaits in turn. Anything else completes where it
+  // is called and its result is the entry's.
+  const mir::Type& result = unit.types.Get(target.result_type);
+  if (const auto* coroutine = result.As<mir::CoroutineType>()) {
+    const mir::LocalId completion = code.locals.Add(
+        mir::LocalDecl{.name = "completion", .type = coroutine->payload});
+    code.Body().AppendStmt(
+        mir::LocalDeclStmt{
+            .target = completion,
+            .init = code.Body().exprs.Add(
+                mir::Expr{
+                    .data = mir::AwaitExpr{.awaitable = call},
+                    .type = coroutine->payload})});
+    code.Body().AppendStmt(
+        mir::ReturnStmt{
+            .value = code.Body().exprs.Add(
+                mir::MakeLocalRefExpr(completion, coroutine->payload))});
+  } else if (result.Is<mir::VoidType>()) {
+    code.Body().AppendStmt(mir::ExprStmt{.expr = call});
+    code.Body().AppendStmt(mir::ReturnStmt{.value = std::nullopt});
+  } else {
+    code.Body().AppendStmt(mir::ReturnStmt{.value = call});
+  }
+  return code;
+}
+
 // Builds a runtime scope class's definition as an ordinary constructed value
 // and installs it on `cls`: a per-phase ABI adapter that downcasts the generic
 // scope receiver to `cls` and forwards to the phase body (empty when the phase
@@ -1511,7 +1622,7 @@ auto InstallGeneratedDefinition(
         mir::AbiAdapter{
             .name = std::move(name),
             .code = std::move(code),
-            .foreign = std::nullopt});
+            .published = mir::UnpublishedEntry{}});
   };
   const mir::AbiAdapterId resolve_abi =
       make_adapter("ResolveStateAbi", resolve_body);
@@ -1520,55 +1631,84 @@ auto InstallGeneratedDefinition(
   const mir::AbiAdapterId create_abi =
       make_adapter("CreateProcessesAbi", create_body);
 
-  // The exports this scope publishes, as their own constant: the table the
+  // The names this scope answers, one constant per namespace: the table the
   // runtime holds is a pointer into contiguous storage, so the records must
   // outlive the definition that points at them rather than sit in its
-  // initializer. A scope declaring none contributes an empty array, which the
-  // same construction covers.
-  mir::StaticConstantDecl exports_decl;
-  exports_decl.name = "kExports";
-  mir::RuntimeRecordBuilder exports(unit, exports_decl.body.exprs);
-  std::vector<mir::ExprId> export_records;
-  for (const mir::AbiAdapterId adapter_id : cls.abi_adapters.Ids()) {
-    const mir::AbiAdapter& adapter = cls.abi_adapters.Get(adapter_id);
-    if (!adapter.foreign.has_value()) {
-      continue;
+  // initializer. A scope answering no name in a namespace contributes an empty
+  // array, which the same construction covers.
+  struct NameTable {
+    mir::TypeId records_type;
+    mir::StaticConstantId records;
+    std::uint32_t count = 0;
+  };
+  const auto publish = [&](std::string constant_name,
+                           auto&& name_of) -> NameTable {
+    mir::StaticConstantDecl decl;
+    decl.name = std::move(constant_name);
+    mir::RuntimeRecordBuilder records(unit, decl.body.exprs);
+    std::vector<mir::ExprId> entries;
+    for (const mir::AbiAdapterId adapter_id : cls.abi_adapters.Ids()) {
+      const mir::AbiAdapter& adapter = cls.abi_adapters.Get(adapter_id);
+      const std::optional<std::string> name = name_of(adapter.published);
+      if (!name.has_value()) {
+        continue;
+      }
+      entries.push_back(records.Construct(
+          mir::RuntimeLibraryKind::kScopeCallable,
+          {records.StringRef(*name),
+           records.ErasedFunctionRef(cls, adapter_id)}));
     }
-    export_records.push_back(exports.Construct(
-        mir::RuntimeLibraryKind::kScopeExport,
-        {exports.StringRef(adapter.foreign->foreign_name),
-         exports.ErasedFunctionRef(cls, adapter_id)}));
-  }
-  const auto export_count = static_cast<std::uint32_t>(export_records.size());
-  exports_decl.value = exports.MachineArray(
-      exports.Type(mir::RuntimeLibraryKind::kScopeExport),
-      std::move(export_records));
-  const mir::TypeId exports_type = exports.TypeOf(exports_decl.value);
-  exports_decl.type = exports_type;
-  const mir::StaticConstantId exports_id =
-      cls.static_constants.Add(std::move(exports_decl));
+    const auto count = static_cast<std::uint32_t>(entries.size());
+    decl.value = records.MachineArray(
+        records.Type(mir::RuntimeLibraryKind::kScopeCallable),
+        std::move(entries));
+    decl.type = records.TypeOf(decl.value);
+    const mir::TypeId records_type = decl.type;
+    return NameTable{
+        .records_type = records_type,
+        .records = cls.static_constants.Add(std::move(decl)),
+        .count = count};
+  };
+  const NameTable exports = publish(
+      "kExports",
+      [](const mir::AbiAdapterPublication& p) -> std::optional<std::string> {
+        const auto* linkage = std::get_if<mir::ForeignLinkage>(&p);
+        return linkage == nullptr ? std::nullopt
+                                  : std::optional{linkage->foreign_name};
+      });
+  const NameTable subroutines = publish(
+      "kSubroutines",
+      [](const mir::AbiAdapterPublication& p) -> std::optional<std::string> {
+        const auto* entry = std::get_if<mir::SubroutineEntry>(&p);
+        return entry == nullptr ? std::nullopt : std::optional{entry->name};
+      });
 
   mir::StaticConstantDecl def;
   def.name = "kDefinition";
   mir::RuntimeRecordBuilder definition(unit, def.body.exprs);
-  const mir::ExprId exports_ref = definition.Add(
-      mir::Expr{
-          .data =
-              mir::ReferenceExpr{
-                  .target = mir::StaticConstantRef{.constant = exports_id}},
-          .type = exports_type});
-  const mir::ExprId exports_data = definition.Add(
-      mir::Expr{
-          .data = mir::MachineArrayDataExpr{.array = exports_ref},
-          .type = unit.types.Intern(
-              mir::Type{mir::PointerType{
-                  .pointee =
-                      definition.Type(mir::RuntimeLibraryKind::kScopeExport),
-                  .ownership = mir::PointerOwnership::kBorrowed,
-                  .mutability = mir::Mutability::kReadOnly}})});
-  const mir::ExprId export_table = definition.Construct(
-      mir::RuntimeLibraryKind::kScopeExportTable,
-      {exports_data, definition.MachineInt(export_count)});
+  const auto build_table = [&](const NameTable& table) -> mir::ExprId {
+    const mir::ExprId records_ref = definition.Add(
+        mir::Expr{
+            .data =
+                mir::ReferenceExpr{
+                    .target =
+                        mir::StaticConstantRef{.constant = table.records}},
+            .type = table.records_type});
+    const mir::ExprId data = definition.Add(
+        mir::Expr{
+            .data = mir::MachineArrayDataExpr{.array = records_ref},
+            .type = unit.types.Intern(
+                mir::Type{mir::PointerType{
+                    .pointee = definition.Type(
+                        mir::RuntimeLibraryKind::kScopeCallable),
+                    .ownership = mir::PointerOwnership::kBorrowed,
+                    .mutability = mir::Mutability::kReadOnly}})});
+    return definition.Construct(
+        mir::RuntimeLibraryKind::kScopeCallableTable,
+        {data, definition.MachineInt(table.count)});
+  };
+  const mir::ExprId export_table = build_table(exports);
+  const mir::ExprId subroutine_table = build_table(subroutines);
 
   const mir::ExprId metadata = definition.Construct(
       mir::RuntimeLibraryKind::kScopeMetadata,
@@ -1578,7 +1718,8 @@ auto InstallGeneratedDefinition(
       mir::RuntimeLibraryKind::kScopeProgram,
       {metadata, definition.FunctionRef(cls, resolve_abi),
        definition.FunctionRef(cls, init_abi),
-       definition.FunctionRef(cls, create_abi), export_table});
+       definition.FunctionRef(cls, create_abi), export_table,
+       subroutine_table});
   const mir::AbiAdapterId construct_abi =
       make_adapter("ConstructAbi", std::nullopt);
   def.value = definition.Construct(
@@ -1636,6 +1777,8 @@ void FinalizeConstructor(
   cls.constructor = mir::ConstructorDecl{
       .code = std::move(ctor_code), .base_args = std::move(base_args)};
 }
+
+}  // namespace
 
 auto StructuralScopeLowerer::PopulateBodies(WalkFrame parent_frame)
     -> diag::Result<void> {
@@ -2062,7 +2205,24 @@ auto StructuralScopeLowerer::PopulateBodies(WalkFrame parent_frame)
         mir::AbiAdapter{
             .name = std::format("{}__export", export_decl.foreign_name),
             .code = std::move(entry.code),
-            .foreign = std::move(entry.linkage)});
+            .published = std::move(entry.linkage)});
+  }
+
+  // Every subroutine this scope declares answers to its own SV name, so a
+  // hierarchical enable that reaches the instance finds it there (LRM 23.6).
+  // The declaring unit cannot know which of them anyone will name -- a module
+  // promises its parameters and ports and nothing else -- so it publishes them
+  // all rather than the ones some referrer happened to compile against.
+  for (const hir::StructuralSubroutineId sub_id :
+       hir_scope.structural_subroutines.Ids()) {
+    const std::string& name = hir_scope.structural_subroutines.Get(sub_id).name;
+    const mir::CallableId method_id = subroutine_callables[sub_id.value];
+    mir_class.abi_adapters.Add(
+        mir::AbiAdapter{
+            .name = std::format("{}__entry", name),
+            .code = SynthesizeSubroutineEntry(
+                unit_lowerer.Unit(), mir_class, class_id_, method_id),
+            .published = mir::SubroutineEntry{.name = name}});
   }
 
   for (const hir::ProcessId id : hir_scope.processes.Ids()) {

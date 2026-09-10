@@ -273,11 +273,11 @@ auto LowerCompilationToHir(const LowerCompilationFacts& facts)
       .units = std::move(units), .signatures = std::move(signatures)};
 }
 
-auto TopLevelUnitNames(const LowerCompilationFacts& facts)
-    -> diag::Result<std::vector<std::string>> {
+auto TopLevelUnits(const LowerCompilationFacts& facts)
+    -> diag::Result<std::vector<TopLevelUnit>> {
   const auto& root = facts.Compilation().getRoot();
-  std::vector<std::string> names;
-  names.reserve(root.topInstances.size());
+  std::vector<TopLevelUnit> tops;
+  tops.reserve(root.topInstances.size());
   for (const auto* inst : root.topInstances) {
     if (const auto required = FindPortRequiringConnection(inst->body)) {
       return std::unexpected(
@@ -294,9 +294,12 @@ auto TopLevelUnitNames(const LowerCompilationFacts& facts)
                       "and make that module the top",
                       inst->name)));
     }
-    names.emplace_back(SpecializationName(*inst));
+    tops.emplace_back(
+        TopLevelUnit{
+            .instance_name = std::string{inst->name},
+            .unit_name = SpecializationName(*inst)});
   }
-  return names;
+  return tops;
 }
 
 }  // namespace lyra::lowering::ast_to_hir

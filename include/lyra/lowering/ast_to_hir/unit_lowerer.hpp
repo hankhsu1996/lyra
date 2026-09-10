@@ -131,12 +131,18 @@ struct ProceduralStaticBinding {
 using ProceduralStaticBindings =
     std::unordered_map<const slang::ast::Symbol*, ProceduralStaticBinding>;
 
-// One procedural scope's minted identity, together with the registry it indexes
-// -- the one belonging to the declaration scope that owns the body it was
-// written in. The pair is what makes the identity meaningful to a reader: an id
-// alone is a position in whichever registry the reader happens to hold.
+// One procedural scope's minted identity, together with the declaration scope
+// whose registry it indexes -- the one owning the body it was written in. The
+// pair is what makes the identity meaningful to a reader: an id alone is a
+// position in whichever registry the reader happens to hold.
+//
+// The owner is named by the frontend's own scope, which lives as long as the
+// elaborated design. Naming it by the address of the registry instead makes the
+// pair unsound: registries sit inside a scope arena that reallocates as sibling
+// scopes are added, so one scope's recorded address can come to name a later
+// scope's registry, and two unrelated scopes then compare equal.
 struct MintedProceduralScope {
-  const base::Registry<hir::ProceduralScopeDecl, hir::ProceduralScopeId>* owner;
+  const slang::ast::Scope* owner;
   hir::ProceduralScopeId scope;
 };
 
@@ -146,7 +152,6 @@ struct MintedProceduralScope {
 struct RouteTarget {
   hir::RouteLeaf leaf;
   hir::TypeId type;
-  hir::PublishedStorage storage;
 };
 
 // How a reader reaches a scope elsewhere on the elaborated hierarchy: where
@@ -161,6 +166,16 @@ struct ScopeRoute {
   // the walk states which unit it stopped in; a route that stops on no object
   // ended at a scope, and nothing past it was promised to anyone.
   std::optional<std::string> unit_name;
+};
+
+// A reach that stays inside one unit's layout: out `hops` enclosing edges to
+// the nearest scope enclosing both reader and target, then down through
+// children this unit declares. The two are separate because out and in are
+// separate axes -- an ancestor is the empty descent, and a sibling's child is
+// both halves at once.
+struct InUnitReach {
+  hir::StructuralHops hops;
+  std::vector<hir::OwnedChildRef> descent;
 };
 
 // What a hop of a descent could be, where the unit standing above it published
@@ -726,9 +741,7 @@ class UnitLowerer {
   // Records the identity a declaration scope minted for one of its procedural
   // scopes, keyed by the symbol slang records the scope as.
   void DeclareProceduralScope(
-      const slang::ast::Symbol& symbol,
-      const base::Registry<hir::ProceduralScopeDecl, hir::ProceduralScopeId>&
-          owner,
+      const slang::ast::Symbol& symbol, const slang::ast::Scope& owner,
       hir::ProceduralScopeId scope) {
     procedural_scopes_.emplace(
         &symbol, MintedProceduralScope{.owner = &owner, .scope = scope});
@@ -755,9 +768,8 @@ class UnitLowerer {
   // owns it, so it means nothing against another one; a body naming a scope
   // therefore asks whether the target is its own before it may carry the id.
   [[nodiscard]] auto LookupProceduralScopeIn(
-      const slang::ast::Symbol& symbol,
-      const base::Registry<hir::ProceduralScopeDecl, hir::ProceduralScopeId>&
-          owner) const -> std::optional<hir::ProceduralScopeId> {
+      const slang::ast::Symbol& symbol, const slang::ast::Scope& owner) const
+      -> std::optional<hir::ProceduralScopeId> {
     const auto it = procedural_scopes_.find(&symbol);
     if (it == procedural_scopes_.end() || it->second.owner != &owner) {
       return std::nullopt;
@@ -836,6 +848,15 @@ class UnitLowerer {
       ScopeFrameId slot_owner, ScopeRoute route, hir::TypeId object_type)
       -> hir::RoutedRef;
 
+  // The reference to the callable `route` reaches by name, for a callable no
+  // unit published. It seals on the same terms the object does and over the
+  // same walk: the scope answers the name once at elaboration and the call
+  // reads the entry directly after.
+  [[nodiscard]] auto MakeRoutedCallableRef(
+      ScopeFrameId slot_owner, ScopeRoute route, std::string name,
+      hir::ExternalCalleeInterface interface, hir::TypeId result_type)
+      -> hir::RoutedRef;
+
   // How this reader reaches the object an instance of another unit is, given
   // how the name reached it. A port is the answer where the name went through
   // one, since what stands behind a port is reached no other way; any other
@@ -844,7 +865,7 @@ class UnitLowerer {
   [[nodiscard]] auto RouteToUnitObject(
       const WalkFrame& frame, const slang::ast::InstanceBodySymbol& body,
       const slang::ast::HierarchicalReference& reference, diag::SourceSpan span)
-      -> diag::Result<std::optional<ScopeRoute>>;
+      -> diag::Result<ScopeRoute>;
 
   // Where a named value lives, as this unit reaches it. One answer serves
   // every consumer of a reference -- reading it, writing it, and waiting on it
@@ -859,6 +880,13 @@ class UnitLowerer {
       const WalkFrame& frame, const slang::ast::ValueSymbol& value)
       -> diag::Result<std::optional<hir::ValueTarget>>;
 
+  // The route to the scope that declares a callee, for a callee no unit's
+  // signature mentions. It is the walk below, with the one reason that walk can
+  // fail written where it is known rather than at whichever caller met it.
+  [[nodiscard]] auto RouteToDeclaringScope(
+      const WalkFrame& frame, const slang::ast::Scope& target,
+      diag::SourceSpan span) -> diag::Result<ScopeRoute>;
+
   // How this reader reaches `target`, a scope elsewhere on the elaborated
   // hierarchy: the head it anchors at and the descent from there, with each
   // step typed where this unit declares what it lands on and by name where it
@@ -869,6 +897,16 @@ class UnitLowerer {
   [[nodiscard]] auto RouteToScope(
       const WalkFrame& frame, const slang::ast::Scope& target)
       -> std::optional<ScopeRoute>;
+
+  // How this reader reaches `target` when `target` is a scope this unit itself
+  // lays out: the climb to the nearest scope enclosing both, then the descent
+  // back down. Every part is typed, so an identity the target scope minted --
+  // a position in one of its own registries -- means what it says once the
+  // reach lands. Refuses where any part leaves this unit's layout, which is
+  // the same reach and a different arm of it.
+  [[nodiscard]] auto ReachOwnScope(
+      const WalkFrame& frame, const slang::ast::Scope& target,
+      diag::SourceSpan span) -> diag::Result<InUnitReach>;
 
   // How this reader reaches the object that owns what a name reached through an
   // interface port names (LRM 25.3). The port is the first step, and each hop
@@ -1078,8 +1116,12 @@ class UnitLowerer {
 // that lowers a body mints and fills every other scope it opens, and the
 // lexical nesting -- which slang's member list does not follow -- is recorded
 // there, where it is known.
+// `declaring` is the scope whose registry the minted identities index, and
+// `walked` the scope being scanned for them; the two part company as the walk
+// descends into blocks the declaration scope still owns.
 void DeclareProceduralScopes(
-    const slang::ast::Scope& slang_scope, UnitLowerer& owner,
+    const slang::ast::Scope& declaring, const slang::ast::Scope& walked,
+    UnitLowerer& owner,
     base::Registry<hir::ProceduralScopeDecl, hir::ProceduralScopeId>& scopes);
 
 }  // namespace lyra::lowering::ast_to_hir

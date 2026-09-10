@@ -310,6 +310,17 @@ auto UnitLowerer::LowerClass(mir::ClassId owner, const mir::Class& cls)
 
   for (const mir::FieldId id : cls.fields.Ids()) {
     const mir::FieldDecl& field = cls.fields.Get(id);
+    // A member holding a code address is an entry a scope answered a name
+    // with, and a call through one is what this path does not yet make -- so
+    // the member is refused where it is declared rather than at whichever call
+    // reaches it first.
+    if (mir_->types.Get(field.type).Is<mir::MachineFunctionType>()) {
+      return diag::Fail(
+          diag::DiagCode::kUnsupportedExpressionForm,
+          "mir_to_lir: a subroutine reached by a hierarchical name the "
+          "declaring unit did not publish is not yet supported on this "
+          "backend");
+    }
     out.members.push_back(
         lir::Member{.name = field.name, .type = TranslateType(field.type)});
   }

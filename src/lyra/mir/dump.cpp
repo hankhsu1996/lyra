@@ -357,10 +357,10 @@ class MirDumper {
                   return "RuntimeLibrary(ScopeMetadata)";
                 case RuntimeLibraryKind::kAbiStringRef:
                   return "RuntimeLibrary(AbiStringRef)";
-                case RuntimeLibraryKind::kScopeExport:
-                  return "RuntimeLibrary(ScopeExport)";
-                case RuntimeLibraryKind::kScopeExportTable:
-                  return "RuntimeLibrary(ScopeExportTable)";
+                case RuntimeLibraryKind::kScopeCallable:
+                  return "RuntimeLibrary(ScopeCallable)";
+                case RuntimeLibraryKind::kScopeCallableTable:
+                  return "RuntimeLibrary(ScopeCallableTable)";
                 case RuntimeLibraryKind::kDpiBitBuffer:
                   return "RuntimeLibrary(DpiBitBuffer)";
                 case RuntimeLibraryKind::kDpiLogicBuffer:

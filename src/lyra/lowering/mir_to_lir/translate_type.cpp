@@ -369,8 +369,8 @@ auto UnitLowerer::TranslateRuntimeLibrary(mir::RuntimeLibraryKind kind)
     case mir::RuntimeLibraryKind::kScopeDefinition:
     case mir::RuntimeLibraryKind::kScopeMetadata:
     case mir::RuntimeLibraryKind::kAbiStringRef:
-    case mir::RuntimeLibraryKind::kScopeExport:
-    case mir::RuntimeLibraryKind::kScopeExportTable:
+    case mir::RuntimeLibraryKind::kScopeCallable:
+    case mir::RuntimeLibraryKind::kScopeCallableTable:
       throw InternalError(
           "TranslateRuntimeLibrary: a unit-definition record type is a "
           "compile-time constant consumed by the backend directly and does not "

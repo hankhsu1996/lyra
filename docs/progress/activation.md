@@ -103,13 +103,18 @@ or incomplete relative to the contract.
       is the one form still waiting on the backend that has no exceptions, because enabling one
       there is an await on a body that completes as a coroutine.
   - [ ] A `disable` whose target another module instance, generate scope, or package declares --
-        `disable u.blk`, `disable g.blk`, `disable pkg::t` -- naming it by a hierarchical path (LRM
-        23.9). A located diagnostic until then. What a name reaches there is an object on the design
-        hierarchy, which every other cross-instance reference already reaches through one route
-        mechanism, so what is missing is the target's own place in that vocabulary rather than a
-        second way to address one; a package's target is on no such object at all and is reached by
-        name. Nothing about the model changes: which source a `disable` invalidates and what leaving
-        it does are already settled.
+        `disable u.blk`, `disable c.tk`, `disable g[0].blk`, `disable pkg::t`, and the same through
+        an interface instance or an interface port -- naming it by a hierarchical path (LRM 23.9).
+        What a name reaches there is an object on the design hierarchy, which every other
+        cross-instance reference already reaches through one route mechanism, so what is missing is
+        the target's own place in that vocabulary rather than a second way to address one; a
+        package's target is on no such object at all and is reached by name. Nothing about the model
+        changes: which source a `disable` invalidates and what leaving it does are already settled.
+
+        A located diagnostic for every spelling above, and for one that needs no hierarchy at all: a
+        target in a generate block of the reader's own module, named from the module body or from a
+        sibling generate block. All of them refuse under one reason, so what the statement can reach
+        is decided by the target it names and not by the position it is written from.
 
 - [ ] **Runtime vocabulary trails the model.** The execution code names the activation and its core
       in coroutine-implementation terms; the contract's vocabulary is activation / completion slot /

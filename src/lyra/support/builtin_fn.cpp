@@ -637,10 +637,13 @@ auto RuntimeEntryOf(BuiltinFn id) -> RuntimeEntry {
     case BuiltinFn::kAddOwnedChild:
       return {
           .name = "add_owned_child", .declaration = Method{"AddOwnedChild"}};
-    case BuiltinFn::kGetSignal:
-      return {.name = "get_signal", .declaration = Method{"GetSignal"}};
-    case BuiltinFn::kGetChild:
-      return {.name = "get_child", .declaration = Method{"GetChild"}};
+    case BuiltinFn::kFindSignal:
+      return {.name = "find_signal", .declaration = Method{"FindSignal"}};
+    case BuiltinFn::kFindChild:
+      return {.name = "find_child", .declaration = Method{"FindChild"}};
+    case BuiltinFn::kFindSubroutine:
+      return {
+          .name = "find_subroutine", .declaration = Method{"FindSubroutine"}};
     case BuiltinFn::kForkWaitAll:
       return {
           .name = "fork_wait_all",

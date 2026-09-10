@@ -52,12 +52,15 @@ auto PortConnectionUnsupported(diag::SourceSpan span, std::string message)
 auto PublishedMemberRecipe(
     const hir::OwnedChildStep& instance_step,
     hir::ExternalUnitObjectId child_object, hir::PublishedMemberId member,
-    hir::TypeId type) -> hir::RoutedPathRecipe {
+    hir::PublishedStorage storage, hir::TypeId type) -> hir::RoutedPathRecipe {
   return hir::RoutedPathRecipe{
       .head = hir::InUnitHead{.hops = {}},
       .steps = {hir::PathStep{instance_step}},
       .leaf =
-          hir::SignatureMemberLeaf{.object = child_object, .member = member},
+          hir::SignatureMemberLeaf{
+              .object = child_object,
+              .member = member,
+              .storage = std::move(storage)},
       .type = type};
 }
 
@@ -239,7 +242,8 @@ auto ConnectInterfacePort(
           .span = span,
           .kind = hir::InterfacePortConnection{
               .endpoint = PublishedMemberRecipe(
-                  instance_step, child_object, published.member, member_type),
+                  instance_step, child_object, published.member, member.storage,
+                  member_type),
               .peers = *std::move(peers)}});
   return {};
 }
@@ -343,7 +347,7 @@ auto ConnectElementPorts(
     // parent never reads the child's declaration to find out. The route ends at
     // the member, whatever part of it the port stands for.
     const hir::RoutedPathRecipe port_recipe = PublishedMemberRecipe(
-        instance_step, child_object, projection->member,
+        instance_step, child_object, projection->member, member.storage,
         unit_lowerer.ImportSignatureType(child_signature, member.type));
     // An input/output port reads the child cell during simulation, so it holds
     // a persistent routed reference; a `ref` port is bound once in the resolve
@@ -354,10 +358,7 @@ auto ConnectElementPorts(
               unit_lowerer, frame, child_signature, projection->path,
               unit_lowerer.MakeRoutedMemberRef(
 
-                  home_frame,
-                  hir::RoutedRefDecl{
-                      .recipe = port_recipe, .target_storage = member.storage},
-                  span),
+                  home_frame, hir::RoutedRefDecl{.recipe = port_recipe}, span),
               span))};
     };
 

@@ -1048,8 +1048,8 @@ auto UnitLowerer::InternLocalClass(
       WalkFrame{}
           .WithDeclaringScope(
               DeclaringScopeChain(declaring_scope), &declaring_scope)
-          .WithProceduralScopeOwner(&decl.procedural_scopes);
-  DeclareProceduralScopes(cls, *this, decl.procedural_scopes);
+          .WithProceduralScopeOwner(&cls, &decl.procedural_scopes);
+  DeclareProceduralScopes(cls, cls, *this, decl.procedural_scopes);
 
   std::optional<hir::ExternalClassRef> promised_base;
 
@@ -1279,7 +1279,7 @@ auto UnitLowerer::PopulateClassBody(PendingClassBody& pending)
           .WithDeclaringScope(
               DeclaringScopeChain(*pending.declaring_scope),
               pending.declaring_scope)
-          .WithProceduralScopeOwner(&decl.procedural_scopes);
+          .WithProceduralScopeOwner(&cls, &decl.procedural_scopes);
 
   for (const auto* method : defined_methods) {
     auto method_decl =

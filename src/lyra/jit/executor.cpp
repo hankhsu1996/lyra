@@ -372,9 +372,9 @@ auto DefineRuntimeAbi(llvm::orc::LLJIT& jit)
   add("lyra_rt_sequence_make", &lyra_rt_sequence_make);
   add("lyra_rt_sequence_element", &lyra_rt_sequence_element);
   add("lyra_rt_register_signal", &lyra_rt_register_signal);
-  add("lyra_rt_get_signal", &lyra_rt_get_signal);
+  add("lyra_rt_find_signal", &lyra_rt_find_signal);
   add("lyra_rt_resolve_visible_child", &lyra_rt_resolve_visible_child);
-  add("lyra_rt_get_child", &lyra_rt_get_child);
+  add("lyra_rt_find_child", &lyra_rt_find_child);
   add("lyra_rt_packed_cell_alloc", &lyra_rt_packed_cell_alloc);
   add("lyra_rt_packed_cell_get", &lyra_rt_packed_cell_get);
   add("lyra_rt_packed_cell_initialize", &lyra_rt_packed_cell_initialize);

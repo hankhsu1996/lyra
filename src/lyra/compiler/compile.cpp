@@ -72,12 +72,11 @@ auto Compile(
       *result.artifacts.parse->compilation,
       result.artifacts.parse->source_mapper, sensitivity_analyzer,
       policy.assertions);
-  auto top_unit_names = lowering::ast_to_hir::TopLevelUnitNames(facts);
-  if (!top_unit_names) {
-    sink.Report(std::move(top_unit_names.error()));
+  auto tops = lowering::ast_to_hir::TopLevelUnits(facts);
+  if (!tops) {
+    sink.Report(std::move(tops.error()));
     return result;
   }
-  result.artifacts.top_unit_names = *std::move(top_unit_names);
 
   // Step 1: lower the whole compilation to a flat set of self-contained HIR
   // units -- every package, then every module body -- each tagged with its
@@ -128,8 +127,8 @@ auto Compile(
   std::optional<ElaboratedUnitMetadata> root_metadata;
   if (want_mir) {
     auto design_root = SynthesizeDesignRoot(
-        mir_units, result.artifacts.top_unit_names, lowered->signatures,
-        stop_after, result.artifacts.parse->diag_sources);
+        mir_units, *tops, lowered->signatures, stop_after,
+        result.artifacts.parse->diag_sources);
     if (!design_root) {
       sink.Report(std::move(design_root.error()));
       return result;

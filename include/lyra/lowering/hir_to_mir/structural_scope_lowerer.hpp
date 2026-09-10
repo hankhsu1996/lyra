@@ -157,18 +157,39 @@ class StructuralScopeLowerer {
   // not yet built (forward / mutual reference, LRM 13.7). The desugar reads the
   // formals' directions and types from here.
   [[nodiscard]] auto LookupHirSubroutine(
-      hir::StructuralHops hops, hir::StructuralSubroutineId id) const
-      -> const hir::SubroutineDecl& {
-    if (hops.value == 0) {
-      return hir_scope_->structural_subroutines.Get(id);
+      hir::StructuralHops hops, std::span<const hir::OwnedChildRef> descent,
+      hir::StructuralSubroutineId id) const -> const hir::SubroutineDecl& {
+    return ScopeAt(hops, descent).hir_scope_->structural_subroutines.Get(id);
+  }
+
+  // The scope a reach lands on: `hops` enclosing edges out, then one owned
+  // child per descent step. Every step is one this unit declares, so the walk
+  // is total -- a reach that leaves the layout never reaches here.
+  [[nodiscard]] auto ScopeAt(
+      hir::StructuralHops hops,
+      std::span<const hir::OwnedChildRef> descent) const
+      -> const StructuralScopeLowerer& {
+    if (hops.value > 0) {
+      if (parent_ == nullptr) {
+        throw InternalError(
+            "StructuralScopeLowerer::ScopeAt: hops walk ran past the root "
+            "scope");
+      }
+      return parent_->ScopeAt(
+          hir::StructuralHops{.value = hops.value - 1}, descent);
     }
-    if (parent_ == nullptr) {
-      throw InternalError(
-          "StructuralScopeLowerer::LookupHirSubroutine: hops walk ran "
-          "past the root scope");
+    const StructuralScopeLowerer* scope = this;
+    for (const hir::OwnedChildRef& child : descent) {
+      const OwnedChildAnchor anchor =
+          scope->TranslateOwnedChild(hir::StructuralHops{.value = 0}, child);
+      if (anchor.target_scope == nullptr) {
+        throw InternalError(
+            "StructuralScopeLowerer::ScopeAt: a descent step reached an "
+            "object this unit does not lay out");
+      }
+      scope = anchor.target_scope;
     }
-    return parent_->LookupHirSubroutine(
-        hir::StructuralHops{.value = hops.value - 1}, id);
+    return *scope;
   }
 
   [[nodiscard]] auto RoutedRefTarget(hir::RoutedRefId hir_id) const
@@ -320,21 +341,13 @@ class StructuralScopeLowerer {
   // that owns the callable, `hops` enclosing edges out from this one, and the
   // callable's identity within it.
   [[nodiscard]] auto TranslateStructuralSubroutine(
-      hir::StructuralHops hops, hir::StructuralSubroutineId hir_id) const
-      -> mir::Direct {
-    if (hops.value == 0) {
-      return mir::Direct{
-          .target = mir::CallableTarget{
-              .owner = class_id_,
-              .slot = declared_subroutines_.Get(hir_id).callable}};
-    }
-    if (parent_ == nullptr) {
-      throw InternalError(
-          "StructuralScopeLowerer::TranslateStructuralSubroutine: hops "
-          "exceed scope chain depth");
-    }
-    return parent_->TranslateStructuralSubroutine(
-        hir::StructuralHops{hops.value - 1}, hir_id);
+      hir::StructuralHops hops, std::span<const hir::OwnedChildRef> descent,
+      hir::StructuralSubroutineId hir_id) const -> mir::Direct {
+    const StructuralScopeLowerer& owner = ScopeAt(hops, descent);
+    return mir::Direct{
+        .target = mir::CallableTarget{
+            .owner = owner.class_id_,
+            .slot = owner.declared_subroutines_.Get(hir_id).callable}};
   }
 
   // The MIR field one instance member became. A declaration is one field

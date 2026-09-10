@@ -98,12 +98,14 @@ the design.
 
 6. **A unit exposes what lies past its signature through the SDK.** So that any artifact's opaque
    segments can reach a declaration a unit did not publish, each unit registers its hierarchically
-   reachable signals and its owned children by name into the object graph node during construction,
-   and the base SDK answers a by-name query from those registrations -- the unit never inspects who
-   asks, and the dispatch is one generic scan, not a per-unit synthesized branch. The referrer's
-   emission consumes those registrations through one route execution and stores the sealed endpoint;
-   it never embeds another unit's layout. A name on the signature needs none of this, because the
-   referrer already compiles against it.
+   reachable declarations by name into the object graph node during construction -- its signals, its
+   owned children, and its subroutines, each in its own namespace -- and the base SDK answers a
+   by-name query from those registrations. The unit never inspects who asks, and the dispatch is one
+   generic scan, not a per-unit synthesized branch. What such a query answers with follows from what
+   was named: a cell, a scope, or an entry to call. The referrer's emission consumes those
+   registrations through one route execution and stores the sealed endpoint; it never embeds another
+   unit's layout. A name on the signature needs none of this, because the referrer already compiles
+   against it.
 7. **A change re-emits exactly the referrers whose consumed signature changed.** A change confined
    to a unit's bodies changes no signature and re-emits no referrer. A change to a signature
    re-emits every unit that consumes it, which is the dependency being real rather than the

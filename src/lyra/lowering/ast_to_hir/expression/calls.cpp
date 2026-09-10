@@ -463,13 +463,13 @@ auto DeclaringUnitOfSubroutine(const slang::ast::SubroutineSymbol& sym)
   return &owner;
 }
 
-// Enables a subroutine on an instance of the unit whose body declares it (LRM
-// 25.7, 23.6). Two facts have to line up for that: a route from here to the
-// object, and a promise from that unit that the name is callable on it. An
-// interface promises its whole declared surface, so the second holds wherever
-// the first does; a module promises only its ports, so a subroutine of one is
-// reached, if at all, by a name the runtime answers while the design elaborates
-// -- which no route to a sealed endpoint expresses.
+// Enables a subroutine another unit declares, on one instance of it (LRM 25.7,
+// 23.6). The route to that object is the same walk a read of a declaration
+// there takes; what the declaring unit promised decides only what answers the
+// name at the end of it. An interface promises its whole declared surface, so
+// the name resolves against that promise; a module promises its parameters and
+// its ports, so the name is answered by the scope itself while the design
+// elaborates.
 auto LowerObjectSubroutineCall(
     UnitLowerer& unit_lowerer, WalkFrame frame,
     const slang::ast::CallExpression& call,
@@ -481,56 +481,83 @@ auto LowerObjectSubroutineCall(
         span, diag::DiagCode::kUnsupportedExpressionForm, std::move(message));
   };
   const slang::ast::Scope* owner = sym.getParentScope();
-  const auto* body =
-      owner == nullptr
-          ? nullptr
-          : owner->asSymbol().as_if<slang::ast::InstanceBodySymbol>();
-  if (body == nullptr) {
+  if (owner == nullptr) {
     return refuse(
         "a subroutine declared in this scope kind is not yet supported");
   }
-
-  auto route = unit_lowerer.RouteToUnitObject(
-      frame, *body, call.lookupInfo.hierRef, span);
-  if (!route) return std::unexpected(std::move(route.error()));
-  if (!route->has_value()) {
-    return refuse(
-        "a subroutine on an instance reached this way is not yet supported");
-  }
+  // A unit's own body is the one scope a promise can be about, so it is the
+  // one whose route is read from how the name reached the instance -- through
+  // a port, or by a walk on the hierarchy. A subroutine declared deeper, in a
+  // generate block of that unit, is reached by walking to the block: no
+  // signature mentions it either way, so nothing about it distinguishes a port.
+  const auto* body = owner->asSymbol().as_if<slang::ast::InstanceBodySymbol>();
+  auto walked = body != nullptr
+                    ? unit_lowerer.RouteToUnitObject(
+                          frame, *body, call.lookupInfo.hierRef, span)
+                    : unit_lowerer.RouteToDeclaringScope(frame, *owner, span);
+  if (!walked) return std::unexpected(std::move(walked.error()));
+  ScopeRoute route = *std::move(walked);
 
   // Reaching an object is what declares the dependency on the unit it belongs
   // to, so a unit this one never declared has no record here and nothing was
-  // promised to compile against.
-  const std::string unit_name = CompilationUnitName(*body);
-  if (unit_lowerer.Signatures().Find(unit_name) == nullptr) {
-    return refuse(
-        "a subroutine on an instance this unit does not reach is not yet "
-        "supported");
-  }
-  const hir::ExternalUnitObjectId object =
-      unit_lowerer.ExternalUnitObjectOf(unit_name);
-  const hir::ExternalUnitObject& promised =
-      unit_lowerer.Unit().external_unit_objects.Get(object);
-  const auto callable = promised.FindCallable(sym.name);
-  if (!callable.has_value()) {
-    return refuse(
-        "a subroutine the declaring unit does not publish is not yet "
-        "supported");
+  // promised to compile against. Where a record does exist, the name still has
+  // to be on it: an interface promises its whole declared surface, a module
+  // promises its parameters and ports.
+  if (body != nullptr) {
+    const std::string unit_name = CompilationUnitName(*body);
+    if (unit_lowerer.Signatures().Find(unit_name) != nullptr) {
+      const hir::ExternalUnitObjectId object =
+          unit_lowerer.ExternalUnitObjectOf(unit_name);
+      const hir::ExternalUnitObject& promised =
+          unit_lowerer.Unit().external_unit_objects.Get(object);
+      if (const auto callable = promised.FindCallable(sym.name)) {
+        const hir::TypeId object_type = unit_lowerer.Unit().types.Intern(
+            hir::Type{hir::UnitObjectType{.unit_name = unit_name}});
+        const hir::RoutedRef receiver = unit_lowerer.MakeRoutedObjectRef(
+            frame.Current(), std::move(route), object_type);
+        return hir::Expr{
+            .type = promised.callables.Get(*callable).result_type,
+            .data =
+                hir::CallExpr{
+                    .callee =
+                        hir::ExternalUnitMethodRef{
+                            .receiver = receiver,
+                            .object = object,
+                            .callable = *callable},
+                    .arguments = std::move(arguments)},
+            .span = span,
+        };
+      }
+    }
   }
 
-  const hir::TypeId object_type = unit_lowerer.Unit().types.Intern(
-      hir::Type{hir::UnitObjectType{.unit_name = unit_name}});
+  // Nothing was promised, so the name is all that crosses: the route reaches
+  // the object and the scope answers the name with its own entry while the
+  // design elaborates (LRM 23.6, 23.8.1). What the call passes and awaits comes
+  // from the callee's declaration, which is also what the entry is generated
+  // from.
+  auto interface = unit_lowerer.MakeExternalCalleeInterface(sym, span);
+  if (!interface) return std::unexpected(std::move(interface.error()));
+  auto result_type = unit_lowerer.InternType(sym.getReturnType(), span);
+  if (!result_type) return std::unexpected(std::move(result_type.error()));
+
+  const hir::TypeId scope_type =
+      unit_lowerer.Unit().types.Intern(hir::Type{hir::OpaqueScopeType{}});
+  const ScopeRoute entry_route = route;
   const hir::RoutedRef receiver = unit_lowerer.MakeRoutedObjectRef(
-      frame.Current(), *std::move(*route), object_type);
+      frame.Current(), std::move(route), scope_type);
+  const hir::RoutedRef entry = unit_lowerer.MakeRoutedCallableRef(
+      frame.Current(), entry_route, std::string{sym.name}, *interface,
+      *result_type);
   return hir::Expr{
-      .type = promised.callables.Get(*callable).result_type,
+      .type = *result_type,
       .data =
           hir::CallExpr{
               .callee =
-                  hir::ExternalUnitMethodRef{
+                  hir::OpaqueUnitMethodRef{
                       .receiver = receiver,
-                      .object = object,
-                      .callable = *callable},
+                      .entry = entry,
+                      .interface = *std::move(interface)},
               .arguments = std::move(arguments)},
       .span = span,
   };
@@ -1125,12 +1152,12 @@ auto LowerCallExpr(
     return LowerObjectSubroutineCall(
         unit_lowerer, frame, call, *sym, std::move(arg_ids), span);
   }
-  const auto hops = frame.HopsTo(binding->owner_frame);
-  if (!hops.has_value()) {
-    throw InternalError(
-        "AST->HIR call: user subroutine owner frame is not on the current "
-        "scope stack");
-  }
+  // The scope that declares the callee, reached the way a reference to a
+  // declaration in that same scope is: a climb to the nearest scope enclosing
+  // both, then a descent. A callee of an enclosing scope is the empty descent,
+  // which is what a bare climb already was.
+  auto reach = unit_lowerer.ReachOwnScope(frame, *sym->getParentScope(), span);
+  if (!reach) return std::unexpected(std::move(reach.error()));
   auto result_type = unit_lowerer.InternType(*call.type, span);
   if (!result_type) return std::unexpected(std::move(result_type.error()));
   return hir::Expr{
@@ -1139,7 +1166,9 @@ auto LowerCallExpr(
           hir::CallExpr{
               .callee =
                   hir::StructuralSubroutineRef{
-                      .hops = *hops, .subroutine = binding->subroutine_id},
+                      .hops = reach->hops,
+                      .descent = std::move(reach->descent),
+                      .subroutine = binding->subroutine_id},
               .arguments = std::move(arg_ids),
           },
       .span = span,

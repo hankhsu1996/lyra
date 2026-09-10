@@ -110,12 +110,13 @@ auto StructuralScopeLowerer::Run(WalkFrame parent_frame)
   scope.declared_classes = owner_->TakeDeclaredClasses(*slang_scope_);
   const WalkFrame frame =
       parent_frame.WithStructuralFrame(frame_, slang_scope_, &scope)
-          .WithProceduralScopeOwner(&scope.procedural_scopes);
+          .WithProceduralScopeOwner(slang_scope_, &scope.procedural_scopes);
   scope.time_resolution = ResolveTimeResolution(slang_scope_->getTimeScale());
 
   // A `disable` names a block or task by static identity (LRM 9.6.2), so it can
   // name one whose body lowers later, or lives in another process entirely.
-  DeclareProceduralScopes(*slang_scope_, *owner_, scope.procedural_scopes);
+  DeclareProceduralScopes(
+      *slang_scope_, *slang_scope_, *owner_, scope.procedural_scopes);
 
   // Instance member decls are built ahead of the port-connection synthesis
   // below, which reads them to wire each connection. The owned-child binding a

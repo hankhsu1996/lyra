@@ -390,13 +390,16 @@ enum class RuntimeLibraryKind : std::uint8_t {
   kScopeDefinition,
   kScopeMetadata,
   kAbiStringRef,
-  // The DPI-C exports a scope publishes (LRM 35.4): one
-  // `lyra::runtime::ScopeExport` per export, naming it and pointing at the
-  // entry that adapts a call to this scope's own subroutine, gathered in a
-  // `lyra::runtime::ScopeExportTable` the scope's program holds. The entry's
-  // own type is a machine function, not one of these.
-  kScopeExport,
-  kScopeExportTable,
+  // The callables a scope answers for by name: one
+  // `lyra::runtime::ScopeCallable` per name, pointing at the entry that adapts
+  // a call to this scope's own subroutine, gathered in a
+  // `lyra::runtime::ScopeCallableTable` the scope's program holds. A scope
+  // holds one such table per namespace it answers in -- the program-global
+  // names of its DPI-C exports (LRM 35.4), and the SV names a hierarchical
+  // enable spells (LRM 23.6). The entry's own type is a machine function, not
+  // one of these.
+  kScopeCallable,
+  kScopeCallableTable,
   // The canonical buffer a packed vector crosses the DPI-C boundary in (LRM
   // 35.5.6, Annex H.10.1.2): `lyra::value::DpiBitBuffer` holds `svBitVecVal`
   // chunks, `lyra::value::DpiLogicBuffer` holds `svLogicVecVal` chunks. The

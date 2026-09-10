@@ -249,6 +249,13 @@ auto UnitLowerer::TranslateType(const hir::Type& type) -> mir::Type {
           [&](const hir::UnitObjectType& src) -> mir::Type {
             return UnitObjectNamed(src.unit_name);
           },
+          [](const hir::OpaqueScopeType&) -> mir::Type {
+            // Nothing was published about the scope, so what names it is what
+            // every scope is: the runtime's own, with no member of it reachable
+            // by position.
+            return mir::Type{
+                mir::RuntimeClassType{.symbol = "lyra::runtime::Scope"}};
+          },
           [](const hir::NullType&) -> mir::Type {
             // The `null` literal carries no class identity; it renders as a
             // null pointer that any handle absorbs, so MIR types it as the

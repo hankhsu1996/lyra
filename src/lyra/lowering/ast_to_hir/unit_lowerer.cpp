@@ -680,14 +680,15 @@ auto ContributionOf(const slang::ast::Symbol& member, const UnitLowerer& owner)
 }  // namespace
 
 void DeclareProceduralScopes(
-    const slang::ast::Scope& slang_scope, UnitLowerer& owner,
+    const slang::ast::Scope& declaring, const slang::ast::Scope& walked,
+    UnitLowerer& owner,
     base::Registry<hir::ProceduralScopeDecl, hir::ProceduralScopeId>& scopes) {
   // A process's own blocks are listed beside it here as well, so the pass
   // gathers them first and then leaves them to the process that answers for
   // them; reaching one from this loop would mint an identity for a block whose
   // process the design may not contain, and nothing would go on to fill it.
   std::unordered_set<const slang::ast::Symbol*> process_blocks;
-  for (const auto& member : slang_scope.members()) {
+  for (const auto& member : walked.members()) {
     if (member.kind != slang::ast::SymbolKind::ProceduralBlock) {
       continue;
     }
@@ -696,29 +697,30 @@ void DeclareProceduralScopes(
       process_blocks.insert(block);
     }
   }
-  for (const auto& member : slang_scope.members()) {
+  for (const auto& member : walked.members()) {
     // Slang lists a base class's members in the derived class's member list
     // too (LRM 8.13 inheritance), and this pass mints for one declaration
     // scope: a member declared elsewhere is that declaration's own to mint,
     // and minting a second identity for it would leave one of them unfilled.
-    if (member.getParentScope() != &slang_scope ||
+    if (member.getParentScope() != &walked ||
         process_blocks.contains(&member)) {
       continue;
     }
     const ScopeContribution contribution = ContributionOf(member, owner);
     if (contribution.minted != nullptr) {
       owner.DeclareProceduralScope(
-          *contribution.minted, scopes, scopes.Declare());
+          *contribution.minted, declaring, scopes.Declare());
     }
     for (const auto* block : contribution.blocks) {
       const ScopeContribution owned = ContributionOf(*block, owner);
       if (owned.minted != nullptr) {
-        owner.DeclareProceduralScope(*owned.minted, scopes, scopes.Declare());
+        owner.DeclareProceduralScope(
+            *owned.minted, declaring, scopes.Declare());
       }
-      DeclareProceduralScopes(*block, owner, scopes);
+      DeclareProceduralScopes(declaring, *block, owner, scopes);
     }
     if (contribution.walked != nullptr) {
-      DeclareProceduralScopes(*contribution.walked, owner, scopes);
+      DeclareProceduralScopes(declaring, *contribution.walked, owner, scopes);
     }
   }
 }

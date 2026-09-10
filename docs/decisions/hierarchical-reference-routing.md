@@ -97,8 +97,8 @@ requires:
 4. A MIR representation reusing or extending the existing type system.
 5. A hot-path realization defined for every supported backend.
 
-Interface members, chandle observability, and hierarchical callable dispatch are candidate
-extensions; each needs its own decision entry.
+Interface members and chandle observability are candidate extensions; each needs its own decision
+entry. Hierarchical callable dispatch was one and has its own entry now.
 
 ### D6. Conditional-generate non-selected arms are sealing failures
 

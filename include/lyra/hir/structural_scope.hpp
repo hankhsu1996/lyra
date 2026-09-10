@@ -8,14 +8,17 @@
 #include <vector>
 
 #include "lyra/base/arena.hpp"
+#include "lyra/base/overloaded.hpp"
 #include "lyra/base/pool_id.hpp"
 #include "lyra/base/registry.hpp"
 #include "lyra/base/time.hpp"
 #include "lyra/hir/class_id.hpp"
 #include "lyra/hir/continuous_assign.hpp"
 #include "lyra/hir/expr.hpp"
+#include "lyra/hir/external_callee.hpp"
 #include "lyra/hir/external_unit_object.hpp"
 #include "lyra/hir/foreign_export.hpp"
+#include "lyra/hir/owned_child_ref.hpp"
 #include "lyra/hir/pattern.hpp"
 #include "lyra/hir/port_direction.hpp"
 #include "lyra/hir/procedural_scope.hpp"
@@ -30,26 +33,6 @@
 namespace lyra::hir {
 
 struct StructuralScope;
-
-struct GenerateId {
-  std::uint32_t value = base::kUnassignedId;
-
-  auto operator<=>(const GenerateId&) const -> std::strong_ordering = default;
-};
-
-struct StructuralScopeId {
-  std::uint32_t value = base::kUnassignedId;
-
-  auto operator<=>(const StructuralScopeId&) const
-      -> std::strong_ordering = default;
-};
-
-struct InstanceMemberId {
-  std::uint32_t value = base::kUnassignedId;
-
-  auto operator<=>(const InstanceMemberId&) const
-      -> std::strong_ordering = default;
-};
 
 struct InterfacePortId {
   std::uint32_t value = base::kUnassignedId;
@@ -67,20 +50,6 @@ struct InterfacePortId {
 // scope does with it.
 using PublishedDecl =
     std::variant<StructuralDataObjectId, InstanceMemberId, InterfacePortId>;
-
-// A generate block (LRM 27) as a child of the scope that declares it: the
-// generate construct it belongs to, plus which of that construct's elaborated
-// blocks it is.
-struct GenerateChildRef {
-  GenerateId generate;
-  StructuralScopeId scope;
-
-  auto operator==(const GenerateChildRef&) const -> bool = default;
-};
-
-// A child object the referrer's compilation unit declares, named by the
-// declaring scope's own identity for it.
-using OwnedChildRef = std::variant<InstanceMemberId, GenerateChildRef>;
 
 // One navigation step whose source and target objects are both declared by
 // this compilation unit, so it realizes as typed member navigation.
@@ -176,8 +145,14 @@ using RouteHead = std::variant<InUnitHead, RootHead, VisibleChildHead>;
 // identity fixes the whole procedural descent. A leaf in another unit takes one
 // of the forms below instead: against that unit's signature when it published
 // the name, and against the runtime when it did not.
+// Each data leaf states the storage its target holds, because that is what the
+// endpoint reaching it points at and no consumer below can recover it: the
+// declaration is in a scope the route walks to rather than one the reader can
+// index, and past a signature there is no declaration at all. A leaf reaching
+// something that is not data states none.
 struct StructuralDataObjectLeaf {
   StructuralDataObjectId object;
+  PublishedStorage storage;
 
   auto operator==(const StructuralDataObjectLeaf&) const -> bool = default;
 };
@@ -200,6 +175,7 @@ struct ProceduralStaticLeaf {
 struct SignatureMemberLeaf {
   ExternalUnitObjectId object;
   PublishedMemberId member;
+  PublishedStorage storage;
 
   auto operator==(const SignatureMemberLeaf&) const -> bool = default;
 };
@@ -216,13 +192,71 @@ struct ScopeLeaf {
 // runtime answers it while the design elaborates (LRM 23.6).
 struct OpaqueLeaf {
   std::string name;
+  PublishedStorage storage;
 
   auto operator==(const OpaqueLeaf&) const -> bool = default;
 };
 
+// The route ends past a signature too, at a subroutine no unit promised: a
+// hierarchical name reaches a module's task or function (LRM 23.6, 23.8.1), and
+// a module's signature is its parameters and ports. The name is all that
+// crosses, and the scope answers it with an entry the way it answers one with a
+// cell. `interface` is what the call passes and awaits, recomputed from the
+// callee's declaration: nothing was published to shape the call, and the entry
+// the scope publishes is generated from that same declaration, so the two
+// cannot disagree.
+struct OpaqueCallableLeaf {
+  std::string name;
+  ExternalCalleeInterface interface;
+
+  auto operator==(const OpaqueCallableLeaf&) const -> bool = default;
+};
+
 using RouteLeaf = std::variant<
     StructuralDataObjectLeaf, ProceduralStaticLeaf, SignatureMemberLeaf,
-    ScopeLeaf, OpaqueLeaf>;
+    ScopeLeaf, OpaqueLeaf, OpaqueCallableLeaf>;
+
+// A cell of the storage the declaring unit says its target is.
+struct EndpointCell {
+  PublishedStorage storage;
+};
+
+// The object the route landed on, which is reached by a pointer to it with no
+// cell in between.
+struct EndpointObject {};
+
+// The entry a scope answered a callable's name with, which is a code address
+// and so is already what a caller holds.
+struct EndpointEntry {};
+
+// What an endpoint reaching this leaf holds. Every consumer of a route asks
+// this and nothing else about where it ends, so the three answers are stated
+// once here rather than re-derived from the leaf at each of them.
+using Endpoint = std::variant<EndpointCell, EndpointObject, EndpointEntry>;
+
+[[nodiscard]] inline auto EndpointOf(const RouteLeaf& leaf) -> Endpoint {
+  return std::visit(
+      Overloaded{
+          [](const StructuralDataObjectLeaf& l) -> Endpoint {
+            return EndpointCell{.storage = l.storage};
+          },
+          [](const SignatureMemberLeaf& l) -> Endpoint {
+            return EndpointCell{.storage = l.storage};
+          },
+          [](const OpaqueLeaf& l) -> Endpoint {
+            return EndpointCell{.storage = l.storage};
+          },
+          // A static-lifetime local is a variable wherever it sits (LRM 6.21),
+          // so it needs no field to say so.
+          [](const ProceduralStaticLeaf&) -> Endpoint {
+            return EndpointCell{.storage = VariableStorage{}};
+          },
+          [](const ScopeLeaf&) -> Endpoint { return EndpointObject{}; },
+          [](const OpaqueCallableLeaf&) -> Endpoint {
+            return EndpointEntry{};
+          }},
+      leaf);
+}
 
 // How to navigate from a scope to a target elsewhere on the object tree:
 // `head` is where navigation starts, `steps` carries the descent from there,
@@ -248,7 +282,6 @@ struct RoutedPathRecipe {
 // is read / written / observed through one stored direct reference.
 struct RoutedRefDecl {
   RoutedPathRecipe recipe;
-  PublishedStorage target_storage;
 };
 
 struct ConcurrentAssertionId {

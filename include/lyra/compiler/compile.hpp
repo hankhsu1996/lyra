@@ -62,9 +62,6 @@ struct CompileArtifacts {
   // the C++ backend takes through the root's constructor.
   std::optional<lir::CompilationUnit> root_lir_unit;
   std::optional<ElaboratedUnitMetadata> root_metadata;
-  // A subset of the compiled units: a unit reached only through instantiation
-  // is compiled but is not a top.
-  std::vector<std::string> top_unit_names;
 
   // Reading a stage's product asserts that the stage ran. Which optionals are
   // filled follows from how far down the pipeline the caller asked to go, and

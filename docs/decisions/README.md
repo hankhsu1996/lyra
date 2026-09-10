@@ -168,6 +168,10 @@ the detail lives in the entry itself.
 - [hierarchical-reference-routing](hierarchical-reference-routing.md) -- one semantic shape per
   hierarchical reference; per-segment classification by layout visibility; sealed endpoint on the
   hot path.
+- [hierarchical-callable-dispatch](hierarchical-callable-dispatch.md) -- a subroutine a hierarchical
+  name enables is the route to the declaring scope plus whatever answers the name there; a module
+  publishing its subroutines is excluded because the dependency graph must stay acyclic, so its
+  subroutines are answered by the scope itself.
 - [binding-graph-resolution](binding-graph-resolution.md) -- resolution and sealing respect
   dependencies between references; forwarding chains collapse end-to-end.
 - [hierarchical-reference-resolution](hierarchical-reference-resolution.md) (superseded) -- the

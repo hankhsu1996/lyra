@@ -57,12 +57,11 @@ auto CurrentExportScope() -> Scope* {
 }
 
 auto FindExportEntry(Scope* scope, const char* subroutine)
-    -> ErasedScopeExportEntry {
+    -> ErasedScopeCallable {
   const std::string_view wanted{subroutine};
-  for (const ScopeExport& published : scope->Program().exports.Entries()) {
-    if (std::string_view{published.name.data, published.name.size} == wanted) {
-      return published.entry;
-    }
+  if (ErasedScopeCallable entry =
+          FindInCallableTable(scope->Program().exports, wanted)) {
+    return entry;
   }
   const char* entered =
       AmbientRunContext::Current().ScopeRegistry().NameOf(scope);

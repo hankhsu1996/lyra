@@ -2,7 +2,6 @@
 
 #include <optional>
 #include <span>
-#include <string>
 
 #include "lyra/compiler/compile.hpp"
 #include "lyra/compiler/unit_metadata.hpp"
@@ -10,6 +9,7 @@
 #include "lyra/diag/source_manager.hpp"
 #include "lyra/hir/unit_signatures.hpp"
 #include "lyra/lir/compilation_unit.hpp"
+#include "lyra/lowering/ast_to_hir/lower.hpp"
 #include "lyra/mir/compilation_unit.hpp"
 
 namespace lyra::compiler {
@@ -41,7 +41,7 @@ struct DesignRootArtifacts {
 // is what the root's handle to one is typed by.
 auto SynthesizeDesignRoot(
     std::span<const mir::CompilationUnit> units,
-    std::span<const std::string> top_names,
+    std::span<const lowering::ast_to_hir::TopLevelUnit> tops,
     const hir::UnitSignatures& signatures, StopAfter stop_after,
     const diag::SourceManager& source_manager)
     -> diag::Result<DesignRootArtifacts>;

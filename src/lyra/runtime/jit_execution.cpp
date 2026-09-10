@@ -1349,9 +1349,9 @@ auto lyra_rt_resolve_visible_child(
       static_cast<const char*>(head_name), PackedValuesOf(head_indices));
 }
 
-auto lyra_rt_get_child(void* self, const void* name, LyraSpan indices)
+auto lyra_rt_find_child(void* self, const void* name, LyraSpan indices)
     -> void* {
-  return static_cast<Scope*>(self)->GetChild(
+  return static_cast<Scope*>(self)->FindChild(
       static_cast<const char*>(name), PackedValuesOf(indices));
 }
 
@@ -1403,8 +1403,8 @@ void lyra_rt_register_signal(void* self, const void* name, void* cell) {
       static_cast<const char*>(name), cell);
 }
 
-auto lyra_rt_get_signal(void* self, const void* name) -> void* {
-  return static_cast<Scope*>(self)->GetSignal(static_cast<const char*>(name));
+auto lyra_rt_find_signal(void* self, const void* name) -> void* {
+  return static_cast<Scope*>(self)->FindSignal(static_cast<const char*>(name));
 }
 
 auto lyra_rt_packed_cell_alloc() -> void* {

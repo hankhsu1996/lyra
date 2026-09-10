@@ -218,7 +218,7 @@ auto LowerStatement(
       // which this statement does not yet route.
       const std::optional<hir::ProceduralScopeId> scope =
           proc.Owner().LookupProceduralScopeIn(
-              target, frame.ProceduralScopes());
+              target, frame.ProceduralScopeOwner());
       if (!scope.has_value()) {
         return diag::Fail(
             span, diag::DiagCode::kUnsupportedStatementForm,
