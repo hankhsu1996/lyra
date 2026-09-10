@@ -226,7 +226,7 @@ backend's gap and is recorded against it, not against the route.
 | named event                       | ok           | ok                    | ok               | ok                   |
 | static of a named block           | ok           | ok                    | ok               | ok                   |
 | static of a subroutine body       | ok           | ok                    | ok               | ok                   |
-| class property, through a handle  | ok           | ok                    | **def**          | **def**              |
+| class property, through a handle  | ok           | ok                    | **ref**          | **ref**              |
 | function or task                  | ok           | ok                    | ok               | ok                   |
 | block or task, as a `disable`     | ok           | ok                    | ok               | ok                   |
 
@@ -245,9 +245,13 @@ missing realization: each was a second walk, or a guard, deciding for one head w
 classification already decides for every head. That is the shape to look for before believing any
 single cell -- a lone failure is either one of these or a misreading of the row.
 
-**Two cells are defects rather than gaps, under one cause.** A class property reached across a unit
-boundary names a type the reader's artifact was never given, out of this unit and through an
-interface alike. That is D12 below, and what it waits on is not the route.
+**Two cells are refused rather than reached, under one cause, and the refusal is not the answer they
+want.** A class property reached across a unit boundary is refused where the access is compiled,
+because nothing the declaring unit promised carries the name -- out of this unit and through an
+interface alike. That is honest for a class a signature could carry and did not, and wrong for the
+case these two cells are: a module publishes no class at all, so nothing was ever going to promise
+one, and refusing on that ground refuses what LRM 23.6 permits. What they owe is the by-name arm
+every other unpromised name already takes, which is D12 below.
 
 **One row is not a route fact.** An enumerator is a constant, and a name ending at one is folded to
 its value before any route is built, so that row reads `ok` everywhere by never reaching the object
@@ -332,16 +336,23 @@ at.
       ends at that structural scope and not at the subroutine -- which the two kinds of scope now
       answer alike.
 
-- [ ] D12 -- Two cells of the table that answer wrongly rather than refusing, both found by running
-      the corpus rather than by a design reading.
+- [ ] D12 -- The two cells of the table a hierarchical name reaches and the access is then refused
+      at, both found by running the corpus rather than by a design reading.
 
-      A **class property reached across a unit boundary** names a type the reader's artifact was
-      never given, out of this unit and through an interface alike: the reference materializes the
-      declaring unit's class in the reader rather than reaching it through what that unit published.
-      It is refused on the execution backend and silently miscompiled on the other, which is why
-      only compiling the emitted text finds it. What it waits on is what a unit publishes about a
-      class another unit names, which is the cross-unit class boundary rather than anything about
-      the route.
+      A **class property reached across a unit boundary**, out of this unit and through an interface
+      alike. The route composes correctly and the reference arrives; what fails is the access, which
+      is compiled against a promise and finds none. For a class a signature could have carried, that
+      refusal is the honest answer. For these two cells it is not: a module publishes no class at
+      all, so no promise was ever possible, and LRM 23.6 lets a name reach past a signature exactly
+      where nothing was promised. The answer they owe is the by-name arm -- an object asked for a
+      member by the name the source spelled, resolved once when the route resolves, naming neither
+      the declaring unit nor the class.
+
+      Two things have to be true and only one of them is. The reference must stop acquiring the
+      declaring unit's class as a type, which is the cross-unit class boundary and is where the
+      refusal now stands; and a member must then be reachable on an object whose class this unit has
+      no declaration for, which is this workstream's own shape and is the erased-entry precedent
+      applied to a member rather than a callable.
 
 - [x] D11 -- A hierarchical reference whose target is a net, in every direction. A net reached
       downward reads and is waited on like a variable, and the name that reaches it there is

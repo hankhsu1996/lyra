@@ -2087,31 +2087,6 @@ auto StructuralScopeLowerer::PopulateBodies(WalkFrame parent_frame)
     unit_lowerer.Unit().DefineClass(name_node.class_id, std::move(node_class));
   }
 
-  // Build the whole name tree here, in this scope's own constructor: each node
-  // hangs under the node of the scope around it, which is what the source
-  // nesting means, while the borrowed handle to it lands on this class -- so
-  // the objects nest and every one of them is still one step from a body.
-  // Construction precedes every resolve, so the names registered below are in
-  // place before anything asks for one.
-  const auto build_name_tree =
-      [&](const auto& self_ref, hir::ProceduralScopeId scope_id,
-          std::optional<mir::FieldId> parent_handle) -> void {
-    const auto& scope = hir_scope.procedural_scopes.Get(scope_id);
-    const ScopeNameNode& name_node = *scopes_.Get(scope_id).name_node;
-    AppendOwnedChildConstruction(
-        unit_lowerer, ctor_frame, parent_handle, scope.source_name.value_or(""),
-        name_node.class_id, std::nullopt, name_node.borrowed_handle);
-    for (const hir::ProceduralScopeId child : scope.child_scopes) {
-      self_ref(self_ref, child, name_node.borrowed_handle);
-    }
-  };
-  for (const auto& s : hir_scope.structural_subroutines) {
-    build_name_tree(build_name_tree, s.body.root_scope, std::nullopt);
-  }
-  for (const auto& p : hir_scope.processes) {
-    build_name_tree(build_name_tree, p.body.root_scope, std::nullopt);
-  }
-
   // What a `disable` naming a block or task terminates is a cell on this
   // object, placed by the rule that places every other piece of static-lifetime
   // state, while what a name reaches is the scope itself (LRM 9.6.2). So the
@@ -2123,36 +2098,64 @@ auto StructuralScopeLowerer::PopulateBodies(WalkFrame parent_frame)
               mir::Type{mir::RuntimeLibraryType{
                   .kind = mir::RuntimeLibraryKind::kCancellationTarget}}),
           .ownership = mir::PointerOwnership::kBorrowed}});
-  for (const hir::ProceduralScopeId scope_id :
-       hir_scope.procedural_scopes.Ids()) {
+
+  // Build the whole name tree here, in this scope's own constructor: each node
+  // hangs under the node of the scope around it, which is what the source
+  // nesting means, while the borrowed handle to it lands on this class -- so
+  // the objects nest and every one of them is still one step from a body.
+  // Construction precedes every resolve, so the names registered below are in
+  // place before anything asks for one.
+  //
+  // What each node answers for registers against the handle the construction
+  // fills, so a node registers exactly when it is built and which scopes stand
+  // at run time is one answer rather than two. A scope declared without being
+  // built therefore registers nothing.
+  const auto build_name_tree =
+      [&](const auto& self_ref, hir::ProceduralScopeId scope_id,
+          std::optional<mir::FieldId> parent_handle) -> void {
+    const auto& scope = hir_scope.procedural_scopes.Get(scope_id);
     const DeclaredScope& declared = scopes_.Get(scope_id);
-    if (!declared.disable_target.has_value()) continue;
-    const mir::FieldId field = DisableTargetField(scope_id);
-    const mir::ExprId cell = ctor_block.exprs.Add(
-        mir::MakeFieldAccessExpr(
-            self_read(), mir::FieldTarget{.owner = class_id_, .slot = field},
-            mir_class.fields.Get(field).type));
-    const mir::ExprId addr = ctor_block.exprs.Add(
-        mir::MakeAddressOfExpr(cell, disable_target_ptr_type));
-    const mir::FieldId borrowed_handle = declared.name_node->borrowed_handle;
-    const mir::ExprId node = ctor_block.exprs.Add(
-        mir::MakeFieldAccessExpr(
-            self_read(),
-            mir::FieldTarget{.owner = class_id_, .slot = borrowed_handle},
-            mir_class.fields.Get(borrowed_handle).type));
-    ctor_block.AppendStmt(
-        mir::ExprStmt{
-            .expr = ctor_block.exprs.Add(
-                mir::Expr{
-                    .data =
-                        mir::CallExpr{
-                            .callee =
-                                mir::Direct{
-                                    .target = support::BuiltinFn::
-                                        kRegisterDisableTarget,
-                                    .receiver = node},
-                            .arguments = {addr}},
-                    .type = void_type})});
+    const ScopeNameNode& name_node = *declared.name_node;
+    AppendOwnedChildConstruction(
+        unit_lowerer, ctor_frame, parent_handle, scope.source_name.value_or(""),
+        name_node.class_id, std::nullopt, name_node.borrowed_handle);
+    if (declared.disable_target.has_value()) {
+      const mir::FieldId field = DisableTargetField(scope_id);
+      const mir::ExprId cell = ctor_block.exprs.Add(
+          mir::MakeFieldAccessExpr(
+              self_read(), mir::FieldTarget{.owner = class_id_, .slot = field},
+              mir_class.fields.Get(field).type));
+      const mir::ExprId addr = ctor_block.exprs.Add(
+          mir::MakeAddressOfExpr(cell, disable_target_ptr_type));
+      const mir::ExprId node = ctor_block.exprs.Add(
+          mir::MakeFieldAccessExpr(
+              self_read(),
+              mir::FieldTarget{
+                  .owner = class_id_, .slot = name_node.borrowed_handle},
+              mir_class.fields.Get(name_node.borrowed_handle).type));
+      ctor_block.AppendStmt(
+          mir::ExprStmt{
+              .expr = ctor_block.exprs.Add(
+                  mir::Expr{
+                      .data =
+                          mir::CallExpr{
+                              .callee =
+                                  mir::Direct{
+                                      .target = support::BuiltinFn::
+                                          kRegisterDisableTarget,
+                                      .receiver = node},
+                              .arguments = {addr}},
+                      .type = void_type})});
+    }
+    for (const hir::ProceduralScopeId child : scope.child_scopes) {
+      self_ref(self_ref, child, name_node.borrowed_handle);
+    }
+  };
+  for (const auto& s : hir_scope.structural_subroutines) {
+    build_name_tree(build_name_tree, s.body.root_scope, std::nullopt);
+  }
+  for (const auto& p : hir_scope.processes) {
+    build_name_tree(build_name_tree, p.body.root_scope, std::nullopt);
   }
 
   // A static-lifetime local is a cell on this object, but the name reaching it
