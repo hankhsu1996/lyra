@@ -2,12 +2,16 @@
 
 #include <optional>
 #include <utility>
+#include <variant>
 #include <vector>
 
 #include "lyra/base/internal_error.hpp"
+#include "lyra/base/overloaded.hpp"
 #include "lyra/lowering/hir_to_mir/cast_lowering.hpp"
+#include "lyra/mir/binary_op.hpp"
 #include "lyra/mir/expr.hpp"
 #include "lyra/mir/type.hpp"
+#include "lyra/support/builtin_fn.hpp"
 
 namespace lyra::lowering::hir_to_mir {
 
@@ -41,6 +45,40 @@ void RefuseNetCell(const mir::Type& place_ty) {
         "lhs_store: a net's cell takes no value a write may put there; the "
         "destination is one of its drivers");
   }
+}
+
+// `lhs op= rhs`, at an operator whose two forms are the whole of what an
+// assignment may apply. An operator the target applies to two values of one
+// type rides the store, which reaches the place once; one it does not is
+// applied by the entry that performs it, against the value the place holds,
+// which reaches it once for the same reason (LRM 11.4.1). Both are ordinary MIR
+// nodes with nothing left to decide.
+auto BuildCompoundExpr(
+    mir::CompilationUnit& unit, mir::Block& block, const WriteTarget& target,
+    mir::ExprId rhs_id, CompoundOperation op, mir::TypeId result_type)
+    -> mir::Expr {
+  const mir::ExprId place = TargetPlace(unit, block, target);
+  return std::visit(
+      Overloaded{
+          [&](mir::BinaryOp applied) -> mir::Expr {
+            return mir::Expr{
+                .data =
+                    mir::AssignExpr{
+                        .target = place,
+                        .compound_op = applied,
+                        .value = rhs_id},
+                .type = result_type};
+          },
+          [&](support::BuiltinFn entry) -> mir::Expr {
+            return mir::Expr{
+                .data =
+                    mir::CallExpr{
+                        .callee =
+                            mir::Direct{.target = entry, .receiver = place},
+                        .arguments = {rhs_id}},
+                .type = unit.builtins.void_type};
+          }},
+      op);
 }
 
 }  // namespace
@@ -120,28 +158,29 @@ auto ReadTargetValue(
 
 auto BuildStoreExpr(
     mir::CompilationUnit& unit, mir::Block& block, const WriteTarget& target,
-    mir::ExprId rhs_id, std::optional<mir::BinaryOp> compound_op,
+    mir::ExprId rhs_id, std::optional<CompoundOperation> compound_op,
     mir::TypeId result_type) -> mir::Expr {
-  // A store carries the right-hand side to the destination's declared
-  // representation before it lands (LRM 10.6.1). The front end already converts
-  // width, signedness, and state domain; the dimension stack -- and, for a
-  // container, the element representation and bound -- is the axis it leaves to
-  // assignment. A compound store computes its value through the operator, which
-  // already yields the destination's shape.
-  if (!compound_op.has_value()) {
-    rhs_id = ConvertToType(
-        unit, block, rhs_id, TargetValueType(unit, block, target));
+  // A compound store computes its value through the operator, which already
+  // yields the destination's shape, so only a plain store carries the
+  // right-hand side to the destination's declared representation (LRM 10.6.1).
+  // The front end already converts width, signedness, and state domain; the
+  // dimension stack -- and, for a container, the element representation and
+  // bound -- is the axis it leaves to assignment.
+  if (compound_op.has_value()) {
+    return BuildCompoundExpr(
+        unit, block, target, rhs_id, *compound_op, result_type);
   }
+  rhs_id =
+      ConvertToType(unit, block, rhs_id, TargetValueType(unit, block, target));
   // Replacing the whole of what a capability wrapper holds acts on the wrapper
   // -- the value lands in its storage and it reports the change to whatever is
-  // watching -- so it is a call taking the wrapper as its destination. A
-  // compound store reads before it writes, and a store that descends writes a
-  // part; both reach storage the way a read does and assign through what they
-  // reach.
+  // watching -- so it is a call taking the wrapper as its destination. A store
+  // that descends writes a part, which reaches storage the way a read does and
+  // assigns through what it reaches.
   const mir::Type& owner_ty =
       unit.types.Get(block.exprs.Get(target.owner).type);
-  if (target.descent.empty() && !compound_op.has_value() &&
-      owner_ty.IsCapabilityWrapper() && !owner_ty.Is<mir::ResolvedType>()) {
+  if (target.descent.empty() && owner_ty.IsCapabilityWrapper() &&
+      !owner_ty.Is<mir::ResolvedType>()) {
     // The operands are the destination and the value, and nothing else: the
     // engine the wrapper reports through is the ambient one, which has the
     // standing of a stack pointer rather than of program data.
@@ -158,9 +197,7 @@ auto BuildStoreExpr(
   return mir::Expr{
       .data =
           mir::AssignExpr{
-              .target = TargetPlace(unit, block, target),
-              .compound_op = compound_op,
-              .value = rhs_id},
+              .target = TargetPlace(unit, block, target), .value = rhs_id},
       .type = result_type};
 }
 

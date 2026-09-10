@@ -838,6 +838,21 @@ auto RuntimeEntryOf(BuiltinFn id) -> RuntimeEntry {
       return {
           .name = "arithmetic_shift_right",
           .declaration = Method{"ArithmeticShiftRight"}};
+    case BuiltinFn::kShiftLeftAssign:
+      return {
+          .name = "shift_left_assign",
+          .declaration = Method{"ShiftLeftAssign"},
+          .mutates_receiver = true};
+    case BuiltinFn::kLogicalShiftRightAssign:
+      return {
+          .name = "logical_shift_right_assign",
+          .declaration = Method{"LogicalShiftRightAssign"},
+          .mutates_receiver = true};
+    case BuiltinFn::kArithmeticShiftRightAssign:
+      return {
+          .name = "arithmetic_shift_right_assign",
+          .declaration = Method{"ArithmeticShiftRightAssign"},
+          .mutates_receiver = true};
     case BuiltinFn::kBitwiseXnor:
       return {.name = "bitwise_xnor", .declaration = Method{"BitwiseXnor"}};
     case BuiltinFn::kLogicalImplication:

@@ -382,7 +382,7 @@ auto RenderClass(const mir::CompilationUnit& unit, const mir::Class& s)
   // machinery routes each vtable slot to the one implementation the class
   // provides.
   bool base_emitted = false;
-  const auto append_base = [&](const std::string& rendered) {
+  const auto append_base = [&](std::string_view rendered) {
     out += base_emitted ? ", public " : " : public ";
     out += rendered;
     base_emitted = true;
@@ -390,14 +390,11 @@ auto RenderClass(const mir::CompilationUnit& unit, const mir::Class& s)
   if (s.base.has_value()) {
     append_base(RenderClassRefAsCpp(unit, *s.base));
   } else if (!s.is_interface_class) {
-    // A class extending nothing roots an SV class hierarchy, and only such an
-    // object is ever asked for a handle to itself (LRM 8.11) -- a scope names a
-    // runtime base and so took the branch above. Realizing that handle as a
-    // shared owner means the object has to record which owner refers to it, so
-    // the root carries the record and everything under it inherits one. An
-    // interface class declares no storage and is never constructed (LRM 8.26),
-    // so nothing asks it.
-    append_base("lyra::runtime::GcObject");
+    // A class extending nothing roots an SV class hierarchy -- a scope names a
+    // runtime base and so took the branch above -- and what this target roots
+    // one over is the object model's own answer. An interface class declares no
+    // storage and is never constructed (LRM 8.26), so nothing roots it.
+    append_base(ManagedObjectRootCppType());
   }
   for (const mir::ClassRef& iface : s.implements) {
     append_base(RenderClassRefAsCpp(unit, iface));

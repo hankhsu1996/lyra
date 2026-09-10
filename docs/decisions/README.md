@@ -91,8 +91,9 @@ the detail lives in the entry itself.
   that stopped; a stage that reported anything is the last one that runs, and what it produced is
   discarded.
 - [foreach-lowering](foreach-lowering.md) -- the lowering shape of `foreach`.
-- [compound-assignment-write-location](compound-assignment-write-location.md) -- one uniform node
-  evaluating the left-hand side exactly once (LRM 11.4.1); superseded for value interiors by
+- [compound-assignment-write-location](compound-assignment-write-location.md) -- one node per write
+  target, evaluating the left-hand side exactly once (LRM 11.4.1); revised so an operator the
+  library performs is applied by the entry that performs it, and superseded for value interiors by
   [value-projection-write](value-projection-write.md).
 - [conversion-folding](conversion-folding.md) -- when type conversions are folded.
 - [shape-from-types-contents-from-expressions](shape-from-types-contents-from-expressions.md) -- a

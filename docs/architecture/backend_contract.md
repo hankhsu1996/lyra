@@ -110,6 +110,14 @@ two ways.
    entries render types only via that dispatch; they never compose a target-language type literal
    directly. A runtime library type's spelling lives at one place; nowhere else.
 
+   A target also needs types for what MIR states as **structure** rather than as a value -- an
+   extent whose exit is an effect, the root a managed object is emitted over -- and no MIR type
+   variant names those, so no dispatch reaches them. They belong here even so, and for the reason
+   this entry exists rather than by exception: each is a library type's spelling, and this is where
+   a library type is spelled. What they are not is a dispatch. Nothing computes which one a site
+   wants -- the site knows -- so each is named outright, and giving them a selector to be looked up
+   by would be a lookup with no question in it.
+
 4. **Place access is one dispatch per MIR type variant, exhaustive over capability wrappers.** MIR
    states that the storage a wrapper represents is reached by dereferencing the wrapper's place
    (`mir.md` invariant 14); it does not state what that costs in a target. Each backend supplies it

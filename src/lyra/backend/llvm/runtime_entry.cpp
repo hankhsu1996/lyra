@@ -243,7 +243,7 @@ auto RuntimeSymbol(lir::CoroutineTarget::Op op) -> std::string {
 }
 
 auto RuntimeSymbol(support::ImportedRuntimeMethod method) -> std::string {
-  return Symbol(support::ImportedRuntimeMethodEntryName(method));
+  return Symbol(support::RuntimeEntryOf(method).name);
 }
 
 auto MemberStorageKindOf(
@@ -570,6 +570,9 @@ auto EntryNamingOf(support::BuiltinFn fn) -> EntryNaming {
     case support::BuiltinFn::kShiftLeft:
     case support::BuiltinFn::kLogicalShiftRight:
     case support::BuiltinFn::kArithmeticShiftRight:
+    case support::BuiltinFn::kShiftLeftAssign:
+    case support::BuiltinFn::kLogicalShiftRightAssign:
+    case support::BuiltinFn::kArithmeticShiftRightAssign:
     case support::BuiltinFn::kBitwiseXnor:
     case support::BuiltinFn::kLogicalImplication:
     case support::BuiltinFn::kLogicalEquivalence:

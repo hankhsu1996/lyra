@@ -120,10 +120,10 @@ auto ObjectClassOf(const mir::TypePool& types, mir::TypeId handle)
           }});
 }
 
-// The operators the executable IR realizes directly. Every other MIR operator
-// is lifted to a library call before this point, so reaching one here is a
-// lowering defect upstream, not an unsupported source form.
-auto TranslateBinaryOp(mir::BinaryOp op) -> std::optional<lir::BinaryOp> {
+// The operators the executable IR realizes directly, which is every operator a
+// MIR node carries: one a library performs is lifted to a call where the node
+// would have been built, so none reaches here.
+auto TranslateBinaryOp(mir::BinaryOp op) -> lir::BinaryOp {
   switch (op) {
     case mir::BinaryOp::kAdd:
       return lir::BinaryOp::kAdd;
@@ -157,10 +157,6 @@ auto TranslateBinaryOp(mir::BinaryOp op) -> std::optional<lir::BinaryOp> {
       return lir::BinaryOp::kLogicalAnd;
     case mir::BinaryOp::kLogicalOr:
       return lir::BinaryOp::kLogicalOr;
-    case mir::BinaryOp::kShiftLeft:
-    case mir::BinaryOp::kLogicalShiftRight:
-    case mir::BinaryOp::kArithmeticShiftRight:
-      return std::nullopt;
   }
   throw InternalError("TranslateBinaryOp: unknown MIR BinaryOp");
 }
@@ -2013,135 +2009,73 @@ auto FunctionLowerer::LowerCoroutineAwait(
 
 auto FunctionLowerer::LowerCompoundOperator(
     mir::BinaryOp op, lir::Operand old_value, lir::Operand rhs,
-    lir::TypeId type) -> diag::Result<lir::Operand> {
-  if (const std::optional<lir::BinaryOp> binop = TranslateBinaryOp(op)) {
-    return Emit(
-        type,
-        lir::BinaryInstr{
-            .op = *binop, .lhs = std::move(old_value), .rhs = std::move(rhs)});
-  }
-  // A builtin operator's domain rides on its first operand, so the target
-  // carries no qualifier and the entry resolves to the same call an expression
-  // of the operator lowers to.
-  if (const std::optional<support::BuiltinFn> fn =
-          mir::BinaryOpAsBuiltinFn(op)) {
-    return Emit(
-        type,
-        lir::CallInstr{
-            .target = lir::BuiltinTarget{.fn = *fn, .qualifier = std::nullopt},
-            .args = {std::move(old_value), std::move(rhs)}});
-  }
-  return Unsupported(
-      "mir_to_lir: compound assignment operator has no direct realization");
+    lir::TypeId type) -> lir::Operand {
+  return Emit(
+      type, lir::BinaryInstr{
+                .op = TranslateBinaryOp(op),
+                .lhs = std::move(old_value),
+                .rhs = std::move(rhs)});
 }
 
 auto FunctionLowerer::LowerAssign(
     const mir::Block& block, const mir::AssignExpr& assign)
     -> diag::Result<lir::Operand> {
-  const mir::TypeId target_type = block.exprs.Get(assign.target).type;
-  const lir::TypeId type = unit_->TranslateType(target_type);
-
-  // A target that reaches into a value aggregate -- a positional part, a
-  // container element, or any composition of them -- is not a place here: the
-  // aggregate crosses as an opaque handle a copy may alias, so the write is a
-  // functional whole-value update stored back through whatever owns it. What
-  // the update stores is the owner's whole value; the assignment's own value is
-  // the part it wrote.
-  if (ReachesIntoValue(block, assign.target)) {
-    std::optional<lir::Operand> assigned;
-    auto written = LowerValuePartUpdate(
-        block, assign.target,
-        [&](const LeafReader& read_leaf,
-            lir::TypeId leaf_type) -> diag::Result<lir::Operand> {
-          auto rhs = LowerExpr(block, assign.value);
-          if (!rhs) {
-            return std::unexpected(std::move(rhs.error()));
-          }
-          if (!assign.compound_op.has_value()) {
-            assigned = *std::move(rhs);
-            return *assigned;
-          }
-          auto combined = LowerCompoundOperator(
-              *assign.compound_op, read_leaf(), *std::move(rhs), leaf_type);
-          if (!combined) {
-            return std::unexpected(std::move(combined.error()));
-          }
-          assigned = *std::move(combined);
-          return *assigned;
-        });
-    if (!written) {
-      return std::unexpected(std::move(written.error()));
-    }
-    return *assigned;
+  // The assignment's own value is what it wrote, which the target's update
+  // yields nothing of -- a write completes with void -- so it is kept here as
+  // the change runs.
+  std::optional<lir::Operand> assigned;
+  auto written = UpdateTarget(
+      block, assign.target,
+      [&](const ValueReader& read_old,
+          lir::TypeId type) -> diag::Result<lir::Operand> {
+        auto rhs = LowerExpr(block, assign.value);
+        if (!rhs) {
+          return std::unexpected(std::move(rhs.error()));
+        }
+        assigned =
+            assign.compound_op.has_value()
+                ? LowerCompoundOperator(
+                      *assign.compound_op, read_old(), *std::move(rhs), type)
+                : *std::move(rhs);
+        return *assigned;
+      });
+  if (!written) {
+    return std::unexpected(std::move(written.error()));
   }
-
-  // An activation value is written through its handle, not a place: a compound
-  // assignment reads the old value out of the cell, combines, and overwrites.
-  if (auto handle = ActivationValueHandleForTarget(block, assign.target)) {
-    auto value = LowerExpr(block, assign.value);
-    if (!value) {
-      return std::unexpected(std::move(value.error()));
-    }
-    lir::Operand written = *value;
-    if (assign.compound_op.has_value()) {
-      auto combined = LowerCompoundOperator(
-          *assign.compound_op, LoadActivationValue(*handle, type),
-          *std::move(value), type);
-      if (!combined) {
-        return std::unexpected(std::move(combined.error()));
-      }
-      written = *std::move(combined);
-    }
-    StoreActivationValue(*handle, written, type);
-    return written;
-  }
-
-  auto place = LowerPlace(block, assign.target);
-  if (!place) {
-    return std::unexpected(std::move(place.error()));
-  }
-  auto value = LowerExpr(block, assign.value);
-  if (!value) {
-    return std::unexpected(std::move(value.error()));
-  }
-
-  lir::Operand written = *value;
-  if (assign.compound_op.has_value()) {
-    auto combined = LowerCompoundOperator(
-        *assign.compound_op, Load(*place, type), *std::move(value), type);
-    if (!combined) {
-      return std::unexpected(std::move(combined.error()));
-    }
-    written = *std::move(combined);
-  }
-  Store(*std::move(place), written);
-  return written;
+  return *assigned;
 }
 
-auto FunctionLowerer::WriteWholeValue(
-    const mir::Block& block, mir::ExprId id, lir::Operand value)
+auto FunctionLowerer::UpdateTarget(
+    const mir::Block& block, mir::ExprId target, const ValueChange& change)
     -> diag::Result<lir::Operand> {
-  // The whole of what a reaching call names is still a part of the value above
-  // it, so putting a value there is the same rebuild any other write to a part
-  // is, with the value already in hand rather than computed at the leaf.
-  if (ReachesIntoValue(block, id)) {
-    return LowerValuePartUpdate(
-        block, id,
-        [&](const LeafReader&, lir::TypeId) -> diag::Result<lir::Operand> {
-          return value;
-        });
+  // A target that reaches into a value aggregate -- a positional part, a
+  // container element, or any composition of them -- is not a place here: the
+  // aggregate crosses as an opaque handle a copy may alias, so what goes back
+  // is the owner's whole value with the part changed.
+  if (ReachesIntoValue(block, target)) {
+    return LowerValuePartUpdate(block, target, change);
   }
+  const lir::TypeId type = unit_->TranslateType(block.exprs.Get(target).type);
+  // An activation value lives in the execution's own store, so it is reached
+  // through the handle that names it rather than as a place.
   if (const std::optional<lir::Operand> handle =
-          ActivationValueHandleForTarget(block, id)) {
-    return StoreActivationValue(
-        *handle, std::move(value),
-        unit_->TranslateType(block.exprs.Get(id).type));
+          ActivationValueHandleForTarget(block, target)) {
+    auto changed =
+        change([&] { return LoadActivationValue(*handle, type); }, type);
+    if (!changed) {
+      return std::unexpected(std::move(changed.error()));
+    }
+    return StoreActivationValue(*handle, *std::move(changed), type);
   }
-  auto place = LowerPlace(block, id);
+  auto place = LowerPlace(block, target);
   if (!place) {
     return std::unexpected(std::move(place.error()));
   }
-  return Store(*std::move(place), std::move(value));
+  auto changed = change([&] { return Load(*place, type); }, type);
+  if (!changed) {
+    return std::unexpected(std::move(changed.error()));
+  }
+  return Store(*std::move(place), *std::move(changed));
 }
 
 auto FunctionLowerer::LowerValuePartSelector(
@@ -2175,7 +2109,7 @@ auto FunctionLowerer::LowerValuePartSelector(
 }
 
 auto FunctionLowerer::LowerValuePartUpdate(
-    const mir::Block& block, mir::ExprId target, const LeafTransform& make_leaf)
+    const mir::Block& block, mir::ExprId target, const ValueChange& change)
     -> diag::Result<lir::Operand> {
   // The steps the write descends, outermost first, and the owner they bottom
   // out in. Composition is the receiver chain, so the walk is the path.
@@ -2225,7 +2159,7 @@ auto FunctionLowerer::LowerValuePartUpdate(
   const std::size_t leaf = steps.size() - 1;
   const lir::TypeId leaf_type =
       unit_->TranslateType(block.exprs.Get(target).type);
-  auto leaf_value = make_leaf(
+  auto leaf_value = change(
       [&] {
         return Emit(
             leaf_type,
@@ -2237,7 +2171,9 @@ auto FunctionLowerer::LowerValuePartUpdate(
     return std::unexpected(std::move(leaf_value.error()));
   }
 
-  // The whole value again, rebuilt outward from the part just written.
+  // The whole value again, rebuilt outward from the part just changed, and put
+  // back through the owner. The owner is where the descent bottomed out, so it
+  // reaches into no value of its own and its update names its storage directly.
   lir::Operand rebuilt = *std::move(leaf_value);
   for (std::size_t depth = steps.size(); depth-- > 0;) {
     rebuilt = Emit(
@@ -2246,15 +2182,13 @@ auto FunctionLowerer::LowerValuePartUpdate(
                                    .selector = selectors[depth],
                                    .replacement = std::move(rebuilt)});
   }
-  return WriteWholeValue(block, owner, std::move(rebuilt));
+  return UpdateTarget(
+      block, owner,
+      [&](const ValueReader&, lir::TypeId) -> diag::Result<lir::Operand> {
+        return rebuilt;
+      });
 }
 
-// A value handle is immutable from the generated side, so a method that
-// appears to mutate its receiver is realized as a functional operation whose
-// result is stored back through the receiver's owner. Where the method also
-// states a result of its own -- a queue pop yields the element it removed (LRM
-// 7.10.2.4) -- the entry completes with both, the updated receiver first, and
-// each is projected out of that product.
 auto FunctionLowerer::LowerMutatingCall(
     const mir::Block& block, const mir::CallExpr& call, support::BuiltinFn fn,
     mir::TypeId type) -> diag::Result<lir::Operand> {
@@ -2264,58 +2198,61 @@ auto FunctionLowerer::LowerMutatingCall(
         "mir_to_lir: a method that updates what it is applied to names that "
         "object, and this call names none -- please report this as a bug");
   }
-  const lir::TypeId container_type =
-      unit_->TranslateType(block.exprs.Get(*receiver).type);
   const bool yields_result = type != unit_->Mir().builtins.void_type;
-  const lir::TypeId call_type =
-      yields_result
-          ? unit_->ProductOf({container_type, unit_->TranslateType(type)})
-          : container_type;
 
-  auto value = LowerExpr(block, *receiver);
-  if (!value) {
-    return std::unexpected(std::move(value.error()));
-  }
-  std::vector<lir::Operand> args;
-  args.reserve(call.arguments.size() + 1);
-  args.push_back(*std::move(value));
-  for (const mir::ExprId argument : call.arguments) {
-    auto arg = LowerArgument(block, argument);
-    if (!arg) {
-      return std::unexpected(std::move(arg.error()));
+  // Applying the entry to one value, answering with the value it updated. Where
+  // the entry states a result of its own, that is projected out here and kept
+  // for the call to answer with, because what the update stores is the value.
+  std::optional<lir::Operand> result;
+  const auto apply = [&](lir::Operand value,
+                         lir::TypeId value_type) -> diag::Result<lir::Operand> {
+    std::vector<lir::Operand> args;
+    args.reserve(call.arguments.size() + 1);
+    args.push_back(std::move(value));
+    for (const mir::ExprId argument : call.arguments) {
+      auto arg = LowerArgument(block, argument);
+      if (!arg) {
+        return std::unexpected(std::move(arg.error()));
+      }
+      args.push_back(*std::move(arg));
     }
-    args.push_back(*std::move(arg));
-  }
+    const lir::TypeId call_type =
+        yields_result
+            ? unit_->ProductOf({value_type, unit_->TranslateType(type)})
+            : value_type;
+    lir::Operand completion = Emit(
+        call_type,
+        lir::CallInstr{
+            .target = lir::BuiltinTarget{.fn = fn, .qualifier = std::nullopt},
+            .args = std::move(args)});
+    if (!yields_result) {
+      return completion;
+    }
+    result = Emit(
+        unit_->TranslateType(type),
+        lir::AggregateExtractInstr{
+            .aggregate = completion,
+            .selector = lir::Part{.index = kMutatingCallResult}});
+    return Emit(
+        value_type, lir::AggregateExtractInstr{
+                        .aggregate = std::move(completion),
+                        .selector = lir::Part{.index = kUpdatedReceiver}});
+  };
 
-  lir::Operand completion = Emit(
-      call_type,
-      lir::CallInstr{
-          .target = lir::BuiltinTarget{.fn = fn, .qualifier = std::nullopt},
-          .args = std::move(args)});
-  if (!yields_result) {
-    return WriteWholeValue(block, *receiver, std::move(completion));
+  auto updated = UpdateTarget(
+      block, *receiver,
+      [&](const ValueReader& read_old, lir::TypeId value_type) {
+        return apply(read_old(), value_type);
+      });
+  if (!updated) {
+    return std::unexpected(std::move(updated.error()));
   }
-
-  lir::Operand updated = Emit(
-      container_type, lir::AggregateExtractInstr{
-                          .aggregate = completion,
-                          .selector = lir::Part{.index = kUpdatedReceiver}});
-  auto stored = WriteWholeValue(block, *receiver, std::move(updated));
-  if (!stored) {
-    return std::unexpected(std::move(stored.error()));
-  }
-  return Emit(
-      unit_->TranslateType(type),
-      lir::AggregateExtractInstr{
-          .aggregate = std::move(completion),
-          .selector = lir::Part{.index = kMutatingCallResult}});
+  return yields_result ? *result : *updated;
 }
 
 auto FunctionLowerer::LowerIncDec(
     const mir::Block& block, const mir::IncDecExpr& inc_dec)
     -> diag::Result<lir::Operand> {
-  const lir::TypeId type =
-      unit_->TranslateType(block.exprs.Get(inc_dec.target).type);
   const bool is_increment = inc_dec.op == mir::IncDecOp::kPreInc ||
                             inc_dec.op == mir::IncDecOp::kPostInc;
   const bool is_prefix = inc_dec.op == mir::IncDecOp::kPreInc ||
@@ -2323,45 +2260,22 @@ auto FunctionLowerer::LowerIncDec(
   const lir::UnaryOp op =
       is_increment ? lir::UnaryOp::kIncrement : lir::UnaryOp::kDecrement;
 
-  // Stepping part of a value aggregate reads the part out of the owner's whole
-  // value, steps it, and folds it back in. What was stored is the owner's whole
-  // value; the statement's own value is the part, before or after the step.
-  if (ReachesIntoValue(block, inc_dec.target)) {
-    std::optional<lir::Operand> old;
-    std::optional<lir::Operand> stepped;
-    auto written = LowerValuePartUpdate(
-        block, inc_dec.target,
-        [&](const LeafReader& read_leaf,
-            lir::TypeId leaf_type) -> diag::Result<lir::Operand> {
-          old = read_leaf();
-          stepped = Emit(leaf_type, lir::UnaryInstr{.op = op, .operand = *old});
-          return *stepped;
-        });
-    if (!written) {
-      return std::unexpected(std::move(written.error()));
-    }
-    return is_prefix ? *stepped : *old;
+  // Which of the two the statement's own value is (LRM 11.4.2) is settled after
+  // the step runs, so both are kept as it does.
+  std::optional<lir::Operand> old;
+  std::optional<lir::Operand> stepped;
+  auto written = UpdateTarget(
+      block, inc_dec.target,
+      [&](const ValueReader& read_old,
+          lir::TypeId type) -> diag::Result<lir::Operand> {
+        old = read_old();
+        stepped = Emit(type, lir::UnaryInstr{.op = op, .operand = *old});
+        return *stepped;
+      });
+  if (!written) {
+    return std::unexpected(std::move(written.error()));
   }
-
-  // An activation value increments through its handle: read the old value out,
-  // apply the step, overwrite.
-  if (auto handle = ActivationValueHandleForTarget(block, inc_dec.target)) {
-    const lir::Operand old = LoadActivationValue(*handle, type);
-    const lir::Operand updated =
-        Emit(type, lir::UnaryInstr{.op = op, .operand = old});
-    StoreActivationValue(*handle, updated, type);
-    return is_prefix ? updated : old;
-  }
-
-  auto place = LowerPlace(block, inc_dec.target);
-  if (!place) {
-    return std::unexpected(std::move(place.error()));
-  }
-  const lir::Operand old = Load(*place, type);
-  const lir::Operand updated =
-      Emit(type, lir::UnaryInstr{.op = op, .operand = old});
-  Store(*std::move(place), updated);
-  return is_prefix ? updated : old;
+  return is_prefix ? *stepped : *old;
 }
 
 auto FunctionLowerer::LowerConditional(
@@ -2619,11 +2533,7 @@ auto FunctionLowerer::LowerExpr(const mir::Block& block, mir::ExprId id)
                 lir::UnaryInstr{.op = op, .operand = *std::move(operand)});
           },
           [&](const mir::BinaryExpr& bin) -> diag::Result<lir::Operand> {
-            const std::optional<lir::BinaryOp> op = TranslateBinaryOp(bin.op);
-            if (!op) {
-              return Unsupported(
-                  "mir_to_lir: binary operator has no direct realization");
-            }
+            const lir::BinaryOp op = TranslateBinaryOp(bin.op);
             auto lhs = LowerExpr(block, bin.lhs);
             if (!lhs) {
               return lhs;
@@ -2644,7 +2554,7 @@ auto FunctionLowerer::LowerExpr(const mir::Block& block, mir::ExprId id)
             return Emit(
                 result_type,
                 lir::BinaryInstr{
-                    .op = *op, .lhs = *std::move(lhs), .rhs = *std::move(rhs)});
+                    .op = op, .lhs = *std::move(lhs), .rhs = *std::move(rhs)});
           },
           [&](const mir::BoolCastExpr& cast) -> diag::Result<lir::Operand> {
             auto operand = LowerExpr(block, cast.operand);

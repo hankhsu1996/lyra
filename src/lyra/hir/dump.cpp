@@ -800,7 +800,7 @@ class HirDumper {
             [](const ImportedMethodRef& i) -> std::string {
               return std::format(
                   "ImportedMethod \"{}\"{}",
-                  support::ImportedRuntimeMethodSymbol(i.method),
+                  support::RuntimeEntryOf(i.method).name,
                   i.receiver.has_value()
                       ? std::format(" recv=Expr[{}]", i.receiver->value)
                       : std::string{});

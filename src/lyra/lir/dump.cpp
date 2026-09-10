@@ -312,8 +312,7 @@ class LirDumper {
               return std::format("extern {}", f.symbol);
             },
             [](const ImportedRuntimeTarget& i) -> std::string {
-              return std::string{
-                  support::ImportedRuntimeMethodEntryName(i.method)};
+              return std::string{support::RuntimeEntryOf(i.method).name};
             },
             [](const ValueCellTarget& f) -> std::string {
               return std::string{ValueCellOpName(f.op)};

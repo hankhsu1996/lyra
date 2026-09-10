@@ -1990,6 +1990,31 @@ auto lyra_rt_packed_arithmetic_shift_right(
       Read<PackedArray>(value).ArithmeticShiftRight(Read<PackedArray>(amount)));
 }
 
+// The applying form of each shift (LRM 11.4.1). A generated module holds a
+// value as a handle a copy may alias, so what "applying" means here is a value
+// with the shift already in it, handed back for the caller to store where the
+// receiver came from.
+auto lyra_rt_packed_shift_left_assign(const void* value, const void* amount)
+    -> void* {
+  PackedArray applied = Read<PackedArray>(value);
+  applied.ShiftLeftAssign(Read<PackedArray>(amount));
+  return Own(std::move(applied));
+}
+
+auto lyra_rt_packed_logical_shift_right_assign(
+    const void* value, const void* amount) -> void* {
+  PackedArray applied = Read<PackedArray>(value);
+  applied.LogicalShiftRightAssign(Read<PackedArray>(amount));
+  return Own(std::move(applied));
+}
+
+auto lyra_rt_packed_arithmetic_shift_right_assign(
+    const void* value, const void* amount) -> void* {
+  PackedArray applied = Read<PackedArray>(value);
+  applied.ArithmeticShiftRightAssign(Read<PackedArray>(amount));
+  return Own(std::move(applied));
+}
+
 auto lyra_rt_packed_bitwise_xnor(const void* lhs, const void* rhs) -> void* {
   return Own(Read<PackedArray>(lhs).BitwiseXnor(Read<PackedArray>(rhs)));
 }

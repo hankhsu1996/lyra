@@ -723,6 +723,12 @@ auto lyra_rt_packed_logical_shift_right(const void* value, const void* amount)
     -> void*;
 auto lyra_rt_packed_arithmetic_shift_right(
     const void* value, const void* amount) -> void*;
+auto lyra_rt_packed_shift_left_assign(const void* value, const void* amount)
+    -> void*;
+auto lyra_rt_packed_logical_shift_right_assign(
+    const void* value, const void* amount) -> void*;
+auto lyra_rt_packed_arithmetic_shift_right_assign(
+    const void* value, const void* amount) -> void*;
 auto lyra_rt_packed_bitwise_xnor(const void* lhs, const void* rhs) -> void*;
 auto lyra_rt_packed_logical_implication(const void* lhs, const void* rhs)
     -> void*;

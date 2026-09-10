@@ -31,6 +31,14 @@ auto NetResolutionCppLiteral(mir::NetResolution resolution)
   throw InternalError("NetResolutionCppLiteral: unknown NetResolution");
 }
 
+auto BodyCleanupExtentCppType() -> std::string_view {
+  return "lyra::runtime::ScopeExit";
+}
+
+auto ManagedObjectRootCppType() -> std::string_view {
+  return "lyra::runtime::GcObject";
+}
+
 auto RenderEachTypeAsCpp(
     const mir::CompilationUnit& unit, std::span<const mir::TypeId> types)
     -> std::vector<std::string> {
@@ -318,10 +326,15 @@ auto RenderTypeAsCpp(const mir::CompilationUnit& unit, mir::TypeId type_id)
           [](const mir::EvaluationAttemptsType&) -> std::string {
             return "lyra::runtime::EvaluationAttempts";
           },
-          [](const auto&) -> std::string {
+          // A closure is emitted as a lambda, and C++ lets nothing name a
+          // lambda's type -- so there is no spelling to answer with, and this
+          // is not a spelling the target is missing. A closure value reaches
+          // its uses directly, and the body reaches its captures as the
+          // lambda's own bindings, so nothing asks.
+          [](const mir::ClosureType&) -> std::string {
             throw InternalError(
-                "RenderTypeAsCpp: MIR type not yet supported in the C++ "
-                "backend");
+                "RenderTypeAsCpp: a closure is emitted as a lambda, whose type "
+                "C++ lets nothing name -- please report this as a bug");
           },
       });
 }

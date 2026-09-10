@@ -8,8 +8,16 @@ decides anything the node did not state, and no closed set holds an alternative 
 and its invariant 8 states the form a reader can check: a value-emission entry names no runtime
 library identifier, because every name it emits comes from the target's own syntax or from a
 dispatch that owns naming. That is the north star for every item here -- an item is finished when
-the entries it touched carry punctuation and nothing else, and the whole workstream is finished when
-counting the library identifiers left in the emitters answers zero.
+the entries it touched carry punctuation and nothing else.
+
+**That count now answers zero**, and `tools/policy/check_render_names.py` is what answers it. Which
+leaves the count no longer sufficient as a finish line, and the reason is worth keeping: the check
+used to match library names by their namespace, so it never saw a runtime method spelling an emitter
+had invented for itself -- one written where a receiver already stands carries no namespace at all.
+It matches on capitalization now, because the target language's own syntax is lowercase, and it was
+run in both directions before being believed. What remains below is the other half of "done": no
+backend entry decides anything the node did not state, and no closed set holds an alternative no
+node carries.
 
 The contracts this answers are `../architecture/backend_contract.md` (a backend entry is a fixed
 function of one MIR node and chooses a spelling rather than an operation) and
@@ -175,6 +183,46 @@ cross-check predicts. This file owns only which instances are known and what is 
       the thousandfold regression `performance.md` names as the thing to re-measure. Where a
       decision is made and what the operation is are separate axes; only the first was in scope.
 
+- [x] T12 -- A compound assignment states the operation it applies rather than the operator, so the
+      lift from operator to library entry happens once where the assignment is built and the
+      operator set is exactly what a node carries. Three shift operators had sat in that set solely
+      because a compound assignment named them: no expression node carried one, every consumer
+      meeting one asked which kind it had, and one of them -- the C++ render -- answered by writing
+      the applying form of each shift's library method into an emitter, which is the one library
+      name the check could not see. An operator the target applies to two values of one type still
+      rides the store; one the library performs is now an ordinary call on the place, against an
+      entry that updates what that place holds. Both reach the place once, which is the whole of
+      what LRM 11.4.1 asks, so the node's own reason is untouched;
+      [compound-assignment-write-location](../decisions/compound-assignment-write-location.md)
+      carries the revision and the survey behind it.
+
+      Routing that half through the mutating-call path exposed a defect there, and it was the
+      cross-check's own shape: a method that changes what it is applied to lowered its receiver
+      twice on the execution backend -- once to call the entry, once to store the answer back -- so a
+      subscript with a side effect took it twice, while the other backend named the receiver once.
+      The receiver is now named once whatever shape naming it takes.
+
+- [x] T16 -- No peephole in a render. One collapsed a scope whose whole content was a single block
+      into the enclosing braces, which decides nothing and states nothing: the emitted artifact is
+      not read for its looks, and what it cost was a branch that had to be read and kept correct.
+      Rendering the block the producer built is the whole of the rule.
+
+      One branch that reads like a peephole stays, and it is a different question. A class with no
+      static property initializer emits no design-init body at all, which the emitter decides by
+      finding that body empty -- but what it avoids is a startup hook rather than a shorter spelling,
+      and whether MIR says "no static initializer" with an absent body or an empty one is a MIR
+      shape decision with a sentence of `mir::Class`'s own behind it. It is listed under
+      exhaustiveness below, where the rest of the absent-versus-empty questions are.
+
+- [x] T23 -- A method the runtime library provides for an imported class (LRM 9.7 `process`) is
+      declared once, the way every other runtime operation is, so a backend spells it and looks
+      nothing up. Four tables had stood over that method set instead: what the C++ target calls it,
+      what the C ABI calls it, whether the runtime handle rides along, whether the call suspends.
+      The first two are naming and are now one row per method beside every other entry's, so the two
+      sides cannot drift apart and the emitter that had been composing the namespace itself composes
+      nothing. The last two are lowering facts rather than naming ones and stay where the lowering
+      reads them.
+
 ## An aggregate's members
 
 - [ ] T8 -- An unpacked struct keeps its field names through lowering, so a member access names a
@@ -194,14 +242,14 @@ cross-check predicts. This file owns only which instances are known and what is 
       no code identity is needed. They agree today because the inputs make both right. **Gated on**
       the external callable form and a co-design with the foreign-symbol contract, which needs the
       same declaration shape.
-- [ ] T12 -- A compound assignment states the operation it applies rather than the operator, so the
-      lift from operator to library entry happens once where the assignment is built and the
-      operator set is exactly what a node carries. Today three shift operators sit in that set
-      solely because a compound assignment names them, and every consumer meeting one asks which
-      kind it has. This reopens the shape
-      [compound-assignment-write-location](../decisions/compound-assignment-write-location.md)
-      settled -- one compound node whose "evaluate the target once" is each backend's mechanical job
-      -- so it is a decision to revisit, not a defect to fix under it.
+- [ ] T24 -- An operation a runtime library carries out is named in one namespace, whichever library
+      class the source reaches it through. A second namespace stands beside the shared one for the
+      six methods of the imported `process` class (LRM 9.7), and what decides a namespace is the
+      highest layer that can state its members -- which is the front end for both, so the count is
+      one. Folding them in retires an arm of the callee set, an arm of the HIR callee set, and the
+      per-method suspension flag, since a callee whose completion the caller awaits states that in
+      its call's type and every other callee already does. **Gated on** nothing but the AST-to-HIR
+      call lowering being free, which another subject holds.
 
 ## Exhaustiveness
 
@@ -246,12 +294,24 @@ cross-check predicts. This file owns only which instances are known and what is 
       MIR states nowhere; and the type pool's own hash falls through to "these carry no payload"
       through an `if constexpr` chain the compiler cannot check.
 
+      One more is absent-versus-empty rather than a catch-all arm, and it is the shape a walker's
+      own idea of emptiness takes at the top: a class always carries a design-init body, empty when
+      no static property declares an initializer, and the C++ backend reads that emptiness to decide
+      whether the class needs a startup hook at all. Either answer is defensible -- the empty body is
+      the zero case handled by not iterating, and an absent one states the fact -- so what this needs
+      is the derivation, not a fix under an existing rule.
+
 ## Small and mechanical
 
 - [ ] T15 -- A backend meeting IR it has not implemented returns the recoverable failure the error
       policy prescribes rather than reporting a compiler bug.
-- [ ] T16 -- No peephole in a render. Where one collapses a shape the producer built, the producer
-      is what states the collapsed form.
+- [ ] T25 -- A net's fold (LRM 6.6) reaches its field as construction rather than as type payload. A
+      member is (name, type), and the C++ backend composes the fold into the field's initializer out
+      of the type it carries, which is the one member-render shape the contract names outright. Both
+      backends read it from the type, so nothing has drifted and nothing will until one of them
+      stops; what it needs is for the fold to arrive the way every other per-member construction
+      state does, as an ordinary call in the constructor body, which reshapes the runtime net and
+      the execution backend's member storage together.
 
 ## Cross-references
 
@@ -262,4 +322,6 @@ cross-check predicts. This file owns only which instances are known and what is 
 - `../decisions/call-receiver-on-the-callee.md` -- T1 and T3's rationale.
 - `../decisions/value-construction-forms.md` -- which form a value crosses into an entry in, and why
   a construction is named by the type it builds. T22 turns on both.
+- `../decisions/compound-assignment-write-location.md` -- why a compound assignment is a node at all
+  rather than the read-apply-write every peer language lowers it to, and what T12 revised about it.
 - `refactor.md` -- architectural debt outside this workstream.

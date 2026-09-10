@@ -96,23 +96,20 @@ merged node.
 
 ### Assignment families
 
-- [x] W11 -- Compound assignment `+= -= *= /= %= &= |= ^= <<= >>= <<<= >>>=`. LRM 11.4.1 "evaluate
-      target only once" applies; falls out of the C++ eval-once rule on the compound expression.
-      NBA + compound is rejected at slang parsing per LRM A.6.2. Complete for whole-variable,
-      selector, and mixed-state target shapes.
+- [x] W11 -- Compound assignment `+= -= *= /= %= &= |= ^= <<= >>= <<<= >>>=` (LRM 11.4.1), with the
+      operation sized and signed by the ordinary expression rules. A nonblocking compound assignment
+      is rejected at parsing per LRM A.6.2. Complete for whole-variable, selector, and mixed-state
+      target shapes.
 - [x] W12 -- `++` / `--` (prefix and postfix, LRM 11.4.2). Behave as blocking assignments; postfix
       yields the operand's prior value, prefix yields the new value. Integer and real operands;
       selector chains (`array[i]++`, `++a[15:8]`) and observable structural roots are covered. NBA
       contexts (`b <= a++`, `var[i++] <= rhs`) evaluate the inc / dec exactly once at submit time.
       Replication / concatenation operands are rejected as targets per LRM 11.4.12.1.
 - [x] W13 -- Compound assignment evaluates the left-hand side exactly once (LRM 11.4.1) for every
-      target, including a side-effecting subscript (`a[f()] op= b`) at any nesting. Every write
-      target -- whole var, array / string element, struct / union member -- is an op=-able
-      write-back location, so compound lowers uniformly to `AssignExpr{target, op, value}` and the
-      backend evaluates the single target once (C++ `op=`; the LIR backend forms the target place
-      once, then loads, combines, and stores). A string character write is a write-back proxy
-      (`String::ElementRef`) and a union member write a reference to the active member
-      (`Union::GetRef`); neither is a read-modify-write desugar at the lowering.
+      target, including a side-effecting subscript (`a[f()] op= b`) at any nesting. It holds for
+      every target shape -- a whole variable, an element of an unpacked array or a queue, a bit or
+      part select, a struct or union member, a string character -- and for every operator the clause
+      admits, the shifts included.
 
 ## Cross-references
 

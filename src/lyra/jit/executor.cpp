@@ -545,6 +545,11 @@ auto DefineRuntimeAbi(llvm::orc::LLJIT& jit)
       &lyra_rt_packed_logical_shift_right);
   add("lyra_rt_packed_arithmetic_shift_right",
       &lyra_rt_packed_arithmetic_shift_right);
+  add("lyra_rt_packed_shift_left_assign", &lyra_rt_packed_shift_left_assign);
+  add("lyra_rt_packed_logical_shift_right_assign",
+      &lyra_rt_packed_logical_shift_right_assign);
+  add("lyra_rt_packed_arithmetic_shift_right_assign",
+      &lyra_rt_packed_arithmetic_shift_right_assign);
   add("lyra_rt_packed_bitwise_xnor", &lyra_rt_packed_bitwise_xnor);
   add("lyra_rt_packed_logical_implication",
       &lyra_rt_packed_logical_implication);

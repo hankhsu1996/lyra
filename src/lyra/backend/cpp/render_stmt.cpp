@@ -100,8 +100,8 @@ auto RenderFinallyStmt(
   const auto& cleanup = view.Block().child_scopes.Get(s.cleanup);
   std::string result = std::format("{}{{\n", Indent(indent));
   result += std::format(
-      "{}lyra::runtime::ScopeExit __lyra_finally_{}([&]() {{\n",
-      Indent(indent + 1), s.cleanup.value);
+      "{}{} __lyra_finally_{}([&]() {{\n", Indent(indent + 1),
+      BodyCleanupExtentCppType(), s.cleanup.value);
   result += RenderNestedBlock(view, cleanup, indent + 2);
   result += std::format("{}}});\n", Indent(indent + 1));
   result += RenderNestedBlock(view, body, indent + 1);
@@ -268,17 +268,6 @@ auto RenderStmt(
 auto RenderBlockStatements(const ScopeView& view, std::size_t indent)
     -> std::string {
   const auto& block = view.Block();
-  // When a scope's whole content is a single begin/end block, the enclosing
-  // braces (a function body, a loop or branch body, an outer block) already
-  // scope it; render the block's body directly instead of emitting a redundant
-  // `{ }`. Recursing collapses a chain of such blocks.
-  if (block.root_stmts.size() == 1) {
-    const auto& only = block.stmts.Get(block.root_stmts.front());
-    if (const auto* block_stmt = std::get_if<mir::BlockStmt>(&only.data)) {
-      const auto& inner = block.child_scopes.Get(block_stmt->scope);
-      return RenderBlockStatements(view.WithBlock(inner), indent);
-    }
-  }
   std::string out;
   for (const auto& sid : block.root_stmts) {
     out += RenderStmt(view, block.stmts.Get(sid), indent);

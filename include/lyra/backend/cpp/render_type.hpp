@@ -17,6 +17,22 @@ namespace lyra::backend::cpp {
 [[nodiscard]] auto NetResolutionCppLiteral(mir::NetResolution resolution)
     -> std::string_view;
 
+// Two things MIR states as structure rather than as a value, and that this
+// target has to realize with a library type. No MIR type names either of them,
+// so neither is reached through the type mapping below -- but each is a library
+// type's spelling, and this is where a library type is spelled.
+
+// A body paired with a cleanup that runs on every way out of it: an object
+// declared ahead of the body whose destruction runs the cleanup. C++ states an
+// extent's exit through a destructor and offers no construct of its own.
+[[nodiscard]] auto BodyCleanupExtentCppType() -> std::string_view;
+
+// What an SV class extending nothing (LRM 8.13) is emitted over, so an object
+// can answer with a handle to itself (LRM 8.11): realizing that handle as a
+// shared owner means the object records which owner refers to it, and this is
+// where that record lives.
+[[nodiscard]] auto ManagedObjectRootCppType() -> std::string_view;
+
 // Renders a MIR type as the corresponding C++ type expression. An enum is a
 // nominal type over a base integral, so its value renders as that base --
 // `lyra::value::PackedArray` -- with no distinct emitted enum type.

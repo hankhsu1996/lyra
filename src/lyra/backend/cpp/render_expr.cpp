@@ -37,10 +37,7 @@ auto LookupLocalName(const ScopeView& view, const mir::LocalRef& ref)
   return view.Local(ref).name;
 }
 
-// The C++ token for an operator this target applies to two values. A shift has
-// none -- C++ decides between the arithmetic and the logical form from the
-// operand's signedness where SV names it in the operator -- so a shift is
-// reached through the library instead.
+// The C++ token for an operator this target applies to two values.
 auto BinaryOpToken(mir::BinaryOp op) -> std::string_view {
   switch (op) {
     case mir::BinaryOp::kAdd:
@@ -75,12 +72,6 @@ auto BinaryOpToken(mir::BinaryOp op) -> std::string_view {
       return "&&";
     case mir::BinaryOp::kLogicalOr:
       return "||";
-    case mir::BinaryOp::kShiftLeft:
-    case mir::BinaryOp::kLogicalShiftRight:
-    case mir::BinaryOp::kArithmeticShiftRight:
-      throw InternalError(
-          "BinaryOpToken: a shift is performed by a library entry and reaches "
-          "no expression; only a compound assignment names one");
   }
   throw InternalError("BinaryOpToken: unknown MIR BinaryOp");
 }
@@ -306,65 +297,21 @@ auto RenderReferenceExpr(
 
 namespace {
 
-// The library method that applies a shift to the value it is called on. A
-// shift is performed by the library rather than applied by the target, and a
-// compound assignment needs the applying form so its destination is reached
-// once (LRM 11.4.1).
-auto ShiftAssignMethod(mir::BinaryOp op) -> std::string_view {
-  switch (op) {
-    case mir::BinaryOp::kShiftLeft:
-      return "ShiftLeftAssign";
-    case mir::BinaryOp::kLogicalShiftRight:
-      return "LogicalShiftRightAssign";
-    case mir::BinaryOp::kArithmeticShiftRight:
-      return "ArithmeticShiftRightAssign";
-    case mir::BinaryOp::kAdd:
-    case mir::BinaryOp::kSub:
-    case mir::BinaryOp::kMul:
-    case mir::BinaryOp::kDiv:
-    case mir::BinaryOp::kMod:
-    case mir::BinaryOp::kBitwiseAnd:
-    case mir::BinaryOp::kBitwiseOr:
-    case mir::BinaryOp::kBitwiseXor:
-    case mir::BinaryOp::kEquality:
-    case mir::BinaryOp::kInequality:
-    case mir::BinaryOp::kGreaterEqual:
-    case mir::BinaryOp::kGreaterThan:
-    case mir::BinaryOp::kLessEqual:
-    case mir::BinaryOp::kLessThan:
-    case mir::BinaryOp::kLogicalAnd:
-    case mir::BinaryOp::kLogicalOr:
-      break;
-  }
-  throw InternalError(
-      "ShiftAssignMethod: the operator is applied by the target and needs no "
-      "method");
-}
-
-// C++ spells a compound assignment by suffixing the operator it applies, so
-// the two forms differ only in whether the target applies the operator at all.
-auto RenderCompoundAssign(
-    mir::BinaryOp op, const std::string& chain, const std::string& rhs)
-    -> std::string {
-  if (mir::BinaryOpAsBuiltinFn(op).has_value()) {
-    return std::format("{}.{}({})", chain, ShiftAssignMethod(op), rhs);
-  }
-  return std::format("{} {}= {}", chain, BinaryOpToken(op), rhs);
-}
-
 auto RenderAssignExpr(const ScopeView& view, const mir::AssignExpr& a)
     -> std::string {
-  std::string value = RenderExpr(view, view.Expr(a.value));
+  const std::string value = RenderExpr(view, view.Expr(a.value));
 
   // Mechanical render: the target names the storage the store reaches, whether
   // that is a plain place or a part of the value one holds, and either renders
-  // as a C++ lvalue -- so this path emits a plain assignment over it. An
-  // assignment is an expression, so it parenthesizes to keep its value usable
-  // wherever it appears.
+  // as a C++ lvalue -- so this path emits a plain assignment over it. C++
+  // spells an applied operator by suffixing its token, and evaluates the left
+  // operand once, which is what LRM 11.4.1 asks. An assignment is an
+  // expression, so it parenthesizes to keep its value usable wherever it
+  // appears.
   const std::string target = RenderExpr(view, view.Expr(a.target));
   if (a.compound_op.has_value()) {
     return std::format(
-        "({})", RenderCompoundAssign(*a.compound_op, target, value));
+        "({} {}= {})", target, BinaryOpToken(*a.compound_op), value);
   }
   return std::format("({} = {})", target, value);
 }

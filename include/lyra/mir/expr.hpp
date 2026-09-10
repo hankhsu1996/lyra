@@ -115,7 +115,12 @@ struct BlockExpr {
 };
 
 // `compound_op.has_value()` marks the assignment as `target op= value`;
-// `nullopt` is a simple write. `value` is already typed to match `target`.
+// `nullopt` is a simple write. `value` is already typed to match `target`. The
+// operator is one a target applies to two values of one type, which is all
+// `BinaryOp` holds: an operator a library performs is applied by the entry that
+// performs it, so an assignment of that kind is an ordinary call on the place
+// and never reaches here. "Evaluate the left-hand side once" (LRM 11.4.1) is a
+// property of the one target expression, whichever shape the assignment took.
 //
 // `target` is a place, whose write is a store, or a part of a value reached by
 // a run of calls, whose write leaves the owner holding an updated whole. What

@@ -14,42 +14,34 @@ auto ImportedRuntimeClassName(ImportedRuntimeClass klass) -> std::string_view {
   throw InternalError("ImportedRuntimeClassName: unknown imported class");
 }
 
-auto ImportedRuntimeMethodSymbol(ImportedRuntimeMethod method)
-    -> std::string_view {
+auto RuntimeEntryOf(ImportedRuntimeMethod method) -> RuntimeEntry {
   switch (method) {
     case ImportedRuntimeMethod::kProcessSelf:
-      return "ProcessSelf";
+      return {
+          .name = "process_self",
+          .declaration = FreeFunction{"lyra::runtime::ProcessSelf"}};
     case ImportedRuntimeMethod::kProcessStatus:
-      return "ProcessStatus";
+      return {
+          .name = "process_status",
+          .declaration = FreeFunction{"lyra::runtime::ProcessStatus"}};
     case ImportedRuntimeMethod::kProcessKill:
-      return "ProcessKill";
+      return {
+          .name = "process_kill",
+          .declaration = FreeFunction{"lyra::runtime::ProcessKill"}};
     case ImportedRuntimeMethod::kProcessAwait:
-      return "ProcessAwait";
+      return {
+          .name = "process_await",
+          .declaration = FreeFunction{"lyra::runtime::ProcessAwait"}};
     case ImportedRuntimeMethod::kProcessSuspend:
-      return "ProcessSuspend";
+      return {
+          .name = "process_suspend",
+          .declaration = FreeFunction{"lyra::runtime::ProcessSuspend"}};
     case ImportedRuntimeMethod::kProcessResume:
-      return "ProcessResume";
+      return {
+          .name = "process_resume",
+          .declaration = FreeFunction{"lyra::runtime::ProcessResume"}};
   }
-  throw InternalError("ImportedRuntimeMethodSymbol: unknown method");
-}
-
-auto ImportedRuntimeMethodEntryName(ImportedRuntimeMethod method)
-    -> std::string_view {
-  switch (method) {
-    case ImportedRuntimeMethod::kProcessSelf:
-      return "process_self";
-    case ImportedRuntimeMethod::kProcessStatus:
-      return "process_status";
-    case ImportedRuntimeMethod::kProcessKill:
-      return "process_kill";
-    case ImportedRuntimeMethod::kProcessAwait:
-      return "process_await";
-    case ImportedRuntimeMethod::kProcessSuspend:
-      return "process_suspend";
-    case ImportedRuntimeMethod::kProcessResume:
-      return "process_resume";
-  }
-  throw InternalError("ImportedRuntimeMethodEntryName: unknown method");
+  throw InternalError("RuntimeEntryOf: unknown imported runtime method");
 }
 
 auto ImportedRuntimeMethodTakesServices(ImportedRuntimeMethod method) -> bool {

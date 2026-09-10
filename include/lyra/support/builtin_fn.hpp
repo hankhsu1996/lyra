@@ -723,6 +723,16 @@ enum class BuiltinFn : std::uint16_t {
   kShiftLeft,
   kLogicalShiftRight,
   kArithmeticShiftRight,
+  // The same three shifts applied to what a place holds, rather than computed
+  // from two values (LRM 11.4.1 `<<=` / `>>=` / `>>>=`). A compound assignment
+  // reads its destination exactly once, and an entry that answers with a value
+  // leaves the reading to whoever calls it -- so applying is its own operation,
+  // and it is the one a compound assignment names. Every other compound
+  // assignment operator is one a target applies to two values of one type and
+  // names no entry at all.
+  kShiftLeftAssign,
+  kLogicalShiftRightAssign,
+  kArithmeticShiftRightAssign,
   kBitwiseXnor,
   kLogicalImplication,
   kLogicalEquivalence,

@@ -3,6 +3,8 @@
 #include <cstdint>
 #include <string_view>
 
+#include "lyra/support/builtin_fn.hpp"
+
 namespace lyra::support {
 
 // A nominal class the runtime library defines once and every unit imports by
@@ -29,18 +31,13 @@ enum class ImportedRuntimeMethod : std::uint8_t {
   kProcessResume,
 };
 
-// The runtime-library function name a call to this method lowers to (the symbol
-// under `lyra::runtime`). Kept in the support layer, not the backend, so the
-// backend renders the call mechanically without a per-method branch.
-auto ImportedRuntimeMethodSymbol(ImportedRuntimeMethod method)
-    -> std::string_view;
-
-// The operation half of the runtime-library entry a backend calling through the
-// C ABI reaches instead. It is what the two sides must agree on, so it is
-// stated once here rather than composed on each; changing it renames a linked
-// symbol, so change it only to correct the operation's identity.
-auto ImportedRuntimeMethodEntryName(ImportedRuntimeMethod method)
-    -> std::string_view;
+// The one declaration of a method the runtime library provides for an imported
+// class -- the same shape every other runtime operation is declared in, because
+// it is one: a free function the library declares, which takes the object it
+// acts on as its leading argument. A backend spells the call from this and
+// looks nothing up, and the ABI name a backend calling through C reaches is the
+// entry's own name, so the two sides cannot drift apart.
+[[nodiscard]] auto RuntimeEntryOf(ImportedRuntimeMethod method) -> RuntimeEntry;
 
 // Whether the runtime symbol takes the runtime handle. Every method
 // needs it except `status`, a pure read of the process node: `self` and

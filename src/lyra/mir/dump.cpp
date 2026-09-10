@@ -524,12 +524,6 @@ class MirDumper {
         return "LogicalAnd";
       case BinaryOp::kLogicalOr:
         return "LogicalOr";
-      case BinaryOp::kShiftLeft:
-        return "ShiftLeft";
-      case BinaryOp::kLogicalShiftRight:
-        return "LogicalShiftRight";
-      case BinaryOp::kArithmeticShiftRight:
-        return "ArithmeticShiftRight";
     }
     throw InternalError("MirDumper: unknown BinaryOp");
   }
@@ -574,7 +568,7 @@ class MirDumper {
             [](const ImportedRuntimeCallTarget& i) -> std::string {
               return std::format(
                   "imported_runtime=\"{}\"",
-                  support::ImportedRuntimeMethodSymbol(i.method));
+                  support::RuntimeEntryOf(i.method).name);
             },
             [](const ExternalUnitCallableTarget& e) -> std::string {
               return std::format(
