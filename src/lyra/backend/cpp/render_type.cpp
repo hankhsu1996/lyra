@@ -18,19 +18,6 @@
 
 namespace lyra::backend::cpp {
 
-auto NetResolutionCppLiteral(mir::NetResolution resolution)
-    -> std::string_view {
-  switch (resolution) {
-    case mir::NetResolution::kTriState:
-      return "lyra::support::NetResolution::kTriState";
-    case mir::NetResolution::kWiredAnd:
-      return "lyra::support::NetResolution::kWiredAnd";
-    case mir::NetResolution::kWiredOr:
-      return "lyra::support::NetResolution::kWiredOr";
-  }
-  throw InternalError("NetResolutionCppLiteral: unknown NetResolution");
-}
-
 auto BodyCleanupExtentCppType() -> std::string_view {
   return "lyra::runtime::ScopeExit";
 }

@@ -241,6 +241,24 @@ cross-check predicts. This file owns only which instances are known and what is 
       nothing. The last two are lowering facts rather than naming ones and stay where the lowering
       reads them.
 
+- [x] T25 -- A net's fold (LRM 6.6) is installed on the net at construction, so a member declaration
+      is (name, type) with nothing read out of the type's payload. The fold was the last thing a
+      field declaration composed a constructor argument from, which is the one member-render shape
+      the contract names outright and the only instance it names by itself. Neither backend had
+      drifted, because both read the same payload; what had kept the fact in the type was that a
+      fold has no spelling as a value a call could carry -- a runtime library's own enumerator is
+      not a name a value-emission entry may write, and there is no dispatch that owns naming one. So
+      the fold is which operation the install names, one entry per fold, which is the remedy the
+      contract already prescribed and the shape the four severity entries had already taken for the
+      same reason.
+
+      The fold left both type pools with it, so two nets of one data type are one type whatever
+      their net types are, and a driver -- which had carried a copy of its net's fold that no
+      consumer ever read -- carries only the value it contributes. It left the signature too: what a
+      referrer knows about another unit's net is that a value reaches it only through a driver,
+      never which truth table folds them, so publishing the net type was publishing a fact with no
+      reader and the refusal that translated it moved to the declaration that has one.
+
 ## An aggregate's members
 
 - [ ] T8 -- An unpacked struct keeps its field names through lowering, so a member access names a
@@ -326,13 +344,6 @@ cross-check predicts. This file owns only which instances are known and what is 
 
 - [ ] T15 -- A backend meeting IR it has not implemented returns the recoverable failure the error
       policy prescribes rather than reporting a compiler bug.
-- [ ] T25 -- A net's fold (LRM 6.6) reaches its field as construction rather than as type payload. A
-      member is (name, type), and the C++ backend composes the fold into the field's initializer out
-      of the type it carries, which is the one member-render shape the contract names outright. Both
-      backends read it from the type, so nothing has drifted and nothing will until one of them
-      stops; what it needs is for the fold to arrive the way every other per-member construction
-      state does, as an ordinary call in the constructor body, which reshapes the runtime net and
-      the execution backend's member storage together.
 
 ## Cross-references
 

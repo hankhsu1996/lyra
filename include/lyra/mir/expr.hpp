@@ -897,19 +897,19 @@ struct Expr {
       .type = value};
 }
 
-// `wrapper.Initialize(prototype)` -- fixes the declared representation (and
-// default contents) once at construction. `prototype` is a value of that
-// declared type; only its representation is used. No runtime handle: it runs
-// before any process, so there are no subscribers to fire.
-[[nodiscard]] inline auto MakeCapabilityInitializeCallExpr(
-    ExprId wrapper, ExprId prototype, TypeId void_type) -> Expr {
+// Installs what a capability wrapper's declaration gives it, once at
+// construction. `entry` names which install this is -- a cell's declared
+// representation and default contents, a net's representation together with
+// the fold its net type picked (LRM 6.6) -- and `prototype` is a value of that
+// declared type, of which only the representation is used. No runtime handle:
+// it runs before any process, so there are no subscribers to fire.
+[[nodiscard]] inline auto MakeCapabilityInstallCallExpr(
+    ExprId wrapper, ExprId prototype, support::BuiltinFn entry,
+    TypeId void_type) -> Expr {
   return Expr{
       .data =
           CallExpr{
-              .callee =
-                  Direct{
-                      .target = support::BuiltinFn::kInitialize,
-                      .receiver = wrapper},
+              .callee = Direct{.target = entry, .receiver = wrapper},
               .arguments = {prototype}},
       .type = void_type};
 }

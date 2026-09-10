@@ -634,22 +634,15 @@ struct ObservableType {
   auto operator==(const ObservableType&) const -> bool = default;
 };
 
-// How a net folds its drivers' contributions into its value (LRM 6.6). The
-// source net type picks it: `wire` and `tri` name the same tri-state fold, and
-// the wired-logic, charge-storage, pull, and supply net types each name their
-// own. It is part of the net's type because two nets of one data type resolve
-// differently when their net types differ, so nothing below can recover it from
-// the value type or invent it.
-enum class NetResolution : std::uint8_t { kTriState, kWiredAnd, kWiredOr };
-
 // A net's resolved storage: an observable value produced by resolving the
 // contributions of the net's drivers (LRM 6.5, 6.6). Readable and observable
 // like an `ObservableType` cell, but never written directly -- a value reaches
 // it through a driver, or through a procedural continuous assignment that
-// overrides what the drivers resolve to (LRM 10.6.2).
+// overrides what the drivers resolve to (LRM 10.6.2). The fold those
+// contributions resolve under (LRM 6.6) is installed at construction, so it is
+// the net's state rather than its type.
 struct ResolvedType {
   TypeId value;
-  NetResolution resolution;
 
   auto operator==(const ResolvedType&) const -> bool = default;
 };
@@ -685,11 +678,10 @@ struct EvaluationAttemptsType {
 };
 
 // The drive capability for a net: a handle to one of a `ResolvedType` net's
-// contributions. A driver updates only its own contribution; the net resolves,
-// so a driver carries the same resolution its net does.
+// contributions. A driver updates only its own contribution and never the
+// resolved value, which is the net's alone to arrive at.
 struct DriverType {
   TypeId value;
-  NetResolution resolution;
 
   auto operator==(const DriverType&) const -> bool = default;
 };

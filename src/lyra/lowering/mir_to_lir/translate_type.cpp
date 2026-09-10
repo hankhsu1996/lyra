@@ -57,18 +57,6 @@ auto TranslateMachineFloatWidth(mir::MachineFloatWidth w)
   throw InternalError("TranslateMachineFloatWidth: unknown MachineFloatWidth");
 }
 
-auto TranslateNetResolution(mir::NetResolution r) -> lir::NetResolution {
-  switch (r) {
-    case mir::NetResolution::kTriState:
-      return lir::NetResolution::kTriState;
-    case mir::NetResolution::kWiredAnd:
-      return lir::NetResolution::kWiredAnd;
-    case mir::NetResolution::kWiredOr:
-      return lir::NetResolution::kWiredOr;
-  }
-  throw InternalError("TranslateNetResolution: unknown NetResolution");
-}
-
 auto TranslatePointerOwnership(mir::PointerOwnership o)
     -> lir::PointerOwnership {
   switch (o) {
@@ -281,14 +269,11 @@ auto UnitLowerer::TranslateType(const mir::Type& ty) -> lir::Type {
                 lir::TaggedUnionType{.elements = std::move(elements)}};
           },
           [&](const mir::ResolvedType& r) -> lir::Type {
-            return lir::Type{lir::ResolvedType{
-                .value = TranslateType(r.value),
-                .resolution = TranslateNetResolution(r.resolution)}};
+            return lir::Type{
+                lir::ResolvedType{.value = TranslateType(r.value)}};
           },
           [&](const mir::DriverType& d) -> lir::Type {
-            return lir::Type{lir::DriverType{
-                .value = TranslateType(d.value),
-                .resolution = TranslateNetResolution(d.resolution)}};
+            return lir::Type{lir::DriverType{.value = TranslateType(d.value)}};
           },
           [&](const mir::ObservableType& ob) -> lir::Type {
             return lir::Type{

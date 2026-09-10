@@ -417,14 +417,14 @@ each meets the same lifetime question above.
       as.
 - [x] **Driving a net.** A net's value is the resolution of its drivers, so a driver attaches to a
       resolution node and updates a contribution rather than writing a cell, and a net-bearing
-      design runs here. A net is storage of its own: it fixes its declared type once, answers with
-      the fold of its drivers' contributions, and takes no store at all. Every form the source may
-      write resolves -- one driver, several, a driver contributing high impedance, a driver covering
-      only part of the net, a net reached across a port, and a net whose data type is an unpacked
-      aggregate -- and a change in the resolved value wakes its subscribers while a contribution
-      that moves without changing it wakes nobody. Which fold a net uses travels with it rather than
-      being assumed below, so a second net type adds its own without disturbing this one. Rolled up
-      in `nets.md`.
+      design runs here. A net is storage of its own: it fixes its declared type and its fold once,
+      answers with the fold of its drivers' contributions, and takes no store at all. Every form the
+      source may write resolves -- one driver, several, a driver contributing high impedance, a
+      driver covering only part of the net, a net reached across a port, and a net whose data type
+      is an unpacked aggregate -- and a change in the resolved value wakes its subscribers while a
+      contribution that moves without changing it wakes nobody. Which fold a net uses reaches it as
+      the install its construction names rather than being assumed below, so a second net type adds
+      its own without disturbing this one. Rolled up in `nets.md`.
 
       Two things this settled reach wider than a net. **How an access through a capability wrapper is
       realized is one question asked at one place**, answering for every wrapper what a load, a store,

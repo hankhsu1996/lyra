@@ -173,10 +173,8 @@ auto Type::Hash::operator()(const Type& type) const -> std::size_t {
       HashId(seed, t.value);
     } else if constexpr (std::is_same_v<T, ResolvedType>) {
       HashId(seed, t.value);
-      HashField(seed, t.resolution);
     } else if constexpr (std::is_same_v<T, DriverType>) {
       HashId(seed, t.value);
-      HashField(seed, t.resolution);
     } else if constexpr (std::is_same_v<T, SampledHistoryType>) {
       HashId(seed, t.value);
     }

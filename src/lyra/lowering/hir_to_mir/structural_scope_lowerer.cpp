@@ -54,6 +54,25 @@ namespace lyra::lowering::hir_to_mir {
 
 namespace {
 
+// The entry installing the fold a net's declared net type names (LRM 6.6).
+// Each pair differs only in source spelling: `wire` / `tri` resolve under the
+// tri-state truth table, `wand` / `triand` under wired-and, and `wor` /
+// `trior` under wired-or (LRM 6.6.3).
+auto NetInitializeEntry(hir::NetType net_type) -> support::BuiltinFn {
+  switch (net_type) {
+    case hir::NetType::kWire:
+    case hir::NetType::kTri:
+      return support::BuiltinFn::kNetInitializeTriState;
+    case hir::NetType::kWand:
+    case hir::NetType::kTriand:
+      return support::BuiltinFn::kNetInitializeWiredAnd;
+    case hir::NetType::kWor:
+    case hir::NetType::kTrior:
+      return support::BuiltinFn::kNetInitializeWiredOr;
+  }
+  throw InternalError("NetInitializeEntry: unknown NetType");
+}
+
 // Adds the runtime scope base's construction prefix (parent, hierarchy
 // segment) as ordinary ctor params, in the order the base
 // constructor consumes them.
@@ -1893,7 +1912,7 @@ auto StructuralScopeLowerer::PopulateBodies(WalkFrame parent_frame)
         TranslateStructuralDataObject(hir::StructuralHops{0}, hir_id);
     const mir::TypeId mir_field_type = mir_class.fields.Get(mir_id).type;
     const mir::TypeId mir_value_type = unit_lowerer.TranslateType(d.type);
-    const bool is_net = std::holds_alternative<hir::StructuralNetDecl>(d.kind);
+    const auto* net = std::get_if<hir::StructuralNetDecl>(&d.kind);
     const auto* var = std::get_if<hir::StructuralVariableDecl>(&d.kind);
     const mir::Type& var_type = unit_lowerer.Unit().types.Get(mir_value_type);
     // Owned children (pointer / vector / object), cross-instance reference
@@ -1939,8 +1958,8 @@ auto StructuralScopeLowerer::PopulateBodies(WalkFrame parent_frame)
         const mir::ExprId prototype = initialize_block.exprs.Add(
             BuildDefaultValueFromHir(unit_lowerer, initialize_block, d.type));
         append_stmt(
-            mir::MakeCapabilityInitializeCallExpr(
-                init_target, prototype,
+            mir::MakeCapabilityInstallCallExpr(
+                init_target, prototype, support::BuiltinFn::kInitialize,
                 unit_lowerer.Unit().builtins.void_type));
         if (var->initializer.has_value()) {
           auto value_or =
@@ -1963,13 +1982,14 @@ auto StructuralScopeLowerer::PopulateBodies(WalkFrame parent_frame)
       }
     }
 
-    // A net cell fixes its declared type at construction (LRM 6.6.1), in the
+    // A net cell fixes what its declaration gives it -- the declared type and
+    // the fold its net type names -- at construction (LRM 6.6.1), in the
     // constructor rather than the initialize phase: a net is a readable,
     // well-typed observable before any driver attaches, and before a cross-unit
     // reader seeds from it during the parent-first initialize phase, so a read
     // that early sees the net type's undriven value, never an uninitialized
     // cell. Drivers, attached at Resolve, update it from there.
-    if (is_net) {
+    if (net != nullptr) {
       const mir::ExprId net_target = ctor_block.exprs.Add(
           mir::MakeFieldAccessExpr(
               self_read(),
@@ -1982,8 +2002,9 @@ auto StructuralScopeLowerer::PopulateBodies(WalkFrame parent_frame)
               .label = std::nullopt,
               .data = mir::ExprStmt{
                   .expr = ctor_block.exprs.Add(
-                      mir::MakeCapabilityInitializeCallExpr(
-                          net_target, prototype, void_type))}});
+                      mir::MakeCapabilityInstallCallExpr(
+                          net_target, prototype,
+                          NetInitializeEntry(net->net_type), void_type))}});
     }
 
     // A value signal, or a named event, records its address under its name so a

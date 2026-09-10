@@ -5,7 +5,6 @@
 #include <string_view>
 #include <variant>
 
-#include "lyra/support/net_resolution.hpp"
 #include "lyra/support/value_domain.hpp"
 
 namespace lyra::runtime {
@@ -168,11 +167,11 @@ struct InlineValueStorage {
 // A net's resolution node (LRM 6.5, 6.6): the storage its drivers'
 // contributions fold into. Like the observable cell it is reached only through
 // its own access, and unlike it nothing ever writes it -- a value reaches a net
-// only through a driver. It names the domain its value is realized in and the
-// fold its net type picked.
+// only through a driver. It names the domain its value is realized in; the fold
+// those contributions resolve under is installed at construction, so it is not
+// among what realizing the storage needs.
 struct ResolvedNetStorage {
   support::ValueDomain domain;
-  support::NetResolution resolution;
 };
 
 // A variable the owner holds: written and read through its own storage, so a

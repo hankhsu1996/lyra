@@ -13,7 +13,6 @@
 #include "lyra/backend/cpp/render_stmt.hpp"
 #include "lyra/backend/cpp/render_type.hpp"
 #include "lyra/backend/cpp/scope_view.hpp"
-#include "lyra/base/overloaded.hpp"
 #include "lyra/mir/class.hpp"
 #include "lyra/mir/class_ref.hpp"
 #include "lyra/mir/compilation_unit.hpp"
@@ -24,26 +23,16 @@ namespace lyra::backend::cpp {
 namespace {
 
 // A field declaration is (name, type): the type carries the target storage
-// form, the name the source identifier. Mutable per-field state -- a cell's
-// declared representation, its initial value -- arrives as ordinary MIR
-// statements in the constructor body, not from type payload here. The field
-// value-initializes, except a net, whose fold (LRM 6.6) is a fixed structural
-// property the type names and the runtime net carries as data, so it is passed
-// to the net's constructor here rather than established by a later store.
+// form, the name the source identifier. Every per-field state -- a cell's
+// declared representation, a net's fold, an initial value -- arrives as
+// ordinary MIR statements in the constructor body, so the declaration
+// value-initializes and carries nothing else.
 auto RenderField(
     const mir::CompilationUnit& unit, const mir::FieldDecl& field,
     std::size_t indent) -> std::string {
-  const std::string type = RenderTypeAsCpp(unit, field.type);
-  const std::string init =
-      unit.types.Get(field.type)
-          .Visit(
-              Overloaded{
-                  [](const mir::ResolvedType& net) -> std::string {
-                    return std::format(
-                        "{{{}}}", NetResolutionCppLiteral(net.resolution));
-                  },
-                  [](const auto&) -> std::string { return "{}"; }});
-  return std::format("{}{} {}{};\n", Indent(indent), type, field.name, init);
+  return std::format(
+      "{}{} {}{{}};\n", Indent(indent), RenderTypeAsCpp(unit, field.type),
+      field.name);
 }
 
 // The value-init field declarations of any field-bearing storage -- a class's

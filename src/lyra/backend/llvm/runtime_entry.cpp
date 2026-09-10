@@ -123,18 +123,6 @@ auto SelectsByStatedIndex(
   return unit.types.Get(container).Is<lir::AssociativeArrayType>();
 }
 
-auto NetResolutionOf(lir::NetResolution resolution) -> support::NetResolution {
-  switch (resolution) {
-    case lir::NetResolution::kTriState:
-      return support::NetResolution::kTriState;
-    case lir::NetResolution::kWiredAnd:
-      return support::NetResolution::kWiredAnd;
-    case lir::NetResolution::kWiredOr:
-      return support::NetResolution::kWiredOr;
-  }
-  throw InternalError("llvm codegen: unknown net resolution");
-}
-
 auto ValueDomainOf(const lir::CompilationUnit& unit, lir::TypeId type)
     -> std::optional<support::ValueDomain> {
   using Domain = std::optional<support::ValueDomain>;
@@ -445,6 +433,12 @@ auto RuntimeSymbol(
             "llvm codegen: a net's resolved value takes no store; a value "
             "reaches a net through one of its drivers");
       }
+      if (fn == support::BuiltinFn::kInitialize) {
+        throw InternalError(
+            "llvm codegen: a net installs its declaration through the entry "
+            "naming its fold, because which truth table it resolves under is "
+            "part of what that declaration fixes");
+      }
       retains_nothing(fn);
       return spelled("net");
     case WrapperKind::kDriver:
@@ -636,11 +630,15 @@ auto EntryNamingOf(support::BuiltinFn fn) -> EntryNaming {
     case support::BuiltinFn::kEndTakeover:
       return NamedByWrapper{};
 
-    // A driver is attached by the net that issues it, so what names the entry
-    // is the representation that net resolves in. A history's three operations
+    // A driver is attached by the net that issues it, and a fold is installed
+    // on the net that applies it, so in both cases what names the entry is the
+    // representation that net resolves in. A history's three operations
     // likewise take the storage they act on and are named by the one domain
     // every value in it is realized in (LRM 16.9.3).
     case support::BuiltinFn::kAttachDriver:
+    case support::BuiltinFn::kNetInitializeTriState:
+    case support::BuiltinFn::kNetInitializeWiredAnd:
+    case support::BuiltinFn::kNetInitializeWiredOr:
     case support::BuiltinFn::kSampledHistoryInstall:
     case support::BuiltinFn::kSampledHistoryPush:
     case support::BuiltinFn::kSampledHistoryAt:

@@ -35,7 +35,6 @@
 #include "lyra/lowering/ast_to_hir/connected_interface.hpp"
 #include "lyra/lowering/ast_to_hir/expression/slang_atoms.hpp"
 #include "lyra/lowering/ast_to_hir/instance_array_shape.hpp"
-#include "lyra/lowering/ast_to_hir/net_type.hpp"
 #include "lyra/lowering/ast_to_hir/subroutine_decl.hpp"
 #include "lyra/lowering/ast_to_hir/unit_identity.hpp"
 #include "lyra/lowering/ast_to_hir/unit_lowerer.hpp"
@@ -234,13 +233,11 @@ auto UnitLowerer::PublishSignature() -> diag::Result<void> {
     const auto span = SourceMapper().PointSpanOf(internal.location);
     auto interned = InternType(internal.getType(), span);
     if (!interned) return std::unexpected(std::move(interned.error()));
-    auto storage = DeclarationStorage(internal, span);
-    if (!storage) return std::unexpected(std::move(storage.error()));
     const hir::PublishedMemberId id = instance_class.members.Add(
         hir::PublishedMember{
             .name = std::string{internal.name},
             .type = publish_type(*interned),
-            .storage = *std::move(storage)});
+            .storage = DeclarationStorage(internal)});
     published_member_ids_.emplace(&internal, id);
     return id;
   };
@@ -650,23 +647,15 @@ auto UnitLowerer::PublishSignature() -> diag::Result<void> {
   return {};
 }
 
-auto UnitLowerer::DeclarationStorage(
-    const slang::ast::ValueSymbol& value, diag::SourceSpan span) const
-    -> diag::Result<hir::PublishedStorage> {
+auto UnitLowerer::DeclarationStorage(const slang::ast::ValueSymbol& value) const
+    -> hir::PublishedStorage {
   if (const auto binding = ReferenceBindingOf(value)) {
     return hir::PublishedStorage{hir::ReferenceStorage{.binding = *binding}};
   }
-  const auto* net = value.as_if<slang::ast::NetSymbol>();
-  if (net == nullptr) {
-    return hir::PublishedStorage{hir::VariableStorage{}};
+  if (value.as_if<slang::ast::NetSymbol>() != nullptr) {
+    return hir::PublishedStorage{hir::NetStorage{}};
   }
-  const auto net_type = TranslateNetType(net->netType);
-  if (!net_type.has_value()) {
-    return diag::Fail(
-        span, diag::DiagCode::kUnsupportedTypeKind,
-        "this net type is not yet supported");
-  }
-  return hir::PublishedStorage{hir::NetStorage{.net_type = *net_type}};
+  return hir::PublishedStorage{hir::VariableStorage{}};
 }
 
 auto UnitLowerer::ImportSignatureType(

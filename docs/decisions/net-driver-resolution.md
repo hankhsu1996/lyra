@@ -124,6 +124,11 @@ the design has attached, which is exactly what a global Seal barrier provides.
   a home and establishes the "topology immutable after Seal" invariant.
 - A net is never accidentally writable as storage, and a variable is never accidentally a driver
   sink, because the capability is in the type.
+- The resolver is fixed by the net type, and it is installed on the node at construction rather than
+  carried by the node's own type: two nets of one data type are therefore one type wherever types
+  are named, one realization serves every net type, and a backend that erases the value type still
+  resolves correctly. Which resolver is stated by which install operation the declaration names, one
+  per resolver, because a truth table has no spelling as a value a call could carry.
 
 ## Alternatives considered
 

@@ -9,10 +9,8 @@
 
 #include "lyra/lir/function.hpp"
 #include "lyra/lir/operator.hpp"
-#include "lyra/lir/type.hpp"
 #include "lyra/lir/type_id.hpp"
 #include "lyra/support/builtin_fn.hpp"
-#include "lyra/support/net_resolution.hpp"
 #include "lyra/support/value_domain.hpp"
 
 namespace lyra::lir {
@@ -33,11 +31,6 @@ inline constexpr std::string_view kRuntimeSymbolPrefix = "lyra_rt_";
 // entry a call names and the storage a cell owns cannot disagree.
 auto ValueDomainOf(const lir::CompilationUnit& unit, lir::TypeId type)
     -> std::optional<support::ValueDomain>;
-
-// The fold a LIR net type resolves under, as the runtime names it. The one
-// place a LIR resolution is classified, so the storage a net owns and the
-// backend that declared it cannot disagree about how it resolves.
-auto NetResolutionOf(lir::NetResolution resolution) -> support::NetResolution;
 
 // Whether a coordinate into this container has to say which representation it
 // is in. An associative array holds no prototype for an index -- LRM 7.8 gives
@@ -235,11 +228,12 @@ auto RuntimeSymbol(support::ValueDomain domain, support::BuiltinFn fn)
 // access the wrapper does not define is refused rather than spelled, because it
 // is an upstream mistake and not a gap. A net's value is the fold of its
 // drivers, so a value reaches it through one of them and never by being written
-// (LRM 6.5); a driver installs no representation of its own, since what it
-// contributes before it drives is the identity the net gave it when it
-// attached; and only a variable retains what a time slot moved away from (LRM
-// 16.5.1), the other two holding a value that is recomputed rather than found
-// there.
+// (LRM 6.5); a net's own install names the fold it resolves under, so the
+// install that names none is not one of its entries; a driver installs no
+// representation of its own, since what it contributes before it drives is the
+// identity the net gave it when it attached; and only a variable retains what a
+// time slot moved away from (LRM 16.5.1), the other two holding a value that is
+// recomputed rather than found there.
 auto RuntimeSymbol(
     support::ValueDomain domain, WrapperKind wrapper, support::BuiltinFn fn)
     -> std::string;

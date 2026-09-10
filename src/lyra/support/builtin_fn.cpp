@@ -388,6 +388,18 @@ auto RuntimeEntryOf(BuiltinFn id) -> RuntimeEntry {
       return {.name = "atanh", .declaration = Method{"Atanh"}};
     case BuiltinFn::kInitialize:
       return {.name = "initialize", .declaration = Method{"Initialize"}};
+    case BuiltinFn::kNetInitializeTriState:
+      return {
+          .name = "net_initialize_tri_state",
+          .declaration = Method{"InitializeTriState"}};
+    case BuiltinFn::kNetInitializeWiredAnd:
+      return {
+          .name = "net_initialize_wired_and",
+          .declaration = Method{"InitializeWiredAnd"}};
+    case BuiltinFn::kNetInitializeWiredOr:
+      return {
+          .name = "net_initialize_wired_or",
+          .declaration = Method{"InitializeWiredOr"}};
     case BuiltinFn::kLoad:
       return {.name = "get", .declaration = Method{"Get"}};
     case BuiltinFn::kStore:

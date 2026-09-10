@@ -205,19 +205,6 @@ class MirDumper {
         s);
   }
 
-  static auto FormatNetResolution(NetResolution resolution)
-      -> std::string_view {
-    switch (resolution) {
-      case NetResolution::kTriState:
-        return "tri_state";
-      case NetResolution::kWiredAnd:
-        return "wired_and";
-      case NetResolution::kWiredOr:
-        return "wired_or";
-    }
-    throw InternalError("FormatNetResolution: unknown NetResolution");
-  }
-
   static auto FormatType(const Type& t) -> std::string {
     return t.Visit(
         Overloaded{
@@ -459,14 +446,10 @@ class MirDumper {
               return std::format("Observable(value=Type[{}])", o.value.value);
             },
             [](const ResolvedType& r) -> std::string {
-              return std::format(
-                  "Resolved(value=Type[{}], resolution={})", r.value.value,
-                  FormatNetResolution(r.resolution));
+              return std::format("Resolved(value=Type[{}])", r.value.value);
             },
             [](const DriverType& d) -> std::string {
-              return std::format(
-                  "Driver(value=Type[{}], resolution={})", d.value.value,
-                  FormatNetResolution(d.resolution));
+              return std::format("Driver(value=Type[{}])", d.value.value);
             },
             [](const SampledHistoryType& h) -> std::string {
               return std::format(

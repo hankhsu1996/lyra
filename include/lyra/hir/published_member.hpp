@@ -27,11 +27,11 @@ struct VariableStorage {
   auto operator==(const VariableStorage&) const -> bool = default;
 };
 
-// A member whose value is the resolution of its drivers, folding under the net
-// type its declaration states (LRM 6.6).
+// A member whose value is the resolution of its drivers rather than anything
+// written to it (LRM 6.6), so a referrer reads and waits on it and never
+// stores through it. The fold it resolves under is the declaring unit's to
+// install, never a referrer's to know.
 struct NetStorage {
-  NetType net_type{};
-
   auto operator==(const NetStorage&) const -> bool = default;
 };
 
@@ -75,8 +75,8 @@ struct PublishedMember {
           [](const StructuralVariableDecl&) -> PublishedStorage {
             return VariableStorage{};
           },
-          [](const StructuralNetDecl& net) -> PublishedStorage {
-            return NetStorage{.net_type = net.net_type};
+          [](const StructuralNetDecl&) -> PublishedStorage {
+            return NetStorage{};
           },
           [](const StructuralReferenceDecl& reference) -> PublishedStorage {
             return ReferenceStorage{.binding = reference.binding};

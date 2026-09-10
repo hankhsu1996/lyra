@@ -8,7 +8,6 @@
 #include "lyra/runtime/net.hpp"
 #include "lyra/runtime/sampled_history.hpp"
 #include "lyra/runtime/scope_program.hpp"
-#include "lyra/support/net_resolution.hpp"
 #include "lyra/support/value_domain.hpp"
 #include "lyra/value/chandle.hpp"
 #include "lyra/value/packed_array.hpp"
@@ -36,22 +35,19 @@ auto Read(const void* handle) -> const T& {
 // struct, or union of net-valid elements, and nothing else; a domain outside
 // that set is one the front end should have rejected as a net's data type.
 template <typename Object>
-void EmplaceResolvedNet(
-    Object& object, support::ValueDomain domain,
-    support::NetResolution resolution) {
+void EmplaceResolvedNet(Object& object, support::ValueDomain domain) {
   switch (domain) {
     case support::ValueDomain::kPacked:
-      object.template emplace<ResolvedNet<value::PackedArray>>(resolution);
+      object.template emplace<ResolvedNet<value::PackedArray>>();
       return;
     case support::ValueDomain::kTuple:
-      object.template emplace<ResolvedNet<value::RuntimeTuple>>(resolution);
+      object.template emplace<ResolvedNet<value::RuntimeTuple>>();
       return;
     case support::ValueDomain::kUnion:
-      object.template emplace<ResolvedNet<value::RuntimeUnion>>(resolution);
+      object.template emplace<ResolvedNet<value::RuntimeUnion>>();
       return;
     case support::ValueDomain::kUnpackedArray:
-      object.template emplace<ResolvedNet<value::RuntimeUnpackedArray>>(
-          resolution);
+      object.template emplace<ResolvedNet<value::RuntimeUnpackedArray>>();
       return;
     case support::ValueDomain::kString:
     case support::ValueDomain::kReal:
@@ -256,7 +252,7 @@ MemberStorage::MemberStorage(MemberStorageDescriptor descriptor) {
             throw InternalError("MemberStorage: unknown value domain");
           },
           [this](const ResolvedNetStorage& net) {
-            EmplaceResolvedNet(object_, net.domain, net.resolution);
+            EmplaceResolvedNet(object_, net.domain);
           },
           [this](const InlineValueStorage& inline_value) {
             switch (inline_value.domain) {

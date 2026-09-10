@@ -166,8 +166,9 @@ auto PopulatePackageStaticStorage(
     install_block.AppendStmt(
         mir::ExprStmt{
             .expr = install_block.exprs.Add(
-                mir::MakeCapabilityInitializeCallExpr(
+                mir::MakeCapabilityInstallCallExpr(
                     make_cell(install_block, d.name, cell_type), prototype,
+                    support::BuiltinFn::kInitialize,
                     unit.builtins.void_type))});
 
     // Phase 2: a user initializer (LRM 10.5) writes the value through the cell.
@@ -230,25 +231,6 @@ auto PopulatePackageStaticStorage(
           .foreign = std::nullopt,
           .virtual_dispatch = std::nullopt});
   return {};
-}
-
-// The fold a net's declared net type names (LRM 6.6). Each pair differs only in
-// source spelling: `wire` / `tri` resolve under the tri-state truth table,
-// `wand` / `triand` under wired-and, and `wor` / `trior` under wired-or
-// (LRM 6.6.3).
-auto TranslateNetResolution(hir::NetType net_type) -> mir::NetResolution {
-  switch (net_type) {
-    case hir::NetType::kWire:
-    case hir::NetType::kTri:
-      return mir::NetResolution::kTriState;
-    case hir::NetType::kWand:
-    case hir::NetType::kTriand:
-      return mir::NetResolution::kWiredAnd;
-    case hir::NetType::kWor:
-    case hir::NetType::kTrior:
-      return mir::NetResolution::kWiredOr;
-  }
-  throw InternalError("TranslateNetResolution: unknown NetType");
 }
 
 // Builds the design's way in: a nullary callable that constructs the root
@@ -329,11 +311,9 @@ auto UnitLowerer::MemberCellType(
           [&](const hir::VariableStorage&) {
             return mir::ObservableCellOf(unit_.types, value_type);
           },
-          [&](const hir::NetStorage& net) {
+          [&](const hir::NetStorage&) {
             return unit_.types.Intern(
-                mir::Type{mir::ResolvedType{
-                    .value = value_type,
-                    .resolution = TranslateNetResolution(net.net_type)}});
+                mir::Type{mir::ResolvedType{.value = value_type}});
           },
           [&](const hir::ReferenceStorage& reference) {
             return unit_.types.Intern(

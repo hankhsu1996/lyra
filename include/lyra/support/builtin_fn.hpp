@@ -208,6 +208,15 @@ enum class BuiltinFn : std::uint16_t {
   // before any process, so nothing is subscribed yet. Every later store
   // requires its value to already be at the installed representation.
   kInitialize,
+  // Installing what a net's declaration gives it, once at construction: the
+  // representation its data type fixes, and the fold its declared net type
+  // picked (LRM 6.6). One entry per fold -- tri-state for `wire` / `tri`,
+  // wired-and for `wand` / `triand`, wired-or for `wor` / `trior` (LRM 6.6.1,
+  // 6.6.3) -- because a fold is a truth table the net applies rather than a
+  // value a call can carry, and an operation is named here.
+  kNetInitializeTriState,
+  kNetInitializeWiredAnd,
+  kNetInitializeWiredOr,
   // Reading what a cell holds, and replacing it. Both act on the wrapper rather
   // than name its storage: a read answers with a value the cell decides how to
   // produce, and a write publishes the change to whatever the wrapper relates

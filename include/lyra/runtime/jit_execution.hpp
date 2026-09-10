@@ -1163,9 +1163,10 @@ void lyra_rt_unpackedarray_value_cell_store(void* cell, const void* value);
 auto lyra_rt_unpackedarray_value_cell_load(const void* cell) -> void*;
 
 // Nets and their drivers (LRM 6.5, 6.6). A net is storage of its own, like a
-// cell: `net_initialize` fixes its declared type once, and `net_get` answers
-// with the fold of its drivers' contributions. It takes no store -- a value
-// reaches a net only through a driver.
+// cell: one `net_initialize` entry per fold fixes the net's declared type and
+// the fold its net type picked, once, and `net_get` answers with the fold of
+// its drivers' contributions. It takes no store -- a value reaches a net only
+// through a driver.
 //
 // `attach_driver` issues one, and the handle it answers with is the net's to
 // own, so a source may hold it for as long as the net lives. `driver_set`
@@ -1178,7 +1179,9 @@ auto lyra_rt_unpackedarray_value_cell_load(const void* cell) -> void*;
 // fixed-size unpacked array, struct, or union whose elements are themselves
 // valid for a net.
 auto lyra_rt_packed_net_get(void* net) -> void*;
-void lyra_rt_packed_net_initialize(void* net, const void* prototype);
+void lyra_rt_packed_net_initialize_tri_state(void* net, const void* prototype);
+void lyra_rt_packed_net_initialize_wired_and(void* net, const void* prototype);
+void lyra_rt_packed_net_initialize_wired_or(void* net, const void* prototype);
 // Forcing a net and releasing it (LRM 10.6.2). What these change is the value
 // the net shows; its drivers go on updating their contributions underneath,
 // which is what the net answers with again once it is released.
@@ -1191,17 +1194,26 @@ auto lyra_rt_packed_attach_driver(void* net) -> void*;
 auto lyra_rt_packed_driver_get(void* driver) -> void*;
 void lyra_rt_packed_driver_set(void* driver, const void* value);
 auto lyra_rt_tuple_net_get(void* net) -> void*;
-void lyra_rt_tuple_net_initialize(void* net, const void* prototype);
+void lyra_rt_tuple_net_initialize_tri_state(void* net, const void* prototype);
+void lyra_rt_tuple_net_initialize_wired_and(void* net, const void* prototype);
+void lyra_rt_tuple_net_initialize_wired_or(void* net, const void* prototype);
 auto lyra_rt_tuple_attach_driver(void* net) -> void*;
 auto lyra_rt_tuple_driver_get(void* driver) -> void*;
 void lyra_rt_tuple_driver_set(void* driver, const void* value);
 auto lyra_rt_union_net_get(void* net) -> void*;
-void lyra_rt_union_net_initialize(void* net, const void* prototype);
+void lyra_rt_union_net_initialize_tri_state(void* net, const void* prototype);
+void lyra_rt_union_net_initialize_wired_and(void* net, const void* prototype);
+void lyra_rt_union_net_initialize_wired_or(void* net, const void* prototype);
 auto lyra_rt_union_attach_driver(void* net) -> void*;
 auto lyra_rt_union_driver_get(void* driver) -> void*;
 void lyra_rt_union_driver_set(void* driver, const void* value);
 auto lyra_rt_unpackedarray_net_get(void* net) -> void*;
-void lyra_rt_unpackedarray_net_initialize(void* net, const void* prototype);
+void lyra_rt_unpackedarray_net_initialize_tri_state(
+    void* net, const void* prototype);
+void lyra_rt_unpackedarray_net_initialize_wired_and(
+    void* net, const void* prototype);
+void lyra_rt_unpackedarray_net_initialize_wired_or(
+    void* net, const void* prototype);
 auto lyra_rt_unpackedarray_attach_driver(void* net) -> void*;
 auto lyra_rt_unpackedarray_driver_get(void* driver) -> void*;
 void lyra_rt_unpackedarray_driver_set(void* driver, const void* value);

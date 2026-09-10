@@ -352,8 +352,7 @@ class UnitLowerer {
   // Which storage the declaration `value` holds. One answer, so what this unit
   // publishes about a declaration and what a route to it reaches cannot differ.
   [[nodiscard]] auto DeclarationStorage(
-      const slang::ast::ValueSymbol& value, diag::SourceSpan span) const
-      -> diag::Result<hir::PublishedStorage>;
+      const slang::ast::ValueSymbol& value) const -> hir::PublishedStorage;
 
   // What the interface port `port` stands for: instances of the unit the
   // connection named, as many as the range it declares. The connection is read

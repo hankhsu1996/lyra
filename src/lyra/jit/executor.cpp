@@ -1046,7 +1046,12 @@ auto DefineRuntimeAbi(llvm::orc::LLJIT& jit)
   add("lyra_rt_unpackedarray_value_cell_load",
       &lyra_rt_unpackedarray_value_cell_load);
   add("lyra_rt_packed_net_get", &lyra_rt_packed_net_get);
-  add("lyra_rt_packed_net_initialize", &lyra_rt_packed_net_initialize);
+  add("lyra_rt_packed_net_initialize_tri_state",
+      &lyra_rt_packed_net_initialize_tri_state);
+  add("lyra_rt_packed_net_initialize_wired_and",
+      &lyra_rt_packed_net_initialize_wired_and);
+  add("lyra_rt_packed_net_initialize_wired_or",
+      &lyra_rt_packed_net_initialize_wired_or);
   add("lyra_rt_packed_net_begin_takeover", &lyra_rt_packed_net_begin_takeover);
   add("lyra_rt_packed_net_drive_takeover", &lyra_rt_packed_net_drive_takeover);
   add("lyra_rt_packed_net_end_takeover", &lyra_rt_packed_net_end_takeover);
@@ -1054,18 +1059,32 @@ auto DefineRuntimeAbi(llvm::orc::LLJIT& jit)
   add("lyra_rt_packed_driver_get", &lyra_rt_packed_driver_get);
   add("lyra_rt_packed_driver_set", &lyra_rt_packed_driver_set);
   add("lyra_rt_tuple_net_get", &lyra_rt_tuple_net_get);
-  add("lyra_rt_tuple_net_initialize", &lyra_rt_tuple_net_initialize);
+  add("lyra_rt_tuple_net_initialize_tri_state",
+      &lyra_rt_tuple_net_initialize_tri_state);
+  add("lyra_rt_tuple_net_initialize_wired_and",
+      &lyra_rt_tuple_net_initialize_wired_and);
+  add("lyra_rt_tuple_net_initialize_wired_or",
+      &lyra_rt_tuple_net_initialize_wired_or);
   add("lyra_rt_tuple_attach_driver", &lyra_rt_tuple_attach_driver);
   add("lyra_rt_tuple_driver_get", &lyra_rt_tuple_driver_get);
   add("lyra_rt_tuple_driver_set", &lyra_rt_tuple_driver_set);
   add("lyra_rt_union_net_get", &lyra_rt_union_net_get);
-  add("lyra_rt_union_net_initialize", &lyra_rt_union_net_initialize);
+  add("lyra_rt_union_net_initialize_tri_state",
+      &lyra_rt_union_net_initialize_tri_state);
+  add("lyra_rt_union_net_initialize_wired_and",
+      &lyra_rt_union_net_initialize_wired_and);
+  add("lyra_rt_union_net_initialize_wired_or",
+      &lyra_rt_union_net_initialize_wired_or);
   add("lyra_rt_union_attach_driver", &lyra_rt_union_attach_driver);
   add("lyra_rt_union_driver_get", &lyra_rt_union_driver_get);
   add("lyra_rt_union_driver_set", &lyra_rt_union_driver_set);
   add("lyra_rt_unpackedarray_net_get", &lyra_rt_unpackedarray_net_get);
-  add("lyra_rt_unpackedarray_net_initialize",
-      &lyra_rt_unpackedarray_net_initialize);
+  add("lyra_rt_unpackedarray_net_initialize_tri_state",
+      &lyra_rt_unpackedarray_net_initialize_tri_state);
+  add("lyra_rt_unpackedarray_net_initialize_wired_and",
+      &lyra_rt_unpackedarray_net_initialize_wired_and);
+  add("lyra_rt_unpackedarray_net_initialize_wired_or",
+      &lyra_rt_unpackedarray_net_initialize_wired_or);
   add("lyra_rt_unpackedarray_attach_driver",
       &lyra_rt_unpackedarray_attach_driver);
   add("lyra_rt_unpackedarray_driver_get", &lyra_rt_unpackedarray_driver_get);
@@ -1200,9 +1219,7 @@ auto DescribeMember(
             unit.types.Get(type).KindName()));
   }
   // What each kind needs beside itself comes from the same type it was read
-  // from: the domain a value is realized in, and the fold a net's own type
-  // picked, since two nets of one data type resolve differently when their net
-  // types differ (LRM 6.6).
+  // from: the domain a value is realized in.
   const auto domain_of = [&](lir::TypeId value) -> support::ValueDomain {
     const std::optional<support::ValueDomain> domain =
         backend::llvm_backend::ValueDomainOf(unit, value);
@@ -1218,12 +1235,9 @@ auto DescribeMember(
     case backend::llvm_backend::MemberStorageKind::kObservableCell:
       return runtime::ObservableCellStorage{
           .domain = domain_of(data.Get<lir::ObservableType>().value)};
-    case backend::llvm_backend::MemberStorageKind::kResolvedNet: {
-      const auto& net = data.Get<lir::ResolvedType>();
+    case backend::llvm_backend::MemberStorageKind::kResolvedNet:
       return runtime::ResolvedNetStorage{
-          .domain = domain_of(net.value),
-          .resolution = backend::llvm_backend::NetResolutionOf(net.resolution)};
-    }
+          .domain = domain_of(data.Get<lir::ResolvedType>().value)};
     case backend::llvm_backend::MemberStorageKind::kSampledHistory:
       return runtime::SampledHistoryStorage{
           .domain = domain_of(data.Get<lir::SampledHistoryType>().value)};

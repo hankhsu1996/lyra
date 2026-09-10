@@ -345,25 +345,18 @@ struct TaggedUnionType {
   auto operator==(const TaggedUnionType&) const -> bool = default;
 };
 
-// How a net folds its drivers' contributions into its value (LRM 6.6), carried
-// down from the net's declared net type. Tri-state for `wire` / `tri`,
-// wired-and for `wand` / `triand`, wired-or for `wor` / `trior` (LRM 6.6.3).
-enum class NetResolution : std::uint8_t { kTriState, kWiredAnd, kWiredOr };
-
 // The sealed endpoint of a cross-instance reference -- a resolution node
-// wrapping the referenced value type.
+// wrapping the referenced value type. The fold it resolves under (LRM 6.6) is
+// installed at construction, so it is the net's state rather than its type.
 struct ResolvedType {
   TypeId value;
-  NetResolution resolution;
 
   auto operator==(const ResolvedType&) const -> bool = default;
 };
 
-// The drive capability for a net: a handle to one of a net's contributions,
-// folding under the same resolution its net does.
+// The drive capability for a net: a handle to one of a net's contributions.
 struct DriverType {
   TypeId value;
-  NetResolution resolution;
 
   auto operator==(const DriverType&) const -> bool = default;
 };

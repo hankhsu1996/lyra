@@ -11,12 +11,6 @@
 
 namespace lyra::backend::cpp {
 
-// The `lyra::support::NetResolution` enumerator naming a net's fold (LRM 6.6),
-// as a C++ literal. A net member is value-initialized with it, so the runtime
-// net carries its fold as data rather than as a type parameter.
-[[nodiscard]] auto NetResolutionCppLiteral(mir::NetResolution resolution)
-    -> std::string_view;
-
 // Two things MIR states as structure rather than as a value, and that this
 // target has to realize with a library type. No MIR type names either of them,
 // so neither is reached through the type mapping below -- but each is a library

@@ -202,14 +202,8 @@ auto Type::Hash::operator()(const Type& type) const -> std::size_t {
           [&](const TupleType& t) { Combine(seed, t.elements); },
           [&](const UnionType& t) { Combine(seed, t.elements); },
           [&](const TaggedUnionType& t) { Combine(seed, t.elements); },
-          [&](const ResolvedType& t) {
-            Combine(seed, t.value);
-            Combine(seed, t.resolution);
-          },
-          [&](const DriverType& t) {
-            Combine(seed, t.value);
-            Combine(seed, t.resolution);
-          },
+          [&](const ResolvedType& t) { Combine(seed, t.value); },
+          [&](const DriverType& t) { Combine(seed, t.value); },
           [&](const ObservableType& t) { Combine(seed, t.value); },
           [&](const SampledHistoryType& t) { Combine(seed, t.value); },
           [](const EvaluationAttemptsType&) {}});
