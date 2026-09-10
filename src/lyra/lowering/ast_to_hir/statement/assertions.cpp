@@ -598,6 +598,17 @@ auto LowerPropertySpec(
 
 }  // namespace
 
+auto EvaluatedInSimulation(
+    const slang::ast::ConcurrentAssertionStatement& assertion,
+    support::AssertionPolicy policy) -> bool {
+  // LRM 16.14.4: `restrict` is the one directive simulation does not verify, so
+  // no policy value makes it evaluate.
+  if (assertion.assertionKind == slang::ast::AssertionKind::Restrict) {
+    return false;
+  }
+  return !support::ElidesAssertions(policy);
+}
+
 auto StaticConcurrentAssertionOf(const slang::ast::ProceduralBlockSymbol& proc)
     -> StaticConcurrentAssertion {
   if (proc.procedureKind != slang::ast::ProceduralBlockKind::Always) {
@@ -738,10 +749,10 @@ auto LowerConcurrentAssertion(
           "a cover sequence statement, which counts every match of an "
           "attempt rather than the attempt");
     case slang::ast::AssertionKind::Restrict:
-      return RefuseAssertionForm(
-          span,
-          "a restrict statement, which constrains a formal tool and is "
-          "not verified in simulation");
+      throw InternalError(
+          "LowerConcurrentAssertion: a restrict is not checked in simulation, "
+          "so it is left out where the statement is read and never reaches a "
+          "lowering of the property it states");
     case slang::ast::AssertionKind::Expect:
       break;
   }

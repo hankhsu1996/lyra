@@ -9,6 +9,7 @@
 #include "lyra/hir/stmt.hpp"
 #include "lyra/lowering/ast_to_hir/process_lowerer.hpp"
 #include "lyra/lowering/ast_to_hir/walk_frame.hpp"
+#include "lyra/support/assertion_policy.hpp"
 
 namespace slang::ast {
 class ConcurrentAssertionStatement;
@@ -42,6 +43,17 @@ struct StaticConcurrentAssertion {
 
 [[nodiscard]] auto StaticConcurrentAssertionOf(
     const slang::ast::ProceduralBlockSymbol& proc) -> StaticConcurrentAssertion;
+
+// Whether a concurrent assertion is evaluated at all. Two things answer it and
+// neither is a property of where the assertion is written, which is why both
+// placements ask this rather than deciding for themselves: simulation checks
+// the directive -- LRM 16.14.4 exempts `restrict`, which states a constraint
+// for a formal tool to converge a proof on and carries no action block -- and
+// the policy in force does not elide the family. One that is not evaluated runs
+// nothing, so a run carrying it and a run with it deleted are the same run.
+[[nodiscard]] auto EvaluatedInSimulation(
+    const slang::ast::ConcurrentAssertionStatement& assertion,
+    support::AssertionPolicy policy) -> bool;
 
 auto LowerImmediateAssertionStmt(
     ProcessLowerer& proc, WalkFrame frame,

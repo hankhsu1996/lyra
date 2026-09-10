@@ -141,12 +141,13 @@ The IDs are stable references and do not imply execution order beyond the depend
       falls between two ticks still preempts.
 
       Of the five statement forms the clause admits, three are carried. `restrict` is the fourth and
-      is accepted rather than checked: it states a constraint for a formal tool and is by definition
-      not verified in simulation (LRM 16.14.4), so eliding it is its semantics rather than a gap.
+      is accepted rather than checked, in either placement: it states a constraint for a formal tool
+      and is by definition not verified in simulation (LRM 16.14.4), so eliding it is its semantics
+      rather than a gap.
 
-      What remains of the form is the other placement: an assertion a procedure reaches is refused,
-      because its enabling condition is that control arrived there, which is queued rather than
-      evaluated (LRM 16.14.6). Refused by name besides: a local variable and a subroutine call
+      What remains of the form is the other placement: an assertion a procedure reaches and
+      simulation checks is refused, because its enabling condition is that control arrived there,
+      which is queued rather than evaluated (LRM 16.14.6). Refused by name besides: a local variable and a subroutine call
       attached to a match (LRM 16.10, 16.11), an unbounded `$` window, a repetition admitting an
       empty match, a nonconsecutive or goto repetition, composing sequences with `and` / `or` /
       `intersect` / `throughout` / `within`, `first_match`, the property connectives and the

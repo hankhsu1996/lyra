@@ -306,12 +306,15 @@ auto LowerStatement(
           span);
 
     case slang::ast::StatementKind::ConcurrentAssertion: {
-      if (support::ElidesAssertions(proc.Owner().AssertionPolicy())) {
+      const auto& assertion =
+          stmt.as<slang::ast::ConcurrentAssertionStatement>();
+      // An assertion nothing evaluates still has control reach it, and what
+      // it does there is nothing -- which is what an empty statement is.
+      if (!EvaluatedInSimulation(assertion, proc.Owner().AssertionPolicy())) {
         return LowerEmptyStmt(span);
       }
-      auto assertion_or = LowerConcurrentAssertion(
-          proc, frame, stmt.as<slang::ast::ConcurrentAssertionStatement>(),
-          span);
+      auto assertion_or =
+          LowerConcurrentAssertion(proc, frame, assertion, span);
       if (!assertion_or) {
         return std::unexpected(std::move(assertion_or.error()));
       }

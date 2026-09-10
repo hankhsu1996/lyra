@@ -596,13 +596,7 @@ auto UnitLowerer::Contains(const slang::ast::ProceduralBlockSymbol& proc) const
   if (found.assertion == nullptr) {
     return true;
   }
-  // LRM 16.14.4: a `restrict` states a constraint for a formal tool to converge
-  // a proof on, and is the one directive a simulator does not verify. It has no
-  // action block either, so carrying it and leaving it out are the same run.
-  if (found.assertion->assertionKind == slang::ast::AssertionKind::Restrict) {
-    return false;
-  }
-  return !support::ElidesAssertions(AssertionPolicy());
+  return EvaluatedInSimulation(*found.assertion, AssertionPolicy());
 }
 
 auto UnitLowerer::LookupProcessBinding(
