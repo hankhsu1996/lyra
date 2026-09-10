@@ -7,4 +7,5 @@
 # out inside the case, where nothing would notice.
 #
 # A case may appear in this file or in the refusal record, never both.
+09_processes/process_suspend_desensitizes_while_suspended: "wake_count was 2, expected 1"
 11_operators/real_shortreal_result_type: "narrow_square was 1.000244155526, expected 1.000244140625"

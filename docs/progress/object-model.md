@@ -82,10 +82,10 @@ each stage establishes, not how.
 - [x] `super` reference and the base-constructor call: an override body reaches its base-class
       implementation by name-independent reference, and a constructor forwards to the base's
       construction as its first act (LRM 8.7). The super qualifier is stated at the call site as a
-      call-side fact independent of the callee's virtual role; the base-constructor call is stated
-      on the class's construction protocol, present whenever the class extends a base -- explicit
-      when the source wrote `super.new(args)`, an empty-args implicit forward otherwise -- so a
-      backend never resorts to its target language's default-construction convention.
+      call-side fact independent of the callee's virtual role; the forward happens wherever the
+      class extends a base -- carrying the arguments the source wrote, and none where it wrote no
+      `super.new` -- so a backend never resorts to its target language's default-construction
+      convention.
 
 - [x] Pure-virtual and abstract classes (LRM 8.21): a virtual method with no body is a contract the
       derived must fill, and a class carrying such a slot is not directly constructible. Each layer
@@ -240,9 +240,9 @@ this list is what remembers.
 - [ ] A base whose constructor declares a formal with a default value does not build. A derived
       class that writes no `super.new` of its own forwards to its base implicitly (LRM 8.7), and
       that implicit call states no arguments -- so a default the base declared never reaches it and
-      the target language is left to decide the call. The case stating construction ordering is
-      parked on this, and its own subject is argument defaulting rather than construction ordering,
-      which runs correctly where every argument is stated.
+      the target language is left to decide the call. Construction ordering itself runs, and the
+      corpus states it wherever every argument is stated; what no case can ask for yet is a base
+      formal left to its default.
 
 ## Open Questions and Deferred Choices
 

@@ -12,6 +12,7 @@
 #include "lyra/base/overloaded.hpp"
 #include "lyra/lir/function.hpp"
 #include "lyra/support/builtin_fn.hpp"
+#include "lyra/support/imported_runtime_class.hpp"
 
 namespace lyra::lir {
 
@@ -23,8 +24,18 @@ class LirDumper {
   }
 
   auto Dump() -> std::string {
-    Line("LirUnit");
+    Line(std::format("LirUnit \"{}\"", unit_->name));
     Indent();
+    // The pool every `t<N>` below indexes. Without it an id is a number the
+    // reader cannot resolve at all, so the question it answers -- is this a
+    // machine boolean or a one-bit packed value -- gets guessed instead, and a
+    // guess about a type is indistinguishable from knowing.
+    Line("Types:");
+    Indent();
+    for (const TypeId id : unit_->types.Ids()) {
+      Line(std::format("[{}] {}", id.value, DescribeType(id)));
+    }
+    Dedent();
     for (const ExternalUnitObjectId id : unit_->external_unit_objects.Ids()) {
       DumpExternalUnitObject(id);
     }
@@ -259,6 +270,10 @@ class LirDumper {
             [](const ForeignTarget& f) -> std::string {
               return std::format("extern {}", f.symbol);
             },
+            [](const ImportedRuntimeTarget& i) -> std::string {
+              return std::string{
+                  support::ImportedRuntimeMethodEntryName(i.method)};
+            },
             [](const ValueCellTarget& f) -> std::string {
               return std::string{ValueCellOpName(f.op)};
             },
@@ -336,7 +351,12 @@ class LirDumper {
             [](const RealConst& c) -> std::string {
               return std::format("real:{}", c.value);
             },
-            [](const NullConst&) -> std::string { return "null"; },
+            // Its type, where every other constant prints its value: referring
+            // to nothing is the whole of a null's value, and which type's
+            // nothing it is decides how it is realized.
+            [](const NullConst& c) -> std::string {
+              return std::format("null:{}", FormatType(c.type));
+            },
             [](const BoolConst& c) -> std::string {
               return std::format("bool:{}", c.value ? "true" : "false");
             },
@@ -355,6 +375,17 @@ class LirDumper {
 
   [[nodiscard]] static auto FormatType(TypeId type) -> std::string {
     return std::format("t{}", type.value);
+  }
+
+  // One type as the table states it: its kind, and for a type that stands for
+  // storage or refers elsewhere, what it reaches. Those are the ones whose kind
+  // alone leaves the reader where they started.
+  [[nodiscard]] auto DescribeType(TypeId id) const -> std::string {
+    const Type& type = unit_->types.Get(id);
+    if (const std::optional<TypeId> target = type.DerefTarget()) {
+      return std::format("{}({})", type.KindName(), FormatType(*target));
+    }
+    return std::string{type.KindName()};
   }
 
   void Line(std::string_view text) {

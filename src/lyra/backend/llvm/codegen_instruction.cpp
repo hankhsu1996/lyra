@@ -172,6 +172,15 @@ auto CodeGenFunction::LowerLoad(
     if (!address) {
       return std::unexpected(std::move(address.error()));
     }
+    if (const std::optional<support::ValueDomain> cell =
+            MemberValueCellDomain(load.place, result_type)) {
+      const std::array<llvm::Value*, 1> args{*address};
+      return builder_.CreateCall(
+          Entry(
+              RuntimeSymbol(*cell, lir::ValueCellTarget::Op::kLoad),
+              result_type, args),
+          args);
+    }
     return builder_.CreateLoad(module_->Types().Map(result_type), *address);
   }
   const WrapperPlace& through = **wrapper;
@@ -205,6 +214,15 @@ auto CodeGenFunction::LowerStore(const lir::StoreInstr& store)
     auto address = ResolvePlaceAddress(store.place);
     if (!address) {
       return std::unexpected(std::move(address.error()));
+    }
+    if (const std::optional<support::ValueDomain> cell =
+            MemberValueCellDomain(store.place, OperandType(store.value))) {
+      const std::array<llvm::Value*, 2> args{*address, *value};
+      return builder_.CreateCall(
+          Entry(
+              RuntimeSymbol(*cell, lir::ValueCellTarget::Op::kStore),
+              module_->Types().Void(), args),
+          args);
     }
     return builder_.CreateStore(*value, *address);
   }
@@ -606,6 +624,13 @@ auto CodeGenFunction::ResolveCallee(
           [&](const lir::ForeignTarget& t)
               -> diag::Result<llvm::FunctionCallee> {
             return Entry(t.symbol, result_type, args);
+          },
+          // A method of a class the runtime library defines and every unit
+          // imports (LRM 9.7). The library realizes it once, whatever it is
+          // called on, so the method alone names the entry.
+          [&](const lir::ImportedRuntimeTarget& t)
+              -> diag::Result<llvm::FunctionCallee> {
+            return Entry(RuntimeSymbol(t.method), result_type, args);
           },
           [&](const lir::ValueCellTarget& t)
               -> diag::Result<llvm::FunctionCallee> {
@@ -1136,6 +1161,20 @@ auto CodeGenFunction::LowerRealConst(const lir::RealConst& constant)
 // the pointer, so its null needs no runtime constructor.
 auto CodeGenFunction::LowerNullConst(const lir::NullConst& constant)
     -> llvm::Value* {
+  // Referring to nothing is a value of the type like any other, so where the
+  // type's values live in storage the null one does too and the constant is a
+  // handle to it. A pointer, and a domain whose value is its own handle, have
+  // no storage behind the handle for it to name, so there the null is the null
+  // pointer itself.
+  const std::optional<support::ValueDomain> domain =
+      ValueDomainOf(module_->Unit(), constant.type);
+  if (domain && !support::ValueDomainIsItsOwnHandle(*domain)) {
+    return builder_.CreateCall(
+        Entry(
+            RuntimeSymbol(*domain, RuntimeOp::kDefault), constant.type,
+            std::span<llvm::Value* const>{}),
+        std::array<llvm::Value*, 0>{});
+  }
   return llvm::ConstantPointerNull::get(
       llvm::cast<llvm::PointerType>(module_->Types().Map(constant.type)));
 }
@@ -1293,6 +1332,24 @@ auto CodeGenFunction::WrapperBehind(lir::TypeId reference) const
   return WrapperBehindRef{.domain = *domain, .kind = reached->first};
 }
 
+auto CodeGenFunction::MemberValueCellDomain(
+    const lir::Place& place, lir::TypeId value) const
+    -> std::optional<support::ValueDomain> {
+  // Only a member has storage of its own; a frame slot holds the handle rather
+  // than the value it names. A member a place reaches is a variable of its
+  // owner -- a snapshot is filled where the owner is built and read through the
+  // entry that hands its captures out, never through a place.
+  if (place.chain.empty() ||
+      !std::holds_alternative<lir::MemberProjection>(place.chain.back())) {
+    return std::nullopt;
+  }
+  if (MemberStorageKindOf(module_->Unit(), value, MemberSlotRole::kVariable) !=
+      MemberStorageKind::kValueCell) {
+    return std::nullopt;
+  }
+  return ValueDomainOf(module_->Unit(), value);
+}
+
 auto CodeGenFunction::CellDomain(lir::TypeId reference) const
     -> diag::Result<support::ValueDomain> {
   auto wrapper = WrapperBehind(reference);
@@ -1435,14 +1492,24 @@ auto CodeGenFunction::ConstructCallee(
             }
             return entry(RuntimeSymbol(RuntimeOp::kMakeScope));
           },
-          // An object the program owns rather than the object tree. A handle to
-          // one is a shared owner, so storing it must copy the handle rather
-          // than write its bits, and no storage here does that yet.
+          // An object the program owns rather than the object tree, brought
+          // into existence together with the handle that refers to it (LRM
+          // 8.3). The definition its class carries says what storage its
+          // properties need and what body brings them to their initial values,
+          // so the entry takes that and nothing else.
           [&](const lir::ManagedRefType&)
               -> diag::Result<llvm::FunctionCallee> {
-            return Unsupported(
-                "llvm codegen: storing a handle to an object on the managed "
-                "heap is not yet supported on this backend");
+            // The entry takes the definition and nothing else, so a
+            // constructor that declares formals has nowhere to receive them
+            // (LRM 8.7). Refused rather than called with operands it has no
+            // parameters for, which would read whatever the caller left behind
+            // them.
+            if (!call.args.empty()) {
+              return Unsupported(
+                  "llvm codegen: building an object whose constructor takes "
+                  "arguments is not yet supported on this backend");
+            }
+            return entry(RuntimeSymbol(RuntimeOp::kObjectMake));
           },
           // Landing a machine integer in a real and reshaping across precisions
           // are named conversions, so what reaches the real family here is a

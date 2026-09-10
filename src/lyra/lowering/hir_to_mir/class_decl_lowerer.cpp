@@ -402,22 +402,22 @@ auto ClassDeclLowerer::PopulateBodies(
 
   // Base construction (LRM 8.7): a derived class always forwards to its base
   // -- explicit `super.new(args)` when the source wrote one, an implicit
-  // `super.new()` otherwise. Publishing the base-init is what makes
+  // `super.new()` otherwise. The class states which base it forwards to, so
+  // what is published here is what that call carries, which makes
   // base-constructor ordering a stated fact rather than a backend convention.
-  // A class with no base carries no base-init.
   //
   // The implicit case states no arguments, which is only right where the base
-  // constructor declares none: a formal carrying a default value never reaches
-  // the call, so the target language is left to decide it.
-  std::optional<mir::BaseInit> base_init;
+  // constructor declares none: a default value belongs to the declaration and
+  // is filled in where a call is written (LRM 13.5.3), and an implicit forward
+  // is written nowhere.
+  std::vector<mir::ExprId> base_args;
   if (hir_class.base.has_value()) {
     // The base's own construction prefix leads its arguments, before whatever
     // the source wrote: a base that belongs to the same instance this class
     // does is handed that instance, which only this constructor holds.
-    std::vector<mir::ExprId> lowered;
     for (const mir::LocalId prefix : BaseCtorPrefixLocals(
              unit_lowerer, *hir_class.base, ctor_prefix_local_ids)) {
-      lowered.push_back(ctor_block.exprs.Add(
+      base_args.push_back(ctor_block.exprs.Add(
           mir::Expr{
               .data =
                   mir::ReferenceExpr{.target = mir::LocalRef{.var = prefix}},
@@ -427,10 +427,9 @@ auto ClassDeclLowerer::PopulateBodies(
       for (const hir::ExprId arg : hir_class.base_call->arguments) {
         auto arg_or = ctor_lowerer.LowerExpr(ctor.body.exprs.Get(arg), frame);
         if (!arg_or) return std::unexpected(std::move(arg_or.error()));
-        lowered.push_back(ctor_block.exprs.Add(*std::move(arg_or)));
+        base_args.push_back(ctor_block.exprs.Add(*std::move(arg_or)));
       }
     }
-    base_init = mir::BaseInit{.args = std::move(lowered)};
   }
 
   // Initialize each property in declaration order before the constructor body
@@ -549,7 +548,7 @@ auto ClassDeclLowerer::PopulateBodies(
   ctor_code.params = std::move(ctor_params);
   ctor_code.result_type = unit_lowerer.Unit().builtins.void_type;
   mir_class.constructor = mir::ConstructorDecl{
-      .code = std::move(ctor_code), .base_init = std::move(base_init)};
+      .code = std::move(ctor_code), .base_args = std::move(base_args)};
 
   std::vector<BodyStatics> body_statics;
   body_statics.reserve(hir_class.methods.size() + 1);

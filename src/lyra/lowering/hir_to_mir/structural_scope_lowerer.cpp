@@ -1587,18 +1587,16 @@ auto InstallGeneratedDefinition(
   return {addr};
 }
 
-// Composes the base-init arg list (each prefix forwarded as a consuming use,
-// followed by trailing args), moves the ctor callable into the class's
-// method storage, and points the construction protocol at it. `ctor_code`
-// must be finalized (params and result_type set) but not yet inserted into
-// the arena.
+// Settles the class's construction protocol: the constructor body, and the
+// arguments its base is entered with -- each prefix forwarded as a consuming
+// use, then the trailing ones. `ctor_code` arrives finalized, its params and
+// result type set, and this is what installs it.
 void FinalizeConstructor(
     mir::CompilationUnit& unit, mir::Class& cls, mir::CallableCode ctor_code,
     const std::vector<mir::LocalId>& prefix_local_ids,
     const std::vector<mir::ExprId>& base_trailing_args) {
-  std::optional<mir::BaseInit> base_init_opt;
+  std::vector<mir::ExprId> base_args;
   if (cls.base.has_value()) {
-    std::vector<mir::ExprId> base_args;
     base_args.reserve(prefix_local_ids.size() + base_trailing_args.size());
     for (const mir::LocalId id : prefix_local_ids) {
       const mir::TypeId ty = ctor_code.locals.Get(id).type;
@@ -1615,10 +1613,9 @@ void FinalizeConstructor(
     for (const mir::ExprId e : base_trailing_args) {
       base_args.push_back(e);
     }
-    base_init_opt = mir::BaseInit{.args = std::move(base_args)};
   }
   cls.constructor = mir::ConstructorDecl{
-      .code = std::move(ctor_code), .base_init = std::move(base_init_opt)};
+      .code = std::move(ctor_code), .base_args = std::move(base_args)};
 }
 
 auto StructuralScopeLowerer::PopulateBodies(WalkFrame parent_frame)

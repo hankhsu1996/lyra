@@ -233,13 +233,17 @@ MemberStorage::MemberStorage(MemberStorageDescriptor descriptor) {
                 object_.emplace<
                     ActivationValueCell<value::RuntimeAssociativeArray>>();
                 return;
-              // A pointer-shaped value is the pointer it carries (LRM 6.14,
-              // 8.3), so a declaration gives it no representation for a write
-              // to land at and a cell would have nothing to install.
+              // A handle is a variable like any other here, unlike above: what
+              // a cell adds over the plain value is a write that lands at the
+              // declared representation, which a handle needs as much as a
+              // packed value does. What it does not need is the observation,
+              // and that is the whole of why the two switches differ.
               case support::ValueDomain::kChandle:
+                object_.emplace<ActivationValueCell<value::Chandle>>();
+                return;
               case support::ValueDomain::kManagedRef:
-                throw InternalError(
-                    "MemberStorage: a pointer-shaped value has no cell");
+                object_.emplace<ActivationValueCell<value::ManagedRef>>();
+                return;
               // An empty (void) value is a tagged union's payload (LRM 7.3.2),
               // held inside its union rather than in a cell of its own.
               case support::ValueDomain::kEmpty:
@@ -290,7 +294,7 @@ MemberStorage::MemberStorage(MemberStorageDescriptor descriptor) {
                 object_.emplace<value::RuntimeAssociativeArray>();
                 return;
               case support::ValueDomain::kManagedRef:
-                object_.emplace<GcRef<ManagedObject>>();
+                object_.emplace<value::ManagedRef>();
                 return;
               // An empty (void) value is a tagged union's payload (LRM 7.3.2),
               // held inside its union, never a member's own inline storage.

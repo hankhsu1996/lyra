@@ -96,6 +96,50 @@ enum class RuntimeOp : std::uint8_t {
   kMakeFormatSpec,
 };
 
+// What a member slot is for, which two declarations answer differently for a
+// slot of the same type: a variable is written through its own store for as
+// long as its owner lives, and a snapshot is filled once where its owner is
+// built and only read afterwards.
+enum class MemberSlotRole : std::uint8_t { kVariable, kSnapshot };
+
+// How a member's storage is held. Everything that acts on a member reads it
+// from here: the runtime side builds the storage the kind names, and code
+// generation realizes a read and a write through it, so the storage a member
+// gets and the access emitted for it are one statement rather than two.
+enum class MemberStorageKind : std::uint8_t {
+  // A subscribable variable: reached only through its own address, and a write
+  // through it wakes whoever waited on it.
+  kObservableCell,
+  // A net's resolution node, likewise reached only through its address; a value
+  // reaches it through a driver rather than by being written (LRM 6.5).
+  kResolvedNet,
+  // A variable the owner holds that nothing subscribes to: written and read
+  // through its own storage, so a write keeps the representation the
+  // declaration gave it and a read copies out rather than aliasing.
+  kValueCell,
+  // A value filled once where the owner is built and only read afterwards, so
+  // the storage itself is what a read hands back.
+  kInlineValue,
+  // A box holding a handle the owner does not own, so a read reads the box
+  // rather than what it names.
+  kBorrowedHandle,
+  // A named event (LRM 15.5), a scope's cancellation target (LRM 9.6.2), and
+  // the joint cancel state of the channels a deferred write targets (LRM
+  // 21.3.2). Each is a runtime record the owner holds and reaches only through
+  // its address; none is read out as a value.
+  kNamedEvent,
+  kCancellationTarget,
+  kChannelCancellation,
+};
+
+// The storage kind a member of `type` needs, or nothing where this backend has
+// no realization for such a member. One arm per LIR type and no catch-all,
+// because the kinds differ in what a write has to do: a type gained later fails
+// to compile here until someone says which storage it needs.
+auto MemberStorageKindOf(
+    const lir::CompilationUnit& unit, lir::TypeId type, MemberSlotRole role)
+    -> std::optional<MemberStorageKind>;
+
 // Which capability wrapper a place reaches storage through. The wrappers share
 // one access vocabulary -- a load, a store, and the install that fixes the
 // storage's declared representation -- and differ in which of those they define
@@ -181,6 +225,7 @@ auto RuntimeSymbol(support::ValueDomain domain, lir::BinaryOp op)
 auto RuntimeSymbol(support::ValueDomain domain, lir::UnaryOp op) -> std::string;
 auto RuntimeSymbol(lir::ControlEffectTarget::Op op) -> std::string;
 auto RuntimeSymbol(lir::CoroutineTarget::Op op) -> std::string;
+auto RuntimeSymbol(support::ImportedRuntimeMethod method) -> std::string;
 auto RuntimeSymbol(support::ValueDomain domain, lir::ValueCellTarget::Op op)
     -> std::string;
 auto RuntimeSymbol(support::BuiltinFn fn) -> std::string;

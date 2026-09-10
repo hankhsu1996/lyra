@@ -166,6 +166,14 @@ auto BuildValueConversion(
   if (src_type == dst_type) {
     return operand_expr;
   }
+  // LRM 8.4: `null` is a value of every class-handle type, so what a null
+  // literal denotes is decided by where it is used and by nothing it carries.
+  // It is the literal that is polymorphic rather than any pair of types, which
+  // is why this reads the operand rather than the conversion's endpoints.
+  if (std::holds_alternative<mir::NullLiteral>(operand_expr.data)) {
+    return mir::Expr{.data = mir::NullLiteral{}, .type = dst_type};
+  }
+
   const auto& src_ty = unit.types.Get(src_type);
   const auto& dst_ty = unit.types.Get(dst_type);
 

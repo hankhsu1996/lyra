@@ -4,11 +4,12 @@
 #include <cstdint>
 #include <filesystem>
 #include <format>
+#include <map>
 #include <memory>
 #include <optional>
-#include <set>
 #include <string>
 #include <string_view>
+#include <type_traits>
 #include <utility>
 #include <variant>
 #include <vector>
@@ -115,6 +116,124 @@ void LowerCoroutines(llvm::orc::LLJIT& jit) {
       });
 }
 
+// What one value crossing the runtime ABI is, coarsely enough that two sides
+// disagreeing is a defect rather than a spelling difference.
+//
+// Every runtime value crosses as an untyped handle, so the compiler sees the
+// C++ function that defines an entry and the call the generated module makes as
+// two unrelated declarations and can compare neither against the other. The
+// shape below is what makes them comparable: it is read off the C++ function --
+// the one place an entry's shape is stated -- and off the module's own
+// declaration, and the two must agree.
+enum class AbiKind : std::uint8_t {
+  kVoid,
+  kPointer,
+  kBool,
+  kInt32,
+  kInt64,
+  kFloat,
+  kDouble,
+  kAggregate,
+  kOther,
+};
+
+template <typename>
+inline constexpr bool kAbiKindUnmapped = false;
+
+// The ABI vocabulary is closed, so a C++ type outside it fails to compile here
+// rather than being classified by whichever arm its shape resembles.
+template <typename T>
+constexpr auto AbiKindOfCpp() -> AbiKind {
+  if constexpr (std::is_void_v<T>) {
+    return AbiKind::kVoid;
+  } else if constexpr (std::is_pointer_v<T>) {
+    return AbiKind::kPointer;
+  } else if constexpr (std::is_same_v<T, bool>) {
+    return AbiKind::kBool;
+  } else if constexpr (std::is_same_v<T, std::int64_t>) {
+    return AbiKind::kInt64;
+  } else if constexpr (std::is_same_v<T, std::uint32_t>) {
+    return AbiKind::kInt32;
+  } else if constexpr (std::is_same_v<T, float>) {
+    return AbiKind::kFloat;
+  } else if constexpr (std::is_same_v<T, double>) {
+    return AbiKind::kDouble;
+  } else if constexpr (std::is_class_v<T>) {
+    return AbiKind::kAggregate;
+  } else {
+    static_assert(kAbiKindUnmapped<T>, "runtime ABI: unmapped C++ type");
+  }
+}
+
+// One entry's shape, as its own definition states it.
+struct AbiSignature {
+  AbiKind result = AbiKind::kVoid;
+  std::vector<AbiKind> operands;
+};
+
+template <typename F>
+struct AbiSignatureOf;
+
+template <typename R, typename... A>
+struct AbiSignatureOf<R(A...)> {
+  static auto Get() -> AbiSignature {
+    return AbiSignature{
+        .result = AbiKindOfCpp<R>(), .operands = {AbiKindOfCpp<A>()...}};
+  }
+};
+
+auto AbiKindOfLlvm(llvm::Type* type) -> AbiKind {
+  if (type->isVoidTy()) {
+    return AbiKind::kVoid;
+  }
+  if (type->isPointerTy()) {
+    return AbiKind::kPointer;
+  }
+  if (type->isIntegerTy(1)) {
+    return AbiKind::kBool;
+  }
+  if (type->isIntegerTy(32)) {
+    return AbiKind::kInt32;
+  }
+  if (type->isIntegerTy(64)) {
+    return AbiKind::kInt64;
+  }
+  if (type->isFloatTy()) {
+    return AbiKind::kFloat;
+  }
+  if (type->isDoubleTy()) {
+    return AbiKind::kDouble;
+  }
+  if (type->isStructTy()) {
+    return AbiKind::kAggregate;
+  }
+  return AbiKind::kOther;
+}
+
+auto AbiKindName(AbiKind kind) -> std::string_view {
+  switch (kind) {
+    case AbiKind::kVoid:
+      return "void";
+    case AbiKind::kPointer:
+      return "pointer";
+    case AbiKind::kBool:
+      return "bool";
+    case AbiKind::kInt32:
+      return "int32";
+    case AbiKind::kInt64:
+      return "int64";
+    case AbiKind::kFloat:
+      return "float";
+    case AbiKind::kDouble:
+      return "double";
+    case AbiKind::kAggregate:
+      return "aggregate";
+    case AbiKind::kOther:
+      return "an unclassified machine type";
+  }
+  throw InternalError("runtime abi: unknown value kind");
+}
+
 // Binds the runtime ABI the generated module calls to the definitions linked
 // into this process. Absolute addresses resolve every generated call without
 // relying on the host's exported dynamic symbol table.
@@ -123,11 +242,13 @@ void LowerCoroutines(llvm::orc::LLJIT& jit) {
 // they are returned rather than only defined: an entry's name composes a value
 // domain with an operation, and the pairs the library implements are a subset
 // of the pairs that compose.
-auto DefineRuntimeAbi(llvm::orc::LLJIT& jit) -> std::set<std::string> {
+auto DefineRuntimeAbi(llvm::orc::LLJIT& jit)
+    -> std::map<std::string, AbiSignature> {
   llvm::orc::SymbolMap symbols;
-  std::set<std::string> published;
+  std::map<std::string, AbiSignature> published;
   auto add = [&](std::string_view name, auto* fn) {
-    published.emplace(name);
+    published.emplace(
+        name, AbiSignatureOf<std::remove_pointer_t<decltype(fn)>>::Get());
     symbols[jit.getExecutionSession().intern(name)] =
         llvm::orc::ExecutorSymbolDef(
             llvm::orc::ExecutorAddr::fromPtr(fn),
@@ -457,6 +578,23 @@ auto DefineRuntimeAbi(llvm::orc::LLJIT& jit) -> std::set<std::string> {
   add("lyra_rt_chandle_ne", &lyra_rt_chandle_ne);
   add("lyra_rt_chandle_case_equal", &lyra_rt_chandle_case_equal);
   add("lyra_rt_chandle_to_bool", &lyra_rt_chandle_to_bool);
+  add("lyra_rt_managedref_default", &lyra_rt_managedref_default);
+  add("lyra_rt_managedref_value_cell_alloc",
+      &lyra_rt_managedref_value_cell_alloc);
+  add("lyra_rt_managedref_value_cell_store",
+      &lyra_rt_managedref_value_cell_store);
+  add("lyra_rt_managedref_value_cell_load",
+      &lyra_rt_managedref_value_cell_load);
+  add("lyra_rt_managedref_eq", &lyra_rt_managedref_eq);
+  add("lyra_rt_managedref_ne", &lyra_rt_managedref_ne);
+  add("lyra_rt_managedref_case_equal", &lyra_rt_managedref_case_equal);
+  add("lyra_rt_managedref_to_bool", &lyra_rt_managedref_to_bool);
+  add("lyra_rt_process_self", &lyra_rt_process_self);
+  add("lyra_rt_process_status", &lyra_rt_process_status);
+  add("lyra_rt_process_kill", &lyra_rt_process_kill);
+  add("lyra_rt_process_await", &lyra_rt_process_await);
+  add("lyra_rt_process_suspend", &lyra_rt_process_suspend);
+  add("lyra_rt_process_resume", &lyra_rt_process_resume);
   add("lyra_rt_packed_value_box", &lyra_rt_packed_value_box);
   add("lyra_rt_string_value_box", &lyra_rt_string_value_box);
   add("lyra_rt_real_value_box", &lyra_rt_real_value_box);
@@ -785,8 +923,8 @@ auto DefineRuntimeAbi(llvm::orc::LLJIT& jit) -> std::set<std::string> {
 // another unit's generated symbol, a foreign function, the host's allocator --
 // so the runtime entry family is the only one answerable here.
 auto UnpublishedEntries(
-    const llvm::Module& module, const std::set<std::string>& published)
-    -> std::string {
+    const llvm::Module& module,
+    const std::map<std::string, AbiSignature>& published) -> std::string {
   std::string unpublished;
   for (const llvm::Function& fn : module.functions()) {
     if (!fn.isDeclaration()) {
@@ -807,6 +945,61 @@ auto UnpublishedEntries(
   return unpublished;
 }
 
+// The entries this module calls at a shape other than the one their definitions
+// have. The module states a shape by how it declares the call, and it derives
+// that from the types at the call site; the definition states one of its own.
+// Nothing else compares them -- an untyped handle carries no type to disagree
+// about -- so a mismatch runs, and reads whatever the machine passed in the
+// register the other side used for something else.
+auto MismatchedEntries(
+    const llvm::Module& module,
+    const std::map<std::string, AbiSignature>& published) -> std::string {
+  std::string mismatched;
+  const auto report = [&](std::string_view name, std::string_view what,
+                          AbiKind called, AbiKind defined) {
+    if (!mismatched.empty()) {
+      mismatched += "; ";
+    }
+    mismatched += std::format(
+        "{} is called with {} {} where its definition has {}", name, what,
+        AbiKindName(called), AbiKindName(defined));
+  };
+  for (const llvm::Function& fn : module.functions()) {
+    if (!fn.isDeclaration()) {
+      continue;
+    }
+    const std::string name = fn.getName().str();
+    const auto entry = published.find(name);
+    if (entry == published.end()) {
+      continue;
+    }
+    const AbiSignature& defined = entry->second;
+    const llvm::FunctionType& called = *fn.getFunctionType();
+    const AbiKind result = AbiKindOfLlvm(called.getReturnType());
+    if (result != defined.result) {
+      report(name, "a result of", result, defined.result);
+    }
+    if (called.getNumParams() != defined.operands.size()) {
+      if (!mismatched.empty()) {
+        mismatched += "; ";
+      }
+      mismatched += std::format(
+          "{} is called with {} operands where its definition takes {}", name,
+          called.getNumParams(), defined.operands.size());
+      continue;
+    }
+    for (unsigned i = 0; i < called.getNumParams(); ++i) {
+      const AbiKind operand = AbiKindOfLlvm(called.getParamType(i));
+      if (operand != defined.operands[i]) {
+        report(
+            name, std::format("operand {} of", i), operand,
+            defined.operands[i]);
+      }
+    }
+  }
+  return mismatched;
+}
+
 // Opens the design's DPI-C library to the execution session, so a generated
 // foreign call finds its symbol (LRM 35.4). A generator searches the library on
 // each unresolved name, which is what an ahead-of-time image's link step does
@@ -824,109 +1017,63 @@ void DefineForeignSymbols(
   jit.getMainJITDylib().addGenerator(std::move(*generator));
 }
 
-// What a slot is for, which two declarations answer differently for a slot of
-// the same type: a variable is written through its own store for as long as its
-// owner lives, and a snapshot is filled once where its owner is built and only
-// read afterwards.
-enum class SlotRole : std::uint8_t { kVariable, kSnapshot };
+using SlotRole = backend::llvm_backend::MemberSlotRole;
 
-// The storage a generic value realizes for one member its declaration holds,
-// projected from that member's LIR type: an observable cell holds a value other
-// processes subscribe to, a reference-typed member is a box holding a borrowed
-// handle, a runtime record is that record, and anything else the runtime has a
-// value realization for the owner holds itself, as its role says.
+// The storage a generic value realizes for one member its declaration holds:
+// the kind comes from the backend's classification of the member's type, and
+// this builds what that kind needs.
 auto DescribeMember(
     const lir::CompilationUnit& unit, lir::TypeId type, SlotRole role)
     -> diag::Result<runtime::MemberStorageDescriptor> {
-  const auto& data = unit.types.Get(type);
-  if (const auto* observable = data.As<lir::ObservableType>()) {
-    if (const std::optional<support::ValueDomain> domain =
-            backend::llvm_backend::ValueDomainOf(unit, observable->value)) {
-      return runtime::ObservableCellStorage{.domain = *domain};
-    }
+  const std::optional<backend::llvm_backend::MemberStorageKind> kind =
+      backend::llvm_backend::MemberStorageKindOf(unit, type, role);
+  if (!kind) {
+    return diag::Fail(
+        diag::DiagCode::kUnsupportedTypeKind,
+        std::format(
+            "jit executor: a member of type {} has no storage realization on "
+            "this backend",
+            unit.types.Get(type).KindName()));
   }
-  // A net is the storage its drivers' contributions fold into, so the member is
-  // the resolution node itself, reached only through its own access. The fold
-  // travels with it, because two nets of one data type resolve differently when
-  // their net types differ (LRM 6.6).
-  if (const auto* net = data.As<lir::ResolvedType>()) {
-    if (const std::optional<support::ValueDomain> domain =
-            backend::llvm_backend::ValueDomainOf(unit, net->value)) {
+  // What each kind needs beside itself comes from the same type it was read
+  // from: the domain a value is realized in, and the fold a net's own type
+  // picked, since two nets of one data type resolve differently when their net
+  // types differ (LRM 6.6).
+  const auto domain_of = [&](lir::TypeId value) -> support::ValueDomain {
+    const std::optional<support::ValueDomain> domain =
+        backend::llvm_backend::ValueDomainOf(unit, value);
+    if (!domain) {
+      throw InternalError(
+          "jit executor: a storage kind naming a value domain was read from a "
+          "type that has none");
+    }
+    return *domain;
+  };
+  const lir::Type& data = unit.types.Get(type);
+  switch (*kind) {
+    case backend::llvm_backend::MemberStorageKind::kObservableCell:
+      return runtime::ObservableCellStorage{
+          .domain = domain_of(data.Get<lir::ObservableType>().value)};
+    case backend::llvm_backend::MemberStorageKind::kResolvedNet: {
+      const auto& net = data.Get<lir::ResolvedType>();
       return runtime::ResolvedNetStorage{
-          .domain = *domain,
-          .resolution =
-              backend::llvm_backend::NetResolutionOf(net->resolution)};
+          .domain = domain_of(net.value),
+          .resolution = backend::llvm_backend::NetResolutionOf(net.resolution)};
     }
+    case backend::llvm_backend::MemberStorageKind::kValueCell:
+      return runtime::ValueCellStorage{.domain = domain_of(type)};
+    case backend::llvm_backend::MemberStorageKind::kInlineValue:
+      return runtime::InlineValueStorage{.domain = domain_of(type)};
+    case backend::llvm_backend::MemberStorageKind::kBorrowedHandle:
+      return runtime::BorrowedHandleStorage{};
+    case backend::llvm_backend::MemberStorageKind::kNamedEvent:
+      return runtime::NamedEventStorage{};
+    case backend::llvm_backend::MemberStorageKind::kCancellationTarget:
+      return runtime::CancellationTargetStorage{};
+    case backend::llvm_backend::MemberStorageKind::kChannelCancellation:
+      return runtime::ChannelCancellationStorage{};
   }
-  // A driver is a handle on a contribution the net owns and issues, so the
-  // member is a box holding that handle rather than storage of its own (LRM
-  // 6.5).
-  if (data.Is<lir::DriverType>()) {
-    return runtime::BorrowedHandleStorage{};
-  }
-  if (const auto* library = data.As<lir::RuntimeLibraryType>()) {
-    switch (library->kind) {
-      case lir::RuntimeLibraryKind::kCancellationTarget:
-        return runtime::CancellationTargetStorage{};
-      // The cancel state a deferred file write is guarded by (LRM 21.3.2),
-      // which the closure performing that write owns a copy of.
-      case lir::RuntimeLibraryKind::kChannelCancellation:
-        return runtime::ChannelCancellationStorage{};
-      // An integral type's descriptor, which a deferred write carries so the
-      // region performing it can build the value. The module holds one per
-      // type for the whole run, so a member that names one points at storage
-      // outliving every closure that reads it rather than owning a copy.
-      case lir::RuntimeLibraryKind::kPackedType:
-        return runtime::BorrowedHandleStorage{};
-      default:
-        break;
-    }
-  }
-  // A named event (LRM 15.5) is reached only through its address and never read
-  // out as a value, so the member is the event itself rather than a value the
-  // owner reads.
-  if (data.Is<lir::EventType>()) {
-    return runtime::NamedEventStorage{};
-  }
-  // A class handle is the value the member holds, not a pointer it merely
-  // points with: the object stays alive because the member refers to it (LRM
-  // 8.3), which is what a box holding a borrowed handle does not do.
-  if (data.Is<lir::ManagedRefType>()) {
-    return runtime::InlineValueStorage{
-        .domain = support::ValueDomain::kManagedRef};
-  }
-  // A declaration standing for several objects keeps a handle on the sequence
-  // of them, which is built once where the owner is built and held for the rest
-  // of the run. So the member is the same box a single such handle is: it owns
-  // neither the sequence nor the objects in it.
-  if (data.Is<lir::VectorType>()) {
-    return runtime::BorrowedHandleStorage{};
-  }
-  if (data.Pointee().has_value()) {
-    return runtime::BorrowedHandleStorage{};
-  }
-  // A value nothing subscribes to lives in the owner's own slot rather than
-  // behind an observable cell, and what the slot is for decides how: a
-  // variable keeps the representation its declaration gave it across every
-  // write, and a snapshot is the value it was filled with.
-  if (const std::optional<support::ValueDomain> domain =
-          backend::llvm_backend::ValueDomainOf(unit, type)) {
-    // A pointer-shaped value has no representation a declaration could give
-    // it (LRM 6.14, 8.3), so there is nothing for a write to land at and no
-    // cell to land in; it is held as it is whatever the slot is for.
-    const bool pointer_shaped = *domain == support::ValueDomain::kChandle ||
-                                *domain == support::ValueDomain::kManagedRef;
-    if (role == SlotRole::kVariable && !pointer_shaped) {
-      return runtime::ValueCellStorage{.domain = *domain};
-    }
-    return runtime::InlineValueStorage{.domain = *domain};
-  }
-  return diag::Fail(
-      diag::DiagCode::kUnsupportedTypeKind,
-      std::format(
-          "jit executor: a member of type {} has no storage realization on "
-          "this backend",
-          unit.types.Get(type).KindName()));
+  throw InternalError("jit executor: unknown member storage kind");
 }
 
 auto DescribeMembers(
@@ -1219,7 +1366,7 @@ auto Execute(
 
   auto jit = Unwrap(llvm::orc::LLJITBuilder().create(), "create jit");
   LowerCoroutines(*jit);
-  const std::set<std::string> published = DefineRuntimeAbi(*jit);
+  const std::map<std::string, AbiSignature> published = DefineRuntimeAbi(*jit);
   if (dpi_library.has_value()) {
     DefineForeignSymbols(*jit, *dpi_library);
   }
@@ -1257,6 +1404,18 @@ auto Execute(
           std::format(
               "llvm codegen: the runtime library publishes no entry named {}",
               unpublished));
+    }
+    // Two sides of the ABI disagreeing is this compiler's own defect, and it is
+    // caught here because it is the one place both are visible. Left to run, a
+    // call reads whatever the machine left in the register the other side used
+    // for something else -- a plausible value, not a failure.
+    const std::string mismatched = MismatchedEntries(*owned.module, published);
+    if (!mismatched.empty()) {
+      throw InternalError(
+          std::format(
+              "runtime abi: the generated module and the runtime "
+              "library disagree on an entry's shape: {}",
+              mismatched));
     }
     Check(
         jit->addIRModule(

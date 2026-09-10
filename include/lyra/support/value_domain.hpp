@@ -39,4 +39,13 @@ enum class ValueDomain : std::uint8_t {
 // on each side.
 auto ValueDomainName(ValueDomain domain) -> std::string_view;
 
+// Whether a value of this domain is the handle rather than something the handle
+// points at. A chandle is a host pointer (LRM 6.14), so there is no runtime
+// object for a handle to name and the pointer travels as itself; every other
+// domain's value lives in storage and its handle is that storage's address.
+// Both sides must agree -- the runtime when it hands a value out of storage,
+// the backend when it reads one -- so it is stated here rather than decided
+// twice.
+auto ValueDomainIsItsOwnHandle(ValueDomain domain) -> bool;
+
 }  // namespace lyra::support

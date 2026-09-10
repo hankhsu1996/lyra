@@ -251,6 +251,121 @@ auto RuntimeSymbol(lir::CoroutineTarget::Op op) -> std::string {
   return Symbol(lir::CoroutineOpName(op));
 }
 
+auto RuntimeSymbol(support::ImportedRuntimeMethod method) -> std::string {
+  return Symbol(support::ImportedRuntimeMethodEntryName(method));
+}
+
+auto MemberStorageKindOf(
+    const lir::CompilationUnit& unit, lir::TypeId type, MemberSlotRole role)
+    -> std::optional<MemberStorageKind> {
+  // A value the owner holds, in the slot its role asks for. It is a kind of
+  // storage only where the runtime realizes values of that type at all.
+  const auto held_value =
+      [&](lir::TypeId value) -> std::optional<MemberStorageKind> {
+    if (!ValueDomainOf(unit, value)) {
+      return std::nullopt;
+    }
+    return role == MemberSlotRole::kVariable ? MemberStorageKind::kValueCell
+                                             : MemberStorageKind::kInlineValue;
+  };
+  const auto value_of = [&](const auto&) { return held_value(type); };
+  const auto borrowed = [](const auto&) -> std::optional<MemberStorageKind> {
+    return MemberStorageKind::kBorrowedHandle;
+  };
+  const auto none = [](const auto&) -> std::optional<MemberStorageKind> {
+    return std::nullopt;
+  };
+  return unit.types.Get(type).Visit(
+      Overloaded{
+          [&](const lir::ObservableType& observable)
+              -> std::optional<MemberStorageKind> {
+            if (!ValueDomainOf(unit, observable.value)) {
+              return std::nullopt;
+            }
+            return MemberStorageKind::kObservableCell;
+          },
+          [&](const lir::ResolvedType& net)
+              -> std::optional<MemberStorageKind> {
+            if (!ValueDomainOf(unit, net.value)) {
+              return std::nullopt;
+            }
+            return MemberStorageKind::kResolvedNet;
+          },
+          // A driver is a handle on a contribution the net owns and issues (LRM
+          // 6.5); a reference and a pointer name storage living elsewhere; and
+          // a declaration standing for several objects keeps a handle on the
+          // sequence of them, built once where the owner is built. None owns
+          // what it names.
+          [&](const lir::DriverType& t) { return borrowed(t); },
+          [&](const lir::RefType& t) { return borrowed(t); },
+          [&](const lir::PointerType& t) { return borrowed(t); },
+          [&](const lir::VectorType& t) { return borrowed(t); },
+          [&](const lir::RuntimeLibraryType& library)
+              -> std::optional<MemberStorageKind> {
+            switch (library.kind) {
+              case lir::RuntimeLibraryKind::kCancellationTarget:
+                return MemberStorageKind::kCancellationTarget;
+              case lir::RuntimeLibraryKind::kChannelCancellation:
+                return MemberStorageKind::kChannelCancellation;
+              // An integral type's descriptor, held once per type for the whole
+              // run, so a member that names one points at storage outliving
+              // every closure that reads it rather than owning a copy.
+              case lir::RuntimeLibraryKind::kPackedType:
+                return MemberStorageKind::kBorrowedHandle;
+              default:
+                return std::nullopt;
+            }
+          },
+          [](const lir::EventType&) -> std::optional<MemberStorageKind> {
+            return MemberStorageKind::kNamedEvent;
+          },
+          // A class handle is a value the member holds rather than a pointer it
+          // merely points with: the object stays alive because the member
+          // refers to it (LRM 8.3), so a write copies the handle's share of
+          // ownership and not just its address. That is what separates it from
+          // every borrowed form above, and from a chandle, whose value is the
+          // bare pointer it carries and which owns nothing (LRM 6.14).
+          [&](const lir::ManagedRefType& t) { return value_of(t); },
+          [&](const lir::ChandleType& t) { return value_of(t); },
+          [&](const lir::PackedArrayType& t) { return value_of(t); },
+          [&](const lir::EnumType& t) { return value_of(t); },
+          [&](const lir::UnpackedArrayType& t) { return value_of(t); },
+          [&](const lir::DynamicArrayType& t) { return value_of(t); },
+          [&](const lir::QueueType& t) { return value_of(t); },
+          [&](const lir::AssociativeArrayType& t) { return value_of(t); },
+          [&](const lir::StringType& t) { return value_of(t); },
+          [&](const lir::RealType& t) { return value_of(t); },
+          [&](const lir::ShortRealType& t) { return value_of(t); },
+          [&](const lir::RealTimeType& t) { return value_of(t); },
+          [&](const lir::TupleType& t) { return value_of(t); },
+          [&](const lir::UnionType& t) { return value_of(t); },
+          [&](const lir::TaggedUnionType& t) { return value_of(t); },
+          [&](const lir::EmptyType& t) { return value_of(t); },
+          // The rest name no storage a member can be. A machine primitive is a
+          // computed value rather than a declaration's storage; an object-tree
+          // node, a generated storage record, a closure, a coroutine and a
+          // runtime facade are reached through a handle, so a member holding
+          // one holds that handle and arrives here as its own type; and a
+          // wildcard index and `void` have no runtime realization at all.
+          [&](const lir::WildcardIndexType& t) { return none(t); },
+          [&](const lir::MachineCStringType& t) { return none(t); },
+          [&](const lir::MachineBoolType& t) { return none(t); },
+          [&](const lir::MachineIntType& t) { return none(t); },
+          [&](const lir::MachineFloatType& t) { return none(t); },
+          [&](const lir::MachineArrayType& t) { return none(t); },
+          [&](const lir::VoidType& t) { return none(t); },
+          [&](const lir::ObjectType& t) { return none(t); },
+          [&](const lir::ExternalUnitObjectType& t) { return none(t); },
+          [&](const lir::StructType& t) { return none(t); },
+          [&](const lir::CrossUnitClassType& t) { return none(t); },
+          [&](const lir::RuntimeClassType& t) { return none(t); },
+          [&](const lir::ClosureType& t) { return none(t); },
+          [&](const lir::RuntimeEffectsType& t) { return none(t); },
+          [&](const lir::FilesType& t) { return none(t); },
+          [&](const lir::DiagnosticType& t) { return none(t); },
+          [&](const lir::CoroutineType& t) { return none(t); }});
+}
+
 auto RuntimeSymbol(support::ValueDomain domain, lir::ValueCellTarget::Op op)
     -> std::string {
   return Symbol(domain, lir::ValueCellOpName(op));

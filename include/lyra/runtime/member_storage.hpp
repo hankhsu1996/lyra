@@ -5,13 +5,13 @@
 #include "lyra/runtime/activation_value_cell.hpp"
 #include "lyra/runtime/cancellation.hpp"
 #include "lyra/runtime/file_table.hpp"
-#include "lyra/runtime/gc_ref.hpp"
 #include "lyra/runtime/named_event.hpp"
 #include "lyra/runtime/net.hpp"
 #include "lyra/runtime/sampled_history.hpp"
 #include "lyra/runtime/scope_program.hpp"
 #include "lyra/runtime/var.hpp"
 #include "lyra/value/chandle.hpp"
+#include "lyra/value/managed_ref.hpp"
 #include "lyra/value/packed_array.hpp"
 #include "lyra/value/real.hpp"
 #include "lyra/value/runtime_associative_array.hpp"
@@ -24,11 +24,6 @@
 #include "lyra/value/string.hpp"
 
 namespace lyra::runtime {
-
-// An object built by `new`, whose storage this file's storage is one slot of.
-// Named rather than included, because the object owns a block of these slots
-// and so is defined in terms of them.
-class ManagedObject;
 
 // The box a borrowed handle is: a pointer the instance does not own, held so
 // that reading the member loads the pointer out rather than the target. It is a
@@ -46,8 +41,10 @@ struct BorrowedHandle {
 // storage behind a reference, and the driver a net issued -- so reading the
 // member reads the box; an observable cell, a net's resolution node, and a
 // named event are the storage itself, which library calls reach through its
-// address and never read out as a value; an inline value is a value the owner
-// owns, whose address is the handle it crosses as.
+// address and never read out as a value; a value cell is a variable the owner
+// holds, written and read through its own access so a write keeps the
+// representation the declaration gave it; and an inline value is a value the
+// owner owns and fills once, whose address is the handle it crosses as.
 //
 // The same storage serves a closure value's captures, which are members of the
 // declaration whose invoke reads them: a captured pointer or reference is a
@@ -88,7 +85,7 @@ class MemberStorage {
       value::String, value::Real, value::ShortReal, value::RuntimeTuple,
       value::RuntimeUnion, value::RuntimeTaggedUnion,
       value::RuntimeDynamicArray, value::RuntimeUnpackedArray,
-      value::RuntimeQueue, value::RuntimeAssociativeArray, GcRef<ManagedObject>,
+      value::RuntimeQueue, value::RuntimeAssociativeArray, value::ManagedRef,
       ActivationValueCell<value::PackedArray>,
       ActivationValueCell<value::String>, ActivationValueCell<value::Real>,
       ActivationValueCell<value::ShortReal>,
@@ -99,8 +96,9 @@ class MemberStorage {
       ActivationValueCell<value::RuntimeUnpackedArray>,
       ActivationValueCell<value::RuntimeQueue>,
       ActivationValueCell<value::RuntimeAssociativeArray>,
-      ResolvedNet<value::PackedArray>, ResolvedNet<value::RuntimeTuple>,
-      ResolvedNet<value::RuntimeUnion>,
+      ActivationValueCell<value::Chandle>,
+      ActivationValueCell<value::ManagedRef>, ResolvedNet<value::PackedArray>,
+      ResolvedNet<value::RuntimeTuple>, ResolvedNet<value::RuntimeUnion>,
       ResolvedNet<value::RuntimeUnpackedArray>,
       SampledHistory<value::PackedArray>, SampledHistory<value::String>,
       SampledHistory<value::Real>, SampledHistory<value::ShortReal>,

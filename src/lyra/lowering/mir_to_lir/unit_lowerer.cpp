@@ -10,7 +10,6 @@
 
 #include "lyra/base/internal_error.hpp"
 #include "lyra/base/overloaded.hpp"
-#include "lyra/diag/diag_code.hpp"
 #include "lyra/lir/class_id.hpp"
 #include "lyra/lir/compilation_unit.hpp"
 #include "lyra/lir/function.hpp"
@@ -31,21 +30,6 @@ auto StaticVariableSymbol(
 }
 
 auto UnitLowerer::Run() -> diag::Result<lir::CompilationUnit> {
-  for (const mir::ClassId id : mir_->classes.Ids()) {
-    if (!mir_->classes.IsDefined(id)) {
-      return diag::Fail(
-          diag::DiagCode::kUnsupportedTypeKind,
-          "mir_to_lir: undefined class in unit");
-    }
-  }
-  for (const mir::ClosureId id : mir_->closures.Ids()) {
-    if (!mir_->closures.IsDefined(id)) {
-      return diag::Fail(
-          diag::DiagCode::kUnsupportedTypeKind,
-          "mir_to_lir: undefined closure in unit");
-    }
-  }
-
   // Every identity the unit will hold is taken before any body is lowered,
   // because a body may name a function whose own body is lowered later --
   // including itself, and a body may build a closure whose own body is lowered
@@ -298,8 +282,7 @@ auto UnitLowerer::LowerClass(mir::ClassId owner, const mir::Class& cls)
   // itself unique program-wide.
   const ClassIdentities& identities = class_identities_.Get(owner);
   auto constructor =
-      FunctionLowerer(
-          *this, cls.constructor.code, std::format("{}.constructor", out.name))
+      FunctionLowerer(*this, cls, std::format("{}.constructor", out.name))
           .Run();
   if (!constructor) {
     return std::unexpected(std::move(constructor.error()));
@@ -336,6 +319,11 @@ auto UnitLowerer::MethodFunction(
         "mir_to_lir: callable has no body, so it is no function of this unit");
   }
   return *fn;
+}
+
+auto UnitLowerer::ConstructorFunction(mir::ClassId cls) const
+    -> lir::FunctionId {
+  return class_identities_.Get(cls).constructor;
 }
 
 auto UnitLowerer::ClosureFunction(mir::ClosureId closure) const

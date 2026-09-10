@@ -183,6 +183,13 @@ class CodeGenFunction {
   // an operand holding it.
   [[nodiscard]] auto CellDomain(lir::TypeId reference) const
       -> diag::Result<support::ValueDomain>;
+  // The domain of the value cell `place` names, where it names a member whose
+  // storage is one. Such a member is written and read through its own storage,
+  // so an access to it is that storage's own operation. A place naming anything
+  // else answers nothing.
+  [[nodiscard]] auto MemberValueCellDomain(
+      const lir::Place& place, lir::TypeId value) const
+      -> std::optional<support::ValueDomain>;
   // The wrapper a reference addresses and the domain its storage is realized
   // in, for an operation that acts on the wrapper itself rather than reaching
   // through it. It is the same classification `WrapperPlaceOf` makes, reached
