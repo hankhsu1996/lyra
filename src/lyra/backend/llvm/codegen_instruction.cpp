@@ -37,6 +37,20 @@ auto Unsupported(std::string message) -> std::unexpected<diag::Diagnostic> {
       diag::DiagCode::kUnsupportedExpressionForm, std::move(message));
 }
 
+// The signature a call is made under: the result the instruction defines, over
+// the values actually crossing. A callee named by symbol and one reached
+// through an address are the same call beneath it, differing only in where the
+// address comes from.
+auto CallSignature(llvm::Type* result, std::span<llvm::Value* const> args)
+    -> llvm::FunctionType* {
+  std::vector<llvm::Type*> params;
+  params.reserve(args.size());
+  for (llvm::Value* arg : args) {
+    params.push_back(arg->getType());
+  }
+  return llvm::FunctionType::get(result, params, false);
+}
+
 // Which capability wrapper a type is, and the value that wrapper represents;
 // nothing for a type that represents no storage. Classifying a wrapper in one
 // place is what keeps an access reached through a place and an operation
@@ -622,13 +636,8 @@ auto CodeGenFunction::LowerCall(
 auto CodeGenFunction::Entry(
     std::string_view symbol, llvm::Type* result,
     std::span<llvm::Value* const> args) -> llvm::FunctionCallee {
-  std::vector<llvm::Type*> params;
-  params.reserve(args.size());
-  for (llvm::Value* arg : args) {
-    params.push_back(arg->getType());
-  }
   return module_->Module().getOrInsertFunction(
-      symbol, llvm::FunctionType::get(result, params, false));
+      symbol, CallSignature(result, args));
 }
 
 auto CodeGenFunction::Entry(
@@ -714,6 +723,16 @@ auto CodeGenFunction::ResolveCallee(
               -> diag::Result<llvm::FunctionCallee> {
             return module_->UnitFunction(t.function);
           },
+          [&](const lir::IndirectTarget& t)
+              -> diag::Result<llvm::FunctionCallee> {
+            auto callee = LowerOperand(t.callee);
+            if (!callee) {
+              return std::unexpected(std::move(callee.error()));
+            }
+            return llvm::FunctionCallee(
+                CallSignature(module_->Types().Map(result_type), args),
+                *callee);
+          },
           // A dispatched call is two operations over one boundary. What class a
           // value is, is the only half this side cannot know, so that is the
           // only half that crosses: the runtime answers with the address of the
@@ -740,15 +759,8 @@ auto CodeGenFunction::ResolveCallee(
                     RuntimeSymbol(RuntimeOp::kObjectMethod),
                     module_->Types().Ptr(), lookup),
                 lookup);
-            std::vector<llvm::Type*> params;
-            params.reserve(args.size());
-            for (llvm::Value* arg : args) {
-              params.push_back(arg->getType());
-            }
             return llvm::FunctionCallee(
-                llvm::FunctionType::get(
-                    module_->Types().Map(result_type), params, false),
-                body);
+                CallSignature(module_->Types().Map(result_type), args), body);
           },
           [&](const lir::ConstructTarget& t)
               -> diag::Result<llvm::FunctionCallee> {
@@ -1789,6 +1801,7 @@ auto CodeGenFunction::EncodingOf(const lir::CallInstr& call) const
           },
           [](const lir::FunctionTarget&) -> Encoded { return CallEncoding{}; },
           [](const lir::DispatchTarget&) -> Encoded { return CallEncoding{}; },
+          [](const lir::IndirectTarget&) -> Encoded { return CallEncoding{}; },
           [](const lir::ForeignTarget&) -> Encoded { return CallEncoding{}; },
           [](const lir::ImportedRuntimeTarget&) -> Encoded {
             return CallEncoding{};

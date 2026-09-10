@@ -631,14 +631,13 @@ auto MaterializeLeaf(
             .data = mir::AddressOfExpr{.operand = access}, .type = slot_type});
   }
 
-  // A route ending at a scope names the object the steps landed on, and every
-  // step already yields a borrowed pointer to what it reached, so the last one
-  // is the value. A step answered by name yields the base instead, and the
-  // route's own type is what says which object that base is.
+  // A route ending at a scope names the object the steps landed on, which the
+  // last step already produced as a borrowed pointer. What the slot holds that
+  // object as is a separate fact -- a receiver a call passes takes the scope
+  // every body is entered through, where a member read takes the object's own
+  // type -- so the value states the slot's type rather than staying whatever
+  // the step happened to reach.
   if (std::holds_alternative<hir::ScopeLeaf>(leaf)) {
-    if (!std::holds_alternative<ScopeBase>(receiver.target)) {
-      return receiver.expr;
-    }
     return block.exprs.Add(
         mir::Expr{
             .data = mir::PointerCastExpr{.operand = receiver.expr},

@@ -290,14 +290,16 @@ auto MemberStorageKindOf(
             return over_values(net.value, MemberStorageKind::kResolvedNet);
           },
           // A driver is a handle on a contribution the net owns and issues (LRM
-          // 6.5); a reference and a pointer name storage living elsewhere; and
-          // a declaration standing for several objects keeps a handle on the
-          // sequence of them, built once where the owner is built. None owns
+          // 6.5); a reference and a pointer name storage living elsewhere; a
+          // declaration standing for several objects keeps a handle on the
+          // sequence of them, built once where the owner is built; and a code
+          // address names a body that outlives every owner there is. None owns
           // what it names.
           [&](const lir::DriverType& t) { return borrowed(t); },
           [&](const lir::RefType& t) { return borrowed(t); },
           [&](const lir::PointerType& t) { return borrowed(t); },
           [&](const lir::VectorType& t) { return borrowed(t); },
+          [&](const lir::MachineFunctionType& t) { return borrowed(t); },
           [&](const lir::RuntimeLibraryType& library)
               -> std::optional<MemberStorageKind> {
             switch (library.kind) {
@@ -439,12 +441,6 @@ auto EntryNamingOf(support::BuiltinFn fn) -> EntryNaming {
   // stands for one.
   constexpr std::string_view kCrossesAForeignStack =
       "carries an execution across a stack the runtime does not own";
-  // What a scope answers a name with is a code address, and a call through one
-  // is what this target does not yet make (a routed callable, and a DPI-C
-  // export reached the same way). Nothing here stands for the entry itself, so
-  // there is no entry to name until the call exists.
-  constexpr std::string_view kAnswersWithACodeAddress =
-      "answers with a code address this target cannot yet call through";
   // A value crosses this boundary as a handle a copy may alias, so nothing here
   // may answer with the part of one: a write through such an answer would be
   // visible through every copy. What this backend needs instead is the
@@ -652,9 +648,6 @@ auto EntryNamingOf(support::BuiltinFn fn) -> EntryNaming {
     case support::BuiltinFn::kFindExportEntry:
       return NotRealized{.shape = kCrossesAForeignStack};
 
-    case support::BuiltinFn::kFindSubroutine:
-      return NotRealized{.shape = kAnswersWithACodeAddress};
-
     case support::BuiltinFn::kTrigger:
     case support::BuiltinFn::kTriggered:
     case support::BuiltinFn::kCurrentRuntime:
@@ -729,6 +722,7 @@ auto EntryNamingOf(support::BuiltinFn fn) -> EntryNaming {
     case support::BuiltinFn::kAddOwnedChild:
     case support::BuiltinFn::kRegisterDisableTarget:
     case support::BuiltinFn::kFindSignal:
+    case support::BuiltinFn::kFindSubroutine:
     case support::BuiltinFn::kFindChild:
     case support::BuiltinFn::kFindDisableTarget:
     case support::BuiltinFn::kForkWaitAll:

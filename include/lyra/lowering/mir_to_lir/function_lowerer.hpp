@@ -227,8 +227,15 @@ class FunctionLowerer {
   // The result type is stated rather than read off the MIR expression, because
   // an awaitable's is not what MIR gave it.
   auto EmitCall(
-      const mir::CallExpr& call, std::vector<lir::Operand> args,
-      lir::TypeId result_type) -> diag::Result<lir::Operand>;
+      const mir::Block& block, const mir::CallExpr& call,
+      std::vector<lir::Operand> args, lir::TypeId result_type)
+      -> diag::Result<lir::Operand>;
+  // Says what a call reaches. A callee named outright resolves to its identity
+  // with nothing evaluated; one that is a code address the program computed
+  // resolves by lowering that address, which is why this reaches the block.
+  auto LowerCallTarget(
+      const mir::Block& block, const mir::Callee& callee,
+      lir::TypeId result_type) -> diag::Result<lir::CallTarget>;
   // Lowers the call an await is over, which arranges this execution's
   // resumption and answers whether it must park at all: a delay and a
   // value-change wait always must, a join whose condition is already met and a

@@ -491,6 +491,13 @@ auto lyra_rt_sequence_element(const void* sequence, std::int64_t index)
 void lyra_rt_register_signal(void* self, const void* name, void* cell);
 auto lyra_rt_find_signal(void* self, const void* name) -> void*;
 
+// Reads back the entry a scope answers a subroutine name with (LRM 23.8.1).
+// It answers a code address rather than a data one, which the language does not
+// guarantee to be interconvertible, so the two lookups cannot share a return
+// type. What a caller does with the answer is restore it to the prototype its
+// own call site was compiled against.
+auto lyra_rt_find_subroutine(void* self, const void* name) -> void (*)();
+
 // Publishes what a `disable` naming this scope terminates, and reads it back
 // (LRM 9.6.2). Neither carries a name, a scope having exactly one.
 void lyra_rt_register_disable_target(void* self, void* target);

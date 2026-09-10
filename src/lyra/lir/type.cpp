@@ -110,6 +110,12 @@ auto Type::Hash::operator()(const Type& type) const -> std::size_t {
             Combine(seed, t.element);
             Combine(seed, t.size);
           },
+          [&](const MachineFunctionType& t) {
+            for (const TypeId param : t.params) {
+              Combine(seed, param);
+            }
+            Combine(seed, t.result);
+          },
           [](const EventType&) {},
           [](const RealType&) {},
           [](const ShortRealType&) {},
@@ -177,6 +183,7 @@ auto Type::KindName() const -> std::string_view {
           [](const MachineIntType&) { return "machine integer"; },
           [](const MachineFloatType&) { return "machine float"; },
           [](const MachineArrayType&) { return "machine array"; },
+          [](const MachineFunctionType&) { return "machine function"; },
           [](const EventType&) { return "named event"; },
           [](const RealType&) { return "real"; },
           [](const ShortRealType&) { return "shortreal"; },
@@ -220,6 +227,16 @@ auto Type::Pointee() const -> std::optional<TypeId> {
   }
   if (const auto* managed = As<ManagedRefType>()) {
     return managed->pointee;
+  }
+  return std::nullopt;
+}
+
+auto Type::Address() const -> std::optional<AddressKind> {
+  if (Is<MachineFunctionType>()) {
+    return AddressKind::kCode;
+  }
+  if (Pointee().has_value()) {
+    return AddressKind::kStorage;
   }
   return std::nullopt;
 }

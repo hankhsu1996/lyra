@@ -173,13 +173,15 @@ auto UnitLowerer::TranslateType(const mir::Type& ty) -> lir::Type {
             return lir::Type{lir::MachineArrayType{
                 .element = TranslateType(ma.element), .size = ma.size}};
           },
-          [&](const mir::MachineFunctionType&) -> lir::Type {
-            // A code address is named only in a unit's definition constant,
-            // which the backend consumes directly rather than through
-            // MIR-to-LIR.
-            throw InternalError(
-                "TranslateType: a machine function type does not flow "
-                "through MIR-to-LIR");
+          [&](const mir::MachineFunctionType& mf) -> lir::Type {
+            std::vector<lir::TypeId> params;
+            params.reserve(mf.params.size());
+            for (const mir::TypeId param : mf.params) {
+              params.push_back(TranslateType(param));
+            }
+            return lir::Type{lir::MachineFunctionType{
+                .params = std::move(params),
+                .result = TranslateType(mf.result)}};
           },
           [](const mir::EventType&) -> lir::Type {
             return lir::Type{lir::EventType{}};

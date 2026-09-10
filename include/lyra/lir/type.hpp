@@ -42,6 +42,11 @@ enum class PointerOwnership : std::uint8_t { kUnique, kShared, kBorrowed };
 
 enum class Mutability : std::uint8_t { kMutable, kReadOnly };
 
+// What an address names. The two do not convert into one another -- no language
+// this compiles through guarantees that a code address survives a trip through
+// a data one -- so retyping an address preserves which of them it is.
+enum class AddressKind : std::uint8_t { kStorage, kCode };
+
 enum class RuntimeLibraryKind : std::uint8_t {
   kPackedType,
   kPackedRange,
@@ -180,6 +185,18 @@ struct MachineArrayType {
   std::uint32_t size;
 
   auto operator==(const MachineArrayType&) const -> bool = default;
+};
+
+// A pointer to code (C `R (*)(A, B)`): the machine family's callable axis,
+// beside the machine scalars and the aggregate of them. Distinct from a
+// function of this unit, which a call names outright -- this is the type an
+// address has when code is a value, and the signature it carries is what a
+// call made through it is compiled against.
+struct MachineFunctionType {
+  std::vector<TypeId> params;
+  TypeId result;
+
+  auto operator==(const MachineFunctionType&) const -> bool = default;
 };
 
 struct EventType {
@@ -389,13 +406,13 @@ class Type {
       PackedArrayType, EnumType, UnpackedArrayType, DynamicArrayType, QueueType,
       AssociativeArrayType, WildcardIndexType, StringType, MachineCStringType,
       MachineBoolType, MachineIntType, MachineFloatType, MachineArrayType,
-      EventType, RealType, ShortRealType, RealTimeType, ChandleType, VoidType,
-      EmptyType, ObjectType, ExternalUnitObjectType, CrossUnitClassType,
-      RuntimeClassType, ClosureType, StructType, RuntimeEffectsType, FilesType,
-      DiagnosticType, RuntimeLibraryType, CoroutineType, RefType, PointerType,
-      ManagedRefType, VectorType, TupleType, UnionType, TaggedUnionType,
-      ResolvedType, DriverType, ObservableType, SampledHistoryType,
-      EvaluationAttemptsType>;
+      MachineFunctionType, EventType, RealType, ShortRealType, RealTimeType,
+      ChandleType, VoidType, EmptyType, ObjectType, ExternalUnitObjectType,
+      CrossUnitClassType, RuntimeClassType, ClosureType, StructType,
+      RuntimeEffectsType, FilesType, DiagnosticType, RuntimeLibraryType,
+      CoroutineType, RefType, PointerType, ManagedRefType, VectorType,
+      TupleType, UnionType, TaggedUnionType, ResolvedType, DriverType,
+      ObservableType, SampledHistoryType, EvaluationAttemptsType>;
 
  public:
   explicit Type(Data data) : data_(std::move(data)) {
@@ -409,8 +426,14 @@ class Type {
 
   // The type this one refers to; absent when it refers to nothing. This is the
   // narrow relation of indirection -- storage that lives elsewhere -- which is
-  // what an address-of yields and a pointer cast retypes.
+  // what an address-of yields.
   [[nodiscard]] auto Pointee() const -> std::optional<TypeId>;
+
+  // Which kind of address this type names, or nothing where it names none.
+  // Wider than the storage relation above, since a code address points at no
+  // storage and is an address regardless; what asks is a retype of an address,
+  // which requires one on each side and the same kind on both.
+  [[nodiscard]] auto Address() const -> std::optional<AddressKind>;
 
   // The type of the storage a dereference reaches. That is a reference's
   // referent, and also what a capability wrapper represents -- a wrapper is not

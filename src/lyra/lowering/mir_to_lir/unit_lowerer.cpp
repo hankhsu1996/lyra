@@ -4,6 +4,8 @@
 #include <format>
 #include <optional>
 #include <string>
+#include <string_view>
+#include <unordered_set>
 #include <utility>
 #include <variant>
 #include <vector>
@@ -310,17 +312,6 @@ auto UnitLowerer::LowerClass(mir::ClassId owner, const mir::Class& cls)
 
   for (const mir::FieldId id : cls.fields.Ids()) {
     const mir::FieldDecl& field = cls.fields.Get(id);
-    // A member holding a code address is an entry a scope answered a name
-    // with, and a call through one is what this path does not yet make -- so
-    // the member is refused where it is declared rather than at whichever call
-    // reaches it first.
-    if (mir_->types.Get(field.type).Is<mir::MachineFunctionType>()) {
-      return diag::Fail(
-          diag::DiagCode::kUnsupportedExpressionForm,
-          "mir_to_lir: a subroutine reached by a hierarchical name the "
-          "declaring unit did not publish is not yet supported on this "
-          "backend");
-    }
     out.members.push_back(
         lir::Member{.name = field.name, .type = TranslateType(field.type)});
   }
@@ -342,6 +333,19 @@ auto UnitLowerer::LowerClass(mir::ClassId owner, const mir::Class& cls)
   out_.functions.Define(identities.constructor, *std::move(constructor));
   out.constructor = identities.constructor;
 
+  // Which of the class's bodies a hierarchical name may end at, by the
+  // identifier such a name spells. That identifier is the whole of the
+  // identity: it is what the scope is asked for at run time and what the
+  // declaration was written under, so the two meet on it and on nothing else.
+  std::unordered_set<std::string_view> published;
+  for (const mir::AbiAdapterId aid : cls.abi_adapters.Ids()) {
+    const mir::AbiAdapter& adapter = cls.abi_adapters.Get(aid);
+    if (const auto* entry =
+            std::get_if<mir::SubroutineEntry>(&adapter.published)) {
+      published.insert(entry->name);
+    }
+  }
+
   // Only a callable this program defines becomes a function: a DPI-C import is
   // reached as a foreign symbol and a pure virtual has no implementation here
   // (LRM 8.21). Which behavior a callable takes over is the other question, and
@@ -359,6 +363,10 @@ auto UnitLowerer::LowerClass(mir::ClassId owner, const mir::Class& cls)
         return std::unexpected(std::move(fn.error()));
       }
       out_.functions.Define(*body, *std::move(fn));
+      if (published.contains(callable.name)) {
+        out.subroutines.push_back(
+            lir::PublishedSubroutine{.name = callable.name, .body = *body});
+      }
     }
     if (const std::optional<lir::DispatchTakeover> taken =
             TakenOver(callable, body)) {

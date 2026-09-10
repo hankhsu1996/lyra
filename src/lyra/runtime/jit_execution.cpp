@@ -1407,6 +1407,11 @@ auto lyra_rt_find_signal(void* self, const void* name) -> void* {
   return static_cast<Scope*>(self)->FindSignal(static_cast<const char*>(name));
 }
 
+auto lyra_rt_find_subroutine(void* self, const void* name) -> void (*)() {
+  return static_cast<Scope*>(self)->FindSubroutine(
+      static_cast<const char*>(name));
+}
+
 void lyra_rt_register_disable_target(void* self, void* target) {
   static_cast<Scope*>(self)->RegisterDisableTarget(
       static_cast<CancellationTarget*>(target));

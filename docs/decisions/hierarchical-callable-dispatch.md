@@ -149,9 +149,12 @@ which side of the reader's own declaration chain the target happens to sit on.
    callable this unit does not declare.
 5. **A hot-path realization per backend.** The realization is to restore the erased entry to the
    prototype the call site compiled against and invoke it on the sealed receiver, walking nothing at
-   call time. The C++ backend does that against the declaring unit's emitted declaration. The
-   execution backend has no call through a computed code address yet -- the same thing that keeps a
-   DPI-C export off it -- so it refuses the arm where it is declared, with its own reason.
+   call time. Both backends make that call; what differs is where the prototype comes from and what
+   answers the name. The C++ backend restores the entry against a prototype it writes at the call
+   site and reads the table the declaring scope rendered as static data. The execution backend calls
+   through the address as a value, under the signature the call itself states, and its scope's table
+   is built by resolving each published subroutine's symbol as the design is loaded -- the same way
+   that backend reaches every other entry a scope's definition names.
 
 ## Forbidden shapes
 
@@ -174,15 +177,17 @@ which side of the reader's own declaration chain the target happens to sit on.
   intra-unit and all typed, because the route to the block is the one a value read already takes.
 - A subroutine and a `disable` target reached by a hierarchical name are not separate gaps: one
   route serves both, and closing the second needed the leaves alone.
-- What a `disable` names runs on both backends, where a call past a signature runs on one. The
-  difference is the endpoint: an address is something either backend can hold, and a code address
-  reached at run time is not.
+- What a `disable` names and what a call past a signature reaches both run on either backend. The
+  endpoints differ -- one seals an address, the other a code address -- and holding a code address
+  is what the machine-code path gained to carry the second.
 - Every scope publishes every subroutine it declares, because a unit compiled alone cannot know
   which of them a name will reach. The cost is one static record and one entry per subroutine, in
   every design, whether or not anything names one.
 - The execution backend cannot borrow the target language's name resolution the way the C++ backend
-  can, so what it owes is a call through a computed code address; until it has one it refuses this
-  arm, and the same thing keeps a DPI-C export off it.
+  can, so it states what that borrowing hid: a code address is a value its IR holds, its type is the
+  signature a call through it is made under, and the scope's own table is what answers the name.
+  What still keeps a DPI-C export off that backend is a different thing -- an execution crossing a
+  stack the runtime does not own.
 
 ## Cross-references
 

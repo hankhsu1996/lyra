@@ -284,8 +284,10 @@ at.
       take the answered-by-name arm and the asymmetry against an interface stands
       (`docs/decisions/hierarchical-callable-dispatch.md`).
 
-      The execution backend refuses the answered-by-name arm: a call through a code address is not
-      yet something it makes. The promised arm and every intra-unit call run there unchanged.
+      Both backends run every arm of this. Reaching the entry is a by-name query the scope answers
+      from what it declares, and calling it is a call through an address the program computed, under
+      the signature the call site states -- neither of which needs the target language's own name
+      resolution, which is the only thing one backend has and the other does not.
 
 - [x] D13 -- A block or task a `disable` names elsewhere on the hierarchy (LRM 9.6.2, 23.6). What
       the statement ends is selected by static declaration identity, so it may sit in another
@@ -301,8 +303,8 @@ at.
       signature ends at the block's own node on the object tree and that node answers for what it
       carries. It answers without being named anything further, because a scope has exactly one
       activity to end and reaching the scope is the whole of naming it. Both backends carry this,
-      the difference from the enable above being what the route seals: an address either backend can
-      hold, rather than a code address reached at run time.
+      as they do the enable above; what the two routes seal differs -- an address against a code
+      address -- and neither is a thing only one backend can hold.
 
       A target the writing body's own declaration scope declares stays what it was -- an identity
       into that scope's own registry, with no route at all -- which is also the only form available
