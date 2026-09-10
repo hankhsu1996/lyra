@@ -54,6 +54,17 @@ auto DeclaringUnitOfValue(const slang::ast::ValueSymbol& value)
   return &owner;
 }
 
+// Whether a scope is one procedural code opens rather than one the design
+// hierarchy is built from: a `begin ... end` or a `fork ... join` (LRM 9.3.4 /
+// 9.3.2), or a task or function, which LRM 23.9 puts on the path beside them.
+// A declaration inside one has its cell on the structural scope that replicates
+// it, so this unit's own identity for that declaration already accounts for
+// every scope of this kind standing above it.
+auto IsProceduralScope(const slang::ast::Symbol& symbol) -> bool {
+  return symbol.kind == slang::ast::SymbolKind::StatementBlock ||
+         symbol.kind == slang::ast::SymbolKind::Subroutine;
+}
+
 }  // namespace
 
 auto UnitLowerer::MapOrGetRoutedRef(
@@ -142,9 +153,10 @@ auto UnitLowerer::ResolveRouteTarget(
   if (!storage) return std::unexpected(std::move(storage.error()));
 
   // This unit's own identity for the target when it declares it -- and for a
-  // static a named block puts on the hierarchical path (LRM 23.9), that
-  // identity also says the blocks between the static and its structural scope
-  // describe where the storage sits rather than steps the route takes.
+  // static a name reaches through a procedural scope (LRM 23.9 puts a block, a
+  // task and a function on that path alike), that identity also says every such
+  // scope between the static and its structural one describes where the storage
+  // sits rather than a step the route takes.
   if (const auto data_object = LookupStructuralDataObjectBinding(value)) {
     return hir::StructuralDataObjectLeaf{
         .object = data_object->var_id,
@@ -171,21 +183,6 @@ auto UnitLowerer::MakeRoutedRef(
     ScopeRoute route) -> diag::Result<hir::ReferenceRoute> {
   auto leaf = ResolveRouteTarget(value, route);
   if (!leaf) return std::unexpected(std::move(leaf.error()));
-  // A head that leaves this unit's layout locates its scope by name, and what
-  // answers a name that way is a cell; a net's drivers fold into a resolution
-  // node instead, which no such answer reaches. The same net reached by a route
-  // whose head stays inside this unit is an ordinary endpoint.
-  const hir::Endpoint reached = hir::EndpointOf(*leaf);
-  const auto* cell = std::get_if<hir::EndpointCell>(&reached);
-  if (cell != nullptr &&
-      std::holds_alternative<hir::NetStorage>(cell->storage) &&
-      !std::holds_alternative<hir::InUnitHead>(route.head)) {
-    return diag::Fail(
-        SourceMapper().PointSpanOf(value.location),
-        diag::DiagCode::kUnsupportedExpressionForm,
-        "a net reached by a hierarchical name that climbs out of this module "
-        "is not yet supported");
-  }
   const hir::RoutedRefId id = MapOrGetRoutedRef(
       slot_owner, hir::RoutedRefDecl{
                       .recipe = hir::RoutedPathRecipe{
@@ -225,9 +222,9 @@ auto UnitLowerer::MakeRoutedDisableTargetRef(
     const WalkFrame& frame, const slang::ast::Symbol& target,
     diag::SourceSpan span) -> diag::Result<hir::RoutedRef> {
   // A scope's identity indexes its declaring scope's registry, so a route
-  // carrying one runs to that scope and the blocks between are where the target
-  // sits rather than steps of their own -- the same reading a static declared
-  // in one of them takes.
+  // carrying one runs to that scope, and the procedural scopes between are
+  // where the target sits rather than steps of their own -- the same reading a
+  // static declared in one of them takes.
   const auto minted = LookupMintedProceduralScope(target);
   const slang::ast::Scope* walk_to =
       minted.has_value() ? minted->owner : target.as_if<slang::ast::Scope>();
@@ -270,8 +267,8 @@ auto UnitLowerer::RouteToUnitObject(
     if (!through.has_value()) {
       return diag::Fail(
           span, diag::DiagCode::kUnsupportedExpressionForm,
-          "a subroutine on an interface reached through a name its port did "
-          "not promise is not yet supported");
+          "a subroutine on an interface reached through a port by a path of "
+          "this shape is not yet supported");
     }
     return *std::move(through);
   }
@@ -329,13 +326,12 @@ auto UnitLowerer::TranslateReferenceRoute(
 
   // A target this unit declares reaches its storage through the scope that
   // owns it, and a leaf naming that declaration already fixes the whole
-  // procedural descent, so the named blocks around it are part of where the
-  // storage sits rather than steps of their own (LRM 23.9). They nest
+  // procedural descent, so the blocks and subroutines around it are part of
+  // where the storage sits rather than steps of their own. They nest
   // contiguously under that scope, so dropping them here drops all of them.
   const slang::ast::Scope* owner = value.getHierarchicalParent();
   if (data_object || procedural_static) {
-    while (owner != nullptr &&
-           owner->asSymbol().kind == slang::ast::SymbolKind::StatementBlock) {
+    while (owner != nullptr && IsProceduralScope(owner->asSymbol())) {
       owner = owner->asSymbol().getHierarchicalParent();
     }
   }
@@ -355,27 +351,20 @@ auto UnitLowerer::ReachThroughInterfacePort(
   if (port == nullptr) {
     return std::nullopt;
   }
-  ScopeRoute route = RouteThroughInterfacePort(frame, *port);
-
-  // What the route is standing on, peeled one layer per hop: an unpacked
-  // dimension where a coordinate selects out of it, and the object of another
-  // unit where a name continues into what that unit published. A coordinate is
-  // admissible exactly when a dimension is there to take it off, so the check
-  // and the descent are one act.
-  hir::TypeId standing = InterfacePortType(*port);
-  const auto landed = [&]() -> std::optional<ScopeRoute> {
-    const auto* object = unit_.types.Get(standing).As<hir::UnitObjectType>();
-    route.unit_name = object == nullptr
-                          ? std::nullopt
-                          : std::optional<std::string>{object->unit_name};
-    return route;
-  };
-
-  // A name that ends at the port names the interface the port carries, which
-  // the port step already reached.
-  if (path.front().symbol == reference.target) {
-    return landed();
-  }
+  // The port's own reach is the descent's first hop: its step, and the unit the
+  // connection bound standing behind it. Taking it as a hop is what lets every
+  // hop below take the classification every descent takes, so a name the
+  // interface published is a step through its promise and one it did not is a
+  // step the instance answers, exactly as they are past a module instance.
+  ScopeRoute reach = RouteThroughInterfacePort(frame, *port);
+  ScopeRoute route{
+      .head = std::move(reach.head), .steps = {}, .unit_name = std::nullopt};
+  std::vector<DescentHop> hops;
+  hops.reserve(path.size());
+  hops.push_back(
+      DescentHop{
+          .step = std::move(reach.steps.front()),
+          .declared_unit = std::move(reach.unit_name)});
 
   // Whether the name ends at an object or at something inside one, which is
   // what says how far the descent runs: a name whose target is an instance ends
@@ -387,45 +376,31 @@ auto UnitLowerer::ReachThroughInterfacePort(
 
   for (std::size_t hop = 1; hop < path.size(); ++hop) {
     if (path[hop].symbol == reference.target && !target_is_object) {
-      return landed();
+      break;
     }
+    // A coordinate selects out of what the hop before it reached (LRM 25.3), so
+    // it is part of that hop rather than one of its own.
     if (const auto* position = std::get_if<std::int32_t>(&path[hop].selector)) {
-      const auto* array =
-          unit_.types.Get(standing).As<hir::UnpackedArrayType>();
-      if (array == nullptr || *position < 0) {
-        return std::nullopt;
-      }
-      standing = array->element_type;
+      if (*position < 0) return std::nullopt;
       std::visit(
           [&](auto& step) {
             step.indices.push_back(static_cast<std::uint32_t>(*position));
           },
-          route.steps.back());
+          hops.back().step);
       continue;
     }
-    // A hop that names rather than selects continues into a member of the unit
-    // standing here, which is a step exactly when that unit published it.
-    const auto* object = unit_.types.Get(standing).As<hir::UnitObjectType>();
-    const auto promised =
-        object == nullptr
-            ? std::nullopt
-            : PromisedObjectMember(object->unit_name, path[hop].symbol->name);
-    if (!promised.has_value()) {
-      return std::nullopt;
-    }
-    const hir::ExternalUnitObjectId record =
-        ExternalUnitObjectOf(promised->signature->unit_name);
-    standing = unit_.external_unit_objects.Get(record)
-                   .members.Get(promised->member)
-                   .type;
-    route.steps.emplace_back(
-        hir::SignatureMemberStep{
-            .object = record, .member = promised->member, .indices = {}});
+    hops.push_back(
+        DescentHop{
+            .step =
+                hir::OpaqueStep{
+                    .name = std::string{path[hop].symbol->name}, .indices = {}},
+            .declared_unit = std::nullopt});
     if (path[hop].symbol == reference.target) {
-      return landed();
+      break;
     }
   }
-  return std::nullopt;
+  ClassifyDescent(route, hops);
+  return route;
 }
 
 auto UnitLowerer::RouteThroughInterfacePort(

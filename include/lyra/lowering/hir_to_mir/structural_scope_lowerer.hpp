@@ -308,9 +308,9 @@ class StructuralScopeLowerer {
   }
 
   // The field one of this scope's static-lifetime body locals was given. A
-  // reference names the declaration rather than the blocks around it, and the
-  // storage is this class's own field, so a referrer standing on this object is
-  // already standing on the cell.
+  // reference names the declaration rather than the procedural scopes around
+  // it, and the storage is this class's own field, so a referrer standing on
+  // this object is already standing on the cell.
   [[nodiscard]] auto ProceduralStaticField(
       const hir::ProceduralBodyRef& body, hir::ProceduralVarId var) const
       -> mir::FieldId {

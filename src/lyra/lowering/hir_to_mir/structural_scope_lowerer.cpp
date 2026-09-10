@@ -305,12 +305,6 @@ auto DeclareRoutedRefSlots(StructuralScopeLowerer& lowerer, ClassShape& shape)
     const mir::TypeId slot_type = std::visit(
         Overloaded{
             [&](const hir::EndpointCell& cell) {
-              if (std::holds_alternative<hir::NetStorage>(cell.storage) &&
-                  !std::holds_alternative<hir::InUnitHead>(cu.recipe.head)) {
-                throw InternalError(
-                    "DeclareRoutedRefSlots: an upward routed reference to a "
-                    "net is not yet supported");
-              }
               return borrowed(unit_lowerer.MemberCellType(
                   unit_lowerer.TranslateType(cell.type), cell.storage));
             },

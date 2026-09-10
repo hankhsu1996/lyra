@@ -122,8 +122,12 @@ B  The interface port
       reactive edge to arm.
 - [x] B2 -- Every member access through the port is one reference whose route begins at that handle:
       the typed step to the port member, then the member at the position the interface's signature
-      gave it, so a name the interface does not publish fails where the module compiles rather than
-      while the design elaborates. Reads, writes, and change observation ride that single route, so
+      gave it, so a member renamed in the interface fails where the module compiles rather than
+      while the design elaborates. A name continuing past what the interface published -- LRM 23.9
+      puts a task and a named block inside the instance on the path -- carries on down that same
+      route with the step past the promise answered by the instance while the design elaborates,
+      which is what a name into any other unit's body already does: the port says where the descent
+      starts and never how far it may go. Reads, writes, and change observation ride that route, so
       a process in the module re-triggers when an interface member changes, and a write through the
       port is immediately the interface's value.
 - [x] B3 -- The actual on the connection is an interface instance named in the instantiating scope,
@@ -211,9 +215,9 @@ the first.
 A subroutine a hierarchical name enables (LRM 23.6) does not follow from it either, and the reason
 is the unit boundary rather than the call: an interface promises its whole declared surface, so a
 name on one is resolved where the caller compiles, while a module promises only its ports, so a
-subroutine of one is reached -- if at all -- by a name the runtime answers while the design
-elaborates. That form is refused, and it is tracked with the hierarchical-reference target forms in
-`hierarchy.md` rather than here.
+subroutine of one is reached by a name the runtime answers while the design elaborates. That form is
+carried with the hierarchical-reference target forms in `hierarchy.md` rather than here, and the
+asymmetry is the whole of what separates the two.
 
 - [x] D1 -- A modport `import` makes an interface subroutine callable through the port, so a call on
       the port identifier enables that task or function on the bound interface instance (LRM 25.7).

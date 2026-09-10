@@ -181,10 +181,11 @@ struct PublishedHop {
 };
 
 // One hop of a descent: the step it stands as, and the unit whose object it
-// lands on where this unit declares the hop and so names its own child. A hop
-// this unit does not declare lands on whatever the unit above it promised,
-// which is read off that promise rather than recorded here -- and which unit
-// stands above it is known only once the whole descent is in hand.
+// lands on where this unit's own declaration says which -- a child it declares,
+// or the interface a port of it carries. A hop it declares nothing about lands
+// on whatever the unit above it promised, which is read off that promise rather
+// than recorded here -- and which unit stands above it is known only once the
+// whole descent is in hand.
 struct DescentHop {
   hir::PathStep step;
   std::optional<std::string> declared_unit;
@@ -912,13 +913,14 @@ class UnitLowerer {
       diag::SourceSpan span) -> diag::Result<InUnitReach>;
 
   // How this reader reaches the object that owns what a name reached through an
-  // interface port names (LRM 25.3). The port is the first step, and each hop
-  // between it and the target is one of two things: a coordinate on the member
-  // the route is standing on -- already the position the select resolved to,
-  // since spending the declared range is what resolving it does -- or a member
-  // the unit standing there published, which the route continues through the
-  // way it would end on one (LRM 25.10). Nothing when a hop names anything
-  // else, which reaches past what that unit promised.
+  // interface port names (LRM 25.3). The port is the first step and says which
+  // unit the descent starts in; each hop after it either carries a coordinate
+  // on the hop before it -- already the position the select resolved to, since
+  // spending the declared range is what resolving it does -- or names one more
+  // step down. Which of those steps are typed and which are answered by name is
+  // decided the way it is for every other descent, so a name may continue past
+  // what the interface published (LRM 25.10) rather than stopping there.
+  // Nothing when the path is of a shape the walk does not take.
   [[nodiscard]] auto ReachThroughInterfacePort(
       const WalkFrame& frame,
       const slang::ast::HierarchicalReference& reference)
@@ -947,12 +949,13 @@ class UnitLowerer {
   auto PublishClassSignatures() -> void;
 
   // How this reader reaches the interface an enclosing scope's `port` carries
-  // (LRM 25.3). The port is the whole route: what stands behind it belongs to a
-  // unit this one reaches no other way, so any other route to the same object
-  // would describe a different design -- which is why the frontend's own
-  // resolution of the port to that object is not what this reads. What the
-  // route ends at is the caller's, so one derivation serves a name read through
-  // the port and a connection handing the port's interface on.
+  // (LRM 25.3). The port is the whole of this unit's reach to it: what stands
+  // behind it belongs to a unit this one reaches no other way, so any other
+  // route to the same object would describe a different design -- which is why
+  // the frontend's own resolution of the port to that object is not what this
+  // reads. Where the route goes from there is the caller's, so one derivation
+  // serves a name read through the port and a connection handing the port's
+  // interface on.
   [[nodiscard]] auto RouteThroughInterfacePort(
       const WalkFrame& frame, const slang::ast::Symbol& port) const
       -> ScopeRoute;

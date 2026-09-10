@@ -209,7 +209,8 @@ the four answers the classification gives, since `c.x`, `g[i].x` and `$root.Top.
 spelling and not in what each segment is.
 
 Legend: **ok** runs end to end -- **ref** refused with a located diagnostic -- **def** answers
-wrongly or crashes, recorded in `tests/paths/*.defects.yaml` -- **?** nobody has measured this cell.
+wrongly or fails where nothing reports it, recorded in `tests/paths/*.defects.yaml`. A cell with no
+letter is one nobody has run, and the corpus is what earns it one.
 
 A cell is what the name reaches, which is a question the front end answers, so it reads the better
 of the two backends: a target one backend carries and the other has no realization for is that
@@ -218,14 +219,14 @@ backend's gap and is recorded against it, not against the route.
 | Declaration kind (LRM 23.8, 23.9) | in this unit | into a child instance | out of this unit | through an interface |
 | --------------------------------- | ------------ | --------------------- | ---------------- | -------------------- |
 | variable                          | ok           | ok                    | ok               | ok                   |
-| net                               | ok           | ok                    | **ref**          | ok                   |
+| net                               | ok           | ok                    | ok               | ok                   |
 | parameter                         | ok           | ok                    | ok               | ok                   |
-| port                              | ok           | ok                    | ?                | ok                   |
-| enum value                        | ok           | ok                    | ?                | ?                    |
+| port                              | ok           | ok                    | ok               | ok                   |
+| enum value                        | ok           | ok                    | ok               | ok                   |
 | named event                       | ok           | ok                    | ok               | ok                   |
 | static of a named block           | ok           | ok                    | ok               | ok                   |
-| static of a subroutine body       | ok           | **def**               | ?                | ?                    |
-| class property, through a handle  | ok           | ok                    | **def**          | ?                    |
+| static of a subroutine body       | ok           | ok                    | ok               | ok                   |
+| class property, through a handle  | ok           | ok                    | **def**          | **def**              |
 | function or task                  | ok           | ok                    | ok               | ok                   |
 | block or task, as a `disable`     | ok           | ok                    | ok               | ok                   |
 
@@ -235,19 +236,23 @@ uses. So a kind that fails fails on every route, and a kind that works works on 
 is why closing the callable row closed four cells at once, and why closing the `disable` row after
 it needed only the leaves the route ends at.
 
-**The one cell that is a cell** is a net out of this unit, and it is one because the refusal is on
-the route's side rather than the leaf's: what answers a name past this unit's layout is a cell, and
-a net's drivers fold into a resolution node instead. That is D11 below, and it is the shape to look
-for before believing any other single cell -- a lone failure is either this kind of thing or a
-misreading of the row.
+**A cell that is a cell rather than a row has always been a refusal standing on the route's head
+rather than on its leaf**, and both of the ones this table carried came off the same way. A net out
+of this unit was refused where a route headed at this unit's own scope reached the same net without
+complaint, and a name through an interface port was refused past what the interface published where
+the same name reaching the same declaration through a module instance resolved. Neither was a
+missing realization: each was a second walk, or a guard, deciding for one head what the one
+classification already decides for every head. That is the shape to look for before believing any
+single cell -- a lone failure is either one of these or a misreading of the row.
 
-**Two cells are defects rather than gaps.** A static of a subroutine body crashes where a static of
-a named block resolves, though LRM 23.9 puts a task on the path exactly as it puts a block; and a
-class property reached out of the unit names a type the reader's artifact was never given, which no
-diagnostic reports. Both are D12 below.
+**Two cells are defects rather than gaps, under one cause.** A class property reached across a unit
+boundary names a type the reader's artifact was never given, out of this unit and through an
+interface alike. That is D12 below, and what it waits on is not the route.
 
-**A `?` is work, not a blank.** It marks a cell nobody has run, and the corpus is what turns one
-into a letter -- so a `?` is a case to write before it is a feature to build.
+**One row is not a route fact.** An enumerator is a constant, and a name ending at one is folded to
+its value before any route is built, so that row reads `ok` everywhere by never reaching the object
+tree at all. It stays in the table because LRM 23.8 lists it among what a hierarchical name may end
+at.
 
 - [x] D9 -- The declaration kinds a hierarchical name may end at. LRM 23.8 enumerates them -- a
       variable, a net, a parameter, a port, a named block, a function, a task -- and LRM 23.6
@@ -304,29 +309,57 @@ into a letter -- so a `?` is a case to write before it is a feature to build.
       inside a class method or a package subroutine, neither of them standing on the hierarchy a
       route walks.
 
+- [x] D15 -- A static-lifetime local of a **subroutine body** named by a hierarchical path. LRM 23.9
+      puts a task and a function on the path exactly as it puts a named block, and LRM 23.6 excludes
+      only what an _automatic_ subroutine declares, so the two owe one answer -- and the block form
+      resolved while the subroutine form was answered by nothing, on every route that left the
+      declaration's own scope.
+
+      What the name reaches is decided by which scope declares it, and that is the source's own
+      answer, never the shape of the statements below it: a task's `int counted;` belongs to the
+      task whether or not the statements that follow it were grouped, while a `begin ... end` the
+      source wrote inside that task is a scope of its own and, unnamed, is one LRM 6.21 says no
+      hierarchical name reaches into. Reading a sequence of statements as a scope of its own is what
+      put every declaration written without a `begin ... end` behind a block nobody wrote. Nothing
+      else was missing: the cell already sat on the object that replicates the declaration, and the
+      subroutine already had its own node on the tree under its own name.
+
+      What the name traverses on the way is decided the same way. A task or a named block between a
+      declaration and the structural scope that replicates it is where the storage sits rather than
+      an object holding it, so a name reaching such a static from a sibling scope of its own unit
+      ends at that structural scope and not at the subroutine -- which the two kinds of scope now
+      answer alike.
+
 - [ ] D12 -- Two cells of the table that answer wrongly rather than refusing, both found by running
       the corpus rather than by a design reading.
 
-      A static-lifetime local of a **subroutine body** reached by a hierarchical name crashes, where
-      the same declaration inside a named block resolves. LRM 23.9 puts a task and a function on the
-      path exactly as it puts a named block, and LRM 23.6 excludes only what an *automatic*
-      subroutine declares, so the two owe one answer. What differs is that the name is attributed to
-      the scope the declaration sits in, and a subroutine body's statements sit in a block the source
-      never wrote -- so the side that answers a name and the side that registers one disagree about
-      which scope owns it. Parked, because it crashes before it can fail usefully.
+      A **class property reached across a unit boundary** names a type the reader's artifact was
+      never given, out of this unit and through an interface alike: the reference materializes the
+      declaring unit's class in the reader rather than reaching it through what that unit published.
+      It is refused on the execution backend and silently miscompiled on the other, which is why
+      only compiling the emitted text finds it. What it waits on is what a unit publishes about a
+      class another unit names, which is the cross-unit class boundary rather than anything about
+      the route.
 
-      A **class property reached out of this unit** emits code naming a type the reader's artifact
-      was never given: a module publishes its parameters and ports, so a class it declares is not on
-      its signature, and the reference materializes that class in the reader anyway. It is refused on
-      the execution backend and silently miscompiled on the other, which is why only compiling the
-      emitted text finds it.
+- [x] D11 -- A hierarchical reference whose target is a net, in every direction. A net reached
+      downward reads and is waited on like a variable, and the name that reaches it there is
+      answered by the same by-name registry an upward name asks, handing back the net's resolution
+      node itself -- so the two directions were never separated by what the leaf can answer with.
+      What separated them was a guard reading the route's head, stated twice and reasoning about a
+      cell a net does not have; removing both left reading an upward net and waiting on one working
+      on either backend, with no realization added anywhere.
 
-- [ ] D11 -- An upward hierarchical reference whose target is a net. A net reached downward reads
-      and is waited on like a variable; the same net reached upward is refused where it is declared,
-      because what answers a name past this unit's layout is a cell and a net's drivers fold into a
-      resolution node instead. Nothing about the net model is missing here -- the downward direction
-      proves that -- so this is the upward route not carrying one target kind the downward route
-      does.
+- [x] D14 -- A name reached through an interface port that the interface did not publish. An
+      interface publishes its members (LRM 25.10), so nearly every name through a port is one the
+      module compiles against; a name ending deeper than a member -- a static of a subroutine body
+      or of a named block, the LRM 23.9 cases -- is past that promise, and used to be refused there.
+
+      It was refused by a second walk rather than by anything missing. The port decides where a
+      descent starts and nothing else about it, so what each step below is follows from the one
+      question every descent asks; the same port already carried a route that asked it, since a
+      `disable` naming a block inside the interface reaches it through the general walk. Routing the
+      port's own descent through that one classification is what closed this, and it removed a
+      second place that decided what "published" means rather than adding a mechanism.
 
 Unlocks `refs/hierarchical_refs`, `refs/upward_refs`, and `instantiation/hierarchical_sensitivity`.
 
@@ -426,6 +459,5 @@ Unlocks the port-connection surface.
   single-driver net port behaves as a continuous assignment and is in scope; multi-driver net
   resolution is a separate design-global concern. `inout` ports are bidirectional net connections in
   this same deferred net domain. A hierarchical reference whose target is a net is **not** in this
-  deferred domain and used to be listed here as though it were: a single-driver net reached downward
-  reads and is waited on today, and the upward direction is D11 above rather than a question about
-  nets.
+  deferred domain and used to be listed here as though it were: a single-driver net reads and is
+  waited on through a name in every direction today, which was never a question about nets.

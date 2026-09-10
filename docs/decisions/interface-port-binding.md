@@ -200,9 +200,12 @@ is what it reaches -- read at the member level.
   produced that pointer. Both end at a member resolved by name against the signature, through one
   function, so the port adds a step and nothing else -- there is no second name resolution and no
   second statement of what a published member's type or storage is.
-- Which names a port reaches follows from what the interface publishes, so what it does not publish
-  is decided in one place. A parameter named on a port folds to its value the way it does on any
-  other hierarchical name, because the port changes how the target is reached and not what it is.
+- What the interface publishes decides how each step of a name through the port is reached, and
+  never how far the name may go. A published member is resolved against the signature where the
+  module compiles; a name continuing past one is answered by the instance while the design
+  elaborates -- the same two answers a name into any other unit gets, decided in one place for both.
+  A parameter named on a port folds to its value the way it does on any other hierarchical name,
+  because the port changes how the target is reached and not what it is.
 
 ## Cross-references
 

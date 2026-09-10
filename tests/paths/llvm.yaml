@@ -31,7 +31,6 @@
 23_hierarchy/ref_port_aliases_connected_variable: "mir_to_lir: storage of this kind is not yet lendable by reference"
 23_hierarchy/downward_name_reaches_each_declaration_kind: "a property of a class another compilation unit declares is not yet reachable on this backend"
 23_hierarchy/upward_name_reaches_a_class_property: "a property of a class another compilation unit declares is not yet reachable on this backend"
-23_hierarchy/upward_name_reads_a_net: "a net reached by a hierarchical name that climbs out of this module is not yet supported"
 23_hierarchy/subroutine_enabled_from_an_upward_name: "a subroutine reached by a hierarchical name the declaring unit did not publish is not yet supported on this backend"
 23_hierarchy/subroutine_enabled_through_an_ancestor_sibling: "a subroutine reached by a hierarchical name the declaring unit did not publish is not yet supported on this backend"
 23_hierarchy/subroutine_enabled_on_a_selected_instance: "a subroutine reached by a hierarchical name the declaring unit did not publish is not yet supported on this backend"

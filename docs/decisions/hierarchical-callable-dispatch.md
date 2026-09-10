@@ -112,11 +112,12 @@ every other route. What a `disable` invalidates and what leaving a target does a
 What ends the route is classified by D2's question, which for this family has two answers rather
 than three, so it is two leaves and not one. Where this artifact lays out the scope that declares
 the block, the leaf carries that scope's own identity for it and the route runs to the declaring
-scope -- the blocks between are where the target sits, not steps of their own, exactly as they are
-for a static declared in one of them. Where it does not, the route runs to the block's own node on
-the object tree and the leaf carries nothing at all: no unit publishes what a `disable` ends, and a
-scope has exactly one, so reaching the node is the whole of naming it and no name crosses. There is
-no published arm, because publishing is what the middle answer means and nothing is published here.
+scope -- the procedural scopes between are where the target sits, not steps of their own, exactly as
+they are for a static declared in one of them. Where it does not, the route runs to the block's own
+node on the object tree and the leaf carries nothing at all: no unit publishes what a `disable`
+ends, and a scope has exactly one, so reaching the node is the whole of naming it and no name
+crosses. There is no published arm, because publishing is what the middle answer means and nothing
+is published here.
 
 Both leaves seal the same thing -- the target's address -- which is what the statement acts on, and
 is why the two arms do not divide the statement. A route sealing the scope instead would leave the

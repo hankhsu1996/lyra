@@ -179,6 +179,13 @@ name and takes the cell's address from it; one declared in a scope the source di
 registered nowhere, so `Top.outer.hidden` does not resolve for a `hidden` inside an unnamed block
 under `outer` -- which is what SV's hierarchical-reference rules already say.
 
+Which scope declares it is the source's own answer and never the shape of the statements below it. A
+task's `int counted;` is declared by the task however its statements are grouped, so the task's node
+registers it and `Top.c.tick.counted` resolves; a `begin ... end` the source wrote inside that task
+is a scope of its own, and unnamed it registers nothing. Reconstructing the declaring scope from
+statement nesting instead puts every declaration written without a `begin ... end` behind a block
+nobody wrote, where the rule above then correctly refuses to register it.
+
 Reachability also decides the storage's shape. Storage in the design hierarchy is an observable
 cell, because a hierarchical reference can read it and an event control can wait on it, so a write
 has to reach subscribers. Storage on a class is a plain cell -- nothing outside the body can name
@@ -209,13 +216,14 @@ answer to "what does this scope own", not one per owner kind.
 The body lowering looks up the resulting binding per static var; it re-derives nothing and does not
 visit the statement tree for any of this.
 
-### D7. Intra-unit access to a procedural-scope static names the declaration, not the blocks
+### D7. Intra-unit access to a procedural-scope static names the declaration, not the scopes above it
 
 A reference of the form `outer.x` from a sibling process is an intra-unit typed route (LRM 23.9),
 not a cross-unit by-name climb. What it names is the static declaration itself -- the body that
-declares it and its id within that body. The named blocks between the static and its structural
-scope are not steps of the route, and they are not steps of the access either: the cell is a field
-of the structural scope's own class, so arriving at that scope is arriving at the cell.
+declares it and its id within that body. The procedural scopes between the static and its structural
+scope -- named blocks, and the tasks and functions LRM 23.9 puts on that path beside them -- are not
+steps of the route, and they are not steps of the access either: the cell is a field of the
+structural scope's own class, so arriving at that scope is arriving at the cell.
 
 This is why a static a hierarchical path can name is minted by the compilation unit's declaration
 pass rather than by the body that declares it, and why it is minted **once**: the reference and the

@@ -140,11 +140,11 @@ using RouteHead = std::variant<InUnitHead, RootHead, VisibleChildHead>;
 
 // What a route ends at. A data object declared by the scope the steps land on,
 // or a static-lifetime local of one of that scope's bodies, which a named block
-// puts on the hierarchical path (LRM 23.9) -- the blocks between are part of
-// where the storage sits, not steps of their own, so the leaf identity fixes
-// the whole procedural descent. A leaf in another unit takes one of the forms
-// below instead: against that unit's signature when it published the name, and
-// against the runtime when it did not.
+// or a subroutine puts on the hierarchical path (LRM 23.9) -- every such scope
+// between is part of where the storage sits, not a step of its own, so the leaf
+// identity fixes the whole procedural descent. A leaf in another unit takes one
+// of the forms below instead: against that unit's signature when it published
+// the name, and against the runtime when it did not.
 //
 // Each leaf states everything the endpoint reaching it needs and nothing more.
 // A leaf that ends at data states the storage its target holds and the data
@@ -223,8 +223,9 @@ struct OpaqueCallableLeaf {
 // The route ends at what a `disable` naming a block or task terminates (LRM
 // 9.6.2), where this artifact lays out the scope that declares it. The scope's
 // identity indexes the registry of the structural scope the steps land on, so
-// the blocks between it and that scope are where the target sits rather than
-// steps of their own -- the same reading a static of one of those blocks takes.
+// the procedural scopes between it and that scope are where the target sits
+// rather than steps of their own -- the same reading a static declared in one
+// of them takes.
 struct DisableTargetLeaf {
   ProceduralScopeId scope;
 

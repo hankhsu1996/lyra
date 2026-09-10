@@ -172,16 +172,20 @@ auto LowerStatementListStmt(
     const slang::ast::StatementList& list, diag::SourceSpan span)
     -> diag::Result<hir::Stmt> {
   // Statements the source wrote without a `begin ... end` around them, which
-  // LRM 13.4 gives the same sequential meaning as a begin-end group. They
-  // become one, with a scope of its own that nothing declares into -- slang
-  // records the enclosing construct as the declaring scope, and that is where
-  // the walk still is.
-  ProceduralScope scope(proc, frame, nullptr, hir::ProceduralScopeKind::kBlock);
+  // LRM 13.4 gives the same sequential meaning as a begin-end group. The
+  // sequence is a statement and not a declaration scope: what a task or an
+  // `initial` writes at its own level belongs to that construct, whose scope
+  // the walk is already in, and LRM 6.21 makes which scope a declaration sits
+  // in the difference between a name outside reaching it and not.
+  const hir::ProceduralScopeId scope = frame.SealScope(
+      OpenProceduralScope{
+          frame.ProceduralScopes().Declare(), hir::ProceduralScopeKind::kBlock,
+          std::nullopt});
 
   std::vector<hir::StmtId> kids;
   kids.reserve(list.list.size());
   for (const auto* child : list.list) {
-    auto child_stmt = proc.LowerStmt(*child, scope.Frame());
+    auto child_stmt = proc.LowerStmt(*child, frame);
     if (!child_stmt) return std::unexpected(std::move(child_stmt.error()));
     kids.push_back(
         frame.current_procedural_body->stmts.Add(*std::move(child_stmt)));
@@ -189,8 +193,7 @@ auto LowerStatementListStmt(
 
   return hir::Stmt{
       .label = std::nullopt,
-      .data =
-          hir::BlockStmt{.statements = std::move(kids), .scope = scope.Seal()},
+      .data = hir::BlockStmt{.statements = std::move(kids), .scope = scope},
       .span = span};
 }
 

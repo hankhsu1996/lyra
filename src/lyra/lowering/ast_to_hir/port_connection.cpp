@@ -159,8 +159,8 @@ auto InterfaceActualRoutes(
     if (!through.has_value()) {
       return PortConnectionUnsupported(
           span,
-          "an interface reached through a name another interface port did not "
-          "promise is not yet supported");
+          "an interface reached through another interface port by a path of "
+          "this shape is not yet supported");
     }
     std::vector<hir::RoutedPathRecipe> peers;
     peers.push_back(
