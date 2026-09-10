@@ -100,16 +100,27 @@ or incomplete relative to the contract.
       class -- a method is automatic (LRM 8.6) and LRM 9.6.2 disables a block inside an automatic
       task for every concurrent execution of it, so one object's `disable` ends the block in every
       other object running it -- and a package subroutine's is one for the program. Disabling a task
-      is the one form still waiting on the backend that has no exceptions, because enabling one
-      there is an await on a body that completes as a coroutine.
-  - [ ] A `disable` whose target another module instance, generate scope, or package declares --
-        `disable u.blk`, `disable g.blk`, `disable pkg::t` -- naming it by a hierarchical path (LRM
-        23.9). A located diagnostic until then. What a name reaches there is an object on the design
-        hierarchy, which every other cross-instance reference already reaches through one route
-        mechanism, so what is missing is the target's own place in that vocabulary rather than a
-        second way to address one; a package's target is on no such object at all and is reached by
-        name. Nothing about the model changes: which source a `disable` invalidates and what leaving
-        it does are already settled.
+      runs on both backends, the one without exceptions included, since a task enable there is an
+      await on a body that completes as a coroutine and the region is built from the body's own ways
+      out.
+  - [x] A `disable` whose target another module instance, generate scope, or interface declares --
+        `disable u.blk`, `disable c.tk`, `disable g[0].blk`, and the same through an interface
+        instance or an interface port -- naming it by a hierarchical path (LRM 23.9). What a name
+        reaches there is an object on the design hierarchy, which every other cross-instance
+        reference already reaches through one route mechanism, and the target took its own place in
+        that vocabulary rather than a second way to address one. Nothing about the model moved:
+        which source a `disable` invalidates and what leaving it does are as they were.
+
+        The same route serves a target in a generate block of the reader's own module, named from
+        the module body or from a sibling generate block, so what the statement can reach is decided
+        by the target it names and not by the position it is written from. A target the writing
+        body's own declaration scope declares needs no route and keeps the identity it always had.
+        Both backends carry it, because what a route seals here is an address.
+
+        `disable pkg::t` is not among them and is refused with a located diagnostic. A package has
+        no instance and so no object on the hierarchy a route walks, which is the same reason a
+        package variable is reached by name rather than by a route; what a target there would need
+        is that by-name form, and it is a target family of its own.
 
 - [ ] **Runtime vocabulary trails the model.** The execution code names the activation and its core
       in coroutine-implementation terms; the contract's vocabulary is activation / completion slot /

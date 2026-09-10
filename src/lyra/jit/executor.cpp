@@ -372,9 +372,12 @@ auto DefineRuntimeAbi(llvm::orc::LLJIT& jit)
   add("lyra_rt_sequence_make", &lyra_rt_sequence_make);
   add("lyra_rt_sequence_element", &lyra_rt_sequence_element);
   add("lyra_rt_register_signal", &lyra_rt_register_signal);
-  add("lyra_rt_get_signal", &lyra_rt_get_signal);
+  add("lyra_rt_find_signal", &lyra_rt_find_signal);
+  add("lyra_rt_find_subroutine", &lyra_rt_find_subroutine);
+  add("lyra_rt_register_disable_target", &lyra_rt_register_disable_target);
+  add("lyra_rt_find_disable_target", &lyra_rt_find_disable_target);
   add("lyra_rt_resolve_visible_child", &lyra_rt_resolve_visible_child);
-  add("lyra_rt_get_child", &lyra_rt_get_child);
+  add("lyra_rt_find_child", &lyra_rt_find_child);
   add("lyra_rt_packed_cell_alloc", &lyra_rt_packed_cell_alloc);
   add("lyra_rt_packed_cell_get", &lyra_rt_packed_cell_get);
   add("lyra_rt_packed_cell_initialize", &lyra_rt_packed_cell_initialize);
@@ -1215,25 +1218,53 @@ auto DescribeMembers(
   return descriptors;
 }
 
+// One scope class loaded into the JIT: the storage schema its instances
+// realize, and the runtime definition built from its compiled entries, which
+// owns a stable address every site constructing an instance references. The
+// schema is held here because the definition names it as plain data it does not
+// own.
+// One subroutine a scope answers a hierarchical name with: the identifier such
+// a name spells, and the symbol the body was emitted under.
+struct LoadedSubroutine {
+  std::string name;
+  std::string symbol;
+};
+
+// The by-name callable surface of one scope: what it declares, and the table
+// the runtime scans. It sits behind its own allocation for the reason the
+// definition beside it does -- the table names the identifiers rather than
+// copying them, so both must keep their addresses for as long as anything holds
+// the definition.
+struct PublishedSubroutines {
+  std::vector<LoadedSubroutine> declared;
+  std::vector<runtime::ScopeCallable> table;
+};
+
+struct LoadedScopeClass {
+  std::string name;
+  std::int8_t time_precision_power = 0;
+  std::vector<runtime::MemberStorageDescriptor> members;
+  std::unique_ptr<PublishedSubroutines> published;
+  std::unique_ptr<runtime::ScopeDefinition> definition;
+};
+
 // Fills one scope class's runtime definition from its JIT-compiled entries. The
 // lifecycle entries are ABI-compatible native functions over the generic scope
 // receiver; an entry the class has no work for is absent and keeps the runtime
-// no-op default. Looking a symbol up here materializes its module, which
-// resolves that module's definition references -- every definition symbol is
-// injected before any is filled, so those references find their address
-// regardless of fill order.
-void FillDefinition(
-    llvm::orc::LLJIT& jit, std::string_view class_name,
-    std::int8_t time_precision_power, runtime::ScopeDefinition& definition) {
+// no-op default. A subroutine answers a hierarchical name instead, so it is
+// named where it is asked for rather than by the position a lifecycle entry
+// sits at. Looking a symbol up here materializes its module, which resolves
+// that module's definition references -- every definition symbol is injected
+// before any is filled, so those references find their address regardless of
+// fill order.
+void FillDefinition(llvm::orc::LLJIT& jit, LoadedScopeClass& cls) {
   // An entry the scope has no work for was never emitted, and the session
   // reports exactly that: the name has no definition. Any other failure means
   // the entry does exist and could not be brought up -- typically a runtime
   // symbol its body calls that nothing defines -- which would leave the scope
   // silently missing a body it was compiled to have.
   auto lookup =
-      [&](std::string_view entry) -> std::optional<llvm::orc::ExecutorAddr> {
-    const std::string symbol =
-        std::string(class_name) + "." + std::string(entry);
+      [&](const std::string& symbol) -> std::optional<llvm::orc::ExecutorAddr> {
     auto found = jit.lookup(symbol);
     if (found) {
       return *found;
@@ -1247,32 +1278,43 @@ void FillDefinition(
         "jit executor: the scope entry '" + symbol +
         "' did not resolve: " + llvm::toString(std::move(reason)));
   };
-  definition.program.metadata.time_precision_power = time_precision_power;
-  if (auto entry = lookup("ResolveState")) {
+  const auto entry_of = [&](std::string_view name) {
+    return lookup(cls.name + "." + std::string(name));
+  };
+  runtime::ScopeDefinition& definition = *cls.definition;
+  definition.program.metadata.time_precision_power = cls.time_precision_power;
+  if (auto entry = entry_of("ResolveState")) {
     definition.program.resolve_state = entry->toPtr<runtime::ScopeEntry>();
   }
-  if (auto entry = lookup("InitializeState")) {
+  if (auto entry = entry_of("InitializeState")) {
     definition.program.initialize_state = entry->toPtr<runtime::ScopeEntry>();
   }
-  if (auto entry = lookup("CreateProcesses")) {
+  if (auto entry = entry_of("CreateProcesses")) {
     definition.program.create_processes = entry->toPtr<runtime::ScopeEntry>();
   }
-  if (auto entry = lookup("constructor")) {
+  if (auto entry = entry_of("constructor")) {
     definition.construct = entry->toPtr<runtime::ScopeEntry>();
   }
-}
 
-// One scope class loaded into the JIT: the storage schema its instances
-// realize, and the runtime definition built from its compiled entries, which
-// owns a stable address every site constructing an instance references. The
-// schema is held here because the definition names it as plain data it does not
-// own.
-struct LoadedScopeClass {
-  std::string name;
-  std::int8_t time_precision_power = 0;
-  std::vector<runtime::MemberStorageDescriptor> members;
-  std::unique_ptr<runtime::ScopeDefinition> definition;
-};
+  PublishedSubroutines& published = *cls.published;
+  published.table.reserve(published.declared.size());
+  for (const LoadedSubroutine& subroutine : published.declared) {
+    auto entry = lookup(subroutine.symbol);
+    if (!entry) {
+      throw InternalError(
+          "jit executor: the subroutine '" + subroutine.symbol +
+          "' the scope publishes has no compiled body");
+    }
+    published.table.emplace_back(
+        runtime::AbiStringRef{
+            subroutine.name.data(),
+            static_cast<std::uint32_t>(subroutine.name.size())},
+        entry->toPtr<runtime::ErasedScopeCallable>());
+  }
+  definition.program.subroutines = runtime::ScopeCallableTable{
+      published.table.data(),
+      static_cast<std::uint32_t>(published.table.size())};
+}
 
 // One cell a unit shares with the whole program, built here because the
 // runtime owns storage and generated code only ever holds its address.
@@ -1335,11 +1377,20 @@ auto LoadScopeClasses(
     // Every scope of a unit runs at the unit's precision: a scope inside a unit
     // has no timescale declaration of its own and takes the enclosing one (LRM
     // 3.14.2.3).
+    auto published = std::make_unique<PublishedSubroutines>();
+    published->declared.reserve(cls.subroutines.size());
+    for (const lir::PublishedSubroutine& subroutine : cls.subroutines) {
+      published->declared.push_back(
+          LoadedSubroutine{
+              .name = subroutine.name,
+              .symbol = unit.functions.Get(subroutine.body).name});
+    }
     loaded.push_back(
         LoadedScopeClass{
             .name = cls.name,
             .time_precision_power = metadata.time_precision_power,
             .members = *std::move(members),
+            .published = std::move(published),
             .definition = std::make_unique<runtime::ScopeDefinition>()});
     // A member whose type reaches an object of this unit is a child this class
     // owns; one reaching a value reaches storage instead. The type says which,
@@ -1806,9 +1857,8 @@ auto Execute(
           llvm::orc::absoluteSymbols(std::move(storage_symbols))),
       "define shared storage");
 
-  for (const LoadedScopeClass& entry : loaded) {
-    FillDefinition(
-        *jit, entry.name, entry.time_precision_power, *entry.definition);
+  for (LoadedScopeClass& entry : loaded) {
+    FillDefinition(*jit, entry);
   }
   RealizeClasses(*jit, objects);
   // Every closure has a body, so a name that does not resolve is not an absent

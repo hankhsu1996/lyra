@@ -2,6 +2,7 @@
 
 #include <cstdint>
 #include <span>
+#include <string_view>
 #include <variant>
 
 #include "lyra/support/net_resolution.hpp"
@@ -59,69 +60,88 @@ struct ScopeMetadata {
   }
 };
 
-// A DPI-C export entry as the table holds it: a code address with its prototype
+// A callable entry as a table holds it: a code address with its prototype
 // erased, so entries of every prototype share one table. It stays a function
 // pointer rather than becoming a data pointer, because converting between the
 // two is not something the language guarantees.
 //
 // An erased entry is only ever called after being restored to the exact type
 // its definition was generated with. Both the definition and the restoring call
-// site are generated from one foreign-linkage description, so the two cannot
+// site are generated from one description of the subroutine, so the two cannot
 // disagree -- which is what makes the erasure safe rather than conventional.
-using ErasedScopeExportEntry = void (*)();
+using ErasedScopeCallable = void (*)();
 
-// One DPI-C export this scope publishes (LRM 35.4): the program-global name the
-// foreign side calls, and the entry adapting that call to this scope's own
-// subroutine. One name reaches whichever scope the foreign call chain
-// established (LRM 35.5.3) -- including a different specialization of the scope
-// that declared it, whose subroutine is separately compiled code.
-struct ScopeExport {
+// One callable a scope answers for by name: the name a caller spells, and the
+// entry adapting that call to this scope's own subroutine. The caller supplies
+// the scope as the entry's first argument, the way every callable takes its
+// receiver.
+struct ScopeCallable {
   AbiStringRef name;
-  ErasedScopeExportEntry entry = nullptr;
+  ErasedScopeCallable entry = nullptr;
 
-  constexpr ScopeExport() = default;
-  constexpr ScopeExport(AbiStringRef name, ErasedScopeExportEntry entry)
+  constexpr ScopeCallable() = default;
+  constexpr ScopeCallable(AbiStringRef name, ErasedScopeCallable entry)
       : name(name), entry(entry) {
   }
 };
 
-// The exports a scope publishes, crossing the generated-runtime boundary as
-// plain data. Empty for a scope that declares none, which is nearly all of
-// them.
-struct ScopeExportTable {
-  const ScopeExport* data = nullptr;
+// A set of callables a scope answers for, crossing the generated-runtime
+// boundary as plain data. Empty for a scope that publishes none.
+struct ScopeCallableTable {
+  const ScopeCallable* data = nullptr;
   std::uint32_t size = 0;
 
-  constexpr ScopeExportTable() = default;
-  constexpr ScopeExportTable(const ScopeExport* data, std::uint32_t size)
+  constexpr ScopeCallableTable() = default;
+  constexpr ScopeCallableTable(const ScopeCallable* data, std::uint32_t size)
       : data(data), size(size) {
   }
 
-  [[nodiscard]] constexpr auto Entries() const -> std::span<const ScopeExport> {
+  [[nodiscard]] constexpr auto Entries() const
+      -> std::span<const ScopeCallable> {
     return {data, size};
   }
 };
 
+// The entry published under `name`, or null when the table holds none. One
+// scan, shared by every namespace a scope answers names in.
+[[nodiscard]] inline auto FindInCallableTable(
+    ScopeCallableTable table, std::string_view name) -> ErasedScopeCallable {
+  for (const ScopeCallable& published : table.Entries()) {
+    if (std::string_view{published.name.data, published.name.size} == name) {
+      return published.entry;
+    }
+  }
+  return nullptr;
+}
+
 // One scope's generated behavior plus its constant metadata. Every scope -- a
 // unit instance or a generate scope -- has one. The lifecycle entries run this
 // scope's own work only; the runtime owns child traversal and phase ordering.
+//
+// A scope holds one callable table per namespace it answers names in, because a
+// DPI-C export's name is the program-global C identifier the foreign side calls
+// (LRM 35.4) while a subroutine's is the SV identifier a hierarchical name
+// spells (LRM 23.6), and one declaration may carry both under different
+// spellings.
 struct ScopeProgram {
   ScopeMetadata metadata;
   ScopeEntry resolve_state = &ScopeNoOp;
   ScopeEntry initialize_state = &ScopeNoOp;
   ScopeEntry create_processes = &ScopeNoOp;
-  ScopeExportTable exports;
+  ScopeCallableTable exports;
+  ScopeCallableTable subroutines;
 
   constexpr ScopeProgram() = default;
   constexpr ScopeProgram(
       ScopeMetadata metadata, ScopeEntry resolve_state,
       ScopeEntry initialize_state, ScopeEntry create_processes,
-      ScopeExportTable exports)
+      ScopeCallableTable exports, ScopeCallableTable subroutines)
       : metadata(metadata),
         resolve_state(resolve_state),
         initialize_state(initialize_state),
         create_processes(create_processes),
-        exports(exports) {
+        exports(exports),
+        subroutines(subroutines) {
   }
 };
 

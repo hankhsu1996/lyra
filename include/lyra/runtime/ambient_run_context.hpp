@@ -63,7 +63,7 @@ auto CurrentExportScope() -> Scope*;
 // and lets svSetScope redirect only to a scope that declares it, and both are
 // obligations on the foreign side that nothing on this side can establish.
 auto FindExportEntry(Scope* scope, const char* subroutine)
-    -> ErasedScopeExportEntry;
+    -> ErasedScopeCallable;
 
 // Runs an exported SV task's body to completion and hands back its completion
 // payload. A foreign C caller of an exported task (LRM 35.8) is not a

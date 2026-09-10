@@ -479,25 +479,33 @@ enum class BuiltinFn : std::uint16_t {
   // Ancestor-scope resolution for a hierarchical reference whose route starts
   // above the referrer (LRM 23.6 / 23.8). Called once per reference in the
   // resolve phase, dispatching on the referrer's own scope handle.
-  // `kResolveRoot` climbs to the parent-less `$root` anchor; the descent
-  // suffix (`kGetChild` / `kGetSignal`) starts strictly below it.
-  // `kResolveVisibleChild` walks the enclosing chain and matches a child by
-  // the canonical instance name and per-axis index it carries as arguments;
-  // the descent suffix starts below the matched child.
+  // `kResolveRoot` climbs to the parent-less `$root` anchor; the descent suffix
+  // starts strictly below it. `kResolveVisibleChild` walks the enclosing chain
+  // and matches a child by the canonical instance name and per-axis index it
+  // carries as arguments; the descent suffix starts below the matched child.
   kResolveRoot,
   kResolveVisibleChild,
   // The scope handle's runtime ABI, each entry dispatching on it. A constructor
-  // registers a signal by name, looks a signal or child up by name, or hands
-  // a freshly-built child to its parent to own. `kRegisterSignal` and
-  // `kGetSignal` carry the signal name as a regular argument; `kGetChild`
-  // carries the lookup name and per-axis index array. `kAddOwnedChild`
-  // consumes the built child (a unique pointer) and returns the parent-owned
-  // handle -- the child's own `Segment()` supplies both the by-name lookup
-  // key and the LRM display form, so the parent never re-states them.
+  // registers a signal by name, or hands a freshly-built child to its parent to
+  // own; `kAddOwnedChild` consumes the built child (a unique pointer) and
+  // returns the parent-owned handle -- the child's own `Segment()` supplies
+  // both the by-name key and the LRM display form, so the parent never
+  // re-states them.
   kRegisterSignal,
   kAddOwnedChild,
-  kGetSignal,
-  kGetChild,
+  // A constructor also hands a scope what a `disable` naming it terminates
+  // (LRM 9.6.2), which is unnamed because a scope carries exactly one.
+  kRegisterDisableTarget,
+  // What a scope answers with, one entry per kind of declaration a hierarchical
+  // name may end at (LRM 23.6): the cell of a signal, the owned child at a name
+  // and per-axis index, the entry of a subroutine, or what a `disable` naming
+  // the scope terminates. Each is reached once in the resolve phase and each
+  // fails rather than answering with nothing, because the name was resolved to
+  // a declaration of that scope before anything was emitted for it.
+  kFindSignal,
+  kFindChild,
+  kFindSubroutine,
+  kFindDisableTarget,
   // Fork-join branch dispatch. Each entry spawns every branch as its own
   // coroutine and yields the parent's wait shape per LRM 9.3.2: `kForkWaitAll`
   // for `join` (resume after the last branch), `kForkWaitFirst` for
@@ -723,8 +731,8 @@ enum class BuiltinFn : std::uint16_t {
   // Typed parent navigation: `scope->Parent()` returns the enclosing scope as
   // the runtime `Scope` base pointer. An intra-unit upward member access casts
   // the result to the enclosing class and reads the member directly (the unit
-  // owns the enclosing class's layout); distinct from the by-name `kGetSignal`
-  // / `kGetChild` cross-unit navigation.
+  // owns the enclosing class's layout); distinct from the by-name cross-unit
+  // navigation above.
   kParent,
   // LRM 8.11 `this`: the handle referring to the object the running subroutine
   // was invoked on. A body reaches its own object through a borrowed pointer,

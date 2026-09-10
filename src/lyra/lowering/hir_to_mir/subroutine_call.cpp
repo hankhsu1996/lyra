@@ -38,9 +38,12 @@ namespace {
 // which is settled after the callee is planned. A callee taking no such
 // parameter has none of these.
 
-// A scope of this unit, reached by climbing that unit's own layout.
+// A scope of this unit, reached through that unit's own layout: `hops`
+// enclosing edges out, then one owned child per descent step. A scope that
+// encloses the caller is the empty descent.
 struct EnclosingScopeReceiver {
   mir::EnclosingHops hops;
+  std::span<const hir::OwnedChildRef> descent;
 };
 
 // The same scope, handed to a callee that dispatches on nothing: a
@@ -102,7 +105,18 @@ struct DispatchedCallee {
   mir::VirtualSlot slot;
 };
 
-using CalleeForm = std::variant<NamedCallee, DispatchedCallee>;
+// The callee is an entry a scope answered a name with, sealed with the route
+// that reached the object; nothing was published about it, so the call restores
+// the erased prototype from the interface the reference carries. `handle` names
+// the object, which leads the arguments as a receiver always does -- here as an
+// ordinary first parameter, an entry being a free function.
+struct EntryCallee {
+  hir::RoutedRef entry;
+  hir::ExternalCalleeInterface interface;
+  AmbientHandle handle;
+};
+
+using CalleeForm = std::variant<NamedCallee, DispatchedCallee, EntryCallee>;
 
 // The callee-interface facts a subroutine call needs, read uniformly however
 // the callee is named: from its HIR declaration when this unit holds one, and
@@ -260,8 +274,8 @@ auto PlanSubroutineCall(
   return std::visit(
       Overloaded{
           [&](const hir::StructuralSubroutineRef& ref) -> Planned {
-            const hir::SubroutineDecl& decl =
-                lowerer.LookupHirSubroutine(ref.hops, ref.subroutine);
+            const hir::SubroutineDecl& decl = lowerer.LookupHirSubroutine(
+                ref.hops, ref.descent, ref.subroutine);
             SubroutineCallee plan;
             plan.kind = decl.kind;
             plan.result_type = result_type;
@@ -269,9 +283,10 @@ auto PlanSubroutineCall(
                 CalleeFormalsOf(unit_lowerer, decl), result_type);
             plan.form = NamedCallee{
                 .callee = lowerer.TranslateStructuralSubroutine(
-                    ref.hops, ref.subroutine),
+                    ref.hops, ref.descent, ref.subroutine),
                 .handle = AmbientHandle{EnclosingScopeReceiver{
-                    .hops = mir::EnclosingHops{.value = ref.hops.value}}}};
+                    .hops = mir::EnclosingHops{.value = ref.hops.value},
+                    .descent = ref.descent}}};
             return plan;
           },
           [&](const hir::ExternalUnitSubroutineRef& ref) -> Planned {
@@ -308,6 +323,18 @@ auto PlanSubroutineCall(
                             ref.object, ref.callable)},
                 .handle =
                     AmbientHandle{SealedObject{.reference = ref.receiver}}};
+            return plan;
+          },
+          [&](const hir::OpaqueUnitMethodRef& ref) -> Planned {
+            SubroutineCallee plan;
+            plan.kind = ref.interface.kind;
+            plan.result_type = result_type;
+            plan.completion = BuildCompletionLayout(
+                CalleeFormalsOf(unit_lowerer, ref.interface), result_type);
+            plan.form = EntryCallee{
+                .entry = ref.entry,
+                .interface = ref.interface,
+                .handle = SealedObject{.reference = ref.receiver}};
             return plan;
           },
           [&](const hir::MethodCallRef& ref) -> Planned {
@@ -404,8 +431,33 @@ auto BuildAmbientHandle(
   return std::visit(
       Overloaded{
           [&](const EnclosingScopeReceiver& r) -> diag::Result<mir::ExprId> {
-            return BuildEnclosingScopeReceiver(
+            mir::ExprId nav = BuildEnclosingScopeReceiver(
                 frame, lowerer.Owner().Unit(), r.hops);
+            // Each descent step is the borrowed handle the scope standing here
+            // holds for that child: the same typed member access a route step
+            // makes, run from a receiver the climb already produced. The
+            // handle's type comes off the shape rather than the finished class,
+            // because a child's class is still being built while the scope that
+            // declares it lowers its own bodies.
+            const hir::StructuralHops climbed{
+                .value = static_cast<std::uint32_t>(r.hops.value)};
+            for (std::size_t i = 0; i < r.descent.size(); ++i) {
+              const StructuralScopeLowerer& standing =
+                  lowerer.ScopeAt(climbed, r.descent.first(i));
+              const OwnedChildAnchor anchor = standing.TranslateOwnedChild(
+                  hir::StructuralHops{.value = 0}, r.descent[i]);
+              const mir::ClassId owner = standing.ClassId();
+              nav = frame.current_block->exprs.Add(
+                  mir::MakeFieldAccessExpr(
+                      nav,
+                      mir::FieldTarget{
+                          .owner = owner, .slot = anchor.borrowed_handle},
+                      lowerer.Owner()
+                          .GetClassShape(owner)
+                          .fields.Get(anchor.borrowed_handle)
+                          .type));
+            }
+            return nav;
           },
           [&](const DeclaringScopeArgument& a) -> diag::Result<mir::ExprId> {
             return BuildEnclosingScopeReceiver(
@@ -485,6 +537,39 @@ auto EmitSubroutineCall(
                     mir::Virtual{
                         .receiver = *receiver_or, .slot = dispatched.slot},
                 .leading = std::nullopt};
+          },
+          [&](const EntryCallee& entry) -> diag::Result<ResolvedCallee> {
+            auto handle_or = BuildAmbientHandle(lowerer, frame, entry.handle);
+            if (!handle_or) {
+              return std::unexpected(std::move(handle_or.error()));
+            }
+            // The entry is the code address the route sealed; restoring it to
+            // the prototype the call was shaped from is what makes it callable,
+            // and both sides read that shape from one declaration.
+            const RoutedRefMeta& meta = lowerer.RoutedRefTarget(entry.entry.id);
+            const mir::ExprId erased =
+                block.exprs.Add(BuildStructuralFieldAccessExpr(
+                    frame, unit, mir::EnclosingHops{0}, meta.target));
+            std::vector<mir::TypeId> entry_params;
+            entry_params.reserve(entry.interface.params.size() + 1);
+            entry_params.push_back(unit.builtins.scope_ptr);
+            for (const hir::ExternalCalleeParam& formal :
+                 entry.interface.params) {
+              if (const std::optional<mir::TypeId> param = ParamTypeOf(
+                      unit_lowerer, formal.type, formal.direction)) {
+                entry_params.push_back(*param);
+              }
+            }
+            const mir::ExprId restored = block.exprs.Add(
+                mir::Expr{
+                    .data = mir::FunctionCastExpr{.operand = erased},
+                    .type = unit.types.Intern(
+                        mir::Type{mir::MachineFunctionType{
+                            .params = std::move(entry_params),
+                            .result = call_result_type}})});
+            return ResolvedCallee{
+                .callee = mir::Indirect{.code = restored},
+                .leading = *handle_or};
           }},
       plan.form);
   if (!resolved_or) return std::unexpected(std::move(resolved_or.error()));

@@ -637,6 +637,11 @@ auto LowerHirCallExpr(
                 "LowerHirCallExpr: a call on another unit's object is planned "
                 "before this dispatch");
           },
+          [](const hir::OpaqueUnitMethodRef&) -> diag::Result<mir::Expr> {
+            throw InternalError(
+                "LowerHirCallExpr: a call on another unit's object is planned "
+                "before this dispatch");
+          },
       },
       c.callee);
 }

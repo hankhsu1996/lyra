@@ -106,16 +106,19 @@ either route, and the routes are the whole of what differs. It holds for a value
 equally, because both are references, and neither the count of endpoints nor the storage they occupy
 is a reason to conflate two.
 
-### D5. A callable the declaring unit did not publish has nothing to compile against
+### D5. A callable the declaring unit did not publish is reached by name, not by a promise
 
 A subroutine a module declares is reached, if at all, by a hierarchical name the module never
 promised (LRM 23.6). Such a name has no signature to resolve against, so it resolves by name while
-the design elaborates -- and a by-name lookup that answers with a callable is a runtime capability
-that does not exist here. The call is refused, under a reason that names what is missing rather than
-the construct that hit it.
+the design elaborates -- which leaves the boundary exactly where the signature draws it: what a unit
+published is callable on its object through the route above, and what it did not is answered by the
+scope itself, from its own record of what it declares.
 
-That leaves the boundary exactly where the signature draws it: what a unit published is callable on
-its object, and what it did not is not reachable yet at all.
+This entry originally stopped at the refusal, because a by-name lookup answering with a callable was
+a runtime capability that did not exist.
+[hierarchical-callable-dispatch](hierarchical-callable-dispatch.md) adds it and states what it
+costs; nothing above changes, because the published arm is still what a promise buys and the two
+arms differ only in what answers the name.
 
 ### D6. Whether a method of another unit takes a receiver is the callee's declaration, carried down
 
@@ -187,8 +190,8 @@ targets became one.
 - Both backends realize the call by naming that symbol -- one composes it from the unit, the class,
   and the method, and the other lets the target language resolve the same three names -- so the two
   refuse the same designs for the same reasons.
-- A subroutine reached across a boundary the target unit published nothing across is refused with
-  its own reason, so the record says which of the two walls a case is held at.
+- A subroutine reached across a boundary the target unit published nothing across takes the other
+  arm rather than this one, so which of the two a call is on follows from the promise alone.
 - A scope holds one endpoint per distinct route rather than per target reached, so a module that
   names one interface both through its port and by hierarchical name holds two, and each follows the
   name that produced it.

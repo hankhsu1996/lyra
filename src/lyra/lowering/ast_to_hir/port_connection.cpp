@@ -52,13 +52,15 @@ auto PortConnectionUnsupported(diag::SourceSpan span, std::string message)
 auto PublishedMemberRecipe(
     const hir::OwnedChildStep& instance_step,
     hir::ExternalUnitObjectId child_object, hir::PublishedMemberId member,
-    hir::TypeId type) -> hir::RoutedPathRecipe {
+    hir::PublishedStorage storage, hir::TypeId type) -> hir::RoutedPathRecipe {
   return hir::RoutedPathRecipe{
       .head = hir::InUnitHead{.hops = {}},
       .steps = {hir::PathStep{instance_step}},
-      .leaf =
-          hir::SignatureMemberLeaf{.object = child_object, .member = member},
-      .type = type};
+      .leaf = hir::SignatureMemberLeaf{
+          .object = child_object,
+          .member = member,
+          .storage = std::move(storage),
+          .type = type}};
 }
 
 // The member and descent a port part reaches, or why no connection can be made
@@ -129,8 +131,7 @@ auto InterfaceActualRoutes(
     return hir::RoutedPathRecipe{
         .head = std::move(head),
         .steps = std::move(steps),
-        .leaf = hir::ScopeLeaf{},
-        .type = behind.element_type};
+        .leaf = hir::ScopeLeaf{.type = behind.element_type}};
   };
 
   const slang::ast::Expression* actual = conn.getExpression();
@@ -158,8 +159,8 @@ auto InterfaceActualRoutes(
     if (!through.has_value()) {
       return PortConnectionUnsupported(
           span,
-          "an interface reached through a name another interface port did not "
-          "promise is not yet supported");
+          "an interface reached through another interface port by a path of "
+          "this shape is not yet supported");
     }
     std::vector<hir::RoutedPathRecipe> peers;
     peers.push_back(
@@ -239,7 +240,8 @@ auto ConnectInterfacePort(
           .span = span,
           .kind = hir::InterfacePortConnection{
               .endpoint = PublishedMemberRecipe(
-                  instance_step, child_object, published.member, member_type),
+                  instance_step, child_object, published.member, member.storage,
+                  member_type),
               .peers = *std::move(peers)}});
   return {};
 }
@@ -343,7 +345,7 @@ auto ConnectElementPorts(
     // parent never reads the child's declaration to find out. The route ends at
     // the member, whatever part of it the port stands for.
     const hir::RoutedPathRecipe port_recipe = PublishedMemberRecipe(
-        instance_step, child_object, projection->member,
+        instance_step, child_object, projection->member, member.storage,
         unit_lowerer.ImportSignatureType(child_signature, member.type));
     // An input/output port reads the child cell during simulation, so it holds
     // a persistent routed reference; a `ref` port is bound once in the resolve
@@ -353,11 +355,7 @@ auto ConnectElementPorts(
           .cell = frame.Exprs().Add(ProjectPublishedPath(
               unit_lowerer, frame, child_signature, projection->path,
               unit_lowerer.MakeRoutedMemberRef(
-
-                  home_frame,
-                  hir::RoutedRefDecl{
-                      .recipe = port_recipe, .target_storage = member.storage},
-                  span),
+                  home_frame, hir::RoutedRefDecl{.recipe = port_recipe}, span),
               span))};
     };
 
@@ -403,9 +401,8 @@ auto ConnectElementPorts(
         // internal signal on any change.
         if (expr->kind != slang::ast::ExpressionKind::Assignment) {
           throw InternalError(
-              "ConnectElementPorts: output port connection expression is not "
-              "an "
-              "assignment");
+              "ConnectElementPorts: an output port connection is stated as an "
+              "assignment to the parent-side target");
         }
         if (internal == nullptr) {
           return PortConnectionUnsupported(

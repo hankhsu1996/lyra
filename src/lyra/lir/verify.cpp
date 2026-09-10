@@ -69,13 +69,14 @@ void VerifyInstr(
           [&](const PointerCastInstr& cast) {
             const std::optional<TypeId> operand_type =
                 OperandType(fn, cast.operand);
-            if (!operand_type || !unit.types.Get(*operand_type).Pointee()) {
+            const std::optional<AddressKind> from =
+                operand_type.has_value()
+                    ? unit.types.Get(*operand_type).Address()
+                    : std::nullopt;
+            if (!from || from != unit.types.Get(result_type).Address()) {
               throw InternalError(
-                  "lir verify: pointer cast of a non-reference operand");
-            }
-            if (!unit.types.Get(result_type).Pointee()) {
-              throw InternalError(
-                  "lir verify: pointer cast result is not a reference type");
+                  "lir verify: pointer cast is not between two addresses of "
+                  "one kind");
             }
           },
           [&](const IntCastInstr& cast) {

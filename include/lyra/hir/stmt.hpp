@@ -16,6 +16,7 @@
 #include "lyra/hir/procedural_scope.hpp"
 #include "lyra/hir/procedural_var.hpp"
 #include "lyra/hir/timing.hpp"
+#include "lyra/hir/value_ref.hpp"
 
 namespace lyra::hir {
 
@@ -307,15 +308,33 @@ struct WaitForkStmt {};
 // caller.
 struct DisableForkStmt {};
 
+// The scope a `disable` names, when it belongs to the declaration scope the
+// statement's own body does. The identity indexes that scope's registry, so
+// naming it needs no navigation at all -- the zero case of a reach, and the
+// only form available inside a class method or a package subroutine, neither of
+// which stands on the design hierarchy a route walks.
+struct DirectDisableTarget {
+  ProceduralScopeId scope;
+};
+
+// The scope a `disable` names elsewhere on the elaborated hierarchy (LRM 23.6):
+// a route to it, sealed once in the resolve phase like every other reference
+// that crosses an instance boundary. Which of the two forms a statement carries
+// says where the target lives and nothing about how the source spelled it.
+struct RoutedDisableTarget {
+  RoutedRef target;
+};
+
+using DisableTarget = std::variant<DirectDisableTarget, RoutedDisableTarget>;
+
 // LRM 9.6.2 `disable <named block or task>`: terminate the activity of the
-// named scope so execution resumes at the statement following it. `target` is a
-// typed reference to that scope's declaration -- selected by static identity,
-// so the target may sit in another process, and it indexes the registry of the
-// declaration scope this body belongs to. How the termination is realized --
-// the scope's runtime endpoint, the resumption gate, the unwind -- is
-// synthesized at HIR-to-MIR, not carried here.
+// named scope so execution resumes at the statement following it. The target is
+// selected by static declaration identity, so it may sit in another process and
+// in another instance. How the termination is realized -- the scope's runtime
+// endpoint, the resumption gate, the unwind -- is synthesized at HIR-to-MIR,
+// not carried here.
 struct DisableStmt {
-  ProceduralScopeId target;
+  DisableTarget target;
 };
 
 using StmtData = std::variant<

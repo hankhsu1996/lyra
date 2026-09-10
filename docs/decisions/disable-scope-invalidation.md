@@ -5,7 +5,8 @@ task, including nested scopes, tasks called from within a scope, and activities 
 Both backends now reach the cases that need a second activation as well, since a fork branch and a
 call into a task both lower on the execution backend. A target declared in a class method, a static
 method, or a package subroutine is reached the same way, its source living where that declaration
-scope keeps static-lifetime state.
+scope keeps static-lifetime state, and one declared anywhere else on the design hierarchy is reached
+by a hierarchical name in every direction the language admits.
 
 ## Why this decision matters
 
@@ -199,11 +200,13 @@ Three interface contracts carry the model into the implementation and are where 
    resumption boundary, each awaited call's return, and a spawned branch's entry -- reading the
    process's enclosing targets with the generation each captured on entry.
 
-One case is not yet reached: a disable whose target another module instance, generate scope, or
-package declares, which needs the hierarchical path to reach that source; it is a located diagnostic
-until then. A target the statement's own declaration scope declares needs no such reach, whichever
-kind of scope that is, and a scope's identity is only meaningful against that scope's own registry
--- which is what the statement tests before it may carry one.
+A target the statement's own declaration scope declares needs no reach at all: a scope's identity is
+only meaningful against that scope's own registry, and holding it is the whole of naming the target.
+That is the only form available to a class method or a package subroutine, neither of which stands
+on the design hierarchy. A target anywhere else on that hierarchy is reached the way every other
+name that leaves a scope is -- a route, sealed once during elaboration
+(`hierarchical-callable-dispatch.md` D5) -- so what a `disable` can name is decided by the route and
+not by which side of the writer's own declaration chain the target sits on.
 
 ## Cross-references
 

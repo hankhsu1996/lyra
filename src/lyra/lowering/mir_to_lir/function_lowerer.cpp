@@ -255,8 +255,10 @@ auto ExternalMethodSymbol(
       .symbol = std::format("{}.{}.{}", unit_name, class_name, method_name)};
 }
 
-auto LowerCallTarget(
-    UnitLowerer& unit, const mir::Callee& callee, lir::TypeId result)
+}  // namespace
+
+auto FunctionLowerer::LowerCallTarget(
+    const mir::Block& block, const mir::Callee& callee, lir::TypeId result_type)
     -> diag::Result<lir::CallTarget> {
   return std::visit(
       Overloaded{
@@ -265,7 +267,7 @@ auto LowerCallTarget(
             if (d.qualification.has_value()) {
               qualifier = std::visit(
                   Overloaded{[&](const mir::TypeQualifier& q) -> lir::TypeId {
-                    return unit.TranslateType(q.type);
+                    return unit_->TranslateType(q.type);
                   }},
                   *d.qualification);
             }
@@ -279,7 +281,7 @@ auto LowerCallTarget(
                             "lowerable to LIR");
                       }
                       return lir::CallTarget{lir::FunctionTarget{
-                          .function = unit.MethodFunction(t.owner, t.slot)}};
+                          .function = unit_->MethodFunction(t.owner, t.slot)}};
                     },
                     [&](const mir::ForeignSymbolTarget& f)
                         -> diag::Result<lir::CallTarget> {
@@ -319,12 +321,15 @@ auto LowerCallTarget(
                 d.target);
           },
           [&](const mir::Construct&) -> diag::Result<lir::CallTarget> {
-            return lir::CallTarget{lir::ConstructTarget{.result = result}};
+            return lir::CallTarget{lir::ConstructTarget{.result = result_type}};
           },
-          [](const mir::Indirect&) -> diag::Result<lir::CallTarget> {
-            return Unsupported(
-                "mir_to_lir: a call through a computed code address is not yet "
-                "lowerable to LIR");
+          [&](const mir::Indirect& i) -> diag::Result<lir::CallTarget> {
+            auto code = LowerExpr(block, i.code);
+            if (!code) {
+              return std::unexpected(std::move(code.error()));
+            }
+            return lir::CallTarget{
+                lir::IndirectTarget{.callee = *std::move(code)}};
           },
           // Which body runs is the receiving value's to decide, so what the
           // call states is where to look rather than what to call. The behavior
@@ -345,12 +350,13 @@ auto LowerCallTarget(
             const bool through_an_interface = std::visit(
                 Overloaded{
                     [&](const mir::LocalVirtualSlot& slot) {
-                      return unit.Mir()
+                      return unit_->Mir()
                           .GetClass(slot.owner_class)
                           .is_interface_class;
                     },
                     [&](const mir::ExternalVirtualSlot& slot) {
-                      return unit.PromisedClass(slot.unit_name, slot.class_name)
+                      return unit_
+                          ->PromisedClass(slot.unit_name, slot.class_name)
                           .is_interface_class;
                     }},
                 v.slot);
@@ -362,11 +368,11 @@ auto LowerCallTarget(
             const lir::DispatchRef method = std::visit(
                 Overloaded{
                     [&](const mir::LocalVirtualSlot& slot) {
-                      return unit.MethodRef(slot.owner_class, slot.slot);
+                      return unit_->MethodRef(slot.owner_class, slot.slot);
                     },
                     [&](const mir::ExternalVirtualSlot& slot) {
                       return lir::DispatchRef{
-                          .introduced_by = unit.ExternalClassValueType(
+                          .introduced_by = unit_->ExternalClassValueType(
                               slot.unit_name, slot.class_name),
                           .ordinal = lir::DispatchOrdinal{slot.ordinal.value}};
                     }},
@@ -375,8 +381,6 @@ auto LowerCallTarget(
           }},
       callee);
 }
-
-}  // namespace
 
 FunctionLowerer::FunctionLowerer(
     UnitLowerer& unit, const mir::CallableCode& code, std::string name)
@@ -1847,7 +1851,7 @@ auto FunctionLowerer::LowerCall(
   if (!args) {
     return std::unexpected(std::move(args.error()));
   }
-  return EmitCall(call, *std::move(args), unit_->TranslateType(type));
+  return EmitCall(block, call, *std::move(args), unit_->TranslateType(type));
 }
 
 auto FunctionLowerer::EnterCoroutine(
@@ -1868,7 +1872,7 @@ auto FunctionLowerer::EnterCoroutine(
   // Making an execution out of that frame is the separate step, and it borrows
   // the environment the body reads -- a receiver, which outlives every
   // execution reaching its members.
-  auto frame = EmitCall(call, *std::move(args), result_type);
+  auto frame = EmitCall(block, call, *std::move(args), result_type);
   if (!frame) {
     return std::unexpected(std::move(frame.error()));
   }
@@ -1882,9 +1886,10 @@ auto FunctionLowerer::EnterCoroutine(
 }
 
 auto FunctionLowerer::EmitCall(
-    const mir::CallExpr& call, std::vector<lir::Operand> args,
-    lir::TypeId result_type) -> diag::Result<lir::Operand> {
-  auto target = LowerCallTarget(*unit_, call.callee, result_type);
+    const mir::Block& block, const mir::CallExpr& call,
+    std::vector<lir::Operand> args, lir::TypeId result_type)
+    -> diag::Result<lir::Operand> {
+  auto target = LowerCallTarget(block, call.callee, result_type);
   if (!target) {
     return std::unexpected(std::move(target.error()));
   }
@@ -1912,7 +1917,7 @@ auto FunctionLowerer::LowerRegistration(
   if (!args) {
     return std::unexpected(std::move(args.error()));
   }
-  return EmitCall(call, *std::move(args), unit_->MachineBoolType());
+  return EmitCall(block, call, *std::move(args), unit_->MachineBoolType());
 }
 
 auto FunctionLowerer::LowerCoroutineAwait(
@@ -2700,10 +2705,14 @@ auto FunctionLowerer::LowerExpr(const mir::Block& block, mir::ExprId id)
             // read.
             return *park;
           },
-          [](const mir::FunctionCastExpr&) -> diag::Result<lir::Operand> {
-            return Unsupported(
-                "mir_to_lir: naming a code address as another function type is "
-                "not yet lowerable to LIR");
+          [&](const mir::FunctionCastExpr& c) -> diag::Result<lir::Operand> {
+            auto operand = LowerExpr(block, c.operand);
+            if (!operand) {
+              return operand;
+            }
+            return Emit(
+                unit_->TranslateType(type),
+                lir::PointerCastInstr{.operand = *std::move(operand)});
           },
       },
       expr.data);

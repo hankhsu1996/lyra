@@ -72,15 +72,27 @@ struct HirCompilation {
 auto LowerCompilationToHir(const LowerCompilationFacts& facts)
     -> diag::Result<HirCompilation>;
 
-// A top-level block is an auto-promoted, uninstantiated module. These names
-// are a subset of the compiled units: a unit reached only through
-// instantiation is compiled but is not a top.
+// A top-level block is an auto-promoted, uninstantiated module, named twice
+// because the two names answer different questions and coincide only when the
+// module carries no parameters.
+struct TopLevelUnit {
+  // What the design's hierarchy shows for this top. Nothing instantiates a
+  // top, so it stands under its own module identifier (LRM 23.3), and that is
+  // the name `%m` prints and an upward hierarchical name matches.
+  std::string instance_name;
+  // The compiled unit it is an instance of. One module compiles to one unit
+  // per distinct parameterization, so this is the artifact's name.
+  std::string unit_name;
+};
+
+// The design's tops, a subset of the compiled units: a unit reached only
+// through instantiation is compiled but is not a top.
 //
 // A top is where the design begins, so nothing instantiates it and its ports
 // are connected to nothing. Two kinds of port may not be left unconnected -- an
 // interface port (LRM 23.3.3.4) and a `ref` port (LRM 23.3.3.2) -- so a module
 // declaring either is a design element and not a design.
-auto TopLevelUnitNames(const LowerCompilationFacts& facts)
-    -> diag::Result<std::vector<std::string>>;
+auto TopLevelUnits(const LowerCompilationFacts& facts)
+    -> diag::Result<std::vector<TopLevelUnit>>;
 
 }  // namespace lyra::lowering::ast_to_hir

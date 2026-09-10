@@ -10,8 +10,13 @@
 // contributes nothing. A named generate block instance contributes its name
 // as any other scope does, and where a loop generate construct made it, that
 // name carries in square brackets the value the loop index held when the
-// instance was elaborated (LRM 21.2.1.5, 23.6, 9.3.5, 27.5, 27.4).
+// instance was elaborated (LRM 21.2.1.5, 23.6, 9.3.5, 27.5, 27.4). What a
+// module's parameters are set to is no part of any of that, so a parameterized
+// module contributes the name it was declared or instantiated under like any
+// other, at the top level as well as below it.
 module Leaf;
+  parameter int Depth = 3;
+
   string in_instance;
   string in_task;
 
@@ -26,6 +31,8 @@ module Leaf;
 endmodule
 
 module Top;
+  parameter int Width = 8;
+
   string at_top;
   string in_named;
   string in_nested;

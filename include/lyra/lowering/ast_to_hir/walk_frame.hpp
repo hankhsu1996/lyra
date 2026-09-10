@@ -141,6 +141,11 @@ struct WalkFrame {
   base::Registry<hir::ProceduralScopeDecl, hir::ProceduralScopeId>*
       current_procedural_scopes = nullptr;
 
+  // The frontend's identity for that declaration scope. The registry above sits
+  // inside a scope arena that reallocates, so its address identifies nothing
+  // beyond the moment it is taken; this outlives the whole lowering.
+  const slang::ast::Scope* procedural_scope_owner = nullptr;
+
   // The current procedural-body write target for statement and local handlers.
   // Set when a ProcessLowerer constructs its body on the stack and entered via
   // `WithProceduralBody`. Null outside a process or subroutine body.
@@ -250,13 +255,28 @@ struct WalkFrame {
 
   // Points the frame at the declaration scope that owns the procedural scopes
   // of the bodies lowered below it. Called on entry to a structural scope and
-  // on entry to a class, the two declaration scopes that own bodies.
+  // on entry to a class, the two declaration scopes that own bodies. `owner`
+  // names that scope as the frontend does, which is what a body compares
+  // against before it may carry an identity minted elsewhere.
   [[nodiscard]] auto WithProceduralScopeOwner(
+      const slang::ast::Scope* owner,
       base::Registry<hir::ProceduralScopeDecl, hir::ProceduralScopeId>* scopes)
       const -> WalkFrame {
     WalkFrame next = *this;
+    next.procedural_scope_owner = owner;
     next.current_procedural_scopes = scopes;
     return next;
+  }
+
+  // The declaration scope whose registry `ProceduralScopes()` is. A body
+  // reaching for a scope identity minted elsewhere asks whether this is the
+  // scope that minted it.
+  [[nodiscard]] auto ProceduralScopeOwner() const -> const slang::ast::Scope& {
+    if (procedural_scope_owner == nullptr) {
+      throw InternalError(
+          "WalkFrame::ProceduralScopeOwner: no procedural-scope write target");
+    }
+    return *procedural_scope_owner;
   }
 
   // Pushes a new structural scope onto the chain and makes it the write

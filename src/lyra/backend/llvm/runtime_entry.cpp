@@ -290,14 +290,16 @@ auto MemberStorageKindOf(
             return over_values(net.value, MemberStorageKind::kResolvedNet);
           },
           // A driver is a handle on a contribution the net owns and issues (LRM
-          // 6.5); a reference and a pointer name storage living elsewhere; and
-          // a declaration standing for several objects keeps a handle on the
-          // sequence of them, built once where the owner is built. None owns
+          // 6.5); a reference and a pointer name storage living elsewhere; a
+          // declaration standing for several objects keeps a handle on the
+          // sequence of them, built once where the owner is built; and a code
+          // address names a body that outlives every owner there is. None owns
           // what it names.
           [&](const lir::DriverType& t) { return borrowed(t); },
           [&](const lir::RefType& t) { return borrowed(t); },
           [&](const lir::PointerType& t) { return borrowed(t); },
           [&](const lir::VectorType& t) { return borrowed(t); },
+          [&](const lir::MachineFunctionType& t) { return borrowed(t); },
           [&](const lir::RuntimeLibraryType& library)
               -> std::optional<MemberStorageKind> {
             switch (library.kind) {
@@ -718,8 +720,11 @@ auto EntryNamingOf(support::BuiltinFn fn) -> EntryNaming {
     case support::BuiltinFn::kResolveVisibleChild:
     case support::BuiltinFn::kRegisterSignal:
     case support::BuiltinFn::kAddOwnedChild:
-    case support::BuiltinFn::kGetSignal:
-    case support::BuiltinFn::kGetChild:
+    case support::BuiltinFn::kRegisterDisableTarget:
+    case support::BuiltinFn::kFindSignal:
+    case support::BuiltinFn::kFindSubroutine:
+    case support::BuiltinFn::kFindChild:
+    case support::BuiltinFn::kFindDisableTarget:
     case support::BuiltinFn::kForkWaitAll:
     case support::BuiltinFn::kForkWaitFirst:
     case support::BuiltinFn::kSpawnAll:

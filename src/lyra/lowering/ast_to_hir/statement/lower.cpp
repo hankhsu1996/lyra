@@ -156,6 +156,43 @@ auto LowerExpressionStmt(
       .label = std::nullopt, .data = hir::ExprStmt{.expr = id}, .span = span};
 }
 
+// LRM 9.6.2 `disable <named block or task>`. A scope's identity indexes the
+// registry of the declaration scope that declared it, so a target this body
+// shares that scope with is named outright. Anything else is somewhere else on
+// the hierarchy and is reached the way every other name that leaves this scope
+// is (LRM 23.6).
+auto LowerDisableStmt(
+    ProcessLowerer& proc, WalkFrame frame,
+    const slang::ast::DisableStatement& dis, diag::SourceSpan span)
+    -> diag::Result<hir::Stmt> {
+  // A disable names a block or a task and slang rejects every other target, so
+  // what arrives here always denotes a procedural scope.
+  if (dis.target.kind != slang::ast::ExpressionKind::ArbitrarySymbol) {
+    throw InternalError(
+        "LowerDisableStmt: a disable target is not a symbol reference");
+  }
+  const slang::ast::Symbol& target =
+      *dis.target.as<slang::ast::ArbitrarySymbolExpression>().symbol;
+
+  const auto minted = proc.Owner().LookupMintedProceduralScope(target);
+  if (minted.has_value() && minted->owner == &frame.ProceduralScopeOwner()) {
+    return hir::Stmt{
+        .label = std::nullopt,
+        .data =
+            hir::DisableStmt{
+                .target = hir::DirectDisableTarget{.scope = minted->scope}},
+        .span = span};
+  }
+  auto routed = proc.Owner().MakeRoutedDisableTargetRef(frame, target, span);
+  if (!routed) return std::unexpected(std::move(routed.error()));
+  return hir::Stmt{
+      .label = std::nullopt,
+      .data =
+          hir::DisableStmt{
+              .target = hir::RoutedDisableTarget{.target = *routed}},
+      .span = span};
+}
+
 // LRM 13.4.1 `return [expr];`. A non-void function carries the returned
 // expression; void functions and tasks use the bare form, leaving `value`
 // absent.
@@ -202,34 +239,9 @@ auto LowerStatement(
       return hir::Stmt{
           .label = std::nullopt, .data = hir::DisableForkStmt{}, .span = span};
 
-    case slang::ast::StatementKind::Disable: {
-      const auto& dis = stmt.as<slang::ast::DisableStatement>();
-      // A disable names a block or a task (LRM 9.6.2) and slang rejects every
-      // other target, so what arrives here always denotes a procedural scope.
-      if (dis.target.kind != slang::ast::ExpressionKind::ArbitrarySymbol) {
-        throw InternalError(
-            "LowerStatement: a disable target is not a symbol reference");
-      }
-      const slang::ast::Symbol& target =
-          *dis.target.as<slang::ast::ArbitrarySymbolExpression>().symbol;
-      // A scope's identity indexes the registry of the declaration scope that
-      // declared it, so it says nothing against another one. A target this body
-      // shares no declaration scope with is reached by a hierarchical path,
-      // which this statement does not yet route.
-      const std::optional<hir::ProceduralScopeId> scope =
-          proc.Owner().LookupProceduralScopeIn(
-              target, frame.ProceduralScopes());
-      if (!scope.has_value()) {
-        return diag::Fail(
-            span, diag::DiagCode::kUnsupportedStatementForm,
-            "disable of a block or task declared outside the enclosing module, "
-            "class, or package is not yet supported");
-      }
-      return hir::Stmt{
-          .label = std::nullopt,
-          .data = hir::DisableStmt{.target = *scope},
-          .span = span};
-    }
+    case slang::ast::StatementKind::Disable:
+      return LowerDisableStmt(
+          proc, frame, stmt.as<slang::ast::DisableStatement>(), span);
 
     case slang::ast::StatementKind::Timed:
       return LowerTimedStmt(

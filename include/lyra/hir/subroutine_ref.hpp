@@ -3,6 +3,7 @@
 #include <optional>
 #include <string>
 #include <variant>
+#include <vector>
 
 #include "lyra/hir/class_ref.hpp"
 #include "lyra/hir/enum_method.hpp"
@@ -10,6 +11,7 @@
 #include "lyra/hir/external_callee.hpp"
 #include "lyra/hir/external_unit_object.hpp"
 #include "lyra/hir/foreign_import_id.hpp"
+#include "lyra/hir/owned_child_ref.hpp"
 #include "lyra/hir/published_callable.hpp"
 #include "lyra/hir/sampled_history.hpp"
 #include "lyra/hir/structural_hops.hpp"
@@ -21,10 +23,19 @@
 
 namespace lyra::hir {
 
-// Calls a structural subroutine declared in the unit (or one of its
-// enclosing scopes, reached through `hops`).
+// Calls a subroutine this compilation unit declares, on the object of the scope
+// that declares it. `hops` climbs to the nearest scope enclosing both the
+// reader and the callee, `descent` steps back down from there into the
+// declaring scope, and `subroutine` is that scope's own identity for it -- a
+// registry position, so it means nothing without the scope the route lands on.
+//
+// A climb alone reaches only a subroutine of an enclosing scope. One this unit
+// declares in a generate block is reached by descending as well (LRM 27.4,
+// 23.6), which is why the reference carries both halves and not a distance:
+// out and in are separate axes and no single number is both.
 struct StructuralSubroutineRef {
   StructuralHops hops;
+  std::vector<OwnedChildRef> descent;
   StructuralSubroutineId subroutine;
 };
 
@@ -187,6 +198,25 @@ struct ExternalUnitMethodRef {
   PublishedCallableId callable;
 };
 
+// Calls a subroutine another compilation unit declares in its own body, on one
+// instance of that unit reached by a hierarchical name the declaring unit never
+// promised (LRM 23.6, 23.8.1). A module's signature is its parameters and its
+// ports, so a subroutine of one was promised to nobody and there is nothing to
+// compile against; what crosses is the name, and the scope answers it with its
+// own entry.
+//
+// Two routes, one walk: `receiver` reaches the object and `entry` reaches the
+// callable on it, so both seal in the resolve phase and the call itself walks
+// nothing. `interface` is what the call passes and awaits, recomputed from the
+// callee's declaration -- the same declaration the entry is generated from,
+// which is what lets a prototype be erased between them without either side
+// being able to disagree about it.
+struct OpaqueUnitMethodRef {
+  RoutedRef receiver;
+  RoutedRef entry;
+  ExternalCalleeInterface interface;
+};
+
 // Calls a static class method (LRM 8.10). Distinct from `MethodCallRef`
 // because a static method has no receiver -- neither an explicit handle, the
 // enclosing method's own object, nor a super qualifier -- and encoding it as a
@@ -210,6 +240,6 @@ using SubroutineRef = std::variant<
     StructuralSubroutineRef, MethodCallRef, StaticMethodCallRef,
     SystemSubroutineRef, BuiltinMethodRef, EnumMethodRef, PastValueRef,
     ValueChangeRef, ForeignImportRef, ImportedMethodRef,
-    ExternalUnitSubroutineRef, ExternalUnitMethodRef>;
+    ExternalUnitSubroutineRef, ExternalUnitMethodRef, OpaqueUnitMethodRef>;
 
 }  // namespace lyra::hir

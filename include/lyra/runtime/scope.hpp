@@ -18,6 +18,8 @@
 
 namespace lyra::runtime {
 
+class CancellationTarget;
+
 // A node in the one canonical object tree. Every constructed
 // SystemVerilog scope -- a module instance, a generate block, the
 // implicit `$root` -- is a Scope. It carries the scope's structural
@@ -51,8 +53,9 @@ class Scope {
   [[nodiscard]] auto DisplaySegment() const -> std::string;
 
   // The base label of `Segment()`. Carries the source-level identifier
-  // without any per-dimension index decoration; the canonical key both
-  // `GetChild` and the upward visible-child climb use to match a child.
+  // without any per-dimension index decoration; the canonical key every
+  // by-name reach for a child matches on, downward and on the upward climb
+  // alike.
   [[nodiscard]] auto Name() const -> std::string_view;
 
   // Joins each ancestor's display segment with `.`, ordered from the outermost
@@ -77,6 +80,13 @@ class Scope {
   // string literal.
   void RegisterSignal(std::string_view name, void* address);
 
+  // Records, during construction, what a `disable` naming this scope terminates
+  // (LRM 9.6.2). The cell lives wherever the scope's other static-lifetime
+  // state lives, so what the scope keeps is its address. A scope has exactly
+  // one, which is why this takes no name: reaching the scope is the whole of
+  // naming what a `disable` there ends.
+  void RegisterDisableTarget(CancellationTarget* target);
+
   // Wires `child` into this scope's physical containment edge: sets
   // `child.parent_` to `this` and places `child` in the attached-children
   // relation (used by elaboration walks, dump, ForEachChild, and the
@@ -88,23 +98,33 @@ class Scope {
   // Whether this scope carries a source-visible SV name. An unnamed
   // begin/end (synthetic anonymous scope) is emitted with an empty
   // `HierarchySegment` base name; every other scope kind gets its SV
-  // identifier as the base name. `GetChild` recurses through
-  // non-addressable children so peer by-name lookup transparently walks
-  // past them (LRM 23 hierarchical-name semantics).
+  // identifier as the base name. A by-name reach recurses through
+  // non-addressable children, so it walks past them transparently (LRM 23
+  // hierarchical-name semantics).
   [[nodiscard]] auto IsAddressable() const -> bool {
     return !segment_.BaseName().empty();
   }
 
-  // Returns the address of the signal registered under `name`, or the owned
-  // child registered at `name` with `indices`; nullptr if none. A cross-unit
-  // referrer reaches a target by name because it knows the target's type but
-  // not its layout; the owner, which knows its layout, answered at construction
-  // by registering the address. Resolution runs once at construction, never on
-  // the simulation path.
-  [[nodiscard]] auto GetSignal(std::string_view name) -> void*;
-  [[nodiscard]] auto GetChild(
+  // What this scope answers with: the cell of a signal it registered, the owned
+  // child at that name and indices, the entry of a subroutine it declares with
+  // its prototype erased, or what a `disable` naming this scope terminates. A
+  // cross-unit referrer reaches a target this way because it knows the target's
+  // type but not its layout; the owner, which knows its layout, answered at
+  // construction by registering it. Resolution runs once at construction, never
+  // on the simulation path.
+  //
+  // All four throw where the scope has no such answer. What reaches here was
+  // resolved to a declaration of this scope before anything was emitted for it,
+  // so absence is not a state a legal program reaches -- and handing back
+  // nothing instead would put the failure at whatever dereferences the answer,
+  // which names neither the scope nor what was asked of it.
+  [[nodiscard]] auto FindSignal(std::string_view name) -> void*;
+  [[nodiscard]] auto FindChild(
       std::string_view name, std::span<const lyra::value::PackedArray> indices)
       -> Scope*;
+  [[nodiscard]] auto FindSubroutine(std::string_view name)
+      -> ErasedScopeCallable;
+  [[nodiscard]] auto FindDisableTarget() -> CancellationTarget*;
 
   // Walks the enclosing chain (starting at `this`) and at each level scans
   // the level's children for one whose canonical instance name plus indices
@@ -180,19 +200,34 @@ class Scope {
     void* address;
   };
 
+  // The one place a name is looked for rather than reached: the climb tries
+  // each enclosing level in turn, so "not at this level" is an answer there
+  // and nowhere else.
+  [[nodiscard]] auto LookupChild(
+      std::string_view name, std::span<const lyra::value::PackedArray> indices)
+      -> Scope*;
+
+  // One message shape for every name this scope cannot answer.
+  [[nodiscard]] auto NoSuchName(
+      std::string_view what, std::string_view name) const -> std::string;
+
   Scope* parent_ = nullptr;
   HierarchySegment segment_;
   // Borrowed. The class this scope was built from, set at construction.
   const ScopeDefinition* definition_ = nullptr;
   // Physical containment: every runtime child scope this object owns
   // appears here once, in attach order. Includes anonymous scopes
-  // (unnamed begin/ends). `GetChild` scans this and recurses into
-  // anonymous children so SV-visible lookup ignores synthetic wrappers.
+  // (unnamed begin/ends). A by-name reach scans this and recurses into
+  // anonymous children, so SV-visible lookup ignores synthetic wrappers.
   std::vector<std::unique_ptr<Scope>> attached_children_;
   // By-name interface this scope answers cross-unit signal queries from.
   // Filled during construction; scanned only at construction-time
   // resolution, never on the simulation path.
   std::vector<SignalEntry> signals_;
+  // Borrowed. What a `disable` naming this scope terminates (LRM 9.6.2), set
+  // during construction by whoever owns the cell. Null on a scope the source
+  // named nothing, which no hierarchical name reaches either.
+  CancellationTarget* disable_target_ = nullptr;
   // LRM 18.14.1 puts one on each module, interface, and program instance. A
   // generate scope is none of those and nothing draws from the one it carries.
   InitializationRng initialization_seeds_;

@@ -1,6 +1,7 @@
 #include "lyra/runtime/scope.hpp"
 
 #include <cstddef>
+#include <format>
 #include <memory>
 #include <ranges>
 #include <span>
@@ -38,20 +39,59 @@ void Scope::ForEachChild(const ChildVisitor& fn) {
   }
 }
 
+auto Scope::NoSuchName(std::string_view what, std::string_view name) const
+    -> std::string {
+  return std::format(
+      "hierarchical name reaches no {} '{}' on '{}' (LRM 23.6)", what, name,
+      HierarchicalPath().CStr());
+}
+
 void Scope::RegisterSignal(std::string_view name, void* address) {
   signals_.push_back(SignalEntry{.name = name, .address = address});
 }
 
-auto Scope::GetSignal(std::string_view name) -> void* {
+void Scope::RegisterDisableTarget(CancellationTarget* target) {
+  disable_target_ = target;
+}
+
+auto Scope::FindSignal(std::string_view name) -> void* {
   for (const SignalEntry& signal : signals_) {
     if (signal.name == name) {
       return signal.address;
     }
   }
-  return nullptr;
+  throw SimulationError(NoSuchName("signal", name));
 }
 
-auto Scope::GetChild(
+auto Scope::FindChild(
+    std::string_view name, std::span<const lyra::value::PackedArray> indices)
+    -> Scope* {
+  if (Scope* child = LookupChild(name, indices)) {
+    return child;
+  }
+  throw SimulationError(NoSuchName("scope", name));
+}
+
+auto Scope::FindSubroutine(std::string_view name) -> ErasedScopeCallable {
+  if (ErasedScopeCallable entry =
+          FindInCallableTable(definition_->program.subroutines, name)) {
+    return entry;
+  }
+  throw SimulationError(NoSuchName("subroutine", name));
+}
+
+auto Scope::FindDisableTarget() -> CancellationTarget* {
+  if (disable_target_ != nullptr) {
+    return disable_target_;
+  }
+  throw SimulationError(
+      std::format(
+          "hierarchical name reaches '{}', which the source named nothing, so "
+          "no disable can end it (LRM 9.6.2)",
+          HierarchicalPath().CStr()));
+}
+
+auto Scope::LookupChild(
     std::string_view name, std::span<const lyra::value::PackedArray> indices)
     -> Scope* {
   // SV-visible child lookup. Named children match on segment name +
@@ -61,7 +101,7 @@ auto Scope::GetChild(
   // begin/ends physically wrap it (LRM 23 hierarchical-name semantics).
   for (const auto& child : attached_children_) {
     if (!child->IsAddressable()) {
-      if (Scope* found = child->GetChild(name, indices)) {
+      if (Scope* found = child->LookupChild(name, indices)) {
         return found;
       }
       continue;
@@ -147,7 +187,7 @@ auto Scope::ResolveVisibleChild(
     std::string_view head_name,
     std::span<const lyra::value::PackedArray> head_indices) -> Scope* {
   for (Scope* level = this; level != nullptr; level = level->Parent()) {
-    if (Scope* child = level->GetChild(head_name, head_indices)) {
+    if (Scope* child = level->LookupChild(head_name, head_indices)) {
       return child;
     }
   }

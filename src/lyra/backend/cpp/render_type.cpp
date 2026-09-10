@@ -14,6 +14,7 @@
 #include "lyra/mir/class_id.hpp"
 #include "lyra/mir/compilation_unit.hpp"
 #include "lyra/mir/type.hpp"
+#include "lyra/mir/type_builders.hpp"
 
 namespace lyra::backend::cpp {
 
@@ -91,6 +92,13 @@ auto RenderTypeAsCpp(const mir::CompilationUnit& unit, mir::TypeId type_id)
                 "std::array<{}, {}>", RenderTypeAsCpp(unit, m.element), m.size);
           },
           [&](const mir::MachineFunctionType& m) -> std::string {
+            // A C++ function pointer spells its name inside the declarator, so
+            // the pointer form below reads correctly only as a type-id -- which
+            // is all a restored prototype is ever used as. The erased form is
+            // what a declaration names, so it takes the runtime's own alias.
+            if (mir::IsErasedFunction(unit.types, type_id)) {
+              return std::string{"lyra::runtime::ErasedScopeCallable"};
+            }
             return std::format(
                 "{} (*)({})", RenderTypeAsCpp(unit, m.result),
                 JoinCommaSeparated(RenderEachTypeAsCpp(unit, m.params)));
@@ -199,10 +207,10 @@ auto RenderTypeAsCpp(const mir::CompilationUnit& unit, mir::TypeId type_id)
                 return std::string{"lyra::runtime::Observation"};
               case mir::RuntimeLibraryKind::kScopeProgram:
                 return std::string{"lyra::runtime::ScopeProgram"};
-              case mir::RuntimeLibraryKind::kScopeExport:
-                return std::string{"lyra::runtime::ScopeExport"};
-              case mir::RuntimeLibraryKind::kScopeExportTable:
-                return std::string{"lyra::runtime::ScopeExportTable"};
+              case mir::RuntimeLibraryKind::kScopeCallable:
+                return std::string{"lyra::runtime::ScopeCallable"};
+              case mir::RuntimeLibraryKind::kScopeCallableTable:
+                return std::string{"lyra::runtime::ScopeCallableTable"};
               case mir::RuntimeLibraryKind::kScopeDefinition:
                 return std::string{"lyra::runtime::ScopeDefinition"};
               case mir::RuntimeLibraryKind::kScopeMetadata:

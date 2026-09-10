@@ -192,6 +192,14 @@ struct DispatchTarget {
   DispatchRef method;
 };
 
+// A call through a code address the program computed -- the dual of naming a
+// function outright. Which body runs is not known where the call is written, so
+// the callee arrives as an operand, and the signature the call is made against
+// is the machine function type that operand carries.
+struct IndirectTarget {
+  Operand callee;
+};
+
 // The type the call builds a value of, which is the whole identity: a type has
 // one way to come into existence, so naming it names the entry. A wrapper that
 // owns what it points at brings the pointee into existence along with itself,
@@ -298,14 +306,15 @@ auto ControlEffectOpName(ControlEffectTarget::Op op) -> std::string_view;
 auto CoroutineOpName(CoroutineTarget::Op op) -> std::string_view;
 
 // The target of a call: a runtime builtin, a function of this unit, a dispatch
-// slot the receiving value's own class fills, a value constructor named by the
-// call's result type, a foreign symbol the host resolves, a method of an
-// imported runtime-library class, a value-cell operation, a control-effect
-// operation, or an operation of the coroutine protocol.
+// slot the receiving value's own class fills, a code address the program
+// computed, a value constructor named by the call's result type, a foreign
+// symbol the host resolves, a method of an imported runtime-library class, a
+// value-cell operation, a control-effect operation, or an operation of the
+// coroutine protocol.
 using CallTarget = std::variant<
-    BuiltinTarget, FunctionTarget, DispatchTarget, ConstructTarget,
-    ForeignTarget, ImportedRuntimeTarget, ValueCellTarget, ControlEffectTarget,
-    CoroutineTarget>;
+    BuiltinTarget, FunctionTarget, DispatchTarget, IndirectTarget,
+    ConstructTarget, ForeignTarget, ImportedRuntimeTarget, ValueCellTarget,
+    ControlEffectTarget, CoroutineTarget>;
 
 struct CallInstr {
   CallTarget target;

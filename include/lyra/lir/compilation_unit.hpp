@@ -57,10 +57,25 @@ struct DispatchTakeover {
   FunctionId body;
 };
 
+// One subroutine a scope answers a hierarchical name with (LRM 23.8.1): the
+// identifier such a name spells, and the body it reaches. Every subroutine a
+// scope declares is answered for, a unit compiled alone having no way to know
+// which of them a name will reach.
+//
+// This is the scope's own namespace, so a body no name reaches is absent from
+// it rather than listed with nothing to say. The table is what is asked -- what
+// does this name reach here -- and a body's presence in it is a relation the
+// namespace holds, never a property the body carries.
+struct PublishedSubroutine {
+  std::string name;
+  FunctionId body;
+};
+
 // One compiled class: its name, the base it extends, the members it declares,
-// its constructor, the behaviors it introduces, and the ones it takes over. A
-// class lists a function rather than holding it because the function is the
-// same kind of thing wherever it is listed.
+// its constructor, the behaviors it introduces, the ones it takes over, and the
+// subroutines it answers a name with. A class lists a function rather than
+// holding it because the function is the same kind of thing wherever it is
+// listed.
 //
 // A class states what it adds to its lineage and nothing about the lineage
 // itself -- the same way it states its own members and not its base's. What a
@@ -78,6 +93,7 @@ struct Class {
   FunctionId constructor{};
   std::vector<std::optional<FunctionId>> introduces;
   std::vector<DispatchTakeover> takeovers;
+  std::vector<PublishedSubroutine> subroutines;
 };
 
 // Whether values of this class are nodes of the runtime object tree. Extending

@@ -40,19 +40,21 @@ namespace {
 // initializers is a whole-design composition step handled at lowering, not HIR
 // content.
 auto BuildDesignRootHir(
-    std::span<const std::string> top_names,
+    std::span<const lowering::ast_to_hir::TopLevelUnit> tops,
     const hir::UnitSignatures& signatures) -> hir::CompilationUnit {
   hir::CompilationUnit root{std::string{kDesignRootUnitName}};
-  for (const auto& name : top_names) {
+  for (const lowering::ast_to_hir::TopLevelUnit& top : tops) {
     // The root reaches a top the way any parent reaches a child it builds:
     // through its own record of the object that unit's signature promised.
     const hir::ExternalUnitObjectId object = root.external_unit_objects.Add(
         hir::ImportExternalUnitObject(
-            signatures.Instantiated(name), root.types));
+            signatures.Instantiated(top.unit_name), root.types));
     root.root_scope.instance_members.Define(
         root.root_scope.instance_members.Declare(),
         hir::InstanceMemberDecl{
-            .instance_name = name, .object = object, .array_dims = {}});
+            .instance_name = top.instance_name,
+            .object = object,
+            .array_dims = {}});
   }
   return root;
 }
@@ -286,12 +288,11 @@ void DefineExportSymbols(
 
 auto SynthesizeDesignRoot(
     std::span<const mir::CompilationUnit> units,
-    std::span<const std::string> top_names,
+    std::span<const lowering::ast_to_hir::TopLevelUnit> tops,
     const hir::UnitSignatures& signatures, StopAfter stop_after,
     const diag::SourceManager& source_manager)
     -> diag::Result<DesignRootArtifacts> {
-  const hir::CompilationUnit root_hir =
-      BuildDesignRootHir(top_names, signatures);
+  const hir::CompilationUnit root_hir = BuildDesignRootHir(tops, signatures);
   lowering::hir_to_mir::UnitLowerer root_lowerer(root_hir, source_manager);
   auto root_mir =
       root_lowerer.RunDesignRoot(BuildPackageInitializationPlan(units));

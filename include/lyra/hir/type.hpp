@@ -255,6 +255,15 @@ struct UnitObjectType {
   auto operator==(const UnitObjectType&) const -> bool = default;
 };
 
+// A scope on the object tree that this unit holds no promise about: what a
+// hierarchical name lands on when the declaring unit published nothing to reach
+// through (LRM 23.6). It names no unit, because naming one is what a consumed
+// signature is and there is none, so nothing in it is reachable by position and
+// everything is reached by name.
+struct OpaqueScopeType {
+  auto operator==(const OpaqueScopeType&) const -> bool = default;
+};
+
 // LRM 8.4: the type slang gives the `null` literal. It is assignment- and
 // comparison-compatible with any class handle; the contextual handle determines
 // the operation, so this type carries no class identity of its own.
@@ -278,8 +287,8 @@ class Type {
       EnumType, UnpackedStructType, UnpackedUnionType, UnpackedArrayType,
       DynamicArrayType, QueueType, AssociativeArrayType, WildcardIndexType,
       StringType, EventType, RealType, ShortRealType, RealTimeType, ChandleType,
-      ClassHandleType, ImportedClassHandleType, UnitObjectType, NullType,
-      VoidType>;
+      ClassHandleType, ImportedClassHandleType, UnitObjectType, OpaqueScopeType,
+      NullType, VoidType>;
 
  public:
   explicit Type(Data data) : data_(std::move(data)) {

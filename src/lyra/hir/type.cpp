@@ -145,6 +145,7 @@ auto Type::Hash::operator()(const Type& type) const -> std::size_t {
           },
           // A type carrying nothing beyond being itself is separated by its arm
           // alone, which the seed already holds.
+          [seed](const OpaqueScopeType&) { return seed; },
           [seed](const WildcardIndexType&) { return seed; },
           [seed](const StringType&) { return seed; },
           [seed](const EventType&) { return seed; },
@@ -186,6 +187,7 @@ auto Type::IsValueChangeObservable() const -> bool {
           [](const ClassHandleType&) { return false; },
           [](const ImportedClassHandleType&) { return false; },
           [](const UnitObjectType&) { return false; },
+          [](const OpaqueScopeType&) { return false; },
           [](const NullType&) { return false; },
           [](const VoidType&) { return false; },
       });

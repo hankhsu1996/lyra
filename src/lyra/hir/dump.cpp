@@ -354,6 +354,9 @@ class HirDumper {
                   "ImportedClassHandleType(class={})",
                   support::ImportedRuntimeClassName(c.klass));
             },
+            [](const OpaqueScopeType&) -> std::string {
+              return "OpaqueScopeType";
+            },
             [](const UnitObjectType& u) -> std::string {
               return std::format("UnitObjectType(unit={})", u.unit_name);
             },
@@ -717,11 +720,19 @@ class HirDumper {
     return std::visit(
         Overloaded{
             [this](const StructuralSubroutineRef& u) -> std::string {
-              const auto& owner = ResolveScope(u.hops);
-              const auto& decl = owner.structural_subroutines.Get(u.subroutine);
+              const StructuralScope* owner = &ResolveScope(u.hops);
+              for (const OwnedChildRef& child : u.descent) {
+                const auto* generate = std::get_if<GenerateChildRef>(&child);
+                if (generate == nullptr) break;
+                owner = &owner->generates.Get(generate->generate)
+                             .child_scopes.Get(generate->scope);
+              }
+              const auto& decl =
+                  owner->structural_subroutines.Get(u.subroutine);
               return std::format(
-                  "StructuralSubroutine[{}](hops={}) \"{}\"",
-                  u.subroutine.value, u.hops.value, decl.name);
+                  "StructuralSubroutine[{}](hops={}, descent={}) \"{}\"",
+                  u.subroutine.value, u.hops.value, u.descent.size(),
+                  decl.name);
             },
             [](const MethodCallRef& m) -> std::string {
               const std::string recv = std::visit(
@@ -799,6 +810,14 @@ class HirDumper {
                   "ExternalUnitMethod {} \"{}::{}\" recv=RoutedRef[{}]",
                   callable.kind == SubroutineKind::kTask ? "task" : "function",
                   promised.class_name, callable.name, e.receiver.id.value);
+            },
+            [](const OpaqueUnitMethodRef& e) -> std::string {
+              return std::format(
+                  "OpaqueUnitMethod {} recv=RoutedRef[{}] "
+                  "entry=RoutedRef[{}]",
+                  e.interface.kind == SubroutineKind::kTask ? "task"
+                                                            : "function",
+                  e.receiver.id.value, e.entry.id.value);
             },
         },
         callee);
@@ -1317,9 +1336,31 @@ class HirDumper {
             [](const ScopeLeaf&) { return std::string{}; },
             [](const OpaqueLeaf& l) {
               return std::format(" . \"{}\"", l.name);
-            }},
+            },
+            [](const OpaqueCallableLeaf& l) {
+              return std::format(" . \"{}\"()", l.name);
+            },
+            [](const DisableTargetLeaf& l) {
+              return std::format(" . ProceduralScope[{}]", l.scope.value);
+            },
+            [](const OpaqueDisableTargetLeaf&) { return std::string{}; }},
         r.leaf);
-    return std::format("{} : Type[{}]", out, r.type.value);
+    const std::string holds = std::visit(
+        Overloaded{
+            [](const EndpointCell& c) {
+              return std::format(
+                  " : Type[{}]{}", c.type.value,
+                  FormatPublishedStorage(c.storage));
+            },
+            [](const EndpointObject& o) {
+              return std::format(" : Type[{}] object", o.type.value);
+            },
+            [](const EndpointEntry&) { return std::string{" : entry"}; },
+            [](const EndpointDisableTarget&) {
+              return std::string{" : disable target"};
+            }},
+        EndpointOf(r.leaf));
+    return out + holds;
   }
 
   void DumpScope(const StructuralScope& s) {
@@ -1416,8 +1457,7 @@ class HirDumper {
       const auto& r = s.routed_refs.Get(id);
       Line(
           std::format(
-              "RoutedRef[{}] {}{}", id.value, FormatRoutedPathRecipe(r.recipe),
-              FormatPublishedStorage(r.target_storage)));
+              "RoutedRef[{}] {}", id.value, FormatRoutedPathRecipe(r.recipe)));
     }
     for (const PortConnectionId id : s.port_connections.Ids()) {
       const auto& pc = s.port_connections.Get(id);
@@ -2249,10 +2289,19 @@ class HirDumper {
               Line(std::format("Stmt[{}] DisableForkStmt", id.value));
             },
             [&](const DisableStmt& d) {
+              const std::string target = std::visit(
+                  Overloaded{
+                      [](const DirectDisableTarget& t) {
+                        return std::format(
+                            "ProceduralScope[{}]", t.scope.value);
+                      },
+                      [](const RoutedDisableTarget& t) {
+                        return std::format("RoutedRef[{}]", t.target.id.value);
+                      }},
+                  d.target);
               Line(
                   std::format(
-                      "Stmt[{}] DisableStmt target={}", id.value,
-                      d.target.value));
+                      "Stmt[{}] DisableStmt target={}", id.value, target));
             },
         },
         s.data);

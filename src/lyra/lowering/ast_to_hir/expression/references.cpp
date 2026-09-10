@@ -379,9 +379,11 @@ auto LowerValueRef(
   return ValueTargetRefExpr(**target, *type_id, span);
 }
 
-// LRM 25.3: a name reached through an interface port, which is the port's whole
-// route plus the name the interface published, and what the route ends at
-// follows the way it does for a step onto an instance.
+// LRM 25.3: a name reached through an interface port, which is the port's own
+// reach plus the descent the name spells out from there. What each step of that
+// descent is, and what the route ends at, follow the way they do for a step
+// onto an instance the reader can see -- the port decides where the descent
+// starts and nothing else about it.
 auto LowerInterfacePortValue(
     UnitLowerer& unit_lowerer, WalkFrame frame,
     const slang::ast::HierarchicalValueExpression& hve,
@@ -391,8 +393,8 @@ auto LowerInterfacePortValue(
   if (!through.has_value()) {
     return diag::Fail(
         span, diag::DiagCode::kUnsupportedExpressionForm,
-        "a name reached through an interface port that the interface did not "
-        "promise is not yet supported");
+        "a name reached through an interface port by a path of this shape is "
+        "not yet supported");
   }
   auto type_id = unit_lowerer.InternType(*hve.type, span);
   if (!type_id) return std::unexpected(std::move(type_id.error()));

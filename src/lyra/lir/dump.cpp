@@ -304,6 +304,9 @@ class LirDumper {
             [&](const DispatchTarget& d) -> std::string {
               return std::format("dispatch {}", FormatDispatchRef(d.method));
             },
+            [&](const IndirectTarget& i) -> std::string {
+              return std::format("through {}", FormatOperand(i.callee));
+            },
             [](const ConstructTarget&) -> std::string { return "Construct"; },
             [](const ForeignTarget& f) -> std::string {
               return std::format("extern {}", f.symbol);

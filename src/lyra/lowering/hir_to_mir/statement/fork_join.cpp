@@ -82,8 +82,8 @@ auto LowerForkStmt(
   // target's membership at the spawn. The region brackets the whole fork, so
   // the target is entered before any branch spawns and all of them are inside
   // it.
-  const std::optional<StaticStorageHome>& cancel_target =
-      fork_scope.cancellation_target;
+  const std::optional<StaticStorageHome>& disable_target =
+      fork_scope.disable_target;
 
   // A branch snapshots the fork's own block-item declarations by value and
   // aliases any deeper-enclosing variable it reads (LRM 6.21 / 9.3.2). The
@@ -157,11 +157,11 @@ auto LowerForkStmt(
   // The region that consumes the effect sits where the fork sits, not inside
   // it: an execution the `disable` reached has already left the fork by the
   // time the handler runs, and it resumes after it (LRM 9.6.2).
-  if (cancel_target.has_value()) {
+  if (disable_target.has_value()) {
     return mir::Stmt{
         .label = std::move(label),
         .data = BuildCancellableRegion(
-            process, frame, std::move(fork_block), *cancel_target)};
+            process, frame, std::move(fork_block), *disable_target)};
   }
   const mir::BlockId scope_id =
       frame.current_block->child_scopes.Add(std::move(fork_block));
