@@ -193,8 +193,8 @@ auto PopulatePackageStaticStorage(
     const hir::SubroutineDecl& src = scope.structural_subroutines.Get(id);
     const StaticVarBindings& statics = subroutine_statics.Get(id);
     ProcessLowerer body_lowerer(
-        unit_lowerer, nullptr, scope.time_resolution, src.body, src.name,
-        WalkFrame{}, scope_nodes, statics);
+        unit_lowerer, nullptr, scope.time_resolution, src.body, std::nullopt,
+        src.name, WalkFrame{}, scope_nodes, statics);
     for (const StaticVarBinding& binding : statics) {
       auto integ = IntegrateStaticInitializer(
           body_lowerer, src.body, install_frame, value_frame, binding);
@@ -557,8 +557,8 @@ auto UnitLowerer::RunNamespace() -> diag::Result<mir::CompilationUnit> {
        scope.structural_subroutines.Ids()) {
     const hir::SubroutineDecl& src = scope.structural_subroutines.Get(id);
     ProcessLowerer subroutine_lowerer(
-        *this, nullptr, scope.time_resolution, src.body, src.name, WalkFrame{},
-        package_scope_nodes, subroutine_statics.Get(id));
+        *this, nullptr, scope.time_resolution, src.body, src.root_stmt,
+        src.name, WalkFrame{}, package_scope_nodes, subroutine_statics.Get(id));
     auto code_or = subroutine_lowerer.Run(src);
     if (!code_or) return std::unexpected(std::move(code_or.error()));
     subroutine_callables.Append(unit_.callables.Add(

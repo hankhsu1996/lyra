@@ -1037,6 +1037,42 @@ enough to warrant its own focused review.
       sequence holding statements alone -- at which point the name it already has is the right one.
       Wide: every lowering that writes into a sequence, both backends, and the dump.
 
+- [ ] R72 -- A switch over a closed set is checked for completeness only where nobody wrote a
+      catch-all. `-Werror=switch` already compiles Lyra's own targets and is a full completeness
+      gate, but the compiler stops applying it the moment the switch carries a `default:`. So
+      whether gaining an alternative breaks the build is settled per site by whether someone reached
+      for a catch-all while writing it, and nothing reports which sites made which choice. A
+      catch-all also leaves the one arm that cannot say two things: a refusal covering several
+      alternatives at once gives them all a single message, and the ones that deserved a different
+      sentence read identically to the ones that did not.
+
+      `exhaustive-alternative-consumption.md` weighed the blanket ban on a catch-all and rejected it,
+      and its reason holds where it was aimed: a registry -- 242 builtins, or the format specifiers
+      -- cannot answer one yes-or-no question by listing every member, so a rule firing there is
+      noise, and that decision's own follow-up found the registry's real answer elsewhere (one
+      declaration per entry, holding every property at once). What it did not settle is the rest. A
+      dozen alternatives a lowering dispatches on is not a registry, and there a catch-all buys
+      nothing the enumeration does not; the earlier objection that enumerating slang's sets makes
+      every dependency upgrade break the build is not what decides it either, at roughly one upgrade
+      a year.
+
+      The flag that would do it is `-Werror=switch-enum`, and measured 2026-09-09 it fires at 27
+      switch sites -- 13 over enums Lyra declares and 14 over slang's, the largest in play naming 41
+      alternatives. It cannot tell a dispatch set from a registry, so it fires on exactly the sets
+      the decision protected; that distinction is per-site, so it belongs where A013 already draws it
+      rather than in a flag. `-Werror=switch` stays whatever shape this takes -- it owns the separate
+      "case label naming no enumerator of the switched type" diagnostic, which `-Wswitch-enum` does
+      not report. Nothing else substitutes: clang-tidy carries no such check (its nearest,
+      `bugprone-switch-missing-default-case`, is the opposite rule and was measured to fire only on
+      non-enum switches, so it does not collide), and `-Wcovered-switch-default` -- the only thing
+      that flags a catch-all left on an already-complete switch -- is Clang-only and so cannot join a
+      set that also compiles under the remote image's GCC.
+
+      Target: say where a catch-all is the wrong shape in terms the policy check can decide, then
+      enumerate those sites. Completeness is not the whole of it either -- whether each arm says the
+      right thing is the first searchable smell in `design-process.md`, and no mechanism sees that.
+      Wide: both backends, the JIT, the value layer, and six lowering families.
+
 ## Out of Scope
 
 - Per-feature workstreams. Those live in the dedicated feature files (`operators.md`,

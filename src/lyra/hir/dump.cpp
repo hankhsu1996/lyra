@@ -1378,6 +1378,10 @@ class HirDumper {
       Line(std::format("clock: {}", FormatEventControl(h.clock)));
       Dedent();
     }
+    for (const ConcurrentAssertionId id : s.concurrent_assertions.Ids()) {
+      DumpConcurrentAssertion(
+          id, s.concurrent_assertions.Get(id), s.procedural_scopes);
+    }
     for (const auto& p : s.processes) {
       DumpProcess(p, s.procedural_scopes);
     }
@@ -1490,7 +1494,7 @@ class HirDumper {
     if (d.is_prototype) {
       DumpProceduralDeclarations(d.body, scopes);
     } else {
-      DumpProceduralBody(d.body, scopes);
+      DumpProceduralBody(d.body, d.root_stmt, scopes);
     }
     Dedent();
   }
@@ -1565,7 +1569,7 @@ class HirDumper {
       }
       Dedent();
     }
-    DumpProceduralBody(p.body, scopes);
+    DumpProceduralBody(p.body, p.root_stmt, scopes);
     Dedent();
   }
 
@@ -1634,7 +1638,11 @@ class HirDumper {
     Dedent();
   }
 
-  void DumpProceduralBody(
+  // Everything a body holds except where execution enters it, which the two
+  // callers answer differently: a procedure runs its root statement, and a
+  // concurrent assertion's action body is entered at whichever arm an outcome
+  // selects.
+  void DumpProceduralBodyContents(
       const ProceduralBody& body,
       const base::Registry<ProceduralScopeDecl, ProceduralScopeId>& scopes) {
     DumpProceduralDeclarations(body, scopes);
@@ -1649,7 +1657,43 @@ class HirDumper {
       Dedent();
     }
     DumpPatterns(body.patterns);
-    DumpStmt(body, body.root_stmt);
+  }
+
+  void DumpProceduralBody(
+      const ProceduralBody& body, StmtId root_stmt,
+      const base::Registry<ProceduralScopeDecl, ProceduralScopeId>& scopes) {
+    DumpProceduralBodyContents(body, scopes);
+    DumpStmt(body, root_stmt);
+  }
+
+  void DumpConcurrentAssertion(
+      ConcurrentAssertionId id, const ConcurrentAssertionDecl& decl,
+      const base::Registry<ProceduralScopeDecl, ProceduralScopeId>& scopes) {
+    Line(
+        std::format(
+            "ConcurrentAssertion[{}] standing=ProceduralScope[{}]", id.value,
+            decl.standing_scope.value));
+    Indent();
+    DumpProceduralBodyContents(decl.action, scopes);
+    std::visit(
+        Overloaded{
+            [&](const ConcurrentAssertStmt& a) {
+              Line(std::format("{} property", DirectiveName(a.directive)));
+              Indent();
+              DumpPropertySpec(decl.action, a.spec);
+              DumpActionBlock(decl.action, "pass", a.pass_stmt);
+              DumpActionBlock(decl.action, "fail", a.fail_stmt);
+              Dedent();
+            },
+            [&](const ConcurrentCoverStmt& c) {
+              Line("cover property");
+              Indent();
+              DumpPropertySpec(decl.action, c.spec);
+              DumpActionBlock(decl.action, "pass", c.pass_stmt);
+              Dedent();
+            }},
+        decl.assertion);
+    Dedent();
   }
 
   void DumpContinuousAssign(const ContinuousAssign& ca) {
@@ -1762,17 +1806,19 @@ class HirDumper {
     Dedent();
   }
 
+  static auto DirectiveName(AssertionDirective directive) -> std::string_view {
+    switch (directive) {
+      case AssertionDirective::kAssert:
+        return "assert";
+      case AssertionDirective::kAssume:
+        return "assume";
+    }
+    throw InternalError("DirectiveName: unknown hir::AssertionDirective");
+  }
+
   void DumpAssertStmtNode(
       const ProceduralBody& p, StmtId id, const AssertStmt& a) {
-    std::string_view directive;
-    switch (a.directive) {
-      case AssertionDirective::kAssert:
-        directive = "assert";
-        break;
-      case AssertionDirective::kAssume:
-        directive = "assume";
-        break;
-    }
+    const std::string_view directive = DirectiveName(a.directive);
     std::string_view timing;
     switch (a.timing) {
       case AssertionTiming::kSimple:
@@ -1807,6 +1853,103 @@ class HirDumper {
     Line(
         std::format(
             "Expr[{}] {}", c.condition.value, FormatProcExpr(p, c.condition)));
+    DumpActionBlock(p, "pass", c.pass_stmt);
+    Dedent();
+  }
+
+  static auto FormatTickRange(const TickRange& range) -> std::string {
+    if (range.max == range.min) {
+      return std::format("[{}]", range.min);
+    }
+    return std::format("[{}:{}]", range.min, range.max);
+  }
+
+  void DumpSequenceExpr(const ProceduralBody& p, SequenceExprId id) {
+    std::visit(
+        Overloaded{
+            [&](const SequenceBoolean& b) {
+              Line(
+                  std::format(
+                      "Sequence[{}] Boolean Expr[{}] {}", id.value,
+                      b.condition.value, FormatProcExpr(p, b.condition)));
+            },
+            [&](const SequenceDelay& d) {
+              Line(
+                  std::format(
+                      "Sequence[{}] Delay {}", id.value,
+                      FormatTickRange(d.delay)));
+              Indent();
+              DumpSequenceExpr(p, d.head);
+              DumpSequenceExpr(p, d.tail);
+              Dedent();
+            },
+            [&](const SequenceRepetition& r) {
+              Line(
+                  std::format(
+                      "Sequence[{}] Repetition {}", id.value,
+                      FormatTickRange(r.count)));
+              Indent();
+              DumpSequenceExpr(p, r.body);
+              Dedent();
+            }},
+        p.sequence_exprs.Get(id).data);
+  }
+
+  void DumpPropertyExpr(const ProceduralBody& p, PropertyExprId id) {
+    std::visit(
+        Overloaded{
+            [&](const PropertySequence& s) {
+              Line(
+                  std::format(
+                      "Property[{}] Sequence ({})", id.value,
+                      s.strength == SequenceStrength::kStrong ? "strong"
+                                                              : "weak"));
+              Indent();
+              DumpSequenceExpr(p, s.sequence);
+              Dedent();
+            },
+            [&](const PropertyImplication& i) {
+              Line(
+                  std::format(
+                      "Property[{}] Implication ({})", id.value,
+                      i.start == ImplicationStart::kSameTick ? "|->" : "|=>"));
+              Indent();
+              DumpSequenceExpr(p, i.antecedent);
+              DumpPropertyExpr(p, i.consequent);
+              Dedent();
+            }},
+        p.property_exprs.Get(id).data);
+  }
+
+  void DumpPropertySpec(const ProceduralBody& p, const PropertySpec& spec) {
+    Line(std::format("clock={}", FormatEventControl(spec.clock)));
+    if (spec.disable_condition.has_value()) {
+      Line(
+          std::format(
+              "disable iff=Expr[{}] {}", spec.disable_condition->value,
+              FormatProcExpr(p, *spec.disable_condition)));
+    }
+    DumpPropertyExpr(p, spec.body);
+  }
+
+  void DumpConcurrentAssertStmtNode(
+      const ProceduralBody& p, StmtId id, const ConcurrentAssertStmt& a) {
+    const std::string_view directive = DirectiveName(a.directive);
+    Line(
+        std::format(
+            "Stmt[{}] ConcurrentAssertStmt {} property", id.value, directive));
+    Indent();
+    DumpPropertySpec(p, a.spec);
+    DumpActionBlock(p, "pass", a.pass_stmt);
+    DumpActionBlock(p, "fail", a.fail_stmt);
+    Dedent();
+  }
+
+  void DumpConcurrentCoverStmtNode(
+      const ProceduralBody& p, StmtId id, const ConcurrentCoverStmt& c) {
+    Line(std::format("Stmt[{}] ConcurrentCoverStmt property", id.value));
+    Indent();
+    DumpPropertySpec(p, c.spec);
     DumpActionBlock(p, "pass", c.pass_stmt);
     Dedent();
   }
@@ -2021,6 +2164,12 @@ class HirDumper {
             },
             [&](const AssertStmt& a) { DumpAssertStmtNode(p, id, a); },
             [&](const CoverStmt& c) { DumpCoverStmtNode(p, id, c); },
+            [&](const ConcurrentAssertStmt& a) {
+              DumpConcurrentAssertStmtNode(p, id, a);
+            },
+            [&](const ConcurrentCoverStmt& c) {
+              DumpConcurrentCoverStmtNode(p, id, c);
+            },
             [&](const ForStmt& f) { DumpForStmtNode(p, id, f); },
             [&](const WhileStmt& w) { DumpWhileStmtNode(p, id, w); },
             [&](const RepeatStmt& r) { DumpRepeatStmtNode(p, id, r); },

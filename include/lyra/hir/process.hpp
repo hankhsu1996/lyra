@@ -30,6 +30,7 @@ struct Process {
   ProcessKind kind = ProcessKind::kInitial;
   diag::SourceSpan span;
   ProceduralBody body;
+  StmtId root_stmt{};
   // LRM 9.2.2.2.1 implicit sensitivity for always_comb / always_latch
   // (procedure-level; the body is a plain statement). Empty for every other
   // process kind -- `always @*` carries its sensitivity inside

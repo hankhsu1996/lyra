@@ -38,8 +38,8 @@ struct SubroutineParam {
 // exists but the source supplied no body. `body.procedural_vars` still
 // carries the parameter var arena so a backend can emit the declaration, and
 // `body.root_scope` still names the scope those parameters are declared in;
-// the statement fields are left at construction default and never consumed,
-// there being no body to hold statements. This bit is source-level
+// `root_stmt` is left at construction default and never consumed, there being
+// no statement for a call to enter at. This bit is source-level
 // truth: a bodyless prototype and a legal empty body (LRM 8.21 note) are
 // distinct forms that emptiness alone cannot separate. Only class methods
 // carry it; free subroutines and processes always ship a body.
@@ -57,6 +57,7 @@ struct SubroutineDecl {
   std::vector<SubroutineParam> params;
   std::optional<ProceduralVarId> result_var;
   ProceduralBody body;
+  StmtId root_stmt{};
   bool is_virtual = false;
   bool is_prototype = false;
   bool is_static = false;

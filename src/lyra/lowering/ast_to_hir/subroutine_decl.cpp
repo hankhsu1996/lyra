@@ -359,7 +359,7 @@ auto LowerSubroutineDeclImpl(
 
   auto body_stmt_or = lowerer.LowerStmt(sym.getBody(), body_frame);
   if (!body_stmt_or) return std::unexpected(std::move(body_stmt_or.error()));
-  body.root_stmt = body.stmts.Add(*std::move(body_stmt_or));
+  const hir::StmtId root_stmt = body.stmts.Add(*std::move(body_stmt_or));
 
   // The registry the root is defined in belongs to whichever declaration scope
   // owns this body -- the enclosing structural scope for a free subroutine, the
@@ -375,6 +375,7 @@ auto LowerSubroutineDeclImpl(
               .params = std::move(params),
               .result_var = result_var,
               .body = std::move(body),
+              .root_stmt = root_stmt,
               .is_virtual = false,
               .overrides = std::nullopt},
       .base_call = std::move(base_call)};

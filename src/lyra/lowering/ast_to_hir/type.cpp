@@ -539,7 +539,7 @@ auto SynthesizeDefaultConstructor(
   hir::ProceduralBody body;
   // A default constructor runs nothing of its own; the class's field
   // initializers are composed into it afterwards.
-  body.root_stmt = body.stmts.Add(
+  const hir::StmtId root_stmt = body.stmts.Add(
       hir::Stmt{.label = std::nullopt, .data = hir::EmptyStmt{}, .span = span});
   body.root_scope = class_frame.SealScope(
       OpenProceduralScope{
@@ -552,6 +552,7 @@ auto SynthesizeDefaultConstructor(
       .params = {},
       .result_var = std::nullopt,
       .body = std::move(body),
+      .root_stmt = root_stmt,
       .is_virtual = false,
       .overrides = std::nullopt};
 }
@@ -637,7 +638,7 @@ auto BuildInterfaceForwardingMethod(
           .span = span});
   // Forwarding is the whole body: one return of the forwarded call, with the
   // formals and the result cell in the method's root scope.
-  body.root_stmt = body.stmts.Add(
+  const hir::StmtId root_stmt = body.stmts.Add(
       hir::Stmt{
           .label = std::nullopt,
           .data = hir::ReturnStmt{.value = call},
@@ -660,6 +661,7 @@ auto BuildInterfaceForwardingMethod(
       .params = std::move(params),
       .result_var = result_var,
       .body = std::move(body),
+      .root_stmt = root_stmt,
       .is_virtual = true,
       .is_prototype = false,
       .is_static = false,

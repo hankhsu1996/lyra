@@ -7,4 +7,14 @@
 #
 # A case may appear in this file or in the defect record, never both.
 08_classes/constructor_argument_directions: "a constructor with an output / inout / ref argument is not yet supported"
+16_assertions/concurrent_assertion_checks_at_every_clock_tick: "a concurrent assertion is not yet lowered"
+16_assertions/concurrent_assertion_default_report: "a concurrent assertion is not yet lowered"
+16_assertions/concurrent_assertion_holds_without_a_report: "a concurrent assertion is not yet lowered"
+16_assertions/cover_property_counts_successful_attempts: "a concurrent assertion is not yet lowered"
+16_assertions/disable_iff_preempts_an_attempt: "a concurrent assertion is not yet lowered"
+16_assertions/implication_evaluates_the_consequent_after_a_match: "a concurrent assertion is not yet lowered"
+16_assertions/named_sequence_and_property_take_arguments: "a concurrent assertion is not yet lowered"
+16_assertions/overlapping_attempts_resolve_independently: "a concurrent assertion is not yet lowered"
+16_assertions/procedural_concurrent_assertion_queues_where_it_runs: "a concurrent assertion embedded in a procedure is not yet lowered"
+16_assertions/sequence_delays_and_repetition_count_clock_ticks: "a concurrent assertion is not yet lowered"
 23_hierarchy/task_enabled_by_hierarchical_name: "a subroutine the declaring unit does not publish is not yet supported"

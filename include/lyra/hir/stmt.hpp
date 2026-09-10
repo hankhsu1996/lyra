@@ -9,6 +9,7 @@
 
 #include "lyra/base/pool_id.hpp"
 #include "lyra/diag/source_span.hpp"
+#include "lyra/hir/assertion.hpp"
 #include "lyra/hir/expr_id.hpp"
 #include "lyra/hir/loop_label_id.hpp"
 #include "lyra/hir/pattern.hpp"
@@ -185,6 +186,40 @@ struct CoverStmt {
   std::optional<StmtId> pass_stmt;
 };
 
+// LRM 16.14 concurrent assert / assume, written where a procedure reaches it.
+// Its enabling condition is that control arrived here, which is no function of
+// the trace and so is recorded by being at this position rather than evaluated.
+// Reaching the statement therefore queues an instance rather than evaluating
+// the property; the instance matures in the Observed region of that time step
+// and begins an attempt at the tick of the leading clock (LRM 16.14.6).
+//
+// Each attempt carries its own result and selects its own arm, and the two
+// omissions mean what they mean for an immediate assertion -- with no pass
+// statement a true result runs nothing, with no fail statement a false one
+// still reaches the tool's own report. An attempt the disable condition
+// preempted selects neither (LRM 16.14.1).
+struct ConcurrentAssertStmt {
+  AssertionDirective directive;
+  PropertySpec spec;
+  std::optional<StmtId> pass_stmt;
+  std::optional<StmtId> fail_stmt;
+};
+
+// LRM 16.14.3 concurrent cover: the statement runs once for each attempt that
+// succeeds, at most once per attempt. An attempt that does not succeed is not a
+// failure, so this form has no fail arm and reaches no report.
+struct ConcurrentCoverStmt {
+  PropertySpec spec;
+  std::optional<StmtId> pass_stmt;
+};
+
+// The two dispositions a concurrent assertion carries, named apart from the
+// statement stream so the assertion whose enabling condition is 1 -- which a
+// scope declares rather than a procedure running it -- is the same concept
+// spelled once.
+using ConcurrentAssertion =
+    std::variant<ConcurrentAssertStmt, ConcurrentCoverStmt>;
+
 struct ForInitDecl {
   ProceduralVarId var = {};
   std::optional<ExprId> init;
@@ -285,8 +320,9 @@ struct DisableStmt {
 
 using StmtData = std::variant<
     EmptyStmt, VarDeclStmt, ExprStmt, BlockStmt, ForkStmt, IfStmt, CaseStmt,
-    PatternCaseStmt, AssertStmt, CoverStmt, ForStmt, WhileStmt, RepeatStmt,
-    DoWhileStmt, ForeverStmt, BreakStmt, ContinueStmt, ReturnStmt, TimedStmt,
+    PatternCaseStmt, AssertStmt, CoverStmt, ConcurrentAssertStmt,
+    ConcurrentCoverStmt, ForStmt, WhileStmt, RepeatStmt, DoWhileStmt,
+    ForeverStmt, BreakStmt, ContinueStmt, ReturnStmt, TimedStmt,
     EventTriggerStmt, WaitStmt, WaitForkStmt, DisableForkStmt, DisableStmt>;
 
 struct Stmt {

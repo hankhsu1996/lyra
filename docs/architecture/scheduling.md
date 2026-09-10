@@ -140,9 +140,9 @@ it cannot yet see. And a process woken by an NBA commit belongs to the slot whos
 runs before that slot's Observed region rather than being pushed to the next time slot.
 
 The reactive group (Reactive, ReInactive, ReNBA) is reached only when the active group has drained,
-which the one ordering rule already gives. It holds program-block statements, checker code, and the
-action blocks of concurrent assertions; none of those are implemented, so the three regions exist
-and stay empty. Preponed is the same: `#1step` sampling is what fills it.
+which the one ordering rule already gives. It holds program-block statements, checker code, the
+action blocks of concurrent assertions, and the report a matured deferred immediate assertion issues
+(LRM 16.4.1). Preponed carries the `#1step` sampling of a clocking block (LRM 14.13).
 
 `#0` delays land in **Inactive**, not Active. A user writing `#0` is asking the engine to let other
 already-pending active work finish first, then come back at this same simulation time. Pushing

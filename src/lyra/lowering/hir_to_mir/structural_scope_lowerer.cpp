@@ -1997,8 +1997,8 @@ auto StructuralScopeLowerer::PopulateBodies(WalkFrame parent_frame)
     const auto& src = hir_scope.structural_subroutines.Get(sub_id);
     const DeclaredCallable& declared = declared_subroutines_.Get(sub_id);
     ProcessLowerer subroutine_lowerer(
-        unit_lowerer, this, hir_scope.time_resolution, src.body, src.name,
-        ctor_frame, scopes_, declared.statics);
+        unit_lowerer, this, hir_scope.time_resolution, src.body, src.root_stmt,
+        src.name, ctor_frame, scopes_, declared.statics);
     auto code_or = subroutine_lowerer.Run(src);
     if (!code_or) return std::unexpected(std::move(code_or.error()));
     mir_class.callables.Define(
@@ -2049,7 +2049,7 @@ auto StructuralScopeLowerer::PopulateBodies(WalkFrame parent_frame)
     const auto& p = hir_scope.processes.Get(id);
     const StaticVarBindings& statics = process_static_bindings_.Get(id);
     ProcessLowerer process_lowerer(
-        unit_lowerer, this, hir_scope.time_resolution, p.body,
+        unit_lowerer, this, hir_scope.time_resolution, p.body, p.root_stmt,
         ProcessCallableName(id), ctor_frame, scopes_, statics);
     auto code_or = process_lowerer.Run(p);
     if (!code_or) return std::unexpected(std::move(code_or.error()));
@@ -2105,6 +2105,15 @@ auto StructuralScopeLowerer::PopulateBodies(WalkFrame parent_frame)
   for (ClassDeclLowerer& class_lowerer : class_lowerers_) {
     auto class_r = class_lowerer.PopulateBodies(ctor_frame, init_frame);
     if (!class_r) return std::unexpected(std::move(class_r.error()));
+  }
+
+  for (const hir::ConcurrentAssertionId id :
+       hir_scope.concurrent_assertions.Ids()) {
+    return diag::Fail(
+        hir_scope.concurrent_assertions.Get(id).span,
+        diag::DiagCode::kUnsupportedStatementForm,
+        "a concurrent assertion is not yet lowered; pass --assertions skip to "
+        "elide it");
   }
 
   // Recurse into descendants. Every class's shape is already published, so a

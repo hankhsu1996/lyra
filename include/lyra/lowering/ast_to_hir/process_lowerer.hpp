@@ -21,6 +21,11 @@
 #include "lyra/lowering/ast_to_hir/unit_lowerer.hpp"
 #include "lyra/lowering/ast_to_hir/walk_frame.hpp"
 
+namespace slang::ast {
+class ConcurrentAssertionStatement;
+class StatementBlockSymbol;
+}  // namespace slang::ast
+
 namespace lyra::lowering::ast_to_hir {
 
 // A set of slang AST expressions the frontend exposes twice -- once as a
@@ -53,6 +58,19 @@ class ProcessLowerer {
   auto Run(
       const slang::ast::ProceduralBlockSymbol& proc, WalkFrame parent_frame)
       -> diag::Result<hir::Process>;
+
+  // Lowers a procedure that is one concurrent assertion under no enabling
+  // condition (LRM 16.14.5). The body it stack-allocates holds only the
+  // statements an outcome selects, because the assertion itself is not
+  // something the body runs. `named_block` is the block a statement label put
+  // around the assertion, null where the source wrote no label; it is a scope
+  // of the body like any other, and the name it carries is what the assertion
+  // is reported under.
+  auto RunConcurrentAssertion(
+      const slang::ast::ProceduralBlockSymbol& proc,
+      const slang::ast::ConcurrentAssertionStatement& as,
+      const slang::ast::StatementBlockSymbol* named_block,
+      WalkFrame parent_frame) -> diag::Result<hir::ConcurrentAssertionDecl>;
 
   // Computes which automatic locals a detached fork branch borrows and can
   // outlive (LRM 6.21), as a set of slang symbols. Run once over the body

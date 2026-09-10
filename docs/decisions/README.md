@@ -415,6 +415,21 @@ the detail lives in the entry itself.
   in Postponed so that "strictly prior" holds by construction rather than by ordering. A Preponed
   scan, per-leaf history with replay, a second implementation of the clock inference, a node kind
   for the sampled read, and an armed observation are rejected.
+- [concurrent-assertion-evaluation](concurrent-assertion-evaluation.md) -- derived from Annex F's
+  formal semantics. One start rule covers both placements: an attempt begins where the clock ticks
+  and the enabling condition holds, which is 1 for a declarative assertion and "control reached this
+  statement" for a procedural one, so where an assertion sits in HIR follows from whether it has a
+  condition to record rather than from the grammar. Three levels, and what may be pooled at each is
+  decided by the quantifier over it: an evaluation is a set of positions in an automaton the
+  HIR-to-MIR lowering builds, pooling because a sequence's operators are existential; an attempt is
+  a list of evaluations that never pool because implication quantifies universally over match
+  points; an assertion holds attempts that never pool because each reports its own result. A finite
+  trace admits four answers, so an attempt reports when the trace settles it and is otherwise
+  pending, and weak versus strong is which answer the statement demands. A synthesized process per
+  assertion and clocking event submits each tick's advance to Observed and each resolved attempt's
+  action to Reactive. A coroutine per attempt, one merged position set for the whole assertion, an
+  interpreted transition table, building the automaton at AST-to-HIR, a MIR node kind for a
+  sequence, and evaluating where the process wakes are rejected.
 
 ### Diagnostics
 

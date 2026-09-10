@@ -65,6 +65,18 @@ auto ProcessLowerer::LowerStmt(const hir::Stmt& stmt, WalkFrame frame)
           [&](const hir::CoverStmt& c) {
             return LowerCoverStmt(*this, frame, stmt.label, c, stmt.span);
           },
+          [&](const hir::ConcurrentAssertStmt&) -> diag::Result<mir::Stmt> {
+            return diag::Fail(
+                stmt.span, diag::DiagCode::kUnsupportedStatementForm,
+                "a concurrent assertion embedded in a procedure is not yet "
+                "lowered; pass --assertions skip to elide it");
+          },
+          [&](const hir::ConcurrentCoverStmt&) -> diag::Result<mir::Stmt> {
+            return diag::Fail(
+                stmt.span, diag::DiagCode::kUnsupportedStatementForm,
+                "a concurrent cover statement is not yet lowered; pass "
+                "--assertions skip to elide it");
+          },
           [&](const hir::ForStmt& f) {
             return LowerForStmt(*this, frame, stmt.label, f);
           },
@@ -116,7 +128,8 @@ namespace {
 auto LowerStraightLineBodyInto(ProcessLowerer& process, WalkFrame frame)
     -> diag::Result<void> {
   const hir::ProceduralBody& body = process.HirBody();
-  auto lowered = process.LowerStmt(body.stmts.Get(body.root_stmt), frame);
+  auto lowered =
+      process.LowerStmt(body.stmts.Get(process.HirRootStmt()), frame);
   if (!lowered) return std::unexpected(std::move(lowered.error()));
   auto& body_block = *frame.current_block;
   body_block.AppendStmt(*std::move(lowered));

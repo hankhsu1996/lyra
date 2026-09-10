@@ -86,12 +86,14 @@ class ProcessLowerer {
       UnitLowerer& unit_lowerer,
       const StructuralScopeLowerer* enclosing_scope_lowerer,
       TimeResolution time_resolution, const hir::ProceduralBody& hir_body,
-      std::string callable_name, WalkFrame owner_ctor_frame,
-      const DeclaredScopes& scopes, std::span<const StaticVarBinding> statics)
+      std::optional<hir::StmtId> hir_root_stmt, std::string callable_name,
+      WalkFrame owner_ctor_frame, const DeclaredScopes& scopes,
+      std::span<const StaticVarBinding> statics)
       : owner_(&unit_lowerer),
         enclosing_scope_lowerer_(enclosing_scope_lowerer),
         time_resolution_(time_resolution),
         hir_body_(&hir_body),
+        hir_root_stmt_(hir_root_stmt),
         callable_name_(std::move(callable_name)),
         owner_ctor_frame_(std::move(owner_ctor_frame)),
         scopes_(&scopes),
@@ -160,6 +162,19 @@ class ProcessLowerer {
 
   [[nodiscard]] auto HirBody() const -> const hir::ProceduralBody& {
     return *hir_body_;
+  }
+
+  // Where execution enters the body, which its owner states rather than the
+  // body itself. A body nothing enters from the top -- a scope's static
+  // initializers, an assertion's action arms -- names none, so asking is a
+  // caller bug rather than an empty answer.
+  [[nodiscard]] auto HirRootStmt() const -> hir::StmtId {
+    if (!hir_root_stmt_.has_value()) {
+      throw InternalError(
+          "ProcessLowerer::HirRootStmt: this body is entered at the statements "
+          "its owner names, not from the top");
+    }
+    return *hir_root_stmt_;
   }
 
   // The expression arena of the body being lowered. The uniform sub-expression
@@ -318,6 +333,7 @@ class ProcessLowerer {
   const StructuralScopeLowerer* enclosing_scope_lowerer_;
   TimeResolution time_resolution_;
   const hir::ProceduralBody* hir_body_;
+  std::optional<hir::StmtId> hir_root_stmt_;
   std::string callable_name_;
   WalkFrame owner_ctor_frame_;
   // Owned by the enclosing declaration scope's lowerer; borrowed here for the

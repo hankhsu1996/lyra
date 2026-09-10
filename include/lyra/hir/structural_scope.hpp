@@ -251,6 +251,36 @@ struct RoutedRefDecl {
   PublishedStorage target_storage;
 };
 
+struct ConcurrentAssertionId {
+  std::uint32_t value = base::kUnassignedId;
+
+  auto operator<=>(const ConcurrentAssertionId&) const
+      -> std::strong_ordering = default;
+};
+
+// A concurrent assertion whose enabling condition is 1: an attempt begins at
+// every tick of its clock, for the whole of the run, and nothing has to be true
+// besides (LRM 16.14.5, and Annex F's top-level definition, where the enabling
+// condition is what separates this from the same assertion written in a
+// procedure). Having no condition to record, it has no position to record it
+// at, which is why it is a declaration here rather than a statement.
+//
+// `action` is the body the statements an outcome selects live in, which such an
+// assertion owns because no procedure encloses it.
+//
+// `standing_scope` is the scope the assertion itself stands in: the block a
+// statement label named (LRM 9.3.5) where the source wrote one, and the action
+// body's root where it did not. Every other scope in a body is named by the
+// body that roots it or by the statement that opens it; an assertion is
+// neither, so it names its own, and the name that scope carries is what a
+// report calls the assertion.
+struct ConcurrentAssertionDecl {
+  diag::SourceSpan span;
+  ConcurrentAssertion assertion;
+  ProceduralBody action;
+  ProceduralScopeId standing_scope;
+};
+
 // A child built from another compilation unit, standing on this unit's record
 // of the object that unit's instances are. `array_dims` is empty for a scalar
 // instance and holds one element count per dimension, outermost first, for an
@@ -381,6 +411,11 @@ struct StructuralScope {
   // does: nothing the user wrote evaluates it, and the process that does is
   // synthesized a layer down.
   base::Registry<SampledHistoryDecl, SampledHistoryId> sampled_histories;
+  // The concurrent assertions this scope declares. They are an arena rather
+  // than a registry because nothing names one before it exists: no reference
+  // reaches an assertion, and what starts its attempts is the clocking event.
+  base::Arena<ConcurrentAssertionDecl, ConcurrentAssertionId>
+      concurrent_assertions;
   // Body-bearing SV subroutines only. A bodyless DPI-C import never enters this
   // arena; the unit owns it, because its foreign symbol is program-global and
   // belongs to no scope (LRM 35.4).

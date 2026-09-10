@@ -29,6 +29,7 @@
 #include "lyra/diag/source_span.hpp"
 #include "lyra/hir/compilation_unit.hpp"
 #include "lyra/lowering/ast_to_hir/instance_array_shape.hpp"
+#include "lyra/lowering/ast_to_hir/statement/assertions.hpp"
 #include "lyra/lowering/ast_to_hir/structural_scope_lowerer.hpp"
 #include "lyra/lowering/ast_to_hir/subroutine_decl.hpp"
 #include "lyra/lowering/ast_to_hir/unit_identity.hpp"
@@ -250,6 +251,11 @@ auto UnitLowerer::DeclareStructuralIdentities(const slang::ast::Scope& scope)
     } else if (member.kind == slang::ast::SymbolKind::ProceduralBlock) {
       const auto& proc = member.as<slang::ast::ProceduralBlockSymbol>();
       if (!Contains(proc)) continue;
+      // An assertion whose enabling condition is 1 is not a procedure the
+      // design runs (LRM 16.14.5): what starts its attempts is the clock. So it
+      // takes no process identity and nothing reaches into it by a hierarchical
+      // name.
+      if (StaticConcurrentAssertionOf(proc).assertion != nullptr) continue;
       const hir::ProcessId id = decls.processes.Declare();
       MapProcessBinding(proc, id);
       // The frontend hoists a process's outermost block into this scope's
@@ -572,6 +578,23 @@ void UnitLowerer::MapProcessBinding(
     throw InternalError(
         "UnitLowerer::MapProcessBinding: process symbol already mapped");
   }
+}
+
+auto UnitLowerer::InferredProcedureClock(const slang::ast::Symbol& containing)
+    const -> const slang::ast::TimingControl* {
+  const auto* proc = containing.as_if<slang::ast::ProceduralBlockSymbol>();
+  if (proc == nullptr) {
+    return nullptr;
+  }
+  return Sensitivity().AnalyzeProcedureClock(*proc);
+}
+
+auto UnitLowerer::Contains(const slang::ast::ProceduralBlockSymbol& proc) const
+    -> bool {
+  if (StaticConcurrentAssertionOf(proc).assertion == nullptr) {
+    return true;
+  }
+  return !support::ElidesAssertions(AssertionPolicy());
 }
 
 auto UnitLowerer::LookupProcessBinding(
