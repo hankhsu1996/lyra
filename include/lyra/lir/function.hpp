@@ -139,9 +139,14 @@ using Operand = std::variant<
 // are different entries of one `fn` -- so the qualifying type rides the target.
 // It is absent for an entry that takes a receiver, whose type the receiver
 // already names.
+// `position` names the part the entry acts on where the call itself fixes it,
+// carried on the callee rather than among the arguments because the part named
+// has a type of its own. A target whose calls take only values writes it as one
+// more argument; one that resolves types writes it where it resolves them.
 struct BuiltinTarget {
   support::BuiltinFn fn;
   std::optional<TypeId> qualifier;
+  std::optional<base::ComponentIndex> position = std::nullopt;
 };
 
 // A function of this unit, named outright. The callee is static, so it is
@@ -333,21 +338,14 @@ struct UnionInstr {
   Operand value;
 };
 
-// Names a subvalue within an aggregate value. A `Component` selects one part of
-// a product by its declaration-order position, carrying no operands because the
-// position is the whole coordinate. Every part of a product coexists, so
-// selecting one neither depends on nor disturbs which others are readable.
-struct Component {
-  base::ComponentIndex index;
-};
-
-// Names the single member an active-member value holds at a time, by its
-// declaration-order position. An update through it makes that member the live
-// one. What a read of a member that is not live answers with -- a default, or a
-// run-time failure where the value carries a tag -- follows from the
-// aggregate's type, the same way the entry that realizes a coordinate step
-// does.
-struct UnionMember {
+// Names a subvalue within an aggregate value by its declaration-order
+// position, carrying no operands because the position is the whole coordinate.
+// One selector covers a product's component and an active-member value's
+// member: whether every part coexists or one is live at a time, what a read of
+// a member that is not live answers with, and whether an update settles which
+// member is live all follow from the aggregate's type, the same way the entry
+// realizing a coordinate step does.
+struct Part {
   base::ComponentIndex index;
 };
 
@@ -365,8 +363,7 @@ struct ContainerSlice {
   std::vector<Operand> operands;
 };
 
-using AggregateSelector =
-    std::variant<Component, UnionMember, ContainerElement, ContainerSlice>;
+using AggregateSelector = std::variant<Part, ContainerElement, ContainerSlice>;
 
 // Extracts a subvalue of an aggregate value, named by `selector`. The aggregate
 // is a value, reached by value: the subvalue is copied out, not aliased. This

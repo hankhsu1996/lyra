@@ -18,6 +18,7 @@
 #include "lyra/lowering/hir_to_mir/class_decl_lowerer.hpp"
 #include "lyra/lowering/hir_to_mir/declared_callable.hpp"
 #include "lyra/lowering/hir_to_mir/declared_scope.hpp"
+#include "lyra/lowering/hir_to_mir/lhs_store.hpp"
 #include "lyra/lowering/hir_to_mir/package_initialization.hpp"
 #include "lyra/lowering/hir_to_mir/static_var_binding.hpp"
 #include "lyra/lowering/hir_to_mir/unit_lowerer.hpp"
@@ -107,9 +108,9 @@ class StructuralScopeLowerer {
       -> diag::Result<mir::Expr>;
 
   // LHS-context expression dispatcher: addressable kinds only, no auto-Get
-  // wrap.
+  // wrap, peeled into the place a write lands in and the descent above it.
   [[nodiscard]] auto LowerLhsExpr(const hir::Expr& expr, WalkFrame frame) const
-      -> diag::Result<mir::Expr>;
+      -> diag::Result<WriteTarget>;
 
   [[nodiscard]] auto Owner() const -> UnitLowerer& {
     return *owner_;

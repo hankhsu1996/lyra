@@ -13,3 +13,6 @@ jobs:
 
       - name: Check architecture policy
         run: python3 tools/policy/check_architecture.py
+
+      - name: Check that value emission names no runtime library identifier
+        run: python3 tools/policy/check_render_names.py

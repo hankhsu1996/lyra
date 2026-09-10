@@ -209,45 +209,57 @@ auto LowerExprImpl(L& lowerer, const hir::Expr& expr, WalkFrame frame)
 
 // The LHS-context dispatcher, shared by both pass classes. Addressable kinds
 // only, and no `Get` auto-wrap, so an observable-cell leaf flows out as the
-// bare cell the assignment target needs. A bare name is the only per-scope arm;
-// selector kinds keep their base cell-rooted by recursing through the pass
-// class's own LHS entry.
+// bare cell the assignment target needs. It peels rather than composes: a kind
+// that reaches a part of a value adds one step to the descent and recurses,
+// and every other kind is the place the descent bottoms out in.
 template <ExprLowerer L>
 auto LowerLhsExprImpl(L& lowerer, const hir::Expr& expr, WalkFrame frame)
-    -> diag::Result<mir::Expr> {
+    -> diag::Result<WriteTarget> {
   constexpr bool kProcedural = std::same_as<L, ProcessLowerer>;
   const mir::TypeId result_type = lowerer.Owner().TranslateType(expr.type);
+  // A kind that reaches no part of a value is where a write lands, so what it
+  // lowers to is the whole target.
+  const auto as_place =
+      [&](diag::Result<mir::Expr> lowered) -> diag::Result<WriteTarget> {
+    if (!lowered) return std::unexpected(std::move(lowered.error()));
+    return WriteTarget{
+        .owner = frame.current_block->exprs.Add(*std::move(lowered)),
+        .descent = {}};
+  };
   return std::visit(
       Overloaded{
-          [&](const hir::PrimaryExpr& p) -> diag::Result<mir::Expr> {
+          [&](const hir::PrimaryExpr& p) -> diag::Result<WriteTarget> {
             if constexpr (kProcedural) {
-              return LowerHirPrimaryExprProc(
-                  lowerer, frame, p.data, result_type);
+              return as_place(
+                  LowerHirPrimaryExprProc(lowerer, frame, p.data, result_type));
             } else {
-              return LowerHirPrimaryExprStructural(
-                  lowerer, frame, p.data, result_type);
+              return as_place(LowerHirPrimaryExprStructural(
+                  lowerer, frame, p.data, result_type));
             }
           },
-          [&](const hir::ElementSelectExpr& sel) -> diag::Result<mir::Expr> {
+          [&](const hir::ElementSelectExpr& sel) -> diag::Result<WriteTarget> {
             return LowerHirElementSelectExprLhs(
                 lowerer, frame, sel, result_type);
           },
-          [&](const hir::RangeSelectExpr& sel) -> diag::Result<mir::Expr> {
+          [&](const hir::RangeSelectExpr& sel) -> diag::Result<WriteTarget> {
             return LowerHirRangeSelectExprLhs(lowerer, frame, sel, result_type);
           },
-          [&](const hir::MemberAccessExpr& sel) -> diag::Result<mir::Expr> {
+          [&](const hir::MemberAccessExpr& sel) -> diag::Result<WriteTarget> {
             return LowerHirMemberAccessExprLhs(
                 lowerer, frame, sel, result_type);
           },
           [&](const hir::ClassPropertyAccessExpr& sel)
-              -> diag::Result<mir::Expr> {
-            return LowerHirClassPropertyAccessExprLhs(
-                lowerer, frame, sel, result_type);
+              -> diag::Result<WriteTarget> {
+            return as_place(LowerHirClassPropertyAccessExprLhs(
+                lowerer, frame, sel, result_type));
           },
-          [&](const hir::ConcatExpr& c) -> diag::Result<mir::Expr> {
-            return LowerHirConcatExpr(lowerer, frame, c, result_type);
+          // A destructuring target is written as a whole: the join stands for
+          // the run of destinations the source spelled, and each run reaches
+          // its own place from inside it.
+          [&](const hir::ConcatExpr& c) -> diag::Result<WriteTarget> {
+            return as_place(LowerHirConcatExpr(lowerer, frame, c, result_type));
           },
-          [](const auto&) -> diag::Result<mir::Expr> {
+          [](const auto&) -> diag::Result<WriteTarget> {
             throw InternalError(
                 "LHS expression lowering: non-addressable HIR expression in "
                 "LHS context (assignability validated at AST-to-HIR)");
@@ -264,7 +276,7 @@ auto ProcessLowerer::LowerExpr(const hir::Expr& expr, WalkFrame frame)
 }
 
 auto ProcessLowerer::LowerLhsExpr(const hir::Expr& expr, WalkFrame frame)
-    -> diag::Result<mir::Expr> {
+    -> diag::Result<WriteTarget> {
   return LowerLhsExprImpl(*this, expr, frame);
 }
 
@@ -274,7 +286,7 @@ auto StructuralScopeLowerer::LowerExpr(
 }
 
 auto StructuralScopeLowerer::LowerLhsExpr(
-    const hir::Expr& expr, WalkFrame frame) const -> diag::Result<mir::Expr> {
+    const hir::Expr& expr, WalkFrame frame) const -> diag::Result<WriteTarget> {
   return LowerLhsExprImpl(*this, expr, frame);
 }
 

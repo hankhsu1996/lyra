@@ -1,9 +1,9 @@
 # Unpacked union is overlapping storage realized as an active-member value (MIR `UnionType`)
 
 Date: 2026-06-27 Status: accepted; the write encoding is superseded by
-[value-projection-designator](value-projection-designator.md), which deletes the `Ref`-suffixed
-access forms -- the union write form among them -- in favour of one write designator. The
-representation this entry settles, an active-member value, is unchanged.
+[value-descent-as-named-calls](value-descent-as-named-calls.md), under which reading a member and
+reaching one are the same pair of entries a product component uses, differing only in which value
+domain realizes them. The representation this entry settles, an active-member value, is unchanged.
 
 ## Why this decision matters
 

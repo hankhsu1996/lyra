@@ -174,9 +174,10 @@ class FunctionLowerer {
   // without an explicit address-of in the source IR.
   auto LowerArgument(const mir::Block& block, mir::ExprId id)
       -> diag::Result<lir::Operand>;
-  // Every operand a call carries, in the order the runtime library takes them.
-  // The object the call dispatches on leads, because a library entry is a free
-  // function and takes what it acts on as its first parameter.
+  // Every operand a call carries, in the order the boundary takes them. The
+  // object the call dispatches on leads, because that boundary takes what an
+  // operation acts on as its first parameter, whichever way the library
+  // declares the entry to a call site that writes it out.
   auto LowerCallOperands(const mir::Block& block, const mir::CallExpr& call)
       -> diag::Result<std::vector<lir::Operand>>;
   auto LowerPlace(const mir::Block& block, mir::ExprId id)
@@ -195,10 +196,10 @@ class FunctionLowerer {
       -> diag::Result<lir::Operand>;
   // The storage a capability wrapper stands for. A wrapper that is itself
   // storage continues the chain that reached it; one that refers to storage
-  // elsewhere opens a new chain at what it refers to. This is the whole of how
-  // an access through a wrapper is realized here, so reading its contents,
-  // replacing them, and reaching a part of them all come through it and none of
-  // them asks the question a second time.
+  // elsewhere opens a new chain at what it refers to. Naming that storage is
+  // what a write descending into it and a reference lent over it both ask for,
+  // and asking it here once is what keeps the two from disagreeing about where
+  // the contents live.
   auto WrapperContentsPlace(const mir::Block& block, mir::ExprId wrapper)
       -> diag::Result<lir::Place>;
   // Which member a field access names. A class field names its declaring class,
@@ -279,46 +280,41 @@ class FunctionLowerer {
   auto LowerCompoundOperator(
       mir::BinaryOp op, lir::Operand old_value, lir::Operand rhs,
       lir::TypeId type) -> diag::Result<lir::Operand>;
-  // Extracts the written part's current value; called at most once, and only
-  // by a leaf transform that needs the old value.
-  using LeafReader = std::function<lir::Operand()>;
-  // Produces the written part's new value, given a reader for its current one
-  // and the part's type.
-  using LeafTransform =
-      std::function<diag::Result<lir::Operand>(const LeafReader&, lir::TypeId)>;
-  // The selector one step names, in LIR's own vocabulary, with whatever
-  // coordinates it carries evaluated here so a compound read and the write-back
-  // share them.
-  auto LowerValuePartSelector(const mir::Block& block, mir::ExprId step)
-      -> diag::Result<lir::AggregateSelector>;
-  // The shared realization of every write that reaches part of a value: read
-  // the owner's whole value, descend the steps, transform the part, rebuild the
-  // whole value outward, store it back. A value crosses to the generated side
-  // as a handle a copy may alias, so it has no interior anything may write
-  // through; what one target realizes by writing the part in place, this one
-  // realizes functionally. The owner and every coordinate evaluate exactly
-  // once, and the store back through the owner is a single one -- for an
-  // observable owner, one cell write whatever the depth.
-  auto LowerValuePartUpdate(
-      const mir::Block& block, mir::ExprId target,
-      const LeafTransform& make_leaf) -> diag::Result<lir::Operand>;
-  // A receiver-mutating value-container method (`arr.delete()`). The container
-  // value cannot be mutated in place through a shared handle, so the method is
-  // a functional operation whose result is stored back through the receiver's
-  // owner, the same whole-value read / update / write as an element write. That
-  // updated container is the entry's one result, so a method that also states a
-  // result of its own has no realization in this form.
+  // A method that changes the object it is applied to. The generated side holds
+  // a value as a handle a copy may alias, so the entry answers with the changed
+  // object rather than changing one in place, and the answer is stored back
+  // through the place the object came from. Where the method also states a
+  // result of its own -- a queue pop yields the element it removed (LRM
+  // 7.10.2.4) -- the entry completes with both, the changed object first, and
+  // each is projected out of that product.
   auto LowerMutatingCall(
       const mir::Block& block, const mir::CallExpr& call, support::BuiltinFn fn,
       mir::TypeId type) -> diag::Result<lir::Operand>;
-  // Stores a whole value back through the place that owns it -- the root of a
-  // designator's chain, or a mutating method's receiver -- so the update goes
-  // through that place's own store rather than reaching past it. What it yields
-  // is the write, whose type is void; a caller in expression position states
-  // the value its own expression has.
+  // Stores a whole value back through the place that owns it, so the update
+  // goes through that place's own store rather than reaching past it. What it
+  // yields is the write, whose type is void; a caller in expression position
+  // states the value its own expression has.
   auto WriteWholeValue(
       const mir::Block& block, mir::ExprId id, lir::Operand value)
       -> diag::Result<lir::Operand>;
+  // Which subvalue one reaching call names, in the vocabulary this layer's
+  // aggregate instructions take.
+  auto LowerValuePartSelector(
+      const mir::Block& block, const mir::CallExpr& call)
+      -> diag::Result<lir::AggregateSelector>;
+  // A write through a run of reaching calls, realized as a read of the owner's
+  // whole value, a rebuild of it with the part replaced, and a store back
+  // through the owner. A value reaches the generated side as a handle a copy
+  // may alias, so nothing here has an interior to write; `make_leaf` states
+  // what goes in the part's place, given a way to read what is there and the
+  // part's type. What this yields is the store; a caller in expression position
+  // states the value its own expression has.
+  using LeafReader = std::function<lir::Operand()>;
+  using LeafTransform =
+      std::function<diag::Result<lir::Operand>(const LeafReader&, lir::TypeId)>;
+  auto LowerValuePartUpdate(
+      const mir::Block& block, mir::ExprId target,
+      const LeafTransform& make_leaf) -> diag::Result<lir::Operand>;
   auto LowerIncDec(const mir::Block& block, const mir::IncDecExpr& inc_dec)
       -> diag::Result<lir::Operand>;
   auto LowerConditional(

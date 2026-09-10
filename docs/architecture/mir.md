@@ -90,11 +90,11 @@ what the construct means.
   which is how an evaluation of several steps stands where only an expression may, sequencing alone:
   it is not a callable boundary, so its steps belong to the enclosing body and capture nothing, and
   it has no control-flow effect, so control never leaves from among its steps -- member access
-  through an explicit receiver expression, access primitives for element and range selection,
-  value-build primitives for the literals that spell an aggregate, and a designator naming a part of
-  a value by the place that owns the whole and the descent that reaches the part. The set is closed
-  under what a generic programming-language AST needs to express; it does not grow to model a
-  particular backend's storage realization or runtime library shape.
+  through an explicit receiver expression, and value-build primitives for the literals that spell an
+  aggregate. Reaching a part of a value is not among them: it is an ordinary call, so a descent of
+  any depth is calls composed through the receiver and no node names a part. The set is closed under
+  what a generic programming-language AST needs to express; it does not grow to model a particular
+  backend's storage realization or runtime library shape.
 - Action shapes for constructs that bind behavior to schedule events (always blocks, continuous
   assignments, deferred assertions, concurrent assertions).
 - A textual dumper that serializes MIR for inspection. The dumper is not a backend; its output is
@@ -198,20 +198,21 @@ suspect, not the analysis (`lowering_organization.md` states this discipline in 
 14. A capability wrapper's place and the storage it represents are distinct places, told apart by
     structure alone. A bare wrapper place denotes the wrapper: reading it yields the wrapper as a
     value, storing into it rebinds the wrapper, taking its address yields the wrapper's address. A
-    dereference of that place denotes the storage the wrapper represents: a designator rooted at it
-    names part of that storage, and passing it as a by-reference argument lends that storage to the
-    callee. Naming storage that way is place formation, not an operation, so it is never a call; the
-    protocol that realizes it comes from the wrapper type at each consuming backend, once, for both
-    of those consumers.
+    dereference of that place denotes the storage the wrapper represents: a descent rooted at it
+    reaches part of that storage, and passing it as a by-reference argument lends that storage to
+    the callee. Naming storage that way is place formation, not an operation, so it is never a call;
+    the protocol that realizes it comes from the wrapper type at each consuming backend, once, for
+    both of those consumers.
 
     Reading that storage, and replacing the whole of it, are operations on the wrapper rather than
     ways of naming it. A read asks the wrapper for a value it decides how to produce; a whole write
     replaces what the storage holds and publishes that change to whatever the wrapper relates to in
     the object graph. Both are ordinary calls against the wrapper's API, alongside the other
     operations that act on the wrapper as an object -- installing its declared representation,
-    attaching it to the object graph. A write names its destination among its operands: a place
-    where it replaces the whole of the storage, a designator where it replaces a part, which is one
-    operation at two path lengths. Nothing any of these calls yields stands for a place.
+    attaching it to the object graph. Replacing a part is not the same operation at a longer path:
+    it acts on the value the storage holds and reaches the wrapper only to name where that value
+    lives, so it is a descent through that value ending in an assignment, not a call on the wrapper.
+    Nothing any of these calls yields stands for a place.
 
     _Programming-language consequence: this is the distinction every generic language draws between
     `p` and `*p`, applied to every type that represents storage, together with the one every
@@ -428,15 +429,15 @@ A capability wrapper illustrates the boundary between MIR's vocabulary and a bac
 realization. A backend may wrap observable storage in a target-side library type; MIR has no "cell
 access" node and needs none. The signal's MIR type is the wrapper, so the `MemberAccess` reaching
 the signal is the wrapper's place, and a dereference of it is the storage a callee may be lent and a
-designator may descend into. Reading what the wrapper holds is not that dereference: a read asks the
+descent may reach into. Reading what the wrapper holds is not that dereference: a read asks the
 wrapper for a value it decides how to produce, so it is an operation on the wrapper and states
 itself as a call.
 
 A write is not a way of naming that storage but an operation on the wrapper -- it replaces what the
 storage holds and publishes the change to whatever the wrapper relates to -- so it is an ordinary
-call whose operands name the destination and the value, and a partial write is that same call over a
-designator rather than over a whole value. Rebinding the wrapper -- pointing a reference at a
-different place -- is a store into the bare place, with no dereference and no call, which is what
+call whose operands name the destination and the value, and a partial write reaches the storage
+instead and assigns into what the descent reached. Rebinding the wrapper -- pointing a reference at
+a different place -- is a store into the bare place, with no dereference and no call, which is what
 separates it from writing through without either one carrying a marker. Nothing any of these nodes
 yields stands for a destination, so no consumer recovers one by recognizing a shape. What each
 becomes in a target -- a method call, a runtime-ABI call, a load or store against an address -- is
@@ -445,11 +446,12 @@ those spellings out of value-emission sites.
 
 An assignment whose target descends into a value -- a container element, a struct component, a union
 member, a fixed-width range -- states an abstract update of the owning value: which owner, which
-selectors, how many times each evaluates, the value written and its coercion, and that the owning
-value is the value updated. The owner is a place; the descent is not. Nothing about the target
-asserts that the interior is independently addressable storage, an alias with its own identity, or a
-reference that outlives the owner -- a value aggregate has no such interior to name. How that update
-keeps value semantics is a lower layer's concern: MIR-to-LIR legalizes the descent into explicit
+levels the descent reaches through, how many times each evaluates, the value written and its
+coercion, and that the owning value is the value updated. The owner is a place; the descent is a run
+of calls, each naming the entry the lowering settled for it. Nothing about the target asserts that
+the interior is independently addressable storage, an alias with its own identity, or a reference
+that outlives the owner -- a value aggregate has no such interior to name. How that update keeps
+value semantics is a lower layer's concern: MIR-to-LIR legalizes the descent into explicit
 whole-value operations, an extract and an insert (`lir.md`), and a backend may instead realize the
 same semantics by mutating private storage in place. A construct that binds the designated part
 rather than writing it -- a reference actual, an output pack component, a nonblocking update --

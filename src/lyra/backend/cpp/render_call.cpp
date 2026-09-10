@@ -43,10 +43,7 @@ struct CalleeSpelling {
 };
 
 // The object a call dispatches on, ready to compose into a callee: the rendered
-// expression, and the token C++ reaches a member through it with. A method that
-// writes through it, a guard that hands it back, and an access that answers
-// with part of it all name storage rather than a value, so those render it as a
-// place.
+// expression, and the token C++ reaches a member through it with.
 struct RenderedReceiver {
   std::string expr;
   std::string_view member_access;
@@ -59,11 +56,8 @@ auto RenderReceiver(const ScopeView& view, const mir::Callee& callee)
     return std::nullopt;
   }
   const mir::Expr& expr = view.Expr(*receiver);
-  const bool names_storage =
-      mir::IsMutatingCallee(callee) || mir::ReachesThroughReceiver(callee);
   return RenderedReceiver{
-      .expr =
-          names_storage ? RenderLhsExpr(view, expr) : RenderExpr(view, expr),
+      .expr = RenderExpr(view, expr),
       .member_access =
           view.Unit().types.Get(expr.type).Is<mir::PointerType>() ? "->" : "."};
 }
@@ -71,10 +65,33 @@ auto RenderReceiver(const ScopeView& view, const mir::Callee& callee)
 // A built-in runtime entry, spelled the way the library declares it. Nothing
 // here reads the call to decide that: which form the entry takes, and the
 // identifier it is written with, are the entry's own declaration.
+// What the name a callee spells is reached through, which is what decides
+// whether C++ can read an argument list after it: a name reached through a
+// value is dependent until the value's type is resolved, and the `template`
+// keyword is what says the angle brackets are an argument list and not a
+// comparison. A name reached on a type is resolved where it is written.
+enum class NameReachedThrough : std::uint8_t { kAValue, kAType };
+
+// An operation the callee names at a position writes that position where C++
+// settles types, because the part it names has a type of its own. An operation
+// that names no position is its bare identifier and needs none of this.
+auto SpelledAt(
+    std::string_view identifier,
+    const std::optional<base::ComponentIndex>& position,
+    NameReachedThrough reached) -> std::string {
+  if (!position.has_value()) {
+    return std::string{identifier};
+  }
+  const std::string_view dependent =
+      reached == NameReachedThrough::kAValue ? "template " : "";
+  return std::format("{}{}<{}>", dependent, identifier, position->value);
+}
+
 auto ResolveBuiltinSpelling(
     const ScopeView& view, support::BuiltinFn id,
     const std::optional<mir::ScopeQualifier>& qualification,
-    const std::optional<RenderedReceiver>& receiver) -> CalleeSpelling {
+    const std::optional<RenderedReceiver>& receiver,
+    const std::optional<base::ComponentIndex>& position) -> CalleeSpelling {
   const support::RuntimeEntry entry = support::RuntimeEntryOf(id);
   return std::visit(
       Overloaded{
@@ -94,7 +111,8 @@ auto ResolveBuiltinSpelling(
                   "names none -- please report this as a bug");
             }
             return {
-                .name = std::string{m.identifier},
+                .name = SpelledAt(
+                    m.identifier, position, NameReachedThrough::kAValue),
                 .placement = ReceiverPlacement::kIntoCalleeName};
           },
           // A factory is reached on the type it builds, which the call site
@@ -110,7 +128,8 @@ auto ResolveBuiltinSpelling(
             return {
                 .name = std::format(
                     "{}::{}", RenderTypeAsCpp(view.Unit(), tq.type),
-                    s.identifier),
+                    SpelledAt(
+                        s.identifier, position, NameReachedThrough::kAType)),
                 .placement = ReceiverPlacement::kIntoCalleeName};
           }},
       entry.declaration);
@@ -143,7 +162,7 @@ auto ResolveDirectSpelling(
           },
           [&](const support::BuiltinFn& id) -> CalleeSpelling {
             return ResolveBuiltinSpelling(
-                view, id, direct.qualification, receiver);
+                view, id, direct.qualification, receiver, direct.position);
           },
           // The runtime library provides an imported class's methods (LRM 9.7)
           // as symbols named by the method identity.

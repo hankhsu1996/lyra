@@ -179,7 +179,10 @@ auto PopulatePackageStaticStorage(
       value_block.AppendStmt(
           mir::ExprStmt{
               .expr = value_block.exprs.Add(BuildStoreExpr(
-                  unit, value_block, make_cell(value_block, d.name, cell_type),
+                  unit, value_block,
+                  WriteTarget{
+                      .owner = make_cell(value_block, d.name, cell_type),
+                      .descent = {}},
                   value_id, std::nullopt, value_type))});
     }
   }

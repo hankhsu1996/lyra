@@ -5,8 +5,10 @@
 #include <cstdint>
 #include <functional>
 #include <type_traits>
+#include <vector>
 
 #include "lyra/base/internal_error.hpp"
+#include "lyra/base/overloaded.hpp"
 
 namespace lyra::mir {
 
@@ -225,6 +227,81 @@ auto Type::WrappedValueType() const -> TypeId {
     return driver->value;
   }
   throw InternalError("mir: type is not a capability wrapper");
+}
+
+auto Type::HeldValueTypes() const -> std::vector<TypeId> {
+  using Held = std::vector<TypeId>;
+  return Visit(
+      Overloaded{
+          // An integral value is one vector of bits, and an enumeration is that
+          // vector under a set of names. Both are indivisible, as is every
+          // other value that is a single quantity, a single token, or nothing.
+          [](const PackedArrayType&) -> Held { return {}; },
+          [](const EnumType&) -> Held { return {}; },
+          [](const WildcardIndexType&) -> Held { return {}; },
+          [](const StringType&) -> Held { return {}; },
+          [](const MachineCStringType&) -> Held { return {}; },
+          [](const MachineBoolType&) -> Held { return {}; },
+          [](const MachineIntType&) -> Held { return {}; },
+          [](const MachineFloatType&) -> Held { return {}; },
+          [](const RealType&) -> Held { return {}; },
+          [](const ShortRealType&) -> Held { return {}; },
+          [](const RealTimeType&) -> Held { return {}; },
+          [](const ChandleType&) -> Held { return {}; },
+          [](const EventType&) -> Held { return {}; },
+          [](const EmptyType&) -> Held { return {}; },
+          [](const VoidType&) -> Held { return {}; },
+
+          // A container holds its elements, and a keyed one holds its keys
+          // beside them.
+          [](const UnpackedArrayType& t) -> Held { return {t.element_type}; },
+          [](const DynamicArrayType& t) -> Held { return {t.element_type}; },
+          [](const QueueType& t) -> Held { return {t.element_type}; },
+          [](const AssociativeArrayType& t) -> Held {
+            return {t.key_type, t.element_type};
+          },
+          [](const MachineArrayType& t) -> Held { return {t.element}; },
+          [](const VectorType& t) -> Held { return {t.element}; },
+
+          // A product holds every component at once; a union and a tagged sum
+          // hold one at a time, which is still one of these.
+          [](const TupleType& t) -> Held { return t.elements; },
+          [](const UnionType& t) -> Held { return t.elements; },
+          [](const TaggedUnionType& t) -> Held { return t.elements; },
+
+          // A cell holds the value it keeps, however it publishes a change to
+          // it and however far back it remembers.
+          [](const ObservableType& t) -> Held { return {t.value}; },
+          [](const ResolvedType& t) -> Held { return {t.value}; },
+          [](const DriverType& t) -> Held { return {t.value}; },
+          [](const SampledHistoryType& t) -> Held { return {t.value}; },
+
+          // These refer to a value living elsewhere rather than holding one:
+          // copying the referring value copies no part of what it reaches. A
+          // coroutine's payload is what awaiting it produces, not something it
+          // carries, and a code address names a signature it is not made of.
+          [](const RefType&) -> Held { return {}; },
+          [](const PointerType&) -> Held { return {}; },
+          [](const ManagedRefType&) -> Held { return {}; },
+          [](const CoroutineType&) -> Held { return {}; },
+          [](const MachineFunctionType&) -> Held { return {}; },
+
+          // A nominal type names a declaration, and the declaration is what
+          // lists the members; the type states none, so a walk that must reach
+          // them goes to the registry the id resolves in.
+          [](const ObjectType&) -> Held { return {}; },
+          [](const ExternalUnitObjectType&) -> Held { return {}; },
+          [](const CrossUnitClassType&) -> Held { return {}; },
+          [](const RuntimeClassType&) -> Held { return {}; },
+          [](const StructType&) -> Held { return {}; },
+          [](const ClosureType&) -> Held { return {}; },
+
+          // A handle to a runtime facility, and an inert payload the library
+          // owns the shape of. Neither is composed of values this layer names.
+          [](const RuntimeEffectsType&) -> Held { return {}; },
+          [](const FilesType&) -> Held { return {}; },
+          [](const DiagnosticType&) -> Held { return {}; },
+          [](const RuntimeLibraryType&) -> Held { return {}; }});
 }
 
 }  // namespace lyra::mir

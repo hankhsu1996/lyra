@@ -69,21 +69,22 @@ auto LowerHirClassPropertyAccessExpr(
     Lowerer& lowerer, WalkFrame frame, const hir::ClassPropertyAccessExpr& sel,
     mir::TypeId result_type) -> diag::Result<mir::Expr>;
 
-// LHS-context selector lowerings: like the read-context handlers but the base
-// lowers in write context too, leaving the chain rooted at the cell itself
+// LHS-context selector lowerings: like the read-context handlers but peeling
+// rather than composing. Each adds one step to the descent and recurses into
+// its base in write context, so what comes back is rooted at the cell itself
 // rather than at the storage it stands for.
 template <ExprLowerer Lowerer>
 auto LowerHirElementSelectExprLhs(
     Lowerer& lowerer, WalkFrame frame, const hir::ElementSelectExpr& sel,
-    mir::TypeId result_type) -> diag::Result<mir::Expr>;
+    mir::TypeId result_type) -> diag::Result<WriteTarget>;
 template <ExprLowerer Lowerer>
 auto LowerHirRangeSelectExprLhs(
     Lowerer& lowerer, WalkFrame frame, const hir::RangeSelectExpr& sel,
-    mir::TypeId result_type) -> diag::Result<mir::Expr>;
+    mir::TypeId result_type) -> diag::Result<WriteTarget>;
 template <ExprLowerer Lowerer>
 auto LowerHirMemberAccessExprLhs(
     Lowerer& lowerer, WalkFrame frame, const hir::MemberAccessExpr& sel,
-    mir::TypeId result_type) -> diag::Result<mir::Expr>;
+    mir::TypeId result_type) -> diag::Result<WriteTarget>;
 template <ExprLowerer Lowerer>
 auto LowerHirClassPropertyAccessExprLhs(
     Lowerer& lowerer, WalkFrame frame, const hir::ClassPropertyAccessExpr& sel,

@@ -8,6 +8,7 @@
 #include "lyra/hir/expr_id.hpp"
 #include "lyra/hir/pattern.hpp"
 #include "lyra/hir/pattern_id.hpp"
+#include "lyra/lowering/hir_to_mir/lhs_store.hpp"
 #include "lyra/lowering/hir_to_mir/walk_frame.hpp"
 #include "lyra/mir/expr.hpp"
 
@@ -27,7 +28,7 @@ concept ExprLowerer = requires(
   { lowerer.LowerExpr(expr, frame) } -> std::same_as<diag::Result<mir::Expr>>;
   {
     lowerer.LowerLhsExpr(expr, frame)
-  } -> std::same_as<diag::Result<mir::Expr>>;
+  } -> std::same_as<diag::Result<WriteTarget>>;
   {
     lowerer.HirExprs()
   } -> std::convertible_to<const base::Arena<hir::Expr, hir::ExprId>&>;

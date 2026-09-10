@@ -6,7 +6,16 @@
 
 ## Status
 
-Accepted
+Accepted; D1's representation is superseded by
+[value-descent-as-named-calls](value-descent-as-named-calls.md) (2026-09-09), and D4 is not built.
+
+D2 is the load-bearing half and stands: an interior write is a functional whole-value update stored
+back through the owner, with owner and coordinates evaluated once. What the superseding entry
+replaces is how that update is stated -- not a designator whose owner and selector path a consumer
+reads, but one call per level whose entry HIR-to-MIR names, with the descent held in the lowering.
+D3 stands and is where a target's in-place realization lives; D5 stands. D4's projection reference
+has no form without the designator, so a `ref` bound to a value interior is refused rather than
+mis-aliased. The migration shape below describes a staged plan that was overtaken.
 
 ## Why this decision matters
 

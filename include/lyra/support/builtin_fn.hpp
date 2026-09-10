@@ -15,25 +15,39 @@ namespace lyra::support {
 // observable storage cells, runtime effects, scope handle); this enum
 // carries only the method identity.
 enum class BuiltinFn : std::uint16_t {
-  // LRM 7.4 / 7.8 / 7.10 / 11.5 positional access. The plain form answers with
-  // the part's value; the `Ref` form answers with the part itself, so what
-  // stands there may be assigned to and a further access composes onto it.
+  // LRM 7.4 / 7.8 / 7.10 / 11.5 access into a value. The plain form answers
+  // with the part's value; the `Ref` form answers with the part itself, so what
+  // stands there may be written and a further access composes onto it.
   //
   // Two entries rather than one entry read two ways: which of them a source
   // position calls is settled where the source is read, and a consumer that had
-  // to work it out from the position could work it out differently. Composition
-  // is the operand that carries it -- an access whose receiver is another
-  // access is the descent, so nothing states a path.
+  // to work it out from the position could work it out differently.
+  // Composition is the receiver -- an access whose receiver is another access
+  // is the descent -- so a descent of any depth is these entries applied one
+  // per level and nothing states a path.
   kElement,
   kSlice,
   kElementRef,
   kSliceRef,
+  // The same two directions over a part named by its declaration-order
+  // position rather than by a coordinate. One pair covers a product and an
+  // active-member value alike: what differs is whether every part is live at
+  // once or one at a time, and whether reaching one for writing settles which
+  // that is -- all of which is the value's own semantics, reached through the
+  // domain its type names, exactly as a coordinate step reaches a queue's rules
+  // or an associative array's.
+  kPart,
+  kPartRef,
+  // Which member an active-member value holds, and building one that holds a
+  // given member. Only a value carrying an observable tag has the first, and a
+  // product has no counterpart for either.
+  kTagMatches,
+  kMakeActiveMember,
   // Yields the receiver when a condition holds and raises the given message as
   // a simulation error when it does not. The shape for a check the language
   // requires to run as part of evaluating an access rather than ahead of it
   // (LRM 11.3.5): passing the receiver through lets the access compose onto the
-  // guard, so a guarded access stays the ordinary one above, and a guarded
-  // write target designates a part of the guard's own result.
+  // guard, so a guarded access stays the ordinary one above.
   kRequire,
   // LRM 7.4.3 / 7.5 / 7.9 / 7.10.2. AA's `num` is an alias of `size`;
   // String's LRM 6.16.1 `len` is its own mandated spelling.
@@ -623,11 +637,9 @@ enum class BuiltinFn : std::uint16_t {
   // The step that fits a concatenation's parts to a fixed-size unpacked array
   // (LRM 10.10): the parts, accumulated into a dynamic array by the two steps
   // above, adopted into a target whose element count is fixed, which is an
-  // error
-  // when the counts differ. The target's type qualifies the call, as it does
-  // for
-  // any static factory, so the entry is named for the array it builds and not
-  // for the dynamic array it reads.
+  // error when the counts differ. The target's type qualifies the call, as it
+  // does for any static factory, so the entry is named for the array it builds
+  // and not for the dynamic array it reads.
   kArrayConformSize,
   // A dynamic array sized at run time: empty at its declared element shape,
   // `new[N]`, and `new[N](src)` (LRM 7.5.1). Each is named because the
@@ -726,8 +738,8 @@ using EntryDeclaration = std::variant<FreeFunction, Method, StaticFactory>;
 // entry gains a property by saying so here and nowhere else.
 struct RuntimeEntry {
   // The entry's stable spelling. It aligns with the SV method spelling where
-  // one exists (LRM 6.16 / 7.9 / 7.10 / 7.12 / 15.5) and is descriptive where
-  // there is no SV-side surface (`get` / `set` / `mutate` / `runtime`).
+  // one exists (LRM 6.16 / 7.9 / 7.10 / 7.12 / 15.5) and with what the library
+  // calls it where there is no SV-side surface (`get` / `set` / `initialize`).
   //
   // This is an interface contract, not a display string. It names the entry in
   // a dump and in a diagnostic, and it is the suffix of the runtime-library
@@ -743,23 +755,17 @@ struct RuntimeEntry {
   // through a capability wrapper reach its write access. Where the update
   // lands and how it gets there is each target's own answer.
   bool mutates_receiver = false;
-  // Whether the entry's result stands for storage its first argument names, so
-  // a call to it stands for whatever that argument stands for -- a value where
-  // the argument is a value, and a place where the argument is a place. Two
-  // kinds qualify: one that hands the argument back unchanged, and one that
-  // answers with a part of it. A consumer following where storage lives passes
-  // through such a call rather than stopping at it.
-  bool reaches_through_receiver = false;
+  // Whether the entry answers with the part it reaches rather than with that
+  // part's value, so what stands at the call may be written and a further
+  // access composes onto it. A target whose values have no reachable interior
+  // realizes such a call as a read of the whole and a rebuild instead; which
+  // entries it must do that for is this, so the property stays with the entry
+  // and not with each target that has to know it.
+  bool answers_with_the_part = false;
   // Whether the LRM 7.12 method takes a `with`-clause closure as its second
   // argument. The other LRM 7.5 / 7.10 array entries (`size`, `delete`,
   // `reverse`) take none.
   bool takes_closure = false;
-  // Whether the entry yields a value whose shape the call site must supply as
-  // a trailing prototype argument, because the object it acts on does not
-  // determine it: the LRM 7.12 reduction, locator, and map families (an index
-  // locator's key, a map's chosen element, an empty reduction's zero) and the
-  // associative index queries (the value an unallocated dimension reports).
-  bool takes_result_prototype = false;
   // Whether the entry answers with an index by writing it into the variable
   // the source named (LRM 7.9.4 -- 7.9.7), so the call lowers to a block
   // expression: binding the answer and writing it back are steps rather than
@@ -774,6 +780,14 @@ struct RuntimeEntry {
   // it boxes into a runtime value in that domain and is read back element by
   // element. Absent for an entry that has none.
   std::optional<std::size_t> spread_operand = std::nullopt;
+  // Which operand is the prototype the entry's result takes its shape from,
+  // absent for an entry whose result the object it acts on already shapes. A
+  // prototype stands for the result before there is one -- an empty
+  // reduction's zero, a locator's key, a map's chosen element (LRM 7.12), the
+  // index an unallocated dimension reports (LRM 20.7), the element a container
+  // is seeded with (LRM 7.5.1) -- so the call site supplies it and it names a
+  // representation the entry has no other way to know.
+  std::optional<std::size_t> result_prototype_operand = std::nullopt;
 };
 
 // The one declaration of `id`. Total over the entry set, so an entry added

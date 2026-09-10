@@ -6,7 +6,11 @@
 
 ## Status
 
-Accepted
+Accepted; how invariant 2's write-side half is stated -- the slice proxy and the out-of-range
+reference to a shield slot -- is settled by
+[value-descent-as-named-calls](value-descent-as-named-calls.md): an element and a slice are each
+reached by an entry the lowering names, and what a target does behind that entry, proxy included, is
+its own realization. The representation this entry settles is unchanged.
 
 ## Why this decision matters
 

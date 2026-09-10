@@ -9,7 +9,6 @@
 03_building_blocks/class_declared_in_compilation_unit_scope: "a property of a class another compilation unit declares is not yet reachable on this backend"
 06_data_types/chandle_value_and_comparison: "a value of type chandle has no construct on this backend"
 06_data_types/type_parameter_distinguishes_classes_by_scope: "a value of type cross-unit class has no definition the runtime builds values of"
-07_aggregate_data_types/associative_array_entry_lifecycle: "binding part of a value rather than writing it is not yet lowerable to LIR"
 07_aggregate_data_types/associative_array_wildcard_index: "a value of type wildcard index has no runtime library realization"
 07_aggregate_data_types/unpacked_structure_whole_assignment: "local is not addressable storage"
 08_classes/constructor_argument_directions: "a constructor with an output / inout / ref argument is not yet supported"

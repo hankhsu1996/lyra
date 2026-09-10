@@ -48,19 +48,14 @@ auto NetResolutionOf(lir::NetResolution resolution) -> support::NetResolution;
 auto DeclaredIndexType(const lir::CompilationUnit& unit, lir::TypeId container)
     -> std::optional<lir::TypeId>;
 
-// An operation the execution model performs that the source language does not
-// spell as a call. The builtin set names the ones it does spell; these are the
-// rest, listed together because the program never writes them, so nothing
-// upstream carries a name for them.
+// How this target realizes an instruction or a construction the layer above it
+// states, where that realization is a library call. Nothing outside this target
+// names one: what is to be done is stated a layer up and how it happens is this
+// target's alone, so another realizing the same instruction differently shares
+// none of these. An operation any layer above can state is named in the entry
+// set both targets read instead, and reaches a symbol through that name.
 enum class RuntimeOp : std::uint8_t {
   kCellAlloc,
-  kCellInitialize,
-  kCellGet,
-  kCellSet,
-  kNetInitialize,
-  kNetGet,
-  kDriverGet,
-  kDriverSet,
   kMemberAddress,
   kSequenceMake,
   kSequenceElement,
@@ -141,28 +136,12 @@ auto MemberStorageKindOf(
     const lir::CompilationUnit& unit, lir::TypeId type, MemberSlotRole role)
     -> std::optional<MemberStorageKind>;
 
-// Which capability wrapper a place reaches storage through. The wrappers share
-// one access vocabulary -- a load, a store, and the install that fixes the
-// storage's declared representation -- and differ in which of those they define
-// and which entry realizes each, so this is what a place's type is classified
-// into before an access through it is named.
+// Which capability wrapper storage is reached through. The wrappers share one
+// access vocabulary -- a load, a store, and the install that fixes the
+// storage's declared representation -- and differ in which of those they
+// define, so this is what a type is classified into before an access through it
+// is named, whether it arrived as a place or as an operand.
 enum class WrapperKind : std::uint8_t { kCell, kNet, kDriver };
-
-// The entry a load through a wrapper reaches. Every wrapper defines one: a cell
-// and a net answer with the value they hold, and a driver with the contribution
-// a partial drive is about to replace part of (LRM 6.6.1).
-auto LoadOpOf(WrapperKind kind) -> RuntimeOp;
-
-// The entry a store through a wrapper reaches. A net defines none, because its
-// value is the fold of its drivers: a value reaches it through one of them and
-// never by being written (LRM 6.5), so a store naming a net is something
-// upstream built that it should not have.
-auto StoreOpOf(WrapperKind kind) -> RuntimeOp;
-
-// The entry that fixes a wrapper's storage at its declared representation. A
-// driver defines none: what it contributes before it drives is the fold's
-// identity at the net's shape, which the net gives it when it attaches.
-auto InstallOpOf(WrapperKind kind) -> RuntimeOp;
 
 // The library realizes an operation once, whatever it is applied to: the
 // runtime performs the work and what it acts on -- the engine, the file broker,
@@ -179,16 +158,17 @@ struct NamedByValue {
   std::size_t operand = 0;
 };
 
-// The operation acts on the capability wrapper an argument addresses rather
-// than on a value it is handed, and it is one every wrapper defines under its
-// own entry name -- installing the storage's declared representation. So both
-// halves come from that wrapper: the domain from the representation its storage
-// holds, and which entry from which wrapper it is.
-struct NamedByWrapperInstall {};
+// The operation acts on the capability wrapper an argument reaches rather than
+// on a value it is handed, and the wrappers each define it -- reading what one
+// holds, replacing the whole of it, installing the storage's declared
+// representation. So both halves come from that wrapper: the domain from the
+// representation its storage holds, and which family of entries from which
+// wrapper it is.
+struct NamedByWrapper {};
 
-// The operation likewise acts on the wrapper an argument addresses, but exists
-// on one wrapper only -- attaching a driver, which only a net does -- so its
-// own name is already unambiguous and only the domain comes from the wrapper.
+// The operation likewise acts on the wrapper an argument reaches, but exists on
+// one wrapper only -- attaching a driver, which only a net does -- so its own
+// name is already unambiguous and only the domain comes from the wrapper.
 struct NamedByWrapperDomain {};
 
 // A conversion crosses two representations and its realization depends on both,
@@ -204,7 +184,7 @@ struct NotRealized {
 };
 
 using EntryNaming = std::variant<
-    NamedAlone, NamedByValue, NamedByWrapperInstall, NamedByWrapperDomain,
+    NamedAlone, NamedByValue, NamedByWrapper, NamedByWrapperDomain,
     NamedByConversion, NotRealized>;
 
 // How the entry behind a builtin is named. Total over the builtin set: what the
@@ -231,6 +211,17 @@ auto RuntimeSymbol(support::ValueDomain domain, lir::ValueCellTarget::Op op)
     -> std::string;
 auto RuntimeSymbol(support::BuiltinFn fn) -> std::string;
 auto RuntimeSymbol(support::ValueDomain domain, support::BuiltinFn fn)
+    -> std::string;
+
+// An access through a capability wrapper leads with the wrapper as well, since
+// a cell, a net and a driver each answer a read of one domain differently. It
+// refuses the two accesses no wrapper defines, which are upstream mistakes
+// rather than gaps: a net's value is the fold of its drivers, so a value
+// reaches it through one of them and never by being written (LRM 6.5), and a
+// driver installs no representation of its own, because what it contributes
+// before it drives is the identity the net gave it when it attached.
+auto RuntimeSymbol(
+    support::ValueDomain domain, WrapperKind wrapper, support::BuiltinFn fn)
     -> std::string;
 auto RuntimeSymbol(
     support::ValueDomain destination, support::BuiltinFn fn,

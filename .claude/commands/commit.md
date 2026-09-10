@@ -1,6 +1,6 @@
 ---
 description: Create a commit with a well-formatted message
-allowed-tools: Bash(git status:*), Bash(git diff:*), Bash(git add:*), Bash(git branch:*), Bash(git switch:*), Bash(git log:*), Bash(clang-format:*), Bash(npx prettier:*), Bash(buildifier:*), Bash(find:*), Bash(python3 tools/policy/*), Bash(bazel build:*), Bash(ls:*)
+allowed-tools: Bash(git status:*), Bash(git diff:*), Bash(git add:*), Bash(git branch:*), Bash(git switch:*), Bash(git log:*), Bash(clang-format:*), Bash(npm run format:*), Bash(buildifier:*), Bash(find:*), Bash(python3 tools/policy/*), Bash(bazel build:*), Bash(ls:*)
 ---
 
 # Commit
@@ -48,17 +48,15 @@ buildifier -r .
 
 ```bash
 buildifier -mode=check -lint=warn -r .
-python3 tools/policy/check_architecture.py
-python3 tools/policy/check_ascii.py --diff-base origin/main
-python3 tools/policy/check_cpp_style.py
-python3 tools/policy/check_docs.py
-python3 tools/policy/check_exceptions.py --diff-base origin/main
-python3 tools/policy/check_runtime_abi.py
 ```
 
-Fix violations before committing. Do not stage / commit through known violations.
+Then **every** script `ls tools/policy/check_*.py` names, one per invocation, with no arguments.
+The list lives on disk, not here: a copy of it in this file is a second thing to keep true, and it
+is the copy that loses -- a check added to the tree went unrun for as long as nobody noticed the
+gap. A script that also takes `--diff-base` narrows itself to what changed; run it without one, so
+what it answers is the whole tree rather than a window that depends on where the branch started.
 
-**Sanity check:** `ls tools/policy/check_*.py` and `ls .github/workflows/`. If a new `check_*.py` exists that this skill does not run, run it anyway and tell the user the skill is out of date.
+Fix violations before committing. Do not stage / commit through known violations.
 
 ## Commit Format
 

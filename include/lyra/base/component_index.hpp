@@ -8,8 +8,7 @@
 namespace lyra::base {
 
 // Which member of a structural aggregate: the declaration-order position of a
-// tuple element, a union member, a tagged union's tag, or one step of a
-// designator path.
+// tuple element, a union member, or a tagged union's tag.
 //
 // This is not an identity, and the difference is the reason it exists. An
 // identity is conferred: two separately declared things are distinct however

@@ -47,38 +47,13 @@ namespace {
 // host pointer.
 auto TypeContainsChandle(const mir::CompilationUnit& unit, mir::TypeId type)
     -> bool {
-  return unit.types.Get(type).Visit(
-      Overloaded{
-          [](const mir::ChandleType&) { return true; },
-          [&](const mir::UnpackedArrayType& t) {
-            return TypeContainsChandle(unit, t.element_type);
-          },
-          [&](const mir::DynamicArrayType& t) {
-            return TypeContainsChandle(unit, t.element_type);
-          },
-          [&](const mir::QueueType& t) {
-            return TypeContainsChandle(unit, t.element_type);
-          },
-          [&](const mir::AssociativeArrayType& t) {
-            return TypeContainsChandle(unit, t.key_type) ||
-                   TypeContainsChandle(unit, t.element_type);
-          },
-          [&](const mir::TupleType& t) {
-            return std::ranges::any_of(t.elements, [&](mir::TypeId e) {
-              return TypeContainsChandle(unit, e);
-            });
-          },
-          [&](const mir::UnionType& t) {
-            return std::ranges::any_of(t.elements, [&](mir::TypeId e) {
-              return TypeContainsChandle(unit, e);
-            });
-          },
-          [&](const mir::TaggedUnionType& t) {
-            return std::ranges::any_of(t.elements, [&](mir::TypeId e) {
-              return TypeContainsChandle(unit, e);
-            });
-          },
-          [](const auto&) { return false; }});
+  const mir::Type& data = unit.types.Get(type);
+  if (data.Is<mir::ChandleType>()) {
+    return true;
+  }
+  return std::ranges::any_of(data.HeldValueTypes(), [&](mir::TypeId held) {
+    return TypeContainsChandle(unit, held);
+  });
 }
 
 auto ToMirFormatModifiers(const value::FormatModifiers& m)

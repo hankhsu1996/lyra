@@ -197,12 +197,6 @@ auto ResolveFieldAccess(const ScopeView& view, const mir::FieldAccessExpr& m)
             // resolves against the receiver's static type.
             return FieldAccess{.name = t.field_name, .through_receiver = true};
           },
-          // A product's component is a position rather than a name in an arena,
-          // so its access composes before this dispatch is reached.
-          [](const mir::ComponentTarget&) -> FieldAccess {
-            throw InternalError(
-                "ResolveFieldAccess: a product's component has no arena name");
-          },
           [&](const mir::FieldId& id) -> FieldAccess {
             const mir::TypeId recv_type = view.Expr(m.receiver).type;
             const auto& recv_data = view.Unit().types.Get(recv_type);
@@ -243,46 +237,8 @@ auto ResolveFieldAccess(const ScopeView& view, const mir::FieldAccessExpr& m)
       m.field);
 }
 
-// Which of a field access's two readings an occurrence is. The node is one --
-// `u.f` is one syntax in the target language too -- and where it stands settles
-// the rest, which is what value category means.
-enum class FieldPosition : std::uint8_t { kValue, kTarget };
-
-// A product's component, reached by position. Every component is live at once,
-// so the component itself answers both readings and only the receiver's own
-// form tells them apart.
-auto RenderComponentAccess(
-    const ScopeView& view, mir::ExprId product, base::ComponentIndex index,
-    FieldPosition position) -> std::string {
-  const mir::Expr& receiver = view.Expr(product);
-  return std::format(
-      "({}).template Get<{}>()",
-      position == FieldPosition::kTarget ? RenderLhsExpr(view, receiver)
-                                         : RenderExpr(view, receiver),
-      index.value);
-}
-
-// A member of an active-member value, reached by its declaration-order
-// position. A read takes the member's value and a write takes a reference to
-// it; what either means for a member that is not the live one belongs to the
-// value's own type, so the same pair of forms serves a union and a tagged one.
-auto RenderActiveMemberAccess(
-    const ScopeView& view, mir::ExprId union_value, base::ComponentIndex index,
-    FieldPosition position) -> std::string {
-  const mir::Expr& receiver = view.Expr(union_value);
-  return std::format(
-      "({}).template {}<{}>()",
-      position == FieldPosition::kTarget ? RenderLhsExpr(view, receiver)
-                                         : RenderExpr(view, receiver),
-      position == FieldPosition::kTarget ? "GetRef" : "Get", index.value);
-}
-
-auto RenderFieldAccessExpr(
-    const ScopeView& view, const mir::FieldAccessExpr& m,
-    FieldPosition position) -> std::string {
-  if (const auto* c = std::get_if<mir::ComponentTarget>(&m.field)) {
-    return RenderComponentAccess(view, m.receiver, c->index, position);
-  }
+auto RenderFieldAccessExpr(const ScopeView& view, const mir::FieldAccessExpr& m)
+    -> std::string {
   const FieldAccess field = ResolveFieldAccess(view, m);
   if (!field.through_receiver) {
     return field.name;
@@ -334,46 +290,6 @@ auto RenderReferenceExpr(
                 r.property_name);
           }},
       reference.target);
-}
-
-// LHS expression render: produces a write-target reference (a name, a
-// dereference, or a chain of container-access `CallExpr`s whose runtime
-// overloads return write-through references). A dereference of a capability
-// wrapper is where the wrapper's own write protocol enters, supplied by the
-// place-access dispatch on the wrapper's type.
-//
-// Only an access into a value aggregate spells differently in target position;
-// every other addressable form is the expression as it reads. The forms are
-// listed rather than defaulted, so what a target may be is stated here and
-// nothing else reaches a write.
-auto RenderLhsExpr(const ScopeView& view, const mir::Expr& expr)
-    -> std::string {
-  return std::visit(
-      Overloaded{
-          [&](const mir::FieldAccessExpr& m) -> std::string {
-            return RenderFieldAccessExpr(view, m, FieldPosition::kTarget);
-          },
-          [&](const mir::UnionMemberExpr& m) -> std::string {
-            return RenderActiveMemberAccess(
-                view, m.union_value, m.index, FieldPosition::kTarget);
-          },
-          [&](const mir::ReferenceExpr&) -> std::string {
-            return RenderExpr(view, expr);
-          },
-          [&](const mir::CallExpr&) -> std::string {
-            return RenderExpr(view, expr);
-          },
-          [&](const mir::DerefExpr&) -> std::string {
-            return RenderExpr(view, expr);
-          },
-          [&](const auto&) -> std::string {
-            throw InternalError(
-                "RenderLhsExpr: expression form is not addressable; the "
-                "assignment target lowering should have produced an "
-                "addressable form");
-          },
-      },
-      expr.data);
 }
 
 namespace {
@@ -428,14 +344,12 @@ auto RenderAssignExpr(const ScopeView& view, const mir::AssignExpr& a)
     -> std::string {
   std::string value = RenderExpr(view, view.Expr(a.value));
 
-  const mir::Expr& lhs_expr = view.Expr(a.target);
-
   // Mechanical render: the target names the storage the store reaches, whether
-  // that is a plain place or the storage a capability wrapper stands for, so
-  // this path emits a plain C++ assignment over whatever the LHS render
-  // produces. An assignment is an expression, so it parenthesizes to keep its
-  // value usable wherever it appears.
-  const std::string target = RenderLhsExpr(view, lhs_expr);
+  // that is a plain place or a part of the value one holds, and either renders
+  // as a C++ lvalue -- so this path emits a plain assignment over it. An
+  // assignment is an expression, so it parenthesizes to keep its value usable
+  // wherever it appears.
+  const std::string target = RenderExpr(view, view.Expr(a.target));
   if (a.compound_op.has_value()) {
     return std::format(
         "({})", RenderCompoundAssign(*a.compound_op, target, value));
@@ -445,8 +359,7 @@ auto RenderAssignExpr(const ScopeView& view, const mir::AssignExpr& a)
 
 auto RenderIncDecExpr(const ScopeView& view, const mir::IncDecExpr& inc)
     -> std::string {
-  const mir::Expr& target_expr = view.Expr(inc.target);
-  std::string lhs = RenderLhsExpr(view, target_expr);
+  std::string lhs = RenderExpr(view, view.Expr(inc.target));
 
   switch (inc.op) {
     case mir::IncDecOp::kPreInc:
@@ -597,7 +510,7 @@ auto RenderDerefExpr(const ScopeView& view, const mir::DerefExpr& d)
 // `&place` emitted as the C++ address-of operator.
 auto RenderAddressOfExpr(const ScopeView& view, const mir::AddressOfExpr& a)
     -> std::string {
-  return std::format("&{}", RenderLhsExpr(view, view.Expr(a.operand)));
+  return std::format("&{}", RenderExpr(view, view.Expr(a.operand)));
 }
 
 // Re-types a reference as the reference type the expression's `type` states.
@@ -735,7 +648,7 @@ auto RenderExpr(const ScopeView& view, const mir::Expr& expr) -> std::string {
             return RenderPointerCastExpr(view, c, expr.type);
           },
           [&](const mir::FieldAccessExpr& m) -> std::string {
-            return RenderFieldAccessExpr(view, m, FieldPosition::kValue);
+            return RenderFieldAccessExpr(view, m);
           },
           [&](const mir::ClosureExpr& cl) -> std::string {
             return RenderClosureExpr(view, cl);
@@ -757,20 +670,6 @@ auto RenderExpr(const ScopeView& view, const mir::Expr& expr) -> std::string {
             return std::format(
                 "({})[{}]", RenderExpr(view, view.Expr(g.vector)),
                 RenderExpr(view, view.Expr(g.index)));
-          },
-          [&](const mir::UnionExpr& u) -> std::string {
-            return std::format(
-                "{}::Make<{}>({})", RenderTypeAsCpp(view.Unit(), expr.type),
-                u.index.value, RenderExpr(view, view.Expr(u.value)));
-          },
-          [&](const mir::TaggedIsExpr& g) -> std::string {
-            return std::format(
-                "({}).template IsTagged<{}>()",
-                RenderExpr(view, view.Expr(g.union_value)), g.tag_index.value);
-          },
-          [&](const mir::UnionMemberExpr& m) -> std::string {
-            return RenderActiveMemberAccess(
-                view, m.union_value, m.index, FieldPosition::kValue);
           },
       },
       expr.data);

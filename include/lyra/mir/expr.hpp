@@ -116,11 +116,12 @@ struct BlockExpr {
 // `compound_op.has_value()` marks the assignment as `target op= value`;
 // `nullopt` is a simple write. `value` is already typed to match `target`.
 //
-// `target` is a place, whose write is a store, or a designated part of a value,
-// whose write leaves the owner holding an updated whole. What settles that a
-// write is meant is this position, not the target's own node kind. A join in
-// target position (LRM 11.4.12 destructuring LHS) is desugared upstream into a
-// snapshot + per-part assignment sequence, so render does not encounter it.
+// `target` is a place, whose write is a store, or a part of a value reached by
+// a run of calls, whose write leaves the owner holding an updated whole. What
+// settles that a write is meant is this position, not what the target is. A
+// join in target position (LRM 11.4.12 destructuring LHS) is desugared upstream
+// into a snapshot + per-part assignment sequence, so render does not encounter
+// it.
 struct AssignExpr {
   ExprId target;
   std::optional<BinaryOp> compound_op = std::nullopt;
@@ -252,10 +253,17 @@ using DirectTarget = std::variant<
 // package subroutine (LRM 26.3), a runtime entry the program reaches by name.
 // The target says where the code is found and this says what it is applied to,
 // so the two vary independently.
+// `position` names the part an entry acts on where that part is fixed by the
+// call itself: a component of a product, the member an active-member value
+// holds. It rides with the callee rather than among the arguments because the
+// part named has a type of its own, so a target with a type system settles the
+// position where it settles types -- which is naming the operation, not handing
+// it a value. Absent for every entry that names no part.
 struct Direct {
   DirectTarget target;
   std::optional<ExprId> receiver = std::nullopt;
   std::optional<ScopeQualifier> qualification = std::nullopt;
+  std::optional<base::ComponentIndex> position = std::nullopt;
 };
 
 // A call through a code address the program computed -- the indirect-call
@@ -335,8 +343,8 @@ struct CallExpr {
 // Names the place its operand stands for: the object a borrowed pointer or a
 // managed handle refers to, or the storage a capability wrapper represents.
 // This is place formation rather than an operation -- reading it loads the
-// referent, storing into it writes the referent, a designator rooted at it
-// writes part of the referent, and passing it by reference lends the referent.
+// referent, storing into it writes the referent, a descent rooted at it reaches
+// part of the referent, and passing it by reference lends the referent.
 // The bare operand keeps naming the pointer or the wrapper itself, so rebinding
 // one is a store carrying no dereference. `Expr::type` is the referent's type.
 // Taking the address of a dereferenced managed handle is how a borrowed pointer
@@ -455,17 +463,6 @@ struct ExternalFieldTarget {
   auto operator==(const ExternalFieldTarget&) const -> bool = default;
 };
 
-// One component of a product value, named by its position. A product declares
-// its components nowhere -- the type is the component list -- so a position is
-// the whole of the identity and there is no arena to qualify it with. Every
-// component of a product is live at once, which is what lets reading one and
-// writing one be the same operation seen two ways.
-struct ComponentTarget {
-  base::ComponentIndex index;
-
-  auto operator==(const ComponentTarget&) const -> bool = default;
-};
-
 // Which arena's field a `FieldAccessExpr` reaches. Three shapes because the
 // class case is where "which arena" is a semantic decision that also splits
 // on unit boundary:
@@ -486,11 +483,11 @@ struct ComponentTarget {
 //   chain, so the arena is uniquely determined by the receiver's type; stating
 //   it again would restate what the structural context already fixes.
 //
-// - `ComponentTarget` is used when the receiver is a product value, whose
-//   components are its type and are named by position rather than declared
-//   anywhere. There is no arena to name.
-using FieldRef =
-    std::variant<FieldTarget, FieldId, ExternalFieldTarget, ComponentTarget>;
+// A field is declared somewhere, which is what separates it from a part named
+// by position: a product declares its components nowhere -- the type is the
+// component list -- so reaching one is an operation on the value rather than a
+// name in an arena, and it is a call.
+using FieldRef = std::variant<FieldTarget, FieldId, ExternalFieldTarget>;
 
 // Field access through an explicit receiver expression: `receiver.field`. The
 // receiver is a field-bearing value -- a class instance, a closure, a
@@ -555,53 +552,6 @@ struct AwaitExpr {
 struct VectorGetExpr {
   ExprId vector;
   ExprId index;
-};
-
-// Builds an active-member value whose live member is component `index`,
-// carrying `value`. The active-member counterpart to `CompositeExpr`: a
-// composite lists every part, this one names the single part that is the value.
-// Used wherever such a value comes into being -- a default-initialized union
-// builds `UnionExpr{0, <member 0 default>}`, and SystemVerilog's `tagged Member
-// expr` (LRM 11.9) builds the member it names.
-//
-// `Expr::type` says whether the live member is observable and a mismatched
-// reach fails, or is erased with a cross-member read defaulted; that is the
-// value's own semantics and changes nothing about the build. A member carrying
-// no bits is filled in with its type's value at HIR-to-MIR, so `value` is
-// always present and no consumer decides what an absent one would mean.
-struct UnionExpr {
-  base::ComponentIndex index;
-  ExprId value;
-};
-
-// Non-throwing tag check: `1` iff the tagged-union value's active tag equals
-// `tag_index`. `Expr::type` is a 1-bit packed vector (the `bool`-shaped result
-// that `if` and `?:` consume). Pattern-matching desugar emits this as the
-// guard preceding every member reach (LRM 12.6), keeping the run-time mismatch
-// error path reserved for the direct dot-access surface.
-struct TaggedIsExpr {
-  ExprId union_value;
-  base::ComponentIndex tag_index;
-};
-
-// One member of an active-member value, named by its declaration-order
-// position. Only one member is live at a time, so reaching the named member
-// answers with its value when it is the live one and writing it makes it the
-// live one.
-//
-// What reaching a member that is not the live one answers with is the value's
-// own semantics and travels with its type: an untagged union answers with that
-// member's default, since LRM 7.3 leaves the read undefined and a deterministic
-// stand-in is what no program may depend on, while a tagged one raises a
-// run-time error (LRM 7.3.2, 11.9). No consumer chooses between the two --
-// each reaches the entry its operand's type names, which is where every value
-// operation's realization comes from.
-//
-// `Expr::type` is the member's type, and where the occurrence stands settles
-// which of the two readings it is.
-struct UnionMemberExpr {
-  ExprId union_value;
-  base::ComponentIndex index;
 };
 
 // Used where a runtime callback surface takes a bare function value with no
@@ -691,8 +641,7 @@ using ExprData = std::variant<
     ConditionalExpr, BlockExpr, AssignExpr, IncDecExpr, CallExpr, DerefExpr,
     AddressOfExpr, MachineArrayDataExpr, MoveExpr, PointerCastExpr,
     FunctionCastExpr, IntCastExpr, FieldAccessExpr, ClosureExpr, CompositeExpr,
-    ValueCastExpr, AwaitExpr, VectorGetExpr, UnionExpr, TaggedIsExpr,
-    UnionMemberExpr>;
+    ValueCastExpr, AwaitExpr, VectorGetExpr>;
 
 struct Expr {
   ExprData data;
@@ -754,12 +703,6 @@ struct Expr {
 // else (direct call to a user method, indirect, construct) is false.
 [[nodiscard]] auto IsMutatingCallee(const Callee& callee) -> bool;
 
-// Whether the call reaches into what its receiver names, so a consumer that
-// wants the call as a place wants the receiver as one too. True only for a
-// direct call to a built-in whose id is in the reaching set; everything else
-// (direct call to a user method, indirect, construct) is false.
-[[nodiscard]] auto ReachesThroughReceiver(const Callee& callee) -> bool;
-
 // `lyra::runtime::current_runtime()` -- reaches the attached Runtime's
 // capability view through a thread-local pointer the Runtime publishes for
 // its lifetime. Zero-argument free function so every body kind -- module
@@ -781,23 +724,59 @@ struct Expr {
   return Expr{.data = DerefExpr{.pointer = place}, .type = referent_type};
 }
 
-// `receiver.index` -- one component of a product value, named by position.
-[[nodiscard]] inline auto MakeComponentAccessExpr(
-    ExprId receiver, base::ComponentIndex index, TypeId component) -> Expr {
+// `subject.index` -- the part a value holds at a declaration-order position: a
+// component of a product, or the member an active-member value holds. One
+// operation for both, because what separates them -- whether every part is live
+// at once, and what a read of one that is not answers with -- is the value's
+// own semantics and reaches the call through the domain its type names.
+[[nodiscard]] inline auto MakePartAccessExpr(
+    ExprId subject, base::ComponentIndex index, TypeId part) -> Expr {
   return Expr{
       .data =
-          FieldAccessExpr{
-              .receiver = receiver, .field = ComponentTarget{.index = index}},
-      .type = component};
+          CallExpr{
+              .callee =
+                  Direct{
+                      .target = support::BuiltinFn::kPart,
+                      .receiver = subject,
+                      .position = index},
+              .arguments = {}},
+      .type = part};
 }
 
-// `union_value.index` -- one member of an active-member value, named by
-// position.
-[[nodiscard]] inline auto MakeUnionMemberExpr(
-    ExprId union_value, base::ComponentIndex index, TypeId member) -> Expr {
+// Whether the member an active-member value holds is the one at `index`. Only a
+// value carrying an observable tag has this; a product has no counterpart. The
+// answer is a machine boolean, so a caller wanting a one-bit integral converts
+// it and the type here is not its to choose.
+[[nodiscard]] inline auto MakeTagMatchesExpr(
+    ExprId subject, base::ComponentIndex index, TypeId machine_boolean)
+    -> Expr {
   return Expr{
-      .data = UnionMemberExpr{.union_value = union_value, .index = index},
-      .type = member};
+      .data =
+          CallExpr{
+              .callee =
+                  Direct{
+                      .target = support::BuiltinFn::kTagMatches,
+                      .receiver = subject,
+                      .position = index},
+              .arguments = {}},
+      .type = machine_boolean};
+}
+
+// An active-member value whose live member is the one at `index`, carrying
+// `value`. Reached on the type it builds, which is what the call qualifies
+// itself with.
+[[nodiscard]] inline auto MakeActiveMemberExpr(
+    ExprId value, base::ComponentIndex index, TypeId built) -> Expr {
+  return Expr{
+      .data =
+          CallExpr{
+              .callee =
+                  Direct{
+                      .target = support::BuiltinFn::kMakeActiveMember,
+                      .qualification = TypeQualifier{.type = built},
+                      .position = index},
+              .arguments = {value}},
+      .type = built};
 }
 
 // Reading what a capability wrapper's storage holds. An operation on the

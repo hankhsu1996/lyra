@@ -614,16 +614,18 @@ enough to warrant its own focused review.
       `ConversionKind`) retires; HIR's `ConversionExpr` + `ConversionKind` stay as SV vocab in HIR
       and collapse into these primitives at HIR-to-MIR.
 
-- [x] R51 -- Reaching a capability wrapper's storage is place formation, not a call. A bare wrapper
-      place denotes the wrapper and a dereference of it denotes the storage it represents, so an
-      observable read is a read, a whole or partial write is a store, and a by-reference lending
-      lends that storage -- while rebinding a reference stays a store into the bare place,
-      structurally distinct from writing through it where before only the choice of lowering path
-      told them apart. The mutation proxy a partial write interposed is gone, and with it the
-      execution backend's pattern-match that recovered the destination it stood for. Each backend
-      now supplies the access protocol from the place's type through one dispatch. The store no
-      longer carries a runtime handle, which removes the handle from the deferred-assignment
-      closure, from the package initializer, and from the cell store the execution ABI exposes.
+- [x] R51 -- Naming a capability wrapper's storage is place formation, not a call. A bare wrapper
+      place denotes the wrapper and a dereference of it denotes the storage it represents, so a
+      write that descends into a part starts from that dereference and a by-reference lending lends
+      that storage -- while rebinding a reference stays a store into the bare place, structurally
+      distinct from writing through it where before only the choice of lowering path told them
+      apart. Reading what a wrapper holds and replacing the whole of it act on the wrapper rather
+      than naming its storage, so each stays an ordinary call. The mutation proxy a partial write
+      interposed is gone, and with it the execution backend's pattern-match that recovered the
+      destination it stood for. Each backend now supplies the access protocol from the place's type
+      through one dispatch. The store no longer carries a runtime handle, which removes the handle
+      from the deferred-assignment closure, from the package initializer, and from the cell store
+      the execution ABI exposes.
 
 - [ ] R47 -- The object model is designed: a module instance, a generate scope, and a SystemVerilog
       class are one generic nominal object type, differing only in which base they extend, which
@@ -909,20 +911,22 @@ enough to warrant its own focused review.
       expression, and each backend recovered the owner and the selectors by walking that expression
       and consulting each receiver's type. Two backends deriving one semantic fact is the shape
       `../architecture/mir.md`'s Forbidden Shapes name, and it made every new container family
-      arrive as another per-type branch. MIR now states the write target as a designator -- the
-      place that owns the whole value, and the descent that reaches the part -- with a closed
-      selector set covering a product component, a union member, an element, and a window. Each
-      backend is a fixed function of that node: the C++ backend composes the value library's write
-      proxies in place, the execution backend folds one functional whole-value update. The nested
-      write encoding, the write-side access entries, the target decomposition, and its per-type
-      predicate are gone. Every interior write -- struct component, union member, packed slice,
-      packed or unpacked element, string character -- and every increment through one now takes the
-      same path on both backends. The full model and the questions it settles are recorded in
-      `../decisions/value-projection-write.md` and `../decisions/value-projection-designator.md`.
-  - [ ] A `ref` / `output` / `inout` actual bound to an interior, and a nonblocking assignment into
-        one, are the designator's evaluated form -- a projection reference. It is rejected on the
-        execution backend today. Landing it needs that reference to exist as a runtime value on both
-        backends, able to cross a suspension.
+      arrive as another per-type branch. A write target is now built rooted where the write lands,
+      as one call per level of the descent, each naming the entry the lowering settled from the type
+      that level descends into. Each backend is a fixed function of those calls: the C++ backend
+      reaches the part in place, the execution backend reads the whole value and rebuilds it,
+      because that is what its representation allows. The nested write encoding, the target
+      decomposition, and its per-type predicate are gone. Every interior write -- struct component,
+      union member, packed slice, packed or unpacked element, string character -- and every
+      increment through one takes the same path on both backends. The model is recorded in
+      `../decisions/value-projection-write.md`, and how it is stated in
+      `../decisions/value-descent-as-named-calls.md`.
+  - [ ] A `ref` / `output` / `inout` actual bound to an interior is rejected on the execution
+        backend today. Landing it needs a reference into a value to exist as a runtime value on both
+        backends, able to cross a suspension. A nonblocking assignment into an interior is not one
+        of them and already runs on both: what it captures is a reference to the owner, not to the
+        part, and the descent is restated over that capture with its coordinates snapshotted, which
+        is what LRM 10.4.2 asks for and needs no reference into the value at all.
   - [ ] The queue and associative-array interior writes connect to the same path once those value
         domains are realized on the execution backend.
 

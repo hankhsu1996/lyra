@@ -9,7 +9,12 @@
 Accepted; decision 3's packed-and-string half is superseded by
 [concatenation-realization](concatenation-realization.md), which finds that one node realized per
 result type is a decision no consumer should be making. What decision 3 settles about a queue
-concatenation stands.
+concatenation stands. Decision 2's write-side half -- the lowering flag that made an element select
+pick a write-side method -- is superseded by
+[value-descent-as-named-calls](value-descent-as-named-calls.md): reading an element and reaching one
+are two entries the lowering names outright, so no flag chooses between them. That an access is a
+call rather than a select node, and that the store boundary conforms the element shape, are
+unchanged.
 
 ## Context
 

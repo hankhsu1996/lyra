@@ -47,9 +47,7 @@
 #include "lyra/lowering/hir_to_mir/sampled_history.hpp"
 #include "lyra/lowering/hir_to_mir/subroutine_call.hpp"
 #include "lyra/lowering/hir_to_mir/walk_frame.hpp"
-#include "lyra/mir/compilation_unit.hpp"
 #include "lyra/mir/expr.hpp"
-#include "lyra/mir/type.hpp"
 #include "lyra/support/builtin_fn.hpp"
 #include "lyra/support/imported_runtime_class.hpp"
 #include "lyra/support/system_subroutine.hpp"
@@ -113,13 +111,12 @@ auto LowerAssociativeTraversal(
 
   auto idx_lhs_or = lowerer.LowerLhsExpr(hir_exprs.Get(idx_hir), step_frame);
   if (!idx_lhs_or) return std::unexpected(std::move(idx_lhs_or.error()));
-  const mir::ExprId idx_lhs_id = body.exprs.Add(*std::move(idx_lhs_or));
   const mir::ExprId visited_id = ProjectCompletionComponent(
       body, completion, payload_type, kTraversalVisitedIndex, key_type);
   body.AppendStmt(
       mir::ExprStmt{
           .expr = body.exprs.Add(BuildStoreExpr(
-              unit, body, idx_lhs_id, visited_id, std::nullopt, key_type))});
+              unit, body, *idx_lhs_or, visited_id, std::nullopt, key_type))});
 
   return steps.Build(ProjectCompletionComponent(
       body, completion, payload_type, kTraversalFound, result_type));
@@ -444,23 +441,22 @@ auto LowerBuiltinMethodCall(
   }
   const auto& unit_lowerer = lowerer.Owner();
   const auto& hir_exprs = lowerer.HirExprs();
-  auto& block = *frame.current_block;
   const hir::TypeId hir_dispatch_type =
       hir_exprs.Get(*c.arguments.front()).type;
+
+  auto& block = *frame.current_block;
   // A static call dispatches on a type, so `args[0]` is a discardable
   // type-bearer and the type-namespace qualifier rides on the callee. Every
-  // other call dispatches on `args[0]`, routed through the partial-write proxy
-  // when the method mutates and the LHS roots in a capability wrapper, so the
-  // method body operates on a snapshot the proxy commits back; a non-mutating
-  // method consumes a value, so the ordinary value path applies.
+  // other call dispatches on `args[0]`: a method that changes the object it
+  // acts on takes the place that object stands in, so the change lands where
+  // the source named it, and one that does not consumes a value.
   std::optional<mir::ExprId> receiver;
   if (!IsStaticFactory(entry)) {
     if (entry.mutates_receiver) {
       auto recv_or =
           lowerer.LowerLhsExpr(hir_exprs.Get(*c.arguments.front()), frame);
       if (!recv_or) return std::unexpected(std::move(recv_or.error()));
-      receiver = StoragePlaceOf(
-          lowerer.Owner().Unit(), block, block.exprs.Add(*std::move(recv_or)));
+      receiver = TargetPlace(lowerer.Owner().Unit(), block, *recv_or);
     } else {
       auto recv_or =
           lowerer.LowerExpr(hir_exprs.Get(*c.arguments.front()), frame);
@@ -501,11 +497,10 @@ auto LowerBuiltinMethodCall(
         "accept a with-clause (LRM 7.12.1 family only)");
   }
 
-  // The producer supplies the result's canonical default whenever the receiver
-  // does not determine the result's shape -- an LRM 7.12 index locator's key, a
-  // map's chosen element, an empty reduction's zero, or the index an empty
-  // associative dimension reports (LRM 20.7).
-  if (entry.takes_result_prototype) {
+  // A prototype the entry takes is never written at the source, so the producer
+  // is what supplies it, at the result type's own canonical default. It trails
+  // the operands the entry itself takes, which is where appending places it.
+  if (entry.result_prototype_operand.has_value()) {
     const mir::TypeId proto_type =
         ResultPrototypeType(unit_lowerer, result_type);
     args.push_back(block.exprs.Add(

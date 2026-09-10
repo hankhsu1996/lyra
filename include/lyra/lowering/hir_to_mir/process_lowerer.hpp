@@ -20,6 +20,7 @@
 #include "lyra/hir/subroutine.hpp"
 #include "lyra/lowering/hir_to_mir/binding_origin.hpp"
 #include "lyra/lowering/hir_to_mir/declared_scope.hpp"
+#include "lyra/lowering/hir_to_mir/lhs_store.hpp"
 #include "lyra/lowering/hir_to_mir/static_var_binding.hpp"
 #include "lyra/lowering/hir_to_mir/structural_scope_lowerer.hpp"
 #include "lyra/lowering/hir_to_mir/unit_lowerer.hpp"
@@ -149,11 +150,12 @@ class ProcessLowerer {
       -> diag::Result<mir::Expr>;
 
   // LHS-context expression dispatcher: same dispatch as `LowerExpr` but
-  // without that dereference, so a capability-wrapper leaf flows out as the
-  // bare wrapper -- which is what a destination re-roots from and what a
-  // reference binds to.
+  // peeling rather than composing, so what comes out is the place a write
+  // lands in and the descent that reaches the part written. A capability
+  // wrapper leaf flows out as the bare wrapper, which is what a destination
+  // re-roots from and what a reference binds to.
   auto LowerLhsExpr(const hir::Expr& expr, WalkFrame frame)
-      -> diag::Result<mir::Expr>;
+      -> diag::Result<WriteTarget>;
 
   // Central statement dispatcher. One switch over `hir::Stmt::data` routing
   // each kind to its per-family handler.

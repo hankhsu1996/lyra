@@ -4,8 +4,10 @@
 #include <cstdint>
 #include <optional>
 #include <span>
+#include <string>
 #include <string_view>
 #include <unordered_map>
+#include <variant>
 #include <vector>
 
 #include <llvm/IR/IRBuilder.h>
@@ -67,7 +69,8 @@ class CodeGenFunction {
       -> diag::Result<llvm::Value*>;
   // The runtime domain a union's member `index` boxes as. Both union kinds hold
   // their member types positionally, so this reads either one.
-  auto UnionMemberDomain(lir::TypeId union_type, std::uint32_t index)
+  [[nodiscard]] auto UnionMemberDomain(
+      lir::TypeId union_type, std::uint32_t index) const
       -> diag::Result<support::ValueDomain>;
   auto LowerAggregateExtract(const lir::AggregateExtractInstr& extract)
       -> diag::Result<llvm::Value*>;
@@ -127,46 +130,89 @@ class CodeGenFunction {
       const lir::BuiltinTarget& target, const lir::CallInstr& call,
       lir::TypeId result_type, std::span<llvm::Value* const> args)
       -> diag::Result<llvm::FunctionCallee>;
-  auto ConstructCallee(
-      const lir::CallInstr& call, lir::TypeId result,
-      std::span<llvm::Value* const> args) -> diag::Result<llvm::FunctionCallee>;
+  // What form an entry takes a call's operands in. A value the runtime builds
+  // from a compile-time description of it leads with a reference to that
+  // description, since the entry is one function over every value so described
+  // and the description is what tells them apart; and a value built over a run
+  // of others takes them as one span, because no entry has an operand per
+  // element.
+  struct OperandsAsStated {};
+  struct OperandsAfterDefinition {
+    lir::TypeId defined;
+  };
+  struct OperandsAsSpanAfterDefinition {
+    lir::TypeId defined;
+  };
+  using OperandForm = std::variant<
+      OperandsAsStated, OperandsAfterDefinition, OperandsAsSpanAfterDefinition>;
+
+  // The entry that brings a value of one type into existence, which of its
+  // operands carries the shape that value is seeded from, and what form it
+  // takes the rest in. A type comes into existence one way, so naming it names
+  // all three.
+  struct Construction {
+    std::string symbol;
+    std::optional<std::size_t> shape_operand = std::nullopt;
+    OperandForm operand_form = OperandsAsStated{};
+  };
+  [[nodiscard]] auto ConstructionOf(
+      const lir::CallInstr& call, lir::TypeId result) const
+      -> diag::Result<Construction>;
 
   // What a call's entry is handed, given the operands the call states. Nothing
   // here is anything the call means; it is this target's encoding of it.
   auto CallArgs(const lir::CallInstr& call, std::vector<llvm::Value*> operands)
       -> diag::Result<std::vector<llvm::Value*>>;
 
-  // A leading reference to the definition of what a construct builds where the
-  // entry needs one, and the operands as one span where it takes them that way
-  // -- read from the result type the same way the entry itself is.
-  auto ConstructArgs(
-      lir::TypeId result, const std::vector<llvm::Value*>& operands)
+  // The operands a call states, put into the form its entry takes them in.
+  auto ArgsInForm(
+      const OperandForm& form, const std::vector<llvm::Value*>& operands)
       -> diag::Result<std::vector<llvm::Value*>>;
 
-  // Which operand states the shape of what a call produces, absent for a call
-  // whose result the operands already shape. A construction leads with the
-  // element default it is seeded from, except where a size precedes it -- the
-  // LRM 7.5.1 run-time-sized forms state how many elements there are before
-  // what each one is -- and an LRM 7.12 method trails the result element the
-  // producer supplied behind the operands the method itself needs.
-  [[nodiscard]] auto ResultShapeOperand(const lir::CallInstr& call) const
-      -> std::optional<std::size_t>;
-
   // Which operand of a call crosses erased, and in which representation. A
-  // value crosses erased where it states a representation the entry has no
-  // other way to know: the shape a call's result takes, which follows the call
-  // rather than the entry's own name, and the index a keyed container selects
-  // by, which states the one that container's declared index type names.
+  // value crosses erased exactly where it states a representation, and as the
+  // bare handle of its own domain where it conforms to one the entry already
+  // holds. Which of an entry's operands states one is that entry's own
+  // property.
   struct ErasedArgument {
     std::size_t position;
     support::ValueDomain domain;
   };
-  [[nodiscard]] auto ErasedOperand(const lir::CallInstr& call) const
+
+  // This target's own encoding of a call: which operand crosses erased, and
+  // what form the entry takes the operands in. Both are decided by the target
+  // and by nothing else about the call, so they are read from it together and a
+  // target that gains an alternative answers for both or fails to build.
+  struct CallEncoding {
+    std::optional<ErasedArgument> erased = std::nullopt;
+    OperandForm operand_form = OperandsAsStated{};
+  };
+  [[nodiscard]] auto EncodingOf(const lir::CallInstr& call) const
+      -> diag::Result<CallEncoding>;
+
+  // The erased operand of a call on a library entry, which is the one target
+  // whose three roles -- a result prototype, a spread part, a coordinate -- are
+  // read off the entry's own declaration.
+  [[nodiscard]] auto BuiltinErasedOperand(
+      const lir::BuiltinTarget& target, const lir::CallInstr& call) const
       -> diag::Result<std::optional<ErasedArgument>>;
+
+  // The operand at one position, boxed into the domain its own type names.
+  // Every erased operand but a coordinate crosses this way, since what a value
+  // states about itself is read from the value.
+  [[nodiscard]] auto InItsOwnDomain(
+      const lir::CallInstr& call, std::size_t position) const
+      -> diag::Result<ErasedArgument>;
 
   // The representation a container's coordinates cross in, absent where they
   // cross as the bare handles their own types name.
   [[nodiscard]] auto CoordinateDomain(lir::TypeId container) const
+      -> diag::Result<std::optional<support::ValueDomain>>;
+
+  // The representation a value put into a positional part crosses in, absent
+  // where the value it goes into already holds a prototype for that part.
+  [[nodiscard]] auto PartDomain(
+      lir::TypeId container, base::ComponentIndex position) const
       -> diag::Result<std::optional<support::ValueDomain>>;
 
   auto SelectorArgs(
@@ -190,21 +236,23 @@ class CodeGenFunction {
   [[nodiscard]] auto MemberValueCellDomain(
       const lir::Place& place, lir::TypeId value) const
       -> std::optional<support::ValueDomain>;
-  // The wrapper a reference addresses and the domain its storage is realized
-  // in, for an operation that acts on the wrapper itself rather than reaching
-  // through it. It is the same classification `WrapperPlaceOf` makes, reached
-  // through a reference instead of a place.
+  // The wrapper an operand reaches and the domain its storage is realized in,
+  // for an operation that acts on the wrapper itself rather than reaching
+  // through it. A wrapper classifies the same way whether it arrives as an
+  // operand or as a place; an operand addresses the wrapper where this target
+  // holds one as storage, and is the wrapper itself where it holds one as a
+  // handle.
   struct WrapperBehindRef {
     support::ValueDomain domain{};
     WrapperKind kind{};
   };
-  [[nodiscard]] auto WrapperBehind(lir::TypeId reference) const
+  [[nodiscard]] auto WrapperBehind(lir::TypeId operand) const
       -> diag::Result<WrapperBehindRef>;
   // Place access: the capability wrapper a place names the storage of, which
   // wrapper it is, and the domain that representation picks its library entries
-  // by; nothing when the place names ordinary addressable storage. This is the
-  // one entry that decides how an access through a wrapper is realized, so no
-  // other site asks which wrapper a place reaches through.
+  // by; nothing when the place names ordinary addressable storage. It is the
+  // one site that asks that of a place, so however deep the chain is an access
+  // through a wrapper is classified once.
   struct WrapperPlace {
     support::ValueDomain domain{};
     WrapperKind kind{};

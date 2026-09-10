@@ -733,6 +733,14 @@ class Type {
   // The value a capability wrapper wraps; throws where there is none.
   [[nodiscard]] auto WrappedValueType() const -> TypeId;
 
+  // The types of the values a value of this type holds -- what copying the
+  // value copies. A container holds its elements and its keys, a product and a
+  // union their components, a cell the value it keeps. Empty for a value that
+  // is one indivisible thing, for one that only refers to a value living
+  // elsewhere, and for a nominal type, whose members a registry declares rather
+  // than the type; a walk that must reach those asks that registry.
+  [[nodiscard]] auto HeldValueTypes() const -> std::vector<TypeId>;
+
   template <typename T>
   [[nodiscard]] auto Is() const -> bool {
     return std::holds_alternative<T>(data_);

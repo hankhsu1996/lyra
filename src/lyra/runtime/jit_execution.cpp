@@ -3314,18 +3314,18 @@ auto lyra_rt_assocarray_bitstream_width(const void* array) -> void* {
   return Own(Read<RuntimeAssociativeArray>(array).BitstreamWidth());
 }
 
-auto lyra_rt_assocarray_assoc_min_index(const void* array, void* empty)
+auto lyra_rt_assocarray_assoc_min_index(const void* array, void* unallocated)
     -> void* {
-  const std::optional<RuntimeValue> index =
-      Read<RuntimeAssociativeArray>(array).FirstIndex();
-  return index.has_value() ? lyra::runtime::ElementHandle(*index) : empty;
+  return lyra::runtime::ElementHandle(
+      Read<RuntimeAssociativeArray>(array).MinIndex(
+          lyra::runtime::ErasedValue(unallocated)));
 }
 
-auto lyra_rt_assocarray_assoc_max_index(const void* array, void* empty)
+auto lyra_rt_assocarray_assoc_max_index(const void* array, void* unallocated)
     -> void* {
-  const std::optional<RuntimeValue> index =
-      Read<RuntimeAssociativeArray>(array).LastIndex();
-  return index.has_value() ? lyra::runtime::ElementHandle(*index) : empty;
+  return lyra::runtime::ElementHandle(
+      Read<RuntimeAssociativeArray>(array).MaxIndex(
+          lyra::runtime::ErasedValue(unallocated)));
 }
 
 auto lyra_rt_assocarray_assoc_first(const void* array, void* probe) -> void* {

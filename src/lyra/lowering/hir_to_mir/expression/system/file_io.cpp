@@ -144,7 +144,7 @@ auto RequireStringDestination(
 // delivered, and all of it is replaced.
 auto BuildTextRead(
     ProcessLowerer& process, BlockBuilder& steps, support::BuiltinFn builtin_fn,
-    std::vector<mir::ExprId> operands, mir::ExprId destination,
+    std::vector<mir::ExprId> operands, WriteTarget destination,
     mir::TypeId destination_type) -> mir::Expr {
   auto& unit = process.Owner().Unit();
   const mir::TypeId count_type = unit.builtins.int_type;
@@ -154,7 +154,7 @@ auto BuildTextRead(
       count_type);
   const mir::TypeId payload = CompletionPayloadType(unit, layout.components);
   const std::array writebacks{CompletionWriteback{
-      .place = destination,
+      .place = std::move(destination),
       .component = *layout.formals.front().component,
       .type = destination_type}};
   const mir::LocalId completion = BindCompletion(
@@ -180,15 +180,14 @@ auto LowerFileGetsCall(
   if (!valid_or) return std::unexpected(std::move(valid_or.error()));
   auto line_or = process.LowerLhsExpr(line_hir, steps.Frame());
   if (!line_or) return std::unexpected(std::move(line_or.error()));
-  const mir::ExprId line_place = steps.Body().exprs.Add(*std::move(line_or));
 
   auto fd_or = LowerOperand(process, steps.Frame(), operands[1]);
   if (!fd_or) return std::unexpected(std::move(fd_or.error()));
   const mir::ExprId fd_id = steps.Body().exprs.Add(*std::move(fd_or));
 
   return BuildTextRead(
-      process, steps, support::BuiltinFn::kFileGets, {fd_id}, line_place,
-      line_type);
+      process, steps, support::BuiltinFn::kFileGets, {fd_id},
+      *std::move(line_or), line_type);
 }
 
 // $fread -- LRM 21.3.4.4. Which destination the source named says which of the
@@ -238,7 +237,7 @@ auto LowerFileReadCall(
   const mir::TypeId dest_type = unit_lowerer.TranslateType(dest_hir.type);
   auto dest_or = process.LowerLhsExpr(dest_hir, step_frame);
   if (!dest_or) return std::unexpected(std::move(dest_or.error()));
-  const mir::ExprId dest_place = body.exprs.Add(*std::move(dest_or));
+  WriteTarget dest_place = *std::move(dest_or);
   const CompletionLayout layout = BuildCompletionLayout(
       {CalleeFormal{
           .direction = hir::ParamDirection::kInOut, .type = dest_type}},
@@ -278,7 +277,7 @@ auto LowerFileReadCall(
 
   const mir::TypeId payload = CompletionPayloadType(unit, layout.components);
   const std::array writebacks{CompletionWriteback{
-      .place = dest_place,
+      .place = std::move(dest_place),
       .component = *layout.formals.front().component,
       .type = dest_type}};
   const mir::LocalId completion = BindCompletion(
@@ -312,12 +311,10 @@ auto LowerFileErrorCall(
   if (!valid_or) return std::unexpected(std::move(valid_or.error()));
   auto message_or = process.LowerLhsExpr(message_hir, steps.Frame());
   if (!message_or) return std::unexpected(std::move(message_or.error()));
-  const mir::ExprId message_place =
-      steps.Body().exprs.Add(*std::move(message_or));
 
   return BuildTextRead(
-      process, steps, support::BuiltinFn::kFileError, {fd_id}, message_place,
-      message_type);
+      process, steps, support::BuiltinFn::kFileError, {fd_id},
+      *std::move(message_or), message_type);
 }
 
 }  // namespace
