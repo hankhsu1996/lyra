@@ -12,6 +12,7 @@
 #include <slang/ast/Expression.h>
 #include <slang/ast/Scope.h>
 #include <slang/ast/Symbol.h>
+#include <slang/ast/statements/MiscStatements.h>
 #include <slang/ast/symbols/BlockSymbols.h>
 #include <slang/ast/symbols/ClassSymbols.h>
 #include <slang/ast/symbols/CompilationUnitSymbols.h>
@@ -591,10 +592,11 @@ auto UnitLowerer::InferredProcedureClock(const slang::ast::Symbol& containing)
 
 auto UnitLowerer::Contains(const slang::ast::ProceduralBlockSymbol& proc) const
     -> bool {
-  if (StaticConcurrentAssertionOf(proc).assertion == nullptr) {
+  const StaticConcurrentAssertion found = StaticConcurrentAssertionOf(proc);
+  if (found.assertion == nullptr) {
     return true;
   }
-  return !support::ElidesAssertions(AssertionPolicy());
+  return EvaluatedInSimulation(*found.assertion, AssertionPolicy());
 }
 
 auto UnitLowerer::LookupProcessBinding(

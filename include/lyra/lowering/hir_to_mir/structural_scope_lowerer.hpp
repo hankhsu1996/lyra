@@ -201,6 +201,14 @@ class StructuralScopeLowerer {
     return sampled_history_fields_.Get(hir_id);
   }
 
+  // The MIR field holding one concurrent assertion's attempts (LRM 16.14.1).
+  // It takes no hop count for the same reason: an assertion is evaluated on the
+  // scope that declares it.
+  [[nodiscard]] auto TranslateConcurrentAssertion(
+      hir::ConcurrentAssertionId hir_id) const -> mir::FieldId {
+    return concurrent_assertion_fields_.Get(hir_id);
+  }
+
   // The MIR field a structural data object became, in the scope `hops`
   // enclosing edges out from this one.
   [[nodiscard]] auto TranslateStructuralDataObject(
@@ -350,6 +358,8 @@ class StructuralScopeLowerer {
       data_object_fields_;
   base::Translation<hir::SampledHistoryId, mir::FieldId>
       sampled_history_fields_;
+  base::Translation<hir::ConcurrentAssertionId, mir::FieldId>
+      concurrent_assertion_fields_;
   base::Translation<hir::InterfacePortId, mir::FieldId> interface_port_fields_;
   base::Translation<hir::RoutedRefId, RoutedRefMeta> routed_ref_targets_;
   base::Translation<hir::GenerateId, GenerateBindings> generate_bindings_;

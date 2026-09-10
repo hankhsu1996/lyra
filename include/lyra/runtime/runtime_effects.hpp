@@ -20,6 +20,7 @@ class StreamDispatcher;
 class DiagnosticDispatcher;
 class FileTable;
 class PlusArgsSource;
+class EvaluationAttempts;
 class Observable;
 class RuntimeProcess;
 
@@ -84,9 +85,15 @@ class RuntimeEffects {
       const value::Real& duration, const value::PackedArray& unit_power,
       const value::PackedArray& precision_power, std::function<void()> closure);
   void SubmitPostponed(std::function<void()> closure);
+  // LRM 16.5: a concurrent assertion is evaluated in the Observed region of the
+  // tick's own time step, once every region in which that step settles the
+  // values it reads has run. Nothing withdraws it: what an attempt reads is
+  // sampled, so no flush point of the process that submitted it can change the
+  // answer.
+  void SubmitObserved(std::function<void()> effect);
   // LRM 12.4.2.1: a violation report matures in the Observed region unless the
   // process that raised it reaches a flush point first.
-  void SubmitObserved(std::function<void()> report);
+  void SubmitViolationReport(std::function<void()> report);
   // LRM 16.4: a deferred immediate assertion's action is queued where the
   // statement is reached and acts later only if every source that could
   // withdraw it still stands -- the executing process's pass, and the disable
@@ -97,6 +104,14 @@ class RuntimeEffects {
   // (16.4.1).
   void SubmitDeferredObserved(std::function<void()> action);
   void SubmitDeferredFinal(std::function<void()> action);
+
+  // LRM 16.14.5: a concurrent assertion's attempts outlive the tick that
+  // started them, so an attempt can still be in flight when the run ends. What
+  // it is owed then is the answer its statement demanded of a pending result
+  // rather than anything a tick settles (Annex F.5.3.2), and the run's own tail
+  // is what supplies it -- ahead of the design's `final` procedures, which read
+  // what the statements it runs wrote.
+  void RegisterConcurrentAssertion(EvaluationAttempts& attempts);
 
   // LRM 20.2: a simulation control task ends the run, and its level selects
   // what the tool prints about it (Table 20-1). `task` is the one the design

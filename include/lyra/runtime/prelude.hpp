@@ -27,6 +27,7 @@
 #include "lyra/runtime/diagnostic.hpp"           // IWYU pragma: keep
 #include "lyra/runtime/distribution.hpp"         // IWYU pragma: keep
 #include "lyra/runtime/dpi_context.hpp"          // IWYU pragma: keep
+#include "lyra/runtime/evaluation_attempts.hpp"  // IWYU pragma: keep
 #include "lyra/runtime/file_table.hpp"           // IWYU pragma: keep
 #include "lyra/runtime/finish.hpp"               // IWYU pragma: keep
 #include "lyra/runtime/foreign_execution.hpp"    // IWYU pragma: keep

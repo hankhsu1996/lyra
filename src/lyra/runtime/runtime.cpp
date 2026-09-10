@@ -17,6 +17,7 @@
 #include "lyra/base/overloaded.hpp"
 #include "lyra/base/time.hpp"
 #include "lyra/runtime/design.hpp"
+#include "lyra/runtime/evaluation_attempts.hpp"
 #include "lyra/runtime/process_kind.hpp"
 #include "lyra/runtime/registration.hpp"
 #include "lyra/runtime/runtime_process.hpp"
@@ -133,6 +134,13 @@ void Runtime::RunSimulation() {
             [](const ToolStopped&) { return false; }},
         state_);
     if (ends_the_simulation) {
+      // An evaluation attempt still in flight is one no tick will settle now,
+      // so it takes the answer its statement demanded of a pending result
+      // (Annex F.5.3.2) -- before the finals, which read what its statements
+      // wrote.
+      for (EvaluationAttempts* attempts : concurrent_assertions_) {
+        attempts->SettleAtEndOfRun();
+      }
       ExecuteFinalProcesses();
     }
   } catch (const std::exception&) {

@@ -17,7 +17,7 @@ module Top;
   int hits = 0;
   int misses = 0;
 
-  always #5 clk = ~clk;
+  initial repeat (10) #5 clk = ~clk;
 
   // Ticks land at 5, 15, 25, 35 and 45. `a` is sampled high at the ticks at 15
   // and 25, and `b` at the ticks at 25 and 35.
@@ -30,7 +30,6 @@ module Top;
     a = 0;
     #10;
     b = 0;
-    #10 $finish;
   end
 
   c_reached: cover property (@(posedge clk) a ##1 b) hits = hits + 1;

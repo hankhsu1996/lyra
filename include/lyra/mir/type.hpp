@@ -666,6 +666,20 @@ struct SampledHistoryType {
   auto operator==(const SampledHistoryType&) const -> bool = default;
 };
 
+// What one concurrent assertion has in flight: an evaluation attempt per tick
+// its clock has reached and not yet answered, each holding its own evaluations
+// (LRM 16.14.1). One assertion has one of these, and it holds every attempt
+// rather than one merged state, because each attempt carries its own result.
+//
+// How wide a position set is, and what the statements an outcome selects are,
+// are not part of the type. They are fixed by filling the storage rather than
+// by constructing it -- the same reason a history's depth is not -- so two
+// assertions over properties of different sizes are one type here and one
+// realization below.
+struct EvaluationAttemptsType {
+  auto operator==(const EvaluationAttemptsType&) const -> bool = default;
+};
+
 // The drive capability for a net: a handle to one of a `ResolvedType` net's
 // contributions. A driver updates only its own contribution; the net resolves,
 // so a driver carries the same resolution its net does.
@@ -697,7 +711,7 @@ class Type {
       DiagnosticType, RuntimeLibraryType, CoroutineType, RefType, PointerType,
       ManagedRefType, VectorType, TupleType, UnionType, TaggedUnionType,
       EmptyType, ObservableType, ResolvedType, DriverType, SampledHistoryType,
-      StructType, ClosureType>;
+      EvaluationAttemptsType, StructType, ClosureType>;
 
  public:
   explicit Type(Data data) : data_(std::move(data)) {

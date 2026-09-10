@@ -158,7 +158,15 @@ void RuntimeEffects::SubmitPostponed(std::function<void()> closure) {
   Submit(Now(), Region::kPostponed, std::move(closure));
 }
 
-void RuntimeEffects::SubmitObserved(std::function<void()> report) {
+void RuntimeEffects::RegisterConcurrentAssertion(EvaluationAttempts& attempts) {
+  AsRuntime(*this).concurrent_assertions_.push_back(&attempts);
+}
+
+void RuntimeEffects::SubmitObserved(std::function<void()> effect) {
+  Submit(Now(), Region::kObserved, std::move(effect));
+}
+
+void RuntimeEffects::SubmitViolationReport(std::function<void()> report) {
   RuntimeProcess* process = AsRuntime(*this).current_process_;
   if (process == nullptr) {
     // A check that fires before any procedure runs -- a static variable's

@@ -1923,11 +1923,13 @@ class HirDumper {
 
   void DumpPropertySpec(const ProceduralBody& p, const PropertySpec& spec) {
     Line(std::format("clock={}", FormatEventControl(spec.clock)));
-    if (spec.disable_condition.has_value()) {
+    if (spec.disable.has_value()) {
       Line(
           std::format(
-              "disable iff=Expr[{}] {}", spec.disable_condition->value,
-              FormatProcExpr(p, *spec.disable_condition)));
+              "disable iff=Expr[{}] {} watching={}",
+              spec.disable->condition.value,
+              FormatProcExpr(p, spec.disable->condition),
+              spec.disable->sensitivity.size()));
     }
     DumpPropertyExpr(p, spec.body);
   }

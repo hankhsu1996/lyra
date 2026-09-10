@@ -169,6 +169,10 @@ it here and checks everything else in SystemVerilog as usual.
 requires the run to write no diagnostic at all, because a conforming tool has no comment on a
 correct program.
 
+A case claiming silence therefore cannot end with a bare `$finish`, which writes a message of its
+own at the default severity (LRM 20.2). Let the run end by exhausting its work -- a clock driven a
+bounded number of times rather than forever -- or name the level that reports nothing.
+
 ```systemverilog
 // @reports: priority violation
 //

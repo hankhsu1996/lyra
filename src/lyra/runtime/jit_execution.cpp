@@ -1009,6 +1009,11 @@ void lyra_rt_submit_observed(void* runtime, void* closure) {
   static_cast<RuntimeEffects*>(runtime)->SubmitObserved(TakeClosure(closure));
 }
 
+void lyra_rt_submit_violation_report(void* runtime, void* closure) {
+  static_cast<RuntimeEffects*>(runtime)->SubmitViolationReport(
+      TakeClosure(closure));
+}
+
 void lyra_rt_submit_deferred_observed(void* runtime, void* closure) {
   static_cast<RuntimeEffects*>(runtime)->SubmitDeferredObserved(
       TakeClosure(closure));

@@ -472,6 +472,9 @@ class MirDumper {
               return std::format(
                   "SampledHistory(value=Type[{}])", h.value.value);
             },
+            [](const EvaluationAttemptsType&) -> std::string {
+              return "EvaluationAttempts";
+            },
         });
   }
 

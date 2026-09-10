@@ -14,13 +14,11 @@ module Top;
 
   int ticks = 0;
 
-  always #5 clk = ~clk;
+  initial repeat (10) #5 clk = ~clk;
 
   always @(posedge clk) ticks = ticks + 1;
 
   a_silent: assert property (@(posedge clk) ok || !ok);
-
-  initial #48 $finish;
 
   final begin
     if (ticks !== 5) $fatal(1, "the clock reached %0d ticks, expected 5",
