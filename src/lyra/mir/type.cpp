@@ -276,6 +276,11 @@ auto Type::HeldValueTypes() const -> std::vector<TypeId> {
           [](const DriverType& t) -> Held { return {t.value}; },
           [](const SampledHistoryType& t) -> Held { return {t.value}; },
 
+          // What a concurrent assertion has in flight is member storage like
+          // those, and holds no value of the design at all: the words in it
+          // mean something only to the transition that reads them.
+          [](const EvaluationAttemptsType&) -> Held { return {}; },
+
           // These refer to a value living elsewhere rather than holding one:
           // copying the referring value copies no part of what it reaches. A
           // coroutine's payload is what awaiting it produces, not something it
