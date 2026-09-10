@@ -56,6 +56,23 @@ auto WrapperOf(const lir::Type& type)
   return std::nullopt;
 }
 
+// The values a storage holds, where they are all of one representation;
+// nothing for a type that is not such storage. A capability wrapper holds the
+// value it represents, and a history holds what each tick of one clocking
+// event settled for one expression -- one representation either way, which is
+// what lets an entry reaching the storage be named once per representation
+// rather than per call.
+auto ValuesHeldBy(const lir::Type& type) -> std::optional<lir::TypeId> {
+  if (const std::optional<std::pair<WrapperKind, lir::TypeId>> wrapper =
+          WrapperOf(type)) {
+    return wrapper->second;
+  }
+  if (const auto* history = type.As<lir::SampledHistoryType>()) {
+    return history->value;
+  }
+  return std::nullopt;
+}
+
 // A leaf of a wait carries the observation that decides what a change there
 // means only where an event control is what waits (LRM 9.4.2); an implicit
 // sensitivity names none and supplies the cell and its bit range alone.
@@ -371,13 +388,15 @@ auto CodeGenFunction::LowerBinary(
     const lir::BinaryInstr& binary, lir::TypeId result_type)
     -> diag::Result<llvm::Value*> {
   const lir::TypeId operand_type = OperandType(binary.lhs);
-  // A machine boolean is a native value, not a value-domain handle: its
-  // operator is a machine instruction, not a runtime-library call. This is how
-  // the reduced predicates a real- or string-family `&&` / `||` / `<->`
-  // composes are combined before `from_bool` widens the result back to a 1-bit
-  // packed.
-  if (module_->Unit().types.Get(operand_type).Is<lir::MachineBoolType>()) {
-    return LowerMachineBinary(binary);
+  // A machine integer is a native value, not a value-domain handle: its
+  // operator is a machine instruction, not a runtime-library call. Two things
+  // arrive this way -- the reduced predicates a real- or string-family `&&` /
+  // `||` / `<->` composes, combined before `from_bool` widens the result back
+  // to a 1-bit packed, and the words a synthesized transition computes over,
+  // which stand for no value of the design at all.
+  if (const std::optional<lir::Signedness> signedness =
+          module_->Unit().types.Get(operand_type).MachineIntegerSignedness()) {
+    return LowerMachineBinary(binary, *signedness);
   }
   auto domain = DomainOf(operand_type);
   if (!domain) {
@@ -396,7 +415,8 @@ auto CodeGenFunction::LowerBinary(
       Entry(RuntimeSymbol(*domain, binary.op), result_type, args), args);
 }
 
-auto CodeGenFunction::LowerMachineBinary(const lir::BinaryInstr& binary)
+auto CodeGenFunction::LowerMachineBinary(
+    const lir::BinaryInstr& binary, lir::Signedness signedness)
     -> diag::Result<llvm::Value*> {
   auto lhs = LowerOperand(binary.lhs);
   if (!lhs) {
@@ -406,31 +426,65 @@ auto CodeGenFunction::LowerMachineBinary(const lir::BinaryInstr& binary)
   if (!rhs) {
     return std::unexpected(std::move(rhs.error()));
   }
-  // The only binary operators that reach a machine boolean compose predicates:
-  // `&&` and `||` combine two, and `<->` arrives as an equality of two. Every
-  // other operator acts on a value domain.
+  // Every operator of the set has a machine integer's answer, and the operand's
+  // own signedness is what division, remainder and the ordering comparisons
+  // need. The logical pair is the bitwise one here, because a machine value
+  // carrying a predicate is one bit wide and a value of any other width is
+  // reduced to a predicate before it reaches a logical operator.
+  const bool is_signed = signedness == lir::Signedness::kSigned;
   switch (binary.op) {
+    case lir::BinaryOp::kAdd:
+      return builder_.CreateAdd(*lhs, *rhs);
+    case lir::BinaryOp::kSub:
+      return builder_.CreateSub(*lhs, *rhs);
+    case lir::BinaryOp::kMul:
+      return builder_.CreateMul(*lhs, *rhs);
+    case lir::BinaryOp::kDiv:
+      return is_signed ? builder_.CreateSDiv(*lhs, *rhs)
+                       : builder_.CreateUDiv(*lhs, *rhs);
+    case lir::BinaryOp::kMod:
+      return is_signed ? builder_.CreateSRem(*lhs, *rhs)
+                       : builder_.CreateURem(*lhs, *rhs);
+    case lir::BinaryOp::kBitwiseAnd:
     case lir::BinaryOp::kLogicalAnd:
       return builder_.CreateAnd(*lhs, *rhs);
+    case lir::BinaryOp::kBitwiseOr:
     case lir::BinaryOp::kLogicalOr:
       return builder_.CreateOr(*lhs, *rhs);
+    case lir::BinaryOp::kBitwiseXor:
+      return builder_.CreateXor(*lhs, *rhs);
     case lir::BinaryOp::kEquality:
       return builder_.CreateICmpEQ(*lhs, *rhs);
-    default:
-      throw InternalError(
-          "llvm codegen: binary operator does not apply to machine values");
+    case lir::BinaryOp::kInequality:
+      return builder_.CreateICmpNE(*lhs, *rhs);
+    case lir::BinaryOp::kLessThan:
+      return is_signed ? builder_.CreateICmpSLT(*lhs, *rhs)
+                       : builder_.CreateICmpULT(*lhs, *rhs);
+    case lir::BinaryOp::kLessEqual:
+      return is_signed ? builder_.CreateICmpSLE(*lhs, *rhs)
+                       : builder_.CreateICmpULE(*lhs, *rhs);
+    case lir::BinaryOp::kGreaterThan:
+      return is_signed ? builder_.CreateICmpSGT(*lhs, *rhs)
+                       : builder_.CreateICmpUGT(*lhs, *rhs);
+    case lir::BinaryOp::kGreaterEqual:
+      return is_signed ? builder_.CreateICmpSGE(*lhs, *rhs)
+                       : builder_.CreateICmpUGE(*lhs, *rhs);
   }
+  throw InternalError("llvm codegen: unknown binary operator");
 }
 
 auto CodeGenFunction::LowerUnary(
     const lir::UnaryInstr& unary, lir::TypeId result_type)
     -> diag::Result<llvm::Value*> {
   const lir::TypeId operand_type = OperandType(unary.operand);
-  // A machine boolean is a native value, not a value-domain handle: its
+  // A machine integer is a native value, not a value-domain handle: its
   // operator is a machine instruction, not a runtime-library call. This is how
   // the reduced predicate a real- or chandle-family `!` produces is negated
   // before `from_bool` widens it back to a 1-bit packed.
-  if (module_->Unit().types.Get(operand_type).Is<lir::MachineBoolType>()) {
+  if (module_->Unit()
+          .types.Get(operand_type)
+          .MachineIntegerSignedness()
+          .has_value()) {
     return LowerMachineUnary(unary);
   }
   auto domain = DomainOf(operand_type);
@@ -452,14 +506,23 @@ auto CodeGenFunction::LowerMachineUnary(const lir::UnaryInstr& unary)
   if (!operand) {
     return std::unexpected(std::move(operand.error()));
   }
+  // Signedness decides none of these: negation, complement and the successor
+  // and predecessor are one instruction whichever way the sign bit is read.
+  llvm::Value* const zero = llvm::ConstantInt::get((*operand)->getType(), 0);
+  llvm::Value* const one = llvm::ConstantInt::get((*operand)->getType(), 1);
   switch (unary.op) {
     case lir::UnaryOp::kLogicalNot:
-      return builder_.CreateICmpEQ(
-          *operand, llvm::ConstantInt::get((*operand)->getType(), 0));
-    default:
-      throw InternalError(
-          "llvm codegen: machine-typed unary operator is not lowerable");
+      return builder_.CreateICmpEQ(*operand, zero);
+    case lir::UnaryOp::kMinus:
+      return builder_.CreateSub(zero, *operand);
+    case lir::UnaryOp::kBitwiseNot:
+      return builder_.CreateNot(*operand);
+    case lir::UnaryOp::kIncrement:
+      return builder_.CreateAdd(*operand, one);
+    case lir::UnaryOp::kDecrement:
+      return builder_.CreateSub(*operand, one);
   }
+  throw InternalError("llvm codegen: unknown unary operator");
 }
 
 auto CodeGenFunction::LowerBoolCast(
@@ -1292,14 +1355,9 @@ auto CodeGenFunction::BuiltinCallee(
                 RuntimeSymbol(wrapper->domain, wrapper->kind, target.fn),
                 result_type, args);
           },
-          [&](const NamedByWrapperDomain&)
+          [&](const NamedByStorageDomain&)
               -> diag::Result<llvm::FunctionCallee> {
-            auto wrapper = WrapperBehind(OperandType(call.args.at(0)));
-            if (!wrapper) {
-              return std::unexpected(std::move(wrapper.error()));
-            }
-            return Entry(
-                RuntimeSymbol(wrapper->domain, target.fn), result_type, args);
+            return over(StorageDomainBehind(OperandType(call.args.at(0))));
           },
           [&](const NamedByConversion&) -> diag::Result<llvm::FunctionCallee> {
             auto destination = DomainOf(acted_on(0));
@@ -1377,15 +1435,17 @@ auto CodeGenFunction::CapturePlaceOf(const lir::Place& place) const
       .index = lir::MemberPosition(module_->Unit(), member->member)};
 }
 
+auto CodeGenFunction::StorageReached(lir::TypeId operand) const
+    -> const lir::Type& {
+  const lir::TypePool& types = module_->Unit().types;
+  const std::optional<lir::TypeId> pointee = types.Get(operand).Pointee();
+  return types.Get(pointee.value_or(operand));
+}
+
 auto CodeGenFunction::WrapperBehind(lir::TypeId operand) const
     -> diag::Result<CodeGenFunction::WrapperBehindRef> {
-  const lir::TypePool& types = module_->Unit().types;
-  // A wrapper this target holds as storage arrives as its address; one it holds
-  // as a handle -- a driver, which names a contribution the net owns -- arrives
-  // as itself, and either way the operand reaches exactly one wrapper.
-  const std::optional<lir::TypeId> pointee = types.Get(operand).Pointee();
   const std::optional<std::pair<WrapperKind, lir::TypeId>> reached =
-      WrapperOf(types.Get(pointee.value_or(operand)));
+      WrapperOf(StorageReached(operand));
   if (!reached.has_value()) {
     throw InternalError(
         "llvm codegen: an operation on a wrapper needs one to act on");
@@ -1395,6 +1455,17 @@ auto CodeGenFunction::WrapperBehind(lir::TypeId operand) const
     return std::unexpected(std::move(domain.error()));
   }
   return WrapperBehindRef{.domain = *domain, .kind = reached->first};
+}
+
+auto CodeGenFunction::StorageDomainBehind(lir::TypeId operand) const
+    -> diag::Result<support::ValueDomain> {
+  const std::optional<lir::TypeId> held = ValuesHeldBy(StorageReached(operand));
+  if (!held.has_value()) {
+    throw InternalError(
+        "llvm codegen: an entry named by the representation of what a storage "
+        "holds needs a storage whose values are all of one");
+  }
+  return DomainOf(*held);
 }
 
 auto CodeGenFunction::MemberValueCellDomain(

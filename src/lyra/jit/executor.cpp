@@ -141,7 +141,10 @@ template <typename>
 inline constexpr bool kAbiKindUnmapped = false;
 
 // The ABI vocabulary is closed, so a C++ type outside it fails to compile here
-// rather than being classified by whichever arm its shape resembles.
+// rather than being classified by whichever arm its shape resembles. Where both
+// spellings of a width cross, they reach one kind: signedness is not part of
+// what crosses, since how the bits are read is the operation's own business at
+// either end.
 template <typename T>
 constexpr auto AbiKindOfCpp() -> AbiKind {
   if constexpr (std::is_void_v<T>) {
@@ -150,7 +153,8 @@ constexpr auto AbiKindOfCpp() -> AbiKind {
     return AbiKind::kPointer;
   } else if constexpr (std::is_same_v<T, bool>) {
     return AbiKind::kBool;
-  } else if constexpr (std::is_same_v<T, std::int64_t>) {
+  } else if constexpr (
+      std::is_same_v<T, std::int64_t> || std::is_same_v<T, std::uint64_t>) {
     return AbiKind::kInt64;
   } else if constexpr (std::is_same_v<T, std::uint32_t>) {
     return AbiKind::kInt32;
@@ -374,18 +378,107 @@ auto DefineRuntimeAbi(llvm::orc::LLJIT& jit)
   add("lyra_rt_packed_cell_get", &lyra_rt_packed_cell_get);
   add("lyra_rt_packed_cell_initialize", &lyra_rt_packed_cell_initialize);
   add("lyra_rt_packed_cell_set", &lyra_rt_packed_cell_set);
+  add("lyra_rt_packed_cell_arm_sampling", &lyra_rt_packed_cell_arm_sampling);
+  add("lyra_rt_packed_cell_sampled_load", &lyra_rt_packed_cell_sampled_load);
   add("lyra_rt_string_cell_alloc", &lyra_rt_string_cell_alloc);
   add("lyra_rt_string_cell_get", &lyra_rt_string_cell_get);
   add("lyra_rt_string_cell_initialize", &lyra_rt_string_cell_initialize);
   add("lyra_rt_string_cell_set", &lyra_rt_string_cell_set);
+  add("lyra_rt_string_cell_arm_sampling", &lyra_rt_string_cell_arm_sampling);
+  add("lyra_rt_string_cell_sampled_load", &lyra_rt_string_cell_sampled_load);
   add("lyra_rt_real_cell_alloc", &lyra_rt_real_cell_alloc);
   add("lyra_rt_real_cell_get", &lyra_rt_real_cell_get);
   add("lyra_rt_real_cell_initialize", &lyra_rt_real_cell_initialize);
   add("lyra_rt_real_cell_set", &lyra_rt_real_cell_set);
+  add("lyra_rt_real_cell_arm_sampling", &lyra_rt_real_cell_arm_sampling);
+  add("lyra_rt_real_cell_sampled_load", &lyra_rt_real_cell_sampled_load);
   add("lyra_rt_shortreal_cell_alloc", &lyra_rt_shortreal_cell_alloc);
   add("lyra_rt_shortreal_cell_get", &lyra_rt_shortreal_cell_get);
   add("lyra_rt_shortreal_cell_initialize", &lyra_rt_shortreal_cell_initialize);
   add("lyra_rt_shortreal_cell_set", &lyra_rt_shortreal_cell_set);
+  add("lyra_rt_shortreal_cell_arm_sampling",
+      &lyra_rt_shortreal_cell_arm_sampling);
+  add("lyra_rt_shortreal_cell_sampled_load",
+      &lyra_rt_shortreal_cell_sampled_load);
+  add("lyra_rt_packed_sampled_history_install",
+      &lyra_rt_packed_sampled_history_install);
+  add("lyra_rt_packed_sampled_history_push",
+      &lyra_rt_packed_sampled_history_push);
+  add("lyra_rt_packed_sampled_history_at", &lyra_rt_packed_sampled_history_at);
+  add("lyra_rt_string_sampled_history_install",
+      &lyra_rt_string_sampled_history_install);
+  add("lyra_rt_string_sampled_history_push",
+      &lyra_rt_string_sampled_history_push);
+  add("lyra_rt_string_sampled_history_at", &lyra_rt_string_sampled_history_at);
+  add("lyra_rt_real_sampled_history_install",
+      &lyra_rt_real_sampled_history_install);
+  add("lyra_rt_real_sampled_history_push", &lyra_rt_real_sampled_history_push);
+  add("lyra_rt_real_sampled_history_at", &lyra_rt_real_sampled_history_at);
+  add("lyra_rt_shortreal_sampled_history_install",
+      &lyra_rt_shortreal_sampled_history_install);
+  add("lyra_rt_shortreal_sampled_history_push",
+      &lyra_rt_shortreal_sampled_history_push);
+  add("lyra_rt_shortreal_sampled_history_at",
+      &lyra_rt_shortreal_sampled_history_at);
+  add("lyra_rt_tuple_sampled_history_install",
+      &lyra_rt_tuple_sampled_history_install);
+  add("lyra_rt_tuple_sampled_history_push",
+      &lyra_rt_tuple_sampled_history_push);
+  add("lyra_rt_tuple_sampled_history_at", &lyra_rt_tuple_sampled_history_at);
+  add("lyra_rt_union_sampled_history_install",
+      &lyra_rt_union_sampled_history_install);
+  add("lyra_rt_union_sampled_history_push",
+      &lyra_rt_union_sampled_history_push);
+  add("lyra_rt_union_sampled_history_at", &lyra_rt_union_sampled_history_at);
+  add("lyra_rt_tagged_union_sampled_history_install",
+      &lyra_rt_tagged_union_sampled_history_install);
+  add("lyra_rt_tagged_union_sampled_history_push",
+      &lyra_rt_tagged_union_sampled_history_push);
+  add("lyra_rt_tagged_union_sampled_history_at",
+      &lyra_rt_tagged_union_sampled_history_at);
+  add("lyra_rt_dynarray_sampled_history_install",
+      &lyra_rt_dynarray_sampled_history_install);
+  add("lyra_rt_dynarray_sampled_history_push",
+      &lyra_rt_dynarray_sampled_history_push);
+  add("lyra_rt_dynarray_sampled_history_at",
+      &lyra_rt_dynarray_sampled_history_at);
+  add("lyra_rt_unpackedarray_sampled_history_install",
+      &lyra_rt_unpackedarray_sampled_history_install);
+  add("lyra_rt_unpackedarray_sampled_history_push",
+      &lyra_rt_unpackedarray_sampled_history_push);
+  add("lyra_rt_unpackedarray_sampled_history_at",
+      &lyra_rt_unpackedarray_sampled_history_at);
+  add("lyra_rt_queue_sampled_history_install",
+      &lyra_rt_queue_sampled_history_install);
+  add("lyra_rt_queue_sampled_history_push",
+      &lyra_rt_queue_sampled_history_push);
+  add("lyra_rt_queue_sampled_history_at", &lyra_rt_queue_sampled_history_at);
+  add("lyra_rt_assocarray_sampled_history_install",
+      &lyra_rt_assocarray_sampled_history_install);
+  add("lyra_rt_assocarray_sampled_history_push",
+      &lyra_rt_assocarray_sampled_history_push);
+  add("lyra_rt_assocarray_sampled_history_at",
+      &lyra_rt_assocarray_sampled_history_at);
+  add("lyra_rt_evaluation_attempts_install",
+      &lyra_rt_evaluation_attempts_install);
+  add("lyra_rt_evaluation_attempts_seed_word",
+      &lyra_rt_evaluation_attempts_seed_word);
+  add("lyra_rt_evaluation_attempts_begin_tick",
+      &lyra_rt_evaluation_attempts_begin_tick);
+  add("lyra_rt_evaluation_attempts_disable_tick",
+      &lyra_rt_evaluation_attempts_disable_tick);
+  add("lyra_rt_evaluation_attempts_live_word",
+      &lyra_rt_evaluation_attempts_live_word);
+  add("lyra_rt_evaluation_attempts_next_unstepped",
+      &lyra_rt_evaluation_attempts_next_unstepped);
+  add("lyra_rt_evaluation_attempts_bits_at",
+      &lyra_rt_evaluation_attempts_bits_at);
+  add("lyra_rt_evaluation_attempts_set_word",
+      &lyra_rt_evaluation_attempts_set_word);
+  add("lyra_rt_evaluation_attempts_step", &lyra_rt_evaluation_attempts_step);
+  add("lyra_rt_evaluation_attempts_seed", &lyra_rt_evaluation_attempts_seed);
+  add("lyra_rt_evaluation_attempts_settle",
+      &lyra_rt_evaluation_attempts_settle);
   add("lyra_rt_packed_value_cell_alloc", &lyra_rt_packed_value_cell_alloc);
   add("lyra_rt_string_value_cell_alloc", &lyra_rt_string_value_cell_alloc);
   add("lyra_rt_packed_value_cell_store", &lyra_rt_packed_value_cell_store);
@@ -616,6 +709,8 @@ auto DefineRuntimeAbi(llvm::orc::LLJIT& jit)
   add("lyra_rt_tuple_cell_get", &lyra_rt_tuple_cell_get);
   add("lyra_rt_tuple_cell_initialize", &lyra_rt_tuple_cell_initialize);
   add("lyra_rt_tuple_cell_set", &lyra_rt_tuple_cell_set);
+  add("lyra_rt_tuple_cell_arm_sampling", &lyra_rt_tuple_cell_arm_sampling);
+  add("lyra_rt_tuple_cell_sampled_load", &lyra_rt_tuple_cell_sampled_load);
   add("lyra_rt_tuple_value_cell_alloc", &lyra_rt_tuple_value_cell_alloc);
   add("lyra_rt_tuple_value_cell_store", &lyra_rt_tuple_value_cell_store);
   add("lyra_rt_tuple_value_cell_load", &lyra_rt_tuple_value_cell_load);
@@ -631,6 +726,8 @@ auto DefineRuntimeAbi(llvm::orc::LLJIT& jit)
   add("lyra_rt_union_cell_get", &lyra_rt_union_cell_get);
   add("lyra_rt_union_cell_initialize", &lyra_rt_union_cell_initialize);
   add("lyra_rt_union_cell_set", &lyra_rt_union_cell_set);
+  add("lyra_rt_union_cell_arm_sampling", &lyra_rt_union_cell_arm_sampling);
+  add("lyra_rt_union_cell_sampled_load", &lyra_rt_union_cell_sampled_load);
   add("lyra_rt_union_value_cell_alloc", &lyra_rt_union_value_cell_alloc);
   add("lyra_rt_union_value_cell_store", &lyra_rt_union_value_cell_store);
   add("lyra_rt_union_value_cell_load", &lyra_rt_union_value_cell_load);
@@ -648,6 +745,10 @@ auto DefineRuntimeAbi(llvm::orc::LLJIT& jit)
   add("lyra_rt_tagged_union_cell_initialize",
       &lyra_rt_tagged_union_cell_initialize);
   add("lyra_rt_tagged_union_cell_set", &lyra_rt_tagged_union_cell_set);
+  add("lyra_rt_tagged_union_cell_arm_sampling",
+      &lyra_rt_tagged_union_cell_arm_sampling);
+  add("lyra_rt_tagged_union_cell_sampled_load",
+      &lyra_rt_tagged_union_cell_sampled_load);
   add("lyra_rt_tagged_union_value_cell_alloc",
       &lyra_rt_tagged_union_value_cell_alloc);
   add("lyra_rt_tagged_union_value_cell_store",
@@ -680,6 +781,10 @@ auto DefineRuntimeAbi(llvm::orc::LLJIT& jit)
   add("lyra_rt_dynarray_cell_get", &lyra_rt_dynarray_cell_get);
   add("lyra_rt_dynarray_cell_initialize", &lyra_rt_dynarray_cell_initialize);
   add("lyra_rt_dynarray_cell_set", &lyra_rt_dynarray_cell_set);
+  add("lyra_rt_dynarray_cell_arm_sampling",
+      &lyra_rt_dynarray_cell_arm_sampling);
+  add("lyra_rt_dynarray_cell_sampled_load",
+      &lyra_rt_dynarray_cell_sampled_load);
   add("lyra_rt_dynarray_value_cell_alloc", &lyra_rt_dynarray_value_cell_alloc);
   add("lyra_rt_dynarray_value_cell_store", &lyra_rt_dynarray_value_cell_store);
   add("lyra_rt_dynarray_value_cell_load", &lyra_rt_dynarray_value_cell_load);
@@ -724,6 +829,8 @@ auto DefineRuntimeAbi(llvm::orc::LLJIT& jit)
   add("lyra_rt_queue_cell_get", &lyra_rt_queue_cell_get);
   add("lyra_rt_queue_cell_initialize", &lyra_rt_queue_cell_initialize);
   add("lyra_rt_queue_cell_set", &lyra_rt_queue_cell_set);
+  add("lyra_rt_queue_cell_arm_sampling", &lyra_rt_queue_cell_arm_sampling);
+  add("lyra_rt_queue_cell_sampled_load", &lyra_rt_queue_cell_sampled_load);
   add("lyra_rt_queue_value_cell_alloc", &lyra_rt_queue_value_cell_alloc);
   add("lyra_rt_queue_value_cell_store", &lyra_rt_queue_value_cell_store);
   add("lyra_rt_queue_value_cell_load", &lyra_rt_queue_value_cell_load);
@@ -760,6 +867,10 @@ auto DefineRuntimeAbi(llvm::orc::LLJIT& jit)
   add("lyra_rt_assocarray_cell_initialize",
       &lyra_rt_assocarray_cell_initialize);
   add("lyra_rt_assocarray_cell_set", &lyra_rt_assocarray_cell_set);
+  add("lyra_rt_assocarray_cell_arm_sampling",
+      &lyra_rt_assocarray_cell_arm_sampling);
+  add("lyra_rt_assocarray_cell_sampled_load",
+      &lyra_rt_assocarray_cell_sampled_load);
   add("lyra_rt_assocarray_value_cell_alloc",
       &lyra_rt_assocarray_value_cell_alloc);
   add("lyra_rt_assocarray_value_cell_store",
@@ -880,6 +991,10 @@ auto DefineRuntimeAbi(llvm::orc::LLJIT& jit)
   add("lyra_rt_unpackedarray_cell_initialize",
       &lyra_rt_unpackedarray_cell_initialize);
   add("lyra_rt_unpackedarray_cell_set", &lyra_rt_unpackedarray_cell_set);
+  add("lyra_rt_unpackedarray_cell_arm_sampling",
+      &lyra_rt_unpackedarray_cell_arm_sampling);
+  add("lyra_rt_unpackedarray_cell_sampled_load",
+      &lyra_rt_unpackedarray_cell_sampled_load);
   add("lyra_rt_unpackedarray_value_cell_alloc",
       &lyra_rt_unpackedarray_value_cell_alloc);
   add("lyra_rt_unpackedarray_value_cell_store",
@@ -1062,6 +1177,9 @@ auto DescribeMember(
           .domain = domain_of(net.value),
           .resolution = backend::llvm_backend::NetResolutionOf(net.resolution)};
     }
+    case backend::llvm_backend::MemberStorageKind::kSampledHistory:
+      return runtime::SampledHistoryStorage{
+          .domain = domain_of(data.Get<lir::SampledHistoryType>().value)};
     case backend::llvm_backend::MemberStorageKind::kValueCell:
       return runtime::ValueCellStorage{.domain = domain_of(type)};
     case backend::llvm_backend::MemberStorageKind::kInlineValue:
@@ -1074,6 +1192,8 @@ auto DescribeMember(
       return runtime::CancellationTargetStorage{};
     case backend::llvm_backend::MemberStorageKind::kChannelCancellation:
       return runtime::ChannelCancellationStorage{};
+    case backend::llvm_backend::MemberStorageKind::kEvaluationAttempts:
+      return runtime::EvaluationAttemptsStorage{};
   }
   throw InternalError("jit executor: unknown member storage kind");
 }

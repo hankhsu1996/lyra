@@ -136,6 +136,9 @@ MemberStorage::MemberStorage(MemberStorageDescriptor descriptor) {
             object_.emplace<ChannelCancellation>();
           },
           [this](const NamedEventStorage&) { object_.emplace<NamedEvent>(); },
+          [this](const EvaluationAttemptsStorage&) {
+            object_.emplace<EvaluationAttempts>();
+          },
           [this](const SampledHistoryStorage& history) {
             EmplaceSampledHistory(object_, history.domain);
           },
@@ -346,6 +349,13 @@ auto MemberStorage::HeldValue() -> void* {
                 "MemberStorage: a sampled history answers for the tick a read "
                 "names, never with contents of its own");
           },
+          // What an assertion has in flight is machine words its own
+          // transition reads; no value of the design is in there to hand back.
+          [](EvaluationAttempts&) -> void* {
+            throw InternalError(
+                "MemberStorage: a concurrent assertion's attempts hold no "
+                "value of the design, so nothing is read out of them");
+          },
           [](auto& object) -> void* { return &object; }},
       object_);
 }
@@ -393,6 +403,14 @@ void MemberStorage::AdoptFrom(void* handle) {
             throw InternalError(
                 "MemberStorage: a sampled history is filled and appended to "
                 "through its own access, never copied into storage");
+          },
+          // Attempts open and settle through the assertion's own transition,
+          // and there is no value of one to copy in from anywhere.
+          [](EvaluationAttempts&) {
+            throw InternalError(
+                "MemberStorage: a concurrent assertion's attempts are opened "
+                "and settled through their own access, never copied into "
+                "storage");
           },
           [&]<typename T>(T& value) { value = Read<T>(handle); }},
       object_);

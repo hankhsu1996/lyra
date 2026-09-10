@@ -292,12 +292,12 @@ auto UnitLowerer::TranslateType(const mir::Type& ty) -> lir::Type {
             return lir::Type{
                 lir::ObservableType{.value = TranslateType(ob.value)}};
           },
-          [&](const mir::SampledHistoryType&) -> lir::Type {
-            return RecordUnsupportedType("a sampled value history");
+          [&](const mir::SampledHistoryType& history) -> lir::Type {
+            return lir::Type{
+                lir::SampledHistoryType{.value = TranslateType(history.value)}};
           },
-          [&](const mir::EvaluationAttemptsType&) -> lir::Type {
-            return RecordUnsupportedType(
-                "a concurrent assertion's attempt storage");
+          [](const mir::EvaluationAttemptsType&) -> lir::Type {
+            return lir::Type{lir::EvaluationAttemptsType{}};
           },
           [&](const mir::StructType& s) -> lir::Type {
             return lir::Type{

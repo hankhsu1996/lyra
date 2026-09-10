@@ -4,6 +4,7 @@
 
 #include "lyra/runtime/activation_value_cell.hpp"
 #include "lyra/runtime/cancellation.hpp"
+#include "lyra/runtime/evaluation_attempts.hpp"
 #include "lyra/runtime/file_table.hpp"
 #include "lyra/runtime/named_event.hpp"
 #include "lyra/runtime/net.hpp"
@@ -39,9 +40,10 @@ struct BorrowedHandle {
 // to its address; what the address means follows the member's storage kind. A
 // borrowed handle is a box holding a pointer the owner does not own -- the
 // storage behind a reference, and the driver a net issued -- so reading the
-// member reads the box; an observable cell, a net's resolution node, and a
-// named event are the storage itself, which library calls reach through its
-// address and never read out as a value; a value cell is a variable the owner
+// member reads the box; an observable cell, a net's resolution node, a named
+// event, a sampled value history and a concurrent assertion's attempts are the
+// storage itself, which library calls reach through its address and never read
+// out as a value; a value cell is a variable the owner
 // holds, written and read through its own access so a write keeps the
 // representation the declaration gave it; and an inline value is a value the
 // owner owns and fills once, whose address is the handle it crosses as.
@@ -77,15 +79,16 @@ class MemberStorage {
  private:
   std::variant<
       BorrowedHandle, CancellationTarget, ChannelCancellation, NamedEvent,
-      Var<value::PackedArray>, Var<value::String>, Var<value::Real>,
-      Var<value::ShortReal>, Var<value::RuntimeTuple>, Var<value::RuntimeUnion>,
-      Var<value::RuntimeTaggedUnion>, Var<value::RuntimeDynamicArray>,
-      Var<value::RuntimeUnpackedArray>, Var<value::RuntimeQueue>,
-      Var<value::RuntimeAssociativeArray>, value::Chandle, value::PackedArray,
-      value::String, value::Real, value::ShortReal, value::RuntimeTuple,
-      value::RuntimeUnion, value::RuntimeTaggedUnion,
-      value::RuntimeDynamicArray, value::RuntimeUnpackedArray,
-      value::RuntimeQueue, value::RuntimeAssociativeArray, value::ManagedRef,
+      EvaluationAttempts, Var<value::PackedArray>, Var<value::String>,
+      Var<value::Real>, Var<value::ShortReal>, Var<value::RuntimeTuple>,
+      Var<value::RuntimeUnion>, Var<value::RuntimeTaggedUnion>,
+      Var<value::RuntimeDynamicArray>, Var<value::RuntimeUnpackedArray>,
+      Var<value::RuntimeQueue>, Var<value::RuntimeAssociativeArray>,
+      value::Chandle, value::PackedArray, value::String, value::Real,
+      value::ShortReal, value::RuntimeTuple, value::RuntimeUnion,
+      value::RuntimeTaggedUnion, value::RuntimeDynamicArray,
+      value::RuntimeUnpackedArray, value::RuntimeQueue,
+      value::RuntimeAssociativeArray, value::ManagedRef,
       ActivationValueCell<value::PackedArray>,
       ActivationValueCell<value::String>, ActivationValueCell<value::Real>,
       ActivationValueCell<value::ShortReal>,

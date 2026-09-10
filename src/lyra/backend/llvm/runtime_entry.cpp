@@ -257,6 +257,19 @@ auto MemberStorageKindOf(
                                              : MemberStorageKind::kInlineValue;
   };
   const auto value_of = [&](const auto&) { return held_value(type); };
+  // Storage the owner holds over values of one domain -- a cell, a net's
+  // resolution node, a history. Each is that storage only where the runtime
+  // realizes values of the domain it holds, for the same reason a value member
+  // is: the storage is built from the domain and there is nothing to build it
+  // from otherwise.
+  const auto over_values =
+      [&](lir::TypeId value,
+          MemberStorageKind kind) -> std::optional<MemberStorageKind> {
+    if (!ValueDomainOf(unit, value)) {
+      return std::nullopt;
+    }
+    return kind;
+  };
   const auto borrowed = [](const auto&) -> std::optional<MemberStorageKind> {
     return MemberStorageKind::kBorrowedHandle;
   };
@@ -265,19 +278,16 @@ auto MemberStorageKindOf(
   };
   return unit.types.Get(type).Visit(
       Overloaded{
-          [&](const lir::ObservableType& observable)
-              -> std::optional<MemberStorageKind> {
-            if (!ValueDomainOf(unit, observable.value)) {
-              return std::nullopt;
-            }
-            return MemberStorageKind::kObservableCell;
+          [&](const lir::ObservableType& observable) {
+            return over_values(
+                observable.value, MemberStorageKind::kObservableCell);
           },
-          [&](const lir::ResolvedType& net)
-              -> std::optional<MemberStorageKind> {
-            if (!ValueDomainOf(unit, net.value)) {
-              return std::nullopt;
-            }
-            return MemberStorageKind::kResolvedNet;
+          [&](const lir::SampledHistoryType& history) {
+            return over_values(
+                history.value, MemberStorageKind::kSampledHistory);
+          },
+          [&](const lir::ResolvedType& net) {
+            return over_values(net.value, MemberStorageKind::kResolvedNet);
           },
           // A driver is a handle on a contribution the net owns and issues (LRM
           // 6.5); a reference and a pointer name storage living elsewhere; and
@@ -306,6 +316,10 @@ auto MemberStorageKindOf(
           },
           [](const lir::EventType&) -> std::optional<MemberStorageKind> {
             return MemberStorageKind::kNamedEvent;
+          },
+          [](const lir::EvaluationAttemptsType&)
+              -> std::optional<MemberStorageKind> {
+            return MemberStorageKind::kEvaluationAttempts;
           },
           // A class handle is a value the member holds rather than a pointer it
           // merely points with: the object stays alive because the member
@@ -384,6 +398,16 @@ auto RuntimeSymbol(
     return Symbol(
         domain, std::format("{}_{}", family, support::RuntimeEntryOf(fn).name));
   };
+  const auto retains_nothing = [](support::BuiltinFn f) {
+    if (f != support::BuiltinFn::kSampledLoad &&
+        f != support::BuiltinFn::kArmSampling) {
+      return;
+    }
+    throw InternalError(
+        "llvm codegen: only a variable retains what a time slot moved away "
+        "from; a net's value and a driver's contribution are recomputed rather "
+        "than found there");
+  };
   switch (wrapper) {
     case WrapperKind::kCell:
       return spelled("cell");
@@ -393,6 +417,7 @@ auto RuntimeSymbol(
             "llvm codegen: a net's resolved value takes no store; a value "
             "reaches a net through one of its drivers");
       }
+      retains_nothing(fn);
       return spelled("net");
     case WrapperKind::kDriver:
       if (fn == support::BuiltinFn::kInitialize) {
@@ -401,6 +426,7 @@ auto RuntimeSymbol(
             "what it contributes before it drives is the identity the net "
             "gave it when it attached");
       }
+      retains_nothing(fn);
       return spelled("driver");
   }
   throw InternalError("llvm codegen: unknown capability wrapper");
@@ -426,26 +452,6 @@ auto EntryNamingOf(support::BuiltinFn fn) -> EntryNaming {
   // tracing that makes the recovery unnecessary.
   constexpr std::string_view kRecoversAHandleFromItsObject =
       "answers with the handle referring to the object a body runs on";
-  // A sampled value is state a cell keeps beside its contents, and producing
-  // one is the cell's own decision about which of the two to answer with (LRM
-  // 16.5.1). It reaches a cell the way an ordinary read does and differs only
-  // in which state answers, so what it needs is an entry per value domain of
-  // its own, which the library does not carry.
-  constexpr std::string_view kAnswersFromStateBesideTheContents =
-      "answers from state a cell keeps beside its contents";
-  // A history is member storage holding one value per tick of a clocking event
-  // (LRM 16.9.3), so filling it, appending to it, and reading the tick a read
-  // names are each an operation on that storage rather than on a value. Each
-  // needs an entry per value domain, which the library does not carry.
-  constexpr std::string_view kKeepsAValuePerTick =
-      "keeps one value per tick of a clocking event";
-  // A concurrent assertion's attempts are member storage this backend has no
-  // realization of, so every operation on them is refused at the storage rather
-  // than one entry at a time. The entries themselves carry only machine words,
-  // which is why nothing here is about a value domain.
-  constexpr std::string_view kHoldsEvaluationAttempts =
-      "holds the evaluation attempts of a concurrent assertion";
-
   switch (fn) {
     case support::BuiltinFn::kElement:
     case support::BuiltinFn::kSlice:
@@ -591,40 +597,29 @@ auto EntryNamingOf(support::BuiltinFn fn) -> EntryNaming {
     case support::BuiltinFn::kFromArray:
       return NamedByConversion{};
 
-    // The three accesses a capability wrapper defines. Which wrapper the call
-    // acts on decides both which family answers and which representation it
-    // answers in, so neither half is the call's own.
+    // The accesses a capability wrapper defines. Which wrapper the call acts
+    // on decides both which family answers and which representation it answers
+    // in, so neither half is the call's own. Arming a cell and reading what it
+    // retained (LRM 16.5.1) are two more of them: what a sampled read yields is
+    // the wrapper's own decision about which of the two values it holds to
+    // answer with, which is the same operation on the same storage as an
+    // ordinary read.
     case support::BuiltinFn::kInitialize:
     case support::BuiltinFn::kLoad:
     case support::BuiltinFn::kStore:
+    case support::BuiltinFn::kSampledLoad:
+    case support::BuiltinFn::kArmSampling:
       return NamedByWrapper{};
 
     // A driver is attached by the net that issues it, so what names the entry
-    // is the representation that net resolves in.
+    // is the representation that net resolves in. A history's three operations
+    // likewise take the storage they act on and are named by the one domain
+    // every value in it is realized in (LRM 16.9.3).
     case support::BuiltinFn::kAttachDriver:
-      return NamedByWrapperDomain{};
-
-    case support::BuiltinFn::kSampledLoad:
-    case support::BuiltinFn::kArmSampling:
-      return NotRealized{.shape = kAnswersFromStateBesideTheContents};
-
     case support::BuiltinFn::kSampledHistoryInstall:
     case support::BuiltinFn::kSampledHistoryPush:
     case support::BuiltinFn::kSampledHistoryAt:
-      return NotRealized{.shape = kKeepsAValuePerTick};
-
-    case support::BuiltinFn::kEvaluationAttemptsInstall:
-    case support::BuiltinFn::kEvaluationAttemptsSeedWord:
-    case support::BuiltinFn::kEvaluationAttemptsBeginTick:
-    case support::BuiltinFn::kEvaluationAttemptsDisableTick:
-    case support::BuiltinFn::kEvaluationAttemptsLiveWord:
-    case support::BuiltinFn::kEvaluationAttemptsNextUnstepped:
-    case support::BuiltinFn::kEvaluationAttemptsBitsAt:
-    case support::BuiltinFn::kEvaluationAttemptsSetWord:
-    case support::BuiltinFn::kEvaluationAttemptsStep:
-    case support::BuiltinFn::kEvaluationAttemptsSeed:
-    case support::BuiltinFn::kEvaluationAttemptsSettle:
-      return NotRealized{.shape = kHoldsEvaluationAttempts};
+      return NamedByStorageDomain{};
 
     case support::BuiltinFn::kOpenForWrite:
       return NotRealized{.shape = kAnswersWithPartOfAValue};
@@ -741,6 +736,19 @@ auto EntryNamingOf(support::BuiltinFn fn) -> EntryNaming {
     case support::BuiltinFn::kEffectNamesTarget:
     case support::BuiltinFn::kParent:
     case support::BuiltinFn::kHierarchicalPath:
+    // An assertion's attempts hold machine words and no value of the design,
+    // so there is no representation for these to be named by (LRM 16.14.1).
+    case support::BuiltinFn::kEvaluationAttemptsInstall:
+    case support::BuiltinFn::kEvaluationAttemptsSeedWord:
+    case support::BuiltinFn::kEvaluationAttemptsBeginTick:
+    case support::BuiltinFn::kEvaluationAttemptsDisableTick:
+    case support::BuiltinFn::kEvaluationAttemptsLiveWord:
+    case support::BuiltinFn::kEvaluationAttemptsNextUnstepped:
+    case support::BuiltinFn::kEvaluationAttemptsBitsAt:
+    case support::BuiltinFn::kEvaluationAttemptsSetWord:
+    case support::BuiltinFn::kEvaluationAttemptsStep:
+    case support::BuiltinFn::kEvaluationAttemptsSeed:
+    case support::BuiltinFn::kEvaluationAttemptsSettle:
       return NamedAlone{};
   }
   throw InternalError("llvm codegen: unknown builtin");
