@@ -20,6 +20,13 @@ struct LyraSpan {
   std::uint64_t count;
 };
 
+// A code address whose prototype is erased, which is how a body the runtime
+// looks up crosses back: one lookup serves bodies of every signature, and the
+// asking code restores the exact type the body was generated with. It stays a
+// function pointer rather than becoming a data pointer, because converting
+// between the two is not something the language guarantees.
+using LyraMethodEntry = void (*)();
+
 auto lyra_rt_current_runtime() -> void*;
 auto lyra_rt_files(void* runtime) -> void*;
 auto lyra_rt_time_format(void* runtime) -> const void*;
@@ -209,6 +216,15 @@ auto lyra_rt_object_deref(void* handle) -> void*;
 // it declares itself, so a property keeps one position in the class that
 // declares it and in every class extending that one.
 auto lyra_rt_object_member_addr(void* object, std::uint32_t index) -> void*;
+
+// The body an object's class holds at one dispatch position (LRM 8.20), the
+// code axis of the position rule above: a body keeps one position in the class
+// that introduces it and in every class extending that one. What class an
+// object is, is a fact only this side holds, while entering a body with the
+// right arguments is only the asking code's to do -- so this answers with the
+// address and calls nothing.
+auto lyra_rt_object_method(void* object, std::uint32_t position)
+    -> LyraMethodEntry;
 
 // The handle one capture crosses back to the body as, by declaration index. A
 // captured pointer answers the pointer it holds; a captured value answers the

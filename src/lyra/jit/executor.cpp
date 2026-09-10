@@ -305,6 +305,7 @@ auto DefineRuntimeAbi(llvm::orc::LLJIT& jit)
   add("lyra_rt_closure_make", &lyra_rt_closure_make);
   add("lyra_rt_object_make", &lyra_rt_object_make);
   add("lyra_rt_object_deref", &lyra_rt_object_deref);
+  add("lyra_rt_object_method", &lyra_rt_object_method);
   add("lyra_rt_object_member_addr", &lyra_rt_object_member_addr);
   add("lyra_rt_closure_capture", &lyra_rt_closure_capture);
   add("lyra_rt_submit_nba", &lyra_rt_submit_nba);
@@ -1241,13 +1242,41 @@ auto LoadScopeClasses(
 }
 
 // One declaration whose values the program builds itself, rather than one the
-// object tree owns an instance of: the storage its members need, and the
-// definition every value of it shares.
+// object tree owns an instance of: the storage its members need, the body each
+// of its dispatch positions holds, and the definition every value of it shares.
+// Both vectors are held here because the definition names each as plain data it
+// does not own, so each has to outlive it and stay where it was.
 struct LoadedMemberStorage {
   std::string name;
   std::vector<runtime::MemberStorageDescriptor> members;
+  // The symbol the body at each dispatch position is emitted under. A position
+  // nothing in the class's lineage supplied a body for names none (LRM 8.21
+  // pure virtual).
+  std::vector<std::optional<std::string>> method_symbols;
+  std::vector<runtime::ErasedMethodEntry> methods;
   std::unique_ptr<runtime::ObjectDefinition> definition;
 };
+
+// The symbol each of a class's dispatch positions is filled from, in position
+// order. A position's body is a function of the unit like any other, so what
+// names it is the name that function is emitted under. A class whose lineage
+// leaves this unit has no table laid out here; nothing can index one either,
+// since the position a call would name is refused where the call is generated.
+auto DispatchSymbols(const lir::CompilationUnit& unit, lir::ClassId cls)
+    -> std::vector<std::optional<std::string>> {
+  std::vector<std::optional<std::string>> symbols;
+  const std::optional<std::vector<std::optional<lir::FunctionId>>> table =
+      lir::DispatchTable(unit, cls);
+  if (!table.has_value()) {
+    return symbols;
+  }
+  for (const std::optional<lir::FunctionId>& body : *table) {
+    symbols.push_back(
+        body.has_value() ? std::optional{unit.functions.Get(*body).name}
+                         : std::nullopt);
+  }
+  return symbols;
+}
 
 auto LoadObjectClasses(const lir::CompilationUnit& unit)
     -> diag::Result<std::vector<LoadedMemberStorage>> {
@@ -1262,10 +1291,14 @@ auto LoadObjectClasses(const lir::CompilationUnit& unit)
     if (!members) {
       return std::unexpected(std::move(members.error()));
     }
+    std::vector<std::optional<std::string>> symbols = DispatchSymbols(unit, id);
+    const std::size_t positions = symbols.size();
     loaded.push_back(
         LoadedMemberStorage{
             .name = cls.name,
             .members = *std::move(members),
+            .method_symbols = std::move(symbols),
+            .methods = std::vector<runtime::ErasedMethodEntry>(positions),
             .definition = std::make_unique<runtime::ObjectDefinition>()});
   }
   return loaded;
@@ -1284,6 +1317,8 @@ auto LoadStructs(const lir::CompilationUnit& unit)
         LoadedMemberStorage{
             .name = record.name,
             .members = *std::move(members),
+            .method_symbols = {},
+            .methods = {},
             .definition = std::make_unique<runtime::ObjectDefinition>()});
   }
   return loaded;
@@ -1491,6 +1526,9 @@ auto Execute(
     entry.definition->members = runtime::MemberStorageSchema{
         .data = entry.members.data(),
         .size = static_cast<std::uint32_t>(entry.members.size())};
+    entry.definition->methods = runtime::MethodDispatchTable{
+        .data = entry.methods.data(),
+        .size = static_cast<std::uint32_t>(entry.methods.size())};
   }
 
   // Each declaration the runtime builds values of publishes its definition as
@@ -1549,6 +1587,26 @@ auto Execute(
   for (const LoadedScopeClass& entry : loaded) {
     FillDefinition(
         *jit, entry.name, entry.time_precision_power, *entry.definition);
+  }
+  // A dispatch position naming a body names one this program compiled, so the
+  // symbol resolves or the class was compiled to answer something it cannot;
+  // one naming none is a behavior nothing in the lineage answered (LRM 8.21),
+  // which no object of a constructible class ever reaches.
+  for (LoadedMemberStorage& entry : objects) {
+    for (std::size_t position = 0; position < entry.method_symbols.size();
+         ++position) {
+      const std::optional<std::string>& symbol = entry.method_symbols[position];
+      if (!symbol.has_value()) {
+        continue;
+      }
+      auto found = jit->lookup(*symbol);
+      if (!found) {
+        throw InternalError(
+            "jit executor: the method body '" + *symbol +
+            "' did not resolve: " + llvm::toString(found.takeError()));
+      }
+      entry.methods[position] = found->toPtr<runtime::ErasedMethodEntry>();
+    }
   }
   // Every closure has a body, so a name that does not resolve is not an absent
   // entry but one that could not be brought up.

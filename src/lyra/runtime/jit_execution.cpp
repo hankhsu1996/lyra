@@ -1380,6 +1380,11 @@ auto lyra_rt_object_member_addr(void* object, std::uint32_t index) -> void* {
   return static_cast<ManagedObject*>(object)->MemberAddress(index);
 }
 
+auto lyra_rt_object_method(void* object, std::uint32_t position)
+    -> LyraMethodEntry {
+  return static_cast<const ManagedObject*>(object)->Method(position);
+}
+
 void lyra_rt_register_signal(void* self, const void* name, void* cell) {
   static_cast<Scope*>(self)->RegisterSignal(
       static_cast<const char*>(name), cell);

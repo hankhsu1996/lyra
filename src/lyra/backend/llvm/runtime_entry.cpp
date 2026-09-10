@@ -64,6 +64,8 @@ auto RuntimeOpName(RuntimeOp op) -> std::string_view {
       return "object_deref";
     case RuntimeOp::kObjectMemberAddress:
       return "object_member_addr";
+    case RuntimeOp::kObjectMethod:
+      return "object_method";
     case RuntimeOp::kClosureCapture:
       return "closure_capture";
     case RuntimeOp::kConst:

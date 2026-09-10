@@ -188,9 +188,18 @@ the detail lives in the entry itself.
   of local nominal object declarations; identity, lexical name resolution, and backend emission
   nesting are separate relations; the lexical-tree-only storage and a second identity are rejected.
 - [entering-a-class-construction](entering-a-class-construction.md) -- a class's runtime definition
-  carries storage and no body: the runtime allocates, and the code that wrote the `new` enters the
-  constructor, so its arguments cross as themselves. A registered entry taking a span of arguments,
-  a per-arity signature on the definition, and splitting in the backend are rejected.
+  carries no constructor, because the allocation site's static type chooses one and nothing a caller
+  chooses belongs on a record every object shares: the runtime allocates, and the code that wrote
+  the `new` enters the constructor, so its arguments cross as themselves. A registered entry taking
+  a span of arguments, a per-arity signature on the definition, and splitting in the backend are
+  rejected.
+- [dispatch-position-is-a-lineage-coordinate](dispatch-position-is-a-lineage-coordinate.md) -- a
+  class states the behaviors it introduces and the ones it takes over, never its lineage's; a
+  behavior is named by the declaration that introduced it plus an ordinal within it, and flattening
+  a lineage into positions is a layout query refused whole where the lineage leaves the unit. The
+  runtime answers which body a value holds and the asking code enters it. An absolute position
+  assigned while lowering, a record listing every body a class declares, and generated code reading
+  the class record are rejected.
 - [instance-array-multiplicity](instance-array-multiplicity.md) -- an array of children is one
   member whose type is a sequence of the child pointer, carrying multiplicity but no length, so
   which element a reference names is an operand of a projection rather than part of a member's

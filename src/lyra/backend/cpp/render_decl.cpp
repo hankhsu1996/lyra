@@ -100,11 +100,7 @@ auto RenderCallableParam(
 // slot the base already declares, which the `override` suffix records
 // separately.
 auto VirtualPrefix(const mir::CallableDecl& m) -> std::string_view {
-  if (!m.virtual_dispatch.has_value()) return "";
-  if (std::holds_alternative<mir::IntroducesVirtualSlot>(*m.virtual_dispatch)) {
-    return "virtual ";
-  }
-  return "";
+  return mir::IntroducesSlot(m.virtual_dispatch) ? "virtual " : "";
 }
 
 // The trailing specifier attached after the return type when this callable
@@ -113,10 +109,7 @@ auto VirtualPrefix(const mir::CallableDecl& m) -> std::string_view {
 // silently disagree with the intended override target.
 auto OverrideSuffix(const mir::CallableDecl& m) -> std::string_view {
   if (!m.virtual_dispatch.has_value()) return "";
-  if (std::holds_alternative<mir::IntroducesVirtualSlot>(*m.virtual_dispatch)) {
-    return "";
-  }
-  return " override";
+  return mir::IntroducesSlot(m.virtual_dispatch) ? "" : " override";
 }
 
 // The parameter list a class callable declares, and the position its user

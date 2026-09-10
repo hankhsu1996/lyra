@@ -68,6 +68,7 @@ enum class RuntimeOp : std::uint8_t {
   kObjectMake,
   kObjectDeref,
   kObjectMemberAddress,
+  kObjectMethod,
   kClosureCapture,
   kConst,
   kToBool,

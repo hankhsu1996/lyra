@@ -41,12 +41,13 @@ and is the load-bearing part.
 - **A synthesized method override is an established mechanism.** The post-construction lifecycle
   bodies are already synthesized overrides with no source form, rendered like any method
   (`object_model.md`). A synthesized realization method is not a special case.
-- **The full slot-to-implementation table is layout, and no backend reads it today.** Which slot an
-  implementation fills is class-type layout; the physical dispatch table is LIR/runtime
-  (`object_model.md`, `unified-callable-model.md`). The C++ backend never builds a dispatch table --
-  it recovers a method name and lets the target language dispatch -- so it never reads "which slots
-  does this method fill." The one place the IR states a method's participation is its single-slot
-  resolved dispatch role.
+- **The full slot-to-implementation table is layout, and what reads layout reads one slot per
+  method.** Which slot an implementation fills is class-type layout; the physical dispatch table is
+  LIR/runtime (`object_model.md`, `unified-callable-model.md`). The C++ backend builds no table at
+  all -- it recovers a method name and lets the target language dispatch -- and a backend that does
+  build one indexes it by the slots the class's own lineage introduces, which the single-slot role
+  already names. "Which slots does this method fill" is asked only where a method answers slots
+  several unrelated declarations introduce.
 
 ## The decision
 
@@ -73,11 +74,15 @@ fills these N slots" representation is deferred until a backend reads it.** The 
 state a method's participation as its single resolved dispatch role, and interface-slot filling
 continues to rely on the target language's implicit override across sibling bases. The richer
 representation -- a method naming every concrete and interface slot it fills -- is deferred. Its
-trigger is the physical-vtable backend (a backend that builds the dispatch table from the IR): at
-that point `backend_contract.md`'s mechanical-backend cross-check forces the full relation, and a
-consumer exists to exercise and test it. Until then, materializing it is write-only state no backend
-reads and no test validates. This keeps inherited satisfaction symmetric with local multi-interface
-satisfaction, which already ships and records the same single-slot role.
+trigger is **a backend that dispatches through an interface handle**, which is narrower than the
+backend that builds a dispatch table at all: a concrete class's table is indexed by the slots its
+own lineage introduces, and the single-slot role names each of those exactly. What the richer
+representation is for is the case a lineage cannot order -- one method answering slots that several
+unrelated interfaces introduce, where two classes conforming to one interface need not agree on
+where those slots sit. At that point `backend_contract.md`'s mechanical-backend cross-check forces
+the full relation and a consumer exists to exercise it. Until then, materializing it is write-only
+state no backend reads and no test validates. This keeps inherited satisfaction symmetric with local
+multi-interface satisfaction, which already ships and records the same single-slot role.
 
 ## Rejected alternatives
 

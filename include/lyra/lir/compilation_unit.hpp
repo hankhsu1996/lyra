@@ -47,18 +47,35 @@ struct Member {
   TypeId type;
 };
 
+// One behavior a class takes over from its lineage (LRM 8.20): which behavior,
+// and the body this class answers it with. Taking one over without a body would
+// leave it exactly as it was, so nothing states that.
+struct DispatchOverride {
+  DispatchRef method;
+  FunctionId body;
+};
+
 // One compiled class: its name, the base it extends, the members it declares,
-// and the interface it publishes -- its constructor and its methods, named by
-// the identities of the unit's functions. A class lists a function rather than
-// holding it because the function is the same kind of thing wherever it is
-// listed; what the listing adds is that the class's realization must present
-// it, which is what a virtual slot indexes.
+// its constructor, the behaviors it introduces, and the ones it takes over. A
+// class lists a function rather than holding it because the function is the
+// same kind of thing wherever it is listed.
+//
+// A class states what it adds to its lineage and nothing about the lineage
+// itself -- the same way it states its own members and not its base's. What a
+// value of it holds and what a value of it answers are read from the lineage,
+// which is what keeps one declaration's meaning independent of what extends it.
+//
+// An introduction's position in the list is the behavior's identity here, the
+// way a member's position is its identity above, and a body is absent where the
+// behavior is declared without an implementation (LRM 8.21); no value answers
+// such a behavior, because a class leaving one unanswered is never constructed.
 struct Class {
   std::string name;
   std::optional<Base> base;
   std::vector<Member> members;
   FunctionId constructor{};
-  std::vector<FunctionId> methods;
+  std::vector<std::optional<FunctionId>> introduces;
+  std::vector<DispatchOverride> overrides;
 };
 
 // The object of a unit this one references, as far as that unit published it:
