@@ -172,6 +172,9 @@ class Runtime final : public RuntimeEffects {
   // Final processes wait here rather than in any slot: LRM 9.2.3 runs them
   // after the last one, when no slot is left to hold them.
   RegistrationList finals_;
+  // Every concurrent assertion the design activated, so an attempt no tick
+  // settled can be answered before the finals run.
+  std::vector<EvaluationAttempts*> concurrent_assertions_;
   // The activations a region drain is working through, held apart from the
   // region they came out of.
   RegistrationList draining_;

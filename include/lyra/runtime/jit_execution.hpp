@@ -241,6 +241,7 @@ auto lyra_rt_closure_capture(void* self, std::uint32_t index) -> void*;
 void lyra_rt_submit_nba(void* runtime, void* closure);
 void lyra_rt_submit_postponed(void* runtime, void* closure);
 void lyra_rt_submit_observed(void* runtime, void* closure);
+void lyra_rt_submit_violation_report(void* runtime, void* closure);
 void lyra_rt_submit_deferred_observed(void* runtime, void* closure);
 void lyra_rt_submit_deferred_final(void* runtime, void* closure);
 

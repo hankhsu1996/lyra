@@ -46,53 +46,12 @@ auto LowerArmIntoScope(
   return LowerStmtIntoChildScope(process, frame, *arm);
 }
 
-// LRM 16.3: with no fail statement, what a false expression selects is the
-// tool's own report, which the standard fixes at error severity. A pass
-// statement does not take its place -- the pass statement is what a true
-// expression selects -- so this arm is reached on the same terms either way.
-// The report emit goes into `block`, which is a fresh scope for a simple
-// assertion and the deferred closure body for a deferred one.
-void AppendDefaultReport(
-    ProcessLowerer& process, mir::Block& block,
-    hir::AssertionDirective directive, diag::SourceSpan span) {
-  const mir::CompilationUnit& unit = process.Owner().Unit();
-  const mir::ExprId runtime_id =
-      block.exprs.Add(BuildCurrentRuntimeCallExpr(process.Owner()));
-  const mir::ExprId diagnostic_id =
-      block.exprs.Add(BuildDiagnosticCallExpr(unit, runtime_id));
-  const mir::ExprId origin_id = BuildStringValueExpr(
-      unit, block,
-      FormatRuntimeOriginString(span, process.Owner().SourceManager()));
-  const mir::ExprId text_id =
-      BuildStringValueExpr(unit, block, std::string(FailureText(directive)));
-  const mir::ExprId emit_id = block.exprs.Add(
-      mir::Expr{
-          .data =
-              mir::CallExpr{
-                  .callee =
-                      mir::Direct{
-                          .target = support::BuiltinFn::kEmitError,
-                          .receiver = diagnostic_id},
-                  .arguments = {origin_id, text_id}},
-          .type = unit.builtins.void_type});
-  block.AppendStmt(mir::ExprStmt{.expr = emit_id});
-}
-
 auto BuildDefaultReportScope(
     ProcessLowerer& process, hir::AssertionDirective directive,
     diag::SourceSpan span) -> mir::Block {
   mir::Block report;
   AppendDefaultReport(process, report, directive, span);
   return report;
-}
-
-// Whether an action arm carries a statement to run. An omitted arm is absent,
-// and slang gives an omitted deferred-assertion arm an empty statement rather
-// than none, so both stand for "no action here" (LRM 16.3, 16.4).
-auto HasRealArm(const hir::ProceduralBody& body, std::optional<hir::StmtId> arm)
-    -> bool {
-  if (!arm.has_value()) return false;
-  return !std::holds_alternative<hir::EmptyStmt>(body.stmts.Get(*arm).data);
 }
 
 // The runtime commit a deferred assertion's report rides: an observed (`#0`)
@@ -145,6 +104,38 @@ auto BuildDeferredReportSubmit(
 }
 
 }  // namespace
+
+void AppendDefaultReport(
+    ProcessLowerer& process, mir::Block& block,
+    hir::AssertionDirective directive, diag::SourceSpan span) {
+  const mir::CompilationUnit& unit = process.Owner().Unit();
+  const mir::ExprId runtime_id =
+      block.exprs.Add(BuildCurrentRuntimeCallExpr(process.Owner()));
+  const mir::ExprId diagnostic_id =
+      block.exprs.Add(BuildDiagnosticCallExpr(unit, runtime_id));
+  const mir::ExprId origin_id = BuildStringValueExpr(
+      unit, block,
+      FormatRuntimeOriginString(span, process.Owner().SourceManager()));
+  const mir::ExprId text_id =
+      BuildStringValueExpr(unit, block, std::string(FailureText(directive)));
+  const mir::ExprId emit_id = block.exprs.Add(
+      mir::Expr{
+          .data =
+              mir::CallExpr{
+                  .callee =
+                      mir::Direct{
+                          .target = support::BuiltinFn::kEmitError,
+                          .receiver = diagnostic_id},
+                  .arguments = {origin_id, text_id}},
+          .type = unit.builtins.void_type});
+  block.AppendStmt(mir::ExprStmt{.expr = emit_id});
+}
+
+auto HasRealArm(const hir::ProceduralBody& body, std::optional<hir::StmtId> arm)
+    -> bool {
+  if (!arm.has_value()) return false;
+  return !std::holds_alternative<hir::EmptyStmt>(body.stmts.Get(*arm).data);
+}
 
 auto LowerAssertStmt(
     ProcessLowerer& process, WalkFrame frame, std::optional<std::string> label,

@@ -439,6 +439,12 @@ auto EntryNamingOf(support::BuiltinFn fn) -> EntryNaming {
   // needs an entry per value domain, which the library does not carry.
   constexpr std::string_view kKeepsAValuePerTick =
       "keeps one value per tick of a clocking event";
+  // A concurrent assertion's attempts are member storage this backend has no
+  // realization of, so every operation on them is refused at the storage rather
+  // than one entry at a time. The entries themselves carry only machine words,
+  // which is why nothing here is about a value domain.
+  constexpr std::string_view kHoldsEvaluationAttempts =
+      "holds the evaluation attempts of a concurrent assertion";
 
   switch (fn) {
     case support::BuiltinFn::kElement:
@@ -607,6 +613,19 @@ auto EntryNamingOf(support::BuiltinFn fn) -> EntryNaming {
     case support::BuiltinFn::kSampledHistoryAt:
       return NotRealized{.shape = kKeepsAValuePerTick};
 
+    case support::BuiltinFn::kEvaluationAttemptsInstall:
+    case support::BuiltinFn::kEvaluationAttemptsSeedWord:
+    case support::BuiltinFn::kEvaluationAttemptsBeginTick:
+    case support::BuiltinFn::kEvaluationAttemptsDisableTick:
+    case support::BuiltinFn::kEvaluationAttemptsLiveWord:
+    case support::BuiltinFn::kEvaluationAttemptsNextUnstepped:
+    case support::BuiltinFn::kEvaluationAttemptsBitsAt:
+    case support::BuiltinFn::kEvaluationAttemptsSetWord:
+    case support::BuiltinFn::kEvaluationAttemptsStep:
+    case support::BuiltinFn::kEvaluationAttemptsSeed:
+    case support::BuiltinFn::kEvaluationAttemptsSettle:
+      return NotRealized{.shape = kHoldsEvaluationAttempts};
+
     case support::BuiltinFn::kOpenForWrite:
       return NotRealized{.shape = kAnswersWithPartOfAValue};
 
@@ -642,6 +661,7 @@ auto EntryNamingOf(support::BuiltinFn fn) -> EntryNaming {
     case support::BuiltinFn::kResumeInNbaRegion:
     case support::BuiltinFn::kSubmitPostponed:
     case support::BuiltinFn::kSubmitObserved:
+    case support::BuiltinFn::kSubmitViolationReport:
     case support::BuiltinFn::kSubmitDeferredObserved:
     case support::BuiltinFn::kSubmitDeferredFinal:
     case support::BuiltinFn::kFiles:

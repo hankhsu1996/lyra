@@ -4,21 +4,19 @@ Tracks the SystemVerilog assertion family: immediate and deferred immediate asse
 16.4), concurrent assertions and their sequences and properties (LRM 16.5-16.13), sampled value
 functions (LRM 16.9.3), the assertion control tasks (LRM 20.11), and checkers (LRM 17).
 
-The simple immediate forms lower and are checked; nothing else in the family does. Because an
-assertion observes the design and never drives it, a run with every one of them removed behaves
-identically, so `--assertions skip` elides the whole family rather than rejecting it -- statements,
-declarations, checkers, and the control tasks alike. Sampled value functions are the one member that
-cannot cover: outside an assertion they produce a value ordinary logic consumes, so there is nothing
-to elide them to.
+Each sub-step below says what of its form is checked. Because an assertion observes the design and
+never drives it, a run with every one of them removed behaves identically, so `--assertions skip`
+elides the whole family rather than rejecting it -- statements, declarations, checkers, and the
+control tasks alike. Sampled value functions are the one member that cannot cover: outside an
+assertion they produce a value ordinary logic consumes, so there is nothing to elide them to.
 
-Two consequences of that split are what a design meets first. A design carrying both an immediate
-and a concurrent assertion has no setting that checks the immediate one: the checking policy refuses
-on the concurrent form, and eliding drops both. That is a property of the concurrent form being
-unimplemented rather than a missing policy value, and it ends when AS5 does. And an immediate
-cover's results are reported as one line per cover statement at the end of a run, on the same
-channel the design's own output uses -- not as a diagnostic, because a false cover is not a failure
-and a run over a design whose covers are only partly reached has to stay one a conforming tool has
-no comment on.
+One reporting rule is what a design meets first: an immediate cover's results are reported as one
+line per cover statement at the end of a run, on the same channel the design's own output uses --
+not as a diagnostic, because a false cover is not a failure and a run over a design whose covers are
+only partly reached has to stay one a conforming tool has no comment on. A concurrent cover reaches
+no such line yet, and its counters are a different set rather than the same two: attempts, successes
+at most one per attempt, and successes owed to vacuity, with the two success counts excluding
+disabled evaluations while the attempt count includes them (LRM 16.14.3).
 
 Done when an assertion of each form evaluates its condition at the point the LRM specifies, runs its
 pass or fail action in the region the LRM specifies, and reports a failure with its source location;
@@ -126,6 +124,38 @@ The IDs are stable references and do not imply execution order beyond the depend
       declarations, `disable iff`, and the clocking a property is evaluated against. Evaluation is
       multi-cycle and against sampled values, which makes this the one form whose semantics are not
       a variation on the immediate model. Rides on AS4.
+
+      In place on the C++ backend for an assertion a scope declares: an attempt begins at every tick
+      of the clock, attempts overlap and each carries its own result, and the statements an outcome
+      selects run in the Reactive region. The operator set carried is a Boolean expression, a delay
+      window and a consecutive repetition with constant bounds, and overlapped and non-overlapped
+      implication nested to any depth; a named sequence or property taking arguments is carried
+      because the front end substitutes the actuals into its body. A sequence standing as a property
+      is read at the strength the statement demands: strong asks that a match exist, weak that no
+      finite prefix has witnessed one cannot (LRM 16.12.2). Over the operator set carried here the
+      two part company only where the trace runs out, so what the strength decides is what an
+      attempt still in flight when the run ends is owed -- an obligation holds, a coverage goal does
+      not -- and it becomes a mid-trace distinction as soon as an unbounded operator arrives.
+      `disable iff` preempts every attempt its condition is true during, tested on current values
+      across the whole interval rather than at that interval's ticks, so a condition that rises and
+      falls between two ticks still preempts.
+
+      Of the five statement forms the clause admits, three are carried. `restrict` is the fourth and
+      is accepted rather than checked: it states a constraint for a formal tool and is by definition
+      not verified in simulation (LRM 16.14.4), so eliding it is its semantics rather than a gap.
+
+      What remains of the form is the other placement: an assertion a procedure reaches is refused,
+      because its enabling condition is that control arrived there, which is queued rather than
+      evaluated (LRM 16.14.6). Refused by name besides: a local variable and a subroutine call
+      attached to a match (LRM 16.10, 16.11), an unbounded `$` window, a repetition admitting an
+      empty match, a nonconsecutive or goto repetition, composing sequences with `and` / `or` /
+      `intersect` / `throughout` / `within`, `first_match`, the property connectives and the
+      operators over time, the abort operators, more than one clocking event (LRM 16.13), a clocking
+      event that is a named event, an action block that consumes time, and the fifth statement form,
+      `cover sequence`, which counts every match an attempt produces rather than the attempt. The execution backend
+      refuses the storage an assertion keeps its attempts in, the way it refuses a sampled value
+      history.
+
 - [ ] AS6 -- Assertion control tasks (LRM 20.11). They act on assertion state -- turning checking
       on, off, or killing it by scope or by name -- so they need that state to exist first.
 - [ ] AS7 -- Checkers (LRM 17): checker declarations and instances, which package assertions with

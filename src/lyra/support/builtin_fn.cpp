@@ -298,6 +298,48 @@ auto RuntimeEntryOf(BuiltinFn id) -> RuntimeEntry {
       return {.name = "sampled_history_push", .declaration = Method{"Push"}};
     case BuiltinFn::kSampledHistoryAt:
       return {.name = "sampled_history_at", .declaration = Method{"At"}};
+    case BuiltinFn::kEvaluationAttemptsInstall:
+      return {
+          .name = "evaluation_attempts_install",
+          .declaration = Method{"Install"}};
+    case BuiltinFn::kEvaluationAttemptsSeedWord:
+      return {
+          .name = "evaluation_attempts_seed_word",
+          .declaration = Method{"SeedWord"}};
+    case BuiltinFn::kEvaluationAttemptsBeginTick:
+      return {
+          .name = "evaluation_attempts_begin_tick",
+          .declaration = Method{"BeginTick"}};
+    case BuiltinFn::kEvaluationAttemptsDisableTick:
+      return {
+          .name = "evaluation_attempts_disable_tick",
+          .declaration = Method{"DisableTick"}};
+    case BuiltinFn::kEvaluationAttemptsLiveWord:
+      return {
+          .name = "evaluation_attempts_live_word",
+          .declaration = Method{"LiveWord"}};
+    case BuiltinFn::kEvaluationAttemptsNextUnstepped:
+      return {
+          .name = "evaluation_attempts_next_unstepped",
+          .declaration = Method{"NextUnstepped"}};
+    case BuiltinFn::kEvaluationAttemptsBitsAt:
+      return {
+          .name = "evaluation_attempts_bits_at",
+          .declaration = Method{"BitsAt"}};
+    case BuiltinFn::kEvaluationAttemptsSetWord:
+      return {
+          .name = "evaluation_attempts_set_word",
+          .declaration = Method{"SetWord"}};
+    case BuiltinFn::kEvaluationAttemptsStep:
+      return {
+          .name = "evaluation_attempts_step", .declaration = Method{"Step"}};
+    case BuiltinFn::kEvaluationAttemptsSeed:
+      return {
+          .name = "evaluation_attempts_seed", .declaration = Method{"Seed"}};
+    case BuiltinFn::kEvaluationAttemptsSettle:
+      return {
+          .name = "evaluation_attempts_settle",
+          .declaration = Method{"Settle"}};
     case BuiltinFn::kIsUnknown:
       return {.name = "is_unknown", .declaration = Method{"IsUnknown"}};
     case BuiltinFn::kCountBits:
@@ -383,6 +425,10 @@ auto RuntimeEntryOf(BuiltinFn id) -> RuntimeEntry {
     case BuiltinFn::kSubmitObserved:
       return {
           .name = "submit_observed", .declaration = Method{"SubmitObserved"}};
+    case BuiltinFn::kSubmitViolationReport:
+      return {
+          .name = "submit_violation_report",
+          .declaration = Method{"SubmitViolationReport"}};
     case BuiltinFn::kSubmitDeferredObserved:
       return {
           .name = "submit_deferred_observed",

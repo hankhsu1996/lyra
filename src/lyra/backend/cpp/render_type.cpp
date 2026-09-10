@@ -307,6 +307,9 @@ auto RenderTypeAsCpp(const mir::CompilationUnit& unit, mir::TypeId type_id)
                 "lyra::runtime::SampledHistory<{}>",
                 RenderTypeAsCpp(unit, h.value));
           },
+          [](const mir::EvaluationAttemptsType&) -> std::string {
+            return "lyra::runtime::EvaluationAttempts";
+          },
           [](const auto&) -> std::string {
             throw InternalError(
                 "RenderTypeAsCpp: MIR type not yet supported in the C++ "

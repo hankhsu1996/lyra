@@ -141,6 +141,30 @@ enum class BuiltinFn : std::uint16_t {
   kSampledHistoryInstall,
   kSampledHistoryPush,
   kSampledHistoryAt,
+  // LRM 16.14.1 concurrent assertion evaluation, all reached through the
+  // storage that holds one assertion's attempts. `Install` fixes how wide a
+  // position set is, what a pending attempt is owed when the run ends, and the
+  // statements an outcome selects. `BeginTick` opens the attempt this tick
+  // starts and makes every live evaluation one the tick has not stepped;
+  // `DisableTick` is the same tick with the disable condition true, which
+  // discards every attempt and starts none (LRM 16.12). `LiveWord` bounds the
+  // Boolean expressions the tick has to read, `NextUnstepped` walks the
+  // evaluations the tick still owes a step, and `BitsAt` / `SetWord` / `Step`
+  // read a position set, replace it with its successor, and record what the
+  // tick left it in. `Seed` starts an evaluation of an implication's
+  // consequent in the attempt whose antecedent matched. `Settle` answers every
+  // attempt the sweep resolved and submits its statements to Reactive.
+  kEvaluationAttemptsInstall,
+  kEvaluationAttemptsSeedWord,
+  kEvaluationAttemptsBeginTick,
+  kEvaluationAttemptsDisableTick,
+  kEvaluationAttemptsLiveWord,
+  kEvaluationAttemptsNextUnstepped,
+  kEvaluationAttemptsBitsAt,
+  kEvaluationAttemptsSetWord,
+  kEvaluationAttemptsStep,
+  kEvaluationAttemptsSeed,
+  kEvaluationAttemptsSettle,
   // LRM 20.9 / 21.3.4.3. 2-state packed types return false; downstream
   // constant-folds those calls.
   kIsUnknown,
@@ -249,7 +273,14 @@ enum class BuiltinFn : std::uint16_t {
   kRunDetached,
   kResumeInNbaRegion,
   kSubmitPostponed,
+  // LRM 16.5: a concurrent assertion's tick is evaluated in the Observed
+  // region, and nothing withdraws it -- what it reads is sampled, so a flush
+  // point of whatever submitted it cannot change the answer.
   kSubmitObserved,
+  // LRM 12.4.2.1: a `unique` / `unique0` / `priority` violation report matures
+  // in the Observed region unless the process that raised it reaches a flush
+  // point first.
+  kSubmitViolationReport,
   // LRM 16.4 deferred immediate assertion action commits, each a
   // `RuntimeEffects` method taking the action closure. The observed (`#0`) form
   // matures in Observed and runs its action in Reactive; the final form matures

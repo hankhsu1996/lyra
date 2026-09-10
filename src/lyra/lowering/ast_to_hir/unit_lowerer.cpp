@@ -12,6 +12,7 @@
 #include <slang/ast/Expression.h>
 #include <slang/ast/Scope.h>
 #include <slang/ast/Symbol.h>
+#include <slang/ast/statements/MiscStatements.h>
 #include <slang/ast/symbols/BlockSymbols.h>
 #include <slang/ast/symbols/ClassSymbols.h>
 #include <slang/ast/symbols/CompilationUnitSymbols.h>
@@ -591,8 +592,15 @@ auto UnitLowerer::InferredProcedureClock(const slang::ast::Symbol& containing)
 
 auto UnitLowerer::Contains(const slang::ast::ProceduralBlockSymbol& proc) const
     -> bool {
-  if (StaticConcurrentAssertionOf(proc).assertion == nullptr) {
+  const StaticConcurrentAssertion found = StaticConcurrentAssertionOf(proc);
+  if (found.assertion == nullptr) {
     return true;
+  }
+  // LRM 16.14.4: a `restrict` states a constraint for a formal tool to converge
+  // a proof on, and is the one directive a simulator does not verify. It has no
+  // action block either, so carrying it and leaving it out are the same run.
+  if (found.assertion->assertionKind == slang::ast::AssertionKind::Restrict) {
+    return false;
   }
   return !support::ElidesAssertions(AssertionPolicy());
 }

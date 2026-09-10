@@ -152,6 +152,41 @@ auto CarriesLocalVars(const slang::ast::AssertionExpr& expr) -> bool {
   return instance != nullptr && !instance->localVars.empty();
 }
 
+// LRM 16.5.1: what a Boolean expression of a sequence is evaluated over is the
+// sampled value of each variable it names, and a cell answers for one only once
+// armed. So every variable a Boolean reads is armed where the assertion is
+// read, exactly as a sampled value function arms what its operand reads.
+auto ArmSampledReads(
+    ProcessLowerer& proc, const WalkFrame& frame,
+    const slang::ast::Expression& expr, diag::SourceSpan span)
+    -> diag::Result<void> {
+  if (frame.current_structural_scope == nullptr ||
+      frame.reader_scope == nullptr) {
+    return diag::Fail(
+        span, diag::DiagCode::kUnsupportedStatementForm,
+        "a concurrent assertion outside a design element's scope is not yet "
+        "supported");
+  }
+  auto& unit_lowerer = proc.Owner();
+  const auto& reads = unit_lowerer.Sensitivity().AnalyzeReads(
+      expr, frame.reader_scope->asSymbol());
+  auto entries = unit_lowerer.TranslateSensitivityReads(reads, frame);
+  if (!entries) return std::unexpected(std::move(entries.error()));
+  // A read the translation could not name as a cell of this design leaves one
+  // that can never answer for a sampled value, so it is refused rather than
+  // read against whatever the cell currently holds.
+  if (entries->size() < reads.size()) {
+    return RefuseAssertionForm(
+        span, "a Boolean expression reading storage this scope cannot name");
+  }
+  std::vector<hir::SensitivityEntry>& sampled =
+      frame.current_structural_scope->sampled_cells;
+  for (hir::SensitivityEntry& entry : *entries) {
+    sampled.push_back(std::move(entry));
+  }
+  return {};
+}
+
 auto AddSequence(const WalkFrame& frame, hir::SequenceExpr expr)
     -> hir::SequenceExprId {
   return frame.SequenceExprs().Add(std::move(expr));
@@ -265,6 +300,8 @@ auto LowerSequenceExpr(
   switch (expr.kind) {
     case slang::ast::AssertionExprKind::Simple: {
       const auto& simple = expr.as<slang::ast::SimpleAssertionExpr>();
+      auto armed = ArmSampledReads(proc, frame, simple.expr, span);
+      if (!armed) return std::unexpected(std::move(armed.error()));
       auto cond_or = proc.LowerExpr(simple.expr, frame);
       if (!cond_or) return std::unexpected(std::move(cond_or.error()));
       hir::SequenceExpr boolean{
@@ -529,11 +566,25 @@ auto LowerPropertySpec(
         "change");
   }
 
-  std::optional<hir::ExprId> disable_condition;
+  // LRM 16.12 tests the disable condition across the whole interval from the
+  // start of an attempt to its end, not at that interval's ticks, so what it
+  // reads is carried here the way every other construct sensitive to a value
+  // carries it. A condition that rises and falls between two ticks is visible
+  // no other way.
+  std::optional<hir::DisableCondition> disable;
   if (parts.disable_condition != nullptr) {
     auto cond_or = proc.LowerExpr(*parts.disable_condition, frame);
     if (!cond_or) return std::unexpected(std::move(cond_or.error()));
-    disable_condition = frame.Exprs().Add(*std::move(cond_or));
+    auto sensitivity_or = proc.Owner().TranslateSensitivityReads(
+        proc.Owner().Sensitivity().AnalyzeReads(
+            *parts.disable_condition, proc.ContainingSymbol()),
+        frame);
+    if (!sensitivity_or) {
+      return std::unexpected(std::move(sensitivity_or.error()));
+    }
+    disable = hir::DisableCondition{
+        .condition = frame.Exprs().Add(*std::move(cond_or)),
+        .sensitivity = *std::move(sensitivity_or)};
   }
 
   auto body_or = LowerPropertyExpr(proc, frame, *parts.body, strength, span);
@@ -541,7 +592,7 @@ auto LowerPropertySpec(
 
   return hir::PropertySpec{
       .clock = *std::move(value_change),
-      .disable_condition = disable_condition,
+      .disable = std::move(disable),
       .body = AddProperty(frame, *std::move(body_or))};
 }
 

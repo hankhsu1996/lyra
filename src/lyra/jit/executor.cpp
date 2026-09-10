@@ -315,6 +315,7 @@ auto DefineRuntimeAbi(llvm::orc::LLJIT& jit)
   add("lyra_rt_resume_in_nba_region", &lyra_rt_resume_in_nba_region);
   add("lyra_rt_submit_postponed", &lyra_rt_submit_postponed);
   add("lyra_rt_submit_observed", &lyra_rt_submit_observed);
+  add("lyra_rt_submit_violation_report", &lyra_rt_submit_violation_report);
   add("lyra_rt_submit_deferred_observed", &lyra_rt_submit_deferred_observed);
   add("lyra_rt_submit_deferred_final", &lyra_rt_submit_deferred_final);
   add("lyra_rt_delay", &lyra_rt_delay);

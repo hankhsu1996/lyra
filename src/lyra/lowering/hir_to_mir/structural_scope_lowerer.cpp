@@ -23,6 +23,7 @@
 #include "lyra/lowering/hir_to_mir/binding_origin.hpp"
 #include "lyra/lowering/hir_to_mir/callable_bindings.hpp"
 #include "lyra/lowering/hir_to_mir/class_shape.hpp"
+#include "lyra/lowering/hir_to_mir/concurrent_assertion.hpp"
 #include "lyra/lowering/hir_to_mir/continuous_assign.hpp"
 #include "lyra/lowering/hir_to_mir/declaration_initializer.hpp"
 #include "lyra/lowering/hir_to_mir/default_value.hpp"
@@ -1253,6 +1254,25 @@ auto StructuralScopeLowerer::DeclareShape() -> diag::Result<mir::ClassId> {
   }
   sampled_history_fields_ = {
       hir_scope.sampled_histories.size(), std::move(sampled_history_fields)};
+
+  // What an assertion has in flight is storage nothing outside this scope
+  // names either: an attempt is started by the clock and read by the tick that
+  // advances it, both of which are this scope's own (LRM 16.14.1). The type
+  // carries nothing, because how wide a position set is and what a pending
+  // attempt is owed are fixed by filling the storage rather than by naming it.
+  std::vector<mir::FieldId> concurrent_assertion_fields;
+  concurrent_assertion_fields.reserve(hir_scope.concurrent_assertions.size());
+  for (const hir::ConcurrentAssertionId id :
+       hir_scope.concurrent_assertions.Ids()) {
+    concurrent_assertion_fields.push_back(shape.fields.Add(
+        mir::FieldDecl{
+            .name = std::format("concurrent_assertion_{}", id.value),
+            .type = unit_lowerer.Unit().types.Intern(
+                mir::Type{mir::EvaluationAttemptsType{}})}));
+  }
+  concurrent_assertion_fields_ = {
+      hir_scope.concurrent_assertions.size(),
+      std::move(concurrent_assertion_fields)};
   instance_member_fields_ = {
       hir_scope.instance_members.size(), std::move(instance_fields)};
   interface_port_fields_ = {
@@ -2107,13 +2127,24 @@ auto StructuralScopeLowerer::PopulateBodies(WalkFrame parent_frame)
     if (!class_r) return std::unexpected(std::move(class_r.error()));
   }
 
+  // One process per assertion and clocking event, for the same reason a
+  // sampler is one per history: two assertions under one event could share the
+  // wait, and deciding that two clocks are the same event means comparing
+  // lowered expressions for equality.
+  std::vector<
+      std::pair<hir::ConcurrentAssertionId, InstalledConcurrentAssertion>>
+      installed_assertions;
+  installed_assertions.reserve(hir_scope.concurrent_assertions.size());
   for (const hir::ConcurrentAssertionId id :
        hir_scope.concurrent_assertions.Ids()) {
-    return diag::Fail(
-        hir_scope.concurrent_assertions.Get(id).span,
-        diag::DiagCode::kUnsupportedStatementForm,
-        "a concurrent assertion is not yet lowered; pass --assertions skip to "
-        "elide it");
+    auto installed = LowerConcurrentAssertion(
+        *this, mir_class, ctor_frame, scopes_, id,
+        hir_scope.concurrent_assertions.Get(id));
+    if (!installed) return std::unexpected(std::move(installed.error()));
+    for (const mir::CallableId process : installed->processes) {
+      AppendProcessRegistration(unit_lowerer, activate_frame, process, false);
+    }
+    installed_assertions.emplace_back(id, *installed);
   }
 
   // Recurse into descendants. Every class's shape is already published, so a
@@ -2176,6 +2207,13 @@ auto StructuralScopeLowerer::PopulateBodies(WalkFrame parent_frame)
                     BuildSampledHistoryExpr(
                         activate_block, activate_frame, *this, id),
                     value, depth, void_type))});
+  }
+
+  // Every assertion's storage is filled here too. Nothing about one needs an
+  // earlier phase -- what it reads it reaches through cells sealed since Seal
+  // -- and the sampling those cells answer from is armed just above.
+  for (const auto& [id, installed] : installed_assertions) {
+    AppendConcurrentAssertionInstall(*this, activate_frame, id, installed);
   }
 
   ctor_code.params.clear();

@@ -111,7 +111,7 @@ void SubmitToObservedRegion(
               mir::CallExpr{
                   .callee =
                       mir::Direct{
-                          .target = support::BuiltinFn::kSubmitObserved,
+                          .target = support::BuiltinFn::kSubmitViolationReport,
                           .receiver = runtime_id},
                   .arguments = {body_id}},
           .type = unit_lowerer.Unit().builtins.void_type});

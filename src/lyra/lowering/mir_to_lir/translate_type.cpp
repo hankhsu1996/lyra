@@ -295,6 +295,10 @@ auto UnitLowerer::TranslateType(const mir::Type& ty) -> lir::Type {
           [&](const mir::SampledHistoryType&) -> lir::Type {
             return RecordUnsupportedType("a sampled value history");
           },
+          [&](const mir::EvaluationAttemptsType&) -> lir::Type {
+            return RecordUnsupportedType(
+                "a concurrent assertion's attempt storage");
+          },
           [&](const mir::StructType& s) -> lir::Type {
             return lir::Type{
                 lir::StructType{.struct_id = StructDeclaration(s.struct_id)}};

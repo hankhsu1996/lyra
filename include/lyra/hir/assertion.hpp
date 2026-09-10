@@ -4,6 +4,7 @@
 #include <cstdint>
 #include <optional>
 #include <variant>
+#include <vector>
 
 #include "lyra/base/pool_id.hpp"
 #include "lyra/diag/source_span.hpp"
@@ -107,19 +108,26 @@ struct PropertyExpr {
   diag::SourceSpan span;
 };
 
+// The condition whose truth preempts an evaluation attempt (LRM 16.12), and
+// what it is watched through. Two things separate it from everything else an
+// assertion reads, and the second is what makes it carry a sensitivity of its
+// own: it is read on current values rather than sampled ones, and it is tested
+// across the whole interval from the start of an attempt to its end rather than
+// at that interval's ticks. Watching for a change is the only way to see a
+// condition that rises and falls between two ticks.
+struct DisableCondition {
+  ExprId condition;
+  std::vector<SensitivityEntry> sensitivity;
+};
+
 // A property together with what it is evaluated against (LRM 16.12): the
 // clocking event whose ticks the evaluation advances over, and the condition
-// whose truth at any point during an attempt preempts it. The clock is always
-// present -- where the source writes none it is inferred, and a property for
-// which no rule yields one is refused rather than evaluated against a guess
-// (LRM 16.14.6, 14.12).
-//
-// The disable condition is the one part read on current values rather than
-// sampled ones (LRM 16.12), which is why it is an ordinary expression here
-// rather than part of the property.
+// that preempts an attempt. The clock is always present -- where the source
+// writes none it is inferred, and a property for which no rule yields one is
+// refused rather than evaluated against a guess (LRM 16.14.6, 14.12).
 struct PropertySpec {
   EventControl clock;
-  std::optional<ExprId> disable_condition;
+  std::optional<DisableCondition> disable;
   PropertyExprId body;
 };
 
