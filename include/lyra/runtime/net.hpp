@@ -3,12 +3,14 @@
 #include <concepts>
 #include <cstddef>
 #include <deque>
+#include <memory>
 #include <utility>
 #include <vector>
 
 #include "lyra/base/internal_error.hpp"
 #include "lyra/runtime/observable.hpp"
 #include "lyra/runtime/runtime_effects.hpp"
+#include "lyra/runtime/takeover.hpp"
 #include "lyra/runtime/trigger.hpp"
 #include "lyra/runtime/var.hpp"
 #include "lyra/support/net_resolution.hpp"
@@ -74,9 +76,11 @@ class Driver;
 // A net: a resolved observable value produced from a set of independently
 // attached driver contributions folded under the net's resolution (LRM 6.5,
 // 6.6). Readable and observable like a `Var<T>` (it extends `Observable`, so a
-// process can wait on it), but never written directly: a value reaches it only
-// by a driver updating its own contribution, after which the net re-resolves
-// and publishes on a real change (LRM 9.4.2). The net owns the contribution
+// process can wait on it), but never written directly: a value reaches it by a
+// driver updating its own contribution, or by a procedural continuous
+// assignment overriding what the drivers resolve to (LRM 10.6.2), and either
+// way the net re-resolves and publishes on a real change (LRM 9.4.2). The net
+// owns the contribution
 // storage; a `Driver<T>` names one contribution by an index the net issued, so
 // the storage stays the net's to reorganize. The fold is fixed at construction
 // from the declared net type and carried as data, not as a template parameter.
@@ -114,6 +118,38 @@ class ResolvedNet : public Observable {
     return resolved_;
   }
 
+  // Puts the net under a procedural continuous assignment and takes it back
+  // out (LRM 10.6.2). A `force` on a net overrides every driver rather than
+  // joining them, so what these change is what the net shows, never the
+  // contributions -- which go on being updated underneath and are what the net
+  // answers with again once it is released.
+  auto BeginTakeover(const value::PackedArray& level) -> value::PackedArray {
+    if (takeovers_ == nullptr) {
+      takeovers_ = std::make_unique<Takeovers<T>>();
+    }
+    return TakeoverGenerationValue(takeovers_->Begin(TakeoverLevelOf(level)));
+  }
+
+  auto DriveTakeover(
+      const value::PackedArray& level, const value::PackedArray& generation,
+      const T& value) -> bool {
+    if (takeovers_ == nullptr ||
+        !takeovers_->Drive(
+            TakeoverLevelOf(level), TakeoverGenerationOf(generation), value)) {
+      return false;
+    }
+    Reresolve(current_runtime());
+    return true;
+  }
+
+  void EndTakeover(const value::PackedArray& level) {
+    if (takeovers_ == nullptr) {
+      return;
+    }
+    takeovers_->End(TakeoverLevelOf(level));
+    Reresolve(current_runtime());
+  }
+
   // Attaches a new driver and returns its handle. Its contribution starts at
   // the non-driving one, so a driver that has not yet driven leaves the
   // resolution exactly as it was -- attaching is not itself an act of driving.
@@ -136,9 +172,18 @@ class ResolvedNet : public Observable {
   // place calls this instead of handing one back: the net reads the same
   // storage either way, and the transition that matters is the resolved
   // value's, which no driver can see.
+  //
+  // This is also where a `force` takes effect (LRM 10.6.2). The fold runs
+  // either way and a takeover replaces its result, so the drivers stay current
+  // underneath a force and the net is immediately assigned the value they
+  // determine the moment it is released.
   void Reresolve(RuntimeEffects& runtime) {
-    PublishIfChanged(
-        runtime, FoldContributions(contributions_, nondriving_, resolution_));
+    T next = FoldContributions(contributions_, nondriving_, resolution_);
+    const T* forced = takeovers_ == nullptr ? nullptr : takeovers_->Highest();
+    if (forced != nullptr) {
+      next = *forced;
+    }
+    PublishIfChanged(runtime, std::move(next));
   }
 
   // The contribution a driver names. Every driver reaches its own through the
@@ -178,6 +223,10 @@ class ResolvedNet : public Observable {
   T resolved_{};
   T nondriving_{};
   value::NetResolution resolution_;
+  // The procedural continuous assignments this net has been put under (LRM
+  // 10.6.2), absent until the first one starts, so a net nobody forces resolves
+  // exactly as it did before the construct existed.
+  std::unique_ptr<Takeovers<T>> takeovers_;
   std::vector<DriveContribution<T>> contributions_;
   // The handles this net has issued. They are the net's rather than each
   // source's so that a source reaching its driver by address holds nothing that

@@ -170,7 +170,7 @@ under each item, and the conformance gaps at the end.
 - [x] P11 -- `wait (cond) body` level-sensitive control (LRM 9.4.3). Sensitivity is precomputed by
       slang's flow analysis on `cond` as a standalone expression. The "skip suspend if cond is
       already true" semantic falls out of the lowering. `wait fork;` (LRM 9.6.1) is a distinct
-      process-control construct belonging to the fork surface; `wait_order(...)` (LRM 15.6) is out
+      process-control construct belonging to the fork surface; `wait_order(...)` (LRM 15.5.4) is out
       of scope.
 
 ### Concurrency

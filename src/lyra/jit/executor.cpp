@@ -392,6 +392,11 @@ auto DefineRuntimeAbi(llvm::orc::LLJIT& jit)
   add("lyra_rt_packed_cell_initialize", &lyra_rt_packed_cell_initialize);
   add("lyra_rt_packed_cell_set", &lyra_rt_packed_cell_set);
   add("lyra_rt_packed_cell_arm_sampling", &lyra_rt_packed_cell_arm_sampling);
+  add("lyra_rt_packed_cell_begin_takeover",
+      &lyra_rt_packed_cell_begin_takeover);
+  add("lyra_rt_packed_cell_drive_takeover",
+      &lyra_rt_packed_cell_drive_takeover);
+  add("lyra_rt_packed_cell_end_takeover", &lyra_rt_packed_cell_end_takeover);
   add("lyra_rt_packed_cell_sampled_load", &lyra_rt_packed_cell_sampled_load);
   add("lyra_rt_string_cell_alloc", &lyra_rt_string_cell_alloc);
   add("lyra_rt_string_cell_get", &lyra_rt_string_cell_get);
@@ -1037,6 +1042,9 @@ auto DefineRuntimeAbi(llvm::orc::LLJIT& jit)
       &lyra_rt_unpackedarray_value_cell_load);
   add("lyra_rt_packed_net_get", &lyra_rt_packed_net_get);
   add("lyra_rt_packed_net_initialize", &lyra_rt_packed_net_initialize);
+  add("lyra_rt_packed_net_begin_takeover", &lyra_rt_packed_net_begin_takeover);
+  add("lyra_rt_packed_net_drive_takeover", &lyra_rt_packed_net_drive_takeover);
+  add("lyra_rt_packed_net_end_takeover", &lyra_rt_packed_net_end_takeover);
   add("lyra_rt_packed_attach_driver", &lyra_rt_packed_attach_driver);
   add("lyra_rt_packed_driver_get", &lyra_rt_packed_driver_get);
   add("lyra_rt_packed_driver_set", &lyra_rt_packed_driver_set);

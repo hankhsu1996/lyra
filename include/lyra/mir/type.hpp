@@ -645,7 +645,8 @@ enum class NetResolution : std::uint8_t { kTriState, kWiredAnd, kWiredOr };
 // A net's resolved storage: an observable value produced by resolving the
 // contributions of the net's drivers (LRM 6.5, 6.6). Readable and observable
 // like an `ObservableType` cell, but never written directly -- a value reaches
-// it only through a driver.
+// it through a driver, or through a procedural continuous assignment that
+// overrides what the drivers resolve to (LRM 10.6.2).
 struct ResolvedType {
   TypeId value;
   NetResolution resolution;

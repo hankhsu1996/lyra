@@ -626,6 +626,11 @@ auto EntryNamingOf(support::BuiltinFn fn) -> EntryNaming {
     case support::BuiltinFn::kStore:
     case support::BuiltinFn::kSampledLoad:
     case support::BuiltinFn::kArmSampling:
+    // A takeover acts on the cell it covers and carries that cell's value, so
+    // the wrapper it is reached through is what names the entry (LRM 10.6).
+    case support::BuiltinFn::kBeginTakeover:
+    case support::BuiltinFn::kDriveTakeover:
+    case support::BuiltinFn::kEndTakeover:
       return NamedByWrapper{};
 
     // A driver is attached by the net that issues it, so what names the entry

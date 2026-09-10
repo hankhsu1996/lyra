@@ -76,7 +76,9 @@ places outside its own scope.
 
 - A net modeled as a plain writable cell that each driver writes directly, so the last write wins.
   Multiple drivers must resolve; a net's value is a projection of its contributions, never the most
-  recent write.
+  recent write. The one thing that displaces that projection is a procedural continuous assignment
+  (LRM 10.6.2), which overrides every driver rather than joining them and is therefore not a driver
+  at all -- the contributions go on being what the net answers with the moment it is released.
 - A net's net-ness carried by a flag beside a value type. The capability type carries it.
 - One aggregate per-net process that reads every driver's expression and fixes the driver set at the
   net's owning-unit compile time. A net's drivers are not all knowable when its unit compiles -- a

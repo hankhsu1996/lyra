@@ -400,6 +400,12 @@ auto RuntimeEntryOf(BuiltinFn id) -> RuntimeEntry {
       return {.name = "open_for_write", .declaration = Method{"Mutate"}};
     case BuiltinFn::kAttachDriver:
       return {.name = "attach_driver", .declaration = Method{"AttachDriver"}};
+    case BuiltinFn::kBeginTakeover:
+      return {.name = "begin_takeover", .declaration = Method{"BeginTakeover"}};
+    case BuiltinFn::kDriveTakeover:
+      return {.name = "drive_takeover", .declaration = Method{"DriveTakeover"}};
+    case BuiltinFn::kEndTakeover:
+      return {.name = "end_takeover", .declaration = Method{"EndTakeover"}};
     case BuiltinFn::kCurrentRuntime:
       return {
           .name = "current_runtime",

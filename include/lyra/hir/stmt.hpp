@@ -17,6 +17,7 @@
 #include "lyra/hir/procedural_var.hpp"
 #include "lyra/hir/timing.hpp"
 #include "lyra/hir/value_ref.hpp"
+#include "lyra/support/takeover_level.hpp"
 
 namespace lyra::hir {
 
@@ -337,12 +338,35 @@ struct DisableStmt {
   DisableTarget target;
 };
 
+// LRM 10.6 `assign` and `force`: take `target` over with an expression that is
+// reevaluated whenever anything it reads changes, which is the continuous
+// assignment's own rule applied from a procedural position. `level` is which
+// keyword was written, and decides what the takeover outranks. What a takeover
+// displaces is never kept, so the two spellings differ in precedence and in
+// what they may name, never in what they store.
+struct ProceduralContinuousAssignStmt {
+  support::TakeoverLevel level;
+  ExprId target;
+  ExprId source;
+  std::vector<SensitivityEntry> sensitivity_list;
+};
+
+// LRM 10.6 `deassign` and `release`: end the takeover `level` names, handing
+// the target to whichever level is still in effect, or to nothing -- in which
+// case the target keeps the value it was last given rather than reverting to
+// what a displaced write carried.
+struct ProceduralContinuousEndStmt {
+  support::TakeoverLevel level;
+  ExprId target;
+};
+
 using StmtData = std::variant<
     EmptyStmt, VarDeclStmt, ExprStmt, BlockStmt, ForkStmt, IfStmt, CaseStmt,
     PatternCaseStmt, AssertStmt, CoverStmt, ConcurrentAssertStmt,
     ConcurrentCoverStmt, ForStmt, WhileStmt, RepeatStmt, DoWhileStmt,
     ForeverStmt, BreakStmt, ContinueStmt, ReturnStmt, TimedStmt,
-    EventTriggerStmt, WaitStmt, WaitForkStmt, DisableForkStmt, DisableStmt>;
+    EventTriggerStmt, WaitStmt, WaitForkStmt, DisableForkStmt, DisableStmt,
+    ProceduralContinuousAssignStmt, ProceduralContinuousEndStmt>;
 
 struct Stmt {
   std::optional<std::string> label;

@@ -335,17 +335,67 @@ auto LowerExprImpl(
           .span = span};
     }
 
-    default:
-      if constexpr (kProcedural) {
-        return diag::Fail(
-            span, diag::DiagCode::kUnsupportedExpressionForm,
-            "this expression form is not supported yet");
-      } else {
-        return diag::Fail(
-            span, diag::DiagCode::kUnsupportedStructuralExpressionForm,
-            "this structural expression form is not supported yet");
-      }
+    case slang::ast::ExpressionKind::Streaming:
+      return diag::Fail(
+          span, diag::DiagCode::kUnsupportedExpressionForm,
+          "a streaming operator is not yet supported (LRM 11.4.14)");
+
+    case slang::ast::ExpressionKind::TypeReference:
+      return diag::Fail(
+          span, diag::DiagCode::kUnsupportedExpressionForm,
+          "the `type` operator is not yet supported (LRM 6.23)");
+
+    case slang::ast::ExpressionKind::DataType:
+      return diag::Fail(
+          span, diag::DiagCode::kUnsupportedExpressionForm,
+          "a data type in an expression position is not yet supported");
+
+    case slang::ast::ExpressionKind::ArbitrarySymbol:
+      return diag::Fail(
+          span, diag::DiagCode::kUnsupportedExpressionForm,
+          "a name that denotes no value is not yet supported here");
+
+    case slang::ast::ExpressionKind::EmptyArgument:
+      return diag::Fail(
+          span, diag::DiagCode::kUnsupportedExpressionForm,
+          "an omitted subroutine argument is not yet supported");
+
+    case slang::ast::ExpressionKind::MinTypMax:
+      return diag::Fail(
+          span, diag::DiagCode::kUnsupportedExpressionForm,
+          "a min:typ:max expression is not yet supported");
+
+    case slang::ast::ExpressionKind::CopyClass:
+      return diag::Fail(
+          span, diag::DiagCode::kUnsupportedExpressionForm,
+          "a shallow copy of an object is not yet supported (LRM 8.12)");
+
+    case slang::ast::ExpressionKind::Dist:
+      return diag::Fail(
+          span, diag::DiagCode::kUnsupportedExpressionForm,
+          "a distribution constraint is not yet supported (LRM 18.5)");
+
+    case slang::ast::ExpressionKind::NewCovergroup:
+      return diag::Fail(
+          span, diag::DiagCode::kUnsupportedExpressionForm,
+          "constructing a covergroup is not yet supported (LRM 19)");
+
+    case slang::ast::ExpressionKind::AssertionInstance:
+      return diag::Fail(
+          span, diag::DiagCode::kUnsupportedExpressionForm,
+          "a sequence or property instance is not yet supported here");
+
+    case slang::ast::ExpressionKind::ClockingEvent:
+      return diag::Fail(
+          span, diag::DiagCode::kUnsupportedExpressionForm,
+          "a clocking event in an expression is not yet supported");
+
+    // Lowering runs only over an AST the front end accepted, so an expression
+    // it could not build never reaches here.
+    case slang::ast::ExpressionKind::Invalid:
+      throw InternalError("LowerExpr: an invalid expression was lowered");
   }
+  throw InternalError("LowerExpr: unknown slang ExpressionKind");
 }
 
 }  // namespace

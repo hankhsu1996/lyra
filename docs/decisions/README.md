@@ -224,6 +224,10 @@ the detail lives in the entry itself.
 - [net-driver-resolution](net-driver-resolution.md) -- a net is a resolution node with node-owned
   driver contributions and capability-handle drivers, validated at a Seal barrier; single-driver is
   N=1.
+- [procedural-continuous-assignment](procedural-continuous-assignment.md) -- `assign` / `force` take
+  a target over at one of two precedence levels through a call on its capability type, evaluated by
+  the loop a continuous assignment already uses; a forced value is not a driver and needs no shadow
+  storage, so reads cost nothing.
 - [front-end-semantic-boundary](front-end-semantic-boundary.md) -- slang owns semantic resolution
   and sensitivity extraction; Lyra translates resolved facts to executable route and endpoint
   capability; sensitivity uses the correct per-consumer slang surface and never reclassifies from

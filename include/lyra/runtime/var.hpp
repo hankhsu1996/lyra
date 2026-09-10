@@ -2,6 +2,7 @@
 
 #include <concepts>
 #include <cstdint>
+#include <memory>
 #include <optional>
 #include <span>
 #include <utility>
@@ -15,6 +16,7 @@
 #include "lyra/runtime/observation.hpp"
 #include "lyra/runtime/pending_wait.hpp"
 #include "lyra/runtime/runtime_effects.hpp"
+#include "lyra/runtime/takeover.hpp"
 #include "lyra/runtime/trigger.hpp"
 #include "lyra/runtime/value_storage_core.hpp"
 #include "lyra/value/concepts.hpp"
@@ -95,7 +97,34 @@ class Var : public Observable, public ValueStorageCore<T> {
   // one: it has the standing of a stack pointer, so a store does not carry it.
   // Defined out of line below, where the per-value-family test it reports
   // through is in scope.
+  //
+  // A procedural continuous assignment overrides the procedural writes a cell
+  // takes on its own (LRM 10.6), so while one is in effect the value arriving
+  // here is discarded outright rather than held anywhere: after the takeover
+  // ends the cell keeps what the takeover last gave it, and never the write
+  // that was overridden.
   void Set(const T& new_val);
+
+  // Starts a procedural continuous assignment at `level`, superseding whatever
+  // was driving that level, and answers with the generation its evaluation
+  // carries (LRM 10.6).
+  auto BeginTakeover(const value::PackedArray& level) -> value::PackedArray;
+
+  // States what the takeover at `level` has evaluated to. It reaches the cell
+  // only when no higher level covers it, and is recorded either way so that
+  // ending the level above it needs nobody to recompute. Answers whether the
+  // evaluation offering the value is still the one driving that level, which
+  // is how an evaluation superseded by a later takeover, or ended by a
+  // `deassign` or `release`, learns to stop.
+  auto DriveTakeover(
+      const value::PackedArray& level, const value::PackedArray& generation,
+      const T& new_val) -> bool;
+
+  // Ends the procedural continuous assignment at `level`, handing the cell to
+  // the highest level still in effect. Where none is left the cell is left
+  // exactly as it stands, which is what a released variable keeps (LRM
+  // 10.6.2).
+  void EndTakeover(const value::PackedArray& level);
 
   // The before-image a transition is computed against, held only where
   // something will read the answer: a wait parked here, or a retained sampled
@@ -159,6 +188,23 @@ class Var : public Observable, public ValueStorageCore<T> {
   auto Mutate() -> ScopedMutation<Ref<T>>;
 
  private:
+  // The one path a value reaches the cell's storage by, whoever sent it: state
+  // what the transition is computed against, write, report. It is the
+  // whole-value case of the same bracket a partial write uses; what it adds is
+  // the representation match, which only a whole value can be checked for --
+  // a chain writes a part and never restates the whole.
+  void Store(const T& new_val) {
+    if constexpr (std::same_as<T, value::PackedArray>) {
+      if (!this->IsInstalled()) {
+        throw InternalError(
+            "Var<PackedArray>: store into a cell that was never initialized");
+      }
+    }
+    const std::optional<T> before = this->CaptureTransitionBase();
+    this->Overwrite(new_val);
+    this->PublishTransition(before);
+  }
+
   // Keeps the value a slot is about to move away from, once per slot. The first
   // change in a slot is the one whose before-image is that slot's Preponed
   // value (LRM 4.4.2.1); every later change moves away from a value the slot
@@ -180,6 +226,12 @@ class Var : public Observable, public ValueStorageCore<T> {
   // samples carries neither the storage nor the work of maintaining it.
   std::optional<T> retained_;
   SimTime retained_slot_ = SimTime{};
+
+  // The procedural continuous assignments this cell has been put under (LRM
+  // 10.6), which almost no cell in a design ever is. It appears the first time
+  // one starts, so a cell nobody takes over carries one pointer, answers every
+  // read from its own storage, and pays one null test on a write.
+  std::unique_ptr<Takeovers<T>> takeovers_;
 };
 
 // A reference to a variable cell. Transparently views one of two backings: an
@@ -404,20 +456,55 @@ void Var<T>::PublishTransition(const std::optional<T>& before) {
 
 template <value::LyraValue T>
 void Var<T>::Set(const T& new_val) {
-  // The whole-value case of the same bracket a partial write uses: state what
-  // the transition is computed against, write, report. What it adds over a
-  // partial write is the representation match, which only a whole value can be
-  // checked for -- a chain writes a part and never restates the whole.
-  if constexpr (std::same_as<T, value::PackedArray>) {
-    if (!this->IsInstalled()) {
-      throw InternalError(
-          "Var<PackedArray>::Set: store into a cell that was never "
-          "initialized");
-    }
+  // A procedural write is discarded outright while any takeover shows through
+  // this cell (LRM 10.6). A cell nobody has ever taken over holds no record at
+  // all, so the ordinary write pays one null test.
+  if (takeovers_ != nullptr && takeovers_->Highest() != nullptr) {
+    return;
   }
-  const std::optional<T> before = this->CaptureTransitionBase();
-  this->Overwrite(new_val);
-  this->PublishTransition(before);
+  Store(new_val);
+}
+
+template <value::LyraValue T>
+auto Var<T>::BeginTakeover(const value::PackedArray& level)
+    -> value::PackedArray {
+  if (takeovers_ == nullptr) {
+    takeovers_ = std::make_unique<Takeovers<T>>();
+  }
+  return TakeoverGenerationValue(takeovers_->Begin(TakeoverLevelOf(level)));
+}
+
+template <value::LyraValue T>
+auto Var<T>::DriveTakeover(
+    const value::PackedArray& level, const value::PackedArray& generation,
+    const T& new_val) -> bool {
+  if (takeovers_ == nullptr ||
+      !takeovers_->Drive(
+          TakeoverLevelOf(level), TakeoverGenerationOf(generation), new_val)) {
+    return false;
+  }
+  // A level that just recorded always leaves something showing, and it is this
+  // value only where no higher level covers it. Storing whatever shows needs
+  // no question asked: where a higher level covers this one, what shows has
+  // not moved, and a store that changes nothing publishes nothing.
+  Store(*takeovers_->Highest());
+  return true;
+}
+
+template <value::LyraValue T>
+void Var<T>::EndTakeover(const value::PackedArray& level) {
+  // Ending a level nothing occupies is what a `release` on an untaken variable
+  // does, and the language gives it no effect (LRM 10.6.2).
+  if (takeovers_ == nullptr) {
+    return;
+  }
+  takeovers_->End(TakeoverLevelOf(level));
+  // Where a level is still in effect underneath, the cell takes what that
+  // level already holds. Where none is, the cell keeps what it has, which is
+  // the value the ended takeover last gave it.
+  if (const T* showing = takeovers_->Highest(); showing != nullptr) {
+    Store(*showing);
+  }
 }
 
 // RAII handle bracketing one partial-write expression: it names the sink's
