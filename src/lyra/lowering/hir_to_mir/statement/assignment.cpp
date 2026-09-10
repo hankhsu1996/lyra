@@ -193,9 +193,6 @@ auto CallStatementSuspends(
           [](const hir::SystemSubroutineRef& sys) {
             return support::LookupSystemSubroutine(sys.id).suspends;
           },
-          [](const hir::ImportedMethodRef& m) {
-            return support::ImportedRuntimeMethodSuspends(m.method);
-          },
           // An intra-unit task enable and a cross-unit one (LRM 26.3) both
           // complete as coroutines, which the call's type already answered.
           [](const hir::StructuralSubroutineRef&) { return false; },
@@ -212,9 +209,12 @@ auto CallStatementSuspends(
           // coroutine, which the call's type already answered.
           [](const hir::MethodCallRef&) { return false; },
           [](const hir::StaticMethodCallRef&) { return false; },
-          // A built-in method (LRM 6.16 / 7.9 / 7.12 / 15.5) computes a value
-          // against a library type and never yields.
-          [](const hir::BuiltinMethodRef&) { return false; },
+          // A built-in method mostly computes a value against a library type
+          // and never yields; the ones that park the caller until something
+          // else settles (LRM 9.7 `await`) say so on their own declaration.
+          [](const hir::BuiltinMethodRef& b) {
+            return support::RuntimeEntryOf(b.method).parks_the_caller;
+          },
           // An enumerated type method (LRM 6.19.5) is answered from the member
           // table, either as a constant or by a synthesized non-task callable.
           [](const hir::EnumMethodRef&) { return false; },

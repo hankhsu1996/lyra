@@ -49,12 +49,11 @@ struct LevelLoop {
 
 // The element-count query for a runtime-sized dimension: queue and dynamic
 // array expose `size`; a string exposes `len` (LRM 6.16.1).
-auto SizeMethodFor(const slang::ast::Type& array_type)
-    -> hir::BuiltinMethodRef {
+auto SizeMethodFor(const slang::ast::Type& array_type) -> support::BuiltinFn {
   if (array_type.getCanonicalType().isString()) {
-    return {.method = support::BuiltinFn::kLen};
+    return support::BuiltinFn::kLen;
   }
-  return {.method = support::BuiltinFn::kSize};
+  return support::BuiltinFn::kSize;
 }
 
 // Build the loop for one index-counted dimension. A fixed dimension iterates
@@ -79,13 +78,15 @@ auto BuildIntegerLevel(
         frame.Exprs().Add(hir::MakeIntLiteral(declared.right, int_type, span));
     ascending = declared.left <= declared.right;
   } else {
-    hir::SubroutineRef size_callee = SizeMethodFor(*array_type);
     const hir::ExprId size_id = frame.Exprs().Add(
         hir::Expr{
             .type = int_type,
             .data =
                 hir::CallExpr{
-                    .callee = std::move(size_callee), .arguments = {array}},
+                    .callee = hir::SubroutineRef{hir::BuiltinMethodRef{
+                        .method = SizeMethodFor(*array_type),
+                        .receiver = array}},
+                    .arguments = {}},
             .span = span});
     const hir::ExprId one_id =
         frame.Exprs().Add(hir::MakeIntLiteral(1, int_type, span));
@@ -190,8 +191,8 @@ auto BuildAssociativeLevel(
             .data =
                 hir::CallExpr{
                     .callee = hir::SubroutineRef{hir::BuiltinMethodRef{
-                        .method = method}},
-                    .arguments = {array, key_ref}},
+                        .method = method, .receiver = array}},
+                    .arguments = {key_ref}},
             .span = span});
   };
 

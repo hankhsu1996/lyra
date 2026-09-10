@@ -789,7 +789,10 @@ class HirDumper {
             },
             [](const BuiltinMethodRef& b) -> std::string {
               return std::format(
-                  "BuiltinFn \"{}\"", support::RuntimeEntryOf(b.method).name);
+                  "BuiltinFn \"{}\"{}", support::RuntimeEntryOf(b.method).name,
+                  b.receiver.has_value()
+                      ? std::format(" recv=Expr[{}]", b.receiver->value)
+                      : std::string{});
             },
             [](const EnumMethodRef& e) -> std::string {
               return std::format(
@@ -814,14 +817,6 @@ class HirDumper {
                             "declaring_scope=hops:{}", f.declaring_scope->value)
                       : "declaring_scope=none",
                   decl.name);
-            },
-            [](const ImportedMethodRef& i) -> std::string {
-              return std::format(
-                  "ImportedMethod \"{}\"{}",
-                  support::RuntimeEntryOf(i.method).name,
-                  i.receiver.has_value()
-                      ? std::format(" recv=Expr[{}]", i.receiver->value)
-                      : std::string{});
             },
             [](const ExternalUnitSubroutineRef& e) -> std::string {
               return std::format(

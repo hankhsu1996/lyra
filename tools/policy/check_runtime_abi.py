@@ -27,6 +27,27 @@ Rules:
         resolves and runs the wrong code, and a name bound twice keeps
         whichever binding ran last without saying so.
 
+  R004  Whether an entry takes the engine handle is stated once. Its runtime
+        entry declaration says so, and its ABI prototype takes the handle as a
+        parameter; a call site composes the operands from the first while the
+        runtime reads them by the second. A disagreement compiles and links,
+        and then hands the runtime every operand shifted by one.
+
+        Only an entry the ABI declares under its own name is checked. One
+        realized per value representation publishes a symbol per
+        representation, and one this backend does not realize publishes none;
+        neither has a prototype to read the answer off.
+
+  R005  Whether a call to an entry parks the caller is stated once, the same
+        way. An entry that parks answers the generated module whether it must
+        suspend, so its prototype returns the host `bool` that answer crosses
+        as; everything an entry computes for the program crosses as an opaque
+        value instead. So the return type says it, and the entry declaration
+        has to agree -- a disagreement either suspends where the runtime did
+        not park or runs on where it did.
+
+        Scoped like R004, and to entries the ABI declares by their own name.
+
 Usage:
   python3 tools/policy/check_runtime_abi.py
 """
@@ -39,12 +60,27 @@ from typing import NamedTuple
 HEADER = "include/lyra/runtime/jit_execution.hpp"
 SOURCE = "src/lyra/runtime/jit_execution.cpp"
 BINDINGS = "src/lyra/jit/executor.cpp"
+ENTRIES = "src/lyra/support/builtin_fn.cpp"
 
 # An entry opens a line, so a prototype and a definition are the same shape and
 # are read the same way. An indented match is a continuation line or a nested
 # declaration, and neither publishes a symbol.
 RE_ENTRY = re.compile(r"^(?:auto|void)\s+(lyra_rt_\w+)\s*\(", re.MULTILINE)
 RE_BINDING = re.compile(r'add\(\s*"(lyra_rt_\w+)"\s*,\s*&(lyra_rt_\w+)\s*\)')
+# One prototype with its parameter list, which ends at the first `)` because a
+# parameter type here is a machine word or an opaque pointer and never a
+# function type.
+RE_PROTOTYPE = re.compile(
+    r"^(?:auto|void)\s+(lyra_rt_\w+)\s*\(([^)]*)\)(\s*->\s*\w+)?",
+    re.MULTILINE)
+# One row of the runtime entry declaration: the entry it declares, and the
+# properties it states.
+RE_ROW = re.compile(r"case BuiltinFn::\w+:\s*return\s*\{(.*?)\};", re.S)
+RE_ROW_NAME = re.compile(r'\.name = "(\w+)"')
+HANDLE_PARAMETER = "runtime"
+HANDLE_PROPERTY = ".takes_the_runtime_handle = true"
+PARK_ANSWER = "bool"
+PARK_PROPERTY = ".parks_the_caller = true"
 
 VIOLATION_HINT = (
     "An entry is one contract written in three places. Add the side that is "
@@ -69,6 +105,10 @@ class Abi(NamedTuple):
     declared: list[Entry]
     defined: list[Entry]
     bound: list[Binding]
+    handle_takers: set[str] = set()
+    parkers: set[str] = set()
+    handle_rows: dict[str, bool] = {}
+    park_rows: dict[str, bool] = {}
 
 
 def line_of(text: str, offset: int) -> int:
@@ -91,6 +131,35 @@ def bindings_of(text: str) -> list[Binding]:
 
 def by_name(entries: list[Entry]) -> list[Entry]:
     return sorted(entries, key=lambda entry: entry.name)
+
+
+def handle_takers_of(text: str) -> set[str]:
+    """The declared entries whose prototype takes the engine handle."""
+    return {
+        m.group(1)
+        for m in RE_PROTOTYPE.finditer(text)
+        if HANDLE_PARAMETER in re.findall(r"\w+", m.group(2))
+    }
+
+
+def parkers_of(text: str) -> set[str]:
+    """The declared entries whose prototype answers whether the caller parks."""
+    return {
+        m.group(1)
+        for m in RE_PROTOTYPE.finditer(text)
+        if (m.group(3) or "").split("->")[-1].strip() == PARK_ANSWER
+    }
+
+
+def rows_of(text: str, states: str) -> dict[str, bool]:
+    """Each runtime entry, against whether its row states `states`."""
+    rows = {}
+    for m in RE_ROW.finditer(text):
+        body = m.group(1)
+        name = RE_ROW_NAME.search(body)
+        if name is not None:
+            rows[name.group(1)] = states in body
+    return rows
 
 
 def check_r001(abi: Abi) -> list[str]:
@@ -142,11 +211,56 @@ def check_r003(abi: Abi) -> list[str]:
     return errors
 
 
+def check_agreement(
+        abi: Abi, rule: str, rows: dict[str, bool], prototypes: set[str],
+        fact: str, carried: str) -> list[str]:
+    """Each entry's row against what its own ABI prototype says.
+
+    One comparison for both facts: what separates them is which property the
+    row states and which part of the prototype answers, and each side is read
+    before this is reached.
+    """
+    declared = {entry.name for entry in abi.declared}
+    errors = []
+    for name, states_it in sorted(rows.items()):
+        symbol = f"lyra_rt_{name}"
+        if symbol not in declared:
+            continue
+        has_it = symbol in prototypes
+        if states_it and not has_it:
+            errors.append(
+                f"  {ENTRIES}: {rule} '{name}' states that it {fact}, and "
+                f"'{symbol}' {carried} no such thing")
+        elif has_it and not states_it:
+            errors.append(
+                f"  {ENTRIES}: {rule} '{name}' does not state that it {fact}, "
+                f"and '{symbol}' {carried} one")
+    return errors
+
+
+def check_r004(abi: Abi) -> list[str]:
+    return check_agreement(
+        abi, "R004", abi.handle_rows, abi.handle_takers,
+        "takes the engine handle", "declares")
+
+
+def check_r005(abi: Abi) -> list[str]:
+    return check_agreement(
+        abi, "R005", abi.park_rows, abi.parkers, "parks the caller",
+        "answers with")
+
+
 def load(root: Path) -> Abi:
+    header = (root / HEADER).read_text()
+    entries = (root / ENTRIES).read_text()
     return Abi(
-        declared=entries_of((root / HEADER).read_text()),
+        declared=entries_of(header),
         defined=entries_of((root / SOURCE).read_text()),
-        bound=bindings_of((root / BINDINGS).read_text()))
+        bound=bindings_of((root / BINDINGS).read_text()),
+        handle_takers=handle_takers_of(header),
+        parkers=parkers_of(header),
+        handle_rows=rows_of(entries, HANDLE_PROPERTY),
+        park_rows=rows_of(entries, PARK_PROPERTY))
 
 
 def run_self_tests() -> bool:
@@ -156,11 +270,15 @@ def run_self_tests() -> bool:
             return False
         return True
 
-    def abi(header="", source="", bindings="") -> Abi:
+    def abi(header="", source="", bindings="", entries="") -> Abi:
         return Abi(
             declared=entries_of(header),
             defined=entries_of(source),
-            bound=bindings_of(bindings))
+            bound=bindings_of(bindings),
+            handle_takers=handle_takers_of(header),
+            parkers=parkers_of(header),
+            handle_rows=rows_of(entries, HANDLE_PROPERTY),
+            park_rows=rows_of(entries, PARK_PROPERTY))
 
     ok = True
     ok &= expect(
@@ -209,6 +327,52 @@ def run_self_tests() -> bool:
                     bindings='add("lyra_rt_a", &lyra_rt_a);\n'
                              'add("lyra_rt_a", &lyra_rt_a);'))) == 1,
         "R003 reports the same entry bound twice")
+
+    row = 'case BuiltinFn::kA:\n      return {{.name = "a"{}}};'
+    takes = "auto lyra_rt_a(void* runtime) -> void*;"
+    takes_none = "auto lyra_rt_a(const void* p) -> void*;"
+    states = row.format(", .takes_the_runtime_handle = true")
+    states_none = row.format("")
+    ok &= expect(
+        handle_takers_of(
+            "auto lyra_rt_a(\n    void* runtime,\n    const void* p)"
+            " -> void*;") == {"lyra_rt_a"},
+        "a prototype spanning lines is read for the handle it takes")
+    ok &= expect(
+        rows_of(states, HANDLE_PROPERTY) == {"a": True}
+        and rows_of(states_none, HANDLE_PROPERTY) == {"a": False},
+        "a row yields the entry it declares and what it says about a property")
+    ok &= expect(
+        len(check_r004(abi(header=takes_none, entries=states))) == 1,
+        "R004 reports a row claiming a handle the prototype does not take")
+    ok &= expect(
+        len(check_r004(abi(header=takes, entries=states_none))) == 1,
+        "R004 reports a prototype taking a handle the row does not state")
+    ok &= expect(
+        not check_r004(abi(header=takes, entries=states)),
+        "R004 is silent when the two sides agree")
+    ok &= expect(
+        not check_r004(abi(entries=states)),
+        "R004 says nothing about an entry the ABI does not declare by name")
+
+    parks = "auto lyra_rt_a(void* p) -> bool;"
+    parks_none = "auto lyra_rt_a(void* p) -> void*;"
+    says_parks = row.format(", .parks_the_caller = true")
+    ok &= expect(
+        parkers_of(parks) == {"lyra_rt_a"} and not parkers_of(parks_none),
+        "a prototype is read for whether it answers the park question")
+    ok &= expect(
+        not parkers_of("void lyra_rt_a(void* p);"),
+        "an entry answering with nothing does not answer the park question")
+    ok &= expect(
+        len(check_r005(abi(header=parks_none, entries=says_parks))) == 1,
+        "R005 reports a row claiming a park the prototype does not answer")
+    ok &= expect(
+        len(check_r005(abi(header=parks, entries=states_none))) == 1,
+        "R005 reports a prototype answering a park the row does not state")
+    ok &= expect(
+        not check_r005(abi(header=parks, entries=says_parks)),
+        "R005 is silent when the two sides agree")
     return ok
 
 
@@ -217,7 +381,9 @@ def main() -> int:
         return 1
 
     abi = load(Path(__file__).resolve().parents[2])
-    failures = check_r001(abi) + check_r002(abi) + check_r003(abi)
+    failures = (
+        check_r001(abi) + check_r002(abi) + check_r003(abi) + check_r004(abi)
+        + check_r005(abi))
 
     if failures:
         print("Runtime ABI check failed:")

@@ -12,7 +12,6 @@
 #include "lyra/base/overloaded.hpp"
 #include "lyra/lir/function.hpp"
 #include "lyra/support/builtin_fn.hpp"
-#include "lyra/support/imported_runtime_class.hpp"
 
 namespace lyra::lir {
 
@@ -306,9 +305,6 @@ class LirDumper {
             [](const ConstructTarget&) -> std::string { return "Construct"; },
             [](const ForeignTarget& f) -> std::string {
               return std::format("extern {}", f.symbol);
-            },
-            [](const ImportedRuntimeTarget& i) -> std::string {
-              return std::string{support::RuntimeEntryOf(i.method).name};
             },
             [](const ValueCellTarget& f) -> std::string {
               return std::string{ValueCellOpName(f.op)};

@@ -216,8 +216,9 @@ auto BuildElementCountExpr(
                   .callee =
                       hir::BuiltinMethodRef{
                           .method = is_string ? support::BuiltinFn::kLen
-                                              : support::BuiltinFn::kSize},
-                  .arguments = {operand_id}},
+                                              : support::BuiltinFn::kSize,
+                          .receiver = operand_id},
+                  .arguments = {}},
           .span = span});
   return hir::Expr{
       .type = *result_type,
@@ -335,8 +336,10 @@ auto LowerAssociativeDimensionQuery(
                       hir::BuiltinMethodRef{
                           .method = query == QueryKind::kLow
                                         ? support::BuiltinFn::kAssocMinIndex
-                                        : support::BuiltinFn::kAssocMaxIndex},
-                  .arguments = {frame.Exprs().Add(*std::move(operand_or))}},
+                                        : support::BuiltinFn::kAssocMaxIndex,
+                          .receiver =
+                              frame.Exprs().Add(*std::move(operand_or))},
+                  .arguments = {}},
           .span = span};
     }
     default:
@@ -371,8 +374,10 @@ auto LowerDynamicBitsQuery(
               hir::CallExpr{
                   .callee =
                       hir::BuiltinMethodRef{
-                          .method = support::BuiltinFn::kBitstreamWidth},
-                  .arguments = {frame.Exprs().Add(*std::move(operand_or))}},
+                          .method = support::BuiltinFn::kBitstreamWidth,
+                          .receiver =
+                              frame.Exprs().Add(*std::move(operand_or))},
+                  .arguments = {}},
           .span = span});
   return hir::Expr{
       .type = *result_type,

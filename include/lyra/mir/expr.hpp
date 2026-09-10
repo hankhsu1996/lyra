@@ -25,7 +25,6 @@
 #include "lyra/mir/struct_id.hpp"
 #include "lyra/mir/unary_op.hpp"
 #include "lyra/support/builtin_fn.hpp"
-#include "lyra/support/imported_runtime_class.hpp"
 
 namespace lyra::mir {
 
@@ -165,19 +164,6 @@ struct CallableTarget {
   auto operator==(const CallableTarget&) const -> bool = default;
 };
 
-// The target of a call to a method the runtime library provides for an imported
-// class (LRM 9.7 `process`). A bodyless external callable whose implementation
-// is a runtime symbol; the identity names the method, and the backend renders
-// the call mechanically to that symbol -- no per-unit declaration and no
-// per-method backend branch. An instance method of such a class dispatches on
-// its handle, which the library takes positionally because a runtime symbol has
-// no receiver of its own to bind.
-struct ImportedRuntimeCallTarget {
-  support::ImportedRuntimeMethod method;
-
-  auto operator==(const ImportedRuntimeCallTarget&) const -> bool = default;
-};
-
 // Identity of a symbol in the DPI-C name space (LRM 35.4): the program-global
 // linkage names imported and exported subroutines resolve to, a name space of
 // its own that no compilation-unit scope contains. It is therefore neither a
@@ -224,17 +210,15 @@ struct ExternalUnitClassMethodTarget {
 // The target of a `Direct` call -- the symbol identity. Each alternative is one
 // identity space, told apart by the table that resolves the name: this unit's
 // own callable arena (`CallableTarget`), the closed set of runtime library
-// entries (`BuiltinFn`, and `ImportedRuntimeCallTarget` for the methods the
-// library provides for an imported class, LRM 9.7), another compilation unit's
-// namespace (`ExternalUnitCallableTarget`) or one of its classes
+// entries (`BuiltinFn`), another compilation unit's namespace
+// (`ExternalUnitCallableTarget`) or one of its classes
 // (`ExternalUnitClassMethodTarget`), and the DPI-C name space
 // (`ForeignSymbolTarget`, LRM 35.4). Nothing here says whether the call
 // dispatches on an object -- that is the callee's receiver -- and none is
 // recovered from the receiver's runtime type.
 using DirectTarget = std::variant<
-    CallableTarget, support::BuiltinFn, ImportedRuntimeCallTarget,
-    ExternalUnitCallableTarget, ExternalUnitClassMethodTarget,
-    ForeignSymbolTarget>;
+    CallableTarget, support::BuiltinFn, ExternalUnitCallableTarget,
+    ExternalUnitClassMethodTarget, ForeignSymbolTarget>;
 
 // A direct call to a named symbol -- the code is found by name at compile
 // time. The single shape for every direct invocation: a user method, a

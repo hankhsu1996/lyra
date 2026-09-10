@@ -222,10 +222,6 @@ auto RuntimeSymbol(lir::CoroutineTarget::Op op) -> std::string {
   return Symbol(lir::CoroutineOpName(op));
 }
 
-auto RuntimeSymbol(support::ImportedRuntimeMethod method) -> std::string {
-  return Symbol(support::RuntimeEntryOf(method).name);
-}
-
 auto MemberStorageKindOf(
     const lir::CompilationUnit& unit, lir::TypeId type, MemberSlotRole role)
     -> std::optional<MemberStorageKind> {
@@ -762,6 +758,12 @@ auto EntryNamingOf(support::BuiltinFn fn) -> EntryNaming {
     case support::BuiltinFn::kEnterTarget:
     case support::BuiltinFn::kLeaveTarget:
     case support::BuiltinFn::kEffectNamesTarget:
+    case support::BuiltinFn::kProcessSelf:
+    case support::BuiltinFn::kProcessStatus:
+    case support::BuiltinFn::kProcessKill:
+    case support::BuiltinFn::kProcessAwait:
+    case support::BuiltinFn::kProcessSuspend:
+    case support::BuiltinFn::kProcessResume:
     case support::BuiltinFn::kParent:
     case support::BuiltinFn::kHierarchicalPath:
     // An assertion's attempts hold machine words and no value of the design,

@@ -756,13 +756,6 @@ auto CodeGenFunction::ResolveCallee(
               -> diag::Result<llvm::FunctionCallee> {
             return Entry(t.symbol, result_type, args);
           },
-          // A method of a class the runtime library defines and every unit
-          // imports (LRM 9.7). The library realizes it once, whatever it is
-          // called on, so the method alone names the entry.
-          [&](const lir::ImportedRuntimeTarget& t)
-              -> diag::Result<llvm::FunctionCallee> {
-            return Entry(RuntimeSymbol(t.method), result_type, args);
-          },
           [&](const lir::ValueCellTarget& t)
               -> diag::Result<llvm::FunctionCallee> {
             auto domain = DomainOf(t.value);
@@ -1794,9 +1787,6 @@ auto CodeGenFunction::EncodingOf(
           [](const lir::DispatchTarget&) -> Encoded { return CallEncoding{}; },
           [](const lir::IndirectTarget&) -> Encoded { return CallEncoding{}; },
           [](const lir::ForeignTarget&) -> Encoded { return CallEncoding{}; },
-          [](const lir::ImportedRuntimeTarget&) -> Encoded {
-            return CallEncoding{};
-          },
           [](const lir::ValueCellTarget&) -> Encoded { return CallEncoding{}; },
           [](const lir::ControlEffectTarget&) -> Encoded {
             return CallEncoding{};

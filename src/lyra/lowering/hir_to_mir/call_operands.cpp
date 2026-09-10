@@ -8,6 +8,7 @@
 #include "lyra/base/internal_error.hpp"
 #include "lyra/hir/expr.hpp"
 #include "lyra/hir/expr_id.hpp"
+#include "lyra/hir/subroutine_ref.hpp"
 
 namespace lyra::lowering::hir_to_mir {
 
@@ -67,6 +68,15 @@ auto OptionalOperand(const hir::CallExpr& call, std::size_t index)
     return std::nullopt;
   }
   return call.arguments[index];
+}
+
+auto ObjectActedOn(const hir::BuiltinMethodRef& callee) -> hir::ExprId {
+  if (!callee.receiver.has_value()) {
+    throw InternalError(
+        "call operands: the lowering names the object a built-in entry acts "
+        "on, and the call carries none");
+  }
+  return *callee.receiver;
 }
 
 }  // namespace lyra::lowering::hir_to_mir

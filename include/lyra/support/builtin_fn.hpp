@@ -572,6 +572,17 @@ enum class BuiltinFn : std::uint16_t {
   kEnterTarget,
   kLeaveTarget,
   kEffectNamesTarget,
+  // LRM 9.7's `process` methods. The class is one the runtime library defines
+  // and every unit imports rather than declares, so no per-unit declaration
+  // names these and the library carries each of them out. `kProcessSelf` names
+  // the running process, so it acts on no object; the other five act on the
+  // handle one of those answered with.
+  kProcessSelf,
+  kProcessStatus,
+  kProcessKill,
+  kProcessAwait,
+  kProcessSuspend,
+  kProcessResume,
   // Lifecycle activation registration (LRM 9.2): binds a process body's
   // coroutine to the scope's startup (`kRegisterInitial`) or shutdown
   // (`kRegisterFinal`) lifecycle. Distinct callees, not one tagged call --
@@ -830,6 +841,19 @@ struct RuntimeEntry {
   // Where the library declares the entry, and what a call site writes to reach
   // it.
   EntryDeclaration declaration;
+  // Whether the entry's implementation takes the engine handle -- to reach the
+  // scheduler, or to identify the process that is running. It is an ordinary
+  // operand, riding immediately after the object the entry acts on and first
+  // where there is none, so a call site composing the operands has to know
+  // whether to supply it and only the entry knows.
+  bool takes_the_runtime_handle = false;
+  // Whether a call to the entry parks the caller until something other than
+  // the call settles, so a statement calling it awaits (LRM 9.7 `await`, LRM
+  // 9.4 a delay, LRM 9.4.2 a value-change wait). Distinct from a callee that
+  // completes as a coroutine, which the call's own type states: the entry
+  // answers with an ordinary value and nothing about that value says the
+  // caller stopped.
+  bool parks_the_caller = false;
   // Whether the entry updates the object it acts on, so that object names a
   // place rather than a value -- which is what makes a receiver reaching
   // through a capability wrapper reach its write access. Where the update

@@ -309,11 +309,6 @@ auto FunctionLowerer::LowerCallTarget(
                         -> diag::Result<lir::CallTarget> {
                       return lir::CallTarget{ExternalMethodSymbol(
                           t.unit_name, t.class_name, t.method_name)};
-                    },
-                    [&](const mir::ImportedRuntimeCallTarget& t)
-                        -> diag::Result<lir::CallTarget> {
-                      return lir::CallTarget{
-                          lir::ImportedRuntimeTarget{.method = t.method}};
                     }},
                 d.target);
           },

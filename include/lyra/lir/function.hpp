@@ -19,7 +19,6 @@
 #include "lyra/lir/operator.hpp"
 #include "lyra/lir/type_id.hpp"
 #include "lyra/support/builtin_fn.hpp"
-#include "lyra/support/imported_runtime_class.hpp"
 
 namespace lyra::lir {
 
@@ -213,15 +212,6 @@ struct ForeignTarget {
   std::string symbol;
 };
 
-// A method the runtime library provides for a class it defines once and every
-// unit imports (LRM 9.7 `process`). The identity is the method, never the
-// symbol behind it: which entry realizes it is the runtime library's agreement
-// with a backend, and a spelling stated here would be one backend's spelling
-// standing in every other consumer's way.
-struct ImportedRuntimeTarget {
-  support::ImportedRuntimeMethod method;
-};
-
 // An operation on a value cell -- storage that holds a value, written and read
 // through itself so a write lands at the representation the declaration gave it
 // and a read copies out rather than aliasing. `kAllocate` asks for one the
@@ -303,13 +293,12 @@ auto CoroutineOpName(CoroutineTarget::Op op) -> std::string_view;
 // The target of a call: a runtime builtin, a function of this unit, a dispatch
 // slot the receiving value's own class fills, a code address the program
 // computed, a value constructor named by the call's result type, a foreign
-// symbol the host resolves, a method of an imported runtime-library class, a
-// value-cell operation, a control-effect operation, or an operation of the
-// coroutine protocol.
+// symbol the host resolves, a value-cell operation, a control-effect operation,
+// or an operation of the coroutine protocol.
 using CallTarget = std::variant<
     BuiltinTarget, FunctionTarget, DispatchTarget, IndirectTarget,
-    ConstructTarget, ForeignTarget, ImportedRuntimeTarget, ValueCellTarget,
-    ControlEffectTarget, CoroutineTarget>;
+    ConstructTarget, ForeignTarget, ValueCellTarget, ControlEffectTarget,
+    CoroutineTarget>;
 
 struct CallInstr {
   CallTarget target;

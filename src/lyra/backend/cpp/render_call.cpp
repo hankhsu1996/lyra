@@ -152,14 +152,6 @@ auto ResolveDirectSpelling(
                 view, support::RuntimeEntryOf(id), receiver, direct.position,
                 result_type);
           },
-          // A method the runtime library provides for an imported class (LRM
-          // 9.7) is declared the way every other runtime entry is, so it is
-          // spelled the way every other one is.
-          [&](const mir::ImportedRuntimeCallTarget& t) -> CalleeSpelling {
-            return ResolveEntrySpelling(
-                view, support::RuntimeEntryOf(t.method), receiver,
-                direct.position, result_type);
-          },
           // Another compilation unit's C++ peer is a namespace, so a callable
           // of it (LRM 26.3) is named through that namespace.
           [](const mir::ExternalUnitCallableTarget& t) -> CalleeSpelling {

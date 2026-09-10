@@ -22,21 +22,21 @@ auto LowerRealConversionCall(
     -> diag::Result<mir::Expr> {
   const auto& unit_lowerer = lowerer.Owner();
   auto& block = *frame.current_block;
-  const std::vector<hir::ExprId> operands = RequiredOperands(c);
-  auto operand_or =
-      lowerer.LowerExpr(lowerer.HirExprs().Get(operands[0]), frame);
-  if (!operand_or) {
-    return std::unexpected(std::move(operand_or.error()));
-  }
-  const mir::ExprId operand_id = block.exprs.Add(*std::move(operand_or));
-  const mir::TypeId machine_int = unit_lowerer.Unit().builtins.machine_int64;
+  const auto lower = [&](hir::ExprId source) -> diag::Result<mir::ExprId> {
+    auto lowered = lowerer.LowerExpr(lowerer.HirExprs().Get(source), frame);
+    if (!lowered) return std::unexpected(std::move(lowered.error()));
+    return block.exprs.Add(*std::move(lowered));
+  };
 
-  // Reading a pattern back names the destination precision's own factory: the
-  // integral operand yields the bits it spells, and the factory reinterprets
-  // them rather than converting the number they would otherwise stand for.
+  // Reading a pattern back names the destination precision's own factory: it
+  // acts on no object, so the pattern is an ordinary operand, and the factory
+  // reinterprets the bits it spells rather than converting the number they
+  // would otherwise stand for.
   if (b.method == support::BuiltinFn::kFromBits) {
+    auto pattern = lower(RequiredOperands(c, 1).at(0));
+    if (!pattern) return std::unexpected(std::move(pattern.error()));
     const mir::ExprId bits =
-        block.exprs.Add(MakeToInt64Call(unit_lowerer.Unit(), operand_id));
+        block.exprs.Add(MakeToInt64Call(unit_lowerer.Unit(), *pattern));
     return mir::Expr{
         .data =
             mir::CallExpr{
@@ -45,17 +45,19 @@ auto LowerRealConversionCall(
         .type = result_type};
   }
 
-  // The other direction answers in a machine integer -- the fraction dropped,
-  // or the pattern itself -- which the destination's declared representation
-  // then lands into, named as the type it is.
+  // The other direction acts on the real it reads out of, and answers in a
+  // machine integer -- the fraction dropped, or the pattern itself -- which the
+  // destination's declared representation then lands into, named as the type it
+  // is.
+  auto subject = lower(ObjectActedOn(b));
+  if (!subject) return std::unexpected(std::move(subject.error()));
   const mir::ExprId read_out = block.exprs.Add(
       mir::Expr{
           .data =
               mir::CallExpr{
-                  .callee =
-                      mir::Direct{.target = b.method, .receiver = operand_id},
+                  .callee = mir::Direct{.target = b.method, .receiver = *subject},
                   .arguments = {}},
-          .type = machine_int});
+          .type = unit_lowerer.Unit().builtins.machine_int64});
   const mir::ExprId packed_type =
       mir::BuildPackedTypeRef(unit_lowerer.Unit(), block, result_type);
   return mir::Expr{

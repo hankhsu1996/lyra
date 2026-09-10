@@ -238,8 +238,9 @@ cross-check predicts. This file owns only which instances are known and what is 
       what the C ABI calls it, whether the runtime handle rides along, whether the call suspends.
       The first two are naming and are now one row per method beside every other entry's, so the two
       sides cannot drift apart and the emitter that had been composing the namespace itself composes
-      nothing. The last two are lowering facts rather than naming ones and stay where the lowering
-      reads them.
+      nothing. The last two were left as lowering facts, on the reasoning that a lowering rather
+      than a backend reads them; that reasoning was wrong and they are entry properties too, which
+      is where the item below put them.
 
 - [x] T25 -- A net's fold (LRM 6.6) is installed on the net at construction, so a member declaration
       is (name, type) with nothing read out of the type's payload. The fold was the last thing a
@@ -302,14 +303,37 @@ cross-check predicts. This file owns only which instances are known and what is 
       no code identity is needed. They agree today because the inputs make both right. **Gated on**
       the external callable form and a co-design with the foreign-symbol contract, which needs the
       same declaration shape.
-- [ ] T24 -- An operation a runtime library carries out is named in one namespace, whichever library
-      class the source reaches it through. A second namespace stands beside the shared one for the
-      six methods of the imported `process` class (LRM 9.7), and what decides a namespace is the
-      highest layer that can state its members -- which is the front end for both, so the count is
-      one. Folding them in retires an arm of the callee set, an arm of the HIR callee set, and the
-      per-method suspension flag, since a callee whose completion the caller awaits states that in
-      its call's type and every other callee already does. **Gated on** nothing but the AST-to-HIR
-      call lowering being free, which another subject holds.
+- [x] T24 -- An operation a runtime library carries out is named in one namespace, whichever library
+      class the source reaches it through. A second namespace had stood beside the shared one for
+      the six methods of the imported `process` class (LRM 9.7), and what decides a namespace is the
+      highest layer that can state its members -- the front end for both, so the count is one.
+      Folding them in retired an arm of the callee set at three layers and every table that had
+      stood over that method set alone.
+
+      The fold did not go through as written, and what stopped it is the reusable part. It said the
+      per-method suspension flag would retire, "since a callee whose completion the caller awaits
+      states that in its call's type". A user task does; a runtime entry that parks the caller does
+      not, and the delay and the value-change wait were already in the shared namespace proving it
+      -- each answers with nothing and is awaited because the entry parks, not because a type says
+      so. Typing such a call as a coroutine would have been a claim about the value the library
+      hands back that is not true of it. So the flag did not retire, it moved: onto the entry's own
+      declaration, where the entry it belongs to already carries every other property, and where the
+      delay and the wait now state it too. The lesson is that "the type already carries this" needs
+      checking against the entries already in the namespace, not only against the ones being added.
+
+      The same move took the other per-method table -- whether the call carries the engine handle --
+      and with it the one site that had been answering that question by naming a single entry.
+      Because the answer is now a property of every entry rather than of six, it is checked rather
+      than trusted: the ABI's own prototype declares the handle or does not, and the policy check
+      that already holds each entry's three sides together holds this fourth one against them.
+
+      What the fold needed first was for a built-in call to state the object it acts on. It had been
+      argument zero, which the lowering re-read as either a receiver or a discardable bearer by
+      looking the entry up -- and neither reading has room for a static method that acts on no object
+      and bears no type, which `process::self` is. The call states the object now, so every consumer
+      reads it, and the lookup that had stood in for it went with it. It had never chosen the second
+      answer in any case: the one entry that would have taken it is routed elsewhere before the
+      branch is reached.
 
 ## Exhaustiveness
 

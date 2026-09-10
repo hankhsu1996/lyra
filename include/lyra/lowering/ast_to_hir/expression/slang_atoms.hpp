@@ -6,6 +6,7 @@
 #include <slang/ast/Expression.h>
 #include <slang/ast/SemanticFacts.h>
 #include <slang/ast/expressions/Operator.h>
+#include <slang/ast/symbols/ClassSymbols.h>
 #include <slang/parsing/KnownSystemName.h>
 
 #include "lyra/hir/binary_op.hpp"
@@ -15,6 +16,7 @@
 #include "lyra/hir/subroutine_kind.hpp"
 #include "lyra/hir/unary_op.hpp"
 #include "lyra/support/builtin_fn.hpp"
+#include "lyra/support/imported_runtime_class.hpp"
 #include "lyra/support/system_subroutine.hpp"
 
 // Stateless slang -> HIR translators. Each function is a pure 1:1 mapping
@@ -44,6 +46,19 @@ auto LowerEnumMethodName(std::string_view name)
     -> std::optional<hir::EnumMethod>;
 
 auto LowerStringMethodName(std::string_view name)
+    -> std::optional<support::BuiltinFn>;
+
+// A class the runtime library defines and every unit imports by reference is a
+// direct member of the built-in `std` package (LRM 9.7 `process` is the first
+// Lyra supports). Keying on the declaring package as well as the name -- rather
+// than on a bare name match anywhere -- is what makes this the library
+// declaration's identity, not a user class that happens to share the name.
+auto ImportedRuntimeClassOf(const slang::ast::ClassType& cls)
+    -> std::optional<support::ImportedRuntimeClass>;
+
+// LRM 9.7's `process` methods. The runtime library carries each of them out,
+// so a call names the entry and no per-unit method declaration exists.
+auto LowerProcessMethodName(std::string_view name)
     -> std::optional<support::BuiltinFn>;
 
 auto LowerArrayMethodName(std::string_view name)

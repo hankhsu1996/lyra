@@ -6,6 +6,7 @@
 
 #include "lyra/hir/expr.hpp"
 #include "lyra/hir/expr_id.hpp"
+#include "lyra/hir/subroutine_ref.hpp"
 
 // Where a call's elided-slot vocabulary ends.
 //
@@ -40,5 +41,12 @@ namespace lyra::lowering::hir_to_mir {
 // leaves one out: a hole in the middle and a short argument list.
 [[nodiscard]] auto OptionalOperand(const hir::CallExpr& call, std::size_t index)
     -> std::optional<hir::ExprId>;
+
+// The object a built-in entry acts on, which is not one of its operands. Every
+// entry the library declares on an object is called with one, so a call
+// carrying none is a call the front end never built -- the same disagreement a
+// named operand shape reports, and reported the same way.
+[[nodiscard]] auto ObjectActedOn(const hir::BuiltinMethodRef& callee)
+    -> hir::ExprId;
 
 }  // namespace lyra::lowering::hir_to_mir

@@ -41,8 +41,9 @@ auto LowerUnboundedLiteralProc(
           .data =
               hir::CallExpr{
                   .callee = hir::SubroutineRef{hir::BuiltinMethodRef{
-                      .method = support::BuiltinFn::kSize}},
-                  .arguments = {frame.dollar_base}},
+                      .method = support::BuiltinFn::kSize,
+                      .receiver = frame.dollar_base}},
+                  .arguments = {}},
           .span = span});
   const hir::ExprId one_id =
       frame.Exprs().Add(hir::MakeIntLiteral(1, int_type, span));

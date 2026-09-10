@@ -73,6 +73,12 @@ Neither fact is written down a second time.**
   to both, every prototype to a binding, and every binding to a single occurrence -- a name bound
   twice keeps whichever binding ran last without saying so.
 
+  The same check holds the entry's own declaration to that prototype wherever the two state one
+  fact. Whether the call carries the engine handle is a parameter on one side and a property on the
+  other; whether the call parks the caller is the host `bool` a prototype answers with on one side
+  and a property on the other. Both are facts about the entry that most of its readers never ask
+  for, which is the shape that goes quietly wrong, so neither is trusted where it can be compared.
+
 ## Rejected
 
 - **Adding the missing arms.** Every builtin that had been refused could have got a method and a

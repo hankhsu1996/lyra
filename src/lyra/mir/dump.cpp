@@ -548,11 +548,6 @@ class MirDumper {
               return std::format(
                   "builtin=\"{}\"", support::RuntimeEntryOf(id).name);
             },
-            [](const ImportedRuntimeCallTarget& i) -> std::string {
-              return std::format(
-                  "imported_runtime=\"{}\"",
-                  support::RuntimeEntryOf(i.method).name);
-            },
             [](const ExternalUnitCallableTarget& e) -> std::string {
               return std::format(
                   R"(external_unit={}::{})", e.unit_name, e.callable_name);
