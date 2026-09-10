@@ -357,6 +357,23 @@ struct ObservableType {
   auto operator==(const ObservableType&) const -> bool = default;
 };
 
+// Storage holding what the ticks of one clocking event settled for one
+// expression, which is what a read of an earlier tick answers from. It names
+// the values it keeps; how many it keeps is fixed by filling the storage rather
+// than by building it, so it is not part of the type.
+struct SampledHistoryType {
+  TypeId value;
+
+  auto operator==(const SampledHistoryType&) const -> bool = default;
+};
+
+// Storage holding what one concurrent assertion has in flight. It names no
+// value, because what it holds is machine words that mean something only to
+// the transition reading them: nothing of the design is in there.
+struct EvaluationAttemptsType {
+  auto operator==(const EvaluationAttemptsType&) const -> bool = default;
+};
+
 // A type one LIR compilation unit names, and the vocabulary for asking what it
 // is. The alternatives are a closed set, consumed by visiting them: a visitor
 // that names each one rather than defaulting is what makes an alternative added
@@ -377,7 +394,8 @@ class Type {
       RuntimeClassType, ClosureType, StructType, RuntimeEffectsType, FilesType,
       DiagnosticType, RuntimeLibraryType, CoroutineType, RefType, PointerType,
       ManagedRefType, VectorType, TupleType, UnionType, TaggedUnionType,
-      ResolvedType, DriverType, ObservableType>;
+      ResolvedType, DriverType, ObservableType, SampledHistoryType,
+      EvaluationAttemptsType>;
 
  public:
   explicit Type(Data data) : data_(std::move(data)) {
@@ -421,6 +439,15 @@ class Type {
   // of asking for a packed shape, so a consumer that does not already know it
   // asks here rather than listing the integral types itself.
   [[nodiscard]] auto IsIntegralPacked() const -> bool;
+
+  // How this type's sign bit is read as a machine integer, and nothing for a
+  // type that is not one. What makes a type a machine integer is that its
+  // operators are machine instructions rather than library calls over an
+  // opaque handle, and the only thing an instruction still has to be told is
+  // the signedness. A machine boolean is one such integer, one bit wide and
+  // never negative, so it answers rather than standing outside.
+  [[nodiscard]] auto MachineIntegerSignedness() const
+      -> std::optional<Signedness>;
 
   // The packed shape an integral type's value is structured by: a packed array
   // is its own shape, an enumeration is represented by its base's. Every

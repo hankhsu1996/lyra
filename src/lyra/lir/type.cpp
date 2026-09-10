@@ -155,7 +155,9 @@ auto Type::Hash::operator()(const Type& type) const -> std::size_t {
             Combine(seed, t.value);
             Combine(seed, t.resolution);
           },
-          [&](const ObservableType& t) { Combine(seed, t.value); }});
+          [&](const ObservableType& t) { Combine(seed, t.value); },
+          [&](const SampledHistoryType& t) { Combine(seed, t.value); },
+          [](const EvaluationAttemptsType&) {}});
   return seed;
 }
 
@@ -202,7 +204,11 @@ auto Type::KindName() const -> std::string_view {
           [](const TaggedUnionType&) { return "tagged union"; },
           [](const ResolvedType&) { return "net resolution node"; },
           [](const DriverType&) { return "net driver"; },
-          [](const ObservableType&) { return "observable cell"; }});
+          [](const ObservableType&) { return "observable cell"; },
+          [](const SampledHistoryType&) { return "sampled value history"; },
+          [](const EvaluationAttemptsType&) {
+            return "concurrent assertion attempts";
+          }});
 }
 
 auto Type::Pointee() const -> std::optional<TypeId> {
@@ -234,11 +240,22 @@ auto Type::DerefTarget() const -> std::optional<TypeId> {
 auto Type::IsAddressOnly() const -> bool {
   return Is<ObservableType>() || Is<ResolvedType>() || Is<ObjectType>() ||
          Is<ExternalUnitObjectType>() || Is<CrossUnitClassType>() ||
-         Is<RuntimeClassType>() || Is<EventType>();
+         Is<RuntimeClassType>() || Is<EventType>() ||
+         Is<SampledHistoryType>() || Is<EvaluationAttemptsType>();
 }
 
 auto Type::IsIntegralPacked() const -> bool {
   return Is<PackedArrayType>() || Is<EnumType>();
+}
+
+auto Type::MachineIntegerSignedness() const -> std::optional<Signedness> {
+  if (const auto* machine = As<MachineIntType>()) {
+    return machine->signedness;
+  }
+  if (Is<MachineBoolType>()) {
+    return Signedness::kUnsigned;
+  }
+  return std::nullopt;
 }
 
 auto Type::PackedShape() const -> const PackedArrayType& {

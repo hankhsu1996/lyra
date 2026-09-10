@@ -25,6 +25,7 @@
 #include "lyra/runtime/delay.hpp"
 #include "lyra/runtime/diagnostic.hpp"
 #include "lyra/runtime/distribution.hpp"
+#include "lyra/runtime/evaluation_attempts.hpp"
 #include "lyra/runtime/file_table.hpp"
 #include "lyra/runtime/fork.hpp"
 #include "lyra/runtime/gc_ref.hpp"
@@ -39,6 +40,7 @@
 #include "lyra/runtime/runtime.hpp"
 #include "lyra/runtime/runtime_effects.hpp"
 #include "lyra/runtime/runtime_process.hpp"
+#include "lyra/runtime/sampled_history.hpp"
 #include "lyra/runtime/scope.hpp"
 #include "lyra/runtime/scope_program.hpp"
 #include "lyra/runtime/sim_time.hpp"
@@ -540,6 +542,7 @@ using lyra::runtime::DelayTicksReal;
 using lyra::runtime::DiagnosticDispatcher;
 using lyra::runtime::DriverOf;
 using lyra::runtime::EnterCancellationTarget;
+using lyra::runtime::EvaluationAttempts;
 using lyra::runtime::FileTable;
 using lyra::runtime::ForkWaitAllMustPark;
 using lyra::runtime::ForkWaitFirstMustPark;
@@ -575,6 +578,7 @@ using lyra::runtime::RunHostCommand;
 using lyra::runtime::RunNullHostCommand;
 using lyra::runtime::RuntimeEffects;
 using lyra::runtime::RuntimeProcess;
+using lyra::runtime::SampledHistory;
 using lyra::runtime::Scope;
 using lyra::runtime::ScopeDefinition;
 using lyra::runtime::SimTimeInUnit;
@@ -1416,6 +1420,14 @@ void lyra_rt_packed_cell_set(void* cell, const void* value) {
   static_cast<Var<PackedArray>*>(cell)->Set(Read<PackedArray>(value));
 }
 
+void lyra_rt_packed_cell_arm_sampling(void* cell) {
+  static_cast<Var<PackedArray>*>(cell)->ArmSampling();
+}
+
+auto lyra_rt_packed_cell_sampled_load(void* cell) -> void* {
+  return Own(static_cast<Var<PackedArray>*>(cell)->SampledGet());
+}
+
 auto lyra_rt_string_cell_alloc() -> void* {
   return GeneratedCallScope::Current().Arena().New<Var<String>>();
 }
@@ -1430,6 +1442,14 @@ void lyra_rt_string_cell_initialize(void* cell, const void* prototype) {
 
 void lyra_rt_string_cell_set(void* cell, const void* value) {
   static_cast<Var<String>*>(cell)->Set(Read<String>(value));
+}
+
+void lyra_rt_string_cell_arm_sampling(void* cell) {
+  static_cast<Var<String>*>(cell)->ArmSampling();
+}
+
+auto lyra_rt_string_cell_sampled_load(void* cell) -> void* {
+  return Own(static_cast<Var<String>*>(cell)->SampledGet());
 }
 
 auto lyra_rt_real_cell_alloc() -> void* {
@@ -1448,6 +1468,14 @@ void lyra_rt_real_cell_set(void* cell, const void* value) {
   static_cast<Var<Real>*>(cell)->Set(Read<Real>(value));
 }
 
+void lyra_rt_real_cell_arm_sampling(void* cell) {
+  static_cast<Var<Real>*>(cell)->ArmSampling();
+}
+
+auto lyra_rt_real_cell_sampled_load(void* cell) -> void* {
+  return Own(static_cast<Var<Real>*>(cell)->SampledGet());
+}
+
 auto lyra_rt_shortreal_cell_alloc() -> void* {
   return GeneratedCallScope::Current().Arena().New<Var<ShortReal>>();
 }
@@ -1462,6 +1490,270 @@ void lyra_rt_shortreal_cell_initialize(void* cell, const void* prototype) {
 
 void lyra_rt_shortreal_cell_set(void* cell, const void* value) {
   static_cast<Var<ShortReal>*>(cell)->Set(Read<ShortReal>(value));
+}
+
+void lyra_rt_shortreal_cell_arm_sampling(void* cell) {
+  static_cast<Var<ShortReal>*>(cell)->ArmSampling();
+}
+
+auto lyra_rt_shortreal_cell_sampled_load(void* cell) -> void* {
+  return Own(static_cast<Var<ShortReal>*>(cell)->SampledGet());
+}
+
+void lyra_rt_packed_sampled_history_install(
+    void* history, const void* default_value, const void* depth) {
+  static_cast<SampledHistory<PackedArray>*>(history)->Install(
+      Read<PackedArray>(default_value), Read<PackedArray>(depth));
+}
+
+void lyra_rt_packed_sampled_history_push(void* history, const void* value) {
+  static_cast<SampledHistory<PackedArray>*>(history)->Push(
+      Read<PackedArray>(value));
+}
+
+auto lyra_rt_packed_sampled_history_at(
+    const void* history, const void* ticks_back) -> void* {
+  return Own(
+      static_cast<const SampledHistory<PackedArray>*>(history)->At(
+          Read<PackedArray>(ticks_back)));
+}
+
+void lyra_rt_string_sampled_history_install(
+    void* history, const void* default_value, const void* depth) {
+  static_cast<SampledHistory<String>*>(history)->Install(
+      Read<String>(default_value), Read<PackedArray>(depth));
+}
+
+void lyra_rt_string_sampled_history_push(void* history, const void* value) {
+  static_cast<SampledHistory<String>*>(history)->Push(Read<String>(value));
+}
+
+auto lyra_rt_string_sampled_history_at(
+    const void* history, const void* ticks_back) -> void* {
+  return Own(
+      static_cast<const SampledHistory<String>*>(history)->At(
+          Read<PackedArray>(ticks_back)));
+}
+
+void lyra_rt_real_sampled_history_install(
+    void* history, const void* default_value, const void* depth) {
+  static_cast<SampledHistory<Real>*>(history)->Install(
+      Read<Real>(default_value), Read<PackedArray>(depth));
+}
+
+void lyra_rt_real_sampled_history_push(void* history, const void* value) {
+  static_cast<SampledHistory<Real>*>(history)->Push(Read<Real>(value));
+}
+
+auto lyra_rt_real_sampled_history_at(
+    const void* history, const void* ticks_back) -> void* {
+  return Own(
+      static_cast<const SampledHistory<Real>*>(history)->At(
+          Read<PackedArray>(ticks_back)));
+}
+
+void lyra_rt_shortreal_sampled_history_install(
+    void* history, const void* default_value, const void* depth) {
+  static_cast<SampledHistory<ShortReal>*>(history)->Install(
+      Read<ShortReal>(default_value), Read<PackedArray>(depth));
+}
+
+void lyra_rt_shortreal_sampled_history_push(void* history, const void* value) {
+  static_cast<SampledHistory<ShortReal>*>(history)->Push(
+      Read<ShortReal>(value));
+}
+
+auto lyra_rt_shortreal_sampled_history_at(
+    const void* history, const void* ticks_back) -> void* {
+  return Own(
+      static_cast<const SampledHistory<ShortReal>*>(history)->At(
+          Read<PackedArray>(ticks_back)));
+}
+
+void lyra_rt_tuple_sampled_history_install(
+    void* history, const void* default_value, const void* depth) {
+  static_cast<SampledHistory<RuntimeTuple>*>(history)->Install(
+      Read<RuntimeTuple>(default_value), Read<PackedArray>(depth));
+}
+
+void lyra_rt_tuple_sampled_history_push(void* history, const void* value) {
+  static_cast<SampledHistory<RuntimeTuple>*>(history)->Push(
+      Read<RuntimeTuple>(value));
+}
+
+auto lyra_rt_tuple_sampled_history_at(
+    const void* history, const void* ticks_back) -> void* {
+  return Own(
+      static_cast<const SampledHistory<RuntimeTuple>*>(history)->At(
+          Read<PackedArray>(ticks_back)));
+}
+
+void lyra_rt_union_sampled_history_install(
+    void* history, const void* default_value, const void* depth) {
+  static_cast<SampledHistory<RuntimeUnion>*>(history)->Install(
+      Read<RuntimeUnion>(default_value), Read<PackedArray>(depth));
+}
+
+void lyra_rt_union_sampled_history_push(void* history, const void* value) {
+  static_cast<SampledHistory<RuntimeUnion>*>(history)->Push(
+      Read<RuntimeUnion>(value));
+}
+
+auto lyra_rt_union_sampled_history_at(
+    const void* history, const void* ticks_back) -> void* {
+  return Own(
+      static_cast<const SampledHistory<RuntimeUnion>*>(history)->At(
+          Read<PackedArray>(ticks_back)));
+}
+
+void lyra_rt_tagged_union_sampled_history_install(
+    void* history, const void* default_value, const void* depth) {
+  static_cast<SampledHistory<RuntimeTaggedUnion>*>(history)->Install(
+      Read<RuntimeTaggedUnion>(default_value), Read<PackedArray>(depth));
+}
+
+void lyra_rt_tagged_union_sampled_history_push(
+    void* history, const void* value) {
+  static_cast<SampledHistory<RuntimeTaggedUnion>*>(history)->Push(
+      Read<RuntimeTaggedUnion>(value));
+}
+
+auto lyra_rt_tagged_union_sampled_history_at(
+    const void* history, const void* ticks_back) -> void* {
+  return Own(
+      static_cast<const SampledHistory<RuntimeTaggedUnion>*>(history)->At(
+          Read<PackedArray>(ticks_back)));
+}
+
+void lyra_rt_dynarray_sampled_history_install(
+    void* history, const void* default_value, const void* depth) {
+  static_cast<SampledHistory<RuntimeDynamicArray>*>(history)->Install(
+      Read<RuntimeDynamicArray>(default_value), Read<PackedArray>(depth));
+}
+
+void lyra_rt_dynarray_sampled_history_push(void* history, const void* value) {
+  static_cast<SampledHistory<RuntimeDynamicArray>*>(history)->Push(
+      Read<RuntimeDynamicArray>(value));
+}
+
+auto lyra_rt_dynarray_sampled_history_at(
+    const void* history, const void* ticks_back) -> void* {
+  return Own(
+      static_cast<const SampledHistory<RuntimeDynamicArray>*>(history)->At(
+          Read<PackedArray>(ticks_back)));
+}
+
+void lyra_rt_unpackedarray_sampled_history_install(
+    void* history, const void* default_value, const void* depth) {
+  static_cast<SampledHistory<RuntimeUnpackedArray>*>(history)->Install(
+      Read<RuntimeUnpackedArray>(default_value), Read<PackedArray>(depth));
+}
+
+void lyra_rt_unpackedarray_sampled_history_push(
+    void* history, const void* value) {
+  static_cast<SampledHistory<RuntimeUnpackedArray>*>(history)->Push(
+      Read<RuntimeUnpackedArray>(value));
+}
+
+auto lyra_rt_unpackedarray_sampled_history_at(
+    const void* history, const void* ticks_back) -> void* {
+  return Own(
+      static_cast<const SampledHistory<RuntimeUnpackedArray>*>(history)->At(
+          Read<PackedArray>(ticks_back)));
+}
+
+void lyra_rt_queue_sampled_history_install(
+    void* history, const void* default_value, const void* depth) {
+  static_cast<SampledHistory<RuntimeQueue>*>(history)->Install(
+      Read<RuntimeQueue>(default_value), Read<PackedArray>(depth));
+}
+
+void lyra_rt_queue_sampled_history_push(void* history, const void* value) {
+  static_cast<SampledHistory<RuntimeQueue>*>(history)->Push(
+      Read<RuntimeQueue>(value));
+}
+
+auto lyra_rt_queue_sampled_history_at(
+    const void* history, const void* ticks_back) -> void* {
+  return Own(
+      static_cast<const SampledHistory<RuntimeQueue>*>(history)->At(
+          Read<PackedArray>(ticks_back)));
+}
+
+void lyra_rt_assocarray_sampled_history_install(
+    void* history, const void* default_value, const void* depth) {
+  static_cast<SampledHistory<RuntimeAssociativeArray>*>(history)->Install(
+      Read<RuntimeAssociativeArray>(default_value), Read<PackedArray>(depth));
+}
+
+void lyra_rt_assocarray_sampled_history_push(void* history, const void* value) {
+  static_cast<SampledHistory<RuntimeAssociativeArray>*>(history)->Push(
+      Read<RuntimeAssociativeArray>(value));
+}
+
+auto lyra_rt_assocarray_sampled_history_at(
+    const void* history, const void* ticks_back) -> void* {
+  return Own(
+      static_cast<const SampledHistory<RuntimeAssociativeArray>*>(history)->At(
+          Read<PackedArray>(ticks_back)));
+}
+
+void lyra_rt_evaluation_attempts_install(
+    void* attempts, void* effects, std::uint64_t words, bool pending_holds,
+    void* pass_action, void* fail_action) {
+  static_cast<EvaluationAttempts*>(attempts)->Install(
+      *static_cast<RuntimeEffects*>(effects), words, pending_holds,
+      TakeClosure(pass_action), TakeClosure(fail_action));
+}
+
+void lyra_rt_evaluation_attempts_seed_word(
+    void* attempts, std::uint64_t word, std::uint64_t bits) {
+  static_cast<EvaluationAttempts*>(attempts)->SeedWord(word, bits);
+}
+
+void lyra_rt_evaluation_attempts_begin_tick(void* attempts) {
+  static_cast<EvaluationAttempts*>(attempts)->BeginTick();
+}
+
+void lyra_rt_evaluation_attempts_disable_tick(void* attempts) {
+  static_cast<EvaluationAttempts*>(attempts)->DisableTick();
+}
+
+auto lyra_rt_evaluation_attempts_live_word(
+    const void* attempts, std::uint64_t word) -> std::uint64_t {
+  return static_cast<const EvaluationAttempts*>(attempts)->LiveWord(word);
+}
+
+auto lyra_rt_evaluation_attempts_next_unstepped(void* attempts)
+    -> std::int64_t {
+  return static_cast<EvaluationAttempts*>(attempts)->NextUnstepped();
+}
+
+auto lyra_rt_evaluation_attempts_bits_at(
+    const void* attempts, std::int64_t index, std::uint64_t word)
+    -> std::uint64_t {
+  return static_cast<const EvaluationAttempts*>(attempts)->BitsAt(index, word);
+}
+
+void lyra_rt_evaluation_attempts_set_word(
+    void* attempts, std::int64_t index, std::uint64_t word,
+    std::uint64_t bits) {
+  static_cast<EvaluationAttempts*>(attempts)->SetWord(index, word, bits);
+}
+
+void lyra_rt_evaluation_attempts_step(
+    void* attempts, std::int64_t index, std::uint64_t outcome) {
+  static_cast<EvaluationAttempts*>(attempts)->Step(index, outcome);
+}
+
+void lyra_rt_evaluation_attempts_seed(
+    void* attempts, std::int64_t index, bool this_tick) {
+  static_cast<EvaluationAttempts*>(attempts)->Seed(index, this_tick);
+}
+
+void lyra_rt_evaluation_attempts_settle(void* attempts, void* effects) {
+  static_cast<EvaluationAttempts*>(attempts)->Settle(
+      *static_cast<RuntimeEffects*>(effects));
 }
 
 // A procedural local whose value crosses a suspension. The cell is allocated in
@@ -2445,6 +2737,14 @@ void lyra_rt_tuple_cell_set(void* cell, const void* value) {
   static_cast<Var<RuntimeTuple>*>(cell)->Set(Read<RuntimeTuple>(value));
 }
 
+void lyra_rt_tuple_cell_arm_sampling(void* cell) {
+  static_cast<Var<RuntimeTuple>*>(cell)->ArmSampling();
+}
+
+auto lyra_rt_tuple_cell_sampled_load(void* cell) -> void* {
+  return Own(static_cast<Var<RuntimeTuple>*>(cell)->SampledGet());
+}
+
 auto lyra_rt_tuple_value_cell_alloc() -> void* {
   return GeneratedCallScope::Current()
       .ActivationValues()
@@ -2514,6 +2814,14 @@ void lyra_rt_union_cell_initialize(void* cell, const void* prototype) {
 
 void lyra_rt_union_cell_set(void* cell, const void* value) {
   static_cast<Var<RuntimeUnion>*>(cell)->Set(Read<RuntimeUnion>(value));
+}
+
+void lyra_rt_union_cell_arm_sampling(void* cell) {
+  static_cast<Var<RuntimeUnion>*>(cell)->ArmSampling();
+}
+
+auto lyra_rt_union_cell_sampled_load(void* cell) -> void* {
+  return Own(static_cast<Var<RuntimeUnion>*>(cell)->SampledGet());
 }
 
 auto lyra_rt_union_value_cell_alloc() -> void* {
@@ -2599,6 +2907,14 @@ void lyra_rt_tagged_union_cell_initialize(void* cell, const void* prototype) {
 void lyra_rt_tagged_union_cell_set(void* cell, const void* value) {
   static_cast<Var<RuntimeTaggedUnion>*>(cell)->Set(
       Read<RuntimeTaggedUnion>(value));
+}
+
+void lyra_rt_tagged_union_cell_arm_sampling(void* cell) {
+  static_cast<Var<RuntimeTaggedUnion>*>(cell)->ArmSampling();
+}
+
+auto lyra_rt_tagged_union_cell_sampled_load(void* cell) -> void* {
+  return Own(static_cast<Var<RuntimeTaggedUnion>*>(cell)->SampledGet());
 }
 
 auto lyra_rt_tagged_union_value_cell_alloc() -> void* {
@@ -2755,6 +3071,14 @@ void lyra_rt_dynarray_cell_initialize(void* cell, const void* prototype) {
 void lyra_rt_dynarray_cell_set(void* cell, const void* value) {
   static_cast<Var<RuntimeDynamicArray>*>(cell)->Set(
       Read<RuntimeDynamicArray>(value));
+}
+
+void lyra_rt_dynarray_cell_arm_sampling(void* cell) {
+  static_cast<Var<RuntimeDynamicArray>*>(cell)->ArmSampling();
+}
+
+auto lyra_rt_dynarray_cell_sampled_load(void* cell) -> void* {
+  return Own(static_cast<Var<RuntimeDynamicArray>*>(cell)->SampledGet());
 }
 
 auto lyra_rt_dynarray_value_cell_alloc() -> void* {
@@ -2978,6 +3302,14 @@ void lyra_rt_unpackedarray_cell_initialize(void* cell, const void* prototype) {
 void lyra_rt_unpackedarray_cell_set(void* cell, const void* value) {
   static_cast<Var<RuntimeUnpackedArray>*>(cell)->Set(
       Read<RuntimeUnpackedArray>(value));
+}
+
+void lyra_rt_unpackedarray_cell_arm_sampling(void* cell) {
+  static_cast<Var<RuntimeUnpackedArray>*>(cell)->ArmSampling();
+}
+
+auto lyra_rt_unpackedarray_cell_sampled_load(void* cell) -> void* {
+  return Own(static_cast<Var<RuntimeUnpackedArray>*>(cell)->SampledGet());
 }
 
 auto lyra_rt_packed_net_get(void* net) -> void* {
@@ -3236,6 +3568,14 @@ void lyra_rt_queue_cell_set(void* cell, const void* value) {
   static_cast<Var<RuntimeQueue>*>(cell)->Set(Read<RuntimeQueue>(value));
 }
 
+void lyra_rt_queue_cell_arm_sampling(void* cell) {
+  static_cast<Var<RuntimeQueue>*>(cell)->ArmSampling();
+}
+
+auto lyra_rt_queue_cell_sampled_load(void* cell) -> void* {
+  return Own(static_cast<Var<RuntimeQueue>*>(cell)->SampledGet());
+}
+
 auto lyra_rt_queue_value_cell_alloc() -> void* {
   return GeneratedCallScope::Current()
       .ActivationValues()
@@ -3384,6 +3724,14 @@ void lyra_rt_assocarray_cell_initialize(void* cell, const void* prototype) {
 void lyra_rt_assocarray_cell_set(void* cell, const void* value) {
   static_cast<Var<RuntimeAssociativeArray>*>(cell)->Set(
       Read<RuntimeAssociativeArray>(value));
+}
+
+void lyra_rt_assocarray_cell_arm_sampling(void* cell) {
+  static_cast<Var<RuntimeAssociativeArray>*>(cell)->ArmSampling();
+}
+
+auto lyra_rt_assocarray_cell_sampled_load(void* cell) -> void* {
+  return Own(static_cast<Var<RuntimeAssociativeArray>*>(cell)->SampledGet());
 }
 
 auto lyra_rt_assocarray_value_cell_alloc() -> void* {

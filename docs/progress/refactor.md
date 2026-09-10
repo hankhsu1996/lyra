@@ -1077,6 +1077,44 @@ enough to warrant its own focused review.
       right thing is the first searchable smell in `design-process.md`, and no mechanism sees that.
       Wide: both backends, the JIT, the value layer, and six lowering families.
 
+- [ ] R73 -- The runtime ABI is named mechanically and defined by hand. Which symbol an operation
+      publishes comes from the closed sets that already spell it, so a symbol cannot be composed
+      from a string; the definition behind that symbol is written out one function at a time. Of 664
+      entries, 532 differ from a sibling only in which value representation they name -- each a
+      cast, a read, and one call -- so an operation added to a family costs a function per
+      representation, and a representation added to the set costs one per operation of every family
+      that names one. The sampled-state work added 66 in a change whose whole subject was three
+      storages.
+
+      The count alone is not the argument, since the functions are short and a check holds each
+      entry's prototype, definition and binding to the other two, which is what makes the shape
+      survivable rather than dangerous. What decides it is that the two halves of one contract are
+      derived differently: one side cannot be spelled wrong and the other is retyped per member of a
+      set the first side already enumerates.
+
+      Target: a family that varies only by value representation states its body once over that set,
+      so adding an operation or a representation is one edit. Nothing blocks it. The check stays
+      whatever shape this takes -- it also covers the standalone entries, which no generation would
+      reach.
+
+- [ ] R74 -- Which accesses a storage defines is spread across the sites that need the answer rather
+      than stated where the storage is. A LIR type is classified into a storage kind in one place,
+      which is right; but the pairs that do not exist -- a net taking a store, a driver installing a
+      representation, either of them retaining what a time slot moved away from -- are guards raised
+      one at a time inside the symbol minter, and there are four now where there were two. Each is a
+      throw rather than something the caller could not have spelled.
+
+      The same answer is also reached by two overlapping classifiers. One asks which capability
+      wrapper a type is, for an access made through a place; the other asks what values a storage
+      holds, for an entry named by the representation of what it holds. The second is the first plus
+      the storages that are not capability wrappers, so a storage joining the second set has to be
+      read against both to know it did not join the first by accident.
+
+      Target: a storage says which accesses it defines, so one it does not define is unspellable
+      rather than thrown on, and the question "what storage does this operand reach, and what does
+      it hold" is asked once. Nothing blocks it; the two readings sit in one file today, which is
+      what keeps them in step and is also why the split is easy to miss.
+
 ## Out of Scope
 
 - Per-feature workstreams. Those live in the dedicated feature files (`operators.md`,

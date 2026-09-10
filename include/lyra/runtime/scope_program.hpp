@@ -190,10 +190,18 @@ struct SampledHistoryStorage {
   support::ValueDomain domain;
 };
 
+// What one concurrent assertion has in flight (LRM 16.14.1): an evaluation
+// attempt per tick its clock has reached and not yet answered. The owner holds
+// it and it is reached only through its address. It names no value domain,
+// because what it holds is machine words the assertion's own transition reads
+// and nothing of the design.
+struct EvaluationAttemptsStorage {};
+
 using MemberStorageDescriptor = std::variant<
     BorrowedHandleStorage, ObservableCellStorage, InlineValueStorage,
     ValueCellStorage, CancellationTargetStorage, ChannelCancellationStorage,
-    NamedEventStorage, SampledHistoryStorage, ResolvedNetStorage>;
+    NamedEventStorage, SampledHistoryStorage, EvaluationAttemptsStorage,
+    ResolvedNetStorage>;
 
 // One declaration's member storage schema, in its own member order: what a
 // generic value of it must realize for each member the declaration holds. It

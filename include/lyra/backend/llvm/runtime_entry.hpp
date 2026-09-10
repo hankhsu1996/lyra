@@ -109,6 +109,11 @@ enum class MemberStorageKind : std::uint8_t {
   // A net's resolution node, likewise reached only through its address; a value
   // reaches it through a driver rather than by being written (LRM 6.5).
   kResolvedNet,
+  // What the ticks of one clocking event settled for one expression (LRM
+  // 16.9.3), also reached only through its address. It holds values of one
+  // domain and answers with the one a read names, so unlike a cell there is no
+  // single current value to read out of it.
+  kSampledHistory,
   // A variable the owner holds that nothing subscribes to: written and read
   // through its own storage, so a write keeps the representation the
   // declaration gave it and a read copies out rather than aliasing.
@@ -119,13 +124,15 @@ enum class MemberStorageKind : std::uint8_t {
   // A box holding a handle the owner does not own, so a read reads the box
   // rather than what it names.
   kBorrowedHandle,
-  // A named event (LRM 15.5), a scope's cancellation target (LRM 9.6.2), and
-  // the joint cancel state of the channels a deferred write targets (LRM
-  // 21.3.2). Each is a runtime record the owner holds and reaches only through
-  // its address; none is read out as a value.
+  // A named event (LRM 15.5), a scope's cancellation target (LRM 9.6.2), the
+  // joint cancel state of the channels a deferred write targets (LRM 21.3.2),
+  // and what one concurrent assertion has in flight (LRM 16.14.1). Each is a
+  // runtime record the owner holds and reaches only through its address; none
+  // is read out as a value, and none names a value domain.
   kNamedEvent,
   kCancellationTarget,
   kChannelCancellation,
+  kEvaluationAttempts,
 };
 
 // The storage kind a member of `type` needs, or nothing where this backend has
@@ -137,10 +144,11 @@ auto MemberStorageKindOf(
     -> std::optional<MemberStorageKind>;
 
 // Which capability wrapper storage is reached through. The wrappers share one
-// access vocabulary -- a load, a store, and the install that fixes the
-// storage's declared representation -- and differ in which of those they
-// define, so this is what a type is classified into before an access through it
-// is named, whether it arrived as a place or as an operand.
+// access vocabulary -- a load, a store, the install that fixes the storage's
+// declared representation, and the pair that arms one to retain what a time
+// slot moved away from and reads back what it retained -- and differ in which
+// of those they define, so this is what a type is classified into before an
+// access through it is named, whether it arrived as a place or as an operand.
 enum class WrapperKind : std::uint8_t { kCell, kNet, kDriver };
 
 // The library realizes an operation once, whatever it is applied to: the
@@ -166,10 +174,12 @@ struct NamedByValue {
 // wrapper it is.
 struct NamedByWrapper {};
 
-// The operation likewise acts on the wrapper an argument reaches, but exists on
-// one wrapper only -- attaching a driver, which only a net does -- so its own
-// name is already unambiguous and only the domain comes from the wrapper.
-struct NamedByWrapperDomain {};
+// The operation likewise acts on storage an argument reaches rather than on a
+// value it is handed, but its own name already says which storage -- attaching
+// a driver, which only a net does; filling, appending to and reading a sampled
+// value history -- so only the domain comes from the storage, and it is the
+// representation of the values that storage holds.
+struct NamedByStorageDomain {};
 
 // A conversion crosses two representations and its realization depends on both,
 // so neither alone names it: the destination is the one the call qualifies
@@ -184,7 +194,7 @@ struct NotRealized {
 };
 
 using EntryNaming = std::variant<
-    NamedAlone, NamedByValue, NamedByWrapper, NamedByWrapperDomain,
+    NamedAlone, NamedByValue, NamedByWrapper, NamedByStorageDomain,
     NamedByConversion, NotRealized>;
 
 // How the entry behind a builtin is named. Total over the builtin set: what the
@@ -214,12 +224,15 @@ auto RuntimeSymbol(support::ValueDomain domain, support::BuiltinFn fn)
     -> std::string;
 
 // An access through a capability wrapper leads with the wrapper as well, since
-// a cell, a net and a driver each answer a read of one domain differently. It
-// refuses the two accesses no wrapper defines, which are upstream mistakes
-// rather than gaps: a net's value is the fold of its drivers, so a value
-// reaches it through one of them and never by being written (LRM 6.5), and a
-// driver installs no representation of its own, because what it contributes
-// before it drives is the identity the net gave it when it attached.
+// a cell, a net and a driver each answer a read of one domain differently. An
+// access the wrapper does not define is refused rather than spelled, because it
+// is an upstream mistake and not a gap. A net's value is the fold of its
+// drivers, so a value reaches it through one of them and never by being written
+// (LRM 6.5); a driver installs no representation of its own, since what it
+// contributes before it drives is the identity the net gave it when it
+// attached; and only a variable retains what a time slot moved away from (LRM
+// 16.5.1), the other two holding a value that is recomputed rather than found
+// there.
 auto RuntimeSymbol(
     support::ValueDomain domain, WrapperKind wrapper, support::BuiltinFn fn)
     -> std::string;

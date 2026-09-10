@@ -96,12 +96,12 @@ The IDs are stable references and do not imply execution order beyond the depend
       LRM 16.9.3) used as ordinary logic, outside any assertion. These read a value as of the
       Preponed region, so they need sampling to exist independently of the assertion machinery.
       Inside an assertion they disappear with it, which is why this item is separable from AS5. All
-      six are in place on the C++ backend. `$sampled` reads a different value: an observable cell
-      may be armed to answer for the value it held before the current time slot first changed it,
-      and an expression's sampled value is that expression over its variables' sampled ones. The
-      other five answer across the ticks of a clocking event, so a scope keeps a history of what is
-      read that way, filled with the expression's default sampled value where the design activates
-      and appended to by a synthesized process at each tick. That process records in the Postponed
+      six are in place on both backends. `$sampled` reads a different value: an observable cell may
+      be armed to answer for the value it held before the current time slot first changed it, and an
+      expression's sampled value is that expression over its variables' sampled ones. The other five
+      answer across the ticks of a clocking event, so a scope keeps a history of what is read that
+      way, filled with the expression's default sampled value where the design activates and
+      appended to by a synthesized process at each tick. That process records in the Postponed
       region of the tick's own time step, which is what makes every tick a reader can see strictly
       prior to it whatever order the two ran in; and because the history starts full, a read
       reaching further back than the ticks that have happened answers with the default sampled value
@@ -112,20 +112,18 @@ The IDs are stable references and do not imply execution order beyond the depend
       as far as naming an event a scope may select as its default; its clockvars, skews, drives and
       the cycle-delay operator are refused.
 
-      Four things are refused rather than answered. An expression that reads an automatic variable
+      Three things are refused rather than answered. An expression that reads an automatic variable
       has no single value a tick can settle, so a history of it would have to be composed from the
       parts that have one -- legal SystemVerilog, and the one corner of the clause left out. A call
-      outside a procedure reaches only the default clocking rule, which is not wired. A clocking
-      event that is a named event rather than a value change is not carried. And the execution
-      backend refuses the history outright, needing storage and an entry per value domain that its
-      library does not have.
+      outside a procedure reaches only the default clocking rule, which is not wired. And a clocking
+      event that is a named event rather than a value change is not carried.
 
 - [ ] AS5 -- Concurrent assertions (LRM 16.5-16.13): sequences, properties, their named
       declarations, `disable iff`, and the clocking a property is evaluated against. Evaluation is
       multi-cycle and against sampled values, which makes this the one form whose semantics are not
       a variation on the immediate model. Rides on AS4.
 
-      In place on the C++ backend for an assertion a scope declares: an attempt begins at every tick
+      In place on both backends for an assertion a scope declares: an attempt begins at every tick
       of the clock, attempts overlap and each carries its own result, and the statements an outcome
       selects run in the Reactive region. The operator set carried is a Boolean expression, a delay
       window and a consecutive repetition with constant bounds, and overlapped and non-overlapped
@@ -147,15 +145,14 @@ The IDs are stable references and do not imply execution order beyond the depend
 
       What remains of the form is the other placement: an assertion a procedure reaches and
       simulation checks is refused, because its enabling condition is that control arrived there,
-      which is queued rather than evaluated (LRM 16.14.6). Refused by name besides: a local variable and a subroutine call
-      attached to a match (LRM 16.10, 16.11), an unbounded `$` window, a repetition admitting an
-      empty match, a nonconsecutive or goto repetition, composing sequences with `and` / `or` /
-      `intersect` / `throughout` / `within`, `first_match`, the property connectives and the
-      operators over time, the abort operators, more than one clocking event (LRM 16.13), a clocking
-      event that is a named event, an action block that consumes time, and the fifth statement form,
-      `cover sequence`, which counts every match an attempt produces rather than the attempt. The execution backend
-      refuses the storage an assertion keeps its attempts in, the way it refuses a sampled value
-      history.
+      which is queued rather than evaluated (LRM 16.14.6). Refused by name besides: a local
+      variable and a subroutine call attached to a match (LRM 16.10, 16.11), an unbounded `$`
+      window, a repetition admitting an empty match, a nonconsecutive or goto repetition, composing
+      sequences with `and` / `or` / `intersect` / `throughout` / `within`, `first_match`, the
+      property connectives and the operators over time, the abort operators, more than one clocking
+      event (LRM 16.13), a clocking event that is a named event, an action block that consumes
+      time, and the fifth statement form, `cover sequence`, which counts every match an attempt
+      produces rather than the attempt.
 
 - [ ] AS6 -- Assertion control tasks (LRM 20.11). They act on assertion state -- turning checking
       on, off, or killing it by scope or by name -- so they need that state to exist first.

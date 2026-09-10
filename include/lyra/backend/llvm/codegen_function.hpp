@@ -83,7 +83,8 @@ class CodeGenFunction {
   auto LowerStore(const lir::StoreInstr& store) -> diag::Result<llvm::Value*>;
   auto LowerBinary(const lir::BinaryInstr& binary, lir::TypeId result_type)
       -> diag::Result<llvm::Value*>;
-  auto LowerMachineBinary(const lir::BinaryInstr& binary)
+  auto LowerMachineBinary(
+      const lir::BinaryInstr& binary, lir::Signedness signedness)
       -> diag::Result<llvm::Value*>;
   auto LowerUnary(const lir::UnaryInstr& unary, lir::TypeId result_type)
       -> diag::Result<llvm::Value*>;
@@ -236,18 +237,29 @@ class CodeGenFunction {
   [[nodiscard]] auto MemberValueCellDomain(
       const lir::Place& place, lir::TypeId value) const
       -> std::optional<support::ValueDomain>;
+  // The storage an operand reaches: this target holds storage as its address,
+  // and holds as a handle only what names storage someone else owns -- a
+  // driver, which names a contribution the net owns -- so an operand is either
+  // that address or the handle itself, and either way reaches exactly one.
+  [[nodiscard]] auto StorageReached(lir::TypeId operand) const
+      -> const lir::Type&;
   // The wrapper an operand reaches and the domain its storage is realized in,
   // for an operation that acts on the wrapper itself rather than reaching
   // through it. A wrapper classifies the same way whether it arrives as an
-  // operand or as a place; an operand addresses the wrapper where this target
-  // holds one as storage, and is the wrapper itself where it holds one as a
-  // handle.
+  // operand or as a place.
   struct WrapperBehindRef {
     support::ValueDomain domain{};
     WrapperKind kind{};
   };
   [[nodiscard]] auto WrapperBehind(lir::TypeId operand) const
       -> diag::Result<WrapperBehindRef>;
+  // The representation the values held by the storage an operand reaches are
+  // realized in, for an operation whose own name already says which storage it
+  // acts on. Storage reached this way holds values of one representation --
+  // what a wrapper represents, or what every tick of a clocking event settled
+  // -- so the entry is named once per representation rather than per call.
+  [[nodiscard]] auto StorageDomainBehind(lir::TypeId operand) const
+      -> diag::Result<support::ValueDomain>;
   // Place access: the capability wrapper a place names the storage of, which
   // wrapper it is, and the domain that representation picks its library entries
   // by; nothing when the place names ordinary addressable storage. It is the

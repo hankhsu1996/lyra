@@ -5,11 +5,11 @@
 // The execution-strategy-neutral ABI the generated module calls. Every runtime
 // value crosses as an opaque pointer; the runtime owns its type and lifetime.
 //
-// A `bool` is never one of those values. It is a machine predicate the
-// generated code branches on -- a condition read off a value, a question about
-// the running execution, or whether that execution must park before its suspend
-// edge -- so it carries no width and no unknown state. Every other answer is a
-// handle or nothing at all.
+// A `bool` is never one of those values. It is a machine predicate -- a
+// condition read off a value, a question about the running execution, a
+// constant of the program the entry is told rather than shown -- so it carries
+// no width and no unknown state. Every other answer is a handle or nothing at
+// all.
 //
 // Definitions wrap the runtime; a host resolves these symbols when it loads a
 // generated module (JIT-compiled, AOT-linked, or interpreted).
@@ -498,22 +498,137 @@ auto lyra_rt_get_signal(void* self, const void* name) -> void*;
 // here reads alike. The cell is owned by the current generated call, which
 // outlives the declaration that built it; nothing subscribes to a procedural
 // local, so the update event a write raises wakes no one.
+//
+// `arm_sampling` and `sampled_load` are the same access to the same storage,
+// differing only in which of the two values a cell holds answers: the current
+// one, or the one the current time slot found there before anything in it ran
+// (LRM 4.4.2.1, 16.5.1). Only an armed cell keeps the second, so a cell nothing
+// samples carries neither the storage nor the work of maintaining it.
 auto lyra_rt_packed_cell_alloc() -> void*;
 auto lyra_rt_packed_cell_get(void* cell) -> void*;
 void lyra_rt_packed_cell_initialize(void* cell, const void* prototype);
 void lyra_rt_packed_cell_set(void* cell, const void* value);
+void lyra_rt_packed_cell_arm_sampling(void* cell);
+auto lyra_rt_packed_cell_sampled_load(void* cell) -> void*;
 auto lyra_rt_string_cell_alloc() -> void*;
 auto lyra_rt_string_cell_get(void* cell) -> void*;
 void lyra_rt_string_cell_initialize(void* cell, const void* prototype);
 void lyra_rt_string_cell_set(void* cell, const void* value);
+void lyra_rt_string_cell_arm_sampling(void* cell);
+auto lyra_rt_string_cell_sampled_load(void* cell) -> void*;
 auto lyra_rt_real_cell_alloc() -> void*;
 auto lyra_rt_real_cell_get(void* cell) -> void*;
 void lyra_rt_real_cell_initialize(void* cell, const void* prototype);
 void lyra_rt_real_cell_set(void* cell, const void* value);
+void lyra_rt_real_cell_arm_sampling(void* cell);
+auto lyra_rt_real_cell_sampled_load(void* cell) -> void*;
 auto lyra_rt_shortreal_cell_alloc() -> void*;
 auto lyra_rt_shortreal_cell_get(void* cell) -> void*;
 void lyra_rt_shortreal_cell_initialize(void* cell, const void* prototype);
 void lyra_rt_shortreal_cell_set(void* cell, const void* value);
+void lyra_rt_shortreal_cell_arm_sampling(void* cell);
+auto lyra_rt_shortreal_cell_sampled_load(void* cell) -> void*;
+
+// What the ticks of one clocking event settled for one expression (LRM
+// 16.9.3), reached only through the history's own address. The entry names the
+// representation every value in it is realized in.
+//
+// `install` fills it with the expression's default sampled value and fixes how
+// far back it reaches, so a read has no empty case and nothing counts ticks;
+// `push` records what a tick settled, dropping the entry no read can name; and
+// `at` answers with what the tick a read names settled, counting back from 1
+// for the most recent.
+void lyra_rt_packed_sampled_history_install(
+    void* history, const void* default_value, const void* depth);
+void lyra_rt_packed_sampled_history_push(void* history, const void* value);
+auto lyra_rt_packed_sampled_history_at(
+    const void* history, const void* ticks_back) -> void*;
+void lyra_rt_string_sampled_history_install(
+    void* history, const void* default_value, const void* depth);
+void lyra_rt_string_sampled_history_push(void* history, const void* value);
+auto lyra_rt_string_sampled_history_at(
+    const void* history, const void* ticks_back) -> void*;
+void lyra_rt_real_sampled_history_install(
+    void* history, const void* default_value, const void* depth);
+void lyra_rt_real_sampled_history_push(void* history, const void* value);
+auto lyra_rt_real_sampled_history_at(
+    const void* history, const void* ticks_back) -> void*;
+void lyra_rt_shortreal_sampled_history_install(
+    void* history, const void* default_value, const void* depth);
+void lyra_rt_shortreal_sampled_history_push(void* history, const void* value);
+auto lyra_rt_shortreal_sampled_history_at(
+    const void* history, const void* ticks_back) -> void*;
+void lyra_rt_tuple_sampled_history_install(
+    void* history, const void* default_value, const void* depth);
+void lyra_rt_tuple_sampled_history_push(void* history, const void* value);
+auto lyra_rt_tuple_sampled_history_at(
+    const void* history, const void* ticks_back) -> void*;
+void lyra_rt_union_sampled_history_install(
+    void* history, const void* default_value, const void* depth);
+void lyra_rt_union_sampled_history_push(void* history, const void* value);
+auto lyra_rt_union_sampled_history_at(
+    const void* history, const void* ticks_back) -> void*;
+void lyra_rt_tagged_union_sampled_history_install(
+    void* history, const void* default_value, const void* depth);
+void lyra_rt_tagged_union_sampled_history_push(
+    void* history, const void* value);
+auto lyra_rt_tagged_union_sampled_history_at(
+    const void* history, const void* ticks_back) -> void*;
+void lyra_rt_dynarray_sampled_history_install(
+    void* history, const void* default_value, const void* depth);
+void lyra_rt_dynarray_sampled_history_push(void* history, const void* value);
+auto lyra_rt_dynarray_sampled_history_at(
+    const void* history, const void* ticks_back) -> void*;
+void lyra_rt_unpackedarray_sampled_history_install(
+    void* history, const void* default_value, const void* depth);
+void lyra_rt_unpackedarray_sampled_history_push(
+    void* history, const void* value);
+auto lyra_rt_unpackedarray_sampled_history_at(
+    const void* history, const void* ticks_back) -> void*;
+void lyra_rt_queue_sampled_history_install(
+    void* history, const void* default_value, const void* depth);
+void lyra_rt_queue_sampled_history_push(void* history, const void* value);
+auto lyra_rt_queue_sampled_history_at(
+    const void* history, const void* ticks_back) -> void*;
+void lyra_rt_assocarray_sampled_history_install(
+    void* history, const void* default_value, const void* depth);
+void lyra_rt_assocarray_sampled_history_push(void* history, const void* value);
+auto lyra_rt_assocarray_sampled_history_at(
+    const void* history, const void* ticks_back) -> void*;
+
+// What one concurrent assertion has in flight (LRM 16.14.1), reached only
+// through the storage's own address. These carry machine words rather than
+// values of the design, which is why one entry serves every assertion.
+//
+// `install` fixes how wide a position set is, what a pending attempt is owed
+// when the run ends, and the statements an outcome selects. A tick opens with
+// `begin_tick`, or with `disable_tick` where the disable condition held;
+// `live_word` bounds the Boolean expressions the tick has to read, and
+// `next_unstepped` walks the evaluations it still owes a step, answering -1
+// when none is left. `bits_at`, `set_word` and `step` read one evaluation's
+// position set, replace it with its successor, and record what the tick left
+// it in; `seed_word` stages the set a new evaluation starts from and `seed`
+// opens one on it. `settle` answers every attempt the sweep resolved.
+void lyra_rt_evaluation_attempts_install(
+    void* attempts, void* effects, std::uint64_t words, bool pending_holds,
+    void* pass_action, void* fail_action);
+void lyra_rt_evaluation_attempts_seed_word(
+    void* attempts, std::uint64_t word, std::uint64_t bits);
+void lyra_rt_evaluation_attempts_begin_tick(void* attempts);
+void lyra_rt_evaluation_attempts_disable_tick(void* attempts);
+auto lyra_rt_evaluation_attempts_live_word(
+    const void* attempts, std::uint64_t word) -> std::uint64_t;
+auto lyra_rt_evaluation_attempts_next_unstepped(void* attempts) -> std::int64_t;
+auto lyra_rt_evaluation_attempts_bits_at(
+    const void* attempts, std::int64_t index, std::uint64_t word)
+    -> std::uint64_t;
+void lyra_rt_evaluation_attempts_set_word(
+    void* attempts, std::int64_t index, std::uint64_t word, std::uint64_t bits);
+void lyra_rt_evaluation_attempts_step(
+    void* attempts, std::int64_t index, std::uint64_t outcome);
+void lyra_rt_evaluation_attempts_seed(
+    void* attempts, std::int64_t index, bool this_tick);
+void lyra_rt_evaluation_attempts_settle(void* attempts, void* effects);
 
 // A procedural local whose value crosses a suspension (LRM 9.4). The cell lives
 // in the running activation's frame, so the handle a generated frame holds
@@ -836,6 +951,8 @@ auto lyra_rt_tuple_cell_alloc() -> void*;
 auto lyra_rt_tuple_cell_get(void* cell) -> void*;
 void lyra_rt_tuple_cell_initialize(void* cell, const void* prototype);
 void lyra_rt_tuple_cell_set(void* cell, const void* value);
+void lyra_rt_tuple_cell_arm_sampling(void* cell);
+auto lyra_rt_tuple_cell_sampled_load(void* cell) -> void*;
 auto lyra_rt_tuple_value_cell_alloc() -> void*;
 void lyra_rt_tuple_value_cell_store(void* cell, const void* value);
 auto lyra_rt_tuple_value_cell_load(const void* cell) -> void*;
@@ -861,6 +978,8 @@ auto lyra_rt_union_cell_alloc() -> void*;
 auto lyra_rt_union_cell_get(void* cell) -> void*;
 void lyra_rt_union_cell_initialize(void* cell, const void* prototype);
 void lyra_rt_union_cell_set(void* cell, const void* value);
+void lyra_rt_union_cell_arm_sampling(void* cell);
+auto lyra_rt_union_cell_sampled_load(void* cell) -> void*;
 auto lyra_rt_union_value_cell_alloc() -> void*;
 void lyra_rt_union_value_cell_store(void* cell, const void* value);
 auto lyra_rt_union_value_cell_load(const void* cell) -> void*;
@@ -887,6 +1006,8 @@ auto lyra_rt_tagged_union_cell_alloc() -> void*;
 auto lyra_rt_tagged_union_cell_get(void* cell) -> void*;
 void lyra_rt_tagged_union_cell_initialize(void* cell, const void* prototype);
 void lyra_rt_tagged_union_cell_set(void* cell, const void* value);
+void lyra_rt_tagged_union_cell_arm_sampling(void* cell);
+auto lyra_rt_tagged_union_cell_sampled_load(void* cell) -> void*;
 auto lyra_rt_tagged_union_value_cell_alloc() -> void*;
 void lyra_rt_tagged_union_value_cell_store(void* cell, const void* value);
 auto lyra_rt_tagged_union_value_cell_load(const void* cell) -> void*;
@@ -944,6 +1065,8 @@ auto lyra_rt_dynarray_cell_alloc() -> void*;
 auto lyra_rt_dynarray_cell_get(void* cell) -> void*;
 void lyra_rt_dynarray_cell_initialize(void* cell, const void* prototype);
 void lyra_rt_dynarray_cell_set(void* cell, const void* value);
+void lyra_rt_dynarray_cell_arm_sampling(void* cell);
+auto lyra_rt_dynarray_cell_sampled_load(void* cell) -> void*;
 auto lyra_rt_dynarray_value_cell_alloc() -> void*;
 void lyra_rt_dynarray_value_cell_store(void* cell, const void* value);
 auto lyra_rt_dynarray_value_cell_load(const void* cell) -> void*;
@@ -992,6 +1115,8 @@ auto lyra_rt_unpackedarray_cell_alloc() -> void*;
 auto lyra_rt_unpackedarray_cell_get(void* cell) -> void*;
 void lyra_rt_unpackedarray_cell_initialize(void* cell, const void* prototype);
 void lyra_rt_unpackedarray_cell_set(void* cell, const void* value);
+void lyra_rt_unpackedarray_cell_arm_sampling(void* cell);
+auto lyra_rt_unpackedarray_cell_sampled_load(void* cell) -> void*;
 auto lyra_rt_unpackedarray_value_cell_alloc() -> void*;
 void lyra_rt_unpackedarray_value_cell_store(void* cell, const void* value);
 auto lyra_rt_unpackedarray_value_cell_load(const void* cell) -> void*;
@@ -1088,6 +1213,8 @@ auto lyra_rt_queue_cell_alloc() -> void*;
 auto lyra_rt_queue_cell_get(void* cell) -> void*;
 void lyra_rt_queue_cell_initialize(void* cell, const void* prototype);
 void lyra_rt_queue_cell_set(void* cell, const void* value);
+void lyra_rt_queue_cell_arm_sampling(void* cell);
+auto lyra_rt_queue_cell_sampled_load(void* cell) -> void*;
 auto lyra_rt_queue_value_cell_alloc() -> void*;
 void lyra_rt_queue_value_cell_store(void* cell, const void* value);
 auto lyra_rt_queue_value_cell_load(const void* cell) -> void*;
@@ -1140,6 +1267,8 @@ auto lyra_rt_assocarray_cell_alloc() -> void*;
 auto lyra_rt_assocarray_cell_get(void* cell) -> void*;
 void lyra_rt_assocarray_cell_initialize(void* cell, const void* prototype);
 void lyra_rt_assocarray_cell_set(void* cell, const void* value);
+void lyra_rt_assocarray_cell_arm_sampling(void* cell);
+auto lyra_rt_assocarray_cell_sampled_load(void* cell) -> void*;
 auto lyra_rt_assocarray_value_cell_alloc() -> void*;
 void lyra_rt_assocarray_value_cell_store(void* cell, const void* value);
 auto lyra_rt_assocarray_value_cell_load(const void* cell) -> void*;
