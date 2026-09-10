@@ -493,15 +493,19 @@ enum class BuiltinFn : std::uint16_t {
   // re-states them.
   kRegisterSignal,
   kAddOwnedChild,
-  // What a scope answers a name with, one entry per kind of declaration a
-  // hierarchical name may end at (LRM 23.6): the cell of a signal, the owned
-  // child at a name and per-axis index, or the entry of a subroutine. Each is
-  // reached once in the resolve phase and each fails rather than answering with
-  // nothing, because the name was resolved to a declaration of that scope
-  // before anything was emitted for it.
+  // A constructor also hands a scope what a `disable` naming it terminates
+  // (LRM 9.6.2), which is unnamed because a scope carries exactly one.
+  kRegisterDisableTarget,
+  // What a scope answers with, one entry per kind of declaration a hierarchical
+  // name may end at (LRM 23.6): the cell of a signal, the owned child at a name
+  // and per-axis index, the entry of a subroutine, or what a `disable` naming
+  // the scope terminates. Each is reached once in the resolve phase and each
+  // fails rather than answering with nothing, because the name was resolved to
+  // a declaration of that scope before anything was emitted for it.
   kFindSignal,
   kFindChild,
   kFindSubroutine,
+  kFindDisableTarget,
   // Fork-join branch dispatch. Each entry spawns every branch as its own
   // coroutine and yields the parent's wait shape per LRM 9.3.2: `kForkWaitAll`
   // for `join` (resume after the last branch), `kForkWaitFirst` for

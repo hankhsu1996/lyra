@@ -262,8 +262,8 @@ auto LowerBlockStmt(
   // -- leaves the block and resumes just past it. A `disable` reaches its
   // target by naming it, so an unnamed block is one none can reach and it needs
   // no region -- which is what owning no target says.
-  const std::optional<StaticStorageHome>& cancel_target =
-      process.Scopes().Get(b.scope).cancellation_target;
+  const std::optional<StaticStorageHome>& disable_target =
+      process.Scopes().Get(b.scope).disable_target;
 
   const hir::ProceduralBody& hir_proc = process.HirBody();
   for (const hir::StmtId child_hir_id : b.statements) {
@@ -274,11 +274,11 @@ auto LowerBlockStmt(
   }
   // The handler is built where the region sits, not inside its body: it runs
   // once the body has already been left.
-  if (cancel_target.has_value()) {
+  if (disable_target.has_value()) {
     return mir::Stmt{
         .label = std::move(label),
         .data = BuildCancellableRegion(
-            process, frame, std::move(child_block), *cancel_target)};
+            process, frame, std::move(child_block), *disable_target)};
   }
   const mir::BlockId scope_id =
       frame.current_block->child_scopes.Add(std::move(child_block));
@@ -293,14 +293,29 @@ auto LowerDisableStmt(
   mir::CompilationUnit& unit = unit_lowerer.Unit();
   mir::Block& block = *frame.current_block;
 
-  const std::optional<StaticStorageHome>& target =
-      process.Scopes().Get(d.target).cancellation_target;
-  if (!target.has_value()) {
-    throw InternalError(
-        "LowerDisableStmt: the named scope owns no cancellation target, so no "
-        "name could have reached it -- please report this as a bug");
-  }
-  const mir::ExprId member = CancellationTarget(process, frame, *target);
+  // Both forms hand the statement the one thing it acts on: the target's
+  // address. A scope of this body's own declaration scope is a cell reached
+  // where it sits; one anywhere else was sealed by a route in the resolve
+  // phase, so the statement reads the slot and walks nothing.
+  const mir::ExprId member = std::visit(
+      Overloaded{
+          [&](const hir::DirectDisableTarget& t) {
+            const std::optional<StaticStorageHome>& home =
+                process.Scopes().Get(t.scope).disable_target;
+            if (!home.has_value()) {
+              throw InternalError(
+                  "LowerDisableStmt: the named scope owns no disable target, "
+                  "so the source named it nothing and no name could have "
+                  "reached it -- please report this as a bug");
+            }
+            return CancellationTarget(process, frame, *home);
+          },
+          [&](const hir::RoutedDisableTarget& t) {
+            return block.exprs.Add(BuildStructuralFieldAccessExpr(
+                frame, unit, mir::EnclosingHops{0},
+                process.RoutedRefTarget(t.target.id).target));
+          }},
+      d.target);
   const mir::ExprId services =
       block.exprs.Add(BuildCurrentRuntimeCallExpr(unit_lowerer));
   // One call carries the whole statement (LRM 9.6.2): it invalidates the

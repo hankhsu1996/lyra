@@ -162,6 +162,11 @@ find out which scopes some `disable` names, and a scope the source did not name 
 nothing can name it. A declaration scope outside the design hierarchy owns none at all, for the same
 reason it gives no scope a node.
 
+Where a node does exist it is handed that cell's address at construction, which is how a `disable`
+written in another unit reaches the source: the route walks to the node and asks it, the way a
+reference walks to a node and asks it for a static's cell. This one takes no name, because a scope
+carries exactly one and reaching the scope is the whole of naming what a `disable` there ends.
+
 ### D4. The lexical owner is the naming owner
 
 A static's cell is a field of the class enclosing the body -- the same arena that holds the scope's
@@ -309,8 +314,9 @@ operand a parsed-at-compile-time one does.
 - The owned-child binding registry carries an enlarged set of head kinds; the lookup path is
   unchanged.
 - Every procedural scope contributes a class and one object per instance, built once at elaboration.
-  Once the cells moved out, that object carries nothing of its own, which is the price of there
-  being a single realization rather than two.
+  Once the cells moved out, that object holds no storage of its own -- only the names it answers
+  with and the address of what a `disable` naming it ends -- which is the price of there being a
+  single realization rather than two.
 
 ## Rejected alternatives
 

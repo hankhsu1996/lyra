@@ -146,14 +146,6 @@ struct MintedProceduralScope {
   hir::ProceduralScopeId scope;
 };
 
-// What a route ends at, and what storage that is. A published member states its
-// own type and its own storage on the signature that carries it; every other
-// target is described the way the referrer already knows it.
-struct RouteTarget {
-  hir::RouteLeaf leaf;
-  hir::TypeId type;
-};
-
 // How a reader reaches a scope elsewhere on the elaborated hierarchy: where
 // navigation starts, and the descent from there. What the route ends at is not
 // part of it, so one walk serves both a reference to storage some scope holds
@@ -763,18 +755,18 @@ class UnitLowerer {
     return it->second.scope;
   }
 
-  // The identity minted for `symbol`, if `owner` is the registry that minted
-  // it. A scope's identity indexes the registry of the declaration scope that
-  // owns it, so it means nothing against another one; a body naming a scope
-  // therefore asks whether the target is its own before it may carry the id.
-  [[nodiscard]] auto LookupProceduralScopeIn(
-      const slang::ast::Symbol& symbol, const slang::ast::Scope& owner) const
-      -> std::optional<hir::ProceduralScopeId> {
+  // The identity minted for `symbol` together with the declaration scope that
+  // minted it, or nothing where this unit minted none. A scope's identity
+  // indexes its declaration scope's registry, so it means nothing without that
+  // scope -- which is why a body naming a scope reads the two together: the
+  // owner says whether the name stays inside this artifact and, if it does not
+  // reach it directly, which scope a route to it lands on.
+  [[nodiscard]] auto LookupMintedProceduralScope(
+      const slang::ast::Symbol& symbol) const
+      -> std::optional<MintedProceduralScope> {
     const auto it = procedural_scopes_.find(&symbol);
-    if (it == procedural_scopes_.end() || it->second.owner != &owner) {
-      return std::nullopt;
-    }
-    return it->second.scope;
+    if (it == procedural_scopes_.end()) return std::nullopt;
+    return it->second;
   }
 
   [[nodiscard]] auto NextScopeFrameId() -> ScopeFrameId;
@@ -854,8 +846,17 @@ class UnitLowerer {
   // reads the entry directly after.
   [[nodiscard]] auto MakeRoutedCallableRef(
       ScopeFrameId slot_owner, ScopeRoute route, std::string name,
-      hir::ExternalCalleeInterface interface, hir::TypeId result_type)
-      -> hir::RoutedRef;
+      hir::ExternalCalleeInterface interface) -> hir::RoutedRef;
+
+  // What a `disable` naming `target` terminates, reached over a route (LRM
+  // 9.6.2, 23.6). Where this unit lays out the scope that declares `target` the
+  // route runs to that scope and carries its own identity for the block;
+  // otherwise it runs to the block's own node on the object tree, which answers
+  // for what it carries. Both seal in the resolve phase, so the statement
+  // itself walks nothing.
+  [[nodiscard]] auto MakeRoutedDisableTargetRef(
+      const WalkFrame& frame, const slang::ast::Symbol& target,
+      diag::SourceSpan span) -> diag::Result<hir::RoutedRef>;
 
   // How this reader reaches the object an instance of another unit is, given
   // how the name reached it. A port is the answer where the name went through
@@ -890,8 +891,10 @@ class UnitLowerer {
   // How this reader reaches `target`, a scope elsewhere on the elaborated
   // hierarchy: the head it anchors at and the descent from there, with each
   // step typed where this unit declares what it lands on and by name where it
-  // does not. Empty when no route reaches the scope, which is a target form
-  // this unit cannot yet express rather than a compiler-bug invariant. Port
+  // does not. Empty when no route reaches the scope, never a compiler-bug
+  // invariant -- either the walk found a target form this unit cannot yet
+  // express, or the scope sits in a namespace unit, which has no instance and
+  // so nothing on the object tree a route could walk to at all. Port
   // connections and hierarchical references share this one walk, so neither
   // reaches across an instance boundary a way the other cannot.
   [[nodiscard]] auto RouteToScope(
@@ -984,17 +987,17 @@ class UnitLowerer {
       const WalkFrame& frame, const slang::ast::ValueSymbol& value)
       -> diag::Result<std::optional<hir::ReferenceRoute>>;
 
-  // What `route` reaches, and what storage that is.
+  // What `route` reaches.
   [[nodiscard]] auto ResolveRouteTarget(
       const slang::ast::ValueSymbol& value, const ScopeRoute& route)
-      -> diag::Result<RouteTarget>;
+      -> diag::Result<hir::RouteLeaf>;
 
   // The same, when the route lands on an object of a unit that published the
   // name. Empty otherwise, which is every case where no declaration stands
   // behind the name at the point the reference is compiled.
-  [[nodiscard]] auto PublishedRouteTarget(
+  [[nodiscard]] auto LookupPublishedRouteTarget(
       const slang::ast::ValueSymbol& value, const ScopeRoute& route)
-      -> std::optional<RouteTarget>;
+      -> std::optional<hir::RouteLeaf>;
 
   // Reserves an identity for each static-lifetime local one procedural block
   // subtree of `body` declares, and recurses into the blocks nested in it.

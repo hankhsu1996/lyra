@@ -227,19 +227,24 @@ backend's gap and is recorded against it, not against the route.
 | static of a subroutine body       | ok           | **def**               | ?                | ?                    |
 | class property, through a handle  | ok           | ok                    | **def**          | ?                    |
 | function or task                  | ok           | ok                    | ok               | ok                   |
-| block or task, as a `disable`     | **ref**      | **ref**               | **ref**          | **ref**              |
+| block or task, as a `disable`     | ok           | ok                    | ok               | ok                   |
 
-**Read the rows, not the cells.** A failure is never one cell: it is a whole row, because what a
-route reaches is stated by its leaf alone and the head and steps that got there are the same ones
-every other kind uses. So a kind that fails fails on every route, and a kind that works works on all
-of them -- which is why closing the callable row closed four cells at once, and why the one row
-still open is one missing thing rather than four. A `disable` reaches its target only where the
-route to it is empty, which is the zero case of the row and not a fifth answer.
+**Read the rows, not the cells.** A gap is normally a whole row, because what a route reaches is
+stated by its leaf alone and the head and steps that got there are the same ones every other kind
+uses. So a kind that fails fails on every route, and a kind that works works on all of them -- which
+is why closing the callable row closed four cells at once, and why closing the `disable` row after
+it needed only the leaves the route ends at.
 
-**Two cells are defects rather than gaps**, and they are not on those rows. A static of a subroutine
-body crashes where a static of a named block resolves, though LRM 23.9 puts a task on the path
-exactly as it puts a block; and a class property reached out of the unit names a type the reader's
-artifact was never given, which no diagnostic reports. Both are D12 below.
+**The one cell that is a cell** is a net out of this unit, and it is one because the refusal is on
+the route's side rather than the leaf's: what answers a name past this unit's layout is a cell, and
+a net's drivers fold into a resolution node instead. That is D11 below, and it is the shape to look
+for before believing any other single cell -- a lone failure is either this kind of thing or a
+misreading of the row.
+
+**Two cells are defects rather than gaps.** A static of a subroutine body crashes where a static of
+a named block resolves, though LRM 23.9 puts a task on the path exactly as it puts a block; and a
+class property reached out of the unit names a type the reader's artifact was never given, which no
+diagnostic reports. Both are D12 below.
 
 **A `?` is work, not a blank.** It marks a cell nobody has run, and the corpus is what turns one
 into a letter -- so a `?` is a case to write before it is a feature to build.
@@ -254,7 +259,8 @@ into a letter -- so a `?` is a case to write before it is a feature to build.
       value, a named event triggered and waited on, a static a named block declares, a static a
       static task declares, a static a named block inside a static task declares, a property reached
       through a class handle, a member of a generate block, and an element of an instance array. The
-      two the language names and this stage does not carry each have their own item below.
+      two the language names beside those -- naming a subroutine, and naming what a `disable` ends
+      -- have their own items below.
 
 - [x] D10 -- A subroutine a hierarchical name enables (LRM 23.6, 23.8.1). A call is the same route a
       read of a declaration takes, ending at the callable instead of at storage, so every spelling a
@@ -276,8 +282,30 @@ into a letter -- so a `?` is a case to write before it is a feature to build.
       The execution backend refuses the answered-by-name arm: a call through a code address is not
       yet something it makes. The promised arm and every intra-unit call run there unchanged.
 
+- [x] D13 -- A block or task a `disable` names elsewhere on the hierarchy (LRM 9.6.2, 23.6). What
+      the statement ends is selected by static declaration identity, so it may sit in another
+      process and in another instance, and the name that reaches it is the same route a read of a
+      declaration there takes: into a child instance and through an instance-array element, down
+      into a generate block, out to an enclosing module, across to a sibling of one, through an
+      absolute path, and through an interface port. A block inside a task, and the task itself, are
+      each targets on that route, and ending one leaves everything the name did not reach running --
+      a sibling instance of the same module, another element of the same array, another iteration of
+      the same generate loop.
+
+      What a `disable` ends is not something any unit publishes, so a name reaching one past a
+      signature ends at the block's own node on the object tree and that node answers for what it
+      carries. It answers without being named anything further, because a scope has exactly one
+      activity to end and reaching the scope is the whole of naming it. Both backends carry this,
+      the difference from the enable above being what the route seals: an address either backend can
+      hold, rather than a code address reached at run time.
+
+      A target the writing body's own declaration scope declares stays what it was -- an identity
+      into that scope's own registry, with no route at all -- which is also the only form available
+      inside a class method or a package subroutine, neither of them standing on the hierarchy a
+      route walks.
+
 - [ ] D12 -- Two cells of the table that answer wrongly rather than refusing, both found by running
-      the corpus rather than by a design reading, and neither on the two open rows.
+      the corpus rather than by a design reading.
 
       A static-lifetime local of a **subroutine body** reached by a hierarchical name crashes, where
       the same declaration inside a named block resolves. LRM 23.9 puts a task and a function on the

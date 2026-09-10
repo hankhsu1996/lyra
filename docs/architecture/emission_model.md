@@ -102,10 +102,12 @@ the design.
    owned children, and its subroutines, each in its own namespace -- and the base SDK answers a
    by-name query from those registrations. The unit never inspects who asks, and the dispatch is one
    generic scan, not a per-unit synthesized branch. What such a query answers with follows from what
-   was named: a cell, a scope, or an entry to call. The referrer's emission consumes those
-   registrations through one route execution and stores the sealed endpoint; it never embeds another
-   unit's layout. A name on the signature needs none of this, because the referrer already compiles
-   against it.
+   was named: a cell, a scope, or an entry to call. One thing a node answers for is not named at
+   all: a scope carries exactly one activity a `disable` can end, so reaching the node is the whole
+   of asking for it and no namespace arises. The referrer's emission consumes those registrations
+   through one route execution and stores the sealed endpoint; it never embeds another unit's
+   layout. A name on the signature needs none of this, because the referrer already compiles against
+   it.
 7. **A change re-emits exactly the referrers whose consumed signature changed.** A change confined
    to a unit's bodies changes no signature and re-emits no referrer. A change to a signature
    re-emits every unit that consumes it, which is the dependency being real rather than the

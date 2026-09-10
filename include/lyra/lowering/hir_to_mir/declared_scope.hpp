@@ -61,7 +61,7 @@ struct ScopeNameNode {
 // state is owned.
 struct DeclaredScope {
   std::optional<ScopeNameNode> name_node;
-  std::optional<StaticStorageHome> cancellation_target;
+  std::optional<StaticStorageHome> disable_target;
 
   // The handle a body reads off its `self` to reach this scope's name node.
   [[nodiscard]] auto NameBorrowedHandle() const -> std::optional<mir::FieldId> {
@@ -102,8 +102,7 @@ using DeclaredScopes = base::Translation<hir::ProceduralScopeId, DeclaredScope>;
     }
     declared.push_back(
         DeclaredScope{
-            .name_node = std::nullopt,
-            .cancellation_target = std::move(target)});
+            .name_node = std::nullopt, .disable_target = std::move(target)});
   }
   return {scopes.size(), std::move(declared)};
 }

@@ -1339,17 +1339,28 @@ class HirDumper {
             },
             [](const OpaqueCallableLeaf& l) {
               return std::format(" . \"{}\"()", l.name);
-            }},
+            },
+            [](const DisableTargetLeaf& l) {
+              return std::format(" . ProceduralScope[{}]", l.scope.value);
+            },
+            [](const OpaqueDisableTargetLeaf&) { return std::string{}; }},
         r.leaf);
     const std::string holds = std::visit(
         Overloaded{
             [](const EndpointCell& c) {
-              return FormatPublishedStorage(c.storage);
+              return std::format(
+                  " : Type[{}]{}", c.type.value,
+                  FormatPublishedStorage(c.storage));
             },
-            [](const EndpointObject&) { return std::string{" object"}; },
-            [](const EndpointEntry&) { return std::string{" entry"}; }},
+            [](const EndpointObject& o) {
+              return std::format(" : Type[{}] object", o.type.value);
+            },
+            [](const EndpointEntry&) { return std::string{" : entry"}; },
+            [](const EndpointDisableTarget&) {
+              return std::string{" : disable target"};
+            }},
         EndpointOf(r.leaf));
-    return std::format("{} : Type[{}]{}", out, r.type.value, holds);
+    return out + holds;
   }
 
   void DumpScope(const StructuralScope& s) {
@@ -2278,10 +2289,19 @@ class HirDumper {
               Line(std::format("Stmt[{}] DisableForkStmt", id.value));
             },
             [&](const DisableStmt& d) {
+              const std::string target = std::visit(
+                  Overloaded{
+                      [](const DirectDisableTarget& t) {
+                        return std::format(
+                            "ProceduralScope[{}]", t.scope.value);
+                      },
+                      [](const RoutedDisableTarget& t) {
+                        return std::format("RoutedRef[{}]", t.target.id.value);
+                      }},
+                  d.target);
               Line(
                   std::format(
-                      "Stmt[{}] DisableStmt target={}", id.value,
-                      d.target.value));
+                      "Stmt[{}] DisableStmt target={}", id.value, target));
             },
         },
         s.data);

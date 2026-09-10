@@ -18,6 +18,8 @@
 
 namespace lyra::runtime {
 
+class CancellationTarget;
+
 // A node in the one canonical object tree. Every constructed
 // SystemVerilog scope -- a module instance, a generate block, the
 // implicit `$root` -- is a Scope. It carries the scope's structural
@@ -78,6 +80,13 @@ class Scope {
   // string literal.
   void RegisterSignal(std::string_view name, void* address);
 
+  // Records, during construction, what a `disable` naming this scope terminates
+  // (LRM 9.6.2). The cell lives wherever the scope's other static-lifetime
+  // state lives, so what the scope keeps is its address. A scope has exactly
+  // one, which is why this takes no name: reaching the scope is the whole of
+  // naming what a `disable` there ends.
+  void RegisterDisableTarget(CancellationTarget* target);
+
   // Wires `child` into this scope's physical containment edge: sets
   // `child.parent_` to `this` and places `child` in the attached-children
   // relation (used by elaboration walks, dump, ForEachChild, and the
@@ -96,24 +105,26 @@ class Scope {
     return !segment_.BaseName().empty();
   }
 
-  // What this scope answers a name with: the cell of a signal it registered,
-  // the owned child at that name and indices, or the entry of a subroutine it
-  // declares, its prototype erased. A cross-unit referrer reaches a target by
-  // name because it knows the target's type but not its layout; the owner,
-  // which knows its layout, answered at construction by registering it.
-  // Resolution runs once at construction, never on the simulation path.
+  // What this scope answers with: the cell of a signal it registered, the owned
+  // child at that name and indices, the entry of a subroutine it declares with
+  // its prototype erased, or what a `disable` naming this scope terminates. A
+  // cross-unit referrer reaches a target this way because it knows the target's
+  // type but not its layout; the owner, which knows its layout, answered at
+  // construction by registering it. Resolution runs once at construction, never
+  // on the simulation path.
   //
-  // All three throw when the scope answers no such name. A name that reaches
-  // here was resolved to a declaration of this scope before anything was
-  // emitted for it, so absence is not a state a legal program reaches -- and
-  // handing back nothing instead would put the failure at whatever dereferences
-  // the answer, which names neither the scope nor the name.
+  // All four throw where the scope has no such answer. What reaches here was
+  // resolved to a declaration of this scope before anything was emitted for it,
+  // so absence is not a state a legal program reaches -- and handing back
+  // nothing instead would put the failure at whatever dereferences the answer,
+  // which names neither the scope nor what was asked of it.
   [[nodiscard]] auto FindSignal(std::string_view name) -> void*;
   [[nodiscard]] auto FindChild(
       std::string_view name, std::span<const lyra::value::PackedArray> indices)
       -> Scope*;
   [[nodiscard]] auto FindSubroutine(std::string_view name)
       -> ErasedScopeCallable;
+  [[nodiscard]] auto FindDisableTarget() -> CancellationTarget*;
 
   // Walks the enclosing chain (starting at `this`) and at each level scans
   // the level's children for one whose canonical instance name plus indices
@@ -213,6 +224,10 @@ class Scope {
   // Filled during construction; scanned only at construction-time
   // resolution, never on the simulation path.
   std::vector<SignalEntry> signals_;
+  // Borrowed. What a `disable` naming this scope terminates (LRM 9.6.2), set
+  // during construction by whoever owns the cell. Null on a scope the source
+  // named nothing, which no hierarchical name reaches either.
+  CancellationTarget* disable_target_ = nullptr;
   // LRM 18.14.1 puts one on each module, interface, and program instance. A
   // generate scope is none of those and nothing draws from the one it carries.
   InitializationRng initialization_seeds_;

@@ -727,8 +727,10 @@ auto EntryNamingOf(support::BuiltinFn fn) -> EntryNaming {
     case support::BuiltinFn::kResolveVisibleChild:
     case support::BuiltinFn::kRegisterSignal:
     case support::BuiltinFn::kAddOwnedChild:
+    case support::BuiltinFn::kRegisterDisableTarget:
     case support::BuiltinFn::kFindSignal:
     case support::BuiltinFn::kFindChild:
+    case support::BuiltinFn::kFindDisableTarget:
     case support::BuiltinFn::kForkWaitAll:
     case support::BuiltinFn::kForkWaitFirst:
     case support::BuiltinFn::kSpawnAll:

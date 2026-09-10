@@ -280,10 +280,10 @@ void EmitInstanceMemberConstruction(
 }
 
 // Allocates one MIR member per cross-unit reference. Every reference -- upward
-// or downward, `$root`-anchored or named -- takes the same borrowed-pointer
-// slot, and its pointee is the cell the target's own storage says it holds, so
-// a read or a drive reaches the right access protocol. The route that fills
-// each slot runs in the resolve phase, after the whole object tree exists.
+// or downward, `$root`-anchored or named -- takes one slot, typed by what the
+// route it seals ends at, so a body reaching through it meets the target's own
+// access protocol and no other. The route that fills each slot runs in the
+// resolve phase, after the whole object tree exists.
 auto DeclareRoutedRefSlots(StructuralScopeLowerer& lowerer, ClassShape& shape)
     -> base::Translation<hir::RoutedRefId, RoutedRefMeta> {
   UnitLowerer& unit_lowerer = lowerer.Owner();
@@ -292,11 +292,9 @@ auto DeclareRoutedRefSlots(StructuralScopeLowerer& lowerer, ClassShape& shape)
   slots.reserve(hir_scope.routed_refs.size());
   for (const auto& cu : hir_scope.routed_refs) {
     std::string member_name = "ep" + std::to_string(slots.size());
-    const hir::Endpoint holds = hir::EndpointOf(cu.recipe.leaf);
-    // What the slot is typed by is what the endpoint holds. A cell and an
-    // object are each reached by a pointer to them; an entry is a code address,
-    // which is one already.
-    const mir::TypeId reached = unit_lowerer.TranslateType(cu.recipe.type);
+    // What the slot is typed by is what the endpoint holds. A cell, an object,
+    // and a disable target are each reached by a pointer to them; an entry is a
+    // code address, which is one already.
     mir::TypePool& types = unit_lowerer.Unit().types;
     const auto borrowed = [&](mir::TypeId pointee) {
       return types.Intern(
@@ -313,14 +311,21 @@ auto DeclareRoutedRefSlots(StructuralScopeLowerer& lowerer, ClassShape& shape)
                     "DeclareRoutedRefSlots: an upward routed reference to a "
                     "net is not yet supported");
               }
-              return borrowed(
-                  unit_lowerer.MemberCellType(reached, cell.storage));
+              return borrowed(unit_lowerer.MemberCellType(
+                  unit_lowerer.TranslateType(cell.type), cell.storage));
             },
-            [&](const hir::EndpointObject&) { return borrowed(reached); },
+            [&](const hir::EndpointObject& object) {
+              return borrowed(unit_lowerer.TranslateType(object.type));
+            },
             [&](const hir::EndpointEntry&) {
               return mir::ErasedFunction(types);
+            },
+            [&](const hir::EndpointDisableTarget&) {
+              return borrowed(types.Intern(
+                  mir::Type{mir::RuntimeLibraryType{
+                      .kind = mir::RuntimeLibraryKind::kCancellationTarget}}));
             }},
-        holds);
+        hir::EndpointOf(cu.recipe.leaf));
     slots.push_back(
         RoutedRefMeta{
             .target = shape.fields.Add(
@@ -664,6 +669,21 @@ auto MaterializeLeaf(
             .type = slot_type});
   }
 
+  // What a `disable` terminates is answered by the scope the steps reached,
+  // unnamed (LRM 9.6.2, 23.9).
+  if (std::holds_alternative<hir::OpaqueDisableTargetLeaf>(leaf)) {
+    return block.exprs.Add(
+        mir::Expr{
+            .data =
+                mir::CallExpr{
+                    .callee =
+                        mir::Direct{
+                            .target = support::BuiltinFn::kFindDisableTarget,
+                            .receiver = receiver.expr},
+                    .arguments = {}},
+            .type = slot_type});
+  }
+
   if (const auto* opaque = std::get_if<hir::OpaqueLeaf>(&leaf)) {
     const mir::TypeId void_ptr_type = unit.types.Intern(
         mir::Type{mir::PointerType{
@@ -693,6 +713,12 @@ auto MaterializeLeaf(
         scope.TranslateStructuralDataObject(
             hir::StructuralHops{0}, object->object),
         slot_type);
+  }
+
+  if (const auto* target = std::get_if<hir::DisableTargetLeaf>(&leaf)) {
+    return AddressTypedLeaf(
+        unit_lowerer, block, receiver, scope.ClassId(),
+        scope.DisableTargetField(target->scope), slot_type);
   }
 
   const auto& static_leaf = std::get<hir::ProceduralStaticLeaf>(leaf);
@@ -870,9 +896,10 @@ void InstallInterfacePortConnection(
   auto& types = unit_lowerer.Unit().types;
   // What the member holds is a handle on each object it stands for, which is
   // the same function of its declared type the declaring unit built it from.
+  const hir::TypeId port_type =
+      std::get<hir::EndpointCell>(hir::EndpointOf(conn.endpoint.leaf)).type;
   const mir::TypeId member_type = unit_lowerer.MemberCellType(
-      unit_lowerer.TranslateType(conn.endpoint.type),
-      hir::BorrowedObjectStorage{});
+      unit_lowerer.TranslateType(port_type), hir::BorrowedObjectStorage{});
   const mir::TypeId slot_type = types.Intern(
       mir::Type{mir::PointerType{
           .pointee = member_type,
@@ -887,14 +914,15 @@ void InstallInterfacePortConnection(
   for (const hir::RoutedPathRecipe& peer : conn.peers) {
     const mir::TypeId handle_type = types.Intern(
         mir::Type{mir::PointerType{
-            .pointee = unit_lowerer.TranslateType(peer.type),
+            .pointee = unit_lowerer.TranslateType(
+                std::get<hir::EndpointObject>(hir::EndpointOf(peer.leaf)).type),
             .ownership = mir::PointerOwnership::kBorrowed}});
     handles.push_back(
         BuildRouteValue(lowerer, resolve_frame, peer, handle_type));
   }
   std::size_t next = 0;
-  const mir::ExprId value = ComposeBoundObjects(
-      unit_lowerer, block, conn.endpoint.type, handles, next);
+  const mir::ExprId value =
+      ComposeBoundObjects(unit_lowerer, block, port_type, handles, next);
   block.AppendStmt(
       mir::ExprStmt{
           .expr = block.exprs.Add(
@@ -951,7 +979,8 @@ auto InstallPortConnections(
           throw InternalError(
               "InstallPortConnections: a ref port reaches its child downward");
         }
-        const mir::TypeId value_type = unit_lowerer.TranslateType(recipe.type);
+        const mir::TypeId value_type = unit_lowerer.TranslateType(
+            std::get<hir::EndpointCell>(hir::EndpointOf(recipe.leaf)).type);
         const mir::TypeId ref_type = unit_lowerer.Unit().types.Intern(
             mir::Type{mir::RefType{
                 .pointee = value_type,
@@ -1414,7 +1443,7 @@ auto StructuralScopeLowerer::DeclareShape() -> diag::Result<mir::ClassId> {
                                         .class_id = node_class}}),
                                 .ownership =
                                     mir::PointerOwnership::kBorrowed}})})},
-        .cancellation_target = std::nullopt};
+        .disable_target = std::nullopt};
 
     // What a `disable` of this scope invalidates (LRM 9.6.2). Its targets are
     // the blocks and tasks a name reaches, so a scope the source named owns one
@@ -1423,7 +1452,7 @@ auto StructuralScopeLowerer::DeclareShape() -> diag::Result<mir::ClassId> {
     // hierarchy is replicated with its instance, so the cell is one per
     // instance, shared by every activation of the scope.
     if (scope.source_name.has_value()) {
-      node.cancellation_target = DeclareStaticCell(
+      node.disable_target = DeclareStaticCell(
           InstanceStorage{.fields = &shape.fields},
           std::format("{}__cancel_{}", segment, scope_id.value),
           cancellation_target_type);
@@ -2088,6 +2117,49 @@ auto StructuralScopeLowerer::PopulateBodies(WalkFrame parent_frame)
   }
   for (const auto& p : hir_scope.processes) {
     build_name_tree(build_name_tree, p.body.root_scope, std::nullopt);
+  }
+
+  // What a `disable` naming a block or task terminates is a cell on this
+  // object, placed by the rule that places every other piece of static-lifetime
+  // state, while what a name reaches is the scope itself (LRM 9.6.2). So the
+  // scope's node keeps the address, and a route that walked to that node asks
+  // it for the target the way it asks for a static's cell.
+  const mir::TypeId disable_target_ptr_type = unit_lowerer.Unit().types.Intern(
+      mir::Type{mir::PointerType{
+          .pointee = unit_lowerer.Unit().types.Intern(
+              mir::Type{mir::RuntimeLibraryType{
+                  .kind = mir::RuntimeLibraryKind::kCancellationTarget}}),
+          .ownership = mir::PointerOwnership::kBorrowed}});
+  for (const hir::ProceduralScopeId scope_id :
+       hir_scope.procedural_scopes.Ids()) {
+    const DeclaredScope& declared = scopes_.Get(scope_id);
+    if (!declared.disable_target.has_value()) continue;
+    const mir::FieldId field = DisableTargetField(scope_id);
+    const mir::ExprId cell = ctor_block.exprs.Add(
+        mir::MakeFieldAccessExpr(
+            self_read(), mir::FieldTarget{.owner = class_id_, .slot = field},
+            mir_class.fields.Get(field).type));
+    const mir::ExprId addr = ctor_block.exprs.Add(
+        mir::MakeAddressOfExpr(cell, disable_target_ptr_type));
+    const mir::FieldId borrowed_handle = declared.name_node->borrowed_handle;
+    const mir::ExprId node = ctor_block.exprs.Add(
+        mir::MakeFieldAccessExpr(
+            self_read(),
+            mir::FieldTarget{.owner = class_id_, .slot = borrowed_handle},
+            mir_class.fields.Get(borrowed_handle).type));
+    ctor_block.AppendStmt(
+        mir::ExprStmt{
+            .expr = ctor_block.exprs.Add(
+                mir::Expr{
+                    .data =
+                        mir::CallExpr{
+                            .callee =
+                                mir::Direct{
+                                    .target = support::BuiltinFn::
+                                        kRegisterDisableTarget,
+                                    .receiver = node},
+                            .arguments = {addr}},
+                    .type = void_type})});
   }
 
   // A static-lifetime local is a cell on this object, but the name reaching it

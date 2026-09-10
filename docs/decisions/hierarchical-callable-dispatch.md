@@ -105,9 +105,24 @@ entries a scope carries -- plain native functions over the receiver -- are not t
 ### D5. A cancellation target is another leaf, not a second mechanism
 
 `disable` naming a block or task elsewhere on the hierarchy (LRM 9.6.2) reaches the same route to a
-scope and ends at that scope's cancellation target. It gains a leaf beside the callable's and shares
-everything else. What a `disable` invalidates and what leaving a target does are settled by
+scope and ends at that scope's cancellation target, sharing the head, the steps and the sealing with
+every other route. What a `disable` invalidates and what leaving a target does are settled by
 `disable-scope-invalidation.md` and do not move.
+
+What ends the route is classified by D2's question, which for this family has two answers rather
+than three, so it is two leaves and not one. Where this artifact lays out the scope that declares
+the block, the leaf carries that scope's own identity for it and the route runs to the declaring
+scope -- the blocks between are where the target sits, not steps of their own, exactly as they are
+for a static declared in one of them. Where it does not, the route runs to the block's own node on
+the object tree and the leaf carries nothing at all: no unit publishes what a `disable` ends, and a
+scope has exactly one, so reaching the node is the whole of naming it and no name crosses. There is
+no published arm, because publishing is what the middle answer means and nothing is published here.
+
+Both leaves seal the same thing -- the target's address -- which is what the statement acts on, and
+is why the two arms do not divide the statement. A route sealing the scope instead would leave the
+statement deriving the target from it, and would have nothing to offer the one form that has no node
+to reach: a target a class method or a package subroutine declares, where the identity alone is the
+whole reference.
 
 This is what makes the statement's reach one question rather than two: what a `disable` can name is
 then decided by the route to the target, the way what a read can name already is, rather than by
@@ -157,7 +172,10 @@ which side of the reader's own declaration chain the target happens to sit on.
   sibling generate block, from a loop-generate iteration and through an absolute path -- all
   intra-unit and all typed, because the route to the block is the one a value read already takes.
 - A subroutine and a `disable` target reached by a hierarchical name are not separate gaps: one
-  route serves both, so neither can be finished without the other being one leaf away.
+  route serves both, and closing the second needed the leaves alone.
+- What a `disable` names runs on both backends, where a call past a signature runs on one. The
+  difference is the endpoint: an address is something either backend can hold, and a code address
+  reached at run time is not.
 - Every scope publishes every subroutine it declares, because a unit compiled alone cannot know
   which of them a name will reach. The cost is one static record and one entry per subroutine, in
   every design, whether or not anything names one.

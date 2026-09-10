@@ -547,8 +547,7 @@ auto LowerObjectSubroutineCall(
   const hir::RoutedRef receiver = unit_lowerer.MakeRoutedObjectRef(
       frame.Current(), std::move(route), scope_type);
   const hir::RoutedRef entry = unit_lowerer.MakeRoutedCallableRef(
-      frame.Current(), entry_route, std::string{sym.name}, *interface,
-      *result_type);
+      frame.Current(), entry_route, std::string{sym.name}, *interface);
   return hir::Expr{
       .type = *result_type,
       .data =

@@ -138,21 +138,24 @@ struct VisibleChildHead {
 
 using RouteHead = std::variant<InUnitHead, RootHead, VisibleChildHead>;
 
-// The storage a route ends at. A data object declared by the scope the steps
-// land on, or a static-lifetime local of one of that scope's bodies, which a
-// named block puts on the hierarchical path (LRM 23.9) -- the blocks between
-// are part of where the storage sits, not steps of their own, so the leaf
-// identity fixes the whole procedural descent. A leaf in another unit takes one
-// of the forms below instead: against that unit's signature when it published
-// the name, and against the runtime when it did not.
-// Each data leaf states the storage its target holds, because that is what the
-// endpoint reaching it points at and no consumer below can recover it: the
-// declaration is in a scope the route walks to rather than one the reader can
-// index, and past a signature there is no declaration at all. A leaf reaching
-// something that is not data states none.
+// What a route ends at. A data object declared by the scope the steps land on,
+// or a static-lifetime local of one of that scope's bodies, which a named block
+// puts on the hierarchical path (LRM 23.9) -- the blocks between are part of
+// where the storage sits, not steps of their own, so the leaf identity fixes
+// the whole procedural descent. A leaf in another unit takes one of the forms
+// below instead: against that unit's signature when it published the name, and
+// against the runtime when it did not.
+//
+// Each leaf states everything the endpoint reaching it needs and nothing more.
+// A leaf that ends at data states the storage its target holds and the data
+// type behind it, because no consumer below can recover either: the declaration
+// is in a scope the route walks to rather than one the reader can index, and
+// past a signature there is no declaration at all. A leaf that ends at
+// something other than data states neither.
 struct StructuralDataObjectLeaf {
   StructuralDataObjectId object;
   PublishedStorage storage;
+  TypeId type;
 
   auto operator==(const StructuralDataObjectLeaf&) const -> bool = default;
 };
@@ -165,6 +168,7 @@ using ProceduralBodyRef = std::variant<ProcessId, StructuralSubroutineId>;
 struct ProceduralStaticLeaf {
   ProceduralBodyRef body;
   ProceduralVarId var;
+  TypeId type;
 
   auto operator==(const ProceduralStaticLeaf&) const -> bool = default;
 };
@@ -176,6 +180,7 @@ struct SignatureMemberLeaf {
   ExternalUnitObjectId object;
   PublishedMemberId member;
   PublishedStorage storage;
+  TypeId type;
 
   auto operator==(const SignatureMemberLeaf&) const -> bool = default;
 };
@@ -184,6 +189,8 @@ struct SignatureMemberLeaf {
 // it. An interface port names a scope and not a value (LRM 25.3), so what a
 // connection to one reaches is the instance itself.
 struct ScopeLeaf {
+  TypeId type;
+
   auto operator==(const ScopeLeaf&) const -> bool = default;
 };
 
@@ -193,6 +200,7 @@ struct ScopeLeaf {
 struct OpaqueLeaf {
   std::string name;
   PublishedStorage storage;
+  TypeId type;
 
   auto operator==(const OpaqueLeaf&) const -> bool = default;
 };
@@ -212,64 +220,98 @@ struct OpaqueCallableLeaf {
   auto operator==(const OpaqueCallableLeaf&) const -> bool = default;
 };
 
+// The route ends at what a `disable` naming a block or task terminates (LRM
+// 9.6.2), where this artifact lays out the scope that declares it. The scope's
+// identity indexes the registry of the structural scope the steps land on, so
+// the blocks between it and that scope are where the target sits rather than
+// steps of their own -- the same reading a static of one of those blocks takes.
+struct DisableTargetLeaf {
+  ProceduralScopeId scope;
+
+  auto operator==(const DisableTargetLeaf&) const -> bool = default;
+};
+
+// The route ends at the same thing past a signature. No unit publishes what a
+// `disable` terminates, so the steps reach the block's own node on the object
+// tree and that node answers for the target it carries (LRM 23.9). It needs no
+// name, because a scope has exactly one and the route already reached it.
+struct OpaqueDisableTargetLeaf {
+  auto operator==(const OpaqueDisableTargetLeaf&) const -> bool = default;
+};
+
 using RouteLeaf = std::variant<
     StructuralDataObjectLeaf, ProceduralStaticLeaf, SignatureMemberLeaf,
-    ScopeLeaf, OpaqueLeaf, OpaqueCallableLeaf>;
+    ScopeLeaf, OpaqueLeaf, OpaqueCallableLeaf, DisableTargetLeaf,
+    OpaqueDisableTargetLeaf>;
 
-// A cell of the storage the declaring unit says its target is.
+// A cell of the storage the declaring unit says its target is, holding a value
+// of `type`.
 struct EndpointCell {
   PublishedStorage storage;
+  TypeId type;
 };
 
 // The object the route landed on, which is reached by a pointer to it with no
 // cell in between.
-struct EndpointObject {};
+struct EndpointObject {
+  TypeId type;
+};
 
 // The entry a scope answered a callable's name with, which is a code address
 // and so is already what a caller holds.
 struct EndpointEntry {};
 
+// What a `disable` naming the scope the route reached terminates (LRM 9.6.2).
+// It is neither data nor an object of the design, so it has no data type: what
+// a route ending here holds follows from the leaf alone.
+struct EndpointDisableTarget {};
+
 // What an endpoint reaching this leaf holds. Every consumer of a route asks
-// this and nothing else about where it ends, so the three answers are stated
-// once here rather than re-derived from the leaf at each of them.
-using Endpoint = std::variant<EndpointCell, EndpointObject, EndpointEntry>;
+// this and nothing else about where it ends, so the answers are stated once
+// here rather than re-derived from the leaf at each of them.
+using Endpoint = std::variant<
+    EndpointCell, EndpointObject, EndpointEntry, EndpointDisableTarget>;
 
 [[nodiscard]] inline auto EndpointOf(const RouteLeaf& leaf) -> Endpoint {
   return std::visit(
       Overloaded{
           [](const StructuralDataObjectLeaf& l) -> Endpoint {
-            return EndpointCell{.storage = l.storage};
+            return EndpointCell{.storage = l.storage, .type = l.type};
           },
           [](const SignatureMemberLeaf& l) -> Endpoint {
-            return EndpointCell{.storage = l.storage};
+            return EndpointCell{.storage = l.storage, .type = l.type};
           },
           [](const OpaqueLeaf& l) -> Endpoint {
-            return EndpointCell{.storage = l.storage};
+            return EndpointCell{.storage = l.storage, .type = l.type};
           },
           // A static-lifetime local is a variable wherever it sits (LRM 6.21),
           // so it needs no field to say so.
-          [](const ProceduralStaticLeaf&) -> Endpoint {
-            return EndpointCell{.storage = VariableStorage{}};
+          [](const ProceduralStaticLeaf& l) -> Endpoint {
+            return EndpointCell{.storage = VariableStorage{}, .type = l.type};
           },
-          [](const ScopeLeaf&) -> Endpoint { return EndpointObject{}; },
-          [](const OpaqueCallableLeaf&) -> Endpoint {
-            return EndpointEntry{};
+          [](const ScopeLeaf& l) -> Endpoint {
+            return EndpointObject{.type = l.type};
+          },
+          [](const OpaqueCallableLeaf&) -> Endpoint { return EndpointEntry{}; },
+          [](const DisableTargetLeaf&) -> Endpoint {
+            return EndpointDisableTarget{};
+          },
+          [](const OpaqueDisableTargetLeaf&) -> Endpoint {
+            return EndpointDisableTarget{};
           }},
       leaf);
 }
 
 // How to navigate from a scope to a target elsewhere on the object tree:
 // `head` is where navigation starts, `steps` carries the descent from there,
-// and `leaf` is the storage it ends at. `type` is the slang-resolved leaf data
-// type. This is the route alone. Whether the route materializes a persistent
-// endpoint slot (a value reference read on the hot path) or is resolved once
-// for a one-shot bind (a `ref` port alias) is the consumer's
-// endpoint-capability decision, not a property of the route.
+// and `leaf` is what it ends at. This is the route alone. Whether the route
+// materializes a persistent endpoint slot (a value reference read on the hot
+// path) or is resolved once for a one-shot bind (a `ref` port alias) is the
+// consumer's endpoint-capability decision, not a property of the route.
 struct RoutedPathRecipe {
   RouteHead head;
   std::vector<PathStep> steps;
   RouteLeaf leaf;
-  TypeId type;
 
   auto operator==(const RoutedPathRecipe&) const -> bool = default;
 };

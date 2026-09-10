@@ -373,6 +373,8 @@ auto DefineRuntimeAbi(llvm::orc::LLJIT& jit)
   add("lyra_rt_sequence_element", &lyra_rt_sequence_element);
   add("lyra_rt_register_signal", &lyra_rt_register_signal);
   add("lyra_rt_find_signal", &lyra_rt_find_signal);
+  add("lyra_rt_register_disable_target", &lyra_rt_register_disable_target);
+  add("lyra_rt_find_disable_target", &lyra_rt_find_disable_target);
   add("lyra_rt_resolve_visible_child", &lyra_rt_resolve_visible_child);
   add("lyra_rt_find_child", &lyra_rt_find_child);
   add("lyra_rt_packed_cell_alloc", &lyra_rt_packed_cell_alloc);

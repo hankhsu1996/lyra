@@ -343,11 +343,11 @@ auto ProcessLowerer::Run(const hir::SubroutineDecl& src)
   // still produced (the LRM leaves a disabled task's output values
   // unspecified). A function cannot be named and never suspends, so it needs
   // no region.
-  const std::optional<StaticStorageHome> cancel_target =
+  const std::optional<StaticStorageHome> disable_target =
       owner_->Unit().types.Get(result_type).Is<mir::CoroutineType>()
-          ? RootScope().cancellation_target
+          ? RootScope().disable_target
           : std::nullopt;
-  if (cancel_target.has_value()) {
+  if (disable_target.has_value()) {
     // The region brackets the whole body, so every activation of the task is
     // inside the target for as long as it runs -- which is what makes one
     // `disable` reach them all (LRM 9.6.2).
@@ -356,7 +356,7 @@ auto ProcessLowerer::Run(const hir::SubroutineDecl& src)
     auto lowered = LowerStraightLineBodyInto(*this, inner_frame);
     if (!lowered) return std::unexpected(std::move(lowered.error()));
     code.body->AppendStmt(BuildCancellableRegion(
-        *this, body_frame, std::move(body_block), *cancel_target));
+        *this, body_frame, std::move(body_block), *disable_target));
   } else {
     auto lowered = LowerStraightLineBodyInto(*this, body_frame);
     if (!lowered) return std::unexpected(std::move(lowered.error()));

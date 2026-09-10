@@ -50,6 +50,10 @@ void Scope::RegisterSignal(std::string_view name, void* address) {
   signals_.push_back(SignalEntry{.name = name, .address = address});
 }
 
+void Scope::RegisterDisableTarget(CancellationTarget* target) {
+  disable_target_ = target;
+}
+
 auto Scope::FindSignal(std::string_view name) -> void* {
   for (const SignalEntry& signal : signals_) {
     if (signal.name == name) {
@@ -74,6 +78,17 @@ auto Scope::FindSubroutine(std::string_view name) -> ErasedScopeCallable {
     return entry;
   }
   throw SimulationError(NoSuchName("subroutine", name));
+}
+
+auto Scope::FindDisableTarget() -> CancellationTarget* {
+  if (disable_target_ != nullptr) {
+    return disable_target_;
+  }
+  throw SimulationError(
+      std::format(
+          "hierarchical name reaches '{}', which the source named nothing, so "
+          "no disable can end it (LRM 9.6.2)",
+          HierarchicalPath().CStr()));
 }
 
 auto Scope::LookupChild(

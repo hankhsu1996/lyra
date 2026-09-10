@@ -491,6 +491,11 @@ auto lyra_rt_sequence_element(const void* sequence, std::int64_t index)
 void lyra_rt_register_signal(void* self, const void* name, void* cell);
 auto lyra_rt_find_signal(void* self, const void* name) -> void*;
 
+// Publishes what a `disable` naming this scope terminates, and reads it back
+// (LRM 9.6.2). Neither carries a name, a scope having exactly one.
+void lyra_rt_register_disable_target(void* self, void* target);
+auto lyra_rt_find_disable_target(void* self) -> void*;
+
 // Observable storage cell operations, reached through the cell's address. The
 // entry names the cell's value domain; the runtime never inspects a type tag.
 // A read yields a value of its own rather than a view of the cell's contents,

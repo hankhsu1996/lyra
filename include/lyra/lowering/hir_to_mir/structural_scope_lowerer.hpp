@@ -337,6 +337,23 @@ class StructuralScopeLowerer {
     return scopes_;
   }
 
+  // The field carrying what a `disable` naming one of this scope's procedural
+  // scopes terminates (LRM 9.6.2). A scope of the design hierarchy is
+  // replicated with its instance, so the cell is this class's own field and a
+  // referrer standing on this object is already standing on it.
+  [[nodiscard]] auto DisableTargetField(hir::ProceduralScopeId scope) const
+      -> mir::FieldId {
+    const std::optional<StaticStorageHome>& home =
+        scopes_.Get(scope).disable_target;
+    if (!home.has_value()) {
+      throw InternalError(
+          "StructuralScopeLowerer::DisableTargetField: the scope owns no "
+          "disable target, so the source named it nothing and no name could "
+          "have reached it -- please report this as a bug");
+    }
+    return std::get<InstanceFieldHome>(*home).field;
+  }
+
   // The call target a structural subroutine reference resolves to: the class
   // that owns the callable, `hops` enclosing edges out from this one, and the
   // callable's identity within it.
