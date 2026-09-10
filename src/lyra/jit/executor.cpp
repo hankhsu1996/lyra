@@ -1247,10 +1247,6 @@ struct LoadedMemberStorage {
   std::string name;
   std::vector<runtime::MemberStorageDescriptor> members;
   std::unique_ptr<runtime::ObjectDefinition> definition;
-  // The symbol whose body brings a value to its initial state, for a
-  // declaration that has one. A class does (LRM 8.7); a struct declares no body
-  // at all, so its fields are filled by whoever builds it.
-  std::optional<std::string> constructor;
 };
 
 auto LoadObjectClasses(const lir::CompilationUnit& unit)
@@ -1270,8 +1266,7 @@ auto LoadObjectClasses(const lir::CompilationUnit& unit)
         LoadedMemberStorage{
             .name = cls.name,
             .members = *std::move(members),
-            .definition = std::make_unique<runtime::ObjectDefinition>(),
-            .constructor = cls.name + ".constructor"});
+            .definition = std::make_unique<runtime::ObjectDefinition>()});
   }
   return loaded;
 }
@@ -1289,8 +1284,7 @@ auto LoadStructs(const lir::CompilationUnit& unit)
         LoadedMemberStorage{
             .name = record.name,
             .members = *std::move(members),
-            .definition = std::make_unique<runtime::ObjectDefinition>(),
-            .constructor = std::nullopt});
+            .definition = std::make_unique<runtime::ObjectDefinition>()});
   }
   return loaded;
 }
@@ -1459,7 +1453,7 @@ auto Execute(
         objects.end(), std::make_move_iterator(unit_objects->begin()),
         std::make_move_iterator(unit_objects->end()));
     // A struct declares the same member storage a class does, so it publishes
-    // the same kind of definition; what it does not declare is any body.
+    // the same kind of definition.
     auto unit_structs = LoadStructs(*unit);
     if (!unit_structs) {
       return std::unexpected(std::move(unit_structs.error()));
@@ -1589,22 +1583,6 @@ auto Execute(
                   .result_domain = body.result_domain};
             }},
         entry.protocol);
-  }
-  // A declaration that names a constructor has one (LRM 8.7 makes that every
-  // class), so a name that does not resolve is not an absent body but one that
-  // could not be brought up.
-  for (const LoadedMemberStorage& entry : objects) {
-    if (!entry.constructor.has_value()) {
-      continue;
-    }
-    const std::string& symbol = *entry.constructor;
-    auto found = jit->lookup(symbol);
-    if (!found) {
-      throw InternalError(
-          "jit executor: the constructor '" + symbol +
-          "' did not resolve: " + llvm::toString(found.takeError()));
-    }
-    entry.definition->construct = found->toPtr<runtime::ObjectEntry>();
   }
 
   auto runtime_options = runtime::DefaultRuntimeOptions();

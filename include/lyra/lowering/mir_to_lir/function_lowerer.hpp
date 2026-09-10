@@ -252,6 +252,14 @@ class FunctionLowerer {
   auto EnterCoroutine(
       const mir::Block& block, const mir::CallExpr& call, mir::TypeId type,
       std::optional<lir::Operand> completion) -> diag::Result<lir::Operand>;
+  // Brings an object of `class_id` into existence and enters the construction
+  // the program asked for on it (LRM 8.3, 8.7). The heap is the runtime's, so
+  // what it answers is an object whose properties hold their storage's
+  // default; the body that brings them to their initial values is this
+  // program's own and is entered like any other.
+  auto LowerObjectConstruction(
+      const mir::Block& block, const mir::CallExpr& call, mir::ClassId class_id,
+      mir::TypeId type) -> diag::Result<lir::Operand>;
   // A reference is the address of the cell its referent lives in.
   auto LowerReferenceBind(
       const mir::Block& block, const mir::CallExpr& call, mir::TypeId type)

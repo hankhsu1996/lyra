@@ -344,23 +344,24 @@ each meets the same lifetime question above.
       base's extended with its own, so an inherited member keeps its position in every class
       extending it and an addition a base does not publish moves nothing. Settled in
       `../decisions/inherited-member-reference.md`.
-- [ ] Calling an inherited method, and constructing the base. The receiver crosses without being
+- [x] Calling an inherited method, and constructing the base. The receiver crosses without being
       re-typed to the class that declares the body, so an inherited method reaches the storage the
       object holds for what that body names; and constructing enters the base's construction first,
       on that same object, so what the base establishes is in place before any property initializer
       or constructor statement of the extending class can read it (LRM 8.7). The C++ backend never
-      had to answer either, because the host language answers them. Neither is reachable end to end,
-      because building the object is refused first: an object is built by an entry that takes the
-      class's definition and nothing else, so a constructor with anywhere to receive an argument has
-      none -- which is every class a scope declares, since such a class is constructed with the
-      instance declaring it. Two narrower refusals sit behind that one: a base another compilation
-      unit declares, on the boundary every cross-unit class reference meets here, and a base
-      constructor formal the forwarding call leaves to its default, since nothing fills a default in
-      where no call is written.
-- [ ] Building an object whose constructor takes arguments, which is what the item above waits on.
-      The entry that builds an object runs the constructor inside the runtime, so the arguments have
-      no way across; carrying them means the runtime builds the storage and the generated code
-      enters the constructor, which is how it already enters a base's.
+      had to answer either, because the host language answers them. Two narrower refusals remain: a
+      base another compilation unit declares, on the boundary every cross-unit class reference meets
+      here, and a base constructor formal the forwarding call leaves to its default, since nothing
+      fills a default in where no call is written.
+- [x] Building an object whose constructor takes arguments. The runtime owns the heap, so it is what
+      brings an object into existence; which body then initializes it is settled where the object is
+      asked for, and the generated code enters that constructor the way it enters a base's.
+- [ ] `this` as a value in its own right (LRM 8.11), so an object can be returned, passed, and
+      compared from inside its own method. A body holds a borrowed pointer to the object it runs on,
+      which serves every member access; answering with a handle instead is what a shared-owner
+      realization needs and a traced one does not, since there the handle is that pointer. So this
+      waits on the reclamation model rather than on an entry: what it costs to add now is the record
+      the tracing would make unnecessary.
 - [ ] `compile` end to end against this backend, so a design becomes a program that outlives the
       session. `dump llvm` and `run` already go through it; what neither produces is an artifact
       that can be handed on, which is what the CI job below waits on as well.

@@ -190,12 +190,13 @@ void lyra_rt_process_resume(const void* self, void* runtime);
 // method that runs a per-element body over its receiver.
 auto lyra_rt_closure_make(const void* definition, LyraSpan captures) -> void*;
 
-// Builds an object on the managed heap and runs its constructor on it (LRM
-// 8.3): `definition` is an opaque cross-artifact reference naming both the
-// storage its properties need and the body that initializes them. The handle
-// answered is a reference to the object, transient like every value the
-// boundary hands back and owned by the current call scope until a store takes
-// a copy of it.
+// Brings an object into existence on the managed heap (LRM 8.3):
+// `definition` is an opaque cross-artifact reference naming the storage its
+// properties need. The object's properties hold their storage's default until
+// the construction the program asked for runs on it, which is the asking
+// code's own to enter. The handle answered is a reference to the object,
+// transient like every value the boundary hands back and owned by the current
+// call scope until a store takes a copy of it.
 auto lyra_rt_object_make(const void* definition) -> void*;
 
 // The object a class handle refers to (LRM 8.3). Which object that is, is a

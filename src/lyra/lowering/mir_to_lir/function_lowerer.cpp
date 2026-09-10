@@ -82,6 +82,27 @@ auto BindsReference(
          types.Get(result_type).Is<mir::RefType>();
 }
 
+// Which class this call brings an object of into existence, absent for every
+// call that does not. A construction names the type it builds, and a managed
+// reference to a class this unit compiles is the one whose constructor is a
+// body of this program.
+auto BuildsObjectOf(
+    const mir::TypePool& types, const mir::CallExpr& call,
+    mir::TypeId result_type) -> std::optional<mir::ClassId> {
+  if (!std::holds_alternative<mir::Construct>(call.callee)) {
+    return std::nullopt;
+  }
+  const auto* managed = types.Get(result_type).As<mir::ManagedRefType>();
+  if (managed == nullptr) {
+    return std::nullopt;
+  }
+  const auto* object = types.Get(managed->pointee).As<mir::ObjectType>();
+  if (object == nullptr) {
+    return std::nullopt;
+  }
+  return object->class_id;
+}
+
 // The operators the executable IR realizes directly. Every other MIR operator
 // is lifted to a library call before this point, so reaching one here is a
 // lowering defect upstream, not an unsupported source form.
@@ -1637,6 +1658,56 @@ auto FunctionLowerer::LowerCallOperands(
   return args;
 }
 
+auto FunctionLowerer::LowerObjectConstruction(
+    const mir::Block& block, const mir::CallExpr& call, mir::ClassId class_id,
+    mir::TypeId type) -> diag::Result<lir::Operand> {
+  const lir::TypeId handle_type = unit_->TranslateType(type);
+  const lir::Operand handle = Emit(
+      handle_type,
+      lir::CallInstr{
+          .target = lir::ConstructTarget{.result = handle_type}, .args = {}});
+
+  const mir::CallableCode& constructor =
+      unit_->Mir().GetClass(class_id).constructor.code;
+  // What the call states is what the constructor declares after the object it
+  // runs on, so a mismatch is a producer that built one of the two wrongly.
+  if (constructor.params.size() != call.arguments.size() + 1) {
+    throw InternalError(
+        "mir_to_lir: a construction states an argument for every formal its "
+        "constructor declares beside the object");
+  }
+  std::vector<lir::Operand> args;
+  args.reserve(constructor.params.size());
+  // The object leads its arguments the way a receiver leads any body's
+  // parameters, and the handle names it rather than being it, so opening the
+  // handle is what reaches the storage the body runs on.
+  args.push_back(Emit(
+      unit_->Types().Intern(
+          lir::Type{lir::PointerType{
+              .pointee = unit_->ClassValueType(class_id),
+              .ownership = lir::PointerOwnership::kBorrowed,
+              .mutability = lir::Mutability::kMutable}}),
+      lir::AddrOfInstr{
+          .place = lir::Place{
+              .base = handle,
+              .chain = {lir::Projection{lir::DerefProjection{}}}}}));
+  for (const mir::ExprId argument : call.arguments) {
+    auto lowered = LowerArgument(block, argument);
+    if (!lowered) {
+      return std::unexpected(std::move(lowered.error()));
+    }
+    args.push_back(*std::move(lowered));
+  }
+  Emit(
+      unit_->TranslateType(unit_->Mir().builtins.void_type),
+      lir::CallInstr{
+          .target =
+              lir::FunctionTarget{
+                  .function = unit_->ConstructorFunction(class_id)},
+          .args = std::move(args)});
+  return handle;
+}
+
 auto FunctionLowerer::LowerReferenceBind(
     const mir::Block& block, const mir::CallExpr& call, mir::TypeId type)
     -> diag::Result<lir::Operand> {
@@ -1715,6 +1786,15 @@ auto FunctionLowerer::LowerCall(
   // address-of, load, and store over the referent's place.
   if (BindsReference(unit_->Mir().types, call, type)) {
     return LowerReferenceBind(block, call, type);
+  }
+
+  // Bringing an object into existence and initializing it are two operations
+  // over one heap the runtime owns: it answers an object whose properties hold
+  // their storage's default, and the class's own constructor -- a body of this
+  // program, reached like any other -- is what runs on it (LRM 8.7).
+  if (const std::optional<mir::ClassId> built =
+          BuildsObjectOf(unit_->Mir().types, call, type)) {
+    return LowerObjectConstruction(block, call, *built, type);
   }
   // Reached where nothing awaits the execution -- a process handed to the
   // scheduler. Such a body finishes with no value, so there is nothing for it

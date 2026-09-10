@@ -187,6 +187,10 @@ the detail lives in the entry itself.
 - [object-model-storage](object-model-storage.md) -- a compilation unit owns one canonical registry
   of local nominal object declarations; identity, lexical name resolution, and backend emission
   nesting are separate relations; the lexical-tree-only storage and a second identity are rejected.
+- [entering-a-class-construction](entering-a-class-construction.md) -- a class's runtime definition
+  carries storage and no body: the runtime allocates, and the code that wrote the `new` enters the
+  constructor, so its arguments cross as themselves. A registered entry taking a span of arguments,
+  a per-arity signature on the definition, and splitting in the backend are rejected.
 - [instance-array-multiplicity](instance-array-multiplicity.md) -- an array of children is one
   member whose type is a sequence of the child pointer, carrying multiplicity but no length, so
   which element a reference names is an operand of a projection rather than part of a member's
