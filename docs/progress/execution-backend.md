@@ -367,11 +367,24 @@ each meets the same lifetime question above.
       declaration and in every class extending it. A behavior introduced without a body (LRM 8.21)
       is a position nothing answers, which no value reaches because such a class is never
       constructed. An abstract class and its pure-virtual contract, a method defined out of block, a
-      `super` call reaching past an override, and a virtual task all run here. What is refused names
-      the gap: a behavior a class of another compilation unit introduced, and a call on a value
-      whose class extends another unit's, since a position this unit did not assign is one it can
-      neither name nor count past. Settled in
+      `super` call reaching past an override, and a virtual task all run here. A behavior a class of
+      another compilation unit introduced runs here too: the introducer is found by walking what
+      each class promised about the class it extends, so a call names it however many classes it was
+      reached through. What is refused is a behavior an interface class states, which sits on no
+      lineage and so has no position counted through one -- a class commits to several interfaces
+      whose declarations are unrelated to each other and to its base, and two classes committing to
+      one need not order them alike (LRM 8.26). Settled in
       `../decisions/dispatch-position-is-a-lineage-coordinate.md`.
+- [x] **A class another compilation unit declares.** Reaching a property or a behavior on one is an
+      ordinary access at every layer below the one that read the promise: the class is on that
+      unit's signature, and the slot or ordinal is counted out of what it published. What a class
+      promises is what it declares plus the class it extends, never what it inherited, so an
+      inherited property or behavior is found by walking that chain -- and reading each promise on
+      the way is what makes its unit a dependency. What a class keeps to itself (LRM 8.18 `local`)
+      is on no promise and sits behind everything it published, so adding one moves nothing a
+      referrer counted. Settled in `../decisions/reaching-past-a-published-class.md`. What still
+      refuses: constructing a class whose base another unit declares, and the type-associated
+      storage of a class a unit declares, which no symbol names yet.
 - [ ] `this` as a value in its own right (LRM 8.11), so an object can be returned, passed, and
       compared from inside its own method. A body holds a borrowed pointer to the object it runs on,
       which serves every member access; answering with a handle instead is what a shared-owner

@@ -10,6 +10,7 @@
 #include <string>
 #include <string_view>
 #include <type_traits>
+#include <unordered_map>
 #include <utility>
 #include <variant>
 #include <vector>
@@ -38,8 +39,8 @@
 #include "lyra/base/overloaded.hpp"
 #include "lyra/compiler/unit_metadata.hpp"
 #include "lyra/diag/diag_code.hpp"
-#include "lyra/lir/class_query.hpp"
 #include "lyra/lir/compilation_unit.hpp"
+#include "lyra/lir/declaration_name.hpp"
 #include "lyra/lir/type.hpp"
 #include "lyra/lir/type_id.hpp"
 #include "lyra/runtime/closure.hpp"
@@ -1362,72 +1363,97 @@ auto LoadScopeClasses(
   return loaded;
 }
 
+// One behavior a class takes over from its lineage (LRM 8.20), as far as one
+// unit can state it: the declaration that introduced the behavior and which of
+// that declaration's introductions it is, with the introducer named the way
+// every reference across an artifact boundary is, and the symbol the body
+// answering it is emitted under.
+struct LoadedTakeover {
+  std::string introduced_by;
+  std::uint32_t ordinal = 0;
+  std::string body;
+};
+
 // One declaration whose values the program builds itself, rather than one the
-// object tree owns an instance of: the storage its members need, the body each
-// of its dispatch positions holds, and the definition every value of it shares.
-// Both vectors are held here because the definition names each as plain data it
-// does not own, so each has to outlive it and stay where it was.
-struct LoadedMemberStorage {
+// object tree owns an instance of: what it adds to its lineage, the flat forms
+// realizing it produced, and the definition every value of it shares. The
+// realization is held here because the definition names it as plain data it
+// does not own, so it has to outlive the definition and stay where it was.
+struct LoadedClass {
   std::string name;
+  std::optional<std::string> base;
   std::vector<runtime::MemberStorageDescriptor> members;
-  // The symbol the body at each dispatch position is emitted under. A position
-  // nothing in the class's lineage supplied a body for names none (LRM 8.21
-  // pure virtual).
-  std::vector<std::optional<std::string>> method_symbols;
-  std::vector<runtime::ErasedMethodEntry> methods;
+  // The symbol the body of each behavior this class introduces is emitted
+  // under, in the order the class introduces them. A behavior declared with no
+  // implementation names none (LRM 8.21 pure virtual).
+  std::vector<std::optional<std::string>> introductions;
+  std::vector<LoadedTakeover> takeovers;
+  runtime::RealizedClass realization;
   std::unique_ptr<runtime::ObjectDefinition> definition;
 };
 
-// The symbol each of a class's dispatch positions is filled from, in position
-// order. A position's body is a function of the unit like any other, so what
-// names it is the name that function is emitted under. A class whose lineage
-// leaves this unit has no table laid out here; nothing can index one either,
-// since the position a call would name is refused where the call is generated.
-auto DispatchSymbols(const lir::CompilationUnit& unit, lir::ClassId cls)
-    -> std::vector<std::optional<std::string>> {
-  std::vector<std::optional<std::string>> symbols;
-  const std::optional<std::vector<std::optional<lir::FunctionId>>> table =
-      lir::DispatchTable(unit, cls);
-  if (!table.has_value()) {
-    return symbols;
+// The declaration a class extends, under the name it is linked by, or nothing
+// where it extends nothing.
+auto ExtendedClassName(const lir::CompilationUnit& unit, const lir::Class& cls)
+    -> std::optional<std::string> {
+  if (!cls.base.has_value()) {
+    return std::nullopt;
   }
-  for (const std::optional<lir::FunctionId>& body : *table) {
-    symbols.push_back(
-        body.has_value() ? std::optional{unit.functions.Get(*body).name}
-                         : std::nullopt);
-  }
-  return symbols;
+  const std::optional<lir::TypeId> base = lir::BaseType(unit, *cls.base);
+  return base.has_value() ? lir::DeclarationName(unit, *base) : std::nullopt;
 }
 
 auto LoadObjectClasses(const lir::CompilationUnit& unit)
-    -> diag::Result<std::vector<LoadedMemberStorage>> {
-  std::vector<LoadedMemberStorage> loaded;
+    -> diag::Result<std::vector<LoadedClass>> {
+  std::vector<LoadedClass> loaded;
   for (const lir::ClassId id : unit.classes.Ids()) {
     const lir::Class& cls = unit.classes.Get(id);
     if (lir::IsObjectTreeNode(cls)) {
       continue;
     }
-    const std::vector<lir::Member> storage = lir::StorageMembers(unit, id);
-    auto members = DescribeMembers(unit, storage, SlotRole::kVariable);
+    auto members = DescribeMembers(unit, cls.members, SlotRole::kVariable);
     if (!members) {
       return std::unexpected(std::move(members.error()));
     }
-    std::vector<std::optional<std::string>> symbols = DispatchSymbols(unit, id);
-    const std::size_t positions = symbols.size();
+    std::vector<std::optional<std::string>> introductions;
+    introductions.reserve(cls.introduces.size());
+    for (const std::optional<lir::FunctionId>& body : cls.introduces) {
+      introductions.push_back(
+          body.has_value() ? std::optional{unit.functions.Get(*body).name}
+                           : std::nullopt);
+    }
+    std::vector<LoadedTakeover> takeovers;
+    takeovers.reserve(cls.takeovers.size());
+    for (const lir::DispatchTakeover& taken : cls.takeovers) {
+      const std::optional<std::string> introduced_by =
+          lir::DeclarationName(unit, taken.method.introduced_by);
+      if (!introduced_by.has_value()) {
+        throw InternalError(
+            "jit executor: a class takes over a behavior of a declaration that "
+            "is linked under no name");
+      }
+      takeovers.push_back(
+          LoadedTakeover{
+              .introduced_by = *introduced_by,
+              .ordinal = taken.method.ordinal.value,
+              .body = unit.functions.Get(taken.body).name});
+    }
     loaded.push_back(
-        LoadedMemberStorage{
+        LoadedClass{
             .name = cls.name,
+            .base = ExtendedClassName(unit, cls),
             .members = *std::move(members),
-            .method_symbols = std::move(symbols),
-            .methods = std::vector<runtime::ErasedMethodEntry>(positions),
+            .introductions = std::move(introductions),
+            .takeovers = std::move(takeovers),
+            .realization = {},
             .definition = std::make_unique<runtime::ObjectDefinition>()});
   }
   return loaded;
 }
 
 auto LoadStructs(const lir::CompilationUnit& unit)
-    -> diag::Result<std::vector<LoadedMemberStorage>> {
-  std::vector<LoadedMemberStorage> loaded;
+    -> diag::Result<std::vector<LoadedClass>> {
+  std::vector<LoadedClass> loaded;
   for (const lir::StructId id : unit.structs.Ids()) {
     const lir::Struct& record = unit.structs.Get(id);
     auto members = DescribeMembers(unit, record.fields, SlotRole::kVariable);
@@ -1435,14 +1461,97 @@ auto LoadStructs(const lir::CompilationUnit& unit)
       return std::unexpected(std::move(members.error()));
     }
     loaded.push_back(
-        LoadedMemberStorage{
+        LoadedClass{
             .name = record.name,
+            .base = std::nullopt,
             .members = *std::move(members),
-            .method_symbols = {},
-            .methods = {},
+            .introductions = {},
+            .takeovers = {},
+            .realization = {},
             .definition = std::make_unique<runtime::ObjectDefinition>()});
   }
   return loaded;
+}
+
+// The address a body is linked at. A body a class states is one this program
+// compiled, so a symbol that does not resolve means the class was compiled to
+// answer something no unit supplied.
+auto MethodEntry(llvm::orc::LLJIT& jit, const std::string& symbol)
+    -> runtime::ErasedMethodEntry {
+  auto found = jit.lookup(symbol);
+  if (!found) {
+    throw InternalError(
+        "jit executor: the method body '" + symbol +
+        "' did not resolve: " + llvm::toString(found.takeError()));
+  }
+  return found->toPtr<runtime::ErasedMethodEntry>();
+}
+
+// Completes every class definition, each after the one it extends. What a class
+// adds is stated by the unit declaring it, and where that lands in a value is
+// settled only with the whole lineage in hand -- which is here, once every unit
+// is loaded and every body is linked, and never in a unit's own lowering.
+void RealizeClasses(llvm::orc::LLJIT& jit, std::vector<LoadedClass>& classes) {
+  std::unordered_map<std::string_view, std::size_t> by_name;
+  for (std::size_t index = 0; index < classes.size(); ++index) {
+    by_name.emplace(classes[index].name, index);
+  }
+  // A lineage never returns to a class it passed, since a class cannot extend
+  // itself or anything extending it (LRM 8.13), so marking a class before its
+  // base is realized records that this pass has reached it and nothing more.
+  std::vector<bool> reached(classes.size(), false);
+  const auto realize = [&](const auto& self_ref, std::size_t index) -> void {
+    if (reached[index]) {
+      return;
+    }
+    reached[index] = true;
+    LoadedClass& entry = classes[index];
+    const runtime::ObjectDefinition* base = nullptr;
+    if (entry.base.has_value()) {
+      const auto found = by_name.find(*entry.base);
+      if (found == by_name.end()) {
+        throw InternalError(
+            "jit executor: the class '" + *entry.base +
+            "' a class extends is defined by no unit of this program");
+      }
+      self_ref(self_ref, found->second);
+      base = classes[found->second].definition.get();
+    }
+    // A behavior declared with no implementation is answered by nothing, which
+    // no object of a constructible class ever reaches (LRM 8.21).
+    std::vector<runtime::ErasedMethodEntry> introductions;
+    introductions.reserve(entry.introductions.size());
+    for (const std::optional<std::string>& symbol : entry.introductions) {
+      introductions.push_back(
+          symbol.has_value() ? MethodEntry(jit, *symbol) : nullptr);
+    }
+    std::vector<runtime::DispatchTakeover> takeovers;
+    takeovers.reserve(entry.takeovers.size());
+    for (const LoadedTakeover& taken : entry.takeovers) {
+      const auto found = by_name.find(taken.introduced_by);
+      if (found == by_name.end()) {
+        throw InternalError(
+            "jit executor: the class '" + taken.introduced_by +
+            "' whose behavior a class takes over is defined by no unit of this "
+            "program");
+      }
+      takeovers.push_back(
+          runtime::DispatchTakeover{
+              .introduced_by = classes[found->second].definition.get(),
+              .ordinal = taken.ordinal,
+              .body = MethodEntry(jit, taken.body)});
+    }
+    runtime::RealizeClass(
+        runtime::ClassContribution{
+            .base = base,
+            .members = entry.members,
+            .introductions = introductions,
+            .takeovers = takeovers},
+        entry.realization, *entry.definition);
+  };
+  for (std::size_t index = 0; index < classes.size(); ++index) {
+    realize(realize, index);
+  }
 }
 
 // The definition of one closure a unit declares, kept alive for the session
@@ -1599,7 +1708,7 @@ auto Execute(
       loaded.end(), std::make_move_iterator(root_classes->begin()),
       std::make_move_iterator(root_classes->end()));
 
-  std::vector<LoadedMemberStorage> objects;
+  std::vector<LoadedClass> objects;
   for (const lir::CompilationUnit* unit : loaded_units) {
     auto unit_objects = LoadObjectClasses(*unit);
     if (!unit_objects) {
@@ -1643,14 +1752,6 @@ auto Execute(
         .data = entry.captures.data(),
         .size = static_cast<std::uint32_t>(entry.captures.size())};
   }
-  for (LoadedMemberStorage& entry : objects) {
-    entry.definition->members = runtime::MemberStorageSchema{
-        .data = entry.members.data(),
-        .size = static_cast<std::uint32_t>(entry.members.size())};
-    entry.definition->methods = runtime::MethodDispatchTable{
-        .data = entry.methods.data(),
-        .size = static_cast<std::uint32_t>(entry.methods.size())};
-  }
 
   // Each declaration the runtime builds values of publishes its definition as
   // an injected data symbol the construct references. Every definition is
@@ -1671,7 +1772,7 @@ auto Execute(
   for (const LoadedClosure& entry : closures) {
     publish(entry.name, entry.definition.get());
   }
-  for (const LoadedMemberStorage& entry : objects) {
+  for (const LoadedClass& entry : objects) {
     publish(entry.name, entry.definition.get());
   }
   Check(
@@ -1709,26 +1810,7 @@ auto Execute(
     FillDefinition(
         *jit, entry.name, entry.time_precision_power, *entry.definition);
   }
-  // A dispatch position naming a body names one this program compiled, so the
-  // symbol resolves or the class was compiled to answer something it cannot;
-  // one naming none is a behavior nothing in the lineage answered (LRM 8.21),
-  // which no object of a constructible class ever reaches.
-  for (LoadedMemberStorage& entry : objects) {
-    for (std::size_t position = 0; position < entry.method_symbols.size();
-         ++position) {
-      const std::optional<std::string>& symbol = entry.method_symbols[position];
-      if (!symbol.has_value()) {
-        continue;
-      }
-      auto found = jit->lookup(*symbol);
-      if (!found) {
-        throw InternalError(
-            "jit executor: the method body '" + *symbol +
-            "' did not resolve: " + llvm::toString(found.takeError()));
-      }
-      entry.methods[position] = found->toPtr<runtime::ErasedMethodEntry>();
-    }
-  }
+  RealizeClasses(*jit, objects);
   // Every closure has a body, so a name that does not resolve is not an absent
   // entry but one that could not be brought up.
   for (const LoadedClosure& entry : closures) {

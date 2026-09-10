@@ -1,6 +1,7 @@
 #include "lyra/backend/llvm/codegen_module.hpp"
 
 #include <format>
+#include <optional>
 #include <string>
 #include <utility>
 #include <vector>
@@ -14,9 +15,9 @@
 
 #include "lyra/backend/llvm/codegen_function.hpp"
 #include "lyra/base/internal_error.hpp"
-#include "lyra/base/overloaded.hpp"
 #include "lyra/diag/diag_code.hpp"
 #include "lyra/lir/compilation_unit.hpp"
+#include "lyra/lir/declaration_name.hpp"
 #include "lyra/lir/function.hpp"
 #include "lyra/lir/type.hpp"
 
@@ -81,38 +82,15 @@ auto CodeGenModule::UnitFunction(lir::FunctionId function) -> llvm::Function* {
 
 auto CodeGenModule::DefinitionRef(lir::TypeId type)
     -> diag::Result<llvm::Constant*> {
-  // A declaration this unit compiles already carries the symbol it was emitted
-  // under; a class another unit publishes is composed from the unit and class a
-  // signature named, the same way that unit composed it. Both resolve to a
-  // record the host built, so the reference is the same kind of symbol either
-  // way.
-  const lir::Type& described = unit_->types.Get(type);
-  auto name = described.Visit(
-      Overloaded{
-          [&](const lir::ObjectType& o) -> diag::Result<std::string> {
-            return unit_->classes.Get(o.class_id).name;
-          },
-          [&](const lir::ExternalUnitObjectType& e)
-              -> diag::Result<std::string> {
-            const lir::ExternalUnitObject& object =
-                unit_->external_unit_objects.Get(e.object);
-            return std::format("{}.{}", object.unit_name, object.class_name);
-          },
-          [&](const lir::ClosureType& c) -> diag::Result<std::string> {
-            return unit_->closures.Get(c.closure_id).name;
-          },
-          [&](const lir::StructType& s) -> diag::Result<std::string> {
-            return unit_->structs.Get(s.struct_id).name;
-          },
-          [&](const auto&) -> diag::Result<std::string> {
-            return diag::Fail(
-                diag::DiagCode::kUnsupportedExpressionForm,
-                std::format(
-                    "llvm codegen: a value of type {} has no definition the "
-                    "runtime builds values of",
-                    described.KindName()));
-          }});
-  if (!name) return std::unexpected(std::move(name.error()));
+  const std::optional<std::string> name = lir::DeclarationName(*unit_, type);
+  if (!name.has_value()) {
+    return diag::Fail(
+        diag::DiagCode::kUnsupportedExpressionForm,
+        std::format(
+            "llvm codegen: a value of type {} has no definition the runtime "
+            "builds values of",
+            unit_->types.Get(type).KindName()));
+  }
   // The definition is opaque to generated code, which only forwards its
   // address; an i8 placeholder gives the external symbol a type without
   // encoding the runtime struct's layout.

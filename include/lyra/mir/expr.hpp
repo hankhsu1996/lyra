@@ -10,6 +10,7 @@
 
 #include "lyra/base/component_index.hpp"
 #include "lyra/mir/abi_adapter_id.hpp"
+#include "lyra/mir/behavior_ordinal.hpp"
 #include "lyra/mir/binary_op.hpp"
 #include "lyra/mir/block_id.hpp"
 #include "lyra/mir/callable_id.hpp"
@@ -288,16 +289,15 @@ struct LocalVirtualSlot {
   auto operator==(const LocalVirtualSlot&) const -> bool = default;
 };
 
-// Identity of a virtual dispatch slot introduced by a class in another
-// compilation unit. The introducing class carries no unit-local id here, so
-// the slot is named by (declaring unit, class canonical name, method source
-// name) -- the same triple the cross-unit override relation uses. A backend
-// renders the dispatch through the target language's own virtual-call
-// machinery reached by including the declaring unit's header.
+// Identity of a behavior a class of another compilation unit introduced. The
+// introducing class carries no unit-local id here, so it is named by (declaring
+// unit, class canonical name) together with which of that class's introductions
+// this is, counted out of what it published -- the same coordinate an
+// intra-unit slot carries, with the class named by its parts.
 struct ExternalVirtualSlot {
   std::string unit_name;
   std::string class_name;
-  std::string method_name;
+  BehaviorOrdinal ordinal;
 
   auto operator==(const ExternalVirtualSlot&) const -> bool = default;
 };
@@ -451,14 +451,15 @@ struct FieldTarget {
   auto operator==(const FieldTarget&) const -> bool = default;
 };
 
-// Identity of a property on an SV class another compilation unit declares. No
-// unit publishes an SV class, so nothing states where such a property sits: it
-// is named by (declaring unit, class canonical name, property name), matched at
-// link time.
+// Identity of a property on an SV class another compilation unit declares: the
+// declaring unit, the class's canonical name -- matched at link time -- and the
+// slot that class gave the property, counted out of what it published. Peer of
+// `FieldTarget` with the class named by its parts rather than by an id, which
+// is how every identity crossing a unit boundary is carried.
 struct ExternalFieldTarget {
   std::string unit_name;
   std::string class_name;
-  std::string field_name;
+  FieldId slot;
 
   auto operator==(const ExternalFieldTarget&) const -> bool = default;
 };

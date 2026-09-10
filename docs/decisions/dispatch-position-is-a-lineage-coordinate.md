@@ -24,10 +24,9 @@ read from the lineage, which is what keeps one declaration's meaning independent
 
 **D2. A behavior is named by the declaration that introduced it and an ordinal within that
 declaration.** The ordinal counts introductions inside one class, so naming a behavior reads that
-class and nothing else. Flattening a lineage into positions is a layout question, answered by the
-same queries that answer where a member's storage sits, and refused as a whole where the lineage
-leaves the compilation unit: a unit that did not assign the positions its base carries can neither
-name one nor count past them.
+class and nothing else. Flattening a lineage into positions is a layout question, answered where the
+whole lineage is in hand rather than where a call is written -- which is what lets a unit name a
+behavior whose position it could not have counted, its base having been declared elsewhere.
 
 **D3. Allocation of the answer is the runtime's; entering the body is the asking code's.** The
 runtime answers with the address of the body a value's class holds at a position; the generated code
@@ -84,15 +83,23 @@ layout component asked at code generation, never from a field carried in the mid
 
 ## Consequences
 
-- A behavior another unit introduced, and a call on a value whose class extends another unit's, are
-  refused by name. Both wait on a compilation unit's signature carrying the positions it assigned,
-  which is what would let a second unit count past them.
+- A behavior another unit introduced, and a call on a value whose class extends another unit's, wait
+  on that unit promising the class -- not on its promising a position. A position is never carried
+  across the boundary: the promise states an order, both sides count it, and where a class's own
+  behaviors land is settled with the whole lineage in hand.
 - Building a consumer that reads the stated relation found that relation being stated wrongly: a
   method declared as an `extern` prototype and defined out of block (LRM 8.24) carries its override
   link on the prototype, and reading only the definition recorded every such override as introducing
   a behavior of its own. No backend had read the relation before, so nothing had contradicted it.
-- Interface-class dispatch stays out. A class conforming to several interfaces answers behaviors
-  that several unrelated declarations introduce, and two classes conforming to one interface need
-  not order them alike; that is a second coordinate system, and
-  [interface-conformance-realization](interface-conformance-realization.md) defers the
-  representation it needs.
+- Interface-class dispatch stays out, and is refused by name rather than left to fall through. A
+  class conforming to several interfaces answers behaviors that several unrelated declarations
+  introduce, and two classes conforming to one interface need not order them alike; that is a second
+  coordinate system, and [interface-conformance-realization](interface-conformance-realization.md)
+  defers the representation it needs. Staying out is not the same as being absent: a call through an
+  interface handle does name a behavior, and given a lineage coordinate for it, that coordinate
+  lands on whatever the object's own lineage put at that position.
+- That refusal belongs where the coordinate is required and nowhere earlier. A backend that recovers
+  a method name and lets the target language dispatch needs no position at all and answers such a
+  call correctly, so stating the limit in a lowering both backends share does not withhold an answer
+  -- it withdraws one that already worked. The question is asked once, of a class this unit declares
+  and a class it read a promise about alike, at the step that turns a behavior into a position.

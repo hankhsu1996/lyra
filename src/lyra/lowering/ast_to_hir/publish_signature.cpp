@@ -149,7 +149,57 @@ auto TranslateDirection(
 
 }  // namespace
 
+auto UnitLowerer::PublishClassSignatures() -> void {
+  // A class this unit's namespace declares is one another unit may name
+  // (LRM 26.2), and one a design element declares is not: a module exists to
+  // be instantiated and wired, so what it declares inside is its own.
+  if (scope_->asSymbol().as_if<slang::ast::InstanceBodySymbol>() != nullptr) {
+    return;
+  }
+  const auto publish = [&](const slang::ast::ClassType& cls) {
+    const auto it = own_class_promises_.find(&cls);
+    if (it == own_class_promises_.end()) {
+      return;
+    }
+    hir::TypeImportMemo published;
+    hir::TypeImporter importer(
+        unit_.types,
+        hir::TypePoolOwner{.unit_name = unit_.name, .classes = &unit_.classes},
+        signature_.types, published);
+    const hir::ClassSignature& promise = it->second;
+    hir::ClassSignature entry{
+        .class_name = promise.class_name,
+        .base = promise.base,
+        .is_interface_class = promise.is_interface_class,
+        .members = {},
+        .behaviors = {}};
+    // The order is the promise: a property's slot and a behavior's ordinal are
+    // counted out of these two lists by the class that declares them and by
+    // every unit that reaches one, and neither states a position to the other.
+    for (const hir::PublishedMemberId id : promise.members.Ids()) {
+      hir::PublishedMember member = promise.members.Get(id);
+      member.type = importer.Import(member.type);
+      entry.members.Add(std::move(member));
+    }
+    for (const hir::PublishedBehaviorId id : promise.behaviors.Ids()) {
+      entry.behaviors.Add(promise.behaviors.Get(id));
+    }
+    signature_.classes.push_back(std::move(entry));
+  };
+  for (const auto& member : scope_->members()) {
+    if (member.kind == slang::ast::SymbolKind::ClassType) {
+      publish(member.as<slang::ast::ClassType>());
+    } else if (member.kind == slang::ast::SymbolKind::GenericClassDef) {
+      for (const auto& spec :
+           member.as<slang::ast::GenericClassDefSymbol>().specializations()) {
+        publish(spec.getCanonicalType().as<slang::ast::ClassType>());
+      }
+    }
+  }
+}
+
 auto UnitLowerer::PublishSignature() -> diag::Result<void> {
+  PublishClassSignatures();
   // Only a design element instantiated into the hierarchy has ports and an
   // object; a namespace unit publishes its declarations by name and roots
   // neither.
@@ -258,7 +308,6 @@ auto UnitLowerer::PublishSignature() -> diag::Result<void> {
     if (instance == nullptr) {
       return refuse("an unconnected interface port is not yet supported");
     }
-    RecordReferencedUnit(SpecializationName(*instance));
     hir::TypeId own = unit_.types.Intern(
         hir::Type{
             hir::UnitObjectType{.unit_name = SpecializationName(*instance)}});
@@ -303,7 +352,6 @@ auto UnitLowerer::PublishSignature() -> diag::Result<void> {
           const slang::ast::InstanceSymbol& leaf,
           std::span<const slang::ConstantRange> ranges) {
         std::string instance_unit = SpecializationName(leaf);
-        RecordReferencedUnit(instance_unit);
         hir::TypeId own = unit_.types.Intern(
             hir::Type{
                 hir::UnitObjectType{.unit_name = std::move(instance_unit)}});
@@ -640,6 +688,30 @@ auto UnitLowerer::ExternalUnitObjectOf(const std::string& unit_name)
           Signatures().Instantiated(unit_name), unit_.types));
   external_unit_objects_.emplace(unit_name, object_id);
   return object_id;
+}
+
+auto UnitLowerer::ExternalClassOf(
+    const std::string& unit_name, const std::string& class_name)
+    -> const hir::ExternalClass* {
+  if (const hir::ExternalClass* held = hir::FindExternalClass(
+          unit_.external_classes, unit_name, class_name)) {
+    return held;
+  }
+  // A unit whose promise this one never read has nothing to compile against.
+  // What puts a promise within reach is naming the unit while this one's own
+  // declarations are read; a name first reached from inside a body arrives
+  // after that, so its class is not described here.
+  const hir::UnitSignature* signature = Signatures().Find(unit_name);
+  if (signature == nullptr) {
+    return nullptr;
+  }
+  const hir::ClassSignature* published = signature->FindClass(class_name);
+  if (published == nullptr) {
+    return nullptr;
+  }
+  unit_.external_classes.push_back(
+      hir::ImportExternalClass(*signature, *published, unit_.types));
+  return &unit_.external_classes.back();
 }
 
 }  // namespace lyra::lowering::ast_to_hir

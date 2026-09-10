@@ -2,9 +2,11 @@
 
 #include <optional>
 #include <string>
+#include <string_view>
 #include <variant>
 #include <vector>
 
+#include "lyra/base/overloaded.hpp"
 #include "lyra/base/registry.hpp"
 #include "lyra/base/translation.hpp"
 #include "lyra/lir/class_id.hpp"
@@ -50,7 +52,7 @@ struct Member {
 // One behavior a class takes over from its lineage (LRM 8.20): which behavior,
 // and the body this class answers it with. Taking one over without a body would
 // leave it exactly as it was, so nothing states that.
-struct DispatchOverride {
+struct DispatchTakeover {
   DispatchRef method;
   FunctionId body;
 };
@@ -75,7 +77,45 @@ struct Class {
   std::vector<Member> members;
   FunctionId constructor{};
   std::vector<std::optional<FunctionId>> introduces;
-  std::vector<DispatchOverride> overrides;
+  std::vector<DispatchTakeover> takeovers;
+};
+
+// Whether values of this class are nodes of the runtime object tree. Extending
+// a base the runtime library defines is what puts an object in that tree, and a
+// scope is the only thing that extends one. Extending a class -- this unit's or
+// another's -- is what a class of the source language does, and says nothing
+// about the tree.
+//
+// One level is the whole answer because a scope is sealed: nothing extends one,
+// so a class either extends the runtime base itself or stands outside the tree
+// entirely. Walking a lineage here would be looking for a shape the source
+// language cannot write.
+[[nodiscard]] inline auto IsObjectTreeNode(const Class& cls) -> bool {
+  if (!cls.base.has_value()) {
+    return false;
+  }
+  return std::visit(
+      Overloaded{
+          [](const RuntimeBase&) { return true; },
+          [](const IntraUnitBase&) { return false; },
+          [](const CrossUnitBase&) { return false; }},
+      *cls.base);
+}
+
+// A class of another unit this one reaches a property on, as far as that unit
+// published it: which unit declares it and its canonical name, both resolved at
+// link time, and the properties it published at the slots that class gave them.
+// Those properties are a prefix of the class's own storage, so a slot counted
+// here is the slot the declaring unit gave. This unit compiles none of it,
+// which is why it sits apart from the classes above.
+struct ExternalClass {
+  std::string unit_name;
+  std::string class_name;
+  // The class it extends, as its own unit promised. What it inherited is not
+  // among the members below, so a value of it carries a member of an ancestor
+  // by way of this chain.
+  std::optional<CrossUnitBase> base;
+  std::vector<Member> members;
 };
 
 // The object of a unit this one references, as far as that unit published it:
@@ -146,6 +186,11 @@ struct CompilationUnit {
   // identity exists before its members are filled in.
   base::Registry<ExternalUnitObject, ExternalUnitObjectId>
       external_unit_objects;
+  // One entry per class of another unit this one reaches a property on, found
+  // by the pair that names the class -- the pair every reference to one
+  // carries, so a reference and the record its slot is counted out of cannot
+  // come apart.
+  std::vector<ExternalClass> external_classes;
   base::Registry<Function, FunctionId> functions;
   std::vector<StaticStorage> static_storage;
   // The nullary function building each type's runtime descriptor, one answer
@@ -155,5 +200,43 @@ struct CompilationUnit {
   base::Translation<TypeId, std::optional<FunctionId>> packed_type_initializers;
   std::optional<ClassId> root;
 };
+
+// The type naming the class `base` extends, in this unit's own pool, or nothing
+// where the lineage ends there. A base the runtime library defines ends one: it
+// declares nothing of the source language, so there is no class of the program
+// past it.
+[[nodiscard]] inline auto BaseType(
+    const CompilationUnit& unit, const Base& base) -> std::optional<TypeId> {
+  return std::visit(
+      Overloaded{
+          [&](const IntraUnitBase& intra) -> std::optional<TypeId> {
+            return unit.types.Intern(
+                Type{ObjectType{.class_id = intra.class_id}});
+          },
+          [&](const CrossUnitBase& cross) -> std::optional<TypeId> {
+            return unit.types.Intern(
+                Type{CrossUnitClassType{
+                    .unit_name = cross.unit_name,
+                    .class_name = cross.class_name}});
+          },
+          [](const RuntimeBase&) -> std::optional<TypeId> {
+            return std::nullopt;
+          }},
+      base);
+}
+
+// The record kept of the class `class_name` of unit `unit_name`, or nothing
+// where this unit consumed no promise about it -- which is the state of every
+// class it merely names.
+[[nodiscard]] inline auto FindExternalClass(
+    const CompilationUnit& unit, std::string_view unit_name,
+    std::string_view class_name) -> const ExternalClass* {
+  for (const ExternalClass& record : unit.external_classes) {
+    if (record.unit_name == unit_name && record.class_name == class_name) {
+      return &record;
+    }
+  }
+  return nullptr;
+}
 
 }  // namespace lyra::lir

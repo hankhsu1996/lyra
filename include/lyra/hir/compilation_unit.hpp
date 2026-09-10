@@ -3,11 +3,13 @@
 #include <cstdint>
 #include <string>
 #include <utility>
+#include <vector>
 
 #include "lyra/base/arena.hpp"
 #include "lyra/base/registry.hpp"
 #include "lyra/hir/class_decl.hpp"
 #include "lyra/hir/class_id.hpp"
+#include "lyra/hir/external_class.hpp"
 #include "lyra/hir/external_unit_object.hpp"
 #include "lyra/hir/foreign_import.hpp"
 #include "lyra/hir/foreign_import_id.hpp"
@@ -55,6 +57,11 @@ struct CompilationUnit {
   // One entry per unit this one reaches an object of, recorded where that
   // unit's signature was consumed.
   base::Arena<ExternalUnitObject, ExternalUnitObjectId> external_unit_objects;
+  // One entry per class of another unit this one reaches a property or a
+  // behavior on, recorded where that class's promise was consumed. Found by the
+  // pair that names the class, which is the same pair every reference to one
+  // carries, so a reference and its record cannot come apart.
+  std::vector<ExternalClass> external_classes;
   // Every DPI-C import this unit takes part in (LRM 35.4), whether declared
   // inside it or declared elsewhere and called from it. The unit owns them
   // rather than any scope because an import's foreign symbol is program-global,

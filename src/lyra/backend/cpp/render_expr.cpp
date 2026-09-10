@@ -194,8 +194,20 @@ auto ResolveFieldAccess(const ScopeView& view, const mir::FieldAccessExpr& m)
             // Cross-unit class field: the declaring unit's header pulls the
             // field name into scope through the include; the receiver reaches
             // it by its source name, which the target-language compiler
-            // resolves against the receiver's static type.
-            return FieldAccess{.name = t.field_name, .through_receiver = true};
+            // resolves against the receiver's static type. The slot is what
+            // the access states, so the name is read out of what that class
+            // promised rather than restated at the access.
+            const mir::ExternalClass* declaring = mir::FindExternalClass(
+                view.Unit().external_classes, t.unit_name, t.class_name);
+            if (declaring == nullptr ||
+                t.slot.value >= declaring->fields.size()) {
+              throw InternalError(
+                  "ResolveFieldAccess: a property access names a slot no "
+                  "consumed promise describes");
+            }
+            return FieldAccess{
+                .name = declaring->fields.Get(t.slot).name,
+                .through_receiver = true};
           },
           [&](const mir::FieldId& id) -> FieldAccess {
             const mir::TypeId recv_type = view.Expr(m.receiver).type;

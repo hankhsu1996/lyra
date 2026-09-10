@@ -190,7 +190,9 @@ published members are ordered, and that order is what fixes their placement.
 
 ```text
 UnitSignature   { unit name; published classes; namespace-level callables and variables }
-ClassSignature  { its own name; published members in declaration order; methods; static storage }
+ClassSignature  { its own name; the class it extends; whether it is an interface class;
+                  published members in declaration order; behaviors it introduces in order;
+                  static storage }
 ```
 
 The content of each entry is settled by D3 rather than by enumeration: it is what a referring unit's
@@ -224,9 +226,16 @@ already forms, that yields more per entry than a reader would name unaided.
   direction and a type, which is what shapes the marshalling an output or `ref` actual rides back
   through.
 - A **namespace-level variable** carries its name and the type of its one program-global cell.
-- A **published class** carries its canonical (specialization) name; per method a name, a result
-  type, its formals, and whether it is virtual (LRM 8.20), which decides whether a call site
-  dispatches statically; per property and per type-associated cell a name and a type.
+- A **published class** carries its canonical (specialization) name; the class it extends, named the
+  same way, so a referrer reaches an inherited property or behavior by walking that chain rather
+  than by reading a list this class would have to build out of another unit's promise; whether it is
+  an interface class, since a behavior an interface class states sits on no lineage and a referrer
+  that could not tell would name a coordinate no value carries; per method a name, a result type,
+  its formals, and whether it is virtual (LRM 8.20), which decides whether a call site dispatches
+  statically, with the ones it introduces in the order that fixes their ordinals; per property and
+  per type-associated cell a name and a type. **What it inherited is never restated.** Computing
+  that would mean reading the base's promise while deriving this one, and a signature is a function
+  of its own unit's declarations alone -- the property that leaves the signature stage unordered.
 
 Member placement follows one rule stated once, below the execution IR: **a published member sits in
 a fixed prefix of its object, ahead of everything the unit did not publish.** Producer and consumer

@@ -8,8 +8,10 @@
 
 #include "lyra/base/arena.hpp"
 #include "lyra/base/internal_error.hpp"
+#include "lyra/hir/external_class.hpp"
 #include "lyra/hir/external_unit_object.hpp"
 #include "lyra/hir/port_direction.hpp"
+#include "lyra/hir/published_behavior.hpp"
 #include "lyra/hir/published_callable.hpp"
 #include "lyra/hir/published_member.hpp"
 #include "lyra/hir/published_modport.hpp"
@@ -84,6 +86,56 @@ struct InstanceClassSignature {
   }
 };
 
+// One class of the source language a unit publishes (LRM 26.2 puts a package's
+// declarations on its signature): its canonical name, the properties it
+// declares in the order that fixes their slots, and the behaviors it introduces
+// in the order that fixes their ordinals.
+//
+// A class states what it adds and nothing about the lineage it extends, so a
+// referrer counts a position out of the class that declares it and never
+// through a lineage it cannot see. What a class keeps to itself (LRM 8.18
+// `local`) is absent, and the class places what it publishes ahead of it, so
+// adding one moves nothing a referrer counted.
+struct ClassSignature {
+  std::string class_name;
+  // The class this one extends, named the way every class named on a signature
+  // is -- by declaring unit and canonical name -- and absent where it extends
+  // nothing. A referrer resolves an inherited property or behavior by walking
+  // this chain, which is why nothing inherited is restated below: stating it
+  // would mean reading the base's promise while deriving this one, and a
+  // signature is a function of its own unit's declarations alone.
+  std::optional<ExternalClassRef> base;
+  // Whether this is an interface class (LRM 8.26). A class commits to one
+  // rather than extending it, so a behavior an interface class states sits on
+  // no lineage; a referrer that could not tell would name a coordinate no value
+  // carries.
+  bool is_interface_class = false;
+  base::Arena<PublishedMember, PublishedMemberId> members;
+  base::Arena<PublishedBehavior, PublishedBehaviorId> behaviors;
+
+  // The property published under `name`, or nothing where the class published
+  // no such name -- which is what leaves a reference to it with nothing to
+  // compile against.
+  [[nodiscard]] auto FindMember(std::string_view name) const
+      -> std::optional<PublishedMemberId> {
+    for (const PublishedMemberId id : members.Ids()) {
+      if (members.Get(id).name == name) return id;
+    }
+    return std::nullopt;
+  }
+
+  // The behavior published under `name`, or nothing where this class
+  // introduces none such -- a class that answers a behavior it did not
+  // introduce is not where a dispatch names it.
+  [[nodiscard]] auto FindBehavior(std::string_view name) const
+      -> std::optional<PublishedBehaviorId> {
+    for (const PublishedBehaviorId id : behaviors.Ids()) {
+      if (behaviors.Get(id).name == name) return id;
+    }
+    return std::nullopt;
+  }
+};
+
 // What a unit publishes: the declarations another unit may name. Derived by the
 // unit from its own declarations alone, so nothing it states can contradict
 // what the unit is, and nothing about any other unit is needed to produce it --
@@ -106,6 +158,20 @@ struct UnitSignature {
   // Absent on a unit with no instance: a package names its declarations and
   // roots no object, so nothing reaches it through a receiver.
   std::optional<InstanceClassSignature> instance_class;
+  // The classes of the source language this unit declares and other units may
+  // name (LRM 26.2), each reached by its own name rather than through any
+  // instance.
+  std::vector<ClassSignature> classes;
+
+  // The class published under `name`, or nothing where the unit published no
+  // such name.
+  [[nodiscard]] auto FindClass(std::string_view name) const
+      -> const ClassSignature* {
+    for (const ClassSignature& published : classes) {
+      if (published.class_name == name) return &published;
+    }
+    return nullptr;
+  }
 };
 
 // The class an instance of the unit named `unit_name` is. The unit both
@@ -138,5 +204,12 @@ struct UnitSignature {
 // counted out of that list.
 [[nodiscard]] auto ImportExternalUnitObject(
     const UnitSignature& signature, TypePool& into) -> ExternalUnitObject;
+
+// The record a referrer keeps of one class `signature` publishes, on the same
+// terms: the whole published list crosses and the types are answered again out
+// of the reader's pool.
+[[nodiscard]] auto ImportExternalClass(
+    const UnitSignature& signature, const ClassSignature& published,
+    TypePool& into) -> ExternalClass;
 
 }  // namespace lyra::hir

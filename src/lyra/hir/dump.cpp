@@ -123,7 +123,7 @@ auto FormatClassPropertyTarget(const ClassPropertyTarget& target)
           [](const ExternalClassPropertyTarget& t) -> std::string {
             return std::format(
                 "Class[external={}::{}].{}", t.unit_name, t.class_name,
-                t.property_name);
+                t.property.value);
           }},
       target);
 }
@@ -153,16 +153,23 @@ auto FormatExternalClassMethod(const ExternalClassMethodTarget& t)
       "Class[external={}::{}].{}", t.unit_name, t.class_name, t.method_name);
 }
 
-auto FormatClassMethodTarget(const ClassMethodTarget& target) -> std::string {
+auto FormatExternalDispatchSlot(const ExternalDispatchSlot& slot)
+    -> std::string {
+  return std::format(
+      "Class[external={}::{}]#{}", slot.unit_name, slot.class_name,
+      slot.behavior.value);
+}
+
+auto FormatOverriddenBehavior(const OverriddenBehavior& taken) -> std::string {
   return std::visit(
       Overloaded{
           [](const LocalClassMethodTarget& t) {
             return FormatLocalClassMethod(t);
           },
-          [](const ExternalClassMethodTarget& t) {
-            return FormatExternalClassMethod(t);
+          [](const ExternalDispatchSlot& s) {
+            return FormatExternalDispatchSlot(s);
           }},
-      target);
+      taken);
 }
 
 auto FormatMethodCallee(const MethodCallee& callee) -> std::string {
@@ -175,7 +182,10 @@ auto FormatMethodCallee(const MethodCallee& callee) -> std::string {
             return std::format(
                 "{} {}{}", FormatExternalClassMethod(c.target),
                 c.interface.kind == SubroutineKind::kTask ? "task" : "function",
-                c.is_virtual ? " virtual" : "");
+                c.slot.has_value()
+                    ? std::format(
+                          " virtual={}", FormatExternalDispatchSlot(*c.slot))
+                    : "");
           }},
       callee);
 }
@@ -1470,7 +1480,7 @@ class HirDumper {
     if (d.is_prototype) flags += " prototype";
     if (d.overrides.has_value()) {
       flags +=
-          std::format(" overrides={}", FormatClassMethodTarget(*d.overrides));
+          std::format(" overrides={}", FormatOverriddenBehavior(*d.overrides));
     }
     Line(
         std::format(

@@ -45,4 +45,27 @@ auto ImportExternalUnitObject(const UnitSignature& signature, TypePool& into)
   return object;
 }
 
+auto ImportExternalClass(
+    const UnitSignature& signature, const ClassSignature& published,
+    TypePool& into) -> ExternalClass {
+  ExternalClass cls{
+      .unit_name = signature.unit_name,
+      .class_name = published.class_name,
+      .base = published.base,
+      .is_interface_class = published.is_interface_class,
+      .members = {},
+      .behaviors = {}};
+  TypeImportMemo memo;
+  TypeImporter importer(signature.types, std::nullopt, into, memo);
+  for (const PublishedMemberId id : published.members.Ids()) {
+    PublishedMember member = published.members.Get(id);
+    member.type = importer.Import(member.type);
+    cls.members.Add(std::move(member));
+  }
+  for (const PublishedBehaviorId id : published.behaviors.Ids()) {
+    cls.behaviors.Add(published.behaviors.Get(id));
+  }
+  return cls;
+}
+
 }  // namespace lyra::hir

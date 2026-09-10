@@ -138,7 +138,7 @@ auto CanonicalVirtualSlot(
             return mir::ExternalVirtualSlot{
                 .unit_name = e.unit_name,
                 .class_name = e.class_name,
-                .method_name = e.method_name};
+                .ordinal = e.ordinal};
           }},
       role);
 }
@@ -167,8 +167,8 @@ auto ReadMethodCallee(
                 .target = unit_lowerer.MakeExternalMethodTarget(ext->target),
                 .qualification = std::nullopt},
         .slot = std::nullopt};
-    if (ext->is_virtual) {
-      facts.slot = unit_lowerer.MakeExternalVirtualSlot(ext->target);
+    if (ext->slot.has_value()) {
+      facts.slot = unit_lowerer.MakeExternalVirtualSlot(*ext->slot);
     }
     return facts;
   }

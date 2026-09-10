@@ -272,16 +272,10 @@ class UnitLowerer {
   // ones it may read.
   [[nodiscard]] auto TakeSignature() -> hir::UnitSignature;
 
-  // The units this one's declarations name, each once. The design narrows the
-  // signatures it hands this unit to these, so a unit's own declarations fix
-  // what its bodies can read about any other.
-  [[nodiscard]] auto ReferencedUnits() const -> std::span<const std::string> {
-    return referenced_units_;
-  }
-
   // The body phase: everything this unit executes, resolved against what the
-  // units it references published.
-  auto LowerBodies(hir::ConsumedSignatures signatures)
+  // design's units published. Which of those promises this unit ends up
+  // depending on is the set it reads, so nothing decides that set in advance.
+  auto LowerBodies(const hir::UnitSignatures& signatures)
       -> diag::Result<hir::CompilationUnit>;
 
   // Read access to the in-progress unit. Handlers reach the unit's type vocab
@@ -322,13 +316,13 @@ class UnitLowerer {
   // What the units this one references published, for a lowering that reaches
   // across the unit boundary. Reachable only once bodies lower: the declaration
   // phase reads this unit alone, so it has none.
-  [[nodiscard]] auto Signatures() const -> const hir::ConsumedSignatures& {
-    if (!consumed_signatures_.has_value()) {
+  [[nodiscard]] auto Signatures() const -> const hir::UnitSignatures& {
+    if (signatures_ == nullptr) {
       throw InternalError(
           "UnitLowerer::Signatures: another unit's signature is reachable only "
           "while bodies lower; the declaration phase reads this unit alone");
     }
-    return *consumed_signatures_;
+    return *signatures_;
   }
 
   // This unit's record of the object an instance of `unit_name` is, taken from
@@ -337,6 +331,15 @@ class UnitLowerer {
   // declares the dependency on it, so its signature is in hand here.
   auto ExternalUnitObjectOf(const std::string& unit_name)
       -> hir::ExternalUnitObjectId;
+
+  // This unit's record of what `unit_name` promised about its class
+  // `class_name`, taken from that unit's signature the first time a property or
+  // a behavior on it is reached. Nothing where that unit published no such
+  // class, which is what leaves such a reference with nothing to compile
+  // against.
+  auto ExternalClassOf(
+      const std::string& unit_name, const std::string& class_name)
+      -> const hir::ExternalClass*;
 
   // Which storage the declaration `value` holds. One answer, so what this unit
   // publishes about a declaration and what a route to it reaches cannot differ.
@@ -437,17 +440,34 @@ class UnitLowerer {
   // its call protocol and each formal's direction and type (LRM 13.5). Both
   // sides derive it from the callee's own declaration, so no table is shared
   // and neither can state an interface the other does not have.
+  // Which behavior a method overriding `overridden` takes over, with the
+  // introducing class named the way the boundary it sits on names one.
+  auto MakeOverriddenBehavior(
+      const hir::ClassRef& class_ref,
+      const slang::ast::SubroutineSymbol& overridden, diag::SourceSpan span)
+      -> diag::Result<hir::OverriddenBehavior>;
+
+  // Which of the behaviors `cls` published the one named `method_name` is.
+  // Refused where that class introduces no such behavior, since what a class
+  // publishes is what it adds and this unit cannot count through a lineage of
+  // another unit.
+  auto MakeExternalDispatchSlot(
+      const hir::ExternalClassRef& cls, std::string_view method_name,
+      diag::SourceSpan span) -> diag::Result<hir::ExternalDispatchSlot>;
+
   auto MakeExternalCalleeInterface(
       const slang::ast::SubroutineSymbol& sym, diag::SourceSpan span)
       -> diag::Result<hir::ExternalCalleeInterface>;
 
-  // The instance-property peer of `MakeClassMethodTarget`. Local when the
-  // class was interned by this unit; external when the class lives in another
-  // compilation unit, in which case the property is named by its source name.
+  // The instance-property peer of `MakeClassMethodTarget`. Local when the class
+  // was interned by this unit; external when the class lives in another
+  // compilation unit, in which case the property is named by its position in
+  // what that class published. A property that class kept to itself has no such
+  // position, and the access has nothing to compile against.
   [[nodiscard]] auto MakeClassPropertyTarget(
       const hir::ClassRef& class_ref,
-      const slang::ast::ClassPropertySymbol& prop) const
-      -> hir::ClassPropertyTarget;
+      const slang::ast::ClassPropertySymbol& prop, diag::SourceSpan span)
+      -> diag::Result<hir::ClassPropertyTarget>;
 
   // The static-property peer of `MakeClassMethodTarget`. Local when the class
   // was interned by this unit; external when the class lives in another
@@ -667,11 +687,6 @@ class UnitLowerer {
   auto DeclareStructuralIdentities(const slang::ast::Scope& scope)
       -> diag::Result<void>;
 
-  // Records that this unit's declarations name `unit_name`. Several instances
-  // may be built from one unit, and the dependency is on the unit rather than
-  // on any one of them, so a repeat contributes nothing.
-  void RecordReferencedUnit(std::string unit_name);
-
   // The frame assigned to `scope` by the declaration pass. Every scope a
   // structural lowerer is built for was assigned one, so absence is a
   // compiler-bug invariant.
@@ -883,6 +898,13 @@ class UnitLowerer {
   // into the signature's own pool, so what leaves stands on its own.
   auto PublishSignature() -> diag::Result<void>;
 
+  // Derives what this unit promises about each class of the source language it
+  // declares: the properties another unit may name, in the order that fixes
+  // their slots, and the behaviors the class introduces, in the order that
+  // fixes their ordinals. Every class is already minted when this runs, so this
+  // reads the unit's own declarations rather than the frontend's tree.
+  auto PublishClassSignatures() -> void;
+
   // How this reader reaches the interface an enclosing scope's `port` carries
   // (LRM 25.3). The port is the whole route: what stands behind it belongs to a
   // unit this one reaches no other way, so any other route to the same object
@@ -956,18 +978,20 @@ class UnitLowerer {
   // What this unit publishes, built by the declaration phase and moved out
   // before any body lowers.
   hir::UnitSignature signature_;
-  // The units this unit's own declarations name, recorded as the declaration
-  // phase walks them.
-  std::vector<std::string> referenced_units_;
-  // What the units this one references publish, for the body phase alone. The
-  // declaration phase has none, which is what makes "a declaration reads only
-  // its own unit" a property of the code rather than a discipline.
-  std::optional<hir::ConsumedSignatures> consumed_signatures_;
+  // What the design's units publish, for the body phase alone. The declaration
+  // phase has none, which is what makes "a declaration reads only its own unit"
+  // a property of the code rather than a discipline.
+  const hir::UnitSignatures* signatures_ = nullptr;
   // What each signature this unit has read out of became in this unit's pool,
   // one entry per signature, so a type published once is taken once however
   // many connections name it.
   std::unordered_map<const hir::UnitSignature*, hir::TypeImportMemo>
       signature_type_memos_;
+  // What each class this unit declares would promise another unit, taken where
+  // that class's own arenas are built so the two count the same positions. Only
+  // the classes the unit's namespace declares reach its signature.
+  std::unordered_map<const slang::ast::ClassType*, hir::ClassSignature>
+      own_class_promises_;
   // Which record this unit made of each referenced unit's object, so every
   // reference into one names the same entry.
   std::unordered_map<std::string, hir::ExternalUnitObjectId>

@@ -76,15 +76,17 @@ using MethodReceiver =
 
 // Calls a class method whose declaring class is in another compilation unit.
 // Beside naming the callee it carries the facts this unit cannot look up about
-// one: whether the method is virtual (LRM 8.20), which routes the call between
-// dynamic and static dispatch, and its interface, which shapes the arguments
-// the call passes and the completion it consumes. Both are read from the
-// frontend's view of the callee where this callee is minted. Whether the
-// method is type-associated (LRM 8.10) is not among them: a call to one is a
-// different reference, which is where that shows.
+// one: the behavior the method answers, absent for a method that answers none
+// (LRM 8.20), and its interface, which shapes the arguments the call passes and
+// the completion it consumes. Both are read from the frontend's view of the
+// callee where this callee is minted. A method that answers a behavior can be
+// dispatched on; whether a given call is, is that call's own question, since
+// naming the base's implementation demands it whatever the callee answers
+// (LRM 8.15). Whether the method is type-associated (LRM 8.10) is not among
+// them: a call to one is a different reference, which is where that shows.
 struct ExternalMethodCallee {
   ExternalClassMethodTarget target;
-  bool is_virtual = false;
+  std::optional<ExternalDispatchSlot> slot;
   ExternalCalleeInterface interface;
 };
 

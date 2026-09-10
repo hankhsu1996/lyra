@@ -644,10 +644,50 @@ auto UnitLowerer::MakeExternalFieldTarget(
     const hir::ExternalClassPropertyTarget& target)
     -> mir::ExternalFieldTarget {
   unit_.AddExternalClassUnit(target.unit_name);
+  RecordExternalClass(target.unit_name, target.class_name);
+  // The properties a class publishes are a prefix of its own storage, so the
+  // position counted out of the promise is the slot that class gave.
   return mir::ExternalFieldTarget{
       .unit_name = target.unit_name,
       .class_name = target.class_name,
-      .field_name = target.property_name};
+      .slot = mir::FieldId{target.property.value}};
+}
+
+auto UnitLowerer::RecordExternalClass(
+    const std::string& unit_name, const std::string& class_name) -> void {
+  if (mir::FindExternalClass(unit_.external_classes, unit_name, class_name) !=
+      nullptr) {
+    return;
+  }
+  const hir::ExternalClass* published =
+      hir::FindExternalClass(Hir().external_classes, unit_name, class_name);
+  if (published == nullptr) {
+    throw InternalError(
+        "hir_to_mir: a reference reaches a class of another unit that no "
+        "consumed promise describes");
+  }
+  mir::ExternalClass record{
+      .unit_name = published->unit_name,
+      .class_name = published->class_name,
+      .base = {},
+      .is_interface_class = published->is_interface_class,
+      .fields = {},
+      .behaviors = {}};
+  if (published->base.has_value()) {
+    record.base = mir::CrossUnitClassRef{
+        .unit_name = published->base->unit_name,
+        .class_name = published->base->class_name};
+  }
+  for (const hir::PublishedMemberId id : published->members.Ids()) {
+    const hir::PublishedMember& member = published->members.Get(id);
+    record.fields.Add(
+        mir::FieldDecl{
+            .name = member.name, .type = TranslateType(member.type)});
+  }
+  for (const hir::PublishedBehaviorId id : published->behaviors.Ids()) {
+    record.behaviors.push_back(published->behaviors.Get(id).name);
+  }
+  unit_.external_classes.push_back(std::move(record));
 }
 
 auto UnitLowerer::TranslateClassPropertyTarget(
@@ -683,22 +723,23 @@ auto UnitLowerer::MakeExternalMethodTarget(
 }
 
 auto UnitLowerer::MakeExternalMethodOverride(
-    const hir::ExternalClassMethodTarget& target)
-    -> mir::OverridesExternalSlot {
-  unit_.AddExternalClassUnit(target.unit_name);
+    const hir::ExternalDispatchSlot& slot) -> mir::OverridesExternalSlot {
+  unit_.AddExternalClassUnit(slot.unit_name);
+  RecordExternalClass(slot.unit_name, slot.class_name);
   return mir::OverridesExternalSlot{
-      .unit_name = target.unit_name,
-      .class_name = target.class_name,
-      .method_name = target.method_name};
+      .unit_name = slot.unit_name,
+      .class_name = slot.class_name,
+      .ordinal = mir::BehaviorOrdinal{slot.behavior.value}};
 }
 
-auto UnitLowerer::MakeExternalVirtualSlot(
-    const hir::ExternalClassMethodTarget& target) -> mir::ExternalVirtualSlot {
-  unit_.AddExternalClassUnit(target.unit_name);
+auto UnitLowerer::MakeExternalVirtualSlot(const hir::ExternalDispatchSlot& slot)
+    -> mir::ExternalVirtualSlot {
+  unit_.AddExternalClassUnit(slot.unit_name);
+  RecordExternalClass(slot.unit_name, slot.class_name);
   return mir::ExternalVirtualSlot{
-      .unit_name = target.unit_name,
-      .class_name = target.class_name,
-      .method_name = target.method_name};
+      .unit_name = slot.unit_name,
+      .class_name = slot.class_name,
+      .ordinal = mir::BehaviorOrdinal{slot.behavior.value}};
 }
 
 auto UnitLowerer::MakeExternalCallableTarget(

@@ -1385,13 +1385,17 @@ auto lyra_rt_object_deref(void* handle) -> void* {
   return object.Share().get();
 }
 
-auto lyra_rt_object_member_addr(void* object, std::uint32_t index) -> void* {
-  return static_cast<ManagedObject*>(object)->MemberAddress(index);
+auto lyra_rt_object_member_addr(
+    void* object, const void* declared_by, std::uint32_t slot) -> void* {
+  return static_cast<ManagedObject*>(object)->MemberAddress(
+      static_cast<const ObjectDefinition*>(declared_by), slot);
 }
 
-auto lyra_rt_object_method(void* object, std::uint32_t position)
+auto lyra_rt_object_method(
+    void* object, const void* introduced_by, std::uint32_t ordinal)
     -> LyraMethodEntry {
-  return static_cast<const ManagedObject*>(object)->Method(position);
+  return static_cast<const ManagedObject*>(object)->Method(
+      static_cast<const ObjectDefinition*>(introduced_by), ordinal);
 }
 
 void lyra_rt_register_signal(void* self, const void* name, void* cell) {

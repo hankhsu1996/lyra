@@ -22,7 +22,6 @@
 #include "lyra/base/internal_error.hpp"
 #include "lyra/base/overloaded.hpp"
 #include "lyra/diag/diag_code.hpp"
-#include "lyra/lir/class_query.hpp"
 #include "lyra/lir/compilation_unit.hpp"
 #include "lyra/lir/integral_constant.hpp"
 #include "lyra/lir/place_query.hpp"
@@ -304,28 +303,54 @@ auto CodeGenFunction::ResolvePlaceAddress(const lir::Place& place)
     // than a load, and a member's address comes from whatever declares it.
     const lir::TypeId reached =
         ReachedType(place, std::distance(place.chain.begin(), step));
-    address = std::visit(
+    auto reached_storage = std::visit(
         Overloaded{
-            [&](const lir::DerefProjection&) -> llvm::Value* {
+            [&](const lir::DerefProjection&) -> diag::Result<llvm::Value*> {
               return OpenedReferent(
                   builder_.CreateLoad(module_->Types().Ptr(), address),
                   reached);
             },
-            [&](const lir::MemberProjection& projection) -> llvm::Value* {
-              const std::array<llvm::Value*, 2> args{
-                  address,
-                  llvm::ConstantInt::get(
-                      llvm::Type::getInt32Ty(module_->Context()),
-                      lir::MemberPosition(module_->Unit(), projection.member))};
-              return builder_.CreateCall(
-                  Entry(
-                      RuntimeSymbol(MemberAddressOp(reached)),
-                      module_->Types().Ptr(), args),
-                  args);
+            [&](const lir::MemberProjection& projection)
+                -> diag::Result<llvm::Value*> {
+              return MemberStorage(address, reached, projection.member);
             }},
         *step);
+    if (!reached_storage) {
+      return std::unexpected(std::move(reached_storage.error()));
+    }
+    address = *reached_storage;
   }
   return address;
+}
+
+auto CodeGenFunction::MemberStorage(
+    llvm::Value* owner, lir::TypeId reached, lir::MemberRef member)
+    -> diag::Result<llvm::Value*> {
+  llvm::Value* const slot = llvm::ConstantInt::get(
+      llvm::Type::getInt32Ty(module_->Context()), member.slot.value);
+  switch (MemberOwnerOf(reached)) {
+    case MemberOwner::kScope: {
+      const std::array<llvm::Value*, 2> args{owner, slot};
+      return builder_.CreateCall(
+          Entry(
+              RuntimeSymbol(RuntimeOp::kMemberAddress), module_->Types().Ptr(),
+              args),
+          args);
+    }
+    case MemberOwner::kObject: {
+      auto declared_by = module_->DefinitionRef(member.declared_by);
+      if (!declared_by) {
+        return std::unexpected(std::move(declared_by.error()));
+      }
+      const std::array<llvm::Value*, 3> args{owner, *declared_by, slot};
+      return builder_.CreateCall(
+          Entry(
+              RuntimeSymbol(RuntimeOp::kObjectMemberAddress),
+              module_->Types().Ptr(), args),
+          args);
+    }
+  }
+  throw InternalError("llvm codegen: a member step reached unknown storage");
 }
 
 // The type of the storage the chain has arrived at where step `index` applies,
@@ -362,21 +387,26 @@ auto CodeGenFunction::IsHandleSequence(lir::TypeId type) const -> bool {
 // Which entry answers the address of a member of what `owner` names. Every
 // owner holds a block of storage described the same way, so what an entry
 // differs in is the runtime type the address it is handed names.
-auto CodeGenFunction::MemberAddressOp(lir::TypeId owner) const -> RuntimeOp {
+auto CodeGenFunction::MemberOwnerOf(lir::TypeId owner) const -> MemberOwner {
   const lir::Type& type = module_->Unit().types.Get(owner);
   if (const auto* object = type.As<lir::ObjectType>()) {
     return lir::IsObjectTreeNode(module_->Unit().classes.Get(object->class_id))
-               ? RuntimeOp::kMemberAddress
-               : RuntimeOp::kObjectMemberAddress;
+               ? MemberOwner::kScope
+               : MemberOwner::kObject;
   }
   // What another unit published is an object of its own tree.
   if (type.Is<lir::ExternalUnitObjectType>()) {
-    return RuntimeOp::kMemberAddress;
+    return MemberOwner::kScope;
+  }
+  // A class another unit declares is the source language's own class, reached
+  // the way this unit's are.
+  if (type.Is<lir::CrossUnitClassType>()) {
+    return MemberOwner::kObject;
   }
   // A struct's fields are the same storage block a heap object's properties
   // are, reached through the same handle.
   if (type.Is<lir::StructType>()) {
-    return RuntimeOp::kObjectMemberAddress;
+    return MemberOwner::kObject;
   }
   throw InternalError(
       std::format(
@@ -691,22 +721,20 @@ auto CodeGenFunction::ResolveCallee(
           // arguments already in hand is this side's own.
           [&](const lir::DispatchTarget& t)
               -> diag::Result<llvm::FunctionCallee> {
-            const std::optional<std::uint32_t> position =
-                lir::DispatchPosition(module_->Unit(), t.method);
-            if (!position.has_value()) {
-              return Unsupported(
-                  "llvm codegen: dispatching on a value whose class extends "
-                  "one another compilation unit declares is not yet supported");
-            }
             if (args.empty()) {
               throw InternalError(
                   "llvm codegen: a dispatched call states no value to dispatch "
                   "on");
             }
-            const std::array<llvm::Value*, 2> lookup{
-                args[0],
+            auto introduced_by = module_->DefinitionRef(t.method.introduced_by);
+            if (!introduced_by) {
+              return std::unexpected(std::move(introduced_by.error()));
+            }
+            const std::array<llvm::Value*, 3> lookup{
+                args[0], *introduced_by,
                 llvm::ConstantInt::get(
-                    llvm::Type::getInt32Ty(module_->Context()), *position)};
+                    llvm::Type::getInt32Ty(module_->Context()),
+                    t.method.ordinal.value)};
             llvm::Value* body = builder_.CreateCall(
                 Entry(
                     RuntimeSymbol(RuntimeOp::kObjectMethod),
@@ -1430,9 +1458,10 @@ auto CodeGenFunction::CapturePlaceOf(const lir::Place& place) const
   if (!module_->Unit().types.Get(reached).Is<lir::ClosureType>()) {
     return std::nullopt;
   }
+  // A closure extends nothing, so the slot its declaration gave a capture is
+  // already where that capture sits in the value.
   return CapturePlace{
-      .closure = std::move(holder),
-      .index = lir::MemberPosition(module_->Unit(), member->member)};
+      .closure = std::move(holder), .index = member->member.slot.value};
 }
 
 auto CodeGenFunction::StorageReached(lir::TypeId operand) const

@@ -54,11 +54,10 @@ auto CanonicalizeVirtualDispatch(
     -> std::optional<mir::VirtualDispatchRole> {
   if (method.overrides.has_value()) {
     if (const auto* ext =
-            std::get_if<hir::ExternalClassMethodTarget>(&*method.overrides)) {
-      // A slot introduced in another unit is canonically owned there; this
-      // unit records the override by the (unit, class, method) name triple
-      // and reaches the base's dispatch machinery through the link-time
-      // include of the declaring unit.
+            std::get_if<hir::ExternalDispatchSlot>(&*method.overrides)) {
+      // A behavior introduced in another unit is canonically owned there, so
+      // this unit records the takeover by the coordinate that unit published
+      // and states nothing about where it lands.
       return mir::VirtualDispatchRole{
           unit_lowerer.MakeExternalMethodOverride(*ext)};
     }
@@ -228,12 +227,31 @@ auto ClassDeclLowerer::DeclareShape(ClassShape* declaring_shape)
   // A property (LRM 8.4) becomes one field of the class, so where a property
   // lands is a fact only this loop knows. It is recorded as the loop goes;
   // nothing downstream recomputes it.
+  //
+  // A property another unit may name sits in a fixed prefix, ahead of every one
+  // the class keeps to itself (LRM 8.18), so a unit reading the promise counts
+  // the same slot out of it and a property the class never promised can move
+  // none of them. The source order is what the promise states and what a
+  // declaration initializer runs in, so it is kept within each group.
   shape.field_translation =
       base::Translation<hir::FieldId, mir::FieldId>{hir_class.fields.size()};
-  for (const auto& field : hir_class.fields) {
-    const mir::TypeId field_type = unit_lowerer.TranslateType(field.type);
-    shape.field_translation.Append(shape.fields.Add(
-        mir::FieldDecl{.name = field.name, .type = field_type}));
+  std::vector<mir::FieldId> placed(hir_class.fields.size());
+  const auto place = [&](bool published) {
+    for (const hir::FieldId id : hir_class.fields.Ids()) {
+      const hir::ClassField& field = hir_class.fields.Get(id);
+      if (field.is_published != published) {
+        continue;
+      }
+      placed[id.value] = shape.fields.Add(
+          mir::FieldDecl{
+              .name = field.name,
+              .type = unit_lowerer.TranslateType(field.type)});
+    }
+  };
+  place(true);
+  place(false);
+  for (const mir::FieldId id : placed) {
+    shape.field_translation.Append(id);
   }
 
   // Everything the class keeps for itself rather than per object goes to one

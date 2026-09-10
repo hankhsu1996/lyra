@@ -86,19 +86,34 @@ class UnitLowerer {
   // receiver has: a class carries what its bases declare as well as its own.
   auto ClassValueType(mir::ClassId cls) -> lir::TypeId;
 
+  // The type naming a class another unit declares. The pair is the whole
+  // identity, which is what lets a property step and a dispatch on one name the
+  // declaration without an id of this unit standing for it.
+  [[nodiscard]] auto ExternalClassValueType(
+      const std::string& unit_name, const std::string& class_name) const
+      -> lir::TypeId;
+
+  // What another unit promised about the class it declares under this pair.
+  // Every reference that reached one consumed its promise where the reference
+  // was lowered, so a pair naming no record is a producer that emitted a
+  // reference it had nothing to compile against.
+  [[nodiscard]] auto PromisedClass(
+      const std::string& unit_name, const std::string& class_name) const
+      -> const mir::ExternalClass&;
+
   // The LIR function a class's callable lowers to. Throws if `callable` has no
   // body in `owner` -- a DPI-C import is reached as a foreign symbol and a pure
   // virtual has no implementation here, so neither is a function of this unit.
   [[nodiscard]] auto MethodFunction(
       mir::ClassId owner, mir::CallableId callable) const -> lir::FunctionId;
 
-  // The behavior a MIR dispatch slot names, as LIR names one: the class that
-  // introduced it, and which of that class's introductions it is. `owner` and
-  // `callable` are the slot's own canonical identity, so this reads that one
-  // class and nothing else -- where the behavior lands in a whole value is a
-  // layout question, answered from the lineage below this pass.
-  [[nodiscard]] auto MethodRef(
-      mir::ClassId owner, mir::CallableId callable) const -> lir::DispatchRef;
+  // The behavior a MIR dispatch slot names, as LIR names one: the declaration
+  // that introduced it, and which of that declaration's introductions it is.
+  // `owner` and `callable` are the slot's own canonical identity, so this reads
+  // that one class and nothing else -- where the behavior lands in a whole
+  // value is a layout question, answered from the lineage below this pass.
+  [[nodiscard]] auto MethodRef(mir::ClassId owner, mir::CallableId callable)
+      -> lir::DispatchRef;
 
   // The LIR function a class's constructor lowers to. Every class defines its
   // own construction, so every one of them has this function, and it is named
@@ -158,8 +173,8 @@ class UnitLowerer {
   // behavior, answering none, and taking one over with no body of its own.
   [[nodiscard]] auto TakenOver(
       const mir::CallableDecl& callable,
-      const std::optional<lir::FunctionId>& body) const
-      -> std::optional<lir::DispatchOverride>;
+      const std::optional<lir::FunctionId>& body)
+      -> std::optional<lir::DispatchTakeover>;
 
   // The symbol a callable of this unit's namespace is emitted and linked under.
   [[nodiscard]] auto UnitCallableSymbol(const mir::CallableDecl& callable) const
