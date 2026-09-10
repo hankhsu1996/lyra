@@ -306,10 +306,12 @@ auto MakeClassPropertyRefExpr(
             .declaring_scope_hops = *declaring_hops},
         *type_id, span);
   }
+  auto target = unit_lowerer.MakeClassPropertyTarget(*owner_ref, prop, span);
+  if (!target) {
+    return std::unexpected(std::move(target.error()));
+  }
   return hir::MakeRefExpr(
-      hir::ClassPropertyRef{
-          .target = unit_lowerer.MakeClassPropertyTarget(*owner_ref, prop)},
-      *type_id, span);
+      hir::ClassPropertyRef{.target = *std::move(target)}, *type_id, span);
 }
 
 // LRM 8.11 `this` standing on its own: the source asks for the object itself

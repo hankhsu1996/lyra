@@ -124,10 +124,14 @@ auto ResolveBuiltinSpelling(
                   "type it builds, and this call names none -- please report "
                   "this as a bug");
             }
-            const auto& tq = std::get<mir::TypeQualifier>(*qualification);
+            const std::string scope = std::visit(
+                Overloaded{[&](const mir::TypeQualifier& q) -> std::string {
+                  return RenderTypeAsCpp(view.Unit(), q.type);
+                }},
+                *qualification);
             return {
                 .name = std::format(
-                    "{}::{}", RenderTypeAsCpp(view.Unit(), tq.type),
+                    "{}::{}", scope,
                     SpelledAt(
                         s.identifier, position, NameReachedThrough::kAType)),
                 .placement = ReceiverPlacement::kIntoCalleeName};
@@ -229,8 +233,18 @@ auto ResolveCalleeSpelling(
                               .callables.Get(l.slot)
                               .name;
                         },
-                        [](const mir::ExternalVirtualSlot& e) -> std::string {
-                          return e.method_name;
+                        [&](const mir::ExternalVirtualSlot& e) -> std::string {
+                          const mir::ExternalClass* introducer =
+                              mir::FindExternalClass(
+                                  view.Unit().external_classes, e.unit_name,
+                                  e.class_name);
+                          if (introducer == nullptr ||
+                              e.ordinal.value >= introducer->behaviors.size()) {
+                            throw InternalError(
+                                "RenderCall: a dispatch names a behavior no "
+                                "consumed promise describes");
+                          }
+                          return introducer->behaviors[e.ordinal.value];
                         }},
                     v.slot),
                 .placement = ReceiverPlacement::kIntoCalleeName};

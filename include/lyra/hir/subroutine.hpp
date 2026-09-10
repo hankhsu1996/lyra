@@ -61,7 +61,7 @@ struct SubroutineDecl {
   bool is_virtual = false;
   bool is_prototype = false;
   bool is_static = false;
-  std::optional<ClassMethodTarget> overrides;
+  std::optional<OverriddenBehavior> overrides;
 };
 
 }  // namespace lyra::hir

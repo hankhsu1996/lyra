@@ -39,6 +39,9 @@ class LirDumper {
     for (const ExternalUnitObjectId id : unit_->external_unit_objects.Ids()) {
       DumpExternalUnitObject(id);
     }
+    for (const ExternalClass& cls : unit_->external_classes) {
+      DumpExternalClass(cls);
+    }
     for (const StaticStorage& storage : unit_->static_storage) {
       Line(
           std::format(
@@ -74,6 +77,18 @@ class LirDumper {
     Dedent();
   }
 
+  void DumpExternalClass(const ExternalClass& cls) {
+    Line(std::format("ExternalClass \"{}.{}\"", cls.unit_name, cls.class_name));
+    Indent();
+    for (std::size_t i = 0; i < cls.members.size(); ++i) {
+      Line(
+          std::format(
+              "member[{}] \"{}\" : {}", i, cls.members[i].name,
+              FormatType(cls.members[i].type)));
+    }
+    Dedent();
+  }
+
   void DumpClass(ClassId id) {
     const Class& cls = unit_->classes.Get(id);
     Line(std::format("Class \"{}\" (#{})", cls.name, id.value));
@@ -93,7 +108,7 @@ class LirDumper {
     for (std::size_t i = 0; i < cls.introduces.size(); ++i) {
       Line(std::format("introduces[{}]: {}", i, FormatBody(cls.introduces[i])));
     }
-    for (const DispatchOverride& taken : cls.overrides) {
+    for (const DispatchTakeover& taken : cls.takeovers) {
       Line(
           std::format(
               "overrides {}: {}", FormatDispatchRef(taken.method),
@@ -250,11 +265,10 @@ class LirDumper {
                             : std::string{"(unanswered)"};
   }
 
-  [[nodiscard]] auto FormatDispatchRef(DispatchRef method) const
+  [[nodiscard]] static auto FormatDispatchRef(DispatchRef method)
       -> std::string {
     return std::format(
-        "{}#{}", unit_->classes.Get(method.introduced_by).name,
-        method.ordinal.value);
+        "{}#{}", FormatType(method.introduced_by), method.ordinal.value);
   }
 
   [[nodiscard]] static auto FormatBase(const Base& base) -> std::string {

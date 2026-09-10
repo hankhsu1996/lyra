@@ -6,13 +6,52 @@
 
 #include "lyra/base/internal_error.hpp"
 #include "lyra/base/overloaded.hpp"
-#include "lyra/lir/class_query.hpp"
+#include "lyra/lir/class_id.hpp"
 #include "lyra/lir/compilation_unit.hpp"
 #include "lyra/lir/function.hpp"
 #include "lyra/lir/type.hpp"
 #include "lyra/lir/type_id.hpp"
 
 namespace lyra::lir {
+
+namespace {
+
+// The class the declaration `type` names extends, or nothing where the lineage
+// ends. One walk covers both sides of the unit boundary: a class this unit
+// compiles states its base outright, and one another unit declares states it on
+// the promise this unit read.
+auto ExtendedBy(const CompilationUnit& unit, TypeId type)
+    -> std::optional<TypeId> {
+  return unit.types.Get(type).Visit(
+      Overloaded{
+          [&](const ObjectType& object) -> std::optional<TypeId> {
+            const std::optional<Base>& base =
+                unit.classes.Get(object.class_id).base;
+            return base.has_value() ? BaseType(unit, *base) : std::nullopt;
+          },
+          [&](const CrossUnitClassType& cls) -> std::optional<TypeId> {
+            const ExternalClass* record =
+                FindExternalClass(unit, cls.unit_name, cls.class_name);
+            if (record == nullptr || !record->base.has_value()) {
+              return std::nullopt;
+            }
+            return BaseType(unit, Base{*record->base});
+          },
+          [](const auto&) -> std::optional<TypeId> { return std::nullopt; }});
+}
+
+}  // namespace
+
+auto CarriesMembersOf(
+    const CompilationUnit& unit, TypeId type, TypeId declaration) -> bool {
+  for (std::optional<TypeId> at = type; at.has_value();
+       at = ExtendedBy(unit, *at)) {
+    if (*at == declaration) {
+      return true;
+    }
+  }
+  return false;
+}
 
 auto DeclaredMembers(const CompilationUnit& unit, TypeId type)
     -> std::optional<MemberList> {
@@ -28,6 +67,15 @@ auto DeclaredMembers(const CompilationUnit& unit, TypeId type)
                 unit.external_unit_objects.Get(external.object);
             return MemberList{
                 .members = object.members, .owner = object.class_name};
+          },
+          [&](const CrossUnitClassType& cls) -> std::optional<MemberList> {
+            const ExternalClass* record =
+                FindExternalClass(unit, cls.unit_name, cls.class_name);
+            if (record == nullptr) {
+              return std::nullopt;
+            }
+            return MemberList{
+                .members = record->members, .owner = record->class_name};
           },
           [&](const ClosureType& closure) -> std::optional<MemberList> {
             const Closure& decl = unit.closures.Get(closure.closure_id);

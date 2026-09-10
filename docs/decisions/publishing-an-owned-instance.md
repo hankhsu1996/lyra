@@ -12,6 +12,10 @@ the readable-signature set `unit-signature.md` D3 bounds, and corrects one Forbi
 invariant states. It removes the refusal `calling-a-subroutine-on-another-units-object.md` D3 ends
 on by changing that refusal's stated premise; nothing is reversed.
 
+D3 is superseded by [reaching-past-a-published-class](reaching-past-a-published-class.md): the bound
+it widens is removed rather than widened again, because a class named only inside a body arrives
+after any set computed from declarations is fixed. The rest of this entry stands.
+
 ## Why this decision matters
 
 An interface can contain smaller interfaces and be passed through ports (LRM 25.3), and access to
@@ -105,7 +109,7 @@ identity is this unit's own declaration rather than another unit's promise: a st
 unit builds, and a step through a port this unit declares. A route with none of the new steps is
 what it was, so the general case covers the old one with no branch.
 
-### D3. A unit may read the signatures it can reach, not only those it declares
+### D3. A unit may read the signatures it can reach, not only those it declares (superseded)
 
 The set of signatures handed to a unit's lowering is a bound: it is what makes reading a signature
 the unit has no business reading unspellable. `unit-signature.md` D3's purity theorem is stated over
@@ -237,6 +241,8 @@ publication. The invariant is the one that holds; both lists are reworded to say
 
 - `unit-signature.md` -- what each unit kind publishes, the two ways into another unit, and the
   purity theorem D3 here reads as a bound rather than a set.
+- `reaching-past-a-published-class.md` -- what one published class promises, and why the bound D3
+  here widens does not survive a class type crossing the boundary.
 - `interface-port-binding.md` -- D3 there is the set this entry extends, D5 the arena question, and
   D6 the demand-driven record this entry leaves alone.
 - `published-member-placement.md` -- the position both sides count out of the signature, and D4's

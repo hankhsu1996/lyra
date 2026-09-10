@@ -263,8 +263,11 @@ auto LowerCallTarget(
           [&](const mir::Direct& d) -> diag::Result<lir::CallTarget> {
             std::optional<lir::TypeId> qualifier;
             if (d.qualification.has_value()) {
-              qualifier = unit.TranslateType(
-                  std::get<mir::TypeQualifier>(*d.qualification).type);
+              qualifier = std::visit(
+                  Overloaded{[&](const mir::TypeQualifier& q) -> lir::TypeId {
+                    return unit.TranslateType(q.type);
+                  }},
+                  *d.qualification);
             }
             return std::visit(
                 Overloaded{
@@ -324,29 +327,51 @@ auto LowerCallTarget(
                 "lowerable to LIR");
           },
           // Which body runs is the receiving value's to decide, so what the
-          // call states is where to look rather than what to call. The logical
-          // slot the layer above names resolves here to the position the class
-          // that introduced it fixed (LRM 8.20); the receiver is already the
-          // call's first argument, as it is for a method named outright.
+          // call states is where to look rather than what to call. The behavior
+          // the layer above names becomes a coordinate here -- the declaration
+          // that introduced it, and which of that declaration's introductions
+          // it is (LRM 8.20) -- and where that lands in a value is settled with
+          // the whole lineage in hand, which is nowhere near this pass. The
+          // receiver is already the call's first argument, as it is for a
+          // method named outright.
           [&](const mir::Virtual& v) -> diag::Result<lir::CallTarget> {
-            return std::visit(
+            // A behavior an interface class states belongs to no lineage: a
+            // class commits to several interfaces whose declarations are
+            // unrelated to each other and to its base, and two classes
+            // committing to one need not order them alike (LRM 8.26). So it
+            // has no position counted through a lineage, which is the only
+            // coordinate this path carries -- and that holds wherever the
+            // class was declared.
+            const bool through_an_interface = std::visit(
                 Overloaded{
-                    [&](const mir::LocalVirtualSlot& slot)
-                        -> diag::Result<lir::CallTarget> {
-                      return lir::CallTarget{lir::DispatchTarget{
-                          .method =
-                              unit.MethodRef(slot.owner_class, slot.slot)}};
+                    [&](const mir::LocalVirtualSlot& slot) {
+                      return unit.Mir()
+                          .GetClass(slot.owner_class)
+                          .is_interface_class;
                     },
-                    // A behavior another unit introduced is named where that
-                    // unit named it, and this one reads no such name.
-                    [](const mir::ExternalVirtualSlot&)
-                        -> diag::Result<lir::CallTarget> {
-                      return Unsupported(
-                          "mir_to_lir: dispatching on a behavior a class of "
-                          "another compilation unit introduced is not yet "
-                          "supported");
+                    [&](const mir::ExternalVirtualSlot& slot) {
+                      return unit.PromisedClass(slot.unit_name, slot.class_name)
+                          .is_interface_class;
                     }},
                 v.slot);
+            if (through_an_interface) {
+              return Unsupported(
+                  "mir_to_lir: dispatching on a behavior an interface class "
+                  "states is not yet supported");
+            }
+            const lir::DispatchRef method = std::visit(
+                Overloaded{
+                    [&](const mir::LocalVirtualSlot& slot) {
+                      return unit.MethodRef(slot.owner_class, slot.slot);
+                    },
+                    [&](const mir::ExternalVirtualSlot& slot) {
+                      return lir::DispatchRef{
+                          .introduced_by = unit.ExternalClassValueType(
+                              slot.unit_name, slot.class_name),
+                          .ordinal = lir::DispatchOrdinal{slot.ordinal.value}};
+                    }},
+                v.slot);
+            return lir::CallTarget{lir::DispatchTarget{.method = method}};
           }},
       callee);
 }
@@ -1329,13 +1354,12 @@ auto FunctionLowerer::MemberRefOf(
             return lir::MemberRef{
                 .declared_by = *pointee, .slot = lir::MemberSlot{id.value}};
           },
-          [](const mir::ExternalFieldTarget&) -> diag::Result<lir::MemberRef> {
-            // A field of an SV class another unit declares is named rather than
-            // numbered, and no unit publishes an SV class, so nothing here
-            // states where it sits.
-            return Unsupported(
-                "mir_to_lir: a property of a class another compilation unit "
-                "declares is not yet reachable on this backend");
+          [&](const mir::ExternalFieldTarget& t)
+              -> diag::Result<lir::MemberRef> {
+            return lir::MemberRef{
+                .declared_by =
+                    unit_->ExternalClassValueType(t.unit_name, t.class_name),
+                .slot = lir::MemberSlot{t.slot.value}};
           },
       },
       field.field);

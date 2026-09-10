@@ -289,7 +289,17 @@ class CodeGenFunction {
   // that knows sequences rather than through the value model.
   [[nodiscard]] auto IsHandleSequence(lir::TypeId type) const -> bool;
 
-  [[nodiscard]] auto MemberAddressOp(lir::TypeId owner) const -> RuntimeOp;
+  // What kind of member-bearing storage a member step has arrived at, which
+  // decides both which entry answers for the step and what the step has to
+  // state. A class's storage extends its base's, so a property is reached by
+  // naming the class that declares it beside the slot that class gave it; a
+  // scope extends no scope, so a slot there is already a position.
+  enum class MemberOwner : std::uint8_t { kScope, kObject };
+  [[nodiscard]] auto MemberOwnerOf(lir::TypeId owner) const -> MemberOwner;
+
+  auto MemberStorage(
+      llvm::Value* owner, lir::TypeId reached, lir::MemberRef member)
+      -> diag::Result<llvm::Value*>;
 
   [[nodiscard]] auto ReachedType(
       const lir::Place& place, std::ptrdiff_t index) const -> lir::TypeId;

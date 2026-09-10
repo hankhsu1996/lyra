@@ -183,6 +183,13 @@ class UnitLowerer {
   auto MakeExternalFieldTarget(const hir::ExternalClassPropertyTarget& target)
       -> mir::ExternalFieldTarget;
 
+  // Takes this unit's record of what another unit promised about one of its
+  // classes into MIR, once per class reached. Every reference to a property or
+  // a behavior on one runs through here, so a reference and the record its
+  // position is counted out of cannot come apart.
+  auto RecordExternalClass(
+      const std::string& unit_name, const std::string& class_name) -> void;
+
   // Convenience that dispatches a HIR class property reference to its MIR
   // `FieldRef` peer: the intra-unit arm translates the owner class and the
   // field slot through the class registry, the cross-unit arm runs through
@@ -199,14 +206,14 @@ class UnitLowerer {
   auto MakeExternalMethodTarget(const hir::ExternalClassMethodTarget& target)
       -> mir::ExternalUnitClassMethodTarget;
 
-  auto MakeExternalMethodOverride(const hir::ExternalClassMethodTarget& target)
+  auto MakeExternalMethodOverride(const hir::ExternalDispatchSlot& slot)
       -> mir::OverridesExternalSlot;
 
-  // The slot a call dispatches through when the class introducing it belongs to
-  // another compilation unit: the referring unit reaches it through the target
-  // language's own virtual-call machinery, which the declaring unit's header
-  // brings in. Records the class dependency so that include is emitted.
-  auto MakeExternalVirtualSlot(const hir::ExternalClassMethodTarget& target)
+  // The behavior a call dispatches on when the class introducing it belongs to
+  // another compilation unit, named by the coordinate that class published.
+  // Records the class dependency so the referring artifact names the unit it
+  // reaches into.
+  auto MakeExternalVirtualSlot(const hir::ExternalDispatchSlot& slot)
       -> mir::ExternalVirtualSlot;
 
   // Receiver-less callable of another compilation unit (LRM 26.3 package

@@ -199,8 +199,8 @@ class MirDumper {
             },
             [](const ExternalVirtualSlot& e) -> std::string {
               return std::format(
-                  "External({}::{}::{})", e.unit_name, e.class_name,
-                  e.method_name);
+                  "External({}::{}#{})", e.unit_name, e.class_name,
+                  e.ordinal.value);
             }},
         s);
   }
@@ -550,8 +550,8 @@ class MirDumper {
             },
             [](const OverridesExternalSlot& e) -> std::string {
               return std::format(
-                  "OverridesExternalSlot[{}::{}::{}]", e.unit_name,
-                  e.class_name, e.method_name);
+                  "OverridesExternalSlot[{}::{}#{}]", e.unit_name, e.class_name,
+                  e.ordinal.value);
             }},
         role);
   }
@@ -796,8 +796,8 @@ class MirDumper {
                           },
                           [](const ExternalFieldTarget& t) -> std::string {
                             return std::format(
-                                "External[{}::{}::{}]", t.unit_name,
-                                t.class_name, t.field_name);
+                                "External[{}::{}#{}]", t.unit_name,
+                                t.class_name, t.slot.value);
                           }},
                       m.field));
             },

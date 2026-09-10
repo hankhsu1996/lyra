@@ -25,6 +25,12 @@ namespace lyra::hir {
 struct ClassField {
   std::string name;
   TypeId type;
+  // Whether a unit other than this one may name the property. A `local` one
+  // (LRM 8.18) is reachable nowhere outside the class it is declared in, so no
+  // other unit can name it or count past it; anything else is reachable
+  // through the class or through an extension of it, and an extension may be
+  // declared anywhere.
+  bool is_published = true;
 };
 
 // A class static property (LRM 8.9): a named type-associated storage cell

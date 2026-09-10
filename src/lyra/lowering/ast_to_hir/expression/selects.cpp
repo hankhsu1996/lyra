@@ -221,14 +221,16 @@ auto LowerMemberAccessExpr(
               .declaring_scope_hops = *declaring_hops},
           *type_id, span);
     }
+    auto target =
+        lowerer.Owner().MakeClassPropertyTarget(*owner_ref, prop, span);
+    if (!target) {
+      return std::unexpected(std::move(target.error()));
+    }
     return hir::Expr{
         .type = *type_id,
         .data =
             hir::ClassPropertyAccessExpr{
-                .base_value = base_id,
-                .target =
-                    lowerer.Owner().MakeClassPropertyTarget(*owner_ref, prop),
-            },
+                .base_value = base_id, .target = *std::move(target)},
         .span = span,
     };
   }

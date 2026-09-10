@@ -16,6 +16,7 @@
 #include "lyra/mir/closure_decl.hpp"
 #include "lyra/mir/closure_id.hpp"
 #include "lyra/mir/expr.hpp"
+#include "lyra/mir/external_class.hpp"
 #include "lyra/mir/external_unit_object.hpp"
 #include "lyra/mir/external_unit_object_id.hpp"
 #include "lyra/mir/foreign_linkage.hpp"
@@ -124,6 +125,11 @@ struct CompilationUnit {
   // does -- so the identity exists before the members are filled in.
   base::Registry<ExternalUnitObject, ExternalUnitObjectId>
       external_unit_objects;
+  // One entry per class of another unit this one reaches a property or a
+  // behavior on. Found by the pair that names the class, which is the pair
+  // every reference to one carries, so a reference and its record cannot come
+  // apart.
+  std::vector<ExternalClass> external_classes;
   // Callables the unit's namespace owns directly rather than through one of its
   // classes -- a package's functions and tasks (LRM 26.3), and both directions
   // of the DPI-C boundary (LRM 35.5): the prototype of every import the unit

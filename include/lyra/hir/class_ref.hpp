@@ -6,6 +6,8 @@
 #include "lyra/hir/class_id.hpp"
 #include "lyra/hir/field_id.hpp"
 #include "lyra/hir/method_id.hpp"
+#include "lyra/hir/published_behavior.hpp"
+#include "lyra/hir/published_member.hpp"
 #include "lyra/hir/static_property_id.hpp"
 
 namespace lyra::hir {
@@ -53,13 +55,17 @@ struct LocalClassPropertyTarget {
 };
 
 // A reference to a class property (LRM 8.4) declared by another compilation
-// unit: the declaring unit, the class's canonical name, and the property's
-// source name. The declaring unit's arena position is not visible here, so
-// the property is named directly.
+// unit: the declaring unit, the class's canonical name, and which of the
+// properties that class published this is. It names the class that declares the
+// property, which is often an ancestor of the one the source wrote, found by
+// walking what each promised about the class it extends. The position is
+// counted out of that promise, by the class that declares it and by this unit
+// alike, so neither states one to the other and neither can count past what the
+// class kept to itself.
 struct ExternalClassPropertyTarget {
   std::string unit_name;
   std::string class_name;
-  std::string property_name;
+  PublishedMemberId property;
 
   auto operator==(const ExternalClassPropertyTarget&) const -> bool = default;
 };
@@ -116,5 +122,27 @@ struct ExternalClassMethodTarget {
 
 using ClassMethodTarget =
     std::variant<LocalClassMethodTarget, ExternalClassMethodTarget>;
+
+// One behavior a class of another compilation unit introduced (LRM 8.20): the
+// declaring unit, that class's canonical name, and which of the behaviors it
+// published this is. It names the class that introduced the behavior, never the
+// one a call happened to reach it through, because every class extending the
+// introducer answers the same behavior under the same name -- so the class
+// named here is often an ancestor of the one the source wrote, found by walking
+// what each promised about the class it extends.
+struct ExternalDispatchSlot {
+  std::string unit_name;
+  std::string class_name;
+  PublishedBehaviorId behavior;
+
+  auto operator==(const ExternalDispatchSlot&) const -> bool = default;
+};
+
+// Which behavior a method takes over (LRM 8.20). One this unit's own class
+// introduced is named by that class and the method introducing it; one a class
+// of another unit introduced is named by the coordinate that class published,
+// since no identity of this unit reaches it.
+using OverriddenBehavior =
+    std::variant<LocalClassMethodTarget, ExternalDispatchSlot>;
 
 }  // namespace lyra::hir

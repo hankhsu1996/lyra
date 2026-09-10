@@ -59,6 +59,27 @@ auto UnitLowerer::Run() -> diag::Result<lir::CompilationUnit> {
         LowerExternalUnitObject(mir_->external_unit_objects.Get(id)));
   }
 
+  // What each class of another unit promised, taken whole: a property step on
+  // one names a slot counted out of that whole list.
+  for (const mir::ExternalClass& cls : mir_->external_classes) {
+    lir::ExternalClass record{
+        .unit_name = cls.unit_name,
+        .class_name = cls.class_name,
+        .base = {},
+        .members = {}};
+    if (cls.base.has_value()) {
+      record.base = lir::CrossUnitBase{
+          .unit_name = cls.base->unit_name, .class_name = cls.base->class_name};
+    }
+    record.members.reserve(cls.fields.size());
+    for (const mir::FieldId id : cls.fields.Ids()) {
+      const mir::FieldDecl& field = cls.fields.Get(id);
+      record.members.push_back(
+          lir::Member{.name = field.name, .type = TranslateType(field.type)});
+    }
+    out_.external_classes.push_back(std::move(record));
+  }
+
   std::vector<ClosureIdentities> closures;
   closures.reserve(mir_->closures.size());
   for (std::size_t i = 0; i < mir_->closures.size(); ++i) {
@@ -328,9 +349,9 @@ auto UnitLowerer::LowerClass(mir::ClassId owner, const mir::Class& cls)
       }
       out_.functions.Define(*body, *std::move(fn));
     }
-    if (const std::optional<lir::DispatchOverride> taken =
+    if (const std::optional<lir::DispatchTakeover> taken =
             TakenOver(callable, body)) {
-      out.overrides.push_back(*taken);
+      out.takeovers.push_back(*taken);
     }
   }
   return out;
@@ -338,8 +359,8 @@ auto UnitLowerer::LowerClass(mir::ClassId owner, const mir::Class& cls)
 
 auto UnitLowerer::TakenOver(
     const mir::CallableDecl& callable,
-    const std::optional<lir::FunctionId>& body) const
-    -> std::optional<lir::DispatchOverride> {
+    const std::optional<lir::FunctionId>& body)
+    -> std::optional<lir::DispatchTakeover> {
   // Taking a behavior over without a body would leave it exactly as the
   // lineage already had it (LRM 8.21 again, one abstract class extending
   // another), so it states nothing.
@@ -349,18 +370,23 @@ auto UnitLowerer::TakenOver(
   return std::visit(
       Overloaded{
           [](const mir::IntroducesVirtualSlot&)
-              -> std::optional<lir::DispatchOverride> { return std::nullopt; },
+              -> std::optional<lir::DispatchTakeover> { return std::nullopt; },
           [&](const mir::OverridesIntraUnitSlot& taken)
-              -> std::optional<lir::DispatchOverride> {
-            return lir::DispatchOverride{
+              -> std::optional<lir::DispatchTakeover> {
+            return lir::DispatchTakeover{
                 .method = MethodRef(taken.slot_owner, taken.slot_id),
                 .body = *body};
           },
-          // A behavior another unit introduced has no name this unit can
-          // write, so the class states nothing about it and a call through it
-          // is refused where it is written.
-          [](const mir::OverridesExternalSlot&)
-              -> std::optional<lir::DispatchOverride> { return std::nullopt; }},
+          [&](const mir::OverridesExternalSlot& taken)
+              -> std::optional<lir::DispatchTakeover> {
+            return lir::DispatchTakeover{
+                .method =
+                    lir::DispatchRef{
+                        .introduced_by = ExternalClassValueType(
+                            taken.unit_name, taken.class_name),
+                        .ordinal = lir::DispatchOrdinal{taken.ordinal.value}},
+                .body = *body};
+          }},
       *callable.virtual_dispatch);
 }
 
@@ -375,11 +401,10 @@ auto UnitLowerer::MethodFunction(
   return *fn;
 }
 
-auto UnitLowerer::MethodRef(mir::ClassId owner, mir::CallableId callable) const
+auto UnitLowerer::MethodRef(mir::ClassId owner, mir::CallableId callable)
     -> lir::DispatchRef {
-  const ClassIdentities& identities = class_identities_.Get(owner);
   const std::optional<lir::DispatchOrdinal>& ordinal =
-      identities.ordinals.Get(callable);
+      class_identities_.Get(owner).ordinals.Get(callable);
   // A dispatch names the callable that introduced the behavior, which is the
   // one identity every class answering it agrees on, so a callable naming no
   // introduction is a producer that built the slot identity wrongly.
@@ -388,7 +413,7 @@ auto UnitLowerer::MethodRef(mir::ClassId owner, mir::CallableId callable) const
         "mir_to_lir: a dispatch names a callable that introduces no behavior");
   }
   return lir::DispatchRef{
-      .introduced_by = identities.lir_class, .ordinal = *ordinal};
+      .introduced_by = ClassValueType(owner), .ordinal = *ordinal};
 }
 
 auto UnitLowerer::ConstructorFunction(mir::ClassId cls) const
@@ -424,6 +449,27 @@ auto UnitLowerer::ClassValueType(mir::ClassId cls) -> lir::TypeId {
   return out_.types.Intern(
       lir::Type{
           lir::ObjectType{.class_id = class_identities_.Get(cls).lir_class}});
+}
+
+auto UnitLowerer::PromisedClass(
+    const std::string& unit_name, const std::string& class_name) const
+    -> const mir::ExternalClass& {
+  const mir::ExternalClass* promised =
+      mir::FindExternalClass(Mir().external_classes, unit_name, class_name);
+  if (promised == nullptr) {
+    throw InternalError(
+        "mir_to_lir: a reference names a class of another unit that no "
+        "consumed promise describes");
+  }
+  return *promised;
+}
+
+auto UnitLowerer::ExternalClassValueType(
+    const std::string& unit_name, const std::string& class_name) const
+    -> lir::TypeId {
+  return out_.types.Intern(
+      lir::Type{lir::CrossUnitClassType{
+          .unit_name = unit_name, .class_name = class_name}});
 }
 
 auto UnitLowerer::ProductOf(std::vector<lir::TypeId> components)

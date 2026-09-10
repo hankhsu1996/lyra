@@ -211,19 +211,23 @@ auto lyra_rt_object_make(const void* definition) -> void*;
 // handle referring to no object fails the run here rather than further in.
 auto lyra_rt_object_deref(void* handle) -> void*;
 
-// The address of a property's storage on an object, by its position in the
-// storage that object owns. A class carries what its bases declare before what
-// it declares itself, so a property keeps one position in the class that
-// declares it and in every class extending that one.
-auto lyra_rt_object_member_addr(void* object, std::uint32_t index) -> void*;
+// The address of a property's storage on an object, named by the class that
+// declares the property and the slot that class gave it. A class carries what
+// its bases declare before what it declares itself, so a property keeps one
+// slot in the class that declares it and in every class extending that one, and
+// where that class's own properties begin is a fact of the class rather than of
+// the access -- which is why the access states a pair and this side adds.
+auto lyra_rt_object_member_addr(
+    void* object, const void* declared_by, std::uint32_t slot) -> void*;
 
-// The body an object's class holds at one dispatch position (LRM 8.20), the
-// code axis of the position rule above: a body keeps one position in the class
-// that introduces it and in every class extending that one. What class an
-// object is, is a fact only this side holds, while entering a body with the
-// right arguments is only the asking code's to do -- so this answers with the
-// address and calls nothing.
-auto lyra_rt_object_method(void* object, std::uint32_t position)
+// The body an object's class answers one behavior with (LRM 8.20), the code
+// axis of the coordinate rule above and named the same way: the class that
+// introduced the behavior, and which of that class's introductions it is. What
+// class an object is, is a fact only this side holds, while entering a body
+// with the right arguments is only the asking code's to do -- so this answers
+// with the address and calls nothing.
+auto lyra_rt_object_method(
+    void* object, const void* introduced_by, std::uint32_t ordinal)
     -> LyraMethodEntry;
 
 // The handle one capture crosses back to the body as, by declaration index. A

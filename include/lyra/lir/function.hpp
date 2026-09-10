@@ -14,7 +14,6 @@
 #include "lyra/base/component_index.hpp"
 #include "lyra/base/internal_error.hpp"
 #include "lyra/base/pool_id.hpp"
-#include "lyra/lir/class_id.hpp"
 #include "lyra/lir/function_id.hpp"
 #include "lyra/lir/integral_constant.hpp"
 #include "lyra/lir/operator.hpp"
@@ -169,13 +168,14 @@ struct DispatchOrdinal {
       -> std::strong_ordering = default;
 };
 
-// One behavior a value answers, named the way a member is: the class that
-// introduced it, and which of that class's introductions it is. Every class
-// extending the introducer answers the same behavior under the same name, which
-// is what lets a call name one without knowing what the value it is made on
-// turns out to be.
+// One behavior a value answers, named the way a member is: the declaration that
+// introduced it, and which of that declaration's introductions it is. Every
+// class extending the introducer answers the same behavior under the same name,
+// which is what lets a call name one without knowing what the value it is made
+// on turns out to be -- and lets it name one a class of another compilation
+// unit introduced, since naming the introducer is all a call does.
 struct DispatchRef {
-  ClassId introduced_by;
+  TypeId introduced_by;
   DispatchOrdinal ordinal;
 
   auto operator==(const DispatchRef&) const -> bool = default;

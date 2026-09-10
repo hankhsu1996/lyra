@@ -41,7 +41,7 @@ namespace {
 // content.
 auto BuildDesignRootHir(
     std::span<const std::string> top_names,
-    const hir::ConsumedSignatures& signatures) -> hir::CompilationUnit {
+    const hir::UnitSignatures& signatures) -> hir::CompilationUnit {
   hir::CompilationUnit root{std::string{kDesignRootUnitName}};
   for (const auto& name : top_names) {
     // The root reaches a top the way any parent reaches a child it builds:
@@ -291,7 +291,7 @@ auto SynthesizeDesignRoot(
     const diag::SourceManager& source_manager)
     -> diag::Result<DesignRootArtifacts> {
   const hir::CompilationUnit root_hir =
-      BuildDesignRootHir(top_names, signatures.Consumed(top_names));
+      BuildDesignRootHir(top_names, signatures);
   lowering::hir_to_mir::UnitLowerer root_lowerer(root_hir, source_manager);
   auto root_mir =
       root_lowerer.RunDesignRoot(BuildPackageInitializationPlan(units));

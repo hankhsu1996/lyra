@@ -197,10 +197,10 @@ the detail lives in the entry itself.
 - [dispatch-position-is-a-lineage-coordinate](dispatch-position-is-a-lineage-coordinate.md) -- a
   class states the behaviors it introduces and the ones it takes over, never its lineage's; a
   behavior is named by the declaration that introduced it plus an ordinal within it, and flattening
-  a lineage into positions is a layout query refused whole where the lineage leaves the unit. The
-  runtime answers which body a value holds and the asking code enters it. An absolute position
-  assigned while lowering, a record listing every body a class declares, and generated code reading
-  the class record are rejected.
+  a lineage into positions is a layout question answered where the whole lineage is in hand rather
+  than where a call is written. The runtime answers which body a value holds and the asking code
+  enters it. An absolute position assigned while lowering, a record listing every body a class
+  declares, and generated code reading the class record are rejected.
 - [instance-array-multiplicity](instance-array-multiplicity.md) -- an array of children is one
   member whose type is a sequence of the child pointer, carrying multiplicity but no length, so
   which element a reference names is an operand of a projection rather than part of a member's
@@ -325,6 +325,13 @@ the detail lives in the entry itself.
   be complete; a signature member is named where the referrer compiles, a name past a signature
   resolves at elaboration; the signature is an artifact separate from code, and that split decides
   what a change recompiles.
+- [reaching-past-a-published-class](reaching-past-a-published-class.md) -- a class promises what it
+  declares and the class it extends, never what it inherited, so a referrer resolves an inherited
+  property or behavior by walking that chain and the coordinate names where the walk landed; reading
+  each promise is what records the dependency, so reaching past a class makes the introducer's unit
+  a real dependency, and nothing bounds in advance which promises it may read. Flattening the
+  promise at publish, resolving the chain at elaboration, a pre-computed consumed set, and
+  publishing what a class keeps to itself are rejected.
 - [published-member-placement](published-member-placement.md) -- a published member's position is
   its position in the signature, computed by producer and consumer and carried by neither; the
   referrer records the object it compiled against in its own IR, in a registry separate from the
@@ -338,10 +345,11 @@ the detail lives in the entry itself.
   per-modport member list are rejected.
 - [publishing-an-owned-instance](publishing-an-owned-instance.md) -- an interface publishes the
   interfaces it instantiates, so a name continues past a port into one; continuing through a
-  published member is the step form of ending on one, a unit may read the signatures it can reach
-  rather than only those it declares, and every route to a published name becomes typed at once.
-  Carrying the inner unit's members inline, recording its object eagerly, walking bodies to bound
-  the read set, and letting the reach fall to a by-name lookup are rejected.
+  published member is the step form of ending on one, and every route to a published name becomes
+  typed at once. Carrying the inner unit's members inline, recording its object eagerly, walking
+  bodies to bound the read set, and letting the reach fall to a by-name lookup are rejected. Its D3,
+  bounding what a lowering may read, is superseded by
+  [reaching-past-a-published-class](reaching-past-a-published-class.md).
 - [identity-is-not-a-rendering](identity-is-not-a-rendering.md) -- what must distinguish is stored
   as its parts and composed into a name only by whoever knows the spelling rules; an identity splits
   exactly where the layer below it splits; naming another unit's object and holding what it

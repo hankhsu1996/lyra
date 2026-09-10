@@ -5,9 +5,9 @@ and routing every reference that lands on a signature through it rather than thr
 runtime answers while the design elaborates.
 
 Done when a unit's signature is derived from its declarations alone and emitted apart from its
-bodies; when a referrer consumes only the signatures of the units it references; when both backends
-realize a reference to a signature member as a direct member access; and when a change confined to a
-unit's bodies re-emits none of its referrers.
+bodies; when a referrer's emission depends on no promise it did not read; when both backends realize
+a reference to a signature member as a direct member access; and when a change confined to a unit's
+bodies re-emits none of its referrers.
 
 ## Contracts
 
@@ -92,14 +92,16 @@ why nothing a signature states may rest on it.
       so a consumer recovers it by comparing the connection's expression against the declaring
       unit's initializer. Closing that needs the frontend to answer "was this connection written",
       which is the first place this workstream wants something the frontend does not offer.
-- [x] S6 -- A unit's lowering is handed the signatures of the units it references, not every
-      signature in the design. Both are pure, so the purity property holds either way; what only the
-      narrowed form gives is that a unit cannot consume a signature it never declared a dependency
-      on. The set comes from the unit's own declarations rather than from a record kept beside them:
-      the pass that walks them for what a peer may name is the same pass that names the units they
-      are built from, so the two cannot describe different designs. The design root is that shape
-      rather than an exception -- it instantiates the tops, so it reads their signatures and nothing
-      else.
+- [x] S6 -- A unit's dependency on another is the promise it read, recorded by reading rather than
+      decided in advance. A narrowed set handed to the lowering was tried first, computed from the
+      unit's own declarations; it cannot be right, for two reasons that only showed once a class of
+      another unit was reached. A name first met inside a body -- a local whose type is another
+      unit's class -- arrives after any such set is fixed, so the promise it needs is absent and the
+      reference is refused for a reason that is not about the program. And the same absence was
+      standing in for a different question: whether the target published the name, which is what
+      decides between compiling against a promise and resolving during elaboration, and which does
+      not depend on who is asking. Purity is unaffected either way, since a fact on no promise
+      reaches nobody.
 - [x] S7 -- A signature is organized as the unit's namespace-level declarations beside an entry per
       published class, each carrying its own name, its published members in declaration order, and
       the callables another unit may enable on it. Which class a referrer instantiates is stated
@@ -111,9 +113,10 @@ why nothing a signature states may rest on it.
       to an instance, so no path composes a class name out of a unit name.
 
       What a signature carries is settled by what a lowering reads about another unit, so an entry
-      for a kind nothing reads that way is not yet on one: a package's declarations and a class the
-      unit declares are reached by a name resolved at link time, and gain an entry when a lowering
-      reads them through the signature instead.
+      for a kind nothing reads that way is not yet on one. A class of the source language has since
+      gained its entry, because a referrer reaching a property or a behavior on one needs the
+      position counted out of what that class published; a package's namespace-level declarations
+      are still reached by a name resolved at link time and have none.
 
 - [x] S8 -- A reference whose target is on a signature the referrer consumes carries the declaring
       unit, the class, and the member's name, and is a member access on a receiver that names that
@@ -133,9 +136,9 @@ why nothing a signature states may rest on it.
       out of anything but the order the signature states. Both paths now realize a module port
       connection, which is what the split between them was costing.
 
-      What is not this: a property of an SV class another unit declares is still refused on the
-      machine-code path. No unit publishes an SV class, so nothing states where such a property
-      sits; it gains a position when S7's remaining kinds gain a signature entry.
+      A property of an SV class another unit declares followed, on the same rule: the class is on
+      that unit's signature, the property's slot is counted out of what it published, and an
+      inherited one is found by walking what each class promised about the class it extends.
 
 - [ ] S10 -- The C++ backend emits a unit's signature as a declaration-only artifact distinct from
       the artifact carrying its bodies, and a referrer consumes only the first. The published prefix

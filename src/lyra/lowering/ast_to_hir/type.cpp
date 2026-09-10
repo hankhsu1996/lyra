@@ -654,6 +654,10 @@ auto BuildInterfaceForwardingMethod(
         "has no stub subroutine slang normally materializes");
   }
 
+  auto taken =
+      unit_lowerer.MakeOverriddenBehavior(*iface_ref, *proto_stub, span);
+  if (!taken) return std::unexpected(std::move(taken.error()));
+
   return hir::SubroutineDecl{
       .name = std::string{proto.name},
       .kind = hir::SubroutineKind::kFunction,
@@ -665,7 +669,7 @@ auto BuildInterfaceForwardingMethod(
       .is_virtual = true,
       .is_prototype = false,
       .is_static = false,
-      .overrides = unit_lowerer.MakeClassMethodTarget(*iface_ref, *proto_stub)};
+      .overrides = *std::move(taken)};
 }
 
 // Synthesizes forwarding methods for every interface pure virtual method a
@@ -818,8 +822,10 @@ auto LowerDefinedClassMethod(
       overridden->getParentScope()->asSymbol().as<slang::ast::ClassType>();
   auto slot_ref = unit_lowerer.ResolveClassRef(slot_class, span);
   if (!slot_ref) return std::unexpected(std::move(slot_ref.error()));
-  method_decl->overrides =
-      unit_lowerer.MakeClassMethodTarget(*slot_ref, *overridden);
+  auto taken =
+      unit_lowerer.MakeOverriddenBehavior(*slot_ref, *overridden, span);
+  if (!taken) return std::unexpected(std::move(taken.error()));
+  method_decl->overrides = *std::move(taken);
   // A method that overrides another is itself virtual, whether or not the
   // derived declaration repeated the keyword (LRM 8.20, 8.26.2).
   method_decl->is_virtual = true;
@@ -857,10 +863,62 @@ auto UnitLowerer::MakeMethodCallee(
   // produce.
   auto interface = MakeExternalCalleeInterface(method, span);
   if (!interface) return std::unexpected(std::move(interface.error()));
+  std::optional<hir::ExternalDispatchSlot> slot;
+  if (method.isVirtual()) {
+    auto resolved = MakeExternalDispatchSlot(
+        std::get<hir::ExternalClassRef>(class_ref), method.name, span);
+    if (!resolved) return std::unexpected(std::move(resolved.error()));
+    slot = *std::move(resolved);
+  }
   return hir::ExternalMethodCallee{
       .target = std::get<hir::ExternalClassMethodTarget>(std::move(target)),
-      .is_virtual = method.isVirtual(),
+      .slot = std::move(slot),
       .interface = *std::move(interface)};
+}
+
+auto UnitLowerer::MakeOverriddenBehavior(
+    const hir::ClassRef& class_ref,
+    const slang::ast::SubroutineSymbol& overridden, diag::SourceSpan span)
+    -> diag::Result<hir::OverriddenBehavior> {
+  if (const auto* local = std::get_if<hir::LocalClassRef>(&class_ref)) {
+    return hir::LocalClassMethodTarget{
+        .owner = local->class_id, .method = LookupMethodId(overridden)};
+  }
+  auto slot = MakeExternalDispatchSlot(
+      std::get<hir::ExternalClassRef>(class_ref), overridden.name, span);
+  if (!slot) return std::unexpected(std::move(slot.error()));
+  return hir::OverriddenBehavior{*std::move(slot)};
+}
+
+auto UnitLowerer::MakeExternalDispatchSlot(
+    const hir::ExternalClassRef& cls, std::string_view method_name,
+    diag::SourceSpan span) -> diag::Result<hir::ExternalDispatchSlot> {
+  // A behavior is named by the class that introduced it, which is the one
+  // identity every class answering it agrees on -- so a class answering one it
+  // took over is a step on the way, not the answer. The walk follows what each
+  // class promised about the class it extends, and reading those promises is
+  // what makes their units dependencies of this one.
+  for (std::optional<hir::ExternalClassRef> at = cls; at.has_value();) {
+    const hir::ExternalClass* published =
+        ExternalClassOf(at->unit_name, at->class_name);
+    if (published == nullptr) {
+      break;
+    }
+    if (const std::optional<hir::PublishedBehaviorId> behavior =
+            published->FindBehavior(method_name)) {
+      return hir::ExternalDispatchSlot{
+          .unit_name = at->unit_name,
+          .class_name = at->class_name,
+          .behavior = *behavior};
+    }
+    at = published->base;
+  }
+  return diag::Fail(
+      span, diag::DiagCode::kUnsupportedExpressionForm,
+      std::format(
+          "'{}' is introduced by no class this unit can read through '{}::{}', "
+          "so there is nothing to name the behavior by",
+          method_name, cls.unit_name, cls.class_name));
 }
 
 auto UnitLowerer::MakeExternalCalleeInterface(
@@ -881,18 +939,38 @@ auto UnitLowerer::MakeExternalCalleeInterface(
 }
 
 auto UnitLowerer::MakeClassPropertyTarget(
-    const hir::ClassRef& class_ref,
-    const slang::ast::ClassPropertySymbol& prop) const
-    -> hir::ClassPropertyTarget {
+    const hir::ClassRef& class_ref, const slang::ast::ClassPropertySymbol& prop,
+    diag::SourceSpan span) -> diag::Result<hir::ClassPropertyTarget> {
   if (const auto* local = std::get_if<hir::LocalClassRef>(&class_ref)) {
     return hir::LocalClassPropertyTarget{
         .owner = local->class_id, .field = LookupClassPropertyFieldId(prop)};
   }
+  // A class promises what it declares and the class it extends, never what it
+  // inherited, so an inherited property is found by walking that chain -- and
+  // reading each promise on the way is what makes its unit a dependency of
+  // this one.
   const auto& ext = std::get<hir::ExternalClassRef>(class_ref);
-  return hir::ExternalClassPropertyTarget{
-      .unit_name = ext.unit_name,
-      .class_name = ext.class_name,
-      .property_name = std::string(prop.name)};
+  for (std::optional<hir::ExternalClassRef> at = ext; at.has_value();) {
+    const hir::ExternalClass* published =
+        ExternalClassOf(at->unit_name, at->class_name);
+    if (published == nullptr) {
+      break;
+    }
+    if (const std::optional<hir::PublishedMemberId> member =
+            published->FindMember(prop.name)) {
+      return hir::ExternalClassPropertyTarget{
+          .unit_name = at->unit_name,
+          .class_name = at->class_name,
+          .property = *member};
+    }
+    at = published->base;
+  }
+  return diag::Fail(
+      span, diag::DiagCode::kUnsupportedExpressionForm,
+      std::format(
+          "'{}' is on no promise this unit can read through '{}::{}', so there "
+          "is nothing to compile the access against",
+          prop.name, ext.unit_name, ext.class_name));
 }
 
 auto UnitLowerer::MakeStaticPropertyTarget(
@@ -973,6 +1051,8 @@ auto UnitLowerer::InternLocalClass(
           .WithProceduralScopeOwner(&decl.procedural_scopes);
   DeclareProceduralScopes(cls, *this, decl.procedural_scopes);
 
+  std::optional<hir::ExternalClassRef> promised_base;
+
   // Concrete base class (LRM 8.13). Only a regular class may extend a
   // concrete base; an interface class carries no concrete base and reaches
   // its parent interface classes through `implements` instead. Slang
@@ -986,6 +1066,19 @@ auto UnitLowerer::InternLocalClass(
         base_type->getCanonicalType().as<slang::ast::ClassType>();
     auto base_ref = ResolveClassRef(base_class, span);
     if (!base_ref) return std::unexpected(std::move(base_ref.error()));
+    // What this class promises about its base is the pair naming it, whichever
+    // unit declares it: a signature is read where no id of this unit means
+    // anything, and a class of this unit is as much "somewhere else" to that
+    // reader as any other.
+    promised_base = std::visit(
+        Overloaded{
+            [&](const hir::LocalClassRef&) {
+              return hir::ExternalClassRef{
+                  .unit_name = unit_.name,
+                  .class_name = SpecializationName(base_class)};
+            },
+            [](const hir::ExternalClassRef& ext) { return ext; }},
+        *base_ref);
     decl.base = *std::move(base_ref);
   }
 
@@ -1028,7 +1121,10 @@ auto UnitLowerer::InternLocalClass(
       continue;
     }
     const hir::FieldId field_id = decl.fields.Add(
-        hir::ClassField{.name = std::string(prop.name), .type = *prop_type});
+        hir::ClassField{
+            .name = std::string(prop.name),
+            .type = *prop_type,
+            .is_published = prop.visibility != slang::ast::Visibility::Local});
     RegisterClassPropertyFieldId(prop, field_id);
   }
   // Every callable the class body declares, resolved to the subroutine that
@@ -1089,6 +1185,44 @@ auto UnitLowerer::InternLocalClass(
   for (const auto* proto : pure_prototypes) {
     RegisterMethodId(*proto->getSubroutine(), decl.methods.Declare());
   }
+
+  // What this class would promise another unit, taken in the one order its own
+  // arenas were just built in, so the promise and the class cannot describe
+  // different positions. Which classes a unit publishes is a separate question,
+  // settled where the signature is derived.
+  hir::ClassSignature promise{
+      .class_name = decl.name,
+      .base = promised_base,
+      .is_interface_class = decl.is_interface_class,
+      .members = {},
+      .behaviors = {}};
+  for (const hir::FieldId id : decl.fields.Ids()) {
+    const hir::ClassField& property = decl.fields.Get(id);
+    if (!property.is_published) {
+      continue;
+    }
+    promise.members.Add(
+        hir::PublishedMember{
+            .name = property.name,
+            .type = property.type,
+            .storage = hir::PublishedStorage{hir::VariableStorage{}}});
+  }
+  const auto introduces = [&](const slang::ast::SubroutineSymbol& method) {
+    return method.isVirtual() && OverriddenMethod(cls, method) == nullptr;
+  };
+  for (const auto* method : defined_methods) {
+    if (introduces(*method)) {
+      promise.behaviors.Add(
+          hir::PublishedBehavior{.name = std::string{method->name}});
+    }
+  }
+  for (const auto* proto : pure_prototypes) {
+    if (introduces(*proto->getSubroutine())) {
+      promise.behaviors.Add(
+          hir::PublishedBehavior{.name = std::string{proto->name}});
+    }
+  }
+  own_class_promises_.emplace(&cls, std::move(promise));
 
   pending_class_bodies_[&declaring_scope].push_back(
       UnitLowerer::PendingClassBody{
@@ -1176,8 +1310,9 @@ auto UnitLowerer::PopulateClassBody(PendingClassBody& pending)
                                      .as<slang::ast::ClassType>();
         auto base_ref = ResolveClassRef(base_class, span);
         if (!base_ref) return std::unexpected(std::move(base_ref.error()));
-        proto_decl->overrides =
-            MakeClassMethodTarget(*base_ref, *overridden_sub);
+        auto taken = MakeOverriddenBehavior(*base_ref, *overridden_sub, span);
+        if (!taken) return std::unexpected(std::move(taken.error()));
+        proto_decl->overrides = *std::move(taken);
       }
     }
     decl.methods.Define(

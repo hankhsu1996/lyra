@@ -4,6 +4,7 @@
 #include <string>
 #include <variant>
 
+#include "lyra/mir/behavior_ordinal.hpp"
 #include "lyra/mir/callable_id.hpp"
 #include "lyra/mir/class_id.hpp"
 
@@ -73,18 +74,16 @@ struct OverridesIntraUnitSlot {
 };
 
 // A method that overrides a virtual dispatch slot introduced by a class in
-// another compilation unit -- LRM 8.20 across the unit boundary. The slot's
-// canonical identity carries no unit-local ids: it names the declaring unit,
-// the introducing class's canonical name, and the introducing method's source
-// name. A virtual slot has no independent name of its own; its canonical
-// identity in a by-name world is the introducing method's source name.
-// A backend renders the override through the target language's own virtual-
-// override machinery -- the same shape as an intra-unit override -- reached
-// by including the declaring unit's header.
+// another compilation unit -- LRM 8.20 across the unit boundary. The behavior's
+// canonical identity carries no unit-local ids: it names the declaring unit and
+// the introducing class's canonical name, together with which of that class's
+// introductions it is, counted out of what that class published. That is the
+// same coordinate an intra-unit takeover carries, with the class named by its
+// parts rather than by an id.
 struct OverridesExternalSlot {
   std::string unit_name;
   std::string class_name;
-  std::string method_name;
+  BehaviorOrdinal ordinal;
 
   auto operator==(const OverridesExternalSlot&) const -> bool = default;
 };

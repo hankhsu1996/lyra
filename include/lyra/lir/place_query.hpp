@@ -25,6 +25,18 @@ struct MemberList {
 auto DeclaredMembers(const CompilationUnit& unit, TypeId type)
     -> std::optional<MemberList>;
 
+// Whether a value of `type` carries the members `declaration` declares -- true
+// when the two are the same declaration, and when `type` is a class reaching
+// `declaration` through the bases it extends. This is what makes a member step
+// valid over a type other than the one that declares the member.
+//
+// One walk covers both sides of the unit boundary: a class this unit compiles
+// states its base outright, and a class another unit declares states it on the
+// promise this unit read, so a lineage crossing the boundary is followed rather
+// than given up on.
+auto CarriesMembersOf(
+    const CompilationUnit& unit, TypeId type, TypeId declaration) -> bool;
+
 // The type of the storage a place names. The base contributes the storage the
 // chain starts from: a place local names its own storage, and any other base is
 // a value, which names storage only once dereferenced. Each dereference names

@@ -256,14 +256,14 @@ auto LowerCompilationToHir(const LowerCompilationFacts& facts)
     signatures.Publish(lowerer->TakeSignature());
   }
 
-  // Each unit's bodies lower against the signatures of the units it named and
-  // no others, so what one unit's emission can depend on is bounded by its own
-  // declarations rather than by what the design happens to contain.
+  // Each unit's bodies lower against what the design's units published. Which
+  // of those promises a unit depends on is the set it reads: a name it first
+  // reaches from inside a body is reached after any set fixed in advance, and
+  // whether a name is on a promise does not depend on who asked.
   std::vector<hir::CompilationUnit> units;
   units.reserve(lowerers.size());
   for (const auto& lowerer : lowerers) {
-    auto unit =
-        lowerer->LowerBodies(signatures.Consumed(lowerer->ReferencedUnits()));
+    auto unit = lowerer->LowerBodies(signatures);
     if (!unit) {
       return std::unexpected(std::move(unit.error()));
     }
