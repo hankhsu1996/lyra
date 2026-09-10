@@ -1,5 +1,6 @@
 #pragma once
 
+#include <optional>
 #include <string>
 #include <variant>
 
@@ -97,5 +98,13 @@ struct OverridesExternalSlot {
 // triple. A consumer reads the slot's identity in one step.
 using VirtualDispatchRole = std::variant<
     IntroducesVirtualSlot, OverridesIntraUnitSlot, OverridesExternalSlot>;
+
+// Whether this participation is the appearance that introduces the slot (LRM
+// 8.20), as against taking over one an ancestor already declared. A callable in
+// no dispatch introduces nothing, so a caller needing to tell taking one over
+// from joining no dispatch at all asks whether the role is there before asking
+// this.
+[[nodiscard]] auto IntroducesSlot(
+    const std::optional<VirtualDispatchRole>& role) -> bool;
 
 }  // namespace lyra::mir

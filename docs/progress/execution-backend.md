@@ -356,6 +356,22 @@ each meets the same lifetime question above.
 - [x] Building an object whose constructor takes arguments. The runtime owns the heap, so it is what
       brings an object into existence; which body then initializes it is settled where the object is
       asked for, and the generated code enters that constructor the way it enters a base's.
+- [x] **Which body a call reaches, decided by the object rather than by the call site** (LRM 8.20,
+      8.21, 8.22). A value carries the bodies its class answers each behavior with, and a call names
+      a behavior instead of a body: the runtime answers what class the value is, and the generated
+      code enters the body that answer names. The split is the same one construction takes -- what
+      only the runtime knows is the only thing that crosses to it -- so nothing generated depends on
+      how an object or its class record is laid out. A class states what it adds to its lineage and
+      nothing about the lineage itself: the behaviors it introduces, and the ones it takes over,
+      each named by the declaration that introduced it, so a behavior keeps one position in that
+      declaration and in every class extending it. A behavior introduced without a body (LRM 8.21)
+      is a position nothing answers, which no value reaches because such a class is never
+      constructed. An abstract class and its pure-virtual contract, a method defined out of block, a
+      `super` call reaching past an override, and a virtual task all run here. What is refused names
+      the gap: a behavior a class of another compilation unit introduced, and a call on a value
+      whose class extends another unit's, since a position this unit did not assign is one it can
+      neither name nor count past. Settled in
+      `../decisions/dispatch-position-is-a-lineage-coordinate.md`.
 - [ ] `this` as a value in its own right (LRM 8.11), so an object can be returned, passed, and
       compared from inside its own method. A body holds a borrowed pointer to the object it runs on,
       which serves every member access; answering with a handle instead is what a shared-owner

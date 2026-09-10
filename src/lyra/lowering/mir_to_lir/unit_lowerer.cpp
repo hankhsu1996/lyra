@@ -232,20 +232,36 @@ auto UnitLowerer::StructSymbol(mir::StructId record) const -> std::string {
 auto UnitLowerer::TakeClassIdentities(const mir::Class& cls)
     -> ClassIdentities {
   // Only a callable this program defines becomes a function of the unit, so a
-  // bodyless one takes no function identity and answers with none.
+  // bodyless one takes no function identity and answers with none. Which
+  // behavior a callable introduces is the other question, answered from the
+  // same walk and independent of it: a callable may have a body and introduce
+  // nothing, introduce something and have no body (LRM 8.21), both, or neither.
   std::vector<std::optional<lir::FunctionId>> methods;
+  std::vector<std::optional<lir::DispatchOrdinal>> ordinals;
   methods.reserve(cls.callables.size());
+  ordinals.reserve(cls.callables.size());
   ClassIdentities identities{
       .lir_class = out_.classes.Declare(),
       .constructor = out_.functions.Declare(),
-      .methods = {}};
+      .methods = {},
+      .ordinals = {},
+      .introduces = {}};
   for (const mir::CallableId callable : cls.callables.Ids()) {
-    methods.push_back(
-        cls.callables.Get(callable).code.body.has_value()
-            ? std::optional{out_.functions.Declare()}
-            : std::nullopt);
+    const mir::CallableDecl& decl = cls.callables.Get(callable);
+    const std::optional<lir::FunctionId> body =
+        decl.code.body.has_value() ? std::optional{out_.functions.Declare()}
+                                   : std::nullopt;
+    std::optional<lir::DispatchOrdinal> ordinal;
+    if (mir::IntroducesSlot(decl.virtual_dispatch)) {
+      ordinal = lir::DispatchOrdinal{
+          .value = static_cast<std::uint32_t>(identities.introduces.size())};
+      identities.introduces.push_back(body);
+    }
+    methods.push_back(body);
+    ordinals.push_back(ordinal);
   }
   identities.methods = {cls.callables.size(), std::move(methods)};
+  identities.ordinals = {cls.callables.size(), std::move(ordinals)};
   return identities;
 }
 
@@ -277,10 +293,14 @@ auto UnitLowerer::LowerClass(mir::ClassId owner, const mir::Class& cls)
         lir::Member{.name = field.name, .type = TranslateType(field.type)});
   }
 
+  // The behaviors the class introduces were settled with the ordinals naming
+  // them, so what is left is to hand the list over.
+  const ClassIdentities& identities = class_identities_.Get(owner);
+  out.introduces = identities.introduces;
+
   // A class's bodies become functions of the program, and a body's own name is
   // unique only within its class -- so the class symbol qualifies it, being
   // itself unique program-wide.
-  const ClassIdentities& identities = class_identities_.Get(owner);
   auto constructor =
       FunctionLowerer(*this, cls, std::format("{}.constructor", out.name))
           .Run();
@@ -291,23 +311,57 @@ auto UnitLowerer::LowerClass(mir::ClassId owner, const mir::Class& cls)
   out.constructor = identities.constructor;
 
   // Only a callable this program defines becomes a function: a DPI-C import is
-  // reached as a foreign symbol and a pure virtual has no implementation here.
-  // The interface lists the rest in arena order, so a method's position in the
-  // list is the slot a dispatch indexes.
+  // reached as a foreign symbol and a pure virtual has no implementation here
+  // (LRM 8.21). Which behavior a callable takes over is the other question, and
+  // the two do not gate each other: a body may take over nothing, and only a
+  // body can take one over.
   for (const mir::CallableId cid : cls.callables.Ids()) {
     const mir::CallableDecl& callable = cls.callables.Get(cid);
-    if (!callable.code.body.has_value()) continue;
-    auto fn =
-        FunctionLowerer(
-            *this, callable.code, std::format("{}.{}", out.name, callable.name))
-            .Run();
-    if (!fn) {
-      return std::unexpected(std::move(fn.error()));
+    const std::optional<lir::FunctionId>& body = identities.methods.Get(cid);
+    if (body.has_value()) {
+      auto fn = FunctionLowerer(
+                    *this, callable.code,
+                    std::format("{}.{}", out.name, callable.name))
+                    .Run();
+      if (!fn) {
+        return std::unexpected(std::move(fn.error()));
+      }
+      out_.functions.Define(*body, *std::move(fn));
     }
-    out_.functions.Define(*identities.methods.Get(cid), *std::move(fn));
-    out.methods.push_back(*identities.methods.Get(cid));
+    if (const std::optional<lir::DispatchOverride> taken =
+            TakenOver(callable, body)) {
+      out.overrides.push_back(*taken);
+    }
   }
   return out;
+}
+
+auto UnitLowerer::TakenOver(
+    const mir::CallableDecl& callable,
+    const std::optional<lir::FunctionId>& body) const
+    -> std::optional<lir::DispatchOverride> {
+  // Taking a behavior over without a body would leave it exactly as the
+  // lineage already had it (LRM 8.21 again, one abstract class extending
+  // another), so it states nothing.
+  if (!callable.virtual_dispatch.has_value() || !body.has_value()) {
+    return std::nullopt;
+  }
+  return std::visit(
+      Overloaded{
+          [](const mir::IntroducesVirtualSlot&)
+              -> std::optional<lir::DispatchOverride> { return std::nullopt; },
+          [&](const mir::OverridesIntraUnitSlot& taken)
+              -> std::optional<lir::DispatchOverride> {
+            return lir::DispatchOverride{
+                .method = MethodRef(taken.slot_owner, taken.slot_id),
+                .body = *body};
+          },
+          // A behavior another unit introduced has no name this unit can
+          // write, so the class states nothing about it and a call through it
+          // is refused where it is written.
+          [](const mir::OverridesExternalSlot&)
+              -> std::optional<lir::DispatchOverride> { return std::nullopt; }},
+      *callable.virtual_dispatch);
 }
 
 auto UnitLowerer::MethodFunction(
@@ -319,6 +373,22 @@ auto UnitLowerer::MethodFunction(
         "mir_to_lir: callable has no body, so it is no function of this unit");
   }
   return *fn;
+}
+
+auto UnitLowerer::MethodRef(mir::ClassId owner, mir::CallableId callable) const
+    -> lir::DispatchRef {
+  const ClassIdentities& identities = class_identities_.Get(owner);
+  const std::optional<lir::DispatchOrdinal>& ordinal =
+      identities.ordinals.Get(callable);
+  // A dispatch names the callable that introduced the behavior, which is the
+  // one identity every class answering it agrees on, so a callable naming no
+  // introduction is a producer that built the slot identity wrongly.
+  if (!ordinal.has_value()) {
+    throw InternalError(
+        "mir_to_lir: a dispatch names a callable that introduces no behavior");
+  }
+  return lir::DispatchRef{
+      .introduced_by = identities.lir_class, .ordinal = *ordinal};
 }
 
 auto UnitLowerer::ConstructorFunction(mir::ClassId cls) const

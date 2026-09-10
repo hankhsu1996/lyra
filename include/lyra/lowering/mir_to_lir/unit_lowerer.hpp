@@ -10,6 +10,7 @@
 #include "lyra/base/translation.hpp"
 #include "lyra/diag/diagnostic.hpp"
 #include "lyra/lir/compilation_unit.hpp"
+#include "lyra/lir/function.hpp"
 #include "lyra/lir/function_id.hpp"
 #include "lyra/lir/type.hpp"
 #include "lyra/lir/type_id.hpp"
@@ -91,6 +92,14 @@ class UnitLowerer {
   [[nodiscard]] auto MethodFunction(
       mir::ClassId owner, mir::CallableId callable) const -> lir::FunctionId;
 
+  // The behavior a MIR dispatch slot names, as LIR names one: the class that
+  // introduced it, and which of that class's introductions it is. `owner` and
+  // `callable` are the slot's own canonical identity, so this reads that one
+  // class and nothing else -- where the behavior lands in a whole value is a
+  // layout question, answered from the lineage below this pass.
+  [[nodiscard]] auto MethodRef(
+      mir::ClassId owner, mir::CallableId callable) const -> lir::DispatchRef;
+
   // The LIR function a class's constructor lowers to. Every class defines its
   // own construction, so every one of them has this function, and it is named
   // before any body is lowered -- which is what lets a derived class enter its
@@ -111,14 +120,21 @@ class UnitLowerer {
   [[nodiscard]] auto StructDeclaration(mir::StructId record) const
       -> lir::StructId;
 
-  // The LIR identities taken on behalf of one MIR class: the class itself, its
-  // constructor's function, and one per callable that has a body. A callable
-  // with no body is no function of this unit and holds none. `lir::Class` holds
-  // the class's content, under these same identities.
+  // What is settled about one MIR class before any body of it is lowered: its
+  // own LIR identity, its constructor's function, one function identity per
+  // callable that has a body, the behaviors it introduces in the order it
+  // introduces them, and which of those each callable is. A callable with no
+  // body is no function of this unit and holds none; one that introduces no
+  // behavior holds no ordinal, and the two are independent. An ordinal is read
+  // off `introduces` as an entry is appended to it, so the position and the
+  // list it indexes are one act.
   struct ClassIdentities {
     lir::ClassId lir_class{};
     lir::FunctionId constructor{};
     base::Translation<mir::CallableId, std::optional<lir::FunctionId>> methods;
+    base::Translation<mir::CallableId, std::optional<lir::DispatchOrdinal>>
+        ordinals;
+    std::vector<std::optional<lir::FunctionId>> introduces;
   };
 
   // The LIR identities taken on behalf of one MIR closure: the declaration its
@@ -136,6 +152,14 @@ class UnitLowerer {
   // class, so classes take theirs in any order and none waits on another.
   [[nodiscard]] auto TakeClassIdentities(const mir::Class& cls)
       -> ClassIdentities;
+
+  // The behavior `callable` takes over from its lineage, if it takes one over
+  // and answers it with a body. Absent otherwise, which covers introducing a
+  // behavior, answering none, and taking one over with no body of its own.
+  [[nodiscard]] auto TakenOver(
+      const mir::CallableDecl& callable,
+      const std::optional<lir::FunctionId>& body) const
+      -> std::optional<lir::DispatchOverride>;
 
   // The symbol a callable of this unit's namespace is emitted and linked under.
   [[nodiscard]] auto UnitCallableSymbol(const mir::CallableDecl& callable) const

@@ -14,6 +14,7 @@
 #include "lyra/base/component_index.hpp"
 #include "lyra/base/internal_error.hpp"
 #include "lyra/base/pool_id.hpp"
+#include "lyra/lir/class_id.hpp"
 #include "lyra/lir/function_id.hpp"
 #include "lyra/lir/integral_constant.hpp"
 #include "lyra/lir/operator.hpp"
@@ -152,6 +153,40 @@ struct FunctionTarget {
   FunctionId function;
 };
 
+// Which of the behaviors one class introduces this is, counted in the order
+// that class introduces them. Peer of `MemberSlot`: each is an ordinal within
+// one declaration, and where it lands in a whole value is a layout question
+// answered from the lineage rather than carried here.
+struct DispatchOrdinal {
+  std::uint32_t value = base::kUnassignedId;
+
+  auto operator<=>(const DispatchOrdinal&) const
+      -> std::strong_ordering = default;
+};
+
+// One behavior a value answers, named the way a member is: the class that
+// introduced it, and which of that class's introductions it is. Every class
+// extending the introducer answers the same behavior under the same name, which
+// is what lets a call name one without knowing what the value it is made on
+// turns out to be.
+struct DispatchRef {
+  ClassId introduced_by;
+  DispatchOrdinal ordinal;
+
+  auto operator==(const DispatchRef&) const -> bool = default;
+};
+
+// The body the value the call is made on answers one behavior with (LRM 8.20).
+// The value is the call's first argument, as it is for a function named
+// outright, and which body runs is decided by what that value is rather than by
+// anything written here -- which is the whole of what makes the call dynamic. A
+// behavior carries one signature in every class that answers it (LRM 8.20), so
+// the call states the signature and every body reachable through it answers to
+// that one.
+struct DispatchTarget {
+  DispatchRef method;
+};
+
 // The type the call builds a value of, which is the whole identity: a type has
 // one way to come into existence, so naming it names the entry. A wrapper that
 // owns what it points at brings the pointee into existence along with itself,
@@ -257,14 +292,14 @@ auto ValueCellOpName(ValueCellTarget::Op op) -> std::string_view;
 auto ControlEffectOpName(ControlEffectTarget::Op op) -> std::string_view;
 auto CoroutineOpName(CoroutineTarget::Op op) -> std::string_view;
 
-// The target of a call: a runtime builtin, a function of this unit, a value
-// constructor named by the call's result type, a foreign symbol the host
-// resolves, a method of an imported runtime-library class, a value-cell
-// operation, a control-effect operation, or an operation of the coroutine
-// protocol.
+// The target of a call: a runtime builtin, a function of this unit, a dispatch
+// slot the receiving value's own class fills, a value constructor named by the
+// call's result type, a foreign symbol the host resolves, a method of an
+// imported runtime-library class, a value-cell operation, a control-effect
+// operation, or an operation of the coroutine protocol.
 using CallTarget = std::variant<
-    BuiltinTarget, FunctionTarget, ConstructTarget, ForeignTarget,
-    ImportedRuntimeTarget, ValueCellTarget, ControlEffectTarget,
+    BuiltinTarget, FunctionTarget, DispatchTarget, ConstructTarget,
+    ForeignTarget, ImportedRuntimeTarget, ValueCellTarget, ControlEffectTarget,
     CoroutineTarget>;
 
 struct CallInstr {

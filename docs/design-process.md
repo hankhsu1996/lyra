@@ -31,6 +31,47 @@ the derivation; the invariant is a witness.
 Every rule in `architecture/` is a consequence of one of these five. If you can reach the same rule
 from the motivation, you understand it; if you can only reach it by quoting the rule, you do not.
 
+## Write what each layer must say before writing any shape
+
+The motivations above say why a layer exists. They do not say what a layer owes the construct in
+front of you, and that is what to write down first: for this construct, in each layer's own
+vocabulary, what that layer must state and what it must not. Write one for every layer the change
+crosses, before naming a single field.
+
+Two things fall out of having written them, and neither is reachable without.
+
+**The lowering between two layers then has exactly one job, and it fits in a sentence.** If the
+sentence needs an "and", the two contracts are not written yet -- and the work will get divided
+between the layers by whichever side is easier to edit rather than by which one owns it.
+
+**A fact appearing in both contracts is in the wrong one.** A layer states a fact because it is the
+highest one that can; a lower layer restating it is two authorities for one answer.
+
+Worked shape, from dynamic dispatch. A semantic layer must state that a call is dynamically bound
+(never inferable -- a call whose receiver's exact type is known is still dynamically bound, and
+whether it can be devirtualized is an optimization), the value it is made on, and which question is
+being asked. It must not state a position, an ordering, or a table: a position means nothing except
+against a chosen layout, and choosing one is what the layer below is for. The execution layer states
+where to look. So the lowering has one job -- turn an identity into a coordinate -- and that
+sentence names the whole change before any field exists.
+
+## Survey the component and the stage, not the answer
+
+Every design here has prior art, and the survey is not optional. What decides whether reading it was
+worth anything is which question it answered.
+
+"What does the other compiler produce" is answered the same way by everyone and transfers almost
+nothing: of course a C++ compiler builds a dispatch table. The question that transfers is **which
+component computes it, and at which stage**. Clang assigns dispatch positions in a vtable-layout
+query sitting beside its record-layout query, consulted at code generation. A Java compiler computes
+none at all: it emits a symbolic reference and its runtime assigns positions when the class links.
+The split is not a matter of taste -- it tracks exactly one thing, when the class hierarchy is fixed
+-- and it is invisible to a survey that stopped at the data structure.
+
+That is the failure worth naming, because nothing downstream reports it: a survey answering only the
+first question lets you build the conventional structure in the wrong component. The tests pass, the
+shape looks like the textbook, and the layer that should have owned the decision never sees it.
+
 ## The one question: read the consumers
 
 Before arguing about a shape, find everything that reads it and look at what each one does in the
@@ -74,7 +115,7 @@ optional -- three different questions that an `optional` on the whole thing has 
 
 ## Falsifying a proposed shape
 
-Two checks, both cheap:
+Four checks, all cheap:
 
 - **Could a mechanical LLVM IR backend translate this without deciding anything?** If a consumer
   needs an `if` to work out what a node means, the node is under-specified. This is the sharpest
@@ -82,6 +123,21 @@ Two checks, both cheap:
 - **Does the empty case fall out of the general case?** Write the loop for N and check that N=0
   needs no branch. If it does need one, the data model is carrying two cases through code that
   should carry one.
+- **Is this the same rule something here already follows?** A class's behaviors extend its base's
+  exactly as its members do. Where one axis of a rule already exists, the second is expressed the
+  same way at every layer it crosses -- if the first keeps a two-part logical coordinate and
+  flattens it at the point of use, so does the second. Two shapes for one rule is what "the code is
+  getting messy" is made of, and it is invisible from inside either axis: each is locally
+  reasonable, and no reader of one is looking at the other.
+- **How much machinery does this shape need, next to its neighbors?** A memo, a recursion, an extra
+  "unknown" state threaded through several returns -- each is evidence about the shape, not about
+  the problem. The mechanical form of the check is to try placing the work inside a contract some
+  existing step already states. Dispatch positions counted across a whole lineage needed a recursive
+  descent, a memo keyed by class, and an absent state carried through three signatures; the same
+  positions named as an ordinal within the declaration that introduced them fit unchanged into a
+  step whose stated contract is that it reads one declaration and waits on nothing. **A shape that
+  fits a contract already written is usually right; one that keeps needing another mechanism to say
+  where something lives is usually answering a question it created.**
 
 ## Do not mint a rule from a fix
 

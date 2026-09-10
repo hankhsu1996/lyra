@@ -309,10 +309,30 @@ auto LowerCallTarget(
                 "mir_to_lir: a call through a computed code address is not yet "
                 "lowerable to LIR");
           },
-          [](const mir::Virtual&) -> diag::Result<lir::CallTarget> {
-            return Unsupported(
-                "mir_to_lir: virtual method dispatch is not yet lowerable to "
-                "LIR");
+          // Which body runs is the receiving value's to decide, so what the
+          // call states is where to look rather than what to call. The logical
+          // slot the layer above names resolves here to the position the class
+          // that introduced it fixed (LRM 8.20); the receiver is already the
+          // call's first argument, as it is for a method named outright.
+          [&](const mir::Virtual& v) -> diag::Result<lir::CallTarget> {
+            return std::visit(
+                Overloaded{
+                    [&](const mir::LocalVirtualSlot& slot)
+                        -> diag::Result<lir::CallTarget> {
+                      return lir::CallTarget{lir::DispatchTarget{
+                          .method =
+                              unit.MethodRef(slot.owner_class, slot.slot)}};
+                    },
+                    // A behavior another unit introduced is named where that
+                    // unit named it, and this one reads no such name.
+                    [](const mir::ExternalVirtualSlot&)
+                        -> diag::Result<lir::CallTarget> {
+                      return Unsupported(
+                          "mir_to_lir: dispatching on a behavior a class of "
+                          "another compilation unit introduced is not yet "
+                          "supported");
+                    }},
+                v.slot);
           }},
       callee);
 }

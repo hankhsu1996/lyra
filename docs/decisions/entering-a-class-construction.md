@@ -31,14 +31,18 @@ dispatched -- and a descriptor slot is exactly a dispatched, fixed-arity thing.
 
 ## Decision
 
-**A class's runtime definition says what storage its properties need, and nothing about behavior.
-Bringing an object into existence and initializing it are two operations, and only the first is the
-runtime's.**
+**A class's runtime definition carries what every object of the class shares and no caller chooses;
+a constructor is neither, because the allocation site's static type chooses it. Bringing an object
+into existence and initializing it are two operations, and only the first is the runtime's.**
 
-### D1. The definition carries storage, not a body
+### D1. The definition carries no constructor
 
-What the runtime holds for a class is the schema its properties need. The allocation entry answers
-an object whose properties hold their storage's default; no body has run when it returns.
+What the runtime holds for a class is what is true of every object of it whoever is asking -- the
+schema its properties need, and, once a call may name a behavior rather than a body, the bodies such
+a call reaches. A constructor is not of that kind: it is selected by the static type written at the
+allocation site, never inherited and never dispatched, so nothing about it belongs on a record
+shared by every object. The allocation entry answers an object whose properties hold their storage's
+default; no body has run when it returns.
 
 ### D2. The construction is entered by the code that asked for it
 
@@ -79,10 +83,10 @@ execution backend translates each mechanically and decides nothing.
 
 ## Consequences
 
-- A class's runtime definition holds one thing. The registered-entry type, the definition's body
-  field, the runtime call that invoked it, and the linkage step that bound a symbol of any signature
-  to it are all gone, and with them the construct-site refusal that stood in for the signature the
-  boundary could not express.
+- A class's runtime definition holds nothing a caller chooses. The registered-entry type, the
+  definition's body field, the runtime call that invoked it, and the linkage step that bound a
+  symbol of any signature to it are all gone, and with them the construct-site refusal that stood in
+  for the signature the boundary could not express.
 - A constructor runs in the generated-call scope of whatever called it, like every other generated
   call. The scope the runtime opened around it is gone, so a temporary the constructor builds now
   lives as long as any other temporary of the calling body.

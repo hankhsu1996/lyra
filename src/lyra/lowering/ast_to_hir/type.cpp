@@ -728,6 +728,21 @@ auto SynthesizeInterfaceForwardingMethods(
   return {};
 }
 
+// The definition a slang override link names. A link may point at the base's
+// own definition or at a prototype standing for one, and what every consumer
+// wants is the declaration carrying the signature, so the two forms are
+// unwrapped to one here rather than at each site that follows a link.
+auto OverriddenSubroutine(const slang::ast::Symbol& target)
+    -> const slang::ast::SubroutineSymbol* {
+  if (target.kind == slang::ast::SymbolKind::Subroutine) {
+    return &target.as<slang::ast::SubroutineSymbol>();
+  }
+  if (target.kind == slang::ast::SymbolKind::MethodPrototype) {
+    return target.as<slang::ast::MethodPrototypeSymbol>().getSubroutine();
+  }
+  return nullptr;
+}
+
 // The method this one overrides, or nothing where it introduces its own
 // behaviour. The frontend resolves the ordinary case, having already matched
 // signature, direction, return type and every other LRM 8.20 compatibility
@@ -742,6 +757,20 @@ auto OverriddenMethod(
     -> const slang::ast::SubroutineSymbol* {
   if (const auto* resolved = method.getOverride(); resolved != nullptr) {
     return resolved;
+  }
+  // A method declared as an `extern` prototype and defined out of block (LRM
+  // 8.24) is two symbols, and the override link sits on the prototype -- the
+  // declaration standing in the class body, which is where the base chain was
+  // in scope. The definition is the same method and answers the same, so a
+  // consumer that asked only the definition would read every out-of-block
+  // override as introducing behaviour of its own.
+  if (const auto* prototype = method.getPrototype(); prototype != nullptr) {
+    if (const auto* target = prototype->getOverride(); target != nullptr) {
+      if (const auto* resolved = OverriddenSubroutine(*target);
+          resolved != nullptr) {
+        return resolved;
+      }
+    }
   }
   const slang::ast::MethodPrototypeSymbol* contract =
       FindOverriddenPureInBaseChain(cls, method.name);
@@ -1139,13 +1168,8 @@ auto UnitLowerer::PopulateClassBody(PendingClassBody& pending)
     // another prototype). Translate the reachable stub form to the HIR
     // identity registered when that ancestor was interned.
     if (const auto* overridden = proto->getOverride(); overridden != nullptr) {
-      const slang::ast::SubroutineSymbol* overridden_sub = nullptr;
-      if (overridden->kind == slang::ast::SymbolKind::Subroutine) {
-        overridden_sub = &overridden->as<slang::ast::SubroutineSymbol>();
-      } else if (overridden->kind == slang::ast::SymbolKind::MethodPrototype) {
-        overridden_sub =
-            overridden->as<slang::ast::MethodPrototypeSymbol>().getSubroutine();
-      }
+      const slang::ast::SubroutineSymbol* overridden_sub =
+          OverriddenSubroutine(*overridden);
       if (overridden_sub != nullptr) {
         const auto& base_class = overridden_sub->getParentScope()
                                      ->asSymbol()

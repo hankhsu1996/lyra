@@ -87,9 +87,17 @@ class LirDumper {
               "member[{}] \"{}\" : {}", i, cls.members[i].name,
               FormatType(cls.members[i].type)));
     }
-    DumpFunction(unit_->functions.Get(cls.constructor));
-    for (const FunctionId method : cls.methods) {
-      DumpFunction(unit_->functions.Get(method));
+    Line(
+        std::format(
+            "constructor: {}", unit_->functions.Get(cls.constructor).name));
+    for (std::size_t i = 0; i < cls.introduces.size(); ++i) {
+      Line(std::format("introduces[{}]: {}", i, FormatBody(cls.introduces[i])));
+    }
+    for (const DispatchOverride& taken : cls.overrides) {
+      Line(
+          std::format(
+              "overrides {}: {}", FormatDispatchRef(taken.method),
+              unit_->functions.Get(taken.body).name));
     }
     Dedent();
   }
@@ -236,6 +244,19 @@ class LirDumper {
         term.data);
   }
 
+  [[nodiscard]] auto FormatBody(const std::optional<FunctionId>& body) const
+      -> std::string {
+    return body.has_value() ? unit_->functions.Get(*body).name
+                            : std::string{"(unanswered)"};
+  }
+
+  [[nodiscard]] auto FormatDispatchRef(DispatchRef method) const
+      -> std::string {
+    return std::format(
+        "{}#{}", unit_->classes.Get(method.introduced_by).name,
+        method.ordinal.value);
+  }
+
   [[nodiscard]] static auto FormatBase(const Base& base) -> std::string {
     return std::visit(
         Overloaded{
@@ -265,6 +286,9 @@ class LirDumper {
             },
             [&](const FunctionTarget& f) -> std::string {
               return unit_->functions.Get(f.function).name;
+            },
+            [&](const DispatchTarget& d) -> std::string {
+              return std::format("dispatch {}", FormatDispatchRef(d.method));
             },
             [](const ConstructTarget&) -> std::string { return "Construct"; },
             [](const ForeignTarget& f) -> std::string {

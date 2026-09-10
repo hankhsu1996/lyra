@@ -613,6 +613,44 @@ auto CodeGenFunction::ResolveCallee(
               -> diag::Result<llvm::FunctionCallee> {
             return module_->UnitFunction(t.function);
           },
+          // A dispatched call is two operations over one boundary. What class a
+          // value is, is the only half this side cannot know, so that is the
+          // only half that crosses: the runtime answers with the address of the
+          // body that class holds for this behavior, and entering it with the
+          // arguments already in hand is this side's own.
+          [&](const lir::DispatchTarget& t)
+              -> diag::Result<llvm::FunctionCallee> {
+            const std::optional<std::uint32_t> position =
+                lir::DispatchPosition(module_->Unit(), t.method);
+            if (!position.has_value()) {
+              return Unsupported(
+                  "llvm codegen: dispatching on a value whose class extends "
+                  "one another compilation unit declares is not yet supported");
+            }
+            if (args.empty()) {
+              throw InternalError(
+                  "llvm codegen: a dispatched call states no value to dispatch "
+                  "on");
+            }
+            const std::array<llvm::Value*, 2> lookup{
+                args[0],
+                llvm::ConstantInt::get(
+                    llvm::Type::getInt32Ty(module_->Context()), *position)};
+            llvm::Value* body = builder_.CreateCall(
+                Entry(
+                    RuntimeSymbol(RuntimeOp::kObjectMethod),
+                    module_->Types().Ptr(), lookup),
+                lookup);
+            std::vector<llvm::Type*> params;
+            params.reserve(args.size());
+            for (llvm::Value* arg : args) {
+              params.push_back(arg->getType());
+            }
+            return llvm::FunctionCallee(
+                llvm::FunctionType::get(
+                    module_->Types().Map(result_type), params, false),
+                body);
+          },
           [&](const lir::ConstructTarget&)
               -> diag::Result<llvm::FunctionCallee> {
             return ConstructCallee(call, result_type, args);
