@@ -442,6 +442,19 @@ enum class BuiltinFn : std::uint16_t {
   // their own, and a real expression, which can name a fraction of a unit.
   kDelay,
   kDelayReal,
+  // What decides whether reaching a wait is an event for it (LRM 9.4.2), built
+  // where the wait begins and held for as long as it lasts. Two halves, each
+  // present exactly where the source put one: an event control watches an
+  // expression's value at a stated edge, and a named event's trigger is the
+  // event itself so it watches nothing; either may carry an `iff` qualifier
+  // (LRM 9.4.2.3, 15.5). Four entries because the four combinations are what
+  // the language distinguishes and an absent half has no value to stand in for
+  // it, so which one a wait carries is settled where the source is read rather
+  // than by counting arguments.
+  kObservationOnReaching,
+  kObservationOfValue,
+  kObservationOfValueQualified,
+  kObservationQualified,
   // LRM 9.4.2 / 9.4.2.2 / 9.4.3 value-change wait. The runtime free function
   // every wait on a signal suspends on -- an `@(...)`, an `@*`, an
   // `always_comb` / `always_latch` body, a `wait (cond)`, a continuous

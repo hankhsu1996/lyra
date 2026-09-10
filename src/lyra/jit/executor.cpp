@@ -335,12 +335,11 @@ auto DefineRuntimeAbi(llvm::orc::LLJIT& jit)
   add("lyra_rt_delay", &lyra_rt_delay);
   add("lyra_rt_delay_real", &lyra_rt_delay_real);
   add("lyra_rt_make_trigger", &lyra_rt_make_trigger);
-  add("lyra_rt_make_observed_trigger", &lyra_rt_make_observed_trigger);
-  add("lyra_rt_make_observation", &lyra_rt_make_observation);
-  add("lyra_rt_make_qualified_observation",
-      &lyra_rt_make_qualified_observation);
-  add("lyra_rt_make_condition_observation",
-      &lyra_rt_make_condition_observation);
+  add("lyra_rt_observation_on_reaching", &lyra_rt_observation_on_reaching);
+  add("lyra_rt_observation_of_value", &lyra_rt_observation_of_value);
+  add("lyra_rt_observation_of_value_qualified",
+      &lyra_rt_observation_of_value_qualified);
+  add("lyra_rt_observation_qualified", &lyra_rt_observation_qualified);
   add("lyra_rt_wait_any", &lyra_rt_wait_any);
   add("lyra_rt_triggered", &lyra_rt_triggered);
   add("lyra_rt_trigger", &lyra_rt_trigger);

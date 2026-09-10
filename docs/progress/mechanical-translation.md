@@ -95,13 +95,13 @@ cross-check predicts. This file owns only which instances are known and what is 
       from the count. An operand a form appeared to omit is that operand at the value the omission
       meant -- a container holding nothing is its own element list with nothing in it, a directive
       writing no modifiers writes each at its default, and a literal with no `default:` clause
-      answers a read of an absent key with the element type's own default (LRM 7.8.6) -- so every
-      construction of a kind now carries the same operands. The one axis a value cannot state, a
-      bounded queue's declared maximum (LRM 7.10.5), is read from the type that declares it. The
-      runtime lost the entries those partial forms named, and an associative array's absent-key
-      answer stopped being an optional whose absence stood for the element default -- which also
-      settled a disagreement between the two realizations of that type about whether the answer is
-      part of the value a change is detected against.
+      answers a read of an absent key with the element type's own default (LRM 7.8.6) -- so each of
+      those three now carries the same operands whichever form the source wrote. The one axis a
+      value cannot state, a bounded queue's declared maximum (LRM 7.10.5), is read from the type
+      that declares it. The runtime lost the entries those partial forms named, and an associative
+      array's absent-key answer stopped being an optional whose absence stood for the element
+      default -- which also settled a disagreement between the two realizations of that type about
+      whether the answer is part of the value a change is detected against.
 - [x] T6 -- A runtime operation is named once, in the namespace of the layer that states it. A
       second namespace sat beside the shared one, private to the execution backend, and seven of its
       entries were second names for the three accesses a capability wrapper defines. MIR states
@@ -259,6 +259,27 @@ cross-check predicts. This file owns only which instances are known and what is 
       never which truth table folds them, so publishing the net type was publishing a fact with no
       reader and the refusal that translated it moved to the declaration that has one.
 
+- [x] T26 -- What decides whether reaching a wait is an event for it is stated where the wait is
+      built, so a wait leaf has one shape and no consumer works out which form a construction is by
+      counting its operands. Two independent halves decide it, each present exactly where the source
+      wrote one: an expression watched at a stated edge (LRM 9.4.2), and an `iff` qualifier (LRM
+      9.4.2.3). All four combinations occur, and they had reached the layer below as one
+      construction of one type carrying zero, one, two or three operands -- so one backend recovered
+      the form from the count while the other handed the same question to its target language's
+      overload resolution, which is the cross-check's own shape: two answers to one question with
+      nothing holding them in step. The operand list could not settle it alone either, its first
+      operand being the watched expression under two forms and the qualifier under a third.
+
+      A construction names no entry beyond its own result type, so a type has exactly one
+      construction -- which is what left the count as the only thing to read. The absent-operand
+      rule does not reach the second half here: an absent qualifier is that qualifier at the value
+      the omission means, but an absent watch has no value at all, there being no expression that
+      stands for watching nothing. So which form it is becomes which entry the construction names,
+      one per combination, the shape a fact with no spelling as a value already takes elsewhere. The
+      leaf then carries an observation whatever it watches, the leaves of one wait share the one
+      that says being reached is the whole condition, and the runtime lost the partial leaf form
+      that had stood for carrying none.
+
 ## An aggregate's members
 
 - [ ] T8 -- An unpacked struct keeps its field names through lowering, so a member access names a
@@ -298,7 +319,8 @@ cross-check predicts. This file owns only which instances are known and what is 
       rest of this file -- extension safety rather than decision-making -- and it is why several of
       the others went unnoticed: a set that lost a member kept compiling.
 
-      What separates the twenty such arms is whether the arm's answer can be told from a real one.
+      What separated the twenty arms the survey found is whether the arm's answer can be told from a
+      real one.
       An absent answer can, and a caller that has to decide what absence means then says so at its
       own site; a substituted value cannot, and every caller inherits a guess. Three functions asked
       one container's element type three ways -- one covering three container kinds and refusing the
@@ -330,8 +352,10 @@ cross-check predicts. This file owns only which instances are known and what is 
       machine type a lowered type maps to, which timing control a delay-or-event form spells -- and
       each needs its own derivation of what the default was standing in for. Two more walk a body's
       expressions asking which operand names storage, which is a question about value category that
-      MIR states nowhere; and the type pool's own hash falls through to "these carry no payload"
-      through an `if constexpr` chain the compiler cannot check.
+      MIR states nowhere. The type pool's own hash was a third, falling through to "these carry no
+      payload" over a chain the compiler cannot check; it now consumes the set the way the layer
+      below already did, one arm per alternative, so a type variant gained anywhere says what its
+      identity is or fails to build.
 
       One more is absent-versus-empty rather than a catch-all arm, and it is the shape a walker's
       own idea of emptiness takes at the top: a class always carries a design-init body, empty when

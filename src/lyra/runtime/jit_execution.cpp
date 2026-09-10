@@ -1060,14 +1060,6 @@ auto lyra_rt_delay_real(
 // of what waits on that cell. Every such cell names `Observable` as its first
 // base, which is what makes the two addresses one under the platform ABI.
 auto lyra_rt_make_trigger(
-    void* observable, const void* lsb_bit_offset, const void* bit_width)
-    -> void* {
-  return Own(Trigger(
-      static_cast<Observable*>(observable), Read<PackedArray>(lsb_bit_offset),
-      Read<PackedArray>(bit_width)));
-}
-
-auto lyra_rt_make_observed_trigger(
     void* observable, const void* observation, const void* lsb_bit_offset,
     const void* bit_width) -> void* {
   return Own(Trigger(
@@ -1075,19 +1067,25 @@ auto lyra_rt_make_observed_trigger(
       Read<PackedArray>(lsb_bit_offset), Read<PackedArray>(bit_width)));
 }
 
-auto lyra_rt_make_observation(void* expression, const void* edge) -> void* {
-  return Own(Observation(TakeEvaluator(expression), Read<PackedArray>(edge)));
+auto lyra_rt_observation_on_reaching() -> void* {
+  return Own(Observation::OnReaching());
 }
 
-auto lyra_rt_make_qualified_observation(
+auto lyra_rt_observation_of_value(void* expression, const void* edge) -> void* {
+  return Own(
+      Observation::OfValue(TakeEvaluator(expression), Read<PackedArray>(edge)));
+}
+
+auto lyra_rt_observation_of_value_qualified(
     void* expression, const void* edge, void* condition) -> void* {
-  return Own(Observation(
-      TakeEvaluator(expression), Read<PackedArray>(edge),
-      TakeEvaluator(condition)));
+  return Own(
+      Observation::OfValueQualified(
+          TakeEvaluator(expression), Read<PackedArray>(edge),
+          TakeEvaluator(condition)));
 }
 
-auto lyra_rt_make_condition_observation(void* condition) -> void* {
-  return Own(Observation(TakeEvaluator(condition)));
+auto lyra_rt_observation_qualified(void* condition) -> void* {
+  return Own(Observation::Qualified(TakeEvaluator(condition)));
 }
 
 // The generated frame the process suspends is not a frame the engine ever sees

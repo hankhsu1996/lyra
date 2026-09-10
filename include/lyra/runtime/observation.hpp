@@ -222,31 +222,40 @@ class ArmedObservation {
 // wait rather than as long as the statement that reached the control, so
 // whatever is watching holds it between them and none of them owns it.
 //
-// A default-built handle names none, which is the implicit sensitivity of an
-// `always_comb` / `always_latch` body, an `@*`, a `wait (cond)` or a continuous
-// assignment: the standard makes those sensitive to the variables read rather
-// than to the value of an expression (LRM 9.2.2.2.1), so being reached is the
-// whole condition.
+// One factory per form the language distinguishes. Watching nothing is
+// the implicit sensitivity of an `always_comb` / `always_latch` body, an `@*`,
+// a `wait (cond)` or a continuous assignment -- the standard makes those
+// sensitive to the variables read rather than to the value of an expression
+// (LRM 9.2.2.2.1), so being reached is the whole condition -- and is equally an
+// unqualified `@e`, whose trigger is the event itself (LRM 15.5.1).
 class Observation {
  public:
   Observation() = default;
 
+  // Being reached is the whole condition, so there is nothing armed to hold.
+  [[nodiscard]] static auto OnReaching() -> Observation {
+    return Observation{};
+  }
+
   template <std::invocable Evaluate>
-  Observation(Evaluate evaluate, const value::PackedArray& edge)
-      : held_(std::make_shared<ArmedObservation>(std::move(evaluate), edge)) {
+  [[nodiscard]] static auto OfValue(
+      Evaluate evaluate, const value::PackedArray& edge) -> Observation {
+    return Observation{
+        std::make_shared<ArmedObservation>(std::move(evaluate), edge)};
   }
 
   template <std::invocable Evaluate, std::invocable Condition>
-  Observation(
+  [[nodiscard]] static auto OfValueQualified(
       Evaluate evaluate, const value::PackedArray& edge, Condition condition)
-      : held_(
-            std::make_shared<ArmedObservation>(
-                std::move(evaluate), edge, std::move(condition))) {
+      -> Observation {
+    return Observation{std::make_shared<ArmedObservation>(
+        std::move(evaluate), edge, std::move(condition))};
   }
 
   template <std::invocable Condition>
-  explicit Observation(Condition condition)
-      : held_(std::make_shared<ArmedObservation>(std::move(condition))) {
+  [[nodiscard]] static auto Qualified(Condition condition) -> Observation {
+    return Observation{
+        std::make_shared<ArmedObservation>(std::move(condition))};
   }
 
   [[nodiscard]] auto Get() const -> ArmedObservation* {
@@ -254,6 +263,10 @@ class Observation {
   }
 
  private:
+  explicit Observation(std::shared_ptr<ArmedObservation> held)
+      : held_(std::move(held)) {
+  }
+
   std::shared_ptr<ArmedObservation> held_;
 };
 

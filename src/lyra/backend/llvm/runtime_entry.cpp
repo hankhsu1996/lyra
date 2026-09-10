@@ -86,14 +86,6 @@ auto RuntimeOpName(RuntimeOp op) -> std::string_view {
       return "make_segment";
     case RuntimeOp::kMakeTrigger:
       return "make_trigger";
-    case RuntimeOp::kMakeObservedTrigger:
-      return "make_observed_trigger";
-    case RuntimeOp::kMakeObservation:
-      return "make_observation";
-    case RuntimeOp::kMakeQualifiedObservation:
-      return "make_qualified_observation";
-    case RuntimeOp::kMakeConditionObservation:
-      return "make_condition_observation";
     case RuntimeOp::kMakePackedRange:
       return "make_packed_range";
     case RuntimeOp::kMakePackedType:
@@ -720,6 +712,10 @@ auto EntryNamingOf(support::BuiltinFn fn) -> EntryNaming {
     case support::BuiltinFn::kRunNullHostCommand:
     case support::BuiltinFn::kDelay:
     case support::BuiltinFn::kDelayReal:
+    case support::BuiltinFn::kObservationOnReaching:
+    case support::BuiltinFn::kObservationOfValue:
+    case support::BuiltinFn::kObservationOfValueQualified:
+    case support::BuiltinFn::kObservationQualified:
     case support::BuiltinFn::kWaitAny:
     case support::BuiltinFn::kSimTime:
     case support::BuiltinFn::kSTime:

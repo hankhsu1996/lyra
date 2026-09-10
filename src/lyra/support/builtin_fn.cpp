@@ -576,6 +576,22 @@ auto RuntimeEntryOf(BuiltinFn id) -> RuntimeEntry {
       return {
           .name = "delay_real",
           .declaration = FreeFunction{"lyra::runtime::DelayReal"}};
+    case BuiltinFn::kObservationOnReaching:
+      return {
+          .name = "observation_on_reaching",
+          .declaration = StaticFactory{"OnReaching"}};
+    case BuiltinFn::kObservationOfValue:
+      return {
+          .name = "observation_of_value",
+          .declaration = StaticFactory{"OfValue"}};
+    case BuiltinFn::kObservationOfValueQualified:
+      return {
+          .name = "observation_of_value_qualified",
+          .declaration = StaticFactory{"OfValueQualified"}};
+    case BuiltinFn::kObservationQualified:
+      return {
+          .name = "observation_qualified",
+          .declaration = StaticFactory{"Qualified"}};
     case BuiltinFn::kWaitAny:
       return {
           .name = "wait_any",

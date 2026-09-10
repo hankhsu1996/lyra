@@ -9,14 +9,6 @@
 namespace lyra::runtime {
 
 Trigger::Trigger(
-    Observable* observable, const value::PackedArray& lsb_bit_offset,
-    const value::PackedArray& bit_width)
-    : observable(observable),
-      lsb_bit_offset(static_cast<std::uint64_t>(lsb_bit_offset.ToInt64())),
-      bit_width(static_cast<std::uint64_t>(bit_width.ToInt64())) {
-}
-
-Trigger::Trigger(
     Observable* observable, Observation observation,
     const value::PackedArray& lsb_bit_offset,
     const value::PackedArray& bit_width)

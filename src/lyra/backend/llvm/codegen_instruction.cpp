@@ -86,29 +86,6 @@ auto ValuesHeldBy(const lir::Type& type) -> std::optional<lir::TypeId> {
   return std::nullopt;
 }
 
-// A leaf of a wait carries the observation that decides what a change there
-// means only where an event control is what waits (LRM 9.4.2); an implicit
-// sensitivity names none and supplies the cell and its bit range alone.
-auto TriggerConstruction(std::size_t argument_count) -> RuntimeOp {
-  return argument_count == 3 ? RuntimeOp::kMakeTrigger
-                             : RuntimeOp::kMakeObservedTrigger;
-}
-
-// What an observation is built over: the watched expression and its edge, both
-// of those plus an `iff` qualifier, or the qualifier alone -- which is a named
-// event's, whose trigger is the event itself so there is no value to watch
-// (LRM 9.4.2, 9.4.2.3, 15.5).
-auto ObservationConstruction(std::size_t argument_count) -> RuntimeOp {
-  switch (argument_count) {
-    case 1:
-      return RuntimeOp::kMakeConditionObservation;
-    case 2:
-      return RuntimeOp::kMakeObservation;
-    default:
-      return RuntimeOp::kMakeQualifiedObservation;
-  }
-}
-
 }  // namespace
 
 auto CodeGenFunction::LowerInstr(const lir::Instr& instr)
@@ -1640,11 +1617,7 @@ auto CodeGenFunction::ConstructionOf(
               case lir::RuntimeLibraryKind::kHierarchySegment:
                 return entry(RuntimeSymbol(RuntimeOp::kMakeSegment));
               case lir::RuntimeLibraryKind::kTrigger:
-                return entry(
-                    RuntimeSymbol(TriggerConstruction(call.args.size())));
-              case lir::RuntimeLibraryKind::kObservation:
-                return entry(
-                    RuntimeSymbol(ObservationConstruction(call.args.size())));
+                return entry(RuntimeSymbol(RuntimeOp::kMakeTrigger));
               case lir::RuntimeLibraryKind::kFormatSpec:
                 return entry(RuntimeSymbol(RuntimeOp::kMakeFormatSpec));
               case lir::RuntimeLibraryKind::kPackedRange:
