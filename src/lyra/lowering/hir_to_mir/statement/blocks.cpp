@@ -109,7 +109,8 @@ void OpenActivationScope(
         promoted[i], PromotedVarBinding{
                          .handle_origin = handle_origin,
                          .handle_type = handle_type,
-                         .field = fields[i]});
+                         .field = mir::StructFieldTarget{
+                             .owner = struct_id, .slot = fields[i]}});
   }
 }
 

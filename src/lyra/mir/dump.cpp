@@ -780,15 +780,29 @@ class MirDumper {
                   m.receiver.value,
                   std::visit(
                       Overloaded{
-                          [](const FieldTarget& t) -> std::string {
+                          [](const ClassFieldTarget& t) -> std::string {
                             return std::format(
                                 "Class[{}]::Field[{}]", t.owner.value,
                                 t.slot.value);
                           },
-                          [](const FieldId& id) -> std::string {
-                            return std::format("Field[{}]", id.value);
+                          [](const StructFieldTarget& t) -> std::string {
+                            return std::format(
+                                "Struct[{}]::Field[{}]", t.owner.value,
+                                t.slot.value);
                           },
-                          [](const ExternalFieldTarget& t) -> std::string {
+                          [](const ClosureFieldTarget& t) -> std::string {
+                            return std::format(
+                                "Closure[{}]::Field[{}]", t.owner.value,
+                                t.slot.value);
+                          },
+                          [](const ExternalUnitObjectFieldTarget& t)
+                              -> std::string {
+                            return std::format(
+                                "ExternalUnitObject(#{})::Field[{}]",
+                                t.owner.value, t.slot.value);
+                          },
+                          [](const CrossUnitClassFieldTarget& t)
+                              -> std::string {
                             return std::format(
                                 "External[{}::{}#{}]", t.unit_name,
                                 t.class_name, t.slot.value);

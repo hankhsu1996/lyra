@@ -45,7 +45,7 @@ auto BuildEnclosingScopeReceiver(
             return block.exprs.Add(
                 mir::MakeFieldAccessExpr(
                     self,
-                    mir::FieldTarget{
+                    mir::ClassFieldTarget{
                         .owner = frame.current_class_id,
                         .slot = through.member},
                     frame.EnclosingClassAtHops(mir::EnclosingHops{0})
@@ -89,7 +89,8 @@ auto BuildStructuralFieldAccessExpr(
   const mir::TypeId field_type = owner.cls->fields.Get(var).type;
   const mir::ExprId receiver = BuildEnclosingScopeReceiver(frame, unit, hops);
   return mir::MakeFieldAccessExpr(
-      receiver, mir::FieldTarget{.owner = owner.id, .slot = var}, field_type);
+      receiver, mir::ClassFieldTarget{.owner = owner.id, .slot = var},
+      field_type);
 }
 
 auto BuildReferenceArg(

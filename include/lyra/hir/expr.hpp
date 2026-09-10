@@ -134,10 +134,9 @@ struct RangeSelectExpr {
 };
 
 // Struct or union member access (LRM 7.2 / 7.3): `field_index` is the
-// declaration-order position of the member within the aggregate arena the
-// receiver's type names. The arena is uniquely determined by the receiver's
-// type -- struct and union have no inheritance -- so no owner qualification
-// is carried on the access.
+// member's declaration-order position. An unpacked struct or union is a
+// product of its member types, so the type is the component list and nothing
+// else declares the member; the position is the whole of its identity.
 struct MemberAccessExpr {
   ExprId base_value;
   base::ComponentIndex field_index;

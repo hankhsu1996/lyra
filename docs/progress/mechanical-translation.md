@@ -202,6 +202,24 @@ cross-check predicts. This file owns only which instances are known and what is 
       subscript with a side effect took it twice, while the other backend named the receiver once.
       The receiver is now named once whatever shape naming it takes.
 
+- [x] T9 -- A field's identity states the declaration that declares it and the slot that declaration
+      gave it, one alternative per kind of declaration, so no consumer works out which arena
+      resolves the name. Five kinds declare fields; four of them had shared one alternative carrying
+      a slot and nothing else, on the argument that the receiver's type fixes the arena uniquely.
+      That is a derivation, and all three consumers paid for it. Two performed it -- strip the
+      receiver's indirection, then, for the one that needed a name rather than a position, classify
+      what it refers to -- each step ending in a refusal for a shape it did not recognize, which is
+      the fall-through-and-throw shape exhaustiveness names, here in the one place no closed set was
+      being switched over so nothing counted it. The third is the dump, which could not perform it
+      and so could not say which declaration an access named. Every producer of one of those four
+      had the declaration in hand, and one of them read the identity it then dropped, to look the
+      field's type up. Stating which storage an access reaches where the access is written, rather
+      than recovering it from the type the access arrived at, is the rule the class kind already
+      followed; it had to, because inheritance makes the derivation wrong there, and the other four
+      now follow it for the reason the rule was written down rather than for the case that forced
+      it. The layer below already named a member this way, so the two layers now split a field's
+      identity in the same place.
+
 - [x] T16 -- No peephole in a render. One collapsed a scope whose whole content was a single block
       into the enclosing braces, which decides nothing and states nothing: the emitted artifact is
       not read for its looks, and what it cost was a branch that had to be read and kept correct.
@@ -226,10 +244,13 @@ cross-check predicts. This file owns only which instances are known and what is 
 ## An aggregate's members
 
 - [ ] T8 -- An unpacked struct keeps its field names through lowering, so a member access names a
-      field rather than a position in a product. The render decision that falls out with it is
-      finding a field's name by walking the receiver's type through the kinds that can bear one.
-- [ ] T9 -- A field's identity splits exactly where the layer below it splits, and no consumer reads
-      how the name resolves. Same shape as T3, one node over.
+      field rather than a position in a product. Field names are dropped at the front-end boundary
+      today, and a settled decision says they are: an unpacked struct is the generic value product,
+      and a product declares its components nowhere. So what this item needs first is that argument
+      re-opened -- whether a nominal source aggregate is the same concept as the transient products
+      lowering builds -- rather than an implementation.
+      [unpacked-struct-representation](../decisions/unpacked-struct-representation.md) holds the
+      rationale to argue against.
 
 ## Callable and assignment identity
 

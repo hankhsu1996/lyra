@@ -1351,33 +1351,33 @@ auto FunctionLowerer::LowerCondition(const mir::Block& block, mir::ExprId id)
   return value;
 }
 
-auto FunctionLowerer::MemberRefOf(
-    const mir::Block& block, const mir::FieldAccessExpr& field)
+auto FunctionLowerer::MemberRefOf(const mir::FieldRef& field)
     -> diag::Result<lir::MemberRef> {
   return std::visit(
       Overloaded{
-          [&](const mir::FieldTarget& t) -> diag::Result<lir::MemberRef> {
+          [&](const mir::ClassFieldTarget& t) -> diag::Result<lir::MemberRef> {
             return lir::MemberRef{
                 .declared_by = unit_->ClassValueType(t.owner),
                 .slot = lir::MemberSlot{t.slot.value}};
           },
-          [&](const mir::FieldId& id) -> diag::Result<lir::MemberRef> {
-            // The receiver of a bare field id declares the field itself -- a
-            // struct, a closure, or another unit's object, none of which
-            // inherits -- so the declaration is what the receiver points at.
-            const lir::TypeId receiver =
-                unit_->TranslateType(block.exprs.Get(field.receiver).type);
-            const std::optional<lir::TypeId> pointee =
-                unit_->Types().Get(receiver).DerefTarget();
-            if (!pointee) {
-              throw InternalError(
-                  "mir_to_lir: a bare-field-id access expects a receiver that "
-                  "refers to member-bearing storage");
-            }
+          [&](const mir::StructFieldTarget& t) -> diag::Result<lir::MemberRef> {
             return lir::MemberRef{
-                .declared_by = *pointee, .slot = lir::MemberSlot{id.value}};
+                .declared_by = unit_->StructValueType(t.owner),
+                .slot = lir::MemberSlot{t.slot.value}};
           },
-          [&](const mir::ExternalFieldTarget& t)
+          [&](const mir::ClosureFieldTarget& t)
+              -> diag::Result<lir::MemberRef> {
+            return lir::MemberRef{
+                .declared_by = unit_->ClosureValueType(t.owner),
+                .slot = lir::MemberSlot{t.slot.value}};
+          },
+          [&](const mir::ExternalUnitObjectFieldTarget& t)
+              -> diag::Result<lir::MemberRef> {
+            return lir::MemberRef{
+                .declared_by = unit_->ExternalUnitObjectValueType(t.owner),
+                .slot = lir::MemberSlot{t.slot.value}};
+          },
+          [&](const mir::CrossUnitClassFieldTarget& t)
               -> diag::Result<lir::MemberRef> {
             return lir::MemberRef{
                 .declared_by =
@@ -1385,7 +1385,7 @@ auto FunctionLowerer::MemberRefOf(
                 .slot = lir::MemberSlot{t.slot.value}};
           },
       },
-      field.field);
+      field);
 }
 
 // The value a call reaches its part out of, and nothing where the call reaches
@@ -1615,7 +1615,7 @@ auto FunctionLowerer::LowerPlace(const mir::Block& block, mir::ExprId id)
             return ReferencePlace(reference.target, expr.type);
           },
           [&](const mir::FieldAccessExpr& field) -> diag::Result<lir::Place> {
-            auto member = MemberRefOf(block, field);
+            auto member = MemberRefOf(field.field);
             if (!member) {
               return std::unexpected(std::move(member.error()));
             }

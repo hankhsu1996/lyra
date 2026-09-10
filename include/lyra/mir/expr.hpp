@@ -17,10 +17,12 @@
 #include "lyra/mir/class_id.hpp"
 #include "lyra/mir/closure.hpp"
 #include "lyra/mir/expr_id.hpp"
+#include "lyra/mir/external_unit_object_id.hpp"
 #include "lyra/mir/inc_dec_op.hpp"
 #include "lyra/mir/local_ref.hpp"
 #include "lyra/mir/static_constant_id.hpp"
 #include "lyra/mir/static_property_id.hpp"
+#include "lyra/mir/struct_id.hpp"
 #include "lyra/mir/unary_op.hpp"
 #include "lyra/support/builtin_fn.hpp"
 #include "lyra/support/imported_runtime_class.hpp"
@@ -447,61 +449,74 @@ struct ValueCastExpr {
 // declares the field, and the slot within that arena. Owner is the declaring
 // class, not the receiver's class; the two coincide when the receiver's class
 // declares the field itself and diverge when the field is inherited from a
-// base. A backend reads the field name and type from this stated owner rather
-// than deriving them from the receiver's type.
-struct FieldTarget {
+// base (LRM 8.14).
+struct ClassFieldTarget {
   ClassId owner;
   FieldId slot;
 
-  auto operator==(const FieldTarget&) const -> bool = default;
+  auto operator==(const ClassFieldTarget&) const -> bool = default;
+};
+
+// Identity of a field of a compiler-generated nominal struct -- the shared
+// activation object a promoted automatic lives in (LRM 6.21) is one.
+struct StructFieldTarget {
+  StructId owner;
+  FieldId slot;
+
+  auto operator==(const StructFieldTarget&) const -> bool = default;
+};
+
+// Identity of a captured binding, which the closure declaration holds as a
+// field like any other storage a declaration declares.
+struct ClosureFieldTarget {
+  ClosureId owner;
+  FieldId slot;
+
+  auto operator==(const ClosureFieldTarget&) const -> bool = default;
+};
+
+// Identity of a member another compilation unit published on one of its
+// objects, at the position that unit's signature gave it.
+struct ExternalUnitObjectFieldTarget {
+  ExternalUnitObjectId owner;
+  FieldId slot;
+
+  auto operator==(const ExternalUnitObjectFieldTarget&) const -> bool = default;
 };
 
 // Identity of a property on an SV class another compilation unit declares: the
 // declaring unit, the class's canonical name -- matched at link time -- and the
-// slot that class gave the property, counted out of what it published. Peer of
-// `FieldTarget` with the class named by its parts rather than by an id, which
-// is how every identity crossing a unit boundary is carried.
-struct ExternalFieldTarget {
+// slot that class gave the property, counted out of what it published. The
+// class is named by its parts rather than by an id, which is how every identity
+// crossing a unit boundary is carried.
+struct CrossUnitClassFieldTarget {
   std::string unit_name;
   std::string class_name;
   FieldId slot;
 
-  auto operator==(const ExternalFieldTarget&) const -> bool = default;
+  auto operator==(const CrossUnitClassFieldTarget&) const -> bool = default;
 };
 
-// Which arena's field a `FieldAccessExpr` reaches. Three shapes because the
-// class case is where "which arena" is a semantic decision that also splits
-// on unit boundary:
-//
-// - `FieldTarget` (owner-qualified) is used when the receiver is a class
-//   instance whose class this unit declares. The receiver's runtime class
-//   type may not be the field's declaring class (inheritance), so the target
-//   states both.
-//
-// - `ExternalFieldTarget` is used when the receiver is an instance of an SV
-//   class another compilation unit declares -- that unit and the class's
-//   canonical name plus the property's source name, matched at link time.
-//
-// - Bare `FieldId` is used when the receiver is a struct value, a closure, or
-//   the object of another unit. Each carries its arena identity in its own type
-//   payload (`StructType.struct_id`, `ClosureType.closure_id`,
-//   `ExternalUnitObjectType.object`) and never participates in an inheritance
-//   chain, so the arena is uniquely determined by the receiver's type; stating
-//   it again would restate what the structural context already fixes.
+// Which field a `FieldAccessExpr` reaches, stated as the declaration that
+// declares it and the slot that declaration gave it. One alternative per
+// declaration kind, because the declaration kinds are what the arenas holding
+// field names are keyed by, and a name is resolved by reading the arena the
+// access states rather than by classifying what the receiver turned out to be.
 //
 // A field is declared somewhere, which is what separates it from a part named
 // by position: a product declares its components nowhere -- the type is the
 // component list -- so reaching one is an operation on the value rather than a
 // name in an arena, and it is a call.
-using FieldRef = std::variant<FieldTarget, FieldId, ExternalFieldTarget>;
+using FieldRef = std::variant<
+    ClassFieldTarget, StructFieldTarget, ClosureFieldTarget,
+    ExternalUnitObjectFieldTarget, CrossUnitClassFieldTarget>;
 
 // Field access through an explicit receiver expression: `receiver.field`. The
-// receiver is a field-bearing value -- a class instance, a closure, a
-// promoted-scope handle, a product -- reached by pointer or held directly,
-// which is the receiver expression's business and not this node's.
-// The receiver is explicit, so a backend never asks "what is the current
-// receiver?"; and for a class receiver the field is owner-qualified, so a
-// backend never derives which class arena to search from the receiver's type.
+// receiver is a value of whichever declaration the field names, reached by
+// pointer or held directly, which is the receiver expression's business and
+// not this node's. So a backend never asks "what is the current receiver?",
+// and never derives which arena declares the name from what the receiver's
+// type turns out to be.
 //
 // One node serves reading the field and writing it. Which of the two an
 // occurrence is follows from where it stands -- a value position reads, an

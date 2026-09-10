@@ -86,6 +86,15 @@ class UnitLowerer {
   // receiver has: a class carries what its bases declare as well as its own.
   auto ClassValueType(mir::ClassId cls) -> lir::TypeId;
 
+  // The type of the values one generated-struct declaration builds.
+  auto StructValueType(mir::StructId record) -> lir::TypeId;
+
+  // The type of the values one object another unit published is an instance
+  // of. Only the published prefix of its layout is named here, which is what a
+  // member reached through it may name.
+  auto ExternalUnitObjectValueType(mir::ExternalUnitObjectId object)
+      -> lir::TypeId;
+
   // The type naming a class another unit declares. The pair is the whole
   // identity, which is what lets a property step and a dispatch on one name the
   // declaration without an id of this unit standing for it.

@@ -58,16 +58,20 @@ what the construct means.
 - The type system: value types (integral, real, string, event, ...); object types in two forms -- an
   intra-unit object (a class of this unit) and an external-unit object (another compilation unit,
   named); two composing wrappers, owning pointer and vector; and four nominal / structural
-  categories that share one **field substrate** (`FieldDecl`, `FieldId`, `FieldAccess`) but stay
-  distinct types: the **tuple**, the one structural heterogeneous product (positional,
-  shape-interned); the **struct**, a nominal named field-bearing aggregate (declaration identity,
-  named fields), used for a compiler-generated promoted automatic scope reached through a `Shared<>`
-  wrapper; the **closure**, an anonymous concrete callable value (capture fields plus one invoke
-  body, a distinct type per site); and the **object** (`mir::Class`), the rich nominal object with
-  methods and dispatch. Structural versus nominal, and storage versus callable, are the ordinary
-  generic-language distinctions (C++/Rust/LLVM carry them). "Activation frame" is a lowering role
-  name for a `Shared<>` scope struct, not a type category; a closure is not a struct-with-invoke but
-  its own callable-value category.
+  categories: the **tuple**, the one structural heterogeneous product (positional, shape-interned);
+  the **struct**, a nominal named field-bearing aggregate (declaration identity, named fields), used
+  for a compiler-generated promoted automatic scope reached through a `Shared<>` wrapper; the
+  **closure**, an anonymous concrete callable value (capture fields plus one invoke body, a distinct
+  type per site); and the **object** (`mir::Class`), the rich nominal object with methods and
+  dispatch. The three nominal ones share one **field substrate** -- a field declaration, a field id
+  keyed within one declaration, and one access node over both -- while staying distinct types; the
+  tuple shares none of it, because a product declares its components nowhere and reaching one is an
+  operation on the value rather than a name in an arena. An access names the declaration it reaches
+  into, so what the substrate shares is the vocabulary and never the identity. Structural versus
+  nominal, and storage versus callable, are the ordinary generic-language distinctions
+  (C++/Rust/LLVM carry them). "Activation frame" is a lowering role name for a `Shared<>` scope
+  struct, not a type category; a closure is not a struct-with-invoke but its own callable-value
+  category.
 - Capability wrappers: types that represent a storage place instead of being a value -- an
   observable cell, a reference, a net's resolved value, a net driver's contribution. A capability
   wrapper composes over the value type it represents, and the wrapper and that storage are distinct

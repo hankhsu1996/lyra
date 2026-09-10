@@ -46,7 +46,7 @@ auto DriverAccess(
   return block.exprs.Add(
       mir::MakeFieldAccessExpr(
           self,
-          mir::FieldTarget{
+          mir::ClassFieldTarget{
               .owner = frame.current_class_id, .slot = driver.field},
           driver.type));
 }

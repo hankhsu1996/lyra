@@ -651,14 +651,14 @@ auto UnitLowerer::TranslateClassRef(const hir::ClassRef& ref) -> mir::ClassRef {
   return MakeExternalClassRef(std::get<hir::ExternalClassRef>(ref));
 }
 
-auto UnitLowerer::MakeExternalFieldTarget(
+auto UnitLowerer::MakeCrossUnitClassFieldTarget(
     const hir::ExternalClassPropertyTarget& target)
-    -> mir::ExternalFieldTarget {
+    -> mir::CrossUnitClassFieldTarget {
   unit_.AddExternalClassUnit(target.unit_name);
   RecordExternalClass(target.unit_name, target.class_name);
   // The properties a class publishes are a prefix of its own storage, so the
   // position counted out of the promise is the slot that class gave.
-  return mir::ExternalFieldTarget{
+  return mir::CrossUnitClassFieldTarget{
       .unit_name = target.unit_name,
       .class_name = target.class_name,
       .slot = mir::FieldId{target.property.value}};
@@ -705,11 +705,11 @@ auto UnitLowerer::TranslateClassPropertyTarget(
     const hir::ClassPropertyTarget& target) -> mir::FieldRef {
   if (const auto* local = std::get_if<hir::LocalClassPropertyTarget>(&target)) {
     const mir::ClassId owner = TranslateClass(local->owner);
-    return mir::FieldRef{mir::FieldTarget{
+    return mir::FieldRef{mir::ClassFieldTarget{
         .owner = owner,
         .slot = GetClassShape(owner).field_translation.Get(local->field)}};
   }
-  return mir::FieldRef{MakeExternalFieldTarget(
+  return mir::FieldRef{MakeCrossUnitClassFieldTarget(
       std::get<hir::ExternalClassPropertyTarget>(target))};
 }
 

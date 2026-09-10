@@ -132,17 +132,6 @@ auto RenderIntCastExpr(
 
 }  // namespace
 
-// How a field access reaches its field: the C++ field name, plus whether it is
-// reached through the receiver (`recv->name`, an object member) or named
-// directly in scope (bare `name`, a closure capture that is an in-scope lambda
-// binding). This is the one place that maps a field-bearing nominal receiver
-// and a field id to a rendered field, so a new receiver kind is added here, not
-// at every access site.
-struct FieldAccess {
-  std::string name;
-  bool through_receiver;
-};
-
 // The C++ name of a closure capture, distinct from the field's source name. A
 // capture is realized as a lambda capture and shares the lambda's scope with
 // the closure's per-invocation parameters and body locals, so its name must not
@@ -156,98 +145,59 @@ auto ClosureCaptureCppName(const mir::ClosureDecl& decl, mir::FieldId field)
   return std::format("{}_c{}", decl.fields.Get(field).name, field.value);
 }
 
-auto ResolveFieldAccess(const ScopeView& view, const mir::FieldAccessExpr& m)
-    -> FieldAccess {
-  // The receiver reaches its field-bearing value through a borrowed pointer (a
-  // class `self`, a closure receiver), a shared handle (a promoted scope), or a
-  // managed reference (a class handle). The field target is owner-qualified
-  // for a class receiver (owner names the declaring class arena) and a bare
-  // field id otherwise (a struct, a closure, or another unit's object, whose
-  // arena is uniquely determined by the receiver's type).
-  //
-  // A closure captures its fields into a lambda whose captures are in scope,
-  // so a read over the closure receiver is the bare capture name, not a
-  // receiver dereference. Every other receiver is `recv->field`.
+auto RenderFieldAccessExpr(const ScopeView& view, const mir::FieldAccessExpr& m)
+    -> std::string {
+  const auto through_receiver = [&](std::string_view name) {
+    return std::format("{}->{}", RenderExpr(view, view.Expr(m.receiver)), name);
+  };
   return std::visit(
       Overloaded{
-          [&](const mir::FieldTarget& t) -> FieldAccess {
+          [&](const mir::ClassFieldTarget& t) -> std::string {
             // Qualified by the declaring class: a derived class may redeclare
             // a name its base already used, both storages exist at once, and
             // which of them an access reaches is fixed where the access is
             // written rather than by the receiver's type (LRM 8.14).
             const auto& cls = view.Unit().GetClass(t.owner);
-            return FieldAccess{
-                .name = std::format(
-                    "{}::{}", ToCppName(cls.name), cls.fields.Get(t.slot).name),
-                .through_receiver = true};
+            return through_receiver(
+                std::format(
+                    "{}::{}", ToCppName(cls.name),
+                    cls.fields.Get(t.slot).name));
           },
-          [&](const mir::ExternalFieldTarget& t) -> FieldAccess {
-            // Cross-unit class field: the declaring unit's header pulls the
-            // field name into scope through the include; the receiver reaches
-            // it by its source name, which the target-language compiler
-            // resolves against the receiver's static type. The slot is what
-            // the access states, so the name is read out of what that class
-            // promised rather than restated at the access.
+          [&](const mir::StructFieldTarget& t) -> std::string {
+            return through_receiver(
+                view.Unit().GetStruct(t.owner).fields.Get(t.slot).name);
+          },
+          [&](const mir::ClosureFieldTarget& t) -> std::string {
+            // A closure is emitted as a lambda whose captures are bindings of
+            // the enclosing scope, so naming the capture is the whole access
+            // and the receiver never appears.
+            return ClosureCaptureCppName(
+                view.Unit().GetClosure(t.owner), t.slot);
+          },
+          [&](const mir::ExternalUnitObjectFieldTarget& t) -> std::string {
+            return through_receiver(view.Unit()
+                                        .external_unit_objects.Get(t.owner)
+                                        .fields.Get(t.slot)
+                                        .name);
+          },
+          [&](const mir::CrossUnitClassFieldTarget& t) -> std::string {
+            // The declaring unit's header pulls the property name into scope
+            // through the include, so the receiver reaches it by its source
+            // name and the target-language compiler resolves it against the
+            // receiver's static type. The slot is what the access states, so
+            // the name is read out of what that class promised rather than
+            // restated at the access.
             const mir::ExternalClass* declaring = mir::FindExternalClass(
                 view.Unit().external_classes, t.unit_name, t.class_name);
             if (declaring == nullptr ||
                 t.slot.value >= declaring->fields.size()) {
               throw InternalError(
-                  "ResolveFieldAccess: a property access names a slot no "
+                  "RenderFieldAccessExpr: a property access names a slot no "
                   "consumed promise describes");
             }
-            return FieldAccess{
-                .name = declaring->fields.Get(t.slot).name,
-                .through_receiver = true};
-          },
-          [&](const mir::FieldId& id) -> FieldAccess {
-            const mir::TypeId recv_type = view.Expr(m.receiver).type;
-            const auto& recv_data = view.Unit().types.Get(recv_type);
-            mir::TypeId pointee{};
-            if (const auto* ptr = recv_data.As<mir::PointerType>()) {
-              pointee = ptr->pointee;
-            } else {
-              throw InternalError(
-                  "ResolveFieldAccess: bare-field-id access expects a pointer "
-                  "receiver (a struct, a closure, or another unit's object)");
-            }
-            const auto& pointee_data = view.Unit().types.Get(pointee);
-            if (const auto* c = pointee_data.As<mir::ClosureType>()) {
-              return FieldAccess{
-                  .name = ClosureCaptureCppName(
-                      view.Unit().GetClosure(c->closure_id), id),
-                  .through_receiver = false};
-            }
-            if (const auto* s = pointee_data.As<mir::StructType>()) {
-              return FieldAccess{
-                  .name =
-                      view.Unit().GetStruct(s->struct_id).fields.Get(id).name,
-                  .through_receiver = true};
-            }
-            if (const auto* e =
-                    pointee_data.As<mir::ExternalUnitObjectType>()) {
-              return FieldAccess{
-                  .name = view.Unit()
-                              .external_unit_objects.Get(e->object)
-                              .fields.Get(id)
-                              .name,
-                  .through_receiver = true};
-            }
-            throw InternalError(
-                "ResolveFieldAccess: bare-field-id access on a receiver that "
-                "is not a member-bearing aggregate or object");
+            return through_receiver(declaring->fields.Get(t.slot).name);
           }},
       m.field);
-}
-
-auto RenderFieldAccessExpr(const ScopeView& view, const mir::FieldAccessExpr& m)
-    -> std::string {
-  const FieldAccess field = ResolveFieldAccess(view, m);
-  if (!field.through_receiver) {
-    return field.name;
-  }
-  return std::format(
-      "{}->{}", RenderExpr(view, view.Expr(m.receiver)), field.name);
 }
 
 // The C++ text a reference names. Every alternative comes out as a name, or a

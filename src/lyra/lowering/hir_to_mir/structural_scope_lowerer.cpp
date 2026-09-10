@@ -268,7 +268,7 @@ void EmitInstanceMemberConstruction(
         mir::MakeFieldAccessExpr(
             block.exprs.Add(
                 MakeSelfRefExpr(frame, frame.current_class->self_pointer_type)),
-            mir::FieldTarget{
+            mir::ClassFieldTarget{
                 .owner = frame.current_class_id,
                 .slot = lowerer.InstanceMemberField(id)},
             member_type));
@@ -492,7 +492,7 @@ auto StepToOwnedChild(
   mir::ExprId access = block.exprs.Add(
       mir::MakeFieldAccessExpr(
           receiver.expr,
-          mir::FieldTarget{
+          mir::ClassFieldTarget{
               .owner = receiver_class, .slot = anchor.borrowed_handle},
           reached));
   for (const std::uint32_t coord : step.indices) {
@@ -535,7 +535,8 @@ auto StepThroughInterfacePort(
   mir::ExprId access = block.exprs.Add(
       mir::MakeFieldAccessExpr(
           receiver.expr,
-          mir::FieldTarget{.owner = receiver_class, .slot = field}, reached));
+          mir::ClassFieldTarget{.owner = receiver_class, .slot = field},
+          reached));
   for (const std::uint32_t coord : step.indices) {
     reached =
         unit_lowerer.Unit().types.Get(reached).Get<mir::VectorType>().element;
@@ -550,29 +551,37 @@ auto StepThroughInterfacePort(
   return RouteReceiver{.expr = access, .target = ExternalObject{}};
 }
 
+// A member another unit published, as the field it is: the object recorded
+// from that unit's signature declares it, and the receiver the route has
+// descended to is an instance of exactly that object.
+auto PublishedMemberTarget(
+    const mir::CompilationUnit& unit, const mir::Block& block,
+    const RouteReceiver& receiver, hir::PublishedMemberId member)
+    -> mir::ExternalUnitObjectFieldTarget {
+  const mir::TypeId pointee =
+      unit.types.Get(block.exprs.Get(receiver.expr).type)
+          .Get<mir::PointerType>()
+          .pointee;
+  return mir::ExternalUnitObjectFieldTarget{
+      .owner =
+          unit.types.Get(pointee).Get<mir::ExternalUnitObjectType>().object,
+      .slot = UnitLowerer::TranslatePublishedMember(member)};
+}
+
 // Descends one step onto a member another unit published whose type makes it an
 // object of a third unit (LRM 25.3, 25.10): the member access at the position
 // that unit's signature gave it, then one index per coordinate the step names.
-// Which object those positions index is already on the receiver's type, so the
-// access states only the position -- the same reading a route ending on a
-// published member takes, reaching a pointer instead of a cell.
 auto StepToSignatureMember(
     UnitLowerer& unit_lowerer, mir::Block& block, const RouteReceiver& receiver,
     const hir::SignatureMemberStep& step) -> RouteReceiver {
-  const mir::TypeId receiver_type = block.exprs.Get(receiver.expr).type;
-  const mir::TypeId pointee = unit_lowerer.Unit()
-                                  .types.Get(receiver_type)
-                                  .Get<mir::PointerType>()
-                                  .pointee;
-  const auto& object =
-      unit_lowerer.Unit().types.Get(pointee).Get<mir::ExternalUnitObjectType>();
-  const mir::FieldId field = UnitLowerer::TranslatePublishedMember(step.member);
+  const mir::ExternalUnitObjectFieldTarget target =
+      PublishedMemberTarget(unit_lowerer.Unit(), block, receiver, step.member);
   mir::TypeId reached = unit_lowerer.Unit()
-                            .external_unit_objects.Get(object.object)
-                            .fields.Get(field)
+                            .external_unit_objects.Get(target.owner)
+                            .fields.Get(target.slot)
                             .type;
   mir::ExprId access =
-      block.exprs.Add(mir::MakeFieldAccessExpr(receiver.expr, field, reached));
+      block.exprs.Add(mir::MakeFieldAccessExpr(receiver.expr, target, reached));
   for (const std::uint32_t coord : step.indices) {
     reached =
         unit_lowerer.Unit().types.Get(reached).Get<mir::VectorType>().element;
@@ -599,7 +608,8 @@ auto AddressTypedLeaf(
       unit_lowerer.GetClassShape(owner_class).fields.Get(field).type;
   const mir::ExprId access = block.exprs.Add(
       mir::MakeFieldAccessExpr(
-          receiver.expr, mir::FieldTarget{.owner = owner_class, .slot = field},
+          receiver.expr,
+          mir::ClassFieldTarget{.owner = owner_class, .slot = field},
           field_type));
   return block.exprs.Add(
       mir::Expr{
@@ -617,14 +627,13 @@ auto MaterializeLeaf(
   auto& unit = unit_lowerer.Unit();
 
   // A published member is reached through the target unit's own object, whose
-  // pointer the step before it produced. The access states only the position:
-  // which object those positions index is already on the receiver's type.
+  // pointer the step before it produced.
   if (const auto* member = std::get_if<hir::SignatureMemberLeaf>(&leaf)) {
     const auto& slot = unit.types.Get(slot_type).Get<mir::PointerType>();
     const mir::ExprId access = block.exprs.Add(
         mir::MakeFieldAccessExpr(
             receiver.expr,
-            UnitLowerer::TranslatePublishedMember(member->member),
+            PublishedMemberTarget(unit, block, receiver, member->member),
             slot.pointee));
     return block.exprs.Add(
         mir::Expr{
@@ -778,7 +787,7 @@ void InstallRoutedRefs(
                 mir::FieldAccessExpr{
                     .receiver = self_for_target,
                     .field =
-                        mir::FieldTarget{
+                        mir::ClassFieldTarget{
                             .owner = resolve_frame.current_class_id,
                             .slot = slot}},
             .type = slot_type});
@@ -1079,7 +1088,7 @@ void AppendOwnedChildConstruction(
     return arm_block.exprs.Add(
         mir::MakeFieldAccessExpr(
             self_read(),
-            mir::FieldTarget{
+            mir::ClassFieldTarget{
                 .owner = arm_frame.current_class_id,
                 .slot = *runtime_parent_handle},
             owner_class.fields.Get(*runtime_parent_handle).type));
@@ -1144,7 +1153,7 @@ void AppendOwnedChildConstruction(
   const mir::ExprId member = arm_block.exprs.Add(
       mir::MakeFieldAccessExpr(
           self_read(),
-          mir::FieldTarget{
+          mir::ClassFieldTarget{
               .owner = arm_frame.current_class_id, .slot = handle_field},
           handle_type));
   const mir::ExprId assign = arm_block.exprs.Add(
@@ -1904,7 +1913,7 @@ auto StructuralScopeLowerer::PopulateBodies(WalkFrame parent_frame)
       const mir::ExprId init_target = initialize_block.exprs.Add(
           mir::MakeFieldAccessExpr(
               init_self_read(),
-              mir::FieldTarget{.owner = class_id_, .slot = mir_id},
+              mir::ClassFieldTarget{.owner = class_id_, .slot = mir_id},
               mir_field_type));
       const auto append_stmt = [&](mir::Expr expr) {
         initialize_block.AppendStmt(
@@ -1963,7 +1972,8 @@ auto StructuralScopeLowerer::PopulateBodies(WalkFrame parent_frame)
     if (is_net) {
       const mir::ExprId net_target = ctor_block.exprs.Add(
           mir::MakeFieldAccessExpr(
-              self_read(), mir::FieldTarget{.owner = class_id_, .slot = mir_id},
+              self_read(),
+              mir::ClassFieldTarget{.owner = class_id_, .slot = mir_id},
               mir_field_type));
       const mir::ExprId prototype = ctor_block.exprs.Add(
           BuildDefaultValueFromHir(unit_lowerer, ctor_block, d.type));
@@ -1987,7 +1997,8 @@ auto StructuralScopeLowerer::PopulateBodies(WalkFrame parent_frame)
     if (is_signal) {
       const mir::ExprId var_ref = ctor_block.exprs.Add(
           mir::MakeFieldAccessExpr(
-              self_read(), mir::FieldTarget{.owner = class_id_, .slot = mir_id},
+              self_read(),
+              mir::ClassFieldTarget{.owner = class_id_, .slot = mir_id},
               mir_field_type));
       const mir::TypeId var_ptr_type = unit_lowerer.Unit().types.Intern(
           mir::Type{mir::PointerType{
@@ -2172,7 +2183,8 @@ auto StructuralScopeLowerer::PopulateBodies(WalkFrame parent_frame)
       const mir::FieldId field = InstanceFieldOf(binding);
       const mir::ExprId cell = ctor_block.exprs.Add(
           mir::MakeFieldAccessExpr(
-              self_read(), mir::FieldTarget{.owner = class_id_, .slot = field},
+              self_read(),
+              mir::ClassFieldTarget{.owner = class_id_, .slot = field},
               binding.cell_type));
       const mir::ExprId addr = ctor_block.exprs.Add(
           mir::MakeAddressOfExpr(
@@ -2185,7 +2197,8 @@ auto StructuralScopeLowerer::PopulateBodies(WalkFrame parent_frame)
       const mir::ExprId node = ctor_block.exprs.Add(
           mir::MakeFieldAccessExpr(
               self_read(),
-              mir::FieldTarget{.owner = class_id_, .slot = borrowed_handle},
+              mir::ClassFieldTarget{
+                  .owner = class_id_, .slot = borrowed_handle},
               mir_class.fields.Get(borrowed_handle).type));
       const mir::ExprId name_lit = ctor_block.exprs.Add(
           mir::Expr{
