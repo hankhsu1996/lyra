@@ -1118,12 +1118,11 @@ auto lyra_rt_assocarray_ne(const void* lhs, const void* rhs) -> void*;
 auto lyra_rt_assocarray_case_equal(const void* lhs, const void* rhs) -> void*;
 auto lyra_rt_assocarray_bitstream_width(const void* array) -> void*;
 // LRM 20.7 `$low` / `$high` over an associative dimension: the smallest and
-// largest index the array holds. An array with no entries reports the value the
-// call supplied for that case, which is the caller's own handle -- a value
-// handle is immutable, so answering with it aliases nothing observable.
-auto lyra_rt_assocarray_assoc_min_index(const void* array, void* empty)
+// largest index the array holds, or `unallocated` where it holds none. That
+// answer is an index, so it crosses erased for the same reason a probe does.
+auto lyra_rt_assocarray_assoc_min_index(const void* array, void* unallocated)
     -> void*;
-auto lyra_rt_assocarray_assoc_max_index(const void* array, void* empty)
+auto lyra_rt_assocarray_assoc_max_index(const void* array, void* unallocated)
     -> void*;
 // LRM 7.9.4 -- 7.9.7 traversal. Each completes with the SV int it answers with
 // and the index it visited, which is the probe unchanged when there is no such

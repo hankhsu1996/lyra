@@ -510,9 +510,8 @@ auto CodeGenFunction::LowerCall(
     operands.push_back(*lowered);
   }
   // The entry is resolved against what it is actually handed, so this target's
-  // own encoding of the call -- an erased operand, a span standing in for a run
-  // of values, a leading reference to what is built -- is already in the
-  // argument list when the entry's signature is read off it.
+  // own encoding of the call is already in the argument list by the time the
+  // entry's signature is read off it.
   auto args = CallArgs(call, std::move(operands));
   if (!args) {
     return std::unexpected(std::move(args.error()));
@@ -548,11 +547,11 @@ auto CodeGenFunction::Entry(
 auto CodeGenFunction::CallArgs(
     const lir::CallInstr& call, std::vector<llvm::Value*> operands)
     -> diag::Result<std::vector<llvm::Value*>> {
-  auto erased = ErasedOperand(call);
-  if (!erased) {
-    return std::unexpected(std::move(erased.error()));
+  auto encoding = EncodingOf(call);
+  if (!encoding) {
+    return std::unexpected(std::move(encoding.error()));
   }
-  if (const std::optional<ErasedArgument>& argument = *erased) {
+  if (const std::optional<ErasedArgument>& argument = encoding->erased) {
     const std::array<llvm::Value*, 1> boxed{operands[argument->position]};
     operands[argument->position] = builder_.CreateCall(
         Entry(
@@ -560,45 +559,36 @@ auto CodeGenFunction::CallArgs(
             module_->Types().Ptr(), boxed),
         boxed);
   }
-  const auto* construct = std::get_if<lir::ConstructTarget>(&call.target);
-  if (construct == nullptr) {
-    return operands;
-  }
-  return ConstructArgs(construct->result, operands);
+  return ArgsInForm(encoding->operand_form, operands);
 }
 
-// A type comes into existence one way, so which entry that is and what it takes
-// are one answer read from the result type.
-auto CodeGenFunction::ConstructArgs(
-    lir::TypeId result, const std::vector<llvm::Value*>& operands)
+auto CodeGenFunction::ArgsInForm(
+    const OperandForm& form, const std::vector<llvm::Value*>& operands)
     -> diag::Result<std::vector<llvm::Value*>> {
-  const auto led_by_definition =
-      [&](lir::TypeId described) -> diag::Result<std::vector<llvm::Value*>> {
-    auto definition = module_->DefinitionRef(described);
-    if (!definition) return std::unexpected(std::move(definition.error()));
-    std::vector<llvm::Value*> args{*definition};
-    args.insert(args.end(), operands.begin(), operands.end());
-    return args;
-  };
-  return module_->Unit().types.Get(result).Visit(
+  return std::visit(
       Overloaded{
-          [&](const lir::ClosureType&)
+          [&](const OperandsAsStated&)
+              -> diag::Result<std::vector<llvm::Value*>> { return operands; },
+          [&](const OperandsAfterDefinition& f)
               -> diag::Result<std::vector<llvm::Value*>> {
-            auto definition = module_->DefinitionRef(result);
-            if (!definition)
+            auto definition = module_->DefinitionRef(f.defined);
+            if (!definition) {
               return std::unexpected(std::move(definition.error()));
+            }
+            std::vector<llvm::Value*> args{*definition};
+            args.insert(args.end(), operands.begin(), operands.end());
+            return args;
+          },
+          [&](const OperandsAsSpanAfterDefinition& f)
+              -> diag::Result<std::vector<llvm::Value*>> {
+            auto definition = module_->DefinitionRef(f.defined);
+            if (!definition) {
+              return std::unexpected(std::move(definition.error()));
+            }
             return std::vector<llvm::Value*>{
                 *definition, SpanOver(operands, module_->Types().Ptr())};
-          },
-          [&](const lir::PointerType& p) {
-            return led_by_definition(p.pointee);
-          },
-          [&](const lir::ManagedRefType& m) {
-            return led_by_definition(m.pointee);
-          },
-          [&](const auto&) -> diag::Result<std::vector<llvm::Value*>> {
-            return operands;
-          }});
+          }},
+      form);
 }
 
 // Every call is a symbol invoked with arguments; the target kinds differ only
@@ -654,9 +644,13 @@ auto CodeGenFunction::ResolveCallee(
                     module_->Types().Map(result_type), params, false),
                 body);
           },
-          [&](const lir::ConstructTarget&)
+          [&](const lir::ConstructTarget& t)
               -> diag::Result<llvm::FunctionCallee> {
-            return ConstructCallee(call, result_type, args);
+            auto construction = ConstructionOf(call, t.result);
+            if (!construction) {
+              return std::unexpected(std::move(construction.error()));
+            }
+            return Entry(construction->symbol, t.result, args);
           },
           // A foreign symbol is declared, never defined: the host resolves it.
           // The boundary already marshaled its operands and result to the
@@ -740,11 +734,10 @@ auto CodeGenFunction::LowerArray(
 // The domains come from the result product type, so the generated side never
 // inspects a component's runtime representation.
 //
-// This is the one place the generated side erases anything. A product's
-// components each have a domain of their own, so no entry can be named by one
-// of them and the caller is the only side that knows them all; every
-// homogeneous operation is named by its single domain instead and erases its
-// own operands.
+// The components each have a domain of their own, so no entry can be named by
+// one of them and the caller is the only side that knows them all. A
+// homogeneous value's entry is named by its single domain instead, so what
+// crosses to one erased is decided at that entry rather than here.
 auto CodeGenFunction::LowerProduct(
     const lir::ProductInstr& product, lir::TypeId result_type)
     -> diag::Result<llvm::Value*> {
@@ -1401,11 +1394,16 @@ auto CodeGenFunction::CellDomain(lir::TypeId reference) const
   return wrapper->domain;
 }
 
-auto CodeGenFunction::ConstructCallee(
-    const lir::CallInstr& call, lir::TypeId result,
-    std::span<llvm::Value* const> args) -> diag::Result<llvm::FunctionCallee> {
-  const auto entry = [&](std::string_view symbol) -> llvm::FunctionCallee {
-    return Entry(symbol, result, args);
+auto CodeGenFunction::ConstructionOf(
+    const lir::CallInstr& call, lir::TypeId result) const
+    -> diag::Result<Construction> {
+  const auto entry = [](std::string symbol) -> Construction {
+    return Construction{.symbol = std::move(symbol)};
+  };
+  // A container holds elements of a representation nothing else states, so
+  // building one takes a prototype of the element it is to hold.
+  const auto seeded = [](std::string symbol) -> Construction {
+    return Construction{.symbol = std::move(symbol), .shape_operand = 0};
   };
   const auto no_construct = [&]() -> std::unexpected<diag::Diagnostic> {
     return Unsupported(
@@ -1420,7 +1418,7 @@ auto CodeGenFunction::ConstructCallee(
             "this backend",
             module_->Unit().types.Get(result).KindName()));
   };
-  const auto real_from_host = [&]() -> diag::Result<llvm::FunctionCallee> {
+  const auto real_from_host = [&]() -> diag::Result<Construction> {
     const lir::Type& arg =
         module_->Unit().types.Get(OperandType(call.args.at(0)));
     if (!arg.Is<lir::MachineFloatType>()) {
@@ -1434,7 +1432,7 @@ auto CodeGenFunction::ConstructCallee(
   };
   return module_->Unit().types.Get(result).Visit(
       Overloaded{
-          [&](const lir::StringType&) -> diag::Result<llvm::FunctionCallee> {
+          [&](const lir::StringType&) -> diag::Result<Construction> {
             return entry(
                 RuntimeSymbol(support::ValueDomain::kString, RuntimeOp::kMake));
           },
@@ -1442,40 +1440,40 @@ auto CodeGenFunction::ConstructCallee(
           // is the one storage it can name. The cell is empty until its
           // initializer installs a representation, so the entry takes nothing
           // but the domain it is chosen by.
-          [&](const lir::RefType&) -> diag::Result<llvm::FunctionCallee> {
+          [&](const lir::RefType&) -> diag::Result<Construction> {
             auto domain = CellDomain(result);
             if (!domain) {
               return std::unexpected(std::move(domain.error()));
             }
             return entry(RuntimeSymbol(*domain, RuntimeOp::kCellAlloc));
           },
-          [&](const lir::ClosureType&) -> diag::Result<llvm::FunctionCallee> {
-            return entry(RuntimeSymbol(RuntimeOp::kClosureMake));
+          [&](const lir::ClosureType&) -> diag::Result<Construction> {
+            return Construction{
+                .symbol = RuntimeSymbol(RuntimeOp::kClosureMake),
+                .operand_form =
+                    OperandsAsSpanAfterDefinition{.defined = result}};
           },
           // A container is built over an element list laid down a stated number
           // of times.
-          [&](const lir::DynamicArrayType&)
-              -> diag::Result<llvm::FunctionCallee> {
-            return entry(RuntimeSymbol(
+          [&](const lir::DynamicArrayType&) -> diag::Result<Construction> {
+            return seeded(RuntimeSymbol(
                 support::ValueDomain::kDynArray, RuntimeOp::kFromLiteral));
           },
-          [&](const lir::UnpackedArrayType&)
-              -> diag::Result<llvm::FunctionCallee> {
-            return entry(RuntimeSymbol(
+          [&](const lir::UnpackedArrayType&) -> diag::Result<Construction> {
+            return seeded(RuntimeSymbol(
                 support::ValueDomain::kUnpackedArray, RuntimeOp::kFromLiteral));
           },
           // LRM 7.10.5: a bounded queue enforces a maximum index, which its own
           // type declares, so which of the two entries builds one follows from
           // the type being built.
-          [&](const lir::QueueType& q) -> diag::Result<llvm::FunctionCallee> {
-            return entry(RuntimeSymbol(
+          [&](const lir::QueueType& q) -> diag::Result<Construction> {
+            return seeded(RuntimeSymbol(
                 support::ValueDomain::kQueue,
                 q.max_bound.has_value() ? RuntimeOp::kFromLiteralBounded
                                         : RuntimeOp::kFromLiteral));
           },
-          [&](const lir::AssociativeArrayType&)
-              -> diag::Result<llvm::FunctionCallee> {
-            return entry(RuntimeSymbol(
+          [&](const lir::AssociativeArrayType&) -> diag::Result<Construction> {
+            return seeded(RuntimeSymbol(
                 support::ValueDomain::kAssocArray,
                 RuntimeOp::kFromEntriesDefault));
           },
@@ -1483,11 +1481,10 @@ auto CodeGenFunction::ConstructCallee(
           // its address, and a dimension above it keeps that address as an
           // ordinary element -- so the runtime takes the handles rather than
           // the element list standing as the value.
-          [&](const lir::VectorType&) -> diag::Result<llvm::FunctionCallee> {
+          [&](const lir::VectorType&) -> diag::Result<Construction> {
             return entry(RuntimeSymbol(RuntimeOp::kSequenceMake));
           },
-          [&](const lir::RuntimeLibraryType& r)
-              -> diag::Result<llvm::FunctionCallee> {
+          [&](const lir::RuntimeLibraryType& r) -> diag::Result<Construction> {
             switch (r.kind) {
               case lir::RuntimeLibraryKind::kPrintLiteralItem:
                 return entry(RuntimeSymbol(RuntimeOp::kMakePrintLiteralItem));
@@ -1522,121 +1519,82 @@ auto CodeGenFunction::ConstructCallee(
           // builds a node of it. A shared owner instead keeps its storage alive
           // for as long as anything holds one, which takes a slot the collector
           // can see, and generated storage is not yet visible to it.
-          [&](const lir::PointerType& p) -> diag::Result<llvm::FunctionCallee> {
+          [&](const lir::PointerType& p) -> diag::Result<Construction> {
             if (p.ownership != lir::PointerOwnership::kUnique) {
               return Unsupported(
                   "llvm codegen: storage kept alive by a shared owner needs a "
                   "slot the collector can see, which generated storage is not "
                   "yet");
             }
-            return entry(RuntimeSymbol(RuntimeOp::kMakeScope));
+            return Construction{
+                .symbol = RuntimeSymbol(RuntimeOp::kMakeScope),
+                .operand_form = OperandsAfterDefinition{.defined = p.pointee}};
           },
           // An object the program owns rather than the object tree, brought
           // into existence together with the handle that refers to it (LRM
           // 8.3). The definition its class carries says what storage its
           // properties need, so the entry takes that and nothing else.
-          [&](const lir::ManagedRefType&)
-              -> diag::Result<llvm::FunctionCallee> {
-            return entry(RuntimeSymbol(RuntimeOp::kObjectMake));
+          [&](const lir::ManagedRefType& m) -> diag::Result<Construction> {
+            return Construction{
+                .symbol = RuntimeSymbol(RuntimeOp::kObjectMake),
+                .operand_form = OperandsAfterDefinition{.defined = m.pointee}};
           },
           // Landing a machine integer in a real and reshaping across precisions
           // are named conversions, so what reaches the real family here is a
           // build over a host scalar: a constant of the destination's own
           // precision. Anything else the boundary hands back has no entry.
-          [&](const lir::RealType&) -> diag::Result<llvm::FunctionCallee> {
+          [&](const lir::RealType&) -> diag::Result<Construction> {
             return real_from_host();
           },
-          [&](const lir::RealTimeType&) -> diag::Result<llvm::FunctionCallee> {
+          [&](const lir::RealTimeType&) -> diag::Result<Construction> {
             return real_from_host();
           },
-          [&](const lir::ShortRealType&) -> diag::Result<llvm::FunctionCallee> {
+          [&](const lir::ShortRealType&) -> diag::Result<Construction> {
             return real_from_host();
           },
           // A value carrying no bits has exactly one value (a tagged union's
           // void member, LRM 7.3.2), so its construction takes nothing and
           // yields that value.
-          [&](const lir::EmptyType&) -> diag::Result<llvm::FunctionCallee> {
+          [&](const lir::EmptyType&) -> diag::Result<Construction> {
             return entry(RuntimeSymbol(
                 support::ValueDomain::kEmpty, RuntimeOp::kDefault));
           },
-          [&](const auto&) -> diag::Result<llvm::FunctionCallee> {
+          [&](const auto&) -> diag::Result<Construction> {
             return no_construct();
           }});
 }
 
-auto CodeGenFunction::ResultShapeOperand(const lir::CallInstr& call) const
-    -> std::optional<std::size_t> {
-  if (const auto* construct = std::get_if<lir::ConstructTarget>(&call.target)) {
-    return module_->Unit()
-        .types.Get(construct->result)
-        .Visit(
-            Overloaded{
-                [](const lir::DynamicArrayType&) -> std::optional<std::size_t> {
-                  return 0;
-                },
-                [](const lir::UnpackedArrayType&)
-                    -> std::optional<std::size_t> { return 0; },
-                [](const lir::QueueType&) -> std::optional<std::size_t> {
-                  return 0;
-                },
-                [](const lir::AssociativeArrayType&)
-                    -> std::optional<std::size_t> { return 0; },
-                [](const auto&) -> std::optional<std::size_t> {
-                  return std::nullopt;
-                }});
+auto CodeGenFunction::InItsOwnDomain(
+    const lir::CallInstr& call, std::size_t position) const
+    -> diag::Result<ErasedArgument> {
+  if (position >= call.args.size()) {
+    throw InternalError(
+        "llvm codegen: an entry names an operand it was not handed -- please "
+        "report this as a bug");
   }
-  const auto* builtin = std::get_if<lir::BuiltinTarget>(&call.target);
-  if (builtin == nullptr) {
-    return std::nullopt;
+  auto domain = DomainOf(OperandType(call.args.at(position)));
+  if (!domain) {
+    return std::unexpected(std::move(domain.error()));
   }
-  switch (builtin->fn) {
-    case support::BuiltinFn::kMakeDynamicArrayDefault:
-      return 0;
-    case support::BuiltinFn::kMakeDynamicArrayNew:
-    case support::BuiltinFn::kMakeDynamicArrayNewCopy:
-    case support::BuiltinFn::kFromArray:
-      return 1;
-    default:
-      break;
-  }
-  // LRM 7.12: a method whose result shape the receiver does not determine takes
-  // the prototype the producer supplied, trailing the operands the method
-  // itself needs. Its representation follows the `with` clause rather than the
-  // receiver, so one entry over a receiver of one representation still meets
-  // prototypes of several.
-  const support::RuntimeEntry entry = support::RuntimeEntryOf(builtin->fn);
-  if (entry.takes_closure && entry.takes_result_prototype) {
-    return call.args.size() - 1;
-  }
-  return std::nullopt;
+  return ErasedArgument{.position = position, .domain = *domain};
 }
 
-auto CodeGenFunction::ErasedOperand(const lir::CallInstr& call) const
+auto CodeGenFunction::BuiltinErasedOperand(
+    const lir::BuiltinTarget& target, const lir::CallInstr& call) const
     -> diag::Result<std::optional<ErasedArgument>> {
-  if (const std::optional<std::size_t> prototype = ResultShapeOperand(call)) {
-    auto domain = DomainOf(OperandType(call.args.at(*prototype)));
-    if (!domain) {
-      return std::unexpected(std::move(domain.error()));
-    }
-    return ErasedArgument{.position = *prototype, .domain = *domain};
+  const support::RuntimeEntry entry = support::RuntimeEntryOf(target.fn);
+  if (entry.result_prototype_operand.has_value()) {
+    return InItsOwnDomain(call, *entry.result_prototype_operand);
   }
-  const auto* builtin = std::get_if<lir::BuiltinTarget>(&call.target);
-  if (builtin == nullptr) {
+  if (entry.spread_operand.has_value()) {
+    return InItsOwnDomain(call, *entry.spread_operand);
+  }
+  if (!entry.index_operand.has_value()) {
     return std::nullopt;
   }
-  const support::RuntimeEntry entry = support::RuntimeEntryOf(builtin->fn);
-  if (const std::optional<std::size_t> part = entry.spread_operand;
-      part.has_value() && *part < call.args.size()) {
-    auto domain = DomainOf(OperandType(call.args.at(*part)));
-    if (!domain) {
-      return std::unexpected(std::move(domain.error()));
-    }
-    return ErasedArgument{.position = *part, .domain = *domain};
-  }
-  const std::optional<std::size_t> index = entry.index_operand;
-  if (!index.has_value() || *index >= call.args.size()) {
-    return std::nullopt;
-  }
+  // A coordinate is the one erased operand whose domain is not its own: what a
+  // keyed container selects by is the type that container declares, and a
+  // container declaring none takes the coordinate as the value it already is.
   auto coordinate = CoordinateDomain(OperandType(call.args.front()));
   if (!coordinate) {
     return std::unexpected(std::move(coordinate.error()));
@@ -1644,7 +1602,57 @@ auto CodeGenFunction::ErasedOperand(const lir::CallInstr& call) const
   if (!coordinate->has_value()) {
     return std::nullopt;
   }
-  return ErasedArgument{.position = *index, .domain = **coordinate};
+  return ErasedArgument{
+      .position = *entry.index_operand, .domain = **coordinate};
+}
+
+auto CodeGenFunction::EncodingOf(const lir::CallInstr& call) const
+    -> diag::Result<CallEncoding> {
+  using Encoded = diag::Result<CallEncoding>;
+  // Only a target named by something other than a signature encodes anything: a
+  // library entry is named by its identity and says on its declaration which
+  // operand states a representation, and a construction is named by the type it
+  // builds, which says both that and the form its entry takes the rest in.
+  // Every other target names code whose parameters are already typed, so what
+  // the call states is what crosses.
+  return std::visit(
+      Overloaded{
+          [&](const lir::BuiltinTarget& t) -> Encoded {
+            auto erased = BuiltinErasedOperand(t, call);
+            if (!erased) {
+              return std::unexpected(std::move(erased.error()));
+            }
+            return CallEncoding{.erased = *erased};
+          },
+          [&](const lir::ConstructTarget& t) -> Encoded {
+            auto construction = ConstructionOf(call, t.result);
+            if (!construction) {
+              return std::unexpected(std::move(construction.error()));
+            }
+            if (!construction->shape_operand.has_value()) {
+              return CallEncoding{.operand_form = construction->operand_form};
+            }
+            auto erased = InItsOwnDomain(call, *construction->shape_operand);
+            if (!erased) {
+              return std::unexpected(std::move(erased.error()));
+            }
+            return CallEncoding{
+                .erased = *erased, .operand_form = construction->operand_form};
+          },
+          [](const lir::FunctionTarget&) -> Encoded { return CallEncoding{}; },
+          [](const lir::DispatchTarget&) -> Encoded { return CallEncoding{}; },
+          [](const lir::ForeignTarget&) -> Encoded { return CallEncoding{}; },
+          [](const lir::ImportedRuntimeTarget&) -> Encoded {
+            return CallEncoding{};
+          },
+          [](const lir::ValueCellTarget&) -> Encoded { return CallEncoding{}; },
+          [](const lir::ControlEffectTarget&) -> Encoded {
+            return CallEncoding{};
+          },
+          [](const lir::CoroutineTarget&) -> Encoded {
+            return CallEncoding{};
+          }},
+      call.target);
 }
 
 }  // namespace lyra::backend::llvm_backend

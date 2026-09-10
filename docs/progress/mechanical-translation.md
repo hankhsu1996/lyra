@@ -110,25 +110,32 @@ cross-check predicts. This file owns only which instances are known and what is 
       step reaches the dispatch that says how the library publishes an entry any more -- the reading
       pair is spelled from the step itself, and the designating pair, which that dispatch used to
       refuse, no longer arrives there at all -- so what it answers for those four is unread.
+- [x] T22 -- Which operand carries the shape a call's result takes is stated on the entry's own
+      declaration, beside the index and the erased spread part it belongs with. The execution
+      backend had been answering it three ways: a hand-kept list of the container constructions, a
+      second visit of the result type beside the one already naming the construction entry, and a
+      conjunction of two unrelated properties standing in for the LRM 7.12 family. The other backend
+      never asks, its target language answering from the named type, so nothing held the three in
+      step and a construction added anywhere answered "no shape operand" in silence. Which entry
+      builds a value of a type, which of its operands seeds it, and what form that entry takes the
+      rest in are now one answer read from that type, which is what a construction naming no entry
+      beyond its own result type already meant. What a call's target decides about how its operands
+      cross is read from the target once and exhaustively, so a target kind gained anywhere says
+      what it encodes or fails to build. Asking it at once also moves one refusal to the wall it
+      belongs at: a case that names a class another unit declares had been reported as a missing
+      definition record, which is downstream of the managed heap this backend does not yet store
+      handles on, and it now says what its four siblings say.
 
-## What MIR can ask a backend to perform
-
-- [ ] T22 -- Which operand carries the shape a call's result takes is stated on the entry's own
-      declaration. Two of the three "which operand plays this role" facts already are -- the index
-      one, and the erased spread part -- and this one is not, so the execution backend answers it
-      itself, twice over: from a hand-kept list of the container-construction entries, and from a
-      conjunction of two unrelated property flags standing in for "is this the LRM 7.12 family". The
-      other backend never asks, because its target language answers from the named type, so nothing
-      holds a second answer in step and a container-construction entry added anywhere returns "no
-      shape operand" here in silence.
-
-      The container rows are a plain relocation. What is not derived yet is what the LRM 7.12
-      row should say: the operand it wants is the trailing prototype rather than a fixed position,
-      and settling that means first establishing whether the two associative index queries -- which
-      carry a prototype the conjunction deliberately excludes, and so cross the boundary unerased
-      today -- are right to, or are a latent defect the conjunction is hiding. That question is about
-      what crosses a C ABI, where a wrong answer is silent rather than a build failure, so it is
-      settled before anything here is moved.
+      What the conjunction existed to exclude was the two associative dimension queries (LRM 20.7
+      `$low` / `$high`), and the rule it excluded them from was already settled: a value crosses into
+      an entry erased exactly where it states a representation, and an index of a keyed container
+      states one, that container holding no prototype for an index. Those two answer with exactly
+      such an index where the dimension has none allocated, and were crossing as the bare handle of
+      their own domain -- which answered correctly only because the entry handed the caller's handle
+      straight back on that path, so its two ways out agreed by a coincidence of representation and
+      not by anything written down. Both now cross the way that rule says, and the erased container
+      gained the pair its monomorphized counterpart already carried, so the entry answering them
+      names that operation instead of open-coding it.
 
 ## An aggregate's members
 
@@ -188,6 +195,11 @@ cross-check predicts. This file owns only which instances are known and what is 
       layers name types in different universes and no single function spans both; it already answers
       with absence, which is the shape this item asks for.
 
+      One of them went with T22: the arm that shaped a construction's operands answered a type it
+      did not recognize by handing the operands back unchanged, which is a substituted answer no
+      caller could tell from a real one, and that form is now read from the type along with the
+      entry that builds it.
+
       What is left needs an answer this file does not have: the remaining substituting arms all walk
       a type's or a node's parts, and each carries its own idea of what has parts. One question --
       the components of a type, the child expressions of a node -- asked once would retire the whole
@@ -209,4 +221,6 @@ cross-check predicts. This file owns only which instances are known and what is 
 - `../architecture/mir.md` -- what MIR's primitive set is closed under, and the forbidden shapes an
   item here is usually an instance of.
 - `../decisions/call-receiver-on-the-callee.md` -- T1 and T3's rationale.
+- `../decisions/value-construction-forms.md` -- which form a value crosses into an entry in, and why
+  a construction is named by the type it builds. T22 turns on both.
 - `refactor.md` -- architectural debt outside this workstream.

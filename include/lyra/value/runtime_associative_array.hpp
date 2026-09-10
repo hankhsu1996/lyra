@@ -114,6 +114,15 @@ class RuntimeAssociativeArray {
   [[nodiscard]] auto PrevIndex(const RuntimeValue& probe) const
       -> std::optional<RuntimeValue>;
 
+  // LRM 20.7 `$low` / `$high` over an associative dimension: the smallest and
+  // largest currently allocated index. With none allocated the dimension has no
+  // index to report and the query reads `unallocated` -- the index type's
+  // default, which is `'x` for a 4-state index type, as LRM 20.7 requires.
+  [[nodiscard]] auto MinIndex(const RuntimeValue& unallocated) const
+      -> RuntimeValue;
+  [[nodiscard]] auto MaxIndex(const RuntimeValue& unallocated) const
+      -> RuntimeValue;
+
   // LRM 11.4.5 `==` / `!=` (Any data type): equal entry sets under equal
   // indices, with each element's own equality propagating X / Z.
   [[nodiscard]] auto operator==(const RuntimeAssociativeArray& other) const

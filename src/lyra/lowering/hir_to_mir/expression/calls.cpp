@@ -501,11 +501,10 @@ auto LowerBuiltinMethodCall(
         "accept a with-clause (LRM 7.12.1 family only)");
   }
 
-  // The producer supplies the result's canonical default whenever the receiver
-  // does not determine the result's shape -- an LRM 7.12 index locator's key, a
-  // map's chosen element, an empty reduction's zero, or the index an empty
-  // associative dimension reports (LRM 20.7).
-  if (entry.takes_result_prototype) {
+  // A prototype the entry takes is never written at the source, so the producer
+  // is what supplies it, at the result type's own canonical default. It trails
+  // the operands the entry itself takes, which is where appending places it.
+  if (entry.result_prototype_operand.has_value()) {
     const mir::TypeId proto_type =
         ResultPrototypeType(unit_lowerer, result_type);
     args.push_back(block.exprs.Add(

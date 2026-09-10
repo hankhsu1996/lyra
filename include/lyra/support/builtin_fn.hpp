@@ -623,11 +623,9 @@ enum class BuiltinFn : std::uint16_t {
   // The step that fits a concatenation's parts to a fixed-size unpacked array
   // (LRM 10.10): the parts, accumulated into a dynamic array by the two steps
   // above, adopted into a target whose element count is fixed, which is an
-  // error
-  // when the counts differ. The target's type qualifies the call, as it does
-  // for
-  // any static factory, so the entry is named for the array it builds and not
-  // for the dynamic array it reads.
+  // error when the counts differ. The target's type qualifies the call, as it
+  // does for any static factory, so the entry is named for the array it builds
+  // and not for the dynamic array it reads.
   kArrayConformSize,
   // A dynamic array sized at run time: empty at its declared element shape,
   // `new[N]`, and `new[N](src)` (LRM 7.5.1). Each is named because the
@@ -760,12 +758,6 @@ struct RuntimeEntry {
   // argument. The other LRM 7.5 / 7.10 array entries (`size`, `delete`,
   // `reverse`) take none.
   bool takes_closure = false;
-  // Whether the entry yields a value whose shape the call site must supply as
-  // a trailing prototype argument, because the object it acts on does not
-  // determine it: the LRM 7.12 reduction, locator, and map families (an index
-  // locator's key, a map's chosen element, an empty reduction's zero) and the
-  // associative index queries (the value an unallocated dimension reports).
-  bool takes_result_prototype = false;
   // Whether the entry answers with an index by writing it into the variable
   // the source named (LRM 7.9.4 -- 7.9.7), so the call lowers to a block
   // expression: binding the answer and writing it back are steps rather than
@@ -780,6 +772,14 @@ struct RuntimeEntry {
   // it boxes into a runtime value in that domain and is read back element by
   // element. Absent for an entry that has none.
   std::optional<std::size_t> spread_operand = std::nullopt;
+  // Which operand is the prototype the entry's result takes its shape from,
+  // absent for an entry whose result the object it acts on already shapes. A
+  // prototype stands for the result before there is one -- an empty
+  // reduction's zero, a locator's key, a map's chosen element (LRM 7.12), the
+  // index an unallocated dimension reports (LRM 20.7), the element a container
+  // is seeded with (LRM 7.5.1) -- so the call site supplies it and it names a
+  // representation the entry has no other way to know.
+  std::optional<std::size_t> result_prototype_operand = std::nullopt;
   // Which step of a value aggregate the entry names, absent for an entry that
   // names none. Reaching a part of a value to read it and designating one to
   // write it name the same step, so a pair of entries differing only in which

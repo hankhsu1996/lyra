@@ -4,8 +4,10 @@
 #include <cstdint>
 #include <optional>
 #include <span>
+#include <string>
 #include <string_view>
 #include <unordered_map>
+#include <variant>
 #include <vector>
 
 #include <llvm/IR/IRBuilder.h>
@@ -127,42 +129,79 @@ class CodeGenFunction {
       const lir::BuiltinTarget& target, const lir::CallInstr& call,
       lir::TypeId result_type, std::span<llvm::Value* const> args)
       -> diag::Result<llvm::FunctionCallee>;
-  auto ConstructCallee(
-      const lir::CallInstr& call, lir::TypeId result,
-      std::span<llvm::Value* const> args) -> diag::Result<llvm::FunctionCallee>;
+  // What form an entry takes a call's operands in. A value the runtime builds
+  // from a compile-time description of it leads with a reference to that
+  // description, since the entry is one function over every value so described
+  // and the description is what tells them apart; and a value built over a run
+  // of others takes them as one span, because no entry has an operand per
+  // element.
+  struct OperandsAsStated {};
+  struct OperandsAfterDefinition {
+    lir::TypeId defined;
+  };
+  struct OperandsAsSpanAfterDefinition {
+    lir::TypeId defined;
+  };
+  using OperandForm = std::variant<
+      OperandsAsStated, OperandsAfterDefinition, OperandsAsSpanAfterDefinition>;
+
+  // The entry that brings a value of one type into existence, which of its
+  // operands carries the shape that value is seeded from, and what form it
+  // takes the rest in. A type comes into existence one way, so naming it names
+  // all three.
+  struct Construction {
+    std::string symbol;
+    std::optional<std::size_t> shape_operand = std::nullopt;
+    OperandForm operand_form = OperandsAsStated{};
+  };
+  [[nodiscard]] auto ConstructionOf(
+      const lir::CallInstr& call, lir::TypeId result) const
+      -> diag::Result<Construction>;
 
   // What a call's entry is handed, given the operands the call states. Nothing
   // here is anything the call means; it is this target's encoding of it.
   auto CallArgs(const lir::CallInstr& call, std::vector<llvm::Value*> operands)
       -> diag::Result<std::vector<llvm::Value*>>;
 
-  // A leading reference to the definition of what a construct builds where the
-  // entry needs one, and the operands as one span where it takes them that way
-  // -- read from the result type the same way the entry itself is.
-  auto ConstructArgs(
-      lir::TypeId result, const std::vector<llvm::Value*>& operands)
+  // The operands a call states, put into the form its entry takes them in.
+  auto ArgsInForm(
+      const OperandForm& form, const std::vector<llvm::Value*>& operands)
       -> diag::Result<std::vector<llvm::Value*>>;
 
-  // Which operand states the shape of what a call produces, absent for a call
-  // whose result the operands already shape. A construction leads with the
-  // element default it is seeded from, except where a size precedes it -- the
-  // LRM 7.5.1 run-time-sized forms state how many elements there are before
-  // what each one is -- and an LRM 7.12 method trails the result element the
-  // producer supplied behind the operands the method itself needs.
-  [[nodiscard]] auto ResultShapeOperand(const lir::CallInstr& call) const
-      -> std::optional<std::size_t>;
-
   // Which operand of a call crosses erased, and in which representation. A
-  // value crosses erased where it states a representation the entry has no
-  // other way to know: the shape a call's result takes, which follows the call
-  // rather than the entry's own name, and the index a keyed container selects
-  // by, which states the one that container's declared index type names.
+  // value crosses erased exactly where it states a representation, and as the
+  // bare handle of its own domain where it conforms to one the entry already
+  // holds. Which of an entry's operands states one is that entry's own
+  // property.
   struct ErasedArgument {
     std::size_t position;
     support::ValueDomain domain;
   };
-  [[nodiscard]] auto ErasedOperand(const lir::CallInstr& call) const
+
+  // This target's own encoding of a call: which operand crosses erased, and
+  // what form the entry takes the operands in. Both are decided by the target
+  // and by nothing else about the call, so they are read from it together and a
+  // target that gains an alternative answers for both or fails to build.
+  struct CallEncoding {
+    std::optional<ErasedArgument> erased = std::nullopt;
+    OperandForm operand_form = OperandsAsStated{};
+  };
+  [[nodiscard]] auto EncodingOf(const lir::CallInstr& call) const
+      -> diag::Result<CallEncoding>;
+
+  // The erased operand of a call on a library entry, which is the one target
+  // whose three roles -- a result prototype, a spread part, a coordinate -- are
+  // read off the entry's own declaration.
+  [[nodiscard]] auto BuiltinErasedOperand(
+      const lir::BuiltinTarget& target, const lir::CallInstr& call) const
       -> diag::Result<std::optional<ErasedArgument>>;
+
+  // The operand at one position, boxed into the domain its own type names.
+  // Every erased operand but a coordinate crosses this way, since what a value
+  // states about itself is read from the value.
+  [[nodiscard]] auto InItsOwnDomain(
+      const lir::CallInstr& call, std::size_t position) const
+      -> diag::Result<ErasedArgument>;
 
   // The representation a container's coordinates cross in, absent where they
   // cross as the bare handles their own types name.

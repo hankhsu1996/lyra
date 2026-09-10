@@ -202,6 +202,16 @@ auto RuntimeAssociativeArray::PrevIndex(const RuntimeValue& probe) const
   return data_[position - 1].index;
 }
 
+auto RuntimeAssociativeArray::MinIndex(const RuntimeValue& unallocated) const
+    -> RuntimeValue {
+  return FirstIndex().value_or(unallocated);
+}
+
+auto RuntimeAssociativeArray::MaxIndex(const RuntimeValue& unallocated) const
+    -> RuntimeValue {
+  return LastIndex().value_or(unallocated);
+}
+
 auto RuntimeAssociativeArray::operator==(
     const RuntimeAssociativeArray& other) const -> PackedArray {
   if (data_.size() != other.data_.size()) {

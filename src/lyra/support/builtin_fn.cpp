@@ -76,97 +76,97 @@ auto RuntimeEntryOf(BuiltinFn id) -> RuntimeEntry {
           .name = "sum",
           .declaration = Method{"Sum"},
           .takes_closure = true,
-          .takes_result_prototype = true};
+          .result_prototype_operand = 2};
     case BuiltinFn::kProduct:
       return {
           .name = "product",
           .declaration = Method{"Product"},
           .takes_closure = true,
-          .takes_result_prototype = true};
+          .result_prototype_operand = 2};
     case BuiltinFn::kAnd:
       return {
           .name = "and",
           .declaration = Method{"And"},
           .takes_closure = true,
-          .takes_result_prototype = true};
+          .result_prototype_operand = 2};
     case BuiltinFn::kOr:
       return {
           .name = "or",
           .declaration = Method{"Or"},
           .takes_closure = true,
-          .takes_result_prototype = true};
+          .result_prototype_operand = 2};
     case BuiltinFn::kXor:
       return {
           .name = "xor",
           .declaration = Method{"Xor"},
           .takes_closure = true,
-          .takes_result_prototype = true};
+          .result_prototype_operand = 2};
     case BuiltinFn::kFind:
       return {
           .name = "find",
           .declaration = Method{"Find"},
           .takes_closure = true,
-          .takes_result_prototype = true};
+          .result_prototype_operand = 2};
     case BuiltinFn::kFindIndex:
       return {
           .name = "find_index",
           .declaration = Method{"FindIndex"},
           .takes_closure = true,
-          .takes_result_prototype = true};
+          .result_prototype_operand = 2};
     case BuiltinFn::kFindFirst:
       return {
           .name = "find_first",
           .declaration = Method{"FindFirst"},
           .takes_closure = true,
-          .takes_result_prototype = true};
+          .result_prototype_operand = 2};
     case BuiltinFn::kFindFirstIndex:
       return {
           .name = "find_first_index",
           .declaration = Method{"FindFirstIndex"},
           .takes_closure = true,
-          .takes_result_prototype = true};
+          .result_prototype_operand = 2};
     case BuiltinFn::kFindLast:
       return {
           .name = "find_last",
           .declaration = Method{"FindLast"},
           .takes_closure = true,
-          .takes_result_prototype = true};
+          .result_prototype_operand = 2};
     case BuiltinFn::kFindLastIndex:
       return {
           .name = "find_last_index",
           .declaration = Method{"FindLastIndex"},
           .takes_closure = true,
-          .takes_result_prototype = true};
+          .result_prototype_operand = 2};
     case BuiltinFn::kMin:
       return {
           .name = "min",
           .declaration = Method{"Min"},
           .takes_closure = true,
-          .takes_result_prototype = true};
+          .result_prototype_operand = 2};
     case BuiltinFn::kMax:
       return {
           .name = "max",
           .declaration = Method{"Max"},
           .takes_closure = true,
-          .takes_result_prototype = true};
+          .result_prototype_operand = 2};
     case BuiltinFn::kUnique:
       return {
           .name = "unique",
           .declaration = Method{"Unique"},
           .takes_closure = true,
-          .takes_result_prototype = true};
+          .result_prototype_operand = 2};
     case BuiltinFn::kUniqueIndex:
       return {
           .name = "unique_index",
           .declaration = Method{"UniqueIndex"},
           .takes_closure = true,
-          .takes_result_prototype = true};
+          .result_prototype_operand = 2};
     case BuiltinFn::kMap:
       return {
           .name = "map",
           .declaration = Method{"Map"},
           .takes_closure = true,
-          .takes_result_prototype = true};
+          .result_prototype_operand = 2};
     case BuiltinFn::kInsert:
       return {
           .name = "insert",
@@ -225,12 +225,12 @@ auto RuntimeEntryOf(BuiltinFn id) -> RuntimeEntry {
       return {
           .name = "assoc_min_index",
           .declaration = Method{"MinIndex"},
-          .takes_result_prototype = true};
+          .result_prototype_operand = 1};
     case BuiltinFn::kAssocMaxIndex:
       return {
           .name = "assoc_max_index",
           .declaration = Method{"MaxIndex"},
-          .takes_result_prototype = true};
+          .result_prototype_operand = 1};
     case BuiltinFn::kGetc:
       return {.name = "getc", .declaration = Method{"Getc"}};
     case BuiltinFn::kPutc:
@@ -682,7 +682,10 @@ auto RuntimeEntryOf(BuiltinFn id) -> RuntimeEntry {
     case BuiltinFn::kDpiOpenArrayHandle:
       return {.name = "dpi_open_array_handle", .declaration = Method{"Handle"}};
     case BuiltinFn::kDpiOpenArrayValue:
-      return {.name = "dpi_open_array_value", .declaration = Method{"ToValue"}};
+      return {
+          .name = "dpi_open_array_value",
+          .declaration = Method{"ToValue"},
+          .result_prototype_operand = 1};
     case BuiltinFn::kRunForeignTaskOnFiber:
       return {
           .name = "run_foreign_task_on_fiber",
@@ -719,7 +722,10 @@ auto RuntimeEntryOf(BuiltinFn id) -> RuntimeEntry {
       return {
           .name = "from_string", .declaration = StaticFactory{"FromString"}};
     case BuiltinFn::kFromArray:
-      return {.name = "from_array", .declaration = StaticFactory{"FromArray"}};
+      return {
+          .name = "from_array",
+          .declaration = StaticFactory{"FromArray"},
+          .result_prototype_operand = 1};
     case BuiltinFn::kConformBound:
       return {.name = "conform_bound", .declaration = Method{"ConformBound"}};
     case BuiltinFn::kArrayConcatElement:
@@ -735,15 +741,18 @@ auto RuntimeEntryOf(BuiltinFn id) -> RuntimeEntry {
     case BuiltinFn::kMakeDynamicArrayDefault:
       return {
           .name = "make_dynamic_array_default",
-          .declaration = StaticFactory{"Default"}};
+          .declaration = StaticFactory{"Default"},
+          .result_prototype_operand = 0};
     case BuiltinFn::kMakeDynamicArrayNew:
       return {
           .name = "make_dynamic_array_new",
-          .declaration = StaticFactory{"New"}};
+          .declaration = StaticFactory{"New"},
+          .result_prototype_operand = 1};
     case BuiltinFn::kMakeDynamicArrayNewCopy:
       return {
           .name = "make_dynamic_array_new_copy",
-          .declaration = StaticFactory{"NewCopy"}};
+          .declaration = StaticFactory{"NewCopy"},
+          .result_prototype_operand = 1};
     case BuiltinFn::kConcat:
       return {.name = "concat", .declaration = Method{"Concat"}};
     case BuiltinFn::kReplicate:
