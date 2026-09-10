@@ -59,7 +59,8 @@ auto IntegrateStaticInitializer(
   }
 
   const mir::Expr assign_expr = BuildStoreExpr(
-      unit, value_block, target, init_value, std::nullopt, storage_type);
+      unit, value_block, WriteTarget{.owner = target, .descent = {}},
+      init_value, std::nullopt, storage_type);
   value_block.AppendStmt(
       mir::ExprStmt{.expr = value_block.exprs.Add(assign_expr)});
   return {};

@@ -126,7 +126,7 @@ auto ProjectCompletionComponent(
   const mir::ExprId tuple_ref =
       block.exprs.Add(mir::MakeLocalRefExpr(completion, payload_type));
   return block.exprs.Add(
-      mir::MakeComponentAccessExpr(tuple_ref, index, component_type));
+      mir::MakePartAccessExpr(tuple_ref, index, component_type));
 }
 
 auto BindCompletion(

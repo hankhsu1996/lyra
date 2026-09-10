@@ -22,6 +22,23 @@ The C++ backend's render therefore serves as the cross-check on MIR shape today:
 render is not a mechanical single-node translation is a place where the next stage (LIR / LLVM IR)
 will hit the same obstruction. The bug is in MIR, not in render.
 
+**The finished shape, which the work toward this contract is measured against.** A value-emission
+entry is punctuation around the renders of its own children and nothing else: a piece of the
+target's syntax with those renders filled into it. Every name it would otherwise have to know comes
+from somewhere that owns naming -- a type's spelling from type mapping, a runtime operation's from
+the runtime-entry declaration the layers above share, a wrapper's access protocol from the
+place-access dispatch. So the end state is observable rather than a matter of judgement: **no
+value-emission entry names a runtime library identifier at all**, and a reader checks that by
+reading the entries rather than by reasoning about what they decide. A string literal in one that
+carries anything but target syntax is the defect, whatever it was written for.
+
+A backend that has reached it holds no table of its own. Gaining a runtime operation, a value
+family, or a container kind changes the shared declaration and reaches every backend at once;
+nothing in an emitter has to be found and edited to match. That is the same property from the other
+side as the rule that a backend never decides what a node means -- an emitter with nothing to look
+up has nothing to decide -- which is why this shape and the invariants below are one statement read
+two ways.
+
 ## Owns
 
 - The principle that a backend render entry is a **fixed function of one MIR node**: input is the
@@ -109,7 +126,7 @@ will hit the same obstruction. The bug is in MIR, not in render.
    MIR and is realized by the same entries that realize every other call. Their target-language
    spelling comes from where every call's spelling comes from, which is what keeps one runtime
    method named at one site (invariant 3). A write that descends is not among them: what descends is
-   a designation, and only its owner reaches this dispatch.
+   a run of calls, and only the owner they start from reaches this dispatch.
 
 5. **Member declaration is (name, type) -- nothing else reaches member render.** A member's
    target-language declaration form is determined by its name and its type alone (the type carries
@@ -133,6 +150,15 @@ will hit the same obstruction. The bug is in MIR, not in render.
    specialized for one backend. A new backend reads the same MIR; the only thing it brings is its
    own type-mapping and place-access dispatches and value-emission rules for its target's syntactic
    form.
+
+8. **A value-emission entry names no runtime library identifier.** Every name it emits is either the
+   target language's own syntax or the answer of a dispatch that owns naming: type mapping for a
+   type, place access for a wrapper's access protocol, and the shared runtime-entry declaration for
+   an operation. The entry looks nothing up itself; it composes punctuation around what its children
+   render to. This is invariants 2 and 3 read forward rather than as prohibitions, and it is what
+   makes the contract checkable by reading a render entry instead of reasoning about it -- a
+   property the earlier form did not have, which is why a spelling written into an emitter went
+   unnoticed for as long as it read like the emitter beside it.
 
 ## Boundary to Adjacent Layers
 
@@ -204,18 +230,37 @@ you cannot write a mechanical translation rule for it -- if your draft contains 
 produce different LLVM instruction sequences -- the MIR primitive set is incomplete. Fix MIR; render
 then writes itself.
 
+What invariant 8 looks like at the two sites that carry the weight. An expression entry is one arm
+per node kind, each a piece of the target's syntax with the children's renders in it -- a binary
+operator is its token between two renders, a dereference is the target's dereference around one, a
+composite is the type-mapping answer around the renders of its parts. A call entry is two steps and
+no more: what the target names the callee, and how it composes an object, a name, and a list of
+rendered operands. The callee's name for a runtime operation is one lookup in the shared
+declaration, which already says whether a call site reaches the operation as a free function, as a
+method on the object it acts on, or as a factory on the type it builds -- so the entry chooses
+nothing and knows no identifier.
+
+An operand is the one thing a call entry may not read past. Where a call carries something the
+target spells somewhere other than its argument list -- a position fixed where the call is written,
+which a typed target resolves where it resolves types -- that thing belongs to the callee rather
+than among the operands, because reading an operand back to decide how to spell it is the same
+defect as reading one to decide what the call means. The tell is arithmetic: a fact placed among the
+operands that does not belong there costs one special case at every site that walks operands, and
+the count of those special cases is the measure of how wrong the placement is.
+
 Reading what a capability wrapper holds, and replacing the whole of it, are both calls, because MIR
 states them as calls: each acts on the wrapper rather than naming its storage. Render composes them
 the way it composes every other call, so each method's spelling comes from the one place every
 runtime entry's spelling comes from, and no access entry writes a second copy of it. Neither render
 knows the wrapper's name or which wrapper kind it is.
 
-Writing part of what it holds is a different node, because it is a different operation. It names a
-designation -- an owner place, and a path of selectors into the value the owner holds -- and assigns
-to that, so only the owner reaches the place-access dispatch. How a backend realizes the descent is
-its own choice: descending into the storage in place, or rebuilding the whole value and storing
-that. That choice is a property of a value domain rather than a decision taken per site, and neither
-form is visible above render.
+Writing part of what it holds descends through it: one call per level, each naming the entry the
+lowering settled and taking the level above it as its receiver, with an ordinary assignment at the
+end. Only the owner those calls start from reaches the place-access dispatch. How a target realizes
+such a call is its own answer -- reaching into the storage in place, or reading the whole value,
+rebuilding it and storing that back -- and it is a property of that target's value representation
+rather than a decision taken per site, so neither form is visible above render and neither is chosen
+by an emitter.
 
 Naming that storage as an lvalue is not a call: it names storage rather than operating on it, and it
 is the one question the place-access dispatch answers. Two things ask it and both compose onto the

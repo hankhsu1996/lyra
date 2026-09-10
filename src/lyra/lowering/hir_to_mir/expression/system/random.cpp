@@ -210,7 +210,6 @@ auto LowerDistributionSystemSubroutineCall(
   if (!seed_place_or) {
     return std::unexpected(std::move(seed_place_or.error()));
   }
-  const mir::ExprId seed_place = body.exprs.Add(*std::move(seed_place_or));
   const mir::ExprId advanced = ConvertToType(
       unit, body,
       ProjectCompletionComponent(
@@ -219,7 +218,7 @@ auto LowerDistributionSystemSubroutineCall(
   body.AppendStmt(
       mir::ExprStmt{
           .expr = body.exprs.Add(BuildStoreExpr(
-              unit, body, seed_place, advanced, std::nullopt, seed_type))});
+              unit, body, *seed_place_or, advanced, std::nullopt, seed_type))});
 
   return steps.Build(ProjectCompletionComponent(
       body, completion, payload_type, kDrawnValue, int_type));

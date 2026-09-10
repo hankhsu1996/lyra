@@ -513,33 +513,31 @@ auto EmitSubroutineCall(
       case hir::ParamDirection::kInOut: {
         auto place_or = lowerer.LowerLhsExpr(hir_arg, frame);
         if (!place_or) return std::unexpected(std::move(place_or.error()));
-        const mir::ExprId place = block.exprs.Add(*std::move(place_or));
         if (formal.direction == hir::ParamDirection::kInOut) {
           auto value_or = lowerer.LowerExpr(hir_arg, frame);
           if (!value_or) return std::unexpected(std::move(value_or.error()));
           call_args.push_back(block.exprs.Add(*std::move(value_or)));
         }
         writebacks.push_back(
-            {.place = place,
+            {.place = *std::move(place_or),
              .component = *formal.component,
              .type = formal.type});
         break;
       }
 
       // A ref / const-ref formal aliases what the actual designates (LRM
-      // 13.5.2). A bare actual is lent as it stands, so a reference over a
-      // capability wrapper aliases the wrapper and keeps the wrapper's own
-      // access -- the update event a write fires included. A projected actual
-      // designates part of a value, which is not a place a reference can
-      // alias, so what is lent is the storage the chain descends into.
+      // 13.5.2). An actual that reaches no part is lent as it stands, so a
+      // reference over a capability wrapper aliases the wrapper and keeps the
+      // wrapper's own access -- the update event a write fires included. One
+      // that descends reaches past that protocol, because a part of a value has
+      // none of its own, so what is lent is the storage the descent reaches.
       case hir::ParamDirection::kRef:
       case hir::ParamDirection::kConstRef: {
         auto arg_or = lowerer.LowerLhsExpr(hir_arg, frame);
         if (!arg_or) return std::unexpected(std::move(arg_or.error()));
-        mir::ExprId actual_id = block.exprs.Add(*std::move(arg_or));
-        if (FindLhsRootId(unit, block, actual_id) != actual_id) {
-          actual_id = StoragePlaceOf(unit, block, actual_id);
-        }
+        const mir::ExprId actual_id = arg_or->descent.empty()
+                                          ? arg_or->owner
+                                          : TargetPlace(unit, block, *arg_or);
         call_args.push_back(BuildReferenceArg(
             unit, block, actual_id, block.exprs.Get(actual_id).type));
         break;
@@ -687,7 +685,7 @@ auto LowerSubroutineCall(
   }
   mir::Block& block = *frame.current_block;
   const mir::ExprId completion = block.exprs.Add(std::move(emitted->call));
-  return diag::Result<mir::Expr>{mir::MakeComponentAccessExpr(
+  return diag::Result<mir::Expr>{mir::MakePartAccessExpr(
       completion, kCompletionResult, *callee.result_type)};
 }
 

@@ -128,7 +128,6 @@ auto LowerDestructuringAssign(
     }
     const mir::TypeId part_mir_type = process.Owner().TranslateType(
         hir_proc.exprs.Get(lhs_concat.operands[i]).type);
-    const mir::ExprId part_lhs_id = wrapper.exprs.Add(*std::move(part_lhs_or));
 
     const mir::ExprId temp_ref =
         wrapper.exprs.Add(mir::MakeLocalRefExpr(snapshot_var, temp_type));
@@ -144,7 +143,7 @@ auto LowerDestructuringAssign(
 
     parts.push_back(
         DestructuredPart{
-            .target = part_lhs_id,
+            .target = *std::move(part_lhs_or),
             .value = rhs_for_part,
             .type = part_mir_type});
   }

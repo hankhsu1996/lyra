@@ -733,14 +733,14 @@ auto LowerHirIncDecExprProc(
   auto target_or =
       process.LowerLhsExpr(process.HirExprs().Get(inc.target), frame);
   if (!target_or) return std::unexpected(std::move(target_or.error()));
-  mir::ExprId target_id = block.exprs.Add(*std::move(target_or));
-
-  // An increment reads and writes the storage its target designates, so the
-  // target names that storage rather than the wrapper standing for it.
-  target_id = StoragePlaceOf(process.Owner().Unit(), block, target_id);
-
+  auto& unit = process.Owner().Unit();
+  // An increment reads and writes the storage its target reaches, so the target
+  // names that storage rather than the wrapper standing for it.
   return mir::Expr{
-      .data = mir::IncDecExpr{.op = LowerIncDecOp(inc.op), .target = target_id},
+      .data =
+          mir::IncDecExpr{
+              .op = LowerIncDecOp(inc.op),
+              .target = TargetPlace(unit, block, *target_or)},
       .type = result_type};
 }
 

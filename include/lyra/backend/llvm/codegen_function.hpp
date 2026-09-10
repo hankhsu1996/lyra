@@ -69,7 +69,8 @@ class CodeGenFunction {
       -> diag::Result<llvm::Value*>;
   // The runtime domain a union's member `index` boxes as. Both union kinds hold
   // their member types positionally, so this reads either one.
-  auto UnionMemberDomain(lir::TypeId union_type, std::uint32_t index)
+  [[nodiscard]] auto UnionMemberDomain(
+      lir::TypeId union_type, std::uint32_t index) const
       -> diag::Result<support::ValueDomain>;
   auto LowerAggregateExtract(const lir::AggregateExtractInstr& extract)
       -> diag::Result<llvm::Value*>;
@@ -206,6 +207,12 @@ class CodeGenFunction {
   // The representation a container's coordinates cross in, absent where they
   // cross as the bare handles their own types name.
   [[nodiscard]] auto CoordinateDomain(lir::TypeId container) const
+      -> diag::Result<std::optional<support::ValueDomain>>;
+
+  // The representation a value put into a positional part crosses in, absent
+  // where the value it goes into already holds a prototype for that part.
+  [[nodiscard]] auto PartDomain(
+      lir::TypeId container, base::ComponentIndex position) const
       -> diag::Result<std::optional<support::ValueDomain>>;
 
   auto SelectorArgs(

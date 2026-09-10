@@ -6,7 +6,20 @@
 
 ## Status
 
-Accepted
+Superseded by [value-descent-as-named-calls](value-descent-as-named-calls.md) (2026-09-09).
+
+The designator was never built, and the superseding entry replaces the representation it proposed:
+each level of a descent is an ordinary call whose entry HIR-to-MIR names, composed through the
+receiver, so the descent lives in the lowering rather than in a node any consumer must interpret.
+D1's node, D2's selector set and D5's read / write asymmetry go there. D4's projection reference is
+not built and a `ref` into a value interior is refused on the execution backend. D9's deletions
+happened, by that route.
+
+What this entry inherited from [value-projection-write](value-projection-write.md) -- the functional
+whole-value update, evaluate-once, one writeback -- was never the disputed half and is unchanged;
+D8's in-place recovery is what a target does with a reaching call, settled per target rather than
+per site, and [owner-transition-and-observation](owner-transition-and-observation.md) is where that
+now lives. This entry is retained for history; it is not the current contract.
 
 ## Why this decision matters
 

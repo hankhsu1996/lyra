@@ -15,25 +15,39 @@ namespace lyra::support {
 // observable storage cells, runtime effects, scope handle); this enum
 // carries only the method identity.
 enum class BuiltinFn : std::uint16_t {
-  // LRM 7.4 / 7.8 / 7.10 / 11.5 positional access. The plain form answers with
-  // the part's value; the `Ref` form answers with the part itself, so what
-  // stands there may be assigned to and a further access composes onto it.
+  // LRM 7.4 / 7.8 / 7.10 / 11.5 access into a value. The plain form answers
+  // with the part's value; the `Ref` form answers with the part itself, so what
+  // stands there may be written and a further access composes onto it.
   //
   // Two entries rather than one entry read two ways: which of them a source
   // position calls is settled where the source is read, and a consumer that had
-  // to work it out from the position could work it out differently. Composition
-  // is the operand that carries it -- an access whose receiver is another
-  // access is the descent, so nothing states a path.
+  // to work it out from the position could work it out differently.
+  // Composition is the receiver -- an access whose receiver is another access
+  // is the descent -- so a descent of any depth is these entries applied one
+  // per level and nothing states a path.
   kElement,
   kSlice,
   kElementRef,
   kSliceRef,
+  // The same two directions over a part named by its declaration-order
+  // position rather than by a coordinate. One pair covers a product and an
+  // active-member value alike: what differs is whether every part is live at
+  // once or one at a time, and whether reaching one for writing settles which
+  // that is -- all of which is the value's own semantics, reached through the
+  // domain its type names, exactly as a coordinate step reaches a queue's rules
+  // or an associative array's.
+  kPart,
+  kPartRef,
+  // Which member an active-member value holds, and building one that holds a
+  // given member. Only a value carrying an observable tag has the first, and a
+  // product has no counterpart for either.
+  kTagMatches,
+  kMakeActiveMember,
   // Yields the receiver when a condition holds and raises the given message as
   // a simulation error when it does not. The shape for a check the language
   // requires to run as part of evaluating an access rather than ahead of it
   // (LRM 11.3.5): passing the receiver through lets the access compose onto the
-  // guard, so a guarded access stays the ordinary one above, and a guarded
-  // write target designates a part of the guard's own result.
+  // guard, so a guarded access stays the ordinary one above.
   kRequire,
   // LRM 7.4.3 / 7.5 / 7.9 / 7.10.2. AA's `num` is an alias of `size`;
   // String's LRM 6.16.1 `len` is its own mandated spelling.
@@ -718,12 +732,6 @@ struct StaticFactory {
 // answered where the source is read and no layer below meets it.
 using EntryDeclaration = std::variant<FreeFunction, Method, StaticFactory>;
 
-// Which step of a value aggregate an entry names. A value's parts are not
-// independently addressable, so reaching one is a step saying which subvalue it
-// is rather than an address: one coordinate into a homogeneous or keyed value,
-// or one fixed-width window of one.
-enum class AggregateStep : std::uint8_t { kCoordinate, kWindow };
-
 // Every property of one runtime entry: what the library calls it, how a call
 // site reaches it, and what it does with the operands it is given. A consumer
 // asking any of those reads the field for it, never a list of its own, so an
@@ -747,13 +755,13 @@ struct RuntimeEntry {
   // through a capability wrapper reach its write access. Where the update
   // lands and how it gets there is each target's own answer.
   bool mutates_receiver = false;
-  // Whether the entry's result stands for storage its first argument names, so
-  // a call to it stands for whatever that argument stands for -- a value where
-  // the argument is a value, and a place where the argument is a place. Two
-  // kinds qualify: one that hands the argument back unchanged, and one that
-  // answers with a part of it. A consumer following where storage lives passes
-  // through such a call rather than stopping at it.
-  bool reaches_through_receiver = false;
+  // Whether the entry answers with the part it reaches rather than with that
+  // part's value, so what stands at the call may be written and a further
+  // access composes onto it. A target whose values have no reachable interior
+  // realizes such a call as a read of the whole and a rebuild instead; which
+  // entries it must do that for is this, so the property stays with the entry
+  // and not with each target that has to know it.
+  bool answers_with_the_part = false;
   // Whether the LRM 7.12 method takes a `with`-clause closure as its second
   // argument. The other LRM 7.5 / 7.10 array entries (`size`, `delete`,
   // `reverse`) take none.
@@ -780,11 +788,6 @@ struct RuntimeEntry {
   // is seeded with (LRM 7.5.1) -- so the call site supplies it and it names a
   // representation the entry has no other way to know.
   std::optional<std::size_t> result_prototype_operand = std::nullopt;
-  // Which step of a value aggregate the entry names, absent for an entry that
-  // names none. Reaching a part of a value to read it and designating one to
-  // write it name the same step, so a pair of entries differing only in which
-  // of the two they do carries the same one here.
-  std::optional<AggregateStep> aggregate_step = std::nullopt;
 };
 
 // The one declaration of `id`. Total over the entry set, so an entry added

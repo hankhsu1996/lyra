@@ -86,14 +86,14 @@ auto LowerContinuousAssign(
   // until the Resolve pass below decides the target is one.
   std::optional<AttachedDriver> driver;
   const auto lower_destination =
-      [&](const WalkFrame& frame) -> diag::Result<mir::ExprId> {
+      [&](const WalkFrame& frame) -> diag::Result<WriteTarget> {
     mir::Block& block = *frame.current_block;
     auto named_or = lowerer.LowerLhsExpr(hir_lhs, frame);
     if (!named_or) return std::unexpected(std::move(named_or.error()));
-    const mir::ExprId named = block.exprs.Add(*std::move(named_or));
-    if (!driver.has_value()) return named;
-    return ReplaceLhsRoot(
-        unit, block, named, DriverAccess(frame, block, *driver));
+    if (!driver.has_value()) return named_or;
+    WriteTarget rerooted = *std::move(named_or);
+    rerooted.owner = DriverAccess(frame, block, *driver);
+    return rerooted;
   };
 
   // A net target acquires its driver in Resolve, installed as a field on the
@@ -103,8 +103,7 @@ auto LowerContinuousAssign(
     mir::Block& resolve_block = *resolve_frame.current_block;
     auto named_or = lowerer.LowerLhsExpr(hir_lhs, resolve_frame);
     if (!named_or) return std::unexpected(std::move(named_or.error()));
-    const mir::ExprId named = resolve_block.exprs.Add(*std::move(named_or));
-    const mir::ExprId cell = FindLhsRootId(unit, resolve_block, named);
+    const mir::ExprId cell = named_or->owner;
     if (const auto* net = unit.types.Get(resolve_block.exprs.Get(cell).type)
                               .As<mir::ResolvedType>()) {
       const mir::TypeId driver_type = unit.types.Intern(

@@ -191,13 +191,10 @@ auto BuildDefaultValueExpr(
   const auto first_member_default =
       [&](std::span<const mir::TypeId> members) -> mir::Expr {
     constexpr base::ComponentIndex kFirstMember{0};
-    return mir::Expr{
-        .data =
-            mir::UnionExpr{
-                .index = kFirstMember,
-                .value = block.exprs.Add(BuildDefaultValueExpr(
-                    unit, block, members[kFirstMember.value]))},
-        .type = type};
+    return mir::MakeActiveMemberExpr(
+        block.exprs.Add(
+            BuildDefaultValueExpr(unit, block, members[kFirstMember.value])),
+        kFirstMember, type);
   };
   return ty.Visit(
       Overloaded{

@@ -10,30 +10,34 @@ auto RuntimeEntryOf(BuiltinFn id) -> RuntimeEntry {
       return {
           .name = "element",
           .declaration = Method{"Element"},
-          .index_operand = 1,
-          .aggregate_step = AggregateStep::kCoordinate};
+          .index_operand = 1};
     case BuiltinFn::kSlice:
-      return {
-          .name = "slice",
-          .declaration = Method{"Slice"},
-          .aggregate_step = AggregateStep::kWindow};
+      return {.name = "slice", .declaration = Method{"Slice"}};
     case BuiltinFn::kElementRef:
       return {
           .name = "element_ref",
           .declaration = Method{"ElementRef"},
-          .reaches_through_receiver = true,
-          .aggregate_step = AggregateStep::kCoordinate};
+          .answers_with_the_part = true};
     case BuiltinFn::kSliceRef:
       return {
           .name = "slice_ref",
           .declaration = Method{"SliceRef"},
-          .reaches_through_receiver = true,
-          .aggregate_step = AggregateStep::kWindow};
+          .answers_with_the_part = true};
+    case BuiltinFn::kPart:
+      return {.name = "extract", .declaration = Method{"Get"}};
+    case BuiltinFn::kPartRef:
+      return {
+          .name = "part_ref",
+          .declaration = Method{"GetRef"},
+          .answers_with_the_part = true};
+    case BuiltinFn::kTagMatches:
+      return {.name = "tag_matches", .declaration = Method{"IsTagged"}};
+    case BuiltinFn::kMakeActiveMember:
+      return {.name = "make", .declaration = StaticFactory{"Make"}};
     case BuiltinFn::kRequire:
       return {
           .name = "require",
-          .declaration = FreeFunction{"lyra::value::Require"},
-          .reaches_through_receiver = true};
+          .declaration = FreeFunction{"lyra::value::Require"}};
     case BuiltinFn::kSize:
       return {.name = "size", .declaration = Method{"Size"}};
     case BuiltinFn::kLen:

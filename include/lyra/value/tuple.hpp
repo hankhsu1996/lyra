@@ -49,6 +49,16 @@ class Tuple {
     return std::get<I>(std::move(data_));
   }
 
+  // Component `I` itself, for a caller that will write it or reach further
+  // through it. Every component of a product is live at once, so reaching one
+  // settles nothing about the others; a value holding one member at a time
+  // answers the same request by settling which member that is, which is why
+  // reaching a part is spelled apart from reading its value at all.
+  template <std::size_t I>
+  [[nodiscard]] auto GetRef() -> decltype(auto) {
+    return std::get<I>(data_);
+  }
+
   // LRM 11.4.5 `==` / `!=` (Any data type). Member-wise logical AND, yielding a
   // 1-bit PackedArray; X / Z on any member propagates through the per-member
   // `==`.

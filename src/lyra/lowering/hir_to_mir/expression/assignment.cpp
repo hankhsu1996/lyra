@@ -48,22 +48,9 @@ auto TargetOutlivesDeferredUpdate(const mir::Block& block, mir::ExprId expr_id)
   const auto& expr = block.exprs.Get(expr_id);
   return std::visit(
       Overloaded{
-          // A field reached through a pointer is storage of its own and
-          // outlives the update. A structural product's component is not: it
-          // lives exactly as long as the value holding it, so the question
-          // passes to the receiver.
-          [&](const mir::FieldAccessExpr& m) {
-            if (!std::holds_alternative<mir::ComponentTarget>(m.field)) {
-              return true;
-            }
-            return TargetOutlivesDeferredUpdate(block, m.receiver);
-          },
-          // A member of an active-member value lives exactly as long as the
-          // value holding it, so the question passes to that value, the same
-          // way a product's component passes it to the product.
-          [&](const mir::UnionMemberExpr& m) {
-            return TargetOutlivesDeferredUpdate(block, m.union_value);
-          },
+          // A field is storage of its own, reached through a pointer, so it
+          // outlives the update whatever holds that pointer.
+          [](const mir::FieldAccessExpr&) { return true; },
           // A name reaches storage of one of two durations: a body's own
           // binding, which goes away when the stretch that holds it returns,
           // and everything a compilation unit declares once -- a
@@ -121,111 +108,54 @@ auto TargetOutlivesDeferredUpdate(const mir::Block& block, mir::ExprId expr_id)
       expr.data);
 }
 
-// Rebuilds the selector layers above an NBA target's root cell onto a body-side
-// reference to that cell. The navigation that reaches the cell is evaluated
-// once at submit time and captured as `captured_root`; only the selector layers
-// above it (element / range / struct-member access) are reproduced here, with
-// their index subexpressions snapshotted by value so the body writes the place
-// the statement named at submit time (LRM 10.4.2). The recursion bottoms out at
-// the cell, which is the captured reference rather than a re-navigation from a
-// receiver.
-auto CloneLhsSelectorChainOntoRef(
+// Rebuilds a target's descent onto a body-side reference to its owner. The
+// navigation that reaches the owner is evaluated
+// once at submit time and captured as `captured_owner`; the descent above it
+// is restated over that capture with every coordinate snapshotted by value, so
+// the body writes the part the statement named at submit time (LRM 10.4.2). A
+// target that designates nothing is the captured reference itself.
+auto FreezeTarget(
     UnitLowerer& unit_lowerer, const WalkFrame& outer_frame,
-    ClosureBuilder& closure, mir::ExprId outer_id, mir::ExprId root_id,
-    mir::ExprId captured_root) -> mir::ExprId {
-  if (outer_id == root_id) {
-    return captured_root;
+    ClosureBuilder& closure, const WriteTarget& target,
+    mir::ExprId captured_owner) -> WriteTarget {
+  WriteTarget frozen = target;
+  frozen.owner = captured_owner;
+  for (DescentStep& step : frozen.descent) {
+    for (mir::ExprId& coordinate : step.operands) {
+      coordinate = SnapshotIntoClosure(
+          unit_lowerer, outer_frame, closure, coordinate, "_lyra_nba_arg");
+    }
   }
-  const mir::Block& outer_block = *outer_frame.current_block;
-  mir::Block& body = closure.Body();
-  const auto& outer_expr = outer_block.exprs.Get(outer_id);
-  return std::visit(
-      Overloaded{
-          // An access above the root: the object it dispatches on is rebuilt
-          // onto the body-side reference and its coordinates are snapshotted by
-          // value, so the body writes the part the statement named at submit
-          // time. Copy the call up front -- the recursion and snapshots below
-          // append to `outer_block`, which can reallocate and dangle
-          // `outer_expr`.
-          [&](const mir::CallExpr& c) -> mir::ExprId {
-            const mir::TypeId type = outer_expr.type;
-            mir::CallExpr rebuilt = c;
-            auto* callee = std::get_if<mir::Direct>(&rebuilt.callee);
-            if (callee == nullptr || !callee->receiver.has_value()) {
-              throw InternalError(
-                  "CloneLhsSelectorChainOntoRef: a selector above the root "
-                  "reaches it through the object it dispatches on, and this "
-                  "call names none -- please report this as a bug");
-            }
-            callee->receiver = CloneLhsSelectorChainOntoRef(
-                unit_lowerer, outer_frame, closure, *callee->receiver, root_id,
-                captured_root);
-            for (mir::ExprId& coordinate : rebuilt.arguments) {
-              coordinate = SnapshotIntoClosure(
-                  unit_lowerer, outer_frame, closure, coordinate,
-                  "_lyra_nba_arg");
-            }
-            return body.exprs.Add(
-                mir::Expr{.data = std::move(rebuilt), .type = type});
-          },
-          // A field or member above the root names no coordinates to snapshot,
-          // so only the value it is taken from is rebuilt.
-          [&](const mir::FieldAccessExpr& m) -> mir::ExprId {
-            mir::FieldAccessExpr rebuilt = m;
-            const mir::TypeId type = outer_expr.type;
-            rebuilt.receiver = CloneLhsSelectorChainOntoRef(
-                unit_lowerer, outer_frame, closure, rebuilt.receiver, root_id,
-                captured_root);
-            return body.exprs.Add(
-                mir::Expr{.data = std::move(rebuilt), .type = type});
-          },
-          [&](const mir::UnionMemberExpr& m) -> mir::ExprId {
-            mir::UnionMemberExpr rebuilt = m;
-            const mir::TypeId type = outer_expr.type;
-            rebuilt.union_value = CloneLhsSelectorChainOntoRef(
-                unit_lowerer, outer_frame, closure, rebuilt.union_value,
-                root_id, captured_root);
-            return body.exprs.Add(mir::Expr{.data = rebuilt, .type = type});
-          },
-          [&](const auto&) -> mir::ExprId {
-            throw InternalError(
-                "CloneLhsSelectorChainOntoRef: unexpected node above the NBA "
-                "target root");
-          },
-      },
-      outer_expr.data);
+  return frozen;
 }
 
 // What a deferred update writes, and where it writes it, once both are frozen
-// into a closure's environment: the navigation to the target cell is evaluated
-// where the statement is reached and captured as a reference, the selector
-// layers above it are rebuilt over that capture with their coordinates
+// into a closure's environment: the navigation to the target's owner is
+// evaluated where the statement is reached and captured as a reference, the
+// descent above it is restated over that capture with its coordinates
 // snapshotted, and each operand is snapshotted. LRM 10.4.2 settles both there,
 // however much later the update runs.
 struct FrozenAssignment {
-  mir::ExprId target;
+  WriteTarget target;
   std::vector<mir::ExprId> operands;
 };
 
 auto FreezeAssignmentInto(
     UnitLowerer& unit_lowerer, const WalkFrame& outer_frame,
-    ClosureBuilder& closure, mir::ExprId target_in_outer,
+    ClosureBuilder& closure, const WriteTarget& target_in_outer,
     std::span<const mir::ExprId> operands_in_outer) -> FrozenAssignment {
   mir::CompilationUnit& unit = unit_lowerer.Unit();
   mir::Block& outer_block = *outer_frame.current_block;
 
-  const mir::ExprId root_in_outer =
-      FindLhsRootId(unit, outer_block, target_in_outer);
   const mir::ExprId place_ref = BuildReferenceArg(
-      unit, outer_block, root_in_outer,
-      outer_block.exprs.Get(root_in_outer).type);
-  const mir::ExprId captured_root = SnapshotIntoClosure(
+      unit, outer_block, target_in_outer.owner,
+      outer_block.exprs.Get(target_in_outer.owner).type);
+  const mir::ExprId captured_owner = SnapshotIntoClosure(
       unit_lowerer, outer_frame, closure, place_ref, "_lyra_nba_place");
 
   FrozenAssignment frozen{
-      .target = CloneLhsSelectorChainOntoRef(
-          unit_lowerer, outer_frame, closure, target_in_outer, root_in_outer,
-          captured_root),
+      .target = FreezeTarget(
+          unit_lowerer, outer_frame, closure, target_in_outer, captured_owner),
       .operands = {}};
   frozen.operands.reserve(operands_in_outer.size());
   for (const mir::ExprId op : operands_in_outer) {
@@ -261,7 +191,7 @@ auto CheckTargetOutlivesUpdate(
 template <typename EffectFn>
 auto ApplyAssignEffect(
     ProcessLowerer& process, WalkFrame frame, const hir::EffectTiming& timing,
-    diag::SourceSpan span, mir::ExprId target_in_outer,
+    diag::SourceSpan span, const WriteTarget& target_in_outer,
     std::span<const mir::ExprId> operands_in_outer, EffectFn effect_fn)
     -> diag::Result<mir::Expr> {
   auto& block = *frame.current_block;
@@ -269,7 +199,7 @@ auto ApplyAssignEffect(
   if (deferred == nullptr) {
     return effect_fn(block, target_in_outer, operands_in_outer);
   }
-  auto outlives = CheckTargetOutlivesUpdate(block, target_in_outer, span);
+  auto outlives = CheckTargetOutlivesUpdate(block, target_in_outer.owner, span);
   if (!outlives) return std::unexpected(std::move(outlives.error()));
   return BuildDeferredEffect(
       process, frame, deferred->control,
@@ -300,15 +230,14 @@ auto LowerObservableAssign(
   const mir::ExprId rhs_id = block.exprs.Add(*std::move(rhs_or));
   auto lhs_or = process.LowerLhsExpr(hir_process.exprs.Get(a.lhs), frame);
   if (!lhs_or) return std::unexpected(std::move(lhs_or.error()));
-  const mir::ExprId lhs_id = block.exprs.Add(*std::move(lhs_or));
 
   const std::optional<mir::BinaryOp> compound_op =
       a.compound_op.has_value() ? std::optional{LowerBinaryOp(*a.compound_op)}
                                 : std::nullopt;
   const std::array<mir::ExprId, 1> operands{rhs_id};
   return ApplyAssignEffect(
-      process, frame, a.timing, span, lhs_id, operands,
-      [&](mir::Block& blk, mir::ExprId target,
+      process, frame, a.timing, span, *lhs_or, operands,
+      [&](mir::Block& blk, const WriteTarget& target,
           std::span<const mir::ExprId> ops) -> mir::Expr {
         return BuildStoreExpr(
             process.Owner().Unit(), blk, target, ops[0], compound_op,
@@ -342,8 +271,8 @@ auto BuildDestructuredDeferredAssign(
     const std::optional<hir::DelayOrEventControl>& control,
     std::span<const DestructuredPart> parts) -> diag::Result<mir::Expr> {
   for (const DestructuredPart& part : parts) {
-    auto outlives =
-        CheckTargetOutlivesUpdate(*frame.current_block, part.target, span);
+    auto outlives = CheckTargetOutlivesUpdate(
+        *frame.current_block, part.target.owner, span);
     if (!outlives) return std::unexpected(std::move(outlives.error()));
   }
   return BuildDeferredEffect(

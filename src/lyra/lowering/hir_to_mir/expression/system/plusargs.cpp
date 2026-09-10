@@ -87,7 +87,7 @@ auto LowerValuePlusargs(
   const mir::TypeId target_type = unit_lowerer.TranslateType(target_hir.type);
   auto place_or = lowerer.LowerLhsExpr(target_hir, step_frame);
   if (!place_or) return std::unexpected(std::move(place_or.error()));
-  const mir::ExprId target_place = body.exprs.Add(*std::move(place_or));
+  WriteTarget target_place = *std::move(place_or);
   auto incoming_or = lowerer.LowerExpr(target_hir, step_frame);
   if (!incoming_or) return std::unexpected(std::move(incoming_or.error()));
   const mir::ExprId incoming_id = body.exprs.Add(*std::move(incoming_or));
@@ -100,7 +100,7 @@ auto LowerValuePlusargs(
   const mir::ExprId runtime_id =
       body.exprs.Add(BuildCurrentRuntimeCallExpr(unit_lowerer));
   const std::array writebacks{CompletionWriteback{
-      .place = target_place,
+      .place = std::move(target_place),
       .component = *layout.formals.front().component,
       .type = target_type}};
   const mir::LocalId completion = BindCompletion(

@@ -98,7 +98,6 @@ auto LowerSFormatSystemSubroutineCallStmt(
   if (!out_or) return std::unexpected(std::move(out_or.error()));
   const mir::TypeId out_type =
       process.Owner().TranslateType(hir_proc.exprs.Get(operands[0]).type);
-  const mir::ExprId out_id = block.exprs.Add(*std::move(out_or));
 
   auto call_expr_or = BuildSFormatCallExpr(process, frame, call, info, 1);
   if (!call_expr_or) return std::unexpected(std::move(call_expr_or.error()));
@@ -112,7 +111,7 @@ auto LowerSFormatSystemSubroutineCallStmt(
       ConvertToType(process.Owner().Unit(), block, call_id, out_type);
 
   const mir::Expr assign_expr = BuildStoreExpr(
-      process.Owner().Unit(), block, out_id, value_id, std::nullopt, out_type);
+      process.Owner().Unit(), block, *out_or, value_id, std::nullopt, out_type);
   const mir::ExprId assign_id = block.exprs.Add(assign_expr);
 
   return mir::Stmt{

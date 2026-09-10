@@ -15,6 +15,7 @@
 #include "lyra/lowering/hir_to_mir/cast_lowering.hpp"
 #include "lyra/lowering/hir_to_mir/default_value.hpp"
 #include "lyra/lowering/hir_to_mir/integral_literal.hpp"
+#include "lyra/lowering/hir_to_mir/lhs_store.hpp"
 #include "lyra/lowering/hir_to_mir/packed_concat.hpp"
 #include "lyra/lowering/hir_to_mir/process_lowerer.hpp"
 #include "lyra/lowering/hir_to_mir/structural_scope_lowerer.hpp"
@@ -420,24 +421,20 @@ auto LowerHirAssignmentPatternKeyedExpr(
     const mir::ExprId value_id = body.exprs.Add(*std::move(value));
     const mir::ExprId owner =
         body.exprs.Add(mir::MakeLocalRefExpr(array, result_type));
-    const mir::ExprId target = body.exprs.Add(
-        mir::Expr{
-            .data =
-                mir::CallExpr{
-                    .callee =
-                        mir::Direct{
-                            .target = support::BuiltinFn::kElementRef,
-                            .receiver = owner},
-                    .arguments =
-                        {index_id,
-                         BuildIntLiteral(unit, body, array_ty.dim.left),
-                         BuildIntLiteral(unit, body, array_ty.dim.right)}},
-            .type = element_type});
-    const mir::ExprId assign = body.exprs.Add(
-        mir::Expr{
-            .data = mir::AssignExpr{.target = target, .value = value_id},
-            .type = element_type});
-    body.AppendStmt(mir::ExprStmt{.expr = assign});
+    const WriteTarget target = DescendInto(
+        WriteTarget{.owner = owner, .descent = {}},
+        DescentStep{
+            .value_entry = support::BuiltinFn::kElement,
+            .part_entry = support::BuiltinFn::kElementRef,
+            .position = std::nullopt,
+            .operands =
+                {index_id, BuildIntLiteral(unit, body, array_ty.dim.left),
+                 BuildIntLiteral(unit, body, array_ty.dim.right)},
+            .part_type = element_type});
+    body.AppendStmt(
+        mir::ExprStmt{
+            .expr = body.exprs.Add(BuildStoreExpr(
+                unit, body, target, value_id, std::nullopt, element_type))});
   }
 
   const mir::ExprId result =

@@ -443,6 +443,12 @@ auto EntryNamingOf(support::BuiltinFn fn) -> EntryNaming {
   switch (fn) {
     case support::BuiltinFn::kElement:
     case support::BuiltinFn::kSlice:
+    case support::BuiltinFn::kElementRef:
+    case support::BuiltinFn::kSliceRef:
+    case support::BuiltinFn::kPart:
+    case support::BuiltinFn::kPartRef:
+    case support::BuiltinFn::kTagMatches:
+    case support::BuiltinFn::kMakeActiveMember:
     case support::BuiltinFn::kRequire:
     case support::BuiltinFn::kSize:
     case support::BuiltinFn::kLen:
@@ -601,8 +607,6 @@ auto EntryNamingOf(support::BuiltinFn fn) -> EntryNaming {
     case support::BuiltinFn::kSampledHistoryAt:
       return NotRealized{.shape = kKeepsAValuePerTick};
 
-    case support::BuiltinFn::kElementRef:
-    case support::BuiltinFn::kSliceRef:
     case support::BuiltinFn::kOpenForWrite:
       return NotRealized{.shape = kAnswersWithPartOfAValue};
 

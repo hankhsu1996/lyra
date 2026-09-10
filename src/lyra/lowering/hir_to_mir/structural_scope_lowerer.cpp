@@ -938,8 +938,7 @@ auto InstallPortConnections(
         auto peer_or =
             lowerer.LowerLhsExpr(hir_scope.exprs.Get(data.peer), resolve_frame);
         if (!peer_or) return std::unexpected(std::move(peer_or.error()));
-        const mir::ExprId peer_cell =
-            resolve_block.exprs.Add(*std::move(peer_or));
+        const mir::ExprId peer_cell = peer_or->owner;
 
         const mir::ExprId bind = BindReferenceSlot(
             unit_lowerer.Unit(), resolve_block, target, peer_cell);
@@ -1731,7 +1730,8 @@ auto StructuralScopeLowerer::PopulateBodies(WalkFrame parent_frame)
       };
       const auto emit_value_store = [&](mir::ExprId value_id) {
         append_stmt(BuildStoreExpr(
-            unit_lowerer.Unit(), initialize_block, init_target, value_id,
+            unit_lowerer.Unit(), initialize_block,
+            WriteTarget{.owner = init_target, .descent = {}}, value_id,
             std::nullopt, mir_value_type));
       };
 

@@ -78,6 +78,8 @@ auto BuildDeferredEffect(
     if (!arrival) return std::unexpected(std::move(arrival.error()));
   }
 
+  // The steps the update runs are the closure's own, so they append to its
+  // body: a name the enclosing body declared is not one this body can reach.
   apply(closure.Body(), *captured);
 
   if (finds_its_own_slot) {

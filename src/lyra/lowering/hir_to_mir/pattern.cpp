@@ -60,11 +60,11 @@ auto SubjectMember(
   };
   if (const auto* s = ty.As<hir::UnpackedStructType>()) {
     return block.exprs.Add(
-        mir::MakeComponentAccessExpr(subject, index, member_type(s->fields)));
+        mir::MakePartAccessExpr(subject, index, member_type(s->fields)));
   }
   if (const auto* u = ty.As<hir::UnpackedUnionType>()) {
     return block.exprs.Add(
-        mir::MakeUnionMemberExpr(subject, index, member_type(u->fields)));
+        mir::MakePartAccessExpr(subject, index, member_type(u->fields)));
   }
   const PackedProjection projection = ProjectPackedAggregate(owner, ty);
   if (index.value >= projection.members.size()) {
@@ -85,15 +85,13 @@ auto BuildTagTest(
     hir::TypeId subject_type, base::ComponentIndex index) -> mir::Expr {
   const hir::Type& ty = owner.Hir().types.Get(subject_type);
   if (ty.Is<hir::UnpackedUnionType>()) {
-    // The tag test answers with a host boolean; re-shaping that answer into a
-    // 1-bit integral is a value conversion, so it is stated here rather than
+    // The tag test answers with a machine boolean; re-shaping that answer into
+    // a 1-bit integral is a value conversion, so it is stated here rather than
     // left for a backend to insert around the test.
     const mir::TypeId bit1 = owner.Unit().builtins.bit1;
     const mir::ExprId is_tagged = block.exprs.Add(
-        mir::Expr{
-            .data =
-                mir::TaggedIsExpr{.union_value = subject, .tag_index = index},
-            .type = bit1});
+        mir::MakeTagMatchesExpr(
+            subject, index, owner.Unit().builtins.machine_bool));
     return mir::Expr{
         .data =
             mir::CallExpr{

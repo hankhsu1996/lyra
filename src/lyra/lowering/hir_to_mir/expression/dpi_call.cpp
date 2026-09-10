@@ -640,7 +640,6 @@ auto PopulateForeignImportBoundary(
   for (const Writeback& wb : writebacks) {
     auto lhs_or = lowerer.LowerLhsExpr(hir_exprs.Get(wb.actual), cframe);
     if (!lhs_or) return std::unexpected(std::move(lhs_or.error()));
-    const mir::ExprId lhs_id = body.exprs.Add(*std::move(lhs_or));
     const mir::ExprId temp_ref =
         body.exprs.Add(mir::MakeLocalRefExpr(wb.temp, wb.carrier_type));
 
@@ -648,7 +647,7 @@ auto PopulateForeignImportBoundary(
         unit_lowerer, cframe, wb.carrier, temp_ref, wb.carrier_type,
         wb.sv_type);
     const mir::Expr assign =
-        BuildStoreExpr(unit, body, lhs_id, rhs_id, std::nullopt, wb.sv_type);
+        BuildStoreExpr(unit, body, *lhs_or, rhs_id, std::nullopt, wb.sv_type);
     body.AppendStmt(mir::ExprStmt{.expr = body.exprs.Add(assign)});
   }
 

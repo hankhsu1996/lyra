@@ -395,12 +395,11 @@ auto LowerScanSystemSubroutineCall(
     auto lvalue_or =
         process.LowerLhsExpr(hir_proc.exprs.Get(operands[k + 2]), then_frame);
     if (!lvalue_or) return std::unexpected(std::move(lvalue_or.error()));
-    const mir::ExprId lvalue_id = then_body.exprs.Add(*std::move(lvalue_or));
     const mir::ExprId parsed_id = ProjectCompletionComponent(
         then_body, completion, payload_type, ScanParsedValue(k),
         target_types[k]);
     const mir::Expr assign_expr = BuildStoreExpr(
-        unit, then_body, lvalue_id, parsed_id, std::nullopt, target_types[k]);
+        unit, then_body, *lvalue_or, parsed_id, std::nullopt, target_types[k]);
     const mir::ExprId assign_id = then_body.exprs.Add(assign_expr);
     then_body.AppendStmt(mir::ExprStmt{.expr = assign_id});
 

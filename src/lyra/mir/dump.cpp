@@ -608,9 +608,13 @@ class MirDumper {
                   d.receiver.has_value()
                       ? std::format(" recv=Expr[{}]", d.receiver->value)
                       : std::string{};
+              const std::string position =
+                  d.position.has_value()
+                      ? std::format(" at={}", d.position->value)
+                      : std::string{};
               return std::format(
-                  "Direct[{}{}{}]", FormatDirectTarget(d.target), receiver,
-                  FormatQualification(d.qualification));
+                  "Direct[{}{}{}{}]", FormatDirectTarget(d.target), receiver,
+                  position, FormatQualification(d.qualification));
             },
             [](const Indirect& i) -> std::string {
               return std::format("Indirect[code=Expr[{}]]", i.code.value);
@@ -787,9 +791,6 @@ class MirDumper {
                           [](const FieldId& id) -> std::string {
                             return std::format("Field[{}]", id.value);
                           },
-                          [](const ComponentTarget& c) -> std::string {
-                            return std::format("Component[{}]", c.index.value);
-                          },
                           [](const ExternalFieldTarget& t) -> std::string {
                             return std::format(
                                 "External[{}::{}::{}]", t.unit_name,
@@ -821,21 +822,6 @@ class MirDumper {
               return std::format(
                   "VectorGetExpr vector=Expr[{}] index=Expr[{}]",
                   g.vector.value, g.index.value);
-            },
-            [](const UnionExpr& u) -> std::string {
-              return std::format(
-                  "UnionExpr index={} value=Expr[{}]", u.index.value,
-                  u.value.value);
-            },
-            [](const TaggedIsExpr& g) -> std::string {
-              return std::format(
-                  "TaggedIsExpr union=Expr[{}] tag={}", g.union_value.value,
-                  g.tag_index.value);
-            },
-            [](const UnionMemberExpr& m) -> std::string {
-              return std::format(
-                  "UnionMemberExpr union=Expr[{}] member={}",
-                  m.union_value.value, m.index.value);
             },
         },
         e.data);

@@ -4,6 +4,13 @@ The render refactoring: MIR states each semantic fact once, and every consumer -
 the MIR-to-LIR lowering, the dump -- reads it rather than working it out. Done when no backend entry
 decides anything the node did not state, and no closed set holds an alternative no node carries.
 
+`../architecture/backend_contract.md`'s Purpose states the finished shape this is measured against,
+and its invariant 8 states the form a reader can check: a value-emission entry names no runtime
+library identifier, because every name it emits comes from the target's own syntax or from a
+dispatch that owns naming. That is the north star for every item here -- an item is finished when
+the entries it touched carry punctuation and nothing else, and the whole workstream is finished when
+counting the library identifiers left in the emitters answers zero.
+
 The contracts this answers are `../architecture/backend_contract.md` (a backend entry is a fixed
 function of one MIR node and chooses a spelling rather than an operation) and
 `../architecture/mir.md` (every semantic decision is explicit in MIR's structure, and a backend
@@ -20,11 +27,18 @@ cross-check predicts. This file owns only which instances are known and what is 
       dispatches on an object is the callee's own receiver, stated once.
 - [x] T4 -- The unary and binary operator sets hold only the operators a node carries. An operator a
       library performs, and one that names no operation at all, is settled before a node is built.
-- [x] T18 -- Reaching the one member an active-member value holds is its own operation, distinct
-      from reaching a component of a product, so no consumer decides what a member reach means by
-      testing what it reaches into. Whether a member that is not the live one answers with a default
-      or with a run-time failure is the value's own semantics and travels with its type, so it needs
-      no second node. The layer below carries the same split, as a selector kind of its own.
+- [x] T18 -- Reaching a part named by its declaration-order position is one operation, whether the
+      value is a product or holds one member at a time, so no consumer decides what a reach means by
+      testing what it reaches into. Whether every part coexists, whether a member that is not the
+      live one answers with a default or a run-time failure, and whether reaching one for writing
+      settles which is live are the value's own semantics and travel with its type -- the same way
+      one coordinate step already spans an unpacked array, a queue and an associative array. The
+      layer below carries one selector for the same reason.
+
+      This reverses the entry as first written, which made the two reaches distinct operations with
+      a selector kind each. That split was what put two hard-coded spellings in the C++ render, and
+      neither of them was a decision the render was entitled to make.
+
 - [x] T10 -- A value that is its own parts is one node, and which value it composes is already the
       expression's type. Two nodes carried it -- a product literal and an element list -- with
       identical fields and emission entries that differed only in the field name they looped over,
@@ -121,10 +135,7 @@ cross-check predicts. This file owns only which instances are known and what is 
       rest in are now one answer read from that type, which is what a construction naming no entry
       beyond its own result type already meant. What a call's target decides about how its operands
       cross is read from the target once and exhaustively, so a target kind gained anywhere says
-      what it encodes or fails to build. Asking it at once also moves one refusal to the wall it
-      belongs at: a case that names a class another unit declares had been reported as a missing
-      definition record, which is downstream of the managed heap this backend does not yet store
-      handles on, and it now says what its four siblings say.
+      what it encodes or fails to build.
 
       What the conjunction existed to exclude was the two associative dimension queries (LRM 20.7
       `$low` / `$high`), and the rule it excluded them from was already settled: a value crosses into
@@ -137,6 +148,33 @@ cross-check predicts. This file owns only which instances are known and what is 
       gained the pair its monomorphized counterpart already carried, so the entry answering them
       names that operation instead of open-coding it.
 
+- [x] T20 -- Making a member the live one is stated, not chosen by where the reach stands, and T14
+      -- one visit over the expression set decides how an expression is rendered -- close with it,
+      because both were the same missing fact. A write target was a chain of access nodes rooted at
+      an opened place, so every consumer found the owner by walking that chain and asking each
+      receiver's type what kind of step it was: two backends deriving one semantic fact, which is
+      the shape `../architecture/mir.md` forbids and the one `../architecture/backend_contract.md`'s
+      cross-check predicts. Every level of a descent is now a call whose entry the lowering names,
+      composed through the receiver, so a consumer meets an ordinary call and decides nothing; and a
+      write target is built rooted where the write lands, so nothing below recovers an owner. The
+      record is `../decisions/value-descent-as-named-calls.md`.
+
+      What fell out rather than being fixed: the four node kinds that named a part, the second walk
+      over the expression set -- it had come to differ from the first only by a check of which forms
+      are addressable, which nothing asks any more -- the property that said a call stands for
+      whatever its receiver stands for, the walk that found a target's root, the recursion that
+      re-rooted one, the one that froze a deferred update's chain, and the parameter a deferred
+      effect threaded so its steps could bind names, which no step needs. Below MIR the product and
+      union selectors became one, because with one entry above them a split below would have forced
+      the layer between to choose from the receiver's type.
+
+      One thing this deliberately does not touch, after a first attempt did: what an interior write
+      *does*. Reaching a part and writing it in place is the value model
+      `../decisions/owner-transition-and-observation.md` settled with a measurement behind it, and
+      the first cut of this work replaced it with a functional rebuild on both backends -- which is
+      the thousandfold regression `performance.md` names as the thing to re-measure. Where a
+      decision is made and what the operation is are separate axes; only the first was in scope.
+
 ## An aggregate's members
 
 - [ ] T8 -- An unpacked struct keeps its field names through lowering, so a member access names a
@@ -144,18 +182,6 @@ cross-check predicts. This file owns only which instances are known and what is 
       finding a field's name by walking the receiver's type through the kinds that can bear one.
 - [ ] T9 -- A field's identity splits exactly where the layer below it splits, and no consumer reads
       how the name resolves. Same shape as T3, one node over.
-- [ ] T20 -- Making a member the live one is stated, not chosen by where the reach stands. Reaching
-      an active member is one node, which is right, but writing one has to activate it and reading
-      one must not, so the backend picks the activating form from the occurrence's position -- two
-      arms a reader can tell apart by running the program. The write designator is what states it: a
-      write names an owner place and the descent that reaches the part, so the activating form is
-      the descent's own and never travels on a node a read shares.
-
-      Blocked on that designator, which MIR does not carry: an assignment target is a chain of
-      access nodes rooted at an opened place, and every consumer finds the owner by walking it.
-      Naming the activating reach on the node instead -- as the write-side container accesses
-      already are -- is the first rejected alternative of the record that settled the designator, so
-      this waits on that migration rather than extending the shape it replaces.
 
 ## Callable and assignment identity
 
@@ -198,17 +224,30 @@ cross-check predicts. This file owns only which instances are known and what is 
       One of them went with T22: the arm that shaped a construction's operands answered a type it
       did not recognize by handing the operands back unchanged, which is a substituted answer no
       caller could tell from a real one, and that form is now read from the type along with the
-      entry that builds it.
+      entry that builds it. Two more went with the write target's own shape, one at each end: the
+      arm that rebuilt a deferred update's chain is gone, because the lowering builds the target
+      where the write lands and has nothing to re-root; and the one deciding whether a target
+      reaches into a value stopped being a switch over node kinds and became one question of the
+      shared entry declaration, which is the difference between classifying a shape and reading a
+      stated fact.
 
-      What is left needs an answer this file does not have: the remaining substituting arms all walk
-      a type's or a node's parts, and each carries its own idea of what has parts. One question --
-      the components of a type, the child expressions of a node -- asked once would retire the whole
-      class, and no per-arm enumeration reaches it.
+      Where a walker's own idea of what has parts was the whole of the arm, the fix is to ask the
+      set once. A type now says which types its values hold -- a container's elements and keys, a
+      product's and a union's components, a cell's contents -- so the walk that decides whether a
+      format operand hides a chandle (LRM 6.14) is a predicate over that answer rather than a second
+      enumeration with a default; and a descent step is an ordinary call, so a consumer reaching
+      every coordinate of one walks its operands rather than enumerating a selector set of its own.
+
+      What is left is not one shape. Four arms answer a target-language question with a default --
+      how a value of a type is constructed, what a member's declaration initializes to, which
+      machine type a lowered type maps to, which timing control a delay-or-event form spells -- and
+      each needs its own derivation of what the default was standing in for. Two more walk a body's
+      expressions asking which operand names storage, which is a question about value category that
+      MIR states nowhere; and the type pool's own hash falls through to "these carry no payload"
+      through an `if constexpr` chain the compiler cannot check.
 
 ## Small and mechanical
 
-- [ ] T14 -- One visit over the expression set decides how an expression is rendered; value position
-      and target position are the same walk asking one question, not two walks sharing most arms.
 - [ ] T15 -- A backend meeting IR it has not implemented returns the recoverable failure the error
       policy prescribes rather than reporting a compiler bug.
 - [ ] T16 -- No peephole in a render. Where one collapses a shape the producer built, the producer

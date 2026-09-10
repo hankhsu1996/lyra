@@ -49,13 +49,13 @@ the detail lives in the entry itself.
 - [slice-value-semantics](slice-value-semantics.md) -- a slice read materializes an owned value; the
   access model is value, not borrow.
 - [value-projection-write](value-projection-write.md) -- a value-aggregate interior write is an
-  owner-relative value projection (a functional whole-value update through the owner), not a place
-  store; MIR states the place-vs-projection designator, the C++ in-place write is a
-  behavior-preserving optimization.
-- [value-projection-designator](value-projection-designator.md) -- the formal shape of that
-  designator: one node whose children are the owner place and a closed selector path, shared by the
-  write path and by the projection reference a `ref`, an `output` / `inout` actual, and a
-  nonblocking assignment bind; the nested-lvalue write encoding is deleted.
+  owner-relative functional whole-value update through the owner, not a place store; the in-place
+  write a target may realize it as is a property of that target. How the update is stated is
+  superseded by [value-descent-as-named-calls](value-descent-as-named-calls.md).
+- [value-descent-as-named-calls](value-descent-as-named-calls.md) -- every level of a descent into a
+  value is a call whose entry HIR-to-MIR names, composed through the receiver, so no node names a
+  part and no consumer classifies a step or recovers an owner. Supersedes the selector-path node of
+  [value-projection-designator](value-projection-designator.md), which was never built.
 - [queue-operators](queue-operators.md) -- queue access operators lower to built-in method calls;
   read and write are distinct methods chosen at lowering. Where it places the receiver is superseded
   by [call-receiver-on-the-callee](call-receiver-on-the-callee.md).

@@ -559,6 +559,21 @@ auto CodeGenFunction::CallArgs(
             module_->Types().Ptr(), boxed),
         boxed);
   }
+  // A position the callee names is not a value the program computed, so this
+  // target writes it where its calls take values: right after the object whose
+  // part it names, and first where the entry acts on no object -- which is what
+  // its declaration says by being a factory on the type it builds.
+  if (const auto* builtin = std::get_if<lir::BuiltinTarget>(&call.target);
+      builtin != nullptr && builtin->position.has_value()) {
+    const bool acts_on_an_object =
+        !std::holds_alternative<support::StaticFactory>(
+            support::RuntimeEntryOf(builtin->fn).declaration);
+    operands.insert(
+        operands.begin() + (acts_on_an_object ? 1 : 0),
+        llvm::ConstantInt::get(
+            llvm::Type::getInt64Ty(module_->Context()),
+            builtin->position->value));
+  }
   return ArgsInForm(encoding->operand_form, operands);
 }
 
@@ -776,7 +791,7 @@ auto CodeGenFunction::LowerProduct(
 }
 
 auto CodeGenFunction::UnionMemberDomain(
-    lir::TypeId union_type, std::uint32_t index)
+    lir::TypeId union_type, std::uint32_t index) const
     -> diag::Result<support::ValueDomain> {
   const lir::Type& ty = module_->Unit().types.Get(union_type);
   const std::vector<lir::TypeId>* members = nullptr;
@@ -857,6 +872,27 @@ auto CodeGenFunction::CoordinateDomain(lir::TypeId container) const
     return std::nullopt;
   }
   auto domain = DomainOf(*index);
+  if (!domain) {
+    return std::unexpected(std::move(domain.error()));
+  }
+  return *domain;
+}
+
+// The domain a value crossing into a positional part states for itself, and
+// nothing where the value it goes into already holds one for that part. A
+// product holds every part at once, so a part conforms to the prototype the
+// product carries and crosses as the bare handle it is; an active-member value
+// holds one part at a time and carries no prototype for the others, so a value
+// replacing one has to say which domain it is in. The coordinate rule one
+// entry over is the same rule over a keyed container.
+auto CodeGenFunction::PartDomain(
+    lir::TypeId container, base::ComponentIndex position) const
+    -> diag::Result<std::optional<support::ValueDomain>> {
+  const lir::Type& ty = module_->Unit().types.Get(container);
+  if (!ty.Is<lir::UnionType>() && !ty.Is<lir::TaggedUnionType>()) {
+    return std::nullopt;
+  }
+  auto domain = UnionMemberDomain(container, position.value);
   if (!domain) {
     return std::unexpected(std::move(domain.error()));
   }
@@ -947,11 +983,8 @@ auto CodeGenFunction::LowerAggregateExtract(
   };
   return std::visit(
       Overloaded{
-          [&](const lir::Component& component) -> diag::Result<llvm::Value*> {
-            return positional(component.index);
-          },
-          [&](const lir::UnionMember& member) -> diag::Result<llvm::Value*> {
-            return positional(member.index);
+          [&](const lir::Part& part) -> diag::Result<llvm::Value*> {
+            return positional(part.index);
           },
           [&](const lir::ContainerElement& e) -> diag::Result<llvm::Value*> {
             auto shape = coordinates(e.operands);
@@ -1020,28 +1053,28 @@ auto CodeGenFunction::LowerAggregateUpdate(
   };
   return std::visit(
       Overloaded{
-          [&](const lir::Component& component) -> diag::Result<llvm::Value*> {
-            return positional(component.index, *replacement);
-          },
-          [&](const lir::UnionMember& member) -> diag::Result<llvm::Value*> {
+          [&](const lir::Part& part) -> diag::Result<llvm::Value*> {
             // An active-member value keeps no per-member prototype, so the
             // runtime cannot recover which domain a raw handle is in and the
-            // caller states it by boxing the replacement in the member's own
+            // caller states it by boxing the replacement in the part's own
             // domain. Whether the write then makes the member live or faults a
-            // mismatched tag follows from the domain the entry is named in.
-            auto member_domain =
-                UnionMemberDomain(container, member.index.value);
-            if (!member_domain) {
-              return std::unexpected(std::move(member_domain.error()));
+            // mismatched tag follows from the domain the entry is named in. A
+            // product answers with no such domain, because its parts keep their
+            // own and the runtime reads them back.
+            auto part_domain = PartDomain(container, part.index);
+            if (!part_domain) {
+              return std::unexpected(std::move(part_domain.error()));
             }
-            const std::array<llvm::Value*, 1> box{*replacement};
-            return positional(
-                member.index,
-                builder_.CreateCall(
-                    Entry(
-                        RuntimeSymbol(*member_domain, RuntimeOp::kValueBox),
-                        module_->Types().Ptr(), box),
-                    box));
+            llvm::Value* written = *replacement;
+            if (part_domain->has_value()) {
+              const std::array<llvm::Value*, 1> box{written};
+              written = builder_.CreateCall(
+                  Entry(
+                      RuntimeSymbol(**part_domain, RuntimeOp::kValueBox),
+                      module_->Types().Ptr(), box),
+                  box);
+            }
+            return positional(part.index, written);
           },
           [&](const lir::ContainerElement& e) -> diag::Result<llvm::Value*> {
             auto shape = coordinates(e.operands);
@@ -1583,6 +1616,21 @@ auto CodeGenFunction::BuiltinErasedOperand(
     const lir::BuiltinTarget& target, const lir::CallInstr& call) const
     -> diag::Result<std::optional<ErasedArgument>> {
   const support::RuntimeEntry entry = support::RuntimeEntryOf(target.fn);
+  // A value put into a positional part crosses in the domain the part states,
+  // where the value it goes into holds no prototype for that part. It is the
+  // call's last operand, everything before it naming which part. The value it
+  // goes into is the type the call is qualified with, because an entry that
+  // builds one takes no object to read it from.
+  if (target.fn == support::BuiltinFn::kMakeActiveMember) {
+    auto part = PartDomain(*target.qualifier, *target.position);
+    if (!part) {
+      return std::unexpected(std::move(part.error()));
+    }
+    if (!part->has_value()) {
+      return std::nullopt;
+    }
+    return ErasedArgument{.position = call.args.size() - 1, .domain = **part};
+  }
   if (entry.result_prototype_operand.has_value()) {
     return InItsOwnDomain(call, *entry.result_prototype_operand);
   }

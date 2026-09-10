@@ -215,10 +215,22 @@ void CollectStorageLocals(
             },
             // Building a reference over a local binds that local's storage, so
             // the local needs an address for the same reason an explicit
-            // address-of gives it one.
+            // address-of gives it one. A method that changes the object it is
+            // applied to writes its answer back through that object, so a local
+            // standing there is written just as an assignment target is.
             [&](const mir::CallExpr& e) {
               if (BindsReference(types, e, expr.type)) {
                 mark_lent(LocalNamedBy(block, e.arguments[0]));
+                return;
+              }
+              const std::optional<support::BuiltinFn> fn =
+                  mir::DirectBuiltinFn(e);
+              if (fn.has_value() &&
+                  support::RuntimeEntryOf(*fn).mutates_receiver) {
+                if (const std::optional<mir::ExprId> receiver =
+                        mir::CalleeReceiver(e.callee)) {
+                  mark(LocalNamedBy(block, *receiver));
+                }
               }
             },
             [&](const mir::MachineArrayDataExpr& e) {
@@ -277,8 +289,10 @@ auto LowerCallTarget(
                     },
                     [&](const support::BuiltinFn& fn)
                         -> diag::Result<lir::CallTarget> {
-                      return lir::CallTarget{
-                          lir::BuiltinTarget{.fn = fn, .qualifier = qualifier}};
+                      return lir::CallTarget{lir::BuiltinTarget{
+                          .fn = fn,
+                          .qualifier = qualifier,
+                          .position = d.position}};
                     },
                     [&](const mir::ExternalUnitCallableTarget& t)
                         -> diag::Result<lir::CallTarget> {
@@ -1323,51 +1337,28 @@ auto FunctionLowerer::MemberRefOf(
                 "mir_to_lir: a property of a class another compilation unit "
                 "declares is not yet reachable on this backend");
           },
-          [](const mir::ComponentTarget&) -> diag::Result<lir::MemberRef> {
-            // A structural product's component is a position in a value rather
-            // than a slot in member-bearing storage, so no member names it.
-            return Unsupported(
-                "mir_to_lir: binding part of a value rather than writing it is "
-                "not yet lowerable to LIR");
-          }},
+      },
       field.field);
 }
 
-// Which step of a value aggregate a call names, and nothing for a call that
-// names none. It is the entry's own property, so a read and the write that
-// descends through the same step agree without either listing the entries.
-auto AggregateStepOf(const mir::CallExpr& call)
-    -> std::optional<support::AggregateStep> {
+// The value a call reaches its part out of, and nothing where the call reaches
+// no part. A step of a descent is a call whose entry answers with the part
+// rather than with the part's value, so both questions -- whether this is one,
+// and what it descends through -- are answered by the entry's own declaration
+// and the call's receiver. Reaching further would be asking where a write
+// through it ultimately lands, a different question.
+auto PartReceiver(const mir::CallExpr& call) -> std::optional<mir::ExprId> {
   const std::optional<support::BuiltinFn> fn = mir::DirectBuiltinFn(call);
-  return fn.has_value() ? support::RuntimeEntryOf(*fn).aggregate_step
-                        : std::nullopt;
+  if (!fn.has_value() || !support::RuntimeEntryOf(*fn).answers_with_the_part) {
+    return std::nullopt;
+  }
+  return mir::CalleeReceiver(call.callee);
 }
 
-// The value a step reaches its part out of, and nothing where the expression
-// names storage instead. Every expression that reaches into a value is an
-// access whose receiver holds the part it reaches, so both questions -- whether
-// it is one, and what it descends through -- are answered by that node alone;
-// reaching further would be asking where a write through it ultimately lands, a
-// different question.
 auto ValuePartReceiver(const mir::Block& block, mir::ExprId step)
     -> std::optional<mir::ExprId> {
-  const mir::ExprData& data = block.exprs.Get(step).data;
-  if (const auto* field = std::get_if<mir::FieldAccessExpr>(&data)) {
-    return std::holds_alternative<mir::ComponentTarget>(field->field)
-               ? std::optional{field->receiver}
-               : std::nullopt;
-  }
-  if (const auto* member = std::get_if<mir::UnionMemberExpr>(&data)) {
-    return member->union_value;
-  }
-  const auto* call = std::get_if<mir::CallExpr>(&data);
-  if (call == nullptr) {
-    return std::nullopt;
-  }
-  if (!AggregateStepOf(*call).has_value()) {
-    return std::nullopt;
-  }
-  return mir::CalleeReceiver(call->callee);
+  const auto* call = std::get_if<mir::CallExpr>(&block.exprs.Get(step).data);
+  return call == nullptr ? std::nullopt : PartReceiver(*call);
 }
 
 // Whether an expression names a part of a value rather than storage.
@@ -1770,9 +1761,8 @@ auto FunctionLowerer::LowerCellPlace(
   // Every other referent holds its value somewhere a reference cannot name. A
   // suspending body's local lives in a cell of the execution's own store,
   // reached by that cell's calls rather than by an address; a member that is
-  // not a signal
-  // owns its value rather than a cell holding it; and a part of a value
-  // aggregate is no independent storage at all.
+  // not a signal owns its value rather than a cell holding it; and a part of a
+  // value aggregate is no independent storage at all.
   return Unsupported(
       "mir_to_lir: storage of this kind is not yet lendable by reference");
 }
@@ -1780,21 +1770,30 @@ auto FunctionLowerer::LowerCellPlace(
 auto FunctionLowerer::LowerCall(
     const mir::Block& block, const mir::CallExpr& call, mir::TypeId type)
     -> diag::Result<lir::Operand> {
-  // A receiver-mutating method on a value is not an in-place call: value
-  // semantics forbid changing what a copy of the receiver would share, so it is
-  // a functional operation whose result is stored back through the owner.
+  // A method that changes the object it is applied to answers with the changed
+  // object: the generated side holds a value as a handle a copy may alias, so
+  // there is nothing to change in place.
   if (const auto fn = mir::DirectBuiltinFn(call);
       fn.has_value() && support::RuntimeEntryOf(*fn).mutates_receiver) {
     return LowerMutatingCall(block, call, *fn, type);
   }
 
-  // A part of a value is reached by a step naming which subvalue it is, and one
-  // step serves both directions: reading a part is the extract a write through
-  // the same step already descends by. The aggregate crosses as a handle a copy
-  // may alias, so a part of it is no storage a load could name.
-  if (const std::optional<support::AggregateStep> step =
-          AggregateStepOf(call)) {
-    return LowerValuePartRead(block, call, *step, type);
+  // A call that answers with the part has nothing to reach here -- the value
+  // holds no interior -- so in a value position it is the extraction, and in a
+  // target position it is the rebuild the write does.
+  if (const std::optional<mir::ExprId> owner = PartReceiver(call)) {
+    auto whole = LowerExpr(block, *owner);
+    if (!whole) {
+      return std::unexpected(std::move(whole.error()));
+    }
+    auto selector = LowerValuePartSelector(block, call);
+    if (!selector) {
+      return std::unexpected(std::move(selector.error()));
+    }
+    return Emit(
+        unit_->TranslateType(type),
+        lir::AggregateExtractInstr{
+            .aggregate = *std::move(whole), .selector = *std::move(selector)});
   }
 
   // A reference is the address of the cell it binds, so building one is the
@@ -1989,10 +1988,13 @@ auto FunctionLowerer::LowerCompoundOperator(
 auto FunctionLowerer::LowerAssign(
     const mir::Block& block, const mir::AssignExpr& assign)
     -> diag::Result<lir::Operand> {
-  // A target that reaches into a value aggregate -- a product component, a
-  // value-container element, or any composition of them -- is not a place here:
-  // the aggregate crosses as an opaque handle a copy may alias, so the write is
-  // a functional whole-value update stored back through whatever owns it. What
+  const mir::TypeId target_type = block.exprs.Get(assign.target).type;
+  const lir::TypeId type = unit_->TranslateType(target_type);
+
+  // A target that reaches into a value aggregate -- a positional part, a
+  // container element, or any composition of them -- is not a place here: the
+  // aggregate crosses as an opaque handle a copy may alias, so the write is a
+  // functional whole-value update stored back through whatever owns it. What
   // the update stores is the owner's whole value; the assignment's own value is
   // the part it wrote.
   if (ReachesIntoValue(block, assign.target)) {
@@ -2022,9 +2024,6 @@ auto FunctionLowerer::LowerAssign(
     }
     return *assigned;
   }
-
-  const mir::TypeId target_type = block.exprs.Get(assign.target).type;
-  const lir::TypeId type = unit_->TranslateType(target_type);
 
   // An activation value is written through its handle, not a place: a compound
   // assignment reads the old value out of the cell, combines, and overwrites.
@@ -2072,6 +2071,16 @@ auto FunctionLowerer::LowerAssign(
 auto FunctionLowerer::WriteWholeValue(
     const mir::Block& block, mir::ExprId id, lir::Operand value)
     -> diag::Result<lir::Operand> {
+  // The whole of what a reaching call names is still a part of the value above
+  // it, so putting a value there is the same rebuild any other write to a part
+  // is, with the value already in hand rather than computed at the leaf.
+  if (ReachesIntoValue(block, id)) {
+    return LowerValuePartUpdate(
+        block, id,
+        [&](const LeafReader&, lir::TypeId) -> diag::Result<lir::Operand> {
+          return value;
+        });
+  }
   if (const std::optional<lir::Operand> handle =
           ActivationValueHandleForTarget(block, id)) {
     return StoreActivationValue(
@@ -2086,73 +2095,40 @@ auto FunctionLowerer::WriteWholeValue(
 }
 
 auto FunctionLowerer::LowerValuePartSelector(
-    const mir::Block& block, mir::ExprId step)
+    const mir::Block& block, const mir::CallExpr& call)
     -> diag::Result<lir::AggregateSelector> {
-  const mir::ExprData& data = block.exprs.Get(step).data;
-  if (const auto* field = std::get_if<mir::FieldAccessExpr>(&data)) {
-    return lir::AggregateSelector{lir::Component{
-        .index = std::get<mir::ComponentTarget>(field->field).index}};
+  const auto& direct = std::get<mir::Direct>(call.callee);
+  const support::BuiltinFn fn = std::get<support::BuiltinFn>(direct.target);
+  if (fn == support::BuiltinFn::kPartRef) {
+    if (!direct.position.has_value()) {
+      throw InternalError(
+          "mir_to_lir: an entry reaching a part by its position names that "
+          "position, and this call names none -- please report this as a bug");
+    }
+    return lir::AggregateSelector{lir::Part{.index = *direct.position}};
   }
-  if (const auto* member = std::get_if<mir::UnionMemberExpr>(&data)) {
-    return lir::AggregateSelector{lir::UnionMember{.index = member->index}};
+  std::vector<lir::Operand> operands;
+  operands.reserve(call.arguments.size());
+  for (const mir::ExprId argument : call.arguments) {
+    auto operand = LowerExpr(block, argument);
+    if (!operand) {
+      return std::unexpected(std::move(operand.error()));
+    }
+    operands.push_back(*std::move(operand));
   }
-  const auto& call = std::get<mir::CallExpr>(data);
-  const std::optional<support::AggregateStep> step_kind = AggregateStepOf(call);
-  if (!step_kind.has_value()) {
-    throw InternalError(
-        "mir_to_lir: a step into a value says which subvalue it names, and "
-        "this call says none -- please report this as a bug");
+  if (fn == support::BuiltinFn::kSliceRef) {
+    return lir::AggregateSelector{
+        lir::ContainerSlice{.operands = std::move(operands)}};
   }
-  return LowerContainerSelector(block, call, *step_kind);
-}
-
-auto FunctionLowerer::LowerContainerSelector(
-    const mir::Block& block, const mir::CallExpr& call,
-    support::AggregateStep step) -> diag::Result<lir::AggregateSelector> {
-  auto operands = LowerEachExpr(block, call.arguments);
-  if (!operands) {
-    return std::unexpected(std::move(operands.error()));
-  }
-  switch (step) {
-    case support::AggregateStep::kCoordinate:
-      return lir::AggregateSelector{
-          lir::ContainerElement{.operands = *std::move(operands)}};
-    case support::AggregateStep::kWindow:
-      return lir::AggregateSelector{
-          lir::ContainerSlice{.operands = *std::move(operands)}};
-  }
-  throw InternalError("mir_to_lir: unknown value-aggregate step");
-}
-
-auto FunctionLowerer::LowerValuePartRead(
-    const mir::Block& block, const mir::CallExpr& call,
-    support::AggregateStep step, mir::TypeId type)
-    -> diag::Result<lir::Operand> {
-  const std::optional<mir::ExprId> receiver = mir::CalleeReceiver(call.callee);
-  if (!receiver.has_value()) {
-    throw InternalError(
-        "mir_to_lir: a step into a value names the value it reaches into, and "
-        "this call names none -- please report this as a bug");
-  }
-  auto aggregate = LowerExpr(block, *receiver);
-  if (!aggregate) {
-    return std::unexpected(std::move(aggregate.error()));
-  }
-  auto selector = LowerContainerSelector(block, call, step);
-  if (!selector) {
-    return std::unexpected(std::move(selector.error()));
-  }
-  return Emit(
-      unit_->TranslateType(type), lir::AggregateExtractInstr{
-                                      .aggregate = *std::move(aggregate),
-                                      .selector = *std::move(selector)});
+  return lir::AggregateSelector{
+      lir::ContainerElement{.operands = std::move(operands)}};
 }
 
 auto FunctionLowerer::LowerValuePartUpdate(
     const mir::Block& block, mir::ExprId target, const LeafTransform& make_leaf)
     -> diag::Result<lir::Operand> {
   // The steps the write descends, outermost first, and the owner they bottom
-  // out in. Composition is the operand chain, so the walk is the path.
+  // out in. Composition is the receiver chain, so the walk is the path.
   std::vector<mir::ExprId> steps;
   mir::ExprId owner = target;
   while (const std::optional<mir::ExprId> receiver =
@@ -2169,7 +2145,8 @@ auto FunctionLowerer::LowerValuePartUpdate(
   std::vector<lir::AggregateSelector> selectors;
   selectors.reserve(steps.size());
   for (const mir::ExprId step : steps) {
-    auto selector = LowerValuePartSelector(block, step);
+    auto selector = LowerValuePartSelector(
+        block, std::get<mir::CallExpr>(block.exprs.Get(step).data));
     if (!selector) {
       return std::unexpected(std::move(selector.error()));
     }
@@ -2210,7 +2187,7 @@ auto FunctionLowerer::LowerValuePartUpdate(
     return std::unexpected(std::move(leaf_value.error()));
   }
 
-  // Rebuild the whole value from the written part outward.
+  // The whole value again, rebuilt outward from the part just written.
   lir::Operand rebuilt = *std::move(leaf_value);
   for (std::size_t depth = steps.size(); depth-- > 0;) {
     rebuilt = Emit(
@@ -2270,10 +2247,9 @@ auto FunctionLowerer::LowerMutatingCall(
   }
 
   lir::Operand updated = Emit(
-      container_type,
-      lir::AggregateExtractInstr{
-          .aggregate = completion,
-          .selector = lir::Component{.index = kUpdatedReceiver}});
+      container_type, lir::AggregateExtractInstr{
+                          .aggregate = completion,
+                          .selector = lir::Part{.index = kUpdatedReceiver}});
   auto stored = WriteWholeValue(block, *receiver, std::move(updated));
   if (!stored) {
     return std::unexpected(std::move(stored.error()));
@@ -2282,7 +2258,7 @@ auto FunctionLowerer::LowerMutatingCall(
       unit_->TranslateType(type),
       lir::AggregateExtractInstr{
           .aggregate = std::move(completion),
-          .selector = lir::Component{.index = kMutatingCallResult}});
+          .selector = lir::Part{.index = kMutatingCallResult}});
 }
 
 auto FunctionLowerer::LowerIncDec(
@@ -2521,36 +2497,8 @@ auto FunctionLowerer::LowerExpr(const mir::Block& block, mir::ExprId id)
           // component is not addressable, so it is extracted from the product's
           // value instead -- the same read either way, over a receiver that is
           // storage in one case and a value in the other.
-          [&](const mir::FieldAccessExpr& field) -> diag::Result<lir::Operand> {
-            const auto* component =
-                std::get_if<mir::ComponentTarget>(&field.field);
-            if (component == nullptr) {
-              return ReadPlace(block, id, unit_->TranslateType(type));
-            }
-            auto receiver = LowerExpr(block, field.receiver);
-            if (!receiver) {
-              return receiver;
-            }
-            return Emit(
-                unit_->TranslateType(type),
-                lir::AggregateExtractInstr{
-                    .aggregate = *std::move(receiver),
-                    .selector = lir::Component{.index = component->index}});
-          },
-          // Reaching the live member of an active-member value extracts it from
-          // the value, as a product's component is. What reaching a member that
-          // is not live answers with is the value's own semantics, so the entry
-          // its type names is what carries the difference.
-          [&](const mir::UnionMemberExpr& m) -> diag::Result<lir::Operand> {
-            auto union_value = LowerExpr(block, m.union_value);
-            if (!union_value) {
-              return union_value;
-            }
-            return Emit(
-                unit_->TranslateType(type),
-                lir::AggregateExtractInstr{
-                    .aggregate = *std::move(union_value),
-                    .selector = lir::UnionMember{.index = m.index}});
+          [&](const mir::FieldAccessExpr&) -> diag::Result<lir::Operand> {
+            return ReadPlace(block, id, unit_->TranslateType(type));
           },
           [&](const mir::DerefExpr&) -> diag::Result<lir::Operand> {
             auto place = LowerPlace(block, id);
@@ -2727,30 +2675,6 @@ auto FunctionLowerer::LowerExpr(const mir::Block& block, mir::ExprId id)
             // An await of nothing yields nothing, so what stands here is never
             // read.
             return *park;
-          },
-          [&](const mir::UnionExpr& u) -> diag::Result<lir::Operand> {
-            auto value = LowerExpr(block, u.value);
-            if (!value) {
-              return value;
-            }
-            return Emit(
-                unit_->TranslateType(type),
-                lir::UnionInstr{.index = u.index, .value = *std::move(value)});
-          },
-          [&](const mir::TaggedIsExpr& g) -> diag::Result<lir::Operand> {
-            // The non-throwing guard a pattern match tests: whether the value's
-            // active tag is the one the pattern names (LRM 12.6). The runtime
-            // holds the comparison, so this is one predicate, not a tag read
-            // and a compare against a constant.
-            auto union_value = LowerExpr(block, g.union_value);
-            if (!union_value) {
-              return union_value;
-            }
-            return Emit(
-                unit_->MachineBoolType(),
-                lir::TagTestInstr{
-                    .aggregate = *std::move(union_value),
-                    .index = g.tag_index});
           },
           [](const mir::FunctionCastExpr&) -> diag::Result<lir::Operand> {
             return Unsupported(
