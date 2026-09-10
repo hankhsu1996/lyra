@@ -24,6 +24,7 @@
 #include "lyra/lowering/hir_to_mir/statement/flow.hpp"
 #include "lyra/lowering/hir_to_mir/statement/fork_join.hpp"
 #include "lyra/lowering/hir_to_mir/statement/loops.hpp"
+#include "lyra/lowering/hir_to_mir/statement/procedural_continuous.hpp"
 #include "lyra/lowering/hir_to_mir/statement/timing.hpp"
 #include "lyra/lowering/hir_to_mir/walk_frame.hpp"
 #include "lyra/mir/compilation_unit.hpp"
@@ -118,6 +119,14 @@ auto ProcessLowerer::LowerStmt(const hir::Stmt& stmt, WalkFrame frame)
           },
           [&](const hir::DisableStmt& d) {
             return LowerDisableStmt(*this, frame, stmt.label, d);
+          },
+          [&](const hir::ProceduralContinuousAssignStmt& pca) {
+            return LowerProceduralContinuousAssignStmt(
+                *this, frame, stmt.label, pca);
+          },
+          [&](const hir::ProceduralContinuousEndStmt& pce) {
+            return LowerProceduralContinuousEndStmt(
+                *this, frame, stmt.label, pce);
           },
       },
       stmt.data);

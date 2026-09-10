@@ -6,7 +6,11 @@
 
 ## Status
 
-Accepted
+Accepted. Decision 7's "a net is only ever driven" is refined by
+[procedural-continuous-assignment](procedural-continuous-assignment.md): a `force` displaces what
+the resolution produces without attaching a driver, so the driver topology this record fixes stays
+immutable after Seal and the single-driver count stays meaningful, while what the net shows is not
+always the fold.
 
 ## Why this decision matters
 

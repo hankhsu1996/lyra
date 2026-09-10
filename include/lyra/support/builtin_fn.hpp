@@ -242,6 +242,14 @@ enum class BuiltinFn : std::uint16_t {
   // Attaching a driver to a net (LRM 6.5): a `ResolvedNet` method returning the
   // driver handle the drive capability is reached through.
   kAttachDriver,
+  // Putting a cell under a procedural continuous assignment and taking it back
+  // out (LRM 10.6). Beginning one answers with the generation its evaluation
+  // carries; driving states what that evaluation produced and answers whether
+  // it is still the one in effect, which is how an evaluation superseded by a
+  // later takeover, or ended by a `deassign` or `release`, learns to stop.
+  kBeginTakeover,
+  kDriveTakeover,
+  kEndTakeover,
   // The ambient `RuntimeEffects` accessor. Zero-argument free function in
   // `lyra::runtime`. Every body kind -- module process, class method, package
   // function, class static method -- reaches the runtime through this,

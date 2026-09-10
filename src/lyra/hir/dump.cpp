@@ -667,6 +667,17 @@ class HirDumper {
         control);
   }
 
+  static auto FormatTakeoverLevel(support::TakeoverLevel level)
+      -> std::string_view {
+    switch (level) {
+      case support::TakeoverLevel::kAssign:
+        return "assign";
+      case support::TakeoverLevel::kForce:
+        return "force";
+    }
+    throw InternalError("FormatTakeoverLevel: unknown takeover level");
+  }
+
   static auto FormatEffectTiming(const EffectTiming& timing) -> std::string {
     return std::visit(
         Overloaded{
@@ -2302,6 +2313,31 @@ class HirDumper {
               Line(
                   std::format(
                       "Stmt[{}] DisableStmt target={}", id.value, target));
+            },
+            [&](const ProceduralContinuousAssignStmt& pca) {
+              std::string sens = "sensitivity=[";
+              for (std::size_t i = 0; i < pca.sensitivity_list.size(); ++i) {
+                if (i != 0) sens += ", ";
+                const auto& r = pca.sensitivity_list[i];
+                sens += std::format(
+                    "{{{} bits={}}}", FormatValueTarget(r.ref),
+                    FormatFootprint(r.footprint));
+              }
+              sens += "]";
+              Line(
+                  std::format(
+                      "Stmt[{}] ProceduralContinuousAssignStmt level={} "
+                      "target=Expr[{}] source=Expr[{}] {}",
+                      id.value, FormatTakeoverLevel(pca.level),
+                      pca.target.value, pca.source.value, sens));
+            },
+            [&](const ProceduralContinuousEndStmt& pce) {
+              Line(
+                  std::format(
+                      "Stmt[{}] ProceduralContinuousEndStmt level={} "
+                      "target=Expr[{}]",
+                      id.value, FormatTakeoverLevel(pce.level),
+                      pce.target.value));
             },
         },
         s.data);

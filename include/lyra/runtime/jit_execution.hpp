@@ -527,6 +527,15 @@ void lyra_rt_packed_cell_initialize(void* cell, const void* prototype);
 void lyra_rt_packed_cell_set(void* cell, const void* value);
 void lyra_rt_packed_cell_arm_sampling(void* cell);
 auto lyra_rt_packed_cell_sampled_load(void* cell) -> void*;
+// Putting a cell under a procedural continuous assignment and taking it back
+// out (LRM 10.6). Beginning one answers with the generation the evaluation
+// driving it carries; driving answers whether that evaluation is still the one
+// in effect, which is what stops one a later takeover superseded.
+auto lyra_rt_packed_cell_begin_takeover(void* cell, const void* level) -> void*;
+auto lyra_rt_packed_cell_drive_takeover(
+    void* cell, const void* level, const void* generation, const void* value)
+    -> bool;
+void lyra_rt_packed_cell_end_takeover(void* cell, const void* level);
 auto lyra_rt_string_cell_alloc() -> void*;
 auto lyra_rt_string_cell_get(void* cell) -> void*;
 void lyra_rt_string_cell_initialize(void* cell, const void* prototype);
@@ -1164,6 +1173,14 @@ auto lyra_rt_unpackedarray_value_cell_load(const void* cell) -> void*;
 // valid for a net.
 auto lyra_rt_packed_net_get(void* net) -> void*;
 void lyra_rt_packed_net_initialize(void* net, const void* prototype);
+// Forcing a net and releasing it (LRM 10.6.2). What these change is the value
+// the net shows; its drivers go on updating their contributions underneath,
+// which is what the net answers with again once it is released.
+auto lyra_rt_packed_net_begin_takeover(void* net, const void* level) -> void*;
+auto lyra_rt_packed_net_drive_takeover(
+    void* net, const void* level, const void* generation, const void* value)
+    -> bool;
+void lyra_rt_packed_net_end_takeover(void* net, const void* level);
 auto lyra_rt_packed_attach_driver(void* net) -> void*;
 auto lyra_rt_packed_driver_get(void* driver) -> void*;
 void lyra_rt_packed_driver_set(void* driver, const void* value);

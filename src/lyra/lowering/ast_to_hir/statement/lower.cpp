@@ -25,6 +25,7 @@
 #include "lyra/lowering/ast_to_hir/statement/loops.hpp"
 #include "lyra/lowering/ast_to_hir/statement/timing.hpp"
 #include "lyra/lowering/ast_to_hir/unit_lowerer.hpp"
+#include "lyra/support/takeover_level.hpp"
 
 namespace lyra::lowering::ast_to_hir {
 
@@ -193,6 +194,61 @@ auto LowerDisableStmt(
       .span = span};
 }
 
+// LRM 10.6 `assign` and `force`. The keyword decides only which level the
+// takeover occupies; what it names and what it evaluates are the same in both,
+// and slang has already held the target to the form its clause allows. The
+// standard says the source is reevaluated exactly as a continuous assignment's
+// is, so the read set of that expression is what the takeover follows while it
+// is in effect.
+auto LowerProceduralContinuousAssignStmt(
+    ProcessLowerer& proc, WalkFrame frame,
+    const slang::ast::ProceduralAssignStatement& pa, diag::SourceSpan span)
+    -> diag::Result<hir::Stmt> {
+  if (pa.assignment.kind != slang::ast::ExpressionKind::Assignment) {
+    return diag::Fail(
+        span, diag::DiagCode::kUnsupportedStatementForm,
+        "this procedural continuous assignment form is not yet supported "
+        "(LRM 10.6)");
+  }
+  const auto& assign = pa.assignment.as<slang::ast::AssignmentExpression>();
+  auto target_or = proc.LowerExpr(assign.left(), frame);
+  if (!target_or) return std::unexpected(std::move(target_or.error()));
+  auto source_or = proc.LowerExpr(assign.right(), frame);
+  if (!source_or) return std::unexpected(std::move(source_or.error()));
+  const auto& reads = proc.Owner().Sensitivity().AnalyzeReads(
+      assign.right(), proc.ContainingSymbol());
+  auto sensitivity = proc.Owner().TranslateSensitivityReads(reads, frame);
+  if (!sensitivity) return std::unexpected(std::move(sensitivity.error()));
+  return hir::Stmt{
+      .label = std::nullopt,
+      .data =
+          hir::ProceduralContinuousAssignStmt{
+              .level = pa.isForce ? support::TakeoverLevel::kForce
+                                  : support::TakeoverLevel::kAssign,
+              .target = frame.Exprs().Add(*std::move(target_or)),
+              .source = frame.Exprs().Add(*std::move(source_or)),
+              .sensitivity_list = *std::move(sensitivity)},
+      .span = span};
+}
+
+// LRM 10.6 `deassign` and `release`. Each ends the level its partner keyword
+// installed, and names only the target.
+auto LowerProceduralContinuousEndStmt(
+    ProcessLowerer& proc, WalkFrame frame,
+    const slang::ast::ProceduralDeassignStatement& pd, diag::SourceSpan span)
+    -> diag::Result<hir::Stmt> {
+  auto target_or = proc.LowerExpr(pd.lvalue, frame);
+  if (!target_or) return std::unexpected(std::move(target_or.error()));
+  return hir::Stmt{
+      .label = std::nullopt,
+      .data =
+          hir::ProceduralContinuousEndStmt{
+              .level = pd.isRelease ? support::TakeoverLevel::kForce
+                                    : support::TakeoverLevel::kAssign,
+              .target = frame.Exprs().Add(*std::move(target_or))},
+      .span = span};
+}
+
 // LRM 13.4.1 `return [expr];`. A non-void function carries the returned
 // expression; void functions and tasks use the bare form, leaving `value`
 // absent.
@@ -340,11 +396,49 @@ auto LowerStatement(
           *std::move(assertion_or));
     }
 
-    default:
+    case slang::ast::StatementKind::ProceduralAssign:
+      return LowerProceduralContinuousAssignStmt(
+          proc, frame, stmt.as<slang::ast::ProceduralAssignStatement>(), span);
+
+    case slang::ast::StatementKind::ProceduralDeassign:
+      return LowerProceduralContinuousEndStmt(
+          proc, frame, stmt.as<slang::ast::ProceduralDeassignStatement>(),
+          span);
+
+    case slang::ast::StatementKind::WaitOrder:
       return diag::Fail(
           span, diag::DiagCode::kUnsupportedStatementForm,
-          "this statement form is not supported yet");
+          "`wait_order` is not yet supported (LRM 15.5.4)");
+
+    // LRM 17 checkers observe the design and never drive it, so a design with
+    // them removed behaves identically and the policy may drop them whole.
+    // Without it they are reported, so no design is quietly reduced to one that
+    // checks nothing.
+    case slang::ast::StatementKind::ProceduralChecker:
+      if (support::ElidesAssertions(proc.Owner().AssertionPolicy())) {
+        return LowerEmptyStmt(span);
+      }
+      return diag::Fail(
+          span, diag::DiagCode::kUnsupportedStatementForm,
+          "a checker instantiation is not supported; pass --assertions skip "
+          "to elide it");
+
+    case slang::ast::StatementKind::RandCase:
+      return diag::Fail(
+          span, diag::DiagCode::kUnsupportedStatementForm,
+          "`randcase` is not yet supported (LRM 18.16)");
+
+    case slang::ast::StatementKind::RandSequence:
+      return diag::Fail(
+          span, diag::DiagCode::kUnsupportedStatementForm,
+          "`randsequence` is not yet supported (LRM 18.17)");
+
+    // Lowering runs only over an AST the front end accepted, so a statement it
+    // could not build never reaches here.
+    case slang::ast::StatementKind::Invalid:
+      throw InternalError("LowerStatement: an invalid statement was lowered");
   }
+  throw InternalError("LowerStatement: unknown slang StatementKind");
 }
 
 // Class method wrapper. The pass-class entry delegates to the free-function

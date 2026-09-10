@@ -909,6 +909,54 @@ struct Expr {
       .type = driver_type};
 }
 
+// `cell.BeginTakeover(level)` -- puts a cell under a procedural continuous
+// assignment, superseding whatever held that level, and yields the generation
+// the new evaluation carries (LRM 10.6).
+[[nodiscard]] inline auto MakeBeginTakeoverCallExpr(
+    ExprId cell, ExprId level, TypeId generation_type) -> Expr {
+  return Expr{
+      .data =
+          CallExpr{
+              .callee =
+                  Direct{
+                      .target = support::BuiltinFn::kBeginTakeover,
+                      .receiver = cell},
+              .arguments = {level}},
+      .type = generation_type};
+}
+
+// `cell.DriveTakeover(level, generation, value)` -- states what a takeover's
+// evaluation produced, and yields whether that evaluation is still the one in
+// effect (LRM 10.6).
+[[nodiscard]] inline auto MakeDriveTakeoverCallExpr(
+    ExprId cell, ExprId level, ExprId generation, ExprId value,
+    TypeId bool_type) -> Expr {
+  return Expr{
+      .data =
+          CallExpr{
+              .callee =
+                  Direct{
+                      .target = support::BuiltinFn::kDriveTakeover,
+                      .receiver = cell},
+              .arguments = {level, generation, value}},
+      .type = bool_type};
+}
+
+// `cell.EndTakeover(level)` -- takes a cell back out of the procedural
+// continuous assignment at `level` (LRM 10.6).
+[[nodiscard]] inline auto MakeEndTakeoverCallExpr(
+    ExprId cell, ExprId level, TypeId void_type) -> Expr {
+  return Expr{
+      .data =
+          CallExpr{
+              .callee =
+                  Direct{
+                      .target = support::BuiltinFn::kEndTakeover,
+                      .receiver = cell},
+              .arguments = {level}},
+      .type = void_type};
+}
+
 // `&place` -- the address-of dual of `DerefExpr`. `pointer_type` must be
 // `PointerType{ kBorrowed, pointee = <operand expr's type> }`; the caller
 // supplies it so this helper need not look up the operand's type.

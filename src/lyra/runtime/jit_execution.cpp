@@ -1453,6 +1453,25 @@ auto lyra_rt_packed_cell_sampled_load(void* cell) -> void* {
   return Own(static_cast<Var<PackedArray>*>(cell)->SampledGet());
 }
 
+auto lyra_rt_packed_cell_begin_takeover(void* cell, const void* level)
+    -> void* {
+  return Own(
+      static_cast<Var<PackedArray>*>(cell)->BeginTakeover(
+          Read<PackedArray>(level)));
+}
+
+auto lyra_rt_packed_cell_drive_takeover(
+    void* cell, const void* level, const void* generation, const void* value)
+    -> bool {
+  return static_cast<Var<PackedArray>*>(cell)->DriveTakeover(
+      Read<PackedArray>(level), Read<PackedArray>(generation),
+      Read<PackedArray>(value));
+}
+
+void lyra_rt_packed_cell_end_takeover(void* cell, const void* level) {
+  static_cast<Var<PackedArray>*>(cell)->EndTakeover(Read<PackedArray>(level));
+}
+
 auto lyra_rt_string_cell_alloc() -> void* {
   return GeneratedCallScope::Current().Arena().New<Var<String>>();
 }
@@ -3379,6 +3398,22 @@ auto lyra_rt_packed_net_get(void* net) -> void* {
 
 void lyra_rt_packed_net_initialize(void* net, const void* prototype) {
   NetOf<PackedArray>(net).Initialize(Read<PackedArray>(prototype));
+}
+
+auto lyra_rt_packed_net_begin_takeover(void* net, const void* level) -> void* {
+  return Own(NetOf<PackedArray>(net).BeginTakeover(Read<PackedArray>(level)));
+}
+
+auto lyra_rt_packed_net_drive_takeover(
+    void* net, const void* level, const void* generation, const void* value)
+    -> bool {
+  return NetOf<PackedArray>(net).DriveTakeover(
+      Read<PackedArray>(level), Read<PackedArray>(generation),
+      Read<PackedArray>(value));
+}
+
+void lyra_rt_packed_net_end_takeover(void* net, const void* level) {
+  NetOf<PackedArray>(net).EndTakeover(Read<PackedArray>(level));
 }
 
 auto lyra_rt_packed_attach_driver(void* net) -> void* {
