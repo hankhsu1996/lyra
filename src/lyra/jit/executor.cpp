@@ -130,6 +130,7 @@ enum class AbiKind : std::uint8_t {
   kVoid,
   kPointer,
   kBool,
+  kInt8,
   kInt32,
   kInt64,
   kFloat,
@@ -159,6 +160,9 @@ constexpr auto AbiKindOfCpp() -> AbiKind {
     return AbiKind::kInt64;
   } else if constexpr (std::is_same_v<T, std::uint32_t>) {
     return AbiKind::kInt32;
+  } else if constexpr (
+      std::is_same_v<T, std::int8_t> || std::is_same_v<T, std::uint8_t>) {
+    return AbiKind::kInt8;
   } else if constexpr (std::is_same_v<T, float>) {
     return AbiKind::kFloat;
   } else if constexpr (std::is_same_v<T, double>) {
@@ -197,6 +201,9 @@ auto AbiKindOfLlvm(llvm::Type* type) -> AbiKind {
   if (type->isIntegerTy(1)) {
     return AbiKind::kBool;
   }
+  if (type->isIntegerTy(8)) {
+    return AbiKind::kInt8;
+  }
   if (type->isIntegerTy(32)) {
     return AbiKind::kInt32;
   }
@@ -223,6 +230,8 @@ auto AbiKindName(AbiKind kind) -> std::string_view {
       return "pointer";
     case AbiKind::kBool:
       return "bool";
+    case AbiKind::kInt8:
+      return "int8";
     case AbiKind::kInt32:
       return "int32";
     case AbiKind::kInt64:
@@ -555,7 +564,7 @@ auto DefineRuntimeAbi(llvm::orc::LLJIT& jit)
   add("lyra_rt_string_from_packed_array", &lyra_rt_string_from_packed_array);
   add("lyra_rt_string_from_byte_array", &lyra_rt_string_from_byte_array);
   add("lyra_rt_string_count_bits", &lyra_rt_string_count_bits);
-  add("lyra_rt_string_string_cstr", &lyra_rt_string_string_cstr);
+  add("lyra_rt_string_cstr", &lyra_rt_string_cstr);
   add("lyra_rt_string_len", &lyra_rt_string_len);
   add("lyra_rt_string_getc", &lyra_rt_string_getc);
   add("lyra_rt_string_element", &lyra_rt_string_element);
@@ -593,6 +602,20 @@ auto DefineRuntimeAbi(llvm::orc::LLJIT& jit)
       &lyra_rt_packed_make_print_value_item);
   add("lyra_rt_string_make_print_value_item",
       &lyra_rt_string_make_print_value_item);
+  add("lyra_rt_format_runtime", &lyra_rt_format_runtime);
+  add("lyra_rt_packed_make_format_arg", &lyra_rt_packed_make_format_arg);
+  add("lyra_rt_string_make_format_arg", &lyra_rt_string_make_format_arg);
+  add("lyra_rt_make_dpi_bit_buffer", &lyra_rt_make_dpi_bit_buffer);
+  add("lyra_rt_make_dpi_logic_buffer", &lyra_rt_make_dpi_logic_buffer);
+  add("lyra_rt_dpi_bit_buffer_data", &lyra_rt_dpi_bit_buffer_data);
+  add("lyra_rt_dpi_logic_buffer_data", &lyra_rt_dpi_logic_buffer_data);
+  add("lyra_rt_read_canonical_bit_vec", &lyra_rt_read_canonical_bit_vec);
+  add("lyra_rt_read_canonical_logic_vec", &lyra_rt_read_canonical_logic_vec);
+  add("lyra_rt_to_sv_logic", &lyra_rt_to_sv_logic);
+  add("lyra_rt_from_sv_logic", &lyra_rt_from_sv_logic);
+  add("lyra_rt_make_dpi_open_array", &lyra_rt_make_dpi_open_array);
+  add("lyra_rt_dpi_open_array_handle", &lyra_rt_dpi_open_array_handle);
+  add("lyra_rt_dpi_open_array_value", &lyra_rt_dpi_open_array_value);
   add("lyra_rt_real_add", &lyra_rt_real_add);
   add("lyra_rt_real_sub", &lyra_rt_real_sub);
   add("lyra_rt_real_mul", &lyra_rt_real_mul);
@@ -643,6 +666,7 @@ auto DefineRuntimeAbi(llvm::orc::LLJIT& jit)
   add("lyra_rt_real_value_cell_load", &lyra_rt_real_value_cell_load);
   add("lyra_rt_real_make_print_value_item",
       &lyra_rt_real_make_print_value_item);
+  add("lyra_rt_real_make_format_arg", &lyra_rt_real_make_format_arg);
   add("lyra_rt_shortreal_add", &lyra_rt_shortreal_add);
   add("lyra_rt_shortreal_sub", &lyra_rt_shortreal_sub);
   add("lyra_rt_shortreal_mul", &lyra_rt_shortreal_mul);
@@ -673,10 +697,16 @@ auto DefineRuntimeAbi(llvm::orc::LLJIT& jit)
   add("lyra_rt_shortreal_value_cell_load", &lyra_rt_shortreal_value_cell_load);
   add("lyra_rt_shortreal_make_print_value_item",
       &lyra_rt_shortreal_make_print_value_item);
+  add("lyra_rt_shortreal_make_format_arg", &lyra_rt_shortreal_make_format_arg);
   add("lyra_rt_chandle_eq", &lyra_rt_chandle_eq);
   add("lyra_rt_chandle_ne", &lyra_rt_chandle_ne);
   add("lyra_rt_chandle_case_equal", &lyra_rt_chandle_case_equal);
   add("lyra_rt_chandle_to_bool", &lyra_rt_chandle_to_bool);
+  add("lyra_rt_chandle_make", &lyra_rt_chandle_make);
+  add("lyra_rt_chandle_ptr", &lyra_rt_chandle_ptr);
+  add("lyra_rt_chandle_value_cell_alloc", &lyra_rt_chandle_value_cell_alloc);
+  add("lyra_rt_chandle_value_cell_store", &lyra_rt_chandle_value_cell_store);
+  add("lyra_rt_chandle_value_cell_load", &lyra_rt_chandle_value_cell_load);
   add("lyra_rt_managedref_default", &lyra_rt_managedref_default);
   add("lyra_rt_managedref_value_cell_alloc",
       &lyra_rt_managedref_value_cell_alloc);

@@ -67,11 +67,12 @@ ownership, or native in-frame layout) for every value.
 - [x] **The chandle** (LRM 6.14) -- realized on the execution backend as a pointer-like value
       domain: the value is the pointer itself, carried inline rather than behind a handle to a
       runtime-owned object. A chandle defaults to null, assigns from null and from another chandle,
-      takes the equality and case-equality families and the boolean test, and lives in a member slot
-      as a variable of its own. This is the one value domain whose value is the handle itself: it
-      owns nothing, so nothing is lost by carrying it as the bare pointer. A class handle does not
-      share the shape -- it carries a share of ownership beside the address, so it is a value living
-      in storage like every other.
+      takes the equality and case-equality families and the boolean test, lives in a member slot as
+      a variable of its own, and comes into existence from the pointer a foreign call hands back --
+      the only way one ever holds a value, since the language admits no other literal for it. This
+      is the one value domain whose value is the handle itself: it owns nothing, so nothing is lost
+      by carrying it as the bare pointer. A class handle does not share the shape -- it carries a
+      share of ownership beside the address, so it is a value living in storage like every other.
 - [x] **The unpacked struct** (LRM 7.2) -- realized on the execution backend as a product value
       domain: a runtime-owned product that owns its components by value and crosses as an opaque
       handle, so the generated side never inspects a component's representation. It default-
@@ -129,10 +130,13 @@ ownership, or native in-frame layout) for every value.
       and largest index it holds, lives in a member slot as a whole-cell observable signal, and
       crosses a suspension as an activation-frame value. It holds no prototype for an index -- the
       clause gives it no index bounds and no index default -- so an index crosses in the
-      representation the array's declared index type names and the order two indices sit in is read
-      from the indices themselves. A wildcard index (LRM 7.8.1) is refused: its entry is named by
-      the value the index expression denotes rather than by the expression's own bits, and no
-      conversion states that yet.
+      representation its own type names and the order two indices sit in is read from the indices
+      themselves. A wildcard index (LRM 7.8.1) is refused, and reading the order off the indices is
+      why: the clause admits an index of any width and orders the entries by unsigned numerical
+      value with leading zeros removed, so how two of them compare is a rule the container's
+      declaration fixes rather than anything the indices carry. Whoever carries that rule also
+      settles what `item.index` is in a `with` clause over such an array (LRM 7.12.4), which is
+      typed today as the container's declared index type and so as something no value has.
 - [x] **The traversal family** (LRM 7.9.4 -- 7.9.7) -- realized on the execution backend. Each
       answers with the SV int the method reports and the index it visited, which is the probe
       unchanged where the array holds no such neighbour, and the call site stores that index into
@@ -424,7 +428,11 @@ each meets the same lifetime question above.
       value layer's erased half states the net fold its monomorphized half already had, so an
       aggregate is valid as a net's data type on both paths rather than on one.
 
-- [ ] By-pointer DPI-C marshaling (the by-value scalar surface runs; see `dpi.md`).
+- [ ] An open array whose actual is an unpacked array (the packed one runs; see `dpi.md`). Imaging
+      one walks the actual down to its leaves, which a monomorphized array does by instantiating the
+      walk at the element type and an erased one cannot: its elements are type-erased values, so the
+      walk has no leaf type to end at. Formatting an aggregate is the same gap seen from another
+      side, which is why `%p` over a container has no entry either.
 - [x] **A region that consumes a control effect** -- what a named block, a named fork, and a task
       need so that `disable` of one resumes execution after it (LRM 9.6.2). A named procedural block
       runs here whether or not anything disables it, a self-`disable` leaves its own region, and an

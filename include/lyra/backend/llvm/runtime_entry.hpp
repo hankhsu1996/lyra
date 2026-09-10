@@ -39,14 +39,17 @@ auto ValueDomainOf(const lir::CompilationUnit& unit, lir::TypeId type)
 // backend that declared it cannot disagree about how it resolves.
 auto NetResolutionOf(lir::NetResolution resolution) -> support::NetResolution;
 
-// The type a keyed container's declared index is, absent for a container whose
-// coordinates are ordinals its entries already name. An associative array holds
-// no prototype for an index -- LRM 7.8 gives it no index bounds and no index
-// default -- so nothing on the far side could know an index's representation,
-// and the index states it by crossing erased in the representation the
-// container's own declaration names.
-auto DeclaredIndexType(const lir::CompilationUnit& unit, lir::TypeId container)
-    -> std::optional<lir::TypeId>;
+// Whether a coordinate into this container has to say which representation it
+// is in. An associative array holds no prototype for an index -- LRM 7.8 gives
+// it no index bounds and no index default -- so nothing on the far side could
+// know an index's representation and the index states its own; every other
+// container selects by an ordinal its entries already name. Which
+// representation that is stays the coordinate's own answer, never the
+// container's: a wildcard index type (LRM 7.8.1) is a rule about what indices
+// are admitted rather than a value's type, so a container declaring one
+// declares nothing an entry could be named by.
+auto SelectsByStatedIndex(
+    const lir::CompilationUnit& unit, lir::TypeId container) -> bool;
 
 // How this target realizes an instruction or a construction the layer above it
 // states, where that realization is a library call. Nothing outside this target
@@ -90,6 +93,10 @@ enum class RuntimeOp : std::uint8_t {
   kMakePrintLiteralItem,
   kMakePrintValueItem,
   kMakeFormatSpec,
+  kMakeFormatArg,
+  kMakeDpiBitBuffer,
+  kMakeDpiLogicBuffer,
+  kMakeDpiOpenArray,
 };
 
 // What a member slot is for, which two declarations answer differently for a

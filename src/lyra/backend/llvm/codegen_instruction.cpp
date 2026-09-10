@@ -967,27 +967,14 @@ auto CodeGenFunction::LowerTagTest(
       args);
 }
 
-auto CodeGenFunction::CoordinateDomain(lir::TypeId container) const
-    -> diag::Result<std::optional<support::ValueDomain>> {
-  const std::optional<lir::TypeId> index =
-      DeclaredIndexType(module_->Unit(), container);
-  if (!index.has_value()) {
-    return std::nullopt;
-  }
-  auto domain = DomainOf(*index);
-  if (!domain) {
-    return std::unexpected(std::move(domain.error()));
-  }
-  return *domain;
-}
-
 // The domain a value crossing into a positional part states for itself, and
 // nothing where the value it goes into already holds one for that part. A
 // product holds every part at once, so a part conforms to the prototype the
 // product carries and crosses as the bare handle it is; an active-member value
 // holds one part at a time and carries no prototype for the others, so a value
 // replacing one has to say which domain it is in. The coordinate rule one
-// entry over is the same rule over a keyed container.
+// entry over is the same rule over a keyed container, where the coordinate is
+// the value with no prototype waiting for it.
 auto CodeGenFunction::PartDomain(
     lir::TypeId container, base::ComponentIndex position) const
     -> diag::Result<std::optional<support::ValueDomain>> {
@@ -1005,23 +992,24 @@ auto CodeGenFunction::PartDomain(
 auto CodeGenFunction::SelectorArgs(
     lir::TypeId container, const std::vector<lir::Operand>& operands,
     std::vector<llvm::Value*>& shape) -> diag::Result<void> {
-  auto coordinate = CoordinateDomain(container);
-  if (!coordinate) {
-    return std::unexpected(std::move(coordinate.error()));
-  }
+  const bool stated = SelectsByStatedIndex(module_->Unit(), container);
   for (const lir::Operand& operand : operands) {
     auto lowered = LowerOperand(operand);
     if (!lowered) {
       return std::unexpected(std::move(lowered.error()));
     }
-    if (!coordinate->has_value()) {
+    if (!stated) {
       shape.push_back(*lowered);
       continue;
+    }
+    auto domain = DomainOf(OperandType(operand));
+    if (!domain) {
+      return std::unexpected(std::move(domain.error()));
     }
     const std::array<llvm::Value*, 1> box{*lowered};
     shape.push_back(builder_.CreateCall(
         Entry(
-            RuntimeSymbol(**coordinate, RuntimeOp::kValueBox),
+            RuntimeSymbol(*domain, RuntimeOp::kValueBox),
             module_->Types().Ptr(), box),
         box));
   }
@@ -1563,6 +1551,15 @@ auto CodeGenFunction::ConstructionOf(
             "this backend",
             module_->Unit().types.Get(result).KindName()));
   };
+  // An entry named by the representation of the value the construction is built
+  // over, which is the call's first operand.
+  const auto over_operand = [&](RuntimeOp op) -> diag::Result<Construction> {
+    auto domain = DomainOf(OperandType(call.args.at(0)));
+    if (!domain) {
+      return std::unexpected(std::move(domain.error()));
+    }
+    return entry(RuntimeSymbol(*domain, op));
+  };
   const auto real_from_host = [&]() -> diag::Result<Construction> {
     const lir::Type& arg =
         module_->Unit().types.Get(OperandType(call.args.at(0)));
@@ -1580,6 +1577,13 @@ auto CodeGenFunction::ConstructionOf(
           [&](const lir::StringType&) -> diag::Result<Construction> {
             return entry(
                 RuntimeSymbol(support::ValueDomain::kString, RuntimeOp::kMake));
+          },
+          // LRM 6.14: a chandle is a host pointer, so the domain carries its
+          // value inline and what comes into existence is the pointer the
+          // boundary handed back.
+          [&](const lir::ChandleType&) -> diag::Result<Construction> {
+            return entry(RuntimeSymbol(
+                support::ValueDomain::kChandle, RuntimeOp::kMake));
           },
           // A reference comes into existence as the cell it binds, since that
           // is the one storage it can name. The cell is empty until its
@@ -1647,17 +1651,44 @@ auto CodeGenFunction::ConstructionOf(
                 return entry(RuntimeSymbol(RuntimeOp::kMakePackedRange));
               case lir::RuntimeLibraryKind::kPackedType:
                 return entry(RuntimeSymbol(RuntimeOp::kMakePackedType));
-              case lir::RuntimeLibraryKind::kPrintValueItem: {
-                auto domain = DomainOf(OperandType(call.args.at(0)));
-                if (!domain) {
-                  return std::unexpected(std::move(domain.error()));
-                }
-                return entry(
-                    RuntimeSymbol(*domain, RuntimeOp::kMakePrintValueItem));
-              }
-              default:
+              // What a value formats as is the value's own answer, so both of
+              // these are named by the representation of what they are built
+              // over. Each borrows that value rather than copying it, which
+              // holds because the value it borrows is a transient of the same
+              // generated entry and outlives the print the entry ends with.
+              case lir::RuntimeLibraryKind::kPrintValueItem:
+                return over_operand(RuntimeOp::kMakePrintValueItem);
+              case lir::RuntimeLibraryKind::kFormatArg:
+                return over_operand(RuntimeOp::kMakeFormatArg);
+              // The DPI-C boundary temporaries (LRM 35.5.6.1, Annex H.7.7).
+              // Each images one SV value in the canonical form the C side
+              // reads, so the entry is one function over every value it can
+              // image and the value crosses erased.
+              case lir::RuntimeLibraryKind::kDpiBitBuffer:
+                return entry(RuntimeSymbol(RuntimeOp::kMakeDpiBitBuffer));
+              case lir::RuntimeLibraryKind::kDpiLogicBuffer:
+                return entry(RuntimeSymbol(RuntimeOp::kMakeDpiLogicBuffer));
+              case lir::RuntimeLibraryKind::kDpiOpenArray:
+                return seeded(RuntimeSymbol(RuntimeOp::kMakeDpiOpenArray));
+              // The rest come into existence some other way, so a construction
+              // naming one would have nothing to call. A print item is built as
+              // one of its two forms and never as their sum; a time format, an
+              // open-array handle and a control effect are what some other
+              // entry answers with; a chunk is the element type a canonical
+              // buffer's pointer addresses rather than a value; and a
+              // cancellation target and a channel's joint cancel state are
+              // storage the owner holds and reaches by address.
+              case lir::RuntimeLibraryKind::kPrintItem:
+              case lir::RuntimeLibraryKind::kTimeFormat:
+              case lir::RuntimeLibraryKind::kDpiBitChunk:
+              case lir::RuntimeLibraryKind::kDpiLogicChunk:
+              case lir::RuntimeLibraryKind::kDpiOpenArrayHandle:
+              case lir::RuntimeLibraryKind::kControlEffect:
+              case lir::RuntimeLibraryKind::kCancellationTarget:
+              case lir::RuntimeLibraryKind::kChannelCancellation:
                 return no_construct();
             }
+            throw InternalError("llvm codegen: unknown runtime library kind");
           },
           // A wrapper that owns storage brings that storage into existence with
           // itself. The runtime owns the object tree, so it is the runtime that
@@ -1749,21 +1780,14 @@ auto CodeGenFunction::BuiltinErasedOperand(
   if (entry.spread_operand.has_value()) {
     return InItsOwnDomain(call, *entry.spread_operand);
   }
-  if (!entry.index_operand.has_value()) {
+  // A coordinate crosses erased only where the container it selects into holds
+  // no prototype for one; where a container names its entries by ordinals, the
+  // entry already knows what an index is and the coordinate crosses as itself.
+  if (!entry.index_operand.has_value() ||
+      !SelectsByStatedIndex(module_->Unit(), OperandType(call.args.front()))) {
     return std::nullopt;
   }
-  // A coordinate is the one erased operand whose domain is not its own: what a
-  // keyed container selects by is the type that container declares, and a
-  // container declaring none takes the coordinate as the value it already is.
-  auto coordinate = CoordinateDomain(OperandType(call.args.front()));
-  if (!coordinate) {
-    return std::unexpected(std::move(coordinate.error()));
-  }
-  if (!coordinate->has_value()) {
-    return std::nullopt;
-  }
-  return ErasedArgument{
-      .position = *entry.index_operand, .domain = **coordinate};
+  return InItsOwnDomain(call, *entry.index_operand);
 }
 
 auto CodeGenFunction::EncodingOf(const lir::CallInstr& call) const

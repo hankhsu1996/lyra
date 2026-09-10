@@ -118,6 +118,23 @@ field defaults, so those are the second kind and collapse rather than split. Bot
 construction subject's to apply, so this change leaves the three counting sites as it found them and
 gathers them where they can be seen.
 
+**A row of that table is a claim about the library, and a row can be wrong.** Saying an entry is
+named by the representation of the value it acts on asserts that the library has a family there; the
+DPI-C marshaling helpers, reading a C string out of a string, and reading the host pointer out of a
+chandle were all filed that way and the library has exactly one function for each. The claim is
+cheap to check and the question is the one to ask when adding a row: does the library have one
+function here, or one per representation? Two tells that a row got it wrong, both visible without
+knowing the subject: the symbol repeats itself, because the operation's own name already carries the
+only type it serves; and the call has no operand whose type names a representation, so the naming
+reaches for one that is a machine word or a pointer and refuses a value nothing was wrong with.
+
+**The same totality is owed by a construction.** Which entry builds a value is read from the type
+being built, on the same footing as which entry an operation reaches, so a runtime-library value
+gaining a kind must break the build here until someone says either which entry brings one into
+existence or that nothing brings one into existence at all. Where that was a fallback arm, four
+kinds shared one refusal that named none of them and read as a capability gap for a value nobody
+constructs.
+
 **What this does not reach, stated so nobody assumes otherwise.** A signature taken from the call
 agrees about how many values cross and what shape each one has, and that is all it agrees about.
 Where a value is a `{pointer, length}` span, what the pointer points _at_ is outside the signature

@@ -199,16 +199,11 @@ class CodeGenFunction {
       -> diag::Result<std::optional<ErasedArgument>>;
 
   // The operand at one position, boxed into the domain its own type names.
-  // Every erased operand but a coordinate crosses this way, since what a value
-  // states about itself is read from the value.
+  // Every erased operand crosses this way, since what a value states about
+  // itself is read from the value.
   [[nodiscard]] auto InItsOwnDomain(
       const lir::CallInstr& call, std::size_t position) const
       -> diag::Result<ErasedArgument>;
-
-  // The representation a container's coordinates cross in, absent where they
-  // cross as the bare handles their own types name.
-  [[nodiscard]] auto CoordinateDomain(lir::TypeId container) const
-      -> diag::Result<std::optional<support::ValueDomain>>;
 
   // The representation a value put into a positional part crosses in, absent
   // where the value it goes into already holds a prototype for that part.
