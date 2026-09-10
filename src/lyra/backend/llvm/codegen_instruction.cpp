@@ -1495,20 +1495,9 @@ auto CodeGenFunction::ConstructCallee(
           // An object the program owns rather than the object tree, brought
           // into existence together with the handle that refers to it (LRM
           // 8.3). The definition its class carries says what storage its
-          // properties need and what body brings them to their initial values,
-          // so the entry takes that and nothing else.
+          // properties need, so the entry takes that and nothing else.
           [&](const lir::ManagedRefType&)
               -> diag::Result<llvm::FunctionCallee> {
-            // The entry takes the definition and nothing else, so a
-            // constructor that declares formals has nowhere to receive them
-            // (LRM 8.7). Refused rather than called with operands it has no
-            // parameters for, which would read whatever the caller left behind
-            // them.
-            if (!call.args.empty()) {
-              return Unsupported(
-                  "llvm codegen: building an object whose constructor takes "
-                  "arguments is not yet supported on this backend");
-            }
             return entry(RuntimeSymbol(RuntimeOp::kObjectMake));
           },
           // Landing a machine integer in a real and reshaping across precisions

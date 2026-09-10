@@ -973,12 +973,6 @@ auto lyra_rt_closure_capture(void* self, std::uint32_t index) -> void* {
 auto lyra_rt_object_make(const void* definition) -> void* {
   GcRef<ManagedObject> object =
       GcNew<ManagedObject>(static_cast<const ObjectDefinition*>(definition));
-  // The constructor runs on an object that already exists, so a body reaching
-  // its own properties finds storage rather than building it.
-  {
-    GeneratedCallScope scope;
-    object->Construct();
-  }
   return Own(ManagedRef{object.Share()});
 }
 

@@ -21,18 +21,11 @@ auto MemberSchemaOf(const ObjectDefinition* definition) -> MemberStorageSchema {
 }  // namespace
 
 ManagedObject::ManagedObject(const ObjectDefinition* definition)
-    : definition_(definition), members_(MemberSchemaOf(definition)) {
+    : members_(MemberSchemaOf(definition)) {
 }
 
 auto ManagedObject::MemberAddress(std::uint32_t index) -> void* {
   return members_.Address(index);
-}
-
-void ManagedObject::Construct() {
-  if (definition_->construct == nullptr) {
-    throw InternalError("ManagedObject: the class has no constructor body");
-  }
-  definition_->construct(this);
 }
 
 }  // namespace lyra::runtime
