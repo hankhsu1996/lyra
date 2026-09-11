@@ -341,18 +341,13 @@ auto LowerSubroutineDeclImpl(
   // ordering the runtime observes when it invokes the base ctor first.
   std::optional<hir::BaseCall> base_call;
   if (base_call_ast != nullptr) {
-    const auto& new_expr = base_call_ast->as<slang::ast::NewClassExpression>();
-    const auto* ctor_call = new_expr.constructorCall();
     hir::BaseCall lowered;
-    if (ctor_call != nullptr) {
-      const auto& actuals =
-          ctor_call->as<slang::ast::CallExpression>().arguments();
-      lowered.arguments.reserve(actuals.size());
-      for (const auto* actual : actuals) {
-        auto arg_or = lowerer.LowerExpr(*actual, body_frame);
-        if (!arg_or) return std::unexpected(std::move(arg_or.error()));
-        lowered.arguments.push_back(body.exprs.Add(*std::move(arg_or)));
-      }
+    const auto actuals = BaseCallArguments(*base_call_ast);
+    lowered.arguments.reserve(actuals.size());
+    for (const auto* actual : actuals) {
+      auto arg_or = lowerer.LowerExpr(*actual, body_frame);
+      if (!arg_or) return std::unexpected(std::move(arg_or.error()));
+      lowered.arguments.push_back(body.exprs.Add(*std::move(arg_or)));
     }
     base_call = std::move(lowered);
   }
@@ -382,6 +377,18 @@ auto LowerSubroutineDeclImpl(
 }
 
 }  // namespace
+
+auto BaseCallArguments(const slang::ast::Expression& base_call)
+    -> std::span<const slang::ast::Expression* const> {
+  if (const auto* written = base_call.as_if<slang::ast::NewClassExpression>()) {
+    const auto* invocation = written->constructorCall();
+    if (invocation == nullptr) {
+      return {};
+    }
+    return invocation->as<slang::ast::CallExpression>().arguments();
+  }
+  return base_call.as<slang::ast::CallExpression>().arguments();
+}
 
 auto LowerSubroutineDecl(
     UnitLowerer& unit_lowerer, const slang::ast::SubroutineSymbol& sym,

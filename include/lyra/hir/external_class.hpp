@@ -23,11 +23,11 @@ struct ExternalClassId {
 };
 
 // A class of another unit this one reaches into, as that unit's signature
-// promised it: which unit declares it, its canonical name, the properties it
-// published in the order that fixes their slots, and the behaviors it
-// introduces in the order that fixes their ordinals. Every type here is this
-// unit's own -- taken into its pool where the signature was consumed -- so
-// nothing below this record reads a signature or a type it does not own.
+// promised it, named by the unit that declares it and its canonical name. The
+// two lists below are ordered rather than sets: a property's slot and a
+// behavior's ordinal are counted out of them. Every type here is this unit's
+// own -- taken into its pool where the signature was consumed -- so nothing
+// below this record reads a signature or a type it does not own.
 //
 // This unit compiles none of it; it holds what it compiled against. Naming such
 // a class and holding what it published are two different acts: a handle typed

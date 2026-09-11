@@ -55,6 +55,12 @@ to an interface rather than extending it, so a behavior an interface class state
 and has no position counted through one (LRM 8.26). A referrer that could not tell would build a
 coordinate no value carries.
 
+Nothing about the class's constructor is here, and
+[constructing-another-units-class](constructing-another-units-class.md) D3 records why a referrer
+needs nothing: what a construction carries is settled from a declaration, so a fact crossing the
+boundary to answer it would be the question asked at the wrong layer. That entry was written with
+such a fact on this list and then removed it.
+
 ### D2. A referrer resolves anything inherited by walking that chain, and the coordinate names where the walk landed
 
 A property is named by the class that declares it and the slot that class gave it; a behavior by the

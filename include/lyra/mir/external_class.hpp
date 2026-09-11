@@ -13,11 +13,11 @@
 namespace lyra::mir {
 
 // A class of another unit this one reaches into, as far as that unit published
-// it: which unit declares it and its canonical name -- both resolved at link
-// time -- the class it extends, the properties it published, at the slots that
-// class gave them, and the behaviors it introduces, in the order that fixes
-// their ordinals. Those properties are a prefix of the class's own storage, so
-// a slot counted here is the slot the declaring unit gave.
+// it, named by the unit that declares it and its canonical name -- both
+// resolved at link time. The two lists below are ordered rather than sets: a
+// property's slot and a behavior's ordinal are counted out of them, and those
+// properties are a prefix of the class's own storage, so a slot counted here is
+// the slot the declaring unit gave.
 //
 // This unit compiles none of it, which is why it sits apart from the classes
 // this unit declares: a walk that emits those cannot reach one, and so cannot

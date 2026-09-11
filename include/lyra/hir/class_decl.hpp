@@ -70,14 +70,14 @@ struct StaticPropertyInit {
   ExprId value;
 };
 
-// A construction-protocol fact (LRM 8.7): the arguments to forward to the
-// base class's constructor before this class's own body runs. Its expressions
-// live in the enclosing constructor body's expression arena, so a captured
+// A construction-protocol fact (LRM 8.7): the arguments the base class's
+// constructor is entered with, before this class's own body runs. Its
+// expressions live in the enclosing constructor body's expression arena, so an
 // argument that reads a formal parameter reaches the same procedural var the
-// body would. Absent means the source did not write an explicit `super.new`;
-// with a base present, HIR-to-MIR still emits a stated base call (LRM 8.7
-// implicit `super.new()`) so the ordering is never left to a backend
-// convention. Empty (0-arg) means the source wrote `super.new()` explicitly.
+// body would. The list is complete however the source arrived at it -- an
+// explicit `super.new(...)`, the arguments on an extends specifier (LRM 8.17),
+// or none where the base constructor declares no formal -- so an empty list
+// means the base takes nothing rather than that nobody computed one.
 struct BaseCall {
   std::vector<ExprId> arguments;
 };
@@ -127,11 +127,13 @@ struct BaseCall {
 // a synthesized stub that no consumer invokes -- an interface class
 // object cannot be constructed (LRM 8.26.5).
 //
-// `base_call` peers with `constructor` because base-constructor forwarding
-// is a class-level construction fact, not a statement inside the ctor body
-// (LRM 8.7): source-written `super.new(args)` populates it, and any
-// expression referencing the ctor's own formals lives in the same body
-// arena.
+// `base_call` peers with `constructor` because forwarding to the base is a
+// class-level construction fact, not a statement inside the ctor body (LRM
+// 8.7) -- the source may state it nowhere, or on the extends specifier, and it
+// happens either way. Any argument expression referencing the ctor's own
+// formals lives in that body's arena. It is read only where `base` is present,
+// and is complete there: a class that extends another enters that base's
+// construction, so "nobody computed the arguments" is not a state this reaches.
 //
 // `field_inits` peers with `constructor` for the same reason: an initializer
 // executes as part of the class's construction protocol before the user
@@ -170,7 +172,7 @@ struct ClassDecl {
   base::Arena<ClassStaticProperty, StaticPropertyId> static_properties;
   base::Registry<SubroutineDecl, MethodId> methods;
   SubroutineDecl constructor;
-  std::optional<BaseCall> base_call;
+  BaseCall base_call;
   std::vector<FieldInit> field_inits;
   ProceduralBody static_init;
   std::vector<StaticPropertyInit> static_property_inits;

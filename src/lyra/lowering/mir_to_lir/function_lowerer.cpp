@@ -17,6 +17,7 @@
 #include "lyra/base/overloaded.hpp"
 #include "lyra/diag/diag_code.hpp"
 #include "lyra/diag/diagnostic.hpp"
+#include "lyra/lir/declaration_name.hpp"
 #include "lyra/lir/function.hpp"
 #include "lyra/lir/integral_constant.hpp"
 #include "lyra/lir/operator.hpp"
@@ -24,7 +25,9 @@
 #include "lyra/lir/type_id.hpp"
 #include "lyra/lowering/mir_to_lir/unit_lowerer.hpp"
 #include "lyra/mir/binary_op.hpp"
+#include "lyra/mir/class_ref.hpp"
 #include "lyra/mir/expr.hpp"
+#include "lyra/mir/external_class.hpp"
 #include "lyra/mir/inc_dec_op.hpp"
 #include "lyra/mir/local.hpp"
 #include "lyra/mir/stmt.hpp"
@@ -82,25 +85,39 @@ auto BindsReference(
          types.Get(result_type).Is<mir::RefType>();
 }
 
-// Which class this call brings an object of into existence, absent for every
-// call that does not. A construction names the type it builds, and a managed
-// reference to a class this unit compiles is the one whose constructor is a
-// body of this program.
-auto BuildsObjectOf(
+// Whether this call brings an object into existence. A construction names the
+// type it builds and a managed reference is what a handle to an object is
+// (LRM 8.3), so the two together are the whole of the question. Which class it
+// builds is a second question, answered from the same type where the class is
+// needed.
+auto BuildsObject(
     const mir::TypePool& types, const mir::CallExpr& call,
-    mir::TypeId result_type) -> std::optional<mir::ClassId> {
-  if (!std::holds_alternative<mir::Construct>(call.callee)) {
-    return std::nullopt;
-  }
-  const auto* managed = types.Get(result_type).As<mir::ManagedRefType>();
-  if (managed == nullptr) {
-    return std::nullopt;
-  }
-  const auto* object = types.Get(managed->pointee).As<mir::ObjectType>();
-  if (object == nullptr) {
-    return std::nullopt;
-  }
-  return object->class_id;
+    mir::TypeId result_type) -> bool {
+  return std::holds_alternative<mir::Construct>(call.callee) &&
+         types.Get(result_type).Is<mir::ManagedRefType>();
+}
+
+// The class a managed reference refers to an object of, named the way that
+// class is named. Every other pointee is a producer that built a handle to
+// something no class declares.
+auto ObjectClassOf(const mir::TypePool& types, mir::TypeId handle)
+    -> mir::ClassRef {
+  const mir::TypeId object =
+      types.Get(handle).Get<mir::ManagedRefType>().pointee;
+  return types.Get(object).Visit(
+      Overloaded{
+          [](const mir::ObjectType& o) -> mir::ClassRef {
+            return mir::IntraUnitClassRef{.class_id = o.class_id};
+          },
+          [](const mir::CrossUnitClassType& c) -> mir::ClassRef {
+            return mir::CrossUnitClassRef{
+                .unit_name = c.unit_name, .class_name = c.class_name};
+          },
+          [](const auto&) -> mir::ClassRef {
+            throw InternalError(
+                "mir_to_lir: a managed reference refers to an object of no "
+                "class");
+          }});
 }
 
 // The operators the executable IR realizes directly. Every other MIR operator
@@ -245,14 +262,13 @@ void CollectStorageLocals(
 }
 
 // A method of another unit's class is reached by the symbol that unit emits it
-// under, which the referrer composes from the unit, the class, and the method
-// its signature named -- the same three names, so the two agree with no table
-// between them.
+// under, which is that class's linkage name and the method's own.
 auto ExternalMethodSymbol(
     std::string_view unit_name, std::string_view class_name,
     std::string_view method_name) -> lir::ForeignTarget {
   return lir::ForeignTarget{
-      .symbol = std::format("{}.{}.{}", unit_name, class_name, method_name)};
+      .symbol = std::format(
+          "{}.{}", lir::ClassLinkageName(unit_name, class_name), method_name)};
 }
 
 }  // namespace
@@ -608,56 +624,63 @@ auto FunctionLowerer::Run() -> diag::Result<lir::Function> {
   return std::move(fn_);
 }
 
+auto FunctionLowerer::ConstructorOf(const mir::ClassRef& cls)
+    -> std::optional<EnteredConstructor> {
+  return std::visit(
+      Overloaded{
+          [&](const mir::IntraUnitClassRef& intra)
+              -> std::optional<EnteredConstructor> {
+            return EnteredConstructor{
+                .object_type = unit_->ClassValueType(intra.class_id),
+                .callee = lir::CallTarget{lir::FunctionTarget{
+                    .function = unit_->ConstructorFunction(intra.class_id)}}};
+          },
+          [&](const mir::CrossUnitClassRef& ext)
+              -> std::optional<EnteredConstructor> {
+            return EnteredConstructor{
+                .object_type = unit_->ExternalClassValueType(
+                    ext.unit_name, ext.class_name),
+                .callee = lir::CallTarget{lir::ForeignTarget{
+                    .symbol = lir::ConstructorSymbolName(
+                        lir::ClassLinkageName(
+                            ext.unit_name, ext.class_name))}}};
+          },
+          [](const mir::RuntimeClassRef&) -> std::optional<EnteredConstructor> {
+            return std::nullopt;
+          }},
+      cls);
+}
+
 auto FunctionLowerer::ConstructBase() -> diag::Result<void> {
   if (constructed_class_ == nullptr || !constructed_class_->base.has_value()) {
     return {};
   }
-  return std::visit(
-      Overloaded{
-          [&](const mir::IntraUnitClassRef& intra) -> diag::Result<void> {
-            const std::vector<mir::ExprId>& stated =
-                constructed_class_->constructor.base_args;
-            std::vector<lir::Operand> args;
-            args.reserve(stated.size() + 1);
-            // The base is entered on the object being constructed, which leads
-            // its arguments the way a receiver leads any body's parameters.
-            args.emplace_back(lir::Use{.value = fn_.params.front()});
-            for (const mir::ExprId arg : stated) {
-              auto lowered = LowerArgument(code_->Body(), arg);
-              if (!lowered) {
-                return std::unexpected(std::move(lowered.error()));
-              }
-              args.push_back(*std::move(lowered));
-            }
-            // What the call states is all it carries, so a base constructor
-            // declaring a formal the call leaves out cannot be entered: a
-            // default value belongs to the declaration and is filled in where
-            // the call is written (LRM 13.5.3), which an implicit forward
-            // never is.
-            const mir::Class& base = unit_->Mir().GetClass(intra.class_id);
-            if (base.constructor.code.params.size() != args.size()) {
-              return Unsupported(
-                  "mir_to_lir: entering a base constructor that declares a "
-                  "formal the forwarding call leaves to its default is not "
-                  "yet supported");
-            }
-            Emit(
-                unit_->TranslateType(unit_->Mir().builtins.void_type),
-                lir::CallInstr{
-                    .target =
-                        lir::FunctionTarget{
-                            .function =
-                                unit_->ConstructorFunction(intra.class_id)},
-                    .args = std::move(args)});
-            return {};
-          },
-          [](const mir::CrossUnitClassRef&) -> diag::Result<void> {
-            return Unsupported(
-                "mir_to_lir: constructing a class whose base another "
-                "compilation unit declares is not yet supported");
-          },
-          [](const mir::RuntimeClassRef&) -> diag::Result<void> { return {}; }},
-      *constructed_class_->base);
+  const std::optional<EnteredConstructor> base =
+      ConstructorOf(*constructed_class_->base);
+  if (!base.has_value()) {
+    return {};
+  }
+  // What the base construction carries was settled where the class was read:
+  // the arguments are complete however the source arrived at them, so there is
+  // nothing to establish about them here.
+  const std::vector<mir::ExprId>& stated =
+      constructed_class_->constructor.base_args;
+  std::vector<lir::Operand> args;
+  args.reserve(stated.size() + 1);
+  // The base is entered on the object being constructed, which leads its
+  // arguments the way a receiver leads any body's parameters.
+  args.emplace_back(lir::Use{.value = fn_.params.front()});
+  for (const mir::ExprId arg : stated) {
+    auto lowered = LowerArgument(code_->Body(), arg);
+    if (!lowered) {
+      return std::unexpected(std::move(lowered.error()));
+    }
+    args.push_back(*std::move(lowered));
+  }
+  Emit(
+      unit_->TranslateType(unit_->Mir().builtins.void_type),
+      lir::CallInstr{.target = base->callee, .args = std::move(args)});
+  return {};
 }
 
 auto FunctionLowerer::NewBlock() -> lir::BlockId {
@@ -1707,32 +1730,35 @@ auto FunctionLowerer::LowerCallOperands(
 }
 
 auto FunctionLowerer::LowerObjectConstruction(
-    const mir::Block& block, const mir::CallExpr& call, mir::ClassId class_id,
-    mir::TypeId type) -> diag::Result<lir::Operand> {
+    const mir::Block& block, const mir::CallExpr& call, mir::TypeId type)
+    -> diag::Result<lir::Operand> {
   const lir::TypeId handle_type = unit_->TranslateType(type);
   const lir::Operand handle = Emit(
       handle_type,
       lir::CallInstr{
           .target = lir::ConstructTarget{.result = handle_type}, .args = {}});
 
-  const mir::CallableCode& constructor =
-      unit_->Mir().GetClass(class_id).constructor.code;
-  // What the call states is what the constructor declares after the object it
-  // runs on, so a mismatch is a producer that built one of the two wrongly.
-  if (constructor.params.size() != call.arguments.size() + 1) {
+  // A construction carries every argument its constructor takes -- the source
+  // wrote the call, so the front end bound it against the declaration and
+  // filled in whatever it left to a default. So there is nothing to establish
+  // about the arguments here, and nothing to read about the class beyond how
+  // its constructor is named.
+  const std::optional<EnteredConstructor> constructor =
+      ConstructorOf(ObjectClassOf(unit_->Mir().types, type));
+  if (!constructor.has_value()) {
     throw InternalError(
-        "mir_to_lir: a construction states an argument for every formal its "
-        "constructor declares beside the object");
+        "mir_to_lir: a construction reached a class the runtime library "
+        "defines, which no `new` expression names");
   }
   std::vector<lir::Operand> args;
-  args.reserve(constructor.params.size());
+  args.reserve(call.arguments.size() + 1);
   // The object leads its arguments the way a receiver leads any body's
   // parameters, and the handle names it rather than being it, so opening the
   // handle is what reaches the storage the body runs on.
   args.push_back(Emit(
       unit_->Types().Intern(
           lir::Type{lir::PointerType{
-              .pointee = unit_->ClassValueType(class_id),
+              .pointee = constructor->object_type,
               .ownership = lir::PointerOwnership::kBorrowed,
               .mutability = lir::Mutability::kMutable}}),
       lir::AddrOfInstr{
@@ -1748,11 +1774,7 @@ auto FunctionLowerer::LowerObjectConstruction(
   }
   Emit(
       unit_->TranslateType(unit_->Mir().builtins.void_type),
-      lir::CallInstr{
-          .target =
-              lir::FunctionTarget{
-                  .function = unit_->ConstructorFunction(class_id)},
-          .args = std::move(args)});
+      lir::CallInstr{.target = constructor->callee, .args = std::move(args)});
   return handle;
 }
 
@@ -1836,9 +1858,8 @@ auto FunctionLowerer::LowerCall(
   // over one heap the runtime owns: it answers an object whose properties hold
   // their storage's default, and the class's own constructor -- a body of this
   // program, reached like any other -- is what runs on it (LRM 8.7).
-  if (const std::optional<mir::ClassId> built =
-          BuildsObjectOf(unit_->Mir().types, call, type)) {
-    return LowerObjectConstruction(block, call, *built, type);
+  if (BuildsObject(unit_->Mir().types, call, type)) {
+    return LowerObjectConstruction(block, call, type);
   }
   // Reached where nothing awaits the execution -- a process handed to the
   // scheduler. Such a body finishes with no value, so there is nothing for it

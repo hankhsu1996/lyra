@@ -111,7 +111,15 @@ each stage establishes, not how.
       callables already use. The class-copied-into-each-referring-unit shape is out. This is what
       lets LRM 8.25's package-scope rule -- matching specializations of a package generic class are
       one type throughout the system -- hold across compilation units, and it applies uniformly to
-      non-parameterized and parameterized classes.
+      non-parameterized and parameterized classes. Bringing one into existence is the same
+      construction as any other: the object is allocated against the class's declaration and its
+      constructor runs on it, both reached by the name the declaring unit links them under, so a
+      property takes its declared initial value and a constructor takes its arguments whichever unit
+      declared the class. A class declared elsewhere that extends one enters its base's construction
+      the same way, and a class extending another states the complete argument list that
+      construction carries however the source arrived at it -- an explicit `super.new`, or the
+      arguments written on the extends specifier (LRM 8.17). Settled in
+      `../decisions/constructing-another-units-class.md`.
 
 - [x] A class's declaration scope reaches its compiled identity. A class declared inside a module, a
       generate scope, a package, or the compilation-unit scope (LRM 8.1, 27.6, 26, 3.12.1) is a
@@ -237,12 +245,12 @@ deletes -- commented out where the rest of its case still runs, and the whole ca
 cannot run at all. Restoring either is manual: nothing detects that the behaviour became right, so
 this list is what remembers.
 
-- [ ] A base whose constructor declares a formal with a default value does not build. A derived
-      class that writes no `super.new` of its own forwards to its base implicitly (LRM 8.7), and
-      that implicit call states no arguments -- so a default the base declared never reaches it and
-      the target language is left to decide the call. Construction ordering itself runs, and the
-      corpus states it wherever every argument is stated; what no case can ask for yet is a base
-      formal left to its default.
+- [ ] A base whose constructor declares a formal with a default value is refused. A derived class
+      that writes no `super.new` and no arguments on its extends specifier forwards to its base with
+      the arguments the base declared as defaults (LRM 8.7, 8.17), and nothing computes them. The
+      refusal names the construct and is the same whichever unit declares the base. What it waits on
+      is a default value crossing into the scope that needs it: the expression is written in the
+      declaring class's own scope, so a class extending it cannot simply lower it in its own.
 
 ## Open Questions and Deferred Choices
 

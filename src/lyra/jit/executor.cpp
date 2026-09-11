@@ -1330,7 +1330,10 @@ void FillDefinition(llvm::orc::LLJIT& jit, LoadedScopeClass& cls) {
   if (auto entry = entry_of("CreateProcesses")) {
     definition.program.create_processes = entry->toPtr<runtime::ScopeEntry>();
   }
-  if (auto entry = entry_of("constructor")) {
+  // Not one of the three above: those name a callable the scope declares, so
+  // the name is the declaration's. A constructor's is minted where the symbol
+  // is composed and is read from there.
+  if (auto entry = lookup(lir::ConstructorSymbolName(cls.name))) {
     definition.construct = entry->toPtr<runtime::ScopeEntry>();
   }
 

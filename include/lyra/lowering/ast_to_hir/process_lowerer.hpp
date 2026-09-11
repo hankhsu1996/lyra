@@ -28,14 +28,15 @@ class StatementBlockSymbol;
 
 namespace lyra::lowering::ast_to_hir {
 
-// A set of slang AST expressions the frontend exposes twice -- once as a
-// class- or scope-level semantic fact (which an enclosing lowering has
-// already consumed) and once as syntactic residue inside a subroutine body's
-// statement list. The body walker elides the residue by matching pointer
-// identity, so the two exposures resolve to one HIR representation without
-// any per-kind knowledge of which SV construct the node names. The single
-// current user is `super.new(...)` (LRM 8.7), lifted from the ctor body
-// onto its class's construction protocol.
+// A set of slang AST expressions an enclosing lowering has already consumed as
+// a class- or scope-level semantic fact, so the body walker must not lower them
+// a second time. It elides them by matching pointer identity, which needs no
+// per-kind knowledge of which SV construct a node names -- and an entry the
+// body never reaches simply matches nothing, so a caller adds what it consumed
+// without first working out whether the source also wrote it inside a body.
+// The single current user is the base construction (LRM 8.7), which the source
+// may write as a `super.new(...)` statement in the ctor body or not write at
+// all.
 using ConsumedBodyExpressions =
     std::unordered_set<const slang::ast::Expression*>;
 

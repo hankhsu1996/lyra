@@ -632,6 +632,17 @@ auto UnitLowerer::MakeExternalClassRef(const hir::ExternalClassRef& ref)
       .unit_name = ref.unit_name, .class_name = ref.class_name}};
 }
 
+auto UnitLowerer::TranslateBaseClassRef(const hir::ClassRef& ref)
+    -> mir::ClassRef {
+  const mir::ClassRef base = TranslateClassRef(ref);
+  // Reading the promise is what records the dependency, so it is taken here
+  // rather than where the lowering below asks its question.
+  if (const auto* ext = std::get_if<mir::CrossUnitClassRef>(&base)) {
+    RecordExternalClass(ext->unit_name, ext->class_name);
+  }
+  return base;
+}
+
 auto UnitLowerer::TranslateClassRef(const hir::ClassRef& ref) -> mir::ClassRef {
   if (const auto* local = std::get_if<hir::LocalClassRef>(&ref)) {
     return mir::ClassRef{
