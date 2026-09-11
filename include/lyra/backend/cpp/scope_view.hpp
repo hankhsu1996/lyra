@@ -3,6 +3,7 @@
 #include "lyra/base/internal_error.hpp"
 #include "lyra/mir/callable_code.hpp"
 #include "lyra/mir/class.hpp"
+#include "lyra/mir/class_id.hpp"
 #include "lyra/mir/compilation_unit.hpp"
 #include "lyra/mir/expr.hpp"
 #include "lyra/mir/expr_id.hpp"
@@ -32,16 +33,16 @@ namespace lyra::backend::cpp {
 class ScopeView {
  public:
   static auto ForRoot(
-      const mir::CompilationUnit& unit, const mir::Class& cls,
-      const mir::CallableCode& code) -> ScopeView {
-    return ScopeView{unit, &cls, &code, code.Body()};
+      const mir::CompilationUnit& unit, mir::ClassId cls_id,
+      const mir::Class& cls, const mir::CallableCode& code) -> ScopeView {
+    return ScopeView{unit, cls_id, &cls, &code, code.Body()};
   }
 
   // A callable the unit's namespace owns directly, belonging to no class.
   static auto ForNamespace(
       const mir::CompilationUnit& unit, const mir::CallableCode& code)
       -> ScopeView {
-    return ScopeView{unit, nullptr, &code, code.Body()};
+    return ScopeView{unit, mir::ClassId{}, nullptr, &code, code.Body()};
   }
 
   // A constant's initializer: an expression tree with no enclosing callable,
@@ -49,18 +50,18 @@ class ScopeView {
   // class, which its initializer may reach; one the unit owns reaches no
   // class.
   static auto ForClassConstant(
-      const mir::CompilationUnit& unit, const mir::Class& cls,
-      const mir::Block& block) -> ScopeView {
-    return ScopeView{unit, &cls, nullptr, block};
+      const mir::CompilationUnit& unit, mir::ClassId cls_id,
+      const mir::Class& cls, const mir::Block& block) -> ScopeView {
+    return ScopeView{unit, cls_id, &cls, nullptr, block};
   }
 
   static auto ForUnitConstant(
       const mir::CompilationUnit& unit, const mir::Block& block) -> ScopeView {
-    return ScopeView{unit, nullptr, nullptr, block};
+    return ScopeView{unit, mir::ClassId{}, nullptr, nullptr, block};
   }
 
   [[nodiscard]] auto WithBlock(const mir::Block& child) const -> ScopeView {
-    return ScopeView{*unit_, class_, code_, child};
+    return ScopeView{*unit_, class_id_, class_, code_, child};
   }
 
   // Enter a closure's own code while staying in the same class context: a
@@ -68,7 +69,8 @@ class ScopeView {
   // local / capture arenas and the body block swap.
   [[nodiscard]] auto WithClosure(const mir::CallableCode& closure_code) const
       -> ScopeView {
-    return ScopeView{*unit_, class_, &closure_code, closure_code.Body()};
+    return ScopeView{
+        *unit_, class_id_, class_, &closure_code, closure_code.Body()};
   }
 
   ScopeView(const ScopeView&) = delete;
@@ -87,6 +89,16 @@ class ScopeView {
           "ScopeView::Class: a namespace-owned callable belongs to no class");
     }
     return *class_;
+  }
+
+  // The identity of the class above. A class the source never declared is
+  // spelled from it, so a render that names the enclosing class needs both.
+  [[nodiscard]] auto ClassId() const -> mir::ClassId {
+    if (class_ == nullptr) {
+      throw InternalError(
+          "ScopeView::ClassId: a namespace-owned callable belongs to no class");
+    }
+    return class_id_;
   }
 
   [[nodiscard]] auto Code() const -> const mir::CallableCode& {
@@ -123,12 +135,18 @@ class ScopeView {
 
  private:
   ScopeView(
-      const mir::CompilationUnit& unit, const mir::Class* cls,
-      const mir::CallableCode* code, const mir::Block& block)
-      : unit_(&unit), class_(cls), code_(code), block_(&block) {
+      const mir::CompilationUnit& unit, mir::ClassId cls_id,
+      const mir::Class* cls, const mir::CallableCode* code,
+      const mir::Block& block)
+      : unit_(&unit),
+        class_id_(cls_id),
+        class_(cls),
+        code_(code),
+        block_(&block) {
   }
 
   const mir::CompilationUnit* unit_;
+  mir::ClassId class_id_;
   const mir::Class* class_;
   const mir::CallableCode* code_;
   const mir::Block* block_;

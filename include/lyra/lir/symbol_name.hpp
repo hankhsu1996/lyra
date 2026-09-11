@@ -21,9 +21,7 @@ enum class SymbolCategory : std::uint8_t {
   kClosureDefinition,
   kStructDefinition,
   kConstructor,
-  kMethod,
-  kSynthesizedBody,
-  kSynthesizedNamespaceBody,
+  kClassCallable,
   kNamespaceCallable,
   kNamespaceStorageInstall,
   kNamespaceStorageInitialize,
@@ -45,6 +43,15 @@ struct SymbolPart {
   std::string encoded;
 };
 
+// The part a declaration contributes to a symbol: the identifier the source
+// wrote, or the position the declaration sits at where the source wrote none.
+// A part says which kind it is, so the two ranges never meet and a declaration
+// the source named can never compose the symbol of one it did not.
+auto SymbolPartOf(std::optional<std::string_view> name, std::uint32_t ordinal)
+    -> SymbolPart;
+auto SymbolPartOf(const std::optional<std::string>& name, std::uint32_t ordinal)
+    -> SymbolPart;
+
 // The symbol a declaration is linked under, program-wide.
 //
 // A SystemVerilog identifier admits every printable character but white space
@@ -59,41 +66,39 @@ auto SymbolName(
     -> std::string;
 
 // The symbol a class is linked under, and the symbols of what belongs to it. A
-// class's own name is unique only inside its unit while the whole program links
+// class's own part is unique only inside its unit while the whole program links
 // into one name space, so the unit qualifies it; a member's name is unique only
-// inside its class, so the class qualifies that.
-auto ClassSymbol(std::string_view unit_name, std::string_view class_name)
+// inside its class, so the class qualifies that. Every part is a name where the
+// source declared one and a position where it did not -- a scope of the design
+// hierarchy is a class the lowering built, and a body the lowering synthesized
+// is reached by no call site that could spell it.
+auto ClassSymbol(std::string_view unit_name, SymbolPart cls) -> std::string;
+auto ConstructorSymbol(std::string_view unit_name, SymbolPart cls)
     -> std::string;
-auto ConstructorSymbol(std::string_view unit_name, std::string_view class_name)
+auto ClassCallableSymbol(
+    std::string_view unit_name, SymbolPart cls, SymbolPart callable)
     -> std::string;
-auto MethodSymbol(
-    std::string_view unit_name, std::string_view class_name,
-    std::string_view method_name) -> std::string;
+// A class's cell, under the class that owns it. The pool holding a class's
+// cells also takes what its bodies keep for the whole class, which the source
+// never declared.
 auto StaticPropertySymbol(
-    std::string_view unit_name, std::string_view class_name,
-    std::string_view property_name) -> std::string;
-
-// The symbol a body nothing names is linked under -- one the compiler
-// synthesized, which no call site spells. Its position in the arena that holds
-// it is its identity, and a category of its own keeps it clear of every symbol
-// composed from a name.
-auto SynthesizedBodySymbol(
-    std::string_view unit_name, std::string_view class_name,
-    std::uint32_t ordinal) -> std::string;
-auto SynthesizedNamespaceBodySymbol(
-    std::string_view unit_name, std::uint32_t ordinal) -> std::string;
+    std::string_view unit_name, SymbolPart cls, SymbolPart property)
+    -> std::string;
 
 // The symbol the runtime record describing one declaration is linked under.
 // The record is the compiler's own and stands beside the declaration rather
 // than inside it, so it is a category over the same parts.
-auto ClassDefinitionSymbol(
-    std::string_view unit_name, std::string_view class_name) -> std::string;
-auto StructDefinitionSymbol(
-    std::string_view unit_name, std::string_view struct_name) -> std::string;
-auto ClosureDefinitionSymbol(std::string_view unit_name, std::uint32_t ordinal)
+auto ClassDefinitionSymbol(std::string_view unit_name, SymbolPart cls)
+    -> std::string;
+auto StructDefinitionSymbol(std::string_view unit_name, SymbolPart record)
+    -> std::string;
+auto ClosureDefinitionSymbol(std::string_view unit_name, SymbolPart closure)
     -> std::string;
 
-// The symbols of what a unit's namespace owns directly.
+// The symbols of what a unit's namespace owns directly. A body here always
+// answers to the identifier the source declared it under -- what a namespace
+// holds that nothing names is storage, never code -- so unlike a class's
+// callable this composes from a name and no position arises.
 auto NamespaceCallableSymbol(
     std::string_view unit_name, std::string_view callable_name) -> std::string;
 
@@ -104,17 +109,24 @@ auto NamespaceCallableSymbol(
 auto NamespaceStorageInstallSymbol(std::string_view unit_name) -> std::string;
 auto NamespaceStorageInitializeSymbol(std::string_view unit_name)
     -> std::string;
-auto NamespaceVariableSymbol(
-    std::string_view unit_name, std::string_view variable_name) -> std::string;
-auto StructSymbol(std::string_view unit_name, std::string_view struct_name)
+// A unit's own storage. A package variable answers to the identifier the source
+// declared, which is what another unit reaches it by; the cell a subroutine's
+// static-lifetime local keeps answers to none, and takes its position instead.
+auto NamespaceVariableSymbol(std::string_view unit_name, SymbolPart variable)
     -> std::string;
-auto TypeDescriptionSymbol(
-    std::string_view unit_name, std::string_view description_name)
+
+// A gathered-scope aggregate, which the source never declared, so its position
+// in the unit's registry is the whole of its identity.
+auto StructSymbol(std::string_view unit_name, SymbolPart record) -> std::string;
+// The run-time description of one of a unit's types. The source declares no
+// such thing, so the position the type sits at in its unit's pool is the whole
+// of what identifies it.
+auto TypeDescriptionSymbol(std::string_view unit_name, std::uint32_t ordinal)
     -> std::string;
 
 // A closure is counted rather than named, having no declaration of the source
 // to take a name from; its body is a second symbol over the same ordinal.
-auto ClosureSymbol(std::string_view unit_name, std::uint32_t ordinal)
+auto ClosureSymbol(std::string_view unit_name, SymbolPart closure)
     -> std::string;
 auto ClosureInvokeSymbol(std::string_view unit_name, std::uint32_t ordinal)
     -> std::string;

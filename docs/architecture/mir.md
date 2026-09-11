@@ -43,8 +43,9 @@ what the construct means.
 ## Owns
 
 - Objects, members, and member access as first-class entities.
-- A member as a `(name, type)` pair. The type is the sole carrier of the member's storage shape and,
-  for a member that owns a child, of its child-scope kind and cardinality.
+- A member as a type at a position in its object, and separately the identifier a source declaration
+  reaches that position by. The type is the sole carrier of the member's storage shape and, for a
+  member that owns a child, of its child-scope kind and cardinality.
 - Machine data -- a machine boolean, a machine integer, a machine float, a borrowed C string, a raw
   pointer, the fixed-size contiguous aggregate of them, and a plain code address -- as ordinary
   types of the language, the way `bool`, `i64`, `[T; N]`, `*const c_char`, and `fn(A) -> R` are
@@ -147,12 +148,15 @@ suspect, not the analysis (`lowering_organization.md` states this discipline in 
 6. MIR does not reconstruct topology or identity from side tables. A member is owned by exactly one
    object; a callable by exactly one owner. _Programming-language consequence: ownership is
    structural, not name-based._
-7. A member is a `(name, type)` pair. An owned child -- a module instance or a named generate scope
-   -- is a member whose type is an owning pointer to an object type. An array of children is a
-   member whose type is a vector of that owning pointer; a multidimensional array nests the vector
-   wrapper. No member carries a classification flag beside its type; the type is the classification.
-   _Programming-language consequence: the type system carries every fact about a member; no parallel
-   discriminator exists._
+7. A member is a type, and its identity is the position it occupies in its object. Being reachable
+   by an identifier is a relation the object holds over that position, stated only where the source
+   declared one, so nothing the compiler introduces answers to a name a design could also write. An
+   owned child -- a module instance or a named generate scope -- is a member whose type is an owning
+   pointer to an object type. An array of children is a member whose type is a vector of that owning
+   pointer; a multidimensional array nests the vector wrapper. No member carries a classification
+   flag beside its type; the type is the classification. _Programming-language consequence: the type
+   system carries every fact about a member; no parallel discriminator exists, and no name has to be
+   invented for a declaration the source did not write._
 8. An object type is exactly one of two forms: intra-unit, naming a class of this unit, or
    external-unit, naming another compilation unit. This single distinction is the owned child's
    runtime scope kind -- a named generate scope versus a module instance. Nothing else encodes scope

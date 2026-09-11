@@ -279,13 +279,27 @@ void CollectStorageLocals(
   }
 }
 
+// What a dump of this function shows beside one of its values. A local the
+// source declared shows the identifier the design wrote; one the lowering added
+// shows nothing, and the value's own number is what a reader has. It is a
+// label: nothing resolves a name to a value at this layer, and no symbol is
+// composed from it.
+auto LocalLabel(const mir::CallableCode& code, mir::LocalId local)
+    -> std::string {
+  const std::optional<std::string_view> name =
+      mir::NameOf(code.named_locals, local);
+  return name.has_value() ? std::string{*name} : std::string{};
+}
+
 // A method of another unit's class is reached by the symbol that unit emits it
 // under, composed from the same three names that unit composed it from.
 auto ExternalMethodSymbol(
     std::string_view unit_name, std::string_view class_name,
     std::string_view method_name) -> lir::ForeignTarget {
   return lir::ForeignTarget{
-      .symbol = lir::MethodSymbol(unit_name, class_name, method_name)};
+      .symbol = lir::ClassCallableSymbol(
+          unit_name, lir::SymbolPart::Name(class_name),
+          lir::SymbolPart::Name(method_name))};
 }
 
 }  // namespace
@@ -476,11 +490,10 @@ FunctionLowerer::FunctionLowerer(
 }
 
 void FunctionLowerer::BindCaptureReceiver(mir::LocalId receiver) {
-  const mir::LocalDecl& decl = code_->locals.Get(receiver);
   const lir::ValueId value = fn_.values.Add(
       lir::Local{
-          .name = decl.name,
-          .type = unit_->TranslateType(decl.type),
+          .name = LocalLabel(*code_, receiver),
+          .type = unit_->TranslateType(code_->locals.Get(receiver).type),
           .kind = lir::LocalKind::kParam});
   fn_.params.push_back(value);
   locals_[receiver.value] =
@@ -560,11 +573,13 @@ auto FunctionLowerer::Run() -> diag::Result<lir::Function> {
     BindCaptureReceiver(mir::LocalId{0});
   }
   for (const mir::LocalId param : code_->params) {
-    const mir::LocalDecl& decl = code_->locals.Get(param);
-    const lir::TypeId type = unit_->TranslateType(decl.type);
+    const lir::TypeId type =
+        unit_->TranslateType(code_->locals.Get(param).type);
     const lir::ValueId value = fn_.values.Add(
         lir::Local{
-            .name = decl.name, .type = type, .kind = lir::LocalKind::kParam});
+            .name = LocalLabel(*code_, param),
+            .type = type,
+            .kind = lir::LocalKind::kParam});
     fn_.params.push_back(value);
     // A parameter whose storage is a cell installs that cell's representation
     // from the incoming argument, its first write; every other parameter binds
@@ -666,7 +681,8 @@ auto FunctionLowerer::ConstructorOf(const mir::ClassRef& cls)
                     ext.unit_name, ext.class_name),
                 .callee = lir::CallTarget{lir::ForeignTarget{
                     .symbol = lir::ConstructorSymbol(
-                        ext.unit_name, ext.class_name)}}};
+                        ext.unit_name,
+                        lir::SymbolPart::Name(ext.class_name))}}};
           },
           [](const mir::RuntimeClassRef&) -> std::optional<EnteredConstructor> {
             return std::nullopt;
@@ -1534,6 +1550,9 @@ auto FunctionLowerer::ReferenceValue(
                 "mir_to_lir: a code address as a value is not yet lowerable to "
                 "LIR");
           },
+          [&](const mir::StaticVariableRef&) -> diag::Result<lir::Operand> {
+            return ReadPlace(block, id, unit_->TranslateType(type));
+          },
           [&](const mir::ExternalUnitVariableRef&)
               -> diag::Result<lir::Operand> {
             return ReadPlace(block, id, unit_->TranslateType(type));
@@ -1592,10 +1611,21 @@ auto FunctionLowerer::ReferencePlace(
           // that no instance holds, so it is reached by the symbol it links
           // under rather than through a receiver -- by the unit that declares
           // it exactly as by any other, since a namespace has no instance.
+          [&](const mir::StaticVariableRef& ref) -> diag::Result<lir::Place> {
+            const mir::CompilationUnit& mir = unit_->Mir();
+            return SymbolPlace(
+                lir::NamespaceVariableSymbol(
+                    mir.name,
+                    lir::SymbolPartOf(
+                        mir::NameOf(mir.named_static_variables, ref.variable),
+                        ref.variable.value)),
+                type);
+          },
           [&](const mir::ExternalUnitVariableRef& ref)
               -> diag::Result<lir::Place> {
             return SymbolPlace(
-                lir::NamespaceVariableSymbol(ref.unit_name, ref.variable_name),
+                lir::NamespaceVariableSymbol(
+                    ref.unit_name, lir::SymbolPart::Name(ref.variable_name)),
                 type);
           },
           // A cell a class owns rather than an object of it (LRM 8.9) is that
@@ -1608,15 +1638,19 @@ auto FunctionLowerer::ReferencePlace(
             const mir::Class& cls = unit_->Mir().GetClass(ref.owner);
             return SymbolPlace(
                 lir::StaticPropertySymbol(
-                    unit_->Mir().name, cls.name,
-                    cls.static_properties.Get(ref.prop).name),
+                    unit_->Mir().name,
+                    lir::SymbolPartOf(cls.name, ref.owner.value),
+                    lir::SymbolPartOf(
+                        mir::NameOf(cls.named_static_properties, ref.prop),
+                        ref.prop.value)),
                 type);
           },
           [&](const mir::ExternalStaticPropertyRef& ref)
               -> diag::Result<lir::Place> {
             return SymbolPlace(
                 lir::StaticPropertySymbol(
-                    ref.unit_name, ref.class_name, ref.property_name),
+                    ref.unit_name, lir::SymbolPart::Name(ref.class_name),
+                    lir::SymbolPart::Name(ref.property_name)),
                 type);
           },
           // A class's static constant is a compile-time record the backend

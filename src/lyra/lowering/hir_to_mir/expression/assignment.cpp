@@ -63,6 +63,7 @@ auto TargetOutlivesDeferredUpdate(const mir::Block& block, mir::ExprId expr_id)
                     [](const mir::StaticPropertyRef&) { return true; },
                     [](const mir::PackedTypeRef&) { return true; },
                     [](const mir::FunctionRef&) { return true; },
+                    [](const mir::StaticVariableRef&) { return true; },
                     [](const mir::ExternalUnitVariableRef&) { return true; },
                     [](const mir::ExternalStaticPropertyRef&) { return true; },
                 },
@@ -121,8 +122,8 @@ auto FreezeTarget(
   frozen.owner = captured_owner;
   for (DescentStep& step : frozen.descent) {
     for (mir::ExprId& coordinate : step.operands) {
-      coordinate = SnapshotIntoClosure(
-          unit_lowerer, outer_frame, closure, coordinate, "_lyra_nba_arg");
+      coordinate =
+          SnapshotIntoClosure(unit_lowerer, outer_frame, closure, coordinate);
     }
   }
   return frozen;
@@ -149,8 +150,8 @@ auto FreezeAssignmentInto(
   const mir::ExprId place_ref = BuildReferenceArg(
       unit, outer_block, target_in_outer.owner,
       outer_block.exprs.Get(target_in_outer.owner).type);
-  const mir::ExprId captured_owner = SnapshotIntoClosure(
-      unit_lowerer, outer_frame, closure, place_ref, "_lyra_nba_place");
+  const mir::ExprId captured_owner =
+      SnapshotIntoClosure(unit_lowerer, outer_frame, closure, place_ref);
 
   FrozenAssignment frozen{
       .target = FreezeTarget(
@@ -158,8 +159,8 @@ auto FreezeAssignmentInto(
       .operands = {}};
   frozen.operands.reserve(operands_in_outer.size());
   for (const mir::ExprId op : operands_in_outer) {
-    frozen.operands.push_back(SnapshotIntoClosure(
-        unit_lowerer, outer_frame, closure, op, "_lyra_nba_arg"));
+    frozen.operands.push_back(
+        SnapshotIntoClosure(unit_lowerer, outer_frame, closure, op));
   }
   return frozen;
 }

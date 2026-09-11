@@ -87,8 +87,7 @@ auto RenderPackedTypeDescriptions(const mir::CompilationUnit& unit)
         mir::DescribePackedType(unit, id);
     const ScopeView view = ScopeView::ForUnitConstant(unit, described.body);
     out += NamespaceConstantOf(
-        RenderTypeAsCpp(unit, unit.builtins.packed_type),
-        mir::PackedTypeDescriptionName(id),
+        RenderTypeAsCpp(unit, unit.builtins.packed_type), CppPackedTypeName(id),
         RenderExpr(view, view.Expr(described.value)));
   }
   return out;
@@ -103,10 +102,10 @@ auto RenderUnitStaticVariables(const mir::CompilationUnit& unit)
     -> std::string {
   std::string out;
   for (const mir::StaticVariableId id : unit.static_variables.Ids()) {
-    const auto& var = unit.static_variables.Get(id);
     out += std::format(
-        "inline {} {}{{}};\n", RenderTypeAsCpp(unit, var.type),
-        ToCppName(var.name));
+        "inline {} {}{{}};\n",
+        RenderTypeAsCpp(unit, unit.static_variables.Get(id).type),
+        CppStaticVariableName(unit.named_static_variables, id));
   }
   return out;
 }
@@ -163,7 +162,8 @@ auto RenderHostMain(
   out += "auto main(int argc, char** argv) -> int {\n";
   out += std::format(
       "  return lyra::runtime::RunDesign<{}::{}>(argc, argv, \"{}\");\n",
-      UnitNamespaceOf(root.name), ToCppName(root_class.name), root_class.name);
+      UnitNamespaceOf(root.name), CppClassName(root_class, tree->root),
+      root.name);
   out += "}\n";
   return out;
 }

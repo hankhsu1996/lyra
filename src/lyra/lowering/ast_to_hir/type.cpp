@@ -597,7 +597,7 @@ auto BuildInterfaceForwardingMethod(
     result_var = body.procedural_vars.Declare();
     body.procedural_vars.Define(
         *result_var,
-        hir::ProceduralVarDecl{.name = "forward_result", .type = result_type});
+        hir::ProceduralVarDecl{.name = std::nullopt, .type = result_type});
     root.declarations.push_back(*result_var);
   }
 

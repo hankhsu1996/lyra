@@ -151,9 +151,7 @@ auto LowerStraightLineProcess(ProcessLowerer& process)
   mir::CallableCode code = mir::CallableCode::Defined();
   CallableBindings bindings(process.Owner().Unit(), code);
   const mir::LocalId self_id = bindings.Declare(
-      BindingOriginId::Receiver(),
-      mir::LocalDecl{
-          .name = "self", .type = parent.current_class->self_pointer_type});
+      BindingOriginId::Receiver(), parent.current_class->self_pointer_type);
   code.params = {self_id};
   const WalkFrame body_frame =
       parent.WithBlock(&code.Body())
@@ -182,9 +180,7 @@ auto LowerForeverProcess(
   mir::CallableCode code = mir::CallableCode::Defined();
   CallableBindings bindings(process.Owner().Unit(), code);
   const mir::LocalId self_id = bindings.Declare(
-      BindingOriginId::Receiver(),
-      mir::LocalDecl{
-          .name = "self", .type = parent.current_class->self_pointer_type});
+      BindingOriginId::Receiver(), parent.current_class->self_pointer_type);
   code.params = {self_id};
   mir::Block body_block;
   {
@@ -252,14 +248,10 @@ auto ProcessLowerer::Run(const hir::SubroutineDecl& src)
   StructuralBase base = parent.structural_base;
   if (has_receiver) {
     params.push_back(bindings.Declare(
-        BindingOriginId::Receiver(),
-        mir::LocalDecl{
-            .name = "self", .type = parent.current_class->self_pointer_type}));
+        BindingOriginId::Receiver(), parent.current_class->self_pointer_type));
   } else if (parent.current_class == nullptr) {
     params.push_back(bindings.Declare(
-        BindingOriginId::Runtime(),
-        mir::LocalDecl{
-            .name = "runtime", .type = owner_->Unit().builtins.effects}));
+        BindingOriginId::Runtime(), owner_->Unit().builtins.effects));
   } else if (std::holds_alternative<ScopeThroughMember>(base)) {
     // A static method of a class a structural scope declares still reaches what
     // that class keeps for itself, and that is the instance's (LRM 6.22). It
@@ -267,10 +259,8 @@ auto ProcessLowerer::Run(const hir::SubroutineDecl& src)
     // leading parameter -- a value the callable needs, not a receiver standing
     // in for an object it does not have.
     const mir::LocalId declaring = bindings.DeclareAnonymous(
-        mir::LocalDecl{
-            .name = "declaring_scope",
-            .type = parent.EnclosingClassAtHops(mir::EnclosingHops{})
-                        .cls->self_pointer_type});
+        parent.EnclosingClassAtHops(mir::EnclosingHops{})
+            .cls->self_pointer_type);
     params.push_back(declaring);
     base = ScopeThroughParameter{.local = declaring};
   }
@@ -298,9 +288,8 @@ auto ProcessLowerer::Run(const hir::SubroutineDecl& src)
     if (!param_type.has_value()) {
       const mir::ExprId default_init = code.Body().exprs.Add(
           BuildDefaultValueFromHir(*owner_, code.Body(), hir_var.type));
-      const mir::LocalId local = bindings.Declare(
-          BindingOriginId::Procedural(param.var),
-          mir::LocalDecl{.name = hir_var.name, .type = value_type});
+      const mir::LocalId local = bindings.DeclareProcedural(
+          BindingOriginId::Procedural(param.var), hir_var.name, value_type);
       code.Body().AppendStmt(
           mir::LocalDeclStmt{.target = local, .init = default_init});
       MapProceduralVar(param.var, AutomaticVarBinding{.type = value_type});
@@ -309,9 +298,8 @@ auto ProcessLowerer::Run(const hir::SubroutineDecl& src)
       continue;
     }
 
-    const mir::LocalId mir_var = bindings.Declare(
-        BindingOriginId::Procedural(param.var),
-        mir::LocalDecl{.name = hir_var.name, .type = *param_type});
+    const mir::LocalId mir_var = bindings.DeclareProcedural(
+        BindingOriginId::Procedural(param.var), hir_var.name, *param_type);
     MapProceduralVar(param.var, AutomaticVarBinding{.type = *param_type});
     params.push_back(mir_var);
     if (dir == hir::ParamDirection::kInOut) {
@@ -330,8 +318,7 @@ auto ProcessLowerer::Run(const hir::SubroutineDecl& src)
     const mir::ExprId default_init = code.Body().exprs.Add(
         BuildDefaultValueFromHir(*owner_, code.Body(), src.result_type));
     const mir::LocalId result_local = bindings.Declare(
-        BindingOriginId::Procedural(*src.result_var),
-        mir::LocalDecl{.name = "_lyra_result", .type = ret_type});
+        BindingOriginId::Procedural(*src.result_var), ret_type);
     code.Body().AppendStmt(
         mir::LocalDeclStmt{.target = result_local, .init = default_init});
     MapProceduralVar(*src.result_var, AutomaticVarBinding{.type = ret_type});
@@ -393,9 +380,8 @@ auto ProcessLowerer::RegisterConstructorFormals(
     }
     const auto& hir_var = ctor.body.procedural_vars.Get(param.var);
     const mir::TypeId value_type = owner_->TranslateType(hir_var.type);
-    const mir::LocalId mir_var = frame.bindings->Declare(
-        BindingOriginId::Procedural(param.var),
-        mir::LocalDecl{.name = hir_var.name, .type = value_type});
+    const mir::LocalId mir_var = frame.bindings->DeclareProcedural(
+        BindingOriginId::Procedural(param.var), hir_var.name, value_type);
     MapProceduralVar(param.var, AutomaticVarBinding{.type = value_type});
     params.push_back(mir_var);
   }

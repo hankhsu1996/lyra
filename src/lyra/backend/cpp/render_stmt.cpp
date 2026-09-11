@@ -27,10 +27,10 @@ auto RenderForInit(const ScopeView& view, const mir::ForInit& init)
             // yields (every integral value is a PackedArray), so `auto` is the
             // exact same type as spelling it out -- and reads as the idiomatic
             // loop counter.
-            const auto& lv = view.Code().locals.Get(d.induction_var);
             const auto& init_expr = view.Block().exprs.Get(d.init);
             return std::format(
-                "auto {} = {}", ToCppName(lv.name),
+                "auto {} = {}",
+                CppLocalName(view.Code().named_locals, d.induction_var),
                 RenderExpr(view, init_expr));
           },
           [&](const mir::ForInitExpr& e) -> std::string {
@@ -48,7 +48,8 @@ auto RenderLocalDeclStmt(
   const auto& init_expr = view.Block().exprs.Get(s.init);
   return std::format(
       "{}{} {} = {};\n", Indent(indent), RenderTypeAsCpp(view.Unit(), lv.type),
-      ToCppName(lv.name), RenderExpr(view, init_expr));
+      CppLocalName(view.Code().named_locals, s.target),
+      RenderExpr(view, init_expr));
 }
 
 auto RenderExprStmt(
@@ -78,7 +79,8 @@ auto RenderTryStmt(
   result += RenderNestedBlock(view, body, indent + 1);
   result += std::format(
       "{}}} catch ({}& {}) {{\n", Indent(indent),
-      RenderTypeAsCpp(view.Unit(), caught.type), ToCppName(caught.name));
+      RenderTypeAsCpp(view.Unit(), caught.type),
+      CppLocalName(view.Code().named_locals, s.caught));
   result += RenderNestedBlock(view, handler, indent + 1);
   result += std::format("{}}}\n", Indent(indent));
   return result;

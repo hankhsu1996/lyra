@@ -2,12 +2,10 @@
 
 #include <compare>
 #include <cstdint>
-#include <format>
 #include <optional>
 #include <string>
 #include <vector>
 
-#include "lyra/base/internal_error.hpp"
 #include "lyra/base/pool_id.hpp"
 #include "lyra/hir/procedural_var.hpp"
 
@@ -57,6 +55,13 @@ struct ProceduralScopeId {
 // construct whether or not a `block_identifier` follows it. The name it was
 // given is recorded as a name, so the kinds stay one per construct and gaining
 // named forks adds no value here.
+//
+// Which construct opened a scope is not a dispatch set: nothing acts on it.
+// What a hierarchical path reaches is the identifier; what a fork's branches do
+// is the statement tree's answer; and the declarations a scope holds are read
+// the same way whichever construct wrote them. It is recorded because a root
+// scope has no statement that introduced it, so there is nowhere else a reader
+// of the scope tree alone could learn what it is looking at.
 enum class ProceduralScopeKind : std::uint8_t {
   kProcessRoot,
   kSubroutineRoot,
@@ -75,30 +80,5 @@ struct ProceduralScopeDecl {
   std::vector<ProceduralVarId> declarations;
   std::vector<ProceduralScopeId> child_scopes;
 };
-
-// The scope's own component of a generated name: the identifier the source gave
-// it, or a stand-in built from the kind and the scope's own identity for one it
-// did not name. Every scope has one, so a generated class or member that needs
-// to name a scope never asks whether the source named it -- what a hierarchical
-// path can reach is the source name, a separate question.
-[[nodiscard]] inline auto SegmentName(
-    const ProceduralScopeDecl& scope, ProceduralScopeId id) -> std::string {
-  if (scope.source_name.has_value()) {
-    return *scope.source_name;
-  }
-  switch (scope.kind) {
-    case ProceduralScopeKind::kProcessRoot:
-      return std::format("body_{}", id.value);
-    case ProceduralScopeKind::kBlock:
-      return std::format("block_{}", id.value);
-    case ProceduralScopeKind::kFork:
-      return std::format("fork_{}", id.value);
-    case ProceduralScopeKind::kSubroutineRoot:
-      break;
-  }
-  throw InternalError(
-      "hir: a subroutine scope was created without the name the source gave "
-      "it");
-}
 
 }  // namespace lyra::hir

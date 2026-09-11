@@ -70,8 +70,8 @@ auto LowerProceduralContinuousAssignStmt(
           builtins.int_unsigned));
 
   ClosureBuilder closure(unit, outer);
-  const mir::ExprId generation = SnapshotIntoClosure(
-      unit_lowerer, outer, closure, begin, "takeover_generation");
+  const mir::ExprId generation =
+      SnapshotIntoClosure(unit_lowerer, outer, closure, begin);
 
   // The target is named again inside the evaluation rather than carried into
   // it: it is reached from the receiver, and the receiver is an ordinary

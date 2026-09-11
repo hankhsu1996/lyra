@@ -32,10 +32,23 @@ stored as its parts, never as a composed name.
 
 ## Decision
 
-**A callable carries no name. Its identity is the position its declaration sits at; being reachable
-by a name is a relation the name space holds.** A class and a unit's namespace each carry a list
-pairing an identifier with the body it reaches. A body the source never wrote is simply absent from
-that list rather than present with a minted spelling in it.
+**A declaration carries no name. Its identity is the position it sits at; being reachable by a name
+is a relation its owner holds.** A class and a unit's namespace each carry a list pairing an
+identifier with what it reaches -- a body, a field, a type-associated cell, a namespace variable --
+and a body of code carries one for the locals it declares. A declaration the source never wrote is
+simply absent from that list rather than present with a minted spelling in it.
+
+The two exceptions are both the same one: where nothing holds the arena, the name is the identity. A
+member another unit promised carries its name, because a referrer has that unit's published
+identifier and not its pools; and a class the source declared carries its name, because that is what
+identifies the class across a unit boundary (LRM 8.3). Neither admits a declaration the source did
+not write, so neither has a nameless entry to describe.
+
+**This begins at the layer that reads the source, not at the one that emits.** A front end records
+the identifier a declaration was written under and records none for a declaration it introduces
+itself, so every layer below reads the absence rather than a word chosen to look unlikely. A rule
+that started lower would leave that layer supplying names nothing downstream could tell from the
+design's own.
 
 **A program-wide symbol is composed from self-delimiting parts under a category, never by joining
 names.** Each part carries its own extent -- a name as its length and bytes, an ordinal as its
@@ -72,6 +85,23 @@ the same symbol from the same two facts, so the two ends agree with nothing shar
   escape marker, and its bytes. The two images are disjoint.
 - Nothing composes a symbol outside the one place that owns composing them, so the unit that emits a
   declaration and every unit that reaches it arrive at the same string with no table between them.
+- A part of a symbol says which of the two ranges it is in -- an identifier the source wrote, or a
+  position counted where it wrote none -- so a declaration the source named can never compose the
+  symbol of one it did not, whatever either is called.
+- What the compiler records about a type rather than about a declaration is named the same way, and
+  for the same reason: a unit's record of one of its packed types is reached by that type's own
+  position, because a design may declare a variable spelled like anything a record could be called.
+- Every mechanism that existed to keep minted names apart is gone, because a position is distinct by
+  being one. What went: a rename that suffixed a colliding local until it was free, a prefix that
+  qualified the cells several declarations put in one pool, and the words composed for a process, a
+  continuous assignment, a port connection, an assertion and a scope's cancellation flag. The rename
+  was the sharpest of them -- it checked for a collision once and never rechecked the name it
+  produced, so two locals of one body could still reach one spelling.
+- What the emitted text costs by this is how a synthesized declaration reads: a handle that showed
+  which block it stood for is now its slot. That is the trade this record already took for an
+  escaped name, and there was no source name here to lose. The IR dump is where a reader asks which
+  declaration a position is, and it answers by showing an identifier for what the source named and
+  nothing for what it did not.
 
 ## Alternatives considered
 

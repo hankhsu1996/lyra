@@ -128,13 +128,12 @@ struct SnapshotBinding {
 
 auto SnapshotPredicate(
     UnitLowerer& unit_lowerer, WalkFrame frame, mir::Block& wrapper,
-    std::size_t index, mir::TypeId predicate_type,
-    mir::ExprId predicate_expr_id) -> SnapshotBinding {
+    mir::TypeId predicate_type, mir::ExprId predicate_expr_id)
+    -> SnapshotBinding {
   const BindingOriginId origin =
       BindingOriginId::Synthesized(unit_lowerer.NextSynthesizedSite(), 0);
   const mir::LocalId local = SnapshotExprToLocal(
-      unit_lowerer, frame, wrapper, std::format("_lyra_unique_cond_{}", index),
-      predicate_type, predicate_expr_id, origin);
+      unit_lowerer, frame, wrapper, predicate_type, predicate_expr_id, origin);
   return {.local = local, .origin = origin};
 }
 
@@ -160,8 +159,7 @@ auto BuildUniquenessCheckBody(
         body.exprs.Add(closure.Bindings().MakeReadExpr(ref, body)));
   }
 
-  const mir::LocalId count_var = closure.Bindings().DeclareAnonymous(
-      mir::LocalDecl{.name = "_lyra_unique_count", .type = int_type});
+  const mir::LocalId count_var = closure.Bindings().DeclareAnonymous(int_type);
 
   const mir::ExprId zero_init_id =
       BuildIntLiteral(unit_lowerer.Unit(), body, 0);
@@ -312,12 +310,10 @@ auto BuildUniquenessCheckCascade(
 
   std::vector<SnapshotBinding> snapshot_vars;
   snapshot_vars.reserve(arms.size());
-  for (std::size_t i = 0; i < arms.size(); ++i) {
-    const mir::TypeId predicate_type =
-        wrapper.exprs.Get(arms[i].predicate).type;
+  for (const auto& arm : arms) {
     snapshot_vars.push_back(SnapshotPredicate(
-        unit_lowerer, wrapper_frame, wrapper, i, predicate_type,
-        arms[i].predicate));
+        unit_lowerer, wrapper_frame, wrapper,
+        wrapper.exprs.Get(arm.predicate).type, arm.predicate));
   }
 
   SubmitToObservedRegion(
@@ -398,8 +394,8 @@ auto LowerUniquenessIfSeries(
   std::vector<QualifiedArm> arms;
   arms.reserve(series.arms.size());
   for (const hir::IfStmt* arm : series.arms) {
-    const mir::LocalId held = wrapper_frame.bindings->DeclareAnonymous(
-        mir::LocalDecl{.name = "_lyra_arm_held", .type = bit1_type});
+    const mir::LocalId held =
+        wrapper_frame.bindings->DeclareAnonymous(bit1_type);
     const mir::ExprId not_held =
         BuildBit1Literal(process.Owner().Unit(), wrapper, false);
     wrapper.AppendStmt(mir::LocalDeclStmt{.target = held, .init = not_held});

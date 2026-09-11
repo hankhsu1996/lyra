@@ -88,8 +88,8 @@ auto LowerDestructuringAssign(
 
   const mir::ExprId temp_default_init = wrapper.exprs.Add(
       BuildDefaultValueExpr(process.Owner().Unit(), wrapper, temp_type));
-  const mir::LocalId snapshot_var = wrapper_frame.bindings->DeclareAnonymous(
-      mir::LocalDecl{.name = "_lyra_destruct_rhs", .type = temp_type});
+  const mir::LocalId snapshot_var =
+      wrapper_frame.bindings->DeclareAnonymous(temp_type);
   wrapper.AppendStmt(
       mir::LocalDeclStmt{.target = snapshot_var, .init = temp_default_init});
 
@@ -252,8 +252,8 @@ auto LowerStreamingUnpackAssign(
           process.Owner(), wrapper, source_id,
           source.BitWidth() - targets_width, targets_width, stream_type)),
       lhs_stream.block_bits);
-  const mir::LocalId stream_var = wrapper_frame.bindings->DeclareAnonymous(
-      mir::LocalDecl{.name = "_lyra_unpack_stream", .type = stream_type});
+  const mir::LocalId stream_var =
+      wrapper_frame.bindings->DeclareAnonymous(stream_type);
   wrapper.AppendStmt(
       mir::LocalDeclStmt{
           .target = stream_var,

@@ -88,7 +88,13 @@ auto DeclaredMembers(const CompilationUnit& unit, TypeId type)
       Overloaded{
           [&](const ObjectType& object) -> std::optional<MemberList> {
             const Class& cls = unit.classes.Get(object.class_id);
-            return MemberList{.members = cls.members, .owner = cls.name};
+            // A scope of the design hierarchy answers to no identifier, so what
+            // a reader can be told about a bad step is the kind, as for a
+            // closure.
+            return MemberList{
+                .members = cls.members,
+                .owner = cls.name.has_value() ? std::string_view{*cls.name}
+                                              : "a scope of the hierarchy"};
           },
           [&](const ExternalUnitObjectType& external)
               -> std::optional<MemberList> {
@@ -114,7 +120,8 @@ auto DeclaredMembers(const CompilationUnit& unit, TypeId type)
           },
           [&](const StructType& record) -> std::optional<MemberList> {
             const Struct& decl = unit.structs.Get(record.struct_id);
-            return MemberList{.members = decl.fields, .owner = decl.name};
+            return MemberList{
+                .members = decl.fields, .owner = "a gathered scope"};
           },
           [](const auto&) -> std::optional<MemberList> {
             return std::nullopt;

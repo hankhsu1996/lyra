@@ -16,9 +16,14 @@
 #include "lyra/mir/abi_adapter_id.hpp"
 #include "lyra/mir/callable.hpp"
 #include "lyra/mir/callable_id.hpp"
+#include "lyra/mir/class.hpp"
+#include "lyra/mir/class_id.hpp"
 #include "lyra/mir/compilation_unit.hpp"
+#include "lyra/mir/field.hpp"
+#include "lyra/mir/local.hpp"
 #include "lyra/mir/namespace_storage_phase.hpp"
 #include "lyra/mir/static_constant_id.hpp"
+#include "lyra/mir/struct_id.hpp"
 
 namespace lyra::backend::cpp {
 
@@ -191,16 +196,112 @@ inline constexpr auto kCppReservedWords = std::to_array<std::string_view>(
   return std::format("{}{}_{}", kMintedPrefix, what, ordinal);
 }
 
-// The C++ identifier one body is emitted under, given the names its owner
-// answers. A body the source named takes that name; one nothing names takes a
-// minted name over the position it sits at, which no source name reaches. One
-// answer, so the declaration, the definition, and every call spell it alike.
-[[nodiscard]] inline auto CppCallableName(
-    std::span<const mir::NamedCallable> named, mir::CallableId body)
-    -> std::string {
-  const std::optional<std::string_view> name = mir::NameOf(named, body);
+// The C++ identifier one body a class owns is emitted under -- a method, a
+// process, or a lifecycle body. One the source named takes that name; one
+// nothing names takes a minted name over the position it sits at, which no
+// source name reaches. One answer, so the declaration, the definition, and
+// every call spell it alike.
+//
+// It takes the class rather than the relation because a unit's namespace holds
+// the same kind of relation over the same kind of id, and a body of one is
+// reached in ways a class's never is -- a foreign linkage name, or which
+// bring-up entry it is. Naming one from here would answer with a spelling
+// nothing links under.
+[[nodiscard]] inline auto CppClassCallableName(
+    const mir::Class& cls, mir::CallableId body) -> std::string {
+  const std::optional<std::string_view> name =
+      mir::NameOf(cls.named_callables, body);
   return name.has_value() ? ToCppName(*name)
                           : MintedCppName("body", body.value);
+}
+
+// The C++ identifier one of a class's fields is emitted under, given the names
+// its class answers. Storage the source named takes that name; storage nothing
+// names takes a minted name over the slot it sits at, which no source name
+// reaches.
+[[nodiscard]] inline auto CppFieldName(
+    std::span<const mir::NamedField> named, mir::FieldId slot) -> std::string {
+  const std::optional<std::string_view> name = mir::NameOf(named, slot);
+  return name.has_value() ? ToCppName(*name)
+                          : MintedCppName("field", slot.value);
+}
+
+// The C++ identifier one of a body's locals is emitted under. Every one of them
+// is minted over the position it sits at, and a local the source named carries
+// that identifier after the position, so the emitted body still reads like the
+// design without the position ever ceasing to be what separates two locals.
+//
+// The position has to lead, because nothing else separates them. A body's
+// locals are one flat arena spanning every scope the source nested inside it,
+// and SystemVerilog lets sibling scopes reuse an identifier -- two `matches`
+// patterns in one block each binding `n` are two variables, each scoped to its
+// own statement (LRM 12.6.1) -- while this target has one scope to declare them
+// in. So a source identifier does not decide a C++ one, and a slot, being a
+// position, is distinct by being one.
+[[nodiscard]] inline auto CppLocalName(
+    std::span<const mir::NamedLocal> named, mir::LocalId local) -> std::string {
+  const std::string minted = MintedCppName("local", local.value);
+  const std::optional<std::string_view> name = mir::NameOf(named, local);
+  return name.has_value() ? std::format("{}_{}", minted, ToCppName(*name))
+                          : minted;
+}
+
+// The C++ identifiers a class's and a unit's type-associated cells are emitted
+// under. The source declares some of each pool and the lowering keeps the rest
+// for bodies that outlive an activation; only the first kind answers to an
+// identifier.
+[[nodiscard]] inline auto CppStaticPropertyName(
+    std::span<const mir::NamedStaticProperty> named, mir::StaticPropertyId slot)
+    -> std::string {
+  const std::optional<std::string_view> name = mir::NameOf(named, slot);
+  return name.has_value() ? ToCppName(*name)
+                          : MintedCppName("cell", slot.value);
+}
+
+[[nodiscard]] inline auto CppStaticVariableName(
+    std::span<const mir::NamedStaticVariable> named,
+    mir::StaticVariableId variable) -> std::string {
+  const std::optional<std::string_view> name = mir::NameOf(named, variable);
+  return name.has_value() ? ToCppName(*name)
+                          : MintedCppName("variable", variable.value);
+}
+
+// The C++ identifier a class is emitted under. A class the source declared
+// takes its declared name; a scope of the design hierarchy takes a minted name
+// over the identity its unit's registry gave it.
+[[nodiscard]] inline auto CppClassName(const mir::Class& cls, mir::ClassId id)
+    -> std::string {
+  return cls.name.has_value() ? ToCppName(*cls.name)
+                              : MintedCppName("scope", id.value);
+}
+
+// The C++ identifier a gathered-scope aggregate, and one member of one, are
+// emitted under. The source declares no such aggregate, so neither it nor any
+// member of it answers to an identifier and a position is the whole of what
+// names one.
+[[nodiscard]] inline auto CppStructName(mir::StructId id) -> std::string {
+  return MintedCppName("scope_storage", id.value);
+}
+
+[[nodiscard]] inline auto CppStructFieldName(mir::FieldId slot) -> std::string {
+  return MintedCppName("field", slot.value);
+}
+
+// The C++ identifier one of a closure's captures is emitted under. A capture is
+// realized as a lambda capture and shares the lambda's scope with the closure's
+// per-invocation parameters and body locals, so what separates it from them has
+// to be something no source identifier can reach: its position in the closure.
+[[nodiscard]] inline auto CppClosureCaptureName(mir::FieldId slot)
+    -> std::string {
+  return MintedCppName("capture", slot.value);
+}
+
+// The C++ identifier the run-time description of a packed type is emitted
+// under. It describes a type rather than standing for a declaration, so no
+// source identifier reaches it and the type's own position is what names it.
+[[nodiscard]] inline auto CppPackedTypeName(mir::TypeId integral)
+    -> std::string {
+  return MintedCppName("packed_type", integral.value);
 }
 
 // The C++ identifiers a class's runtime-callback adapters and its compile-time
@@ -244,9 +345,6 @@ inline constexpr auto kCppReservedWords = std::to_array<std::string_view>(
           [](const mir::ReachedByName& r) { return ToCppName(r.name); },
           [](const mir::ReachedByStoragePhase& r) {
             return CppStorageEntryName(r.phase);
-          },
-          [&](const mir::ReachedByNothing&) {
-            return MintedCppName("body", body.value);
           }},
       mir::NamespaceReachOf(unit, body));
 }

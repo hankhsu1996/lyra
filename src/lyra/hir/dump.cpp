@@ -121,6 +121,15 @@ auto ReferenceBindingLabel(ReferenceBinding binding) -> std::string_view {
   return binding == ReferenceBinding::kConstRef ? " const ref" : " ref";
 }
 
+// The identifier a declaration answers to, quoted, or nothing at all where the
+// source gave it none. Printing the absence as an empty string rather than a
+// stand-in is the point: what a reader learns from this dump is which
+// declarations the design wrote, and a stand-in spelled out of ordinary
+// identifier characters is one a design may also write.
+auto FormatName(const std::optional<std::string>& name) -> std::string {
+  return name.has_value() ? std::format(" \"{}\"", *name) : std::string{};
+}
+
 auto FormatPublishedStorage(const PublishedStorage& storage) -> std::string {
   return std::visit(
       Overloaded{
@@ -1767,8 +1776,9 @@ class HirDumper {
     if (!s.declarations.empty()) declares += ")";
     Line(
         std::format(
-            "ProceduralScope[{}] {} \"{}\"{}", id.value,
-            ProceduralScopeKindLabel(s.kind), SegmentName(s, id), declares));
+            "ProceduralScope[{}] {}{}{}", id.value,
+            ProceduralScopeKindLabel(s.kind), FormatName(s.source_name),
+            declares));
     Indent();
     for (const ProceduralScopeId child : s.child_scopes) {
       DumpProceduralScope(scopes, child);
@@ -1786,8 +1796,8 @@ class HirDumper {
         const auto& lv = body.procedural_vars.Get(id);
         Line(
             std::format(
-                "ProceduralVar[{}] \"{}\" : Type[{}]{}{}{}", id.value, lv.name,
-                lv.type.value,
+                "ProceduralVar[{}]{} : Type[{}]{}{}{}", id.value,
+                FormatName(lv.name), lv.type.value,
                 lv.lifetime == VariableLifetime::kStatic ? " static" : "",
                 lv.lifetime_extended ? " lifetime-extended" : "",
                 lv.init.has_value()

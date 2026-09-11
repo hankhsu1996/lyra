@@ -10,6 +10,7 @@
 #include "lyra/hir/value_ref.hpp"
 #include "lyra/lowering/hir_to_mir/callable_bindings.hpp"
 #include "lyra/lowering/hir_to_mir/endpoint.hpp"
+#include "lyra/lowering/hir_to_mir/expression/references.hpp"
 #include "lyra/lowering/hir_to_mir/integral_literal.hpp"
 #include "lyra/lowering/hir_to_mir/runtime_call.hpp"
 #include "lyra/lowering/hir_to_mir/structural_scope_lowerer.hpp"
@@ -35,18 +36,8 @@ auto BuildObservableCellExpr(
                 frame, unit, BindEndpoint(lowerer, frame, route)));
           },
           [&](const hir::ExternalUnitValueRef& pkg) -> mir::ExprId {
-            unit.AddExternalReferencedUnit(pkg.unit_name);
-            const mir::TypeId cell_type = mir::ObservableCellOf(
-                unit.types, lowerer.Owner().TranslateType(pkg.value_type));
-            return block.exprs.Add(
-                mir::Expr{
-                    .data =
-                        mir::ReferenceExpr{
-                            .target =
-                                mir::ExternalUnitVariableRef{
-                                    .unit_name = pkg.unit_name,
-                                    .variable_name = pkg.variable_name}},
-                    .type = cell_type});
+            return block.exprs.Add(LowerExternalUnitValueRefExpr(
+                unit, pkg, lowerer.Owner().TranslateType(pkg.value_type)));
           },
       },
       entry.ref);
@@ -57,8 +48,8 @@ namespace {
 // The same storage as a borrowed pointer, which is the form a registration
 // hands the runtime. A route answers for this form itself, because an endpoint
 // that reached out of the unit already holds a pointer and composing one from
-// the cell would send that case through a dereference and back. A package
-// variable is named as its cell alone, so its pointer is that name's address.
+// the cell would send that case through a dereference and back. A namespace's
+// cell is reached as the cell itself, so its pointer is that cell's address.
 auto BuildObservablePtrExpr(
     mir::Block& block, const WalkFrame& frame, mir::CompilationUnit& unit,
     const StructuralScopeLowerer& lowerer, const hir::SensitivityEntry& entry)
@@ -133,9 +124,8 @@ auto DeclareObservation(
                   .callee = mir::Direct{.target = entry},
                   .arguments = std::move(arguments)},
           .type = unit.builtins.observation});
-  const mir::LocalId local = frame.bindings->DeclareAnonymous(
-      mir::LocalDecl{
-          .name = "_lyra_observation", .type = unit.builtins.observation});
+  const mir::LocalId local =
+      frame.bindings->DeclareAnonymous(unit.builtins.observation);
   block.AppendStmt(mir::LocalDeclStmt{.target = local, .init = observe_id});
   return local;
 }

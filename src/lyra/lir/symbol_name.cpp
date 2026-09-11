@@ -31,12 +31,8 @@ auto CategoryTag(SymbolCategory category) -> char {
       return 'g';
     case SymbolCategory::kConstructor:
       return 'n';
-    case SymbolCategory::kMethod:
+    case SymbolCategory::kClassCallable:
       return 'm';
-    case SymbolCategory::kSynthesizedBody:
-      return 'y';
-    case SymbolCategory::kSynthesizedNamespaceBody:
-      return 'w';
     case SymbolCategory::kNamespaceCallable:
       return 'f';
     case SymbolCategory::kNamespaceStorageInstall:
@@ -69,6 +65,18 @@ auto SymbolPart::Ordinal(std::uint32_t value) -> SymbolPart {
   return SymbolPart{std::format("$i{};", value)};
 }
 
+auto SymbolPartOf(std::optional<std::string_view> name, std::uint32_t ordinal)
+    -> SymbolPart {
+  return name.has_value() ? SymbolPart::Name(*name)
+                          : SymbolPart::Ordinal(ordinal);
+}
+
+auto SymbolPartOf(const std::optional<std::string>& name, std::uint32_t ordinal)
+    -> SymbolPart {
+  return name.has_value() ? SymbolPart::Name(*name)
+                          : SymbolPart::Ordinal(ordinal);
+}
+
 auto SymbolName(
     SymbolCategory category, std::initializer_list<SymbolPart> parts)
     -> std::string {
@@ -79,73 +87,53 @@ auto SymbolName(
   return out;
 }
 
-auto ClassSymbol(std::string_view unit_name, std::string_view class_name)
+auto ClassSymbol(std::string_view unit_name, SymbolPart cls) -> std::string {
+  return SymbolName(
+      SymbolCategory::kClass, {SymbolPart::Name(unit_name), std::move(cls)});
+}
+
+auto ClassDefinitionSymbol(std::string_view unit_name, SymbolPart cls)
     -> std::string {
   return SymbolName(
-      SymbolCategory::kClass,
-      {SymbolPart::Name(unit_name), SymbolPart::Name(class_name)});
-}
-
-auto ClassDefinitionSymbol(
-    std::string_view unit_name, std::string_view class_name) -> std::string {
-  return SymbolName(
       SymbolCategory::kClassDefinition,
-      {SymbolPart::Name(unit_name), SymbolPart::Name(class_name)});
+      {SymbolPart::Name(unit_name), std::move(cls)});
 }
 
-auto StructDefinitionSymbol(
-    std::string_view unit_name, std::string_view struct_name) -> std::string {
+auto StructDefinitionSymbol(std::string_view unit_name, SymbolPart record)
+    -> std::string {
   return SymbolName(
       SymbolCategory::kStructDefinition,
-      {SymbolPart::Name(unit_name), SymbolPart::Name(struct_name)});
+      {SymbolPart::Name(unit_name), std::move(record)});
 }
 
-auto ClosureDefinitionSymbol(std::string_view unit_name, std::uint32_t ordinal)
+auto ClosureDefinitionSymbol(std::string_view unit_name, SymbolPart closure)
     -> std::string {
   return SymbolName(
       SymbolCategory::kClosureDefinition,
-      {SymbolPart::Name(unit_name), SymbolPart::Ordinal(ordinal)});
+      {SymbolPart::Name(unit_name), std::move(closure)});
 }
 
-auto ConstructorSymbol(std::string_view unit_name, std::string_view class_name)
+auto ConstructorSymbol(std::string_view unit_name, SymbolPart cls)
     -> std::string {
   return SymbolName(
       SymbolCategory::kConstructor,
-      {SymbolPart::Name(unit_name), SymbolPart::Name(class_name)});
+      {SymbolPart::Name(unit_name), std::move(cls)});
 }
 
-auto MethodSymbol(
-    std::string_view unit_name, std::string_view class_name,
-    std::string_view method_name) -> std::string {
+auto ClassCallableSymbol(
+    std::string_view unit_name, SymbolPart cls, SymbolPart callable)
+    -> std::string {
   return SymbolName(
-      SymbolCategory::kMethod,
-      {SymbolPart::Name(unit_name), SymbolPart::Name(class_name),
-       SymbolPart::Name(method_name)});
+      SymbolCategory::kClassCallable,
+      {SymbolPart::Name(unit_name), std::move(cls), std::move(callable)});
 }
 
 auto StaticPropertySymbol(
-    std::string_view unit_name, std::string_view class_name,
-    std::string_view property_name) -> std::string {
+    std::string_view unit_name, SymbolPart cls, SymbolPart property)
+    -> std::string {
   return SymbolName(
       SymbolCategory::kStaticProperty,
-      {SymbolPart::Name(unit_name), SymbolPart::Name(class_name),
-       SymbolPart::Name(property_name)});
-}
-
-auto SynthesizedBodySymbol(
-    std::string_view unit_name, std::string_view class_name,
-    std::uint32_t ordinal) -> std::string {
-  return SymbolName(
-      SymbolCategory::kSynthesizedBody,
-      {SymbolPart::Name(unit_name), SymbolPart::Name(class_name),
-       SymbolPart::Ordinal(ordinal)});
-}
-
-auto SynthesizedNamespaceBodySymbol(
-    std::string_view unit_name, std::uint32_t ordinal) -> std::string {
-  return SymbolName(
-      SymbolCategory::kSynthesizedNamespaceBody,
-      {SymbolPart::Name(unit_name), SymbolPart::Ordinal(ordinal)});
+      {SymbolPart::Name(unit_name), std::move(cls), std::move(property)});
 }
 
 auto NamespaceCallableSymbol(
@@ -167,33 +155,32 @@ auto NamespaceStorageInitializeSymbol(std::string_view unit_name)
       {SymbolPart::Name(unit_name)});
 }
 
-auto NamespaceVariableSymbol(
-    std::string_view unit_name, std::string_view variable_name) -> std::string {
+auto NamespaceVariableSymbol(std::string_view unit_name, SymbolPart variable)
+    -> std::string {
   return SymbolName(
       SymbolCategory::kNamespaceVariable,
-      {SymbolPart::Name(unit_name), SymbolPart::Name(variable_name)});
+      {SymbolPart::Name(unit_name), std::move(variable)});
 }
 
-auto StructSymbol(std::string_view unit_name, std::string_view struct_name)
+auto StructSymbol(std::string_view unit_name, SymbolPart record)
     -> std::string {
   return SymbolName(
       SymbolCategory::kStruct,
-      {SymbolPart::Name(unit_name), SymbolPart::Name(struct_name)});
+      {SymbolPart::Name(unit_name), std::move(record)});
 }
 
-auto TypeDescriptionSymbol(
-    std::string_view unit_name, std::string_view description_name)
+auto TypeDescriptionSymbol(std::string_view unit_name, std::uint32_t ordinal)
     -> std::string {
   return SymbolName(
       SymbolCategory::kTypeDescription,
-      {SymbolPart::Name(unit_name), SymbolPart::Name(description_name)});
+      {SymbolPart::Name(unit_name), SymbolPart::Ordinal(ordinal)});
 }
 
-auto ClosureSymbol(std::string_view unit_name, std::uint32_t ordinal)
+auto ClosureSymbol(std::string_view unit_name, SymbolPart closure)
     -> std::string {
   return SymbolName(
       SymbolCategory::kClosure,
-      {SymbolPart::Name(unit_name), SymbolPart::Ordinal(ordinal)});
+      {SymbolPart::Name(unit_name), std::move(closure)});
 }
 
 auto ClosureInvokeSymbol(std::string_view unit_name, std::uint32_t ordinal)
@@ -218,8 +205,9 @@ enum class DeclarationKind : std::uint8_t { kClass, kClosure, kStruct };
 struct DeclarationParts {
   DeclarationKind kind;
   std::string unit_name;
-  std::string name;
-  std::uint32_t ordinal;
+  // What the declaration contributes: the identifier its unit gave it, or the
+  // position that unit counted it at where it was given none.
+  SymbolPart part;
 };
 
 auto PartsOf(const CompilationUnit& unit, TypeId type)
@@ -230,8 +218,8 @@ auto PartsOf(const CompilationUnit& unit, TypeId type)
             return DeclarationParts{
                 .kind = DeclarationKind::kClass,
                 .unit_name = unit.name,
-                .name = unit.classes.Get(o.class_id).name,
-                .ordinal = 0};
+                .part = SymbolPartOf(
+                    unit.classes.Get(o.class_id).name, o.class_id.value)};
           },
           [&](const ExternalUnitObjectType& e)
               -> std::optional<DeclarationParts> {
@@ -240,15 +228,13 @@ auto PartsOf(const CompilationUnit& unit, TypeId type)
             return DeclarationParts{
                 .kind = DeclarationKind::kClass,
                 .unit_name = object.unit_name,
-                .name = object.class_name,
-                .ordinal = 0};
+                .part = SymbolPart::Name(object.class_name)};
           },
           [](const CrossUnitClassType& c) -> std::optional<DeclarationParts> {
             return DeclarationParts{
                 .kind = DeclarationKind::kClass,
                 .unit_name = c.unit_name,
-                .name = c.class_name,
-                .ordinal = 0};
+                .part = SymbolPart::Name(c.class_name)};
           },
           [&](const ClosureType& c) -> std::optional<DeclarationParts> {
             // A closure has no declaration of the source to take a name from,
@@ -256,15 +242,15 @@ auto PartsOf(const CompilationUnit& unit, TypeId type)
             return DeclarationParts{
                 .kind = DeclarationKind::kClosure,
                 .unit_name = unit.name,
-                .name = {},
-                .ordinal = c.closure_id.value};
+                .part = SymbolPart::Ordinal(c.closure_id.value)};
           },
           [&](const StructType& s) -> std::optional<DeclarationParts> {
+            // Like a closure, a gathered scope is no declaration of the
+            // source, so its position is what identifies it.
             return DeclarationParts{
                 .kind = DeclarationKind::kStruct,
                 .unit_name = unit.name,
-                .name = unit.structs.Get(s.struct_id).name,
-                .ordinal = 0};
+                .part = SymbolPart::Ordinal(s.struct_id.value)};
           },
           [](const auto&) -> std::optional<DeclarationParts> {
             return std::nullopt;
@@ -281,11 +267,11 @@ auto DeclarationSymbol(const CompilationUnit& unit, TypeId type)
   }
   switch (parts->kind) {
     case DeclarationKind::kClass:
-      return ClassSymbol(parts->unit_name, parts->name);
+      return ClassSymbol(parts->unit_name, parts->part);
     case DeclarationKind::kStruct:
-      return StructSymbol(parts->unit_name, parts->name);
+      return StructSymbol(parts->unit_name, parts->part);
     case DeclarationKind::kClosure:
-      return ClosureSymbol(parts->unit_name, parts->ordinal);
+      return ClosureSymbol(parts->unit_name, parts->part);
   }
   throw InternalError("DeclarationSymbol: unknown declaration kind");
 }
@@ -298,11 +284,11 @@ auto DefinitionSymbol(const CompilationUnit& unit, TypeId type)
   }
   switch (parts->kind) {
     case DeclarationKind::kClass:
-      return ClassDefinitionSymbol(parts->unit_name, parts->name);
+      return ClassDefinitionSymbol(parts->unit_name, parts->part);
     case DeclarationKind::kStruct:
-      return StructDefinitionSymbol(parts->unit_name, parts->name);
+      return StructDefinitionSymbol(parts->unit_name, parts->part);
     case DeclarationKind::kClosure:
-      return ClosureDefinitionSymbol(parts->unit_name, parts->ordinal);
+      return ClosureDefinitionSymbol(parts->unit_name, parts->part);
   }
   throw InternalError("DefinitionSymbol: unknown declaration kind");
 }

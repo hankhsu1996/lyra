@@ -193,8 +193,8 @@ auto LowerDistributionSystemSubroutineCall(
                   .callee = mir::Direct{.target = DistributionEntry(info.kind)},
                   .arguments = std::move(arguments)},
           .type = payload_type});
-  const mir::LocalId completion = steps.Bindings().DeclareAnonymous(
-      mir::LocalDecl{.name = "_lyra_draw", .type = payload_type});
+  const mir::LocalId completion =
+      steps.Bindings().DeclareAnonymous(payload_type);
   body.AppendStmt(mir::LocalDeclStmt{.target = completion, .init = draw_call});
 
   // LRM 20.14.1 / 20.14.2 make the seed an integral variable the draw advances,

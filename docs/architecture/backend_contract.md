@@ -136,11 +136,13 @@ two ways.
    method named at one site (invariant 3). A write that descends is not among them: what descends is
    a run of calls, and only the owner they start from reaches this dispatch.
 
-5. **Member declaration is (name, type) -- nothing else reaches member render.** A member's
-   target-language declaration form is determined by its name and its type alone (the type carries
-   size, offset, and target type form; the name carries the source identifier). Wrapper-typed
-   members are no exception: any per-member construction state arrives later as ordinary MIR
-   expressions in the constructor body, never as type payload that member render reads.
+5. **Member declaration is a type at a position -- nothing else reaches member render.** A member's
+   target-language declaration form is determined by its type and by what its class answers for that
+   position: the type carries size, offset, and target type form, and the class answers with the
+   identifier the source wrote or with nothing, which is what tells a render whether to spell the
+   member from a name or from the position. Wrapper-typed members are no exception: any per-member
+   construction state arrives later as ordinary MIR expressions in the constructor body, never as
+   type payload that member render reads.
 
 6. **The LLVM IR backend is the canonical cross-check.** When invariant 2 leaves a branch in doubt,
    ask: could a mechanical LLVM IR backend translate the same MIR node without working out what the

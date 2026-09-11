@@ -445,8 +445,7 @@ auto LowerHirAssignmentPatternKeyedExpr(
 
   auto filled = build_filled(step_frame);
   if (!filled) return std::unexpected(std::move(filled.error()));
-  const mir::LocalId array = steps.Bindings().DeclareAnonymous(
-      mir::LocalDecl{.name = "_lyra_pattern", .type = result_type});
+  const mir::LocalId array = steps.Bindings().DeclareAnonymous(result_type);
   body.AppendStmt(
       mir::LocalDeclStmt{
           .target = array, .init = body.exprs.Add(*std::move(filled))});

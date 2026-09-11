@@ -1184,33 +1184,86 @@ enough to warrant its own focused review.
       arrive is the same everywhere. Blocked by nothing, and R77 is where it naturally lands: the
       one surface that hands out the pairs is the place the question belongs.
 
-- [ ] R79 -- A lowering composes a declaration's name by joining a source name to a word of its own,
-      in a layer with no target, so the result is neither a source name nor a name the target minted
-      -- and nothing downstream can tell the two apart. A module declaring
-      `int foo_borrowed_handle;` beside a block named `foo` emits a C++ class with that member
-      declared twice; so does `int foo__cancel_1;` beside the same block. Legal SystemVerilog, no
-      diagnostic, and the emitted text does not compile.
+- [x] R79 -- A declaration the source never wrote carries no name. Its identity is the position it
+      sits at, and being reachable by an identifier is a relation its owner holds, which only what
+      the source declared takes part in. The compiler therefore mints nothing into the design's own
+      name space, and a backend answers "what is this called" by asking whether anything names it
+      rather than by reading a spelling it was handed.
 
-      Ten sites compose such a name today, across both lowerings, and seven start from a source
-      name: an owned child's handle, what a `disable` of a named scope invalidates, a continuous
-      assignment's driver, a nested scope's class, an assertion local, and the name a view offers a
-      port under. The other three join an ordinal to a word of the compiler's own, which collides
-      just as well -- nothing stops a design declaring the identifier the composition produces --
-      and around ninety further sites name a synthesized local with a literal of the same kind.
+      Before it, a lowering joined a source name to a word of its own and the result was neither
+      kind of name. `int foo_borrowed_handle;` beside a block named `foo` emitted a class with that
+      member declared twice; a design element named for an enclosing one and a block inside it
+      collided with the scope built for that block; and two block-local variables could reach one
+      spelling, because the mechanism that kept synthesized locals apart renamed a colliding one and
+      never rechecked what the rename produced. All legal SystemVerilog, no diagnostic, and emitted
+      text that does not compile.
 
-      Target shape, already decided for the callable case: a declaration the source never wrote
-      carries no name, its identity is the position it sits at, and being reachable by a name is a
-      relation its owner holds (`decisions/a-name-is-a-relation-not-an-identity.md`, which names one
-      position of this on the unit side already). Applying it to a field, a local and a class means
-      MIR saying which of its names came from the source, which is the fact the producer has and
-      drops -- today both arrive as one string, so a backend must treat them alike and whichever way
-      it treats them is wrong for the other. The C++ backend already spells a nameless callable from
-      its slot, so the range a minted spelling lands in exists and is disjoint from the mapped one.
+      It reached further than the count suggested. One rule crossed eight kinds of declaration --
+      a field, a class, a gathered scope and its members, a local, a construction parameter, a
+      class-level cell, a namespace variable -- two IR layers, both backends, and the composition of
+      program-wide symbols, where a part now says which of the two ranges it is in. What the rule
+      paid for itself with is deletion: every mechanism that existed to keep minted names apart is
+      gone, because a position is distinct by being one.
 
-      Not blocked. Separate from R76 because the rule is different: R76 is a source name reaching a
-      target's identifier space intact, this is the compiler not minting names into the source's.
-      The execution backend answers all of it correctly, so the failure anyone can see is the C++
-      backend's while the unsoundness is everyone's.
+      Two defects it exposed that nothing was looking for. `$printtimescale` (LRM 20.4.2) named the
+      scope with a word the compiler had composed, printed to the user as simulation output; it now
+      reports the design element, and what the clause actually asks for -- the hierarchical path --
+      is a run-time fact this layer cannot answer. And the emitted construction protocol spelled its
+      receiver one way in the signature and another in the body, which held only while both reached
+      for the same word.
+
+      The execution backend answered all of it correctly throughout, because what it links is not a
+      C++ identifier, so only the C++ projection could see the failure while the unsoundness was
+      everyone's.
+
+- [x] R80 -- The front end records the identifier a variable was declared under and records none for
+      a variable it introduced itself, so R79's rule holds from the layer that answers what the
+      design wrote. A held right-hand side of an intra-assignment delay (LRM 9.4.5), a `foreach`
+      bound and its continuation flag, a crossing result and a forwarded one had each carried a word
+      of the compiler's own, under three conventions, two of which are ordinary identifiers a design
+      may also declare.
+
+      It was filed as a subject of its own and that was wrong. The rule is R79's, and the reading
+      that separated them -- that the front end owes source fidelity rather than a target spelling
+      -- describes why the answer takes the shape it does, not why it is a different question.
+      R79's decision record states that a name relation admits only what the source declared; while
+      the front end supplied names for what it synthesized, that sentence was false in the tree, and
+      an invariant its own change violates is worse than none.
+
+      Doing it turned up a position nothing else had: the record a unit keeps about each of its
+      packed types was named in a layer with no target, and a package declaring a variable spelled
+      like one of those records emitted C++ that does not compile. It is the same defect as every
+      other position on the axis, it had gone unseen through the whole of R79, and it was reachable
+      only by treating the two as one subject -- which is the argument against splitting a rule by
+      the layer it happens to land in.
+
+- [ ] R81 -- A policy check's own allowlists go stale silently, so a check keeps passing for a
+      reason that stopped being true. Each of these scripts carries lists naming paths, functions or
+      expressions that are exempt, and nothing confirms any entry still matches anything: an entry
+      whose subject was renamed or deleted stops exempting what it was written for, and the summary
+      line each script prints goes on counting it. Four scripts carry such lists -- the exception
+      policy has four, the architecture policy three plus four hard-coded file paths, the runtime
+      ABI check four hard-coded paths, and the render-name check its emitter list.
+
+      The class has already cost once: a rule named the directory a `catch(...)` allowlist covered,
+      the entry point moved, and the sentence went on naming a directory the gate no longer meant --
+      which reads like a typo and is dead configuration. Where the exempted subject no longer
+      exists, the check passes over it for the wrong reason.
+
+      The shape of the fix is settled and proven in one place: the emitted-name check now reports
+      any entry of its three lists that nothing in the scanned files reaches, and that report was
+      verified in both directions -- fabricated dead entries make it fail and name them, removing
+      them makes it pass. Each remaining script wants the same, in its own terms. Blocked by
+      nothing.
+
+      Two rules were considered here and rejected on measurement rather than on judgement, which is
+      worth recording so they are not re-proposed. A check for a variant alternative nothing
+      constructs finds nothing: 91 variants and 521 alternatives were examined and every one is
+      constructed somewhere. A check for an alternative built at exactly one site finds fourteen,
+      all of them legitimate single-producer cases, so it would either stand red or need an
+      allowlist of its own -- which is the defect above. What neither catches is the case that
+      prompted them: an alternative built only by the classifier's own unreachable fallthrough,
+      which is a reachability property and not a syntactic one.
 
 - [ ] R80 -- The C++ backend has no diagnostic channel, so every construct it does not realize is
       either an internal error telling the reader to report a bug, or a refusal stated somewhere

@@ -1,9 +1,7 @@
 #include "lyra/lowering/hir_to_mir/continuous_assign.hpp"
 
 #include <expected>
-#include <format>
 #include <optional>
-#include <string>
 #include <utility>
 
 #include "lyra/hir/continuous_assign.hpp"
@@ -74,8 +72,7 @@ auto DriverAccess(
 auto LowerContinuousAssign(
     const StructuralScopeLowerer& lowerer, const WalkFrame& ctor_frame,
     const WalkFrame& resolve_frame, const WalkFrame& init_frame,
-    std::string name, const hir::ContinuousAssign& src)
-    -> diag::Result<mir::CallableDecl> {
+    const hir::ContinuousAssign& src) -> diag::Result<mir::CallableDecl> {
   mir::CompilationUnit& unit = lowerer.Owner().Unit();
   const hir::StructuralScope& hir_scope = lowerer.HirScope();
   const mir::TypeId self_ptr_type = ctor_frame.current_class->self_pointer_type;
@@ -111,10 +108,7 @@ auto LowerContinuousAssign(
           unit.types.Intern(mir::Type{mir::DriverType{.value = net->value}});
       mir::Class& mir_class = *resolve_frame.current_class;
       driver = AttachedDriver{
-          .field = mir_class.fields.Add(
-              mir::FieldDecl{
-                  .name = std::format("{}__driver", name),
-                  .type = driver_type}),
+          .field = mir_class.fields.Add(mir::FieldDecl{.type = driver_type}),
           .type = driver_type};
       const mir::ExprId strength =
           BuildStrengthOperand(unit, resolve_block, src.strength);
@@ -164,9 +158,8 @@ auto LowerContinuousAssign(
 
   mir::CallableCode code = mir::CallableCode::Defined();
   CallableBindings bindings(unit, code);
-  const mir::LocalId self_id = bindings.Declare(
-      BindingOriginId::Receiver(),
-      mir::LocalDecl{.name = "self", .type = self_ptr_type});
+  const mir::LocalId self_id =
+      bindings.Declare(BindingOriginId::Receiver(), self_ptr_type);
 
   mir::Block body_block;
   const WalkFrame body_frame =

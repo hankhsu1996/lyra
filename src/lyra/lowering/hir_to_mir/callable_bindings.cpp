@@ -39,30 +39,33 @@ CallableBindings::CallableBindings(
           .pointee = closure_value,
           .ownership = mir::PointerOwnership::kBorrowed,
           .mutability = mir::Mutability::kReadOnly}});
-  self_local_ =
-      code_->locals.Add(mir::LocalDecl{.name = "self", .type = self_ptr_type_});
+  self_local_ = code_->AddLocal(self_ptr_type_);
 }
 
-auto CallableBindings::AddLocal(mir::LocalDecl decl) -> mir::LocalId {
-  const bool name_taken =
-      std::ranges::any_of(code_->locals, [&](const mir::LocalDecl& existing) {
-        return existing.name == decl.name;
-      });
-  if (name_taken) {
-    decl.name += "_" + std::to_string(code_->locals.size());
-  }
-  return code_->locals.Add(std::move(decl));
-}
-
-auto CallableBindings::Declare(BindingOriginId origin, mir::LocalDecl decl)
+auto CallableBindings::DeclareNamed(
+    BindingOriginId origin, std::string name, mir::TypeId type)
     -> mir::LocalId {
-  const mir::LocalId id = AddLocal(std::move(decl));
+  const mir::LocalId id = code_->AddNamedLocal(std::move(name), type);
   available_.insert_or_assign(origin, BodyBindingRef{.ref = id});
   return id;
 }
 
-auto CallableBindings::DeclareAnonymous(mir::LocalDecl decl) -> mir::LocalId {
-  return AddLocal(std::move(decl));
+auto CallableBindings::DeclareProcedural(
+    BindingOriginId origin, const std::optional<std::string>& name,
+    mir::TypeId type) -> mir::LocalId {
+  return name.has_value() ? DeclareNamed(origin, *name, type)
+                          : Declare(origin, type);
+}
+
+auto CallableBindings::Declare(BindingOriginId origin, mir::TypeId type)
+    -> mir::LocalId {
+  const mir::LocalId id = code_->AddLocal(type);
+  available_.insert_or_assign(origin, BodyBindingRef{.ref = id});
+  return id;
+}
+
+auto CallableBindings::DeclareAnonymous(mir::TypeId type) -> mir::LocalId {
+  return code_->AddLocal(type);
 }
 
 auto CallableBindings::EnsureCarrier(BindingOriginId origin) -> BodyBindingRef {
@@ -79,7 +82,6 @@ auto CallableBindings::EnsureCarrier(BindingOriginId origin) -> BodyBindingRef {
   // construction site (a block of the parent), then add a captured field here.
   const BodyBindingRef parent_ref = parent_->EnsureCarrier(origin);
   const mir::TypeId parent_type = parent_->TypeOf(parent_ref);
-  const std::string name = parent_->NameOf(parent_ref);
   const mir::ExprId read = capture_site_->exprs.Add(
       parent_->MakeReadExpr(parent_ref, *capture_site_));
 
@@ -90,8 +92,8 @@ auto CallableBindings::EnsureCarrier(BindingOriginId origin) -> BodyBindingRef {
     field_type = capture_site_->exprs.Get(source).type;
   }
 
-  const mir::FieldId field = closure_decl_->fields.Add(
-      mir::FieldDecl{.name = name, .type = field_type});
+  const mir::FieldId field =
+      closure_decl_->fields.Add(mir::FieldDecl{.type = field_type});
   captures_.Define(field, CaptureEntry{.origin = origin, .source = source});
   const BodyBindingRef result{.ref = field};
   available_.insert_or_assign(origin, result);
@@ -125,19 +127,6 @@ auto CallableBindings::TypeOf(BodyBindingRef ref) const -> mir::TypeId {
           [&](mir::LocalId id) { return code_->locals.Get(id).type; },
           [&](mir::FieldId field) {
             return closure_decl_->fields.Get(field).type;
-          },
-      },
-      ref.ref);
-}
-
-auto CallableBindings::NameOf(BodyBindingRef ref) const -> const std::string& {
-  return std::visit(
-      Overloaded{
-          [&](mir::LocalId id) -> const std::string& {
-            return code_->locals.Get(id).name;
-          },
-          [&](mir::FieldId field) -> const std::string& {
-            return closure_decl_->fields.Get(field).name;
           },
       },
       ref.ref);

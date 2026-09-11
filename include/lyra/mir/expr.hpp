@@ -23,6 +23,7 @@
 #include "lyra/mir/namespace_storage_phase.hpp"
 #include "lyra/mir/static_constant_id.hpp"
 #include "lyra/mir/static_property_id.hpp"
+#include "lyra/mir/static_variable_id.hpp"
 #include "lyra/mir/struct_id.hpp"
 #include "lyra/mir/unary_op.hpp"
 #include "lyra/support/builtin_fn.hpp"
@@ -189,10 +190,15 @@ struct ForeignSymbolTarget {
 // function or task (LRM 26.3). It carries no unit-local id: it names the owning
 // unit and the callable by name, resolved against that unit's interface at link
 // time, exactly as `ExternalUnitObjectType` names an instantiated child. One
-// target kind covers every caller, the owning unit's own bodies included, for
-// the reason a namespace variable has one reference kind: there is no receiver
-// to reach a namespace through, so being inside it changes nothing. A backend
-// renders it as the free qualified form `unit_name::callable_name(args)`.
+// target kind covers every caller, the owning unit's own bodies included,
+// because every body a namespace owns answers to the identifier the source
+// declared it under -- so the name is total here, and a caller inside the unit
+// reaches its sibling by the same thing a caller outside it does. A namespace's
+// storage is the case this does not extend to: that pool also holds the
+// static-lifetime cells of the unit's subroutines, which the source never
+// named, so a cell is reached by its position rather than by a name that for
+// some of them does not exist. A backend renders this as the free qualified
+// form `unit_name::callable_name(args)`.
 struct ExternalUnitCallableTarget {
   std::string unit_name;
   std::string callable_name;
@@ -588,15 +594,22 @@ struct StaticPropertyRef {
   StaticPropertyId prop;
 };
 
-// A place naming a variable a unit's namespace owns (LRM 26.2), by the unit and
-// the variable (`unit_name::variable_name`). One reference kind covers every
-// referrer, the declaring unit's own bodies included: a namespace has no
-// instance and no receiver, so its variable is reached by name rather than
-// through a `self`-based field access, and there is no second shape for a
-// reader that happens to be inside it. `Expr::type` is the variable's
-// observable-cell type, so a read wraps it in `Get` and a write in `Set`,
-// exactly as an intra-unit signal's cell does. The storage dual of
-// `ExternalUnitCallableTarget`.
+// A place naming a variable this unit's own namespace owns (LRM 26.2), by the
+// position the variable's declaration sits at. A namespace has no instance and
+// no receiver, so the variable is reached directly rather than through a
+// `self`-based field access; what makes this the intra-unit form is that the
+// arena holding the declaration is in hand, exactly as it is for a property of
+// a class this unit declares. `Expr::type` is the variable's observable-cell
+// type, so a read wraps it in `Get` and a write in `Set`.
+struct StaticVariableRef {
+  StaticVariableId variable;
+};
+
+// The same storage, named from another compilation unit, where no arena is in
+// hand and the unit's published name for it is the whole of what a referrer
+// has (`unit_name::variable_name`). The storage dual of
+// `ExternalUnitCallableTarget`, and the peer of `ExternalStaticPropertyRef` on
+// the namespace-versus-class axis.
 struct ExternalUnitVariableRef {
   std::string unit_name;
   std::string variable_name;
@@ -621,7 +634,7 @@ struct ExternalStaticPropertyRef {
 // whether or not this expression names it.
 using ReferenceTarget = std::variant<
     LocalRef, FunctionRef, StaticConstantRef, PackedTypeRef, StaticPropertyRef,
-    ExternalUnitVariableRef, ExternalStaticPropertyRef>;
+    StaticVariableRef, ExternalUnitVariableRef, ExternalStaticPropertyRef>;
 
 // Names a declared thing. Reading it loads what the name reaches, assigning to
 // it stores there, and taking its address yields a pointer to it -- one node

@@ -70,9 +70,8 @@ auto UnitLowerer::Run() -> diag::Result<lir::CompilationUnit> {
     }
     record.members.reserve(cls.fields.size());
     for (const mir::FieldId id : cls.fields.Ids()) {
-      const mir::FieldDecl& field = cls.fields.Get(id);
       record.members.push_back(
-          lir::Member{.name = field.name, .type = TranslateType(field.type)});
+          lir::Member{.type = TranslateType(cls.fields.Get(id).type)});
     }
     out_.external_classes.push_back(std::move(record));
   }
@@ -100,11 +99,13 @@ auto UnitLowerer::Run() -> diag::Result<lir::CompilationUnit> {
   // reader reaches it by that name, this unit's own bodies included, since a
   // namespace has no instance for a receiver to arrive through.
   for (const mir::StaticVariableId id : mir_->static_variables.Ids()) {
-    const mir::StaticVariableDecl& variable = mir_->static_variables.Get(id);
     out_.static_storage.push_back(
         lir::StaticStorage{
-            .symbol = lir::NamespaceVariableSymbol(mir_->name, variable.name),
-            .type = TranslateType(variable.type)});
+            .symbol = lir::NamespaceVariableSymbol(
+                mir_->name,
+                lir::SymbolPartOf(
+                    mir::NameOf(mir_->named_static_variables, id), id.value)),
+            .type = TranslateType(mir_->static_variables.Get(id).type)});
   }
 
   // A cell a class owns rather than an object of it (LRM 8.9) is that same one
@@ -115,12 +116,14 @@ auto UnitLowerer::Run() -> diag::Result<lir::CompilationUnit> {
   for (const mir::ClassId id : mir_->classes.Ids()) {
     const mir::Class& cls = mir_->GetClass(id);
     for (const mir::StaticPropertyId prop_id : cls.static_properties.Ids()) {
-      const mir::StaticPropertyDecl& prop = cls.static_properties.Get(prop_id);
       out_.static_storage.push_back(
           lir::StaticStorage{
-              .symbol =
-                  lir::StaticPropertySymbol(mir_->name, cls.name, prop.name),
-              .type = TranslateType(prop.type)});
+              .symbol = lir::StaticPropertySymbol(
+                  mir_->name, lir::SymbolPartOf(cls.name, id.value),
+                  lir::SymbolPartOf(
+                      mir::NameOf(cls.named_static_properties, prop_id),
+                      prop_id.value)),
+              .type = TranslateType(cls.static_properties.Get(prop_id).type)});
     }
   }
 
@@ -160,9 +163,7 @@ auto UnitLowerer::Run() -> diag::Result<lir::CompilationUnit> {
     closure.captures.reserve(decl.fields.size());
     for (const mir::FieldId field : decl.fields.Ids()) {
       closure.captures.push_back(
-          lir::Member{
-              .name = decl.fields.Get(field).name,
-              .type = TranslateType(decl.fields.Get(field).type)});
+          lir::Member{.type = TranslateType(decl.fields.Get(field).type)});
     }
     closure.invoke = ClosureFunction(id);
     auto fn = FunctionLowerer(
@@ -181,13 +182,10 @@ auto UnitLowerer::Run() -> diag::Result<lir::CompilationUnit> {
   for (const mir::StructId id : mir_->structs.Ids()) {
     const mir::StructDecl& decl = mir_->GetStruct(id);
     lir::Struct record;
-    record.name = decl.name;
     record.fields.reserve(decl.fields.size());
     for (const mir::FieldId field : decl.fields.Ids()) {
       record.fields.push_back(
-          lir::Member{
-              .name = decl.fields.Get(field).name,
-              .type = TranslateType(decl.fields.Get(field).type)});
+          lir::Member{.type = TranslateType(decl.fields.Get(field).type)});
     }
     out_.structs.Define(StructDeclaration(id), std::move(record));
   }
@@ -205,9 +203,7 @@ auto UnitLowerer::Run() -> diag::Result<lir::CompilationUnit> {
     // links into one name space, so the unit qualifies it -- the same reason a
     // namespace callable is qualified.
     auto fn = FunctionLowerer::LowerDescription(
-        *this, description,
-        lir::TypeDescriptionSymbol(
-            mir_->name, mir::PackedTypeDescriptionName(id)));
+        *this, description, lir::TypeDescriptionSymbol(mir_->name, id.value));
     if (!fn) {
       return std::unexpected(std::move(fn.error()));
     }
@@ -253,20 +249,16 @@ auto UnitLowerer::UnitCallableSymbol(mir::CallableId id) const -> std::string {
           },
           [&](const mir::ReachedByStoragePhase& r) {
             return StorageEntrySymbol(mir_->name, r.phase);
-          },
-          [&](const mir::ReachedByNothing&) {
-            return lir::SynthesizedNamespaceBodySymbol(mir_->name, id.value);
           }},
       mir::NamespaceReachOf(*mir_, id));
 }
 
 auto UnitLowerer::ClassBodySymbol(
-    const mir::Class& cls, mir::CallableId id) const -> std::string {
-  const std::optional<std::string_view> name =
-      mir::NameOf(cls.named_callables, id);
-  return name.has_value()
-             ? lir::MethodSymbol(mir_->name, cls.name, *name)
-             : lir::SynthesizedBodySymbol(mir_->name, cls.name, id.value);
+    mir::ClassId owner, const mir::Class& cls, mir::CallableId id) const
+    -> std::string {
+  return lir::ClassCallableSymbol(
+      mir_->name, lir::SymbolPartOf(cls.name, owner.value),
+      lir::SymbolPartOf(mir::NameOf(cls.named_callables, id), id.value));
 }
 
 auto UnitLowerer::TakeClassIdentities(const mir::Class& cls)
@@ -320,9 +312,8 @@ auto UnitLowerer::LowerExternalUnitObject(const mir::ExternalUnitObject& object)
       .class_name = object.class_name,
       .members = {}};
   out.members.reserve(object.fields.size());
-  for (const mir::FieldDecl& field : object.fields) {
-    out.members.push_back(
-        lir::Member{.name = field.name, .type = TranslateType(field.type)});
+  for (const mir::PromisedField& field : object.fields) {
+    out.members.push_back(lir::Member{.type = TranslateType(field.type)});
   }
   return out;
 }
@@ -336,9 +327,17 @@ auto UnitLowerer::LowerClass(mir::ClassId owner, const mir::Class& cls)
   }
 
   for (const mir::FieldId id : cls.fields.Ids()) {
-    const mir::FieldDecl& field = cls.fields.Get(id);
     out.members.push_back(
-        lir::Member{.name = field.name, .type = TranslateType(field.type)});
+        lir::Member{.type = TranslateType(cls.fields.Get(id).type)});
+  }
+
+  // The identifiers this class answers for its storage, carried down so a
+  // referrer that cannot name the class can still ask for one by name. The
+  // simulation path reaches a member by its position and never through this.
+  out.named_members.reserve(cls.named_fields.size());
+  for (const mir::NamedField& named : cls.named_fields) {
+    out.named_members.push_back(
+        lir::NamedMember{.name = named.name, .position = named.slot.value});
   }
 
   // The behaviors the class introduces were settled with the ordinals naming
@@ -351,9 +350,15 @@ auto UnitLowerer::LowerClass(mir::ClassId owner, const mir::Class& cls)
   // same declaration.
   out.declares.reserve(cls.declares.size());
   for (const mir::ClassId declared : cls.declares) {
+    const std::optional<std::string>& name = mir_->classes.Get(declared).name;
+    if (!name.has_value()) {
+      throw InternalError(
+          "mir_to_lir: a scope answers for a class the source never named, so "
+          "no referrer could ask for it -- please report this as a bug");
+    }
     out.declares.push_back(
         lir::DeclaredClass{
-            .name = mir_->classes.Get(declared).name,
+            .name = *name,
             .declaration = class_identities_.Get(declared).lir_class});
   }
 
@@ -361,7 +366,10 @@ auto UnitLowerer::LowerClass(mir::ClassId owner, const mir::Class& cls)
   // unique only within its class -- so the class qualifies it, being itself
   // unique program-wide.
   auto constructor =
-      FunctionLowerer(*this, cls, lir::ConstructorSymbol(mir_->name, cls.name))
+      FunctionLowerer(
+          *this, cls,
+          lir::ConstructorSymbol(
+              mir_->name, lir::SymbolPartOf(cls.name, owner.value)))
           .Run();
   if (!constructor) {
     return std::unexpected(std::move(constructor.error()));
@@ -391,7 +399,8 @@ auto UnitLowerer::LowerClass(mir::ClassId owner, const mir::Class& cls)
     const mir::CallableDecl& callable = cls.callables.Get(cid);
     const std::optional<lir::FunctionId>& body = identities.methods.Get(cid);
     if (body.has_value()) {
-      auto fn = FunctionLowerer(*this, callable.code, ClassBodySymbol(cls, cid))
+      auto fn = FunctionLowerer(
+                    *this, callable.code, ClassBodySymbol(owner, cls, cid))
                     .Run();
       if (!fn) {
         return std::unexpected(std::move(fn.error()));

@@ -552,7 +552,7 @@ auto StructuralScopeLowerer::PopulateModportMember(
     const hir::ProceduralVarId result_var = read_body.procedural_vars.Declare();
     read_body.procedural_vars.Define(
         result_var,
-        hir::ProceduralVarDecl{.name = "result", .type = *crossing});
+        hir::ProceduralVarDecl{.name = std::nullopt, .type = *crossing});
     read_root.declarations.push_back(result_var);
     ProcessLowerer read_lowerer(*owner_, *port);
     auto value = read_lowerer.LowerExpr(

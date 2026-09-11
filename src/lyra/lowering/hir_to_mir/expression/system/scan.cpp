@@ -5,7 +5,6 @@
 #include <expected>
 #include <format>
 #include <optional>
-#include <string>
 #include <utility>
 #include <vector>
 
@@ -216,8 +215,8 @@ auto LowerScanSystemSubroutineCall(
     return std::unexpected(std::move(raw_source_or.error()));
   }
   const mir::TypeId raw_source_type = raw_source_or->type;
-  const mir::LocalId source_var = steps.Bindings().DeclareAnonymous(
-      mir::LocalDecl{.name = "_lyra_scan_source", .type = raw_source_type});
+  const mir::LocalId source_var =
+      steps.Bindings().DeclareAnonymous(raw_source_type);
   body.AppendStmt(
       mir::LocalDeclStmt{
           .target = source_var,
@@ -227,15 +226,14 @@ auto LowerScanSystemSubroutineCall(
       process.LowerExpr(hir_proc.exprs.Get(operands[1]), step_frame);
   if (!format_or) return std::unexpected(std::move(format_or.error()));
   const mir::TypeId format_type = format_or->type;
-  const mir::LocalId format_var = steps.Bindings().DeclareAnonymous(
-      mir::LocalDecl{.name = "_lyra_scan_format", .type = format_type});
+  const mir::LocalId format_var =
+      steps.Bindings().DeclareAnonymous(format_type);
   body.AppendStmt(
       mir::LocalDeclStmt{
           .target = format_var, .init = body.exprs.Add(*std::move(format_or))});
 
   // The answer until a conversion settles it (LRM 21.3.4.3).
-  const mir::LocalId count_var = steps.Bindings().DeclareAnonymous(
-      mir::LocalDecl{.name = "_lyra_scan_count", .type = integer_t});
+  const mir::LocalId count_var = steps.Bindings().DeclareAnonymous(integer_t);
   body.AppendStmt(
       mir::LocalDeclStmt{
           .target = count_var,
@@ -324,8 +322,8 @@ auto LowerScanSystemSubroutineCall(
                   .callee = mir::Direct{.target = parse_fn},
                   .arguments = {source_id, format_id, prototypes_id}},
           .type = payload_type});
-  const mir::LocalId completion = steps.Bindings().DeclareAnonymous(
-      mir::LocalDecl{.name = "_lyra_scan", .type = payload_type});
+  const mir::LocalId completion =
+      steps.Bindings().DeclareAnonymous(payload_type);
   scan_body.AppendStmt(
       mir::LocalDeclStmt{.target = completion, .init = parse_call_id});
 

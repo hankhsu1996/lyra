@@ -192,8 +192,8 @@ class MirDumper {
         Overloaded{
             [this](const IntraUnitClassRef& i) -> std::string {
               return std::format(
-                  "IntraUnit[#{}] \"{}\"", i.class_id.value,
-                  unit_->GetClass(i.class_id).name);
+                  "IntraUnit[#{}]{}", i.class_id.value,
+                  FormatName(unit_->GetClass(i.class_id).name));
             },
             [](const CrossUnitClassRef& e) -> std::string {
               return std::format(
@@ -654,8 +654,8 @@ class MirDumper {
         Overloaded{
             [this](const LocalRef& r) -> std::string {
               return std::format(
-                  "LocalRef[var={}] \"{}\"", r.var.value,
-                  code_->locals.Get(r.var).name);
+                  "LocalRef[var={}]{}", r.var.value,
+                  FormatName(NameOf(code_->named_locals, r.var)));
             },
             [](const FunctionRef& fr) -> std::string {
               return std::format(
@@ -673,6 +673,11 @@ class MirDumper {
               return std::format(
                   "StaticPropertyRef owner=Class[{}] prop=StaticProperty[{}]",
                   r.owner.value, r.prop.value);
+            },
+            [](const StaticVariableRef& r) -> std::string {
+              return std::format(
+                  "StaticVariableRef variable=StaticVariable[{}]",
+                  r.variable.value);
             },
             [](const ExternalUnitVariableRef& r) -> std::string {
               return std::format(
@@ -852,11 +857,24 @@ class MirDumper {
     return std::format("Type[{}]", type.value);
   }
 
+  // The identifier a declaration answers to, quoted, or nothing at all where
+  // the source declared no such thing. Printing the absence as an empty string
+  // rather than a placeholder is the point: what a reader learns from this dump
+  // is which declarations the design wrote.
+  static auto FormatName(std::optional<std::string_view> name) -> std::string {
+    return name.has_value() ? std::format(" \"{}\"", *name) : std::string{};
+  }
+
+  static auto FormatName(const std::optional<std::string>& name)
+      -> std::string {
+    return name.has_value() ? std::format(" \"{}\"", *name) : std::string{};
+  }
+
   void DumpClass(ClassId id, const Class& s) {
     dumped_.insert(id.value);
     scope_stack_.push_back(&s);
     const std::string kind = s.is_interface_class ? "InterfaceClass" : "Class";
-    Line(std::format("{} \"{}\" (#{})", kind, s.name, id.value));
+    Line(std::format("{}{} (#{})", kind, FormatName(s.name), id.value));
     Indent();
 
     if (s.base.has_value()) {
@@ -880,13 +898,13 @@ class MirDumper {
     for (const ClassId declared : s.declares) {
       Line(
           std::format(
-              "Declares: Class[{}] \"{}\"", declared.value,
-              unit_->GetClass(declared).name));
+              "Declares: Class[{}]{}", declared.value,
+              FormatName(unit_->GetClass(declared).name)));
     }
 
     Line("Fields:");
     Indent();
-    DumpFieldList(s.fields);
+    DumpFieldList(s.fields, s.named_fields);
     Dedent();
 
     Line("StaticProperties:");
@@ -895,7 +913,9 @@ class MirDumper {
       const StaticPropertyDecl& p = s.static_properties.Get(id);
       Line(
           std::format(
-              R"([{}] "{}" : {})", id.value, p.name, FormatVarType(p.type)));
+              "[{}]{} : {}", id.value,
+              FormatName(NameOf(s.named_static_properties, id)),
+              FormatVarType(p.type)));
     }
     Dedent();
 
@@ -951,12 +971,14 @@ class MirDumper {
     scope_stack_.pop_back();
   }
 
-  void DumpFieldList(const base::Arena<FieldDecl, FieldId>& fields) {
+  void DumpFieldList(
+      const base::Arena<FieldDecl, FieldId>& fields,
+      std::span<const NamedField> named) {
     for (const FieldId id : fields.Ids()) {
-      const auto& v = fields.Get(id);
       Line(
           std::format(
-              "[{}] \"{}\" : {}", id.value, v.name, FormatVarType(v.type)));
+              "[{}]{} : {}", id.value, FormatName(NameOf(named, id)),
+              FormatVarType(fields.Get(id).type)));
     }
   }
 
@@ -983,10 +1005,12 @@ class MirDumper {
       DumpForeignLinkage(*d.foreign);
     }
     for (std::size_t i = 0; i < d.code.params.size(); ++i) {
-      const auto& param = d.code.locals.Get(d.code.params[i]);
+      const LocalId param = d.code.params[i];
       Line(
           std::format(
-              "Param[{}] \"{}\" : Type[{}]", i, param.name, param.type.value));
+              "Param[{}]{} : Type[{}]", i,
+              FormatName(NameOf(d.code.named_locals, param)),
+              d.code.locals.Get(param).type.value));
     }
     if (d.code.body.has_value()) {
       DumpCallableBody(d.code);
@@ -995,11 +1019,11 @@ class MirDumper {
   }
 
   void DumpStruct(StructId id, const StructDecl& decl) {
-    Line(std::format("Struct \"{}\" (#{})", decl.name, id.value));
+    Line(std::format("Struct (#{})", id.value));
     Indent();
     Line("Fields:");
     Indent();
-    DumpFieldList(decl.fields);
+    DumpFieldList(decl.fields, {});
     Dedent();
     Dedent();
   }
@@ -1009,7 +1033,7 @@ class MirDumper {
     Indent();
     Line("Captures:");
     Indent();
-    DumpFieldList(decl.fields);
+    DumpFieldList(decl.fields, {});
     Dedent();
     if (!decl.field_order.empty()) {
       std::string order;
@@ -1030,10 +1054,12 @@ class MirDumper {
     Line(std::format("[{}] : Type[{}]", index, a.code.result_type.value));
     Indent();
     for (std::size_t i = 0; i < a.code.params.size(); ++i) {
-      const auto& param = a.code.locals.Get(a.code.params[i]);
+      const LocalId param = a.code.params[i];
       Line(
           std::format(
-              "Param[{}] \"{}\" : Type[{}]", i, param.name, param.type.value));
+              "Param[{}]{} : Type[{}]", i,
+              FormatName(NameOf(a.code.named_locals, param)),
+              a.code.locals.Get(param).type.value));
     }
     DumpCallableBody(a.code);
     Dedent();
@@ -1051,10 +1077,11 @@ class MirDumper {
       Line("Locals:");
       Indent();
       for (const LocalId id : code.locals.Ids()) {
-        const auto& v = code.locals.Get(id);
         Line(
             std::format(
-                "Local[{}] \"{}\" : Type[{}]", id.value, v.name, v.type.value));
+                "Local[{}]{} : Type[{}]", id.value,
+                FormatName(NameOf(code.named_locals, id)),
+                code.locals.Get(id).type.value));
       }
       Dedent();
     }
@@ -1096,11 +1123,10 @@ class MirDumper {
 
   void DumpLocalDeclStmt(
       const Block& enclosing, StmtId id, const LocalDeclStmt& s) {
-    const auto& var = code_->locals.Get(s.target);
     Line(
         std::format(
-            "Stmt[{}] LocalDeclStmt target=LocalRef[var={}] \"{}\"", id.value,
-            s.target.value, var.name));
+            "Stmt[{}] LocalDeclStmt target=LocalRef[var={}]{}", id.value,
+            s.target.value, FormatName(NameOf(code_->named_locals, s.target))));
     Indent();
     Line(
         std::format(
@@ -1315,11 +1341,13 @@ class MirDumper {
                 const std::string init_str = std::format(
                     " = Expr[{}] {}", d.init.value,
                     FormatExpr(enclosing, d.init));
-                const auto& var = code_->locals.Get(d.induction_var);
                 Line(
                     std::format(
-                        "[{}] decl LocalRef[var={}] \"{}\"{}", i,
-                        d.induction_var.value, var.name, init_str));
+                        "[{}] decl LocalRef[var={}]{}{}", i,
+                        d.induction_var.value,
+                        FormatName(
+                            NameOf(code_->named_locals, d.induction_var)),
+                        init_str));
               },
               [&](const ForInitExpr& e) {
                 Line(

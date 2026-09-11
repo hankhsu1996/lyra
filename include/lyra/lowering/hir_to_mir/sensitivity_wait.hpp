@@ -24,10 +24,10 @@ struct ObservedLeaf {
 };
 
 // The observable storage one leaf names, as the place an operation on the cell
-// acts through. A leaf reaches either a cell of this design through its route
-// or a package variable's one program-global cell by name (LRM 26.2); that
-// classification is made here rather than by everything needing to name what a
-// leaf watches.
+// acts through. A leaf reaches either a cell of this design through its route,
+// or the one program-global cell a unit's namespace owns (LRM 26.2); the two
+// are told apart here rather than by everything that needs to name what a leaf
+// watches.
 [[nodiscard]] auto BuildObservableCellExpr(
     mir::Block& block, const WalkFrame& frame, mir::CompilationUnit& unit,
     const StructuralScopeLowerer& lowerer, const hir::SensitivityEntry& entry)

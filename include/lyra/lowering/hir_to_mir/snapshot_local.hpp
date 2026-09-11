@@ -1,7 +1,6 @@
 #pragma once
 
 #include <optional>
-#include <string>
 
 #include "lyra/lowering/hir_to_mir/binding_origin.hpp"
 #include "lyra/lowering/hir_to_mir/closure_builder.hpp"
@@ -25,7 +24,7 @@ namespace lyra::lowering::hir_to_mir {
 // `wrapper`).
 auto SnapshotExprToLocal(
     const UnitLowerer& unit_lowerer, WalkFrame frame, mir::Block& wrapper,
-    std::string name, mir::TypeId type, mir::ExprId expr_id,
+    mir::TypeId type, mir::ExprId expr_id,
     std::optional<BindingOriginId> origin = std::nullopt) -> mir::LocalId;
 
 // Freezes an outer expression's value into a closure's environment: hoists it
@@ -37,7 +36,6 @@ auto SnapshotExprToLocal(
 // forwards an ordinary local -- the snapshot is not a special capture form.
 auto SnapshotIntoClosure(
     UnitLowerer& unit_lowerer, const WalkFrame& outer_frame,
-    ClosureBuilder& closure, mir::ExprId outer_expr, std::string name)
-    -> mir::ExprId;
+    ClosureBuilder& closure, mir::ExprId outer_expr) -> mir::ExprId;
 
 }  // namespace lyra::lowering::hir_to_mir

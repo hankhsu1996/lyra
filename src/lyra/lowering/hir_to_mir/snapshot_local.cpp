@@ -2,8 +2,6 @@
 
 #include <cstdint>
 #include <optional>
-#include <string>
-#include <utility>
 
 #include "lyra/lowering/hir_to_mir/binding_origin.hpp"
 #include "lyra/lowering/hir_to_mir/callable_bindings.hpp"
@@ -15,14 +13,11 @@ namespace lyra::lowering::hir_to_mir {
 
 auto SnapshotExprToLocal(
     const UnitLowerer& unit_lowerer, WalkFrame frame, mir::Block& wrapper,
-    std::string name, mir::TypeId type, mir::ExprId expr_id,
+    mir::TypeId type, mir::ExprId expr_id,
     std::optional<BindingOriginId> origin) -> mir::LocalId {
-  const mir::LocalId snap_var =
-      origin.has_value()
-          ? frame.bindings->Declare(
-                *origin, mir::LocalDecl{.name = std::move(name), .type = type})
-          : frame.bindings->DeclareAnonymous(
-                mir::LocalDecl{.name = std::move(name), .type = type});
+  const mir::LocalId snap_var = origin.has_value()
+                                    ? frame.bindings->Declare(*origin, type)
+                                    : frame.bindings->DeclareAnonymous(type);
   const mir::ExprId default_init = wrapper.exprs.Add(
       BuildDefaultValueExpr(unit_lowerer.Unit(), wrapper, type));
   wrapper.AppendStmt(
@@ -41,22 +36,18 @@ auto SnapshotExprToLocal(
 
 auto SnapshotIntoClosure(
     UnitLowerer& unit_lowerer, const WalkFrame& outer_frame,
-    ClosureBuilder& closure, mir::ExprId outer_expr, std::string name)
-    -> mir::ExprId {
+    ClosureBuilder& closure, mir::ExprId outer_expr) -> mir::ExprId {
   mir::Block& outer_block = *outer_frame.current_block;
   const mir::TypeId type = outer_block.exprs.Get(outer_expr).type;
 
-  // The site uniquely identifies this synthesized carrier and tags its name, so
-  // several snapshots in one outer body never collide on origin or C++ name.
-  // The temp initializes directly from the snapshotted expression (not a
-  // default-then-assign), so a carrier with no default value -- a `Ref<T>` over
-  // the target cell -- is materialized correctly.
+  // The site uniquely identifies this synthesized carrier, so several snapshots
+  // in one outer body never collide on origin. The temp initializes directly
+  // from the snapshotted expression (not a default-then-assign), so a carrier
+  // with no default value -- a `Ref<T>` over the target cell -- is materialized
+  // correctly.
   const std::uint32_t site = unit_lowerer.NextSynthesizedSite();
   const BindingOriginId origin = BindingOriginId::Synthesized(site, 0);
-  const mir::LocalId temp = outer_frame.bindings->Declare(
-      origin,
-      mir::LocalDecl{
-          .name = std::move(name) + "_" + std::to_string(site), .type = type});
+  const mir::LocalId temp = outer_frame.bindings->Declare(origin, type);
   outer_block.AppendStmt(
       mir::LocalDeclStmt{.target = temp, .init = outer_expr});
 

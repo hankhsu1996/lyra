@@ -2,7 +2,6 @@
 
 #include <cstdint>
 #include <string>
-#include <string_view>
 #include <unordered_map>
 #include <utility>
 
@@ -224,9 +223,9 @@ class UnitLowerer {
   auto MakeExternalVirtualSlot(const hir::ExternalDispatchSlot& slot)
       -> mir::ExternalVirtualSlot;
 
-  // Receiver-less callable of another compilation unit (LRM 26.3 package
-  // function or task). Recorded on the callable dependency list, not the
-  // class one.
+  // Receiver-less callable of a unit's namespace (LRM 26.3 package function or
+  // task), reached the same way by a body of that unit and by a body outside
+  // it. The dependency it records is the callable one, never the class one.
   auto MakeExternalCallableTarget(const hir::ExternalUnitSubroutineRef& ref)
       -> mir::ExternalUnitCallableTarget;
 
@@ -237,15 +236,6 @@ class UnitLowerer {
   [[nodiscard]] auto MakeExternalUnitMethodTarget(
       hir::ExternalUnitObjectId object, hir::PublishedCallableId callable) const
       -> mir::ExternalUnitClassMethodTarget;
-
-  // Mints a collision-free class name for one generate scope, tagged by its
-  // arm kind (`loop` / `then` / `else` / ...). The name is only an
-  // implementation handle for the emitted type -- a generate scope's runtime
-  // identity is its HierarchySegment -- so it need only be unit-unique and
-  // deterministic, which a monotonic count over the deterministic lowering walk
-  // provides.
-  [[nodiscard]] auto NextGenerateScopeName(std::string_view arm_tag)
-      -> std::string;
 
   // Mints a fresh owner-site id for a synthesized binding origin -- a carrier a
   // lowering creates that has no source-level variable (an activation handle, a
@@ -320,7 +310,6 @@ class UnitLowerer {
       external_unit_object_translations_;
   std::unordered_map<std::string, mir::ExternalUnitObjectId>
       external_unit_objects_by_name_;
-  std::uint32_t next_generate_scope_name_ = 0;
   std::uint32_t next_synthesized_site_ = 0;
   // What the declare stage settled about each class, read by every body that
   // names a peer. Lives only on the lowerer; the finished compilation unit

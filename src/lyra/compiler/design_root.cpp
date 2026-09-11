@@ -1,7 +1,6 @@
 #include "lyra/compiler/design_root.hpp"
 
 #include <algorithm>
-#include <cstddef>
 #include <expected>
 #include <optional>
 #include <span>
@@ -169,17 +168,13 @@ void DefineExportSymbol(
   mir::Block& body = code.Body();
 
   std::vector<mir::TypeId> entry_params{root.builtins.scope_ptr};
-  for (std::size_t i = 0; i < signature.params.size(); ++i) {
-    const mir::LocalId param = bindings.DeclareAnonymous(
-        mir::LocalDecl{
-            .name = "arg" + std::to_string(i), .type = signature.params[i]});
-    code.params.push_back(param);
-    entry_params.push_back(signature.params[i]);
+  for (const mir::TypeId type : signature.params) {
+    code.params.push_back(bindings.DeclareAnonymous(type));
+    entry_params.push_back(type);
   }
   code.result_type = signature.result;
 
-  const mir::LocalId scope = bindings.DeclareAnonymous(
-      mir::LocalDecl{.name = "scope", .type = root.builtins.scope_ptr});
+  const mir::LocalId scope = bindings.DeclareAnonymous(root.builtins.scope_ptr);
   body.AppendStmt(
       mir::LocalDeclStmt{
           .target = scope,

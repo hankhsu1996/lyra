@@ -12,8 +12,8 @@ auto AppendCaseSnapshot(
     -> CaseSnapshotRefs {
   auto& wrapper = *frame.current_block;
   const mir::TypeId sel_type = wrapper.exprs.Get(cond_expr_id).type;
-  const mir::LocalId sel_var = SnapshotExprToLocal(
-      unit_lowerer, frame, wrapper, "_lyra_case_sel", sel_type, cond_expr_id);
+  const mir::LocalId sel_var =
+      SnapshotExprToLocal(unit_lowerer, frame, wrapper, sel_type, cond_expr_id);
   return CaseSnapshotRefs{.sel_var = sel_var, .sel_type = sel_type};
 }
 

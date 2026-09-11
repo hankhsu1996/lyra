@@ -53,8 +53,7 @@ EMITTERS = [
 MAPPERS = [
     "ToCppName",
     "UnitNamespaceOf",
-    "MintedCppName",
-    "CppCallableName",
+    "CppClassCallableName",
     "CppAbiAdapterName",
     "CppStaticConstantName",
     "CppStorageEntryName",
@@ -81,7 +80,7 @@ ADMITTED: dict[str, str] = {
         "a resolved callee is text this backend has already spelled, so "
         "mapping it again would escape the punctuation it is made of"
     ),
-    "root_class.name": (
+    "root.name": (
         "the design root's own name is formatted into a quoted slot, so it "
         "leaves as a string the simulation reports itself by rather than as an "
         "identifier"
@@ -204,14 +203,39 @@ def expression_before(code: str, end: int) -> str:
     return code[start:end]
 
 
+def stale(blob: str, exercised: set[str]) -> list[str]:
+    """The entries above that nothing reaches any more.
+
+    An exemption nobody exercises reads exactly like one that is working, so
+    without this it outlives the expression it was written for and the summary
+    below goes on counting it. The same holds for a name in either list: one
+    that has been renamed away stops exempting anything, and the entry is then
+    a sentence about the code that is no longer true.
+    """
+    out: list[str] = []
+    for name in MAPPERS:
+        if not re.search(rf"\b{re.escape(name)}\s*\(", blob):
+            out.append(f"{name}: listed as a mapper but no emitter calls it")
+    for name in LOOKUPS:
+        if not re.search(rf"\b{re.escape(name)}\s*\(", blob):
+            out.append(f"{name}: listed as a lookup but no emitter calls it")
+    for written in ADMITTED:
+        if written not in exercised:
+            out.append(f"`{written}`: admitted but no emitter writes it")
+    return out
+
+
 def violations() -> list[str]:
     found: list[str] = []
+    sources: list[Source] = []
+    exercised: set[str] = set()
     for relative in EMITTERS:
         path = ROOT / relative
         if not path.exists():
             found.append(f"{relative}: listed as an emitter but does not exist")
             continue
         source = Source(relative, blanked(path.read_text()))
+        sources.append(source)
         mapped = argument_spans(source.code, MAPPER_CALL)
         looked_up = argument_spans(source.code, LOOKUP_CALL)
         reads = list(NAME_MEMBER.finditer(source.code))
@@ -222,6 +246,7 @@ def violations() -> list[str]:
                 (expression_before(source.code, position)
                  + member.group()).split())
             if written in ADMITTED:
+                exercised.add(written)
                 continue
             if any(start <= position < end for start, end in mapped):
                 continue
@@ -232,6 +257,7 @@ def violations() -> list[str]:
                 f"reaches emitted text without the map that spells a source "
                 f"name as a C++ identifier"
             )
+    found += stale("\n".join(source.code for source in sources), exercised)
     return found
 
 

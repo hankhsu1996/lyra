@@ -142,8 +142,8 @@ auto BindCompletion(
                     .data = mir::AwaitExpr{.awaitable = call_id},
                     .type = payload_type})
           : call_id;
-  const mir::LocalId completion = frame.bindings->DeclareAnonymous(
-      mir::LocalDecl{.name = "_lyra_completion", .type = payload_type});
+  const mir::LocalId completion =
+      frame.bindings->DeclareAnonymous(payload_type);
   body.AppendStmt(
       mir::LocalDeclStmt{.target = completion, .init = completion_value});
 

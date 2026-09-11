@@ -3,7 +3,6 @@
 #include <cstddef>
 #include <cstdint>
 #include <expected>
-#include <format>
 #include <optional>
 #include <span>
 #include <string>
@@ -59,22 +58,17 @@ void OpenActivationScope(
   UnitLowerer& unit_lowerer = process.Owner();
   mir::CompilationUnit& unit = unit_lowerer.Unit();
 
-  // The escaping scope's locals are promoted into a compiler-generated struct
-  // whose identity lives in the unit's struct registry. The name is unique
-  // within the unit, which is the scope a struct identity has to be
-  // distinguishable in.
-  const std::string struct_name = std::string(process.CallableName()) +
-                                  "__scope" +
-                                  std::to_string(unit.structs.size());
+  // The escaping scope's locals are gathered into a compiler-generated struct
+  // whose identity lives in the unit's struct registry. That identity is the
+  // whole of what distinguishes it; the source declared no such aggregate and
+  // so wrote no name for one.
   mir::StructDecl struct_decl;
-  struct_decl.name = struct_name;
   std::vector<mir::FieldId> fields;
   fields.reserve(promoted.size());
   for (const hir::ProceduralVarId v : promoted) {
     const hir::ProceduralVarDecl& decl = body.procedural_vars.Get(v);
     fields.push_back(struct_decl.fields.Add(
-        mir::FieldDecl{
-            .name = decl.name, .type = unit_lowerer.TranslateType(decl.type)}));
+        mir::FieldDecl{.type = unit_lowerer.TranslateType(decl.type)}));
   }
   const mir::StructId struct_id = unit.AddStruct(std::move(struct_decl));
   const mir::TypeId struct_type =
@@ -99,9 +93,8 @@ void OpenActivationScope(
   // space every synthesized carrier shares.
   const BindingOriginId handle_origin =
       BindingOriginId::Synthesized(unit_lowerer.NextSynthesizedSite(), 0);
-  const mir::LocalId handle = frame.bindings->Declare(
-      handle_origin,
-      mir::LocalDecl{.name = struct_name + "_h", .type = handle_type});
+  const mir::LocalId handle =
+      frame.bindings->Declare(handle_origin, handle_type);
   block.AppendStmt(mir::LocalDeclStmt{.target = handle, .init = init});
 
   for (std::size_t i = 0; i < promoted.size(); ++i) {
@@ -195,9 +188,7 @@ auto BuildCancellableRegion(
           .kind = mir::RuntimeLibraryKind::kControlEffect}});
   const std::uint32_t site = unit_lowerer.NextSynthesizedSite();
   const BindingOriginId origin = BindingOriginId::Synthesized(site, 0);
-  const mir::LocalId caught = frame.bindings->Declare(
-      origin, mir::LocalDecl{
-                  .name = std::format("effect_{}", site), .type = effect_type});
+  const mir::LocalId caught = frame.bindings->Declare(origin, effect_type);
 
   // The handler is a scope of its own, so its test and its raise are lowered
   // through a frame whose current block is that scope.

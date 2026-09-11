@@ -1,6 +1,8 @@
 #pragma once
 
 #include <optional>
+#include <string>
+#include <utility>
 #include <vector>
 
 #include "lyra/base/arena.hpp"
@@ -37,6 +39,10 @@ struct CallableCode {
   std::vector<LocalId> params;
   TypeId result_type;
   base::Arena<LocalDecl, LocalId> locals;
+  // What the source called the locals it declared. A local the lowering added
+  // for its own working takes no part, so what a reader sees named is what the
+  // design wrote.
+  std::vector<NamedLocal> named_locals;
   std::optional<Block> body;
 
   // A code skeleton for a callable this program defines: the body starts
@@ -49,6 +55,20 @@ struct CallableCode {
     CallableCode code{};
     code.body.emplace();
     return code;
+  }
+
+  // A local the source declared, which the body answers by the identifier the
+  // source wrote, and a local the lowering keeps for its own working, which
+  // nothing answers. Two calls rather than one with an optional, so a site says
+  // which it is building at the moment it builds it.
+  auto AddNamedLocal(std::string name, TypeId type) -> LocalId {
+    const LocalId id = locals.Add(LocalDecl{.type = type});
+    named_locals.push_back(NamedLocal{.name = std::move(name), .local = id});
+    return id;
+  }
+
+  auto AddLocal(TypeId type) -> LocalId {
+    return locals.Add(LocalDecl{.type = type});
   }
 
   // Whether the signature declares a receiver: `params[0]`, if present, is

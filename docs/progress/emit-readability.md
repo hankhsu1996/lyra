@@ -98,5 +98,8 @@ locate-divergence feedback loop; this one owns the readability of what the loop 
   be read in, so full qualification is kept deliberately; it is not a gap to close.
 - In-place declaration of a static-lifetime body local. A SystemVerilog static local is
   per-instance, and C++ has no per-instance variable declared inside a method body, so it is emitted
-  as a member on the enclosing class rather than at its source position, and its name carries a
-  uniqueness suffix. The hoist is inherent to per-instance static storage; it is not a gap to close.
+  as a member on the enclosing class rather than at its source position, spelled from the position
+  it took there rather than from the name the source wrote. The hoist is inherent to per-instance
+  static storage, and the spelling is what keeps a name the compiler composes out of the space a
+  design declares in (`../decisions/a-name-is-a-relation-not-an-identity.md`); neither is a gap to
+  close. Which declaration a position is, is a question the IR dump answers.
