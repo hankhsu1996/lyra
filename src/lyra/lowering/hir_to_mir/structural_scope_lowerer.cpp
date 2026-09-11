@@ -984,8 +984,8 @@ auto InstallPortConnections(
         }
         if (!internal_or->descent.empty() || !external_or->descent.empty()) {
           throw InternalError(
-              "InstallPortConnections: a bidirectional connection names a whole "
-              "net on each side, which is decided where the connection is read");
+              "InstallPortConnections: a bidirectional connection names "
+              "a whole net on each side, decided where the connection is read");
         }
         const mir::ExprId internal = internal_or->owner;
         const mir::TypeId net_ptr_type = unit_lowerer.Unit().types.Intern(
