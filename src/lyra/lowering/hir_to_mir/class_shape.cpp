@@ -22,7 +22,8 @@ auto ClassShape::OpenClass() const -> mir::Class {
       .callables = {},
       .abi_adapters = {},
       .static_constants = {},
-      .static_properties = static_properties};
+      .static_properties = static_properties,
+      .named_callables = {}};
   for (std::size_t i = 0; i < callable_signatures.size(); ++i) {
     cls.callables.Declare();
   }

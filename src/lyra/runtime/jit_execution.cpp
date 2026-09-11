@@ -3348,6 +3348,46 @@ auto lyra_rt_unpackedarray_bitstream_width(const void* value) -> void* {
   return Own(Read<RuntimeUnpackedArray>(value).BitstreamWidth());
 }
 
+auto lyra_rt_packed_to_bitstream(const void* value) -> void* {
+  return Own(Read<PackedArray>(value).ToBitstream());
+}
+
+auto lyra_rt_tuple_to_bitstream(const void* value) -> void* {
+  return Own(Read<RuntimeTuple>(value).ToBitstream());
+}
+
+auto lyra_rt_unpackedarray_to_bitstream(const void* value) -> void* {
+  return Own(Read<RuntimeUnpackedArray>(value).ToBitstream());
+}
+
+auto lyra_rt_packed_from_bitstream(const void* bits, void* prototype) -> void* {
+  const lyra::value::RuntimeValue shape = lyra::runtime::ErasedValue(prototype);
+  return Own(
+      PackedArray::FromBitstream(
+          Read<PackedArray>(bits), std::get<PackedArray>(shape.value)));
+}
+
+auto lyra_rt_tuple_from_bitstream(const void* bits, void* prototype) -> void* {
+  const lyra::value::RuntimeValue shape = lyra::runtime::ErasedValue(prototype);
+  return Own(
+      RuntimeTuple::FromBitstream(
+          Read<PackedArray>(bits), std::get<RuntimeTuple>(shape.value)));
+}
+
+auto lyra_rt_unpackedarray_from_bitstream(const void* bits, void* prototype)
+    -> void* {
+  const lyra::value::RuntimeValue shape = lyra::runtime::ErasedValue(prototype);
+  return Own(
+      RuntimeUnpackedArray::FromBitstream(
+          Read<PackedArray>(bits),
+          std::get<RuntimeUnpackedArray>(shape.value)));
+}
+
+auto lyra_rt_packed_reverse_blocks(const void* value, std::int64_t block)
+    -> void* {
+  return Own(Read<PackedArray>(value).ReverseBlocks(block));
+}
+
 auto lyra_rt_unpackedarray_size(const void* array) -> void* {
   return Own(Read<RuntimeUnpackedArray>(array).Size());
 }

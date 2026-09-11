@@ -1,0 +1,49 @@
+name: Address Sanitizer (Nightly)
+
+# Every pool in the compiler hands out a view into relocatable storage, and an
+# id is the only durable handle. A reference kept across an append to the same
+# pool therefore reads correctly right up until the storage happens to move --
+# so the ordinary gate is green whether or not the code is right, and says
+# nothing either way. Review is what stands between that shape and the tree, and
+# review has already missed one.
+#
+# This closes none of that by itself: it reports only the executions the corpus
+# reaches, and only the ones where the storage actually moved. What it buys is
+# that the failures stop being silent.
+#
+# It runs the merge gate's own set rather than the `nightly` complement, because
+# that is the set which exercises the compiler itself -- the pools live in
+# lowering, not in the emitted program that the host-compiling group builds.
+#
+# Like the host C++ nightly and unlike the clang-tidy sweep, this gates its own
+# run: a sanitizer report is a defect with a stack trace, not a backlog item.
+on:
+  schedule:
+    - cron: '0 7 * * *'
+  workflow_dispatch:
+
+jobs:
+  asan:
+    name: Run the gate under the address sanitizer
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v6
+
+      - name: Setup Bazel
+        uses: bazel-contrib/setup-bazel@0.18.0
+        with:
+          bazelisk-cache: true
+          disk-cache: ${{ github.workflow }}-${{ hashFiles('MODULE.bazel') }}
+          repository-cache: true
+
+      - name: Setup Clang
+        uses: ./.github/actions/setup-clang
+
+      # Runs on the runner rather than through remote execution, for the reason
+      # the host C++ nightly gives: the sanitizer runtime has to be the one
+      # belonging to the compiler installed above, and an action sent to the
+      # remote image would build under a different toolchain.
+      - name: Test
+        run: |
+          bazel test //... --config=asan --verbose_failures

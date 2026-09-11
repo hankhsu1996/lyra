@@ -157,6 +157,22 @@ struct ConcatExpr {
   std::vector<ExprId> operands;
 };
 
+// LRM 11.4.14: `{<< n {a, b}}` -- the bits of each operand laid end to end, the
+// first operand most significant, and the result then divided into `block_bits`
+// blocks whose order is reversed. `block_bits` is zero for `>>`, which
+// LRM 11.4.14.2 says performs no re-ordering at all and ignores any slice size
+// written beside it; the front end has already folded the written size to a bit
+// count, so nothing below reads a slice type or a constant expression.
+//
+// The same node stands on either side of an assignment: as a source it builds a
+// stream, and as a target it says which variables that stream fills and in what
+// order (LRM 11.4.14.3). Which of the two an occurrence is follows from where
+// it stands, so it carries no discriminator.
+struct StreamingConcatExpr {
+  std::vector<ExprId> operands;
+  std::uint64_t block_bits;
+};
+
 // LRM 11.4.12: `{multiplier{...}}` is a replication built around an inner
 // concatenation. The inner ExprId always points to a ConcatExpr.
 struct ReplicationExpr {
@@ -278,9 +294,10 @@ using ExprData = std::variant<
     PrimaryExpr, UnaryExpr, BinaryExpr, ConditionalExpr, AssignExpr, IncDecExpr,
     CallExpr, ConversionExpr, ValueRangeExpr, InsideExpr, ElementSelectExpr,
     RangeSelectExpr, MemberAccessExpr, ClassPropertyAccessExpr, ConcatExpr,
-    ReplicationExpr, AssignmentPatternExpr, AssignmentPatternReplicationExpr,
-    DynamicArrayNewExpr, ClassNewExpr, AssociativeAssignmentPatternExpr,
-    AssignmentPatternKeyedExpr, TaggedUnionExpr>;
+    StreamingConcatExpr, ReplicationExpr, AssignmentPatternExpr,
+    AssignmentPatternReplicationExpr, DynamicArrayNewExpr, ClassNewExpr,
+    AssociativeAssignmentPatternExpr, AssignmentPatternKeyedExpr,
+    TaggedUnionExpr>;
 
 struct Expr {
   TypeId type;

@@ -177,6 +177,19 @@ concept BitstreamSizable = requires(const T& t, const PackedArray& control) {
   { t.CountBits(control) } -> std::same_as<PackedArray>;
 };
 
+// BitstreamConvertible: the bits themselves, over the same stream the width
+// above counts -- LRM 6.24.3 read out, and read back in at a prototype's
+// declared representation. Its participation set is narrower than the width
+// query's: a value whose width only the running program fixes has no type to
+// name the stream it makes, so no conversion reaches one. Building takes a
+// prototype rather than a type because the runtime holds shapes as values.
+template <typename T>
+concept BitstreamConvertible =
+    BitstreamSizable<T> && requires(const T& t, const PackedArray& bits) {
+      { t.ToBitstream() } -> std::same_as<PackedArray>;
+      { T::FromBitstream(bits, t) } -> std::same_as<T>;
+    };
+
 // Indexable: single-element access by integer position. The container
 // exposes a value-form (`Element`) returning a snapshot or const view, and
 // a reference-form (`ElementRef`) returning a write-through reference. The

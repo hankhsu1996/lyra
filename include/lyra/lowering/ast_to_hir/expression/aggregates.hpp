@@ -1,10 +1,11 @@
 #pragma once
 
 // Lowering of aggregate value-construction expressions: Concatenation
-// (LRM 11.4.12), Replication (LRM 11.4.12.1), AssignmentPattern (LRM 10.9.1
-// `'{...}` positional and structured forms), ReplicatedAssignmentPattern
-// (LRM 10.9.1 replicated form), and NewArray (LRM 7.5.1 dynamic-array
-// constructor). Both procedural and structural contexts where applicable.
+// (LRM 11.4.12), StreamingConcatenation (LRM 11.4.14), Replication
+// (LRM 11.4.12.1), AssignmentPattern (LRM 10.9.1 `'{...}` positional and
+// structured forms), ReplicatedAssignmentPattern (LRM 10.9.1 replicated form),
+// and NewArray (LRM 7.5.1 dynamic-array constructor). Both procedural and
+// structural contexts where applicable.
 
 #include "lyra/diag/diagnostic.hpp"
 #include "lyra/diag/source_span.hpp"
@@ -20,6 +21,7 @@ class NewClassExpression;
 class ReplicatedAssignmentPatternExpression;
 class ReplicationExpression;
 class SimpleAssignmentPatternExpression;
+class StreamingConcatenationExpression;
 class StructuredAssignmentPatternExpression;
 }  // namespace slang::ast
 
@@ -33,6 +35,11 @@ auto LowerConcatExpr(
     Lowerer& lowerer, WalkFrame frame,
     const slang::ast::ConcatenationExpression& cc, diag::SourceSpan span)
     -> diag::Result<hir::Expr>;
+template <ExprLowerer Lowerer>
+auto LowerStreamingConcatExpr(
+    Lowerer& lowerer, WalkFrame frame,
+    const slang::ast::StreamingConcatenationExpression& sc,
+    diag::SourceSpan span) -> diag::Result<hir::Expr>;
 template <ExprLowerer Lowerer>
 auto LowerAssignmentPatternFromElements(
     Lowerer& lowerer, WalkFrame frame,

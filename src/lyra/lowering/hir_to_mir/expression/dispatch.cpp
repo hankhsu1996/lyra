@@ -5,6 +5,7 @@
 
 #include "lyra/base/internal_error.hpp"
 #include "lyra/base/overloaded.hpp"
+#include "lyra/diag/diag_code.hpp"
 #include "lyra/diag/diagnostic.hpp"
 #include "lyra/hir/expr.hpp"
 #include "lyra/lowering/hir_to_mir/expression/aggregates.hpp"
@@ -130,6 +131,9 @@ auto LowerExprImpl(L& lowerer, const hir::Expr& expr, WalkFrame frame)
           [&](const hir::ConcatExpr& c) -> diag::Result<mir::Expr> {
             return LowerHirConcatExpr(
                 lowerer, frame, c, expr.type, result_type);
+          },
+          [&](const hir::StreamingConcatExpr& s) -> diag::Result<mir::Expr> {
+            return LowerHirStreamingConcatExpr(lowerer, frame, s, result_type);
           },
           [&](const hir::ReplicationExpr& r) -> diag::Result<mir::Expr> {
             return LowerHirReplicationExpr(lowerer, frame, r, result_type);
@@ -260,6 +264,18 @@ auto LowerLhsExprImpl(L& lowerer, const hir::Expr& expr, WalkFrame frame)
           [&](const hir::ConcatExpr& c) -> diag::Result<WriteTarget> {
             return as_place(
                 LowerHirConcatExpr(lowerer, frame, c, expr.type, result_type));
+          },
+          // A stream stands for a run of destinations too, but it does not
+          // stand for a place: what fills each of them is a share of a
+          // sequence of bits rather than a share of a value laid out like the
+          // targets, so the assignment that consumes it distributes the shares
+          // itself. Every context that can reach one does that; a context that
+          // cannot is one where the assignment is not a statement of its own.
+          [&](const hir::StreamingConcatExpr&) -> diag::Result<WriteTarget> {
+            return diag::Fail(
+                expr.span, diag::DiagCode::kUnsupportedExpressionForm,
+                "a streaming operator is not yet supported as the target of "
+                "this kind of assignment (LRM 11.4.14.3)");
           },
           // The front end verifies that an assignment's target is an lvalue
           // whose every element can be assigned to, and refuses the program

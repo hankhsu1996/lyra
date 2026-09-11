@@ -344,9 +344,9 @@ auto LowerExprImpl(
     }
 
     case slang::ast::ExpressionKind::Streaming:
-      return diag::Fail(
-          span, diag::DiagCode::kUnsupportedExpressionForm,
-          "a streaming operator is not yet supported (LRM 11.4.14)");
+      return LowerStreamingConcatExpr(
+          lowerer, frame,
+          expr.as<slang::ast::StreamingConcatenationExpression>(), span);
 
     case slang::ast::ExpressionKind::TypeReference:
       return diag::Fail(

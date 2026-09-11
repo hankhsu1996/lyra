@@ -1,6 +1,7 @@
 #pragma once
 
 #include <cstddef>
+#include <cstdint>
 #include <string>
 #include <tuple>
 #include <utility>
@@ -150,6 +151,37 @@ class Tuple {
     }(std::index_sequence_for<Ts...>{});
   }
 
+  // LRM 6.24.3: the members' own streams laid end to end, the first member
+  // most significant. A product of no components contributes no bits, and a
+  // sequence of no bits is not a value this representation has, so the
+  // conversion is declared only where there are components -- the same reason
+  // the component-taking constructor is.
+  [[nodiscard]] auto ToBitstream() const -> PackedArray
+    requires(sizeof...(Ts) > 0)
+  {
+    PackedArray stream = std::get<0>(data_).ToBitstream();
+    [&]<std::size_t... I>(std::index_sequence<I...>) {
+      ((stream = stream.Concat(std::get<I + 1>(data_).ToBitstream())), ...);
+    }(std::make_index_sequence<sizeof...(Ts) - 1>{});
+    return stream;
+  }
+
+  // The inverse, each member taking its own width off the front of what is
+  // left (LRM 11.4.14.3) and reading it back at the shape the prototype's
+  // corresponding member has.
+  [[nodiscard]] static auto FromBitstream(
+      const PackedArray& bits, const Tuple& prototype) -> Tuple
+    requires(sizeof...(Ts) > 0)
+  {
+    Tuple result = prototype;
+    std::uint64_t consumed = 0;
+    [&]<std::size_t... I>(std::index_sequence<I...>) {
+      ((result.template GetRef<I>() = TakeMember<I>(bits, consumed, prototype)),
+       ...);
+    }(std::index_sequence_for<Ts...>{});
+    return result;
+  }
+
   // LRM 20.9 `$isunknown`: any member carrying an X / Z bit propagates up.
   [[nodiscard]] auto HasUnknown() const -> bool {
     return [&]<std::size_t... I>(std::index_sequence<I...>) {
@@ -172,6 +204,22 @@ class Tuple {
   }
 
  private:
+  // Member `I` read off the stream and the cursor advanced past it, so the
+  // fold that rebuilds a product states the order once and the offset nowhere.
+  template <std::size_t I>
+  [[nodiscard]] static auto TakeMember(
+      const PackedArray& bits, std::uint64_t& consumed, const Tuple& prototype)
+      -> std::tuple_element_t<I, std::tuple<Ts...>> {
+    using Member = std::tuple_element_t<I, std::tuple<Ts...>>;
+    const auto& member_prototype = std::get<I>(prototype.data_);
+    const auto width =
+        static_cast<std::uint64_t>(member_prototype.BitstreamWidth().ToInt64());
+    Member member = Member::FromBitstream(
+        BitstreamSegment(bits, consumed, width), member_prototype);
+    consumed += width;
+    return member;
+  }
+
   std::tuple<Ts...> data_;
 };
 
@@ -202,11 +250,13 @@ static_assert(Defaultable<Tuple<>>);
 static_assert(LyraValue<Tuple<PackedArray>>);
 static_assert(CaseEqualComparable<Tuple<PackedArray>>);
 static_assert(BitstreamSizable<Tuple<PackedArray>>);
+static_assert(BitstreamConvertible<Tuple<PackedArray>>);
 static_assert(Defaultable<Tuple<PackedArray>>);
 
 static_assert(LyraValue<Tuple<PackedArray, PackedArray>>);
 static_assert(CaseEqualComparable<Tuple<PackedArray, PackedArray>>);
 static_assert(BitstreamSizable<Tuple<PackedArray, PackedArray>>);
+static_assert(BitstreamConvertible<Tuple<PackedArray, PackedArray>>);
 static_assert(Defaultable<Tuple<PackedArray, PackedArray>>);
 static_assert(NetResolvable<Tuple<PackedArray, PackedArray>>);
 

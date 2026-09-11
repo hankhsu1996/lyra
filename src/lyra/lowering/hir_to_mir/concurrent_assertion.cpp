@@ -602,9 +602,8 @@ auto LowerDisableWatcher(
 // in the engine learns what a concurrent assertion is.
 auto LowerProcess(
     ProcessLowerer& action, const StructuralScopeLowerer& lowerer,
-    const WalkFrame& ctor_frame, hir::ConcurrentAssertionId id,
-    const hir::EventControl& clock, mir::CallableId advance)
-    -> diag::Result<mir::CallableDecl> {
+    const WalkFrame& ctor_frame, const hir::EventControl& clock,
+    mir::CallableId advance) -> diag::Result<mir::CallableDecl> {
   mir::CompilationUnit& unit = lowerer.Owner().Unit();
   const mir::TypeId void_type = unit.builtins.void_type;
   const mir::TypeId self_ptr_type = ctor_frame.current_class->self_pointer_type;
@@ -737,8 +736,8 @@ auto LowerConcurrentAssertion(
           .foreign = std::nullopt,
           .virtual_dispatch = std::nullopt});
 
-  auto process = LowerProcess(
-      action, lowerer, ctor_frame, id, parts.spec->clock, advance_id);
+  auto process =
+      LowerProcess(action, lowerer, ctor_frame, parts.spec->clock, advance_id);
   if (!process) return std::unexpected(std::move(process.error()));
 
   std::vector<mir::CallableId> processes;

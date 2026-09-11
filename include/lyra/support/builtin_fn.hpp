@@ -58,6 +58,27 @@ enum class BuiltinFn : std::uint16_t {
   // itself dynamically sized contributes its current width. The fixed-size case
   // folds at elaboration and never reaches this entry.
   kBitstreamWidth,
+  // The bits themselves, in the order LRM 6.24.3 fixes for the value's type:
+  // the first item occupies the most significant bits, an associative array
+  // contributes in index-sorted order, and a class contributes its base's
+  // members before its own. One entry reads a value out as that sequence and
+  // one builds a value from it, and both recurse the way the width query above
+  // does -- a part reports its own bits, so no caller inspects the part's
+  // shape.
+  //
+  // Building takes a prototype because a sequence of bits carries no shape: the
+  // result is the prototype's type, held at the prototype's representation, and
+  // the sequence is consumed left to right. The caller brings the sequence to
+  // exactly the width the prototype reports, so neither widening nor truncation
+  // is this entry's business.
+  kToBitstream,
+  kFromBitstream,
+  // Reversing the order of the fixed-size blocks a vector divides into, from
+  // its least significant bit up, leaving the bits inside each block where they
+  // are (LRM 11.4.14.2). The last block is whatever is left over and is not
+  // padded. A generic bit operation -- LLVM's `llvm.bswap` is this at a block
+  // size of eight -- so the block size reaches it as a machine count.
+  kReverseBlocks,
   // LRM 7.12 / 7.5 / 7.10 container ops. Emptying a container and dropping
   // the one entry an index names are two operations the source spells with one
   // word (LRM 7.9.3 / 7.10.2.3), so each takes its own identity here and the

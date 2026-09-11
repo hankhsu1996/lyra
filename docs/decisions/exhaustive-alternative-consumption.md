@@ -98,9 +98,10 @@ one, the diagnostic-code table, and A014 holds every code to an entry in it.
   everywhere rather than re-derived per site.
 - An exemption is legible: the comment says the set is not a dispatch set and why, which is a claim
   a reviewer can disagree with.
-- Two constructs the pipeline had been folding into an unrelated path now refuse by name: a
-  bitstream cast and the streaming operators, which had been reaching a conversion that returned
-  their operand unchanged and failing later as a host compile error or an internal error.
+- Two constructs the pipeline had been folding into an unrelated path stopped being folded into it:
+  a bitstream cast and the streaming operators, which had been reaching a conversion that returned
+  their operand unchanged and failing later as a host compile error or an internal error. Being
+  named is what made them answerable, and both are carried out now.
 
 ## Cross-references
 

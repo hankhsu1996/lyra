@@ -28,6 +28,13 @@ auto LowerHirConcatExpr(
     Lowerer& lowerer, WalkFrame frame, const hir::ConcatExpr& c,
     hir::TypeId hir_result_type, mir::TypeId result_type)
     -> diag::Result<mir::Expr>;
+// A stream carries no element default and no keyed index, so it takes the
+// lowered result type alone: what it builds is a run of bits, whose every fact
+// the operands' own types already state.
+template <ExprLowerer Lowerer>
+auto LowerHirStreamingConcatExpr(
+    Lowerer& lowerer, WalkFrame frame, const hir::StreamingConcatExpr& s,
+    mir::TypeId result_type) -> diag::Result<mir::Expr>;
 template <ExprLowerer Lowerer>
 auto LowerHirAssignmentPatternExpr(
     Lowerer& lowerer, WalkFrame frame, const hir::AssignmentPatternExpr& a,
