@@ -1312,6 +1312,23 @@ enough to warrant its own focused review.
 
       Not blocked, and each entry is independent of the others.
 
+- [ ] R82 -- Every value domain names its two realizations the same way: the monomorphized one takes
+      the domain's own word and the erased one takes that word behind `Runtime`, so a reader meeting
+      either knows there is a pair and what the other is. The class-handle domain is the one that
+      does not -- its two realizations carry unrelated words, and the domain's own name matches
+      neither -- so nothing in any of the three names says they are one concept, and a reader has to
+      be told.
+
+      What makes it more than cosmetic is where the domain's name goes. It is the word the
+      library's symbols are composed from, so the pair is not renamed without renaming the entries
+      the generated module calls, and it is the word the semantic layers use for the type as well.
+      Straightening it therefore crosses both IRs, both backends, the runtime and the ABI at once,
+      for no change in behaviour -- which is why it is written down rather than taken.
+
+      Not blocked. Read it together with whatever is live on name composition, since the two touch
+      the same question from opposite ends: this is one concept wearing three words, that is one
+      word standing for two kinds of name.
+
 ## Out of Scope
 
 - Per-feature workstreams. Those live in the dedicated feature files (`operators.md`,

@@ -3,10 +3,12 @@
 // chandle or against null, case equality and case inequality with the same
 // meaning, a Boolean test that is 0 when the chandle is null and 1 otherwise,
 // assignment from another chandle or from null, passing to and returning from
-// a subroutine, and insertion into an associative array. Two distinct pointers
-// therefore stay distinct through every one of those, and the relative
-// ordering of associative array entries keyed by a chandle is not fixed, so
-// nothing here depends on it (LRM 6.14).
+// a subroutine, insertion into an associative array, and the assignment-pattern
+// conversion, under which a chandle naming nothing prints the word null and one
+// naming something prints in a format the tool chooses (LRM 21.2.1.6). Two
+// distinct pointers therefore stay distinct through every one of those, and the
+// relative ordering of associative array entries keyed by a chandle is not
+// fixed, so nothing here depends on it (LRM 6.14).
 module Top;
   import "DPI-C" function chandle allocate_cell(input int seed);
   import "DPI-C" function int read_cell(input chandle handle);
@@ -21,6 +23,8 @@ module Top;
   bit null_compares_equal;
   bit boolean_of_null;
   bit boolean_of_handle;
+  bit not_of_null;
+  bit not_of_handle;
   bit handle_equals_null;
   bit handle_differs_from_null;
   bit distinct_handles_compare_equal;
@@ -39,6 +43,11 @@ module Top;
 
   int tally [chandle];
 
+  string null_text;
+  string first_text;
+  string copy_text;
+  string second_text;
+
   function automatic chandle pass_through(chandle handle);
     return handle;
   endfunction
@@ -53,8 +62,16 @@ module Top;
     tally_of_first = -1;
     tally_of_second = -1;
     tally_entries = -1;
+    null_text = "unset";
+    first_text = "unset";
+    copy_text = "unset";
+    second_text = "unset";
+
+    not_of_handle = 1'b1;
 
     default_is_null = (first === null);
+    null_text = $sformatf("%p", first);
+    not_of_null = !first;
     null_compares_equal = (first == null);
     if (first) boolean_of_null = 1'b1;
     else boolean_of_null = 1'b0;
@@ -66,6 +83,7 @@ module Top;
     else boolean_of_handle = 1'b0;
     handle_equals_null = (first == null);
     handle_differs_from_null = (first !== null);
+    not_of_handle = !first;
 
     distinct_handles_compare_equal = (first === second);
     distinct_handles_differ = (first != second);
@@ -79,6 +97,10 @@ module Top;
     read_from_source = read_cell(first);
     read_from_copy = read_cell(copy);
     read_from_returned = read_cell(returned);
+
+    first_text = $sformatf("%p", first);
+    copy_text = $sformatf("%p", copy);
+    second_text = $sformatf("%p", second);
 
     tally[first] = 3;
     tally[second] = 4;
@@ -113,6 +135,11 @@ module Top;
     if (handle_differs_from_null !== 1'b1)
       $fatal(1, "!== against null on a non-null chandle was %b, expected 1",
              handle_differs_from_null);
+    if (not_of_null !== 1'b1)
+      $fatal(1, "the negated null chandle was %b, expected 1", not_of_null);
+    if (not_of_handle !== 1'b0)
+      $fatal(1, "the negated non-null chandle was %b, expected 0",
+             not_of_handle);
     if (distinct_handles_compare_equal !== 1'b0)
       $fatal(1, "two distinct chandles compared equal as %b, expected 0",
              distinct_handles_compare_equal);
@@ -151,6 +178,15 @@ module Top;
     if (tally_entries !== 2)
       $fatal(1, "two distinct handles made %0d entries, expected 2",
              tally_entries);
+
+    if (null_text != "null")
+      $fatal(1, "a null chandle printed as %s, expected null", null_text);
+    if (first_text == "null")
+      $fatal(1, "a non-null chandle printed as null");
+    if (first_text != copy_text)
+      $fatal(1, "one pointer printed as %s and as %s", first_text, copy_text);
+    if (first_text == second_text)
+      $fatal(1, "two distinct pointers both printed as %s", first_text);
     $display("All checks passed");
   end
 endmodule

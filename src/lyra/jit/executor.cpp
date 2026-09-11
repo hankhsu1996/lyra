@@ -616,9 +616,16 @@ auto DefineRuntimeAbi(llvm::orc::LLJIT& jit)
       &lyra_rt_packed_make_print_value_item);
   add("lyra_rt_string_make_print_value_item",
       &lyra_rt_string_make_print_value_item);
+  add("lyra_rt_chandle_make_print_value_item",
+      &lyra_rt_chandle_make_print_value_item);
+  add("lyra_rt_managedref_make_print_value_item",
+      &lyra_rt_managedref_make_print_value_item);
   add("lyra_rt_format_runtime", &lyra_rt_format_runtime);
   add("lyra_rt_packed_make_format_arg", &lyra_rt_packed_make_format_arg);
   add("lyra_rt_string_make_format_arg", &lyra_rt_string_make_format_arg);
+  add("lyra_rt_chandle_make_format_arg", &lyra_rt_chandle_make_format_arg);
+  add("lyra_rt_managedref_make_format_arg",
+      &lyra_rt_managedref_make_format_arg);
   add("lyra_rt_make_dpi_bit_buffer", &lyra_rt_make_dpi_bit_buffer);
   add("lyra_rt_make_dpi_logic_buffer", &lyra_rt_make_dpi_logic_buffer);
   add("lyra_rt_dpi_bit_buffer_data", &lyra_rt_dpi_bit_buffer_data);
@@ -743,6 +750,7 @@ auto DefineRuntimeAbi(llvm::orc::LLJIT& jit)
   add("lyra_rt_real_value_box", &lyra_rt_real_value_box);
   add("lyra_rt_shortreal_value_box", &lyra_rt_shortreal_value_box);
   add("lyra_rt_chandle_value_box", &lyra_rt_chandle_value_box);
+  add("lyra_rt_managedref_value_box", &lyra_rt_managedref_value_box);
   add("lyra_rt_tuple_value_box", &lyra_rt_tuple_value_box);
   add("lyra_rt_dynarray_value_box", &lyra_rt_dynarray_value_box);
   add("lyra_rt_tuple_make", &lyra_rt_tuple_make);

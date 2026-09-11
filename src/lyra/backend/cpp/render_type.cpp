@@ -297,7 +297,7 @@ auto RenderTypeAsCpp(const mir::CompilationUnit& unit, mir::TypeId type_id)
           // two units holding one cell under different views is ordinary, so a
           // spelling that followed the view would give that cell two types.
           [](const mir::ManagedRefType&) -> std::string {
-            return std::string{"lyra::runtime::ObjectRef"};
+            return std::string{"lyra::value::ObjectRef"};
           },
           [&](const mir::VectorType& v) -> std::string {
             return std::format(

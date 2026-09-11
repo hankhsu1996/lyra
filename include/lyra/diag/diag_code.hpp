@@ -42,6 +42,7 @@ enum class DiagCode : std::uint32_t {
   kErrorFormatStringUnknownSpecifier,
   kErrorFormatStringModifierNotPermitted,
   kErrorDisplayMissingArg,
+  kErrorHandleFormatConversion,
 
   kHostInvalidCliArgs,
   kHostInvalidManifest,

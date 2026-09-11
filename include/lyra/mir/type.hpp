@@ -821,14 +821,6 @@ class Type {
   // The value a capability wrapper wraps; throws where there is none.
   [[nodiscard]] auto WrappedValueType() const -> TypeId;
 
-  // The types of the values a value of this type holds -- what copying the
-  // value copies. A container holds its elements and its keys, a product and a
-  // union their components, a cell the value it keeps. Empty for a value that
-  // is one indivisible thing, for one that only refers to a value living
-  // elsewhere, and for a type whose members a registry declares rather than the
-  // type itself; a walk that must reach those asks that registry.
-  [[nodiscard]] auto HeldValueTypes() const -> std::vector<TypeId>;
-
   // The type of the elements this one holds a run of, or nothing where it
   // holds none: the unpacked array (LRM 7.4), the dynamic array (7.5), the
   // associative array (7.8) and the queue (7.10). Narrower than holding

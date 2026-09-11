@@ -9,8 +9,9 @@ namespace lyra::value {
 
 // Runtime representation of the SystemVerilog `chandle` (LRM 6.14): storage for
 // a pointer passed across the DPI-C boundary, at least wide enough to hold a
-// host pointer. The value is opaque to SystemVerilog, which may only compare
-// two chandles, compare one against `null`, and test one for a boolean value.
+// host pointer. The value is opaque to SystemVerilog, which may compare two
+// chandles, compare one against `null`, test one for a boolean value, and print
+// one under the assignment-pattern conversion (LRM 21.2.1.6).
 //
 // A chandle is a value type rather than a bare host pointer because it appears
 // as an associative-array element, a class member, and a struct field, and
@@ -20,10 +21,6 @@ namespace lyra::value {
 // `!==` the same semantics as `==` / `!=`, so `CaseEqualComparable` holds and
 // `CaseEqual` shares pointer identity with `IsBitIdentical`. Relational
 // operators are not defined on a chandle, so `Ordered` does not.
-//
-// There is deliberately no `Formatter<Chandle>`: LRM 6.14 permits a chandle
-// only in the equality family and a boolean test, so a chandle never reaches a
-// format argument -- HIR-to-MIR rejects that program.
 class Chandle {
  public:
   Chandle() = default;

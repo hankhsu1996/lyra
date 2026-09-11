@@ -407,11 +407,11 @@ cross-check predicts. This file owns only which instances are known and what is 
       stated fact.
 
       Where a walker's own idea of what has parts was the whole of the arm, the fix is to ask the
-      set once. A type now says which types its values hold -- a container's elements and keys, a
-      product's and a union's components, a cell's contents -- so the walk that decides whether a
-      format operand hides a chandle (LRM 6.14) is a predicate over that answer rather than a second
-      enumeration with a default; and a descent step is an ordinary call, so a consumer reaching
-      every coordinate of one walks its operands rather than enumerating a selector set of its own.
+      set once, and a descent step is an ordinary call, so a consumer reaching every coordinate of
+      one walks its operands rather than enumerating a selector set of its own. The walk this was
+      first shown on was one looking for a chandle hidden inside a format operand; LRM 21.2.1.6
+      admits a handle under the assignment-pattern conversion and the frontend rejects an aggregate
+      operand under every other, so there is nothing left for such a walk to find and it is gone.
 
       The type pool's own hash fell through to "these carry no payload" over a chain the compiler
       cannot check; it now consumes the set the way the layer below already did, one arm per

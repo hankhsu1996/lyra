@@ -11,6 +11,9 @@ namespace lyra::value {
 
 class PackedArray;
 class String;
+class Chandle;
+class ObjectRef;
+class ManagedRef;
 template <typename Host>
 class RealValue;
 template <typename T>
@@ -150,6 +153,9 @@ struct FormatArg {
   // `Formatter`.
   explicit FormatArg(const PackedArray& value);
   explicit FormatArg(const String& value);
+  explicit FormatArg(const Chandle& value);
+  explicit FormatArg(const ObjectRef& value);
+  explicit FormatArg(const ManagedRef& value);
   template <typename Host>
   explicit FormatArg(const RealValue<Host>& value);
   template <typename T>
@@ -199,6 +205,15 @@ inline FormatArg::FormatArg(const PackedArray& value)
     : FormatArg(MakeFormatArg(value)) {
 }
 inline FormatArg::FormatArg(const String& value)
+    : FormatArg(MakeFormatArg(value)) {
+}
+inline FormatArg::FormatArg(const Chandle& value)
+    : FormatArg(MakeFormatArg(value)) {
+}
+inline FormatArg::FormatArg(const ObjectRef& value)
+    : FormatArg(MakeFormatArg(value)) {
+}
+inline FormatArg::FormatArg(const ManagedRef& value)
     : FormatArg(MakeFormatArg(value)) {
 }
 template <typename Host>
@@ -297,6 +312,32 @@ struct Formatter<String> {
       -> std::string;
 };
 
+// LRM 21.2.1.6: a chandle, a class handle, an interface class handle, an event
+// and a virtual interface each print in an implementation-dependent format,
+// except that a handle naming nothing prints the word `null`. The clause fixes
+// a spelling for that one conversion and the language defines the handle under
+// no other, so these answer the assignment pattern and refuse the rest. What
+// the text stands for is which object the handle names, and the address is how
+// that is spelled, so two handles naming one object print alike and no two
+// objects share a text.
+template <>
+struct Formatter<Chandle> {
+  static auto Format(const FormatSpec& spec, const Chandle& value)
+      -> std::string;
+};
+
+template <>
+struct Formatter<ObjectRef> {
+  static auto Format(const FormatSpec& spec, const ObjectRef& value)
+      -> std::string;
+};
+
+template <>
+struct Formatter<ManagedRef> {
+  static auto Format(const FormatSpec& spec, const ManagedRef& value)
+      -> std::string;
+};
+
 template <>
 struct Formatter<double> {
   static auto Format(
@@ -341,6 +382,15 @@ struct PrintValueItem {
       : spec(spec), arg(MakeFormatArg(value)) {
   }
   PrintValueItem(const String& value, FormatSpec spec)
+      : spec(spec), arg(MakeFormatArg(value)) {
+  }
+  PrintValueItem(const Chandle& value, FormatSpec spec)
+      : spec(spec), arg(MakeFormatArg(value)) {
+  }
+  PrintValueItem(const ObjectRef& value, FormatSpec spec)
+      : spec(spec), arg(MakeFormatArg(value)) {
+  }
+  PrintValueItem(const ManagedRef& value, FormatSpec spec)
       : spec(spec), arg(MakeFormatArg(value)) {
   }
   template <typename Host>

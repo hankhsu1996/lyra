@@ -256,6 +256,15 @@ auto Own(T value) -> void* {
   return GeneratedCallScope::Current().Arena().New<T>(std::move(value));
 }
 
+// The same storage, named rather than handed out as a handle, for a value a
+// borrower has to outlive the expression that built it. A domain whose value is
+// carried as the handle itself has no storage of the caller's to borrow, so one
+// is made here and lives as long as the entry's other transients do.
+template <typename T>
+auto Held(T value) -> const T& {
+  return *static_cast<const T*>(Own(std::move(value)));
+}
+
 // A net and one of its drivers, behind the addresses the ABI carries them as.
 // The fold a net resolves under travels in the net object itself, so one
 // recovery serves every net type: the address names a net, not a net of a
@@ -275,7 +284,7 @@ auto DriverOf(void* driver) -> Driver<T>& {
 // keeps the node alive for the length of the call: the entry is the one place
 // that knows which object the share is of, which is what erasing it costs and
 // all it costs.
-auto ProcessOf(const void* handle) -> ObjectRef {
+auto ProcessOf(const void* handle) -> value::ObjectRef {
   return RefToObject(
       std::static_pointer_cast<RuntimeProcess>(
           Read<value::ManagedRef>(handle).Share()));
@@ -555,13 +564,13 @@ using lyra::runtime::ForkWaitFirstMustPark;
 using lyra::runtime::GcNew;
 using lyra::runtime::GeneratedCallScope;
 using lyra::runtime::GeneratedScope;
+using lyra::runtime::Held;
 using lyra::runtime::HierarchySegment;
 using lyra::runtime::LeaveCancellationTarget;
 using lyra::runtime::ManagedObject;
 using lyra::runtime::NamedEvent;
 using lyra::runtime::NetOf;
 using lyra::runtime::ObjectDefinition;
-using lyra::runtime::ObjectRef;
 using lyra::runtime::Observable;
 using lyra::runtime::Observation;
 using lyra::runtime::Own;
@@ -606,6 +615,7 @@ using lyra::value::FormatArg;
 using lyra::value::FormatSpec;
 using lyra::value::MakeFormatArg;
 using lyra::value::ManagedRef;
+using lyra::value::ObjectRef;
 using lyra::value::PackedArray;
 using lyra::value::PackedRange;
 using lyra::value::PackedType;
@@ -937,10 +947,7 @@ void lyra_rt_disable_fork(void* runtime) {
 }
 
 auto lyra_rt_process_self(void* runtime) -> void* {
-  return Own(
-      ManagedRef{ProcessSelf(*static_cast<RuntimeEffects*>(runtime))
-                     .Identity()
-                     .Share()});
+  return Own(ProcessSelf(*static_cast<RuntimeEffects*>(runtime)).Handle());
 }
 
 auto lyra_rt_process_status(const void* self) -> void* {
@@ -991,7 +998,7 @@ auto lyra_rt_closure_capture(void* self, std::uint32_t index) -> void* {
 auto lyra_rt_object_make(const void* definition) -> void* {
   ObjectRef object =
       GcNew<ManagedObject>(static_cast<const ObjectDefinition*>(definition));
-  return Own(ManagedRef{object.Identity().Share()});
+  return Own(object.Handle());
 }
 
 void lyra_rt_submit_nba(void* runtime, void* closure) {
@@ -1392,7 +1399,7 @@ auto lyra_rt_sequence_element(const void* sequence, std::int64_t index)
 auto lyra_rt_object_deref(void* handle) -> void* {
   const auto& object = Read<ManagedRef>(handle);
   if (!static_cast<bool>(object)) {
-    lyra::runtime::RaiseNullObjectHandleAccess();
+    lyra::value::RaiseNullObjectHandleAccess();
   }
   return object.Share().get();
 }
@@ -2343,6 +2350,18 @@ auto lyra_rt_string_make_print_value_item(const void* value, const void* spec)
       PrintItem(PrintValueItem(Read<String>(value), Read<FormatSpec>(spec))));
 }
 
+auto lyra_rt_chandle_make_print_value_item(void* value, const void* spec)
+    -> void* {
+  return Own(
+      PrintItem(PrintValueItem(Held(Chandle{value}), Read<FormatSpec>(spec))));
+}
+
+auto lyra_rt_managedref_make_print_value_item(
+    const void* value, const void* spec) -> void* {
+  return Own(PrintItem(
+      PrintValueItem(Read<ManagedRef>(value), Read<FormatSpec>(spec))));
+}
+
 auto lyra_rt_real_add(const void* lhs, const void* rhs) -> void* {
   return Own(Read<Real>(lhs) + Read<Real>(rhs));
 }
@@ -2717,23 +2736,18 @@ auto lyra_rt_managedref_default() -> void* {
   return &null_handle;
 }
 
-// Comparing two handles is a machine predicate, not a value operation: the
-// answer is whether they name one object, and the call site widens it to the
-// 1-bit SystemVerilog result (LRM 11.4.5).
-auto lyra_rt_managedref_eq(const void* lhs, const void* rhs) -> bool {
-  return Read<ManagedRef>(lhs).Share().get() ==
-         Read<ManagedRef>(rhs).Share().get();
+// Comparing two handles asks which object each names (LRM 11.4.5). The clause
+// makes the answer always a known 1'b0 or 1'b1, so the entry answers with that
+// value.
+auto lyra_rt_managedref_eq(const void* lhs, const void* rhs) -> void* {
+  return Own(Read<ManagedRef>(lhs) == Read<ManagedRef>(rhs));
 }
 
-auto lyra_rt_managedref_ne(const void* lhs, const void* rhs) -> bool {
-  return Read<ManagedRef>(lhs).Share().get() !=
-         Read<ManagedRef>(rhs).Share().get();
+auto lyra_rt_managedref_ne(const void* lhs, const void* rhs) -> void* {
+  return Own(Read<ManagedRef>(lhs) != Read<ManagedRef>(rhs));
 }
 
-// LRM 11.4.5: `===` on a handle carries the same meaning as `==`. Unlike those,
-// it answers with the 1-bit value directly, because the clause makes the result
-// always known and the call is stated at that rather than widened from a
-// predicate.
+// LRM 11.4.5: `===` on a handle carries the same meaning as `==`.
 auto lyra_rt_managedref_case_equal(const void* lhs, const void* rhs) -> void* {
   return Own(Read<ManagedRef>(lhs).CaseEqual(Read<ManagedRef>(rhs)));
 }
@@ -2788,6 +2802,10 @@ auto lyra_rt_shortreal_value_box(const void* value) -> void* {
 // object out of it.
 auto lyra_rt_chandle_value_box(void* value) -> void* {
   return Own(RuntimeValue{Chandle{value}});
+}
+
+auto lyra_rt_managedref_value_box(const void* value) -> void* {
+  return Own(RuntimeValue{Read<ManagedRef>(value)});
 }
 
 auto lyra_rt_tuple_value_box(const void* value) -> void* {
@@ -4840,6 +4858,14 @@ auto lyra_rt_packed_make_format_arg(const void* value) -> void* {
 
 auto lyra_rt_string_make_format_arg(const void* value) -> void* {
   return Own(MakeFormatArg(Read<String>(value)));
+}
+
+auto lyra_rt_chandle_make_format_arg(void* value) -> void* {
+  return Own(MakeFormatArg(Held(Chandle{value})));
+}
+
+auto lyra_rt_managedref_make_format_arg(const void* value) -> void* {
+  return Own(MakeFormatArg(Read<ManagedRef>(value)));
 }
 
 auto lyra_rt_make_dpi_bit_buffer(const void* sv) -> void* {

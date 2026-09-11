@@ -17,6 +17,7 @@
 #include "lyra/value/chandle.hpp"
 #include "lyra/value/concepts.hpp"
 #include "lyra/value/format.hpp"
+#include "lyra/value/object_ref.hpp"
 #include "lyra/value/oob_shield.hpp"
 #include "lyra/value/packed_array.hpp"
 #include "lyra/value/queue.hpp"
@@ -129,6 +130,24 @@ struct ChandleKeyLess {
 template <>
 struct AssocKeyTraits<Chandle> {
   using Less = ChandleKeyLess;
+};
+
+// LRM 7.8.3: a class may key an associative array, its entries order
+// deterministically but arbitrarily, and null is a valid index. Which object a
+// handle names is therefore the order, which no SV operator states -- `<` is
+// not defined on a handle -- so `std::less` over the identity supplies the
+// total order the storage needs, and null takes its place in it like any
+// other.
+struct ObjectRefKeyLess {
+  [[nodiscard]] auto operator()(const ObjectRef& a, const ObjectRef& b) const
+      -> bool {
+    return std::less<>{}(a.Handle().Share().get(), b.Handle().Share().get());
+  }
+};
+
+template <>
+struct AssocKeyTraits<ObjectRef> {
+  using Less = ObjectRefKeyLess;
 };
 
 // A wildcard key formats as its underlying integral value (LRM 21.2.1.6 prints

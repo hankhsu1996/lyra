@@ -123,6 +123,9 @@ auto RuntimeValueOrderBefore(const RuntimeValue& a, const RuntimeValue& b)
         using T = std::decay_t<decltype(lhs)>;
         if constexpr (std::is_same_v<T, Chandle>) {
           return std::less<>{}(lhs.Ptr(), std::get<T>(b.value).Ptr());
+        } else if constexpr (std::is_same_v<T, ManagedRef>) {
+          return std::less<>{}(
+              lhs.Share().get(), std::get<T>(b.value).Share().get());
         } else if constexpr (requires { lhs < std::get<T>(b.value); }) {
           return static_cast<bool>(lhs < std::get<T>(b.value));
         } else {
@@ -155,6 +158,10 @@ auto RuntimeValueBitstreamWidth(const RuntimeValue& value) -> PackedArray {
           throw SimulationError(
               "$bits of a union is not yet supported on this backend; please "
               "open an issue asking for support");
+        } else if constexpr (std::is_same_v<T, ManagedRef>) {
+          throw SimulationError(
+              "$bits of a class object is not yet supported on this backend; "
+              "please open an issue asking for support");
         } else {
           return v.BitstreamWidth();
         }
@@ -179,6 +186,10 @@ auto RuntimeValueCountBits(
           throw SimulationError(
               "$countbits of a union is not yet supported on this backend; "
               "please open an issue asking for support");
+        } else if constexpr (std::is_same_v<T, ManagedRef>) {
+          throw SimulationError(
+              "$countbits of a class object is not yet supported on this "
+              "backend; please open an issue asking for support");
         } else {
           return v.CountBits(control_bits);
         }
@@ -190,7 +201,13 @@ auto RuntimeValueToBitstream(const RuntimeValue& value) -> PackedArray {
   return std::visit(
       [](const auto& v) -> PackedArray {
         using T = std::decay_t<decltype(v)>;
-        if constexpr (BitstreamConvertible<T>) {
+        if constexpr (
+            std::is_same_v<T, Real> || std::is_same_v<T, ShortReal> ||
+            std::is_same_v<T, Chandle>) {
+          throw InternalError(
+              "RuntimeValue::ToBitstream: a real and a chandle are not "
+              "bit-stream types (LRM 6.24.3)");
+        } else if constexpr (BitstreamConvertible<T>) {
           return v.ToBitstream();
         } else {
           throw SimulationError(
@@ -206,7 +223,13 @@ auto RuntimeValueFromBitstream(
   return std::visit(
       [&](const auto& v) -> RuntimeValue {
         using T = std::decay_t<decltype(v)>;
-        if constexpr (BitstreamConvertible<T>) {
+        if constexpr (
+            std::is_same_v<T, Real> || std::is_same_v<T, ShortReal> ||
+            std::is_same_v<T, Chandle>) {
+          throw InternalError(
+              "RuntimeValue::FromBitstream: a real and a chandle are not "
+              "bit-stream types (LRM 6.24.3)");
+        } else if constexpr (BitstreamConvertible<T>) {
           return RuntimeValue{T::FromBitstream(bits, v)};
         } else {
           throw SimulationError(

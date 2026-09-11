@@ -309,12 +309,12 @@ this list is what remembers.
       another unit's instance storage by a name no signature carries, not the coordinate above, and
       it is refused.
 
-- [ ] A collection of such handles -- an unpacked array or a queue of them -- reached through such a
-      reference. The coordinate side needs nothing new, since what follows a value with no class
-      view is decided by the operation and not by the syntax that produced the value. What blocks it
-      is that the execution backend has no value domain for a class handle, so a handle cannot be
-      held as an element at all; this is recorded against that backend rather than here, and it
-      stops the construct with no hierarchical name anywhere in sight.
+- [x] A collection of such handles -- an unpacked array or a queue of them -- reached through such a
+      reference. The coordinate side needed nothing new, since what follows a value with no class
+      view is decided by the operation and not by the syntax that produced the value. What blocked
+      it was that a handle was not a value either backend could hold as an element, which stopped
+      the construct with no hierarchical name anywhere in sight and is settled in
+      `../decisions/a-handle-is-a-value.md`.
 
 - [ ] An instance is still a backend-private shell rather than a generic object over its definition.
       The runtime no longer reaches generated behavior through a C++ base class, so a scope's
