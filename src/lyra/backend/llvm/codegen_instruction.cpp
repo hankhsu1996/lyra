@@ -1750,7 +1750,120 @@ auto CodeGenFunction::ConstructionOf(
             return entry(RuntimeSymbol(
                 support::ValueDomain::kEmpty, RuntimeOp::kDefault));
           },
-          [&](const auto&) -> diag::Result<Construction> {
+
+          // Nothing below has a construction entry on this backend. Each says
+          // so on a line of its own, because "nothing brings one of these into
+          // existence" is a claim about that type and a reader can only check
+          // a claim that was made; a type added later lands in none of them
+          // and fails to compile until someone places it.
+
+          // A value that is a vector of bits, or a host scalar standing beside
+          // one.
+          [&](const lir::PackedArrayType&) -> diag::Result<Construction> {
+            return no_construct();
+          },
+          [&](const lir::EnumType&) -> diag::Result<Construction> {
+            return no_construct();
+          },
+          [&](const lir::PackedStructType&) -> diag::Result<Construction> {
+            return no_construct();
+          },
+          [&](const lir::PackedUnionType&) -> diag::Result<Construction> {
+            return no_construct();
+          },
+          [&](const lir::WildcardIndexType&) -> diag::Result<Construction> {
+            return no_construct();
+          },
+          [&](const lir::MachineBoolType&) -> diag::Result<Construction> {
+            return no_construct();
+          },
+          [&](const lir::MachineIntType&) -> diag::Result<Construction> {
+            return no_construct();
+          },
+          [&](const lir::MachineFloatType&) -> diag::Result<Construction> {
+            return no_construct();
+          },
+          [&](const lir::MachineCStringType&) -> diag::Result<Construction> {
+            return no_construct();
+          },
+          [&](const lir::VoidType&) -> diag::Result<Construction> {
+            return no_construct();
+          },
+
+          // Aggregates this layer lays out itself, and the code address of a
+          // body.
+          [&](const lir::MachineArrayType&) -> diag::Result<Construction> {
+            return no_construct();
+          },
+          [&](const lir::TupleType&) -> diag::Result<Construction> {
+            return no_construct();
+          },
+          [&](const lir::UnpackedStructType&) -> diag::Result<Construction> {
+            return no_construct();
+          },
+          [&](const lir::UnionType&) -> diag::Result<Construction> {
+            return no_construct();
+          },
+          [&](const lir::TaggedUnionType&) -> diag::Result<Construction> {
+            return no_construct();
+          },
+          [&](const lir::StructType&) -> diag::Result<Construction> {
+            return no_construct();
+          },
+          [&](const lir::MachineFunctionType&) -> diag::Result<Construction> {
+            return no_construct();
+          },
+          [&](const lir::CoroutineType&) -> diag::Result<Construction> {
+            return no_construct();
+          },
+
+          // A node of the object tree. What brings one into existence is the
+          // construction of the unique owner whose pointee it is, so the node
+          // type itself never names an entry.
+          [&](const lir::ObjectType&) -> diag::Result<Construction> {
+            return no_construct();
+          },
+          [&](const lir::ExternalUnitObjectType&)
+              -> diag::Result<Construction> { return no_construct(); },
+          [&](const lir::CrossUnitClassType&) -> diag::Result<Construction> {
+            return no_construct();
+          },
+          [&](const lir::OpaqueObjectType&) -> diag::Result<Construction> {
+            return no_construct();
+          },
+          [&](const lir::RuntimeClassType&) -> diag::Result<Construction> {
+            return no_construct();
+          },
+
+          // Storage an owner holds, which comes into existence with the owner
+          // and is reached by address.
+          [&](const lir::ObservableType&) -> diag::Result<Construction> {
+            return no_construct();
+          },
+          [&](const lir::ResolvedType&) -> diag::Result<Construction> {
+            return no_construct();
+          },
+          [&](const lir::DriverType&) -> diag::Result<Construction> {
+            return no_construct();
+          },
+          [&](const lir::SampledHistoryType&) -> diag::Result<Construction> {
+            return no_construct();
+          },
+          [&](const lir::EvaluationAttemptsType&)
+              -> diag::Result<Construction> { return no_construct(); },
+          [&](const lir::EventType&) -> diag::Result<Construction> {
+            return no_construct();
+          },
+
+          // A stable runtime facade, realized as a live reference rather than
+          // as a value anything builds.
+          [&](const lir::RuntimeEffectsType&) -> diag::Result<Construction> {
+            return no_construct();
+          },
+          [&](const lir::FilesType&) -> diag::Result<Construction> {
+            return no_construct();
+          },
+          [&](const lir::DiagnosticType&) -> diag::Result<Construction> {
             return no_construct();
           }});
 }

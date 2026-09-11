@@ -44,7 +44,7 @@ auto ContributesItsElements(
   if (part == element) {
     return false;
   }
-  return ContainerElementType(unit, part).has_value();
+  return unit.types.Get(part).ContainerElementType().has_value();
 }
 
 // A container whose value is built from a positional list of its elements,

@@ -1097,7 +1097,7 @@ enough to warrant its own focused review.
       it hold" is asked once. Nothing blocks it; the two readings sit in one file today, which is
       what keeps them in step and is also why the split is easy to miss.
 
-- [ ] R75 -- Twenty-one switches over a closed set of alternatives still carry a `default:`, so for
+- [ ] R75 -- Nineteen switches over a closed set of alternatives still carry a `default:`, so for
       each of them the compiler's exhaustiveness check is off and gaining an alternative compiles
       silently. The style contract has forbidden this all along and a person had been catching it by
       hand; the count is what says that was never the mechanism, and writing the check found more
@@ -1106,7 +1106,7 @@ enough to warrant its own focused review.
       the list only ever shrinks and is the authoritative statement of what remains. Nothing blocks
       picking them up.
 
-      The record holds fifteen entries for those twenty-one switches, because it is keyed by the
+      The record holds fourteen entries for those nineteen switches, because it is keyed by the
       file and the set being switched on so that an entry survives the code moving. Where one file
       switches over one set more than once, the entries share a key: fixing one of them leaves the
       key satisfied by its neighbour, and only fixing all of them frees the entry to be dropped.
@@ -1231,6 +1231,32 @@ enough to warrant its own focused review.
       is missing is the C++ side's plumbing and not the contract. Weigh it against the C++ backend's
       remaining life: threading a result through the fold touches every entry in it and collides with
       any other work in render.
+
+- [ ] R81 -- Eleven files answer a question about a closed set by visiting it and letting one arm
+      declared `auto` take whatever the named arms did not. A021 records them and admits no more, so
+      what is left is the record, and it is not transcription: ten of the thirteen arms ask a
+      question of a forty-odd-alternative type set and answer for a handful, so writing the rest out
+      would produce forty lines saying nothing. The subset is the answer, and what states it belongs
+      on the type beside the total questions already there -- `lir::Type::KindName`,
+      `hir::Type::IsValueChangeObservable`, `mir::Type::ContainerElementType`.
+
+      Four of them ask one question in four spellings: which declaration a type names.
+      `lir/place_query.cpp` asks it twice, once for the base and once for the member list;
+      `lir/symbol_name.cpp` asks it for the name parts; `mir_to_lir/function_lowerer.cpp` asks it one
+      layer up for the class. One question on each type answers all four, and each caller then
+      dispatches on an answer with about five alternatives rather than on a set with forty-eight.
+      **That concept is R79's, not this entry's** -- what a declaration's names are and which the
+      source wrote is being settled there, and a second statement of it built here would be one
+      concept with two designs. Reach this from R79 rather than ahead of it.
+
+      A third mechanism is unmeasured and no check sees it: an `As<T>()` / `Is<T>()` chain falling
+      off its end, which is the same opt-out spelled a third way. `lir::Type::DerefTarget` and
+      `IsAddressOnly` are written that way, and so is `IsArrayContainerType` in the HIR-to-MIR
+      default-value lowering, so it is not one layer's habit. Seventy-two sites use `As<`, and how
+      many of them are a chain over a closed set has not been counted. A021 and A020 hold the other
+      two.
+
+      Not blocked, and each entry is independent of the others.
 
 ## Out of Scope
 

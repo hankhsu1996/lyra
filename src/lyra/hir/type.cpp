@@ -4,6 +4,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <functional>
+#include <optional>
 #include <variant>
 #include <vector>
 
@@ -192,6 +193,57 @@ auto Type::IsValueChangeObservable() const -> bool {
           [](const OpaqueScopeType&) { return false; },
           [](const NullType&) { return false; },
           [](const VoidType&) { return false; },
+      });
+}
+
+auto Type::ContainerElementType() const -> std::optional<TypeId> {
+  using Element = std::optional<TypeId>;
+  // One arm per HIR type and no catch-all, so a type added later fails to
+  // compile here until it says whether it holds a run of values.
+  return Visit(
+      Overloaded{
+          // The four a declaration names as holding a run of values, however
+          // the run is sized and however it is indexed.
+          [](const UnpackedArrayType& t) -> Element { return t.element_type; },
+          [](const DynamicArrayType& t) -> Element { return t.element_type; },
+          [](const QueueType& t) -> Element { return t.element_type; },
+          [](const AssociativeArrayType& t) -> Element {
+            return t.element_type;
+          },
+
+          // A packed array names an element type and a packed aggregate names
+          // members, and neither is a run of values: the whole of such a type
+          // is one vector of bits, so reaching into it selects a run of that
+          // vector rather than reading a value held beside the others.
+          [](const PackedArrayType&) -> Element { return std::nullopt; },
+          [](const PackedStructType&) -> Element { return std::nullopt; },
+          [](const PackedUnionType&) -> Element { return std::nullopt; },
+          [](const EnumType&) -> Element { return std::nullopt; },
+
+          // An unpacked aggregate holds its members at once rather than a run
+          // of one type, so there is no single element type to answer with.
+          [](const UnpackedStructType&) -> Element { return std::nullopt; },
+          [](const UnpackedUnionType&) -> Element { return std::nullopt; },
+
+          // A single quantity, a single token, a handle to something living
+          // elsewhere, or nothing at all.
+          [](const ScalarBitType&) -> Element { return std::nullopt; },
+          [](const StringType&) -> Element { return std::nullopt; },
+          [](const RealType&) -> Element { return std::nullopt; },
+          [](const ShortRealType&) -> Element { return std::nullopt; },
+          [](const RealTimeType&) -> Element { return std::nullopt; },
+          [](const WildcardIndexType&) -> Element { return std::nullopt; },
+          [](const EventType&) -> Element { return std::nullopt; },
+          [](const ChandleType&) -> Element { return std::nullopt; },
+          [](const ClassHandleType&) -> Element { return std::nullopt; },
+          [](const OpaqueObjectHandleType&) -> Element { return std::nullopt; },
+          [](const ImportedClassHandleType&) -> Element {
+            return std::nullopt;
+          },
+          [](const UnitObjectType&) -> Element { return std::nullopt; },
+          [](const OpaqueScopeType&) -> Element { return std::nullopt; },
+          [](const NullType&) -> Element { return std::nullopt; },
+          [](const VoidType&) -> Element { return std::nullopt; },
       });
 }
 

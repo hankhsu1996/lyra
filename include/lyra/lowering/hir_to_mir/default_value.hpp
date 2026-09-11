@@ -4,7 +4,6 @@
 #include <utility>
 #include <vector>
 
-#include "lyra/hir/type.hpp"
 #include "lyra/hir/type_id.hpp"
 #include "lyra/lowering/hir_to_mir/unit_lowerer.hpp"
 #include "lyra/mir/compilation_unit.hpp"
@@ -50,30 +49,17 @@ namespace lyra::lowering::hir_to_mir {
     const UnitLowerer& unit_lowerer, mir::Block& block, hir::TypeId hir_type)
     -> mir::Expr;
 
-// Whether a type is one of the three array container types (unpacked, dynamic,
-// or queue), which is what a caller asks before reaching for its element type.
-[[nodiscard]] auto IsArrayContainerType(const mir::Type& type) -> bool;
-
-// Whether an assignment between the two types crosses from one of those three
-// kinds to another. Two containers of one kind hold their elements the same
-// way, so a value crosses between them as it stands.
+// Whether an assignment between the two types crosses from one array container
+// kind to another -- unpacked, dynamic, or queue. Two containers of one kind
+// hold their elements the same way, so a value crosses between them as it
+// stands.
 [[nodiscard]] auto CrossesArrayContainerKinds(
     const mir::Type& source, const mir::Type& destination) -> bool;
 
-// The element type of a container that holds elements of one type, absent for
-// a type that holds none. Which types those are is stated here and nowhere
-// else; a caller that must decide what a non-container means says so at its
-// own site. There is one of these per type universe, because the two layers
-// name types in different ones and no single function spans both.
-[[nodiscard]] auto ContainerElementType(
-    const mir::CompilationUnit& unit, mir::TypeId type)
-    -> std::optional<mir::TypeId>;
-
-[[nodiscard]] auto ContainerElementType(const hir::Type& type)
-    -> std::optional<hir::TypeId>;
-
-// The same, for a caller whose own construction guarantees a container. Where
-// that guarantee did not hold, the producer built something it should not
+// A container's element type, for a caller whose own construction guarantees
+// there is one. Which types hold a run of elements is the type's own question
+// and is answered there; this adds only what an absent answer means here.
+// Where the guarantee did not hold, the producer built something it should not
 // have, so this reports a compiler bug rather than answering.
 [[nodiscard]] auto RequiredContainerElementType(
     const mir::CompilationUnit& unit, mir::TypeId container) -> mir::TypeId;
