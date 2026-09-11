@@ -315,6 +315,14 @@ class Type {
   // 9.4.2). A handle / event / void is not a value and drives no such event.
   [[nodiscard]] auto IsValueChangeObservable() const -> bool;
 
+  // The type of the elements this one holds a run of, or nothing where it
+  // holds none: the unpacked array (LRM 7.4), the dynamic array (7.5), the
+  // associative array (7.8) and the queue (7.10). A packed type names an
+  // element type too and answers with nothing here, because reaching into one
+  // selects a run of the single vector its value is rather than reading a
+  // value held beside the others.
+  [[nodiscard]] auto ContainerElementType() const -> std::optional<TypeId>;
+
   template <typename T>
   [[nodiscard]] auto Is() const -> bool {
     return std::holds_alternative<T>(data_);

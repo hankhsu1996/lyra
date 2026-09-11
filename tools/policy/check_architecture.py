@@ -155,6 +155,34 @@ Rules:
         arrive" is a claim the next reader has to be able to check.
         Scope: every .cpp/.hpp under src/lyra and include/lyra.
 
+  A021  A `std::visit` arm names the alternative it answers for. The
+        `Overloaded` helper's guarantee, stated in its own header, is that a
+        variant gaining an alternative leaves overload resolution nothing to
+        select, so the call site fails to compile until someone says what the
+        new one means. An arm declared `auto` accepts it instead. That is
+        A020's `default:` in a visit's clothes and it costs the same thing:
+        the set grows, every visit keeps compiling, and the alternative
+        nobody considered is answered plausibly -- or throws at run time,
+        where the build could have failed instead.
+        Two generic lambdas are not this, and both stand in the tree. One
+        bound to a name and called from a typed arm is shared code: the arm
+        list above it still names every alternative, so it is the remedy
+        rather than the defect. And a visit whose whole visitor is one
+        generic lambda dispatches on nothing -- it applies one operation to
+        every alternative and decides nothing, which is why the defect is a
+        generic arm standing *beside* typed ones, silently taking whatever
+        they did not name. So what this rule reads is the parameter of each
+        arm of an `Overloaded` list, never the file.
+        The arm lists that carried one when this rule was written are a
+        record below, keyed by file, on A020's terms: nothing new joins it,
+        and an entry whose file is clean fails until the entry goes, so it
+        only ever shrinks and is what is left to do. Most of those ask a
+        question of a forty-odd-alternative type set and answer for a
+        handful, which is not transcription -- the subset is the answer, and
+        what states it belongs on the type beside `KindName`, the way
+        `ContainerElementType` now does.
+        Scope: every .cpp/.hpp under src/lyra and include/lyra.
+
 When a rule fires, the printed message includes a fixed reminder that the
 fix is to change the ownership boundary, NOT to rename the function.
 
@@ -915,6 +943,89 @@ def check_a020(repo_root: Path) -> list[str]:
     return errors
 
 
+# Rule A021
+#
+# An arm of an `Overloaded` list is a lambda whose parameter names the
+# alternative it answers for, so the arm is found by its parameter. `[` and
+# `]` do not count toward depth: at arm level the only brackets are a
+# lambda's capture list, and a subscript can only stand inside an arm's own
+# parentheses or braces, which do count.
+OVERLOADED_PATTERN = re.compile(r"\bOverloaded\s*\{")
+GENERIC_ARM_PATTERN = re.compile(
+    r"\]\s*\(\s*(?:const\s+)?auto\s*(?:&&|&|\*)?\s*(?:[A-Za-z_]\w*)?\s*\)"
+)
+
+# The files whose arm lists carried a generic arm when this rule was written,
+# on A020's terms. Keyed by the file, so a file holding more than one stays
+# listed until the last of them is written out. Do not add to it.
+A021_STANDING = frozenset({
+    "src/lyra/backend/cpp/render_type.cpp",
+    "src/lyra/backend/llvm/runtime_entry.cpp",
+    "src/lyra/dpi/abi_header.cpp",
+    "src/lyra/lir/place_query.cpp",
+    "src/lyra/lir/symbol_name.cpp",
+    "src/lyra/lowering/hir_to_mir/default_value.cpp",
+    "src/lyra/lowering/hir_to_mir/expression/assignment.cpp",
+    "src/lyra/lowering/hir_to_mir/expression/dispatch.cpp",
+    "src/lyra/lowering/hir_to_mir/expression/system/mem_file.cpp",
+    "src/lyra/lowering/mir_to_lir/function_lowerer.cpp",
+    "src/lyra/runtime/member_storage.cpp",
+})
+
+
+def overloaded_bodies(text: str) -> list[tuple[int, str]]:
+    """Each `Overloaded{...}` arm list in `text`, as (offset of `{`, source)."""
+    bodies = []
+    for m in OVERLOADED_PATTERN.finditer(text):
+        open_brace = m.end() - 1
+        end = _balanced_close(text, open_brace)
+        bodies.append((open_brace, text[open_brace + 1:end - 1]))
+    return bodies
+
+
+def generic_arms(body: str) -> list[int]:
+    """Offsets in `body` of the arms this list declares `auto`.
+
+    A match inside an arm's own body belongs to that arm -- a generic lambda
+    handed to an algorithm, say -- so only depth zero counts.
+    """
+    depth = 0
+    found = []
+    for index, char in enumerate(body):
+        if char in "{(":
+            depth += 1
+        elif char in "})":
+            depth -= 1
+        elif depth == 0 and GENERIC_ARM_PATTERN.match(body, index):
+            found.append(index)
+    return found
+
+
+def check_a021(repo_root: Path) -> list[str]:
+    errors = []
+    seen = set()
+    for path, rel in iter_lyra_files(repo_root):
+        text = path.read_text()
+        for offset, body in overloaded_bodies(text):
+            for at in generic_arms(body):
+                seen.add(rel)
+                if rel in A021_STANDING:
+                    continue
+                lineno = text.count("\n", 0, offset + 1 + at) + 1
+                errors.append(
+                    f"  {rel}:{lineno}: A021 a visit arm declared `auto` "
+                    f"answers for every alternative, the one nobody has "
+                    f"written yet included"
+                )
+    for rel in sorted(A021_STANDING - seen):
+        errors.append(
+            f"  {rel}: A021 the record still lists this file, whose arms now "
+            f"all name an alternative; drop the entry, so the record only "
+            f"ever shrinks"
+        )
+    return errors
+
+
 # Self-tests
 def run_self_tests() -> bool:
     def expect(cond, msg):
@@ -1318,6 +1429,46 @@ def run_self_tests() -> bool:
             switch_bodies(a020_nested)[0][1], DEFAULT_LABEL_PATTERN),
         "A020 an inner switch's default is not the outer one's")
 
+    # A021 -- parser and pattern against each other, on the shapes the tree
+    # actually holds. A pattern proven on a hand-written parameter list says
+    # nothing about whether the arm it sits in was found.
+    a021_offender = (
+        "  return unit.types.Get(type).Visit(\n"
+        "      Overloaded{\n"
+        "          [&](const lir::ObservableType& observable) {\n"
+        "            return over_values(observable.value);\n"
+        "          },\n"
+        "          [](const auto&) -> std::optional<Kind> {\n"
+        "            return std::nullopt;\n"
+        "          }});\n"
+    )
+    a021_typed = (
+        "  return x.Visit(Overloaded{\n"
+        "      [&](const lir::DriverType& t) { return borrowed(t); },\n"
+        "      [&](const lir::RefType& t) { return borrowed(t); }});\n"
+    )
+    a021_nested = (
+        "  return x.Visit(Overloaded{\n"
+        "      [&](const mir::CallExpr& c) {\n"
+        "        return std::ranges::all_of(\n"
+        "            c.arguments, [&](const auto& op) { return f(op); });\n"
+        "      }});\n"
+    )
+    a021_helper = "const auto none = [](const auto&) { return 0; };\n"
+    ok &= expect(len(overloaded_bodies(a021_offender)) == 1,
+                 "A021 parser sees one arm list")
+    ok &= expect(
+        len(generic_arms(overloaded_bodies(a021_offender)[0][1])) == 1,
+        "A021 an arm declared auto is reported")
+    ok &= expect(
+        not generic_arms(overloaded_bodies(a021_typed)[0][1]),
+        "A021 typed arms calling a generic helper are clean")
+    ok &= expect(
+        not generic_arms(overloaded_bodies(a021_nested)[0][1]),
+        "A021 a generic lambda inside an arm body is not an arm")
+    ok &= expect(not overloaded_bodies(a021_helper),
+                 "A021 a named generic helper is not an arm list")
+
     return ok
 
 
@@ -1344,6 +1495,7 @@ CHECKS = [
     ("A018 construct consults the declaration registry", check_a018),
     ("A019 LIR names a MIR identity", check_a019),
     ("A020 switch over a closed set carries default", check_a020),
+    ("A021 visit arm declared auto", check_a021),
 ]
 
 

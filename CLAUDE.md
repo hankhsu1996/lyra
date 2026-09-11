@@ -143,8 +143,10 @@ the modern idiom -- `std::format`, `std::span` / `std::string_view`, `std::array
   always-present spare fields, so an invalid combination cannot be spelled. No arm is added without
   a complete lowering path in the same change.
 - **Whatever shape it takes, that set is consumed by a `switch` or a `std::visit`, never by `==`**,
-  so gaining an alternative breaks the build until every consumer says what it means. Enforced by
-  `tools/policy/check_architecture.py` A013.
+  so gaining an alternative breaks the build until every consumer says what it means. That last
+  clause is what a catch-all switches off, so it takes three rules in
+  `tools/policy/check_architecture.py`: A013 for the comparison, A020 for a `default:` arm, and A021
+  for a visit arm declared `auto`.
 - **One namespace per directory**; a sub-namespace with no corresponding folder is not one.
 - **ASCII only in source and docs**, enforced by `tools/policy/check_ascii.py`. In markdown,
   backtick underscored SV keywords (`always_comb` and friends) or Prettier mangles them and the

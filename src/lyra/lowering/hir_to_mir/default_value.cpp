@@ -488,10 +488,16 @@ auto BuildDefaultValueFromHir(
       });
 }
 
+namespace {
+
+// The three containers that hold their elements as an ordered run, which is
+// what makes a value of one of them cross into another as it stands.
 auto IsArrayContainerType(const mir::Type& type) -> bool {
   return type.Is<mir::UnpackedArrayType>() ||
          type.Is<mir::DynamicArrayType>() || type.Is<mir::QueueType>();
 }
+
+}  // namespace
 
 auto CrossesArrayContainerKinds(
     const mir::Type& source, const mir::Type& destination) -> bool {
@@ -505,28 +511,10 @@ auto CrossesArrayContainerKinds(
          !same_kind;
 }
 
-auto ContainerElementType(const mir::CompilationUnit& unit, mir::TypeId type)
-    -> std::optional<mir::TypeId> {
-  using Element = std::optional<mir::TypeId>;
-  return unit.types.Get(type).Visit(
-      Overloaded{
-          [](const mir::UnpackedArrayType& t) -> Element {
-            return t.element_type;
-          },
-          [](const mir::DynamicArrayType& t) -> Element {
-            return t.element_type;
-          },
-          [](const mir::QueueType& t) -> Element { return t.element_type; },
-          [](const mir::AssociativeArrayType& t) -> Element {
-            return t.element_type;
-          },
-          [](const auto&) -> Element { return std::nullopt; }});
-}
-
 auto RequiredContainerElementType(
     const mir::CompilationUnit& unit, mir::TypeId container) -> mir::TypeId {
   const std::optional<mir::TypeId> element =
-      ContainerElementType(unit, container);
+      unit.types.Get(container).ContainerElementType();
   if (!element.has_value()) {
     throw InternalError(
         "RequiredContainerElementType: the type holds no elements, and the "
@@ -536,28 +524,11 @@ auto RequiredContainerElementType(
   return *element;
 }
 
-auto ContainerElementType(const hir::Type& type) -> std::optional<hir::TypeId> {
-  using Element = std::optional<hir::TypeId>;
-  return type.Visit(
-      Overloaded{
-          [](const hir::UnpackedArrayType& t) -> Element {
-            return t.element_type;
-          },
-          [](const hir::DynamicArrayType& t) -> Element {
-            return t.element_type;
-          },
-          [](const hir::QueueType& t) -> Element { return t.element_type; },
-          [](const hir::AssociativeArrayType& t) -> Element {
-            return t.element_type;
-          },
-          [](const auto&) -> Element { return std::nullopt; }});
-}
-
 auto BuildElementDefault(
     const UnitLowerer& unit_lowerer, mir::Block& block, hir::TypeId container)
     -> mir::ExprId {
   const std::optional<hir::TypeId> element =
-      ContainerElementType(unit_lowerer.Hir().types.Get(container));
+      unit_lowerer.Hir().types.Get(container).ContainerElementType();
   if (!element.has_value()) {
     throw InternalError(
         "BuildElementDefault: the type holds no elements, and the caller "

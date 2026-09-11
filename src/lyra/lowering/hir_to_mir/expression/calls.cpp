@@ -128,7 +128,9 @@ auto LowerAssociativeTraversal(
 // as the prototype; a scalar result is its own prototype.
 auto ResultPrototypeType(
     const UnitLowerer& unit_lowerer, mir::TypeId result_type) -> mir::TypeId {
-  return ContainerElementType(unit_lowerer.Unit(), result_type)
+  return unit_lowerer.Unit()
+      .types.Get(result_type)
+      .ContainerElementType()
       .value_or(result_type);
 }
 
@@ -150,7 +152,7 @@ auto BuildArrayMethodClosure(
       unit_lowerer.Hir().types.Get(hir_receiver_type);
   // The LRM 7.12 family shares one closure shape across every unpacked-array
   // receiver; only the element type differs.
-  const auto element_type = ContainerElementType(hir_recv_ty);
+  const auto element_type = hir_recv_ty.ContainerElementType();
   if (!element_type.has_value()) {
     throw InternalError(
         "BuildArrayMethodClosure: receiver is not an unpacked-array type");

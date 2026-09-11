@@ -64,6 +64,34 @@ to be found.
 A registry read in both directions cannot be a switch and so cannot be checked this way. There is
 one, the diagnostic-code table, and A014 holds every code to an entry in it.
 
+**A `std::visit` is the same rule, and it had no check at all until A021.** `base/overloaded.hpp`
+states the guarantee in its own comment: a variant gaining an alternative leaves overload resolution
+nothing to select, so the call site fails to compile. An arm declared `auto` accepts the new
+alternative instead, which is the `default:` opt-out one mechanism over -- and it stood at sixteen
+sites when the rule was written, while the switch half was enforced, because nothing looked. Two
+generic lambdas are not this: one bound to a name and called from a typed arm is shared code, and a
+visitor that is a single generic lambda applies one operation to every alternative and dispatches on
+nothing. The defect is a generic arm standing beside typed ones.
+
+**What a catch-all may do is decided by who can add a member, and by nothing else.** A set this
+compiler declares gains no member without a change here, so every arm is written out. A set the
+front end declares gains one on a dependency bump with no edit here, so the known members are still
+written out and what covers the rest may only refuse, naming the set and the member it met -- never
+answer. Both are already in the tree: A013 tells our enums from slang's when it looks for a
+consumer, and eight of A020's standing entries are switches over slang's sets. Swift and Rust each
+reached the same split and spell the two differently rather than leaving one token to mean both --
+Swift's `@unknown default` matches a future case while still warning about a known one nobody
+handled (SE-0192), and Rust's `#[non_exhaustive]` forces a wildcard arm on downstream crates while
+the declaring crate is still checked exhaustively (RFC 2008). C++ has neither spelling, which is why
+the distinction has to live in a policy check here.
+
+**Size is what makes the question wrong, never what makes the arm right.** A question asked of a
+forty-odd-alternative set that answers for a handful is not asking a large set anything: the subset
+is the answer, and what states it belongs on the type beside its other named questions --
+`lir::Type::KindName`, `hir::Type::IsValueChangeObservable`, `mir::Type::ContainerElementType` --
+each a total visit written once where the alternatives are declared. This is the registry's answer
+above, one layer over: ask one question per entry rather than each question of the whole set.
+
 ## Rejected
 
 - **Make every such set a `std::variant` of per-kind structs.** The shape that carries a per-kind
@@ -73,8 +101,8 @@ one, the diagnostic-code table, and A014 holds every code to an entry in it.
   of that.
 
 - **Fix the instances and leave the rule as prose.** The instances were found by writing the query;
-  a rule nobody can run finds the next one only by luck. The query is forty lines and the project
-  already gates five policy checks in CI.
+  a rule nobody can run finds the next one only by luck. The query is forty lines and every policy
+  check the repository has is already gated in CI.
 
 - **Forbid a `default:` arm on a switch over an alternative set.** It is the same opt-out in another
   disguise, and where the set is a large open registry -- the builtin table, the format specifiers
@@ -89,6 +117,16 @@ one, the diagnostic-code table, and A014 holds every code to an entry in it.
   is total with no arm to opt out through. Where a registry's questions are all about the same
   subject, that is the shape, and the ban stays unwritten because it would have fired on the shape
   rather than on what was wrong with it.
+
+  **The ban was written the next day, and this entry said otherwise for two months.** A020 landed
+  2026-09-10 and forbids a `default:` on a switch over a closed set; nothing in `docs/` recorded it,
+  so the paragraph above stood contradicted by the tree it describes. Written down now because a
+  reversal nobody argues for is the failure, and because the reason it survives the objection above
+  is worth having: A020 does not exempt a registry, it **owes** one. The switches that already
+  carried a `default:` are a record keyed by file and set, it only ever shrinks, and nothing new
+  joins -- so a registry is on the list rather than outside the rule, and what takes it off the list
+  is the shape the paragraph above found. The objection was right about the registry and wrong about
+  the ban.
 
 ## Consequences
 

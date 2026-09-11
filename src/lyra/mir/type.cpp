@@ -4,6 +4,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <functional>
+#include <optional>
 #include <type_traits>
 #include <vector>
 
@@ -371,6 +372,90 @@ auto Type::HeldValueTypes() const -> std::vector<TypeId> {
           [](const FilesType&) -> Held { return {}; },
           [](const DiagnosticType&) -> Held { return {}; },
           [](const RuntimeLibraryType&) -> Held { return {}; }});
+}
+
+auto Type::ContainerElementType() const -> std::optional<TypeId> {
+  using Element = std::optional<TypeId>;
+  return Visit(
+      Overloaded{
+          // The four a declaration names as holding a run of values, however
+          // the run is sized and however it is indexed.
+          [](const UnpackedArrayType& t) -> Element { return t.element_type; },
+          [](const DynamicArrayType& t) -> Element { return t.element_type; },
+          [](const QueueType& t) -> Element { return t.element_type; },
+          [](const AssociativeArrayType& t) -> Element {
+            return t.element_type;
+          },
+
+          // These hold a run of values too and are still not containers: a
+          // lowering builds them to carry something, where a container is a
+          // type a declaration named.
+          [](const MachineArrayType&) -> Element { return std::nullopt; },
+          [](const VectorType&) -> Element { return std::nullopt; },
+
+          // One vector of bits, under a set of names or not: what looks like
+          // an element is a run of that vector rather than a value held beside
+          // the others.
+          [](const PackedArrayType&) -> Element { return std::nullopt; },
+          [](const EnumType&) -> Element { return std::nullopt; },
+          [](const PackedStructType&) -> Element { return std::nullopt; },
+          [](const PackedUnionType&) -> Element { return std::nullopt; },
+
+          // Held all at once, or one at a time, but never as a run of one
+          // type.
+          [](const TupleType&) -> Element { return std::nullopt; },
+          [](const UnpackedStructType&) -> Element { return std::nullopt; },
+          [](const UnionType&) -> Element { return std::nullopt; },
+          [](const TaggedUnionType&) -> Element { return std::nullopt; },
+
+          // A single quantity or a single token.
+          [](const WildcardIndexType&) -> Element { return std::nullopt; },
+          [](const StringType&) -> Element { return std::nullopt; },
+          [](const MachineCStringType&) -> Element { return std::nullopt; },
+          [](const MachineBoolType&) -> Element { return std::nullopt; },
+          [](const MachineIntType&) -> Element { return std::nullopt; },
+          [](const MachineFloatType&) -> Element { return std::nullopt; },
+          [](const RealType&) -> Element { return std::nullopt; },
+          [](const ShortRealType&) -> Element { return std::nullopt; },
+          [](const RealTimeType&) -> Element { return std::nullopt; },
+          [](const ChandleType&) -> Element { return std::nullopt; },
+          [](const EventType&) -> Element { return std::nullopt; },
+          [](const EmptyType&) -> Element { return std::nullopt; },
+          [](const VoidType&) -> Element { return std::nullopt; },
+
+          // A cell keeps one value, whatever it publishes about changes to it;
+          // the run, where there is one, belongs to the value it keeps.
+          [](const ObservableType&) -> Element { return std::nullopt; },
+          [](const ResolvedType&) -> Element { return std::nullopt; },
+          [](const DriverType&) -> Element { return std::nullopt; },
+          [](const SampledHistoryType&) -> Element { return std::nullopt; },
+          [](const EvaluationAttemptsType&) -> Element { return std::nullopt; },
+
+          // These refer to a value living elsewhere rather than holding one,
+          // so a container reached through one is reached by dereferencing it
+          // first.
+          [](const RefType&) -> Element { return std::nullopt; },
+          [](const PointerType&) -> Element { return std::nullopt; },
+          [](const ManagedRefType&) -> Element { return std::nullopt; },
+          [](const CoroutineType&) -> Element { return std::nullopt; },
+          [](const MachineFunctionType&) -> Element { return std::nullopt; },
+
+          // A nominal type names a declaration, and a declaration is not a run
+          // of anything.
+          [](const ObjectType&) -> Element { return std::nullopt; },
+          [](const ExternalUnitObjectType&) -> Element { return std::nullopt; },
+          [](const CrossUnitClassType&) -> Element { return std::nullopt; },
+          [](const OpaqueObjectType&) -> Element { return std::nullopt; },
+          [](const RuntimeClassType&) -> Element { return std::nullopt; },
+          [](const StructType&) -> Element { return std::nullopt; },
+          [](const ClosureType&) -> Element { return std::nullopt; },
+
+          // A handle to a runtime facility, and an inert payload the library
+          // owns the shape of.
+          [](const RuntimeEffectsType&) -> Element { return std::nullopt; },
+          [](const FilesType&) -> Element { return std::nullopt; },
+          [](const DiagnosticType&) -> Element { return std::nullopt; },
+          [](const RuntimeLibraryType&) -> Element { return std::nullopt; }});
 }
 
 }  // namespace lyra::mir
