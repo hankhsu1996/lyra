@@ -158,7 +158,8 @@ auto ResolveDirectSpelling(
           [](const mir::ExternalUnitCallableTarget& t) -> CalleeSpelling {
             return {
                 .name = std::format(
-                    "{}::{}", ToCppName(t.unit_name), t.callable_name),
+                    "{}::{}", ToCppName(t.unit_name),
+                    ToCppName(t.callable_name)),
                 .placement = ReceiverPlacement::kIntoCalleeName};
           },
           // A method on one of that namespace's classes is named through the

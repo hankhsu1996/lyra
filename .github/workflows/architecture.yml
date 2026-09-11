@@ -16,3 +16,6 @@ jobs:
 
       - name: Check that value emission names no runtime library identifier
         run: python3 tools/policy/check_render_names.py
+
+      - name: Check that every source name the C++ backend writes is mapped
+        run: python3 tools/policy/check_emitted_names.py
