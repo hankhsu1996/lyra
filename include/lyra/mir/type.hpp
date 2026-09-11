@@ -332,6 +332,17 @@ struct CrossUnitClassType {
   auto operator==(const CrossUnitClassType&) const -> bool = default;
 };
 
+// An object this unit points at without carrying what identifies it. A class a
+// design element declares is a type of each instance of that element rather
+// than one type of the unit, and is nameable only inside the scope declaring
+// it, so a referrer outside has no identity to carry and no promise to compile
+// against. What crosses is the reference's representation and nothing more, so
+// naming such an object declares no dependency on the unit that declares it. No
+// member is reachable through it: reaching one is what needs the identity.
+struct OpaqueObjectType {
+  auto operator==(const OpaqueObjectType&) const -> bool = default;
+};
+
 // The type of an instance of a class the runtime library defines, named by the
 // library symbol. MIR does not know its members either; unlike a class of
 // another unit it belongs to no compilation unit, so the symbol is the whole
@@ -584,7 +595,10 @@ struct PointerType {
 // its target's lifetime is governed by reachability, not by RAII ownership, so
 // the tracing collector follows it as an edge. Null is a legal value, identity
 // is comparable, copies are shallow, and the target is retained while
-// reachable. The C++ backend renders it as `lyra::runtime::GcRef<T>`.
+// reachable. The pointee is the reference's static view at the program point
+// holding it -- what may be reached through it there -- and says nothing about
+// how a target realizes the reference, which is why one cell reached under two
+// views is ordinary rather than a conflict.
 struct ManagedRefType {
   TypeId pointee;
 
@@ -746,11 +760,11 @@ class Type {
       WildcardIndexType, StringType, MachineCStringType, MachineBoolType,
       MachineIntType, MachineFloatType, MachineArrayType, MachineFunctionType,
       EventType, RealType, ShortRealType, RealTimeType, ChandleType, VoidType,
-      ObjectType, ExternalUnitObjectType, CrossUnitClassType, RuntimeClassType,
-      RuntimeEffectsType, FilesType, DiagnosticType, RuntimeLibraryType,
-      CoroutineType, RefType, PointerType, ManagedRefType, VectorType,
-      TupleType, UnpackedStructType, UnionType, TaggedUnionType, EmptyType,
-      ObservableType, ResolvedType, DriverType, SampledHistoryType,
+      ObjectType, ExternalUnitObjectType, CrossUnitClassType, OpaqueObjectType,
+      RuntimeClassType, RuntimeEffectsType, FilesType, DiagnosticType,
+      RuntimeLibraryType, CoroutineType, RefType, PointerType, ManagedRefType,
+      VectorType, TupleType, UnpackedStructType, UnionType, TaggedUnionType,
+      EmptyType, ObservableType, ResolvedType, DriverType, SampledHistoryType,
       EvaluationAttemptsType, StructType, ClosureType>;
 
  public:

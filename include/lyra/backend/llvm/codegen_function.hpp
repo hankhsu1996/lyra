@@ -228,11 +228,11 @@ class CodeGenFunction {
   // an operand holding it.
   [[nodiscard]] auto CellDomain(lir::TypeId reference) const
       -> diag::Result<support::ValueDomain>;
-  // The domain of the value cell `place` names, where it names a member whose
-  // storage is one. Such a member is written and read through its own storage,
-  // so an access to it is that storage's own operation. A place naming anything
-  // else answers nothing.
-  [[nodiscard]] auto MemberValueCellDomain(
+  // The domain of the value cell `place` names, where the storage it reaches is
+  // one. Such storage is written and read through itself rather than off its
+  // address, so an access to it is that storage's own operation. A place naming
+  // anything else answers nothing.
+  [[nodiscard]] auto PlaceValueCellDomain(
       const lir::Place& place, lir::TypeId value) const
       -> std::optional<support::ValueDomain>;
   // The storage an operand reaches: this target holds storage as its address,

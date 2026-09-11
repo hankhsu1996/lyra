@@ -255,6 +255,13 @@ auto UnitLowerer::TranslateType(const hir::Type& type) -> mir::Type {
                 .pointee = MakeExternalClassPointee(
                     std::get<hir::ExternalClassRef>(src.class_ref))}};
           },
+          [&](const hir::OpaqueObjectHandleType&) -> mir::Type {
+            // Still a managed reference -- the collector traces it like any
+            // other handle -- over an object this unit carries no identity for.
+            return mir::Type{mir::ManagedRefType{
+                .pointee =
+                    Unit().types.Intern(mir::Type{mir::OpaqueObjectType{}})}};
+          },
           [&](const hir::ImportedClassHandleType& src) -> mir::Type {
             // A handle to an imported runtime-library class is the same managed
             // reference, its pointee the runtime-provided object type.

@@ -16,7 +16,7 @@
 #include "lyra/mir/class.hpp"
 #include "lyra/mir/compilation_unit.hpp"
 #include "lyra/mir/packed_type_descriptor.hpp"
-#include "lyra/mir/type.hpp"
+#include "lyra/mir/type_id.hpp"
 #include "lyra/support/runtime_prelude.hpp"
 
 namespace lyra::backend::cpp {
@@ -35,10 +35,10 @@ auto CollectExternalUnitNames(const mir::CompilationUnit& unit)
   // connects, a published member it names -- has a record of that object here;
   // a unit whose namespace symbol is reached by name (a receiver-less callable
   // or a package variable) names its unit in the reference-dependency list,
-  // since such a reference reaches no object; a unit a class is referenced from
-  // -- as a handle, a `new`, a field / method / static access, or a base
-  // extension -- names its unit in the class-dependency list. All three are
-  // external units this unit's artifact includes.
+  // since such a reference reaches no object; a unit this one reaches into a
+  // class of -- a `new`, a field / method / static access, or a base extension
+  // -- names its unit in the class-dependency list. All three are external
+  // units whose definitions this unit's artifact needs and so includes.
   for (const mir::ExternalUnitObject& object : unit.external_unit_objects) {
     add(object.unit_name);
   }
@@ -63,9 +63,9 @@ auto DefinesForeignSymbol(const mir::CompilationUnit& unit) -> bool {
 }
 
 // The include preamble every emitted unit header shares: the runtime umbrella
-// naming everything a rendered body may call into, and one include per
-// external unit this unit references (instantiated or called), so a cross-unit
-// name resolves against the other unit's emitted header. Naming the umbrella
+// naming everything a rendered body may call into, and one include per external
+// unit whose definitions this one needs, so a name reaching into another unit
+// resolves against that unit's emitted header. Naming the umbrella
 // rather than the individual headers is what keeps the emit's include set and
 // the precompiled header's coverage the same set.
 auto RenderUnitIncludes(const mir::CompilationUnit& unit) -> std::string {
@@ -118,18 +118,20 @@ auto RenderUnitStaticVariables(const mir::CompilationUnit& unit)
 auto RenderUnitHeaderFile(const mir::CompilationUnit& unit) -> std::string {
   const UnitCallableText callables = RenderUnitCallables(unit);
   const ClassText classes = RenderUnitClasses(unit);
+  std::string body;
+  AppendSection(body, callables.declarations);
+  AppendSection(body, RenderPackedTypeDescriptions(unit));
+  AppendSection(body, RenderUnitStaticVariables(unit));
+  AppendSection(body, classes.declaration);
+  AppendSection(body, classes.definitions);
+  AppendSection(body, callables.definitions);
+  body += "\n";
+
   std::string out;
   out += "#pragma once\n";
   out += RenderUnitIncludes(unit);
   out += "\n";
-  out += std::format("namespace {} {{\n", ToCppName(unit.name));
-  AppendSection(out, callables.declarations);
-  AppendSection(out, RenderPackedTypeDescriptions(unit));
-  AppendSection(out, RenderUnitStaticVariables(unit));
-  AppendSection(out, classes.declaration);
-  AppendSection(out, classes.definitions);
-  AppendSection(out, callables.definitions);
-  out += std::format("\n}}  // namespace {}\n", ToCppName(unit.name));
+  out += NamespaceBlockOf(UnitNamespaceOf(unit.name), body);
   return out;
 }
 
@@ -160,7 +162,7 @@ auto RenderHostMain(
   out += "auto main(int argc, char** argv) -> int {\n";
   out += std::format(
       "  return lyra::runtime::RunDesign<{}::{}>(argc, argv, \"{}\");\n",
-      ToCppName(root.name), ToCppName(root_class.name), root_class.name);
+      UnitNamespaceOf(root.name), ToCppName(root_class.name), root_class.name);
   out += "}\n";
   return out;
 }

@@ -219,12 +219,28 @@ each stage establishes, not how.
 The managed-object lifetime sub-step above states the terminal semantic target (precise tracing with
 cyclic reclamation). Current backend coverage:
 
-- C++ backend: shared-ownership interim. Acyclic garbage is reclaimed as the last handle drops; a
-  cycle of handles that becomes unreachable is not reclaimed. Sufficient to unblock class surface
-  work whose semantics do not depend on cyclic reclamation, which covers every SV class feature
-  planned in this workstream.
-- LLVM / JIT backend: managed execution is not implemented; a program that constructs an SV class
-  object is not lowerable through this path.
+Both backends reclaim by shared ownership today, and both leak an unreachable cycle. What differs is
+what a handle is made of, and the difference is worth stating because it is the shape the terminal
+model has to reach on both.
+
+- C++ backend: the handle is parameterized by the class it refers to, so a reference carries the
+  static class in its representation and one is unspellable where that class has no name. Acyclic
+  garbage is reclaimed as the last handle drops. Sufficient to unblock class surface work whose
+  semantics do not depend on cyclic reclamation, which covers every SV class feature planned in this
+  workstream.
+- LLVM / JIT backend: the handle is one representation for every object a handle can name, with the
+  object's own type erased and its class carried by the object rather than by the reference. This is
+  sound because SystemVerilog classes are singly inherited (LRM 8.13), so a handle to a base and a
+  handle to the derived object are the same address. Constructing an object, reaching a property,
+  and dispatching a behavior all work; what refuses is the operation that recovers a handle from the
+  object a body runs on (LRM 8.11 `this`), which a shared-owner realization needs and a traced one
+  does not.
+
+Nothing above is visible to any IR: no rule in HIR, MIR, LIR, or lowering states a reference count,
+a shared owner, or a control block. The one exception is that recovery operation, which exists at
+MIR level only because a body holds a borrowed pointer to its object and has to get a handle back
+from it; under tracing the handle is what the body already holds, so the operation goes away with
+the interim rather than being ported to it.
 
 Precise-tracing storage discipline and collector are deferred until a driver appears (a workload
 that hits cycle leaks in practice, or LLVM / JIT SV-class execution becoming a priority). The design
@@ -262,6 +278,26 @@ this list is what remembers.
       procedural block). MIR now names them uniformly by qualified string, but the runtime library
       has not yet been collapsed to one scope class with the def-name facet as an optional field. Do
       it when the runtime cadence allows; MIR-side consumers already treat the three as one.
+
+- [x] A reference to an object whose class another design element declares. Such a class is a
+      distinct type per instance of that element (LRM 6.22) and is nameable only inside the scope
+      declaring it (LRM 23.9), so a referrer outside has no name for it and none could be published.
+      The reference is still a complete static type stating that values of it are objects, and every
+      operation that reads nothing the class holds -- testing against null, comparing identity,
+      copying, assigning, being retained -- is defined on it, on both backends and in both
+      directions of the hierarchy. An object's identity is what those operations read, and it is the
+      same through a view naming an ancestor, a view naming a contract the class conforms to, and no
+      view at all.
+
+- [ ] Reaching a property or entering a behavior through such a reference. The front end resolves
+      the name against the class it knows, so these are legal programs; they are refused today. The
+      model is settled in `../decisions/structural-access-on-an-opaque-object.md` -- the name
+      resolves where the instance is known, and what reaches the body is the same coordinate a
+      referrer able to name the class would have formed, applied to whichever object the reference
+      holds. Two things are missing. A class cannot yet be asked what it declares under a given
+      name, which a runtime scope already answers for the names reached past its unit's signature.
+      And an access cannot yet state a coordinate that arrived as a value rather than one fixed
+      where the access was written.
 
 - [ ] An instance is still a backend-private shell rather than a generic object over its definition.
       The runtime no longer reaches generated behavior through a C++ base class, so a scope's

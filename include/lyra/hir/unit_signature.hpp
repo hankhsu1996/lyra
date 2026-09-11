@@ -164,6 +164,14 @@ struct UnitSignature {
   // instance.
   std::vector<ClassSignature> classes;
 
+  // Whether this unit is a design element (LRM 23.2.1), which exists to be
+  // instantiated and wired and so publishes its ports and nothing it declares
+  // inside. The object its instances are is what says so: a unit that roots one
+  // is a design element, and a namespace unit roots none.
+  [[nodiscard]] auto IsDesignElement() const -> bool {
+    return instance_class.has_value();
+  }
+
   // The class published under `name`, or nothing where the unit published no
   // such name.
   [[nodiscard]] auto FindClass(std::string_view name) const

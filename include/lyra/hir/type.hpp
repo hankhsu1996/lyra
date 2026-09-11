@@ -234,6 +234,19 @@ struct ClassHandleType {
   auto operator==(const ClassHandleType&) const -> bool = default;
 };
 
+// LRM 8.3 class handle reached past another unit's signature, where the class
+// it refers to has no name here. A class a design element declares is a type of
+// each instance of that element rather than one type of the unit (LRM 6.22),
+// and it is nameable only inside the scope that declares it (LRM 23.9), so a
+// referrer outside has no name that identifies it and no promise to compile
+// against. What the handle carries is that it refers to an object; what it may
+// do is what needs no class -- compare identity, test against null, and be
+// assigned -- while reaching a member of the object needs the class and has
+// nothing here to name.
+struct OpaqueObjectHandleType {
+  auto operator==(const OpaqueObjectHandleType&) const -> bool = default;
+};
+
 // LRM 8.3 class handle whose referenced class is an imported runtime-library
 // class rather than a unit-declared one. Managed and null-legal like
 // ClassHandleType, but the class is named by its library identity, not a unit
@@ -287,8 +300,8 @@ class Type {
       EnumType, UnpackedStructType, UnpackedUnionType, UnpackedArrayType,
       DynamicArrayType, QueueType, AssociativeArrayType, WildcardIndexType,
       StringType, EventType, RealType, ShortRealType, RealTimeType, ChandleType,
-      ClassHandleType, ImportedClassHandleType, UnitObjectType, OpaqueScopeType,
-      NullType, VoidType>;
+      ClassHandleType, OpaqueObjectHandleType, ImportedClassHandleType,
+      UnitObjectType, OpaqueScopeType, NullType, VoidType>;
 
  public:
   explicit Type(Data data) : data_(std::move(data)) {

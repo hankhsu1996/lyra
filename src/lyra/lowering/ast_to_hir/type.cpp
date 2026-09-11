@@ -333,6 +333,9 @@ auto TranslateType(
       if (const auto imported = ImportedRuntimeClassOf(class_type)) {
         return hir::Type{hir::ImportedClassHandleType{.klass = *imported}};
       }
+      if (unit_lowerer.HasNoNameHere(class_type)) {
+        return hir::Type{hir::OpaqueObjectHandleType{}};
+      }
       auto class_ref_or = unit_lowerer.ResolveClassRef(class_type, decl_span);
       if (!class_ref_or) {
         return std::unexpected(std::move(class_ref_or.error()));
@@ -907,6 +910,16 @@ auto UnitLowerer::MakeExternalDispatchSlot(
     }
     at = published->base;
   }
+  if (DeclaredByADesignElement(cls)) {
+    return diag::Fail(
+        span, diag::DiagCode::kUnsupportedExpressionForm,
+        std::format(
+            "'{}' is called on '{}::{}', a class a design element declares and "
+            "so publishes on no signature; resolving such a name at "
+            "elaboration "
+            "is not yet supported",
+            method_name, cls.unit_name, cls.class_name));
+  }
   return diag::Fail(
       span, diag::DiagCode::kUnsupportedExpressionForm,
       std::format(
@@ -959,6 +972,17 @@ auto UnitLowerer::MakeClassPropertyTarget(
     }
     at = published->base;
   }
+  if (DeclaredByADesignElement(ext)) {
+    return diag::Fail(
+        span, diag::DiagCode::kUnsupportedExpressionForm,
+        std::format(
+            "'{}' is reached on '{}::{}', a class a design element declares "
+            "and "
+            "so publishes on no signature; resolving such a name at "
+            "elaboration "
+            "is not yet supported",
+            prop.name, ext.unit_name, ext.class_name));
+  }
   return diag::Fail(
       span, diag::DiagCode::kUnsupportedExpressionForm,
       std::format(
@@ -980,6 +1004,15 @@ auto UnitLowerer::MakeStaticPropertyTarget(
       .unit_name = ext.unit_name,
       .class_name = ext.class_name,
       .property_name = std::string(prop.name)};
+}
+
+auto UnitLowerer::HasNoNameHere(const slang::ast::ClassType& cls) const
+    -> bool {
+  const slang::ast::Symbol& declaring = DeclaringCompilationUnit(cls);
+  if (&declaring == &scope_->asSymbol()) {
+    return false;
+  }
+  return IsDesignElement(declaring);
 }
 
 auto UnitLowerer::ResolveClassRef(

@@ -68,6 +68,23 @@ module Top;
     endfunction
   endclass
 
+  interface class Drivable;
+    pure virtual function int Level();
+  endclass
+
+  // A class conforming to an interface, whose lineage declares no virtual
+  // method of its own: the handle `this` answers with must name the object
+  // rather than whichever part of it a target language happens to put first.
+  class Conforming implements Drivable;
+    virtual function int Level();
+      return 1;
+    endfunction
+
+    function Conforming itself();
+      return this;
+    endfunction
+  endclass
+
   class Derived extends Demo #(2);
     function new();
       super.new(4);
@@ -92,6 +109,8 @@ module Top;
   bit returned_this_is_same = 0;
   bit passed_this_is_same = 0;
   bit other_object_differs = 1;
+  bit conforming_this_is_same = 0;
+  bit conforming_this_matches_a_contract_view = 0;
 
   initial begin
     Demo #(3) d;
@@ -99,6 +118,8 @@ module Top;
     Initialized f;
     Node g;
     Node h;
+    Conforming k;
+    Drivable k_as_drivable;
 
     d = new(5);
     qualified_argument = d.x;
@@ -130,6 +151,11 @@ module Top;
     returned_this_is_same = (g.itself() == g);
     passed_this_is_same = g.names_same_object(g);
     other_object_differs = g.names_same_object(h);
+
+    k = new();
+    k_as_drivable = k;
+    conforming_this_is_same = (k.itself() == k);
+    conforming_this_matches_a_contract_view = (k.itself() == k_as_drivable);
   end
 
   final begin
@@ -168,6 +194,12 @@ module Top;
     if (other_object_differs !== 0)
       $fatal(1, "other_object_differs was %0d, expected 0",
              other_object_differs);
+    if (conforming_this_is_same !== 1)
+      $fatal(1, "conforming_this_is_same was %0d, expected 1",
+             conforming_this_is_same);
+    if (conforming_this_matches_a_contract_view !== 1)
+      $fatal(1, "conforming_this_matches_a_contract_view was %0d, expected 1",
+             conforming_this_matches_a_contract_view);
     $display("All checks passed");
   end
 endmodule

@@ -196,6 +196,7 @@ auto Type::Hash::operator()(const Type& type) const -> std::size_t {
             Combine(seed, t.unit_name);
             Combine(seed, t.class_name);
           },
+          [](const OpaqueObjectType&) {},
           [&](const RuntimeClassType& t) { Combine(seed, t.symbol); },
           [&](const ClosureType& t) { Combine(seed, t.closure_id.value); },
           [&](const StructType& t) { Combine(seed, t.struct_id.value); },
@@ -256,6 +257,7 @@ auto Type::KindName() const -> std::string_view {
           [](const ObjectType&) { return "class object"; },
           [](const ExternalUnitObjectType&) { return "external unit object"; },
           [](const CrossUnitClassType&) { return "cross-unit class"; },
+          [](const OpaqueObjectType&) { return "opaque object"; },
           [](const RuntimeClassType&) { return "runtime class"; },
           [](const ClosureType&) { return "closure"; },
           [](const StructType&) { return "struct"; },
@@ -322,7 +324,7 @@ auto Type::DerefTarget() const -> std::optional<TypeId> {
 auto Type::IsAddressOnly() const -> bool {
   return Is<ObservableType>() || Is<ResolvedType>() || Is<ObjectType>() ||
          Is<ExternalUnitObjectType>() || Is<CrossUnitClassType>() ||
-         Is<RuntimeClassType>() || Is<EventType>() ||
+         Is<OpaqueObjectType>() || Is<RuntimeClassType>() || Is<EventType>() ||
          Is<SampledHistoryType>() || Is<EvaluationAttemptsType>();
 }
 

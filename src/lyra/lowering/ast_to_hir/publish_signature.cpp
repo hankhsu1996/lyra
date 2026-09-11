@@ -736,4 +736,10 @@ auto UnitLowerer::ExternalClassOf(
   return &unit_.external_classes.back();
 }
 
+auto UnitLowerer::DeclaredByADesignElement(
+    const hir::ExternalClassRef& cls) const -> bool {
+  const hir::UnitSignature* declaring = Signatures().Find(cls.unit_name);
+  return declaring != nullptr && declaring->IsDesignElement();
+}
+
 }  // namespace lyra::lowering::ast_to_hir

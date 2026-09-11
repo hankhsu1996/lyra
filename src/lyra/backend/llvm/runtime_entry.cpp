@@ -380,6 +380,7 @@ auto MemberStorageKindOf(
           [&](const lir::ExternalUnitObjectType& t) { return none(t); },
           [&](const lir::StructType& t) { return none(t); },
           [&](const lir::CrossUnitClassType& t) { return none(t); },
+          [&](const lir::OpaqueObjectType& t) { return none(t); },
           [&](const lir::RuntimeClassType& t) { return none(t); },
           [&](const lir::ClosureType& t) { return none(t); },
           [&](const lir::RuntimeEffectsType& t) { return none(t); },

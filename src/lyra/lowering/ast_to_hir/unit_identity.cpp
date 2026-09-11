@@ -284,6 +284,10 @@ auto DeclaringCompilationUnit(const slang::ast::Symbol& decl)
       "element's body, or the file-set scope");
 }
 
+auto IsDesignElement(const slang::ast::Symbol& unit) -> bool {
+  return unit.kind == slang::ast::SymbolKind::InstanceBody;
+}
+
 auto CompilationUnitName(const slang::ast::Symbol& unit) -> std::string {
   using slang::ast::SymbolKind;
   if (unit.kind == SymbolKind::Package) {

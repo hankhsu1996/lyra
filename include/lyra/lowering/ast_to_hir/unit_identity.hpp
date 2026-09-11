@@ -125,6 +125,13 @@ auto SpecializationName(const slang::ast::ClassType& cls) -> std::string;
 auto DeclaringCompilationUnit(const slang::ast::Symbol& decl)
     -> const slang::ast::Symbol&;
 
+// Whether `unit` is a design element (LRM 23.2.1) rather than a namespace one.
+// A design element is instantiated into the hierarchy, so a type it declares
+// inside is a type of each instance rather than one type of the unit (LRM
+// 6.22), and what it publishes is its ports. A package and the file-set scope
+// are named once and declare once.
+[[nodiscard]] auto IsDesignElement(const slang::ast::Symbol& unit) -> bool;
+
 // The name a compilation unit publishes for itself, so a consumer reaching one
 // of its members by name and the unit emitting that member agree with no shared
 // table (LRM 26.3). A package publishes its declared name; a module body its

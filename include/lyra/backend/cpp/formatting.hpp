@@ -68,4 +68,14 @@ inline void AppendSection(std::string& out, const std::string& section) {
   return std::format("inline static const {} {} = {};\n", type, name, init);
 }
 
+// A namespace enclosing `body`, which is written whole and ends with its own
+// newline. Opening one and closing it are the same decision seen twice -- the
+// closing comment repeats the name -- so both are spelled here and a caller
+// supplies only what goes inside.
+[[nodiscard]] inline auto NamespaceBlockOf(
+    std::string_view name, std::string_view body) -> std::string {
+  return std::format(
+      "namespace {} {{\n{}}}  // namespace {}\n", name, body, name);
+}
+
 }  // namespace lyra::backend::cpp

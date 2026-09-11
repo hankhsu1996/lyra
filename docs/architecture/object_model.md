@@ -86,11 +86,19 @@ reference -- destroys a distinction a consumer has to read.
 2. **One nominal-object reference; identity representation follows the unit boundary.** Every place
    one object type names another uses one reference abstraction. Its identity is a stable
    compiler-owned id when the target is intra-unit, a by-name reference resolved against an imported
-   interface when the target is in another compilation unit, and an imported library declaration
-   when the target is a runtime-library type. Intra-unit and cross-unit identities never share a key
-   space. _Object-model consequence: a consumer resolves any object reference through one entry
-   point; the local-versus-external split lives in the resolver, not in three incompatible reference
-   forms scattered across consumers._
+   interface when the target is in another compilation unit, an imported library declaration when
+   the target is a runtime-library type, and **no identity at all** when the target is an object
+   type of an instance rather than of a unit -- a type nameable only inside the scope declaring it,
+   for which a referrer outside has nothing to name and no promise to compile against. Intra-unit
+   and cross-unit identities never share a key space. _Object-model consequence: a consumer resolves
+   any object reference through one entry point; the local-versus-external split lives in the
+   resolver, not in incompatible reference forms scattered across consumers. Having no identity is
+   one of the cases that resolver answers, not the absence of an answer._
+
+   An object type with no identity is a complete static type and states one fact: values of it are
+   objects. It carries no member and no behavior, because reaching either is what needs the
+   identity. It is not a type decided at run time, and it is not a type the compiler failed to
+   determine -- the front end resolved it, and what the referrer lacks is a name for it.
 
 3. **Inheritance is one concrete base plus a set of interface conformances.** The concrete base
    determines instance layout and constructor chaining; an interface conformance is a method
@@ -110,6 +118,22 @@ reference -- destroys a distinction a consumer has to read.
    consequence: topology, lifetime, and category are three axes; collapsing any two -- "a unique
    reference means a tree child", "a class handle is a shared pointer" -- loses a distinction a
    backend must read._
+
+   Which object a reference names and what a consumer may assume going through it are two facts, not
+   one. The object type a reference carries is its **static view** at that program point; the
+   object's identity is established when the object is created and is the same through every view of
+   it, including a view that names an ancestor, a view that names a contract the class conforms to,
+   and no view at all. Identity is therefore never derived from a view, and two references are equal
+   exactly when they name one object, whatever each was declared as.
+
+   **A static view governs the operations a program point may perform through a reference; it never
+   governs the reference's representation.** Two units holding one storage under different static
+   views is the ordinary case rather than the exception -- it is what a name resolved at elaboration
+   means -- so a representation that follows the view puts two representations on one cell, and
+   reaching that cell then rests on the two agreeing rather than on an operation either side states.
+   _Object-model consequence: a backend may spell a reference whose view names a class differently
+   from one whose view names none, and may not lay them out differently; what differs between them
+   is which operations are available, and nothing else._
 
 5. **Construction is its own concept.** Allocating an object and running its constructor, with
    optional base-constructor chaining and a defined initialization ordering, is a construction form
@@ -199,6 +223,18 @@ reference -- destroys a distinction a consumer has to read.
   category is expressed through base, reference, and lifecycle. (Invariant 1.)
 - A global object-id space, or a cross-unit object reference that names another unit's internal id
   rather than its public name. (Invariant 2.)
+- A referrer minting an identity for an object type no signature publishes, so that what it invented
+  and what the declaring unit owns are two names for one type. (Invariant 2.)
+- An object type with no identity read as a missing type, an incomplete type, or a type resolved at
+  run time, rather than as the static type it is. (Invariant 2.)
+- An object's identity derived from its static view -- taken as the address of the view, or
+  recomputed when a reference is converted -- so that two references naming one object compare
+  unequal because they were declared differently. (Invariant 4.)
+- A reference carrying its object's class as a run-time field, so that what a consumer may assume
+  going through it becomes a run-time question. (Invariant 4.)
+- A reference's representation following its static view, so that one storage has as many layouts as
+  there are views of it and reaching it across a unit boundary depends on two of them agreeing.
+  (Invariant 4.)
 - One flat list of bases mixing the concrete base with interface conformances; an interface
   conformance that introduces instance storage. (Invariant 3.)
 - Deriving runtime-tree membership from a reference's ownership kind. (Invariant 4.)
