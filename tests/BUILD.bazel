@@ -53,8 +53,8 @@ cc_test(
 )
 
 cc_test(
-    name = "runtime_gc_ref_test",
-    srcs = ["runtime/gc_ref_test.cpp"],
+    name = "runtime_object_ref_test",
+    srcs = ["runtime/object_ref_test.cpp"],
     copts = LYRA_COPTS,
     deps = [
         "//:runtime",

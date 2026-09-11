@@ -56,6 +56,17 @@ inline constexpr std::string_view kMintedPrefix = "sv_";
   return out;
 }
 
+// The namespace a unit's declarations live in. That a unit's emitted peer is a
+// namespace is one decision, and two kinds of site spell it: the header that
+// opens the unit's own, and every reference that qualifies into another's. They
+// have to agree or the reference resolves to nothing, so the mapping is
+// answered here rather than at each of them -- which also tells a reader which
+// of the identifiers around it is a namespace and which is a class.
+[[nodiscard]] inline auto UnitNamespaceOf(std::string_view unit_name)
+    -> std::string {
+  return ToCppName(unit_name);
+}
+
 // The C++ identifier a declaration the compiler synthesized is emitted under.
 // `what` says which kind it is and `ordinal` which one, because such a
 // declaration has no source name to take one from.

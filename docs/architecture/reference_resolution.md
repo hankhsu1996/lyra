@@ -22,6 +22,9 @@ its changes.
   parallel resolution.
 - The contract that a sealed endpoint serves both value access and change observation through one
   stored reference.
+- The rule that a route whose leaf is an object reference seals how to reach the target rather than
+  where the target is, and the resolution of a source name against the class an instance turned out
+  to have.
 - The rule that connectivity is linkage between objects and never alters what an object owns.
 
 ## Does Not Own
@@ -80,10 +83,25 @@ its changes.
    it is wired to. (Merging nets into a single shared net is a design-global net-resolution concern,
    outside this contract.)
 7. The endpoint inherits the access protocol of the target it reaches. A reference to an observable
-   storage cell reads and writes through the cell's protocol; a reference to a class handle
-   dereferences the handle, then operates on the class object; a reference to an event participates
+   storage cell reads and writes through the cell's protocol; a reference to an event participates
    in the event's protocol. The endpoint is not a new access category; it is the target's access
    surface reached through a sealed direct path.
+8. A route whose leaf is an object reference seals **how to reach** the target, not **where** the
+   target is. The reference's value is a value the design computes and overwrites, so no address
+   survives sealing; what the route commits is the object reference itself, plus -- where the source
+   continues into a property or a behavior -- the resolution of that name into a coordinate: what
+   the access reaches, stated independently of which object it is applied to. The body applies it to
+   whichever object the reference holds at each access. The class the name resolves against is the
+   one the reached storage was **declared** with, never the one an object turns out to be: a
+   reference commonly names no object at all when its route seals, and which property an access
+   reaches is fixed by the class the access names rather than by what it runs on.
+9. Resolving a name against a class is not resolving it to a body. A coordinate for a property or a
+   non-virtual behavior is complete at sealing. A coordinate for a virtual behavior names the
+   dispatch position the source name means; which body fills that position is the object's own
+   answer at the moment of the call, and no route commits it. _Consequence: a reference without a
+   class view is not a reference whose view is chosen at run time -- every legality question is
+   settled before lowering, and what the referrer lacks is a name for the class rather than
+   knowledge of it._
 
 ## Boundary to Adjacent Layers
 
@@ -129,6 +147,23 @@ its changes.
 - A per-access runtime lookup on the simulation path. Routes execute once during elaboration; the
   hot path reads a sealed endpoint. A hot-path read that performs any hierarchy traversal, parent
   walk, or by-name lookup is the canonical hot-path violation.
+- A route that seals an object reference to the address of whichever object it held at sealing. The
+  reference's value is the design's to change, so such an endpoint is correct only until the first
+  assignment and silently wrong afterwards.
+- A source name carried into a body to be resolved against an object there. The name is resolved
+  where the instance is known; what crosses into the body is the coordinate.
+- Elaboration committing which body a virtual behavior enters. It resolves the name to a dispatch
+  position; the object answers the position.
+- A coordinate formed against a class the referrer assumed rather than the class the bound instance
+  has. A position read off the wrong class addresses whatever sits at that position in another
+  class's layout, with nothing to catch it.
+- Reaching past a signature by arranging for the two sides' representations to agree, rather than by
+  an operation both sides state. Agreement in layout is a target language's choice and holds for
+  some shapes and not others, so what it produces is a failure confined to the shapes where it does
+  not hold.
+- A specialization forked so that an endpoint's class becomes a compile-time fact of the body. The
+  class of a target reached past a signature belongs to the instance; making it an artifact fact
+  requires keying the artifact on where the instance sits.
 - A route keyed or resolved by a design-global coordinate, ordinal, or instance id.
 - A reference whose sealing failure is silently swallowed at runtime. A user-diagnosable failure
   (non-constructed target, forwarding cycle without storage root) surfaces a user diagnostic; an
@@ -180,6 +215,18 @@ consumes, the same arrow is declared rather than opaque, and the route's shape d
 `child.p` for a port `p` is the same three-hop route with its last arrow typed. Nothing about a
 route is decided by how many units it crosses, by how deep it goes, or by the syntax that named the
 target; every arrow asks the one question and the answers compose.
+
+**A route that continues past an object reference.** `holder.h.tag`, where `h` is a class-typed
+variable of another unit and the class is declared inside that unit's design element. The segment
+reaching `h` is opaque, like any name past a signature. What follows is not another segment of the
+same kind: `tag` is a property of an object, and which object is a value `holder` overwrites
+whenever it likes. So the route seals two things -- the reference, and `tag` resolved against the
+class that instance declared `h` with. The body dereferences whichever object the reference holds
+and applies the coordinate. Replacing `tag` with a virtual behavior changes only what the coordinate
+names: a dispatch position instead of a storage position, with the object still answering which body
+fills it. `holder.q[0].tag` is the same picture with a collection in the middle -- what decides the
+shape is that a structural operation follows a value with no class view, never the syntax that
+produced the value.
 
 **Port connections share the routing.** An input or output port is a continuous-assignment edge
 between the two objects' own storage (LRM 23.3.3); the cross-unit side reaches the partner cell

@@ -176,6 +176,7 @@ auto Type::Hash::operator()(const Type& type) const -> std::size_t {
             HashField(seed, t.unit_name);
             HashField(seed, t.class_name);
           },
+          [](const OpaqueObjectType&) {},
           [&](const RuntimeClassType& t) { HashField(seed, t.symbol); },
           [](const RuntimeEffectsType&) {},
           [](const FilesType&) {},
@@ -359,6 +360,7 @@ auto Type::HeldValueTypes() const -> std::vector<TypeId> {
           [](const ObjectType&) -> Held { return {}; },
           [](const ExternalUnitObjectType&) -> Held { return {}; },
           [](const CrossUnitClassType&) -> Held { return {}; },
+          [](const OpaqueObjectType&) -> Held { return {}; },
           [](const RuntimeClassType&) -> Held { return {}; },
           [](const StructType&) -> Held { return {}; },
           [](const ClosureType&) -> Held { return {}; },

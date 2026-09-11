@@ -344,6 +344,14 @@ auto BuildDefaultValueExpr(
                     mir::CallExpr{.callee = mir::Construct{}, .arguments = {}},
                 .type = type};
           },
+          // An object with no class to name is never a variable's own type:
+          // what a variable holds is the reference, which answers below. So
+          // nothing asks this one what it starts out as.
+          [&](const mir::OpaqueObjectType&) -> mir::Expr {
+            throw InternalError(
+                "DefaultValueOf: an object with no class to name is held by "
+                "reference and never declared as storage");
+          },
           [&](const mir::PointerType&) -> mir::Expr {
             return mir::Expr{.data = mir::NullLiteral{}, .type = type};
           },
@@ -469,6 +477,7 @@ auto BuildDefaultValueFromHir(
           [&](const hir::RealTimeType& t) { return type_default(t); },
           [&](const hir::ChandleType& t) { return type_default(t); },
           [&](const hir::ClassHandleType& t) { return type_default(t); },
+          [&](const hir::OpaqueObjectHandleType& t) { return type_default(t); },
           [&](const hir::ImportedClassHandleType& t) {
             return type_default(t);
           },

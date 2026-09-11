@@ -28,12 +28,12 @@
 #include "lyra/runtime/evaluation_attempts.hpp"
 #include "lyra/runtime/file_table.hpp"
 #include "lyra/runtime/fork.hpp"
-#include "lyra/runtime/gc_ref.hpp"
 #include "lyra/runtime/generated_call_scope.hpp"
 #include "lyra/runtime/hierarchy_segment.hpp"
 #include "lyra/runtime/host_command.hpp"
 #include "lyra/runtime/managed_object.hpp"
 #include "lyra/runtime/named_event.hpp"
+#include "lyra/runtime/object_ref.hpp"
 #include "lyra/runtime/plusargs.hpp"
 #include "lyra/runtime/process_control.hpp"
 #include "lyra/runtime/random.hpp"
@@ -275,9 +275,10 @@ auto DriverOf(void* driver) -> Driver<T>& {
 // keeps the node alive for the length of the call: the entry is the one place
 // that knows which object the share is of, which is what erasing it costs and
 // all it costs.
-auto ProcessOf(const void* handle) -> GcRef<RuntimeProcess> {
-  return GcRef<RuntimeProcess>(std::static_pointer_cast<RuntimeProcess>(
-      Read<value::ManagedRef>(handle).Share()));
+auto ProcessOf(const void* handle) -> ObjectRef {
+  return RefToObject(
+      std::static_pointer_cast<RuntimeProcess>(
+          Read<value::ManagedRef>(handle).Share()));
 }
 
 // Takes over the erased value a boxed handle carries. A value crosses this way
@@ -549,7 +550,6 @@ using lyra::runtime::FileTable;
 using lyra::runtime::ForkWaitAllMustPark;
 using lyra::runtime::ForkWaitFirstMustPark;
 using lyra::runtime::GcNew;
-using lyra::runtime::GcRef;
 using lyra::runtime::GeneratedCallScope;
 using lyra::runtime::GeneratedScope;
 using lyra::runtime::HierarchySegment;
@@ -558,6 +558,7 @@ using lyra::runtime::ManagedObject;
 using lyra::runtime::NamedEvent;
 using lyra::runtime::NetOf;
 using lyra::runtime::ObjectDefinition;
+using lyra::runtime::ObjectRef;
 using lyra::runtime::Observable;
 using lyra::runtime::Observation;
 using lyra::runtime::Own;
@@ -933,7 +934,9 @@ void lyra_rt_disable_fork(void* runtime) {
 
 auto lyra_rt_process_self(void* runtime) -> void* {
   return Own(
-      ManagedRef{ProcessSelf(*static_cast<RuntimeEffects*>(runtime)).Share()});
+      ManagedRef{ProcessSelf(*static_cast<RuntimeEffects*>(runtime))
+                     .Identity()
+                     .Share()});
 }
 
 auto lyra_rt_process_status(const void* self) -> void* {
@@ -946,7 +949,7 @@ void lyra_rt_process_kill(const void* self, void* runtime) {
 
 auto lyra_rt_process_await(const void* self, void* runtime) -> bool {
   auto& svc = *static_cast<RuntimeEffects*>(runtime);
-  const GcRef<RuntimeProcess> target = ProcessOf(self);
+  const ObjectRef target = ProcessOf(self);
   // LRM 9.7's precondition and readiness rule come from the operation rather
   // than being restated: forming the wait is what rejects awaiting the caller,
   // and a target that has already terminated leaves nothing to wait for.
@@ -957,7 +960,7 @@ auto lyra_rt_process_await(const void* self, void* runtime) -> bool {
   // Termination is not a report flush point (LRM 16.4.2): awaiting a process
   // is a method call rather than an event control or a wait statement.
   svc.CurrentProcess().RegisterWakeup(false, [&target](CoroutineHandle waiter) {
-    target->ArmTerminatedWaiter(waiter);
+    lyra::runtime::ProcessNodeOf(target).ArmTerminatedWaiter(waiter);
   });
   return true;
 }
@@ -982,9 +985,9 @@ auto lyra_rt_closure_capture(void* self, std::uint32_t index) -> void* {
 }
 
 auto lyra_rt_object_make(const void* definition) -> void* {
-  GcRef<ManagedObject> object =
+  ObjectRef object =
       GcNew<ManagedObject>(static_cast<const ObjectDefinition*>(definition));
-  return Own(ManagedRef{object.Share()});
+  return Own(ManagedRef{object.Identity().Share()});
 }
 
 void lyra_rt_submit_nba(void* runtime, void* closure) {

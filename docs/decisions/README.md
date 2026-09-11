@@ -281,6 +281,20 @@ the detail lives in the entry itself.
   vocabulary is untouched because the hop is resolved once per body rather than once per reference.
   Putting the object in the runtime tree, reaching the scope by lexical capture, and refusing a
   construction reached through another unit's generic are rejected.
+- [object-identity-is-carried-not-derived](object-identity-is-carried-not-derived.md) -- an object's
+  identity is fixed when it is created and carried unchanged by every reference to it, and equality
+  and null read it alone; a reference is one storage shape at every program point, because two sides
+  hold one cell under different static views wherever a name resolves at elaboration, so the view
+  decides which operations are available and never what the reference is. The class moves from
+  declarations to uses. Keeping the fused typed owner, deriving the view from identity, a reference
+  type per static view, and publishing a read and a write beside each cell are rejected.
+- [structural-access-on-an-opaque-object](structural-access-on-an-opaque-object.md) -- a name
+  reaching a property or a behavior through a reference whose class belongs to the instance resolves
+  where the instance is known, and what crosses into the body compiled once per specialization is
+  the same coordinate a referrer that could name the class would have formed, applied to whichever
+  object the reference holds; resolving a virtual behavior's name names its dispatch position and
+  never its body. A witness record, a lookup at each access, a specialization per endpoint class,
+  and relying on the two sides' representations agreeing are rejected.
 - [unit-scope-naming](unit-scope-naming.md) -- the anonymous `$unit` scope (LRM 3.12.1) is a
   namespace unit named by its compilation-unit input identity, recomputed table-free by producer and
   consumer; a design-wide unit id, a fixed name, a collection ordinal, and a content digest are all

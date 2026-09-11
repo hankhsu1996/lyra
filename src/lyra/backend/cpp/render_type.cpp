@@ -27,6 +27,10 @@ auto ManagedObjectRootCppType() -> std::string_view {
   return "lyra::runtime::GcObject";
 }
 
+auto ObjectViewConversionCppName() -> std::string_view {
+  return "lyra::runtime::ViewAs";
+}
+
 auto RenderEachTypeAsCpp(
     const mir::CompilationUnit& unit, std::span<const mir::TypeId> types)
     -> std::vector<std::string> {
@@ -152,19 +156,28 @@ auto RenderTypeAsCpp(const mir::CompilationUnit& unit, mir::TypeId type_id)
             return ToCppName(unit.GetStruct(s.struct_id).name);
           },
           [&unit](const mir::ExternalUnitObjectType& e) -> std::string {
-            // A unit's emitted peer is a namespace, and the class it publishes
-            // its instances as sits inside it.
+            // The class a unit publishes its instances as is named on its
+            // signature rather than derived from the unit's own name, so the
+            // record of what it promised is what says which class this is.
             const mir::ExternalUnitObject& object =
                 unit.external_unit_objects.Get(e.object);
             return std::format(
-                "{}::{}", ToCppName(object.unit_name),
+                "{}::{}", UnitNamespaceOf(object.unit_name),
                 ToCppName(object.class_name));
           },
           [](const mir::CrossUnitClassType& e) -> std::string {
-            // A unit's emitted peer is a namespace, and the class it declares
-            // sits inside it.
             return std::format(
-                "{}::{}", ToCppName(e.unit_name), ToCppName(e.class_name));
+                "{}::{}", UnitNamespaceOf(e.unit_name),
+                ToCppName(e.class_name));
+          },
+          // An object this unit has no class to name has no spelling here
+          // either, and nothing asks for one: a reference to such an object is
+          // carried and compared without naming its class, and every operation
+          // that would need the name is refused while the design elaborates.
+          [](const mir::OpaqueObjectType&) -> std::string {
+            throw InternalError(
+                "RenderTypeAsCpp: an object with no class to name has no "
+                "target-language spelling");
           },
           [](const mir::RuntimeClassType& e) -> std::string {
             return e.symbol;
@@ -274,9 +287,13 @@ auto RenderTypeAsCpp(const mir::CompilationUnit& unit, mir::TypeId type_id)
             }
             throw InternalError("RenderTypeAsCpp: unknown PointerOwnership");
           },
-          [&](const mir::ManagedRefType& m) -> std::string {
-            return std::format(
-                "lyra::runtime::GcRef<{}>", RenderTypeAsCpp(unit, m.pointee));
+          // One spelling for every static view. Which class a program point
+          // assumes is a property of that point, so it is written where the
+          // reference is used and not where storage for it is declared -- and
+          // two units holding one cell under different views is ordinary, so a
+          // spelling that followed the view would give that cell two types.
+          [](const mir::ManagedRefType&) -> std::string {
+            return std::string{"lyra::runtime::ObjectRef"};
           },
           [&](const mir::VectorType& v) -> std::string {
             return std::format(
@@ -341,6 +358,32 @@ auto RenderTypeAsCpp(const mir::CompilationUnit& unit, mir::TypeId type_id)
             throw InternalError(
                 "RenderTypeAsCpp: a closure is emitted as a lambda, whose type "
                 "C++ lets nothing name -- please report this as a bug");
+          },
+      });
+}
+
+auto RenderPlaceAccessAsCpp(
+    const mir::CompilationUnit& unit, mir::TypeId type_id,
+    std::string_view place) -> std::string {
+  return unit.types.Get(type_id).Visit(
+      Overloaded{
+          [&](const mir::PointerType&) -> std::string {
+            return std::format("(*{})", place);
+          },
+          // Spelled like a pointer's and reached differently: what a reference
+          // opens is the cell it was bound to, which is the target language's
+          // own operator standing for the library's (LRM 23.3.3.2).
+          [&](const mir::RefType&) -> std::string {
+            return std::format("(*{})", place);
+          },
+          [&](const mir::ManagedRefType& m) -> std::string {
+            return std::format(
+                "{}.Deref<{}>()", place, RenderTypeAsCpp(unit, m.pointee));
+          },
+          [](const auto&) -> std::string {
+            throw InternalError(
+                "RenderPlaceAccessAsCpp: this backend states no access for a "
+                "place of this type");
           },
       });
 }
@@ -418,6 +461,14 @@ auto RenderTypeConstructionAsCpp(
             return by_naming_itself(t);
           },
           [&](const mir::CrossUnitClassType& t) { return by_naming_itself(t); },
+          // Bringing an object into existence names its class, so a reference
+          // with no class to name states no construction: the source could not
+          // have written one.
+          [](const mir::OpaqueObjectType&) -> std::string {
+            throw InternalError(
+                "RenderTypeConstructionAsCpp: an object with no class to name "
+                "is never constructed");
+          },
           [&](const mir::RuntimeClassType& t) { return by_naming_itself(t); },
           [&](const mir::RuntimeEffectsType& t) { return by_naming_itself(t); },
           [&](const mir::FilesType& t) { return by_naming_itself(t); },
@@ -451,7 +502,8 @@ auto RenderClassRefAsCpp(
           },
           [](const mir::CrossUnitClassRef& e) -> std::string {
             return std::format(
-                "{}::{}", ToCppName(e.unit_name), ToCppName(e.class_name));
+                "{}::{}", UnitNamespaceOf(e.unit_name),
+                ToCppName(e.class_name));
           },
           [](const mir::RuntimeClassRef& e) -> std::string {
             return e.symbol;

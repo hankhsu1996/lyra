@@ -153,6 +153,7 @@ auto Type::Hash::operator()(const Type& type) const -> std::size_t {
           [seed](const ShortRealType&) { return seed; },
           [seed](const RealTimeType&) { return seed; },
           [seed](const ChandleType&) { return seed; },
+          [seed](const OpaqueObjectHandleType&) { return seed; },
           [seed](const NullType&) { return seed; },
           [seed](const VoidType&) { return seed; }});
 }
@@ -185,6 +186,7 @@ auto Type::IsValueChangeObservable() const -> bool {
           [](const EventType&) { return false; },
           [](const ChandleType&) { return false; },
           [](const ClassHandleType&) { return false; },
+          [](const OpaqueObjectHandleType&) { return false; },
           [](const ImportedClassHandleType&) { return false; },
           [](const UnitObjectType&) { return false; },
           [](const OpaqueScopeType&) { return false; },

@@ -428,6 +428,23 @@ class UnitLowerer {
       const std::string& unit_name, const std::string& class_name)
       -> const hir::ExternalClass*;
 
+  // Whether `cls` has no name in this unit. A class a design element declares
+  // is a type of each instance of that element rather than one type of the unit
+  // (LRM 6.22), and is nameable only inside the scope declaring it (LRM 23.9),
+  // so from outside there is not one type to name and no name that identifies
+  // one. Read from the declaration alone, so answering it consults no other
+  // unit.
+  [[nodiscard]] auto HasNoNameHere(const slang::ast::ClassType& cls) const
+      -> bool;
+
+  // Whether a design element declares `cls`. Such a class is on no signature
+  // and no signature could carry it (LRM 23.2.1), so a name that reaches one is
+  // resolved at elaboration (LRM 23.6) rather than compiled against a promise
+  // -- which is a different answer from a promise this unit merely has not
+  // read, and the two are told apart nowhere else.
+  [[nodiscard]] auto DeclaredByADesignElement(
+      const hir::ExternalClassRef& cls) const -> bool;
+
   // Which storage the declaration `value` holds. One answer, so what this unit
   // publishes about a declaration and what a route to it reaches cannot differ.
   [[nodiscard]] auto DeclarationStorage(

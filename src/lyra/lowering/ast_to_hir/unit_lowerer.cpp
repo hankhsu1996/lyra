@@ -355,7 +355,7 @@ auto UnitLowerer::DeclaringScopeHopsFrom(
   // decides this, not which unit is being lowered: a package class reached
   // from a module needs no instance either.
   const slang::ast::Symbol& decl_unit = DeclaringCompilationUnit(cls);
-  if (decl_unit.kind != slang::ast::SymbolKind::InstanceBody) {
+  if (!IsDesignElement(decl_unit)) {
     return std::nullopt;
   }
   if (&decl_unit != &scope_->asSymbol()) {

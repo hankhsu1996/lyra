@@ -167,7 +167,7 @@ auto CodeGenFunction::LowerLoad(
       return std::unexpected(std::move(address.error()));
     }
     if (const std::optional<support::ValueDomain> cell =
-            MemberValueCellDomain(load.place, result_type)) {
+            PlaceValueCellDomain(load.place, result_type)) {
       const std::array<llvm::Value*, 1> args{*address};
       return builder_.CreateCall(
           Entry(
@@ -211,7 +211,7 @@ auto CodeGenFunction::LowerStore(const lir::StoreInstr& store)
       return std::unexpected(std::move(address.error()));
     }
     if (const std::optional<support::ValueDomain> cell =
-            MemberValueCellDomain(store.place, OperandType(store.value))) {
+            PlaceValueCellDomain(store.place, OperandType(store.value))) {
       const std::array<llvm::Value*, 2> args{*address, *value};
       return builder_.CreateCall(
           Entry(
@@ -1448,15 +1448,15 @@ auto CodeGenFunction::StorageDomainBehind(lir::TypeId operand) const
   return DomainOf(*held);
 }
 
-auto CodeGenFunction::MemberValueCellDomain(
+auto CodeGenFunction::PlaceValueCellDomain(
     const lir::Place& place, lir::TypeId value) const
     -> std::optional<support::ValueDomain> {
-  // Only a member has storage of its own; a frame slot holds the handle rather
-  // than the value it names. A member a place reaches is a variable of its
-  // owner -- a snapshot is filled where the owner is built and read through the
-  // entry that hands its captures out, never through a place.
-  if (place.chain.empty() ||
-      !std::holds_alternative<lir::MemberProjection>(place.chain.back())) {
+  // A projection reaches storage the runtime built and owns the representation
+  // of, whether it names a member of an owner or dereferences a pointer that
+  // arrived at one -- and the pointer form is how a name past another unit's
+  // signature reaches it (LRM 23.6). An empty chain names the base local, whose
+  // slot holds the value itself and is read off its address.
+  if (place.chain.empty()) {
     return std::nullopt;
   }
   if (MemberStorageKindOf(module_->Unit(), value, MemberSlotRole::kVariable) !=

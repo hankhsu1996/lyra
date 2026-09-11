@@ -228,6 +228,9 @@ auto UnitLowerer::TranslateType(const mir::Type& ty) -> lir::Type {
             return lir::Type{lir::CrossUnitClassType{
                 .unit_name = e.unit_name, .class_name = e.class_name}};
           },
+          [](const mir::OpaqueObjectType&) -> lir::Type {
+            return lir::Type{lir::OpaqueObjectType{}};
+          },
           [](const mir::RuntimeEffectsType&) -> lir::Type {
             return lir::Type{lir::RuntimeEffectsType{}};
           },

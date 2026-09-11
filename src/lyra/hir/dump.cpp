@@ -406,6 +406,9 @@ class HirDumper {
               return std::format(
                   "ClassHandleType(class={})", FormatClassRef(c.class_ref));
             },
+            [](const OpaqueObjectHandleType&) -> std::string {
+              return "OpaqueObjectHandleType";
+            },
             [](const ImportedClassHandleType& c) -> std::string {
               return std::format(
                   "ImportedClassHandleType(class={})",

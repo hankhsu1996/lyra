@@ -498,6 +498,20 @@ cross-check predicts. This file owns only which instances are known and what is 
       factory, which is routed to a conversion path before that branch is reached -- so the branch
       had never run. It went with the scope it existed to state.
 
+## Naming ownership
+
+- [ ] T23 -- Every name a render emits comes from something that owns naming, and re-viewing an
+      object reference has no owner. Three owners exist -- type mapping for a type, place access for
+      a wrapper's access protocol, the shared runtime-entry declaration for an operation -- and "the
+      same object, seen as another class" is stated as a cast node rather than a call, so a backend
+      that cannot spell it in target syntax alone writes the name itself. The source backend now
+      does. The obvious move, making it a call so the shared declaration owns the name the way
+      `this` already is owned, does not work as stated: the execution backend's naming set
+      classifies every entry as naming a library entry or as not realized, and it realizes this cast
+      with no instructions at all, so the move would force it to gain an entry it does not need or
+      to refuse one it answers today. Two things could be true and the item is which -- the list of
+      naming owners is short one owner, or a re-view should not be a cast.
+
 ## Cross-references
 
 - `../architecture/backend_contract.md` -- the mechanical-translation contract and the cross-check

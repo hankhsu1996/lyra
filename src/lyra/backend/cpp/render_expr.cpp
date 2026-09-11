@@ -115,12 +115,28 @@ auto RenderConditionalExpr(const ScopeView& view, const mir::ConditionalExpr& c)
 // The enclosing parentheses are load-bearing: cast notation is not a primary
 // expression, so a `->` or a `[` written after it would take the cast's own
 // operand instead, and the conversion would silently apply to the wrong thing.
+//
+// A reference to an object is the exception, and the pair is what says so:
+// every static view of one is the same target type, so cast notation would
+// copy it unchanged where what the pair calls for is the same object under
+// another view. The conversion is named for that instead, and the two classes
+// it takes are the ones the pair already carries.
 auto RenderCastExpr(
     const ScopeView& view, const mir::Expr& expr, const mir::CastExpr& cast)
     -> std::string {
+  const mir::Expr& operand = view.Expr(cast.operand);
+  const auto* from =
+      view.Unit().types.Get(operand.type).As<mir::ManagedRefType>();
+  const auto* to = view.Unit().types.Get(expr.type).As<mir::ManagedRefType>();
+  if (from != nullptr && to != nullptr) {
+    return std::format(
+        "{}<{}, {}>({})", ObjectViewConversionCppName(),
+        RenderTypeAsCpp(view.Unit(), from->pointee),
+        RenderTypeAsCpp(view.Unit(), to->pointee), RenderExpr(view, operand));
+  }
   return std::format(
       "(({})({}))", RenderTypeAsCpp(view.Unit(), expr.type),
-      RenderExpr(view, view.Expr(cast.operand)));
+      RenderExpr(view, operand));
 }
 
 // The C++ name of a closure capture, which is not the field's source name. A
@@ -139,7 +155,12 @@ auto ClosureCaptureCppName(mir::FieldId field) -> std::string {
 auto RenderFieldAccessExpr(const ScopeView& view, const mir::FieldAccessExpr& m)
     -> std::string {
   const auto through_receiver = [&](std::string_view name) {
-    return std::format("{}->{}", RenderExpr(view, view.Expr(m.receiver)), name);
+    const mir::Expr& receiver = view.Expr(m.receiver);
+    return std::format(
+        "{}.{}",
+        RenderPlaceAccessAsCpp(
+            view.Unit(), receiver.type, RenderExpr(view, receiver)),
+        name);
   };
   return std::visit(
       Overloaded{
@@ -401,10 +422,12 @@ auto RenderPartsAsBraceInit(
       JoinCommaSeparated(RenderEachExpr(view, parts)));
 }
 
-// A dereference: the storage the operand's pointer stands for.
+// A dereference: the storage the operand stands for.
 auto RenderDerefExpr(const ScopeView& view, const mir::DerefExpr& d)
     -> std::string {
-  return std::format("(*{})", RenderExpr(view, view.Expr(d.pointer)));
+  const mir::Expr& pointer = view.Expr(d.pointer);
+  return RenderPlaceAccessAsCpp(
+      view.Unit(), pointer.type, RenderExpr(view, pointer));
 }
 
 // `&place` emitted as the C++ address-of operator.

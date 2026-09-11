@@ -82,6 +82,8 @@ If you are looking for a concept, this table points to the canonical doc.
 | Callable model; code vs value; captures; references as a field type                        | `callable.md`                   |
 | Closure (`ClosureType`) vs promoted scope (`StructType`); shared field substrate; captures | `compiler_generated_storage.md` |
 | Object model; nominal object types; inheritance; dispatch; handles                         | `object_model.md`               |
+| Object identity vs a reference's static view; a reference that names no class              | `object_model.md`               |
+| Coordinates; structural access through a reference with no class view                      | `reference_resolution.md`       |
 | Object lifetime; managed reclamation; tracing GC; activation frames                        | `object_lifetime.md`            |
 | LIR shape (CFG, basic blocks, storage)                                                     | `lir.md`                        |
 | Activation; execution instance; completion slot; cancellation domain                       | `activation.md`                 |

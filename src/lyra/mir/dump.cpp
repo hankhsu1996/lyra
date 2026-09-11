@@ -336,6 +336,9 @@ class MirDumper {
               return std::format(
                   "CrossUnitClass(\"{}::{}\")", e.unit_name, e.class_name);
             },
+            [](const OpaqueObjectType&) -> std::string {
+              return "OpaqueObject";
+            },
             [](const RuntimeClassType& e) -> std::string {
               return std::format("RuntimeClass(\"{}\")", e.symbol);
             },

@@ -8,7 +8,7 @@
 #include "lyra/base/internal_error.hpp"
 #include "lyra/base/simulation_error.hpp"
 #include "lyra/runtime/cancellation.hpp"
-#include "lyra/runtime/gc_ref.hpp"
+#include "lyra/runtime/object_ref.hpp"
 #include "lyra/runtime/pending_wait.hpp"
 #include "lyra/runtime/registration.hpp"
 #include "lyra/runtime/runtime_effects.hpp"
@@ -32,8 +32,15 @@ enum class ProcessStatusCode : std::int32_t {
 // LRM 9.7 `process::self()`: a handle to the process making the call. A task or
 // function runs in its caller's thread (LRM 9.5), so this returns the enclosing
 // executing process, reached through the ambient execution context.
-inline auto ProcessSelf(RuntimeEffects& runtime) -> GcRef<RuntimeProcess> {
-  return GcRef<RuntimeProcess>(runtime.CurrentProcess().shared_from_this());
+inline auto ProcessSelf(RuntimeEffects& runtime) -> ObjectRef {
+  return RefToObject(runtime.CurrentProcess().shared_from_this());
+}
+
+// The process node a reference names. A reference states which object it refers
+// to and leaves what may be read through it to the program point holding it;
+// every point here assumes the same class, so it is named once.
+inline auto ProcessNodeOf(const ObjectRef& self) -> RuntimeProcess& {
+  return self.Deref<RuntimeProcess>();
 }
 
 // LRM 9.7 `process::status()`: the process's execution state projected onto the
@@ -42,10 +49,10 @@ inline auto ProcessSelf(RuntimeEffects& runtime) -> GcRef<RuntimeProcess> {
 // handle after its body terminates. A terminated process reports FINISHED or
 // KILLED by how it terminated -- the completion slot is gone by then, so the
 // distinction is read from the node's persistent terminal cause.
-inline auto ProcessStatus(const GcRef<RuntimeProcess>& self)
-    -> lyra::value::PackedArray {
+inline auto ProcessStatus(const ObjectRef& self) -> lyra::value::PackedArray {
+  const RuntimeProcess& node = ProcessNodeOf(self);
   const ProcessStatusCode code = [&] {
-    switch (self->ExecutionState()) {
+    switch (node.ExecutionState()) {
       case ProcessExecutionState::kCreated:
       case ProcessExecutionState::kRunning:
         return ProcessStatusCode::kRunning;
@@ -54,7 +61,7 @@ inline auto ProcessStatus(const GcRef<RuntimeProcess>& self)
       case ProcessExecutionState::kSuspended:
         return ProcessStatusCode::kSuspended;
       case ProcessExecutionState::kTerminated:
-        return self->TerminationCause() == ProcessTerminationCause::kKilled
+        return node.TerminationCause() == ProcessTerminationCause::kKilled
                    ? ProcessStatusCode::kKilled
                    : ProcessStatusCode::kFinished;
     }
@@ -75,9 +82,8 @@ inline auto ProcessStatus(const GcRef<RuntimeProcess>& self)
 // the running process's own termination is requested (registrations revoked,
 // cause recorded) and its body is unwound to the engine's resume boundary,
 // where the terminal state is published and the retained chain released.
-inline void ProcessKill(
-    const GcRef<RuntimeProcess>& self, RuntimeEffects& runtime) {
-  RuntimeProcess& target = *self;
+inline void ProcessKill(const ObjectRef& self, RuntimeEffects& runtime) {
+  RuntimeProcess& target = ProcessNodeOf(self);
   RuntimeProcess& caller = runtime.CurrentProcess();
   if (target.IsSelfOrAncestorOf(caller)) {
     std::vector<CoroutineHandle> woken;
@@ -117,18 +123,19 @@ inline void ProcessKill(
 // re-entrant engine would need an atomic arm-or-observe protocol here.
 class ProcessAwaitAwaitable : public PendingWait {
  public:
-  explicit ProcessAwaitAwaitable(GcRef<RuntimeProcess> target)
+  explicit ProcessAwaitAwaitable(ObjectRef target)
       : target_(std::move(target)) {
   }
 
   [[nodiscard]] auto await_ready() const -> bool {
-    return target_->ExecutionState() == ProcessExecutionState::kTerminated;
+    return ProcessNodeOf(target_).ExecutionState() ==
+           ProcessExecutionState::kTerminated;
   }
 
   template <class P>
   void await_suspend(std::coroutine_handle<P> waiter) {
     CoroutineHandle token = &waiter.promise();
-    target_->ArmTerminatedWaiter(token);
+    ProcessNodeOf(target_).ArmTerminatedWaiter(token);
     BlockOn(token);
   }
 
@@ -142,10 +149,11 @@ class ProcessAwaitAwaitable : public PendingWait {
   // NOLINTNEXTLINE(readability-named-parameter)
   auto Reestablish(RuntimeEffects&, CoroutineHandle activation)
       -> PendingWaitOutcome override {
-    if (target_->ExecutionState() == ProcessExecutionState::kTerminated) {
+    if (ProcessNodeOf(target_).ExecutionState() ==
+        ProcessExecutionState::kTerminated) {
       return PendingWaitOutcome::kRunnable;
     }
-    target_->ArmTerminatedWaiter(activation);
+    ProcessNodeOf(target_).ArmTerminatedWaiter(activation);
     return PendingWaitOutcome::kReblocked;
   }
 
@@ -159,16 +167,15 @@ class ProcessAwaitAwaitable : public PendingWait {
  private:
   // Pins the target across the suspension, so a kill that detaches it from the
   // lineage while the caller is parked cannot free the node before resume.
-  GcRef<RuntimeProcess> target_;
+  ObjectRef target_;
 };
 
 // It is an error to await the calling process (a process cannot wait for its
 // own termination). The check is here at the call, symmetric with `suspend`, so
 // the awaitable itself is pure readiness.
-inline auto ProcessAwait(
-    const GcRef<RuntimeProcess>& self, RuntimeEffects& runtime)
+inline auto ProcessAwait(const ObjectRef& self, RuntimeEffects& runtime)
     -> ProcessAwaitAwaitable {
-  if (self.Get() == &runtime.CurrentProcess()) {
+  if (self.View<RuntimeProcess>() == &runtime.CurrentProcess()) {
     throw SimulationError(
         "process::await on the calling process is not allowed (LRM 9.7)");
   }
@@ -179,9 +186,8 @@ inline auto ProcessAwait(
 // calling process (a function cannot suspend its own execution). Suspending a
 // process that is already suspended or terminated has no effect. The activation
 // layer does the state transition and the detach; nothing here schedules.
-inline void ProcessSuspend(
-    const GcRef<RuntimeProcess>& self, RuntimeEffects& runtime) {
-  RuntimeProcess& target = *self;
+inline void ProcessSuspend(const ObjectRef& self, RuntimeEffects& runtime) {
+  RuntimeProcess& target = ProcessNodeOf(self);
   if (&target == &runtime.CurrentProcess()) {
     throw SimulationError(
         "process::suspend on the calling process is not allowed (LRM 9.7)");
@@ -194,9 +200,8 @@ inline void ProcessSuspend(
 // its wait through the leaf's pending wait -- re-enrolling, or becoming
 // runnable if the condition is already satisfied; a process suspended while
 // runnable is re-queued to run in the current time step.
-inline void ProcessResume(
-    const GcRef<RuntimeProcess>& self, RuntimeEffects& runtime) {
-  RuntimeProcess& target = *self;
+inline void ProcessResume(const ObjectRef& self, RuntimeEffects& runtime) {
+  RuntimeProcess& target = ProcessNodeOf(self);
   if (target.ExecutionState() != ProcessExecutionState::kSuspended) {
     return;
   }

@@ -285,6 +285,15 @@ struct CrossUnitClassType {
   auto operator==(const CrossUnitClassType&) const -> bool = default;
 };
 
+// An object this unit points at without carrying what identifies it: what a
+// name reaching past another unit's signature lands on when the class it
+// reaches is one that unit's design element declares, and so is a type of each
+// instance rather than one type this unit could name. Only the reference's
+// representation crosses; no member is reachable through it.
+struct OpaqueObjectType {
+  auto operator==(const OpaqueObjectType&) const -> bool = default;
+};
+
 // A class the runtime library defines, named by the library symbol. It belongs
 // to no compilation unit, so the symbol is the whole identity.
 struct RuntimeClassType {
@@ -448,11 +457,11 @@ class Type {
       MachineIntType, MachineFloatType, MachineArrayType, MachineFunctionType,
       EventType, RealType, ShortRealType, RealTimeType, ChandleType, VoidType,
       EmptyType, ObjectType, ExternalUnitObjectType, CrossUnitClassType,
-      RuntimeClassType, ClosureType, StructType, RuntimeEffectsType, FilesType,
-      DiagnosticType, RuntimeLibraryType, CoroutineType, RefType, PointerType,
-      ManagedRefType, VectorType, TupleType, UnpackedStructType, UnionType,
-      TaggedUnionType, ResolvedType, DriverType, ObservableType,
-      SampledHistoryType, EvaluationAttemptsType>;
+      OpaqueObjectType, RuntimeClassType, ClosureType, StructType,
+      RuntimeEffectsType, FilesType, DiagnosticType, RuntimeLibraryType,
+      CoroutineType, RefType, PointerType, ManagedRefType, VectorType,
+      TupleType, UnpackedStructType, UnionType, TaggedUnionType, ResolvedType,
+      DriverType, ObservableType, SampledHistoryType, EvaluationAttemptsType>;
 
  public:
   explicit Type(Data data) : data_(std::move(data)) {

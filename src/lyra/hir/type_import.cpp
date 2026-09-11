@@ -152,6 +152,7 @@ auto TypeImporter::Import(const Type& type) -> Type {
             return Type{
                 ClassHandleType{.class_ref = ImportClassRef(t.class_ref)}};
           },
+          [](const OpaqueObjectHandleType& t) -> Type { return Type{t}; },
           [](const ImportedClassHandleType& t) -> Type { return Type{t}; },
           [](const UnitObjectType& t) -> Type { return Type{t}; },
           [](const OpaqueScopeType& t) -> Type { return Type{t}; },
