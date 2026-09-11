@@ -118,15 +118,24 @@ This workstream reasons from these and does not restate them:
       resolution across every net in it, and a port left unconnected joins nothing and resolves
       alone. The two sides must state the same net type: where they differ, the standard names a
       dominating type per pair of nets and that relation does not extend to the set a chain joins,
-      so the program is reported rather than answered.
+      so the program is reported rather than answered. What a net type states carries no width, so
+      two nets of unequal width state the same one.
+- [x] N10 -- A bidirectional connection reaches a run of a net rather than always the whole of it
+      (LRM 23.3.3.7, 10.11): a connection naming a part select or a single-bit select of a net puts
+      those positions, and no others, in one resolution with the child's port net. The positions a
+      connection does not reach go on resolving over their own drivers, and a driver of either side
+      meets the others only where the run overlaps it. An instance array distributing a packed
+      actual across its elements (LRM 23.3.3.5) is this with no select written anywhere in the
+      source, which is how a design meets it without asking for it. A connection naming a whole net
+      is the run that covers it, so it needs no path of its own.
 
 ## Out of scope
 
-- Joining part of a net rather than the whole of it: a bidirectional port whose connection names a
-  part select or a concatenation of nets, and the `alias` statement (LRM 10.11), which states
-  connectivity per bit range and so can put one net's bits in several resolutions at once. Each is
-  refused by name. What they need is a resolution over bit ranges rather than over whole nets, which
-  is a model question of its own.
+- A bidirectional port whose connection names a concatenation of nets, one whose own internal name
+  is a select of a declaration, and the `alias` statement (LRM 10.11). Each is refused by name. What
+  remains for all three is turning what the source wrote into the runs it names -- pairing the two
+  sides and splitting whichever is wider, which the front end already does for `alias` -- since a
+  resolution over runs is what the model now carries.
 - A simulated net formed from dissimilar net types (LRM 23.3.3.7, Table 23-1), refused by name at
   elaboration. The standard defines the dominating type for a pair of nets, and the relation it
   tabulates is not transitive -- `tri0` dominates `trireg`, while `trireg` and `wand` tie, and so do

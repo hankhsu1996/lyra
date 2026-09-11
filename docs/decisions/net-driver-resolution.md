@@ -21,8 +21,8 @@ Decision 4's other expectation -- that Seal would be where net collapse canonica
 falsified by [joined-nets-are-one-resolution](joined-nets-are-one-resolution.md). Every input a join
 needs is final before Resolve begins and nothing observes a net until Initialize, so a connection
 joins its two nets where its route resolves and the barrier has no consumer. Decision 1 is widened
-there as well: what resolves is the nets a connection has joined, and a net nothing joined is the
-one-net case of it.
+there as well, and its resolver clause moved: what resolves is the physical net the connectivity
+forms, over the positions it covers, and a net nothing reached is the one-name case of it.
 
 ## Why this decision matters
 
@@ -80,9 +80,16 @@ the design has attached, which is exactly what a global Seal barrier provides.
 
 ## The decision
 
-1. **A net is a resolution node**: a resolved observable value, a set of driver contributions owned
-   by the node, and a resolver fixed by the net type. The node is a distinct capability type sibling
-   to the plain observable cell -- readable and observable, never directly written.
+1. **A net is a resolution node**: a resolved observable value and a set of driver contributions
+   owned by the node. The node is a distinct capability type sibling to the plain observable cell --
+   readable and observable, never directly written.
+
+   The resolver was here too, and
+   [joined-nets-are-one-resolution](joined-nets-are-one-resolution.md) moves it: what resolves is
+   the physical net the connectivity forms, so the fold belongs to that and not to a name, which is
+   what lets two positions of one name resolve under different net types (LRM 23.3.3.7 is read per
+   bit range). A net keeps its own contributions and a copy of what the resolution produced over the
+   positions it reaches.
 
 2. **A driver is a capability handle, not a pointer into the net's storage.** The node owns the
    contribution storage and lifetime; a driver names exactly one contribution by a stable identity.
@@ -136,11 +143,11 @@ the design has attached, which is exactly what a global Seal barrier provides.
   a home and establishes the "topology immutable after Seal" invariant.
 - A net is never accidentally writable as storage, and a variable is never accidentally a driver
   sink, because the capability is in the type.
-- The resolver is fixed by the net type, and it is installed on the node at construction rather than
-  carried by the node's own type: two nets of one data type are therefore one type wherever types
-  are named, one realization serves every net type, and a backend that erases the value type still
-  resolves correctly. Which resolver is stated by which install operation the declaration names, one
-  per resolver, because a truth table has no spelling as a value a call could carry.
+- The resolver is fixed by the net type and installed at construction rather than carried by a type:
+  two nets of one data type are therefore one type wherever types are named, one realization serves
+  every net type, and a backend that erases the value type still resolves correctly. Which resolver
+  is stated by which install operation the declaration names, one per resolver, because a truth
+  table has no spelling as a value a call could carry. Where it is installed moved with decision 1.
 
 ## Alternatives considered
 

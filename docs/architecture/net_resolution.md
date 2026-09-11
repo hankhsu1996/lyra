@@ -4,17 +4,19 @@
 
 Define what a SystemVerilog net is and how its value is produced. A net's value is not written; it
 is the resolution of a set of independent driver contributions under the net type's resolution
-policy. What that resolution covers is not always one net: a bidirectional connection joins nets
-into one resolution over the contributions of all of them, and a net nothing joins is that same
-resolution over one. This document owns the driver / contribution / resolution model, what one
-resolution covers, and the distinction between a net and a variable. It is the design-global
-net-resolution concern that `reference_resolution.md` places outside its own scope.
+policy. What that resolution covers is not always one net, and not always the whole of one: a
+bidirectional connection and an `alias` each state that runs of positions across several nets are
+the same physical net, resolving over the contributions of all of them, and a net nothing reached is
+that same resolution with nothing coupled to it. This document owns the driver / contribution /
+resolution model, what one resolution covers, and the distinction between a net and a variable. It
+is the design-global net-resolution concern that `reference_resolution.md` places outside its own
+scope.
 
 ## Owns
 
 - The rule that a net is a resolved observable value: its value is `resolve(contributions)`, where
-  the resolver is fixed by the net type and the contributions are supplied by the net's drivers and
-  by the net type itself.
+  the resolver is fixed by the net type and the contributions are supplied by the drivers of every
+  name reaching those positions and by the net type itself.
 - The decomposition of a net into three parts: a resolved observable value, a set of driver
   contributions, and a resolver policy.
 - The rule that each driver is an independent contribution with its own identity and provenance. A
@@ -29,12 +31,18 @@ net-resolution concern that `reference_resolution.md` places outside its own sco
 - The rule that a driver's contribution carries both a logic value and a drive strength, and that
   resolution consumes both: strength decides between contributions of unequal strength, and the net
   type's fold decides among those of equal strength.
-- What one resolution covers: the nets a bidirectional connection has joined, considered as one. A
-  join pools the contributions of both sides and never makes one side's resolved value an input to
-  the other's resolution, and every net it covers shows what that resolution produced and publishes
-  its own change under its own name.
-- The rule that one resolution has one net type, so a join requires the nets it covers to state the
-  same one.
+- What resolves: a physical net, the set of positions the elaborated design's connectivity places in
+  one resolution (LRM 10.11, 23.3.3.7). It is an object of its own, carrying the fold, the net
+  type's own contribution and any procedural continuous assignment over those positions -- the facts
+  a resolution needs and a name does not. A declared net is a name reaching a run of one, holding
+  its own contributions, its own observers and a copy of what that resolution produced over the
+  positions it reaches; a net no connection reached is the one name of a node covering it exactly.
+- The rule that a resolution pools the contributions reaching its positions and never makes one
+  resolution's value an input to another's.
+- The rule that one resolution has one net type, so a join requires the nets it reaches to state the
+  same one -- the same fold, the same contribution of the net type's own, and the same answer to
+  whether resolution keeps that contribution current. What a net type states carries no width, so
+  nets of unequal width state the same one.
 
 ## Does Not Own
 
@@ -45,21 +53,21 @@ net-resolution concern that `reference_resolution.md` places outside its own sco
 - The capability-type family and the observable-cell access protocol that a net's resolved value and
   a driver handle are members of (`mir.md`).
 - Waking dependent processes when a net's resolved value changes (`scheduling.md`).
-- Which connections join nets. Whether a construct places two nets in one resolution is a property
-  of the construct -- a port's direction, an alias statement -- and belongs to whatever owns that
-  construct; this document owns what being in one resolution means.
-- Joining a part of a net rather than the whole of it. A construct that states connectivity per bit
-  range, so that one net's bits belong to several resolutions at once, is a shape this model does
-  not carry.
+- Which connections join nets, and which run of each they reach. Whether a construct places nets in
+  one resolution is a property of the construct -- a port's direction, an alias statement -- and so
+  is which of their positions it reaches, which a select, a concatenation and an assignment pattern
+  each state in their own terms. Turning what the source wrote into a run belongs to whatever owns
+  that construct; this document owns what being in one resolution means.
 
 ## Core Invariants
 
 1. A net's value is the resolution of its contributions under the net type's resolver. With zero
    drivers the value is what the net type's own contribution resolves to; a single driver and many
    drivers are the N=1 and N>1 cases of the same resolution, with no separate single-driver
-   representation. Where a connection has joined nets, "its contributions" are the contributions of
-   every net that resolution covers; a net nothing joined is the one-net case of the same rule and
-   has no representation of its own.
+   representation. Where a connection has placed runs of other nets in one resolution with a run of
+   this one, "its contributions" are the contributions reaching every run that resolution covers,
+   each read at the positions it occupies here; a net nothing reached is the case with nothing
+   coupled to it and has no representation of its own.
 2. A driver is an independent contribution with identity and provenance. A driver writes only its
    own contribution and never the net's resolved value directly. The net owns the contribution
    storage; the driver names its contribution by a stable identity, never by a borrowed pointer into
@@ -138,8 +146,15 @@ net-resolution concern that `reference_resolution.md` places outside its own sco
 - A join realized by giving each side a driver fed by the other side's resolved value. That is
   strength-reducing, which is the one property the standard names for a bidirectional connection,
   and it turns a resolution into a fixpoint over values that never met at a common strength.
-- A separate representation for a net no connection joined. One resolution over one net is the rule,
-  not a case beside it.
+- A separate representation for a net no connection joined. One name reaching one resolution is the
+  rule, not a case beside it.
+- A fact the resolution owns kept on a name: the fold, the contribution the net type makes to its
+  own resolution, or a procedural continuous assignment over the positions. A name cannot state one
+  per run, so keeping any of them there makes two positions of one name unable to resolve
+  differently, which the standard requires of them (LRM 23.3.3.7 is read per bit range).
+- A resolution the names in it encode between them rather than an object they reach. A ring of the
+  names, or a closed set of runs relating them pairwise, is correct for the values and wrong for
+  everything a resolution owns, and costs a walk per name where an object costs one.
 
 ## Notes / Examples
 

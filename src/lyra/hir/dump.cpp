@@ -1622,6 +1622,13 @@ class HirDumper {
           pc.kind);
       Line(std::format("PortConnection[{}] {}", id.value, body));
     }
+    for (const NetJoin& join : s.net_joins) {
+      Line(
+          std::format(
+              "NetJoin Expr[{}][{}+:{}] = Expr[{}][{}+:{}]", join.here.value,
+              join.here_offset, join.width, join.there.value, join.there_offset,
+              join.width));
+    }
     Dedent();
     scope_stack_.pop_back();
   }
