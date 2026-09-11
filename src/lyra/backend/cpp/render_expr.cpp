@@ -155,9 +155,8 @@ auto RenderFieldAccessExpr(const ScopeView& view, const mir::FieldAccessExpr& m)
                     ToCppName(cls.fields.Get(t.slot).name)));
           },
           [&](const mir::StructFieldTarget& t) -> std::string {
-            return through_receiver(
-                ToCppName(
-                    view.Unit().GetStruct(t.owner).fields.Get(t.slot).name));
+            return through_receiver(ToCppName(
+                view.Unit().GetStruct(t.owner).fields.Get(t.slot).name));
           },
           [&](const mir::ClosureFieldTarget& t) -> std::string {
             // A closure is emitted as a lambda whose captures are bindings of
