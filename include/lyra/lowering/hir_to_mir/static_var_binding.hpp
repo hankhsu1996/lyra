@@ -45,7 +45,13 @@ struct InstanceFieldHome {
   mir::FieldId field;
 };
 
+// A cell its class owns is named by that class and the cell's position in its
+// pool. Both are on the home because a statement reaching the cell may stand
+// anywhere -- a namespace unit brings its classes' cells up in a body that is
+// in no class at all -- so nothing about where the statement sits can answer
+// which class owns what it reaches.
 struct ClassCellHome {
+  mir::ClassId owner;
   mir::StaticPropertyId property;
 };
 
@@ -66,7 +72,9 @@ struct InstanceStorage {
 };
 
 struct ClassStorage {
-  base::Arena<mir::StaticPropertyDecl, mir::StaticPropertyId>* properties;
+  mir::ClassId owner;
+  base::Arena<mir::StaticPropertyDecl, mir::StaticPropertyId>* properties =
+      nullptr;
 };
 
 struct UnitStorage {

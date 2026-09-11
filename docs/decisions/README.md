@@ -218,6 +218,13 @@ the detail lives in the entry itself.
   argument list its base construction carries where its own declaration is read. Putting what a base
   construction needs on the promise, letting an empty list mean two things, filling a default from
   the declaring scope, and a call target of LIR's own are rejected.
+- [type-associated-storage-is-the-declarers](type-associated-storage-is-the-declarers.md) -- storage
+  a type owns rather than an object of it is brought up by whatever brings up the thing that
+  replicates its declaration, never by a mechanism of its own; a cell a name can reach outside every
+  body is an observable cell, every one of them takes both a declared representation and a value
+  whether or not the source wrote one, and below LIR it is storage under a symbol with nothing of
+  the class left. A per-class startup body, a program-startup trigger, deciding what the storage is
+  from the shape of the access, and a per-class cell list at LIR are rejected.
 - [dispatch-position-is-a-lineage-coordinate](dispatch-position-is-a-lineage-coordinate.md) -- a
   class states the behaviors it introduces and the ones it takes over, never its lineage's; a
   behavior is named by the declaration that introduced it plus an ordinal within it, and flattening
@@ -398,6 +405,13 @@ the detail lives in the entry itself.
   exactly where the layer below it splits; naming another unit's object and holding what it
   published are two facts with two vocabulary items. Mangling at the composition site, tagging one
   conflated arm, and recording every transitively reachable unit are rejected.
+- [a-name-is-a-relation-not-an-identity](a-name-is-a-relation-not-an-identity.md) -- a callable
+  carries no name, because being reachable by one is a relation the name space holds; a program-wide
+  symbol is self-delimiting parts under a category rather than names joined by a separator; what a
+  declaration is called in a target is that target's to mint, into a range no source name reaches;
+  and an entry another unit must reach but the source never named is reached by which entry it is.
+  Reserving a separator character, reserving a minted word, length-prefixing without a category,
+  naming every synthesized declaration anyway, and hashing the parts are rejected.
 - [calling-a-subroutine-on-another-units-object](calling-a-subroutine-on-another-units-object.md) --
   an interface publishes its subroutines, and enabling one is a route that ends at the object plus a
   name resolved against what that unit promised, so no sealed-endpoint category for a callable is

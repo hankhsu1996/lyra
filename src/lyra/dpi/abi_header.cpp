@@ -86,9 +86,11 @@ auto RenderTypeAsC(const mir::CompilationUnit& unit, mir::TypeId id)
 // The full C declarator of one foreign callable, the text a user's compiler
 // checks their definition or call against. It is the callable's own signature
 // spelled in C, so it cannot drift from the one an emitted artifact publishes.
+// The name is the caller's to supply: it is the linkage name, which lives in
+// the DPI-C name space (LRM 35.4) rather than among the names a unit answers.
 auto RenderPrototype(
-    const mir::CompilationUnit& unit, const mir::CallableDecl& callable)
-    -> std::string {
+    const mir::CompilationUnit& unit, const mir::CallableDecl& callable,
+    std::string_view linkage_name) -> std::string {
   const mir::CallableCode& code = callable.code;
   std::string params;
   for (std::size_t i = 0; i < code.params.size(); ++i) {
@@ -99,8 +101,7 @@ auto RenderPrototype(
     params = "void";
   }
   return std::format(
-      "{} {}({})", RenderTypeAsC(unit, code.result_type), callable.LinkedName(),
-      params);
+      "{} {}({})", RenderTypeAsC(unit, code.result_type), linkage_name, params);
 }
 
 struct ForeignEntry {
@@ -143,8 +144,9 @@ void RecordCallable(
     return;
   }
   ForeignEntry entry{
-      .name = callable.LinkedName(),
-      .prototype = RenderPrototype(unit, callable)};
+      .name = callable.foreign->foreign_name,
+      .prototype =
+          RenderPrototype(unit, callable, callable.foreign->foreign_name)};
   if (const ForeignEntry* seen = FindOnSurface(surface, entry.name);
       seen != nullptr) {
     if (seen->prototype != entry.prototype) {

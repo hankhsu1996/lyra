@@ -48,6 +48,7 @@ auto DeclareStaticCell(
           },
           [&](const ClassStorage& cls) -> StaticStorageHome {
             return ClassCellHome{
+                .owner = cls.owner,
                 .property = cls.properties->Add(
                     mir::StaticPropertyDecl{
                         .name = std::move(name), .type = cell_type})};
@@ -138,8 +139,7 @@ auto BuildStaticStorageAccess(
                     mir::ReferenceExpr{
                         .target =
                             mir::StaticPropertyRef{
-                                .owner = frame.current_class_id,
-                                .prop = cls.property}},
+                                .owner = cls.owner, .prop = cls.property}},
                 .type = cell_type};
           },
           [&](const UnitCellHome& namespace_cell) {

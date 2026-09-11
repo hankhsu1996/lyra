@@ -10,6 +10,7 @@
 #include <vector>
 
 #include "lyra/backend/cpp/formatting.hpp"
+#include "lyra/backend/cpp/naming.hpp"
 #include "lyra/backend/cpp/render_call.hpp"
 #include "lyra/backend/cpp/render_stmt.hpp"
 #include "lyra/backend/cpp/render_type.hpp"
@@ -30,8 +31,8 @@ namespace {
 auto LookupLocalName(const ScopeView& view, const mir::LocalRef& ref)
     -> std::string {
   // Every local -- including `self` (`locals[0]`), which the method emit
-  // seeds from `this` -- renders as its declared name.
-  return view.Local(ref).name;
+  // seeds from `this` -- renders as its declared name spelled for this target.
+  return ToCppName(view.Local(ref).name);
 }
 
 // The C++ token for an operator this target applies to two values.
@@ -122,17 +123,17 @@ auto RenderCastExpr(
       RenderExpr(view, view.Expr(cast.operand)));
 }
 
-// The C++ name of a closure capture, distinct from the field's source name. A
+// The C++ name of a closure capture, which is not the field's source name. A
 // capture is realized as a lambda capture and shares the lambda's scope with
 // the closure's per-invocation parameters and body locals, so its name must not
 // collide with a parameter -- a nested clause may capture an enclosing iterator
 // whose source name matches this closure's own iterator parameter -- nor with
-// another capture of the same source name. The field id disambiguates: it is
-// unique within the closure and is a shape no source-level name carries. This
-// stays in the backend so the MIR field name remains the plain source name.
-auto ClosureCaptureCppName(const mir::ClosureDecl& decl, mir::FieldId field)
-    -> std::string {
-  return std::format("{}_c{}", decl.fields.Get(field).name, field.value);
+// another capture of the same source name. Its position in the closure is
+// unique within it and reaches no source name, so that is what it is minted
+// from. This stays in the backend so the MIR field name remains the plain
+// source name.
+auto ClosureCaptureCppName(mir::FieldId field) -> std::string {
+  return MintedCppName("capture", field.value);
 }
 
 auto RenderFieldAccessExpr(const ScopeView& view, const mir::FieldAccessExpr& m)
@@ -151,24 +152,24 @@ auto RenderFieldAccessExpr(const ScopeView& view, const mir::FieldAccessExpr& m)
             return through_receiver(
                 std::format(
                     "{}::{}", ToCppName(cls.name),
-                    cls.fields.Get(t.slot).name));
+                    ToCppName(cls.fields.Get(t.slot).name)));
           },
           [&](const mir::StructFieldTarget& t) -> std::string {
-            return through_receiver(
-                view.Unit().GetStruct(t.owner).fields.Get(t.slot).name);
+            return through_receiver(ToCppName(
+                view.Unit().GetStruct(t.owner).fields.Get(t.slot).name));
           },
           [&](const mir::ClosureFieldTarget& t) -> std::string {
             // A closure is emitted as a lambda whose captures are bindings of
             // the enclosing scope, so naming the capture is the whole access
             // and the receiver never appears.
-            return ClosureCaptureCppName(
-                view.Unit().GetClosure(t.owner), t.slot);
+            return ClosureCaptureCppName(t.slot);
           },
           [&](const mir::ExternalUnitObjectFieldTarget& t) -> std::string {
-            return through_receiver(view.Unit()
-                                        .external_unit_objects.Get(t.owner)
-                                        .fields.Get(t.slot)
-                                        .name);
+            return through_receiver(
+                ToCppName(view.Unit()
+                              .external_unit_objects.Get(t.owner)
+                              .fields.Get(t.slot)
+                              .name));
           },
           [&](const mir::CrossUnitClassFieldTarget& t) -> std::string {
             // The declaring unit's header pulls the property name into scope
@@ -185,7 +186,8 @@ auto RenderFieldAccessExpr(const ScopeView& view, const mir::FieldAccessExpr& m)
                   "RenderFieldAccessExpr: a property access names a slot no "
                   "consumed promise describes");
             }
-            return through_receiver(declaring->fields.Get(t.slot).name);
+            return through_receiver(
+                ToCppName(declaring->fields.Get(t.slot).name));
           }},
       m.field);
 }
@@ -207,13 +209,13 @@ auto RenderReferenceExpr(
             const mir::Class& cls = view.Class();
             return std::format(
                 "(&{}::{})", ToCppName(cls.name),
-                cls.abi_adapters.Get(fr.adapter).name);
+                CppAbiAdapterName(fr.adapter));
           },
           [&](const mir::StaticConstantRef& r) -> std::string {
             const mir::Class& cls = view.Class();
             return std::format(
                 "{}::{}", ToCppName(cls.name),
-                cls.static_constants.Get(r.constant).name);
+                CppStaticConstantName(r.constant));
           },
           [&](const mir::PackedTypeRef& r) -> std::string {
             return mir::PackedTypeDescriptionName(r.integral);
@@ -222,16 +224,16 @@ auto RenderReferenceExpr(
             const mir::Class& owner_cls = view.Unit().GetClass(r.owner);
             return std::format(
                 "{}::{}", ToCppName(owner_cls.name),
-                owner_cls.static_properties.Get(r.prop).name);
+                ToCppName(owner_cls.static_properties.Get(r.prop).name));
           },
           [&](const mir::ExternalUnitVariableRef& r) -> std::string {
             return std::format(
-                "{}::{}", ToCppName(r.unit_name), r.variable_name);
+                "{}::{}", ToCppName(r.unit_name), ToCppName(r.variable_name));
           },
           [&](const mir::ExternalStaticPropertyRef& r) -> std::string {
             return std::format(
                 "{}::{}::{}", ToCppName(r.unit_name), ToCppName(r.class_name),
-                r.property_name);
+                ToCppName(r.property_name));
           }},
       reference.target);
 }
@@ -278,7 +280,7 @@ auto RenderIncDecExpr(const ScopeView& view, const mir::IncDecExpr& inc)
 auto RenderBindingParamDecl(const ScopeView& view, const mir::LocalDecl& bind)
     -> std::string {
   return std::format(
-      "{} {}", RenderTypeAsCpp(view.Unit(), bind.type), bind.name);
+      "{} {}", RenderTypeAsCpp(view.Unit(), bind.type), ToCppName(bind.name));
 }
 
 // The value a construction supplies for one field. A field init names its
@@ -355,7 +357,7 @@ auto RenderClosureExpr(const ScopeView& view, const mir::ClosureExpr& construct)
       const mir::FieldDecl& field = decl.fields.Get(field_id);
       params_text += std::format(
           "{} {}", RenderTypeAsCpp(view.Unit(), field.type),
-          ClosureCaptureCppName(decl, field_id));
+          ClosureCaptureCppName(field_id));
       args_text += RenderExpr(
           view, view.Expr(FieldInitValue(construct.field_inits, field_id)));
       first = false;
@@ -369,7 +371,7 @@ auto RenderClosureExpr(const ScopeView& view, const mir::ClosureExpr& construct)
   for (const mir::FieldId field_id : decl.field_order) {
     if (!first_capture) captures_text += ", ";
     captures_text += std::format(
-        "{} = {}", ClosureCaptureCppName(decl, field_id),
+        "{} = {}", ClosureCaptureCppName(field_id),
         RenderExpr(
             view, view.Expr(FieldInitValue(construct.field_inits, field_id))));
     first_capture = false;

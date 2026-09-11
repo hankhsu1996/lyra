@@ -16,7 +16,7 @@
 #include "lyra/hir/subroutine_ref.hpp"
 #include "lyra/hir/type.hpp"
 #include "lyra/lowering/hir_to_mir/class_shape.hpp"
-#include "lyra/lowering/hir_to_mir/package_initialization.hpp"
+#include "lyra/lowering/hir_to_mir/namespace_storage_initialization.hpp"
 #include "lyra/mir/class_id.hpp"
 #include "lyra/mir/class_ref.hpp"
 #include "lyra/mir/compilation_unit.hpp"
@@ -64,7 +64,7 @@ class UnitLowerer {
   // resolves and passes in; the lowering only realizes it into cross-unit
   // calls, so this special input stays at the design-root boundary and never
   // reaches a source unit's lowering.
-  auto RunDesignRoot(PackageInitializationPlan package_init_plan)
+  auto RunDesignRoot(NamespaceStorageInitializationPlan namespace_storage_plan)
       -> diag::Result<mir::CompilationUnit>;
 
   // Lowers a unit that roots no object -- a package (LRM 26) or the `$unit`
@@ -287,7 +287,8 @@ class UnitLowerer {
   // empty for a source module and carries the design root's resolved plan (LRM
   // 26.2 / 10.5), which the root scope's Initialize phase realizes into
   // cross-unit install and initialize calls.
-  auto PopulateModuleRoot(PackageInitializationPlan package_init_plan)
+  auto PopulateModuleRoot(
+      NamespaceStorageInitializationPlan namespace_storage_plan)
       -> diag::Result<void>;
 
   // Everything one class declaration can be named by before it settles: its

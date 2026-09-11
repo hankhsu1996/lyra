@@ -3,7 +3,6 @@
 #include <algorithm>
 #include <cstddef>
 #include <cstdint>
-#include <format>
 #include <optional>
 #include <ranges>
 #include <span>
@@ -17,10 +16,10 @@
 #include "lyra/base/overloaded.hpp"
 #include "lyra/diag/diag_code.hpp"
 #include "lyra/diag/diagnostic.hpp"
-#include "lyra/lir/declaration_name.hpp"
 #include "lyra/lir/function.hpp"
 #include "lyra/lir/integral_constant.hpp"
 #include "lyra/lir/operator.hpp"
+#include "lyra/lir/symbol_name.hpp"
 #include "lyra/lir/type_builders.hpp"
 #include "lyra/lir/type_id.hpp"
 #include "lyra/lowering/mir_to_lir/unit_lowerer.hpp"
@@ -281,13 +280,12 @@ void CollectStorageLocals(
 }
 
 // A method of another unit's class is reached by the symbol that unit emits it
-// under, which is that class's linkage name and the method's own.
+// under, composed from the same three names that unit composed it from.
 auto ExternalMethodSymbol(
     std::string_view unit_name, std::string_view class_name,
     std::string_view method_name) -> lir::ForeignTarget {
   return lir::ForeignTarget{
-      .symbol = std::format(
-          "{}.{}", lir::ClassLinkageName(unit_name, class_name), method_name)};
+      .symbol = lir::MethodSymbol(unit_name, class_name, method_name)};
 }
 
 }  // namespace
@@ -325,13 +323,21 @@ auto FunctionLowerer::LowerCallTarget(
                       // unit and is reached by its symbol, which carries that
                       // unit because a namespace name is unique only inside it.
                       return lir::CallTarget{lir::ForeignTarget{
-                          .symbol = std::format(
-                              "{}.{}", t.unit_name, t.callable_name)}};
+                          .symbol = lir::NamespaceCallableSymbol(
+                              t.unit_name, t.callable_name)}};
                     },
                     [&](const mir::ExternalUnitClassMethodTarget& t)
                         -> diag::Result<lir::CallTarget> {
                       return lir::CallTarget{ExternalMethodSymbol(
                           t.unit_name, t.class_name, t.method_name)};
+                    },
+                    [&](const mir::ExternalUnitStorageTarget& t)
+                        -> diag::Result<lir::CallTarget> {
+                      // Neither entry answers to a name, so its symbol is
+                      // composed from the unit and which of the two it is --
+                      // the same parts the unit that defines it composes.
+                      return lir::CallTarget{lir::ForeignTarget{
+                          .symbol = StorageEntrySymbol(t.unit_name, t.phase)}};
                     }},
                 d.target);
           },
@@ -640,9 +646,8 @@ auto FunctionLowerer::ConstructorOf(const mir::ClassRef& cls)
                 .object_type = unit_->ExternalClassValueType(
                     ext.unit_name, ext.class_name),
                 .callee = lir::CallTarget{lir::ForeignTarget{
-                    .symbol = lir::ConstructorSymbolName(
-                        lir::ClassLinkageName(
-                            ext.unit_name, ext.class_name))}}};
+                    .symbol = lir::ConstructorSymbol(
+                        ext.unit_name, ext.class_name)}}};
           },
           [](const mir::RuntimeClassRef&) -> std::optional<EnteredConstructor> {
             return std::nullopt;
@@ -1517,6 +1522,20 @@ auto FunctionLowerer::ReferenceValue(
       target);
 }
 
+auto FunctionLowerer::SymbolPlace(std::string symbol, mir::TypeId type)
+    -> lir::Place {
+  return lir::Place{
+      .base =
+          lir::StaticRef{
+              .symbol = std::move(symbol),
+              .type = unit_->Types().Intern(
+                  lir::Type{lir::PointerType{
+                      .pointee = unit_->TranslateType(type),
+                      .ownership = lir::PointerOwnership::kBorrowed,
+                      .mutability = lir::Mutability::kMutable}})},
+      .chain = {lir::Projection{lir::DerefProjection{}}}};
+}
+
 auto FunctionLowerer::ReferencePlace(
     const mir::ReferenceTarget& target, mir::TypeId type)
     -> diag::Result<lir::Place> {
@@ -1543,43 +1562,42 @@ auto FunctionLowerer::ReferencePlace(
           // A variable of a unit's namespace is one cell for the whole program
           // that no instance holds, so it is reached by the symbol it links
           // under rather than through a receiver -- by the unit that declares
-          // it exactly as by any other, since a namespace has no instance. The
-          // symbol names the cell's address, so the place opens there and
-          // dereferences it, the same shape a member place has once its
-          // receiver is resolved.
+          // it exactly as by any other, since a namespace has no instance.
           [&](const mir::ExternalUnitVariableRef& ref)
               -> diag::Result<lir::Place> {
-            return lir::Place{
-                .base =
-                    lir::StaticRef{
-                        .symbol = StaticVariableSymbol(
-                            ref.unit_name, ref.variable_name),
-                        .type = unit_->Types().Intern(
-                            lir::Type{lir::PointerType{
-                                .pointee = unit_->TranslateType(type),
-                                .ownership = lir::PointerOwnership::kBorrowed,
-                                .mutability = lir::Mutability::kMutable}})},
-                .chain = {lir::Projection{lir::DerefProjection{}}}};
+            return SymbolPlace(
+                lir::NamespaceVariableSymbol(ref.unit_name, ref.variable_name),
+                type);
           },
-          // Each of the following does name storage, reached by a name rather
-          // than through a receiver, and what it lacks is the storage itself:
-          // nothing yet builds a cell for a class's type-associated
-          // declarations, so no symbol names one.
-          [](const mir::StaticConstantRef&) -> diag::Result<lir::Place> {
-            return Unsupported(
-                "mir_to_lir: a class's static constant is not yet reachable on "
-                "this backend");
+          // A cell a class owns rather than an object of it (LRM 8.9) is that
+          // same one cell for the whole program, so it is reached the same way
+          // and differs only in how far its name is qualified. The class the
+          // reference names is the one that declares the cell, however the
+          // source spelled it, so the symbol is settled without reading what
+          // any other class holds.
+          [&](const mir::StaticPropertyRef& ref) -> diag::Result<lir::Place> {
+            const mir::Class& cls = unit_->Mir().GetClass(ref.owner);
+            return SymbolPlace(
+                lir::StaticPropertySymbol(
+                    unit_->Mir().name, cls.name,
+                    cls.static_properties.Get(ref.prop).name),
+                type);
           },
-          [](const mir::StaticPropertyRef&) -> diag::Result<lir::Place> {
-            return Unsupported(
-                "mir_to_lir: a class's static property is not yet reachable on "
-                "this backend");
-          },
-          [](const mir::ExternalStaticPropertyRef&)
+          [&](const mir::ExternalStaticPropertyRef& ref)
               -> diag::Result<lir::Place> {
-            return Unsupported(
-                "mir_to_lir: a static property of a class another compilation "
-                "unit declares is not yet reachable on this backend");
+            return SymbolPlace(
+                lir::StaticPropertySymbol(
+                    ref.unit_name, ref.class_name, ref.property_name),
+                type);
+          },
+          // A class's static constant is a compile-time record the backend
+          // consumes directly rather than storage a body reaches, the same way
+          // the unit-definition record types are.
+          [](const mir::StaticConstantRef&) -> diag::Result<lir::Place> {
+            throw InternalError(
+                "mir_to_lir: a class's static constant is a compile-time "
+                "record consumed by the backend directly and names no place -- "
+                "please report this as a bug");
           },
           // A descriptor and a function are values the unit generates, not
           // storage anything writes through.

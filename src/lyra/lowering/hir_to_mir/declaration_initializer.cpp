@@ -15,8 +15,10 @@ namespace lyra::lowering::hir_to_mir {
 
 auto IntegrateStaticInitializer(
     ProcessLowerer& process, const hir::ProceduralBody& body,
-    const WalkFrame& install_frame, const WalkFrame& value_frame,
-    const StaticVarBinding& binding) -> diag::Result<void> {
+    const StorageBringUp& bring_up, const StaticVarBinding& binding)
+    -> diag::Result<void> {
+  const WalkFrame& install_frame = bring_up.install;
+  const WalkFrame& value_frame = bring_up.value;
   auto& value_block = *value_frame.current_block;
   mir::CompilationUnit& unit = process.Owner().Unit();
   const hir::ProceduralVarDecl& decl = body.procedural_vars.Get(binding.var);

@@ -25,6 +25,7 @@
 #include "lyra/mir/local.hpp"
 #include "lyra/mir/packed_type_descriptor.hpp"
 #include "lyra/mir/runtime_print.hpp"
+#include "lyra/mir/static_property_id.hpp"
 #include "lyra/mir/stmt.hpp"
 #include "lyra/mir/type.hpp"
 #include "lyra/mir/unary_op.hpp"
@@ -34,6 +35,16 @@
 namespace lyra::mir {
 
 namespace {
+
+// What a dump calls one body: the name its owner answers it by, or what it is
+// where nothing names it. A body the compiler synthesized has no name to print,
+// and printing its position is what a reader can match against the arena.
+auto CallableLabel(std::span<const NamedCallable> named, CallableId body)
+    -> std::string {
+  const std::optional<std::string_view> name = NameOf(named, body);
+  return name.has_value() ? std::string{*name}
+                          : std::format("<synthesized {}>", body.value);
+}
 
 auto FormatExprList(std::span<const ExprId> ids) -> std::string {
   std::string text;
@@ -64,8 +75,8 @@ class MirDumper {
     Dedent();
     Line("Class:");
     Indent();
-    if (unit.root.has_value()) {
-      DumpClass(*unit.root, unit.GetClass(*unit.root));
+    if (const RootedTree* tree = RootedTreeOf(unit)) {
+      DumpClass(tree->root, unit.GetClass(tree->root));
     }
     // The walk above descended the root's contained classes, so what is left
     // is every class no containment edge reaches -- one a handle reaches
@@ -85,7 +96,8 @@ class MirDumper {
       Line("Callables:");
       Indent();
       for (const CallableId id : unit.callables.Ids()) {
-        DumpCallable(unit.callables.Get(id), id.value);
+        DumpCallable(
+            unit.named_callables, id, unit.callables.Get(id), id.value);
       }
       Dedent();
     }
@@ -102,9 +114,6 @@ class MirDumper {
       Dedent();
     }
     Dedent();
-    if (unit.root_factory.has_value()) {
-      Line(std::format("RootFactory: Callable[{}]", unit.root_factory->value));
-    }
     if (unit.structs.size() > 0) {
       Line("Structs:");
       Indent();
@@ -191,7 +200,11 @@ class MirDumper {
                   "CrossUnit(\"{}::{}\")", e.unit_name, e.class_name);
             },
             [](const RuntimeClassRef& e) -> std::string {
-              return std::format("Runtime(\"{}\")", e.symbol);
+              return std::format(
+                  R"(Runtime("{}", resolve=Callable[{}], )"
+                  "initialize=Callable[{}], create=Callable[{}])",
+                  e.symbol, e.resolve_state.value, e.initialize_state.value,
+                  e.create_processes.value);
             }},
         ref);
   }
@@ -202,10 +215,9 @@ class MirDumper {
         Overloaded{
             [this](const LocalVirtualSlot& l) -> std::string {
               const auto& owner = unit_->GetClass(l.owner_class);
-              const auto& callable = owner.callables.Get(l.slot);
               return std::format(
                   "Class[{}].{}(Callable[{}])", l.owner_class.value,
-                  callable.name, l.slot.value);
+                  CallableLabel(owner.named_callables, l.slot), l.slot.value);
             },
             [](const ExternalVirtualSlot& e) -> std::string {
               return std::format(
@@ -538,10 +550,11 @@ class MirDumper {
             },
             [this](const OverridesIntraUnitSlot& o) -> std::string {
               const auto& owner = unit_->GetClass(o.slot_owner);
-              const auto& callable = owner.callables.Get(o.slot_id);
               return std::format(
                   "OverridesIntraUnitSlot[Class[{}].{}(Callable[{}])]",
-                  o.slot_owner.value, callable.name, o.slot_id.value);
+                  o.slot_owner.value,
+                  CallableLabel(owner.named_callables, o.slot_id),
+                  o.slot_id.value);
             },
             [](const OverridesExternalSlot& e) -> std::string {
               return std::format(
@@ -551,16 +564,26 @@ class MirDumper {
         role);
   }
 
+  [[nodiscard]] static auto FormatStoragePhase(NamespaceStoragePhase phase)
+      -> std::string_view {
+    switch (phase) {
+      case NamespaceStoragePhase::kInstall:
+        return "install";
+      case NamespaceStoragePhase::kInitialize:
+        return "initialize";
+    }
+    throw InternalError("mir dump: unknown namespace storage phase");
+  }
+
   [[nodiscard]] auto FormatDirectTarget(const DirectTarget& target) const
       -> std::string {
     return std::visit(
         Overloaded{
             [this](const CallableTarget& c) -> std::string {
-              const auto& callable =
-                  unit_->GetClass(c.owner).callables.Get(c.slot);
               return std::format(
                   R"(callable=Class[{}].{} "{}")", c.owner.value, c.slot.value,
-                  callable.name);
+                  CallableLabel(
+                      unit_->GetClass(c.owner).named_callables, c.slot));
             },
             [](const support::BuiltinFn& id) -> std::string {
               return std::format(
@@ -574,6 +597,11 @@ class MirDumper {
               return std::format(
                   "external_class_method={}::{}::{}", e.unit_name, e.class_name,
                   e.method_name);
+            },
+            [](const ExternalUnitStorageTarget& e) -> std::string {
+              return std::format(
+                  "external_unit_storage={}::{}", e.unit_name,
+                  FormatStoragePhase(e.phase));
             },
             [](const ForeignSymbolTarget& f) -> std::string {
               return std::format("foreign_symbol=\"{}\"", f.linkage_name);
@@ -840,10 +868,20 @@ class MirDumper {
     DumpFieldList(s.fields);
     Dedent();
 
+    Line("StaticProperties:");
+    Indent();
+    for (const StaticPropertyId id : s.static_properties.Ids()) {
+      const StaticPropertyDecl& p = s.static_properties.Get(id);
+      Line(
+          std::format(
+              R"([{}] "{}" : {})", id.value, p.name, FormatVarType(p.type)));
+    }
+    Dedent();
+
     Line("Callables:");
     Indent();
     for (const CallableId id : s.callables.Ids()) {
-      DumpCallable(s.callables.Get(id), id.value);
+      DumpCallable(s.named_callables, id, s.callables.Get(id), id.value);
     }
     Dedent();
 
@@ -854,8 +892,8 @@ class MirDumper {
         const StaticConstantDecl& c = s.static_constants.Get(id);
         Line(
             std::format(
-                R"([{}] "{}" : Type[{}] = Expr[{}])", id.value, c.name,
-                c.type.value, c.value.value));
+                "[{}] : Type[{}] = Expr[{}]", id.value, c.type.value,
+                c.value.value));
         Indent();
         DumpBlock(c.body);
         Dedent();
@@ -905,10 +943,12 @@ class MirDumper {
     Line(std::format(R"(ForeignLinkage: c_name="{}")", linkage.foreign_name));
   }
 
-  void DumpCallable(const CallableDecl& d, std::size_t index) {
+  void DumpCallable(
+      std::span<const NamedCallable> named, CallableId id,
+      const CallableDecl& d, std::size_t index) {
     Line(
         std::format(
-            R"([{}] "{}"{} : Type[{}])", index, d.name,
+            R"([{}] "{}"{} : Type[{}])", index, CallableLabel(named, id),
             d.code.body.has_value() ? "" : " declaration",
             d.code.result_type.value));
     Indent();
@@ -966,9 +1006,7 @@ class MirDumper {
   }
 
   void DumpAbiAdapter(const AbiAdapter& a, std::size_t index) {
-    Line(
-        std::format(
-            "[{}] \"{}\" : Type[{}]", index, a.name, a.code.result_type.value));
+    Line(std::format("[{}] : Type[{}]", index, a.code.result_type.value));
     Indent();
     for (std::size_t i = 0; i < a.code.params.size(); ++i) {
       const auto& param = a.code.locals.Get(a.code.params[i]);

@@ -79,7 +79,9 @@ auto DeclaredMembers(const CompilationUnit& unit, TypeId type)
           },
           [&](const ClosureType& closure) -> std::optional<MemberList> {
             const Closure& decl = unit.closures.Get(closure.closure_id);
-            return MemberList{.members = decl.captures, .owner = decl.name};
+            // A closure carries no name of its own, so what a reader can be
+            // told about a bad step is which kind of declaration it was on.
+            return MemberList{.members = decl.captures, .owner = "a closure"};
           },
           [&](const StructType& record) -> std::optional<MemberList> {
             const Struct& decl = unit.structs.Get(record.struct_id);

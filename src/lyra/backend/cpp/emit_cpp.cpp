@@ -7,10 +7,12 @@
 #include "lyra/backend/cpp/api.hpp"
 #include "lyra/backend/cpp/artifact.hpp"
 #include "lyra/backend/cpp/formatting.hpp"
+#include "lyra/backend/cpp/naming.hpp"
 #include "lyra/backend/cpp/render_decl.hpp"
 #include "lyra/backend/cpp/render_expr.hpp"
 #include "lyra/backend/cpp/render_type.hpp"
 #include "lyra/backend/cpp/scope_view.hpp"
+#include "lyra/base/internal_error.hpp"
 #include "lyra/mir/class.hpp"
 #include "lyra/mir/compilation_unit.hpp"
 #include "lyra/mir/packed_type_descriptor.hpp"
@@ -141,7 +143,11 @@ auto RenderUnitHeaderFile(const mir::CompilationUnit& unit) -> std::string {
 auto RenderHostMain(
     std::span<const mir::CompilationUnit> units,
     const mir::CompilationUnit& root) -> std::string {
-  const auto& root_class = root.GetClass(*root.root);
+  const mir::RootedTree* tree = mir::RootedTreeOf(root);
+  if (tree == nullptr) {
+    throw InternalError("backend::cpp: the design root roots no tree");
+  }
+  const mir::Class& root_class = root.GetClass(tree->root);
   std::string out;
   out += std::format("#include \"{}\"\n", support::kHostEntryHeader);
   for (const auto& unit : units) {

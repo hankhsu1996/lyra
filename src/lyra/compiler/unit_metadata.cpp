@@ -10,10 +10,11 @@ auto BuildUnitMetadata(const mir::CompilationUnit& unit)
   // Every scope of a unit runs at the unit's precision, which the unit states
   // through the class its object tree is rooted at. A namespace unit (LRM 26)
   // roots none and so has no scope to give a precision to.
-  if (!unit.root.has_value()) {
+  const mir::RootedTree* tree = mir::RootedTreeOf(unit);
+  if (tree == nullptr) {
     return ElaboratedUnitMetadata{};
   }
-  const mir::Class& root = unit.GetClass(*unit.root);
+  const mir::Class& root = unit.GetClass(tree->root);
   return ElaboratedUnitMetadata{
       .time_precision_power = root.time_resolution.precision_power};
 }

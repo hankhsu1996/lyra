@@ -22,7 +22,7 @@
 #include "lyra/hir/unit_signatures.hpp"
 #include "lyra/lir/verify.hpp"
 #include "lyra/lowering/hir_to_mir/callable_bindings.hpp"
-#include "lyra/lowering/hir_to_mir/package_initialization.hpp"
+#include "lyra/lowering/hir_to_mir/namespace_storage_initialization.hpp"
 #include "lyra/lowering/hir_to_mir/unit_lowerer.hpp"
 #include "lyra/lowering/mir_to_lir/lower.hpp"
 #include "lyra/mir/compilation_unit.hpp"
@@ -59,66 +59,67 @@ auto BuildDesignRootHir(
   return root;
 }
 
-// Post-order DFS emitting `name` after the packages its initializer reads (LRM
+// Post-order DFS emitting `name` after the units its initializers read (LRM
 // 26.2 / 10.5), so a dependency precedes its dependent. The LRM leaves the
 // relative order of initializers unspecified; this is a stable, best-effort
 // preference, not a correctness input -- every cell is installed with its
 // default before any initializer runs, so a missed or cyclic dependency only
 // means a read observes a default, never an uninstalled cell. Visiting `name`
 // before descending makes a cyclic dependency terminate with a deterministic
-// order rather than recur; each package's dependencies are walked in the
-// caller's stable name-sorted order, so the whole result is reproducible for a
-// given design. `covered` is the set this ordering ranges over, so a dependency
+// order rather than recur; each unit's dependencies are walked in the caller's
+// stable name-sorted order, so the whole result is reproducible for a given
+// design. `covered` is the set this ordering ranges over, so a dependency
 // outside it is skipped rather than placed.
-void OrderPackageInit(
+void OrderNamespaceUnit(
     const std::string& name,
     const std::unordered_map<std::string, std::vector<std::string>>&
-        package_deps,
+        initializer_reads,
     const std::unordered_set<std::string>& covered,
     std::unordered_set<std::string>& placed,
     std::vector<std::string>& ordered) {
   if (!placed.insert(name).second) {
     return;
   }
-  if (const auto it = package_deps.find(name); it != package_deps.end()) {
-    for (const std::string& dep : it->second) {
-      if (covered.contains(dep)) {
-        OrderPackageInit(dep, package_deps, covered, placed, ordered);
+  if (const auto it = initializer_reads.find(name);
+      it != initializer_reads.end()) {
+    for (const std::string& read : it->second) {
+      if (covered.contains(read)) {
+        OrderNamespaceUnit(read, initializer_reads, covered, placed, ordered);
       }
     }
   }
   ordered.push_back(name);
 }
 
-// Resolves the whole-design package initialization plan from the compiled
-// units. A package unit is the one that roots no object tree; every package
-// takes part in both phases, so nothing here asks what a given one supplied.
-// The install phase is order-independent, so a stable order serves; the
-// value-initialize phase prefers a package a given initializer reads directly
-// to come first, which the relative order of initializers does not require --
-// it is what makes one run's output match the next. The names are sorted first
-// so the result is deterministic for a given design.
-auto BuildPackageInitializationPlan(std::span<const mir::CompilationUnit> units)
-    -> lowering::hir_to_mir::PackageInitializationPlan {
-  std::unordered_map<std::string, std::vector<std::string>> package_reads;
-  lowering::hir_to_mir::PackageInitializationPlan plan;
+// Resolves the whole-design plan for bringing up what each unit's namespace
+// owns, from the compiled units. A namespace unit is one that states a
+// namespace to bring up; every one of them takes part in both phases, so
+// nothing here asks what a given one supplied. The order prefers a unit a
+// given initializer reads directly to come first, which the relative order of
+// initializers does not require -- it is what makes one run's output match the
+// next. The names are walked sorted so the result is deterministic for a given
+// design.
+auto BuildNamespaceStorageInitializationPlan(
+    std::span<const mir::CompilationUnit> units)
+    -> lowering::hir_to_mir::NamespaceStorageInitializationPlan {
+  std::unordered_map<std::string, std::vector<std::string>> initializer_reads;
+  std::vector<std::string> names;
   for (const mir::CompilationUnit& unit : units) {
-    if (unit.root.has_value()) {
+    if (mir::BroughtUpNamespaceOf(unit) == nullptr) {
       continue;
     }
-    plan.install_order.push_back(unit.name);
-    package_reads.emplace(unit.name, unit.direct_initializer_package_reads);
+    names.push_back(unit.name);
+    initializer_reads.emplace(unit.name, unit.direct_initializer_unit_reads);
   }
-  std::ranges::sort(plan.install_order);
+  std::ranges::sort(names);
 
-  // A read may name a package this design does not compile, so ordering ranges
+  // A read may name a unit this design does not compile, so ordering ranges
   // only over the ones it does.
-  const std::unordered_set<std::string> packages(
-      plan.install_order.begin(), plan.install_order.end());
+  const std::unordered_set<std::string> covered(names.begin(), names.end());
   std::unordered_set<std::string> placed;
-  for (const std::string& name : plan.install_order) {
-    OrderPackageInit(
-        name, package_reads, packages, placed, plan.value_initialize_order);
+  lowering::hir_to_mir::NamespaceStorageInitializationPlan plan;
+  for (const std::string& name : names) {
+    OrderNamespaceUnit(name, initializer_reads, covered, placed, plan.units);
   }
   return plan;
 }
@@ -242,7 +243,6 @@ void DefineExportSymbol(
 
   root.callables.Add(
       mir::CallableDecl{
-          .name = linkage.foreign_name,
           .code = std::move(code),
           .foreign = linkage,
           .virtual_dispatch = std::nullopt});
@@ -294,8 +294,8 @@ auto SynthesizeDesignRoot(
     -> diag::Result<DesignRootArtifacts> {
   const hir::CompilationUnit root_hir = BuildDesignRootHir(tops, signatures);
   lowering::hir_to_mir::UnitLowerer root_lowerer(root_hir, source_manager);
-  auto root_mir =
-      root_lowerer.RunDesignRoot(BuildPackageInitializationPlan(units));
+  auto root_mir = root_lowerer.RunDesignRoot(
+      BuildNamespaceStorageInitializationPlan(units));
   if (!root_mir) {
     return std::unexpected(std::move(root_mir.error()));
   }

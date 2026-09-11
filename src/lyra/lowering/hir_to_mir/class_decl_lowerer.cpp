@@ -20,7 +20,9 @@
 #include "lyra/lowering/hir_to_mir/declaration_initializer.hpp"
 #include "lyra/lowering/hir_to_mir/declared_scope.hpp"
 #include "lyra/lowering/hir_to_mir/default_value.hpp"
+#include "lyra/lowering/hir_to_mir/lhs_store.hpp"
 #include "lyra/lowering/hir_to_mir/process_lowerer.hpp"
+#include "lyra/lowering/hir_to_mir/runtime_call.hpp"
 #include "lyra/lowering/hir_to_mir/self_ref.hpp"
 #include "lyra/lowering/hir_to_mir/static_var_binding.hpp"
 #include "lyra/lowering/hir_to_mir/unit_lowerer.hpp"
@@ -34,6 +36,8 @@
 #include "lyra/mir/local.hpp"
 #include "lyra/mir/stmt.hpp"
 #include "lyra/mir/type.hpp"
+#include "lyra/mir/type_builders.hpp"
+#include "lyra/support/builtin_fn.hpp"
 
 namespace lyra::lowering::hir_to_mir {
 
@@ -96,48 +100,85 @@ auto CanonicalizeVirtualDispatch(
 }
 
 // One body of the class and the static-lifetime locals it declared, paired so
-// the design-init body can apply each initializer in the arena the expression
-// was written in.
+// the bring-up can apply each initializer in the arena the expression was
+// written in.
 struct BodyStatics {
   const hir::ProceduralBody* body;
   std::string_view name;
   std::span<const StaticVarBinding> statics;
 };
 
-// Lowers the class's design-init body (LRM 8.9 / 10.5): a receiver-less,
-// formal-less callable code the runtime invokes once at program startup,
-// before any initial or always procedure runs. Everything the class owns for
-// itself is brought up here. Each source-written static property initializer
-// lowers to an assignment to that property, in declaration order; a static
-// property without a source initializer takes its type's Table 7-1 default and
-// gets no statement here. A static-lifetime local of a body follows, its cell
-// being the class's for the same reason.
-auto LowerStaticInitInto(
+// Brings up the cells this class owns rather than an object of it (LRM 8.9),
+// into the bodies its owner brings its own storage up in (LRM 10.5). Which
+// owner that is was settled where the cells were declared; this only writes
+// where it was told.
+//
+// Every property's cell is installed with its declared representation and
+// default in the install phase, because the storage arrives with none. A
+// source-written value then stores through the cell in the value phase, and the
+// default case needs no statement there, being fully expressed by the
+// installation already. The value order is declaration order, because an
+// initializer may read a property declared before it. A static-lifetime local
+// of one of the class's bodies follows, its cell being the class's for the same
+// reason.
+auto LowerStaticStorageInto(
     UnitLowerer& unit_lowerer, const StructuralScopeLowerer* declaring_scope,
     const hir::ClassDecl& hir_class, const ClassShape& shape,
     const mir::Class& mir_class, const DeclaredScopes& scopes,
-    std::span<const BodyStatics> body_statics, const WalkFrame& frame)
+    std::span<const BodyStatics> body_statics, const StorageBringUp& bring_up)
     -> diag::Result<void> {
+  mir::CompilationUnit& unit = unit_lowerer.Unit();
+  const WalkFrame& frame = bring_up.value;
   mir::Block& block = *frame.current_block;
+  mir::Block& install_block = *bring_up.install.current_block;
   ProcessLowerer lowerer(
       unit_lowerer, declaring_scope, mir_class.time_resolution,
       hir_class.static_init, std::nullopt, "<static_init>", frame, scopes, {});
 
+  // Index the source-declared initializers by their target so the per-property
+  // loop reads each one in O(1): the source names only the properties it wrote,
+  // and the pass visits every property.
+  std::unordered_map<hir::StaticPropertyId, hir::ExprId> initializer_of;
+  initializer_of.reserve(hir_class.static_property_inits.size());
   for (const hir::StaticPropertyInit& init : hir_class.static_property_inits) {
-    const hir::Expr& hir_value = hir_class.static_init.exprs.Get(init.value);
-    auto value_or = lowerer.LowerExpr(hir_value, frame);
+    initializer_of.emplace(init.target, init.value);
+  }
+  for (const hir::StaticPropertyId prop_id :
+       hir_class.static_properties.Ids()) {
+    const hir::ClassStaticProperty& prop =
+        hir_class.static_properties.Get(prop_id);
+    const mir::TypeId prop_type = unit_lowerer.TranslateType(prop.type);
+    const mir::TypeId cell_type = mir::ObservableCellOf(unit.types, prop_type);
+    const StaticStorageHome& home =
+        shape.static_property_translation.Get(prop_id);
+
+    const mir::ExprId installed =
+        install_block.exprs.Add(BuildStaticStorageAccess(
+            unit, bring_up.install, home, cell_type, mir::EnclosingHops{}));
+    const mir::ExprId prototype = install_block.exprs.Add(
+        BuildDefaultValueFromHir(unit_lowerer, install_block, prop.type));
+    install_block.AppendStmt(
+        mir::ExprStmt{
+            .expr = install_block.exprs.Add(
+                mir::MakeCapabilityInstallCallExpr(
+                    installed, prototype, support::BuiltinFn::kInitialize,
+                    unit.builtins.void_type))});
+
+    const auto written = initializer_of.find(prop_id);
+    if (written == initializer_of.end()) {
+      continue;
+    }
+    auto value_or = lowerer.LowerExpr(
+        hir_class.static_init.exprs.Get(written->second), frame);
     if (!value_or) return std::unexpected(std::move(value_or.error()));
     const mir::ExprId value_id = block.exprs.Add(*std::move(value_or));
-
-    const StaticStorageHome& home =
-        shape.static_property_translation.Get(init.target);
-    const mir::TypeId prop_type = unit_lowerer.TranslateType(
-        hir_class.static_properties.Get(init.target).type);
     const mir::ExprId target = block.exprs.Add(BuildStaticStorageAccess(
-        unit_lowerer.Unit(), frame, home, prop_type, mir::EnclosingHops{}));
-    const mir::ExprId assign =
-        block.exprs.Add(mir::MakeAssignExpr(target, value_id, prop_type));
-    block.AppendStmt(mir::ExprStmt{.expr = assign});
+        unit, frame, home, cell_type, mir::EnclosingHops{}));
+    block.AppendStmt(
+        mir::ExprStmt{
+            .expr = block.exprs.Add(BuildStoreExpr(
+                unit, block, WriteTarget{.owner = target, .descent = {}},
+                value_id, std::nullopt, prop_type))});
   }
 
   // LRM 6.21 applies such an initializer once before any process starts, rather
@@ -150,7 +191,7 @@ auto LowerStaticInitInto(
         std::nullopt, std::string{body.name}, frame, scopes, body.statics);
     for (const StaticVarBinding& binding : body.statics) {
       auto integ = IntegrateStaticInitializer(
-          body_lowerer, *body.body, frame, frame, binding);
+          body_lowerer, *body.body, bring_up, binding);
       if (!integ) return std::unexpected(std::move(integ.error()));
     }
   }
@@ -263,10 +304,11 @@ auto ClassDeclLowerer::DeclareShape(ClassShape* declaring_shape)
   // its blocks invalidates all take the same answer, because the question is
   // the same one.
   const StaticStorageOwner class_storage =
-      declaring_shape != nullptr ? StaticStorageOwner{InstanceStorage{
-                                       .fields = &declaring_shape->fields}}
-                                 : StaticStorageOwner{ClassStorage{
-                                       .properties = &shape.static_properties}};
+      declaring_shape != nullptr
+          ? StaticStorageOwner{InstanceStorage{
+                .fields = &declaring_shape->fields}}
+          : StaticStorageOwner{ClassStorage{
+                .owner = class_id_, .properties = &shape.static_properties}};
 
   // A cell's name has to be unique in the pool that holds it. A callable name
   // and a declaration id are unique within one class; a structural scope's pool
@@ -277,13 +319,20 @@ auto ClassDeclLowerer::DeclareShape(ClassShape* declaring_shape)
   // Static properties (LRM 8.9) take their cells in declaration order, recorded
   // as the loop goes. That pool also takes what the class's bodies keep, so a
   // property's position in it is not its position in the source.
+  //
+  // Each is an observable cell. A static property needs no object, so a name
+  // outside every body of the class reaches it and a continuous assignment may
+  // take it as an operand and must re-evaluate when it changes (LRM 8.9,
+  // 10.3.2) -- the same test that makes a namespace variable a cell and leaves
+  // an instance property, reachable only through a receiver, a plain value.
   shape.static_property_translation =
       base::Translation<hir::StaticPropertyId, StaticStorageHome>{
           hir_class.static_properties.size()};
   for (const auto& sp : hir_class.static_properties) {
-    const mir::TypeId sp_type = unit_lowerer.TranslateType(sp.type);
+    const mir::TypeId cell_type = mir::ObservableCellOf(
+        unit_lowerer.Unit().types, unit_lowerer.TranslateType(sp.type));
     shape.static_property_translation.Append(
-        DeclareStaticCell(class_storage, cell_prefix + sp.name, sp_type));
+        DeclareStaticCell(class_storage, cell_prefix + sp.name, cell_type));
   }
 
   const auto bind_statics = [&](const hir::SubroutineDecl& decl,
@@ -348,7 +397,7 @@ auto ClassDeclLowerer::BodyFrame(
 }
 
 auto ClassDeclLowerer::PopulateBodies(
-    WalkFrame declaring_frame, WalkFrame declaring_init_frame)
+    WalkFrame declaring_frame, StorageBringUp owner_bring_up)
     -> diag::Result<void> {
   UnitLowerer& unit_lowerer = *owner_;
   const hir::ClassDecl& hir_class = *hir_class_;
@@ -495,6 +544,10 @@ auto ClassDeclLowerer::PopulateBodies(
   for (const hir::MethodId method_id : hir_class.methods.Ids()) {
     const auto& method = hir_class.methods.Get(method_id);
     const DeclaredCallable& declared = declared_methods_.Get(method_id);
+    // A method the source declared is what a name reaches, here and from
+    // another unit, so the class records the name against the body it reaches.
+    mir_class.named_callables.push_back(
+        mir::NamedCallable{.name = method.name, .body = declared.callable});
     const auto method_dispatch =
         shape.callable_signatures.Get(declared.callable).virtual_dispatch;
     if (method.is_prototype) {
@@ -525,10 +578,10 @@ auto ClassDeclLowerer::PopulateBodies(
       // method, and the deriving class supplies it.
       mir_class.callables.Define(
           declared.callable, mir::CallableDecl{
-                                 .name = method.name,
                                  .code = std::move(proto_code),
                                  .foreign = std::nullopt,
-                                 .virtual_dispatch = method_dispatch});
+                                 .virtual_dispatch = method_dispatch,
+                             });
       continue;
     }
     ScopeChainNode method_link{};
@@ -544,10 +597,10 @@ auto ClassDeclLowerer::PopulateBodies(
     }
     mir_class.callables.Define(
         declared.callable, mir::CallableDecl{
-                               .name = method.name,
                                .code = *std::move(method_code_or),
                                .foreign = std::nullopt,
-                               .virtual_dispatch = method_dispatch});
+                               .virtual_dispatch = method_dispatch,
+                           });
   }
 
   // The constructor body statements (LRM 8.7) run after base construction
@@ -579,35 +632,16 @@ auto ClassDeclLowerer::PopulateBodies(
 
   // The cells these initializers write go wherever what replicates the class
   // declaration puts them, so the statements go wherever that owner is brought
-  // up: a class a namespace unit declares owns its cells and brings them up in
-  // its own design-init body (LRM 10.5), and one a structural scope declares
-  // has them as fields of the instance, brought up where that instance brings
-  // up its own -- once per instance, still before any process runs.
-  if (declaring_scope_ != nullptr) {
-    if (auto r = LowerStaticInitInto(
-            unit_lowerer, declaring_scope_, hir_class, shape, mir_class,
-            scopes_, body_statics, declaring_init_frame);
-        !r) {
-      return std::unexpected(std::move(r.error()));
-    }
-  } else {
-    mir::CallableCode static_init = mir::CallableCode::Defined();
-    CallableBindings static_bindings(unit_lowerer.Unit(), static_init);
-    static_init.params = {};
-    static_init.result_type = unit_lowerer.Unit().builtins.void_type;
-    ScopeChainNode static_link{};
-    const WalkFrame static_frame =
-        WalkFrame{}
-            .WithClass(&mir_class, class_id_, static_link)
-            .WithBlock(&static_init.Body())
-            .WithBindings(&static_bindings);
-    if (auto r = LowerStaticInitInto(
-            unit_lowerer, nullptr, hir_class, shape, mir_class, scopes_,
-            body_statics, static_frame);
-        !r) {
-      return std::unexpected(std::move(r.error()));
-    }
-    mir_class.static_init = std::move(static_init);
+  // up: a class a structural scope declares has them as fields of the instance,
+  // brought up where that instance brings up its own, and one a namespace unit
+  // declares has them as its own, brought up where that namespace brings up the
+  // rest of what it owns. Either way once, and before any process runs (LRM
+  // 10.5).
+  if (auto r = LowerStaticStorageInto(
+          unit_lowerer, declaring_scope_, hir_class, shape, mir_class, scopes_,
+          body_statics, owner_bring_up);
+      !r) {
+    return std::unexpected(std::move(r.error()));
   }
 
   unit_lowerer.Unit().DefineClass(class_id_, std::move(mir_class));

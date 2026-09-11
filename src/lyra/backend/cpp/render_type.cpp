@@ -8,6 +8,7 @@
 #include <vector>
 
 #include "lyra/backend/cpp/formatting.hpp"
+#include "lyra/backend/cpp/naming.hpp"
 #include "lyra/base/internal_error.hpp"
 #include "lyra/base/overloaded.hpp"
 #include "lyra/mir/class.hpp"
@@ -148,7 +149,7 @@ auto RenderTypeAsCpp(const mir::CompilationUnit& unit, mir::TypeId type_id)
             return ToCppName(unit.GetClass(o.class_id).name);
           },
           [&unit](const mir::StructType& s) -> std::string {
-            return unit.GetStruct(s.struct_id).name;
+            return ToCppName(unit.GetStruct(s.struct_id).name);
           },
           [&unit](const mir::ExternalUnitObjectType& e) -> std::string {
             // A unit's emitted peer is a namespace, and the class it publishes

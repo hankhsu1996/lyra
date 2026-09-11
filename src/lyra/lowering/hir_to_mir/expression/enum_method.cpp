@@ -173,7 +173,6 @@ auto SynthesizeEnumNameCallable(
 
   return owner.callables.Add(
       mir::CallableDecl{
-          .name = std::format("__enum_name_{}", enum_ty.value),
           .code = std::move(code),
           .foreign = std::nullopt,
           .virtual_dispatch = std::nullopt});
@@ -263,7 +262,6 @@ auto SynthesizeEnumStepCallable(
 
   return owner.callables.Add(
       mir::CallableDecl{
-          .name = std::format("__enum_step_{}", enum_ty.value),
           .code = std::move(code),
           .foreign = std::nullopt,
           .virtual_dispatch = std::nullopt});

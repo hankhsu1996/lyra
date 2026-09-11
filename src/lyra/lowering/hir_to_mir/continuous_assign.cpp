@@ -191,7 +191,6 @@ auto LowerContinuousAssign(
   code.params = {self_id};
   code.result_type = unit.builtins.coroutine_void;
   return mir::CallableDecl{
-      .name = std::move(name),
       .code = std::move(code),
       .foreign = std::nullopt,
       .virtual_dispatch = std::nullopt};

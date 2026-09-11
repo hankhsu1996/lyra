@@ -87,12 +87,10 @@ The C++ backend renders each form in its natural idiom:
 
 Every callable body lowers to a static function over the explicit receiver `self`. The callables an
 engine or the C++ language reaches through an instance entry -- the C++ constructor (instance
-creation requires a real constructor), the post-construction lifecycle hooks (`ResolveState` /
-`InitializeState`), and `CreateProcesses` -- keep that uniform static body and add a thin non-static
-shim that forwards to it: the constructor runs `init(this)`, a lifecycle override runs
-`ResolveState(this)`. C++'s implicit `this` appears only in these dispatch shims, as the argument to
-the static body, never inside a body. The shims are C++ plumbing, not SV-derived callables, and are
-not MIR-modeled.
+creation requires a real constructor) and the post-construction lifecycle bodies -- keep that
+uniform static body and add a thin entry that forwards to it, supplying the receiver the entry was
+handed. C++'s implicit `this` appears only in those entries, as the argument to the static body,
+never inside a body. They are plumbing for reaching a body from outside, not SV-derived callables.
 
 ### Child-instance construction receiver triple
 
@@ -211,9 +209,9 @@ binding pushes the answer up to one place that every backend just reads.
   override runs `<name>(this)`. Closures emit as
   `[self = <enclosing self expr>, cap1 = ..., cap2 = <reference value>](closure_params) -> R { ... }`
   -- every capture is name-explicit and by-value; an alias capture binds a reference value, never a
-  C++ `[&]` reference (see `docs/architecture/callable.md` for why). `CreateProcesses()` adapts:
-  where it previously emitted `AddProcess(kind, process_N())` it now emits
-  `AddProcess(kind, process_N(this))`.
+  C++ `[&]` reference (see `docs/architecture/callable.md` for why). The body that creates a scope's
+  processes registers each one over the receiver it was handed, the same way every other body
+  reaches its own.
 
 - LIR / LLVM-IR lowering reads the `self` binding directly off MIR. No backend re-derives receiver
   semantics.

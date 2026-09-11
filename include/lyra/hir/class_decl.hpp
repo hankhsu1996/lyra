@@ -58,11 +58,10 @@ struct FieldInit {
 };
 
 // A source-written static property initializer (LRM 8.9 / 10.5): the
-// assignment that runs once at design init, before any initial or always
-// procedure, on the static property named by `target`. Distinct from
-// `FieldInit` because the timing is class-level program startup, not
-// per-instance construction. `value` lives in the class's `static_init`
-// body arena, an arena separate from the constructor body's, because the
+// assignment that runs once before any initial or always procedure, on the
+// static property named by `target`. Distinct from `FieldInit` because it runs
+// once for the cell rather than once per instance constructed. `value` lives in
+// the arena below, separate from the constructor body's, because the
 // initializer cannot read a per-instance formal or self and must not share
 // the constructor body's expression identities.
 struct StaticPropertyInit {
@@ -146,11 +145,13 @@ struct BaseCall {
 // (LRM 8.9), not instance members. Inherited static properties are reached
 // through the base's registry entry, same as inherited instance fields.
 //
-// `static_init` is the class-level design-init body (LRM 10.5): the arena
-// hosting each static property's initializer expression tree, kept separate
-// from the constructor body because the initializer runs once at program
-// startup, not per instance construction. It is a bare `ProceduralBody` --
-// no `self`, no receiver -- because the code carries no per-instance context.
+// `static_init` is the arena hosting each static property's initializer
+// expression tree (LRM 10.5), kept separate from the constructor body because
+// such an initializer runs once for the cell rather than once per instance
+// constructed. It is a bare `ProceduralBody` -- no `self`, no receiver --
+// because the code carries no per-instance context. Where those expressions
+// run is not stated here: it follows what replicates the class declaration,
+// which is the declaring scope's to answer.
 //
 // `static_property_inits` pairs each source-written `= value` initializer
 // with its static property in source order; expressions live in

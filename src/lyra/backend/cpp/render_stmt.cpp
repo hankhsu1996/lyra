@@ -7,6 +7,7 @@
 #include <vector>
 
 #include "lyra/backend/cpp/formatting.hpp"
+#include "lyra/backend/cpp/naming.hpp"
 #include "lyra/backend/cpp/render_expr.hpp"
 #include "lyra/backend/cpp/render_type.hpp"
 #include "lyra/backend/cpp/scope_view.hpp"
@@ -29,7 +30,8 @@ auto RenderForInit(const ScopeView& view, const mir::ForInit& init)
             const auto& lv = view.Code().locals.Get(d.induction_var);
             const auto& init_expr = view.Block().exprs.Get(d.init);
             return std::format(
-                "auto {} = {}", lv.name, RenderExpr(view, init_expr));
+                "auto {} = {}", ToCppName(lv.name),
+                RenderExpr(view, init_expr));
           },
           [&](const mir::ForInitExpr& e) -> std::string {
             const auto& expr = view.Block().exprs.Get(e.expr);
@@ -46,7 +48,7 @@ auto RenderLocalDeclStmt(
   const auto& init_expr = view.Block().exprs.Get(s.init);
   return std::format(
       "{}{} {} = {};\n", Indent(indent), RenderTypeAsCpp(view.Unit(), lv.type),
-      lv.name, RenderExpr(view, init_expr));
+      ToCppName(lv.name), RenderExpr(view, init_expr));
 }
 
 auto RenderExprStmt(
@@ -76,7 +78,7 @@ auto RenderTryStmt(
   result += RenderNestedBlock(view, body, indent + 1);
   result += std::format(
       "{}}} catch ({}& {}) {{\n", Indent(indent),
-      RenderTypeAsCpp(view.Unit(), caught.type), caught.name);
+      RenderTypeAsCpp(view.Unit(), caught.type), ToCppName(caught.name));
   result += RenderNestedBlock(view, handler, indent + 1);
   result += std::format("{}}}\n", Indent(indent));
   return result;

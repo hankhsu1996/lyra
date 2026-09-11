@@ -1,10 +1,13 @@
 #pragma once
 
 #include <optional>
+#include <span>
 #include <string>
+#include <string_view>
 #include <variant>
 
 #include "lyra/mir/callable_code.hpp"
+#include "lyra/mir/callable_id.hpp"
 #include "lyra/mir/class_ref.hpp"
 #include "lyra/mir/foreign_linkage.hpp"
 
@@ -41,19 +44,42 @@ namespace lyra::mir {
 // own `local` / `protected` (LRM 8.9) is a source-declared, three-valued fact
 // over members of every kind, which is a different thing than a callable-only
 // flag.
+// A callable carries no name. Its identity is the position its declaration
+// sits at, which every callable has and which is already what an intra-unit
+// reference names; being reachable by a name is a separate relation, held by
+// whatever answers that name (`NamedCallable` below). A body the source never
+// wrote simply does not take part in it, rather than taking part with nothing
+// in the slot -- and it needs no name of the compiler's own, which is as well,
+// since a SystemVerilog identifier admits every printable character but white
+// space (LRM 5.6.1) and so leaves no spelling reserved to mint one from.
 struct CallableDecl {
-  std::string name;
   CallableCode code;
   std::optional<ForeignLinkage> foreign;
   std::optional<VirtualDispatchRole> virtual_dispatch;
-
-  // The name the emitted symbol is reached by. A foreign callable's linkage
-  // name is program-global and independent of the SV name it was declared under
-  // (LRM 35.4); every other callable is reached by its declared name.
-  [[nodiscard]] auto LinkedName() const -> const std::string& {
-    return foreign.has_value() ? foreign->foreign_name : name;
-  }
 };
+
+// One entry of the relation between a name space and the bodies it answers: the
+// identifier written in the source, and the body it reaches. A class's methods
+// and a namespace's subroutines are each such a relation, held by the class or
+// the unit rather than by the bodies, so the bodies nothing names carry
+// nothing.
+struct NamedCallable {
+  std::string name;
+  CallableId body;
+};
+
+// The identifier `body` answers to among `named`, or nothing where nothing
+// names it. Answering nothing is the answer, not a case to work around.
+[[nodiscard]] inline auto NameOf(
+    std::span<const NamedCallable> named, CallableId body)
+    -> std::optional<std::string_view> {
+  for (const NamedCallable& entry : named) {
+    if (entry.body == body) {
+      return std::string_view{entry.name};
+    }
+  }
+  return std::nullopt;
+}
 
 // The lifecycle entries the runtime drives are reached through the definition
 // itself and answer to no name.
@@ -80,17 +106,22 @@ struct SubroutineEntry {
 using AbiAdapterPublication =
     std::variant<UnpublishedEntry, ForeignLinkage, SubroutineEntry>;
 
-// A named class-owned callable whose identity is a plain function pointer the
-// runtime library holds and calls back through -- the shape a lifecycle hook
-// taking the scope it runs on requires, and the shape a name answered at
-// elaboration hands back. Structurally a distinct callable species from
-// `CallableDecl`: its receiver is an explicit parameter (never bound
-// implicitly), it participates in no dispatch table, and it is never named as a
-// callee, only reached as a code address. A backend renders it in the target
-// language's function-pointer-compatible form, which is not the form an
-// instance method takes.
+// A class-owned callable whose identity is a plain function pointer the runtime
+// library holds and calls back through -- the shape a lifecycle hook taking the
+// scope it runs on requires, and the shape a name answered at elaboration hands
+// back. Structurally a distinct callable species from `CallableDecl`: its
+// receiver is an explicit parameter (never bound implicitly), it participates
+// in no dispatch table, and it is never named as a callee, only reached as a
+// code address. A backend renders it in the target language's
+// function-pointer-compatible form, which is not the form an instance method
+// takes.
+//
+// Its position in the class's own arena is the whole of its identity; what it
+// is spelled as in a target language is that target's to mint. The name it
+// answers to elsewhere -- a hierarchical name, or the DPI-C name space -- is
+// `published`, which says which name space holds it rather than what it is
+// called here.
 struct AbiAdapter {
-  std::string name;
   CallableCode code;
   AbiAdapterPublication published;
 };

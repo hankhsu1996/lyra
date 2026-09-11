@@ -18,19 +18,19 @@
 #include "lyra/mir/class_ref.hpp"
 #include "lyra/mir/closure_id.hpp"
 #include "lyra/mir/compilation_unit.hpp"
+#include "lyra/mir/namespace_storage_phase.hpp"
 #include "lyra/mir/type.hpp"
 #include "lyra/mir/type_id.hpp"
 
 namespace lyra::lowering::mir_to_lir {
 
-// The symbol a unit's namespace-level storage is linked under. A namespace
-// name is unique only inside the unit that declares it while the whole program
-// links into one name space, so the unit qualifies it. Both ends compose the
-// string here: the unit that defines the storage from its own name, and a unit
-// that reads it from the name its reference carries -- one rule, so the two
-// agree with no shared table.
-auto StaticVariableSymbol(
-    std::string_view unit_name, std::string_view variable_name) -> std::string;
+// The symbol one of the two bodies bringing up a unit's namespace is emitted
+// and linked under. It is composed from the unit and which of the two it is,
+// never from a name, so the unit that defines it and the design root that calls
+// it arrive at the same string with nothing shared between them.
+[[nodiscard]] auto StorageEntrySymbol(
+    std::string_view unit_name, mir::NamespaceStoragePhase phase)
+    -> std::string;
 
 // Per-unit lowerer for the MIR-to-LIR pass. Reads the source MIR, owns the
 // in-progress LIR unit, and memoizes type translation so each distinct MIR type
@@ -185,20 +185,17 @@ class UnitLowerer {
       const std::optional<lir::FunctionId>& body)
       -> std::optional<lir::DispatchTakeover>;
 
-  // The symbol a callable of this unit's namespace is emitted and linked under.
-  [[nodiscard]] auto UnitCallableSymbol(const mir::CallableDecl& callable) const
+  // The symbol a callable of this unit's namespace is emitted and linked under,
+  // which is whatever reaches it from outside the unit, composed for the
+  // linker.
+  [[nodiscard]] auto UnitCallableSymbol(mir::CallableId id) const
       -> std::string;
 
-  // The symbol a class of this unit is emitted and linked under, and the
-  // qualifier its bodies take.
-  [[nodiscard]] auto ClassSymbol(const mir::Class& cls) const -> std::string;
-
-  // The symbol a closure of this unit is emitted and linked under, and the
-  // qualifier its invoke takes.
-  [[nodiscard]] auto ClosureSymbol(mir::ClosureId closure) const -> std::string;
-
-  // The symbol a struct of this unit is emitted and linked under.
-  [[nodiscard]] auto StructSymbol(mir::StructId record) const -> std::string;
+  // The symbol one body of `cls` is emitted and linked under. Which body it is
+  // decides that: a body the source declared is reached by its name, and one
+  // the compiler synthesized by which body it is.
+  [[nodiscard]] auto ClassBodySymbol(
+      const mir::Class& cls, mir::CallableId id) const -> std::string;
 
   auto TranslateType(const mir::Type& ty) -> lir::Type;
   // The LIR mirror of a runtime-library record type. MIR is written once for
@@ -214,7 +211,8 @@ class UnitLowerer {
       -> lir::ExternalUnitObject;
   auto LowerClass(mir::ClassId owner, const mir::Class& cls)
       -> diag::Result<lir::Class>;
-  auto LowerBase(const mir::ClassRef& base) const -> lir::Base;
+  auto LowerBase(mir::ClassId owner, const mir::ClassRef& base) const
+      -> lir::Base;
 
   const mir::CompilationUnit* mir_;
   lir::CompilationUnit out_;

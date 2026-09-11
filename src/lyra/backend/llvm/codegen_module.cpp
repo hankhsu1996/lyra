@@ -17,8 +17,8 @@
 #include "lyra/base/internal_error.hpp"
 #include "lyra/diag/diag_code.hpp"
 #include "lyra/lir/compilation_unit.hpp"
-#include "lyra/lir/declaration_name.hpp"
 #include "lyra/lir/function.hpp"
+#include "lyra/lir/symbol_name.hpp"
 #include "lyra/lir/type.hpp"
 
 namespace lyra::backend::llvm_backend {
@@ -82,8 +82,8 @@ auto CodeGenModule::UnitFunction(lir::FunctionId function) -> llvm::Function* {
 
 auto CodeGenModule::DefinitionRef(lir::TypeId type)
     -> diag::Result<llvm::Constant*> {
-  const std::optional<std::string> name = lir::DeclarationName(*unit_, type);
-  if (!name.has_value()) {
+  const std::optional<std::string> symbol = lir::DefinitionSymbol(*unit_, type);
+  if (!symbol.has_value()) {
     return diag::Fail(
         diag::DiagCode::kUnsupportedExpressionForm,
         std::format(
@@ -94,8 +94,7 @@ auto CodeGenModule::DefinitionRef(lir::TypeId type)
   // The definition is opaque to generated code, which only forwards its
   // address; an i8 placeholder gives the external symbol a type without
   // encoding the runtime struct's layout.
-  return module_->getOrInsertGlobal(
-      DefinitionSymbolName(*name), llvm::Type::getInt8Ty(*context_));
+  return module_->getOrInsertGlobal(*symbol, llvm::Type::getInt8Ty(*context_));
 }
 
 auto CodeGenModule::PackedTypeCell(lir::TypeId integral)
