@@ -13,6 +13,7 @@
 #include <slang/ast/SemanticFacts.h>
 #include <slang/ast/Symbol.h>
 #include <slang/ast/expressions/MiscExpressions.h>
+#include <slang/ast/expressions/OperatorExpressions.h>
 #include <slang/ast/expressions/SelectExpressions.h>
 #include <slang/ast/symbols/InstanceSymbols.h>
 #include <slang/ast/symbols/MemberSymbols.h>
@@ -553,14 +554,51 @@ auto UnitLowerer::PublishSignature() -> diag::Result<void> {
       if (!id) return std::unexpected(std::move(id.error()));
     }
 
-    // A modport is a named view of what the interface publishes (LRM 25.5), and
-    // each name it offers stands for an expression this interface evaluates
-    // (LRM 25.5.4) -- an item's own name where the view wrote none. Reading the
-    // name is that expression evaluated and writing it is that expression
-    // assigned to, so what the view promises is the pair of subroutines
-    // carrying those out: the expression names declarations of this interface
-    // and would mean nothing where the signature is read, while a callable
-    // crosses as any other does.
+    // The storage a name the view admits a write to designates. LRM 25.5.4
+    // sends what such a name may be to LRM 23.3.3, where a connection is a
+    // continuous assignment and its sink is an lvalue, so the expression always
+    // designates storage. A concatenation joins several declarations under one
+    // name, which LRM 23.2.2.1 orders most significant first; a designator is
+    // that shape with one part.
+    const auto publish_designated_parts =
+        [&](const slang::ast::Expression& written, diag::SourceSpan span)
+        -> diag::Result<std::vector<hir::MemberProjection>> {
+      std::vector<const slang::ast::Expression*> written_parts;
+      if (const auto* joined =
+              written.as_if<slang::ast::ConcatenationExpression>()) {
+        for (const auto* operand : joined->operands()) {
+          written_parts.push_back(operand);
+        }
+      } else {
+        written_parts.push_back(&written);
+      }
+      std::vector<hir::MemberProjection> parts;
+      parts.reserve(written_parts.size());
+      for (const auto* written_part : written_parts) {
+        const auto peeled = PeelPortExpression(*written_part);
+        if (!peeled.has_value()) {
+          return diag::Fail(
+              span, diag::DiagCode::kUnsupportedStructuralMember,
+              "a view naming this part of one of its interface's declarations "
+              "is not yet supported");
+        }
+        auto id = publish_member(*peeled->base);
+        if (!id) return std::unexpected(std::move(id.error()));
+        auto path = publish_path(peeled->steps, span);
+        if (!path) return std::unexpected(std::move(path.error()));
+        parts.push_back(
+            hir::MemberProjection{.member = *id, .path = *std::move(path)});
+      }
+      return parts;
+    };
+
+    // A modport is a named view of what the interface publishes (LRM 25.5).
+    // What a view promises is only the names it defines: an item written as a
+    // plain identifier is the interface's own item serving twice (LRM 25.5.4),
+    // already on the member list, and reached there. For a name the view wrote
+    // an expression for, what it promises is decided by the direction it
+    // declared, which is why no direction is on this signature -- a referrer
+    // never asks which way the name runs, it asks what the name is.
     const auto publish_modport_port =
         [&](std::string_view modport_name,
             const slang::ast::ModportPortSymbol& port)
@@ -568,37 +606,33 @@ auto UnitLowerer::PublishSignature() -> diag::Result<void> {
       const auto span = SourceMapper().PointSpanOf(port.location);
       const auto* connection = port.getConnectionExpr();
       if (connection == nullptr) {
-        return diag::Fail(
-            span, diag::DiagCode::kUnsupportedStructuralMember,
-            "a view offering a name that reaches nothing inside its interface "
-            "is not yet supported");
+        throw InternalError(
+            "PublishSignature: a name the view defines is the expression it "
+            "was written with");
       }
       auto interned = InternType(*connection->type, span);
       if (!interned) return std::unexpected(std::move(interned.error()));
-      const hir::TypeId crossing = publish_type(*interned);
-      const ModportAccessors accessors = ModportAccessorsOf(port);
-      const hir::PublishedCallableId getter = instance_class.callables.Add(
+      if (port.direction != slang::ast::ArgumentDirection::In) {
+        auto parts = publish_designated_parts(*connection, span);
+        if (!parts) return std::unexpected(std::move(parts.error()));
+        return hir::PublishedModportPort{
+            .name = std::string{port.name},
+            .meaning = hir::ViewDefinedPlace{
+                .parts = *std::move(parts), .type = publish_type(*interned)}};
+      }
+
+      // Nothing bounds a name offered only for reading to an lvalue, so what
+      // crosses is the subroutine this interface evaluates it in.
+      const hir::PublishedCallableId evaluate = instance_class.callables.Add(
           hir::PublishedCallable{
               .name = ModportReadName(modport_name, port.name),
               .kind = hir::SubroutineKind::kFunction,
-              .result_type = crossing,
+              .result_type = publish_type(*interned),
               .params = {}});
-      std::optional<hir::PublishedCallableId> setter;
-      if (accessors.setter.has_value()) {
-        setter = instance_class.callables.Add(
-            hir::PublishedCallable{
-                .name = ModportWriteName(modport_name, port.name),
-                .kind = hir::SubroutineKind::kFunction,
-                .result_type = publish_type(
-                    unit_.types.Intern(hir::Type{hir::VoidType{}})),
-                .params = {hir::ExternalCalleeParam{
-                    .direction = hir::ParamDirection::kInput,
-                    .type = crossing}}});
-      }
       // What the expression reads, which is what a process waiting on the name
       // observes. LRM 25.5 confines those names to this interface's own
       // declarations, so each is already a member it publishes.
-      std::vector<hir::PublishedMemberId> reads;
+      std::vector<hir::PublishedMemberId> observes;
       diag::Result<void> read_failure;
       connection->visitSymbolReferences(
           [&](const slang::ast::Expression&, const slang::ast::Symbol& symbol) {
@@ -608,16 +642,15 @@ auto UnitLowerer::PublishSignature() -> diag::Result<void> {
               read_failure = std::unexpected(std::move(id.error()));
               return;
             }
-            if (!std::ranges::contains(reads, *id)) reads.push_back(*id);
+            if (!std::ranges::contains(observes, *id)) observes.push_back(*id);
           });
       if (!read_failure) {
         return std::unexpected(std::move(read_failure.error()));
       }
       return hir::PublishedModportPort{
           .name = std::string{port.name},
-          .getter = getter,
-          .setter = setter,
-          .reads = std::move(reads)};
+          .meaning = hir::ViewComputedValue{
+              .evaluate = evaluate, .observes = std::move(observes)}};
     };
 
     for (const auto& member : scope_->members()) {
@@ -627,7 +660,7 @@ auto UnitLowerer::PublishSignature() -> diag::Result<void> {
           .name = std::string{modport->name}, .ports = {}};
       for (const auto& item : modport->members()) {
         const auto* port = item.as_if<slang::ast::ModportPortSymbol>();
-        if (port == nullptr) continue;
+        if (port == nullptr || !ViewDefinesTheName(*port)) continue;
         auto published_port = publish_modport_port(modport->name, *port);
         if (!published_port) {
           return std::unexpected(std::move(published_port.error()));

@@ -183,25 +183,33 @@ B  The interface port
       reached: the handle and the route are the modport-free ones. A port with no modport selected
       reaches every net and variable in the interface with direction `inout` or `ref`.
 - [x] C2 -- A modport expression gives a port identifier its own meaning inside the interface (LRM
-      25.5.4): an element, a part-select, a concatenation, an assignment pattern, or a constant. The
-      identifier names an expression the interface evaluates, which is one concept rather than a set
-      of kinds -- a plain identifier is that expression being the item's own name. Reading the
-      identifier evaluates that expression and writing it assigns to it, so the interface publishes
-      the two subroutines carrying those out and a module written against the view reaches the name
-      by calling them. Port identifiers live in their own name space per modport, so one name
-      carries a different meaning per view and a module written once against it acts on whichever
-      the view it was bound through named.
+      25.5.4): an element, a part-select, a concatenation, or a constant. Port identifiers live in
+      their own name space per modport, so one name carries a different meaning per view and a
+      module written once against it acts on whichever the view it was bound through named.
 
-      The expression is lowered in the interface, where its names resolve, so no form of it needs
-      recognizing at the referrer and none is folded: a designator, a constant, a concatenation and
-      an expression over the interface's members all reach a module the same way. A process waiting
-      on such a name waits on every member the expression reads, which the interface publishes
-      alongside it, so a computed name re-evaluates exactly when a plain one does.
+      What such a name is follows from the direction the view declared, because the language ties
+      the two: a name the view admits a write to must resolve to a legal expression for the type of
+      module port (LRM 25.5.4, 23.3.3), so it designates storage, while one offered only for reading
+      may be any expression over the interface's declarations. So a writable name is published as
+      the storage it designates -- one part per declaration it joins, most significant first -- and a
+      read-only one as the subroutine the interface evaluates it in, together with the members that
+      expression reads so a process waiting on it re-evaluates exactly when a plain name does. An
+      identifier the view wrote no expression for is the interface's own item serving twice and is
+      published as nothing at all: it is already on the member list, and a referrer reaches it there
+      exactly as it reaches a name on an unrestricted port.
 
-      A view offering a name that reaches nothing inside its interface is legal and is rejected with
-      a clean diagnostic, as is a compound or nonblocking assignment to such a name, and waiting on
-      a name whose view the reading scope carries on more than one of its own ports -- a read states
-      no path, so which port it came through is not recoverable there.
+      A writable name therefore reaches a module as an ordinary place, so every assignment form the
+      language allows for the storage behind it works: blocking, compound, increment, a part-select
+      target, an intra-assignment delay, a nonblocking update, a continuous assignment, and a
+      procedural continuous assignment. The expression itself is never recognized at the referrer
+      and no form of it is folded.
+
+      A view offering a name that reaches nothing inside its interface is legal and is refused where
+      the name is used rather than where the view is declared, so an interface declaring one still
+      compiles. Waiting on a name whose view the reading scope carries on more than one of its own
+      ports is refused -- a read states no path, so which port it came through is not recoverable
+      there. Taking over part of a target with `force` is refused for any target, not only one a
+      view names.
 
 ### Stage D -- Subroutines across the boundary
 
@@ -282,8 +290,13 @@ asymmetry is the whole of what separates the two.
   already one published point each. What is open is whether the ANSI form is the same shape read
   differently by the front end, or a port whose sink is genuinely several places at once -- and a
   port's sink is where the answer has to come from, since a port connection is an assignment (LRM
-  23.3.3). Nothing is open on the modport side, where a name stands for an expression whatever shape
-  that expression takes.
+  23.3.3).
+
+  The modport side of that question is answered, and it answers toward the second reading: a name a
+  view admits a write to designates one place per declaration it joins, ordered most significant
+  first, and a referrer writes them as the one place they spell. That is the same clause (LRM
+  23.3.3) reached from the other construct, so whatever the ANSI port turns out to be, it is not
+  free to be a third thing.
 
 ## Out of scope
 

@@ -141,8 +141,10 @@ auto ParameterInput(const slang::ast::Symbol& symbol) -> SpecializationInput {
 // that interface instantiates is. Everything reached through the port takes its
 // types and positions from there, so two instantiations bound to different
 // interfaces build different objects and are different units, exactly as two
-// parameter bindings are. A modport narrows what the port reaches (LRM 25.5),
-// so it belongs to the same answer.
+// parameter bindings are. A modport belongs to the same answer, and not merely
+// because it narrows: a view also names things of its own (LRM 25.5.4), and two
+// views may give one name different storage, so a unit bound through each
+// reaches a different place under the same spelling.
 auto InterfacePortInput(const slang::ast::PortConnection& connection)
     -> SpecializationInput {
   const auto [instance, modport] =

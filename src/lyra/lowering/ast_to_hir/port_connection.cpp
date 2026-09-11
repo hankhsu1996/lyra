@@ -350,10 +350,12 @@ auto ConnectElementPorts(
     // An input/output port reads the child cell during simulation, so it holds
     // a persistent routed reference; a `ref` port is bound once in the resolve
     // phase, so it keeps only the reach.
+    const std::vector<hir::PublishedSelector> port_path =
+        ImportPublishedPath(unit_lowerer, child_signature, projection->path);
     const auto cell_endpoint = [&]() -> hir::PortEndpoint {
       return hir::PortCellEndpoint{
           .cell = frame.Exprs().Add(ProjectPublishedPath(
-              unit_lowerer, frame, child_signature, projection->path,
+              unit_lowerer, frame, port_path,
               unit_lowerer.MakeRoutedMemberRef(
                   home_frame, hir::RoutedRefDecl{.recipe = port_recipe}, span),
               span))};

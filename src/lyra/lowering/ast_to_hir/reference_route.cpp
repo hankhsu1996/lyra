@@ -20,6 +20,7 @@
 #include <slang/ast/types/Type.h>
 
 #include "lyra/base/internal_error.hpp"
+#include "lyra/base/overloaded.hpp"
 #include "lyra/diag/diagnostic.hpp"
 #include "lyra/diag/source_span.hpp"
 #include "lyra/hir/compilation_unit.hpp"
@@ -29,6 +30,7 @@
 #include "lyra/lowering/ast_to_hir/connected_interface.hpp"
 #include "lyra/lowering/ast_to_hir/expression/references.hpp"
 #include "lyra/lowering/ast_to_hir/sensitivity.hpp"
+#include "lyra/lowering/ast_to_hir/subroutine_decl.hpp"
 #include "lyra/lowering/ast_to_hir/unit_identity.hpp"
 #include "lyra/lowering/ast_to_hir/unit_lowerer.hpp"
 #include "lyra/lowering/ast_to_hir/walk_frame.hpp"
@@ -786,12 +788,31 @@ auto UnitLowerer::ObservedThroughModport(
   if (name == nullptr) {
     throw InternalError(
         "UnitLowerer::ObservedThroughModport: an interface publishes every "
-        "view it declares and every name each view offers");
+        "view it declares and every name each view defines");
   }
 
+  // What a change to the name is a change to. A name designating storage is
+  // watched at the members it designates; one this interface computes is
+  // watched at every member its expression reads, since a call shows nothing to
+  // wait on.
+  const std::vector<hir::PublishedMemberId> watched = std::visit(
+      Overloaded{
+          [](const hir::ViewDefinedPlace& place) {
+            std::vector<hir::PublishedMemberId> members;
+            members.reserve(place.parts.size());
+            for (const hir::MemberProjection& part : place.parts) {
+              members.push_back(part.member);
+            }
+            return members;
+          },
+          [](const hir::ViewComputedValue& computed) {
+            return computed.observes;
+          }},
+      name->meaning);
+
   std::vector<hir::SensitivityEntry> out;
-  out.reserve(name->reads.size());
-  for (const hir::PublishedMemberId id : name->reads) {
+  out.reserve(watched.size());
+  for (const hir::PublishedMemberId id : watched) {
     const hir::PublishedMember member =
         unit_.external_unit_objects.Get(object).members.Get(id);
     const hir::RoutedRefId slot = MapOrGetRoutedRef(
@@ -819,13 +840,14 @@ auto UnitLowerer::TranslateSensitivityReads(
   std::vector<hir::SensitivityEntry> out;
   out.reserve(reads.size());
   for (const auto& read : reads) {
-    // A name a modport offers stands for an expression the interface evaluates
-    // (LRM 25.5.4), so it is no single declaration to wait on. What waiting on
-    // it means is waiting on every member that expression reads, which the
-    // interface publishes alongside the name.
-    if (const auto* offered =
-            read.symbol->as_if<slang::ast::ModportPortSymbol>()) {
-      auto entries = ObservedThroughModport(*offered, frame);
+    // A name a view defined for itself stands for an expression the interface
+    // evaluates (LRM 25.5.4), so it is no single declaration to wait on. What
+    // waiting on it means is waiting on every member that expression reads,
+    // which the interface publishes alongside the name. An item the view named
+    // without an expression is one declaration, and is waited on as one.
+    if (ViewDefinesTheName(*read.symbol)) {
+      auto entries = ObservedThroughModport(
+          read.symbol->as<slang::ast::ModportPortSymbol>(), frame);
       if (!entries) return std::unexpected(std::move(entries.error()));
       out.insert(out.end(), entries->begin(), entries->end());
       continue;

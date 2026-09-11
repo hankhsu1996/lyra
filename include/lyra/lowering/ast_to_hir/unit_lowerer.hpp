@@ -602,21 +602,15 @@ class UnitLowerer {
       const slang::ast::SubroutineSymbol& sym) const
       -> std::optional<SubroutineBinding>;
 
-  // The subroutines an interface carries out on behalf of one name a modport
-  // offers (LRM 25.5.4). The name stands for an expression this unit
-  // evaluates, so reading it runs one subroutine and writing it runs the
-  // other; a view that admits no write publishes only the first. Their
-  // identities are minted with every other structural identity so the
-  // signature can name them before any body is lowered.
-  struct ModportAccessors {
-    hir::StructuralSubroutineId getter;
-    std::optional<hir::StructuralSubroutineId> setter;
-  };
-
-  void MapModportAccessors(
-      const slang::ast::Symbol& port, ModportAccessors accessors);
-  [[nodiscard]] auto ModportAccessorsOf(const slang::ast::Symbol& port) const
-      -> ModportAccessors;
+  // The subroutine this interface evaluates one name a view offers only for
+  // reading in (LRM 25.5.4). Only such a name has one: every other direction
+  // designates storage, which a referrer reaches rather than asks for. The
+  // identity is minted with every other structural identity so the signature
+  // can name it before any body is lowered.
+  void MapModportEvaluator(
+      const slang::ast::Symbol& port, hir::StructuralSubroutineId evaluator);
+  [[nodiscard]] auto ModportEvaluatorOf(const slang::ast::Symbol& port) const
+      -> hir::StructuralSubroutineId;
 
   // Interns this unit's record of a DPI-C import (LRM 35.4), classifying its
   // ABI projection on first sight and answering with the same id every later
@@ -1076,8 +1070,8 @@ class UnitLowerer {
   std::unordered_map<const slang::ast::Symbol*, InterfacePortBinding>
       interface_port_bindings_;
   SubroutineBindings subroutine_bindings_;
-  std::unordered_map<const slang::ast::Symbol*, ModportAccessors>
-      modport_accessors_;
+  std::unordered_map<const slang::ast::Symbol*, hir::StructuralSubroutineId>
+      modport_evaluators_;
   ForeignImportBindings foreign_import_bindings_;
   ForeignImportScopes foreign_import_scopes_;
   OwnedChildBindings owned_child_bindings_;

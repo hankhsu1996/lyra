@@ -372,7 +372,15 @@ the detail lives in the entry itself.
   selector path and never an expression, an interface publishes its modports, and the referrer
   applies the projection as an ordinary access so no endpoint category is added. A synthesized cell
   per point, carrying the source expression, reading it off the frontend, a member per point, and a
-  per-modport member list are rejected.
+  per-modport member list are rejected. The write half of its D5, which published a name a view
+  offers as a subroutine assigning to it, is superseded by
+  [names-a-view-offers](names-a-view-offers.md).
+- [names-a-view-offers](names-a-view-offers.md) -- an identifier a modport did not rename is the
+  interface item and nothing about the view crosses; one it renamed is the storage it designates
+  where the view admits a write, and the subroutine evaluating it where it does not, so every
+  assignment form the language allows reaches it with no arm per form. Defining each failing form in
+  terms of a subroutine pair, publishing both representations, reading the internal symbol off the
+  frontend, and flattening the interface are rejected.
 - [publishing-an-owned-instance](publishing-an-owned-instance.md) -- an interface publishes the
   interfaces it instantiates, so a name continues past a port into one; continuing through a
   published member is the step form of ending on one, and every route to a published name becomes

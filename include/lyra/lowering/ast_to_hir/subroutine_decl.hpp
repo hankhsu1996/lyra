@@ -17,6 +17,7 @@ class Expression;
 class FormalArgumentSymbol;
 class MethodPrototypeSymbol;
 class SubroutineSymbol;
+class Symbol;
 }  // namespace slang::ast
 
 namespace lyra::lowering::ast_to_hir {
@@ -32,13 +33,21 @@ class UnitLowerer;
 auto ParamDirectionOf(const slang::ast::FormalArgumentSymbol& formal)
     -> hir::ParamDirection;
 
-// The subroutines an interface carries out for one name a modport offers (LRM
-// 25.5.4), named from the view and the name it offers. The declaring unit both
-// promises these and builds them, so the two are spelled through one function
-// and cannot describe different subroutines.
+// True when a modport item names something the view itself defined. LRM 25.5.4
+// makes an item written as a plain identifier serve twice, "as both a reference
+// to an interface item and a port identifier", so it denotes that item and the
+// view changes nothing about how it is reached; only an item the view wrote an
+// expression for denotes something no member of the interface answers to. The
+// promise, the bodies carrying it out, and every reference to it all ask this,
+// so it is spelled once and the three cannot disagree about which names a view
+// defines.
+auto ViewDefinesTheName(const slang::ast::Symbol& item) -> bool;
+
+// The subroutine an interface evaluates one name a view offers only for reading
+// in (LRM 25.5.4), named from the view and the name. The declaring unit both
+// promises it and builds it, so the two are spelled through one function and
+// cannot describe different subroutines.
 auto ModportReadName(std::string_view modport, std::string_view port)
-    -> std::string;
-auto ModportWriteName(std::string_view modport, std::string_view port)
     -> std::string;
 
 // Lowers a slang subroutine (LRM 13) into a hir::SubroutineDecl: its result

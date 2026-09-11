@@ -13,6 +13,7 @@
 #include <slang/ast/Symbol.h>
 #include <slang/ast/expressions/AssignmentExpressions.h>
 #include <slang/ast/expressions/CallExpression.h>
+#include <slang/ast/symbols/MemberSymbols.h>
 #include <slang/ast/symbols/SubroutineSymbols.h>
 #include <slang/ast/symbols/VariableSymbols.h>
 #include <slang/ast/types/AllTypes.h>
@@ -47,14 +48,14 @@ auto ParamDirectionOf(const slang::ast::FormalArgumentSymbol& formal)
   throw InternalError("ParamDirectionOf: unknown ArgumentDirection");
 }
 
+auto ViewDefinesTheName(const slang::ast::Symbol& item) -> bool {
+  const auto* port = item.as_if<slang::ast::ModportPortSymbol>();
+  return port != nullptr && port->explicitConnection != nullptr;
+}
+
 auto ModportReadName(std::string_view modport, std::string_view port)
     -> std::string {
   return std::format("modport_read_{}_{}", modport, port);
-}
-
-auto ModportWriteName(std::string_view modport, std::string_view port)
-    -> std::string {
-  return std::format("modport_write_{}_{}", modport, port);
 }
 
 namespace {
