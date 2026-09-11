@@ -238,7 +238,14 @@ the detail lives in the entry itself.
   identity; an interface port carrying a range is the same member over a borrowed pointer. A member
   per element with the coordinate in its name, a fixed-size aggregate carrying the count, an index
   step in the place vocabulary, one published member per element, and a simulation-value container
-  are rejected.
+  are rejected. Which element binds where is left open there and settled by
+  [pairing-a-connection-with-a-port](pairing-a-connection-with-a-port.md).
+- [pairing-a-connection-with-a-port](pairing-a-connection-with-a-port.md) -- a connection binds one
+  object at each position the port stands for, paired left index to left index from the two declared
+  ranges alone, so a forwarding port compiles from its own declarations however it is instantiated;
+  an actual names a member and a region of it, which makes whole, part, and one element one shape.
+  Binding the actual's sequence whole, taking the pairing from the front end for every actual form,
+  a shared helper computing it once, and carrying the ranges beside the port's type are rejected.
 - [procedural-storage-scope](procedural-storage-scope.md) -- HIR carries a lexical procedural scope
   tree (downward ownership, no backrefs) alongside its statement tree; a HIR-to-MIR two-pass
   scope-tree fold decides which named begin/ends materialize as runtime hierarchy children and where

@@ -151,10 +151,7 @@ B  The interface port
       23.2.2). The port is one published member whatever its multiplicity, which its type carries;
       the connection binds every instance it supplies at once, in the order the port's coordinates
       count them; and a name selecting an element spends the declared range where it is resolved, so
-      everything below reaches an element by position. Forwarding such a port whole into a deeper
-      module's own ranged port is refused: what the name reaches there is the forwarding scope's
-      member, which stands for every instance at once rather than for one of them, and what a
-      connection binds is one instance per point.
+      everything below reaches an element by position.
 - [x] B8 -- A name continues past the port into what the interface itself owns: an interface may
       instantiate another interface (LRM 25.3), and a port bound to the outer one reaches the inner
       instance's members, enables its subroutines, and connects it to a deeper module's own
@@ -173,6 +170,14 @@ B  The interface port
       rather than one unit serving both. Each compiles against the interface its own connection
       named, so a member reached through the port is the one that interface declares at that
       position.
+- [x] B10 -- An interface port is handed on to a deeper module, whole, one element of it, or a
+      contiguous part; LRM 23.3.3.4 admits a higher level interface port as the actual alongside an
+      interface instance. Both sides state their own shape and the connection pairs their elements
+      left index to left index, right index to right index (LRM 23.3.3.5), so a forwarding port and
+      the port it feeds may run in opposite directions or over different coordinates and each
+      element still reaches the instance the standard pairs it with. A port standing for one
+      instance is that pairing over a single position, so nothing about handing a port on depends on
+      whether it carries a range, and a view the port was restricted to travels with it.
 
 ### Stage C -- Modports
 
@@ -273,6 +278,25 @@ asymmetry is the whole of what separates the two.
       union member.
 
 ## Open questions
+
+- A module that only passes an interface on, never reaching into it, binds objects of a unit it has
+  recorded nothing about, and the C++ backend writes a store it cannot type: the value is the
+  untyped pointer that unit's absence leaves, the target is the child's own field, and the emitted
+  project does not compile. The execution backend runs every one of these correctly, because nothing
+  there depends on a pointee's spelling. The corpus does not see it -- the case that forwards a
+  published instance also reads a member of it, which is exactly the condition that records the unit
+  and hides the defect -- so a reduction has to forward and do nothing else.
+
+  **What is missing is a way to name another unit's object without its layout.** A referrer holds
+  what it reaches through and deliberately holds nothing about a pointer it only passes along, which
+  is right: importing the pointee's promise to bind one pointer would grow a referrer's dependencies
+  with nesting depth. But the only two things that can be said today are the whole published surface
+  or nothing at all, and "nothing at all" is spelled as an untyped pointer -- so the fact that both
+  sides of the store are the same unit, which is what makes the connection legal and which the
+  connection does know, is dropped on the way down. A middle that names the unit and promises no
+  layout is what both ends need, and picking a representation for it is the same question a
+  reference whose static class is not nameable is waiting on; settling it here would settle it there
+  by accident.
 
 - The reference model leaves its set of sealed-endpoint target categories open and requires a
   decision entry per category (`../decisions/hierarchical-reference-routing.md`, D5). Neither Stage

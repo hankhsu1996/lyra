@@ -1,3 +1,4 @@
+#include <algorithm>
 #include <cstddef>
 #include <cstdint>
 #include <expected>
@@ -115,25 +116,132 @@ auto CollectConnectedInstances(const slang::ast::Symbol& connected)
   return instances;
 }
 
+// The correspondence LRM 23.3.3.5 fixes between the positions a port stands for
+// and the objects an actual supplies. One side is the child's promise and the
+// other is what this unit worked out from its own declarations, and a value of
+// this type exists only where the two stated the same shape -- so how many
+// objects there are and which one stands at a position are both answered out of
+// that agreement. A count read off one side alone agrees with itself whatever
+// the other says, which is how a connection comes to pair positions that do not
+// correspond with nothing able to report it.
+class PairedPositions {
+ public:
+  // Nothing where the two shapes disagree. Each side arrives as the thing it
+  // already is -- a promise read off a signature, a reach built by a walk -- so
+  // neither can be passed where the other belongs.
+  [[nodiscard]] static auto Meet(
+      const hir::ObjectsBehindType& promised, const ScopeRoute& reach)
+      -> std::optional<PairedPositions> {
+    // A port binds every object it stands for, so every position of every
+    // dimension it declares is in play: the same statement the actual makes
+    // about what it kept, at its own width.
+    std::vector<OpenDimension> port = WholeDimensions(promised.shape.dims);
+    const auto kept_count = [](const OpenDimension& dim) {
+      return dim.kept.count;
+    };
+    if (!std::ranges::equal(port, reach.open, {}, kept_count, kept_count)) {
+      return std::nullopt;
+    }
+    return PairedPositions{std::move(port), reach.open};
+  }
+
+  // How many objects the connection binds.
+  [[nodiscard]] auto Count() const -> std::uint64_t {
+    std::uint64_t count = 1;
+    for (const OpenDimension& dim : port_) {
+      count *= dim.kept.count;
+    }
+    return count;
+  }
+
+  // The coordinate of the object paired with the port's `position`, outermost
+  // first. Both sides count their own positions from the lower end of the range
+  // each declared, so the pairing runs through the offset from the left end,
+  // which is what the standard matches: the port's leftmost element is the
+  // actual's leftmost, whichever way either was declared.
+  [[nodiscard]] auto CoordinateAt(std::uint64_t position) const
+      -> std::vector<std::uint32_t> {
+    std::vector<std::uint32_t> coordinate(port_.size());
+    std::uint64_t remaining = position;
+    for (std::size_t dim = port_.size(); dim-- > 0;) {
+      const std::uint32_t width = port_[dim].kept.count;
+      const auto within = static_cast<std::uint32_t>(remaining % width);
+      remaining /= width;
+      coordinate[dim] =
+          actual_[dim].PositionFromLeft(port_[dim].OffsetFromLeft(within));
+    }
+    return coordinate;
+  }
+
+ private:
+  PairedPositions(
+      std::vector<OpenDimension> port, std::vector<OpenDimension> actual)
+      : port_(std::move(port)), actual_(std::move(actual)) {
+  }
+
+  std::vector<OpenDimension> port_;
+  std::vector<OpenDimension> actual_;
+};
+
+// One route per object the port stands for, pairing each of its positions with
+// one the actual left open (LRM 23.3.3.4, 23.3.3.5). A port standing for one
+// instance has no open coordinate and no position to pair, which is the same
+// walk over nothing rather than a case of its own.
+auto RoutesToPairedObjects(
+    const ScopeRoute& reach, const hir::ObjectsBehindType& behind,
+    diag::SourceSpan span) -> diag::Result<std::vector<hir::RoutedPathRecipe>> {
+  if (reach.steps.empty()) {
+    throw InternalError(
+        "RoutesToPairedObjects: a reach through an interface port starts at "
+        "that port's own step, so there is always a step to pick an object out "
+        "of");
+  }
+  const auto paired = PairedPositions::Meet(behind, reach);
+  if (!paired.has_value()) {
+    return PortConnectionUnsupported(
+        span,
+        "an interface port bound to a set of interface instances whose shape "
+        "is not the one it stands for is not yet supported");
+  }
+  const std::uint64_t objects = paired->Count();
+  std::vector<hir::RoutedPathRecipe> peers;
+  peers.reserve(objects);
+  for (std::uint64_t position = 0; position < objects; ++position) {
+    // Every position reaches the same member and differs only in which object
+    // of it the last step picks, so the route is the walk's with that one
+    // coordinate written onto its end. A port standing for one instance writes
+    // an empty coordinate, which leaves the walk's own route as it stands.
+    const std::vector<std::uint32_t> coordinate =
+        paired->CoordinateAt(position);
+    std::vector<hir::PathStep> steps = reach.steps;
+    std::visit(
+        [&](auto& step) {
+          step.indices.insert(
+              step.indices.end(), coordinate.begin(), coordinate.end());
+        },
+        steps.back());
+    peers.push_back(
+        hir::RoutedPathRecipe{
+            .head = reach.head,
+            .steps = std::move(steps),
+            .leaf = hir::ScopeLeaf{.type = behind.shape.element_type}});
+  }
+  return peers;
+}
+
 // The routes to the interface instances a connection names (LRM 25.3). An
 // actual written as an interface port of a scope enclosing the connection is
 // the port's own route; every other actual names instances somewhere on the
 // object tree, reached by the same walk every reference across an instance
 // boundary uses.
+//
+// What comes back has met the child's promise about how many objects belong
+// there: one way arrives that way by construction, the other is counted against
+// the promise here, which is where the two independent counts sit side by side.
 auto InterfaceActualRoutes(
     UnitLowerer& unit_lowerer, const slang::ast::PortConnection& conn,
     const hir::ObjectsBehindType& behind, diag::SourceSpan span,
     WalkFrame frame) -> diag::Result<std::vector<hir::RoutedPathRecipe>> {
-  // A route ends at one object, so what types a peer is the element the member
-  // stands for rather than the member's whole shape.
-  const auto recipe = [&](hir::RouteHead head,
-                          std::vector<hir::PathStep> steps) {
-    return hir::RoutedPathRecipe{
-        .head = std::move(head),
-        .steps = std::move(steps),
-        .leaf = hir::ScopeLeaf{.type = behind.element_type}};
-  };
-
   const slang::ast::Expression* actual = conn.getExpression();
   const auto* named =
       actual == nullptr
@@ -141,19 +249,10 @@ auto InterfaceActualRoutes(
           : actual->as_if<slang::ast::ArbitrarySymbolExpression>();
 
   if (named != nullptr && named->hierRef.isViaIfacePort()) {
-    // Handing a whole port on names no instance: what the route reaches is the
-    // forwarding scope's own member, which for a port carrying a range is
-    // already the sequence rather than one of the objects in it. A range of one
-    // element is still a sequence, so the count is not what decides it.
-    if (behind.dimensions != 0) {
-      return PortConnectionUnsupported(
-          span,
-          "an interface port carrying a range forwarded from another port is "
-          "not yet supported");
-    }
-    // The actual is the port itself, or an instance the interface it carries
-    // published (LRM 25.10) -- one route reaches either, since continuing past
-    // a published member is a step of the same descent.
+    // The actual is the port itself, a part of it, or an instance the interface
+    // it carries published (LRM 25.10) -- one walk reaches all three, since
+    // continuing past a published member is a step of the same descent and
+    // naming part of a member settles fewer of its coordinates.
     auto through =
         unit_lowerer.ReachThroughInterfacePort(frame, named->hierRef);
     if (!through.has_value()) {
@@ -162,10 +261,7 @@ auto InterfaceActualRoutes(
           "an interface reached through another interface port by a path of "
           "this shape is not yet supported");
     }
-    std::vector<hir::RoutedPathRecipe> peers;
-    peers.push_back(
-        recipe(std::move(through->head), std::move(through->steps)));
-    return peers;
+    return RoutesToPairedObjects(*through, behind, span);
   }
 
   // Which instance an element of an instance array is given is settled while
@@ -189,7 +285,24 @@ auto InterfaceActualRoutes(
           "an interface port connected to an instance this scope cannot name "
           "is not yet supported");
     }
-    peers.push_back(recipe(std::move(route->head), std::move(route->steps)));
+    // A route ends at one object, so what types a peer is the element the
+    // member stands for rather than the member's whole shape.
+    peers.push_back(
+        hir::RoutedPathRecipe{
+            .head = std::move(route->head),
+            .steps = std::move(route->steps),
+            .leaf = hir::ScopeLeaf{.type = behind.shape.element_type}});
+  }
+  // How many objects the member stands for is the child's promise; how many
+  // this connection supplies is what the parent worked out from the frontend.
+  // Each side counted its own and they meet here -- a count taken from the
+  // other would agree with it whatever it said, and the two would then build
+  // different layouts with nothing able to report it.
+  if (peers.size() != behind.shape.ElementCount()) {
+    return PortConnectionUnsupported(
+        span,
+        "an interface port bound to a number of interface instances other than "
+        "the number it stands for is not yet supported");
   }
   return peers;
 }
@@ -224,17 +337,6 @@ auto ConnectInterfacePort(
   }
   auto peers = InterfaceActualRoutes(unit_lowerer, conn, *behind, span, frame);
   if (!peers) return std::unexpected(std::move(peers.error()));
-  // How many objects the member stands for is the child's promise; how many the
-  // connection supplies is what the parent worked out from the frontend. Each
-  // side counts its own and they meet here, because a side that takes the count
-  // from the other agrees with it by construction, and the two would then build
-  // different layouts with nothing able to say so.
-  if (peers->size() != behind->count) {
-    return PortConnectionUnsupported(
-        span,
-        "an interface port bound to a number of interface instances other than "
-        "the number it stands for is not yet supported");
-  }
   frame.current_structural_scope->port_connections.Add(
       hir::PortConnection{
           .span = span,
