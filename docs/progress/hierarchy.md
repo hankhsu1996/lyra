@@ -400,9 +400,10 @@ Unlocks `refs/hierarchical_refs`, `refs/upward_refs`, and `instantiation/hierarc
 - [x] E3 -- An output port propagates a child write so the parent-side target observes it.
 - [x] E4 -- Expression-driven and constant-valued port connections. A constant connection drives the
       port once at construction and then holds.
-- [ ] E5 -- Net-typed ports alongside variable-typed ports: a net driven across a module port in
-      either direction. The net side resolves its drivers per the net model; that model and the
-      port-driver facet are tracked in `nets.md` (N3).
+- [x] E5 -- Net-typed ports alongside variable-typed ports: a net driven across a module port in
+      either direction, and a bidirectional port, which drives in neither and instead joins the nets
+      on both sides into one resolution. The net side resolves its drivers per the net model; that
+      model and both port facets are tracked in `nets.md`.
 - [x] E6 -- Pass-through ports (a port forwarded into a deeper child while the module keeps its own
       local state) and sibling-to-sibling connections through a shared parent signal. Landed for
       variable-typed ports; both endpoints keep their own storage.
@@ -482,9 +483,9 @@ Unlocks the port-connection surface.
   identity already distinguishes such a binding from a numeric one; only the value's representation
   is missing. It waits for the assertion workstream rather than blocking this one.
 - Bind directives and configuration (`config` / `bind`).
-- Net resolution and net merging: multi-driver resolved nets and net collapsing across ports. A
-  single-driver net port behaves as a continuous assignment and is in scope; multi-driver net
-  resolution is a separate design-global concern. `inout` ports are bidirectional net connections in
-  this same deferred net domain. A hierarchical reference whose target is a net is **not** in this
-  deferred domain and used to be listed here as though it were: a single-driver net reads and is
-  waited on through a name in every direction today, which was never a question about nets.
+- Net resolution, including which nets a connection makes one resolution. A port connection's own
+  structure is in scope here whichever direction it carries -- a directional one is a continuous
+  assignment and a bidirectional one joins the two nets -- while what a net does with the drivers
+  that reach it belongs to `nets.md`. A hierarchical reference whose target is a net is **not** in
+  that domain and used to be listed here as though it were: a single-driver net reads and is waited
+  on through a name in every direction today, which was never a question about nets.

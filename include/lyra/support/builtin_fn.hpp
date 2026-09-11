@@ -260,6 +260,12 @@ enum class BuiltinFn : std::uint16_t {
   // attaches rather than restated on every update, because it is a property of
   // the source and not of the value it puts on the net.
   kAttachDriver,
+  // Joining two nets into one resolution (LRM 23.3.3.7): a `ResolvedNet`
+  // method taking the other net, after which every driver of either is a
+  // contribution to the same fold at the strength it drives at, and both nets
+  // show what that fold produces. It states no direction, because the
+  // connection it realizes has none (LRM 23.3.3).
+  kNetJoin,
   // Putting a cell under a procedural continuous assignment and taking it back
   // out (LRM 10.6). Beginning one answers with the generation its evaluation
   // carries; driving states what that evaluation produced and answers whether

@@ -205,7 +205,7 @@ recorded in Build; their realization differs.
 | ------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------- |
 | `input` / `output` | parent-owned directional reactive edge (an implied continuous assignment); persistent endpoint resolved in Resolve, sealed in Seal, process armed in Activate | Resolve + Seal + Activate |
 | `ref`              | forwarding link; the child's reference member sealed to the actual's final cell                                                                               | Resolve + Seal            |
-| `inout`            | attachment of both terminals to one net connectivity / resolution domain (a separate net model)                                                               | deferred (net domain)     |
+| `inout`            | the two nets joined into one resolution over the contributions of both (`net_resolution.md`); no process, no driver, no sensitivity                           | Resolve                   |
 
 **Pass-through `ref`.**
 

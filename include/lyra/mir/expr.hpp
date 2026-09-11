@@ -892,6 +892,23 @@ struct Expr {
       .type = driver_type};
 }
 
+// `net.Join(other)` -- joins two nets into one resolution over the
+// contributions of both (LRM 23.3.3.7). `other` is a borrowed pointer to the
+// net being joined, since what crosses is that net itself and not its value.
+// The two operands are interchangeable: a bidirectional connection states no
+// direction.
+[[nodiscard]] inline auto MakeNetJoinCallExpr(
+    ExprId net, ExprId other, TypeId void_type) -> Expr {
+  return Expr{
+      .data =
+          CallExpr{
+              .callee =
+                  Direct{
+                      .target = support::BuiltinFn::kNetJoin, .receiver = net},
+              .arguments = {other}},
+      .type = void_type};
+}
+
 // `cell.BeginTakeover(level)` -- puts a cell under a procedural continuous
 // assignment, superseding whatever held that level, and yields the generation
 // the new evaluation carries (LRM 10.6).

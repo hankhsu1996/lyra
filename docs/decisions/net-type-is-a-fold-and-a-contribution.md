@@ -231,7 +231,8 @@ somewhere to go the moment the vocabulary exists.
   non-strength-reducing transistor connection" (LRM 23.3.3) between two nets, which 23.3.3.7 settles
   by merging them into one simulated net whose type Table 23-1 selects. It is a question about which
   nets are one resolution domain, and it is answered without deciding anything about strength -- the
-  merged node folds the drivers of both sides exactly as it folds its own.
+  merged node folds the drivers of both sides exactly as it folds its own. Settled separately in
+  [joined-nets-are-one-resolution](joined-nets-are-one-resolution.md), which is what it became.
 
 ## Cross-references
 

@@ -251,10 +251,20 @@ auto StructuralScopeLowerer::PopulateMember(
           "assertion and checker declarations are not supported; pass "
           "--assertions skip to elide them");
 
+    // An alias makes its members' bits the same physical nets (LRM 10.11). It
+    // is one resolution over several nets, which a bidirectional port
+    // connection also is -- but an alias states it per bit range, so one net's
+    // bits may belong to several resolutions at once, which is a shape the
+    // model behind that connection does not carry.
+    case SymbolKind::NetAlias:
+      return diag::Fail(
+          owner_->SourceMapper().PointSpanOf(member.location),
+          diag::DiagCode::kUnsupportedStructuralMember,
+          "a net alias (LRM 10.11) is not yet supported");
+
     // Behavior the design depends on: skipping one would hand the backend a
     // different design than the source describes.
     case SymbolKind::PrimitiveInstance:
-    case SymbolKind::NetAlias:
     case SymbolKind::RandSeqProduction:
     case SymbolKind::AnonymousProgram:
     case SymbolKind::UninstantiatedDef:

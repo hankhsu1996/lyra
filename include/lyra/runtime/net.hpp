@@ -9,6 +9,7 @@
 #include <vector>
 
 #include "lyra/base/internal_error.hpp"
+#include "lyra/base/simulation_error.hpp"
 #include "lyra/runtime/observable.hpp"
 #include "lyra/runtime/runtime_effects.hpp"
 #include "lyra/runtime/takeover.hpp"
@@ -55,6 +56,12 @@ class Driver;
 // either way the net re-resolves and publishes on a real change (LRM 9.4.2).
 // The net owns the contribution storage; a `Driver<T>` names one contribution
 // by an index the net issued, so the storage stays the net's to reorganize.
+//
+// What resolves is not always one net. A bidirectional connection joins the
+// nets on both sides of it into a single resolution over all their
+// contributions (LRM 23.3.3, 23.3.3.7), and each of them then shows what that
+// resolution produced under its own name. A net no connection joined is that
+// same resolution over one net.
 template <value::NetResolvable T>
 class ResolvedNet : public Observable {
  public:
@@ -120,30 +127,81 @@ class ResolvedNet : public Observable {
   // contributions -- which go on being updated underneath and are what the net
   // answers with again once it is released.
   auto BeginTakeover(const value::PackedArray& level) -> value::PackedArray {
-    if (takeovers_ == nullptr) {
-      takeovers_ = std::make_unique<Takeovers<T>>();
+    ResolvedNet& net = *simulated_;
+    if (net.takeovers_ == nullptr) {
+      net.takeovers_ = std::make_unique<Takeovers<T>>();
     }
-    return TakeoverGenerationValue(takeovers_->Begin(TakeoverLevelOf(level)));
+    return TakeoverGenerationValue(
+        net.takeovers_->Begin(TakeoverLevelOf(level)));
   }
 
   auto DriveTakeover(
       const value::PackedArray& level, const value::PackedArray& generation,
       const T& value) -> bool {
-    if (takeovers_ == nullptr ||
-        !takeovers_->Drive(
+    ResolvedNet& net = *simulated_;
+    if (net.takeovers_ == nullptr ||
+        !net.takeovers_->Drive(
             TakeoverLevelOf(level), TakeoverGenerationOf(generation), value)) {
       return false;
     }
-    Reresolve(current_runtime());
+    net.Reresolve(current_runtime());
     return true;
   }
 
   void EndTakeover(const value::PackedArray& level) {
-    if (takeovers_ == nullptr) {
+    ResolvedNet& net = *simulated_;
+    if (net.takeovers_ == nullptr) {
       return;
     }
-    takeovers_->End(TakeoverLevelOf(level));
-    Reresolve(current_runtime());
+    net.takeovers_->End(TakeoverLevelOf(level));
+    net.Reresolve(current_runtime());
+  }
+
+  // Joins this net and `other` into one resolution (LRM 23.3.3.7). Every
+  // driver of either becomes a contribution to the same fold, at the strength
+  // it drives at, which is what makes the connection non-strength-reducing
+  // (LRM 23.3.3); no net's resolved value is ever an input to another's
+  // resolution. Joining twice over is a connection restating what some other
+  // connection already established, which is a shape a design writes rather
+  // than a mistake.
+  //
+  // One resolution has one net type, so the two nets have to state the same
+  // one: the same fold, and the same contribution of its own. Where they
+  // differ the standard names a dominating type per pair of nets (LRM 23.3.3.7
+  // Table 23-1), which does not extend to the set of nets a chain of
+  // connections joins -- the relation it tabulates is not transitive. The
+  // report names what the design wrote rather than which net type won, because
+  // which net type a net is, is not something below the net's declaration
+  // knows or should learn. What the two are compared on is the contribution
+  // each net type makes, which a net carries as its own; a net that stores a
+  // value keeps that contribution current as it is driven, so this reads the
+  // net type only while nothing has driven yet, which is where every connection
+  // is resolved.
+  void Join(ResolvedNet* other) {
+    ResolvedNet& one = *simulated_;
+    ResolvedNet& two = *other->simulated_;
+    if (&one == &two) {
+      return;
+    }
+    if (one.resolution_ != two.resolution_ || one.own_kind_ != two.own_kind_ ||
+        one.own_.strength != two.own_.strength ||
+        !one.own_.value.IsBitIdentical(two.own_.value)) {
+      throw SimulationError(
+          "a bidirectional connection joins two nets of dissimilar net types; "
+          "a simulated net formed from net types that resolve differently "
+          "(LRM 23.3.3.7) is not yet supported");
+    }
+    // Everything `two` resolved for resolves into `one` from here. Walked
+    // before the rings are spliced, while `two` is still its own ring.
+    two.simulated_ = &one;
+    for (ResolvedNet* net = two.next_joined_; net != &two;
+         net = net->next_joined_) {
+      net->simulated_ = &one;
+    }
+    // Two disjoint rings become one by exchanging the two nets' successors.
+    std::swap(one.next_joined_, two.next_joined_);
+    one.occupied_ |= two.occupied_;
+    one.Reresolve(current_runtime());
   }
 
   // Attaches a new driver at the strength its source drives at and returns its
@@ -173,7 +231,9 @@ class ResolvedNet : public Observable {
     return OccupiedLevels{1} << static_cast<unsigned>(level);
   }
 
-  // The value the net shows, from the contributions as they now stand. Between
+  // The value the net shows, from the contributions as they now stand -- its
+  // own, and those of every net a bidirectional connection has joined to it,
+  // which is one resolution over all of them (LRM 23.3.3.7). Between
   // levels the stronger contribution determines every position it drives and
   // leaves the rest (LRM 28.12.1); within one level the net type's truth table
   // decides -- tri-state, wired-and, or wired-or (LRM 6.6.1 Table 6-2, LRM
@@ -193,10 +253,17 @@ class ResolvedNet : public Observable {
         continue;
       }
       T group = own_.strength == at ? own_.value : nondriving_;
-      for (const auto& driver : contributions_) {
-        if (driver.strength == at) {
-          group = group.ResolveNet(driver.value, resolution_);
+      const auto fold = [&](const ResolvedNet& net) {
+        for (const auto& driver : net.contributions_) {
+          if (driver.strength == at) {
+            group = group.ResolveNet(driver.value, resolution_);
+          }
         }
+      };
+      fold(*this);
+      for (const ResolvedNet* net = next_joined_; net != this;
+           net = net->next_joined_) {
+        fold(*net);
       }
       resolved = resolved.Dominating(group);
     }
@@ -220,14 +287,20 @@ class ResolvedNet : public Observable {
     own_ = DriveContribution<T>{
         .value = T::FilledLike(prototype, fill),
         .strength = StrengthLevelOf(strength)};
-    occupied_ |= LevelBit(own_.strength);
+    simulated_->occupied_ |= LevelBit(own_.strength);
     resolved_ = Resolve();
   }
 
   void UpdateContribution(
       RuntimeEffects& runtime, std::size_t index, const T& value) {
     ContributionOf(index).value = value;
-    Reresolve(runtime);
+    ReresolveSimulatedNet(runtime);
+  }
+
+  // Re-resolves whatever resolution this net takes part in. A driver names the
+  // net it attached to, which is not always the one that resolves for it.
+  void ReresolveSimulatedNet(RuntimeEffects& runtime) {
+    simulated_->Reresolve(runtime);
   }
 
   // Recomputes the resolved value from the contributions as they now stand,
@@ -235,6 +308,11 @@ class ResolvedNet : public Observable {
   // place calls this instead of handing one back: the net reads the same
   // storage either way, and the transition that matters is the resolved
   // value's, which no driver can see.
+  //
+  // Runs on the net standing as the simulated net, which is what makes the
+  // contribution and the levels it reads here the ones the whole resolution
+  // has; every caller reaches it through that net rather than through the one
+  // whose contribution moved.
   //
   // This is also where a `force` takes effect (LRM 10.6.2). The fold runs
   // either way and a takeover replaces its result, so the drivers stay current
@@ -254,6 +332,14 @@ class ResolvedNet : public Observable {
     const T* forced = takeovers_ == nullptr ? nullptr : takeovers_->Highest();
     if (forced != nullptr) {
       next = *forced;
+    }
+    // Every net this resolution covers shows what it produced and wakes what
+    // waits on that name (LRM 23.3.3.7). The loop covers the nets joined to
+    // this one; the statement after it covers this one, which is the only
+    // member until a connection joins another.
+    for (ResolvedNet* net = next_joined_; net != this;
+         net = net->next_joined_) {
+      net->PublishIfChanged(runtime, next);
     }
     PublishIfChanged(runtime, std::move(next));
   }
@@ -294,13 +380,20 @@ class ResolvedNet : public Observable {
 
   T resolved_{};
   T nondriving_{};
+  // The net standing as the simulated net for this one, and the next net that
+  // simulated net covers, circularly (LRM 23.3.3.7). Both are this net until a
+  // bidirectional connection joins it to another. What follows below belongs to
+  // the simulated net rather than to this one, so only the net the first of
+  // these names carries it.
+  ResolvedNet* simulated_ = this;
+  ResolvedNet* next_joined_ = this;
   DriveContribution<T> own_{};
   OccupiedLevels occupied_{};
   value::NetResolution resolution_{};
   OwnContribution own_kind_{};
   // The procedural continuous assignments this net has been put under (LRM
-  // 10.6.2), absent until the first one starts, so a net nobody forces resolves
-  // exactly as it did before the construct existed.
+  // 10.6.2), absent until the first one starts, so a net nobody forces carries
+  // neither the storage nor the work of maintaining it.
   std::unique_ptr<Takeovers<T>> takeovers_;
   std::vector<DriveContribution<T>> contributions_;
   // The handles this net has issued. They are the net's rather than each
@@ -369,7 +462,7 @@ class Driver {
     if (before.IsBitIdentical(MutationStorage())) {
       return;
     }
-    Net().Reresolve(current_runtime());
+    Net().ReresolveSimulatedNet(current_runtime());
   }
 
  private:
@@ -390,7 +483,9 @@ auto ResolvedNet<T>::AttachDriver(const value::PackedArray& strength)
   const support::StrengthLevel level = StrengthLevelOf(strength);
   contributions_.push_back(
       DriveContribution<T>{.value = nondriving_, .strength = level});
-  occupied_ |= LevelBit(level);
+  // Which levels are occupied is a property of the resolution rather than of
+  // the net the driver attached to, so it is recorded where the fold reads it.
+  simulated_->occupied_ |= LevelBit(level);
   drivers_.emplace_back(*this, contributions_.size() - 1);
   return drivers_.back();
 }

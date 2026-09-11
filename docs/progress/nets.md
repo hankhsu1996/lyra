@@ -2,14 +2,15 @@
 
 Tracks support for SystemVerilog nets: a net is a value-carrying signal whose value is the
 resolution of its drivers, not a directly written variable (LRM 6.5, 6.6). This covers net
-declarations, the resolution of one or more drivers under each net type, drive strength, and
-net-typed port connections. The model and its rationale are fixed by the contracts below; this file
-tracks the delta between the code and that model.
+declarations, the resolution of one or more drivers under each net type, drive strength, net-typed
+port connections, and which nets a connection makes one resolution. The model and its rationale are
+fixed by the contracts below; this file tracks the delta between the code and that model.
 
 Done when the in-scope net types carry correct driver-resolution semantics end to end --
 declaration, single- and multi-driver resolution, the wired and tri-state net types, drive strength,
 pull/supply, and charge storage -- and net-typed port connections behave as those nets across the
-object graph.
+object graph, whether the connection drives in one direction or joins the two sides into one
+resolution.
 
 ## Contracts
 
@@ -24,19 +25,20 @@ This workstream reasons from these and does not restate them:
 - `../decisions/net-type-is-a-fold-and-a-contribution.md` -- what a net type states: which truth
   table resolves contributions of equal strength, and the contribution the net type makes to the
   net's own resolution.
+- `../decisions/joined-nets-are-one-resolution.md` -- what one resolution covers: the nets a
+  bidirectional connection has joined, pooling their contributions rather than their results.
 - `../architecture/elaboration_lifecycle.md` -- the phase protocol the attach / seal / seed steps
   ride on.
 
 ## Lifecycle prerequisite
 
 - [ ] The Seal barrier is a design-global, coordinator-owned step, materialized when its first
-      consumer needs it. It validates and freezes the whole design's driver topology at once -- a
-      forwarding chain spans scopes -- so it is an engine-level pass over the elaborated design,
-      never a per-scope hook. No sub-step below needs it: how many drivers a net may have is decided
-      over the elaborated design by the front end, which reports a violation naming every driver
-      involved, so nothing here counts drivers. Until a consumer lands, the
-      Resolve-before-Initialize ordering the engine already enforces is the only barrier the
-      in-scope sub-steps require.
+      consumer needs it. No sub-step below needs it, and the two that were expected to have both
+      turned out not to: how many drivers a net may have is decided over the elaborated design by
+      the front end, so nothing here counts drivers; and joining nets into one resolution needs no
+      barrier either, because every input a join takes is final before any route runs and nothing
+      observes a net until Initialize. The Resolve-before-Initialize ordering the engine already
+      enforces is the only barrier this workstream requires.
 
 ## Sub-steps
 
@@ -107,16 +109,28 @@ This workstream reasons from these and does not restate them:
       drivers go to high impedance, holding it at the charge strength its declaration names and at
       medium where it names none (LRM 6.6.4, 6.7.1, 28.15.2). It reads x before anything drives it.
       Charge decay is a delay on the declaration and is refused with every other net delay.
+- [x] N9 -- A bidirectional (`inout`) port connection joins the nets on both sides into one
+      resolution over the contributions of both (LRM 23.3.3, 23.3.3.7). Every driver of either side
+      meets the others at the strength it drives at, under one net type's truth table, so a pull in
+      one module and a strong driver in the other resolve the way they would on a single net --
+      which is what makes the connection non-strength-reducing. Both names show the result, wake
+      what waits on them, and answer a force over the joined net; a chain of such ports is one
+      resolution across every net in it, and a port left unconnected joins nothing and resolves
+      alone. The two sides must state the same net type: where they differ, the standard names a
+      dominating type per pair of nets and that relation does not extend to the set a chain joins,
+      so the program is reported rather than answered.
 
 ## Out of scope
 
-- Bidirectional (`inout`) net connectivity and net-to-net collapse: unifying two or more nets into
-  one shared simulated net with zero propagation delay. LRM 23.3.3 makes an `inout` port connection
-  a non-strength-reducing transistor connection and 23.3.3.7 settles it by merging the two nets into
-  one simulated net whose type Table 23-1 selects, so what it decides is which nets are one
-  resolution domain -- a cross-net connectivity domain distinct from resolving a single net's own
-  drivers, and it waits for its own workstream. A net-typed port that behaves as a single-driver
-  continuous-assignment edge is in scope (N3); merging the two sides into one electrical net is not.
+- Joining part of a net rather than the whole of it: a bidirectional port whose connection names a
+  part select or a concatenation of nets, and the `alias` statement (LRM 10.11), which states
+  connectivity per bit range and so can put one net's bits in several resolutions at once. Each is
+  refused by name. What they need is a resolution over bit ranges rather than over whole nets, which
+  is a model question of its own.
+- A simulated net formed from dissimilar net types (LRM 23.3.3.7, Table 23-1), refused by name at
+  elaboration. The standard defines the dominating type for a pair of nets, and the relation it
+  tabulates is not transitive -- `tri0` dominates `trireg`, while `trireg` and `wand` tie, and so do
+  `tri0` and `wand` -- so it gives no answer for the set of nets a chain of connections joins.
 - Gate-level primitive instances and user-defined primitives as net drivers. Their outputs are net
   drivers in the same model, but the primitive instances themselves are a separate workstream. They
   are also what makes a resolved net's own strength observable -- a switch passes it on, and a

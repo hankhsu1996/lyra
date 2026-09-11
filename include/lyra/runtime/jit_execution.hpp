@@ -1172,6 +1172,10 @@ auto lyra_rt_unpackedarray_value_cell_load(const void* cell) -> void*;
 // source driving part of a net updates part of and leaves the rest of at high
 // impedance (LRM 6.6.1).
 //
+// `net_join` makes two nets one resolution, over the contributions of both
+// (LRM 23.3.3.7). It takes the other net rather than a value, and states no
+// direction; both nets then answer with what that one resolution produces.
+//
 // LRM 6.7.1 fixes which domains these exist for: a 4-state integral net, and a
 // fixed-size unpacked array, struct, or union whose elements are themselves
 // valid for a net.
@@ -1193,6 +1197,7 @@ auto lyra_rt_packed_net_drive_takeover(
     -> bool;
 void lyra_rt_packed_net_end_takeover(void* net, const void* level);
 auto lyra_rt_packed_attach_driver(void* net, const void* strength) -> void*;
+void lyra_rt_packed_net_join(void* net, void* other);
 auto lyra_rt_packed_driver_get(void* driver) -> void*;
 void lyra_rt_packed_driver_set(void* driver, const void* value);
 auto lyra_rt_tuple_net_get(void* net) -> void*;
@@ -1205,6 +1210,7 @@ void lyra_rt_tuple_net_initialize_wired_or(
 void lyra_rt_tuple_net_initialize_retaining(
     void* net, const void* prototype, const void* fill, const void* strength);
 auto lyra_rt_tuple_attach_driver(void* net, const void* strength) -> void*;
+void lyra_rt_tuple_net_join(void* net, void* other);
 auto lyra_rt_tuple_driver_get(void* driver) -> void*;
 void lyra_rt_tuple_driver_set(void* driver, const void* value);
 auto lyra_rt_union_net_get(void* net) -> void*;
@@ -1217,6 +1223,7 @@ void lyra_rt_union_net_initialize_wired_or(
 void lyra_rt_union_net_initialize_retaining(
     void* net, const void* prototype, const void* fill, const void* strength);
 auto lyra_rt_union_attach_driver(void* net, const void* strength) -> void*;
+void lyra_rt_union_net_join(void* net, void* other);
 auto lyra_rt_union_driver_get(void* driver) -> void*;
 void lyra_rt_union_driver_set(void* driver, const void* value);
 auto lyra_rt_unpackedarray_net_get(void* net) -> void*;
@@ -1230,6 +1237,7 @@ void lyra_rt_unpackedarray_net_initialize_retaining(
     void* net, const void* prototype, const void* fill, const void* strength);
 auto lyra_rt_unpackedarray_attach_driver(void* net, const void* strength)
     -> void*;
+void lyra_rt_unpackedarray_net_join(void* net, void* other);
 auto lyra_rt_unpackedarray_driver_get(void* driver) -> void*;
 void lyra_rt_unpackedarray_driver_set(void* driver, const void* value);
 

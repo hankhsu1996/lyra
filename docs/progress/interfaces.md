@@ -179,6 +179,12 @@ B  The interface port
       instance is that pairing over a single position, so nothing about handing a port on depends on
       whether it carries a range, and a view the port was restricted to travels with it.
 
+- [x] B11 -- An interface's own port list carries the same directions a module's does, including a
+      bidirectional one: an interface declared with an `inout` port joins that net to the one the
+      instantiation connects, and the interface's bodies read and drive it as their own. Nothing
+      about the connection is particular to interfaces -- what a port does is settled by its
+      direction rather than by the kind of unit that declared it.
+
 ### Stage C -- Modports
 
 - [x] C1 -- A modport names a directional view of an interface, declared with the directions seen
@@ -333,9 +339,6 @@ asymmetry is the whole of what separates the two.
   nor delivers it.
 - Interfaces used as terminals in specify blocks (LRM 25.6). Specify blocks belong to the timing
   domain, which has no support in any scope.
-- `inout` on an interface's own port list. It is a bidirectional net connection in the deferred
-  net-connectivity domain tracked in `nets.md`, not a reference, and it is deferred there for every
-  compilation-unit kind rather than for interfaces in particular.
 - `defparam` reaching a parameter of an interface instance or its hierarchy. LRM 25.3 and 25.9 both
   carve out restrictions for it; `defparam` itself is unsupported, so the restrictions have nothing
   to constrain.

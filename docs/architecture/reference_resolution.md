@@ -43,9 +43,9 @@ its changes.
 - How an observed change wakes a dependent process (see `scheduling.md`).
 - Storage placement and offsets of members (see `lir.md`).
 - The phases the route executes in (see `elaboration_lifecycle.md`).
-- Net resolution and net merging across ports (a single simulated net shared by both sides). That is
-  a design-global net-resolution concern, separate from per-object reference resolution; a net's own
-  driver resolution is owned by `net_resolution.md`, which reaches its drivers through this route.
+- Net resolution, and what it means for a connection to join two nets into one of them. That is a
+  design-global net-resolution concern, separate from per-object reference resolution;
+  `net_resolution.md` owns it and reaches both the drivers and the joined net through this route.
 
 ## Core Invariants
 
@@ -78,10 +78,10 @@ its changes.
 5. Port connections, hierarchical references, and cross-instance trigger subscriptions share one
    route mechanism. There is no parallel resolution path per reference kind, per direction, or per
    lexical form.
-6. Connectivity is linkage between objects. For a variable member it never removes the object's
-   storage, never changes the object's layout, and never makes a member's addressing depend on what
-   it is wired to. (Merging nets into a single shared net is a design-global net-resolution concern,
-   outside this contract.)
+6. Connectivity is linkage between objects. It never removes the object's storage, never changes the
+   object's layout, and never makes a member's addressing depend on what it is wired to. Nets are no
+   exception: joining two of them into one resolution is a design-global net-resolution concern
+   outside this contract, and it leaves both nets' storage and addressing exactly as they were.
 7. The endpoint inherits the access protocol of the target it reaches. A reference to an observable
    storage cell reads and writes through the cell's protocol; a reference to an event participates
    in the event's protocol. The endpoint is not a new access category; it is the target's access
@@ -232,8 +232,10 @@ produced the value.
 between the two objects' own storage (LRM 23.3.3); the cross-unit side reaches the partner cell
 through one route, whose final segment is declared because a port is on the module's signature. A
 `ref` port (LRM 23.3.3.2) is a forwarding link that resolves to the connected cell at sealing. An
-`inout` port is a bidirectional net connection and belongs to the deferred net-resolution domain.
-Every form whose cross-instance reach passes through Resolve shares the one route mechanism.
+`inout` port reaches the child's net through the same route and then joins it to the parent's into
+one resolution (`net_resolution.md`), which is a fact about the two nets rather than a second way of
+reaching one. Every form whose cross-instance reach passes through Resolve shares the one route
+mechanism.
 
 **Routing is deferred to Resolve, not dynamic.** The deferral keeps each unit independently and
 incrementally compilable; it carries no semantic uncertainty. The frontend has already proven every
