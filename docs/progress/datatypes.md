@@ -183,12 +183,13 @@ case holds it is one nothing watches.
 ## Chandle
 
 LRM 6.14: `chandle` stores a pointer passed through the DPI. It always initializes to `null`, and
-its only legal uses are equality (`==` / `!=`) and case equality (`===` / `!==`) against another
-chandle or `null`, a boolean test that is 0 when null and 1 otherwise, assignment from another
-chandle or `null`, membership in an associative array, a class, or a subroutine's arguments and
-return value. It is illegal as a port, in a sensitivity list or event expression, in a continuous
-assignment, in an untagged union, and in a packed type, so a chandle never participates in event
-propagation and a structural chandle is not observable storage.
+its legal uses are equality (`==` / `!=`) and case equality (`===` / `!==`) against another chandle
+or `null`, a boolean test that is 0 when null and 1 otherwise, assignment from another chandle or
+`null`, membership in an associative array, a class, or a subroutine's arguments and return value,
+and the assignment-pattern conversion, which LRM 21.2.1.6 names it under. It is illegal as a port,
+in a sensitivity list or event expression, in a continuous assignment, in an untagged union, and in
+a packed type, so a chandle never participates in event propagation and a structural chandle is not
+observable storage.
 
 - [x] CH1 -- Declaration and `null` default, assignment from `null` and from another chandle, the
       equality and case-equality families against a chandle and against `null`, the boolean test
@@ -197,9 +198,11 @@ propagation and a structural chandle is not observable storage.
       (whose relative entry ordering LRM 6.14 leaves to the implementation). A non-null chandle
       originates only at the DPI boundary, where it crosses as an opaque pointer in either direction
       (`dpi.md`).
-- [x] CH2 -- A chandle reaching a format argument, alone or nested in an aggregate, is an LRM 6.14
-      violation the frontend does not filter, so lowering diagnoses it. No simulation prints a host
-      pointer.
+- [x] CH2 -- `%p` on a chandle, which LRM 21.2.1.6 names among the handles that print in an
+      implementation-dependent format, except that one naming nothing prints the word `null`. Every
+      other conversion is one the language defines no text for; the frontend does not filter a bare
+      chandle operand, so lowering diagnoses it where the conversion is written and the runtime
+      formatter where the format string is one the program computed.
 
 ### Cross-references
 

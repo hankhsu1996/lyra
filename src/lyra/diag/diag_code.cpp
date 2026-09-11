@@ -137,6 +137,10 @@ constexpr std::array kEntries{
     std::pair{
         DiagCode::kErrorDisplayMissingArg,
         DiagCodeInfo{.kind = DiagKind::kError, .name = "display_missing_arg"}},
+    std::pair{
+        DiagCode::kErrorHandleFormatConversion,
+        DiagCodeInfo{
+            .kind = DiagKind::kError, .name = "handle_format_conversion"}},
 
     std::pair{
         DiagCode::kHostInvalidCliArgs,

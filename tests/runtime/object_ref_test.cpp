@@ -6,9 +6,9 @@ namespace {
 
 using lyra::runtime::GcNew;
 using lyra::runtime::GcObject;
-using lyra::runtime::ObjectRef;
 using lyra::runtime::SelfHandle;
 using lyra::runtime::ViewAs;
+using lyra::value::ObjectRef;
 
 struct Counted {
   static inline int alive = 0;

@@ -73,12 +73,17 @@ ownership, or native in-frame layout) for every value.
       is the one value domain whose value is the handle itself: it owns nothing, so nothing is lost
       by carrying it as the bare pointer. A class handle does not share the shape -- it carries a
       share of ownership beside the address, so it is a value living in storage like every other.
-- [ ] **A class handle as a value domain.** A handle lives in a member slot and in a local, and it
-      compares, copies and dispatches there; what it cannot be is an _element_. The erased value a
-      container holds admits every domain the backend realizes and not this one, so an unpacked
-      array or a queue of handles refuses as soon as one is stored -- with no hierarchical name and
-      no inheritance anywhere near it. Every operation such a collection then supports follows from
-      the domain rather than from the collection, so this is one answer and not one per container.
+- [x] **A class handle as a value domain** (LRM 8.3) -- realized on the execution backend as the
+      erased value a type-erased aggregate holds, beside the member slot and the local it already
+      lived in. A handle is an element of a fixed-size unpacked array, a dynamic array, a queue and
+      an associative array, a member of an unpacked structure, and an associative array's index
+      whose entries order by which object each names (LRM 7.8.3, a null index included). It takes
+      the equality and case-equality families as one operation answering with the 1-bit value, the
+      boolean test in every position including a negation, and the assignment-pattern conversion,
+      where a handle naming nothing prints the word null (LRM 21.2.1.6). Every operation such a
+      collection supports follows from the domain rather than from the collection, so this was one
+      answer and not one per container. Reading a class object out as a bit stream (LRM 6.24.3) is a
+      separate operation over the object's own properties and is not carried out.
 - [x] **The unpacked struct** (LRM 7.2) -- realized on the execution backend as a product value
       domain: a runtime-owned product that owns its components by value and crosses as an opaque
       handle, so the generated side never inspects a component's representation. It default-

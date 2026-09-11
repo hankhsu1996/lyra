@@ -1,6 +1,5 @@
 #include "lyra/lowering/hir_to_mir/print_items.hpp"
 
-#include <algorithm>
 #include <cstddef>
 #include <cstdint>
 #include <expected>
@@ -39,23 +38,6 @@ namespace lyra::lowering::hir_to_mir {
 
 namespace {
 
-// LRM 6.14 permits a chandle only in the equality family and a boolean test, so
-// a chandle -- alone or nested inside an aggregate whose `%p` would print it --
-// is never a legal format operand. slang does not filter the form, so lowering
-// does, exactly as it does for a `real` case-equality (LRM Table 11-1). The
-// runtime consequently carries no chandle formatter, and no simulation prints a
-// host pointer.
-auto TypeContainsChandle(const mir::CompilationUnit& unit, mir::TypeId type)
-    -> bool {
-  const mir::Type& data = unit.types.Get(type);
-  if (data.Is<mir::ChandleType>()) {
-    return true;
-  }
-  return std::ranges::any_of(data.HeldValueTypes(), [&](mir::TypeId held) {
-    return TypeContainsChandle(unit, held);
-  });
-}
-
 auto ToMirFormatModifiers(const value::FormatModifiers& m)
     -> mir::FormatModifiers {
   return mir::FormatModifiers{
@@ -81,22 +63,14 @@ auto FlattenCallArgs(const hir::CallExpr& call) -> std::vector<hir::ExprId> {
   return args;
 }
 
-// Lowers one operand of a format, whichever way its conversion is chosen. The
-// returned expression is detached for the caller to intern.
+// The returned expression is detached for the caller to intern.
 template <ExprLowerer Lowerer>
 auto LowerFormatOperand(Lowerer& lowerer, WalkFrame frame, hir::ExprId hir_arg)
     -> diag::Result<mir::Expr> {
   const hir::Expr& hir_expr = lowerer.HirExprs().Get(hir_arg);
   auto lowered_or = lowerer.LowerExpr(hir_expr, frame);
   if (!lowered_or) return std::unexpected(std::move(lowered_or.error()));
-  mir::Expr lowered = *std::move(lowered_or);
-  if (TypeContainsChandle(lowerer.Owner().Unit(), lowered.type)) {
-    return diag::Fail(
-        hir_expr.span, diag::DiagCode::kUnsupportedExpressionForm,
-        "a chandle is not a legal format argument (LRM 6.14 permits a chandle "
-        "only in an equality comparison and a boolean test)");
-  }
-  return lowered;
+  return *std::move(lowered_or);
 }
 
 // LRM 21.2.1.6: an enumeration prints the name its type declares for the value,
@@ -179,6 +153,21 @@ auto BuildPrintValueItem(
   const bool is_string = value_type.Is<mir::StringType>();
   const bool is_integral_packed = value_type.IsIntegralPacked();
   const bool is_enumeration = value_type.Is<mir::EnumType>();
+  const bool is_handle =
+      value_type.Is<mir::ChandleType>() || value_type.Is<mir::ManagedRefType>();
+
+  // LRM 21.2.1.6 gives a handle a text under the assignment pattern and the
+  // language gives it one under no other conversion. slang does not filter the
+  // form, so lowering does, exactly as it does for a real case equality (LRM
+  // Table 11-1). A format string the program computes reaches no directive
+  // here, so the runtime formatter answers that one on its own.
+  if (is_handle && spec.kind != value::FormatKind::kAssignmentPattern) {
+    return diag::Fail(
+        lowerer.HirExprs().Get(hir_arg).span,
+        diag::DiagCode::kErrorHandleFormatConversion,
+        "a handle is printed only by the assignment pattern conversion "
+        "(LRM 21.2.1.6)");
+  }
 
   // %s formats by operand type (LRM 21.2.1.7): a String and a packed value
   // each format directly, without building a string value. Only an unpacked

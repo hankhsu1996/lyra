@@ -4,9 +4,10 @@
 // written by qualifying its name with a handle, and a method called on a
 // handle operates on that object's own properties without being passed it.
 // Assigning one handle to another names the same object rather than copying
-// it, so a write through either name is visible through both, and the
-// equality operators on handles compare identity. A property may itself be
-// a handle to the declaring class, and such qualifications chain to reach
+// it, so a write through either name is visible through both; the equality
+// operators on handles compare identity, and a handle tested for a Boolean
+// value is false exactly when it names no object. A property may itself be a
+// handle to the declaring class, and such qualifications chain to reach
 // through a sequence of objects (LRM 8.4, 8.5, 8.6, 8.12).
 module Top;
   class Counter;
@@ -31,6 +32,10 @@ module Top;
   endclass
 
   bit fresh_is_null;
+  bit boolean_of_null;
+  bit boolean_of_handle;
+  bit not_of_null;
+  bit not_of_handle;
   int after_set;
   int after_add;
   int after_direct_write;
@@ -52,9 +57,18 @@ module Top;
     Node mid;
     Node tail;
 
+    boolean_of_null = 1'b1;
+    not_of_handle = 1'b1;
+
     fresh_is_null = (c == null);
+    if (c) boolean_of_null = 1'b1;
+    else boolean_of_null = 1'b0;
+    not_of_null = !c;
 
     c = new;
+    if (c) boolean_of_handle = 1'b1;
+    else boolean_of_handle = 1'b0;
+    not_of_handle = !c;
     c.set(10);
     after_set = c.get();
     c.add(5);
@@ -90,6 +104,14 @@ module Top;
   final begin
     if (fresh_is_null !== 1)
       $fatal(1, "fresh_is_null was %0d, expected 1", fresh_is_null);
+    if (boolean_of_null !== 0)
+      $fatal(1, "boolean_of_null was %0d, expected 0", boolean_of_null);
+    if (boolean_of_handle !== 1)
+      $fatal(1, "boolean_of_handle was %0d, expected 1", boolean_of_handle);
+    if (not_of_null !== 1)
+      $fatal(1, "not_of_null was %0d, expected 1", not_of_null);
+    if (not_of_handle !== 0)
+      $fatal(1, "not_of_handle was %0d, expected 0", not_of_handle);
     if (after_set !== 10)
       $fatal(1, "after_set was %0d, expected 10", after_set);
     if (after_add !== 15)

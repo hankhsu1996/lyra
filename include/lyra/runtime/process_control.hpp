@@ -32,14 +32,14 @@ enum class ProcessStatusCode : std::int32_t {
 // LRM 9.7 `process::self()`: a handle to the process making the call. A task or
 // function runs in its caller's thread (LRM 9.5), so this returns the enclosing
 // executing process, reached through the ambient execution context.
-inline auto ProcessSelf(RuntimeEffects& runtime) -> ObjectRef {
+inline auto ProcessSelf(RuntimeEffects& runtime) -> value::ObjectRef {
   return RefToObject(runtime.CurrentProcess().shared_from_this());
 }
 
 // The process node a reference names. A reference states which object it refers
 // to and leaves what may be read through it to the program point holding it;
 // every point here assumes the same class, so it is named once.
-inline auto ProcessNodeOf(const ObjectRef& self) -> RuntimeProcess& {
+inline auto ProcessNodeOf(const value::ObjectRef& self) -> RuntimeProcess& {
   return self.Deref<RuntimeProcess>();
 }
 
@@ -49,7 +49,8 @@ inline auto ProcessNodeOf(const ObjectRef& self) -> RuntimeProcess& {
 // handle after its body terminates. A terminated process reports FINISHED or
 // KILLED by how it terminated -- the completion slot is gone by then, so the
 // distinction is read from the node's persistent terminal cause.
-inline auto ProcessStatus(const ObjectRef& self) -> lyra::value::PackedArray {
+inline auto ProcessStatus(const value::ObjectRef& self)
+    -> lyra::value::PackedArray {
   const RuntimeProcess& node = ProcessNodeOf(self);
   const ProcessStatusCode code = [&] {
     switch (node.ExecutionState()) {
@@ -82,7 +83,7 @@ inline auto ProcessStatus(const ObjectRef& self) -> lyra::value::PackedArray {
 // the running process's own termination is requested (registrations revoked,
 // cause recorded) and its body is unwound to the engine's resume boundary,
 // where the terminal state is published and the retained chain released.
-inline void ProcessKill(const ObjectRef& self, RuntimeEffects& runtime) {
+inline void ProcessKill(const value::ObjectRef& self, RuntimeEffects& runtime) {
   RuntimeProcess& target = ProcessNodeOf(self);
   RuntimeProcess& caller = runtime.CurrentProcess();
   if (target.IsSelfOrAncestorOf(caller)) {
@@ -123,7 +124,7 @@ inline void ProcessKill(const ObjectRef& self, RuntimeEffects& runtime) {
 // re-entrant engine would need an atomic arm-or-observe protocol here.
 class ProcessAwaitAwaitable : public PendingWait {
  public:
-  explicit ProcessAwaitAwaitable(ObjectRef target)
+  explicit ProcessAwaitAwaitable(value::ObjectRef target)
       : target_(std::move(target)) {
   }
 
@@ -167,13 +168,13 @@ class ProcessAwaitAwaitable : public PendingWait {
  private:
   // Pins the target across the suspension, so a kill that detaches it from the
   // lineage while the caller is parked cannot free the node before resume.
-  ObjectRef target_;
+  value::ObjectRef target_;
 };
 
 // It is an error to await the calling process (a process cannot wait for its
 // own termination). The check is here at the call, symmetric with `suspend`, so
 // the awaitable itself is pure readiness.
-inline auto ProcessAwait(const ObjectRef& self, RuntimeEffects& runtime)
+inline auto ProcessAwait(const value::ObjectRef& self, RuntimeEffects& runtime)
     -> ProcessAwaitAwaitable {
   if (self.View<RuntimeProcess>() == &runtime.CurrentProcess()) {
     throw SimulationError(
@@ -186,7 +187,8 @@ inline auto ProcessAwait(const ObjectRef& self, RuntimeEffects& runtime)
 // calling process (a function cannot suspend its own execution). Suspending a
 // process that is already suspended or terminated has no effect. The activation
 // layer does the state transition and the detach; nothing here schedules.
-inline void ProcessSuspend(const ObjectRef& self, RuntimeEffects& runtime) {
+inline void ProcessSuspend(
+    const value::ObjectRef& self, RuntimeEffects& runtime) {
   RuntimeProcess& target = ProcessNodeOf(self);
   if (&target == &runtime.CurrentProcess()) {
     throw SimulationError(
@@ -200,7 +202,8 @@ inline void ProcessSuspend(const ObjectRef& self, RuntimeEffects& runtime) {
 // its wait through the leaf's pending wait -- re-enrolling, or becoming
 // runnable if the condition is already satisfied; a process suspended while
 // runnable is re-queued to run in the current time step.
-inline void ProcessResume(const ObjectRef& self, RuntimeEffects& runtime) {
+inline void ProcessResume(
+    const value::ObjectRef& self, RuntimeEffects& runtime) {
   RuntimeProcess& target = ProcessNodeOf(self);
   if (target.ExecutionState() != ProcessExecutionState::kSuspended) {
     return;

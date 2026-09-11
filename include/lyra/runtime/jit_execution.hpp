@@ -960,8 +960,8 @@ auto lyra_rt_chandle_value_cell_load(const void* cell) -> void*;
 // value rather than a null pointer, because a null pointer would be a second
 // shape for the operand every entry would then have to tell apart.
 auto lyra_rt_managedref_default() -> void*;
-auto lyra_rt_managedref_eq(const void* lhs, const void* rhs) -> bool;
-auto lyra_rt_managedref_ne(const void* lhs, const void* rhs) -> bool;
+auto lyra_rt_managedref_eq(const void* lhs, const void* rhs) -> void*;
+auto lyra_rt_managedref_ne(const void* lhs, const void* rhs) -> void*;
 auto lyra_rt_managedref_case_equal(const void* lhs, const void* rhs) -> void*;
 auto lyra_rt_managedref_to_bool(const void* operand) -> bool;
 auto lyra_rt_managedref_value_cell_alloc() -> void*;
@@ -981,6 +981,7 @@ auto lyra_rt_string_value_box(const void* value) -> void*;
 auto lyra_rt_real_value_box(const void* value) -> void*;
 auto lyra_rt_shortreal_value_box(const void* value) -> void*;
 auto lyra_rt_chandle_value_box(void* value) -> void*;
+auto lyra_rt_managedref_value_box(const void* value) -> void*;
 auto lyra_rt_tuple_value_box(const void* value) -> void*;
 auto lyra_rt_dynarray_value_box(const void* value) -> void*;
 
@@ -1658,6 +1659,10 @@ auto lyra_rt_packed_make_print_value_item(const void* value, const void* spec)
     -> void*;
 auto lyra_rt_string_make_print_value_item(const void* value, const void* spec)
     -> void*;
+auto lyra_rt_chandle_make_print_value_item(void* value, const void* spec)
+    -> void*;
+auto lyra_rt_managedref_make_print_value_item(
+    const void* value, const void* spec) -> void*;
 
 // A format performed at run time (LRM 21.3.3), where the format string is not a
 // literal and so no print item could be built for it at compile time: the text
@@ -1671,6 +1676,8 @@ auto lyra_rt_format_runtime(
     const void* time_format, const void* timeunit_power) -> void*;
 auto lyra_rt_packed_make_format_arg(const void* value) -> void*;
 auto lyra_rt_string_make_format_arg(const void* value) -> void*;
+auto lyra_rt_chandle_make_format_arg(void* value) -> void*;
+auto lyra_rt_managedref_make_format_arg(const void* value) -> void*;
 
 // The DPI-C boundary temporaries (LRM 35.5.6, Annex H.7.7, H.10). None of these
 // is an SV value: each exists inside one lowered call window, holding an image

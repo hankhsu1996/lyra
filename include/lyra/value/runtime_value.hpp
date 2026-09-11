@@ -6,6 +6,7 @@
 #include "lyra/value/chandle.hpp"
 #include "lyra/value/concepts.hpp"
 #include "lyra/value/empty.hpp"
+#include "lyra/value/managed_ref.hpp"
 #include "lyra/value/packed_array.hpp"
 #include "lyra/value/real.hpp"
 #include "lyra/value/runtime_associative_array.hpp"
@@ -28,7 +29,7 @@ struct RuntimeValue {
   std::variant<
       PackedArray, String, Real, ShortReal, Chandle, Empty, RuntimeTuple,
       RuntimeUnion, RuntimeTaggedUnion, RuntimeDynamicArray,
-      RuntimeUnpackedArray, RuntimeQueue, RuntimeAssociativeArray>
+      RuntimeUnpackedArray, RuntimeQueue, RuntimeAssociativeArray, ManagedRef>
       value;
 };
 
@@ -73,11 +74,13 @@ struct RuntimeValue {
     const RuntimeValue& prototype, const PackedArray& fill) -> RuntimeValue;
 
 // The order two values of one domain sit in: lexicographic for a string,
-// numerical for an integral, and for a chandle the pointer it carries, an order
-// LRM 6.14 leaves free to vary between runs. It is the domain's own ordering,
-// read off the values rather than supplied beside them, which is what lets a
-// keyed container carry no index prototype (LRM 7.8.2, 7.8.4) and lets an
-// LRM 7.12.1 locator compare keys of whatever shape a `with` clause produced.
+// numerical for an integral, and for a handle which object it names -- an order
+// LRM 6.14 leaves free to vary between runs for a chandle and LRM 7.8.3 calls
+// deterministic but arbitrary for a class, so both take the host's. It is the
+// domain's own ordering, read off the values rather than supplied beside them,
+// which is what lets a keyed container carry no index prototype (LRM 7.8.2,
+// 7.8.3, 7.8.4) and lets an LRM 7.12.1 locator compare keys of whatever shape a
+// `with` clause produced.
 [[nodiscard]] auto RuntimeValueOrderBefore(
     const RuntimeValue& a, const RuntimeValue& b) -> bool;
 
@@ -99,6 +102,12 @@ struct RuntimeValue {
 // back from a stream of exactly that width. An aggregate reduces over these
 // the way it reduces over the width above, so a part states its own bits and
 // nothing above it knows the part's shape.
+//
+// The clause admits a class among the bit-stream types, so what a handle's
+// stream would be is the object's own properties rather than the handle naming
+// them -- which is why a handle answers as an operation not carried out, while
+// a real and a chandle, which the clause admits nowhere, answer as a program
+// that should never have reached here.
 [[nodiscard]] auto RuntimeValueToBitstream(const RuntimeValue& value)
     -> PackedArray;
 [[nodiscard]] auto RuntimeValueFromBitstream(

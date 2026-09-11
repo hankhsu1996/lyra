@@ -27,6 +27,9 @@ the detail lives in the entry itself.
   packed-to-string strips NUL, `%s` formats bits without a string value.
 - [enum-representation](enum-representation.md) -- an enum's semantic type identity is separate from
   its runtime value; the value is the base integral, never a distinct C++ type.
+- [a-handle-is-a-value](a-handle-is-a-value.md) -- a class handle is a value domain like any other,
+  so every position the language states over a data type admits one; and which managed edges a value
+  holds is answered by the value, not by a description beside its storage.
 
 ### Aggregate types and access
 

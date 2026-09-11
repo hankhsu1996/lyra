@@ -414,16 +414,17 @@ auto TranslateType(
             .key_type = unit_lowerer.Unit().builtins.wildcard_index,
         }};
       }
-      // A declared index covers string (LRM 7.8.2), integral, which includes a
-      // packed struct / enum (LRM 7.8.4 / 7.8.5), and chandle, whose entries
-      // may order arbitrarily (LRM 6.14). A class index (LRM 7.8.3) and a real
-      // index are rejected.
+      // A declared index covers string (LRM 7.8.2), class, whose entries order
+      // deterministically but arbitrarily and whose null is a valid index
+      // (LRM 7.8.3), integral, which includes a packed struct / enum
+      // (LRM 7.8.4 / 7.8.5), and chandle, ordering as arbitrarily as a class
+      // does (LRM 6.14). A real index is rejected.
       if (!(aa.indexType->isIntegral() || aa.indexType->isString() ||
-            aa.indexType->isCHandle())) {
+            aa.indexType->isCHandle() || aa.indexType->isClass())) {
         return diag::Fail(
             decl_span, diag::DiagCode::kUnsupportedAssociativeArrayType,
-            "associative arrays are only supported with a string, integral, "
-            "chandle, or wildcard index type");
+            "associative arrays are only supported with a string, class, "
+            "integral, chandle, or wildcard index type");
       }
       auto key_id_or = unit_lowerer.InternType(*aa.indexType, decl_span);
       if (!key_id_or) {

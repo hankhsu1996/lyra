@@ -384,12 +384,13 @@ auto BuildMirUnaryExpr(
     return MakeBuiltinFnCall(*builtin, operand_id, {}, result_type);
   }
 
-  // LRM 11.3.1 real `!` and LRM 6.14 chandle `!`: route through `bool(...)` and
-  // wrap the host-bool result in `FromBool` so the surface type stays the 1-bit
-  // integral the SV semantic prescribes. A chandle's boolean value is 0 when it
-  // is null and 1 otherwise.
+  // LRM 11.3.1 real `!`, and `!` on a handle, which LRM 6.14 and LRM 8.4 each
+  // give a boolean value that is 0 when it names nothing and 1 otherwise:
+  // route through `bool(...)` and wrap the host-bool result in `FromBool` so
+  // the surface type stays the 1-bit integral the SV semantic prescribes.
   if (op == hir::UnaryOp::kLogicalNot &&
-      (operand_ty.IsRealFamily() || operand_ty.Is<mir::ChandleType>())) {
+      (operand_ty.IsRealFamily() || operand_ty.Is<mir::ChandleType>() ||
+       operand_ty.Is<mir::ManagedRefType>())) {
     const mir::ExprId operand_bool =
         block.exprs.Add(MakeBoolCast(unit, operand_id));
     const mir::ExprId not_id = block.exprs.Add(
@@ -419,37 +420,29 @@ auto BuildMirBinaryExpr(
   const bool string_lhs = lhs_ty.Is<mir::StringType>();
   const bool string_rhs = rhs_ty.Is<mir::StringType>();
 
-  // LRM 8.4: class-handle equality asks which object each handle names, which
-  // is a machine predicate; the 1-bit value LRM 11.4.5 gives the operator is
-  // that predicate widened, so the two are stated separately -- the same shape
-  // a real- or string-family logical operator takes. A chandle is compared as
-  // the value it is (LRM 6.14) and needs neither step.
+  // LRM 8.4 admits `null` as one operand of a handle comparison. A comparison
+  // states no destination, so the front end leaves such an operand at the null
+  // type and the handle's type is what it is being compared at; converting says
+  // that once, in the one place a value crossing to another type is
+  // materialized.
   const auto is_handle = [](const mir::Type& ty) {
     return ty.Is<mir::ManagedRefType>();
   };
   if ((is_handle(lhs_ty) || is_handle(rhs_ty)) &&
       (op == hir::BinaryOp::kEquality || op == hir::BinaryOp::kInequality)) {
-    // LRM 8.4 admits `null` as one operand. A comparison states no destination,
-    // so the front end leaves such an operand at the null type and the handle's
-    // type is what it is being compared at; converting says that once, in the
-    // one place a value crossing to another type is materialized.
     const mir::TypeId handle_type = is_handle(lhs_ty)
                                         ? block.exprs.Get(lhs_id).type
                                         : block.exprs.Get(rhs_id).type;
     const auto at_handle_type = [&](mir::ExprId operand) -> mir::ExprId {
       return ConvertToType(unit, block, operand, handle_type);
     };
-    // The comparison is typed at the host bool it produces; the 1-bit result is
-    // what the widening around it yields.
-    const mir::ExprId cmp = block.exprs.Add(
-        mir::Expr{
-            .data =
-                mir::BinaryExpr{
-                    .op = LowerBinaryOp(op),
-                    .lhs = at_handle_type(lhs_id),
-                    .rhs = at_handle_type(rhs_id)},
-            .type = unit.builtins.machine_bool});
-    return MakeFromBoolCall(cmp, result_type);
+    return mir::Expr{
+        .data =
+            mir::BinaryExpr{
+                .op = LowerBinaryOp(op),
+                .lhs = at_handle_type(lhs_id),
+                .rhs = at_handle_type(rhs_id)},
+        .type = result_type};
   }
 
   // LRM 11.3.1 / LRM 6.16 logical operator on real / string operands needs

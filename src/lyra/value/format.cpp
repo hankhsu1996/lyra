@@ -13,8 +13,11 @@
 #include "lyra/base/internal_error.hpp"
 #include "lyra/base/overloaded.hpp"
 #include "lyra/base/simulation_error.hpp"
+#include "lyra/value/chandle.hpp"
 #include "lyra/value/format_parse.hpp"
 #include "lyra/value/integral_format.hpp"
+#include "lyra/value/managed_ref.hpp"
+#include "lyra/value/object_ref.hpp"
 #include "lyra/value/packed_array.hpp"
 #include "lyra/value/string.hpp"
 
@@ -208,6 +211,38 @@ auto Formatter<String>::Format(const FormatSpec& spec, const String& value)
     return "\"" + std::move(body) + "\"";
   }
   return ApplyFieldWidth(std::move(body), spec);
+}
+
+namespace {
+
+auto FormatHandleIdentity(const FormatSpec& spec, const void* identity)
+    -> std::string {
+  if (spec.kind != FormatKind::kAssignmentPattern) {
+    throw SimulationError(
+        "a handle is printed only by the assignment pattern conversion "
+        "(LRM 21.2.1.6)");
+  }
+  if (identity == nullptr) {
+    return std::string{"null"};
+  }
+  return std::format("{}", identity);
+}
+
+}  // namespace
+
+auto Formatter<Chandle>::Format(const FormatSpec& spec, const Chandle& value)
+    -> std::string {
+  return FormatHandleIdentity(spec, value.Ptr());
+}
+
+auto Formatter<ObjectRef>::Format(
+    const FormatSpec& spec, const ObjectRef& value) -> std::string {
+  return FormatHandleIdentity(spec, value.Handle().Share().get());
+}
+
+auto Formatter<ManagedRef>::Format(
+    const FormatSpec& spec, const ManagedRef& value) -> std::string {
+  return FormatHandleIdentity(spec, value.Share().get());
 }
 
 auto Formatter<double>::Format(

@@ -61,11 +61,7 @@ auto ValueOf(support::ValueDomain domain, void* handle) -> value::RuntimeValue {
     case support::ValueDomain::kAssocArray:
       return Read<value::RuntimeAssociativeArray>(handle);
     case support::ValueDomain::kManagedRef:
-      // A managed reference is not one of the alternatives an erased value
-      // holds, so a container of them has no realization either and refuses
-      // where it is built.
-      throw InternalError(
-          "erased value: a managed reference is not an erased value");
+      return Read<value::ManagedRef>(handle);
   }
   throw InternalError("erased value: unknown value domain");
 }

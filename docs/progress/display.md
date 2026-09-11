@@ -74,6 +74,13 @@ refused outright rather than left-justified.
       carrying the modifiers its own formatting model admits). No newline appended (LRM 21.3.3 is a
       string-producer; newline policy belongs to the display / write family).
 
+- [x] DI10 -- `%p` on a handle (LRM 21.2.1.6). A chandle and a class handle each print in a format
+      the clause leaves to the tool, except that one naming nothing prints the word `null`; the text
+      stands for which object the handle names, so two handles naming one object print alike and no
+      two objects share a text. The clause defines a handle under that conversion alone, so every
+      other one is diagnosed where it is written, or rejected by the formatter where the format
+      string is one the program computed.
+
 ## Scan family follow-ups
 
 Tracks remaining LRM 21.3.4.3 corners explicitly rejected by the scan family. Each item is a
