@@ -1,5 +1,6 @@
 #pragma once
 
+#include <algorithm>
 #include <concepts>
 #include <cstddef>
 #include <cstdint>
@@ -57,16 +58,29 @@ class Driver;
 template <value::NetResolvable T>
 class ResolvedNet;
 
-// Where one declared net sits in a physical net: which run of that net's own
-// positions the physical net covers, and where that run begins among the
-// physical net's positions. A net no connection reached is the one placement of
-// its own physical net, covering it exactly, which is the case every net in a
-// design that writes no connection is in.
+template <value::NetResolvable T>
+class PhysicalNet;
+
+// Where one declared net sits in a physical net: the net, and where among that
+// net's own positions the run the physical net covers begins. Every name in a
+// physical net covers the whole of it, so the run's width is the physical net's
+// and a name reaching part of one reaches it as a separate physical net -- what
+// a connection relates is a run, and a run related to two different things at
+// two alignments is two runs. A net no connection reached is the one placement
+// of its own physical net at offset zero.
 template <value::NetResolvable T>
 struct NetPlacement {
   ResolvedNet<T>* net{};
   std::uint32_t net_offset{};
-  std::uint32_t physical_offset{};
+};
+
+// One run of a declared net's own positions and the physical net it reaches
+// there. A net's runs cover it exactly and in order, so a name whose positions
+// were never split reaches one.
+template <value::NetResolvable T>
+struct NetReach {
+  std::shared_ptr<PhysicalNet<T>> physical;
+  std::uint32_t net_offset{};
   std::uint32_t width{};
 };
 
@@ -138,32 +152,23 @@ class PhysicalNet {
     }
   }
 
-  // Whether a placement covers the whole of both sides, so carrying a value
-  // between them leaves every position where it already is. That is the case
-  // every design connecting whole nets is in, and it has to be the whole of
-  // both: covering the whole of these positions says nothing about how wide the
-  // name reaching them is.
-  [[nodiscard]] auto CoversBothWholly(
+  // Whether a placement stands for the whole of the name reaching it, so
+  // carrying a value between the two leaves every position where it already is.
+  // That is the case every design connecting whole nets is in.
+  [[nodiscard]] auto CoversTheName(
       const NetPlacement<T>& placement, std::uint64_t net_width) const -> bool {
-    return placement.physical_offset == 0 && placement.net_offset == 0 &&
-           placement.width == width_ && placement.width == net_width;
+    return placement.net_offset == 0 && width_ == net_width;
   }
 
   // A name's value seen at these positions.
   [[nodiscard]] auto FromPlacement(
       const T& value, const NetPlacement<T>& placement) const -> T {
     if constexpr (std::same_as<T, value::PackedArray>) {
-      if (CoversBothWholly(placement, value.BitWidth())) {
+      if (CoversTheName(placement, value.BitWidth())) {
         return value;
       }
-      T carried = nondriving_;
-      carried.AssignSlice(
-          value::PackedArray::IntUnsigned(placement.physical_offset),
-          placement.width,
-          value.ExtractBits(
-              value::PackedArray::IntUnsigned(placement.net_offset),
-              placement.width));
-      return carried;
+      return value.ExtractBits(
+          value::PackedArray::IntUnsigned(placement.net_offset), width_);
     } else {
       return value;
     }
@@ -174,15 +179,11 @@ class PhysicalNet {
   [[nodiscard]] auto IntoPlacement(
       T into, const T& value, const NetPlacement<T>& placement) const -> T {
     if constexpr (std::same_as<T, value::PackedArray>) {
-      if (CoversBothWholly(placement, into.BitWidth())) {
+      if (CoversTheName(placement, into.BitWidth())) {
         return value;
       }
       into.AssignSlice(
-          value::PackedArray::IntUnsigned(placement.net_offset),
-          placement.width,
-          value.ExtractBits(
-              value::PackedArray::IntUnsigned(placement.physical_offset),
-              placement.width));
+          value::PackedArray::IntUnsigned(placement.net_offset), width_, value);
       return into;
     } else {
       return value;
@@ -212,37 +213,70 @@ class PhysicalNet {
   // any of them.
   void Reresolve(RuntimeEffects& runtime);
 
-  // Where one of a name's own positions sits among these. A name reaches its
-  // physical net over at least the whole of itself, so exactly one placement
-  // carries it.
-  [[nodiscard]] auto PositionIn(
-      const ResolvedNet<T>& net, std::uint32_t position) const
-      -> std::uint32_t {
-    for (const auto& placement : placements_) {
-      if (placement.net == &net && position >= placement.net_offset &&
-          position - placement.net_offset < placement.width) {
-        return placement.physical_offset + (position - placement.net_offset);
+  // These positions cut in two at `at`, which keeps the low part and hands back
+  // the high one. Every name here covers the whole of these positions, so each
+  // is placed in both halves, the high one at that name's own offset advanced
+  // by the cut. A cut is what a connection reaching part of these positions
+  // asks for: the part it reaches goes on to resolve with whatever it is
+  // coupled to, and the rest of these positions is a resolution of its own.
+  [[nodiscard]] auto Split(std::uint32_t at)
+      -> std::shared_ptr<PhysicalNet<T>> {
+    if constexpr (!std::same_as<T, value::PackedArray>) {
+      throw InternalError(
+          "PhysicalNet: an aggregate states one indivisible position, so a "
+          "connection reaching one reaches the whole of it");
+    } else {
+      if (at == 0 || at >= width_) {
+        throw InternalError(
+            "PhysicalNet: a cut falls inside these positions, since a cut at "
+            "either end asks for the positions that are already here");
       }
+      if (takeovers_ != nullptr) {
+        throw InternalError(
+            "PhysicalNet: every connection is stated while the design "
+            "resolves, which is before any procedural continuous assignment "
+            "can have taken these positions over");
+      }
+      const std::uint32_t above = width_ - at;
+      auto high = std::make_shared<PhysicalNet<T>>(
+          SliceOfPositions(nondriving_, at, above),
+          DriveContribution<T>{
+              .value = SliceOfPositions(own_.value, at, above),
+              .strength = own_.strength},
+          own_fill_, fold_, own_kind_, above);
+      for (const NetPlacement<T>& placement : placements_) {
+        high->placements_.push_back(
+            NetPlacement<T>{
+                .net = placement.net, .net_offset = placement.net_offset + at});
+      }
+      nondriving_ = SliceOfPositions(nondriving_, 0, at);
+      own_.value = SliceOfPositions(own_.value, 0, at);
+      width_ = at;
+      return high;
     }
-    throw InternalError(
-        "PhysicalNet: a net reaches its physical net over the whole of itself, "
-        "so every position of it is one that physical net covers");
   }
 
-  // Adds a name over a run of these positions. The same name may reach one
-  // physical net more than once, at more than one alignment, which is what a
-  // connection permuting runs states -- LRM 10.11's byte-swap example places
-  // one net at four places in one physical net.
+  // Adds a name over these positions, at the offset among its own that the
+  // first of them stands at. A name already here at that offset is already
+  // saying this, which is what an alias repeated in two statements states.
   void Admit(const NetPlacement<T>& placement) {
     for (const auto& existing : placements_) {
       if (existing.net == placement.net &&
-          existing.net_offset == placement.net_offset &&
-          existing.physical_offset == placement.physical_offset &&
-          existing.width == placement.width) {
+          existing.net_offset == placement.net_offset) {
         return;
       }
     }
     placements_.push_back(placement);
+  }
+
+  // A run of a value's positions, as a value of its own.
+  [[nodiscard]] static auto SliceOfPositions(
+      const T& value, std::uint32_t from, std::uint32_t width) -> T {
+    if constexpr (std::same_as<T, value::PackedArray>) {
+      return value.ExtractBits(value::PackedArray::IntUnsigned(from), width);
+    } else {
+      return value;
+    }
   }
 
   T nondriving_{};
@@ -415,6 +449,23 @@ class ResolvedNet : public Observable {
   friend class Driver<T>;
   friend class PhysicalNet<T>;
 
+  // Which of this net's runs begins at `position`, cutting what it reaches so
+  // that one does and so that the run is no longer than `within`. A connection
+  // names a run of a net's own positions; what the net reaches there was fixed
+  // by whatever connections came before, so the two are made to agree here.
+  auto RunAt(std::uint32_t position, std::uint32_t within) -> std::size_t;
+
+  // Cuts a physical net in two, `at` positions from its start, and gives every
+  // name reaching it the two runs that replace the one.
+  static void CutPhysical(
+      std::shared_ptr<PhysicalNet<T>> physical, std::uint32_t at);
+
+  // Makes one physical net of two that cover the same positions, leaving every
+  // name of the second reaching the first.
+  static void MergePhysical(
+      std::shared_ptr<PhysicalNet<T>> keep,
+      std::shared_ptr<PhysicalNet<T>> folded);
+
   void Install(
       T prototype, const value::PackedArray& fill,
       const value::PackedArray& strength, value::NetResolution resolution,
@@ -428,42 +479,46 @@ class ResolvedNet : public Observable {
     nondriving_ =
         T::FilledLike(prototype, value::PackedArray::HighImpedanceScalar());
     const std::uint32_t width = PhysicalNet<T>::PositionsOf(nondriving_);
-    physical_ = std::make_shared<PhysicalNet<T>>(
+    auto physical = std::make_shared<PhysicalNet<T>>(
         nondriving_,
         DriveContribution<T>{
             .value = T::FilledLike(prototype, fill),
             .strength = StrengthLevelOf(strength)},
         fill, resolution, own_kind, width);
-    physical_->Admit(
-        NetPlacement<T>{
-            .net = this,
-            .net_offset = 0,
-            .physical_offset = 0,
-            .width = width});
-    resolved_ = physical_->Resolve();
+    physical->Admit(NetPlacement<T>{.net = this, .net_offset = 0});
+    resolved_ = physical->Resolve();
+    reaches_.push_back(
+        NetReach<T>{
+            .physical = std::move(physical), .net_offset = 0, .width = width});
   }
 
-  // The physical net this name reaches, where it reaches the whole of it. An
-  // operation written on a name rather than on a run needs that, because a name
-  // covering part of one has no way to say which part it meant.
+  // The physical net this name reaches, where it reaches one covering the whole
+  // of it. An operation written on a name rather than on a run needs that,
+  // because a name reaching several has no way to say which it meant.
   [[nodiscard]] auto WholePhysicalNet() -> PhysicalNet<T>& {
-    if (physical_->width_ != PhysicalNet<T>::PositionsOf(nondriving_)) {
+    if (reaches_.size() != 1 ||
+        reaches_.front().width != PhysicalNet<T>::PositionsOf(nondriving_)) {
       throw SimulationError(
           "a procedural continuous assignment names a net that a connection "
           "reaches over part of one resolution, so what it overrides is part "
           "of a physical net, which is not yet supported (LRM 10.6.2)");
     }
-    return *physical_;
+    return *reaches_.front().physical;
   }
 
   void UpdateContribution(
       RuntimeEffects& runtime, std::size_t index, const T& value) {
     ContributionOf(index).value = value;
-    physical_->Reresolve(runtime);
+    ReresolveJoint(runtime);
   }
 
+  // A driver writes wherever this net's own positions are, so every resolution
+  // any run of it takes part in recomputes. A net no connection split reaches
+  // one, which is the same walk over one.
   void ReresolveJoint(RuntimeEffects& runtime) {
-    physical_->Reresolve(runtime);
+    for (const NetReach<T>& reach : reaches_) {
+      reach.physical->Reresolve(runtime);
+    }
   }
 
   // The contribution a driver names. Every driver reaches its own through the
@@ -502,10 +557,12 @@ class ResolvedNet : public Observable {
 
   T resolved_{};
   T nondriving_{};
-  // The physical net this name reaches. Its own until a connection states that
-  // some of these positions are also another name's, which is every net in a
-  // design that writes no connection.
-  std::shared_ptr<PhysicalNet<T>> physical_;
+  // The physical nets this name reaches, covering its positions exactly and in
+  // order. One, its own, until a connection states that a run of these
+  // positions is also a run of another name's -- which cuts this net's runs at
+  // that run's ends, since what the two share resolves together and what it
+  // does not goes on resolving alone.
+  std::vector<NetReach<T>> reaches_;
   // Whether any of this net's own contributions sits at a given level, which a
   // resolution reads from every name reaching it. Recording it per name is what
   // leaves a driver attached after a connection needing nothing propagated, and
@@ -562,7 +619,7 @@ void PhysicalNet<T>::Reresolve(RuntimeEffects& runtime) {
   if (forced != nullptr) {
     next = *forced;
   }
-  for (const auto& placement : placements_) {
+  for (const NetPlacement<T>& placement : placements_) {
     placement.net->PublishIfChanged(
         runtime, IntoPlacement(placement.net->resolved_, next, placement));
   }
@@ -572,60 +629,102 @@ template <value::NetResolvable T>
 void ResolvedNet<T>::Join(
     ResolvedNet* other, const value::PackedArray& here,
     const value::PackedArray& there, const value::PackedArray& width) {
-  // Both are held for the whole call: the last name reaching one of them is
-  // about to be pointed at the other, and what that drops is the one this is
-  // still reading placements out of.
-  const std::shared_ptr<PhysicalNet<T>> mine_held = physical_;
-  const std::shared_ptr<PhysicalNet<T>> theirs_held = other->physical_;
-  PhysicalNet<T>& mine = *mine_held;
-  PhysicalNet<T>& theirs = *theirs_held;
-  if (&mine == &theirs) {
+  std::uint32_t at_here = PositionOf(here);
+  std::uint32_t at_there = PositionOf(there);
+  std::uint32_t remaining = PositionOf(width);
+  // The two sides reach physical nets whose runs fall wherever earlier
+  // connections left them, so the coupling is taken in the pieces both sides
+  // have whole. Each piece cuts what is longer than it, which is what leaves
+  // every physical net covered entirely by every name in it.
+  while (remaining > 0) {
+    // Each side is asked in turn and cuts as it answers, so asking the first
+    // again after the second has answered is what settles the piece: a cut for
+    // one side reaches every name in the physical net it cut, the other side
+    // among them.
+    std::uint32_t run = reaches_[RunAt(at_here, remaining)].width;
+    run = other->reaches_[other->RunAt(at_there, run)].width;
+    const std::shared_ptr<PhysicalNet<T>> mine =
+        reaches_[RunAt(at_here, run)].physical;
+    const std::shared_ptr<PhysicalNet<T>> theirs =
+        other->reaches_[other->RunAt(at_there, run)].physical;
+    MergePhysical(mine, theirs);
+    at_here += run;
+    at_there += run;
+    remaining -= run;
+  }
+}
+
+template <value::NetResolvable T>
+auto ResolvedNet<T>::RunAt(std::uint32_t position, std::uint32_t within)
+    -> std::size_t {
+  for (std::size_t at = 0; at < reaches_.size(); ++at) {
+    const NetReach<T>& reach = reaches_[at];
+    if (position < reach.net_offset ||
+        position - reach.net_offset >= reach.width) {
+      continue;
+    }
+    if (position > reach.net_offset) {
+      CutPhysical(reach.physical, position - reach.net_offset);
+      return RunAt(position, within);
+    }
+    if (reach.width > within) {
+      CutPhysical(reach.physical, within);
+      return RunAt(position, within);
+    }
+    return at;
+  }
+  throw InternalError(
+      "ResolvedNet: a net's own runs cover every position it has, so a "
+      "connection naming one reaches a run that holds it");
+}
+
+template <value::NetResolvable T>
+void ResolvedNet<T>::CutPhysical(
+    std::shared_ptr<PhysicalNet<T>> physical, std::uint32_t at) {
+  const std::shared_ptr<PhysicalNet<T>> above = physical->Split(at);
+  for (const NetPlacement<T>& placement : above->placements_) {
+    std::vector<NetReach<T>>& runs = placement.net->reaches_;
+    for (std::size_t run = 0; run < runs.size(); ++run) {
+      if (runs[run].physical != physical) {
+        continue;
+      }
+      const NetReach<T> tail{
+          .physical = above,
+          .net_offset = runs[run].net_offset + at,
+          .width = runs[run].width - at};
+      runs[run].width = at;
+      runs.insert(runs.begin() + static_cast<std::ptrdiff_t>(run) + 1, tail);
+      break;
+    }
+  }
+}
+
+template <value::NetResolvable T>
+void ResolvedNet<T>::MergePhysical(
+    std::shared_ptr<PhysicalNet<T>> keep,
+    std::shared_ptr<PhysicalNet<T>> folded) {
+  if (keep == folded) {
     return;
   }
-  if (mine.fold_ != theirs.fold_ || mine.own_kind_ != theirs.own_kind_ ||
-      mine.own_.strength != theirs.own_.strength ||
-      !mine.own_fill_.IsBitIdentical(theirs.own_fill_)) {
+  if (keep->fold_ != folded->fold_ || keep->own_kind_ != folded->own_kind_ ||
+      keep->own_.strength != folded->own_.strength ||
+      !keep->own_fill_.IsBitIdentical(folded->own_fill_)) {
     throw SimulationError(
-        "a bidirectional connection joins two nets of dissimilar net types; "
-        "a simulated net formed from net types that resolve differently "
-        "(LRM 23.3.3.7) is not yet supported");
+        "a connection makes one physical net of runs whose nets state "
+        "dissimilar net types; a resolution over net types that resolve "
+        "differently (LRM 23.3.3.7, 10.11) is not yet supported");
   }
-  const std::uint32_t run = PositionOf(width);
-  const std::uint32_t mine_at = mine.PositionIn(*this, PositionOf(here));
-  const std::uint32_t theirs_at = theirs.PositionIn(*other, PositionOf(there));
-  if (mine_at + run > mine.width_ || theirs_at + run > theirs.width_) {
-    throw InternalError(
-        "ResolvedNet::Join: a connection states a run reaching past the "
-        "positions one of the nets it names has");
+  // Both cover the same number of positions and the coupling puts their first
+  // ones together, so each name keeps the offset it had among its own.
+  for (const NetPlacement<T>& placement : folded->placements_) {
+    keep->Admit(placement);
+    for (NetReach<T>& reach : placement.net->reaches_) {
+      if (reach.physical == folded) {
+        reach.physical = keep;
+      }
+    }
   }
-  // The wider keeps its positions and the narrower is placed into it, so
-  // nothing already recorded is rebased. Every connection a lowering states
-  // joins a whole net to a run of another, which is always this way round.
-  PhysicalNet<T>* keep = &mine;
-  PhysicalNet<T>* fold_in = &theirs;
-  std::uint32_t shift = mine_at - theirs_at;
-  if (mine.width_ < theirs.width_) {
-    keep = &theirs;
-    fold_in = &mine;
-    shift = theirs_at - mine_at;
-  }
-  if (shift + fold_in->width_ > keep->width_) {
-    throw InternalError(
-        "ResolvedNet::Join: a connection places a physical net outside the "
-        "positions of the one it joins, which no stated connection does");
-  }
-  const std::shared_ptr<PhysicalNet<T>> survivor =
-      keep == &mine ? mine_held : theirs_held;
-  for (const NetPlacement<T>& placement : fold_in->placements_) {
-    keep->Admit(
-        NetPlacement<T>{
-            .net = placement.net,
-            .net_offset = placement.net_offset,
-            .physical_offset = placement.physical_offset + shift,
-            .width = placement.width});
-    placement.net->physical_ = survivor;
-  }
-  survivor->Reresolve(current_runtime());
+  keep->Reresolve(current_runtime());
 }
 
 // The drive capability for a net: a handle to one contribution of a

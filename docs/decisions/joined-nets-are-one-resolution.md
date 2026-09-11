@@ -154,6 +154,38 @@ So the range is consulted exactly once, where the source wrote the select, which
 that reads it. That is also the one place with the folded constants in hand, so nothing below
 recomputes anything.
 
+### F9. One node per name is falsified by the standard's own example, and the fix makes the node smaller
+
+The first implementation gave each name one node and merged the smaller into the larger. That holds
+while every connection reaches the whole of one of the two nets, which was true of every connection
+the model was built against. LRM 10.11's byte-swap example is not: it relates `A[7:0]` to `B[31:24]`
+and `A[15:8]` to `B[23:16]` in one statement. If each name sits at one base in one space, the two
+demand that A's base be B's plus 24 and also plus 8, so no widening, permutation or choice of
+coordinates satisfies them. The same shape arrives without a concatenation, from two aliases between
+part selects of one pair of names.
+
+What removes it is not a bigger node but a smaller one: **a node is a run that every name in it
+covers entirely**, so a name reaches one node per run of its positions and a connection cuts the
+runs its ends fall inside before relating them. A node then needs no width of its own beyond the
+run, no alignment per name beyond the offset among that name's positions, and nothing is ever
+rebased -- which is the property the one-node-per-name shape was chosen for and did not have.
+
+**The example is how this was found; the reason it had to come out this way is one clause earlier,
+and it makes the cut predictable instead of surprising.** The standard's own unit of resolution is
+the bit: LRM 6.7.1 makes a net "composed entirely of 4-state bits", LRM 6.5 makes each bit of a
+packed type an independent element, and LRM 6.6.7 names it -- an _atomic net_ is one "whose value is
+updated and resolved as a whole", and "a `logic` vector net is not an atomic net as each `logic`
+element is resolved and updated independently", each atomic net describing "a single connection
+point in the design". So the object this record builds is not a new idea; it is one object per
+**run** of atomic nets that share a connection point, which is the bit-wise model compressed.
+
+Read that way the rule writes itself. A run means "these positions are connected identically", so it
+has to be maximal with respect to that, and a connection reaching part of one destroys the property
+-- the cut is what restores it. One node per _name_ asserts something else entirely, that positions
+belong together because one declaration named them, which the language never says and which the
+byte-swap example is simply the smallest program to disprove. Anything that keeps a whole name at
+one alignment fails the same way, however its coordinates are chosen.
+
 ## The decision
 
 1. **What resolves is the physical net (LRM 10.11, 23.3.3.7): a set of positions that resolve
@@ -165,9 +197,13 @@ recomputes anything.
    in.
 
    A node is a space of positions with names placed in it, rather than a set of names each carrying
-   a range. That is what lets one name reach a node at more than one alignment, which is what a
-   connection permuting runs states -- LRM 10.11's byte-swap example places one net at four places
-   in one node -- and it is why joining never has to split anything.
+   a range. **A name reaches one node per run of its own positions**, which is what lets a
+   connection permuting runs state what it does -- LRM 10.11's byte-swap example relates four runs
+   of one name to four of another at four alignments, and one node per name cannot hold that
+   whatever its coordinates are, since a name at one base in one space cannot satisfy two alignments
+   at once. F9 has the falsification; this clause first said joining never has to split anything,
+   which held of every join that existed when it was written and of none that reaches part of a
+   name.
 
 2. **A join pools contributions, never results.** Every driver a simulated net covers contributes to
    one resolution at the strength it drives at, and no net's resolved value is ever an input to
@@ -210,6 +246,26 @@ recomputes anything.
    overlay rules ... for a packed union with the same member types", and LRM 7.6 makes whole-value
    correspondence positional rather than range-relative -- so below the lowering that reads the
    source, no layer needs the range a net names its own positions by.
+
+8. **Each side of a connection is a sequence of runs, and what the connection states is the two laid
+   over one another.** LRM 10.11 gives an overlay the bit overlay rules of a packed union, so
+   correspondence runs position-wise from the most significant end; the two sides' runs need not
+   fall at the same boundaries, so the statement is taken in the pieces both sides have whole, each
+   as wide as the shorter of the two it stands between. An actual naming one net is the case where
+   its side has one run, and needs no path of its own.
+
+   Which runs a side names is answered where that side's source is: the connecting unit reads its
+   own actual, and the declaring unit publishes the run its port stands for, because the descent it
+   publishes is in coordinates only that unit's declarations give meaning to. A consumer that had to
+   turn those into positions would be deriving what the producer already knew.
+
+9. **What resolves is a run every name reaching it covers entirely, and a name reaches one per run
+   of its own positions.** A connection cuts the runs its ends fall inside -- on both sides, and for
+   every name already sharing them -- and then makes one resolution of two runs that now cover the
+   same number of positions. So a name is never at two alignments in one resolution, nothing is ever
+   rebased, and two positions of one name can take part in two resolutions, which is what LRM
+   23.3.3.7 requires of a name whose bits meet different net types. A name no connection reached is
+   the single run that covers it.
 
 ## Consequences
 

@@ -92,6 +92,9 @@ class StructuralScopeLowerer {
   auto PopulatePortConnections(
       const slang::ast::Scope& slang_scope, WalkFrame frame)
       -> diag::Result<void>;
+  auto PopulateNetAliasMember(
+      const slang::ast::NetAliasSymbol& alias, WalkFrame frame)
+      -> diag::Result<void>;
   auto LowerContinuousAssign(
       const slang::ast::ContinuousAssignSymbol& sym, WalkFrame frame)
       -> diag::Result<hir::ContinuousAssign>;

@@ -35,6 +35,7 @@
 #include "lyra/hir/structural_scope.hpp"
 #include "lyra/hir/subroutine.hpp"
 #include "lyra/lowering/ast_to_hir/instance_array_shape.hpp"
+#include "lyra/lowering/ast_to_hir/net_overlay.hpp"
 #include "lyra/lowering/ast_to_hir/net_type.hpp"
 #include "lyra/lowering/ast_to_hir/process_lowerer.hpp"
 #include "lyra/lowering/ast_to_hir/statement/assertions.hpp"
@@ -137,15 +138,17 @@ auto StructuralScopeLowerer::Run(WalkFrame parent_frame)
   }
 
   // Structural members (variables, generates, subroutine bodies) are lowered
-  // before behavioral ones (processes, continuous assigns), so a process or
-  // continuous assign resolves a downward reference into a generate block it
-  // textually precedes -- declarations are scope-wide (LRM 27), the same
-  // reason instances are bound in the pre-pass above.
+  // before the members that name them (processes, continuous assigns, and the
+  // aliases that state which of this scope's nets are one physical net), so
+  // such a member resolves a reference to a declaration it textually precedes
+  // -- declarations are scope-wide (LRM 27), the same reason instances are
+  // bound in the pre-pass above.
   for (const auto& member : slang_scope_->members()) {
     if (member.kind == slang::ast::SymbolKind::Instance ||
         member.kind == slang::ast::SymbolKind::InstanceArray ||
         member.kind == slang::ast::SymbolKind::ProceduralBlock ||
-        member.kind == slang::ast::SymbolKind::ContinuousAssign) {
+        member.kind == slang::ast::SymbolKind::ContinuousAssign ||
+        member.kind == slang::ast::SymbolKind::NetAlias) {
       continue;
     }
     auto r = PopulateMember(member, frame);
@@ -160,7 +163,8 @@ auto StructuralScopeLowerer::Run(WalkFrame parent_frame)
 
   for (const auto& member : slang_scope_->members()) {
     if (member.kind != slang::ast::SymbolKind::ProceduralBlock &&
-        member.kind != slang::ast::SymbolKind::ContinuousAssign) {
+        member.kind != slang::ast::SymbolKind::ContinuousAssign &&
+        member.kind != slang::ast::SymbolKind::NetAlias) {
       continue;
     }
     auto r = PopulateMember(member, frame);
@@ -211,6 +215,9 @@ auto StructuralScopeLowerer::PopulateMember(
     case SymbolKind::ContinuousAssign:
       return PopulateContinuousAssignMember(
           member.as<slang::ast::ContinuousAssignSymbol>(), frame);
+    case SymbolKind::NetAlias:
+      return PopulateNetAliasMember(
+          member.as<slang::ast::NetAliasSymbol>(), frame);
     case SymbolKind::GenerateBlockArray:
       return PopulateGenerateArrayMember(
           member.as<slang::ast::GenerateBlockArraySymbol>(), frame);
@@ -252,17 +259,6 @@ auto StructuralScopeLowerer::PopulateMember(
           diag::DiagCode::kUnsupportedStructuralMember,
           "assertion and checker declarations are not supported; pass "
           "--assertions skip to elide them");
-
-    // An alias makes its members' bits the same physical nets (LRM 10.11). It
-    // is one resolution over several nets, which a bidirectional port
-    // connection also is -- but an alias states it per bit range, so one net's
-    // bits may belong to several resolutions at once, which is a shape the
-    // model behind that connection does not carry.
-    case SymbolKind::NetAlias:
-      return diag::Fail(
-          owner_->SourceMapper().PointSpanOf(member.location),
-          diag::DiagCode::kUnsupportedStructuralMember,
-          "a net alias (LRM 10.11) is not yet supported");
 
     // Behavior the design depends on: skipping one would hand the backend a
     // different design than the source describes.
@@ -657,6 +653,36 @@ auto StructuralScopeLowerer::PopulateContinuousAssignMember(
   auto ca = LowerContinuousAssign(sym, frame);
   if (!ca) return std::unexpected(std::move(ca.error()));
   frame.current_structural_scope->continuous_assigns.Add(*std::move(ca));
+  return {};
+}
+
+// An alias states that the bits of the signals it lists are the same physical
+// nets (LRM 10.11). Each member is one side of the overlay, and being the same
+// physical net is transitive, so stating it between each side and the next
+// states it among all of them -- which is also why a design may write the same
+// pair in two statements and get one physical net rather than two.
+//
+// What the standard demands of the members is decided over the elaborated
+// design and reported there: one net type across the list, sides of equal
+// width, no variable and no hierarchical reference, and no pair stated twice.
+auto StructuralScopeLowerer::PopulateNetAliasMember(
+    const slang::ast::NetAliasSymbol& alias, WalkFrame frame)
+    -> diag::Result<void> {
+  const diag::SourceSpan span =
+      owner_->SourceMapper().PointSpanOf(alias.location);
+  std::optional<NetSide> previous;
+  for (const slang::ast::Expression* member : alias.getNetReferences()) {
+    auto side = NetRunsOfLvalue(
+        *this, slang_scope_->asSymbol(), *member, span,
+        diag::DiagCode::kUnsupportedStructuralMember, frame);
+    if (!side) return std::unexpected(std::move(side.error()));
+    if (previous.has_value()) {
+      for (const hir::NetJoin& coupling : CoupleSides(*previous, *side, span)) {
+        frame.current_structural_scope->net_joins.push_back(coupling);
+      }
+    }
+    previous = *std::move(side);
+  }
   return {};
 }
 

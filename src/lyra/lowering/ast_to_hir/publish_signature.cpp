@@ -8,10 +8,12 @@
 #include <utility>
 #include <vector>
 
+#include <slang/ast/EvalContext.h>
 #include <slang/ast/Expression.h>
 #include <slang/ast/Scope.h>
 #include <slang/ast/SemanticFacts.h>
 #include <slang/ast/Symbol.h>
+#include <slang/ast/ValuePath.h>
 #include <slang/ast/expressions/MiscExpressions.h>
 #include <slang/ast/expressions/OperatorExpressions.h>
 #include <slang/ast/expressions/SelectExpressions.h>
@@ -127,6 +129,45 @@ auto PeelPortExpression(const slang::ast::Expression& expr)
     }
     return std::nullopt;
   }
+}
+
+// How many positions a declaration has, in the terms a connection lays one run
+// over another in: an integral declaration has one per bit (LRM 10.11 states an
+// alias over "bits within a net"), and every other kind has one indivisible
+// position, since nothing names a part of one.
+auto PositionsOfDeclaration(const slang::ast::ValueSymbol& base)
+    -> std::uint32_t {
+  const slang::ast::Type& type = base.getType();
+  if (!type.isIntegral()) {
+    return 1;
+  }
+  return static_cast<std::uint32_t>(type.getBitWidth());
+}
+
+// Which of the declaration's own positions the part a port stands for covers.
+// A port written as a plain name covers all of them; one written as a select
+// covers the run the front end folded that select to. A select into a
+// declaration whose positions are not bits reaches a part that is no run of
+// them, which is what the absent answer says.
+auto RunOfPortExpression(
+    const slang::ast::ValueSymbol& base, const slang::ast::Expression* written)
+    -> std::optional<hir::PublishedRun> {
+  if (written == nullptr) {
+    return hir::PublishedRun{
+        .position = 0, .width = PositionsOfDeclaration(base)};
+  }
+  if (!base.getType().isIntegral()) {
+    return std::nullopt;
+  }
+  slang::ast::EvalContext eval_context(base);
+  const slang::ast::ValuePath path(*written, eval_context);
+  if (path.lsp != written) {
+    return std::nullopt;
+  }
+  return hir::PublishedRun{
+      .position = static_cast<std::uint32_t>(path.lspBounds.first),
+      .width = static_cast<std::uint32_t>(
+          path.lspBounds.second - path.lspBounds.first + 1)};
 }
 
 auto TranslateDirection(
@@ -475,8 +516,10 @@ auto UnitLowerer::PublishSignature() -> diag::Result<void> {
     return hir::PortPart{hir::DataPortPart{
         .direction = direction,
         .type = publish_type(*interned),
-        .target =
-            hir::MemberProjection{.member = *id, .path = *std::move(path)}}};
+        .target = hir::MemberProjection{
+            .member = *id,
+            .path = *std::move(path),
+            .run = RunOfPortExpression(*peeled->base, written)}}};
   };
 
   for (const auto* member : body->getPortList()) {
@@ -587,7 +630,10 @@ auto UnitLowerer::PublishSignature() -> diag::Result<void> {
         auto path = publish_path(peeled->steps, span);
         if (!path) return std::unexpected(std::move(path.error()));
         parts.push_back(
-            hir::MemberProjection{.member = *id, .path = *std::move(path)});
+            hir::MemberProjection{
+                .member = *id,
+                .path = *std::move(path),
+                .run = RunOfPortExpression(*peeled->base, written_part)});
       }
       return parts;
     };
