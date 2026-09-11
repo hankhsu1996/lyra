@@ -222,8 +222,8 @@ template <typename Control>
 auto AsWiderControl(hir::AnyEventControl event) -> Control {
   return std::visit(
       Overloaded{
-          [](hir::EventControl e) -> Control { return std::move(e); },
-          [](hir::NamedEventControl n) -> Control { return std::move(n); }},
+          [](hir::EventControl e) -> Control { return e; },
+          [](hir::NamedEventControl n) -> Control { return n; }},
       std::move(event));
 }
 
