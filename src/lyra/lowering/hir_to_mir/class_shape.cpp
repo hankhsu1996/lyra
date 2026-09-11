@@ -2,7 +2,6 @@
 
 #include <cstddef>
 
-#include "lyra/mir/callable_code.hpp"
 #include "lyra/mir/class.hpp"
 
 namespace lyra::lowering::hir_to_mir {
