@@ -14,7 +14,8 @@ aggregate family (dynamic array, queue, associative array) is complete as a valu
 element reference into one has to survive is not, and is recorded with the conformance gaps below.
 Unpacked struct and union, tagged and untagged, are complete. Default initialization (LRM Table 6-7)
 and value representation, including a wide value carrying X/Z across the 64-bit word boundary, are
-complete. Chandle is complete.
+complete. Chandle is complete. Bit-stream casting is complete between fixed-size types; the
+dynamically sized form is the one gap, recorded below.
 
 ## Tagged union
 
@@ -79,6 +80,25 @@ LRM 6.12: `real` is IEEE 754 double, `shortreal` is IEEE 754 single, `realtime` 
 
 - LRM 6.12 (Real, shortreal, realtime), 6.12.1 (Conversion), 11.3.1 (Operators with real operands),
   Table 11-1 (Operators and data types).
+
+## Bit-stream casting
+
+LRM 6.24.3: a cast whose casting type is a bit-stream type reads the operand as the sequence of bits
+its own type fixes and lays that sequence back out as the casting type, so two aggregates of equal
+total width convert into each other without either naming the other's members.
+
+- [x] BC1 -- Casts between fixed-size bit-stream types, in every direction the family admits:
+      structure to packed vector and back, structure to structure under members that divide the bits
+      differently, structure to unpacked array, and the round trip that shows the conversion loses
+      nothing. The order is the one every bit-stream operation shares -- first member or element
+      most significant.
+  - [ ] A cast where either side's bit count is only known while the program runs, which includes
+        LRM 6.24.3's greedy rule for a dynamically sized destination. It waits on the same thing the
+        streaming operator's dynamic form does -- a type naming a run of bits whose length the
+        program fixes -- and on nothing of its own, so the two close together.
+  - [ ] A cast whose operand or casting type is a union, or a class. Both wait on the value layer
+        carrying a bit stream for those at all, which is also what `$bits` of one waits on; neither
+        is specific to casting.
 
 ## Structural Initializers
 

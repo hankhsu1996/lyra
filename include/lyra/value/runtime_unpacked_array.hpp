@@ -208,6 +208,14 @@ class RuntimeUnpackedArray {
   [[nodiscard]] auto CountBits(const PackedArray& control_bits) const
       -> PackedArray;
 
+  // LRM 6.24.3: the elements' own streams laid end to end, index 0 most
+  // significant, and the inverse under a prototype that states the element
+  // count and every element's shape.
+  [[nodiscard]] auto ToBitstream() const -> PackedArray;
+  [[nodiscard]] static auto FromBitstream(
+      const PackedArray& bits, const RuntimeUnpackedArray& prototype)
+      -> RuntimeUnpackedArray;
+
  private:
   // Indirect because `RuntimeValue` closes over this type: a by-value member
   // would need `RuntimeValue` complete here, which it is not.
@@ -221,6 +229,7 @@ static_assert(CaseEqualComparable<RuntimeUnpackedArray>);
 static_assert(ConditionallyMergeable<RuntimeUnpackedArray>);
 static_assert(Sized<RuntimeUnpackedArray>);
 static_assert(BitstreamSizable<RuntimeUnpackedArray>);
+static_assert(BitstreamConvertible<RuntimeUnpackedArray>);
 static_assert(EntryWalkable<RuntimeUnpackedArray>);
 static_assert(RangedSliceable<RuntimeUnpackedArray>);
 

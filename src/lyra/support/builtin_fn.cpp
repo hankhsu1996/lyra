@@ -45,6 +45,15 @@ auto RuntimeEntryOf(BuiltinFn id) -> RuntimeEntry {
     case BuiltinFn::kBitstreamWidth:
       return {
           .name = "bitstream_width", .declaration = Method{"BitstreamWidth"}};
+    case BuiltinFn::kToBitstream:
+      return {.name = "to_bitstream", .declaration = Method{"ToBitstream"}};
+    case BuiltinFn::kFromBitstream:
+      return {
+          .name = "from_bitstream",
+          .declaration = StaticFactory{"FromBitstream"},
+          .result_prototype_operand = 1};
+    case BuiltinFn::kReverseBlocks:
+      return {.name = "reverse_blocks", .declaration = Method{"ReverseBlocks"}};
     case BuiltinFn::kToOwned:
       return {.name = "to_owned", .declaration = Method{"ToOwned"}};
     case BuiltinFn::kDelete:

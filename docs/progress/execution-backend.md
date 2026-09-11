@@ -78,11 +78,12 @@ ownership, or native in-frame layout) for every value.
       handle, so the generated side never inspects a component's representation. It default-
       constructs member-wise, builds from an assignment pattern, copies with value semantics, takes
       the equality and case-equality families, reads and writes a component (including a nested
-      product and a string component), lives in a member slot as a whole-cell observable signal
-      whose partial write fires subscribers, and crosses a suspension as an activation-frame value.
-      A component write is a whole-value rebuild stored back through the value's owner, so an
-      observable partial write never bypasses the cell's update semantics -- the aggregate
-      partial-update protocol a container reuses later.
+      product and a string component), reads its bit stream out and builds one back from a stream
+      and a prototype, lives in a member slot as a whole-cell observable signal whose partial write
+      fires subscribers, and crosses a suspension as an activation-frame value. A component write is
+      a whole-value rebuild stored back through the value's owner, so an observable partial write
+      never bypasses the cell's update semantics -- the aggregate partial-update protocol a
+      container reuses later.
 - [x] **The dynamic array** (LRM 7.5) -- realized on the execution backend as a run-time-sized
       container value domain, the first variable-size aggregate. It defaults to empty, builds from
       `new[N]` / `new[N](src)` and an assignment pattern, copies with value semantics, takes the
@@ -99,14 +100,15 @@ ownership, or native in-frame layout) for every value.
       fixed-arity container value domain. It default-constructs member-wise, builds from an
       enumerated element list and from a replicated pattern through one repeat-unit-and-count path,
       copies with value semantics, takes the equality and case-equality families, reports its size
-      and its bit-stream width and count, reads and writes an element, reads and writes a contiguous
-      range select, lives in a member slot as a whole-cell observable signal, and crosses a
-      suspension as an activation-frame value. Its payload is ordinal-only: the declared range is
-      the receiver's static type's and arrives at a select as its own operand, so a whole-value
-      store copies positions and relabels nothing -- and a store between two arrays whose declared
-      ranges differ lowers, because the range is gone by this layer, both sides are one type, and a
-      type pool keyed by content says so. A range write rebuilds the whole value with that window
-      replaced (LRM 7.4.6) and stores it back through the owner.
+      and its bit-stream width and count, reads its bit stream out and builds one back from a stream
+      and a prototype, reads and writes an element, reads and writes a contiguous range select,
+      lives in a member slot as a whole-cell observable signal, and crosses a suspension as an
+      activation-frame value. Its payload is ordinal-only: the declared range is the receiver's
+      static type's and arrives at a select as its own operand, so a whole-value store copies
+      positions and relabels nothing -- and a store between two arrays whose declared ranges differ
+      lowers, because the range is gone by this layer, both sides are one type, and a type pool
+      keyed by content says so. A range write rebuilds the whole value with that window replaced
+      (LRM 7.4.6) and stores it back through the owner.
 - [x] **The queue** (LRM 7.10) -- realized on the execution backend as a run-time-sized ordered
       container value domain. It defaults to empty, builds from an assignment pattern, copies with
       value semantics, takes the equality and case-equality families, reports its size and its

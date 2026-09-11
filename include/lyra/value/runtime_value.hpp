@@ -95,6 +95,15 @@ struct RuntimeValue {
 [[nodiscard]] auto RuntimeValueCountBits(
     const RuntimeValue& value, const PackedArray& control_bits) -> PackedArray;
 
+// LRM 6.24.3: the value's own bits, and a value of the prototype's shape read
+// back from a stream of exactly that width. An aggregate reduces over these
+// the way it reduces over the width above, so a part states its own bits and
+// nothing above it knows the part's shape.
+[[nodiscard]] auto RuntimeValueToBitstream(const RuntimeValue& value)
+    -> PackedArray;
+[[nodiscard]] auto RuntimeValueFromBitstream(
+    const PackedArray& bits, const RuntimeValue& prototype) -> RuntimeValue;
+
 // The element count of a container value, and the element at a position, over
 // any element-container domain (queue, dynamic array, unpacked array) -- the
 // erased form of the raw element access a monomorphized container exposes. A

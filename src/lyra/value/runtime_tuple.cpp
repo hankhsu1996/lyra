@@ -147,4 +147,26 @@ auto RuntimeTuple::CountBits(const PackedArray& control_bits) const
   return total;
 }
 
+auto RuntimeTuple::ToBitstream() const -> PackedArray {
+  PackedArray stream = RuntimeValueToBitstream(components_.front());
+  for (std::size_t i = 1; i < components_.size(); ++i) {
+    stream = stream.Concat(RuntimeValueToBitstream(components_[i]));
+  }
+  return stream;
+}
+
+auto RuntimeTuple::FromBitstream(
+    const PackedArray& bits, const RuntimeTuple& prototype) -> RuntimeTuple {
+  RuntimeTuple result = prototype;
+  std::uint64_t consumed = 0;
+  for (std::size_t i = 0; i < result.components_.size(); ++i) {
+    const auto width = static_cast<std::uint64_t>(
+        RuntimeValueBitstreamWidth(prototype.components_[i]).ToInt64());
+    result.components_[i] = RuntimeValueFromBitstream(
+        BitstreamSegment(bits, consumed, width), prototype.components_[i]);
+    consumed += width;
+  }
+  return result;
+}
+
 }  // namespace lyra::value

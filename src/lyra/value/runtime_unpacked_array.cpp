@@ -329,4 +329,27 @@ auto RuntimeUnpackedArray::CountBits(const PackedArray& control_bits) const
   return total;
 }
 
+auto RuntimeUnpackedArray::ToBitstream() const -> PackedArray {
+  PackedArray stream = RuntimeValueToBitstream(data_.front());
+  for (std::size_t i = 1; i < data_.size(); ++i) {
+    stream = stream.Concat(RuntimeValueToBitstream(data_[i]));
+  }
+  return stream;
+}
+
+auto RuntimeUnpackedArray::FromBitstream(
+    const PackedArray& bits, const RuntimeUnpackedArray& prototype)
+    -> RuntimeUnpackedArray {
+  RuntimeUnpackedArray result = prototype;
+  std::uint64_t consumed = 0;
+  for (std::size_t i = 0; i < result.data_.size(); ++i) {
+    const auto width = static_cast<std::uint64_t>(
+        RuntimeValueBitstreamWidth(prototype.data_[i]).ToInt64());
+    result.data_[i] = RuntimeValueFromBitstream(
+        BitstreamSegment(bits, consumed, width), prototype.data_[i]);
+    consumed += width;
+  }
+  return result;
+}
+
 }  // namespace lyra::value

@@ -511,6 +511,35 @@ class UnpackedArray {
     return total;
   }
 
+  // LRM 6.24.3: the elements' own streams laid end to end, the element at
+  // index 0 most significant -- the order a `foreach` traverses them in
+  // (LRM 11.4.14.1).
+  [[nodiscard]] auto ToBitstream() const -> PackedArray {
+    PackedArray stream = data_[0].ToBitstream();
+    for (std::size_t i = 1; i < data_.size(); ++i) {
+      stream = stream.Concat(data_[i].ToBitstream());
+    }
+    return stream;
+  }
+
+  // The inverse, each element taking its own width off the front of what is
+  // left (LRM 11.4.14.3). The prototype states the element count and every
+  // element's shape, both of which a sequence of bits carries nothing of.
+  [[nodiscard]] static auto FromBitstream(
+      const PackedArray& bits, const UnpackedArray& prototype)
+      -> UnpackedArray {
+    UnpackedArray result = prototype;
+    std::uint64_t consumed = 0;
+    for (std::size_t i = 0; i < result.data_.size(); ++i) {
+      const auto width = static_cast<std::uint64_t>(
+          prototype.data_[i].BitstreamWidth().ToInt64());
+      result.data_[i] = T::FromBitstream(
+          BitstreamSegment(bits, consumed, width), prototype.data_[i]);
+      consumed += width;
+    }
+    return result;
+  }
+
   // LRM 7.12.2 ordering: an in-place positional permutation at constant size (a
   // fixed array never grows or shrinks). `reverse` takes no closure; `sort` /
   // `rsort` order by the closure-projected key with the ordinal position as
@@ -743,6 +772,7 @@ auto UnpackedArray<T>::FromPackedArray(
 static_assert(LyraValue<UnpackedArray<PackedArray>>);
 static_assert(Sized<UnpackedArray<PackedArray>>);
 static_assert(BitstreamSizable<UnpackedArray<PackedArray>>);
+static_assert(BitstreamConvertible<UnpackedArray<PackedArray>>);
 static_assert(RangedIndexable<UnpackedArray<PackedArray>>);
 static_assert(RangedSliceable<UnpackedArray<PackedArray>>);
 static_assert(RangedSliceableRef<UnpackedArray<PackedArray>>);

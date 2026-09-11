@@ -491,6 +491,8 @@ auto EntryNamingOf(support::BuiltinFn fn) -> EntryNaming {
     case support::BuiltinFn::kSize:
     case support::BuiltinFn::kLen:
     case support::BuiltinFn::kBitstreamWidth:
+    case support::BuiltinFn::kToBitstream:
+    case support::BuiltinFn::kReverseBlocks:
     case support::BuiltinFn::kToOwned:
     case support::BuiltinFn::kDelete:
     case support::BuiltinFn::kDeleteIndex:
@@ -613,6 +615,7 @@ auto EntryNamingOf(support::BuiltinFn fn) -> EntryNaming {
     case support::BuiltinFn::kFromString:
     case support::BuiltinFn::kFromBool:
     case support::BuiltinFn::kArrayConformSize:
+    case support::BuiltinFn::kFromBitstream:
       return NamedByResult{};
 
     // LRM 7.6 assignment between unpacked array kinds crosses two container

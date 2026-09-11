@@ -195,6 +195,28 @@ class PackedArray {
     return PackedArray::Int(static_cast<std::int32_t>(BitWidth()));
   }
 
+  // LRM 6.24.3: the bits this value contributes to a stream, as an unsigned
+  // vector of its own width. It is the leaf of the recursion an aggregate
+  // performs, and the identity for a value that is already one bit plane --
+  // what changes is only that a stream carries no signedness and no dimension
+  // stack.
+  [[nodiscard]] auto ToBitstream() const -> PackedArray;
+
+  // The inverse: `bits`, which the caller has already brought to the width
+  // `prototype` reports, read back at the prototype's declared representation.
+  // A 4-state stream reaching a 2-state prototype collapses its unknown bits,
+  // which is the cast LRM 11.4.14.3 names.
+  [[nodiscard]] static auto FromBitstream(
+      const PackedArray& bits, const PackedArray& prototype) -> PackedArray;
+
+  // LRM 11.4.14.2: this value divided into `block_bits`-wide blocks from its
+  // least significant bit up, with the block order reversed and the bits inside
+  // each block left where they are. A leftover top block keeps whatever width
+  // is left; nothing is padded or dropped, so the result has this value's own
+  // width.
+  [[nodiscard]] auto ReverseBlocks(std::int64_t block_bits) const
+      -> PackedArray;
+
   // Restore the value to this shape's canonical default in place: all-zero
   // for 2-state, all-X for 4-state (LRM Table 6-7 / Table 7-1). The declared
   // type (dimensions, signedness, state domain) is preserved.
@@ -711,11 +733,21 @@ class PackedArrayRef {
   std::vector<PackedRange> dims_;
 };
 
+// The `width` bits sitting `consumed` bits in from the most significant end of
+// `bits`. An unpack reads a stream from that end (LRM 11.4.14.3), so every part
+// of an aggregate takes its own bits by how many the parts before it took, and
+// one statement of where a part's bits are serves every aggregate that has
+// parts.
+[[nodiscard]] auto BitstreamSegment(
+    const PackedArray& bits, std::uint64_t consumed, std::uint64_t width)
+    -> PackedArray;
+
 static_assert(LyraValue<PackedArray>);
 static_assert(CaseEqualComparable<PackedArray>);
 static_assert(WildcardComparable<PackedArray>);
 static_assert(Ordered<PackedArray>);
 static_assert(BitstreamSizable<PackedArray>);
+static_assert(BitstreamConvertible<PackedArray>);
 static_assert(Indexable<PackedArray>);
 static_assert(ShapedSliceable<PackedArray>);
 static_assert(ShapedSliceableRef<PackedArray>);

@@ -53,14 +53,15 @@ futures, which is why they are not one tag.
 
 ## When to run what
 
-Four moments, each answering a different question, and the answers are not interchangeable.
+Five moments, each answering a different question, and the answers are not interchangeable.
 
-| Moment     | Question                      | Command                                      |
-| ---------- | ----------------------------- | -------------------------------------------- |
-| edit loop  | did that edit do what I meant | one case, or the binary on one file directly |
-| pre-commit | will this land green          | `bazel test //...`                           |
-| merge gate | is `main` still correct       | `bazel test //...`                           |
-| nightly    | is the C++ path still correct | `bazel test //... --config=nightly`          |
+| Moment     | Question                        | Command                                      |
+| ---------- | ------------------------------- | -------------------------------------------- |
+| edit loop  | did that edit do what I meant   | one case, or the binary on one file directly |
+| pre-commit | will this land green            | `bazel test //...`                           |
+| merge gate | is `main` still correct         | `bazel test //...`                           |
+| nightly    | is the C++ path still correct   | `bazel test //... --config=nightly`          |
+| nightly    | is any of it reading freed bits | `bazel test //... --config=asan`             |
 
 Pre-commit and the merge gate are the same command, and that is the whole point: a green run before
 committing means "this lands green" only while the two sets are identical. Any change that makes the
@@ -150,6 +151,15 @@ gates**, so its findings are a backlog to pay down and a red run is not an alarm
 
 `host-cxx-nightly.yml` runs the `nightly` target. It **gates its own run**: a corpus case that stops
 passing is a regression, and a red nightly is the thing to act on that day.
+
+`asan-nightly.yml` runs the merge gate's own set under the address sanitizer -- the gate's set and
+not the `nightly` complement, because the pools it is watching live in lowering rather than in the
+program the host-compiling group builds. It **gates its own run**, for the reason the host C++ one
+does: a sanitizer report carries a stack trace and names a defect. What makes it worth a nightly at
+all is that the class it catches is invisible to every other job: a reference held into a pool that
+has since grown reads correctly until the storage happens to move, so a green ordinary run is
+consistent with the code being wrong. It narrows that rather than closing it -- it sees only the
+executions the corpus reaches, and only those where the move landed in between.
 
 `benchmark-nightly.yml` builds every case under `tests/benchmark/` and times it beside Verilator on
 the same sources, giving each tool the amount of work it needs to reach the same duration. It gates

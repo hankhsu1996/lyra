@@ -1,5 +1,6 @@
 #include "lyra/lowering/ast_to_hir/expression/aggregates.hpp"
 
+#include <algorithm>
 #include <cstdint>
 #include <expected>
 #include <optional>
@@ -74,6 +75,31 @@ auto DesignatedIndex(const slang::ast::Expression& key) -> std::int64_t {
   return *index;
 }
 
+// What a stream element actually carries: the operand, or -- where
+// LRM 11.4.14.4 names a range with `with` -- the selection over it, which the
+// front end has already bound as an ordinary selector. Everything that reads an
+// element goes through this, so the range is resolved in one place and nothing
+// else knows a `with` was written.
+auto StreamedExpression(
+    const slang::ast::StreamingConcatenationExpression::StreamExpression&
+        stream) -> const slang::ast::Expression& {
+  return stream.withExpr != nullptr ? *stream.withExpr : *stream.operand;
+}
+
+// LRM 11.4.14: whether any part of what a stream packs is 4-state, which is
+// what decides the stream's own domain. A part that is itself a stream answers
+// for its own parts, since the front end gives it no type to be asked.
+auto StreamCarriesUnknown(
+    const slang::ast::StreamingConcatenationExpression& sc) -> bool {
+  return std::ranges::any_of(sc.streams(), [](const auto& stream) {
+    const slang::ast::Expression& operand = StreamedExpression(stream);
+    return operand.kind == slang::ast::ExpressionKind::Streaming
+               ? StreamCarriesUnknown(
+                     operand.as<slang::ast::StreamingConcatenationExpression>())
+               : operand.type->isFourState();
+  });
+}
+
 }  // namespace
 
 template <ExprLowerer Lowerer>
@@ -114,6 +140,71 @@ auto LowerConcatExpr(
   return hir::Expr{
       .type = *type_id,
       .data = hir::ConcatExpr{.operands = std::move(operand_ids)},
+      .span = span,
+  };
+}
+
+template <ExprLowerer Lowerer>
+auto LowerStreamingConcatExpr(
+    Lowerer& lowerer, WalkFrame frame,
+    const slang::ast::StreamingConcatenationExpression& sc,
+    diag::SourceSpan span) -> diag::Result<hir::Expr> {
+  auto& unit_lowerer = lowerer.Owner();
+  // LRM 11.4.14.4 admits a dynamically sized value in a stream, whose bit count
+  // only the running program has. A stream is a value here like any other and
+  // its type states a width, so a stream whose width is not fixed has no type
+  // to be given. What the standard defines over it is the same pack and unpack
+  // this builds; what it waits on is naming that width.
+  if (!sc.isFixedSize()) {
+    return diag::Fail(
+        span, diag::DiagCode::kUnsupportedExpressionForm,
+        "a streaming operator over a dynamically sized value is not yet "
+        "supported (LRM 11.4.14.4)");
+  }
+  // A stream of no bits has no type to be given, and no program reaches one:
+  // the front end refuses both routes to one, a zero replication inside a
+  // stream and a dimension declared with no elements.
+  const std::uint64_t width = sc.getBitstreamWidth();
+  if (width == 0) {
+    throw InternalError(
+        "LowerStreamingConcatExpr: a stream carries at least one bit");
+  }
+  std::vector<hir::ExprId> operand_ids;
+  operand_ids.reserve(sc.streams().size());
+  for (const auto& stream : sc.streams()) {
+    const slang::ast::Expression& operand = StreamedExpression(stream);
+    const diag::SourceSpan operand_span =
+        unit_lowerer.SourceMapper().SpanOf(operand.sourceRange);
+    if (operand.type->getCanonicalType().isClass()) {
+      return diag::Fail(
+          operand_span, diag::DiagCode::kUnsupportedExpressionForm,
+          "streaming the object a class handle refers to is not yet supported "
+          "(LRM 11.4.14.1)");
+    }
+    auto operand_or = lowerer.LowerExpr(operand, frame);
+    if (!operand_or) return std::unexpected(std::move(operand_or.error()));
+    operand_ids.push_back(frame.Exprs().Add(*std::move(operand_or)));
+  }
+  // LRM 11.4.14: a pack whose data carries any 4-state part yields a 4-state
+  // stream, and a 2-state one otherwise. The stream has no other source of a
+  // type -- the front end gives a streaming concatenation none, because what it
+  // may be used for is fixed by where it stands rather than by what it is.
+  const hir::TypeId atom = StreamCarriesUnknown(sc)
+                               ? unit_lowerer.Unit().builtins.scalar_logic
+                               : unit_lowerer.Unit().builtins.scalar_bit;
+  const hir::TypeId stream_type = unit_lowerer.AddComposedType(
+      hir::Type{hir::PackedArrayType{
+          .dim =
+              hir::PackedRange{
+                  .left = static_cast<std::int64_t>(width) - 1, .right = 0},
+          .element_type = atom,
+          .signedness = hir::Signedness::kUnsigned}});
+  return hir::Expr{
+      .type = stream_type,
+      .data =
+          hir::StreamingConcatExpr{
+              .operands = std::move(operand_ids),
+              .block_bits = sc.getSliceSize()},
       .span = span,
   };
 }
@@ -436,6 +527,14 @@ template auto LowerConcatExpr(
 template auto LowerConcatExpr(
     StructuralScopeLowerer&, WalkFrame,
     const slang::ast::ConcatenationExpression&, diag::SourceSpan)
+    -> diag::Result<hir::Expr>;
+template auto LowerStreamingConcatExpr(
+    ProcessLowerer&, WalkFrame,
+    const slang::ast::StreamingConcatenationExpression&, diag::SourceSpan)
+    -> diag::Result<hir::Expr>;
+template auto LowerStreamingConcatExpr(
+    StructuralScopeLowerer&, WalkFrame,
+    const slang::ast::StreamingConcatenationExpression&, diag::SourceSpan)
     -> diag::Result<hir::Expr>;
 template auto LowerAssignmentPatternFromElements(
     ProcessLowerer&, WalkFrame,

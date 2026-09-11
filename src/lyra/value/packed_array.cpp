@@ -790,6 +790,59 @@ auto PackedArray::Replicate(std::int64_t count) const -> PackedArray {
   return result;
 }
 
+auto PackedArray::ToBitstream() const -> PackedArray {
+  return ConvertFrom(*this, BitWidth(), false, IsFourState());
+}
+
+auto PackedArray::FromBitstream(
+    const PackedArray& bits, const PackedArray& prototype) -> PackedArray {
+  if (bits.BitWidth() != prototype.BitWidth()) {
+    throw InternalError(
+        "PackedArray::FromBitstream: the stream reaching a part is the part's "
+        "own width, which whoever divided the stream owed -- please report "
+        "this as a bug");
+  }
+  return ConvertFrom(bits, prototype.Type());
+}
+
+auto PackedArray::ReverseBlocks(std::int64_t block_bits) const -> PackedArray {
+  if (block_bits <= 0) {
+    throw InternalError(
+        "PackedArray::ReverseBlocks: a block size is a constant expression the "
+        "front end has already checked to be positive -- please report this as "
+        "a bug");
+  }
+  const auto block = static_cast<std::uint64_t>(block_bits);
+  const std::uint64_t width = BitWidth();
+  auto block_at = [&](std::uint64_t low) {
+    return ConvertFrom(
+        LogicalShiftRight(PackedArray::Int(static_cast<std::int32_t>(low))),
+        std::min(block, width - low), false, IsFourState());
+  };
+  // The block starting at bit zero ends up most significant, so the blocks
+  // compose in the order they are taken.
+  PackedArray result = block_at(0);
+  for (std::uint64_t low = block; low < width; low += block) {
+    result = result.Concat(block_at(low));
+  }
+  return result;
+}
+
+auto BitstreamSegment(
+    const PackedArray& bits, std::uint64_t consumed, std::uint64_t width)
+    -> PackedArray {
+  if (consumed + width > bits.BitWidth()) {
+    throw InternalError(
+        "BitstreamSegment: a part asked for more bits than the stream has "
+        "left, which the caller that sized the stream owed -- please report "
+        "this as a bug");
+  }
+  const std::uint64_t low = bits.BitWidth() - consumed - width;
+  return PackedArray::ConvertFrom(
+      bits.LogicalShiftRight(PackedArray::Int(static_cast<std::int32_t>(low))),
+      width, false, bits.IsFourState());
+}
+
 auto PackedArray::ConvertBitsInto(PackedArray dst, const PackedArray& src)
     -> PackedArray {
   const Signedness src_signedness =

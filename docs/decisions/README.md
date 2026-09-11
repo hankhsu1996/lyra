@@ -65,6 +65,11 @@ the detail lives in the entry itself.
 - [concatenation-realization](concatenation-realization.md) -- a join is a call rather than a node
   of its own, over every operand family, and reaches MIR already folded to the two operands every
   entry that performs it takes.
+- [a-value-states-its-own-bits](a-value-states-its-own-bits.md) -- which bits a value makes is the
+  same question as how many, so a value answers both, and a bit-stream cast and a streaming operator
+  are the same pack and unpack stated against those entries plus one that re-orders a bit vector.
+  Unrolling the traversal at the lowering, a direction operand, a type reference in place of the
+  prototype, and typing a dynamically sized stream by its fixed part are rejected.
 - [value-construction-forms](value-construction-forms.md) -- a construction says which form it is; a
   value that is its own parts is a primitive, a container built from one is a call, and what names a
   call is the type's own answer.

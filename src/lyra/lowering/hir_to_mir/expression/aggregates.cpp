@@ -11,6 +11,7 @@
 #include "lyra/base/internal_error.hpp"
 #include "lyra/hir/expr.hpp"
 #include "lyra/hir/type.hpp"
+#include "lyra/lowering/hir_to_mir/bitstream.hpp"
 #include "lyra/lowering/hir_to_mir/block_builder.hpp"
 #include "lyra/lowering/hir_to_mir/cast_lowering.hpp"
 #include "lyra/lowering/hir_to_mir/default_value.hpp"
@@ -208,6 +209,31 @@ auto LowerHirConcatExpr(
 }
 
 template <ExprLowerer Lowerer>
+auto LowerHirStreamingConcatExpr(
+    Lowerer& lowerer, WalkFrame frame, const hir::StreamingConcatExpr& s,
+    mir::TypeId result_type) -> diag::Result<mir::Expr> {
+  auto& block = *frame.current_block;
+  mir::CompilationUnit& unit = lowerer.Owner().Unit();
+  // LRM 11.4.14.1: each operand contributes its own bits, appended to the right
+  // of what the operands before it contributed, so the first is most
+  // significant -- which is the order the join already composes in.
+  std::vector<mir::ExprId> runs;
+  runs.reserve(s.operands.size());
+  for (const auto& id : s.operands) {
+    const hir::Expr& operand = lowerer.HirExprs().Get(id);
+    auto lowered = lowerer.LowerExpr(operand, frame);
+    if (!lowered) return std::unexpected(std::move(lowered.error()));
+    auto run_or = BuildToBitstream(
+        unit, block, block.exprs.Add(*std::move(lowered)), operand.span);
+    if (!run_or) return std::unexpected(std::move(run_or.error()));
+    runs.push_back(*run_or);
+  }
+  const mir::ExprId stream = BuildReorderedStream(
+      unit, block, BuildPackedConcat(unit, block, runs), s.block_bits);
+  return BuildValueConversion(unit, block, stream, result_type);
+}
+
+template <ExprLowerer Lowerer>
 auto LowerHirReplicationExpr(
     Lowerer& lowerer, WalkFrame frame, const hir::ReplicationExpr& r,
     mir::TypeId result_type) -> diag::Result<mir::Expr> {
@@ -297,7 +323,9 @@ auto LowerPackedKeyedPattern(
     -> diag::Result<mir::Expr> {
   auto& block = *frame.current_block;
   mir::CompilationUnit& unit = lowerer.Owner().Unit();
-  const mir::PackedArrayType& result_pa =
+  // By value: the pool's view does not survive interning, and the run builder
+  // below interns once for every run it emits.
+  const mir::PackedArrayType result_pa =
       unit.types.Get(result_type).PackedShape();
   const std::uint64_t element_width = result_pa.BitWidth() / dim.ElementCount();
 
@@ -599,6 +627,12 @@ template auto LowerHirConcatExpr(
 template auto LowerHirConcatExpr(
     const StructuralScopeLowerer&, WalkFrame, const hir::ConcatExpr&,
     hir::TypeId, mir::TypeId) -> diag::Result<mir::Expr>;
+template auto LowerHirStreamingConcatExpr(
+    ProcessLowerer&, WalkFrame, const hir::StreamingConcatExpr&, mir::TypeId)
+    -> diag::Result<mir::Expr>;
+template auto LowerHirStreamingConcatExpr(
+    const StructuralScopeLowerer&, WalkFrame, const hir::StreamingConcatExpr&,
+    mir::TypeId) -> diag::Result<mir::Expr>;
 template auto LowerHirAssignmentPatternExpr(
     ProcessLowerer&, WalkFrame, const hir::AssignmentPatternExpr&, hir::TypeId,
     mir::TypeId) -> diag::Result<mir::Expr>;

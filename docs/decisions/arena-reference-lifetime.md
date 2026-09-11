@@ -31,6 +31,39 @@ fact from an existing node, then intern the sibling or derived nodes the lowerin
 the inspection and the interning are interleaved by narrative order, not by a data dependency on the
 live reference.
 
+## What established compilers do about it
+
+Added 2026-09-11, after the question was reopened. It confirms the decision below from outside, and
+it answers the objection that a relocating pool is an odd choice.
+
+**rustc keeps both mechanisms and uses them for different jobs.** Its index-addressed pool is
+
+```rust
+pub struct IndexVec<I: Idx, T> { pub raw: Vec<T>, _marker: PhantomData<fn(&I)> }
+```
+
+-- a `Vec<T>` behind a typed index, handing out `&T` through `Deref`. That is this arena exactly,
+down to the relocation. It backs HIR and MIR bodies, locals, and basic blocks. Its arenas are a
+separate thing: `rustc_arena` allocates in chunks where "each new chunk is twice as big as its
+predecessor", so an allocation's address is stable for the arena's life, and that is what lets an
+interned type be a durable reference rather than an index.
+
+**slang, which this compiler's front end is, takes the other branch throughout**: a `BumpAllocator`
+that allocates "in blocks as needed" and never moves what it has handed out, so its whole AST is
+referenced by raw pointer.
+
+**Where our conditions sit.** The choice tracks one question -- whether a handle must survive
+leaving the process. An index does and a pointer does not, which is what makes the index the right
+handle wherever compilation is incremental, cached, or sharded across units, and what makes a
+pointer fine where the graph lives and dies in one run. The north star's incremental and
+per-unit-compilation invariants put every pool here on the first side.
+
+**The one thing rustc has that this does not is the check, not the container.** Holding `&vec[i]`
+across `vec.push(..)` is a borrow-checker error there -- the forbidden shape below is refused by the
+language rather than by review. That difference is the whole of the gap, and it falls on detection
+rather than on storage: it is an argument for finding violations, never for changing what the pool
+is.
+
 ## Decision
 
 `Get` is a transient view; the `Id` is the only durable handle.
@@ -92,8 +125,18 @@ live reference.
   expression's type) may gain value-returning accessors as consumers appear, so the projecting shape
   reads cleanly; they are not added pre-emptively.
 - Holding a `Get` reference across a same-arena `Add` and reading it afterward is a forbidden shape.
-  Absent a reliable static check, it is caught by the contract and review, not by the data
-  structure.
+  No static check refuses it, so what is left is the contract, projection at the call site, review,
+  and -- since 2026-09-11 -- a nightly that runs the merge gate's own set under the address
+  sanitizer. The sanitizer answers only for the executions the corpus reaches and only where the
+  storage actually moved, so it narrows the gap rather than closing it; the contract is still what
+  the shape is judged against.
+- Review alone was measured and found insufficient, which the "discipline alone" rejection
+  predicted. One violation stood in the tree: a reference to the result type's packed shape,
+  captured by a lambda that interned a fresh type on every run it emitted, so the second call read
+  what the first had invalidated. That is the shape to look for -- a `Get` reference whose lifetime
+  outlives the statement, which in practice means captured by a lambda or held across a loop.
+  Straight-line code is safe for a reason worth knowing: a branch that appends returns from it, and
+  a reference read as an argument to the appending call is sequenced before the append.
 
 ## Cross-references
 

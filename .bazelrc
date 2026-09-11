@@ -58,6 +58,19 @@ build:release --cxxopt='-DNDEBUG'
 build:fastbuild --compilation_mode=fastbuild
 build:fastbuild --cxxopt='-O1'
 
+# Address sanitizer, for the nightly that runs the merge gate's own set under
+# it. Every pool in the compiler hands out a view into relocatable storage and
+# an id is the only durable handle, so a reference kept across an append reads
+# correctly until the storage happens to move -- which makes an ordinary run
+# green and says nothing. Nothing cheaper distinguishes the two, because the
+# read is only wrong on the executions where the move landed in between.
+# `-O1` and a kept frame pointer are what make the report name the read.
+build:asan --copt='-fsanitize=address'
+build:asan --copt='-fno-omit-frame-pointer'
+build:asan --copt='-O1'
+build:asan --linkopt='-fsanitize=address'
+build:asan --strip=never
+
 # Shared cache and result streaming with actions still running locally, so the
 # compiler is the one named above. Needs a BuildBuddy key via `--remote_header`.
 build:ci --bes_results_url=https://app.buildbuddy.io/invocation/

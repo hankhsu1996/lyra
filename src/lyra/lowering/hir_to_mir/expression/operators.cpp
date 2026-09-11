@@ -8,12 +8,12 @@
 #include <vector>
 
 #include "lyra/base/internal_error.hpp"
-#include "lyra/diag/diag_code.hpp"
 #include "lyra/diag/diagnostic.hpp"
 #include "lyra/hir/binary_op.hpp"
 #include "lyra/hir/conversion.hpp"
 #include "lyra/hir/expr.hpp"
 #include "lyra/hir/unary_op.hpp"
+#include "lyra/lowering/hir_to_mir/bitstream.hpp"
 #include "lyra/lowering/hir_to_mir/block_builder.hpp"
 #include "lyra/lowering/hir_to_mir/callable_bindings.hpp"
 #include "lyra/lowering/hir_to_mir/cast_lowering.hpp"
@@ -819,17 +819,21 @@ auto LowerHirConversionExpr(
     // LRM 6.24.3 reinterprets the operand as a bit stream and repacks it into
     // the casting type, which is a different operation from reshaping one
     // value's representation into another's -- the operand and the result need
-    // not even be the same kind of value.
-    case hir::ConversionKind::kBitstreamCast:
-      return diag::Fail(
-          operand.span, diag::DiagCode::kUnsupportedConversionForm,
-          "a bitstream cast is not yet supported");
+    // not even be the same kind of value. The clause states it in two steps and
+    // this is those two steps.
+    case hir::ConversionKind::kBitstreamCast: {
+      auto packed_or = BuildToBitstream(unit, block, operand_id, operand.span);
+      if (!packed_or) return std::unexpected(std::move(packed_or.error()));
+      return BuildFromBitstream(
+          unit, block, *packed_or, result_type, operand.span);
+    }
     // LRM 11.4.14 streaming operators, which slang marks as a conversion when
-    // one feeds an assignment.
+    // one feeds an assignment. The operand is already the stream the operator
+    // built, so what is left is the target's own half of the clause: widen to
+    // its width, then read the bits back as a value of it.
     case hir::ConversionKind::kStreamingConcat:
-      return diag::Fail(
-          operand.span, diag::DiagCode::kUnsupportedConversionForm,
-          "the streaming pack and unpack operators are not yet supported");
+      return BuildFromBitstream(
+          unit, block, operand_id, result_type, operand.span);
   }
   throw InternalError("LowerHirConversionExpr: unknown hir::ConversionKind");
 }

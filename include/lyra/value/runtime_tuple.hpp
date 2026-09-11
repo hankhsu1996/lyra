@@ -90,6 +90,13 @@ class RuntimeTuple {
   [[nodiscard]] auto CountBits(const PackedArray& control_bits) const
       -> PackedArray;
 
+  // LRM 6.24.3: the components' own streams laid end to end, the first
+  // component most significant, and the inverse under a prototype that states
+  // what the components are.
+  [[nodiscard]] auto ToBitstream() const -> PackedArray;
+  [[nodiscard]] static auto FromBitstream(
+      const PackedArray& bits, const RuntimeTuple& prototype) -> RuntimeTuple;
+
  private:
   std::vector<RuntimeValue> components_;
 };
@@ -98,5 +105,6 @@ static_assert(LyraValue<RuntimeTuple>);
 static_assert(NetResolvable<RuntimeTuple>);
 static_assert(CaseEqualComparable<RuntimeTuple>);
 static_assert(BitstreamSizable<RuntimeTuple>);
+static_assert(BitstreamConvertible<RuntimeTuple>);
 
 }  // namespace lyra::value

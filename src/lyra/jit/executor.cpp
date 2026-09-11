@@ -903,6 +903,15 @@ auto DefineRuntimeAbi(llvm::orc::LLJIT& jit)
   add("lyra_rt_dynarray_bitstream_width", &lyra_rt_dynarray_bitstream_width);
   add("lyra_rt_unpackedarray_bitstream_width",
       &lyra_rt_unpackedarray_bitstream_width);
+  add("lyra_rt_packed_to_bitstream", &lyra_rt_packed_to_bitstream);
+  add("lyra_rt_tuple_to_bitstream", &lyra_rt_tuple_to_bitstream);
+  add("lyra_rt_unpackedarray_to_bitstream",
+      &lyra_rt_unpackedarray_to_bitstream);
+  add("lyra_rt_packed_from_bitstream", &lyra_rt_packed_from_bitstream);
+  add("lyra_rt_tuple_from_bitstream", &lyra_rt_tuple_from_bitstream);
+  add("lyra_rt_unpackedarray_from_bitstream",
+      &lyra_rt_unpackedarray_from_bitstream);
+  add("lyra_rt_packed_reverse_blocks", &lyra_rt_packed_reverse_blocks);
   add("lyra_rt_assocarray_count_bits", &lyra_rt_assocarray_count_bits);
   add("lyra_rt_assocarray_value_box", &lyra_rt_assocarray_value_box);
   add("lyra_rt_assocarray_cell_alloc", &lyra_rt_assocarray_cell_alloc);

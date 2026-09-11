@@ -1105,6 +1105,18 @@ class HirDumper {
               }
               return std::format("ConcatExpr operands=[{}]", operands);
             },
+            [](const StreamingConcatExpr& s) -> std::string {
+              std::string operands;
+              for (std::size_t i = 0; i < s.operands.size(); ++i) {
+                if (i != 0) {
+                  operands += ", ";
+                }
+                operands += std::format("Expr[{}]", s.operands[i].value);
+              }
+              return std::format(
+                  "StreamingConcatExpr block_bits={} operands=[{}]",
+                  s.block_bits, operands);
+            },
             [](const ReplicationExpr& r) -> std::string {
               return std::format(
                   "ReplicationExpr count=Expr[{}] concat=Expr[{}]",

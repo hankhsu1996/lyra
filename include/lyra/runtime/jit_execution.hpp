@@ -1586,6 +1586,24 @@ auto lyra_rt_tuple_bitstream_width(const void* value) -> void*;
 auto lyra_rt_dynarray_bitstream_width(const void* value) -> void*;
 auto lyra_rt_unpackedarray_bitstream_width(const void* value) -> void*;
 
+// LRM 6.24.3: the bits a value makes, and a value read back from them at the
+// shape a prototype states. The prototype crosses boxed, as every operand
+// naming a representation the entry cannot otherwise know does. One pair per
+// domain a fixed-size stream is built from; a domain whose width only the
+// running program fixes has no entry, because no stream over one is nameable.
+auto lyra_rt_packed_to_bitstream(const void* value) -> void*;
+auto lyra_rt_tuple_to_bitstream(const void* value) -> void*;
+auto lyra_rt_unpackedarray_to_bitstream(const void* value) -> void*;
+auto lyra_rt_packed_from_bitstream(const void* bits, void* prototype) -> void*;
+auto lyra_rt_tuple_from_bitstream(const void* bits, void* prototype) -> void*;
+auto lyra_rt_unpackedarray_from_bitstream(const void* bits, void* prototype)
+    -> void*;
+
+// LRM 11.4.14.2: a vector's `block`-wide blocks in reversed order, the bits
+// inside each block left where they are.
+auto lyra_rt_packed_reverse_blocks(const void* value, std::int64_t block)
+    -> void*;
+
 // LRM 20.9 `$countbits` over the domains whose value is a bit stream. An
 // aggregate reduces over its parts, so each of these is the same fold seen at a
 // different element type.

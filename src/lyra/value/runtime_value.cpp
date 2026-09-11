@@ -186,6 +186,37 @@ auto RuntimeValueCountBits(
       value.value);
 }
 
+auto RuntimeValueToBitstream(const RuntimeValue& value) -> PackedArray {
+  return std::visit(
+      [](const auto& v) -> PackedArray {
+        using T = std::decay_t<decltype(v)>;
+        if constexpr (BitstreamConvertible<T>) {
+          return v.ToBitstream();
+        } else {
+          throw SimulationError(
+              "reading this value as a stream of bits is not yet supported on "
+              "this backend; please open an issue asking for support");
+        }
+      },
+      value.value);
+}
+
+auto RuntimeValueFromBitstream(
+    const PackedArray& bits, const RuntimeValue& prototype) -> RuntimeValue {
+  return std::visit(
+      [&](const auto& v) -> RuntimeValue {
+        using T = std::decay_t<decltype(v)>;
+        if constexpr (BitstreamConvertible<T>) {
+          return RuntimeValue{T::FromBitstream(bits, v)};
+        } else {
+          throw SimulationError(
+              "building this value from a stream of bits is not yet supported "
+              "on this backend; please open an issue asking for support");
+        }
+      },
+      prototype.value);
+}
+
 namespace {
 
 template <typename T>

@@ -2,13 +2,13 @@
 
 Tracks the operator surface. The sub-steps cover what sits outside the integral family: set
 membership, wildcard / case equality, selectors (bit-select, part-select, indexed part-select) on
-both read and write sides, concatenation, replication, compound assignment, and the `++` / `--`
-family.
+both read and write sides, concatenation, replication, the streaming operators, compound assignment,
+and the `++` / `--` family.
 
 Done when:
 
-- Set membership, wildcard and case equality, concatenation, replication, compound assignment, and
-  `++` / `--` all run.
+- Set membership, wildcard and case equality, concatenation, replication, the streaming operators,
+  compound assignment, and `++` / `--` all run.
 - The indexed part-select surface runs. The selector lives here rather than in `packed.md`,
   following the type-vs-operator boundary.
 
@@ -18,7 +18,7 @@ Every numbered item is closed. What stays open is the forms recorded as rejected
 
 ## Sub-Steps
 
-The numeric IDs (W1..W14) imply execution order; where a cut is independent the text says so.
+The numeric IDs (W1..W15) imply execution order; where a cut is independent the text says so.
 
 ### Membership and equality
 
@@ -91,8 +91,45 @@ merged node.
       evaluated once and bits are distributed MSB-first, so `{a, b} = {b, a}` swaps. Parts may be
       any writable lvalue (including W6 selector chains, e.g. `{a[7:4], b[7:4]} = rhs`). NBA form
       requires every part to be a structural target. Replication operands are rejected per LRM
-      11.4.12.1. LRM 10.9 assignment-pattern LHS and LRM 11.4.14.3 streaming-unpack LHS are separate
-      constructs, both out of scope.
+      11.4.12.1. The LRM 10.9 assignment-pattern LHS is a separate construct and out of scope; the
+      LRM 11.4.14.3 streaming-unpack LHS is W15 below.
+- [x] W15 -- Streaming operators `{>> {...}}` / `{<< n {...}}` in both directions (LRM 11.4.14).
+      Packing lays each operand's bits end to end with the first operand most significant, an
+      unpacked array contributing its elements in `foreach` order and a structure its members in
+      declaration order; `<<` then reverses the order of slice-sized blocks taken from the least
+      significant bit up, leaving a short final block unpadded, while `>>` re-orders nothing and
+      ignores any slice size. As an assignment source the stream is left-aligned in a wider
+      fixed-size target by zero-filling on the right; as a target it is consumed from its most
+      significant end and any surplus at the other end is dropped. Covers both directions in
+      procedural and continuous-assignment position, the nonblocking form, a nested stream, a slice
+      size written as a type or a constant, and a `with` clause naming which elements of a
+      one-dimensional unpacked array take part (LRM 11.4.14.4) on either side of the assignment, in
+      every range form a select admits.
+
+  The four forms below are rejected, and they are not one gap. Each says what it waits on.
+  - [ ] A dynamically sized value wherever it meets a stream -- packed into one (LRM 11.4.14.4),
+        filled from one, or standing as the source an unpack consumes. What it waits on is a type
+        naming a run of bits whose length the program fixes: the runtime already holds a packed
+        value's width on the value rather than in its type, so the value side is ready and the type
+        side is not. This is the only one of the four whose answer changes what is already built,
+        because the stream's own type is what would move.
+  - [ ] A class handle as a stream expression (LRM 11.4.14.1 streams the object's data members in
+        declaration order, a base's before a derived's). What it waits on is a traversal over an
+        object rather than over a value: a class object is reached through a managed reference and
+        has no value-layer representation, so the product traversal every other aggregate shares
+        does not reach it.
+  - [ ] A streaming target on a continuous assignment. The concatenation target at that position
+        does lower, because a packed concatenation of lvalues is itself one place; a stream is not,
+        so it needs the distribution into several targets that the procedural form performs. What it
+        waits on is that distribution becoming one component the destructuring assignment, the
+        streaming unpack, and the continuous assignment all reach.
+  - [ ] An unpacked union anywhere in a stream. LRM 11.4.14.1 streams its first-declared member
+        whatever member is live, and the front end already resolves that much. What blocks it is the
+        union's own storage: this pipeline keeps only the active member and reports a read of any
+        other, so the first member's bits are not there to read when a later member is live --
+        streaming a union needs the member overlay the storage model does not have. Worth knowing
+        before it is taken up: LRM 6.24.3 sizes a union by its largest member while 11.4.14.1
+        streams its first, and for `union { byte narrow; int wide; }` those are 32 bits and 8.
 
 ### Assignment families
 
