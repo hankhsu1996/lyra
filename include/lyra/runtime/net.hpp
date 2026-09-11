@@ -2,6 +2,7 @@
 
 #include <concepts>
 #include <cstddef>
+#include <cstdint>
 #include <deque>
 #include <memory>
 #include <utility>
@@ -13,83 +14,94 @@
 #include "lyra/runtime/takeover.hpp"
 #include "lyra/runtime/trigger.hpp"
 #include "lyra/runtime/var.hpp"
+#include "lyra/support/strength_level.hpp"
 #include "lyra/value/concepts.hpp"
 #include "lyra/value/net_resolution.hpp"
 #include "lyra/value/packed_array.hpp"
 
 namespace lyra::runtime {
 
-// The drive strength of a driver's contribution (LRM 28). Strength is a
-// property of what a driver contributes, not of the net's resolved value, so it
-// rides the contribution rather than sitting beside the net.
-struct DriveStrength {};
+// Which level a contribution is driven at. It arrives as a PackedArray
+// literal, the way every compile-time scalar crosses into a runtime entry.
+[[nodiscard]] inline auto StrengthLevelOf(const value::PackedArray& level)
+    -> support::StrengthLevel {
+  return static_cast<support::StrengthLevel>(level.ToInt64());
+}
 
-// One driver's contribution to a net's resolution: a logic value and its drive
-// strength (LRM 28).
+// One contribution to a net's resolution: a logic value and the strength it is
+// driven at (LRM 28.11). Strength rides the contribution rather than the net's
+// resolved value, because all it decides is which contribution determines a
+// position, and nothing that reads a net asks how strongly it got there.
 template <value::NetResolvable T>
 struct DriveContribution {
   T value{};
-  DriveStrength strength{};
+  support::StrengthLevel strength{};
 };
 
-// Folds a net's driver contributions into its resolved value under the truth
-// table `resolution` names (LRM 6.6): tri-state for `wire` / `tri`, wired-and
-// for `wand` / `triand`, wired-or for `wor` / `trior` (LRM 6.6.1 Table 6-2,
-// LRM 6.6.3 Tables 6-3 and 6-4). The fold starts at `nondriving` -- the all-`z`
-// value that is every fold's identity -- so an empty driver set is not a case
-// of its own, and it reads the same operation from every net-valid value type,
-// which is what `value::NetResolvable` states. The fold is a value the net
-// carries, not a type it is parameterized by, so one realization serves every
-// net type and a backend that erases the value type still resolves correctly.
-template <value::NetResolvable T>
-[[nodiscard]] auto FoldContributions(
-    const std::vector<DriveContribution<T>>& contributions, const T& nondriving,
-    value::NetResolution resolution) -> T {
-  T resolved = nondriving;
-  for (const auto& contribution : contributions) {
-    resolved = resolved.ResolveNet(contribution.value, resolution);
-  }
-  return resolved;
-}
+// What the contribution a net type makes to its own resolution does once the
+// net has been driven: hold what the declaration gave it, or take what the
+// drivers last decided, which is how a net stores a value (LRM 6.6.4).
+enum class OwnContribution : std::uint8_t { kFixed, kRetained };
 
 template <value::NetResolvable T>
 class Driver;
 
-// A net: a resolved observable value produced from a set of independently
-// attached driver contributions folded under the net's resolution (LRM 6.5,
-// 6.6). Readable and observable like a `Var<T>` (it extends `Observable`, so a
+// A net: a resolved observable value produced from the contribution its net
+// type makes and the ones independently attached drivers make (LRM 6.5, 6.6).
+// Readable and observable like a `Var<T>` (it extends `Observable`, so a
 // process can wait on it), but never written directly: a value reaches it by a
 // driver updating its own contribution, or by a procedural continuous
-// assignment overriding what the drivers resolve to (LRM 10.6.2), and either
-// way the net re-resolves and publishes on a real change (LRM 9.4.2). The net
-// owns the contribution
-// storage; a `Driver<T>` names one contribution by an index the net issued, so
-// the storage stays the net's to reorganize.
+// assignment overriding what the contributions resolve to (LRM 10.6.2), and
+// either way the net re-resolves and publishes on a real change (LRM 9.4.2).
+// The net owns the contribution storage; a `Driver<T>` names one contribution
+// by an index the net issued, so the storage stays the net's to reorganize.
 template <value::NetResolvable T>
 class ResolvedNet : public Observable {
  public:
   ResolvedNet() = default;
 
   // Fixes what the net's declaration gives it -- the declared type, from a
-  // value carrying it, and the fold its declared net type picked -- once at
-  // construction. The net is therefore a readable, well-typed observable
-  // before any driver attaches. Its value at that point is the fold over no
-  // contributions at all, which is the same fold every later value comes from
-  // -- an empty driver set is not a case of its own. Installing twice is a
-  // lowering defect.
+  // value carrying it, and what its declared net type states: which truth
+  // table resolves contributions of equal strength, and the contribution the
+  // net type itself makes, as the value it shows where nothing drives it and
+  // the strength it holds that value at (LRM 6.7.1). The net is therefore a
+  // readable, well-typed observable before any driver attaches, and its value
+  // at that point comes from the same resolution every later value comes from.
+  // Installing twice is a lowering defect.
   //
-  // One entry per fold, since a fold has no spelling as a value the call could
-  // carry: tri-state for `wire` / `tri` (LRM 6.6.1 Table 6-2), wired-and for
-  // `wand` / `triand` and wired-or for `wor` / `trior` (LRM 6.6.3 Tables 6-3
-  // and 6-4).
-  void InitializeTriState(T prototype) {
-    Install(std::move(prototype), value::NetResolution::kTriState);
+  // One entry per resolution, since a truth table has no spelling as a value
+  // the call could carry: tri-state for `wire` / `tri` (LRM 6.6.1 Table 6-2),
+  // wired-and for `wand` / `triand` and wired-or for `wor` / `trior` (LRM 6.6.3
+  // Tables 6-3 and 6-4), and one that resolves tri-state and leaves its own
+  // contribution holding what the drivers last decided, which is how a net
+  // stores a value (LRM 6.6.4).
+  void InitializeTriState(
+      T prototype, const value::PackedArray& fill,
+      const value::PackedArray& strength) {
+    Install(
+        std::move(prototype), fill, strength, value::NetResolution::kTriState,
+        OwnContribution::kFixed);
   }
-  void InitializeWiredAnd(T prototype) {
-    Install(std::move(prototype), value::NetResolution::kWiredAnd);
+  void InitializeWiredAnd(
+      T prototype, const value::PackedArray& fill,
+      const value::PackedArray& strength) {
+    Install(
+        std::move(prototype), fill, strength, value::NetResolution::kWiredAnd,
+        OwnContribution::kFixed);
   }
-  void InitializeWiredOr(T prototype) {
-    Install(std::move(prototype), value::NetResolution::kWiredOr);
+  void InitializeWiredOr(
+      T prototype, const value::PackedArray& fill,
+      const value::PackedArray& strength) {
+    Install(
+        std::move(prototype), fill, strength, value::NetResolution::kWiredOr,
+        OwnContribution::kFixed);
+  }
+  void InitializeRetaining(
+      T prototype, const value::PackedArray& fill,
+      const value::PackedArray& strength) {
+    Install(
+        std::move(prototype), fill, strength, value::NetResolution::kTriState,
+        OwnContribution::kRetained);
   }
 
   ResolvedNet(const ResolvedNet&) = delete;
@@ -134,18 +146,67 @@ class ResolvedNet : public Observable {
     Reresolve(current_runtime());
   }
 
-  // Attaches a new driver and returns its handle. Its contribution starts at
-  // the non-driving one, so a driver that has not yet driven leaves the
-  // resolution exactly as it was -- attaching is not itself an act of driving.
-  // The contribution list only grows, so an index into it is a stable identity.
-  // The handle is the net's own, so a source that can hold one by value copies
-  // it out of the reference and one that cannot keeps the reference itself.
-  auto AttachDriver() -> Driver<T>&;
+  // Attaches a new driver at the strength its source drives at and returns its
+  // handle. Its contribution starts at the non-driving one, so a driver that
+  // has not yet driven leaves the resolution exactly as it was -- attaching is
+  // not itself an act of driving. The contribution list only grows, so an index
+  // into it is a stable identity. The handle is the net's own, so a source that
+  // can hold one by value copies it out of the reference and one that cannot
+  // keeps the reference itself.
+  auto AttachDriver(const value::PackedArray& strength) -> Driver<T>&;
 
  private:
   friend class Driver<T>;
 
-  void Install(T prototype, value::NetResolution resolution) {
+  // Whether any contribution sits at a given level, one bit per level, so a
+  // resolution visits only the levels that exist. A contribution at high
+  // impedance is never recorded, because it determines no position (LRM
+  // 28.12.1) -- which is what leaves a net nobody drives resolving in no passes
+  // at all.
+  using OccupiedLevels = std::uint32_t;
+
+  [[nodiscard]] static auto LevelBit(support::StrengthLevel level)
+      -> OccupiedLevels {
+    if (level == support::StrengthLevel::kHighImpedance) {
+      return 0U;
+    }
+    return OccupiedLevels{1} << static_cast<unsigned>(level);
+  }
+
+  // The value the net shows, from the contributions as they now stand. Between
+  // levels the stronger contribution determines every position it drives and
+  // leaves the rest (LRM 28.12.1); within one level the net type's truth table
+  // decides -- tri-state, wired-and, or wired-or (LRM 6.6.1 Table 6-2, LRM
+  // 6.6.3 Tables 6-3 and 6-4, LRM 28.12.4). The net type's own contribution
+  // takes part like any other, so a net nothing drives resolves to it, and
+  // every level starts from the all-`z` value every fold treats as its
+  // identity, so a level nothing occupies and a net with no drivers are not
+  // cases of their own. Every operation here reads the same way from every
+  // net-valid value type, which is what `value::NetResolvable` states, so one
+  // realization serves every net type and a backend that erases the value type
+  // still resolves correctly.
+  [[nodiscard]] auto Resolve() const -> T {
+    T resolved = nondriving_;
+    for (std::size_t level = support::kStrengthLevelCount; level-- > 0;) {
+      const auto at = static_cast<support::StrengthLevel>(level);
+      if ((occupied_ & LevelBit(at)) == 0U) {
+        continue;
+      }
+      T group = own_.strength == at ? own_.value : nondriving_;
+      for (const auto& driver : contributions_) {
+        if (driver.strength == at) {
+          group = group.ResolveNet(driver.value, resolution_);
+        }
+      }
+      resolved = resolved.Dominating(group);
+    }
+    return resolved;
+  }
+
+  void Install(
+      T prototype, const value::PackedArray& fill,
+      const value::PackedArray& strength, value::NetResolution resolution,
+      OwnContribution own_kind) {
     if constexpr (std::same_as<T, value::PackedArray>) {
       if (!resolved_.IsUninitialized()) {
         throw InternalError(
@@ -153,8 +214,14 @@ class ResolvedNet : public Observable {
       }
     }
     resolution_ = resolution;
-    nondriving_ = T::HighImpedanceLike(prototype);
-    resolved_ = FoldContributions(contributions_, nondriving_, resolution_);
+    own_kind_ = own_kind;
+    nondriving_ =
+        T::FilledLike(prototype, value::PackedArray::HighImpedanceScalar());
+    own_ = DriveContribution<T>{
+        .value = T::FilledLike(prototype, fill),
+        .strength = StrengthLevelOf(strength)};
+    occupied_ |= LevelBit(own_.strength);
+    resolved_ = Resolve();
   }
 
   void UpdateContribution(
@@ -174,7 +241,16 @@ class ResolvedNet : public Observable {
   // underneath a force and the net is immediately assigned the value they
   // determine the moment it is released.
   void Reresolve(RuntimeEffects& runtime) {
-    T next = FoldContributions(contributions_, nondriving_, resolution_);
+    T next = Resolve();
+    // A net that stores a value holds what its drivers last decided, so its own
+    // contribution takes the resolution it just took part in: the positions
+    // something drove are what it now carries, and the positions nothing drove
+    // are the ones it decided itself, which leaves them as they were (LRM
+    // 6.6.4). A takeover displaces what the net shows and not what it holds, so
+    // this happens before one is consulted (LRM 10.6.2).
+    if (own_kind_ == OwnContribution::kRetained) {
+      own_.value = next;
+    }
     const T* forced = takeovers_ == nullptr ? nullptr : takeovers_->Highest();
     if (forced != nullptr) {
       next = *forced;
@@ -218,7 +294,10 @@ class ResolvedNet : public Observable {
 
   T resolved_{};
   T nondriving_{};
+  DriveContribution<T> own_{};
+  OccupiedLevels occupied_{};
   value::NetResolution resolution_{};
+  OwnContribution own_kind_{};
   // The procedural continuous assignments this net has been put under (LRM
   // 10.6.2), absent until the first one starts, so a net nobody forces resolves
   // exactly as it did before the construct existed.
@@ -306,8 +385,12 @@ class Driver {
 };
 
 template <value::NetResolvable T>
-auto ResolvedNet<T>::AttachDriver() -> Driver<T>& {
-  contributions_.push_back(DriveContribution<T>{.value = nondriving_});
+auto ResolvedNet<T>::AttachDriver(const value::PackedArray& strength)
+    -> Driver<T>& {
+  const support::StrengthLevel level = StrengthLevelOf(strength);
+  contributions_.push_back(
+      DriveContribution<T>{.value = nondriving_, .strength = level});
+  occupied_ |= LevelBit(level);
   drivers_.emplace_back(*this, contributions_.size() - 1);
   return drivers_.back();
 }

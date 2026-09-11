@@ -11,10 +11,12 @@ module Top;
 
   logic clk;
   logic gate;
-  int ticks;
+  // Given its value where it is declared rather than in a procedure: a
+  // variable an always_ff procedure writes shall be written by no other
+  // process (LRM 9.2.2.4), and a declaration assignment is not one.
+  int ticks = 0;
 
   initial begin
-    ticks = 0;
     clk = 1'b0;
     repeat (8) #5 clk = ~clk;
   end

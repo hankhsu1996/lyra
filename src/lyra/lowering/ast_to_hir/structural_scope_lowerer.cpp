@@ -38,6 +38,7 @@
 #include "lyra/lowering/ast_to_hir/net_type.hpp"
 #include "lyra/lowering/ast_to_hir/process_lowerer.hpp"
 #include "lyra/lowering/ast_to_hir/statement/assertions.hpp"
+#include "lyra/lowering/ast_to_hir/strength.hpp"
 #include "lyra/lowering/ast_to_hir/subroutine_decl.hpp"
 #include "lyra/lowering/ast_to_hir/time_resolution.hpp"
 #include "lyra/lowering/ast_to_hir/unit_identity.hpp"
@@ -452,18 +453,28 @@ auto StructuralScopeLowerer::PopulateNetMember(
   const auto span = mapper.PointSpanOf(net.location);
   auto type_id_or = owner_->InternType(net.getType(), span);
   if (!type_id_or) return std::unexpected(std::move(type_id_or.error()));
-  const auto net_type = TranslateNetType(net.netType);
-  if (!net_type.has_value()) {
+  auto net_type = TranslateNetType(net.netType, span);
+  if (!net_type) return std::unexpected(std::move(net_type.error()));
+
+  // A delay on a net declaration is the time a value change takes to reach it
+  // (LRM 10.3.3), and on a `trireg` its third component is how long a stored
+  // charge lasts (LRM 6.6.4.2). Neither is modelled, and dropping one answers
+  // at the wrong time rather than refusing.
+  if (net.getDelay() != nullptr) {
     return diag::Fail(
         span, diag::DiagCode::kUnsupportedTypeKind,
-        "this net type is not yet supported");
+        "a delay on a net declaration (LRM 10.3.3) is not yet supported");
   }
+
   const hir::StructuralDataObjectId local =
       frame.current_structural_scope->structural_data_objects.Add(
           hir::StructuralDataObjectDecl{
               .name = std::string{net.name},
               .type = *type_id_or,
-              .kind = hir::StructuralNetDecl{.net_type = *net_type}});
+              .kind = hir::StructuralNetDecl{
+                  .net_type = *net_type,
+                  .charge_strength =
+                      TranslateChargeStrength(net.getChargeStrength())}});
   owner_->MapStructuralDataObjectBinding(net, frame_, local, *type_id_or);
 
   // A net-declaration assignment (`wire w = expr;`, LRM 6.5) is a single
@@ -473,6 +484,8 @@ auto StructuralScopeLowerer::PopulateNetMember(
   // explicit `assign` does. The sensitivity is the read set of the driving
   // expression, analyzed with the net as the containing symbol.
   if (const auto* init = net.getInitializer(); init != nullptr) {
+    auto strength = TranslateDriveStrength(net.getDriveStrength(), span);
+    if (!strength) return std::unexpected(std::move(strength.error()));
     auto rhs_or = LowerExpr(*init, frame);
     if (!rhs_or) return std::unexpected(std::move(rhs_or.error()));
     const hir::ExprId lhs_id = frame.Exprs().Add(
@@ -487,6 +500,7 @@ auto StructuralScopeLowerer::PopulateNetMember(
             .span = span,
             .lhs = lhs_id,
             .rhs = rhs_id,
+            .strength = *strength,
             .sensitivity_list = *std::move(sensitivity)});
   }
   return {};

@@ -180,10 +180,16 @@ class RuntimeUnpackedArray {
       const RuntimeUnpackedArray& other, NetResolution fold) const
       -> RuntimeUnpackedArray;
 
-  // The all-high-impedance value at `prototype`'s shape: each element's own
-  // high-impedance value (LRM 6.6.1). Only the prototype's shape is read.
-  [[nodiscard]] static auto HighImpedanceLike(
-      const RuntimeUnpackedArray& prototype) -> RuntimeUnpackedArray;
+  // What a stronger contribution leaves a weaker one, element by element (LRM
+  // 28.12.1).
+  [[nodiscard]] auto Dominating(const RuntimeUnpackedArray& weaker) const
+      -> RuntimeUnpackedArray;
+
+  // `prototype`'s shape with every bit set to `fill`: each element filled the
+  // same way (LRM 6.7.1). Only the prototype's shape is read.
+  [[nodiscard]] static auto FilledLike(
+      const RuntimeUnpackedArray& prototype, const PackedArray& fill)
+      -> RuntimeUnpackedArray;
 
   // LRM 9.4.2 update-event predicate (engine change-detection hook).
   [[nodiscard]] auto IsBitIdentical(const RuntimeUnpackedArray& other) const

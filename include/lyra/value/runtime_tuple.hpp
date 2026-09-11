@@ -64,10 +64,15 @@ class RuntimeTuple {
   [[nodiscard]] auto ResolveNet(
       const RuntimeTuple& other, NetResolution fold) const -> RuntimeTuple;
 
-  // The all-high-impedance value at `prototype`'s shape: each component's own
-  // high-impedance value (LRM 6.6.1). Only the prototype's shape is read.
-  [[nodiscard]] static auto HighImpedanceLike(const RuntimeTuple& prototype)
+  // What a stronger contribution leaves a weaker one, component by component
+  // (LRM 28.12.1).
+  [[nodiscard]] auto Dominating(const RuntimeTuple& weaker) const
       -> RuntimeTuple;
+
+  // `prototype`'s shape with every bit set to `fill`: each component filled the
+  // same way (LRM 6.7.1). Only the prototype's shape is read.
+  [[nodiscard]] static auto FilledLike(
+      const RuntimeTuple& prototype, const PackedArray& fill) -> RuntimeTuple;
 
   // LRM 9.4.2 update-event predicate (engine change-detection hook).
   [[nodiscard]] auto IsBitIdentical(const RuntimeTuple& other) const -> bool;

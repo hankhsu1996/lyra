@@ -450,18 +450,30 @@ class UnpackedArray {
     return resolved;
   }
 
-  // The all-high-impedance value at `prototype`'s shape: the element count and
-  // each element's own high-impedance value (LRM 6.6.1). Only the prototype's
-  // shape is read. The out-of-bounds shield keeps the prototype's element
-  // default, which an invalid-index read returns under LRM 7.4.5 whether the
-  // array is a net or a variable.
-  [[nodiscard]] static auto HighImpedanceLike(const UnpackedArray& prototype)
+  // What a stronger contribution leaves a weaker one, element by element (LRM
+  // 28.12.1).
+  [[nodiscard]] auto Dominating(const UnpackedArray& weaker) const
       -> UnpackedArray {
-    UnpackedArray floating = prototype;
-    for (T& element : floating.data_) {
-      element = T::HighImpedanceLike(element);
+    UnpackedArray resolved = *this;
+    for (std::size_t i = 0; i < resolved.data_.size(); ++i) {
+      resolved.data_[i] = resolved.data_[i].Dominating(weaker.data_[i]);
     }
-    return floating;
+    return resolved;
+  }
+
+  // `prototype`'s shape with every bit set to `fill`: the element count and
+  // each element filled the same way (LRM 6.7.1). Only the prototype's shape is
+  // read. The out-of-bounds shield keeps the prototype's element default, which
+  // an invalid-index read returns under LRM 7.4.5 whether the array is a net or
+  // a variable.
+  [[nodiscard]] static auto FilledLike(
+      const UnpackedArray& prototype, const PackedArray& fill)
+      -> UnpackedArray {
+    UnpackedArray filled = prototype;
+    for (T& element : filled.data_) {
+      element = T::FilledLike(element, fill);
+    }
+    return filled;
   }
 
   // LRM 20.9: any element carrying an unknown bit propagates up.

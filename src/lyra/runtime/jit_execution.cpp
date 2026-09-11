@@ -3419,16 +3419,32 @@ auto lyra_rt_packed_net_get(void* net) -> void* {
   return Own(NetOf<PackedArray>(net).Get());
 }
 
-void lyra_rt_packed_net_initialize_tri_state(void* net, const void* prototype) {
-  NetOf<PackedArray>(net).InitializeTriState(Read<PackedArray>(prototype));
+void lyra_rt_packed_net_initialize_tri_state(
+    void* net, const void* prototype, const void* fill, const void* strength) {
+  NetOf<PackedArray>(net).InitializeTriState(
+      Read<PackedArray>(prototype), Read<PackedArray>(fill),
+      Read<PackedArray>(strength));
 }
 
-void lyra_rt_packed_net_initialize_wired_and(void* net, const void* prototype) {
-  NetOf<PackedArray>(net).InitializeWiredAnd(Read<PackedArray>(prototype));
+void lyra_rt_packed_net_initialize_wired_and(
+    void* net, const void* prototype, const void* fill, const void* strength) {
+  NetOf<PackedArray>(net).InitializeWiredAnd(
+      Read<PackedArray>(prototype), Read<PackedArray>(fill),
+      Read<PackedArray>(strength));
 }
 
-void lyra_rt_packed_net_initialize_wired_or(void* net, const void* prototype) {
-  NetOf<PackedArray>(net).InitializeWiredOr(Read<PackedArray>(prototype));
+void lyra_rt_packed_net_initialize_wired_or(
+    void* net, const void* prototype, const void* fill, const void* strength) {
+  NetOf<PackedArray>(net).InitializeWiredOr(
+      Read<PackedArray>(prototype), Read<PackedArray>(fill),
+      Read<PackedArray>(strength));
+}
+
+void lyra_rt_packed_net_initialize_retaining(
+    void* net, const void* prototype, const void* fill, const void* strength) {
+  NetOf<PackedArray>(net).InitializeRetaining(
+      Read<PackedArray>(prototype), Read<PackedArray>(fill),
+      Read<PackedArray>(strength));
 }
 
 auto lyra_rt_packed_net_begin_takeover(void* net, const void* level) -> void* {
@@ -3447,8 +3463,8 @@ void lyra_rt_packed_net_end_takeover(void* net, const void* level) {
   NetOf<PackedArray>(net).EndTakeover(Read<PackedArray>(level));
 }
 
-auto lyra_rt_packed_attach_driver(void* net) -> void* {
-  return &NetOf<PackedArray>(net).AttachDriver();
+auto lyra_rt_packed_attach_driver(void* net, const void* strength) -> void* {
+  return &NetOf<PackedArray>(net).AttachDriver(Read<PackedArray>(strength));
 }
 
 auto lyra_rt_packed_driver_get(void* driver) -> void* {
@@ -3463,20 +3479,36 @@ auto lyra_rt_tuple_net_get(void* net) -> void* {
   return Own(NetOf<RuntimeTuple>(net).Get());
 }
 
-void lyra_rt_tuple_net_initialize_tri_state(void* net, const void* prototype) {
-  NetOf<RuntimeTuple>(net).InitializeTriState(Read<RuntimeTuple>(prototype));
+void lyra_rt_tuple_net_initialize_tri_state(
+    void* net, const void* prototype, const void* fill, const void* strength) {
+  NetOf<RuntimeTuple>(net).InitializeTriState(
+      Read<RuntimeTuple>(prototype), Read<PackedArray>(fill),
+      Read<PackedArray>(strength));
 }
 
-void lyra_rt_tuple_net_initialize_wired_and(void* net, const void* prototype) {
-  NetOf<RuntimeTuple>(net).InitializeWiredAnd(Read<RuntimeTuple>(prototype));
+void lyra_rt_tuple_net_initialize_wired_and(
+    void* net, const void* prototype, const void* fill, const void* strength) {
+  NetOf<RuntimeTuple>(net).InitializeWiredAnd(
+      Read<RuntimeTuple>(prototype), Read<PackedArray>(fill),
+      Read<PackedArray>(strength));
 }
 
-void lyra_rt_tuple_net_initialize_wired_or(void* net, const void* prototype) {
-  NetOf<RuntimeTuple>(net).InitializeWiredOr(Read<RuntimeTuple>(prototype));
+void lyra_rt_tuple_net_initialize_wired_or(
+    void* net, const void* prototype, const void* fill, const void* strength) {
+  NetOf<RuntimeTuple>(net).InitializeWiredOr(
+      Read<RuntimeTuple>(prototype), Read<PackedArray>(fill),
+      Read<PackedArray>(strength));
 }
 
-auto lyra_rt_tuple_attach_driver(void* net) -> void* {
-  return &NetOf<RuntimeTuple>(net).AttachDriver();
+void lyra_rt_tuple_net_initialize_retaining(
+    void* net, const void* prototype, const void* fill, const void* strength) {
+  NetOf<RuntimeTuple>(net).InitializeRetaining(
+      Read<RuntimeTuple>(prototype), Read<PackedArray>(fill),
+      Read<PackedArray>(strength));
+}
+
+auto lyra_rt_tuple_attach_driver(void* net, const void* strength) -> void* {
+  return &NetOf<RuntimeTuple>(net).AttachDriver(Read<PackedArray>(strength));
 }
 
 auto lyra_rt_tuple_driver_get(void* driver) -> void* {
@@ -3491,20 +3523,36 @@ auto lyra_rt_union_net_get(void* net) -> void* {
   return Own(NetOf<RuntimeUnion>(net).Get());
 }
 
-void lyra_rt_union_net_initialize_tri_state(void* net, const void* prototype) {
-  NetOf<RuntimeUnion>(net).InitializeTriState(Read<RuntimeUnion>(prototype));
+void lyra_rt_union_net_initialize_tri_state(
+    void* net, const void* prototype, const void* fill, const void* strength) {
+  NetOf<RuntimeUnion>(net).InitializeTriState(
+      Read<RuntimeUnion>(prototype), Read<PackedArray>(fill),
+      Read<PackedArray>(strength));
 }
 
-void lyra_rt_union_net_initialize_wired_and(void* net, const void* prototype) {
-  NetOf<RuntimeUnion>(net).InitializeWiredAnd(Read<RuntimeUnion>(prototype));
+void lyra_rt_union_net_initialize_wired_and(
+    void* net, const void* prototype, const void* fill, const void* strength) {
+  NetOf<RuntimeUnion>(net).InitializeWiredAnd(
+      Read<RuntimeUnion>(prototype), Read<PackedArray>(fill),
+      Read<PackedArray>(strength));
 }
 
-void lyra_rt_union_net_initialize_wired_or(void* net, const void* prototype) {
-  NetOf<RuntimeUnion>(net).InitializeWiredOr(Read<RuntimeUnion>(prototype));
+void lyra_rt_union_net_initialize_wired_or(
+    void* net, const void* prototype, const void* fill, const void* strength) {
+  NetOf<RuntimeUnion>(net).InitializeWiredOr(
+      Read<RuntimeUnion>(prototype), Read<PackedArray>(fill),
+      Read<PackedArray>(strength));
 }
 
-auto lyra_rt_union_attach_driver(void* net) -> void* {
-  return &NetOf<RuntimeUnion>(net).AttachDriver();
+void lyra_rt_union_net_initialize_retaining(
+    void* net, const void* prototype, const void* fill, const void* strength) {
+  NetOf<RuntimeUnion>(net).InitializeRetaining(
+      Read<RuntimeUnion>(prototype), Read<PackedArray>(fill),
+      Read<PackedArray>(strength));
+}
+
+auto lyra_rt_union_attach_driver(void* net, const void* strength) -> void* {
+  return &NetOf<RuntimeUnion>(net).AttachDriver(Read<PackedArray>(strength));
 }
 
 auto lyra_rt_union_driver_get(void* driver) -> void* {
@@ -3520,25 +3568,37 @@ auto lyra_rt_unpackedarray_net_get(void* net) -> void* {
 }
 
 void lyra_rt_unpackedarray_net_initialize_tri_state(
-    void* net, const void* prototype) {
+    void* net, const void* prototype, const void* fill, const void* strength) {
   NetOf<RuntimeUnpackedArray>(net).InitializeTriState(
-      Read<RuntimeUnpackedArray>(prototype));
+      Read<RuntimeUnpackedArray>(prototype), Read<PackedArray>(fill),
+      Read<PackedArray>(strength));
 }
 
 void lyra_rt_unpackedarray_net_initialize_wired_and(
-    void* net, const void* prototype) {
+    void* net, const void* prototype, const void* fill, const void* strength) {
   NetOf<RuntimeUnpackedArray>(net).InitializeWiredAnd(
-      Read<RuntimeUnpackedArray>(prototype));
+      Read<RuntimeUnpackedArray>(prototype), Read<PackedArray>(fill),
+      Read<PackedArray>(strength));
 }
 
 void lyra_rt_unpackedarray_net_initialize_wired_or(
-    void* net, const void* prototype) {
+    void* net, const void* prototype, const void* fill, const void* strength) {
   NetOf<RuntimeUnpackedArray>(net).InitializeWiredOr(
-      Read<RuntimeUnpackedArray>(prototype));
+      Read<RuntimeUnpackedArray>(prototype), Read<PackedArray>(fill),
+      Read<PackedArray>(strength));
 }
 
-auto lyra_rt_unpackedarray_attach_driver(void* net) -> void* {
-  return &NetOf<RuntimeUnpackedArray>(net).AttachDriver();
+void lyra_rt_unpackedarray_net_initialize_retaining(
+    void* net, const void* prototype, const void* fill, const void* strength) {
+  NetOf<RuntimeUnpackedArray>(net).InitializeRetaining(
+      Read<RuntimeUnpackedArray>(prototype), Read<PackedArray>(fill),
+      Read<PackedArray>(strength));
+}
+
+auto lyra_rt_unpackedarray_attach_driver(void* net, const void* strength)
+    -> void* {
+  return &NetOf<RuntimeUnpackedArray>(net).AttachDriver(
+      Read<PackedArray>(strength));
 }
 
 auto lyra_rt_unpackedarray_driver_get(void* driver) -> void* {

@@ -824,11 +824,9 @@ struct Expr {
 }
 
 // Installs what a capability wrapper's declaration gives it, once at
-// construction. `entry` names which install this is -- a cell's declared
-// representation and default contents, a net's representation together with
-// the fold its net type picked (LRM 6.6) -- and `prototype` is a value of that
-// declared type, of which only the representation is used. No runtime handle:
-// it runs before any process, so there are no subscribers to fire.
+// construction. `entry` names which install this is, and `prototype` is a value
+// of the declared type, of which only the representation is used. No runtime
+// handle: it runs before any process, so there are no subscribers to fire.
 [[nodiscard]] inline auto MakeCapabilityInstallCallExpr(
     ExprId wrapper, ExprId prototype, support::BuiltinFn entry,
     TypeId void_type) -> Expr {
@@ -840,10 +838,28 @@ struct Expr {
       .type = void_type};
 }
 
-// `net.AttachDriver()` -- attaches a driver to a net's resolution node and
-// yields the driver handle (the result type is the driver type).
+// Installs what a net's declaration gives it, once at construction. `entry`
+// names which resolution the net performs (LRM 6.6), `prototype` carries the
+// declared representation, and the two operands beside it are the contribution
+// the net type makes to the net's own resolution: the scalar the net shows
+// where nothing drives it, filling that representation, and the strength it
+// holds that scalar at (LRM 6.7.1, 28.11).
+[[nodiscard]] inline auto MakeNetInstallCallExpr(
+    ExprId net, ExprId prototype, ExprId fill, ExprId strength,
+    support::BuiltinFn entry, TypeId void_type) -> Expr {
+  return Expr{
+      .data =
+          CallExpr{
+              .callee = Direct{.target = entry, .receiver = net},
+              .arguments = {prototype, fill, strength}},
+      .type = void_type};
+}
+
+// `net.AttachDriver(strength)` -- attaches a driver contributing at `strength`
+// to a net's resolution and yields the driver handle (the result type is the
+// driver type).
 [[nodiscard]] inline auto MakeNetAttachDriverCallExpr(
-    ExprId net, TypeId driver_type) -> Expr {
+    ExprId net, ExprId strength, TypeId driver_type) -> Expr {
   return Expr{
       .data =
           CallExpr{
@@ -851,7 +867,7 @@ struct Expr {
                   Direct{
                       .target = support::BuiltinFn::kAttachDriver,
                       .receiver = net},
-              .arguments = {}},
+              .arguments = {strength}},
       .type = driver_type};
 }
 

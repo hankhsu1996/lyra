@@ -406,6 +406,10 @@ auto RuntimeEntryOf(BuiltinFn id) -> RuntimeEntry {
       return {
           .name = "net_initialize_wired_or",
           .declaration = Method{"InitializeWiredOr"}};
+    case BuiltinFn::kNetInitializeRetaining:
+      return {
+          .name = "net_initialize_retaining",
+          .declaration = Method{"InitializeRetaining"}};
     case BuiltinFn::kLoad:
       return {.name = "get", .declaration = Method{"Get"}};
     case BuiltinFn::kStore:

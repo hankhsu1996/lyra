@@ -1083,6 +1083,12 @@ enough to warrant its own focused review.
       whatever shape this takes -- it also covers the standalone entries, which no generation would
       reach.
 
+      The net-strength work is another measurement of the same cost, taken after the one above: one
+      new install operation and one new operand on an existing attach cost twenty edited or written
+      functions across the four representations a net may hold, in a change whose subject was six
+      net types. The number is small enough to write by hand and that is the point -- nothing about
+      it is a decision, so nothing about it is review.
+
 - [ ] R74 -- Which accesses a storage defines is spread across the sites that need the answer rather
       than stated where the storage is. A LIR type is classified into a storage kind in one place,
       which is right; but the pairs that do not exist -- a net taking a store, a driver installing a
@@ -1156,6 +1162,41 @@ enough to warrant its own focused review.
       one C++ keyword, because what they guard is the single mechanism rather than a list of names
       somebody thought of. **They will only ever go red on the nightly**, since the default test set
       runs the execution backend and `cpp_tests` is the only thing that compiles emitted text.
+
+- [ ] R77 -- The value layer states every aggregate operation twice, once for each realization. A
+      product, a union and a fixed-size unpacked array each exist as a monomorphized template the
+      C++ backend instantiates and as a type-erased class the execution backend holds, and the two
+      carry the same algorithm: recurse into the components, apply the operation, put the results
+      back. Which realization a backend uses is settled (`decisions/jit-aggregate-realization.md`)
+      and is not what this entry disputes; what it disputes is that the algorithm is written per
+      realization rather than once over "a value made of parts".
+
+      The cost is per operation rather than per type, which is why it grows. Adding net domination
+      and a shape-preserving fill -- two operations -- cost seven implementations each: one packed,
+      three monomorphized aggregates, three erased ones. Every operation the value layer has ever
+      gained paid the same, and nothing about the second copy is a decision: the erased one differs
+      from the template one only in reaching its parts through a variant rather than a pack.
+
+      Target: an aggregate's per-part operations are stated once against how it reaches its parts,
+      so a new operation is one implementation plus whatever a leaf type states for itself. Nothing
+      blocks it. The obstacle is that the two families expose their parts differently -- an index
+      sequence over a type pack on one side, a vector of erased values on the other -- so what has
+      to be found first is the one surface both can answer, and that is a design question rather
+      than a transcription.
+
+- [ ] R78 -- Whether a pairwise operation requires two values to have the same shape is decided per
+      operation. The runtime product checks the component counts agree in its equality and its case
+      equality and does not in its net resolution or its domination; the erased array family is
+      split the same way. Every one of them indexes the other value by position, so the ones that do
+      not check read out of bounds where the ones that do report. The states that would reach it are
+      unreachable today -- a net fixes the shape of every contribution to it, and an assignment
+      fixes the shape of a comparison's operands -- so this is a shape argument rather than a bug
+      report.
+
+      Target: how a pairwise operation over parts obtains its pairs is stated once, so whether the
+      counts agree is asked once rather than per operation, and the answer for a shape that cannot
+      arrive is the same everywhere. Blocked by nothing, and R77 is where it naturally lands: the
+      one surface that hands out the pairs is the place the question belongs.
 
 ## Out of Scope
 

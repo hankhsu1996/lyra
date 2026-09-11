@@ -241,8 +241,13 @@ the detail lives in the entry itself.
 - [elaboration-lifecycle-phases](elaboration-lifecycle-phases.md) -- a generated constructor only
   allocates; elaboration is a staged build / resolve / initialize / activate protocol.
 - [net-driver-resolution](net-driver-resolution.md) -- a net is a resolution node with node-owned
-  driver contributions and capability-handle drivers, validated at a Seal barrier; single-driver is
-  N=1.
+  driver contributions and capability-handle drivers, with the topology frozen at a Seal barrier;
+  single-driver is N=1.
+- [net-type-is-a-fold-and-a-contribution](net-type-is-a-fold-and-a-contribution.md) -- a net type
+  states a fold and the contribution it makes to its own resolution, so strength decides between
+  levels and the truth table within one; a per-bit strength on the resolved value, a value-only fold
+  per net type, compile-time strength resolution, and the single-driver check at a barrier are
+  rejected.
 - [procedural-continuous-assignment](procedural-continuous-assignment.md) -- `assign` / `force` take
   a target over at one of two precedence levels through a call on its capability type, evaluated by
   the loop a continuous assignment already uses; a forced value is not a driver and needs no shadow

@@ -26,6 +26,9 @@ module Top;
   logic [3:0] merged_high_impedance;
   logic [3:0] merged_elements [2];
 
+  logic [3:0] part_from_selected_arm;
+  logic [3:0] part_from_merged_arms;
+
   initial begin
     int a;
     int b;
@@ -83,6 +86,19 @@ module Top;
 
     // The relational operator binds first, so the predicate is 2 * 3 > 5.
     looser_than_relational = 2 * 3 > 5 ? 40 : 50;
+
+    // An arm is the value it produces and not the shape its own expression was
+    // written at, so a part-select arm reaches a part of the destination the
+    // same way any other expression would -- whichever arm the predicate takes,
+    // and whichever way an ambiguous predicate merges them.
+    narrow_arm = 4'b1011;
+    flag = 1;
+    part_from_selected_arm = 4'b0000;
+    part_from_selected_arm[1:0] = flag ? narrow_arm[3:2] : 2'b00;
+
+    ambiguous = 1'bx;
+    part_from_merged_arms = 4'b0000;
+    part_from_merged_arms[1:0] = ambiguous ? narrow_arm[3:2] : 2'b01;
   end
 
   final begin
@@ -120,6 +136,13 @@ module Top;
     if (merged_elements[1] !== 4'b0110)
       $fatal(1, "merged_elements[1] was %b, expected 0110",
              merged_elements[1]);
+
+    if (part_from_selected_arm !== 4'b0010)
+      $fatal(1, "part_from_selected_arm was %b, expected 0010",
+             part_from_selected_arm);
+    if (part_from_merged_arms !== 4'b00xx)
+      $fatal(1, "part_from_merged_arms was %b, expected 00xx",
+             part_from_merged_arms);
     $display("All checks passed");
   end
 endmodule

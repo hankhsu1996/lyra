@@ -31,11 +31,34 @@
 #include "lyra/hir/type.hpp"
 #include "lyra/hir/unary_op.hpp"
 #include "lyra/hir/value_ref.hpp"
+#include "lyra/support/strength_level.hpp"
 #include "lyra/support/system_subroutine.hpp"
 
 namespace lyra::hir {
 
 namespace {
+
+auto StrengthLevelLabel(support::StrengthLevel level) -> std::string_view {
+  switch (level) {
+    case support::StrengthLevel::kHighImpedance:
+      return "highz";
+    case support::StrengthLevel::kSmall:
+      return "small";
+    case support::StrengthLevel::kMedium:
+      return "medium";
+    case support::StrengthLevel::kWeak:
+      return "weak";
+    case support::StrengthLevel::kLarge:
+      return "large";
+    case support::StrengthLevel::kPull:
+      return "pull";
+    case support::StrengthLevel::kStrong:
+      return "strong";
+    case support::StrengthLevel::kSupply:
+      return "supply";
+  }
+  throw InternalError("StrengthLevelLabel: unknown strength level");
+}
 
 auto NetTypeLabel(NetType net_type) -> std::string_view {
   switch (net_type) {
@@ -51,6 +74,18 @@ auto NetTypeLabel(NetType net_type) -> std::string_view {
       return "wor";
     case NetType::kTrior:
       return "trior";
+    case NetType::kTri0:
+      return "tri0";
+    case NetType::kTri1:
+      return "tri1";
+    case NetType::kSupply0:
+      return "supply0";
+    case NetType::kSupply1:
+      return "supply1";
+    case NetType::kUwire:
+      return "uwire";
+    case NetType::kTrireg:
+      return "trireg";
   }
   throw InternalError("NetTypeLabel: unknown NetType");
 }
@@ -110,7 +145,11 @@ auto FormatStructuralDataObject(const StructuralDataObjectDecl& decl)
                        : std::string{};
           },
           [](const StructuralNetDecl& net) {
-            return std::format(" net={}", NetTypeLabel(net.net_type));
+            return net.charge_strength.has_value()
+                       ? std::format(
+                             " net={} charge={}", NetTypeLabel(net.net_type),
+                             StrengthLevelLabel(*net.charge_strength))
+                       : std::format(" net={}", NetTypeLabel(net.net_type));
           },
           [](const StructuralReferenceDecl& reference) {
             return std::string{ReferenceBindingLabel(reference.binding)};
@@ -1768,8 +1807,8 @@ class HirDumper {
   void DumpContinuousAssign(const ContinuousAssign& ca) {
     Line(
         std::format(
-            "ContinuousAssign lhs=Expr[{}] rhs=Expr[{}]", ca.lhs.value,
-            ca.rhs.value));
+            "ContinuousAssign lhs=Expr[{}] rhs=Expr[{}] strength={}",
+            ca.lhs.value, ca.rhs.value, StrengthLevelLabel(ca.strength)));
     Indent();
     if (!ca.sensitivity_list.empty()) {
       Line("SensitivityList:");

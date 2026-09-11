@@ -11,20 +11,22 @@ places outside its own scope.
 ## Owns
 
 - The rule that a net is a resolved observable value: its value is `resolve(contributions)`, where
-  the resolver is fixed by the net type and the contributions are supplied by the net's drivers.
+  the resolver is fixed by the net type and the contributions are supplied by the net's drivers and
+  by the net type itself.
 - The decomposition of a net into three parts: a resolved observable value, a set of driver
   contributions, and a resolver policy.
 - The rule that each driver is an independent contribution with its own identity and provenance. A
   driver updates only its own contribution; it never writes the net's resolved value.
 - The rule that the net re-resolves whenever any contribution changes, and publishes a change only
   when the resolved value itself changes.
-- The undriven case: with zero drivers a net holds the net type's undriven value (high-impedance for
-  the common net types).
+- The rule that a net type states two things and no more: the fold it performs, and the contribution
+  it makes to the net's own resolution -- a value and the strength it holds that value at.
 - The distinction between a net and a variable as a property carried by type, not a flag: a variable
   owns mutable state and is written directly (a procedural write, or a single continuous driver); a
   net owns a resolver and a driver set and is only ever driven.
 - The rule that a driver's contribution carries both a logic value and a drive strength, and that
-  resolution consumes both.
+  resolution consumes both: strength decides between contributions of unequal strength, and the net
+  type's fold decides among those of equal strength.
 
 ## Does Not Own
 
@@ -41,9 +43,10 @@ places outside its own scope.
 
 ## Core Invariants
 
-1. A net's value is the resolution of its drivers' contributions under the net type's resolver. With
-   zero drivers the value is the net type's undriven value; a single driver and many drivers are the
-   N=1 and N>1 cases of the same resolution, with no separate single-driver representation.
+1. A net's value is the resolution of its contributions under the net type's resolver. With zero
+   drivers the value is what the net type's own contribution resolves to; a single driver and many
+   drivers are the N=1 and N>1 cases of the same resolution, with no separate single-driver
+   representation.
 2. A driver is an independent contribution with identity and provenance. A driver writes only its
    own contribution and never the net's resolved value directly. The net owns the contribution
    storage; the driver names its contribution by a stable identity, never by a borrowed pointer into
@@ -52,12 +55,22 @@ places outside its own scope.
    value changes. A contribution that moves without changing the resolved value wakes no observer.
 4. A net is never the target of a direct or procedural write; it is only driven. This is carried by
    the net being a distinct capability type, not by a classifying flag beside a value type.
-5. Resolution is a function of the drivers' current contributions for the wired and tri-state net
-   types; only the charge-retaining net type carries resolver state. No resolver depends on anything
-   but the current contributions and, for the one stateful type, its own retained value.
-6. A single-driver constraint (a net type that admits only one driver) is a property of the attached
-   driver set -- the count of drivers with identity -- not of any contribution's current value. A
-   driver contributing high-impedance is still a driver.
+5. Resolution is a function of the contributions as they stand and of nothing else. The one
+   contribution resolution itself writes is the charge-retaining net type's own, which takes the
+   resolved value at every position some stronger contribution decided; every other contribution is
+   written by its driver or by the net type once.
+6. A constraint on how many drivers a net may have is decided before this model. It is a property of
+   the elaborated driver topology rather than of any contribution's value, so nothing here counts
+   drivers and no net type is modelled as refusing a second one; a net type that admits one driver
+   resolves the one it has exactly as a net that happens to have one does.
+7. Strength orders contributions and nothing else: where two contributions differ in strength the
+   stronger decides the positions it drives, and where they agree the net type's fold decides. A
+   contribution at the high-impedance strength decides no position, which is what makes a net with
+   no drivers resolve to its net type's own contribution rather than to a case of its own.
+8. A net's resolved value carries no strength. This holds while no modelled construct makes one
+   net's resolved value an input to another resolution; a switch, a gate primitive, and net collapse
+   are the three that would, and the first two are outside this document's subject while the third
+   merges the contributions rather than the results.
 
 ## Boundary to Adjacent Layers
 
@@ -65,8 +78,12 @@ places outside its own scope.
   net through that route, and a read of a net reaches the resolved value through that route; net
   resolution is the concern that doc names as design-global and out of its own scope.
 - `elaboration_lifecycle.md` owns when. Drivers attach during Resolve; the driver topology is frozen
-  and validated at the Seal barrier; contributions are seeded in Initialize; the processes that
-  update contributions arm in Activate.
+  at the Seal barrier and whatever validation needs the whole design's topology runs there;
+  contributions are seeded in Initialize; the processes that update contributions arm in Activate.
+- The front end owns which drivers a legal program may give a net, as `compiler_overview.md` places
+  every question answered over the elaborated design before HIR. A rule the standard states as an
+  error rather than as a value -- a net type that admits one driver, a nettype declared with no
+  resolution function -- is decided there, and this model resolves whatever topology it is handed.
 - `mir.md` owns the capability-type family. A net's resolved value is a capability type sibling to
   the plain observable cell (readable and observable, but not directly writable); a driver is a
   capability handle sibling to a reference.
@@ -88,8 +105,14 @@ places outside its own scope.
   reorganizable at will; a driver addresses its contribution by stable identity.
 - A single-driver net represented as a variable, or any path that special-cases the single-driver
   case apart from the N-driver resolution.
-- A single-driver constraint validated by inspecting current contribution values rather than
-  counting attached drivers.
+- A net type modelled here as refusing a second driver, or any count of drivers kept so that a
+  constraint can be checked against it. What a legal program may connect is decided before this
+  layer.
+- A net type realized as a resolver of its own, or as an alternative anything below this layer
+  branches on. A net type says which fold and what it contributes; a type that pulls, supplies, or
+  stores charge differs from a plain one in that contribution and in nothing else.
+- A value the net type contributes to itself modeled as a driver. It is never detached, never
+  updated by anything outside the net, and never counted by a constraint on the driver set.
 - A net publishing to its observers because a contribution changed while the resolved value did not.
 - Two nets sharing one simulated cell introduced as a reference alias. Net collapse and `inout`
   connectivity are a separate cross-net concern; they are not a special case of single-net
@@ -111,9 +134,17 @@ the child's net resolves its own drivers. The child cannot enumerate who drives 
 compiled, which is why a driver is an independently attached contribution rather than a member of a
 list the net's unit builds at compile time (LRM 23.3.3).
 
-The single-driver `uwire` net is the N=1 case constrained so that attaching a second driver is an
-error; the constraint is checked against the count of attached drivers, each carrying its
-provenance, so the diagnostic can name the conflicting drivers (LRM 6.6.2).
+The single-driver `uwire` net resolves as any other net with one driver does; what makes it single
+driver is that connecting a second one is an error (LRM 6.6.2), which is the same rule the standard
+states generally for a nettype declared with no resolution function (LRM 6.6.7). Being unresolved
+and admitting one driver are one fact, and it is a fact about the elaborated design rather than
+about resolution, so no net type here is spelled differently for it.
+
+A `tri0` net is "equivalent to a wire net with a continuous 0 value of `pull` strength driving it"
+(LRM 6.6.5), which is the net type's own contribution: the tri-state fold decides every position
+some driver drives, and the contribution decides the rest. A `supply0` net says the same thing at
+the other end of the scale, so its contribution outranks every driver instead of deferring to them,
+and a `trireg` says it with a contribution resolution itself keeps current (LRM 6.6.4, 6.7.1).
 
 A net's data type may be an unpacked aggregate whose elements are themselves valid for a net (LRM
 6.7.1), and the fold then reaches an aggregate by recursing into its elements: a contribution is a

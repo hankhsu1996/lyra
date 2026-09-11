@@ -134,17 +134,12 @@ class Union {
         data_, other.data_);
   }
 
-  // Net resolution over the active member under the fold `fold` names
-  // (LRM 6.6). LRM 6.7.1 admits an unpacked union as a net's data type when
-  // every member is itself valid for a net, so a union net resolves its drivers
-  // like any other when they agree on which member they drive.
-  //
-  // They need not. Two contributions may nominally carry different members, and
-  // one of those cases is ordinary: a contribution that drives nothing is
-  // high-impedance, and high-impedance is the fold's identity, so it defers to
-  // the other whichever member it nominally carries. That is what makes a
-  // single driver of any member exact, since the fold starts from the first
-  // member (LRM 7.3) while the driver may carry any.
+  // What two contributions nominally carrying different members resolve to, by
+  // either rule that combines contributions. One of those cases is ordinary: a
+  // contribution that drives nothing is high-impedance, so it defers to the
+  // other whichever member it nominally carries. That is what makes a single
+  // driver of any member exact, since resolution starts from the first member
+  // (LRM 7.3) while the driver may carry any.
   //
   // What is left -- two contributions both driving, on different members -- has
   // no answer at all: LRM 7.3 gives an unpacked union no required
@@ -153,20 +148,29 @@ class Union {
   // defined bit space the two overlay in. The design is relying on something
   // the standard declines to define, so this reports that rather than inventing
   // a value.
+  [[nodiscard]] static auto AcrossMembers(const Union& a, const Union& b)
+      -> Union {
+    const PackedArray high_impedance = PackedArray::HighImpedanceScalar();
+    if (a.IsBitIdentical(FilledLike(a, high_impedance))) {
+      return b;
+    }
+    if (b.IsBitIdentical(FilledLike(b, high_impedance))) {
+      return a;
+    }
+    throw SimulationError(
+        "two drivers of an unpacked-union net are driving different members; "
+        "SystemVerilog gives an unpacked union no defined storage overlay, so "
+        "their resolution has no defined value");
+  }
+
+  // Net resolution over the active member under the fold `fold` names
+  // (LRM 6.6). LRM 6.7.1 admits an unpacked union as a net's data type when
+  // every member is itself valid for a net, so a union net resolves its drivers
+  // like any other when they agree on which member they drive.
   [[nodiscard]] auto ResolveNet(const Union& other, NetResolution fold) const
       -> Union {
     if (data_.index() != other.data_.index()) {
-      if (IsBitIdentical(HighImpedanceLike(*this))) {
-        return other;
-      }
-      if (other.IsBitIdentical(HighImpedanceLike(other))) {
-        return *this;
-      }
-      throw SimulationError(
-          "two drivers of an unpacked-union net are driving different members; "
-          "SystemVerilog gives an unpacked union no defined storage overlay, "
-          "so "
-          "their resolution has no defined value");
+      return AcrossMembers(*this, other);
     }
     Union resolved;
     [&]<std::size_t... I>(std::index_sequence<I...>) {
@@ -180,21 +184,40 @@ class Union {
     return resolved;
   }
 
-  // The all-high-impedance value at `prototype`'s shape: the prototype's own
-  // active member carrying that member's high-impedance value (LRM 6.6.1). A
-  // net's prototype is its declared default, which for an unpacked union is its
-  // first member (LRM 7.3), so a union net with nothing driving it reads as
-  // that member at high impedance.
-  [[nodiscard]] static auto HighImpedanceLike(const Union& prototype) -> Union {
-    Union floating;
+  // What a stronger contribution leaves a weaker one (LRM 28.12.1), which for
+  // members that differ has an answer only where one of them drives nothing --
+  // the same place LRM 7.3 leaves the two without a storage overlay.
+  [[nodiscard]] auto Dominating(const Union& weaker) const -> Union {
+    if (data_.index() != weaker.data_.index()) {
+      return AcrossMembers(*this, weaker);
+    }
+    Union resolved;
+    [&]<std::size_t... I>(std::index_sequence<I...>) {
+      ((std::get_if<I>(&data_) == nullptr
+            ? void()
+            : void(resolved.data_.template emplace<I>(
+                  std::get_if<I>(&data_)->Dominating(
+                      *std::get_if<I>(&weaker.data_))))),
+       ...);
+    }(std::index_sequence_for<Ts...>{});
+    return resolved;
+  }
+
+  // `prototype`'s shape with every bit set to `fill`: the prototype's own
+  // active member, filled (LRM 6.7.1). A net's prototype is its declared
+  // default, which for an unpacked union is its first member (LRM 7.3), so a
+  // union net nothing drives reads as that member at high impedance.
+  [[nodiscard]] static auto FilledLike(
+      const Union& prototype, const PackedArray& fill) -> Union {
+    Union filled;
     [&]<std::size_t... I>(std::index_sequence<I...>) {
       ((std::get_if<I>(&prototype.data_) == nullptr
             ? void()
-            : void(floating.data_.template emplace<I>(
-                  Ts::HighImpedanceLike(*std::get_if<I>(&prototype.data_))))),
+            : void(filled.data_.template emplace<I>(
+                  Ts::FilledLike(*std::get_if<I>(&prototype.data_), fill)))),
        ...);
     }(std::index_sequence_for<Ts...>{});
-    return floating;
+    return filled;
   }
 
   // LRM 20.9 `$isunknown`: the active member's unknown bits propagate up.

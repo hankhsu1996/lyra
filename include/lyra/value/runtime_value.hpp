@@ -60,11 +60,17 @@ struct RuntimeValue {
     const RuntimeValue& a, const RuntimeValue& b, NetResolution fold)
     -> RuntimeValue;
 
-// The all-high-impedance value at `prototype`'s shape: what a driver
-// contributes where it is not driving, and so the identity the fold above
-// starts from. Only the prototype's shape is read.
-[[nodiscard]] auto RuntimeValueHighImpedanceLike(const RuntimeValue& prototype)
-    -> RuntimeValue;
+// What a stronger contribution leaves a weaker one: `a` determines every
+// position it drives and `b` the rest (LRM 28.12.1).
+[[nodiscard]] auto RuntimeValueDominating(
+    const RuntimeValue& a, const RuntimeValue& b) -> RuntimeValue;
+
+// `prototype`'s shape with every bit set to `fill`: the identity the fold above
+// starts from when the fill is high-impedance, and what a net type contributes
+// to its own resolution otherwise (LRM 6.7.1). Only the prototype's shape is
+// read.
+[[nodiscard]] auto RuntimeValueFilledLike(
+    const RuntimeValue& prototype, const PackedArray& fill) -> RuntimeValue;
 
 // The order two values of one domain sit in: lexicographic for a string,
 // numerical for an integral, and for a chandle the pointer it carries, an order

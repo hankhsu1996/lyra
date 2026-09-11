@@ -125,6 +125,12 @@ auto PackedArray::FromBool(bool value) -> PackedArray {
   return Bit(value);
 }
 
+auto PackedArray::HighImpedanceScalar() -> PackedArray {
+  const std::array<std::uint64_t, 1> value_words = {0};
+  const std::array<std::uint64_t, 1> unknown_words = {1};
+  return FromWords(value_words, unknown_words, 1, false, true);
+}
+
 auto PackedArray::MakeFromWordPlanesShaped(
     std::span<const PackedRange> dims, bool is_signed, bool is_four_state,
     std::span<const std::uint64_t> value_words,
@@ -388,20 +394,31 @@ auto PackedArray::ResetToDefault() -> void {
   }
 }
 
-auto PackedArray::HighImpedanceLike(const PackedArray& prototype)
-    -> PackedArray {
-  if (!prototype.type_.is_four_state) {
-    // A 2-state shape has no high-impedance state, so the all-zero canonical
-    // default is all there is (z collapses to 0 outside the 4-state domain).
-    return PackedArray(prototype.type_);
-  }
-  // z is the value plane all-0 with the unknown plane all-1 (x is value 1,
-  // unknown 1). Construction masks the bits above the declared width in the top
-  // word.
+auto PackedArray::FilledLike(
+    const PackedArray& prototype, const PackedArray& fill) -> PackedArray {
+  const auto low_bit = [](std::span<const std::uint64_t> words) -> bool {
+    return !words.empty() && (words.front() & 1U) != 0U;
+  };
+  const bool value_bit = low_bit(fill.ValueWords());
+  const bool unknown_bit = low_bit(fill.UnknownWords());
+
   const std::uint64_t width = prototype.type_.bit_width;
   const auto words = static_cast<std::size_t>((width + 63) / 64);
-  const std::vector<std::uint64_t> value_words(words, 0);
-  const std::vector<std::uint64_t> unknown_words(words, ~std::uint64_t{0});
+  const std::uint64_t all_ones = ~std::uint64_t{0};
+
+  if (!prototype.type_.is_four_state) {
+    // A 2-state shape has neither an unknown nor a high-impedance state, so
+    // both collapse to the all-zero canonical default and only 1 fills.
+    const std::vector<std::uint64_t> value_words(
+        words, (value_bit && !unknown_bit) ? all_ones : 0);
+    return FromWords(value_words, {}, prototype.type_);
+  }
+  // The two planes spell the four scalars: 0 and 1 are the value plane with the
+  // unknown plane clear, x is both set, and z is the unknown plane alone.
+  // Construction masks the bits above the declared width in the top word.
+  const std::vector<std::uint64_t> value_words(words, value_bit ? all_ones : 0);
+  const std::vector<std::uint64_t> unknown_words(
+      words, unknown_bit ? all_ones : 0);
   return FromWords(value_words, unknown_words, prototype.type_);
 }
 
@@ -1533,6 +1550,30 @@ auto PackedArray::ResolveNet(const PackedArray& other, NetResolution fold) const
     }
     res_val[w] = v;
     res_unk[w] = u;
+  }
+  return FromWords(res_val, res_unk, type_);
+}
+
+auto PackedArray::Dominating(const PackedArray& weaker) const -> PackedArray {
+  RequireSameStorageDomain(*this, weaker, "Dominating");
+  const auto words = WordCountForBits(type_.bit_width);
+  const auto a_val = ValueWords();
+  const auto b_val = weaker.ValueWords();
+  const auto a_unk = UnknownWords();
+  const auto b_unk = weaker.UnknownWords();
+  std::vector<std::uint64_t> res_val(words, 0U);
+  std::vector<std::uint64_t> res_unk(words, 0U);
+  for (std::size_t w = 0; w < words; ++w) {
+    const std::uint64_t av = a_val[w];
+    const std::uint64_t bv = b_val[w];
+    const std::uint64_t au = w < a_unk.size() ? a_unk[w] : 0U;
+    const std::uint64_t bu = w < b_unk.size() ? b_unk[w] : 0U;
+    // A position is undriven exactly where this value is Z (value 0, unknown
+    // 1); everywhere else it determines the result, so a 2-state shape, which
+    // has no Z, determines all of it.
+    const std::uint64_t undriven = ~av & au;
+    res_val[w] = (av & ~undriven) | (bv & undriven);
+    res_unk[w] = (au & ~undriven) | (bu & undriven);
   }
   return FromWords(res_val, res_unk, type_);
 }

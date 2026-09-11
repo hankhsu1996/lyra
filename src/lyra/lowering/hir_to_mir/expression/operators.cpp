@@ -545,6 +545,23 @@ auto LowerHirBinaryExpr(
       lowerer.Owner().Unit(), block, b.op, lhs_id, rhs_id, result_type);
 }
 
+// One arm of a conditional, at the type the conditional yields. Both arms carry
+// that type whatever their own expressions produced (LRM 11.4.11), because what
+// reads a conditional reads the type off the node: an arm left at its own hands
+// a consumer a value shaped like something the node never claimed to be, on
+// exactly the runs where that arm is taken.
+template <ExprLowerer Lowerer>
+auto BuildConditionalArm(
+    Lowerer& lowerer, const WalkFrame& frame, hir::ExprId value,
+    mir::TypeId result_type) -> diag::Result<mir::ExprId> {
+  auto value_or = lowerer.LowerExpr(lowerer.HirExprs().Get(value), frame);
+  if (!value_or) return std::unexpected(std::move(value_or.error()));
+  mir::Block& block = *frame.current_block;
+  return ConvertToType(
+      lowerer.Owner().Unit(), block, block.exprs.Add(*std::move(value_or)),
+      result_type);
+}
+
 // LRM 11.4.11 over a predicate whose truth is three-valued: a predicate that
 // settles selects one arm and the other is never evaluated; an ambiguous one
 // selects neither, so both are evaluated and their results are combined bit by
@@ -578,13 +595,13 @@ auto BuildMergingConditional(
   };
 
   auto then_or =
-      lowerer.LowerExpr(lowerer.HirExprs().Get(c.then_value), steps.Frame());
+      BuildConditionalArm(lowerer, steps.Frame(), c.then_value, result_type);
   if (!then_or) return std::unexpected(std::move(then_or.error()));
-  const mir::ExprId then_id = body.exprs.Add(*std::move(then_or));
+  const mir::ExprId then_id = *then_or;
   auto else_or =
-      lowerer.LowerExpr(lowerer.HirExprs().Get(c.else_value), steps.Frame());
+      BuildConditionalArm(lowerer, steps.Frame(), c.else_value, result_type);
   if (!else_or) return std::unexpected(std::move(else_or.error()));
-  const mir::ExprId else_id = body.exprs.Add(*std::move(else_or));
+  const mir::ExprId else_id = *else_or;
 
   const mir::ExprId negated = body.exprs.Add(
       mir::Expr{
@@ -679,19 +696,17 @@ auto LowerHirConditionalExpr(
   const mir::ExprId predicate_id =
       BuildMirLogicalAnd(unit, block, bit1_type, clauses);
 
-  auto then_or = lowerer.LowerExpr(lowerer.HirExprs().Get(c.then_value), frame);
+  auto then_or = BuildConditionalArm(lowerer, frame, c.then_value, result_type);
   if (!then_or) return std::unexpected(std::move(then_or.error()));
-  const mir::ExprId then_id = block.exprs.Add(*std::move(then_or));
-  auto else_or = lowerer.LowerExpr(lowerer.HirExprs().Get(c.else_value), frame);
+  auto else_or = BuildConditionalArm(lowerer, frame, c.else_value, result_type);
   if (!else_or) return std::unexpected(std::move(else_or.error()));
-  const mir::ExprId else_id = block.exprs.Add(*std::move(else_or));
 
   return mir::Expr{
       .data =
           mir::ConditionalExpr{
               .condition = ReduceToCondition(unit, block, predicate_id),
-              .then_value = then_id,
-              .else_value = else_id},
+              .then_value = *then_or,
+              .else_value = *else_or},
       .type = result_type};
 }
 
@@ -724,10 +739,10 @@ auto LowerHirBindingConditionalExpr(
 
   auto assign_arm = [&](WalkFrame arm_frame,
                         hir::ExprId value) -> diag::Result<void> {
-    auto value_or = lowerer.LowerExpr(lowerer.HirExprs().Get(value), arm_frame);
+    auto value_or = BuildConditionalArm(lowerer, arm_frame, value, result_type);
     if (!value_or) return std::unexpected(std::move(value_or.error()));
     auto& arm_block = *arm_frame.current_block;
-    const mir::ExprId value_id = arm_block.exprs.Add(*std::move(value_or));
+    const mir::ExprId value_id = *value_or;
     const mir::ExprId target =
         arm_block.exprs.Add(mir::MakeLocalRefExpr(result_local, result_type));
     arm_block.AppendStmt(
