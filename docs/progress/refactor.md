@@ -1120,38 +1120,34 @@ enough to warrant its own focused review.
       it should be the same place that declares them, not a switch that silently answers "no" for
       whatever is added later. Expect at least one entry to turn into its own cut.
 
-- [ ] R76 -- A SystemVerilog identifier is written into the emitted C++ as it stands, so a legal
-      program whose name is not a legal C++ identifier produces output that does not compile. This
-      is not a refusal and not a wrong answer; it is a build failure in generated code, which is the
-      worst of the three because nothing in the compiler reports it. Nothing blocks the fix.
+- [x] R76 -- A SystemVerilog name reaches the emitted C++ through one total, injective map, and the
+      map's plain branch is exactly the set of spellings C++ accepts as a name. A design may spell a
+      declaration with any printable non-space character (LRM 5.6.1); C++ admits fewer and reserves
+      some of what is left, so a name it refuses is escaped to a reserved prefix and its bytes
+      rather than repaired, because repairing maps two declarations that differ onto one token.
 
-      Two sources, and the second is the common one. An escaped identifier (LRM 5.6.1) carries
-      characters C++ forbids -- `\a+b ` emits as `self->Test::a+b`. And an ordinary SystemVerilog
-      identifier that happens to be a C++ keyword needs no escaping to break: `int operator;` and
-      `int delete;` are legal SystemVerilog and emit as declarations C++ rejects. Measured on both:
-      the execution backend runs all of them correctly, because its symbols are not C++ identifiers,
-      so this is the C++ backend's alone.
+      Four ways a name used to reach emitted text without that map, each a legal program producing
+      output that does not compile, and none of them reported by anything. The plain branch tested
+      whether a name was spelled out of identifier characters, which every keyword is, so eleven
+      positions broke on an ordinary name -- a design element (it becomes a namespace), a variable, a
+      port, a signal an interface declares, an instance, a class, a property, a method, a
+      package-level subroutine, and a subroutine's arguments and locals. A package variable was
+      defined without the map and referenced through it, and a package subroutine the other way
+      round, so each spelled one declaration two ways across a unit boundary -- which breaks on an
+      escaped name as well, and is invisible from either end alone. And a unit's own program-global
+      cells were written straight out.
 
-      Names the compiler synthesizes from user names inherit it. A view's read-only name is
-      published under a name composed from the modport and the port, so an escaped modport emits
-      `modport_read_mp-a_p-x`; there will be others wherever a user name is a component of a
-      generated one. Such a name can also collide: nothing stops a design declaring the identifier
-      the composition happens to produce.
+      Escaping is decided by what C++ refuses outright, so its keywords and the alternative
+      spellings of its operators are escaped, and so are the identifiers it gives a meaning of their
+      own, which cost only how a name reads. What it reserves to an implementation rather than
+      refusing -- a name carrying a double underscore, or an underscore before a capital -- stays
+      plain: such a name compiles, and the compiler already spells names of its own that way.
 
-      Target shape, already decided. `decisions/identity-is-not-a-rendering.md` D1 states that a
-      composed name is made by whoever knows the spelling rules and never earlier, and its rejected
-      alternatives refuse mangling at the composition site because that puts one target's spelling
-      in a layer with no target. So the mangle belongs where the C++ backend turns a name into an
-      identifier, at one point, and the check that it is one point is the same shape
-      `tools/policy/check_render_names.py` already applies to runtime library identifiers.
-
-      The corpus covers none of this -- no conformance case uses an escaped identifier or a C++
-      keyword as a name. Cases are worth writing after the mangle exists and not before: one per
-      identifier position (variable, module, package, class and method, port, modport and the names
-      it defines, generate block, hierarchical reference), each carrying one escaped identifier and
-      one C++ keyword, because what they guard is the single mechanism rather than a list of names
-      somebody thought of. **They will only ever go red on the nightly**, since the default test set
-      runs the execution backend and `cpp_tests` is the only thing that compiles emitted text.
+      The execution backend runs every one of these correctly, because what it links is not a C++
+      identifier, so this was the C++ backend's alone. `tools/policy/check_emitted_names.py` is what
+      keeps the map at one point, and it fails closed: a name an emitter reads is a violation unless
+      it is an argument of the map, an argument of a call that looks something up rather than
+      writing it, or admitted with the reason it is neither.
 
 - [ ] R77 -- The value layer states every aggregate operation twice, once for each realization. A
       product, a union and a fixed-size unpacked array each exist as a monomorphized template the
@@ -1187,6 +1183,34 @@ enough to warrant its own focused review.
       counts agree is asked once rather than per operation, and the answer for a shape that cannot
       arrive is the same everywhere. Blocked by nothing, and R77 is where it naturally lands: the
       one surface that hands out the pairs is the place the question belongs.
+
+- [ ] R79 -- A lowering composes a declaration's name by joining a source name to a word of its own,
+      in a layer with no target, so the result is neither a source name nor a name the target minted
+      -- and nothing downstream can tell the two apart. A module declaring
+      `int foo_borrowed_handle;` beside a block named `foo` emits a C++ class with that member
+      declared twice; so does `int foo__cancel_1;` beside the same block. Legal SystemVerilog, no
+      diagnostic, and the emitted text does not compile.
+
+      Ten sites compose such a name today, across both lowerings, and seven start from a source
+      name: an owned child's handle, what a `disable` of a named scope invalidates, a continuous
+      assignment's driver, a nested scope's class, an assertion local, and the name a view offers a
+      port under. The other three join an ordinal to a word of the compiler's own, which collides
+      just as well -- nothing stops a design declaring the identifier the composition produces --
+      and around ninety further sites name a synthesized local with a literal of the same kind.
+
+      Target shape, already decided for the callable case: a declaration the source never wrote
+      carries no name, its identity is the position it sits at, and being reachable by a name is a
+      relation its owner holds (`decisions/a-name-is-a-relation-not-an-identity.md`, which names one
+      position of this on the unit side already). Applying it to a field, a local and a class means
+      MIR saying which of its names came from the source, which is the fact the producer has and
+      drops -- today both arrive as one string, so a backend must treat them alike and whichever way
+      it treats them is wrong for the other. The C++ backend already spells a nameless callable from
+      its slot, so the range a minted spelling lands in exists and is disjoint from the mapped one.
+
+      Not blocked. Separate from R76 because the rule is different: R76 is a source name reaching a
+      target's identifier space intact, this is the compiler not minting names into the source's.
+      The execution backend answers all of it correctly, so the failure anyone can see is the C++
+      backend's while the unsoundness is everyone's.
 
 ## Out of Scope
 

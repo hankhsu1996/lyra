@@ -105,7 +105,8 @@ auto RenderUnitStaticVariables(const mir::CompilationUnit& unit)
   for (const mir::StaticVariableId id : unit.static_variables.Ids()) {
     const auto& var = unit.static_variables.Get(id);
     out += std::format(
-        "inline {} {}{{}};\n", RenderTypeAsCpp(unit, var.type), var.name);
+        "inline {} {}{{}};\n", RenderTypeAsCpp(unit, var.type),
+        ToCppName(var.name));
   }
   return out;
 }
