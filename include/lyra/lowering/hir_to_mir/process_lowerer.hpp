@@ -3,7 +3,6 @@
 #include <map>
 #include <optional>
 #include <span>
-#include <string>
 #include <utility>
 #include <variant>
 #include <vector>
@@ -86,15 +85,13 @@ class ProcessLowerer {
       UnitLowerer& unit_lowerer,
       const StructuralScopeLowerer* enclosing_scope_lowerer,
       TimeResolution time_resolution, const hir::ProceduralBody& hir_body,
-      std::optional<hir::StmtId> hir_root_stmt, std::string callable_name,
-      WalkFrame owner_ctor_frame, const DeclaredScopes& scopes,
-      std::span<const StaticVarBinding> statics)
+      std::optional<hir::StmtId> hir_root_stmt, WalkFrame owner_ctor_frame,
+      const DeclaredScopes& scopes, std::span<const StaticVarBinding> statics)
       : owner_(&unit_lowerer),
         enclosing_scope_lowerer_(enclosing_scope_lowerer),
         time_resolution_(time_resolution),
         hir_body_(&hir_body),
         hir_root_stmt_(hir_root_stmt),
-        callable_name_(std::move(callable_name)),
         owner_ctor_frame_(std::move(owner_ctor_frame)),
         scopes_(&scopes),
         // A body completes for no caller until it is lowered as one that does,
@@ -303,10 +300,6 @@ class ProcessLowerer {
   // The synthesized identifier for the callable being lowered (`"process_3"`,
   // or a user-given name), used as a prefix for any per-callable artifact the
   // body emits (e.g. a lifetime-extended activation scope's struct).
-  [[nodiscard]] auto CallableName() const -> std::string_view {
-    return callable_name_;
-  }
-
   // The owner class's constructor-time frame -- the base each body lowering
   // extends with its own block / bindings. Carries the outer-class context
   // (self pointer type, scope chain) so a body frame derived from it
@@ -350,7 +343,6 @@ class ProcessLowerer {
   TimeResolution time_resolution_;
   const hir::ProceduralBody* hir_body_;
   std::optional<hir::StmtId> hir_root_stmt_;
-  std::string callable_name_;
   WalkFrame owner_ctor_frame_;
   // Owned by the enclosing declaration scope's lowerer; borrowed here for the
   // body lowering's lifetime.

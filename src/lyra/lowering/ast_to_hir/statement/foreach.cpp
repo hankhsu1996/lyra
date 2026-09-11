@@ -27,9 +27,6 @@ namespace lyra::lowering::ast_to_hir {
 
 namespace {
 
-constexpr std::string_view kLastIndexName = "__lyra_foreach_last";
-constexpr std::string_view kMoreFlagName = "__lyra_foreach_more";
-
 using LoopDim = slang::ast::ForeachLoopStatement::LoopDim;
 
 // The pieces that drive one iterated dimension's `for` loop, plus the loop
@@ -100,7 +97,7 @@ auto BuildIntegerLevel(
     const hir::ProceduralVarId last_var = body.procedural_vars.Declare();
     body.procedural_vars.Define(
         last_var, hir::ProceduralVarDecl{
-                      .name = std::string{kLastIndexName},
+                      .name = std::nullopt,
                       .type = int_type,
                       .lifetime = hir::VariableLifetime::kAutomatic,
                       .init = last_value_id});
@@ -177,7 +174,7 @@ auto BuildAssociativeLevel(
   const hir::ProceduralVarId more_var = body.procedural_vars.Declare();
   body.procedural_vars.Define(
       more_var, hir::ProceduralVarDecl{
-                    .name = std::string{kMoreFlagName},
+                    .name = std::nullopt,
                     .type = int_type,
                     .lifetime = hir::VariableLifetime::kAutomatic});
 

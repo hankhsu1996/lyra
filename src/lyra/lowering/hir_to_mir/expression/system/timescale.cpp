@@ -69,8 +69,11 @@ auto LowerPrintTimescaleSystemSubroutineCall(
   // compile-time facts of the enclosing scope, so the message string is
   // assembled here once and the runtime only sees the same sink write that
   // $display lands on.
+  // TODO(hankhsu): LRM 20.4.2 names the scope by its hierarchical path, which
+  // exists only once the tree is built; the unit's own name is what this layer
+  // has.
   const std::string message = std::format(
-      "Time scale of ({}) is {} / {}", process.EnclosingScopeLowerer().Name(),
+      "Time scale of ({}) is {} / {}", process.Owner().Unit().name,
       value::TimeUnitText(resolution.unit_power),
       value::TimeUnitText(resolution.precision_power));
   const mir::ExprId text_lit = body.exprs.Add(

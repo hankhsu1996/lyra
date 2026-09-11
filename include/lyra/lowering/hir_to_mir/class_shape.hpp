@@ -40,7 +40,9 @@ struct CallableSignature {
 // None of this outlives the lowering. A finished unit holds one fully composed
 // class per identity, so nothing downstream pairs two views of one class.
 struct ClassShape {
-  std::string name;
+  // Absent for a scope of the design hierarchy, which the source never declared
+  // as a class and nothing outside this unit names.
+  std::optional<std::string> name;
   std::optional<mir::ClassRef> base;
   // Interface class contracts (LRM 8.26) this class commits to satisfying.
   // Populated from the source `implements` clause of a regular class or the
@@ -54,7 +56,9 @@ struct ClassShape {
   TimeResolution time_resolution;
   base::Arena<mir::ParamDecl, mir::ParamId> ctor_prefix_params;
   base::Arena<mir::FieldDecl, mir::FieldId> fields;
+  std::vector<mir::NamedField> named_fields;
   base::Arena<mir::StaticPropertyDecl, mir::StaticPropertyId> static_properties;
+  std::vector<mir::NamedStaticProperty> named_static_properties;
   // Which pass owns the callable identity space depends on the entity: an SV
   // class's methods are named by another class's declaration (an override
   // states the slot its base declared, LRM 8.20), so they are taken before any
@@ -88,6 +92,13 @@ struct ClassShape {
   // target-language type and to route inheritance through the multi-base
   // mechanism `implements` names.
   bool is_interface_class = false;
+
+  // Storage the source declared, which the class answers by the identifier the
+  // source wrote, and storage the lowering keeps for its own use, which nothing
+  // answers. Two calls rather than one with an optional, so a site says which
+  // it is building at the moment it builds it.
+  auto AddNamedField(std::string name, mir::TypeId type) -> mir::FieldId;
+  auto AddField(mir::TypeId type) -> mir::FieldId;
 
   // The class this declaration becomes: everything settled here carried over
   // verbatim, and one reserved callable identity per signature. What is left

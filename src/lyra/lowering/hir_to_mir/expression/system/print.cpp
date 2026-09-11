@@ -116,11 +116,11 @@ auto LowerStrobeCall(
   std::optional<mir::ExprId> body_user_descriptor;
   if (outer_user_descriptor.has_value()) {
     body_user_descriptor = SnapshotIntoClosure(
-        process.Owner(), frame, closure, *outer_user_descriptor, "descriptor");
+        process.Owner(), frame, closure, *outer_user_descriptor);
   }
   if (outer_cancellation.has_value()) {
     const mir::ExprId cancellation = SnapshotIntoClosure(
-        process.Owner(), frame, closure, *outer_cancellation, "cancellation");
+        process.Owner(), frame, closure, *outer_cancellation);
     const mir::ExprId is_cancelled = body.exprs.Add(
         mir::Expr{
             .data =

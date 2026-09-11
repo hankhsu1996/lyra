@@ -120,29 +120,6 @@ auto LowerReferenceRouteExpr(
       frame, lowerer.Owner().Unit(), BindEndpoint(lowerer, frame, route));
 }
 
-// A package variable (LRM 26.2) is reached by name, never through a
-// `self`-based route: the same by-name form serves a referrer in another unit
-// and the package's own callable reading its own variable. The result is the
-// variable's observable-cell type, so the dispatcher reaches its value one
-// dereference further, exactly as an intra-unit signal's cell. A referrer in
-// another unit records the dependency so the backend emits the include and link
-// edge; a package's own reference to its own variable records nothing.
-auto LowerExternalUnitValueRefExpr(
-    mir::CompilationUnit& unit, const hir::ExternalUnitValueRef& r,
-    mir::TypeId value_type) -> mir::Expr {
-  if (r.unit_name != unit.name) {
-    unit.AddExternalReferencedUnit(r.unit_name);
-  }
-  return mir::Expr{
-      .data =
-          mir::ReferenceExpr{
-              .target =
-                  mir::ExternalUnitVariableRef{
-                      .unit_name = r.unit_name,
-                      .variable_name = r.variable_name}},
-      .type = mir::ObservableCellOf(unit.types, value_type)};
-}
-
 // The pattern that declares the identifier is its binding origin, so the read
 // is the ordinary body-binding read of that origin -- the clause lowering
 // materialized it before the arm it guards was walked.
@@ -212,6 +189,43 @@ auto LowerIterationBindingRefExpr(
 }
 
 }  // namespace
+
+// A variable of a unit's namespace (LRM 26.2) is reached without a `self`-based
+// route: a namespace has no instance for a receiver to arrive through. The
+// result is the variable's observable-cell type, so the dispatcher reaches its
+// value one dereference further, exactly as an intra-unit signal's cell.
+auto LowerExternalUnitValueRefExpr(
+    mir::CompilationUnit& unit, const hir::ExternalUnitValueRef& r,
+    mir::TypeId value_type) -> mir::Expr {
+  const mir::TypeId cell_type = mir::ObservableCellOf(unit.types, value_type);
+  // A reference into this unit's own namespace has the arena the storage lives
+  // in, so it names the position; one into another unit has only the identifier
+  // that unit published, and consuming that promise is what makes the unit a
+  // dependency whose header and link edge the backend then emits.
+  if (r.unit_name == unit.name) {
+    const std::optional<mir::StaticVariableId> variable =
+        mir::StaticVariableNamed(unit.named_static_variables, r.variable_name);
+    if (!variable.has_value()) {
+      throw InternalError(
+          "LowerExternalUnitValueRefExpr: this unit's namespace publishes no "
+          "variable under the identifier a reference inside it spells");
+    }
+    return mir::Expr{
+        .data =
+            mir::ReferenceExpr{
+                .target = mir::StaticVariableRef{.variable = *variable}},
+        .type = cell_type};
+  }
+  unit.AddExternalReferencedUnit(r.unit_name);
+  return mir::Expr{
+      .data =
+          mir::ReferenceExpr{
+              .target =
+                  mir::ExternalUnitVariableRef{
+                      .unit_name = r.unit_name,
+                      .variable_name = r.variable_name}},
+      .type = cell_type};
+}
 
 auto LowerHirIntegralConstant(const hir::IntegralConstant& c)
     -> mir::IntegralConstant {

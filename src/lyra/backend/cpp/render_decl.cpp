@@ -29,11 +29,14 @@ namespace {
 // ordinary MIR statements in the constructor body, so the declaration
 // value-initializes and carries nothing else.
 auto RenderField(
-    const mir::CompilationUnit& unit, const mir::FieldDecl& field,
+    const mir::CompilationUnit& unit,
+    std::span<const mir::NamedField> named_fields,
+    const base::Arena<mir::FieldDecl, mir::FieldId>& fields, mir::FieldId slot,
     std::size_t indent) -> std::string {
   return std::format(
-      "{}{} {}{{}};\n", Indent(indent), RenderTypeAsCpp(unit, field.type),
-      ToCppName(field.name));
+      "{}{} {}{{}};\n", Indent(indent),
+      RenderTypeAsCpp(unit, fields.Get(slot).type),
+      CppFieldName(named_fields, slot));
 }
 
 // The value-init field declarations of any field-bearing storage -- a class's
@@ -41,11 +44,12 @@ auto RenderField(
 // field-emission of its own; it feeds the same declarations a class does.
 auto RenderFieldList(
     const mir::CompilationUnit& unit,
+    std::span<const mir::NamedField> named_fields,
     const base::Arena<mir::FieldDecl, mir::FieldId>& fields, std::size_t indent)
     -> std::string {
   std::string out;
-  for (const auto& field : fields) {
-    out += RenderField(unit, field, indent);
+  for (const mir::FieldId slot : fields.Ids()) {
+    out += RenderField(unit, named_fields, fields, slot, indent);
   }
   return out;
 }
@@ -55,31 +59,34 @@ auto RenderFieldList(
 // given its declared representation and value where whatever brings the class's
 // owner up runs, never baked into the declaration.
 auto RenderClassStaticProperty(
-    const mir::CompilationUnit& unit, const mir::StaticPropertyDecl& sp,
-    std::size_t indent) -> std::string {
-  const std::string type = RenderTypeAsCpp(unit, sp.type);
+    const mir::CompilationUnit& unit, const mir::Class& s,
+    mir::StaticPropertyId slot, std::size_t indent) -> std::string {
+  const std::string type =
+      RenderTypeAsCpp(unit, s.static_properties.Get(slot).type);
   return std::format(
-      "{}inline static {} {}{{}};\n", Indent(indent), type, ToCppName(sp.name));
+      "{}inline static {} {}{{}};\n", Indent(indent), type,
+      CppStaticPropertyName(s.named_static_properties, slot));
 }
 
 auto RenderClassStaticProperties(
     const mir::CompilationUnit& unit, const mir::Class& s) -> std::string {
   std::string out;
-  for (const mir::StaticPropertyDecl& sp : s.static_properties) {
-    out += RenderClassStaticProperty(unit, sp, 1);
+  for (const mir::StaticPropertyId slot : s.static_properties.Ids()) {
+    out += RenderClassStaticProperty(unit, s, slot, 1);
   }
   return out;
 }
 
 auto RenderCallableParam(
-    const mir::CompilationUnit& unit, const mir::LocalDecl& param)
-    -> std::string {
+    const mir::CompilationUnit& unit, const mir::CallableCode& code,
+    mir::LocalId param) -> std::string {
   // Every formal is a value parameter: an `input` by value (LRM 13.5.1), a
   // `ref` / `const ref` whose `RefType` already renders as `(const) Ref<T>` so
   // the reference value carries the aliasing (LRM 13.5.2). `output` / `inout`
   // are not parameters -- they ride the completion payload.
   return std::format(
-      "{} {}", RenderTypeAsCpp(unit, param.type), ToCppName(param.name));
+      "{} {}", RenderTypeAsCpp(unit, code.locals.Get(param).type),
+      CppLocalName(code.named_locals, param));
 }
 
 // The C++ specifier this callable's dispatch role prefixes its declaration
@@ -112,7 +119,7 @@ auto RenderUserParams(
   std::string out;
   for (std::size_t i = start; i < code.params.size(); ++i) {
     if (i != start) out += ", ";
-    out += RenderCallableParam(unit, code.locals.Get(code.params[i]));
+    out += RenderCallableParam(unit, code, code.params[i]);
   }
   return out;
 }
@@ -124,7 +131,7 @@ auto RenderClassCallableDecl(
   const bool has_receiver = code.HasReceiver(s.self_pointer_type);
   const std::string sig = std::format(
       "{}{}auto {}({}) -> {}{}", has_receiver ? "" : "static ",
-      VirtualPrefix(m), CppCallableName(s.named_callables, id),
+      VirtualPrefix(m), CppClassCallableName(s, id),
       RenderUserParams(unit, code, has_receiver ? 1 : 0),
       RenderTypeAsCpp(unit, code.result_type), OverrideSuffix(m));
   // A class method this declaration does not define is a pure virtual (LRM
@@ -143,23 +150,24 @@ auto RenderClassCallableDecl(
 // prototype has no definition. A namespace's receiver-less callable renders
 // through the free-function path instead.
 auto RenderClassCallableDef(
-    const mir::CompilationUnit& unit, const mir::Class& s, mir::CallableId id,
-    const mir::CallableDecl& m) -> std::string {
+    const mir::CompilationUnit& unit, mir::ClassId cls_id, const mir::Class& s,
+    mir::CallableId id, const mir::CallableDecl& m) -> std::string {
   const mir::CallableCode& code = m.code;
   if (!code.body.has_value()) return "";
   const bool has_receiver = code.HasReceiver(s.self_pointer_type);
   std::string out = std::format(
-      "inline auto {}::{}({}) -> {} {{\n", ToCppName(s.name),
-      CppCallableName(s.named_callables, id),
+      "inline auto {}::{}({}) -> {} {{\n", CppClassName(s, cls_id),
+      CppClassCallableName(s, id),
       RenderUserParams(unit, code, has_receiver ? 1 : 0),
       RenderTypeAsCpp(unit, code.result_type));
   if (has_receiver) {
-    const auto& self_decl = code.locals.Get(code.params[0]);
+    const mir::LocalId self = code.params[0];
     out += std::format(
-        "{}{} {} = this;\n", Indent(1), RenderTypeAsCpp(unit, self_decl.type),
-        ToCppName(self_decl.name));
+        "{}{} {} = this;\n", Indent(1),
+        RenderTypeAsCpp(unit, code.locals.Get(self).type),
+        CppLocalName(code.named_locals, self));
   }
-  out += RenderBlockStatements(ScopeView::ForRoot(unit, s, code), 1);
+  out += RenderBlockStatements(ScopeView::ForRoot(unit, cls_id, s, code), 1);
   out += "}\n";
   return out;
 }
@@ -178,13 +186,13 @@ auto RenderAbiAdapterDecl(
 }
 
 auto RenderAbiAdapterDef(
-    const mir::CompilationUnit& unit, const mir::Class& s, mir::AbiAdapterId id,
-    const mir::AbiAdapter& a) -> std::string {
+    const mir::CompilationUnit& unit, mir::ClassId cls_id, const mir::Class& s,
+    mir::AbiAdapterId id, const mir::AbiAdapter& a) -> std::string {
   return std::format(
-      "inline auto {}::{}({}) -> {} {{\n{}}}\n", ToCppName(s.name),
+      "inline auto {}::{}({}) -> {} {{\n{}}}\n", CppClassName(s, cls_id),
       CppAbiAdapterName(id), RenderUserParams(unit, a.code, 0),
       RenderTypeAsCpp(unit, a.code.result_type),
-      RenderBlockStatements(ScopeView::ForRoot(unit, s, a.code), 1));
+      RenderBlockStatements(ScopeView::ForRoot(unit, cls_id, s, a.code), 1));
 }
 
 // The C++ construction shell, split the way every other member is: the class
@@ -205,9 +213,11 @@ struct ConstructorText {
   std::string definitions;
 };
 
-auto RenderConstructor(const mir::CompilationUnit& unit, const mir::Class& s)
+auto RenderConstructor(
+    const mir::CompilationUnit& unit, mir::ClassId cls_id, const mir::Class& s)
     -> ConstructorText {
-  const ScopeView scope_view = ScopeView::ForRoot(unit, s, s.constructor.code);
+  const ScopeView scope_view =
+      ScopeView::ForRoot(unit, cls_id, s, s.constructor.code);
   const auto& ctor_code = s.constructor.code;
   const auto render_typed_name = [&](mir::TypeId type, std::string_view name) {
     return std::format("{} {}", RenderTypeAsCpp(unit, type), name);
@@ -219,9 +229,11 @@ auto RenderConstructor(const mir::CompilationUnit& unit, const mir::Class& s)
   forward_names.reserve(ctor_code.params.size());
   // Skip params[0] (self, MIR contract); the C++ ctor's receiver is `this`.
   for (std::size_t i = 1; i < ctor_code.params.size(); ++i) {
-    const auto& p = ctor_code.locals.Get(ctor_code.params[i]);
-    sig_args.push_back(render_typed_name(p.type, ToCppName(p.name)));
-    forward_names.push_back(ToCppName(p.name));
+    const mir::LocalId param = ctor_code.params[i];
+    const std::string name = CppLocalName(ctor_code.named_locals, param);
+    sig_args.push_back(
+        render_typed_name(ctor_code.locals.Get(param).type, name));
+    forward_names.push_back(name);
   }
 
   std::optional<std::string> base_clause;
@@ -237,19 +249,24 @@ auto RenderConstructor(const mir::CompilationUnit& unit, const mir::Class& s)
         JoinCommaSeparated(base_args_rendered));
   }
 
-  const std::string cpp_name = ToCppName(s.name);
+  const std::string cpp_name = CppClassName(s, cls_id);
   const std::string params = JoinCommaSeparated(sig_args);
 
   // The base subobject is constructed before any statement of the body can
   // run, so that one step stays in the C++ constructor's own initializer
   // clause and the constructor is otherwise an allocation shell handing off to
-  // a static `init(self, ...)` -- the same static-over-self shape every method
-  // render uses, so a body-local self reference resolves as `self` here just
-  // like in any other body. The constructor formals ride alongside `self` so
-  // the body reaches them the same way it reaches any parameter.
+  // a static `init(receiver, ...)` -- the same static-over-self shape every
+  // method render uses. The receiver is spelled from the same binding the body
+  // reads it through, so the parameter and every reference to it agree by
+  // construction rather than by both reaching for one word. The constructor
+  // formals ride alongside it so the body reaches them the same way it reaches
+  // any parameter.
   std::vector<std::string> init_params;
   init_params.reserve(sig_args.size() + 1);
-  init_params.push_back(std::format("{}* self", cpp_name));
+  init_params.push_back(
+      std::format(
+          "{}* {}", cpp_name,
+          CppLocalName(ctor_code.named_locals, ctor_code.params[0])));
   for (const std::string& arg : sig_args) {
     init_params.push_back(arg);
   }
@@ -278,10 +295,11 @@ auto RenderConstructor(const mir::CompilationUnit& unit, const mir::Class& s)
 // A compiler-generated struct emits as a plain struct of value-init fields --
 // a promoted automatic scope synthesized while lowering some body. Storage
 // only: no base, no constructor, no methods.
-auto RenderStruct(const mir::CompilationUnit& unit, const mir::StructDecl& decl)
-    -> std::string {
-  std::string out = "struct " + ToCppName(decl.name) + " {\n";
-  out += RenderFieldList(unit, decl.fields, 1);
+auto RenderStruct(
+    const mir::CompilationUnit& unit, mir::StructId id,
+    const mir::StructDecl& decl) -> std::string {
+  std::string out = "struct " + CppStructName(id) + " {\n";
+  out += RenderFieldList(unit, {}, decl.fields, 1);
   out += "};\n";
   return out;
 }
@@ -294,16 +312,17 @@ auto RenderStruct(const mir::CompilationUnit& unit, const mir::StructDecl& decl)
 // only ever takes its address, which does not depend on that one's initializer
 // having run.
 auto RenderStaticConstant(
-    const mir::CompilationUnit& unit, const mir::Class& s,
+    const mir::CompilationUnit& unit, mir::ClassId cls_id, const mir::Class& s,
     mir::StaticConstantId id, const mir::StaticConstantDecl& c) -> std::string {
-  const ScopeView view = ScopeView::ForClassConstant(unit, s, c.body);
+  const ScopeView view = ScopeView::ForClassConstant(unit, cls_id, s, c.body);
   return Indent(1) + ClassConstantOf(
                          RenderTypeAsCpp(unit, c.type),
                          CppStaticConstantName(id),
                          RenderExpr(view, view.Expr(c.value)));
 }
 
-auto RenderClass(const mir::CompilationUnit& unit, const mir::Class& s)
+auto RenderClass(
+    const mir::CompilationUnit& unit, mir::ClassId id, const mir::Class& s)
     -> ClassText;
 
 // Appends a class and every intra-unit base it depends on, in an order that
@@ -323,16 +342,17 @@ void AppendClassInDependencyOrder(
   }
   if (emitted[id.value]) return;
   emitted[id.value] = true;
-  const ClassText rendered = RenderClass(unit, cls);
+  const ClassText rendered = RenderClass(unit, id, cls);
   AppendSection(text.declaration, rendered.declaration);
   AppendSection(text.definitions, rendered.definitions);
 }
 
-auto RenderClass(const mir::CompilationUnit& unit, const mir::Class& s)
+auto RenderClass(
+    const mir::CompilationUnit& unit, mir::ClassId id, const mir::Class& s)
     -> ClassText {
   ClassText text;
   std::string& out = text.declaration;
-  out += "class " + ToCppName(s.name);
+  out += "class " + CppClassName(s, id);
   if (s.is_final) {
     out += " final";
   }
@@ -368,13 +388,13 @@ auto RenderClass(const mir::CompilationUnit& unit, const mir::Class& s)
   // makes the class implicitly abstract by virtue of the pure virtual
   // methods and forbids `new` on it.
   if (!s.is_interface_class) {
-    const ConstructorText ctor = RenderConstructor(unit, s);
+    const ConstructorText ctor = RenderConstructor(unit, id, s);
     AppendSection(out, ctor.declaration);
     AppendSection(text.definitions, ctor.definitions);
   }
 
   // Members are public so cross-unit references can reach them directly.
-  AppendSection(out, RenderFieldList(unit, s.fields, 1));
+  AppendSection(out, RenderFieldList(unit, s.named_fields, s.fields, 1));
 
   // Type-associated storage (LRM 8.9): one cell per class, declared here and
   // given its value where whatever brings the class's owner up runs, the same
@@ -386,11 +406,12 @@ auto RenderClass(const mir::CompilationUnit& unit, const mir::Class& s)
   // 8.21) declares its `= 0` marker and defines nothing, so its definition is
   // an empty section.
   std::string callable_decls;
-  for (const mir::CallableId id : s.callables.Ids()) {
-    const mir::CallableDecl& callable = s.callables.Get(id);
-    callable_decls += RenderClassCallableDecl(unit, s, id, callable);
+  for (const mir::CallableId callable_id : s.callables.Ids()) {
+    const mir::CallableDecl& callable = s.callables.Get(callable_id);
+    callable_decls += RenderClassCallableDecl(unit, s, callable_id, callable);
     AppendSection(
-        text.definitions, RenderClassCallableDef(unit, s, id, callable));
+        text.definitions,
+        RenderClassCallableDef(unit, id, s, callable_id, callable));
   }
   AppendSection(out, callable_decls);
 
@@ -398,19 +419,22 @@ auto RenderClass(const mir::CompilationUnit& unit, const mir::Class& s)
   // whose address decays to a plain function pointer for the runtime
   // callback table.
   std::string adapter_decls;
-  for (const mir::AbiAdapterId id : s.abi_adapters.Ids()) {
-    const mir::AbiAdapter& a = s.abi_adapters.Get(id);
-    adapter_decls += RenderAbiAdapterDecl(unit, id, a);
-    AppendSection(text.definitions, RenderAbiAdapterDef(unit, s, id, a));
+  for (const mir::AbiAdapterId adapter_id : s.abi_adapters.Ids()) {
+    const mir::AbiAdapter& a = s.abi_adapters.Get(adapter_id);
+    adapter_decls += RenderAbiAdapterDecl(unit, adapter_id, a);
+    AppendSection(
+        text.definitions, RenderAbiAdapterDef(unit, id, s, adapter_id, a));
   }
   AppendSection(out, adapter_decls);
 
   // The class's static constants (a tree node's generated-behavior record among
   // them), each emitted as a static member. Its initializer names the class's
   // own adapters, declared just above, so it stays in the class body.
-  for (const mir::StaticConstantId id : s.static_constants.Ids()) {
+  for (const mir::StaticConstantId constant_id : s.static_constants.Ids()) {
     AppendSection(
-        out, RenderStaticConstant(unit, s, id, s.static_constants.Get(id)));
+        out,
+        RenderStaticConstant(
+            unit, id, s, constant_id, s.static_constants.Get(constant_id)));
   }
 
   out += "};\n";
@@ -432,7 +456,7 @@ auto RenderFreeCallableSignature(
   std::vector<std::string> params;
   params.reserve(code.params.size());
   for (const mir::LocalId param : code.params) {
-    params.push_back(RenderCallableParam(unit, code.locals.Get(param)));
+    params.push_back(RenderCallableParam(unit, code, param));
   }
   return std::format(
       "{} auto {}({}) -> {}",
@@ -470,14 +494,13 @@ auto RenderUnitClasses(const mir::CompilationUnit& unit) -> ClassText {
   std::string struct_definitions;
   for (const mir::ClassId id : unit.classes.Ids()) {
     forward_declarations +=
-        std::format("class {};\n", ToCppName(unit.GetClass(id).name));
+        std::format("class {};\n", CppClassName(unit.GetClass(id), id));
   }
   // A struct's forward declaration leads every struct body, because one
   // generated scope's field may name another's.
   for (const mir::StructId id : unit.structs.Ids()) {
-    const mir::StructDecl& decl = unit.GetStruct(id);
-    forward_declarations += std::format("struct {};\n", ToCppName(decl.name));
-    struct_definitions += RenderStruct(unit, decl);
+    forward_declarations += std::format("struct {};\n", CppStructName(id));
+    struct_definitions += RenderStruct(unit, id, unit.GetStruct(id));
   }
   AppendSection(text.declaration, forward_declarations);
   AppendSection(text.declaration, struct_definitions);

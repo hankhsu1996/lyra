@@ -598,9 +598,7 @@ auto PopulateForeignImportBoundary(
     // the same way. The foreign side reads and writes the object, and the
     // read-back below lands the result in the actual's cell.
     const mir::TypeId carrier_type = CarrierTypeId(unit, carrier);
-    const mir::LocalId temp = cframe.bindings->DeclareAnonymous(
-        mir::LocalDecl{
-            .name = "_lyra_dpi_arg" + std::to_string(i), .type = carrier_type});
+    const mir::LocalId temp = cframe.bindings->DeclareAnonymous(carrier_type);
     body.AppendStmt(
         mir::LocalDeclStmt{
             .target = temp,
@@ -634,8 +632,7 @@ auto PopulateForeignImportBoundary(
   // before it is marshaled and returned.
   std::optional<mir::LocalId> ret_temp;
   if (ReturnsValue(import)) {
-    ret_temp = cframe.bindings->DeclareAnonymous(
-        mir::LocalDecl{.name = "_lyra_dpi_ret", .type = call_type});
+    ret_temp = cframe.bindings->DeclareAnonymous(call_type);
     body.AppendStmt(
         mir::LocalDeclStmt{
             .target = *ret_temp,
@@ -678,8 +675,7 @@ auto BuildDpiScopeGuard(
   const mir::TypeId guard_type = unit.types.Intern(
       mir::Type{mir::RuntimeLibraryType{
           .kind = mir::RuntimeLibraryKind::kDpiScopeGuard}});
-  const mir::LocalId guard = frame.bindings->DeclareAnonymous(
-      mir::LocalDecl{.name = "_lyra_dpi_scope", .type = guard_type});
+  const mir::LocalId guard = frame.bindings->DeclareAnonymous(guard_type);
   const mir::ExprId services_id =
       body.exprs.Add(BuildCurrentRuntimeCallExpr(unit_lowerer));
   const mir::ExprId decl_scope_id =
@@ -880,15 +876,13 @@ auto MakeForeignSignature(
       .params = {},
       .result_type = ForeignBoundaryReturnType(unit, ret_abi, is_task),
       .locals = {},
+      .named_locals = {},
       .body = std::nullopt};
   CallableBindings bindings(unit, code);
   code.params.reserve(params.size());
-  for (std::size_t i = 0; i < params.size(); ++i) {
+  for (const auto& param : params) {
     code.params.push_back(bindings.DeclareAnonymous(
-        mir::LocalDecl{
-            .name = "arg" + std::to_string(i),
-            .type = ForeignBoundaryType(
-                unit, params[i].carrier, params[i].direction)}));
+        ForeignBoundaryType(unit, param.carrier, param.direction)));
   }
   return code;
 }
@@ -1019,8 +1013,7 @@ auto SynthesizeForeignExportEntry(
 
   std::optional<mir::LocalId> scope_param;
   if (through_scope) {
-    scope_param = bindings.DeclareAnonymous(
-        mir::LocalDecl{.name = "scope", .type = unit.builtins.scope_ptr});
+    scope_param = bindings.DeclareAnonymous(unit.builtins.scope_ptr);
     code.params.insert(code.params.begin(), *scope_param);
   }
 
@@ -1039,9 +1032,7 @@ auto SynthesizeForeignExportEntry(
   mir::ExprId context_init{};
   if (through_scope) {
     context_type = context_frame.current_class->self_pointer_type;
-    context_local = bindings.Declare(
-        BindingOriginId::Receiver(),
-        mir::LocalDecl{.name = "self", .type = context_type});
+    context_local = bindings.Declare(BindingOriginId::Receiver(), context_type);
     context_init = body.exprs.Add(
         mir::Expr{
             .data =
@@ -1052,9 +1043,7 @@ auto SynthesizeForeignExportEntry(
             .type = context_type});
   } else {
     context_type = unit.builtins.effects;
-    context_local = bindings.Declare(
-        BindingOriginId::Runtime(),
-        mir::LocalDecl{.name = "runtime", .type = context_type});
+    context_local = bindings.Declare(BindingOriginId::Runtime(), context_type);
     context_init =
         body.exprs.Add(mir::MakeCurrentRuntimeCallExpr(context_type));
   }
@@ -1107,8 +1096,7 @@ auto SynthesizeForeignExportEntry(
       sv_init = body.exprs.Add(
           MarshalCarrierToSv(module, body_frame, carrier, p.carrier, sv_type));
     }
-    const mir::LocalId sv_in = bindings.DeclareAnonymous(
-        mir::LocalDecl{.name = "in" + std::to_string(i), .type = sv_type});
+    const mir::LocalId sv_in = bindings.DeclareAnonymous(sv_type);
     body.AppendStmt(mir::LocalDeclStmt{.target = sv_in, .init = sv_init});
     call_args.push_back(body.exprs.Add(mir::MakeLocalRefExpr(sv_in, sv_type)));
   }
@@ -1181,8 +1169,7 @@ auto SynthesizeForeignExportEntry(
   // Bind the completion value to a local every component projects out of. A
   // completion is a product at every count, so it binds the same way whether or
   // not anything is projected back out of it.
-  const mir::LocalId completion = bindings.DeclareAnonymous(
-      mir::LocalDecl{.name = "_lyra_completion", .type = payload_type});
+  const mir::LocalId completion = bindings.DeclareAnonymous(payload_type);
   body.AppendStmt(
       mir::LocalDeclStmt{.target = completion, .init = completion_source});
   const auto component_value = [&](std::size_t k) -> mir::ExprId {

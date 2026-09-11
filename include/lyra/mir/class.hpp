@@ -49,10 +49,33 @@ struct StaticConstantDecl {
 // replicates the class and the declaring unit's namespace bring-up where
 // nothing does. Initializer timing and per-cell identity are separate concerns,
 // and a statement list is the one home a backend reads for either.
+// It carries no name, for the reason `FieldDecl` carries none: the pool also
+// takes what a class's bodies keep for the whole class, and those cells the
+// source never declared.
 struct StaticPropertyDecl {
-  std::string name;
   TypeId type;
 };
+
+// One entry of the relation between a class and the type-associated storage it
+// answers by name: the identifier the source declared the property under, and
+// the cell it reaches.
+struct NamedStaticProperty {
+  std::string name;
+  StaticPropertyId slot;
+};
+
+// The identifier `slot` answers to among `named`, or nothing where nothing
+// names it.
+[[nodiscard]] inline auto NameOf(
+    std::span<const NamedStaticProperty> named, StaticPropertyId slot)
+    -> std::optional<std::string_view> {
+  for (const NamedStaticProperty& entry : named) {
+    if (entry.slot == slot) {
+      return std::string_view{entry.name};
+    }
+  }
+  return std::nullopt;
+}
 
 // The class's construction protocol. The constructor is a bare body block the
 // class owns directly, not a member of the callable arena: it is never a call
@@ -76,7 +99,14 @@ struct ConstructorDecl {
 };
 
 struct Class {
-  std::string name;
+  // The identifier the source declared this class under, absent where the
+  // source declared no class at all -- a scope of the design hierarchy is one
+  // the lowering builds, and nothing outside this unit ever names it. Where it
+  // is present it is also the class's cross-unit identity (LRM 8.3), which is
+  // why it sits here rather than in a relation: a name a referrer resolves and
+  // a name a backend spells are the same string only because the source wrote
+  // it.
+  std::optional<std::string> name;
   std::optional<ClassRef> base;
   std::vector<ClassRef> implements;
   bool is_final = false;
@@ -87,6 +117,12 @@ struct Class {
   // minimum (LRM 3.14.3) and so delays scale to it.
   TimeResolution time_resolution;
   base::Arena<FieldDecl, FieldId> fields;
+  // The identifiers the source wrote for storage this class holds, each paired
+  // with the field it reaches. A declared variable, an instance and a signal a
+  // scope offers take part; the storage a lowering synthesized for its own use
+  // does not, which is what makes "did the source write this" a question the
+  // class answers rather than one a consumer reads out of a spelling.
+  std::vector<NamedField> named_fields;
   ConstructorDecl constructor;
   // The classes this one structurally owns -- the children it builds. Each
   // names a registry identity, in construction order. Ownership of the
@@ -127,6 +163,10 @@ struct Class {
   // type-associated axis: a static property is one cell owned by the type,
   // never a member replicated into each instance.
   base::Arena<StaticPropertyDecl, StaticPropertyId> static_properties;
+  // The identifiers the source declared for type-associated storage this class
+  // holds. A property the source wrote takes part; a cell a body keeps for the
+  // whole class does not.
+  std::vector<NamedStaticProperty> named_static_properties;
   // The names this class answers and which body each reaches (LRM 8.3, one
   // name space over a class's members). A method the source declared is here
   // because a call site outside this unit spells it; a body the compiler

@@ -1,8 +1,6 @@
 #pragma once
 
 #include <span>
-#include <string>
-#include <string_view>
 #include <variant>
 #include <vector>
 
@@ -12,7 +10,6 @@
 #include "lyra/hir/procedural_scope.hpp"
 #include "lyra/hir/procedural_var.hpp"
 #include "lyra/hir/subroutine.hpp"
-#include "lyra/mir/class.hpp"
 #include "lyra/mir/compilation_unit.hpp"
 #include "lyra/mir/enclosing_hops.hpp"
 #include "lyra/mir/expr.hpp"
@@ -25,6 +22,7 @@ namespace lyra::lowering::hir_to_mir {
 
 class UnitLowerer;
 struct WalkFrame;
+struct ClassShape;
 
 // Where a static-lifetime local keeps its one cell (LRM 6.21). What decides it
 // is what the declaration belongs to, never what reaches it. A body in the
@@ -55,10 +53,11 @@ struct ClassCellHome {
   mir::StaticPropertyId property;
 };
 
-// A cell the unit's namespace owns is reached by name, never by its
-// declaration id, so the name is what a reference needs and what this carries.
+// A cell the unit's namespace owns. Only bodies of that same unit reach one of
+// these -- a static-lifetime local is a local, whatever storage outlives it --
+// so the declaration's own position is what a reference needs.
 struct UnitCellHome {
-  std::string name;
+  mir::StaticVariableId variable;
 };
 
 using StaticStorageHome =
@@ -68,13 +67,12 @@ using StaticStorageHome =
 // one per home above. Whoever lowers a declaration scope states its own, so
 // nothing here works out where a body sits from the body.
 struct InstanceStorage {
-  base::Arena<mir::FieldDecl, mir::FieldId>* fields;
+  ClassShape* shape = nullptr;
 };
 
 struct ClassStorage {
   mir::ClassId owner;
-  base::Arena<mir::StaticPropertyDecl, mir::StaticPropertyId>* properties =
-      nullptr;
+  ClassShape* shape = nullptr;
 };
 
 struct UnitStorage {
@@ -103,10 +101,12 @@ struct StaticVarBinding {
 using StaticVarBindings = std::vector<StaticVarBinding>;
 
 // Declares one static-lifetime cell in `owner` and answers with the home a body
-// reaches it through. Every cell that outlives an activation is minted here,
-// whichever construct asked for one.
+// reaches it through. Every cell that outlives an activation is declared here,
+// whichever construct asked for one. The cell answers to no identifier: the
+// source declared a local of a body, and what a hierarchical path reaches is
+// the scope that declared it, which offers the spelling the source wrote.
 [[nodiscard]] auto DeclareStaticCell(
-    const StaticStorageOwner& owner, std::string name, mir::TypeId cell_type)
+    const StaticStorageOwner& owner, mir::TypeId cell_type)
     -> StaticStorageHome;
 
 // The vars a callable's signature already binds: its formals and, for a
@@ -122,16 +122,15 @@ using StaticVarBindings = std::vector<StaticVarBinding>;
 // that is where a declaration's scope is stated -- a declaration holds no link
 // back up to it.
 //
-// The mangled cell name carries the callable and the declaration's id, so
-// sibling callables sharing a source identifier, and nested blocks repeating
-// one, stay distinct in the pool they all share.
+// Sibling callables sharing a source identifier, and nested blocks repeating
+// one, need nothing done to stay distinct: each cell is a position in the pool
+// they share, and a position is distinct by being one.
 auto BindBodyStatics(
     const UnitLowerer& unit_lowerer,
     const base::Registry<hir::ProceduralScopeDecl, hir::ProceduralScopeId>&
         scopes,
     const StaticStorageOwner& owner, const hir::ProceduralBody& body,
-    std::span<const hir::ProceduralVarId> signature_bound,
-    std::string_view callable_name) -> StaticVarBindings;
+    std::span<const hir::ProceduralVarId> signature_bound) -> StaticVarBindings;
 
 // The expression a body reaches one of these cells through. Each home is one
 // access from where the body stands: a field off the instance `hops` out from

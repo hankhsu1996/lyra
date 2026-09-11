@@ -70,8 +70,7 @@ class LirDumper {
     for (std::size_t i = 0; i < object.members.size(); ++i) {
       Line(
           std::format(
-              "member[{}] \"{}\" : {}", i, object.members[i].name,
-              FormatType(object.members[i].type)));
+              "member[{}] : {}", i, FormatType(object.members[i].type)));
     }
     Dedent();
   }
@@ -80,26 +79,25 @@ class LirDumper {
     Line(std::format("ExternalClass \"{}.{}\"", cls.unit_name, cls.class_name));
     Indent();
     for (std::size_t i = 0; i < cls.members.size(); ++i) {
-      Line(
-          std::format(
-              "member[{}] \"{}\" : {}", i, cls.members[i].name,
-              FormatType(cls.members[i].type)));
+      Line(std::format("member[{}] : {}", i, FormatType(cls.members[i].type)));
     }
     Dedent();
   }
 
   void DumpClass(ClassId id) {
     const Class& cls = unit_->classes.Get(id);
-    Line(std::format("Class \"{}\" (#{})", cls.name, id.value));
+    Line(
+        std::format(
+            "Class{} (#{})",
+            cls.name.has_value() ? std::format(" \"{}\"", *cls.name)
+                                 : std::string{},
+            id.value));
     Indent();
     if (cls.base.has_value()) {
       Line(std::format("Base: {}", FormatBase(*cls.base)));
     }
     for (std::size_t i = 0; i < cls.members.size(); ++i) {
-      Line(
-          std::format(
-              "member[{}] \"{}\" : {}", i, cls.members[i].name,
-              FormatType(cls.members[i].type)));
+      Line(std::format("member[{}] : {}", i, FormatType(cls.members[i].type)));
     }
     Line(
         std::format(
@@ -133,8 +131,7 @@ class LirDumper {
     for (std::size_t i = 0; i < closure.captures.size(); ++i) {
       Line(
           std::format(
-              "capture[{}] \"{}\" : {}", i, closure.captures[i].name,
-              FormatType(closure.captures[i].type)));
+              "capture[{}] : {}", i, FormatType(closure.captures[i].type)));
     }
     DumpFunction(unit_->functions.Get(closure.invoke));
     Dedent();

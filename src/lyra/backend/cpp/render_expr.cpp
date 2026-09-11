@@ -20,7 +20,6 @@
 #include "lyra/base/overloaded.hpp"
 #include "lyra/mir/binary_op.hpp"
 #include "lyra/mir/expr.hpp"
-#include "lyra/mir/packed_type_descriptor.hpp"
 #include "lyra/mir/type.hpp"
 #include "lyra/mir/unary_op.hpp"
 
@@ -30,9 +29,9 @@ namespace {
 
 auto LookupLocalName(const ScopeView& view, const mir::LocalRef& ref)
     -> std::string {
-  // Every local -- including `self` (`locals[0]`), which the method emit
-  // seeds from `this` -- renders as its declared name spelled for this target.
-  return ToCppName(view.Local(ref).name);
+  // Every local -- including the receiver (`locals[0]`), which the method emit
+  // seeds from `this` -- renders under whichever of the two ranges names it.
+  return CppLocalName(view.Code().named_locals, ref.var);
 }
 
 // The C++ token for an operator this target applies to two values.
@@ -139,19 +138,6 @@ auto RenderCastExpr(
       RenderExpr(view, operand));
 }
 
-// The C++ name of a closure capture, which is not the field's source name. A
-// capture is realized as a lambda capture and shares the lambda's scope with
-// the closure's per-invocation parameters and body locals, so its name must not
-// collide with a parameter -- a nested clause may capture an enclosing iterator
-// whose source name matches this closure's own iterator parameter -- nor with
-// another capture of the same source name. Its position in the closure is
-// unique within it and reaches no source name, so that is what it is minted
-// from. This stays in the backend so the MIR field name remains the plain
-// source name.
-auto ClosureCaptureCppName(mir::FieldId field) -> std::string {
-  return MintedCppName("capture", field.value);
-}
-
 auto RenderFieldAccessExpr(const ScopeView& view, const mir::FieldAccessExpr& m)
     -> std::string {
   const auto through_receiver = [&](std::string_view name) {
@@ -172,18 +158,17 @@ auto RenderFieldAccessExpr(const ScopeView& view, const mir::FieldAccessExpr& m)
             const auto& cls = view.Unit().GetClass(t.owner);
             return through_receiver(
                 std::format(
-                    "{}::{}", ToCppName(cls.name),
-                    ToCppName(cls.fields.Get(t.slot).name)));
+                    "{}::{}", CppClassName(cls, t.owner),
+                    CppFieldName(cls.named_fields, t.slot)));
           },
           [&](const mir::StructFieldTarget& t) -> std::string {
-            return through_receiver(ToCppName(
-                view.Unit().GetStruct(t.owner).fields.Get(t.slot).name));
+            return through_receiver(CppStructFieldName(t.slot));
           },
           [&](const mir::ClosureFieldTarget& t) -> std::string {
             // A closure is emitted as a lambda whose captures are bindings of
             // the enclosing scope, so naming the capture is the whole access
             // and the receiver never appears.
-            return ClosureCaptureCppName(t.slot);
+            return CppClosureCaptureName(t.slot);
           },
           [&](const mir::ExternalUnitObjectFieldTarget& t) -> std::string {
             return through_receiver(
@@ -232,25 +217,30 @@ auto RenderReferenceExpr(
             return LookupLocalName(view, l);
           },
           [&](const mir::FunctionRef& fr) -> std::string {
-            const mir::Class& cls = view.Class();
             return std::format(
-                "(&{}::{})", ToCppName(cls.name),
+                "(&{}::{})", CppClassName(view.Class(), view.ClassId()),
                 CppAbiAdapterName(fr.adapter));
           },
           [&](const mir::StaticConstantRef& r) -> std::string {
-            const mir::Class& cls = view.Class();
             return std::format(
-                "{}::{}", ToCppName(cls.name),
+                "{}::{}", CppClassName(view.Class(), view.ClassId()),
                 CppStaticConstantName(r.constant));
           },
           [&](const mir::PackedTypeRef& r) -> std::string {
-            return mir::PackedTypeDescriptionName(r.integral);
+            return CppPackedTypeName(r.integral);
           },
           [&](const mir::StaticPropertyRef& r) -> std::string {
             const mir::Class& owner_cls = view.Unit().GetClass(r.owner);
             return std::format(
-                "{}::{}", ToCppName(owner_cls.name),
-                ToCppName(owner_cls.static_properties.Get(r.prop).name));
+                "{}::{}", CppClassName(owner_cls, r.owner),
+                CppStaticPropertyName(
+                    owner_cls.named_static_properties, r.prop));
+          },
+          [&](const mir::StaticVariableRef& r) -> std::string {
+            // A body of the declaring unit reaches it directly: the emitted
+            // namespace is the one the body is already inside.
+            return CppStaticVariableName(
+                view.Unit().named_static_variables, r.variable);
           },
           [&](const mir::ExternalUnitVariableRef& r) -> std::string {
             return std::format(
@@ -303,10 +293,12 @@ auto RenderIncDecExpr(const ScopeView& view, const mir::IncDecExpr& inc)
 // Renders a binding's parameter declaration -- its type then its name. A
 // `RefType` binding renders as `Ref<T> name`, a value binding as `T name`;
 // the wrapper comes from the type alone (RenderTypeAsCpp), never hand-written.
-auto RenderBindingParamDecl(const ScopeView& view, const mir::LocalDecl& bind)
+auto RenderBindingParamDecl(
+    const ScopeView& view, const mir::CallableCode& code, mir::LocalId param)
     -> std::string {
   return std::format(
-      "{} {}", RenderTypeAsCpp(view.Unit(), bind.type), ToCppName(bind.name));
+      "{} {}", RenderTypeAsCpp(view.Unit(), code.locals.Get(param).type),
+      CppLocalName(code.named_locals, param));
 }
 
 // The value a construction supplies for one field. A field init names its
@@ -383,7 +375,7 @@ auto RenderClosureExpr(const ScopeView& view, const mir::ClosureExpr& construct)
       const mir::FieldDecl& field = decl.fields.Get(field_id);
       params_text += std::format(
           "{} {}", RenderTypeAsCpp(view.Unit(), field.type),
-          ClosureCaptureCppName(field_id));
+          CppClosureCaptureName(field_id));
       args_text += RenderExpr(
           view, view.Expr(FieldInitValue(construct.field_inits, field_id)));
       first = false;
@@ -397,7 +389,7 @@ auto RenderClosureExpr(const ScopeView& view, const mir::ClosureExpr& construct)
   for (const mir::FieldId field_id : decl.field_order) {
     if (!first_capture) captures_text += ", ";
     captures_text += std::format(
-        "{} = {}", ClosureCaptureCppName(field_id),
+        "{} = {}", CppClosureCaptureName(field_id),
         RenderExpr(
             view, view.Expr(FieldInitValue(construct.field_inits, field_id))));
     first_capture = false;
@@ -407,7 +399,7 @@ auto RenderClosureExpr(const ScopeView& view, const mir::ClosureExpr& construct)
   bool first_param = true;
   for (const mir::LocalId param : code.params) {
     if (!first_param) params_text += ", ";
-    params_text += RenderBindingParamDecl(view, code.locals.Get(param));
+    params_text += RenderBindingParamDecl(view, code, param);
     first_param = false;
   }
 

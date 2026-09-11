@@ -30,19 +30,24 @@ ClosureBuilder::ClosureBuilder(
                  .WithBindings(&bindings_)) {
 }
 
-auto ClosureBuilder::AddParam(
-    BindingOriginId origin, std::string_view name, mir::TypeId type)
+auto ClosureBuilder::AddNamedParam(
+    BindingOriginId origin, std::string name, mir::TypeId type)
     -> mir::LocalId {
-  const mir::LocalId binding = bindings_.Declare(
-      origin, mir::LocalDecl{.name = std::string(name), .type = type});
+  const mir::LocalId binding =
+      bindings_.DeclareNamed(origin, std::move(name), type);
   invocation_params_.push_back(binding);
   return binding;
 }
 
-auto ClosureBuilder::AddParamAnonymous(std::string_view name, mir::TypeId type)
+auto ClosureBuilder::AddParam(BindingOriginId origin, mir::TypeId type)
     -> mir::LocalId {
-  const mir::LocalId binding = bindings_.DeclareAnonymous(
-      mir::LocalDecl{.name = std::string(name), .type = type});
+  const mir::LocalId binding = bindings_.Declare(origin, type);
+  invocation_params_.push_back(binding);
+  return binding;
+}
+
+auto ClosureBuilder::AddParamAnonymous(mir::TypeId type) -> mir::LocalId {
+  const mir::LocalId binding = bindings_.DeclareAnonymous(type);
   invocation_params_.push_back(binding);
   return binding;
 }

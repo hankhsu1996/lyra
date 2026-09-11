@@ -124,8 +124,7 @@ auto LowerChainArm(
   // is only declared alongside one.
   std::optional<mir::LocalId> taken_flag;
   if (fall_through.has_value()) {
-    taken_flag = frame.bindings->DeclareAnonymous(
-        mir::LocalDecl{.name = "_lyra_cond_taken", .type = bit1_type});
+    taken_flag = frame.bindings->DeclareAnonymous(bit1_type);
     block.AppendStmt(
         mir::LocalDeclStmt{
             .target = *taken_flag,

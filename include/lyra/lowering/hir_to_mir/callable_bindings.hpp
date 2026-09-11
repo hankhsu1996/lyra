@@ -117,14 +117,28 @@ class CallableBindings {
   ~CallableBindings() = default;
 
   // Declare a binding with a cross-body identity in this callable's `locals`,
-  // recording it as the origin's canonical carrier here. Used to seed the
-  // receiver and parameters at body entry and to materialize a declared local
-  // at its declaration.
-  auto Declare(BindingOriginId origin, mir::LocalDecl decl) -> mir::LocalId;
+  // recording it as the origin's canonical carrier here. `DeclareNamed` is for
+  // a local the source declared and carries the identifier it wrote;
+  // `Declare` is for one the lowering seeds an origin with -- a receiver, the
+  // ambient runtime, the instance a static method of a replicated class
+  // reaches -- which the source never wrote and no identifier reaches.
+  auto DeclareNamed(BindingOriginId origin, std::string name, mir::TypeId type)
+      -> mir::LocalId;
+  auto Declare(BindingOriginId origin, mir::TypeId type) -> mir::LocalId;
+
+  // Declare a binding for one variable of a procedural body, under whatever the
+  // front end recorded for it. That layer names a variable the source declared
+  // and leaves one it introduced itself unnamed, so this is the single place
+  // the two are told apart on the way down.
+  auto DeclareProcedural(
+      BindingOriginId origin, const std::optional<std::string>& name,
+      mir::TypeId type) -> mir::LocalId;
 
   // Declare a local with no cross-body identity (a lowering temporary used only
-  // within this body). It is allocated in `locals` but never captured.
-  auto DeclareAnonymous(mir::LocalDecl decl) -> mir::LocalId;
+  // within this body). It is allocated in `locals` but never captured, and it
+  // answers to no identifier: a local the source declared is one some other
+  // body may reach, which is what an origin is for.
+  auto DeclareAnonymous(mir::TypeId type) -> mir::LocalId;
 
   // Make `origin` available as a body binding here, forwarding it through the
   // lexical parent one boundary at a time and recording the canonical carrier.
@@ -145,17 +159,6 @@ class CallableBindings {
   auto Finalize() -> std::vector<mir::FieldInit>;
 
  private:
-  // Adds a local to this callable's arena under a name no other local of the
-  // body already holds. Two locals must never share a name: a body-scoped
-  // target language renders each declaration where the lowering emitted it, so
-  // a repeated identifier -- two arms of one statement each binding the same
-  // pattern name, two selector snapshots, an inner block reusing an outer
-  // name -- would collide there. Only a colliding name is suffixed, so the
-  // first local to claim a name keeps it.
-  auto AddLocal(mir::LocalDecl decl) -> mir::LocalId;
-
-  [[nodiscard]] auto NameOf(BodyBindingRef ref) const -> const std::string&;
-
   struct CaptureEntry {
     BindingOriginId origin;
     mir::ExprId source{};

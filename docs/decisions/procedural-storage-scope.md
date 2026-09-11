@@ -57,16 +57,19 @@ declares its own control variables gets one too, but not a kind of its own: LRM 
 define that scope as an implicit begin/end block around the loop statement, unnamed unless a
 statement label names it, so it is an ordinary block scope. Each scope record holds:
 
-- a kind (process root, subroutine root, begin/end block, named begin/end block, fork/join);
-- a segment name, always present: the identifier the source gave the scope -- a `block_identifier`
-  (LRM 9.3.5) or a subroutine name -- and a synthesized one for a scope the source did not name;
+- a kind (process root, subroutine root, begin/end block, fork/join);
+- the identifier the source gave the scope -- a `block_identifier` (LRM 9.3.5) or a subroutine name
+  -- absent where it gave none;
 - the ids of the variables declared directly in that scope;
 - the ids of the scopes nested directly inside it.
 
-The name is uniform on purpose. Nothing downstream has to ask whether the source named a scope, so
-no consumer carries a present / absent branch for it. What keeps a synthesized name off a
-hierarchical path is the kind, never the spelling -- a synthesized stand-in is an ordinary legal SV
-identifier, so reading addressability out of the string would be wrong as well as fragile.
+Whether the source named a scope is recorded as the presence of that identifier, never as a kind: a
+`begin ... end` is one construct whether or not a `block_identifier` follows it, and gaining named
+forks therefore adds nothing here. Nothing stands in for the identifier a scope was not given.
+Composing one out of the kind and the scope's own position would put it in the space the design
+declares in, where a block the source did name can collide with it
+(`a-name-is-a-relation-not-an-identity.md`); a scope with no identifier is reached by its position,
+which is distinct by being one.
 
 The process root is the one kind SV does not itself define: LRM 23.9 lists the `begin/end`, not the
 `always` or `initial` around it. It exists so that every body has exactly one root even when the
@@ -103,11 +106,10 @@ which is also the only pass that knows the lexical nesting: the frontend records
 of its own (the bindings of a pattern arm, the control variables of a loop) and lists those symbols
 as siblings of the process rather than inside it, so its member nesting is not the source's.
 
-A scope's runtime addressability -- whether an SV path can name it -- follows from the kind alone,
-and the kinds that qualify are the procedural entries in LRM 23.9's scope list: a task or function
-root, and a named begin/end. Future named-fork support extends the kind set without reshaping the
-registry. Addressability is not read off the name: the name is present on every kind, so it cannot
-carry that distinction.
+A scope's runtime addressability -- whether an SV path can name it -- is exactly whether the source
+gave it an identifier, which is what LRM 23.9's procedural entries come to: a task or function root,
+which is always named, and a begin/end the source labelled. Nothing has to be read off the kind or
+out of a spelling, and named forks need no new kind to qualify.
 
 ### D2. Three distinct layers: HIR lexical scope, MIR name node, MIR storage
 

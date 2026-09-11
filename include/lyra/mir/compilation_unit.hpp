@@ -30,21 +30,62 @@
 
 namespace lyra::mir {
 
-// A unit-level static variable: a named mutable value the unit's namespace owns
-// with static storage -- one program-global cell, shared across the whole
+// A unit-level static variable: a mutable value the unit's namespace owns with
+// static storage -- one program-global cell, shared across the whole
 // simulation, not a member of any instance (LRM 26.2 package variables, LRM
 // 6.21 static lifetime). The mutable, observable counterpart of a
-// `StaticConstantDecl`: a backend emits it as a namespace-scope observable cell
-// and every reference reaches it by name (`unit::name`), the storage dual of
-// the unit's receiver-less callables. `type` is the observable-cell type; the
+// `StaticConstantDecl`: a backend emits it as a namespace-scope observable
+// cell, the storage dual of the unit's receiver-less callables. A body of the
+// declaring unit reaches the cell by its position; another unit has only the
+// identifier this one published, and spells `unit::name`. `type` is the
+// observable-cell type; the
 // declared value type is its inner value. The initializer is not here: it runs
 // in the unit's synthesized initializer at time zero (LRM 10.5), the way a
 // class member's initializer runs in its Initialize phase, never as a field on
 // the declaration.
+// It carries no name, for the reason a field carries none: the arena also takes
+// the static-lifetime cells of bodies the unit's namespace declares, and those
+// the source never wrote.
 struct StaticVariableDecl {
-  std::string name;
   TypeId type;
 };
+
+// One entry of the relation between a unit's namespace and the storage it
+// answers by name: the identifier the source declared the variable under, and
+// the cell it reaches. This is also the unit's published surface for it -- what
+// another unit has instead of the arena.
+struct NamedStaticVariable {
+  std::string name;
+  StaticVariableId variable;
+};
+
+// The identifier `variable` answers to among `named`, or nothing where nothing
+// names it.
+[[nodiscard]] inline auto NameOf(
+    std::span<const NamedStaticVariable> named, StaticVariableId variable)
+    -> std::optional<std::string_view> {
+  for (const NamedStaticVariable& entry : named) {
+    if (entry.variable == variable) {
+      return std::string_view{entry.name};
+    }
+  }
+  return std::nullopt;
+}
+
+// The storage `name` reaches among `named`, or nothing where the unit publishes
+// no such identifier. The relation read the other way: a reference written
+// inside the declaring unit arrives carrying what the source spelled, and what
+// it names is a position in that unit's own arena.
+[[nodiscard]] inline auto StaticVariableNamed(
+    std::span<const NamedStaticVariable> named, std::string_view name)
+    -> std::optional<StaticVariableId> {
+  for (const NamedStaticVariable& entry : named) {
+    if (entry.name == name) {
+      return entry.variable;
+    }
+  }
+  return std::nullopt;
+}
 
 // A unit whose instances are a tree of objects the runtime drives (LRM 23.3):
 // the class at the root of that tree.
@@ -190,6 +231,10 @@ struct CompilationUnit {
   // that class; these are the unit-level namespace's, one scope up. Their
   // initializers run in the unit's synthesized initializer at time zero.
   base::Arena<StaticVariableDecl, StaticVariableId> static_variables;
+  // The identifiers the source declared for storage this unit's namespace
+  // holds. A package variable takes part; the cell a subroutine's
+  // static-lifetime local keeps does not.
+  std::vector<NamedStaticVariable> named_static_variables;
   // The foreign names this unit takes part in (LRM 35), in declaration order.
   // The program's foreign surface is the composition of these across units: a
   // name is program-global and lives in its own name space, so no single unit
@@ -374,7 +419,15 @@ struct CompilationUnit {
   // Records a cross-unit namespace-symbol dependency, deduplicated. Called from
   // HIR-to-MIR when a reference names a receiver-less callable or a static
   // variable of another unit.
+  //
+  // This unit is not a dependency of itself, and that is settled here rather
+  // than by each caller: whether a reference crosses the boundary is a property
+  // of the list, so a site that reaches a sibling of its own namespace needs no
+  // rule of its own and a site added later cannot forget one.
   void AddExternalReferencedUnit(std::string unit_name) {
+    if (unit_name == name) {
+      return;
+    }
     for (const std::string& existing : external_referenced_units) {
       if (existing == unit_name) {
         return;
@@ -385,8 +438,12 @@ struct CompilationUnit {
 
   // Records a cross-unit class-reference dependency, deduplicated. Called
   // from HIR-to-MIR when a class handle type, a `new`, a field / method /
-  // static access, or a base extension names a class of another unit.
+  // static access, or a base extension names a class of another unit. Self is
+  // excluded for the reason above.
   void AddExternalClassUnit(std::string unit_name) {
+    if (unit_name == name) {
+      return;
+    }
     for (const std::string& existing : external_class_units) {
       if (existing == unit_name) {
         return;
@@ -411,10 +468,16 @@ struct CompilationUnit {
   return std::get_if<BroughtUpNamespace>(&unit.content);
 }
 
-// What reaches one body of a unit's namespace from outside it: the linkage name
-// the source wrote in the DPI-C name space, which is program-global and belongs
-// to no unit (LRM 35.4); the identifier the unit's own namespace answers (LRM
-// 26.3); which of the two bring-up entries it is; or nothing at all.
+// What reaches one body of a unit's namespace: the linkage name the source
+// wrote in the DPI-C name space, which is program-global and belongs to no unit
+// (LRM 35.4); the identifier the unit's own namespace answers (LRM 26.3); or
+// which of the two bring-up entries it is.
+//
+// Every namespace body is one of these three. That is what separates a body
+// from a cell, whose pool also takes the static-lifetime storage of the unit's
+// subroutines and so holds storage nothing names -- a distinction worth having
+// in front of you, because it is the whole reason a cell is reached by its
+// position while a body is reached by what answers for it.
 struct ReachedByLinkageName {
   std::string_view name;
 };
@@ -424,15 +487,13 @@ struct ReachedByName {
 struct ReachedByStoragePhase {
   NamespaceStoragePhase phase;
 };
-struct ReachedByNothing {};
 
-using NamespaceReach = std::variant<
-    ReachedByLinkageName, ReachedByName, ReachedByStoragePhase,
-    ReachedByNothing>;
+using NamespaceReach =
+    std::variant<ReachedByLinkageName, ReachedByName, ReachedByStoragePhase>;
 
-// How `id` is reached from outside the unit that owns it. Every target names it
-// from this one answer, so no two arrive at different names for one body and
-// none works out for itself which kind of body it is looking at.
+// How `id` is reached. Every target names it from this one answer, so no two
+// arrive at different names for one body and none works out for itself which
+// kind of body it is looking at.
 [[nodiscard]] inline auto NamespaceReachOf(
     const CompilationUnit& unit, CallableId id) -> NamespaceReach {
   const CallableDecl& callable = unit.callables.Get(id);
@@ -451,7 +512,10 @@ using NamespaceReach = std::variant<
           NameOf(unit.named_callables, id)) {
     return ReachedByName{*name};
   }
-  return ReachedByNothing{};
+  throw InternalError(
+      "NamespaceReachOf: a unit's namespace holds a body that answers to no "
+      "identifier, no linkage name and neither bring-up entry, so nothing "
+      "could call it -- please report this as a bug");
 }
 
 [[nodiscard]] inline auto MakeStringLiteral(

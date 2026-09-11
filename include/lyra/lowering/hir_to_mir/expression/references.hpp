@@ -31,4 +31,12 @@ auto LowerHirPrimaryExprStructural(
 auto LowerHirIntegralConstant(const hir::IntegralConstant& c)
     -> mir::IntegralConstant;
 
+// The cell a variable of some unit's namespace is reached through (LRM 26.2).
+// Whether that unit is this one decides both how the reference names the
+// storage and whether reaching it makes that unit a dependency, so the two are
+// settled together here rather than at each site that needs one.
+auto LowerExternalUnitValueRefExpr(
+    mir::CompilationUnit& unit, const hir::ExternalUnitValueRef& r,
+    mir::TypeId value_type) -> mir::Expr;
+
 }  // namespace lyra::lowering::hir_to_mir

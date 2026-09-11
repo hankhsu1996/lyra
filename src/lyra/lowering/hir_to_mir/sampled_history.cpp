@@ -138,9 +138,8 @@ auto LowerSampledHistorySampler(
 
   mir::CallableCode code = mir::CallableCode::Defined();
   CallableBindings bindings(unit, code);
-  const mir::LocalId self_id = bindings.Declare(
-      BindingOriginId::Receiver(),
-      mir::LocalDecl{.name = "self", .type = self_ptr_type});
+  const mir::LocalId self_id =
+      bindings.Declare(BindingOriginId::Receiver(), self_ptr_type);
 
   mir::Block body_block;
   const WalkFrame body_frame =
@@ -169,8 +168,8 @@ auto LowerSampledHistorySampler(
   // tick a reader in this step sees is never this one -- which is what makes
   // "strictly prior" hold by construction rather than by anyone's ordering.
   ClosureBuilder closure(unit, body_frame);
-  const mir::ExprId captured = SnapshotIntoClosure(
-      lowerer.Owner(), body_frame, closure, settled, "sampled");
+  const mir::ExprId captured =
+      SnapshotIntoClosure(lowerer.Owner(), body_frame, closure, settled);
   closure.Body().AppendStmt(
       mir::ExprStmt{
           .expr = closure.Body().exprs.Add(

@@ -80,9 +80,14 @@ struct RoutedRefMeta {
 // walk moves.
 class StructuralScopeLowerer {
  public:
+  // `name` is the identifier the class this scope becomes is declared under,
+  // and is present only for a unit's own root scope: that class is what another
+  // unit names when it reaches an instance of this one. A scope nested inside
+  // it is built by the lowering rather than declared by the source, so nothing
+  // names it and it carries none.
   StructuralScopeLowerer(
       UnitLowerer& unit_lowerer, const StructuralScopeLowerer* parent,
-      std::string name, const hir::StructuralScope& hir_scope,
+      std::optional<std::string> name, const hir::StructuralScope& hir_scope,
       NamespaceStorageInitializationPlan namespace_storage_plan = {})
       : owner_(&unit_lowerer),
         parent_(parent),
@@ -119,10 +124,6 @@ class StructuralScopeLowerer {
 
   [[nodiscard]] auto Parent() const -> const StructuralScopeLowerer* {
     return parent_;
-  }
-
-  [[nodiscard]] auto Name() const -> const std::string& {
-    return name_;
   }
 
   [[nodiscard]] auto HirScope() const -> const hir::StructuralScope& {
@@ -392,7 +393,7 @@ class StructuralScopeLowerer {
  private:
   UnitLowerer* owner_;
   const StructuralScopeLowerer* parent_;
-  std::string name_;
+  std::optional<std::string> name_;
   const hir::StructuralScope* hir_scope_;
   // Non-empty only on the design root's own scope, the sole scope whose
   // elaboration spans the whole design. Every source unit's scope and every

@@ -1,6 +1,5 @@
 #include "lyra/lowering/ast_to_hir/sensitivity.hpp"
 
-#include <utility>
 #include <vector>
 
 #include <slang/analysis/AbstractFlowAnalysis.h>

@@ -1,6 +1,6 @@
 #pragma once
 
-#include <string_view>
+#include <string>
 #include <vector>
 
 #include "lyra/lowering/hir_to_mir/binding_origin.hpp"
@@ -74,15 +74,19 @@ class ClosureBuilder {
 
   // Declares a per-invocation parameter (LRM 7.12.4 with-clause) with its
   // cross-body origin, so a nested clause can capture it. Allocates the body
-  // slot and records the parameter; returns its binding.
-  auto AddParam(BindingOriginId origin, std::string_view name, mir::TypeId type)
+  // slot and records the parameter; returns its binding. `AddNamedParam` is for
+  // the iterator the clause declares, whose identifier the source wrote; the
+  // index beside it is one the language supplies rather than the design, so it
+  // answers to no identifier of its own.
+  auto AddNamedParam(BindingOriginId origin, std::string name, mir::TypeId type)
       -> mir::LocalId;
+  auto AddParam(BindingOriginId origin, mir::TypeId type) -> mir::LocalId;
 
-  // Declares a per-invocation parameter with no cross-body identity: the body
-  // names it directly and no nested closure can capture it (a built-in array
-  // reduction whose body is the bare element, with no with-clause).
-  auto AddParamAnonymous(std::string_view name, mir::TypeId type)
-      -> mir::LocalId;
+  // A per-invocation parameter with no cross-body identity: the body reaches it
+  // directly and no nested closure can capture it. Only a call with no
+  // with-clause takes these, and such a call declares no iteration variable, so
+  // there is no named form of this.
+  auto AddParamAnonymous(mir::TypeId type) -> mir::LocalId;
 
   // Closes the body with `return result`, finalizes the closure, and yields the
   // closure value typed as its closure type. Single-use.

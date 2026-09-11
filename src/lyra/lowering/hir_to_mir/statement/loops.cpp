@@ -41,9 +41,8 @@ auto LowerForStmt(
               const auto& hir_local = hir_proc.procedural_vars.Get(d.var);
               const mir::TypeId type =
                   process.Owner().TranslateType(hir_local.type);
-              const mir::LocalId local_id = frame.bindings->Declare(
-                  BindingOriginId::Procedural(d.var),
-                  mir::LocalDecl{.name = hir_local.name, .type = type});
+              const mir::LocalId local_id = frame.bindings->DeclareProcedural(
+                  BindingOriginId::Procedural(d.var), hir_local.name, type);
               process.MapProceduralVar(
                   d.var, AutomaticVarBinding{.type = type});
               mir::ExprId init_id{};
@@ -176,12 +175,10 @@ auto BuildRepeatLoopStmt(
   if (block.exprs.Get(count).type != int_type) {
     count = block.exprs.Add(BuildValueConversion(unit, block, count, int_type));
   }
-  const mir::LocalId count_var = frame.bindings->DeclareAnonymous(
-      mir::LocalDecl{.name = "_lyra_repeat_count", .type = int_type});
+  const mir::LocalId count_var = frame.bindings->DeclareAnonymous(int_type);
   block.AppendStmt(mir::LocalDeclStmt{.target = count_var, .init = count});
 
-  const mir::LocalId idx_var = frame.bindings->DeclareAnonymous(
-      mir::LocalDecl{.name = "_lyra_repeat_index", .type = int_type});
+  const mir::LocalId idx_var = frame.bindings->DeclareAnonymous(int_type);
 
   const mir::ExprId zero_id = BuildIntLiteral(unit, block, 0);
   const mir::ExprId one_id = BuildIntLiteral(unit, block, 1);

@@ -3,7 +3,6 @@
 #include <algorithm>
 #include <cstddef>
 #include <expected>
-#include <format>
 #include <optional>
 #include <string>
 #include <string_view>
@@ -107,9 +106,10 @@ auto UnitsReadBy(const mir::Block& body, std::string_view own_unit)
 // same one-program-global-cell storage; the cells the unit's classes own join
 // the same two bodies from the class lowering. The design root installs every
 // unit before initializing any, so a value initializer always reaches installed
-// storage. Such a cell is reached by name (`unit::name`), so an initializer's
-// references to sibling or other-unit variables lower through the same by-name
-// path with no enclosing scope or receiver.
+// storage. Neither this unit's cells nor another's sit on an instance, so an
+// initializer here lowers with no enclosing scope and no receiver: a sibling
+// cell is reached by its position in this arena, and another unit's by the
+// identifier that unit published (`unit::name`).
 auto PopulateNamespaceOwnStorage(
     UnitLowerer& unit_lowerer, const hir::StructuralScope& scope,
     const base::Translation<hir::StructuralSubroutineId, StaticVarBindings>&
@@ -126,15 +126,13 @@ auto PopulateNamespaceOwnStorage(
   const StructuralScopeLowerer expr_lowerer(
       unit_lowerer, nullptr, unit.name, scope);
 
-  const auto make_cell = [&](mir::Block& block, const std::string& name,
+  const auto make_cell = [&](mir::Block& block, mir::StaticVariableId variable,
                              mir::TypeId cell_type) -> mir::ExprId {
     return block.exprs.Add(
         mir::Expr{
             .data =
                 mir::ReferenceExpr{
-                    .target =
-                        mir::ExternalUnitVariableRef{
-                            .unit_name = unit.name, .variable_name = name}},
+                    .target = mir::StaticVariableRef{.variable = variable}},
             .type = cell_type});
   };
 
@@ -158,8 +156,10 @@ auto PopulateNamespaceOwnStorage(
           diag::DiagCode::kUnsupportedExpressionForm,
           "a package variable of this type is not yet supported");
     }
-    unit.static_variables.Add(
-        mir::StaticVariableDecl{.name = d.name, .type = cell_type});
+    const mir::StaticVariableId variable =
+        unit.static_variables.Add(mir::StaticVariableDecl{.type = cell_type});
+    unit.named_static_variables.push_back(
+        mir::NamedStaticVariable{.name = d.name, .variable = variable});
 
     // Phase 1: install the cell's declared representation and default.
     const mir::ExprId prototype = install_block.exprs.Add(
@@ -168,7 +168,7 @@ auto PopulateNamespaceOwnStorage(
         mir::ExprStmt{
             .expr = install_block.exprs.Add(
                 mir::MakeCapabilityInstallCallExpr(
-                    make_cell(install_block, d.name, cell_type), prototype,
+                    make_cell(install_block, variable, cell_type), prototype,
                     support::BuiltinFn::kInitialize,
                     unit.builtins.void_type))});
 
@@ -183,7 +183,7 @@ auto PopulateNamespaceOwnStorage(
               .expr = value_block.exprs.Add(BuildStoreExpr(
                   unit, value_block,
                   WriteTarget{
-                      .owner = make_cell(value_block, d.name, cell_type),
+                      .owner = make_cell(value_block, variable, cell_type),
                       .descent = {}},
                   value_id, std::nullopt, value_type))});
     }
@@ -199,7 +199,7 @@ auto PopulateNamespaceOwnStorage(
     const StaticVarBindings& statics = subroutine_statics.Get(id);
     ProcessLowerer body_lowerer(
         unit_lowerer, nullptr, scope.time_resolution, src.body, std::nullopt,
-        src.name, WalkFrame{}, scope_nodes, statics);
+        WalkFrame{}, scope_nodes, statics);
     for (const StaticVarBinding& binding : statics) {
       auto integ = IntegrateStaticInitializer(
           body_lowerer, src.body,
@@ -287,7 +287,7 @@ auto UnitLowerer::BuildExternalUnitObject(
   for (const hir::PublishedMemberId id : object.members.Ids()) {
     const hir::PublishedMember& member = object.members.Get(id);
     out.fields.Add(
-        mir::FieldDecl{
+        mir::PromisedField{
             .name = member.name,
             .type =
                 MemberCellType(TranslateType(member.type), member.storage)});
@@ -438,7 +438,7 @@ auto UnitLowerer::RunNamespace() -> diag::Result<mir::CompilationUnit> {
   const hir::StructuralScope& scope = hir_->root_scope;
   const DeclaredScopes package_scope_nodes = ScopesOwningDisableTargets(
       scope.procedural_scopes,
-      UnitStorage{.variables = &unit_.static_variables}, "",
+      UnitStorage{.variables = &unit_.static_variables},
       unit_.types.Intern(
           mir::Type{mir::RuntimeLibraryType{
               .kind = mir::RuntimeLibraryKind::kCancellationTarget}}));
@@ -449,7 +449,7 @@ auto UnitLowerer::RunNamespace() -> diag::Result<mir::CompilationUnit> {
     subroutine_statics.Append(BindBodyStatics(
         *this, scope.procedural_scopes,
         UnitStorage{.variables = &unit_.static_variables}, src.body,
-        SignatureBoundVars(src), src.name));
+        SignatureBoundVars(src)));
   }
 
   // The two bodies the design root calls at time zero. They exist before
@@ -509,7 +509,7 @@ auto UnitLowerer::RunNamespace() -> diag::Result<mir::CompilationUnit> {
     const hir::SubroutineDecl& src = scope.structural_subroutines.Get(id);
     ProcessLowerer subroutine_lowerer(
         *this, nullptr, scope.time_resolution, src.body, src.root_stmt,
-        src.name, WalkFrame{}, package_scope_nodes, subroutine_statics.Get(id));
+        WalkFrame{}, package_scope_nodes, subroutine_statics.Get(id));
     auto code_or = subroutine_lowerer.Run(src);
     if (!code_or) return std::unexpected(std::move(code_or.error()));
     const mir::CallableId body = unit_.callables.Add(
@@ -557,11 +557,6 @@ auto UnitLowerer::RunNamespace() -> diag::Result<mir::CompilationUnit> {
       unit_, std::move(install_code), std::move(value_code));
 
   return std::move(unit_);
-}
-
-auto UnitLowerer::NextGenerateScopeName(std::string_view arm_tag)
-    -> std::string {
-  return std::format("gen{}_{}", next_generate_scope_name_++, arm_tag);
 }
 
 auto UnitLowerer::MakeExternalClassPointee(const hir::ExternalClassRef& ref)
@@ -639,7 +634,7 @@ auto UnitLowerer::RecordExternalClass(
   for (const hir::PublishedMemberId id : published->members.Ids()) {
     const hir::PublishedMember& member = published->members.Get(id);
     record.fields.Add(
-        mir::FieldDecl{
+        mir::PromisedField{
             .name = member.name, .type = TranslateType(member.type)});
   }
   for (const hir::PublishedBehaviorId id : published->behaviors.Ids()) {

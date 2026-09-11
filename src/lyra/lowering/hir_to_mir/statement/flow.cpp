@@ -26,9 +26,8 @@ auto LowerAutomaticVarDeclStmt(
     const hir::VarDeclStmt& v, const hir::ProceduralVarDecl& hir_local,
     mir::TypeId type) -> diag::Result<mir::Stmt> {
   auto& block = *frame.current_block;
-  const mir::LocalId local_id = frame.bindings->Declare(
-      BindingOriginId::Procedural(v.var),
-      mir::LocalDecl{.name = hir_local.name, .type = type});
+  const mir::LocalId local_id = frame.bindings->DeclareProcedural(
+      BindingOriginId::Procedural(v.var), hir_local.name, type);
   process.MapProceduralVar(v.var, AutomaticVarBinding{.type = type});
 
   mir::ExprId init_value{};

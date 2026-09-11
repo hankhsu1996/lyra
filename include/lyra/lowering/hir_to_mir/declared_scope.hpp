@@ -1,6 +1,5 @@
 #pragma once
 
-#include <format>
 #include <optional>
 #include <utility>
 #include <vector>
@@ -27,11 +26,18 @@ namespace lyra::lowering::hir_to_mir {
 // So a scope of the design hierarchy becomes a name node, a runtime object
 // carrying the identity a hierarchical path matches, and everything a body
 // there keeps is a field of the class enclosing it -- both one member access
-// from that body's `self`:
+// from that body's `self`. For
 //
-//   initial begin : outer        self->outer_borrowed_handle  reports the name
-//     static int x;              self->outer__x               holds the value
-//     begin : inner ... end      self->inner_borrowed_handle
+//   initial begin : outer
+//     static int x;
+//     begin : inner ... end
+//   end
+//
+// the enclosing class holds three fields: a handle on each scope's node, and
+// the cell `x` outlives its activation in. None of them answers to an
+// identifier -- the source declared no such storage -- so each is reached by
+// the position it sits at, and what a hierarchical path spells is the segment
+// its node reports and the name that node offers the cell under.
 //
 // How the nodes nest is the HIR scope tree, and nothing here restates it. What
 // this states is only what each scope got.
@@ -78,27 +84,18 @@ using DeclaredScopes = base::Translation<hir::ProceduralScopeId, DeclaredScope>;
 // scope answers for a name there, and a scope the source named owns the target
 // a `disable` invalidates. Every scope still has an entry, so a body there
 // reads its answer the same way a body anywhere else does.
-//
-// `pool_prefix` distinguishes what several declaration scopes put in one pool:
-// a source name is unique among one declaration scope's own scopes and not
-// among a pool that several of them share, which is what a structural scope's
-// is once it declares more than one class.
 [[nodiscard]] inline auto ScopesOwningDisableTargets(
     const base::Registry<hir::ProceduralScopeDecl, hir::ProceduralScopeId>&
         scopes,
-    const StaticStorageOwner& owner, std::string_view pool_prefix,
-    mir::TypeId target_type) -> DeclaredScopes {
+    const StaticStorageOwner& owner, mir::TypeId target_type)
+    -> DeclaredScopes {
   std::vector<DeclaredScope> declared;
   declared.reserve(scopes.size());
   for (const hir::ProceduralScopeId id : scopes.Ids()) {
     const hir::ProceduralScopeDecl& scope = scopes.Get(id);
     std::optional<StaticStorageHome> target;
     if (scope.source_name.has_value()) {
-      target = DeclareStaticCell(
-          owner,
-          std::format(
-              "{}{}__cancel_{}", pool_prefix, *scope.source_name, id.value),
-          target_type);
+      target = DeclareStaticCell(owner, target_type);
     }
     declared.push_back(
         DeclaredScope{

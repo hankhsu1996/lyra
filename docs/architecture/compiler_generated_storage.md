@@ -179,12 +179,13 @@ SV (inside a method M):
   int x = 5;               // lifetime-extended: a scope StructType, reached via Shared<>
   fork  #1 out <= x;  join_none
 
-scope     : StructType M__scope0 { x: int }                  // named aggregate, reached via Shared<>
-closure   : ClosureType C_k { self: M*, scope: Shared<M__scope0> } + invoke
+scope     : StructType S_j { x: int }                        // an aggregate of storage, reached via Shared<>
+closure   : ClosureType C_k { self: M*, scope: Shared<S_j> } + invoke
 invoke    : field_access(closure_receiver, field_of(scope)) then ... -> read scope.x through the handle
 ```
 
-The current C++ backend realizes the scope as `struct M__scope0 {...}` + `shared_ptr`, and the
+The current C++ backend realizes the scope as a `struct` + `shared_ptr`, spelled from the identity
+its unit's registry gave it because the source declared no such aggregate to name it by, and the
 closure as an anonymous lambda holding its captures -- or, where the invoke is a coroutine, as one
 taking them as parameters and called at once to yield the coroutine, because a coroutine lambda's
 captures do not survive its first suspension. That is this backend's realization, not the MIR
@@ -195,7 +196,7 @@ The three capture forms differ only by field type:
 ```text
 snapshot capture : field type = int                  // a value taken at construction
 live-place alias : field type = Ref<logic>           // an observable-cell alias
-retained scope   : field type = Shared<M__scope0>    // retain the owner; read scope.x through it
+retained scope   : field type = Shared<S_j>          // retain the owner; read scope.x through it
 ```
 
 A closure submitted to a heterogeneous region queue is erased at the submit site once that consumer

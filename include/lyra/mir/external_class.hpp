@@ -34,7 +34,7 @@ struct ExternalClass {
   // interface class states sits on no lineage and has no position counted
   // through one (LRM 8.26).
   bool is_interface_class = false;
-  base::Arena<FieldDecl, FieldId> fields;
+  base::Arena<PromisedField, FieldId> fields;
   std::vector<std::string> behaviors;
 };
 

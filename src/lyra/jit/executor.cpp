@@ -1486,13 +1486,16 @@ auto LoadScopeClasses(
           LoadedSubroutine{
               .name = declared.name,
               .symbol = lir::ClassSymbol(
-                  unit.name, unit.classes.Get(declared.declaration).name)});
+                  unit.name, lir::SymbolPartOf(
+                                 unit.classes.Get(declared.declaration).name,
+                                 declared.declaration.value))});
     }
     loaded.push_back(
         LoadedScopeClass{
-            .name = lir::ClassSymbol(unit.name, cls.name),
-            .definition_symbol =
-                lir::ClassDefinitionSymbol(unit.name, cls.name),
+            .name = lir::ClassSymbol(
+                unit.name, lir::SymbolPartOf(cls.name, id.value)),
+            .definition_symbol = lir::ClassDefinitionSymbol(
+                unit.name, lir::SymbolPartOf(cls.name, id.value)),
             .entries =
                 LoadedScopeEntries{
                     .resolve_state =
@@ -1617,12 +1620,10 @@ auto LoadObjectClasses(const lir::CompilationUnit& unit)
               ? std::optional{unit.functions.Get(*introduced.body).name}
               : std::nullopt);
     }
-    declared->properties.reserve(cls.members.size());
-    for (std::size_t slot = 0; slot < cls.members.size(); ++slot) {
+    declared->properties.reserve(cls.named_members.size());
+    for (const lir::NamedMember& named : cls.named_members) {
       declared->properties.push_back(
-          LoadedDeclaredName{
-              .name = cls.members[slot].name,
-              .position = static_cast<std::uint32_t>(slot)});
+          LoadedDeclaredName{.name = named.name, .position = named.position});
     }
     std::vector<LoadedTakeover> takeovers;
     takeovers.reserve(cls.takeovers.size());
@@ -1642,9 +1643,10 @@ auto LoadObjectClasses(const lir::CompilationUnit& unit)
     }
     loaded.push_back(
         LoadedClass{
-            .name = lir::ClassSymbol(unit.name, cls.name),
-            .definition_symbol =
-                lir::ClassDefinitionSymbol(unit.name, cls.name),
+            .name = lir::ClassSymbol(
+                unit.name, lir::SymbolPartOf(cls.name, id.value)),
+            .definition_symbol = lir::ClassDefinitionSymbol(
+                unit.name, lir::SymbolPartOf(cls.name, id.value)),
             .base = ExtendedClassName(unit, cls),
             .members = *std::move(members),
             .declared = std::move(declared),
@@ -1667,9 +1669,10 @@ auto LoadStructs(const lir::CompilationUnit& unit)
     }
     loaded.push_back(
         LoadedClass{
-            .name = lir::StructSymbol(unit.name, record.name),
-            .definition_symbol =
-                lir::StructDefinitionSymbol(unit.name, record.name),
+            .name = lir::StructSymbol(
+                unit.name, lir::SymbolPart::Ordinal(id.value)),
+            .definition_symbol = lir::StructDefinitionSymbol(
+                unit.name, lir::SymbolPart::Ordinal(id.value)),
             .base = std::nullopt,
             .members = *std::move(members),
             // A compiler-generated record answers no name: nothing of the
@@ -1868,8 +1871,8 @@ auto LoadClosures(const lir::CompilationUnit& unit)
     }
     loaded.push_back(
         LoadedClosure{
-            .definition_symbol =
-                lir::ClosureDefinitionSymbol(unit.name, id.value),
+            .definition_symbol = lir::ClosureDefinitionSymbol(
+                unit.name, lir::SymbolPart::Ordinal(id.value)),
             .invoke_symbol = unit.functions.Get(closure.invoke).name,
             .captures = *std::move(captures),
             .protocol = ProtocolOf(unit, unit.functions.Get(closure.invoke)),
@@ -1966,7 +1969,9 @@ auto Execute(
     throw InternalError("jit executor: the design root roots no object tree");
   }
   const std::string root_class_symbol = lir::ClassSymbol(
-      root_unit.name, root_unit.classes.Get(*root_unit.root).name);
+      root_unit.name,
+      lir::SymbolPartOf(
+          root_unit.classes.Get(*root_unit.root).name, root_unit.root->value));
   auto root_classes = LoadScopeClasses(root_unit, root_metadata);
   if (!root_classes) {
     return std::unexpected(std::move(root_classes.error()));

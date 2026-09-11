@@ -18,7 +18,7 @@ namespace lyra::mir {
 struct ExternalUnitObject {
   std::string unit_name;
   std::string class_name;
-  base::Arena<FieldDecl, FieldId> fields;
+  base::Arena<PromisedField, FieldId> fields;
 };
 
 }  // namespace lyra::mir

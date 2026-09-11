@@ -1,9 +1,6 @@
 #include "lyra/lowering/hir_to_mir/static_var_binding.hpp"
 
 #include <algorithm>
-#include <format>
-#include <string>
-#include <utility>
 #include <vector>
 
 #include "lyra/base/internal_error.hpp"
@@ -35,28 +32,24 @@ auto CellTypeFor(
 
 }  // namespace
 
-auto DeclareStaticCell(
-    const StaticStorageOwner& owner, std::string name, mir::TypeId cell_type)
+auto DeclareStaticCell(const StaticStorageOwner& owner, mir::TypeId cell_type)
     -> StaticStorageHome {
   return std::visit(
       Overloaded{
           [&](const InstanceStorage& instance) -> StaticStorageHome {
             return InstanceFieldHome{
-                .field = instance.fields->Add(
-                    mir::FieldDecl{
-                        .name = std::move(name), .type = cell_type})};
+                .field = instance.shape->AddField(cell_type)};
           },
           [&](const ClassStorage& cls) -> StaticStorageHome {
             return ClassCellHome{
                 .owner = cls.owner,
-                .property = cls.properties->Add(
-                    mir::StaticPropertyDecl{
-                        .name = std::move(name), .type = cell_type})};
+                .property = cls.shape->static_properties.Add(
+                    mir::StaticPropertyDecl{.type = cell_type})};
           },
           [&](const UnitStorage& unit) -> StaticStorageHome {
-            unit.variables->Add(
-                mir::StaticVariableDecl{.name = name, .type = cell_type});
-            return UnitCellHome{.name = std::move(name)};
+            return UnitCellHome{
+                .variable = unit.variables->Add(
+                    mir::StaticVariableDecl{.type = cell_type})};
           }},
       owner);
 }
@@ -79,8 +72,8 @@ auto BindBodyStatics(
     const base::Registry<hir::ProceduralScopeDecl, hir::ProceduralScopeId>&
         scopes,
     const StaticStorageOwner& owner, const hir::ProceduralBody& body,
-    std::span<const hir::ProceduralVarId> signature_bound,
-    std::string_view callable_name) -> StaticVarBindings {
+    std::span<const hir::ProceduralVarId> signature_bound)
+    -> StaticVarBindings {
   StaticVarBindings bindings;
   // Descends the body's lexical scope tree, since a declaration states its
   // scope only by sitting in it.
@@ -97,11 +90,7 @@ auto BindBodyStatics(
           StaticVarBinding{
               .var = var_id,
               .scope = scope_id,
-              .home = DeclareStaticCell(
-                  owner,
-                  std::format(
-                      "{}__{}_{}", callable_name, var.name, var_id.value),
-                  cell_type),
+              .home = DeclareStaticCell(owner, cell_type),
               .cell_type = cell_type});
     }
     for (const hir::ProceduralScopeId child : scope.child_scopes) {
@@ -147,9 +136,8 @@ auto BuildStaticStorageAccess(
                 .data =
                     mir::ReferenceExpr{
                         .target =
-                            mir::ExternalUnitVariableRef{
-                                .unit_name = unit.name,
-                                .variable_name = namespace_cell.name}},
+                            mir::StaticVariableRef{
+                                .variable = namespace_cell.variable}},
                 .type = cell_type};
           }},
       home);

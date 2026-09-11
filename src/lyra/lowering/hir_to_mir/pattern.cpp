@@ -138,9 +138,8 @@ void EmitPatternBindings(
           [&](const hir::VariablePattern& v) {
             const mir::TypeId local_type =
                 owner.TranslateType(pattern.subject_type);
-            const mir::LocalId local_id = assign_frame.bindings->Declare(
-                BindingOriginId::Pattern(pattern_id),
-                mir::LocalDecl{.name = v.name, .type = local_type});
+            const mir::LocalId local_id = assign_frame.bindings->DeclareNamed(
+                BindingOriginId::Pattern(pattern_id), v.name, local_type);
 
             auto& decl_block = *decl_frame.current_block;
             const mir::ExprId default_id =

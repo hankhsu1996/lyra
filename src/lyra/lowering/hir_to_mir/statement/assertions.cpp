@@ -208,8 +208,7 @@ auto LowerCoverStmt(
 
   // LRM 16.3 evaluates the expression once, and both the coverage result and
   // the statement the goal carries read that one outcome.
-  const mir::LocalId succeeded = frame.bindings->DeclareAnonymous(
-      mir::LocalDecl{.name = "_lyra_cover_succeeded", .type = bool_type});
+  const mir::LocalId succeeded = frame.bindings->DeclareAnonymous(bool_type);
   block.AppendStmt(
       mir::LocalDeclStmt{
           .target = succeeded,

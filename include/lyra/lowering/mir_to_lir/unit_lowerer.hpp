@@ -195,7 +195,8 @@ class UnitLowerer {
   // decides that: a body the source declared is reached by its name, and one
   // the compiler synthesized by which body it is.
   [[nodiscard]] auto ClassBodySymbol(
-      const mir::Class& cls, mir::CallableId id) const -> std::string;
+      mir::ClassId owner, const mir::Class& cls, mir::CallableId id) const
+      -> std::string;
 
   auto TranslateType(const mir::Type& ty) -> lir::Type;
   // The LIR mirror of a runtime-library record type. MIR is written once for

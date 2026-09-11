@@ -270,10 +270,6 @@ auto LowerTimingControl(
   }
 }
 
-// The name a held right-hand side carries. LRM 9.4.5 gives it no name of its
-// own, so one that cannot collide with a design's is minted here.
-constexpr std::string_view kHeldValueName = "_lyra_intra_assign";
-
 // LRM 15.5.1: when the trigger happens. The grammar puts a control only on the
 // nonblocking form, which is the one whose effect is due in a slot other than
 // where the statement stands, so a blocking form carrying one is a shape the
@@ -372,7 +368,7 @@ auto LowerIntraAssignmentStmt(
   const hir::ProceduralVarId held = body.procedural_vars.Declare();
   body.procedural_vars.Define(
       held, hir::ProceduralVarDecl{
-                .name = std::string{kHeldValueName},
+                .name = std::nullopt,
                 .type = type,
                 .lifetime = hir::VariableLifetime::kAutomatic});
   inner.OpenScope().declarations.push_back(held);

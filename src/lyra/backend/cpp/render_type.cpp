@@ -150,10 +150,10 @@ auto RenderTypeAsCpp(const mir::CompilationUnit& unit, mir::TypeId type_id)
             return "lyra::value::WildcardKey";
           },
           [&unit](const mir::ObjectType& o) -> std::string {
-            return ToCppName(unit.GetClass(o.class_id).name);
+            return CppClassName(unit.GetClass(o.class_id), o.class_id);
           },
-          [&unit](const mir::StructType& s) -> std::string {
-            return ToCppName(unit.GetStruct(s.struct_id).name);
+          [](const mir::StructType& s) -> std::string {
+            return CppStructName(s.struct_id);
           },
           [&unit](const mir::ExternalUnitObjectType& e) -> std::string {
             // The class a unit publishes its instances as is named on its
@@ -502,7 +502,7 @@ auto RenderClassRefAsCpp(
   return std::visit(
       Overloaded{
           [&unit](const mir::IntraUnitClassRef& i) -> std::string {
-            return ToCppName(unit.GetClass(i.class_id).name);
+            return CppClassName(unit.GetClass(i.class_id), i.class_id);
           },
           [](const mir::CrossUnitClassRef& e) -> std::string {
             return std::format(

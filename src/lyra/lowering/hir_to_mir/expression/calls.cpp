@@ -106,8 +106,8 @@ auto LowerAssociativeTraversal(
                       mir::Direct{.target = b.method, .receiver = map_read_id},
                   .arguments = {idx_read_id}},
           .type = payload_type});
-  const mir::LocalId completion = steps.Bindings().DeclareAnonymous(
-      mir::LocalDecl{.name = "_lyra_trav", .type = payload_type});
+  const mir::LocalId completion =
+      steps.Bindings().DeclareAnonymous(payload_type);
   body.AppendStmt(mir::LocalDeclStmt{.target = completion, .init = query_id});
 
   auto idx_lhs_or = lowerer.LowerLhsExpr(hir_exprs.Get(idx_hir), step_frame);
@@ -165,9 +165,6 @@ auto BuildArrayMethodClosure(
       assoc != nullptr) {
     index_type = unit_lowerer.TranslateType(assoc->key_type);
   }
-  const std::string iterator_name =
-      with_clause != nullptr ? with_clause->element_name : std::string{"item"};
-
   ClosureBuilder closure(lowerer.Owner().Unit(), frame);
   mir::Block& body = closure.Body();
 
@@ -178,26 +175,27 @@ auto BuildArrayMethodClosure(
     // resolves each reference by identity and captures it -- through the same
     // forwarding machinery as any binding -- when it crosses a closure boundary
     // (a clause nested in the body still reaches this outer iterator).
-    closure.AddParam(
+    closure.AddNamedParam(
         BindingOriginId::Iterator(
             with_clause->id.value,
             static_cast<std::uint32_t>(hir::IterationBindingRole::kElement)),
-        iterator_name, item_type);
+        with_clause->element_name, item_type);
     closure.AddParam(
         BindingOriginId::Iterator(
             with_clause->id.value,
             static_cast<std::uint32_t>(hir::IterationBindingRole::kIndex)),
-        "index", index_type);
+        index_type);
     auto body_expr_or =
         lowerer.LowerExpr(hir_exprs.Get(with_clause->expr), closure.Frame());
     if (!body_expr_or) return std::unexpected(std::move(body_expr_or.error()));
     body_return_value = body.exprs.Add(*std::move(body_expr_or));
   } else {
-    // A built-in reduction (no with-clause) returns the bare element; its two
-    // parameters carry no cross-body identity -- nothing can capture them.
-    const mir::LocalId item_binding =
-        closure.AddParamAnonymous(iterator_name, item_type);
-    closure.AddParamAnonymous("index", index_type);
+    // A built-in reduction (no with-clause) returns the bare element. The
+    // source wrote no iteration variable for it, so neither parameter answers
+    // to an identifier, and neither carries a cross-body identity because
+    // nothing can capture them.
+    const mir::LocalId item_binding = closure.AddParamAnonymous(item_type);
+    closure.AddParamAnonymous(index_type);
     body_return_value =
         body.exprs.Add(mir::MakeLocalRefExpr(item_binding, item_type));
   }

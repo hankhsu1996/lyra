@@ -1,9 +1,5 @@
 #include "lyra/mir/packed_type_descriptor.hpp"
 
-#include <cstddef>
-#include <cstdint>
-#include <format>
-#include <string>
 #include <utility>
 #include <vector>
 
@@ -13,10 +9,6 @@
 #include "lyra/mir/type.hpp"
 
 namespace lyra::mir {
-
-auto PackedTypeDescriptionName(TypeId integral) -> std::string {
-  return std::format("_lyra_packed_type_{}", integral.value);
-}
 
 namespace {
 

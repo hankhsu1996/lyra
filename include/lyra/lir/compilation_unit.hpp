@@ -1,5 +1,6 @@
 #pragma once
 
+#include <cstdint>
 #include <optional>
 #include <string>
 #include <string_view>
@@ -58,11 +59,22 @@ using Base = std::variant<IntraUnitBase, CrossUnitBase, ObjectTreeBase>;
 
 // A typed member of whatever declares it -- the storage a member place reaches
 // by a member projection. Its position in the declaring list is its member
-// identity there. The C++ backend realizes a member as a native field; a
-// generic runtime value realizes it as runtime-owned storage.
+// identity there, and it carries no other, because nothing below here reaches a
+// member by a name: this layer's consumers index. The C++ backend realizes a
+// member as a native field; a generic runtime value realizes it as
+// runtime-owned storage.
 struct Member {
-  std::string name;
   TypeId type;
+};
+
+// One member a class answers a name with, and where it sits. A referrer that
+// cannot name the class counts no position for itself and asks by name instead;
+// nothing on the simulation path reads this. Only what the source declared
+// takes part, since a name is all such a referrer has to ask with and the
+// compiler minted none for the rest.
+struct NamedMember {
+  std::string name;
+  std::uint32_t position;
 };
 
 // One behavior a class takes over from its lineage (LRM 8.20): which behavior,
@@ -87,26 +99,6 @@ struct PublishedSubroutine {
   FunctionId body;
 };
 
-// One compiled class: its name, the base it extends, the members it declares,
-// its constructor, the behaviors it introduces, the ones it takes over, and the
-// subroutines it answers a name with. A class lists a function rather than
-// holding it because the function is the same kind of thing wherever it is
-// listed.
-//
-// A class states what it adds to its lineage and nothing about the lineage
-// itself -- the same way it states its own members and not its base's. What a
-// value of it holds and what a value of it answers are read from the lineage,
-// which is what keeps one declaration's meaning independent of what extends it.
-//
-// An introduction's position in the list is the behavior's identity here, the
-// way a member's position is its identity above, and a body is absent where the
-// behavior is declared without an implementation (LRM 8.21); no value answers
-// such a behavior, because a class leaving one unanswered is never constructed.
-// `name` is the class's own, as its unit declared it -- not a symbol. What the
-// class links under, what its constructor links under, and what the record
-// describing it links under are three different symbols over those same parts,
-// so none of them is derivable from another and each is composed where it is
-// used.
 // One behavior a class introduces (LRM 8.20): the identifier a referrer spells,
 // and the body answering it -- absent where the class declares the behavior
 // without one (LRM 8.21 pure virtual). The name is here because a referrer that
@@ -126,10 +118,34 @@ struct DeclaredClass {
   ClassId declaration;
 };
 
+// One compiled class: its name, the base it extends, the members it declares,
+// its constructor, the behaviors it introduces, the ones it takes over, and the
+// subroutines it answers a name with. A class lists a function rather than
+// holding it because the function is the same kind of thing wherever it is
+// listed.
+//
+// A class states what it adds to its lineage and nothing about the lineage
+// itself -- the same way it states its own members and not its base's. What a
+// value of it holds and what a value of it answers are read from the lineage,
+// which is what keeps one declaration's meaning independent of what extends it.
+//
+// An introduction's position in the list is the behavior's identity here, the
+// way a member's position is its identity above, and a body is absent where the
+// behavior is declared without an implementation (LRM 8.21); no value answers
+// such a behavior, because a class leaving one unanswered is never constructed.
+// What the class links under, what its constructor links under, and what the
+// record describing it links under are three different symbols over the same
+// parts, so none of them is derivable from another and each is composed where
+// it is used.
 struct Class {
-  std::string name;
+  // The identifier the source declared this class under, absent for a scope of
+  // the design hierarchy, which the lowering built. Every symbol qualified by
+  // this class is composed from it where it is present and from the class's own
+  // position where it is not, so the two ranges never meet.
+  std::optional<std::string> name;
   std::optional<Base> base;
   std::vector<Member> members;
+  std::vector<NamedMember> named_members;
   FunctionId constructor{};
   std::vector<Introduction> introduces;
   std::vector<DispatchTakeover> takeovers;
@@ -205,8 +221,9 @@ struct Closure {
 // any code, since a struct is storage a builder fills rather than a thing that
 // runs.
 // `name` is the struct's own, as its unit named it -- not a symbol.
+// It carries no name: the source declares no such aggregate, so its position in
+// the unit's registry is the whole of what identifies it.
 struct Struct {
-  std::string name;
   std::vector<Member> fields;
 };
 

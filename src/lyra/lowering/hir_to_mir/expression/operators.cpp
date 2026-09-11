@@ -586,8 +586,8 @@ auto BuildMergingConditional(
       lowerer.HirExprs().Get(c.conditions.front().expr), steps.Frame());
   if (!predicate_or) return std::unexpected(std::move(predicate_or.error()));
   const mir::ExprId predicate_value = body.exprs.Add(*std::move(predicate_or));
-  const mir::LocalId predicate_var = steps.Bindings().DeclareAnonymous(
-      mir::LocalDecl{.name = "_lyra_predicate", .type = predicate_type});
+  const mir::LocalId predicate_var =
+      steps.Bindings().DeclareAnonymous(predicate_type);
   body.AppendStmt(
       mir::LocalDeclStmt{.target = predicate_var, .init = predicate_value});
   const auto read_predicate = [&] {
@@ -721,8 +721,8 @@ auto LowerHirBindingConditionalExpr(
   // A clause pattern declares an identifier, so this predicate cannot be an
   // rvalue: the arms become assignments into a result local under the same
   // clause chain an `if` uses, and the expression is a read of that local.
-  const mir::LocalId result_local = frame.bindings->DeclareAnonymous(
-      mir::LocalDecl{.name = "_lyra_cond_result", .type = result_type});
+  const mir::LocalId result_local =
+      frame.bindings->DeclareAnonymous(result_type);
   block.AppendStmt(
       mir::LocalDeclStmt{
           .target = result_local,
@@ -731,8 +731,7 @@ auto LowerHirBindingConditionalExpr(
 
   // A conditional expression always has both arms, so the else-arm is always
   // reachable and the chain always has to report whether it held.
-  const mir::LocalId taken_flag = frame.bindings->DeclareAnonymous(
-      mir::LocalDecl{.name = "_lyra_cond_taken", .type = bit1_type});
+  const mir::LocalId taken_flag = frame.bindings->DeclareAnonymous(bit1_type);
   block.AppendStmt(
       mir::LocalDeclStmt{
           .target = taken_flag, .init = BuildBit1Literal(unit, block, false)});

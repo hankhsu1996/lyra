@@ -3,9 +3,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <expected>
-#include <format>
 #include <optional>
-#include <string>
 #include <utility>
 #include <variant>
 #include <vector>
@@ -28,11 +26,6 @@
 namespace lyra::lowering::hir_to_mir {
 
 namespace {
-
-auto AssertionName(hir::ConcurrentAssertionId id, std::string_view part)
-    -> std::string {
-  return std::format("concurrent_assertion_{}__{}", id.value, part);
-}
 
 // A call on the storage holding one assertion's attempts. Every one of them is
 // reached through its address, so the receiver is the member place and nothing
@@ -86,16 +79,13 @@ void Assign(
 // and a one-word automaton is that run at length one.
 auto DeclareWords(
     CallableBindings& bindings, mir::Block& block, mir::TypeId type,
-    std::string_view name, const PositionSet& initial)
-    -> std::vector<mir::LocalId> {
+    const PositionSet& initial) -> std::vector<mir::LocalId> {
   std::vector<mir::LocalId> locals;
   locals.reserve(initial.size());
-  for (std::size_t word = 0; word < initial.size(); ++word) {
-    const mir::LocalId local = bindings.DeclareAnonymous(
-        mir::LocalDecl{.name = std::format("{}_{}", name, word), .type = type});
+  for (const auto& word : initial) {
+    const mir::LocalId local = bindings.DeclareAnonymous(type);
     block.AppendStmt(
-        mir::LocalDeclStmt{
-            .target = local, .init = Word(block, type, initial[word])});
+        mir::LocalDeclStmt{.target = local, .init = Word(block, type, word)});
     locals.push_back(local);
   }
   return locals;
@@ -221,9 +211,7 @@ auto LowerActionArm(
   mir::CallableCode code = mir::CallableCode::Defined();
   CallableBindings bindings(unit, code);
   const mir::LocalId self_id = bindings.Declare(
-      BindingOriginId::Receiver(),
-      mir::LocalDecl{
-          .name = "self", .type = parent.current_class->self_pointer_type});
+      BindingOriginId::Receiver(), parent.current_class->self_pointer_type);
   code.params = {self_id};
   code.result_type = unit.builtins.void_type;
 
@@ -335,9 +323,7 @@ auto LowerAdvance(
   mir::CallableCode code = mir::CallableCode::Defined();
   CallableBindings bindings(unit, code);
   const mir::LocalId self_id = bindings.Declare(
-      BindingOriginId::Receiver(),
-      mir::LocalDecl{
-          .name = "self", .type = parent.current_class->self_pointer_type});
+      BindingOriginId::Receiver(), parent.current_class->self_pointer_type);
   code.params = {self_id};
   code.result_type = void_type;
 
@@ -395,7 +381,7 @@ auto LowerAdvance(
   // recorded outermost-first, so one forward pass over them is the whole
   // cascade however deep the implications nest.
   const std::vector<mir::LocalId> need =
-      DeclareWords(bindings, body, word_type, "need", empty);
+      DeclareWords(bindings, body, word_type, empty);
   for (std::uint32_t word = 0; word < automaton.words; ++word) {
     Assign(
         body, need[word], word_type,
@@ -417,7 +403,7 @@ auto LowerAdvance(
   // The design's own Boolean expressions, as of the Preponed region of this
   // tick's time step (LRM 16.5.1), and only where something waits on them.
   const std::vector<mir::LocalId> hold =
-      DeclareWords(bindings, body, word_type, "hold", empty);
+      DeclareWords(bindings, body, word_type, empty);
   for (std::size_t position = 0; position < automaton.positions.size();
        ++position) {
     const PositionSet at = bit_at(position);
@@ -451,8 +437,7 @@ auto LowerAdvance(
   // Every evaluation this tick has not stepped, including the ones an
   // overlapped implication seeds during the sweep, which is what reads a
   // consequent at the very tick its antecedent matched (LRM 16.12.7).
-  const mir::LocalId cursor = bindings.DeclareAnonymous(
-      mir::LocalDecl{.name = "evaluation", .type = index_type});
+  const mir::LocalId cursor = bindings.DeclareAnonymous(index_type);
   body.AppendStmt(
       mir::LocalDeclStmt{
           .target = cursor,
@@ -462,7 +447,7 @@ auto LowerAdvance(
 
   mir::Block sweep;
   const std::vector<mir::LocalId> bits =
-      DeclareWords(bindings, sweep, word_type, "live", empty);
+      DeclareWords(bindings, sweep, word_type, empty);
   for (std::uint32_t word = 0; word < automaton.words; ++word) {
     Assign(
         sweep, bits[word], word_type,
@@ -472,7 +457,7 @@ auto LowerAdvance(
             word_type));
   }
   const std::vector<mir::LocalId> matched =
-      DeclareWords(bindings, sweep, word_type, "matched", empty);
+      DeclareWords(bindings, sweep, word_type, empty);
   for (std::uint32_t word = 0; word < automaton.words; ++word) {
     Assign(
         sweep, matched[word], word_type,
@@ -481,7 +466,7 @@ auto LowerAdvance(
            Read(sweep, hold[word], word_type)));
   }
   const std::vector<mir::LocalId> next =
-      DeclareWords(bindings, sweep, word_type, "next", empty);
+      DeclareWords(bindings, sweep, word_type, empty);
   for (std::size_t position = 0; position < automaton.positions.size();
        ++position) {
     mir::Block advanced;
@@ -553,9 +538,7 @@ auto LowerDisableWatcher(
   mir::CallableCode code = mir::CallableCode::Defined();
   CallableBindings bindings(unit, code);
   const mir::LocalId self_id = bindings.Declare(
-      BindingOriginId::Receiver(),
-      mir::LocalDecl{
-          .name = "self", .type = ctor_frame.current_class->self_pointer_type});
+      BindingOriginId::Receiver(), ctor_frame.current_class->self_pointer_type);
 
   mir::Block body_block;
   const WalkFrame body_frame =
@@ -610,9 +593,8 @@ auto LowerProcess(
 
   mir::CallableCode code = mir::CallableCode::Defined();
   CallableBindings bindings(unit, code);
-  const mir::LocalId self_id = bindings.Declare(
-      BindingOriginId::Receiver(),
-      mir::LocalDecl{.name = "self", .type = self_ptr_type});
+  const mir::LocalId self_id =
+      bindings.Declare(BindingOriginId::Receiver(), self_ptr_type);
 
   mir::Block body_block;
   const WalkFrame body_frame =
@@ -705,8 +687,7 @@ auto LowerConcurrentAssertion(
 
   ProcessLowerer action(
       lowerer.Owner(), &lowerer, lowerer.HirScope().time_resolution,
-      decl.action, std::nullopt, AssertionName(id, "action"), ctor_frame,
-      scopes, {});
+      decl.action, std::nullopt, ctor_frame, scopes, {});
 
   auto pass = LowerActionArm(
       action, ctor_frame, PassArmOf(decl.action, parts), decl.span);

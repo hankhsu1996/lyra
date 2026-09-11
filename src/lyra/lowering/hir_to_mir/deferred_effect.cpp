@@ -117,8 +117,7 @@ auto BuildDueSlotWaitStmt(
             if (!count_or) return std::unexpected(std::move(count_or.error()));
             const mir::ExprId count = SnapshotIntoClosure(
                 unit_lowerer, outer_frame, carrier,
-                outer_frame.current_block->exprs.Add(*std::move(count_or)),
-                "_lyra_nba_count");
+                outer_frame.current_block->exprs.Add(*std::move(count_or)));
             mir::Block loop_body;
             const WalkFrame loop_frame = carrier_frame.WithBlock(&loop_body);
             auto wait_or =

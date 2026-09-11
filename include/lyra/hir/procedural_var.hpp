@@ -31,7 +31,14 @@ enum class VariableLifetime : std::uint8_t {
 };
 
 struct ProceduralVarDecl {
-  std::string name;
+  // The identifier the source declared this variable under, absent for one the
+  // lowering introduced to carry a construct the language states without a
+  // variable -- a `foreach` bound, the right-hand side an intra-assignment
+  // delay holds (LRM 9.4.5). The absence is the fact worth having: this layer
+  // answers what the design wrote, and there is no spelling the compiler could
+  // put here that a design may not also write (LRM 5.6.1), so the layers below
+  // read the absence rather than a word chosen to look unlikely.
+  std::optional<std::string> name;
   TypeId type;
   VariableLifetime lifetime = VariableLifetime::kAutomatic;
   // An automatic local a detached (join_none / join_any) fork branch borrows

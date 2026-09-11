@@ -2,7 +2,6 @@
 
 #include <cstddef>
 #include <cstdint>
-#include <format>
 #include <optional>
 #include <string>
 #include <utility>
@@ -153,8 +152,7 @@ auto SynthesizeEnumNameCallable(
   const mir::TypeId bit_ty = unit.builtins.bit1;
 
   mir::CallableCode code = mir::CallableCode::Defined();
-  const mir::LocalId value_id =
-      code.locals.Add(mir::LocalDecl{.name = "value", .type = enum_ty});
+  const mir::LocalId value_id = code.AddLocal(enum_ty);
   code.params = {value_id};
   code.result_type = str_ty;
 
@@ -191,16 +189,12 @@ auto SynthesizeEnumStepCallable(
   const auto n = static_cast<std::int64_t>(members.size());
 
   mir::CallableCode code = mir::CallableCode::Defined();
-  const mir::LocalId value_id =
-      code.locals.Add(mir::LocalDecl{.name = "value", .type = enum_ty});
-  const mir::LocalId step_id =
-      code.locals.Add(mir::LocalDecl{.name = "step", .type = int_ty});
+  const mir::LocalId value_id = code.AddLocal(enum_ty);
+  const mir::LocalId step_id = code.AddLocal(int_ty);
   code.params = {value_id, step_id};
   code.result_type = enum_ty;
-  const mir::LocalId idx_id =
-      code.locals.Add(mir::LocalDecl{.name = "idx", .type = int_ty});
-  const mir::LocalId newidx_id =
-      code.locals.Add(mir::LocalDecl{.name = "newidx", .type = int_ty});
+  const mir::LocalId idx_id = code.AddLocal(int_ty);
+  const mir::LocalId newidx_id = code.AddLocal(int_ty);
 
   mir::Block& body = code.Body();
 

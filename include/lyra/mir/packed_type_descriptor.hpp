@@ -1,6 +1,5 @@
 #pragma once
 
-#include <string>
 #include <vector>
 
 #include "lyra/mir/compilation_unit.hpp"
@@ -10,11 +9,6 @@
 #include "lyra/mir/type_id.hpp"
 
 namespace lyra::mir {
-
-// The name a described type's description is emitted under. Derived from the
-// type, so a consumer reaches the same name without being told it, and two
-// types never collide within a unit.
-[[nodiscard]] auto PackedTypeDescriptionName(TypeId integral) -> std::string;
 
 // The declared representation a packed value-layer call lands its result into,
 // stated as an operand so it reaches the runtime through the argument list

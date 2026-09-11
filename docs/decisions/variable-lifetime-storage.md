@@ -58,12 +58,14 @@ C++ local at its source position.** A process and a method use the identical mec
   visibility to preserve. Modeling each static as a plain member collapses static-local storage and
   access onto the same paths the rest of MIR already uses for module-level signals (one type of
   decl, one MemberAccess shape, one render path, no static-frame walker state on the backend).
-- Names are made unique **uniformly** by appending an id to every static member -- not "append only
-  on collision". Sibling callables in the same owner class (`static int x;` in two processes) and
-  nested blocks repeating an identifier can both claim the same source name; the suffix removes the
-  collision without a presence decision. HIR-to-MIR mangles the name as
-  `<callable_name>__<source_name>_<hir_var_id>` before adding the decl to the owner class, so the
-  member name is unique within the class's member arena.
+- The cell answers to no identifier, so nothing has to keep two of them apart. Sibling callables in
+  the same owner class (`static int x;` in two processes) and nested blocks repeating an identifier
+  can all claim the same source name, and each still takes its own position in the pool its owner
+  declares; a position is distinct by being one (`a-name-is-a-relation-not-an-identity.md`). The
+  source name stays what the declaring scope offers a hierarchical path
+  (`procedural-storage-scope.md`), never something composed into the member -- a name joined to a
+  word of the compiler's own is a name a design may also declare, and the two then land on one
+  member.
 
 ### Why honor the frontend, and not reclassify bare to automatic
 
@@ -148,8 +150,8 @@ elaborations of the declaring scope share nothing.
 - **`$strobe` of a static local reads its end-of-timestep value** (LRM 21.2.2), because the local is
   still live in the postponed region; it is not snapshotted at the call. A later same-timestep write
   is therefore observed.
-- **The emitted static local is not in place.** It appears as a per-instance member with an id
-  suffix, away from its source position. This is inherent to per-instance static storage and is out
-  of scope here.
+- **The emitted static local is not in place.** It appears as a per-instance member spelled from the
+  position it took, away from its source position. This is inherent to per-instance static storage
+  and is out of scope here.
 - **An automatic local in a trace task (`$strobe` / `$monitor`) is rejected**, since it is not live
   in the postponed region.

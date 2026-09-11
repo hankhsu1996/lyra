@@ -133,7 +133,7 @@ auto LowerStaticStorageInto(
   mir::Block& install_block = *bring_up.install.current_block;
   ProcessLowerer lowerer(
       unit_lowerer, declaring_scope, mir_class.time_resolution,
-      hir_class.static_init, std::nullopt, "<static_init>", frame, scopes, {});
+      hir_class.static_init, std::nullopt, frame, scopes, {});
 
   // Index the source-declared initializers by their target so the per-property
   // loop reads each one in O(1): the source names only the properties it wrote,
@@ -188,7 +188,7 @@ auto LowerStaticStorageInto(
   for (const BodyStatics& body : body_statics) {
     ProcessLowerer body_lowerer(
         unit_lowerer, declaring_scope, mir_class.time_resolution, *body.body,
-        std::nullopt, std::string{body.name}, frame, scopes, body.statics);
+        std::nullopt, frame, scopes, body.statics);
     for (const StaticVarBinding& binding : body.statics) {
       auto integ = IntegrateStaticInitializer(
           body_lowerer, *body.body, bring_up, binding);
@@ -244,11 +244,14 @@ auto ClassDeclLowerer::DeclareShape(ClassShape* declaring_shape)
       .time_resolution = {},
       .ctor_prefix_params = {},
       .fields = {},
+      .named_fields = {},
       .static_properties = {},
+      .named_static_properties = {},
       .callable_signatures = {},
       .field_translation = {},
       .static_property_translation = {},
       .contained = {},
+      .declares = {},
       .is_final = false,
       .is_interface_class = hir_class.is_interface_class};
 
@@ -259,10 +262,8 @@ auto ClassDeclLowerer::DeclareShape(ClassShape* declaring_shape)
   // arrives, which is why it is also the constructor's leading parameter.
   if (declaring_shape != nullptr) {
     const mir::TypeId declaring_ptr = declaring_shape->self_pointer_type;
-    declaring_scope_field_ = shape.fields.Add(
-        mir::FieldDecl{.name = "declaring_scope", .type = declaring_ptr});
-    shape.ctor_prefix_params.Add(
-        mir::ParamDecl{.name = "declaring_scope", .type = declaring_ptr});
+    declaring_scope_field_ = shape.AddField(declaring_ptr);
+    shape.ctor_prefix_params.Add(mir::ParamDecl{.type = declaring_ptr});
   }
 
   // A property (LRM 8.4) becomes one field of the class, so where a property
@@ -283,10 +284,8 @@ auto ClassDeclLowerer::DeclareShape(ClassShape* declaring_shape)
       if (field.is_published != published) {
         continue;
       }
-      placed[id.value] = shape.fields.Add(
-          mir::FieldDecl{
-              .name = field.name,
-              .type = unit_lowerer.TranslateType(field.type)});
+      placed[id.value] = shape.AddNamedField(
+          field.name, unit_lowerer.TranslateType(field.type));
     }
   };
   place(true);
@@ -305,16 +304,9 @@ auto ClassDeclLowerer::DeclareShape(ClassShape* declaring_shape)
   // the same one.
   const StaticStorageOwner class_storage =
       declaring_shape != nullptr
-          ? StaticStorageOwner{InstanceStorage{
-                .fields = &declaring_shape->fields}}
-          : StaticStorageOwner{ClassStorage{
-                .owner = class_id_, .properties = &shape.static_properties}};
-
-  // A cell's name has to be unique in the pool that holds it. A callable name
-  // and a declaration id are unique within one class; a structural scope's pool
-  // is shared by every class it declares, so the class name joins them there.
-  const std::string cell_prefix =
-      declaring_shape != nullptr ? hir_class.name + "__" : std::string{};
+          ? StaticStorageOwner{InstanceStorage{.shape = declaring_shape}}
+          : StaticStorageOwner{
+                ClassStorage{.owner = class_id_, .shape = &shape}};
 
   // Static properties (LRM 8.9) take their cells in declaration order, recorded
   // as the loop goes. That pool also takes what the class's bodies keep, so a
@@ -331,15 +323,33 @@ auto ClassDeclLowerer::DeclareShape(ClassShape* declaring_shape)
   for (const auto& sp : hir_class.static_properties) {
     const mir::TypeId cell_type = mir::ObservableCellOf(
         unit_lowerer.Unit().types, unit_lowerer.TranslateType(sp.type));
-    shape.static_property_translation.Append(
-        DeclareStaticCell(class_storage, cell_prefix + sp.name, cell_type));
+    const StaticStorageHome home = DeclareStaticCell(class_storage, cell_type);
+    // The class answers the identifier the source declared only where the class
+    // owns the cell. Where a structural scope replicates the class the cell is
+    // storage of that scope's instance, reached as the field it is, and the
+    // class-qualified name a source reference carries is resolved before this
+    // layer rather than spelled on the storage.
+    std::visit(
+        Overloaded{
+            [&](const ClassCellHome& cell) {
+              shape.named_static_properties.push_back(
+                  mir::NamedStaticProperty{
+                      .name = sp.name, .slot = cell.property});
+            },
+            [](const InstanceFieldHome&) {},
+            [](const UnitCellHome&) {
+              throw InternalError(
+                  "DeclareStaticProperties: a class property took a cell of a "
+                  "unit's namespace");
+            }},
+        home);
+    shape.static_property_translation.Append(home);
   }
 
-  const auto bind_statics = [&](const hir::SubroutineDecl& decl,
-                                std::string_view callable_name) {
+  const auto bind_statics = [&](const hir::SubroutineDecl& decl) {
     return BindBodyStatics(
         unit_lowerer, hir_class.procedural_scopes, class_storage, decl.body,
-        SignatureBoundVars(decl), cell_prefix + std::string{callable_name});
+        SignatureBoundVars(decl));
   };
 
   // Everything a peer may need about a method before its body exists is
@@ -363,11 +373,11 @@ auto ClassDeclLowerer::DeclareShape(ClassShape* declaring_shape)
     declared_methods.push_back(
         DeclaredCallable{
             .callable = unit_lowerer.TranslateMethod(hir_class_id_, id),
-            .statics = bind_statics(method, method.name)});
+            .statics = bind_statics(method)});
   }
   shape.callable_signatures = {hir_class.methods.size(), std::move(signatures)};
   declared_methods_ = {hir_class.methods.size(), std::move(declared_methods)};
-  ctor_static_bindings_ = bind_statics(hir_class.constructor, "<ctor>");
+  ctor_static_bindings_ = bind_statics(hir_class.constructor);
 
   // No lexical scope of a method body answers for a name: a class object is
   // reached by member select rather than by scope name (LRM 23.7), so no
@@ -377,7 +387,7 @@ auto ClassDeclLowerer::DeclareShape(ClassShape* declaring_shape)
   // automatic task for every concurrent execution of it, so one cell serves
   // every object of the class.
   scopes_ = ScopesOwningDisableTargets(
-      hir_class.procedural_scopes, class_storage, cell_prefix,
+      hir_class.procedural_scopes, class_storage,
       unit_lowerer.Unit().types.Intern(
           mir::Type{mir::RuntimeLibraryType{
               .kind = mir::RuntimeLibraryKind::kCancellationTarget}}));
@@ -408,8 +418,7 @@ auto ClassDeclLowerer::PopulateBodies(
   mir::CallableCode ctor_code = mir::CallableCode::Defined();
   CallableBindings ctor_bindings(unit_lowerer.Unit(), ctor_code);
   const mir::LocalId self_id = ctor_bindings.Declare(
-      BindingOriginId::Receiver(),
-      mir::LocalDecl{.name = "self", .type = shape.self_pointer_type});
+      BindingOriginId::Receiver(), shape.self_pointer_type);
   // The instance the object belongs to lands as an ordinary local after
   // `self`, the way every construction prefix does, and is written into the
   // member the object records it in before anything the body can observe.
@@ -417,8 +426,7 @@ auto ClassDeclLowerer::PopulateBodies(
   ctor_prefix_local_ids.reserve(shape.ctor_prefix_params.size());
   for (const mir::ParamId param : shape.ctor_prefix_params.Ids()) {
     const auto& p = shape.ctor_prefix_params.Get(param);
-    ctor_prefix_local_ids.push_back(ctor_bindings.DeclareAnonymous(
-        mir::LocalDecl{.name = p.name, .type = p.type}));
+    ctor_prefix_local_ids.push_back(ctor_bindings.DeclareAnonymous(p.type));
   }
   mir::Block& ctor_block = ctor_code.Body();
   ScopeChainNode scope_link{};
@@ -429,7 +437,7 @@ auto ClassDeclLowerer::PopulateBodies(
   const hir::SubroutineDecl& ctor = hir_class.constructor;
   ProcessLowerer ctor_lowerer(
       unit_lowerer, declaring_scope_, mir_class.time_resolution, ctor.body,
-      ctor.root_stmt, "<ctor>", frame, scopes_, ctor_static_bindings_);
+      ctor.root_stmt, frame, scopes_, ctor_static_bindings_);
 
   // Register the ctor formals early so a base-constructor arg (LRM 8.7) can
   // reference them: `super.new(a * 2)` in the derived ctor reads its own `a`
@@ -554,8 +562,7 @@ auto ClassDeclLowerer::PopulateBodies(
       mir::CallableCode proto_code;
       CallableBindings proto_bindings(unit_lowerer.Unit(), proto_code);
       const mir::LocalId proto_self_id = proto_bindings.Declare(
-          BindingOriginId::Receiver(),
-          mir::LocalDecl{.name = "self", .type = shape.self_pointer_type});
+          BindingOriginId::Receiver(), shape.self_pointer_type);
       std::vector<mir::LocalId> proto_params{proto_self_id};
       proto_params.reserve(method.params.size() + 1);
       for (const auto& hir_param : method.params) {
@@ -565,9 +572,9 @@ auto ClassDeclLowerer::PopulateBodies(
         if (!param_type.has_value()) {
           continue;
         }
-        const mir::LocalId param_id = proto_bindings.Declare(
-            BindingOriginId::Procedural(hir_param.var),
-            mir::LocalDecl{.name = hir_var.name, .type = *param_type});
+        const mir::LocalId param_id = proto_bindings.DeclareProcedural(
+            BindingOriginId::Procedural(hir_param.var), hir_var.name,
+            *param_type);
         proto_params.push_back(param_id);
       }
       proto_code.params = std::move(proto_params);
@@ -589,8 +596,7 @@ auto ClassDeclLowerer::PopulateBodies(
         BodyFrame(declaring_frame, mir_class, method_link);
     ProcessLowerer method_lowerer(
         unit_lowerer, declaring_scope_, mir_class.time_resolution, method.body,
-        method.root_stmt, method.name, method_owner_frame, scopes_,
-        declared.statics);
+        method.root_stmt, method_owner_frame, scopes_, declared.statics);
     auto method_code_or = method_lowerer.Run(method);
     if (!method_code_or) {
       return std::unexpected(std::move(method_code_or.error()));

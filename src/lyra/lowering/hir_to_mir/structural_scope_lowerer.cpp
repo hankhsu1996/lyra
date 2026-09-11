@@ -62,30 +62,9 @@ namespace {
 void AttachRuntimeScopeCtorPrefix(
     const mir::CompilationUnit& unit, ClassShape& shape) {
   const auto& builtins = unit.builtins;
+  shape.ctor_prefix_params.Add(mir::ParamDecl{.type = builtins.scope_ptr});
   shape.ctor_prefix_params.Add(
-      mir::ParamDecl{.name = "parent", .type = builtins.scope_ptr});
-  shape.ctor_prefix_params.Add(
-      mir::ParamDecl{.name = "segment", .type = builtins.hierarchy_segment});
-}
-
-// The callable name for a body SV leaves unnamed: a process (LRM 9.2), a
-// scope-level continuous assign (LRM 10.3), and the implicit assign a port
-// connection carries (LRM 23.3.3). Each is named after what it is and where it
-// stands among its own kind, both facts of the HIR entity itself. Nothing here
-// consults how many callables the class already holds, which is what lets the
-// shape phase mangle a process's static storage against a name the body phase
-// produces later, and what keeps one body added to a scope from renaming every
-// other body in it.
-auto ProcessCallableName(hir::ProcessId id) -> std::string {
-  return std::format("process_{}", id.value);
-}
-
-auto ContinuousAssignCallableName(hir::ContinuousAssignId id) -> std::string {
-  return std::format("continuous_assign_{}", id.value);
-}
-
-auto PortConnectionCallableName(hir::PortConnectionId id) -> std::string {
-  return std::format("port_connection_{}", id.value);
+      mir::ParamDecl{.type = builtins.hierarchy_segment});
 }
 
 auto MakeUniqueObjectPointer(UnitLowerer& unit_lowerer, mir::ClassId class_id)
@@ -294,8 +273,7 @@ template <typename Id>
 auto DeclareClassNameSlots(
     StructuralScopeLowerer& lowerer, ClassShape& shape,
     const base::Arena<hir::ClassNameDecl, Id>& decls,
-    mir::RuntimeLibraryKind answer, std::string_view prefix)
-    -> base::Translation<Id, mir::FieldId> {
+    mir::RuntimeLibraryKind answer) -> base::Translation<Id, mir::FieldId> {
   mir::TypePool& types = lowerer.Owner().Unit().types;
   std::vector<mir::FieldId> slots;
   slots.reserve(decls.size());
@@ -308,10 +286,7 @@ auto DeclareClassNameSlots(
             .pointee = types.Intern(
                 mir::Type{mir::RuntimeLibraryType{.kind = answer}}),
             .ownership = mir::PointerOwnership::kBorrowed}});
-    slots.push_back(shape.fields.Add(
-        mir::FieldDecl{
-            .name = std::string{prefix} + std::to_string(at),
-            .type = slot_type}));
+    slots.push_back(shape.AddField(slot_type));
   }
   return {decls.size(), std::move(slots)};
 }
@@ -323,7 +298,6 @@ auto DeclareRoutedRefSlots(StructuralScopeLowerer& lowerer, ClassShape& shape)
   std::vector<RoutedRefMeta> slots;
   slots.reserve(hir_scope.routed_refs.size());
   for (const auto& cu : hir_scope.routed_refs) {
-    std::string member_name = "ep" + std::to_string(slots.size());
     // What the slot is typed by is what the endpoint holds. A cell, an object,
     // and a disable target are each reached by a pointer to them; an entry is a
     // code address, which is one already.
@@ -354,10 +328,7 @@ auto DeclareRoutedRefSlots(StructuralScopeLowerer& lowerer, ClassShape& shape)
         hir::EndpointOf(cu.recipe.leaf));
     slots.push_back(
         RoutedRefMeta{
-            .target = shape.fields.Add(
-                mir::FieldDecl{
-                    .name = std::move(member_name), .type = slot_type}),
-            .slot_type = slot_type});
+            .target = shape.AddField(slot_type), .slot_type = slot_type});
   }
   return {hir_scope.routed_refs.size(), std::move(slots)};
 }
@@ -1176,8 +1147,7 @@ auto InstallPortConnections(
         .strength = support::StrengthLevel::kStrong,
         .sensitivity_list = data.sensitivity};
     auto method_or = LowerContinuousAssign(
-        lowerer, frame, resolve_frame, init_frame,
-        PortConnectionCallableName(id), assign);
+        lowerer, frame, resolve_frame, init_frame, assign);
     if (!method_or) return std::unexpected(std::move(method_or.error()));
     const mir::CallableId body = mir_class.callables.Add(std::move(*method_or));
     AppendProcessRegistration(unit_lowerer, activate_frame, body, false);
@@ -1399,12 +1369,10 @@ auto StructuralScopeLowerer::DeclareShape() -> diag::Result<mir::ClassId> {
         Overloaded{
             [&](const hir::StructuralDataObjectId& id) {
               const auto& d = hir_scope.structural_data_objects.Get(id);
-              data_object_fields[id.value] = shape.fields.Add(
-                  mir::FieldDecl{
-                      .name = d.name,
-                      .type = unit_lowerer.MemberCellType(
-                          unit_lowerer.TranslateType(d.type),
-                          hir::StorageOf(d))});
+              data_object_fields[id.value] = shape.AddNamedField(
+                  d.name,
+                  unit_lowerer.MemberCellType(
+                      unit_lowerer.TranslateType(d.type), hir::StorageOf(d)));
             },
             [&](const hir::InstanceMemberId& id) {
               // Every instance member keeps one borrowed typed handle on this
@@ -1415,11 +1383,10 @@ auto StructuralScopeLowerer::DeclareShape() -> diag::Result<mir::ClassId> {
               // reaching an element never has to name the member a second
               // time.
               const auto& im = hir_scope.instance_members.Get(id);
-              instance_fields[id.value] = shape.fields.Add(
-                  mir::FieldDecl{
-                      .name = im.instance_name,
-                      .type = MakeInstanceMemberType(
-                          unit_lowerer, im, mir::PointerOwnership::kBorrowed)});
+              instance_fields[id.value] = shape.AddNamedField(
+                  im.instance_name,
+                  MakeInstanceMemberType(
+                      unit_lowerer, im, mir::PointerOwnership::kBorrowed));
             },
             [&](const hir::InterfacePortId& id) {
               const auto& port = hir_scope.interface_ports.Get(id);
@@ -1432,14 +1399,12 @@ auto StructuralScopeLowerer::DeclareShape() -> diag::Result<mir::ClassId> {
                   mir::Type{mir::ExternalUnitObjectType{
                       .object = unit_lowerer.TranslateExternalUnitObject(
                           port.object)}});
-              interface_port_fields[id.value] = shape.fields.Add(
-                  mir::FieldDecl{
-                      .name = port.name,
-                      .type = unit_lowerer.MemberCellType(
-                          SequenceOver(
-                              unit_lowerer, object_type,
-                              port.array_dims.size()),
-                          hir::BorrowedObjectStorage{})});
+              interface_port_fields[id.value] = shape.AddNamedField(
+                  port.name,
+                  unit_lowerer.MemberCellType(
+                      SequenceOver(
+                          unit_lowerer, object_type, port.array_dims.size()),
+                      hir::BorrowedObjectStorage{}));
             }},
         decl);
   }
@@ -1458,11 +1423,9 @@ auto StructuralScopeLowerer::DeclareShape() -> diag::Result<mir::ClassId> {
         hir_scope.sampled_histories.Get(id);
     const mir::TypeId value_type =
         unit_lowerer.TranslateType(hir_scope.exprs.Get(history.subject).type);
-    sampled_history_fields.push_back(shape.fields.Add(
-        mir::FieldDecl{
-            .name = std::format("sampled_history_{}", id.value),
-            .type = unit_lowerer.Unit().types.Intern(
-                mir::Type{mir::SampledHistoryType{.value = value_type}})}));
+    sampled_history_fields.push_back(
+        shape.AddField(unit_lowerer.Unit().types.Intern(
+            mir::Type{mir::SampledHistoryType{.value = value_type}})));
   }
   sampled_history_fields_ = {
       hir_scope.sampled_histories.size(), std::move(sampled_history_fields)};
@@ -1474,13 +1437,10 @@ auto StructuralScopeLowerer::DeclareShape() -> diag::Result<mir::ClassId> {
   // attempt is owed are fixed by filling the storage rather than by naming it.
   std::vector<mir::FieldId> concurrent_assertion_fields;
   concurrent_assertion_fields.reserve(hir_scope.concurrent_assertions.size());
-  for (const hir::ConcurrentAssertionId id :
-       hir_scope.concurrent_assertions.Ids()) {
-    concurrent_assertion_fields.push_back(shape.fields.Add(
-        mir::FieldDecl{
-            .name = std::format("concurrent_assertion_{}", id.value),
-            .type = unit_lowerer.Unit().types.Intern(
-                mir::Type{mir::EvaluationAttemptsType{}})}));
+  for (std::size_t i = 0; i < hir_scope.concurrent_assertions.size(); ++i) {
+    concurrent_assertion_fields.push_back(
+        shape.AddField(unit_lowerer.Unit().types.Intern(
+            mir::Type{mir::EvaluationAttemptsType{}})));
   }
   concurrent_assertion_fields_ = {
       hir_scope.concurrent_assertions.size(),
@@ -1493,10 +1453,10 @@ auto StructuralScopeLowerer::DeclareShape() -> diag::Result<mir::ClassId> {
   routed_ref_targets_ = DeclareRoutedRefSlots(*this, shape);
   property_coordinate_targets_ = DeclareClassNameSlots(
       *this, shape, HirScope().property_coordinates,
-      mir::RuntimeLibraryKind::kPropertyCoordinate, "pc");
+      mir::RuntimeLibraryKind::kPropertyCoordinate);
   behavior_coordinate_targets_ = DeclareClassNameSlots(
       *this, shape, HirScope().behavior_coordinates,
-      mir::RuntimeLibraryKind::kBehaviorCoordinate, "bc");
+      mir::RuntimeLibraryKind::kBehaviorCoordinate);
 
   // Recursively declare every owned generate child's class shape; each child
   // lowerer is retained for the body sweep.
@@ -1511,13 +1471,8 @@ auto StructuralScopeLowerer::DeclareShape() -> diag::Result<mir::ClassId> {
     std::vector<ChildStructuralScopeBinding> gen_bindings;
     gen_bindings.reserve(gen.child_scopes.size());
     for (const auto& child_scope : gen.child_scopes) {
-      // Every elaborated block of a loop generate shares one source label
-      // (LRM 27.4), so the child's own unique scope name is what keeps their
-      // borrowed handles apart on the parent.
-      std::string scope_name = unit_lowerer.NextGenerateScopeName("gen");
-      std::string handle_name = std::format("{}_borrowed_handle", scope_name);
       auto child = std::make_unique<StructuralScopeLowerer>(
-          unit_lowerer, this, std::move(scope_name), child_scope);
+          unit_lowerer, this, std::nullopt, child_scope);
       auto child_r = child->DeclareShape();
       if (!child_r) return std::unexpected(std::move(child_r.error()));
 
@@ -1532,8 +1487,7 @@ auto StructuralScopeLowerer::DeclareShape() -> diag::Result<mir::ClassId> {
               .pointee = unit_lowerer.Unit().types.Intern(
                   mir::Type{mir::ObjectType{.class_id = child_id}}),
               .ownership = mir::PointerOwnership::kBorrowed}});
-      const mir::FieldId borrowed_handle = shape.fields.Add(
-          mir::FieldDecl{.name = std::move(handle_name), .type = handle_type});
+      const mir::FieldId borrowed_handle = shape.AddField(handle_type);
       gen_bindings.push_back(
           ChildStructuralScopeBinding{
               .label = child_scope.source_name,
@@ -1565,11 +1519,9 @@ auto StructuralScopeLowerer::DeclareShape() -> diag::Result<mir::ClassId> {
   for (const hir::ProceduralScopeId scope_id :
        hir_scope.procedural_scopes.Ids()) {
     const auto& scope = hir_scope.procedural_scopes.Get(scope_id);
-    const std::string segment = hir::SegmentName(scope, scope_id);
 
     const mir::ClassId node_class = unit_lowerer.Unit().DeclareClass();
     ClassShape node_shape;
-    node_shape.name = std::format("{}__{}", name_, segment);
     node_shape.is_final = true;
     node_shape.self_pointer_type = unit_lowerer.Unit().types.Intern(
         mir::Type{mir::PointerType{
@@ -1590,16 +1542,13 @@ auto StructuralScopeLowerer::DeclareShape() -> diag::Result<mir::ClassId> {
         .name_node =
             ScopeNameNode{
                 .class_id = node_class,
-                .borrowed_handle = shape.fields.Add(
-                    mir::FieldDecl{
-                        .name = std::format("{}_borrowed_handle", segment),
-                        .type = unit_lowerer.Unit().types.Intern(
-                            mir::Type{mir::PointerType{
-                                .pointee = unit_lowerer.Unit().types.Intern(
-                                    mir::Type{mir::ObjectType{
-                                        .class_id = node_class}}),
-                                .ownership =
-                                    mir::PointerOwnership::kBorrowed}})})},
+                .borrowed_handle =
+                    shape.AddField(unit_lowerer.Unit().types.Intern(
+                        mir::Type{mir::PointerType{
+                            .pointee = unit_lowerer.Unit().types.Intern(
+                                mir::Type{
+                                    mir::ObjectType{.class_id = node_class}}),
+                            .ownership = mir::PointerOwnership::kBorrowed}}))},
         .disable_target = std::nullopt};
 
     // What a `disable` of this scope invalidates (LRM 9.6.2). Its targets are
@@ -1610,9 +1559,7 @@ auto StructuralScopeLowerer::DeclareShape() -> diag::Result<mir::ClassId> {
     // instance, shared by every activation of the scope.
     if (scope.source_name.has_value()) {
       node.disable_target = DeclareStaticCell(
-          InstanceStorage{.fields = &shape.fields},
-          std::format("{}__cancel_{}", segment, scope_id.value),
-          cancellation_target_type);
+          InstanceStorage{.shape = &shape}, cancellation_target_type);
     }
     scopes.push_back(node);
   }
@@ -1638,8 +1585,8 @@ auto StructuralScopeLowerer::DeclareShape() -> diag::Result<mir::ClassId> {
             .callable = subroutine_ids.Take(),
             .statics = BindBodyStatics(
                 unit_lowerer, hir_scope.procedural_scopes,
-                InstanceStorage{.fields = &shape.fields}, s.body,
-                SignatureBoundVars(s), s.name)});
+                InstanceStorage{.shape = &shape}, s.body,
+                SignatureBoundVars(s))});
   }
   shape.callable_signatures = {
       hir_scope.structural_subroutines.size(), std::move(signatures)};
@@ -1651,8 +1598,8 @@ auto StructuralScopeLowerer::DeclareShape() -> diag::Result<mir::ClassId> {
   for (const hir::ProcessId id : hir_scope.processes.Ids()) {
     process_statics.push_back(BindBodyStatics(
         unit_lowerer, hir_scope.procedural_scopes,
-        InstanceStorage{.fields = &shape.fields},
-        hir_scope.processes.Get(id).body, {}, ProcessCallableName(id)));
+        InstanceStorage{.shape = &shape}, hir_scope.processes.Get(id).body,
+        {}));
   }
   process_static_bindings_ = {
       hir_scope.processes.size(), std::move(process_statics)};
@@ -1694,8 +1641,7 @@ auto SynthesizeSubroutineEntry(
     mir::CallableId subroutine) -> mir::CallableCode {
   const mir::CallableCode& target = cls.callables.Get(subroutine).code;
   mir::CallableCode code = mir::CallableCode::Defined();
-  const mir::LocalId self = code.locals.Add(
-      mir::LocalDecl{.name = "self", .type = unit.builtins.scope_ptr});
+  const mir::LocalId self = code.AddLocal(unit.builtins.scope_ptr);
   code.params.push_back(self);
   // The subroutine's own receiver leads its params, and the entry supplies it
   // from the scope it was handed rather than forwarding one; what the entry
@@ -1707,8 +1653,7 @@ auto SynthesizeSubroutineEntry(
   arguments.reserve(formals.size());
   for (const mir::LocalId formal : formals) {
     const mir::LocalDecl& decl = target.locals.Get(formal);
-    const mir::LocalId param =
-        code.locals.Add(mir::LocalDecl{.name = decl.name, .type = decl.type});
+    const mir::LocalId param = code.AddLocal(decl.type);
     code.params.push_back(param);
     arguments.push_back(
         code.Body().exprs.Add(mir::MakeLocalRefExpr(param, decl.type)));
@@ -1739,8 +1684,7 @@ auto SynthesizeSubroutineEntry(
   // is called and its result is the entry's.
   const mir::Type& result = unit.types.Get(target.result_type);
   if (const auto* coroutine = result.As<mir::CoroutineType>()) {
-    const mir::LocalId completion = code.locals.Add(
-        mir::LocalDecl{.name = "completion", .type = coroutine->payload});
+    const mir::LocalId completion = code.AddLocal(coroutine->payload);
     code.Body().AppendStmt(
         mir::LocalDeclStmt{
             .target = completion,
@@ -1783,8 +1727,7 @@ auto InstallGeneratedDefinition(
   // of the arena, so the backend supplies it.
   const auto empty_adapter = [&]() -> mir::AbiAdapterId {
     mir::CallableCode code = mir::CallableCode::Defined();
-    code.params = {
-        code.locals.Add(mir::LocalDecl{.name = "self", .type = scope_ptr})};
+    code.params = {code.AddLocal(scope_ptr)};
     code.result_type = void_type;
     return cls.abi_adapters.Add(
         mir::AbiAdapter{
@@ -1792,8 +1735,7 @@ auto InstallGeneratedDefinition(
   };
   const auto make_adapter = [&](mir::CallableId body) -> mir::AbiAdapterId {
     mir::CallableCode code = mir::CallableCode::Defined();
-    const mir::LocalId self =
-        code.locals.Add(mir::LocalDecl{.name = "self", .type = scope_ptr});
+    const mir::LocalId self = code.AddLocal(scope_ptr);
     code.params = {self};
     code.result_type = void_type;
     const mir::ExprId self_ref =
@@ -1987,9 +1929,7 @@ auto StructuralScopeLowerer::PopulateBodies(WalkFrame parent_frame)
   const mir::TypeId self_ptr_type = mir_class.self_pointer_type;
   ScopeChainNode outer_scope_link{};
   const auto seed_self = [&](CallableBindings& bindings) -> mir::LocalId {
-    return bindings.Declare(
-        BindingOriginId::Receiver(),
-        mir::LocalDecl{.name = "self", .type = self_ptr_type});
+    return bindings.Declare(BindingOriginId::Receiver(), self_ptr_type);
   };
 
   // Each lifecycle phase is a callable like any other: `self` is the receiver
@@ -2005,8 +1945,7 @@ auto StructuralScopeLowerer::PopulateBodies(WalkFrame parent_frame)
   ctor_prefix_local_ids.reserve(shape.ctor_prefix_params.size());
   for (const mir::ParamId param : shape.ctor_prefix_params.Ids()) {
     const auto& p = shape.ctor_prefix_params.Get(param);
-    ctor_prefix_local_ids.push_back(ctor_bindings.DeclareAnonymous(
-        mir::LocalDecl{.name = p.name, .type = p.type}));
+    ctor_prefix_local_ids.push_back(ctor_bindings.DeclareAnonymous(p.type));
   }
   mir::Block& ctor_block = ctor_code.Body();
   const WalkFrame ctor_frame =
@@ -2243,14 +2182,13 @@ auto StructuralScopeLowerer::PopulateBodies(WalkFrame parent_frame)
     mir::CallableCode node_ctor_code = mir::CallableCode::Defined();
     CallableBindings node_ctor_bindings(unit_lowerer.Unit(), node_ctor_code);
     node_ctor_code.params.push_back(node_ctor_bindings.Declare(
-        BindingOriginId::Receiver(),
-        mir::LocalDecl{.name = "self", .type = node_shape.self_pointer_type}));
+        BindingOriginId::Receiver(), node_shape.self_pointer_type));
     std::vector<mir::LocalId> node_ctor_prefix_local_ids;
     node_ctor_prefix_local_ids.reserve(node_shape.ctor_prefix_params.size());
     for (const mir::ParamId param : node_shape.ctor_prefix_params.Ids()) {
       const auto& p = node_shape.ctor_prefix_params.Get(param);
-      node_ctor_prefix_local_ids.push_back(node_ctor_bindings.DeclareAnonymous(
-          mir::LocalDecl{.name = p.name, .type = p.type}));
+      node_ctor_prefix_local_ids.push_back(
+          node_ctor_bindings.DeclareAnonymous(p.type));
       node_ctor_code.params.push_back(node_ctor_prefix_local_ids.back());
     }
     node_ctor_code.result_type = void_type;
@@ -2261,9 +2199,7 @@ auto StructuralScopeLowerer::PopulateBodies(WalkFrame parent_frame)
       mir::CallableCode code = mir::CallableCode::Defined();
       CallableBindings bindings(unit_lowerer.Unit(), code);
       code.params = {bindings.Declare(
-          BindingOriginId::Receiver(),
-          mir::LocalDecl{
-              .name = "self", .type = node_shape.self_pointer_type})};
+          BindingOriginId::Receiver(), node_shape.self_pointer_type)};
       code.result_type = void_type;
       return node_class.callables.Add(
           mir::CallableDecl{
@@ -2384,11 +2320,20 @@ auto StructuralScopeLowerer::PopulateBodies(WalkFrame parent_frame)
               mir::ClassFieldTarget{
                   .owner = class_id_, .slot = borrowed_handle},
               mir_class.fields.Get(borrowed_handle).type));
+      // What registers is the spelling the source wrote, so a variable the
+      // front end introduced has nothing to register under -- and none can
+      // reach here, since a hierarchical name reaches static storage and every
+      // such variable is automatic.
+      const std::optional<std::string>& declared_as =
+          body.procedural_vars.Get(binding.var).name;
+      if (!declared_as.has_value()) {
+        throw InternalError(
+            "register_named_statics: a variable the source never declared "
+            "took static storage a hierarchical name can reach");
+      }
       const mir::ExprId name_lit = ctor_block.exprs.Add(
           mir::Expr{
-              .data =
-                  mir::StringLiteral{
-                      .value = body.procedural_vars.Get(binding.var).name},
+              .data = mir::StringLiteral{.value = *declared_as},
               .type = unit_lowerer.Unit().builtins.string});
       ctor_block.AppendStmt(
           mir::ExprStmt{
@@ -2430,7 +2375,7 @@ auto StructuralScopeLowerer::PopulateBodies(WalkFrame parent_frame)
         mir::NamedCallable{.name = src.name, .body = declared.callable});
     ProcessLowerer subroutine_lowerer(
         unit_lowerer, this, hir_scope.time_resolution, src.body, src.root_stmt,
-        src.name, ctor_frame, scopes_, declared.statics);
+        ctor_frame, scopes_, declared.statics);
     auto code_or = subroutine_lowerer.Run(src);
     if (!code_or) return std::unexpected(std::move(code_or.error()));
     mir_class.callables.Define(
@@ -2497,7 +2442,7 @@ auto StructuralScopeLowerer::PopulateBodies(WalkFrame parent_frame)
     const StaticVarBindings& statics = process_static_bindings_.Get(id);
     ProcessLowerer process_lowerer(
         unit_lowerer, this, hir_scope.time_resolution, p.body, p.root_stmt,
-        ProcessCallableName(id), ctor_frame, scopes_, statics);
+        ctor_frame, scopes_, statics);
     auto code_or = process_lowerer.Run(p);
     if (!code_or) return std::unexpected(std::move(code_or.error()));
     const mir::CallableId body = mir_class.callables.Add(
@@ -2531,7 +2476,7 @@ auto StructuralScopeLowerer::PopulateBodies(WalkFrame parent_frame)
   for (const hir::ContinuousAssignId id : hir_scope.continuous_assigns.Ids()) {
     auto method_or = LowerContinuousAssign(
         *this, ctor_frame, resolve_frame, init_frame,
-        ContinuousAssignCallableName(id), hir_scope.continuous_assigns.Get(id));
+        hir_scope.continuous_assigns.Get(id));
     if (!method_or) return std::unexpected(std::move(method_or.error()));
     const mir::CallableId body = mir_class.callables.Add(std::move(*method_or));
     AppendProcessRegistration(unit_lowerer, activate_frame, body, false);

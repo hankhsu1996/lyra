@@ -144,8 +144,8 @@ auto ResolveDirectSpelling(
             const auto& cls = view.Unit().GetClass(t.owner);
             return {
                 .name = std::format(
-                    "{}::{}", ToCppName(cls.name),
-                    CppCallableName(cls.named_callables, t.slot)),
+                    "{}::{}", CppClassName(cls, t.owner),
+                    CppClassCallableName(cls, t.slot)),
                 .placement = ReceiverPlacement::kIntoCalleeName};
           },
           [&](const support::BuiltinFn& id) -> CalleeSpelling {
@@ -215,11 +215,8 @@ auto ResolveCalleeSpelling(
                 .name = std::visit(
                     Overloaded{
                         [&](const mir::LocalVirtualSlot& l) -> std::string {
-                          return CppCallableName(
-                              view.Unit()
-                                  .GetClass(l.owner_class)
-                                  .named_callables,
-                              l.slot);
+                          return CppClassCallableName(
+                              view.Unit().GetClass(l.owner_class), l.slot);
                         },
                         [&](const mir::ExternalVirtualSlot& e) -> std::string {
                           const mir::ExternalClass* introducer =
