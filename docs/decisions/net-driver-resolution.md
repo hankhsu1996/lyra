@@ -9,8 +9,13 @@
 Accepted. Decision 7's "a net is only ever driven" is refined by
 [procedural-continuous-assignment](procedural-continuous-assignment.md): a `force` displaces what
 the resolution produces without attaching a driver, so the driver topology this record fixes stays
-immutable after Seal and the single-driver count stays meaningful, while what the net shows is not
-always the fold.
+immutable after Seal, while what the net shows is not always the fold.
+
+Decisions 4 and 8 are refined by
+[net-type-is-a-fold-and-a-contribution](net-type-is-a-fold-and-a-contribution.md). Strength on the
+contribution stands, with the reason it is exact; the single-driver constraint does not belong to
+the Seal barrier or to this model at all, because how many drivers a net may have is decided over
+the elaborated design before any of this exists.
 
 ## Why this decision matters
 

@@ -62,11 +62,13 @@ The cheapest-looking shape gives a forced value a drive strength above every oth
 the existing net resolver pick it, which adds no concept at all. One argument defeats it, from the
 standard alone:
 
-**A wired-logic resolver combines rather than selects.** `wand` and `wor` fold their inputs through
-a truth table (LRM 6.6.3), so a contribution at any strength is combined with the other drivers
-rather than replacing them, and 10.6.2's "override all drivers" is not delivered at any strength.
-The language committee reaches the same conclusion in its own discussion of force strength: while a
-force is active the drivers are ignored rather than out-competed, and force carries no strength.
+**No strength overrides every driver, because the scale has a top a driver can also sit at.**
+Strength orders contributions and a wired-logic resolver combines the ones that tie (LRM 6.6.3,
+28.12.4), so a forced value given `supply` strength is combined with a `supply`-strength driver
+through the truth table rather than replacing it, and 10.6.2's "override all drivers" is not
+delivered at any strength there is. The language committee reaches the same conclusion in its own
+discussion of force strength: while a force is active the drivers are ignored rather than
+out-competed, and force carries no strength.
 
 That this also leaves [net-driver-resolution](net-driver-resolution.md)'s post-Seal driver topology
 undisturbed is a consistency check and not a reason. An invariant agreeing with a derivation is

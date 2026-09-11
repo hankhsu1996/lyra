@@ -255,7 +255,8 @@ cross-check predicts. This file owns only which instances are known and what is 
 
       The fold left both type pools with it, so two nets of one data type are one type whatever
       their net types are, and a driver -- which had carried a copy of its net's fold that no
-      consumer ever read -- carries only the value it contributes. It left the signature too: what a
+      consumer ever read -- carries what it contributes rather than how that is combined. It left
+      the signature too: what a
       referrer knows about another unit's net is that a value reaches it only through a driver,
       never which truth table folds them, so publishing the net type was publishing a fact with no
       reader and the refusal that translated it moved to the declaration that has one.

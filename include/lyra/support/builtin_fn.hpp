@@ -209,14 +209,20 @@ enum class BuiltinFn : std::uint16_t {
   // requires its value to already be at the installed representation.
   kInitialize,
   // Installing what a net's declaration gives it, once at construction: the
-  // representation its data type fixes, and the fold its declared net type
-  // picked (LRM 6.6). One entry per fold -- tri-state for `wire` / `tri`,
+  // representation its data type fixes, and what its declared net type states
+  // -- the contribution the net type itself makes, as the value the net shows
+  // where nothing drives it and the strength it holds that value at (LRM
+  // 6.6.5, 6.7.1). One entry per resolution -- tri-state for `wire` / `tri`,
   // wired-and for `wand` / `triand`, wired-or for `wor` / `trior` (LRM 6.6.1,
-  // 6.6.3) -- because a fold is a truth table the net applies rather than a
-  // value a call can carry, and an operation is named here.
+  // 6.6.3), and one that resolves tri-state and leaves its own contribution
+  // holding what the drivers last decided, which is how a net stores a value
+  // (LRM 6.6.4) -- because a truth table is applied rather than carried, and
+  // an operation is named here. What the contribution is stays a value the
+  // call carries.
   kNetInitializeTriState,
   kNetInitializeWiredAnd,
   kNetInitializeWiredOr,
+  kNetInitializeRetaining,
   // Reading what a cell holds, and replacing it. Both act on the wrapper rather
   // than name its storage: a read answers with a value the cell decides how to
   // produce, and a write publishes the change to whatever the wrapper relates
@@ -248,8 +254,11 @@ enum class BuiltinFn : std::uint16_t {
   // names the storage through it and a write that reaches one part of a value
   // costs that part rather than the whole.
   kOpenForWrite,
-  // Attaching a driver to a net (LRM 6.5): a `ResolvedNet` method returning the
-  // driver handle the drive capability is reached through.
+  // Attaching a driver to a net (LRM 6.5), at the strength its source drives at
+  // (LRM 28.11): a `ResolvedNet` method returning the driver handle the drive
+  // capability is reached through. The strength is fixed when the driver
+  // attaches rather than restated on every update, because it is a property of
+  // the source and not of the value it puts on the net.
   kAttachDriver,
   // Putting a cell under a procedural continuous assignment and taking it back
   // out (LRM 10.6). Beginning one answers with the generation its evaluation

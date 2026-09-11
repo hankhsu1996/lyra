@@ -81,17 +81,35 @@ auto RuntimeValueResolveNet(
       a.value);
 }
 
-auto RuntimeValueHighImpedanceLike(const RuntimeValue& prototype)
+auto RuntimeValueDominating(const RuntimeValue& a, const RuntimeValue& b)
     -> RuntimeValue {
+  SameDomain(a, b);
   return std::visit(
-      [](const auto& shape) -> RuntimeValue {
-        using T = std::decay_t<decltype(shape)>;
+      [&](const auto& stronger) -> RuntimeValue {
+        using T = std::decay_t<decltype(stronger)>;
         if constexpr (NetResolvable<T>) {
-          return RuntimeValue{.value = T::HighImpedanceLike(shape)};
+          return RuntimeValue{
+              .value = stronger.Dominating(std::get<T>(b.value))};
         } else {
           throw InternalError(
-              "RuntimeValue::HighImpedanceLike: this domain is not valid for a "
-              "net (LRM 6.7.1), so it has no non-driving contribution");
+              "RuntimeValue::Dominating: this domain is not valid for a net "
+              "(LRM 6.7.1), so nothing should have contributed to it");
+        }
+      },
+      a.value);
+}
+
+auto RuntimeValueFilledLike(
+    const RuntimeValue& prototype, const PackedArray& fill) -> RuntimeValue {
+  return std::visit(
+      [&fill](const auto& shape) -> RuntimeValue {
+        using T = std::decay_t<decltype(shape)>;
+        if constexpr (NetResolvable<T>) {
+          return RuntimeValue{.value = T::FilledLike(shape, fill)};
+        } else {
+          throw InternalError(
+              "RuntimeValue::FilledLike: this domain is not valid for a net "
+              "(LRM 6.7.1), so no fill of it is a net's value");
         }
       },
       prototype.value);

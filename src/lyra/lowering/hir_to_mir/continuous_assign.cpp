@@ -12,6 +12,7 @@
 #include "lyra/lowering/hir_to_mir/binding_origin.hpp"
 #include "lyra/lowering/hir_to_mir/callable_bindings.hpp"
 #include "lyra/lowering/hir_to_mir/lhs_store.hpp"
+#include "lyra/lowering/hir_to_mir/net_declaration.hpp"
 #include "lyra/lowering/hir_to_mir/self_ref.hpp"
 #include "lyra/lowering/hir_to_mir/sensitivity_wait.hpp"
 #include "lyra/lowering/hir_to_mir/walk_frame.hpp"
@@ -115,8 +116,10 @@ auto LowerContinuousAssign(
                   .name = std::format("{}__driver", name),
                   .type = driver_type}),
           .type = driver_type};
+      const mir::ExprId strength =
+          BuildStrengthOperand(unit, resolve_block, src.strength);
       const mir::ExprId attach = resolve_block.exprs.Add(
-          mir::MakeNetAttachDriverCallExpr(cell, driver_type));
+          mir::MakeNetAttachDriverCallExpr(cell, strength, driver_type));
       const mir::ExprId handle =
           DriverAccess(resolve_frame, resolve_block, *driver);
       resolve_block.AppendStmt(

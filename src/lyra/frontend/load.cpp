@@ -3,6 +3,7 @@
 #include <optional>
 #include <string>
 
+#include <slang/analysis/AnalysisManager.h>
 #include <slang/ast/Compilation.h>
 #include <slang/diagnostics/TextDiagnosticClient.h>
 #include <slang/driver/CompatSettings.h>
@@ -74,6 +75,14 @@ auto ReportSlangDiagnostics(
   for (const auto& diagnostic : compilation.getAllDiagnostics()) {
     driver.diagEngine.issue(diagnostic);
   }
+
+  // What a program may connect is decided over the whole elaborated design
+  // rather than over any one declaration -- which drivers reach a net, and
+  // whether a net type admits that many (LRM 6.6.2, 6.6.7) -- and the front end
+  // answers it in a pass of its own. Running that pass through the same engine
+  // keeps one account of what the front end has to say and one error count.
+  driver.runAnalysis(compilation);
+
   out_text = driver.textDiagClient->getString();
   return driver.diagEngine.getNumErrors() == 0;
 }

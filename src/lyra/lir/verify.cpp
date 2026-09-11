@@ -1,5 +1,6 @@
 #include "lyra/lir/verify.hpp"
 
+#include <format>
 #include <optional>
 #include <variant>
 
@@ -33,7 +34,10 @@ void VerifyInstr(
             }
             if (result_type != place_type) {
               throw InternalError(
-                  "lir verify: load result type does not match its place type");
+                  std::format(
+                      "lir verify: load result type does not match its place "
+                      "type (result Type[{}], place Type[{}])",
+                      result_type.value, place_type.value));
             }
           },
           [&](const StoreInstr& store) {
@@ -50,7 +54,10 @@ void VerifyInstr(
             }
             if (*value_type != place_type) {
               throw InternalError(
-                  "lir verify: store value type does not match its place type");
+                  std::format(
+                      "lir verify: store value type does not match its place "
+                      "type (value Type[{}], place Type[{}])",
+                      value_type->value, place_type.value));
             }
             if (!IsVoid(unit, result_type)) {
               throw InternalError("lir verify: store must yield void");

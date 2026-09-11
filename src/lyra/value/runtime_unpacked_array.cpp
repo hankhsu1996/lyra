@@ -267,13 +267,23 @@ auto RuntimeUnpackedArray::ResolveNet(
   return resolved;
 }
 
-auto RuntimeUnpackedArray::HighImpedanceLike(
-    const RuntimeUnpackedArray& prototype) -> RuntimeUnpackedArray {
-  RuntimeUnpackedArray floating = prototype;
-  for (RuntimeValue& element : floating.data_) {
-    element = RuntimeValueHighImpedanceLike(element);
+auto RuntimeUnpackedArray::Dominating(const RuntimeUnpackedArray& weaker) const
+    -> RuntimeUnpackedArray {
+  RuntimeUnpackedArray resolved = *this;
+  for (std::size_t i = 0; i < resolved.data_.size(); ++i) {
+    resolved.data_[i] = RuntimeValueDominating(data_[i], weaker.data_[i]);
   }
-  return floating;
+  return resolved;
+}
+
+auto RuntimeUnpackedArray::FilledLike(
+    const RuntimeUnpackedArray& prototype, const PackedArray& fill)
+    -> RuntimeUnpackedArray {
+  RuntimeUnpackedArray filled = prototype;
+  for (RuntimeValue& element : filled.data_) {
+    element = RuntimeValueFilledLike(element, fill);
+  }
+  return filled;
 }
 
 // LRM 9.4.2: a size mismatch is a change. That is how the empty default of a

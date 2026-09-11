@@ -101,15 +101,21 @@ concept WildcardComparable = LyraValue<T> && requires(const T& a, const T& b) {
 // question by delegating to them. `ResolveNet` folds one driver's contribution
 // into another under the truth table its `NetResolution` names -- tri-state,
 // wired-and, or wired-or (LRM 6.6.1 Table 6-2, LRM 6.6.3 Tables 6-3 and 6-4);
-// `HighImpedanceLike` yields the all-`z` value at the prototype's shape, which
-// is every fold's identity and therefore the value of a position no driver
-// drives. A dynamically sized container is excluded by "fixed-size", and
-// `String` / `Real` by "4-state bits".
+// `Dominating` is what a stronger contribution does to a weaker one: it
+// determines every position it drives and leaves the rest (LRM 28.12.1).
+// `FilledLike` yields the prototype's shape with every bit set to one scalar,
+// which is how both the identity every fold starts from and the value a net
+// type contributes to its own resolution are stated (LRM 6.7.1). A dynamically
+// sized container is excluded by "fixed-size", and `String` / `Real` by
+// "4-state bits".
 template <typename T>
 concept NetResolvable =
-    LyraValue<T> && requires(const T& a, const T& b, NetResolution fold) {
+    LyraValue<T> &&
+    requires(
+        const T& a, const T& b, const PackedArray& bit, NetResolution fold) {
       { a.ResolveNet(b, fold) } -> std::same_as<T>;
-      { T::HighImpedanceLike(a) } -> std::same_as<T>;
+      { a.Dominating(b) } -> std::same_as<T>;
+      { T::FilledLike(a, bit) } -> std::same_as<T>;
     };
 
 // LRM 11.4.11: where a conditional operator's condition is ambiguous it selects

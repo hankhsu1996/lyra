@@ -56,30 +56,46 @@ auto RuntimeUnion::CaseEqual(const RuntimeUnion& other) const -> PackedArray {
   return RuntimeValueCaseEqual(active_.front(), other.active_.front());
 }
 
+auto RuntimeUnion::AcrossMembers(const RuntimeUnion& a, const RuntimeUnion& b)
+    -> RuntimeUnion {
+  const PackedArray high_impedance = PackedArray::HighImpedanceScalar();
+  if (a.IsBitIdentical(FilledLike(a, high_impedance))) {
+    return b;
+  }
+  if (b.IsBitIdentical(FilledLike(b, high_impedance))) {
+    return a;
+  }
+  throw SimulationError(
+      "two drivers of an unpacked-union net are driving different members; "
+      "SystemVerilog gives an unpacked union no defined storage overlay, so "
+      "their resolution has no defined value");
+}
+
 auto RuntimeUnion::ResolveNet(
     const RuntimeUnion& other, NetResolution fold) const -> RuntimeUnion {
   if (active_index_ != other.active_index_) {
-    if (IsBitIdentical(HighImpedanceLike(*this))) {
-      return other;
-    }
-    if (other.IsBitIdentical(HighImpedanceLike(other))) {
-      return *this;
-    }
-    throw SimulationError(
-        "two drivers of an unpacked-union net are driving different members; "
-        "SystemVerilog gives an unpacked union no defined storage overlay, so "
-        "their resolution has no defined value");
+    return AcrossMembers(*this, other);
   }
   return RuntimeUnion{
       active_index_,
       RuntimeValueResolveNet(active_.front(), other.active_.front(), fold)};
 }
 
-auto RuntimeUnion::HighImpedanceLike(const RuntimeUnion& prototype)
+auto RuntimeUnion::Dominating(const RuntimeUnion& weaker) const
     -> RuntimeUnion {
+  if (active_index_ != weaker.active_index_) {
+    return AcrossMembers(*this, weaker);
+  }
+  return RuntimeUnion{
+      active_index_,
+      RuntimeValueDominating(active_.front(), weaker.active_.front())};
+}
+
+auto RuntimeUnion::FilledLike(
+    const RuntimeUnion& prototype, const PackedArray& fill) -> RuntimeUnion {
   return RuntimeUnion{
       prototype.active_index_,
-      RuntimeValueHighImpedanceLike(prototype.active_.front())};
+      RuntimeValueFilledLike(prototype.active_.front(), fill)};
 }
 
 auto RuntimeUnion::IsBitIdentical(const RuntimeUnion& other) const -> bool {

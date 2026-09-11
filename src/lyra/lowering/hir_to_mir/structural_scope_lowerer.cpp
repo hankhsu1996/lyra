@@ -30,6 +30,7 @@
 #include "lyra/lowering/hir_to_mir/expression/dpi_call.hpp"
 #include "lyra/lowering/hir_to_mir/integral_literal.hpp"
 #include "lyra/lowering/hir_to_mir/lhs_store.hpp"
+#include "lyra/lowering/hir_to_mir/net_declaration.hpp"
 #include "lyra/lowering/hir_to_mir/package_initialization.hpp"
 #include "lyra/lowering/hir_to_mir/process_lowerer.hpp"
 #include "lyra/lowering/hir_to_mir/runtime_call.hpp"
@@ -49,29 +50,11 @@
 #include "lyra/mir/type.hpp"
 #include "lyra/mir/type_builders.hpp"
 #include "lyra/support/builtin_fn.hpp"
+#include "lyra/support/strength_level.hpp"
 
 namespace lyra::lowering::hir_to_mir {
 
 namespace {
-
-// The entry installing the fold a net's declared net type names (LRM 6.6).
-// Each pair differs only in source spelling: `wire` / `tri` resolve under the
-// tri-state truth table, `wand` / `triand` under wired-and, and `wor` /
-// `trior` under wired-or (LRM 6.6.3).
-auto NetInitializeEntry(hir::NetType net_type) -> support::BuiltinFn {
-  switch (net_type) {
-    case hir::NetType::kWire:
-    case hir::NetType::kTri:
-      return support::BuiltinFn::kNetInitializeTriState;
-    case hir::NetType::kWand:
-    case hir::NetType::kTriand:
-      return support::BuiltinFn::kNetInitializeWiredAnd;
-    case hir::NetType::kWor:
-    case hir::NetType::kTrior:
-      return support::BuiltinFn::kNetInitializeWiredOr;
-  }
-  throw InternalError("NetInitializeEntry: unknown NetType");
-}
 
 // Adds the runtime scope base's construction prefix (parent, hierarchy
 // segment) as ordinary ctor params, in the order the base
@@ -1032,12 +1015,14 @@ auto InstallPortConnections(
     // driven. An input port's source is the parent expression and its sink is
     // the child cell; an output port's source is the child cell and its sink
     // is the parent target. The edge is the same continuous assignment either
-    // way; the sink's own MIR type -- resolved-net cell or observable cell --
-    // picks the write protocol (LRM 23.3.3).
+    // way, written with no strength of its own and so driving at strong like
+    // any other (LRM 23.3.3, 10.3.1); the sink's own MIR type -- resolved-net
+    // cell or observable cell -- picks the write protocol.
     const hir::ContinuousAssign assign{
         .span = pc.span,
         .lhs = is_input ? cell.cell : data.peer,
         .rhs = is_input ? data.peer : cell.cell,
+        .strength = support::StrengthLevel::kStrong,
         .sensitivity_list = data.sensitivity};
     auto method_or = LowerContinuousAssign(
         lowerer, frame, resolve_frame, init_frame,
@@ -1979,12 +1964,13 @@ auto StructuralScopeLowerer::PopulateBodies(WalkFrame parent_frame)
       }
     }
 
-    // A net cell fixes what its declaration gives it -- the declared type and
-    // the fold its net type names -- at construction (LRM 6.6.1), in the
-    // constructor rather than the initialize phase: a net is a readable,
+    // A net cell fixes what its declaration gives it -- the declared type, and
+    // what its net type states about how contributions resolve and what the net
+    // shows where nothing drives them -- at construction (LRM 6.6.1, 6.7.1), in
+    // the constructor rather than the initialize phase: a net is a readable,
     // well-typed observable before any driver attaches, and before a cross-unit
     // reader seeds from it during the parent-first initialize phase, so a read
-    // that early sees the net type's undriven value, never an uninitialized
+    // that early sees what the net type contributes, never an uninitialized
     // cell. Drivers, attached at Resolve, update it from there.
     if (net != nullptr) {
       const mir::ExprId net_target = ctor_block.exprs.Add(
@@ -1994,14 +1980,16 @@ auto StructuralScopeLowerer::PopulateBodies(WalkFrame parent_frame)
               mir_field_type));
       const mir::ExprId prototype = ctor_block.exprs.Add(
           BuildDefaultValueFromHir(unit_lowerer, ctor_block, d.type));
+      const NetInstall install =
+          BuildNetInstall(unit_lowerer.Unit(), ctor_block, *net);
       ctor_block.AppendStmt(
           mir::Stmt{
               .label = std::nullopt,
               .data = mir::ExprStmt{
                   .expr = ctor_block.exprs.Add(
-                      mir::MakeCapabilityInstallCallExpr(
-                          net_target, prototype,
-                          NetInitializeEntry(net->net_type), void_type))}});
+                      mir::MakeNetInstallCallExpr(
+                          net_target, prototype, install.fill, install.strength,
+                          install.entry, void_type))}});
     }
 
     // A value signal, or a named event, records its address under its name so a

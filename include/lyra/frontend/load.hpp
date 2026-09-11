@@ -27,9 +27,11 @@ struct ParseResult {
 // diagnostic engine for ReportSlangDiagnostics to render.
 auto Elaborate(slang::driver::Driver& driver) -> std::optional<ParseResult>;
 
-// Renders everything slang has to say through the one engine the warning
-// options configured, so a suppression on the command line reaches the
-// diagnostics it names. Returns false when any of them carried error severity.
+// Renders everything the front end has to say -- what elaborating each
+// declaration found, and what only the whole elaborated design answers --
+// through the one engine the warning options configured, so a suppression on
+// the command line reaches the diagnostics it names. Returns false when any of
+// them carried error severity.
 auto ReportSlangDiagnostics(
     slang::driver::Driver& driver, slang::ast::Compilation& compilation,
     std::string& out_text) -> bool;

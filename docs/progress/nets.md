@@ -21,17 +21,22 @@ This workstream reasons from these and does not restate them:
 - `../decisions/net-driver-resolution.md` -- the settled model: a resolution node with node-owned
   driver contributions and capability-handle drivers; attach during Resolve; the materialized Seal
   barrier; seed in Initialize; inline resolution reusing publish-on-change.
+- `../decisions/net-type-is-a-fold-and-a-contribution.md` -- what a net type states: which truth
+  table resolves contributions of equal strength, and the contribution the net type makes to the
+  net's own resolution.
 - `../architecture/elaboration_lifecycle.md` -- the phase protocol the attach / seal / seed steps
   ride on.
 
 ## Lifecycle prerequisite
 
 - [ ] The Seal barrier is a design-global, coordinator-owned step, materialized when its first
-      consumer needs it (N4 net-topology validation). It validates and freezes the whole design's
-      driver topology at once -- a single-driver constraint or a forwarding chain spans scopes -- so
-      it is an engine-level pass over the elaborated design, never a per-scope hook. Until that
-      consumer lands, the Resolve-before-Initialize ordering the engine already enforces is the only
-      barrier the in-scope sub-steps require.
+      consumer needs it. It validates and freezes the whole design's driver topology at once -- a
+      forwarding chain spans scopes -- so it is an engine-level pass over the elaborated design,
+      never a per-scope hook. No sub-step below needs it: how many drivers a net may have is decided
+      over the elaborated design by the front end, which reports a violation naming every driver
+      involved, so nothing here counts drivers. Until a consumer lands, the
+      Resolve-before-Initialize ordering the engine already enforces is the only barrier the
+      in-scope sub-steps require.
 
 ## Sub-steps
 
@@ -75,27 +80,51 @@ This workstream reasons from these and does not restate them:
       can recover it from the value type. `wire` and `tri` name the same tri-state fold, which is
       why the assumption held while they were the only net types; each type below adds its fold
       beside it instead of replacing one.
-- [ ] N4 -- A single-driver net type (`uwire`) reports a diagnostic when more than one driver
-      attaches, naming each driver's source. The constraint is on the number of attached drivers,
-      not on any current value.
+- [x] N4 -- A single-driver net type (`uwire`) resolves the one driver it admits exactly as any
+      other net with one driver does (LRM 6.6.2), and connecting a second one is reported as the
+      error the standard makes it, naming the net and both drivers, including where one of them
+      arrives through a port connection authored in another unit. How many drivers a net may have is
+      a property of the elaborated design rather than of any value, so it is decided in the front
+      end and nothing below counts drivers.
 - [x] N5 -- The wired-logic net types resolve under their own truth tables (LRM 6.6.3): `wand` /
       `triand` by and-resolution, where any driver at 0 forces the bit to 0, and `wor` / `trior` by
       or-resolution, where any driver at 1 forces it to 1. High impedance is the identity of either
       fold, so a driver holding a bit at z leaves it to the others and an undriven net reads z, and
       the fold reaches an unpacked-aggregate net by resolving each element. Both backends run it.
-- [ ] N6 -- Drive strength on continuous assignments and resolution by strength (LRM 28): a
-      contribution carries a drive-0 / drive-1 strength, and stronger drivers dominate weaker ones.
-- [ ] N7 -- Pull and supply nets (`tri0` / `tri1` / `supply0` / `supply1`) behave as built-in,
-      never-detached drivers of the appropriate value and strength (LRM 6.6).
-- [ ] N8 -- The charge-storage net type (`trireg`) retains its last driven value when undriven
-      (capacitive state), with charge strength (LRM 6.6.4).
+- [x] N6 -- Every contribution carries the strength it is driven at, and resolution consumes it:
+      where two contributions differ the stronger determines the positions it drives (LRM 28.12.1),
+      and only among equal strengths does the net type's truth table decide (LRM 28.12.4). A
+      continuous assignment states its own strength, on the statement or on the net declaration it
+      is part of, and one that states none drives at strong; a port connection is such an assignment
+      and drives at strong. A specification whose 0 and 1 halves differ is refused: at a position
+      where such a driver is unknown it occupies a range of strengths rather than one, and a range
+      has no representation here.
+- [x] N7 -- Pull and supply nets (`tri0` / `tri1` / `supply0` / `supply1`) contribute their own
+      value at their own strength (LRM 6.6.5, 6.6.6): the pull is outranked by every ordinary driver
+      and so shows only where nothing else drives, and the supply outranks them and so shows
+      regardless.
+- [x] N8 -- The charge-storage net type (`trireg`) retains its last driven value per bit when its
+      drivers go to high impedance, holding it at the charge strength its declaration names and at
+      medium where it names none (LRM 6.6.4, 6.7.1, 28.15.2). It reads x before anything drives it.
+      Charge decay is a delay on the declaration and is refused with every other net delay.
 
 ## Out of scope
 
 - Bidirectional (`inout`) net connectivity and net-to-net collapse: unifying two or more nets into
-  one shared simulated net with zero propagation delay. This is a cross-net connectivity domain
-  distinct from resolving a single net's own drivers; it waits for its own workstream. A net-typed
-  port that behaves as a single-driver continuous-assignment edge is in scope (N3); merging the two
-  sides into one electrical net is not.
+  one shared simulated net with zero propagation delay. LRM 23.3.3 makes an `inout` port connection
+  a non-strength-reducing transistor connection and 23.3.3.7 settles it by merging the two nets into
+  one simulated net whose type Table 23-1 selects, so what it decides is which nets are one
+  resolution domain -- a cross-net connectivity domain distinct from resolving a single net's own
+  drivers, and it waits for its own workstream. A net-typed port that behaves as a single-driver
+  continuous-assignment edge is in scope (N3); merging the two sides into one electrical net is not.
 - Gate-level primitive instances and user-defined primitives as net drivers. Their outputs are net
-  drivers in the same model, but the primitive instances themselves are a separate workstream.
+  drivers in the same model, but the primitive instances themselves are a separate workstream. They
+  are also what makes a resolved net's own strength observable -- a switch passes it on, and a
+  three-state gate with an unknown control produces a range of strengths rather than one -- so both
+  arrive together with an ambiguous-strength representation the current model does not carry.
+- A net declaration's delay (LRM 10.3.3), including the charge decay a `trireg` specifies as its
+  third delay (LRM 6.6.4.2). Refused by name rather than dropped, because dropping one answers at
+  the wrong time instead of refusing.
+- `interconnect` nets (LRM 6.6.8) and user-defined nettypes (LRM 6.6.7), each refused by name. A
+  nettype declared with no resolution function admits one driver, which is the same rule `uwire`
+  states and the same front-end check answers.

@@ -11,8 +11,10 @@
 #include "lyra/diag/diag_code.hpp"
 #include "lyra/diag/diagnostic.hpp"
 #include "lyra/lowering/ast_to_hir/sensitivity.hpp"
+#include "lyra/lowering/ast_to_hir/strength.hpp"
 #include "lyra/lowering/ast_to_hir/structural_scope_lowerer.hpp"
 #include "lyra/lowering/ast_to_hir/unit_lowerer.hpp"
+#include "lyra/support/strength_level.hpp"
 
 namespace lyra::lowering::ast_to_hir {
 
@@ -22,7 +24,8 @@ namespace {
 // operand expressions and the read set its sensitivity derives from.
 auto BuildContinuousAssign(
     UnitLowerer& unit_lowerer, WalkFrame frame, diag::SourceSpan span,
-    hir::Expr lhs, hir::Expr rhs, const std::vector<SensitivityRead>& reads)
+    hir::Expr lhs, hir::Expr rhs, support::StrengthLevel strength,
+    const std::vector<SensitivityRead>& reads)
     -> diag::Result<hir::ContinuousAssign> {
   auto sensitivity = unit_lowerer.TranslateSensitivityReads(reads, frame);
   if (!sensitivity) return std::unexpected(std::move(sensitivity.error()));
@@ -32,6 +35,7 @@ auto BuildContinuousAssign(
       .span = span,
       .lhs = lhs_id,
       .rhs = rhs_id,
+      .strength = strength,
       .sensitivity_list = *std::move(sensitivity),
   };
 }
@@ -49,12 +53,8 @@ auto StructuralScopeLowerer::LowerContinuousAssign(
         span, diag::DiagCode::kUnsupportedContinuousAssignForm,
         "delay on continuous assignment is not yet supported");
   }
-  const auto strength = sym.getDriveStrength();
-  if (strength.first.has_value() || strength.second.has_value()) {
-    return diag::Fail(
-        span, diag::DiagCode::kUnsupportedContinuousAssignForm,
-        "drive strength on continuous assignment is not yet supported");
-  }
+  auto strength = TranslateDriveStrength(sym.getDriveStrength(), span);
+  if (!strength) return std::unexpected(std::move(strength.error()));
 
   const auto& assignment_expr = sym.getAssignment();
   if (assignment_expr.kind != slang::ast::ExpressionKind::Assignment) {
@@ -92,7 +92,8 @@ auto StructuralScopeLowerer::LowerContinuousAssign(
   const auto& reads = owner_->Sensitivity().AnalyzeReads(assignment_expr, sym);
 
   return BuildContinuousAssign(
-      *owner_, frame, span, *std::move(lhs_or), *std::move(rhs_or), reads);
+      *owner_, frame, span, *std::move(lhs_or), *std::move(rhs_or), *strength,
+      reads);
 }
 
 }  // namespace lyra::lowering::ast_to_hir

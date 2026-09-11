@@ -649,6 +649,7 @@ auto EntryNamingOf(support::BuiltinFn fn) -> EntryNaming {
     case support::BuiltinFn::kNetInitializeTriState:
     case support::BuiltinFn::kNetInitializeWiredAnd:
     case support::BuiltinFn::kNetInitializeWiredOr:
+    case support::BuiltinFn::kNetInitializeRetaining:
     case support::BuiltinFn::kSampledHistoryInstall:
     case support::BuiltinFn::kSampledHistoryPush:
     case support::BuiltinFn::kSampledHistoryAt:

@@ -8,6 +8,7 @@
 #include "lyra/diag/source_span.hpp"
 #include "lyra/hir/expr_id.hpp"
 #include "lyra/hir/timing.hpp"
+#include "lyra/support/strength_level.hpp"
 
 namespace lyra::hir {
 
@@ -31,6 +32,7 @@ struct ContinuousAssign {
   diag::SourceSpan span;
   ExprId lhs;
   ExprId rhs;
+  support::StrengthLevel strength;
   std::vector<SensitivityEntry> sensitivity_list;
 };
 

@@ -89,13 +89,23 @@ auto RuntimeTuple::ResolveNet(
   return resolved;
 }
 
-auto RuntimeTuple::HighImpedanceLike(const RuntimeTuple& prototype)
+auto RuntimeTuple::Dominating(const RuntimeTuple& weaker) const
     -> RuntimeTuple {
-  RuntimeTuple floating = prototype;
-  for (RuntimeValue& component : floating.components_) {
-    component = RuntimeValueHighImpedanceLike(component);
+  RuntimeTuple resolved = *this;
+  for (std::size_t i = 0; i < resolved.components_.size(); ++i) {
+    resolved.components_[i] =
+        RuntimeValueDominating(components_[i], weaker.components_[i]);
   }
-  return floating;
+  return resolved;
+}
+
+auto RuntimeTuple::FilledLike(
+    const RuntimeTuple& prototype, const PackedArray& fill) -> RuntimeTuple {
+  RuntimeTuple filled = prototype;
+  for (RuntimeValue& component : filled.components_) {
+    component = RuntimeValueFilledLike(component, fill);
+  }
+  return filled;
 }
 
 auto RuntimeTuple::IsBitIdentical(const RuntimeTuple& other) const -> bool {

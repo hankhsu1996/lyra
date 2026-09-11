@@ -55,24 +55,33 @@ class RuntimeUnion {
   // bit-for-bit identical value.
   [[nodiscard]] auto CaseEqual(const RuntimeUnion& other) const -> PackedArray;
 
-  // Net resolution under the fold `fold` names (LRM 6.6). Two contributions
-  // carrying the same member fold that member; one that is not driving is
+  // What two contributions nominally carrying different members resolve to, by
+  // either rule that combines contributions. One that is not driving is
   // all-high-impedance and defers to the other whichever member it nominally
-  // carries, which is what makes a single driver of any member exact while the
-  // fold starts from the first member (LRM 7.3).
+  // carries, which is what makes a single driver of any member exact while
+  // resolution starts from the first member (LRM 7.3).
   //
   // Two contributions both driving different members has no answer: LRM 7.3
   // gives an unpacked union no required storage representation and, unlike a
   // packed union, no reading back of a member written as another, so there is
   // no defined bit space the two overlay in. That is reported rather than
   // answered with an invented value.
+  [[nodiscard]] static auto AcrossMembers(
+      const RuntimeUnion& a, const RuntimeUnion& b) -> RuntimeUnion;
+
+  // Net resolution under the fold `fold` names (LRM 6.6). Two contributions
+  // carrying the same member fold that member.
   [[nodiscard]] auto ResolveNet(
       const RuntimeUnion& other, NetResolution fold) const -> RuntimeUnion;
 
-  // The all-high-impedance value at `prototype`'s shape: the prototype's own
-  // active member carrying that member's high-impedance value (LRM 6.6.1).
-  [[nodiscard]] static auto HighImpedanceLike(const RuntimeUnion& prototype)
+  // What a stronger contribution leaves a weaker one (LRM 28.12.1).
+  [[nodiscard]] auto Dominating(const RuntimeUnion& weaker) const
       -> RuntimeUnion;
+
+  // `prototype`'s shape with every bit set to `fill`: the prototype's own
+  // active member, filled (LRM 6.7.1).
+  [[nodiscard]] static auto FilledLike(
+      const RuntimeUnion& prototype, const PackedArray& fill) -> RuntimeUnion;
 
   // LRM 9.4.2 update-event predicate (engine change-detection hook): changed
   // when the active member changed or the active value's bits changed.

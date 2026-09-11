@@ -81,6 +81,11 @@ class PackedArray {
   // C++ keeps the SV-level reason visible.
   [[nodiscard]] static auto FromBool(bool value) -> PackedArray;
 
+  // 1-bit unsigned 4-state shape holding high impedance. The scalar a net's
+  // positions take where nothing drives them (LRM 6.6), which is also what a
+  // fold treats as its identity.
+  [[nodiscard]] static auto HighImpedanceScalar() -> PackedArray;
+
   // Constructs a narrow PackedArray (bit_width <= 64) from an integer value:
   // bits above the width are masked out and the unknown plane is left at zero.
   // The result shape comes from a `PackedType` -- the destination's declared
@@ -197,14 +202,14 @@ class PackedArray {
   // a freshly-defaulted element would read as.
   auto ResetToDefault() -> void;
 
-  // The all-high-impedance value at `prototype`'s declared type: every bit `z`
-  // for a 4-state shape, which is what a `wire` / `tri` driver contributes
-  // where it is not driving (LRM 6.6.1), and the all-zero canonical default for
-  // a 2-state shape, which has no high-impedance state. The prototype's
-  // contents are unused; only its declared type (width, signedness, state
-  // domain) is read.
-  [[nodiscard]] static auto HighImpedanceLike(const PackedArray& prototype)
-      -> PackedArray;
+  // `prototype`'s declared type with every bit set to `fill`'s low bit: what a
+  // net shows where nothing drives it, and what a driver contributes where it
+  // is not driving (LRM 6.6, 6.7.1). The prototype's contents are unused; only
+  // its declared type (width, signedness, state domain) is read, and an unknown
+  // or high-impedance fill collapses to zero on a 2-state shape, which has
+  // neither state.
+  [[nodiscard]] static auto FilledLike(
+      const PackedArray& prototype, const PackedArray& fill) -> PackedArray;
 
   // LRM 9.4.2 update event predicate (engine change-detection hook): are the
   // two values bit-identical, considering both the value plane and the
@@ -428,6 +433,12 @@ class PackedArray {
   // commutative, so a net folds its drivers in any order.
   [[nodiscard]] auto ResolveNet(
       const PackedArray& other, NetResolution fold) const -> PackedArray;
+  // The result of this value meeting a weaker one: it determines every position
+  // it drives, and `weaker` determines the rest (LRM 28.12.1). A position is
+  // driven wherever this value is not high-impedance there, so nothing is
+  // folded -- a stronger contribution replaces a weaker one rather than
+  // combining with it.
+  [[nodiscard]] auto Dominating(const PackedArray& weaker) const -> PackedArray;
 
   // Low-level bit-level primitives. `ExtractBits` reads `bit_width` contiguous
   // bits starting at `lsb_bit`. `AssignSlice` writes those bits with the LRM

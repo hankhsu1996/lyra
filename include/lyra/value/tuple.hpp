@@ -111,11 +111,20 @@ class Tuple {
     }(std::index_sequence_for<Ts...>{});
   }
 
-  // The all-high-impedance value at `prototype`'s shape: each member's own
-  // high-impedance value (LRM 6.6.1). Only the prototype's shape is read.
-  [[nodiscard]] static auto HighImpedanceLike(const Tuple& prototype) -> Tuple {
+  // What a stronger contribution leaves a weaker one, member by member (LRM
+  // 28.12.1).
+  [[nodiscard]] auto Dominating(const Tuple& weaker) const -> Tuple {
     return [&]<std::size_t... I>(std::index_sequence<I...>) {
-      return Tuple(Ts::HighImpedanceLike(std::get<I>(prototype.data_))...);
+      return Tuple(std::get<I>(data_).Dominating(std::get<I>(weaker.data_))...);
+    }(std::index_sequence_for<Ts...>{});
+  }
+
+  // `prototype`'s shape with every bit set to `fill`: each member filled the
+  // same way (LRM 6.7.1). Only the prototype's shape is read.
+  [[nodiscard]] static auto FilledLike(
+      const Tuple& prototype, const PackedArray& fill) -> Tuple {
+    return [&]<std::size_t... I>(std::index_sequence<I...>) {
+      return Tuple(Ts::FilledLike(std::get<I>(prototype.data_), fill)...);
     }(std::index_sequence_for<Ts...>{});
   }
 
