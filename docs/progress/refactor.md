@@ -1124,6 +1124,39 @@ enough to warrant its own focused review.
       it should be the same place that declares them, not a switch that silently answers "no" for
       whatever is added later. Expect at least one entry to turn into its own cut.
 
+- [ ] R76 -- A SystemVerilog identifier is written into the emitted C++ as it stands, so a legal
+      program whose name is not a legal C++ identifier produces output that does not compile. This
+      is not a refusal and not a wrong answer; it is a build failure in generated code, which is the
+      worst of the three because nothing in the compiler reports it. Nothing blocks the fix.
+
+      Two sources, and the second is the common one. An escaped identifier (LRM 5.6.1) carries
+      characters C++ forbids -- `\a+b ` emits as `self->Test::a+b`. And an ordinary SystemVerilog
+      identifier that happens to be a C++ keyword needs no escaping to break: `int operator;` and
+      `int delete;` are legal SystemVerilog and emit as declarations C++ rejects. Measured on both:
+      the execution backend runs all of them correctly, because its symbols are not C++ identifiers,
+      so this is the C++ backend's alone.
+
+      Names the compiler synthesizes from user names inherit it. A view's read-only name is
+      published under a name composed from the modport and the port, so an escaped modport emits
+      `modport_read_mp-a_p-x`; there will be others wherever a user name is a component of a
+      generated one. Such a name can also collide: nothing stops a design declaring the identifier
+      the composition happens to produce.
+
+      Target shape, already decided. `decisions/identity-is-not-a-rendering.md` D1 states that a
+      composed name is made by whoever knows the spelling rules and never earlier, and its rejected
+      alternatives refuse mangling at the composition site because that puts one target's spelling
+      in a layer with no target. So the mangle belongs where the C++ backend turns a name into an
+      identifier, at one point, and the check that it is one point is the same shape
+      `tools/policy/check_render_names.py` already applies to runtime library identifiers.
+
+      The corpus covers none of this -- no conformance case uses an escaped identifier or a C++
+      keyword as a name. Cases are worth writing after the mangle exists and not before: one per
+      identifier position (variable, module, package, class and method, port, modport and the names
+      it defines, generate block, hierarchical reference), each carrying one escaped identifier and
+      one C++ keyword, because what they guard is the single mechanism rather than a list of names
+      somebody thought of. **They will only ever go red on the nightly**, since the default test set
+      runs the execution backend and `cpp_tests` is the only thing that compiles emitted text.
+
 ## Out of Scope
 
 - Per-feature workstreams. Those live in the dedicated feature files (`operators.md`,
