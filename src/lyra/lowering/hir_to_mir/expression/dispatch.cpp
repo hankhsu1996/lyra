@@ -259,10 +259,14 @@ auto LowerLhsExprImpl(L& lowerer, const hir::Expr& expr, WalkFrame frame)
           [&](const hir::ConcatExpr& c) -> diag::Result<WriteTarget> {
             return as_place(LowerHirConcatExpr(lowerer, frame, c, result_type));
           },
+          // The front end verifies that an assignment's target is an lvalue
+          // whose every element can be assigned to, and refuses the program
+          // otherwise, so a kind arriving here that reaches no storage means a
+          // target was lowered to something the source did not name.
           [](const auto&) -> diag::Result<WriteTarget> {
             throw InternalError(
                 "LHS expression lowering: non-addressable HIR expression in "
-                "LHS context (assignability validated at AST-to-HIR)");
+                "LHS context");
           },
       },
       expr.data);

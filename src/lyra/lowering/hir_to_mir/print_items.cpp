@@ -273,9 +273,14 @@ auto LowerPrintItemForDirective(
 }
 
 // The format grammar is span-free so the runtime can share it (LRM 21.3.3
-// allows a format string known only at simulation time). A compile-time parse
-// rejects the same malformed directives, so it pins the failure to the format
-// string's source span here.
+// allows a format string known only at simulation time), and this is where a
+// string the design settles at compile time is held to it. The front end reads
+// only a literal written at the call site, so a format string that is constant
+// but not literal -- a parameter, a localparam, a constant function's result --
+// reaches here unexamined. LRM 21.2.1.1 makes an undefined specifier an error
+// and requires an argument for every `%` but `%m`, `%l` and `%%`, so a
+// malformed one is refused rather than carried to the runtime, whatever the
+// front end chose to say about it.
 auto FailFormatParse(
     const value::FormatParseResult& parsed, diag::SourceSpan span)
     -> std::unexpected<diag::Diagnostic> {

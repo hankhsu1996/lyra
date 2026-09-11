@@ -86,6 +86,10 @@ the detail lives in the entry itself.
   which supersedes both of those answers here.
 - [declarations-before-bodies](declarations-before-bodies.md) -- every structural declaration's
   identity and shape is CU-global and queryable before any executable lowering begins.
+- [reporting-every-gap-in-one-run](reporting-every-gap-in-one-run.md) -- a refusal is collected and
+  the stage goes on, so one run accounts for every unit and every member rather than for the first
+  that stopped; a stage that reported anything is the last one that runs, and what it produced is
+  discarded.
 - [foreach-lowering](foreach-lowering.md) -- the lowering shape of `foreach`.
 - [compound-assignment-write-location](compound-assignment-write-location.md) -- one uniform node
   evaluating the left-hand side exactly once (LRM 11.4.1); superseded for value interiors by
@@ -238,7 +242,8 @@ the detail lives in the entry itself.
 - [front-end-semantic-boundary](front-end-semantic-boundary.md) -- slang owns semantic resolution
   and sensitivity extraction; Lyra translates resolved facts to executable route and endpoint
   capability; sensitivity uses the correct per-consumer slang surface and never reclassifies from
-  `ValueSymbol + global table + HopsTo`.
+  `ValueSymbol + global table + HopsTo`; reading, writing and observing one target consult the one
+  translation instead of each recomputing it, so an assignment's target is validated nowhere.
 - [cross-unit-class-translation](cross-unit-class-translation.md) -- AST-to-HIR splits class
   interning into a top-down `InternLocalClass` (never asks "which CU?") and a boundary
   `ResolveClassRef` (walks slang's parent chain only when a class is not already cached);

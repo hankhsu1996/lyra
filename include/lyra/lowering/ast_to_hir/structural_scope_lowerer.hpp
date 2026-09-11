@@ -52,11 +52,6 @@ class StructuralScopeLowerer {
   auto LowerExpr(const slang::ast::Expression& expr, WalkFrame frame)
       -> diag::Result<hir::Expr>;
 
-  // Rejects an assignment-target expression that is not addressable in
-  // structural context (continuous assignment LHS).
-  auto ValidateAssignableStructural(const slang::ast::Expression& expr)
-      -> diag::Result<void>;
-
  private:
   auto PopulateMember(const slang::ast::Symbol& member, WalkFrame frame)
       -> diag::Result<void>;

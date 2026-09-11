@@ -538,9 +538,9 @@ fixed:
   (`operators.hpp` for unary / binary / conditional / conversion; `calls.hpp` for the call
   expression; `selects.hpp` for element-select / range-select / member-access; `aggregates.hpp` for
   concat / replication / assignment-pattern variants; `references.hpp` for name resolution;
-  `assignment.hpp` for assignment / increment-decrement and their assignability validation;
-  `inside.hpp` for the inside operator; analogous families on the statement side). Per-kind handler
-  signatures are `(PassClass&, WalkFrame, const NodeKind&, diag::SourceSpan) -> diag::Result<T>`.
+  `assignment.hpp` for assignment / increment-decrement; `inside.hpp` for the inside operator;
+  analogous families on the statement side). Per-kind handler signatures are
+  `(PassClass&, WalkFrame, const NodeKind&, diag::SourceSpan) -> diag::Result<T>`.
 - One implementation `.cpp` per subsystem header defines the family's handlers and any
   anonymous-namespace helpers private to the family. Subsystem `.cpp` files include the pass class
   header (to accept the pass class instance as the first parameter and to recurse via

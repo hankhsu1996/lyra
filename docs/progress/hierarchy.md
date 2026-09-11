@@ -271,6 +271,20 @@ at.
       two the language names beside those -- naming a subroutine, and naming what a `disable` ends
       -- have their own items below.
 
+      **"Be written" was read as "be written by a procedure" for two months, and the table said
+      `ok` throughout.** A continuous assignment (LRM 10.3) whose left-hand side named a target in
+      another instance was refused, while a procedural write and a `force` to the identical target
+      both ran -- so every row of the table was right about what the name reached, and the
+      enumeration above was wrong about what could be done with it. The cause was a walk over the
+      target expression that ran ahead of the assignment lowering and asked whether this unit's own
+      declaration table held the name, which is the shape `front-end-semantic-boundary.md` D1
+      forbids; removing it is what closed the gap, and nothing was added.
+
+      **The reading to carry: a coverage claim that enumerates what may be done with a target is
+      checkable only for the ways someone ran.** The table's axes were routes and declaration
+      kinds, so nothing in it had a column for "by which kind of assignment", and the one that had
+      never been run read the same as the three that had.
+
 - [x] D10 -- A subroutine a hierarchical name enables (LRM 23.6, 23.8.1). A call is the same route a
       read of a declaration takes, ending at the callable instead of at storage, so every spelling a
       read reaches by an enable reaches too: downward (`c.fn()`, `c[i].fn()`), into a child's

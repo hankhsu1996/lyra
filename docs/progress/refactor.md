@@ -1116,6 +1116,29 @@ enough to warrant its own focused review.
       it hold" is asked once. Nothing blocks it; the two readings sit in one file today, which is
       what keeps them in step and is also why the split is easy to miss.
 
+- [ ] R75 -- Twenty-one switches over a closed set of alternatives still carry a `default:`, so for
+      each of them the compiler's exhaustiveness check is off and gaining an alternative compiles
+      silently. The style contract has forbidden this all along and a person had been catching it by
+      hand; the count is what says that was never the mechanism, and writing the check found more
+      than twice what hand-catching had. The architecture policy now fails on a new one, and carries
+      the standing ones as a record that fails equally when an entry is fixed and left listed, so
+      the list only ever shrinks and is the authoritative statement of what remains. Nothing blocks
+      picking them up.
+
+      The record holds fifteen entries for those twenty-one switches, because it is keyed by the
+      file and the set being switched on so that an entry survives the code moving. Where one file
+      switches over one set more than once, the entries share a key: fixing one of them leaves the
+      key satisfied by its neighbour, and only fixing all of them frees the entry to be dropped.
+      That is coarser than one entry per switch and it is still monotone -- nothing new can hide
+      behind a listed key, since a key is listed only where a switch already carried a `default:`.
+
+      Target: the record empty and the rule enforced by nothing but the compiler. Most are
+      mechanical -- write the arms out -- but they are not one job. A `default:` over a large
+      enumeration where the switch answers for a handful of members is a design question rather
+      than a transcription: the set being asked is a subset, and what states which members are in
+      it should be the same place that declares them, not a switch that silently answers "no" for
+      whatever is added later. Expect at least one entry to turn into its own cut.
+
 ## Out of Scope
 
 - Per-feature workstreams. Those live in the dedicated feature files (`operators.md`,

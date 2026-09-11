@@ -1,19 +1,16 @@
 #pragma once
 
-// Lowering of assignment-shaped expressions: Assignment (LRM 11.4.1),
-// IncDec (LRM 11.4.2 increment/decrement), plus the shared lvalue-assignability
-// validation walker (LRM 10.3, 11.4.12 destructuring).
+// Lowering of assignment-shaped expressions: Assignment (LRM 11.4.1) and
+// IncDec (LRM 11.4.2 increment/decrement).
 
 #include "lyra/diag/diagnostic.hpp"
 #include "lyra/diag/source_span.hpp"
 #include "lyra/hir/expr.hpp"
 #include "lyra/lowering/ast_to_hir/process_lowerer.hpp"
-#include "lyra/lowering/ast_to_hir/unit_lowerer.hpp"
 #include "lyra/lowering/ast_to_hir/walk_frame.hpp"
 
 namespace slang::ast {
 class AssignmentExpression;
-class Expression;
 class UnaryExpression;
 }  // namespace slang::ast
 
@@ -28,13 +25,5 @@ auto LowerIncDecExprProc(
     ProcessLowerer& proc, WalkFrame frame,
     const slang::ast::UnaryExpression& un, diag::SourceSpan span)
     -> diag::Result<hir::Expr>;
-
-// Walks a slang assignment-target expression and rejects any form that is
-// not addressable. `procedural_context` distinguishes the rule for procedural
-// (process / subroutine body) targets from continuous-assign targets
-// (LRM 10.3 -- structural-var only).
-auto ValidateAssignableImpl(
-    UnitLowerer& unit_lowerer, bool procedural_context,
-    const slang::ast::Expression& expr) -> diag::Result<void>;
 
 }  // namespace lyra::lowering::ast_to_hir

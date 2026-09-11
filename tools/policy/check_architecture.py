@@ -117,6 +117,44 @@ Rules:
         Scope: include/lyra/mir/{expr,stmt}.hpp against
                src/lyra/backend/cpp/** and src/lyra/lowering/mir_to_lir/**.
 
+  A018  How a reference reaches its target is decided once, by the route
+        translation, and the compilation unit's declaration registry is that
+        translation's input. A construct that consults the registry itself
+        is deciding for its own case what the route decides for every case,
+        and the two answers differ: the registry holds only the declarations
+        of the unit being lowered, so a construct reading it refuses every
+        target in another instance while the route reaches them all. No test
+        run sees this. Each axis -- which construct states a target's value,
+        and how the target is named -- is covered on its own, and only the
+        combination is wrong, so both suites stay green.
+        Scope: src/**, include/** outside the two sites that own it -- the
+               route translation, which reads the registry to build a leaf,
+               and the pass that mints procedural identities, which reads it
+               to reuse one it already minted.
+
+  A019  LIR names no MIR identity. A layer that holds the identity of the
+        layer above it has two identity systems for one entity, and the
+        second one drifts: a `mir::TypeId` or a class / member / method
+        index arriving live means LIR is resolving against a pool it does
+        not own. The boundary above this one is already checked, and the
+        one rule covering only one of two boundaries is how the shape
+        survives at the other.
+        Scope: src/lyra/lir/**, include/lyra/lir/**.
+
+  A020  A switch over a closed set of alternatives carries no `default:`.
+        A013 makes such a set be consumed by a switch; this is the other
+        half, and without it the first buys nothing -- `default:` is exactly
+        what stops `-Werror=switch` reporting the alternative nobody
+        handled, so a set gains a member and every switch keeps compiling
+        while one of them silently answers wrongly. The set being the front
+        end's rather than ours changes nothing: a release that adds a kind
+        is the same event.
+        Where the reachable alternatives are genuinely fewer than the
+        enum's -- a narrowed parameter type, a set bounded by a caller --
+        the arms that cannot arrive are still written out, because "cannot
+        arrive" is a claim the next reader has to be able to check.
+        Scope: every .cpp/.hpp under src/lyra and include/lyra.
+
 When a rule fires, the printed message includes a fixed reminder that the
 fix is to change the ownership boundary, NOT to rename the function.
 
@@ -695,6 +733,189 @@ def check_a016(repo_root: Path) -> list[str]:
     return errors
 
 
+# Rule A018
+DECLARATION_REGISTRY_PATTERN = re.compile(
+    r"\bLookup(?:StructuralDataObjectBinding|ProceduralStatic)\b"
+)
+DECLARATION_REGISTRY_OWNERS = frozenset(
+    {
+        # Declares and defines the registry.
+        "include/lyra/lowering/ast_to_hir/unit_lowerer.hpp",
+        "src/lyra/lowering/ast_to_hir/unit_lowerer.cpp",
+        # Builds a route's leaf from what this unit declares.
+        "src/lyra/lowering/ast_to_hir/reference_route.cpp",
+        # Reuses the identity it already minted for a static.
+        "src/lyra/lowering/ast_to_hir/process_lowerer.cpp",
+    }
+)
+
+
+def check_a018(repo_root: Path) -> list[str]:
+    errors = []
+    for root in ("src/lyra", "include/lyra"):
+        for path, rel in iter_files(repo_root, root):
+            if rel in DECLARATION_REGISTRY_OWNERS:
+                continue
+            for lineno, line in enumerate(path.read_text().splitlines(), 1):
+                if DECLARATION_REGISTRY_PATTERN.search(line):
+                    errors.append(
+                        f"  {rel}:{lineno}: A018 consults the declaration "
+                        f"registry; what a name reaches is the route's "
+                        f"answer, and a construct that asks for itself "
+                        f"refuses every target outside this unit"
+                    )
+    return errors
+
+
+# Rule A019
+LIR_NAMES_MIR_PATTERN = re.compile(
+    r'#\s*include\s*"lyra/mir/|\bmir::'
+)
+
+
+def check_a019(repo_root: Path) -> list[str]:
+    errors = []
+    for root in ("src/lyra/lir", "include/lyra/lir"):
+        for path, rel in iter_files(repo_root, root):
+            for lineno, line in enumerate(path.read_text().splitlines(), 1):
+                if LIR_NAMES_MIR_PATTERN.search(line):
+                    errors.append(
+                        f"  {rel}:{lineno}: A019 names a MIR identity; the "
+                        f"layer above owns it, and holding it here is a "
+                        f"second identity system for one entity"
+                    )
+    return errors
+
+
+# Rule A020
+#
+# The switches that carried `default:` when this rule was written, keyed by the
+# file and the set they dispatch on so an entry survives the code moving. A
+# switch not listed here fails, so nothing new joins; an entry whose switch has
+# been written out fails until the entry goes, so the record only ever shrinks
+# and is therefore what is left to do. Do not add to it.
+#
+# Where one file switches over one set more than once, those switches share a
+# key, so the entry stays satisfied until the last of them is written out. That
+# is coarser than one entry per switch, and it hides nothing new: a key is here
+# only because a switch under it already carried a `default:`.
+A020_STANDING = frozenset({
+    ("include/lyra/lowering/hir_to_mir/callable_bindings.hpp",
+     "BindingOriginId::Kind"),
+    ("src/lyra/lowering/ast_to_hir/compilation_lowerer.cpp",
+     "slang::ast::SymbolKind"),
+    ("src/lyra/lowering/ast_to_hir/expression/query.cpp", "KnownSystemName"),
+    ("src/lyra/lowering/ast_to_hir/expression/query.cpp", "QueryKind"),
+    ("src/lyra/lowering/ast_to_hir/expression/slang_atoms.cpp",
+     "slang::ast::UnaryOperator"),
+    ("src/lyra/lowering/ast_to_hir/expression/slang_atoms.cpp",
+     "KnownSystemName"),
+    ("src/lyra/lowering/ast_to_hir/net_type.cpp", "slang::ast::NetType"),
+    ("src/lyra/lowering/ast_to_hir/statement/lower.cpp", "KnownSystemName"),
+    ("src/lyra/lowering/ast_to_hir/statement/timing.cpp",
+     "slang::ast::TimingControlKind"),
+    ("src/lyra/lowering/ast_to_hir/type.cpp", "slang::ast::SymbolKind"),
+    ("src/lyra/lowering/ast_to_hir/unit_identity.cpp", "SymbolKind"),
+    ("src/lyra/lowering/hir_to_mir/expression/operators.cpp", "hir::BinaryOp"),
+    ("src/lyra/lowering/hir_to_mir/expression/system/bit_vector.cpp",
+     "support::BitCountReading"),
+    ("src/lyra/lowering/hir_to_mir/expression/system/file_io.cpp",
+     "support::BuiltinFn"),
+    ("src/lyra/value/format.cpp", "FormatKind"),
+})
+
+SWITCH_KEYWORD_PATTERN = re.compile(r"\bswitch\s*\(")
+SCOPED_CASE_PATTERN = re.compile(r"\bcase\s+\w+(?:::\w+)+\s*:")
+DEFAULT_LABEL_PATTERN = re.compile(r"\bdefault\s*:")
+
+
+def switch_bodies(text: str) -> list[tuple[int, str]]:
+    """Each switch body in `text`, as (offset of the body, its source).
+
+    The body is brace-matched from the `{` that opens it, so a switch nested
+    inside another is returned on its own and its labels are not read as the
+    outer one's.
+    """
+    bodies = []
+    for m in SWITCH_KEYWORD_PATTERN.finditer(text):
+        open_brace = text.find("{", m.end())
+        if open_brace < 0:
+            continue
+        depth = 0
+        for i in range(open_brace, len(text)):
+            if text[i] == "{":
+                depth += 1
+            elif text[i] == "}":
+                depth -= 1
+                if depth == 0:
+                    bodies.append((open_brace, text[open_brace + 1:i]))
+                    break
+    return bodies
+
+
+def labels_at_top_level(body: str, pattern: re.Pattern[str]) -> bool:
+    """Whether `pattern` matches a label belonging to this switch itself.
+
+    A match inside a nested block is that block's, so only depth zero counts.
+    """
+    depth = 0
+    index = 0
+    while index < len(body):
+        char = body[index]
+        if char == "{":
+            depth += 1
+        elif char == "}":
+            depth -= 1
+        elif depth == 0:
+            m = pattern.match(body, index)
+            if m is not None:
+                return True
+        index += 1
+    return False
+
+
+def switched_set(body: str) -> str:
+    """The set a switch dispatches on, read off its first scoped case label.
+
+    This is what an entry is keyed by rather than a line number, so the
+    record survives the code moving and still names one switch.
+    """
+    m = SCOPED_CASE_PATTERN.search(body)
+    if m is None:
+        return ""
+    label = m.group(0)
+    return label[label.index("case") + 4:label.rindex("::")].strip()
+
+
+def check_a020(repo_root: Path) -> list[str]:
+    errors = []
+    seen = set()
+    for path, rel in iter_lyra_files(repo_root):
+        text = path.read_text()
+        for offset, body in switch_bodies(text):
+            if not labels_at_top_level(body, SCOPED_CASE_PATTERN):
+                continue
+            if not labels_at_top_level(body, DEFAULT_LABEL_PATTERN):
+                continue
+            entry = (rel, switched_set(body))
+            seen.add(entry)
+            if entry in A020_STANDING:
+                continue
+            lineno = text.count("\n", 0, offset) + 1
+            errors.append(
+                f"  {rel}:{lineno}: A020 a switch over {entry[1]} carries "
+                f"`default:`, which is what stops the compiler reporting the "
+                f"alternative nobody handled"
+            )
+    for entry in sorted(A020_STANDING - seen):
+        errors.append(
+            f"  {entry[0]}: A020 the record still lists a switch over "
+            f"{entry[1]} that no longer carries `default:`; drop the entry, "
+            f"so the record only ever shrinks"
+        )
+    return errors
+
+
 # Self-tests
 def run_self_tests() -> bool:
     def expect(cond, msg):
@@ -1047,6 +1268,57 @@ def run_self_tests() -> bool:
         REF_NODE_PATTERN.sub("Expr", "DerefExpr") == "DerefExpr",
         "A017 a node merely ending in Expr is not a Ref form")
 
+    # A018
+    ok &= expect(
+        DECLARATION_REGISTRY_PATTERN.search(
+            "if (!LookupStructuralDataObjectBinding(var).has_value()) {"),
+        "A018 a membership test on the registry")
+    ok &= expect(
+        DECLARATION_REGISTRY_PATTERN.search(
+            "const auto s = owner_->LookupProceduralStatic(var);"),
+        "A018 either registry lookup")
+    ok &= expect(
+        not DECLARATION_REGISTRY_PATTERN.search(
+            "auto binding = LookupInterfacePortBinding(port);"),
+        "A018 another registry is not this one")
+
+    # A019
+    ok &= expect(
+        LIR_NAMES_MIR_PATTERN.search('#include "lyra/mir/type.hpp"'),
+        "A019 a MIR header")
+    ok &= expect(
+        LIR_NAMES_MIR_PATTERN.search("  mir::TypeId source;"),
+        "A019 a MIR identity named in a declaration")
+    ok &= expect(
+        not LIR_NAMES_MIR_PATTERN.search("  lir::TypeId source;"),
+        "A019 this layer's own identity is not the one above")
+
+    # A020
+    a020_offender = "switch (k) { case Kind::A: return 1; default: return 0; }"
+    a020_clean = "switch (k) { case Kind::A: return 1; case Kind::B: break; }"
+    a020_not_an_enum = "switch (c) { case 'a': return 1; default: return 0; }"
+    a020_nested = (
+        "switch (k) { case Kind::A: { switch (c) { default: break; } } }")
+    ok &= expect(
+        len(switch_bodies(a020_offender)) == 1,
+        "A020 one switch body is found")
+    ok &= expect(
+        labels_at_top_level(
+            switch_bodies(a020_offender)[0][1], DEFAULT_LABEL_PATTERN),
+        "A020 a default beside a scoped case")
+    ok &= expect(
+        not labels_at_top_level(
+            switch_bodies(a020_clean)[0][1], DEFAULT_LABEL_PATTERN),
+        "A020 an exhaustive switch is clean")
+    ok &= expect(
+        not labels_at_top_level(
+            switch_bodies(a020_not_an_enum)[0][1], SCOPED_CASE_PATTERN),
+        "A020 a switch over no enum is not this rule")
+    ok &= expect(
+        not labels_at_top_level(
+            switch_bodies(a020_nested)[0][1], DEFAULT_LABEL_PATTERN),
+        "A020 an inner switch's default is not the outer one's")
+
     return ok
 
 
@@ -1070,6 +1342,9 @@ CHECKS = [
     ("A015 backend names a runtime library type", check_a015),
     ("A016 MIR node kind only one consumer reads", check_a016),
     ("A017 MIR node kind split by read versus write", check_a017),
+    ("A018 construct consults the declaration registry", check_a018),
+    ("A019 LIR names a MIR identity", check_a019),
+    ("A020 switch over a closed set carries default", check_a020),
 ]
 
 
