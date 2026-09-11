@@ -185,13 +185,14 @@ struct ForeignSymbolTarget {
   auto operator==(const ForeignSymbolTarget&) const -> bool = default;
 };
 
-// Identity of a receiver-less callable owned by another compilation unit's
-// namespace -- a package function or task (LRM 26.3) reached from this unit.
-// The target lives outside this unit, so it carries no unit-local id: it names
-// the owning unit and the callable by name, resolved against that unit's
-// interface at link time, exactly as `ExternalUnitObjectType` names an
-// instantiated child. A backend renders it as the free qualified form
-// `unit_name::callable_name(args)`.
+// Identity of a receiver-less callable a unit's namespace owns -- a package
+// function or task (LRM 26.3). It carries no unit-local id: it names the owning
+// unit and the callable by name, resolved against that unit's interface at link
+// time, exactly as `ExternalUnitObjectType` names an instantiated child. One
+// target kind covers every caller, the owning unit's own bodies included, for
+// the reason a namespace variable has one reference kind: there is no receiver
+// to reach a namespace through, so being inside it changes nothing. A backend
+// renders it as the free qualified form `unit_name::callable_name(args)`.
 struct ExternalUnitCallableTarget {
   std::string unit_name;
   std::string callable_name;
@@ -562,12 +563,12 @@ struct StaticPropertyRef {
   StaticPropertyId prop;
 };
 
-// A place naming a static variable of another compilation unit's namespace by
-// name (`unit_name::variable_name`) -- a package variable (LRM 26.2) read or
-// written from this unit. The reference kind for a package variable is uniform:
-// a package has no instance and no receiver, so its variable is reached by name
-// whether the referrer is another unit or the package's own callable, never
-// through a `self`-based field access. `Expr::type` is the variable's
+// A place naming a variable a unit's namespace owns (LRM 26.2), by the unit and
+// the variable (`unit_name::variable_name`). One reference kind covers every
+// referrer, the declaring unit's own bodies included: a namespace has no
+// instance and no receiver, so its variable is reached by name rather than
+// through a `self`-based field access, and there is no second shape for a
+// reader that happens to be inside it. `Expr::type` is the variable's
 // observable-cell type, so a read wraps it in `Get` and a write in `Set`,
 // exactly as an intra-unit signal's cell does. The storage dual of
 // `ExternalUnitCallableTarget`.

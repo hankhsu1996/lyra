@@ -144,8 +144,9 @@ agree with no table between them.
   execution backend, and the cross-unit form reads and writes the same cell.
 - A static property with no source initializer holds its type's default from time zero on both
   backends; before this it was brought up nowhere.
-- The two bodies a unit publishes cover everything its namespace owns, so they are named for that
-  rather than for package variables.
+- The two bodies a unit publishes cover everything its namespace owns rather than only its own
+  variables, so what the design root asks of a unit is the same question whatever that unit
+  declares.
 - The design root's best-effort initialize order now counts a unit's classes' cells among the reads
   that make one unit a dependency of another.
 - `mir::Class` carries no startup body, and the C++ backend emits no program-startup trigger.
