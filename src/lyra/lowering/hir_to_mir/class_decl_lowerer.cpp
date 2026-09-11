@@ -37,6 +37,7 @@
 #include "lyra/mir/stmt.hpp"
 #include "lyra/mir/type.hpp"
 #include "lyra/mir/type_builders.hpp"
+#include "lyra/support/builtin_fn.hpp"
 
 namespace lyra::lowering::hir_to_mir {
 
@@ -159,8 +160,9 @@ auto LowerStaticStorageInto(
     install_block.AppendStmt(
         mir::ExprStmt{
             .expr = install_block.exprs.Add(
-                mir::MakeCapabilityInitializeCallExpr(
-                    installed, prototype, unit.builtins.void_type))});
+                mir::MakeCapabilityInstallCallExpr(
+                    installed, prototype, support::BuiltinFn::kInitialize,
+                    unit.builtins.void_type))});
 
     const auto written = initializer_of.find(prop_id);
     if (written == initializer_of.end()) {
