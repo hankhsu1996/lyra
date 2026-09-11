@@ -917,20 +917,25 @@ struct Expr {
       .type = driver_type};
 }
 
-// `net.Join(other)` -- joins two nets into one resolution over the
-// contributions of both (LRM 23.3.3.7). `other` is a borrowed pointer to the
-// net being joined, since what crosses is that net itself and not its value.
-// The two operands are interchangeable: a bidirectional connection states no
-// direction.
+// `net.Join(other, here, there, width)` -- states that `width` positions of
+// `net` starting at `here`, and the same many of `other` starting at `there`,
+// are one physical net whose contributions resolve together (LRM 23.3.3.7,
+// 10.11). `other` is a borrowed pointer to the net on the other side, since
+// what crosses is that net itself and not its value; the positions are counted
+// from each value's least significant one. A connection naming a whole net on
+// each side states the run that covers it, which is why there is no second
+// shape for one. The two sides are interchangeable, with their positions:
+// a connection that states this states no direction.
 [[nodiscard]] inline auto MakeNetJoinCallExpr(
-    ExprId net, ExprId other, TypeId void_type) -> Expr {
+    ExprId net, ExprId other, ExprId here, ExprId there, ExprId width,
+    TypeId void_type) -> Expr {
   return Expr{
       .data =
           CallExpr{
               .callee =
                   Direct{
                       .target = support::BuiltinFn::kNetJoin, .receiver = net},
-              .arguments = {other}},
+              .arguments = {other, here, there, width}},
       .type = void_type};
 }
 

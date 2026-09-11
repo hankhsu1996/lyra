@@ -1030,15 +1030,65 @@ void InstallInterfacePortConnection(
                   .type = member_type})});
 }
 
-// Realizes each port connection (LRM 23.3.3). An input or output port is the
-// implied continuous assignment between the two cells, materialized as the same
-// synthesized process a scope-level `assign` produces, registered as a process;
-// when the driven side is a net the edge attaches a driver rather than writing
-// the cell. The other two directions carry no edge and are emitted into the
-// resolve block instead: a `ref` port binds the child's reference member --
-// navigated by name from the owned child -- to the connected variable's cell,
-// and a bidirectional port joins the two nets into one resolution. Each is one
-// statement, with no second cell and no continuous assignment.
+// Realizes the runs of nets this scope's constructs place in one resolution
+// (LRM 23.3.3.7, 10.11). Each is one statement in the resolve body, beside the
+// `ref` port's bind: no driver is attached and no process is registered,
+// because what a join states is which contributions resolve together and not an
+// edge anything travels along. Both nets are named whole and the run says which
+// of their positions the connection reached, so what a backend meets is one
+// call with every operand stated.
+auto InstallNetJoins(StructuralScopeLowerer& lowerer, WalkFrame resolve_frame)
+    -> diag::Result<void> {
+  UnitLowerer& unit_lowerer = lowerer.Owner();
+  mir::Block& block = *resolve_frame.current_block;
+  const hir::StructuralScope& hir_scope = lowerer.HirScope();
+  for (const hir::NetJoin& join : hir_scope.net_joins) {
+    auto here_or =
+        lowerer.LowerLhsExpr(hir_scope.exprs.Get(join.here), resolve_frame);
+    if (!here_or) return std::unexpected(std::move(here_or.error()));
+    auto there_or =
+        lowerer.LowerLhsExpr(hir_scope.exprs.Get(join.there), resolve_frame);
+    if (!there_or) return std::unexpected(std::move(there_or.error()));
+    if (!here_or->descent.empty() || !there_or->descent.empty()) {
+      throw InternalError(
+          "InstallNetJoins: a join names a whole net on each side and says "
+          "which of its positions the run covers, decided where it is read");
+    }
+    const mir::ExprId there = there_or->owner;
+    const mir::TypeId net_ptr_type = unit_lowerer.Unit().types.Intern(
+        mir::Type{mir::PointerType{
+            .pointee = block.exprs.Get(there).type,
+            .ownership = mir::PointerOwnership::kBorrowed}});
+    block.AppendStmt(
+        mir::ExprStmt{
+            .expr = block.exprs.Add(
+                mir::MakeNetJoinCallExpr(
+                    here_or->owner,
+                    block.exprs.Add(
+                        mir::MakeAddressOfExpr(there, net_ptr_type)),
+                    BuildIntLiteral(
+                        unit_lowerer.Unit(), block, join.here_offset),
+                    BuildIntLiteral(
+                        unit_lowerer.Unit(), block, join.there_offset),
+                    BuildIntLiteral(unit_lowerer.Unit(), block, join.width),
+                    unit_lowerer.Unit().builtins.void_type))});
+  }
+  return {};
+}
+
+// Realizes each connection that carries data across the boundary (LRM 23.3.3).
+// An input or output port is the implied continuous assignment between the two
+// cells, materialized as the same synthesized process a scope-level `assign`
+// produces, registered as a process; when the driven side is a net the edge
+// attaches a driver rather than writing the cell. A `ref` port carries no edge
+// and is emitted into the resolve block instead, binding the child's reference
+// member -- navigated by name from the owned child -- to the connected
+// variable's cell: one statement, with no second cell and no continuous
+// assignment.
+//
+// A bidirectional port carries no data in either direction and states no
+// direction at all, so it is not one of these; what it states is which
+// positions resolve together, which is a join.
 auto InstallPortConnections(
     StructuralScopeLowerer& lowerer, WalkFrame frame, WalkFrame resolve_frame,
     WalkFrame init_frame, WalkFrame activate_frame) -> diag::Result<void> {
@@ -1061,43 +1111,11 @@ auto InstallPortConnections(
       case hir::PortDirection::kInput:
       case hir::PortDirection::kOutput:
         break;
-      case hir::PortDirection::kInOut: {
-        // A bidirectional connection joins the two nets into one resolution
-        // over the contributions of both (LRM 23.3.3, 23.3.3.7). It installs
-        // no driver and registers no process, because a transistor connection
-        // is not a reactive edge; it states no direction, because the
-        // connection has none, so which net the call names first says nothing.
-        const auto& cell = std::get<hir::PortCellEndpoint>(data.endpoint);
-        auto internal_or =
-            lowerer.LowerLhsExpr(hir_scope.exprs.Get(cell.cell), resolve_frame);
-        if (!internal_or) {
-          return std::unexpected(std::move(internal_or.error()));
-        }
-        auto external_or =
-            lowerer.LowerLhsExpr(hir_scope.exprs.Get(data.peer), resolve_frame);
-        if (!external_or) {
-          return std::unexpected(std::move(external_or.error()));
-        }
-        if (!internal_or->descent.empty() || !external_or->descent.empty()) {
-          throw InternalError(
-              "InstallPortConnections: a bidirectional connection names "
-              "a whole net on each side, decided where the connection is read");
-        }
-        const mir::ExprId internal = internal_or->owner;
-        const mir::TypeId net_ptr_type = unit_lowerer.Unit().types.Intern(
-            mir::Type{mir::PointerType{
-                .pointee = resolve_block.exprs.Get(internal).type,
-                .ownership = mir::PointerOwnership::kBorrowed}});
-        const mir::ExprId joined = resolve_block.exprs.Add(
-            mir::MakeAddressOfExpr(internal, net_ptr_type));
-        resolve_block.AppendStmt(
-            mir::ExprStmt{
-                .expr = resolve_block.exprs.Add(
-                    mir::MakeNetJoinCallExpr(
-                        external_or->owner, joined,
-                        unit_lowerer.Unit().builtins.void_type))});
-        continue;
-      }
+      case hir::PortDirection::kInOut:
+        throw InternalError(
+            "InstallPortConnections: a bidirectional connection carries no "
+            "data across the boundary and is recorded as the join it is, so "
+            "it never reaches the connection switch");
       case hir::PortDirection::kRef: {
         // A `ref` port reaches the child's reference member by the same route
         // navigation a routed reference uses, then binds it to the peer's cell
@@ -2582,6 +2600,8 @@ auto StructuralScopeLowerer::PopulateBodies(WalkFrame parent_frame)
   auto port_conn_r = InstallPortConnections(
       *this, ctor_frame, resolve_frame, init_frame, activate_frame);
   if (!port_conn_r) return std::unexpected(std::move(port_conn_r.error()));
+  auto net_join_r = InstallNetJoins(*this, resolve_frame);
+  if (!net_join_r) return std::unexpected(std::move(net_join_r.error()));
 
   // A cell answers for a sampled value only once armed, and what arming
   // installs is the value every read answers with until a later time slot

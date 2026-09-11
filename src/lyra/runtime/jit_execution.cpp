@@ -3546,8 +3546,12 @@ auto lyra_rt_packed_attach_driver(void* net, const void* strength) -> void* {
   return &NetOf<PackedArray>(net).AttachDriver(Read<PackedArray>(strength));
 }
 
-void lyra_rt_packed_net_join(void* net, void* other) {
-  NetOf<PackedArray>(net).Join(&NetOf<PackedArray>(other));
+void lyra_rt_packed_net_join(
+    void* net, void* other, const void* here, const void* there,
+    const void* width) {
+  NetOf<PackedArray>(net).Join(
+      &NetOf<PackedArray>(other), Read<PackedArray>(here),
+      Read<PackedArray>(there), Read<PackedArray>(width));
 }
 
 auto lyra_rt_packed_driver_get(void* driver) -> void* {
@@ -3594,8 +3598,12 @@ auto lyra_rt_tuple_attach_driver(void* net, const void* strength) -> void* {
   return &NetOf<RuntimeTuple>(net).AttachDriver(Read<PackedArray>(strength));
 }
 
-void lyra_rt_tuple_net_join(void* net, void* other) {
-  NetOf<RuntimeTuple>(net).Join(&NetOf<RuntimeTuple>(other));
+void lyra_rt_tuple_net_join(
+    void* net, void* other, const void* here, const void* there,
+    const void* width) {
+  NetOf<RuntimeTuple>(net).Join(
+      &NetOf<RuntimeTuple>(other), Read<PackedArray>(here),
+      Read<PackedArray>(there), Read<PackedArray>(width));
 }
 
 auto lyra_rt_tuple_driver_get(void* driver) -> void* {
@@ -3642,8 +3650,12 @@ auto lyra_rt_union_attach_driver(void* net, const void* strength) -> void* {
   return &NetOf<RuntimeUnion>(net).AttachDriver(Read<PackedArray>(strength));
 }
 
-void lyra_rt_union_net_join(void* net, void* other) {
-  NetOf<RuntimeUnion>(net).Join(&NetOf<RuntimeUnion>(other));
+void lyra_rt_union_net_join(
+    void* net, void* other, const void* here, const void* there,
+    const void* width) {
+  NetOf<RuntimeUnion>(net).Join(
+      &NetOf<RuntimeUnion>(other), Read<PackedArray>(here),
+      Read<PackedArray>(there), Read<PackedArray>(width));
 }
 
 auto lyra_rt_union_driver_get(void* driver) -> void* {
@@ -3692,8 +3704,12 @@ auto lyra_rt_unpackedarray_attach_driver(void* net, const void* strength)
       Read<PackedArray>(strength));
 }
 
-void lyra_rt_unpackedarray_net_join(void* net, void* other) {
-  NetOf<RuntimeUnpackedArray>(net).Join(&NetOf<RuntimeUnpackedArray>(other));
+void lyra_rt_unpackedarray_net_join(
+    void* net, void* other, const void* here, const void* there,
+    const void* width) {
+  NetOf<RuntimeUnpackedArray>(net).Join(
+      &NetOf<RuntimeUnpackedArray>(other), Read<PackedArray>(here),
+      Read<PackedArray>(there), Read<PackedArray>(width));
 }
 
 auto lyra_rt_unpackedarray_driver_get(void* driver) -> void* {

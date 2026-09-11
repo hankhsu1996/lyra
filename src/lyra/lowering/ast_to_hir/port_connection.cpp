@@ -9,10 +9,12 @@
 #include <variant>
 #include <vector>
 
+#include <slang/ast/EvalContext.h>
 #include <slang/ast/Expression.h>
 #include <slang/ast/HierarchicalReference.h>
 #include <slang/ast/Scope.h>
 #include <slang/ast/SemanticFacts.h>
+#include <slang/ast/ValuePath.h>
 #include <slang/ast/expressions/AssignmentExpressions.h>
 #include <slang/ast/expressions/MiscExpressions.h>
 #include <slang/ast/symbols/InstanceSymbols.h>
@@ -348,6 +350,49 @@ auto ConnectInterfacePort(
   return {};
 }
 
+// The join a bidirectional port connection states (LRM 23.3.3, 23.3.3.7). What
+// it needs of the actual is the net that expression bottoms out at and the run
+// of that net's positions it names, and the front end answers both: a value
+// path yields the root symbol and the bit range the statically known part of
+// the expression selects. So nothing here turns a declared coordinate into a
+// position -- a question over the elaborated design is answered before HIR, and
+// this is one.
+//
+// The child's port net is joined whole, because a port naming part of an
+// internal name is refused before this is reached.
+auto ConnectBidirectionalPort(
+    StructuralScopeLowerer& scope, const slang::ast::Symbol& eval_scope,
+    const slang::ast::Expression& actual, hir::Expr child_net,
+    std::uint64_t child_width, diag::SourceSpan span, WalkFrame frame)
+    -> diag::Result<hir::NetJoin> {
+  slang::ast::EvalContext eval_context(eval_scope);
+  const slang::ast::ValuePath path(actual, eval_context);
+  const slang::ast::ValueSymbol* root = path.rootSymbol();
+  if (path.lsp != &actual || path.rootExpr == nullptr || root == nullptr ||
+      root->kind != slang::ast::SymbolKind::Net) {
+    return PortConnectionUnsupported(
+        span,
+        "an inout port connected to a concatenation of nets is not yet "
+        "supported");
+  }
+  const std::uint64_t width = path.lspBounds.second - path.lspBounds.first + 1;
+  if (width != child_width) {
+    return PortConnectionUnsupported(
+        span,
+        "an inout port connected to a net of a different width is not yet "
+        "supported");
+  }
+  auto peer_or = scope.LowerExpr(*path.rootExpr, frame);
+  if (!peer_or) return std::unexpected(std::move(peer_or.error()));
+  return hir::NetJoin{
+      .span = span,
+      .here = frame.Exprs().Add(*std::move(peer_or)),
+      .here_offset = static_cast<std::uint32_t>(path.lspBounds.first),
+      .there = frame.Exprs().Add(std::move(child_net)),
+      .there_offset = 0,
+      .width = static_cast<std::uint32_t>(width)};
+}
+
 // Records one instance's port connections as HIR. The instance is reached
 // from its owning scope as `child`, with `element_indices` selecting the
 // element when it is an instance array (empty for a scalar); each port is a
@@ -538,11 +583,11 @@ auto ConnectElementPorts(
         break;
       }
       case hir::PortDirection::kInOut: {
-        // A bidirectional connection is not a directional edge: it joins the
-        // nets on both sides into one resolution (LRM 23.3.3, 23.3.3.7), so it
-        // reads nothing, drives nothing, and waits on nothing. What it names
-        // on each side has to be a whole net -- a part of one belongs to a
-        // resolution of its own, which this model does not carry.
+        // A bidirectional connection is not a directional edge: it states that
+        // runs of the nets on both sides are one physical net, resolving over
+        // the contributions of all of them (LRM 23.3.3, 23.3.3.7), so it reads
+        // nothing, drives nothing, and waits on nothing. It is therefore not a
+        // data port connection at all, and is recorded as the join it is.
         if (!projection->path.empty()) {
           return PortConnectionUnsupported(
               span,
@@ -562,27 +607,14 @@ auto ConnectElementPorts(
               "ConnectElementPorts: an inout port connection is stated as an "
               "assignment to the parent-side target");
         }
-        const auto& actual =
-            expr->as<slang::ast::AssignmentExpression>().left();
-        if (actual.kind != slang::ast::ExpressionKind::NamedValue &&
-            actual.kind != slang::ast::ExpressionKind::HierarchicalValue) {
-          return PortConnectionUnsupported(
-              span,
-              "an inout port connected to a part of a net, or to a "
-              "concatenation of nets, is not yet supported");
-        }
-        endpoint = cell_endpoint();
-        auto peer_or = scope.LowerExpr(actual, frame);
-        if (!peer_or) return std::unexpected(std::move(peer_or.error()));
-        // The two nets resolve to one value, so they have to be one type.
-        if (peer_or->type != type_id) {
-          return PortConnectionUnsupported(
-              span,
-              "an inout port connected to a net of a different type is not yet "
-              "supported");
-        }
-        peer = frame.Exprs().Add(*std::move(peer_or));
-        break;
+        auto join = ConnectBidirectionalPort(
+            scope, inst, expr->as<slang::ast::AssignmentExpression>().left(),
+            unit_lowerer.MakeRoutedMemberRef(
+                home_frame, hir::RoutedRefDecl{.recipe = port_recipe}, span),
+            port->getType().getBitWidth(), span, frame);
+        if (!join) return std::unexpected(std::move(join.error()));
+        frame.current_structural_scope->net_joins.push_back(*std::move(join));
+        continue;
       }
       case hir::PortDirection::kConstRef:
         throw InternalError(

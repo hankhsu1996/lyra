@@ -99,13 +99,75 @@ already stated where the connection is read, one by the child's signature and on
 own type, so that check is a comparison of facts in hand and belongs there. The net-type check is
 not, and belongs where the facts are.
 
+### F7. F4's two realizations are not the pair it took them for
+
+F4 above frames the choice as: reach the surviving net through a pointer on every access, or let
+every net hold what the resolution produced. It is not a pair. Both are what is available when there
+is **no object for the resolution**, so choosing between them was choosing not to build one, and the
+third shape has what each was picked for -- a node that exists only while the design runs, holding
+what a resolution needs, and a copy of its result on every name that reaches it. Reads stay direct;
+the fold runs once per node rather than once per name.
+
+What the omission cost is visible in the shapes it forced, and none of it is a matter of degree:
+
+- **The fold ends up on a name.** Two positions of one name then cannot resolve under different net
+  types -- and they can: LRM 23.3.3.7 is read per bit range because "different bits may have
+  different net types", and a concatenation of a `wand` and a `wor` across a bidirectional port
+  gives one port net two folds. That program is legal, `lyra check` accepts it without a warning,
+  and no arrangement of per-name folds represents it.
+- **Resolution goes quadratic.** A joint of K names is K resolutions each folding K names'
+  contributions, where a node is one fold and K copies -- so a bus through K modules costs O(K^2)
+  per driver change rather than O(K).
+- **Facts that belong to the resolution have nowhere to live.** An `interconnect` net (LRM 6.6.8)
+  has no net type until elaboration picks one, which is after every name exists; a net delay (LRM
+  28.16) sits between the resolution and what a name shows; a resolution function (LRM 6.6.7) takes
+  the drivers as one array; and a resistive switch (LRM 28.14, Table 28-8) reads the strength of a
+  resolved value, which a node can keep and a name does not want.
+
+The standard names the object outright and this record quoted the sentence without taking it: LRM
+10.11 declares names "for the same physical net, or bits within a net", and its members are signals
+"whose bits share the same physical nets". `tran` is the same object again -- 28.13 gives it the
+same "shall not affect signal strength" the port connection has.
+
+### F8. A composed run is expressible only as a position, which settles where the rebase happens
+
+`selector-coordinate-resolution.md` D2 puts the rebase from a declared coordinate to a storage
+position "inside the value", and D3 makes that position private -- "never a coordinate that flows
+between runtime components". A run carries positions and so reverses both, which is argued rather
+than assumed.
+
+The falsification is that the coordinate-facing form cannot express what this needs. Connectivity
+composes: joining `a` to `b` and `b` to `c` puts a run of `a` and a run of `c` in one resolution,
+and where they meet is a selector of neither net -- the two may be declared in opposite directions
+(`[3:0]` against `[0:3]`), so there is no source-level select of `a` that names it. Composition has
+meaning only in positions.
+
+What makes the reversal safe is that D2's two stated defects cannot occur here. Both name a _runtime
+selector_: a narrow rebase wrapping an out-of-range index, and a four-state selector against a
+two-state bound. A connection's run is a constant the front end folded and range-checked, and
+nothing selects while the simulation runs. And D4 of that same record already draws this line --
+whole-value movement "is position-wise and range-agnostic (LRM 7.6) ... Only element and slice
+selection consult the range" -- which is what a connection is: LRM 10.11 gives it a packed union's
+bit overlay rules, not a select's.
+
+So the range is consulted exactly once, where the source wrote the select, which is the lowering
+that reads it. That is also the one place with the folded constants in hand, so nothing below
+recomputes anything.
+
 ## The decision
 
-1. **What resolves is the simulated net a connection forms (LRM 23.3.3.7): the declared nets it has
-   joined, considered as one.** A net no connection joins is the simulated net over one declared
-   net, and its resolution is the same walk over one. There is no separate single-net path. The word
-   is the standard's rather than one minted here, and "domain" is deliberately not used for it --
-   this codebase already spends that word on the representation a value is realized in.
+1. **What resolves is the physical net (LRM 10.11, 23.3.3.7): a set of positions that resolve
+   together, which the connectivity of the elaborated design forms and which exists as an object of
+   its own.** A declared net is a name that reaches a run of one; a net no connection reaches is the
+   one name of a node covering it exactly, which is the same walk over one member. There is no
+   separate single-net path, and no case for "not joined". "Domain" is deliberately not used for any
+   of this, since this codebase already spends that word on the representation a value is realized
+   in.
+
+   A node is a space of positions with names placed in it, rather than a set of names each carrying
+   a range. That is what lets one name reach a node at more than one alignment, which is what a
+   connection permuting runs states -- LRM 10.11's byte-swap example places one net at four places
+   in one node -- and it is why joining never has to split anything.
 
 2. **A join pools contributions, never results.** Every driver a simulated net covers contributes to
    one resolution at the strength it drives at, and no net's resolved value is ever an input to
@@ -128,12 +190,26 @@ not, and belongs where the facts are.
    statement in the parent's resolve body, beside the `ref` port's bind and in place of the reactive
    process the two directional ports install. It attaches no driver and registers no process.
 
-6. **Every declared net holds the value its simulated net resolved and publishes its own change.**
-   Each keeps its own contributions, its own resolved value, and its own observable identity; one of
-   them stands as the simulated net and carries what belongs to it -- the fold, the net type's own
-   contribution, and any procedural continuous assignment in force over it. Reading a net, waiting
-   on it, sampling it, forcing it, and reaching it by a hierarchical name are therefore unchanged by
-   collapse.
+6. **What resolves is a node the connectivity forms, and a declared net is a name that reaches a run
+   of it.** The node holds what a resolution needs and a name does not: the fold, the contribution
+   the net type makes to its own resolution, and any procedural continuous assignment in force over
+   the positions. A name holds what belongs to it: its own contributions, its own observers, and a
+   copy of what the node produced over the positions it reaches. Reading a net therefore reaches its
+   own storage directly and never follows a pointer to get there, and reading, waiting, sampling,
+   forcing and reaching by a hierarchical name are unchanged by collapse.
+
+   A node exists only while the design runs, because which names reach it is the connectivity of the
+   elaborated design. Nothing compiles against one, no name's storage moves or changes layout, and
+   no name is designated to answer for another.
+
+   Transitivity is a property of the object rather than something maintained: a chain of connections
+   leaves every name it passes through in one node, so nothing is closed, composed, or rebuilt.
+
+7. **A run is a position, and the declared range that named it is read once, where the source wrote
+   the select.** What a connection states is a position-wise overlay -- LRM 10.11 gives it "the bit
+   overlay rules ... for a packed union with the same member types", and LRM 7.6 makes whole-value
+   correspondence positional rather than range-relative -- so below the lowering that reads the
+   source, no layer needs the range a net names its own positions by.
 
 ## Consequences
 
@@ -148,18 +224,35 @@ not, and belongs where the facts are.
 - The Seal barrier stays a lifecycle contract with no consumer. The first construct that genuinely
   cannot be applied as its route resolves will materialize it.
 - Net collapse is invisible to every consumer of a net, so no reader, waiter, sampler, or cross-unit
-  route changes. What grows is the net itself, by the two facts that say which simulated net it
-  belongs to and which nets that one covers.
+  route changes. What a name gains is which node it reaches; what it gives up is the fold, the net
+  type's own contribution and any force over it, each of which belongs to the resolution and moves
+  to the node with it.
+- A fact that belongs to a resolution rather than to a name now has somewhere to be stated, which is
+  what the constructs still out of scope were each waiting for: a net type elaboration picks (LRM
+  6.6.8), a delay between the resolution and what a name shows (28.16), a resolution function over
+  the drivers as one array (6.6.7), and the strength of a resolved value that a resistive switch
+  reads (28.14). None of them is taken here; each stops needing a reshape first.
 
 ## Alternatives considered
 
 **Each side drives the other with what it resolved to.** Rejected by F1: it is strength-reducing,
 which is the one property LRM 23.3.3 names, and it turns a resolution into a fixpoint iteration.
 
-**Reach the surviving net through a pointer on every access.** Rejected by F4. It is what a
-simulator that flattens the design at compile time gets for free, because the flattening resolves
-the name to the node before any code is generated; compiling per unit means the pointer would be
-read at run time instead, on every read of every net in every design.
+**Reach the surviving net through a pointer on every access.** Rejected by F4, and the rejection
+stands while the reasoning around it does not -- F7 is why. It is what a simulator that flattens the
+design at compile time gets for free, because the flattening resolves the name to the node before
+any code is generated; compiling per unit means the pointer would be read at run time instead, on
+every read of every net in every design. What F4 drew from that, and F7 corrects, is that there is
+therefore no node: a node with a copy of its result on every name reaching it costs no indirection
+at all.
+
+**No object for the resolution, with the nets encoding it between them.** Rejected by F7, after
+building it twice -- as a ring of the names in one resolution, and as a transitively closed set of
+runs between them. Both are correct for what they were built for and both put the fold on a name,
+which no arrangement of names can make per-range; both make a joint of K names cost K resolutions
+over K names' contributions; and neither has anywhere to state a fact that belongs to the resolution
+rather than to a name. The tell, available from the start, is that the standard names the object in
+the clause this record is derived from.
 
 **Delete the dominated net and rebind its name.** Rejected: a child's compiled body addresses its
 own member, and the parent that would delete it is not compiled into the child. This is also the

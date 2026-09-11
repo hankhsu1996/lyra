@@ -434,6 +434,10 @@ struct PortConnectionId {
 // it: an input or output port as the implied continuous assignment between the
 // two cells, a `ref` port as an alias bind of the child's reference member to
 // the peer's cell, performed in the resolve phase (LRM 23.3.3.2).
+//
+// A bidirectional port is not one of these. Nothing crosses it in either
+// direction, so it has no source, no sink and nothing to wait on; what it
+// states is a join.
 struct DataPortConnection {
   PortDirection direction;
   PortEndpoint endpoint;
@@ -457,6 +461,31 @@ struct InterfacePortConnection {
 struct PortConnection {
   diag::SourceSpan span;
   std::variant<DataPortConnection, InterfacePortConnection> kind;
+};
+
+// A run of one net's positions and an equally wide run of another's, which a
+// construct states are the same physical net (LRM 23.3.3.7, 10.11). `here` and
+// `there` name the two nets whole, and the offsets say where the shared run
+// starts in each of their values, counted from the first position.
+//
+// What such a construct states is a position-wise overlay -- LRM 10.11 gives it
+// the bit overlay rules of a packed union, and LRM 7.6 makes whole-value
+// correspondence positional rather than range-relative -- so the declared range
+// each side names its own positions by is read once, here, where the source
+// wrote the select, and is not a fact any layer below needs. A construct naming
+// one whole net on each side states the run that covers both, which is the
+// case every design that joins whole nets is in rather than a shape of its own.
+//
+// Nothing is driven, read, or waited on: a bidirectional connection (LRM
+// 23.3.3) and an `alias` (LRM 10.11) both state which positions resolve
+// together and state no direction, so one construct spelling covers both.
+struct NetJoin {
+  diag::SourceSpan span;
+  ExprId here;
+  std::uint32_t here_offset{};
+  ExprId there;
+  std::uint32_t there_offset{};
+  std::uint32_t width{};
 };
 
 // The lowered form of every generate construct (LRM 27): after frontend
@@ -497,6 +526,10 @@ struct StructuralScope {
   base::Registry<InstanceMemberDecl, InstanceMemberId> instance_members;
   base::Arena<InterfacePortDecl, InterfacePortId> interface_ports;
   base::Arena<PortConnection, PortConnectionId> port_connections;
+  // The runs of nets this scope's constructs place in one resolution. A plain
+  // list rather than an arena because nothing names one: no reference reaches a
+  // join, and what it states is already complete when it is recorded.
+  std::vector<NetJoin> net_joins;
   base::Arena<RoutedRefDecl, RoutedRefId> routed_refs;
   base::Arena<ClassNameDecl, PropertyCoordinateId> property_coordinates;
   base::Arena<ClassNameDecl, BehaviorCoordinateId> behavior_coordinates;
