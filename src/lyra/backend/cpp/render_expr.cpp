@@ -27,9 +27,6 @@ namespace lyra::backend::cpp {
 
 namespace {
 
-auto RenderDerefExpr(const ScopeView& view, const mir::DerefExpr& d)
-    -> std::string;
-
 auto LookupLocalName(const ScopeView& view, const mir::LocalRef& ref)
     -> std::string {
   // Every local -- including `self` (`locals[0]`), which the method emit
@@ -37,10 +34,7 @@ auto LookupLocalName(const ScopeView& view, const mir::LocalRef& ref)
   return view.Local(ref).name;
 }
 
-// The C++ token for an operator this target applies to two values. A shift has
-// none -- C++ decides between the arithmetic and the logical form from the
-// operand's signedness where SV names it in the operator -- so a shift is
-// reached through the library instead.
+// The C++ token for an operator this target applies to two values.
 auto BinaryOpToken(mir::BinaryOp op) -> std::string_view {
   switch (op) {
     case mir::BinaryOp::kAdd:
@@ -75,12 +69,6 @@ auto BinaryOpToken(mir::BinaryOp op) -> std::string_view {
       return "&&";
     case mir::BinaryOp::kLogicalOr:
       return "||";
-    case mir::BinaryOp::kShiftLeft:
-    case mir::BinaryOp::kLogicalShiftRight:
-    case mir::BinaryOp::kArithmeticShiftRight:
-      throw InternalError(
-          "BinaryOpToken: a shift is performed by a library entry and reaches "
-          "no expression; only a compound assignment names one");
   }
   throw InternalError("BinaryOpToken: unknown MIR BinaryOp");
 }
@@ -110,14 +98,6 @@ auto RenderBinaryExpr(const ScopeView& view, const mir::BinaryExpr& b)
       RenderExpr(view, view.Expr(b.rhs)));
 }
 
-// Emits the host-bool reduction the node states, so a condition and a native
-// C++ logical operand read a value as a boolean the same way, without leaving
-// the boolean decision to a contextual conversion at the use site.
-auto RenderBoolCastExpr(const ScopeView& view, const mir::BoolCastExpr& b)
-    -> std::string {
-  return std::format("bool({})", RenderExpr(view, view.Expr(b.operand)));
-}
-
 auto RenderConditionalExpr(const ScopeView& view, const mir::ConditionalExpr& c)
     -> std::string {
   return std::format(
@@ -126,31 +106,21 @@ auto RenderConditionalExpr(const ScopeView& view, const mir::ConditionalExpr& c)
       RenderExpr(view, view.Expr(c.else_value)));
 }
 
-// Converts a machine integer to the machine integer named by the enclosing
-// `Expr::type` -- a truncation or an extension, which `static_cast` performs.
-// This is a machine conversion, not a simulation-value one: every SV value
-// reshape (integral resize, real <-> integral, packed <-> string) is a
-// `CallExpr` against a `lyra::value` factory and renders through the call path.
-auto RenderIntCastExpr(
-    const ScopeView& view, const mir::Expr& expr, const mir::IntCastExpr& cast)
+// The operand read as the type the expression has, written as the C++ cast
+// notation from the one to the other. That notation is the C++ spelling for
+// whichever conversion a pair of types calls for, so the pair decides the
+// conversion here as it does in the node, and this names no type of its own.
+//
+// The enclosing parentheses are load-bearing: cast notation is not a primary
+// expression, so a `->` or a `[` written after it would take the cast's own
+// operand instead, and the conversion would silently apply to the wrong thing.
+auto RenderCastExpr(
+    const ScopeView& view, const mir::Expr& expr, const mir::CastExpr& cast)
     -> std::string {
   return std::format(
-      "static_cast<{}>({})", RenderTypeAsCpp(view.Unit(), expr.type),
+      "(({})({}))", RenderTypeAsCpp(view.Unit(), expr.type),
       RenderExpr(view, view.Expr(cast.operand)));
 }
-
-}  // namespace
-
-// How a field access reaches its field: the C++ field name, plus whether it is
-// reached through the receiver (`recv->name`, an object member) or named
-// directly in scope (bare `name`, a closure capture that is an in-scope lambda
-// binding). This is the one place that maps a field-bearing nominal receiver
-// and a field id to a rendered field, so a new receiver kind is added here, not
-// at every access site.
-struct FieldAccess {
-  std::string name;
-  bool through_receiver;
-};
 
 // The C++ name of a closure capture, distinct from the field's source name. A
 // capture is realized as a lambda capture and shares the lambda's scope with
@@ -165,105 +135,67 @@ auto ClosureCaptureCppName(const mir::ClosureDecl& decl, mir::FieldId field)
   return std::format("{}_c{}", decl.fields.Get(field).name, field.value);
 }
 
-auto ResolveFieldAccess(const ScopeView& view, const mir::FieldAccessExpr& m)
-    -> FieldAccess {
-  // The receiver reaches its field-bearing value through a borrowed pointer (a
-  // class `self`, a closure receiver), a shared handle (a promoted scope), or a
-  // managed reference (a class handle). The field target is owner-qualified
-  // for a class receiver (owner names the declaring class arena) and a bare
-  // field id otherwise (a struct, a closure, or another unit's object, whose
-  // arena is uniquely determined by the receiver's type).
-  //
-  // A closure captures its fields into a lambda whose captures are in scope,
-  // so a read over the closure receiver is the bare capture name, not a
-  // receiver dereference. Every other receiver is `recv->field`.
+auto RenderFieldAccessExpr(const ScopeView& view, const mir::FieldAccessExpr& m)
+    -> std::string {
+  const auto through_receiver = [&](std::string_view name) {
+    return std::format("{}->{}", RenderExpr(view, view.Expr(m.receiver)), name);
+  };
   return std::visit(
       Overloaded{
-          [&](const mir::FieldTarget& t) -> FieldAccess {
+          [&](const mir::ClassFieldTarget& t) -> std::string {
             // Qualified by the declaring class: a derived class may redeclare
             // a name its base already used, both storages exist at once, and
             // which of them an access reaches is fixed where the access is
             // written rather than by the receiver's type (LRM 8.14).
             const auto& cls = view.Unit().GetClass(t.owner);
-            return FieldAccess{
-                .name = std::format(
-                    "{}::{}", ToCppName(cls.name), cls.fields.Get(t.slot).name),
-                .through_receiver = true};
+            return through_receiver(
+                std::format(
+                    "{}::{}", ToCppName(cls.name),
+                    cls.fields.Get(t.slot).name));
           },
-          [&](const mir::ExternalFieldTarget& t) -> FieldAccess {
-            // Cross-unit class field: the declaring unit's header pulls the
-            // field name into scope through the include; the receiver reaches
-            // it by its source name, which the target-language compiler
-            // resolves against the receiver's static type. The slot is what
-            // the access states, so the name is read out of what that class
-            // promised rather than restated at the access.
+          [&](const mir::StructFieldTarget& t) -> std::string {
+            return through_receiver(
+                view.Unit().GetStruct(t.owner).fields.Get(t.slot).name);
+          },
+          [&](const mir::ClosureFieldTarget& t) -> std::string {
+            // A closure is emitted as a lambda whose captures are bindings of
+            // the enclosing scope, so naming the capture is the whole access
+            // and the receiver never appears.
+            return ClosureCaptureCppName(
+                view.Unit().GetClosure(t.owner), t.slot);
+          },
+          [&](const mir::ExternalUnitObjectFieldTarget& t) -> std::string {
+            return through_receiver(view.Unit()
+                                        .external_unit_objects.Get(t.owner)
+                                        .fields.Get(t.slot)
+                                        .name);
+          },
+          [&](const mir::CrossUnitClassFieldTarget& t) -> std::string {
+            // The declaring unit's header pulls the property name into scope
+            // through the include, so the receiver reaches it by its source
+            // name and the target-language compiler resolves it against the
+            // receiver's static type. The slot is what the access states, so
+            // the name is read out of what that class promised rather than
+            // restated at the access.
             const mir::ExternalClass* declaring = mir::FindExternalClass(
                 view.Unit().external_classes, t.unit_name, t.class_name);
             if (declaring == nullptr ||
                 t.slot.value >= declaring->fields.size()) {
               throw InternalError(
-                  "ResolveFieldAccess: a property access names a slot no "
+                  "RenderFieldAccessExpr: a property access names a slot no "
                   "consumed promise describes");
             }
-            return FieldAccess{
-                .name = declaring->fields.Get(t.slot).name,
-                .through_receiver = true};
-          },
-          [&](const mir::FieldId& id) -> FieldAccess {
-            const mir::TypeId recv_type = view.Expr(m.receiver).type;
-            const auto& recv_data = view.Unit().types.Get(recv_type);
-            mir::TypeId pointee{};
-            if (const auto* ptr = recv_data.As<mir::PointerType>()) {
-              pointee = ptr->pointee;
-            } else {
-              throw InternalError(
-                  "ResolveFieldAccess: bare-field-id access expects a pointer "
-                  "receiver (a struct, a closure, or another unit's object)");
-            }
-            const auto& pointee_data = view.Unit().types.Get(pointee);
-            if (const auto* c = pointee_data.As<mir::ClosureType>()) {
-              return FieldAccess{
-                  .name = ClosureCaptureCppName(
-                      view.Unit().GetClosure(c->closure_id), id),
-                  .through_receiver = false};
-            }
-            if (const auto* s = pointee_data.As<mir::StructType>()) {
-              return FieldAccess{
-                  .name =
-                      view.Unit().GetStruct(s->struct_id).fields.Get(id).name,
-                  .through_receiver = true};
-            }
-            if (const auto* e =
-                    pointee_data.As<mir::ExternalUnitObjectType>()) {
-              return FieldAccess{
-                  .name = view.Unit()
-                              .external_unit_objects.Get(e->object)
-                              .fields.Get(id)
-                              .name,
-                  .through_receiver = true};
-            }
-            throw InternalError(
-                "ResolveFieldAccess: bare-field-id access on a receiver that "
-                "is not a member-bearing aggregate or object");
+            return through_receiver(declaring->fields.Get(t.slot).name);
           }},
       m.field);
-}
-
-auto RenderFieldAccessExpr(const ScopeView& view, const mir::FieldAccessExpr& m)
-    -> std::string {
-  const FieldAccess field = ResolveFieldAccess(view, m);
-  if (!field.through_receiver) {
-    return field.name;
-  }
-  return std::format(
-      "{}->{}", RenderExpr(view, view.Expr(m.receiver)), field.name);
 }
 
 // The C++ text a reference names. Every alternative comes out as a name, or a
 // scope and a name joined; what differs is which table the strings are read out
 // of, which is the whole of what separates one referent from another. A
 // function is named by its address, since C++ spells a bare function name as a
-// call.
+// call -- and that address, alone among these, is not a primary expression, so
+// it carries the parentheses that let it stand wherever the others do.
 auto RenderReferenceExpr(
     const ScopeView& view, const mir::ReferenceExpr& reference) -> std::string {
   return std::visit(
@@ -274,7 +206,7 @@ auto RenderReferenceExpr(
           [&](const mir::FunctionRef& fr) -> std::string {
             const mir::Class& cls = view.Class();
             return std::format(
-                "&{}::{}", ToCppName(cls.name),
+                "(&{}::{})", ToCppName(cls.name),
                 cls.abi_adapters.Get(fr.adapter).name);
           },
           [&](const mir::StaticConstantRef& r) -> std::string {
@@ -304,67 +236,21 @@ auto RenderReferenceExpr(
       reference.target);
 }
 
-namespace {
-
-// The library method that applies a shift to the value it is called on. A
-// shift is performed by the library rather than applied by the target, and a
-// compound assignment needs the applying form so its destination is reached
-// once (LRM 11.4.1).
-auto ShiftAssignMethod(mir::BinaryOp op) -> std::string_view {
-  switch (op) {
-    case mir::BinaryOp::kShiftLeft:
-      return "ShiftLeftAssign";
-    case mir::BinaryOp::kLogicalShiftRight:
-      return "LogicalShiftRightAssign";
-    case mir::BinaryOp::kArithmeticShiftRight:
-      return "ArithmeticShiftRightAssign";
-    case mir::BinaryOp::kAdd:
-    case mir::BinaryOp::kSub:
-    case mir::BinaryOp::kMul:
-    case mir::BinaryOp::kDiv:
-    case mir::BinaryOp::kMod:
-    case mir::BinaryOp::kBitwiseAnd:
-    case mir::BinaryOp::kBitwiseOr:
-    case mir::BinaryOp::kBitwiseXor:
-    case mir::BinaryOp::kEquality:
-    case mir::BinaryOp::kInequality:
-    case mir::BinaryOp::kGreaterEqual:
-    case mir::BinaryOp::kGreaterThan:
-    case mir::BinaryOp::kLessEqual:
-    case mir::BinaryOp::kLessThan:
-    case mir::BinaryOp::kLogicalAnd:
-    case mir::BinaryOp::kLogicalOr:
-      break;
-  }
-  throw InternalError(
-      "ShiftAssignMethod: the operator is applied by the target and needs no "
-      "method");
-}
-
-// C++ spells a compound assignment by suffixing the operator it applies, so
-// the two forms differ only in whether the target applies the operator at all.
-auto RenderCompoundAssign(
-    mir::BinaryOp op, const std::string& chain, const std::string& rhs)
-    -> std::string {
-  if (mir::BinaryOpAsBuiltinFn(op).has_value()) {
-    return std::format("{}.{}({})", chain, ShiftAssignMethod(op), rhs);
-  }
-  return std::format("{} {}= {}", chain, BinaryOpToken(op), rhs);
-}
-
 auto RenderAssignExpr(const ScopeView& view, const mir::AssignExpr& a)
     -> std::string {
-  std::string value = RenderExpr(view, view.Expr(a.value));
+  const std::string value = RenderExpr(view, view.Expr(a.value));
 
   // Mechanical render: the target names the storage the store reaches, whether
   // that is a plain place or a part of the value one holds, and either renders
-  // as a C++ lvalue -- so this path emits a plain assignment over it. An
-  // assignment is an expression, so it parenthesizes to keep its value usable
-  // wherever it appears.
+  // as a C++ lvalue -- so this path emits a plain assignment over it. C++
+  // spells an applied operator by suffixing its token, and evaluates the left
+  // operand once, which is what LRM 11.4.1 asks. An assignment is an
+  // expression, so it parenthesizes to keep its value usable wherever it
+  // appears.
   const std::string target = RenderExpr(view, view.Expr(a.target));
   if (a.compound_op.has_value()) {
     return std::format(
-        "({})", RenderCompoundAssign(*a.compound_op, target, value));
+        "({} {}= {})", target, BinaryOpToken(*a.compound_op), value);
   }
   return std::format("({} = {})", target, value);
 }
@@ -522,17 +408,7 @@ auto RenderDerefExpr(const ScopeView& view, const mir::DerefExpr& d)
 // `&place` emitted as the C++ address-of operator.
 auto RenderAddressOfExpr(const ScopeView& view, const mir::AddressOfExpr& a)
     -> std::string {
-  return std::format("&{}", RenderExpr(view, view.Expr(a.operand)));
-}
-
-// Re-types a reference as the reference type the expression's `type` states.
-// Renders as `static_cast<DestType>(operand)`; the destination spelling comes
-// from the type table, not from any local inference.
-auto RenderPointerCastExpr(
-    const ScopeView& view, const mir::PointerCastExpr& cast, mir::TypeId dest)
-    -> std::string {
-  return "static_cast<" + RenderTypeAsCpp(view.Unit(), dest) + ">(" +
-         RenderExpr(view, view.Expr(cast.operand)) + ")";
+  return std::format("(&{})", RenderExpr(view, view.Expr(a.operand)));
 }
 
 // How a machine float literal is written so the target reads back the value it
@@ -615,8 +491,8 @@ auto RenderExpr(const ScopeView& view, const mir::Expr& expr) -> std::string {
           [&](const mir::BinaryExpr& b) -> std::string {
             return RenderBinaryExpr(view, b);
           },
-          [&](const mir::BoolCastExpr& b) -> std::string {
-            return RenderBoolCastExpr(view, b);
+          [&](const mir::CastExpr& c) -> std::string {
+            return RenderCastExpr(view, expr, c);
           },
           [&](const mir::ConditionalExpr& c) -> std::string {
             return RenderConditionalExpr(view, c);
@@ -630,20 +506,11 @@ auto RenderExpr(const ScopeView& view, const mir::Expr& expr) -> std::string {
           [&](const mir::IncDecExpr& inc) -> std::string {
             return RenderIncDecExpr(view, inc);
           },
-          [&](const mir::IntCastExpr& cast) -> std::string {
-            return RenderIntCastExpr(view, expr, cast);
-          },
           [&](const mir::CallExpr& call) -> std::string {
             return RenderCallExpr(view, call, expr.type);
           },
           [&](const mir::DerefExpr& d) -> std::string {
             return RenderDerefExpr(view, d);
-          },
-          [&](const mir::FunctionCastExpr& c) -> std::string {
-            return std::format(
-                "reinterpret_cast<{}>({})",
-                RenderTypeAsCpp(view.Unit(), expr.type),
-                RenderExpr(view, view.Expr(c.operand)));
           },
           [&](const mir::MachineArrayDataExpr& d) -> std::string {
             return std::format(
@@ -656,20 +523,11 @@ auto RenderExpr(const ScopeView& view, const mir::Expr& expr) -> std::string {
             return std::format(
                 "std::move({})", RenderExpr(view, view.Expr(m.operand)));
           },
-          [&](const mir::PointerCastExpr& c) -> std::string {
-            return RenderPointerCastExpr(view, c, expr.type);
-          },
           [&](const mir::FieldAccessExpr& m) -> std::string {
             return RenderFieldAccessExpr(view, m);
           },
           [&](const mir::ClosureExpr& cl) -> std::string {
             return RenderClosureExpr(view, cl);
-          },
-          // The value is unchanged and so is its C++ type: an enumeration and
-          // its base share one runtime class, so ascribing the other type to a
-          // value spells nothing here.
-          [&](const mir::ValueCastExpr& v) -> std::string {
-            return RenderExpr(view, view.Expr(v.operand));
           },
           [&](const mir::CompositeExpr& c) -> std::string {
             return RenderPartsAsBraceInit(view, expr.type, c.parts);

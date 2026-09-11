@@ -78,12 +78,12 @@ why nothing a signature states may rest on it.
       callable's formals and result, and a published member's type, cross the same way once those
       are published.
 - [x] S4 -- A published port states the storage it reaches: which member of the unit's object, and
-      whether that member is a net and under which resolution its drivers combine. A route to that
-      storage takes both from the statement rather than from the declaration behind it, so the cell
-      a cross-unit route ends at is the publishing unit's own answer. What is not done is the wider
-      vocabulary: a net type the compiler does not model is refused where it is declared, so a
-      signature only ever carries the net types the vocabulary spells, and publishing an unmodelled
-      one for the consumer to refuse waits on that.
+      whether that member is a net. A route to that storage takes both from the statement rather
+      than from the declaration behind it, so the cell a cross-unit route ends at is the publishing
+      unit's own answer. Which fold a net's drivers combine under is not among what crosses: a
+      referrer reaches a net by attaching a driver and updating its own contribution, so the fold is
+      the declaring unit's own work and a net type the compiler does not model is refused where it
+      is declared rather than travelling to a consumer to be refused there.
 - [ ] S5 -- A published port states the default value an omitted connection materializes (LRM
       23.2.2.4). The default is written in the declaring unit and resolves there, so what crosses is
       the value it folded to rather than the expression that produced it. Publishing the value is

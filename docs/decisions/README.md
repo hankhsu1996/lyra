@@ -34,11 +34,14 @@ the detail lives in the entry itself.
   recursively (one dim per node); MIR stays flat and HIR-to-MIR flattens.
 - [unpacked-array-representation](unpacked-array-representation.md) -- representation of a
   fixed-size unpacked array.
-- [unpacked-struct-representation](unpacked-struct-representation.md) -- an unpacked struct is the
-  generic product type (MIR `TupleType`), positional access, defaults synthesized at lowering.
+- [unpacked-struct-representation](unpacked-struct-representation.md) -- an unpacked struct is a
+  value product and not an object, positional access, defaults synthesized at lowering.
 - [unpacked-union-representation](unpacked-union-representation.md) -- the sibling the struct
   decision left open: overlapping storage is neither a product nor a sum, and this settles which one
   MIR models it as.
+- [aggregate-names-are-type-content](aggregate-names-are-type-content.md) -- an aggregate the source
+  declared names its members in its own type, whose value-domain projection is the product or the
+  vector a type naming nothing already has.
 - [unpacked-range-belongs-to-type](unpacked-range-belongs-to-type.md) -- an unpacked array's index
   range is part of its type, not a size carried beside it; packed arrays are carved out.
 - [selector-coordinate-resolution](selector-coordinate-resolution.md) -- `a[1:7]`, `b[7:1]`, and
@@ -91,8 +94,9 @@ the detail lives in the entry itself.
   that stopped; a stage that reported anything is the last one that runs, and what it produced is
   discarded.
 - [foreach-lowering](foreach-lowering.md) -- the lowering shape of `foreach`.
-- [compound-assignment-write-location](compound-assignment-write-location.md) -- one uniform node
-  evaluating the left-hand side exactly once (LRM 11.4.1); superseded for value interiors by
+- [compound-assignment-write-location](compound-assignment-write-location.md) -- one node per write
+  target, evaluating the left-hand side exactly once (LRM 11.4.1); revised so an operator the
+  library performs is applied by the entry that performs it, and superseded for value interiors by
   [value-projection-write](value-projection-write.md).
 - [conversion-folding](conversion-folding.md) -- when type conversions are folded.
 - [shape-from-types-contents-from-expressions](shape-from-types-contents-from-expressions.md) -- a
@@ -136,6 +140,10 @@ the detail lives in the entry itself.
   convention are rejected.
 - [address-of-primitive](address-of-primitive.md) -- MIR carries an explicit place-to-pointer
   operator (`AddressOfExpr`), dual to `DerefExpr`; the backend never injects `&`.
+- [cast-is-a-pair-of-types](cast-is-a-pair-of-types.md) -- a cast is one node whose operand type and
+  result type are its whole statement, so no kind sits beside them; a backend refuses a pair it
+  cannot realize rather than passing the value through. One node per conversion, and a kind
+  enumeration on the node, are rejected.
 - [event-control-unification](event-control-unification.md) -- unified treatment of event control:
   every value-change wait (`always_comb` / `@*`, `@(...)`, `wait (cond)`, a continuous assignment)
   is one shape over a per-leaf `(observable, bit_range)` set. Its MIR carrier is superseded by the
@@ -321,7 +329,8 @@ the detail lives in the entry itself.
 - [inherited-member-reference](inherited-member-reference.md) -- a member projection names the
   declaration that declares the member and the slot it gave it, so which storage a shadowed name
   reaches is stated rather than re-derived from the type the chain arrived at; an inherited member
-  keeps its slot, so a base's unpublished addition moves nothing. Flattening during lowering, a base
+  keeps its slot, so a base's unpublished addition moves nothing. Every kind of declaration that
+  declares fields is named this way, not only the class. Flattening during lowering, a base
   subobject as a place step, and a per-access base offset are rejected.
 - [closure-value-realization](closure-value-realization.md) -- on the execution backend a closure
   declaration publishes a definition (its body and its capture storage schema) and a closure value

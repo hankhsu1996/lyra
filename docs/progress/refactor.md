@@ -335,16 +335,17 @@ enough to warrant its own focused review.
       `RenderExprNatural` split and `ProducesPackedArrayRef` predicate are gone.
 
 - [x] R25 -- **Closed: both carve-outs resolved.** The two value-query families this entry set aside
-      as not fitting the generic `(receiver).name(args)` member-call rule are both settled. Enum
-      type-static methods (`first` / `last` / `num`, no receiver -- the type qualifier is part of
-      the symbol identity) lower to the `BuiltinStaticCallee` arm R29 introduced and render as
-      `Enum::method(args)`. `$isunknown` needs no special type-static / constant-fold path: it is
-      the generic instance built-in call `(x).IsUnknown()` returning the SV `bit` type (1-bit
-      `PackedArray`, LRM 20.9), now wired end to end -- recognized at AST-to-HIR by
-      `KnownSystemName::IsUnknown`, lowered through the context-free call family in both procedural
-      and continuous-assign positions (`../decisions/context-free-call-lowering.md`). The
-      cross-cutting value-model (SV-typed runtime signatures, the representation bridge inside the
-      method body, the backend reading the stated result type) is settled.
+      as not fitting the generic `(receiver).name(args)` member-call rule are both settled. An
+      enumerated type's methods (`first` / `last` / `num`, no receiver) are answered from the
+      enumeration's own declared members rather than by a runtime entry, so the call the source
+      wrote reaches a body the lowering synthesizes for that enumeration. `$isunknown` needs no
+      special type-associated or constant-fold path: it is the generic instance built-in call
+      `(x).IsUnknown()` returning the SV `bit` type (1-bit `PackedArray`, LRM 20.9), now wired end
+      to end -- recognized at AST-to-HIR by `KnownSystemName::IsUnknown`, lowered through the
+      context-free call family in both procedural and continuous-assign positions
+      (`../decisions/context-free-call-lowering.md`). The cross-cutting value-model (SV-typed
+      runtime signatures, the representation bridge inside the method body, the backend reading the
+      stated result type) is settled.
 
 - [x] R26 -- Runtime container protocols are pinned as explicit C++20 concepts in a single
       value-layer concept header; each container `static_assert`s every protocol it satisfies. Slice
@@ -365,10 +366,9 @@ enough to warrant its own focused review.
       separate `Writable` concept: the pair belongs with the read-side concept it shadows.
 
 - [x] R29 -- Built-in method calls and runtime entries carry one flat closed-namespace identifier
-      shared between HIR and MIR. Two MIR callee arms (instance, type-namespace-qualified static)
-      replace the per-family variant. The receiver's MIR type drives backend calling-convention
-      mechanically; SV-side `$isunknown` returns the SV `bit` type so no host-bool lift survives at
-      the backend. See `decisions/builtin-call-identity.md`.
+      shared between HIR and MIR, replacing the per-family variant. The receiver's MIR type drives
+      backend calling-convention mechanically; SV-side `$isunknown` returns the SV `bit` type so no
+      host-bool lift survives at the backend. See `decisions/builtin-call-identity.md`.
 
 - [x] R30 -- **Runtime effects as generic calls: the closure-bearing subset** (carve-out of R20,
       same decision). The `$strobe` family and the synthesized non-blocking-assignment and
@@ -563,12 +563,12 @@ enough to warrant its own focused review.
 - [x] R42 -- Retired `RuntimeNavCallee`. The three by-name scope operations (`kRegisterSignal` /
       `kGetSignal` / `kGetChild`) now ride `BuiltinFnCallee` with the signal / child name as a
       regular `StringLiteral` argument and the index list as an element list. The `kGetSignal` cast
-      is lifted to a new MIR `PointerCastExpr` primitive whose destination type is the call site's
-      slot type; the backend emits `static_cast<T>(...)` mechanically from a stated MIR fact. The
-      `kGetChild` index conversion moved into the runtime (which now accepts
-      `std::span<const value::PackedArray>` and calls `.ToInt64()` itself), so the render side has
-      no `.ToInt64()` injection and no `std::array{...}` wrapper. Every call -- regardless of callee
-      variant -- now renders as `fn(rendered_args...)`.
+      is lifted to a MIR cast whose destination type is the call site's slot type, so the backend
+      emits the conversion mechanically from a stated MIR fact. The `kGetChild` index conversion
+      moved into the runtime (which now accepts `std::span<const value::PackedArray>` and calls
+      `.ToInt64()` itself), so the render side has no `.ToInt64()` injection and no
+      `std::array{...}` wrapper. Every call -- regardless of callee variant -- now renders as
+      `fn(rendered_args...)`.
 
 - [x] R43 -- Replace the constructor-of-pointer fallback. The expression set grew a `NullLiteral`
       primitive that the default-value lowering emits directly for borrowed-pointer members; the
@@ -588,31 +588,26 @@ enough to warrant its own focused review.
       field that no backend's realization reads, or that restates what the node's structural context
       already fixes") be violated -- the LLVM backend's realization does not consult the arm; for
       the C++ backend, instance-form / free-form is a per-id render fact, not structure. Landed as:
-      `Callee = variant<Direct, Indirect, Construct>`, where
-      `Direct { target, qualification: optional<ScopeQualifier> }`. `target` is the symbol identity,
-      which `mechanical-translation.md` T11 unifies into one space, and `qualification` names the
-      scope a source-level `::` resolved through. `MethodRef`'s `hops` field retires -- the receiver
-      becomes an explicit expression the call carries, and its type pins the enclosing class whose
-      arena names the callable. Render mode follows the callee: a receiver drives the instance form,
-      a qualification the type-qualified one, and neither the free form, whose namespace is per-id
-      backend metadata with no MIR-level meaning. The `decisions/builtin-call-identity.md` paragraph
-      that justified the instance / static / free split as "structural at MIR" for backend
-      convenience is rewritten -- the split was an invariant-10 violation, not a structural fact.
-      Reserves the seat for `Virtual` (R8e) without inventing it now: gated on R47, a future
+      `Callee = variant<Direct, Indirect, Construct>`, where a direct call carries the symbol
+      identity -- which `mechanical-translation.md` T11 unifies into one space -- and the object it
+      dispatches on, where it has one. `MethodRef`'s `hops` field retires -- the receiver becomes an
+      explicit expression the call carries, and its type pins the enclosing class whose arena names
+      the callable. Render mode follows the callee: a receiver drives the instance form, and a
+      callee that binds no object is spelled from its own declaration, which is per-id backend
+      metadata with no MIR-level meaning. The `decisions/builtin-call-identity.md` paragraph that
+      justified the instance / static / free split as "structural at MIR" for backend convenience is
+      rewritten -- the split was an invariant-10 violation, not a structural fact. Reserves the seat
+      for `Virtual` (R8e) without inventing it now: gated on R47, a future
       `Virtual { slot, static_receiver_type }` arm slots in as an additional `Callee` arm with no
       change to the others.
 
-- [x] R46 -- MIR's cast vocabulary is a set of single-meaning primitives, each carrying no kind axis
-      because each _is_ one kind: `BoolCastExpr` reduces a value to a machine boolean,
-      `PointerCastExpr` re-types a reference without moving bits, and `IntCastExpr` converts a
-      machine integer's width or signedness. The destination type is stated on the enclosing
-      `Expr::type`. A conversion no primitive covers therefore fails to compile, which is the
-      property a single node whose realization each backend selects from the (source, destination)
-      type pair cannot offer: there, a pair a backend never handled is a silent no-op. Every
-      conversion that reshapes a _value_ -- integral resize, real <-> integral, packed <-> string --
-      is a library call, not a cast node. `mir::ConversionExpr` (mirroring HIR's LRM-defined
-      `ConversionKind`) retires; HIR's `ConversionExpr` + `ConversionKind` stay as SV vocab in HIR
-      and collapse into these primitives at HIR-to-MIR.
+- [x] R46 -- A cast below the front end is one node stating two types: what the value comes from and
+      what it is read as. Every conversion that reshapes a _value_ -- integral resize, real <->
+      integral, packed <-> string -- is a library call and not a cast at all. HIR keeps SV's own
+      conversion vocabulary, which is where an overloaded source conversion is resolved, so what
+      reaches MIR is one concrete type pair. Settled by `decisions/cast-is-a-pair-of-types.md`,
+      which reversed the several-primitives shape this entry first landed and says how a backend
+      refuses a pair it cannot realize.
 
 - [x] R51 -- Naming a capability wrapper's storage is place formation, not a call. A bare wrapper
       place denotes the wrapper and a dereference of it denotes the storage it represents, so a
@@ -803,24 +798,14 @@ enough to warrant its own focused review.
       header collapses the copies by linkage name as it collects them, which is correct but is the
       consumer doing what the record should have done. **Blocker**: none.
 
-- [x] R57 -- A condition is a value; reducing it to a control predicate is an explicit conversion,
-      not a backend's contextual one. MIR already owns the primitive: `BoolCastExpr` reduces any
-      operand to a host bool, and a real or chandle `!` lowers through it. But `IfStmt`,
-      `WhileStmt`, the loop forms, and `ConditionalExpr` all carry a raw SV-typed condition, and the
-      C++ backend recovers the predicate by handing that value to C++'s contextual conversion -- a
-      passthrough render that works only because every value type happens to expose
-      `explicit operator bool`. The semantic fact "this value is read as a predicate here" is
-      therefore stated nowhere in MIR; each backend rediscovers it from the operand's type at the
-      branch site, which is exactly the re-derivation `mir.md` invariant 10 forbids, and an LLVM
-      backend must synthesize a different test per type (`icmp ne ptr null` for a chandle, a runtime
-      call for a `PackedArray`) with no MIR node telling it to. The asymmetry is visible today: `!h`
-      on a chandle carries an explicit `BoolCastExpr` while `if (h)` does not, for no reason other
-      than that `!`'s result must be re-shaped to a 1-bit integral. Target: every condition context
-      carries its condition already reduced through `BoolCastExpr` at HIR-to-MIR, and the backend's
-      condition-rendering passthrough disappears -- render emits the cast like any other node. No
-      new node kind is needed; the cut is to make the existing primitive mandatory where a predicate
-      is consumed, and to settle each value type's predicate semantics against LRM Table 11-1 while
-      doing so. **Blocker**: none.
+- [x] R57 -- A condition is a value, and reducing it to a control predicate is an explicit
+      conversion rather than a backend's contextual one. Every condition context -- `if`, the loop
+      forms, the conditional expression -- carries its condition already reduced to a machine
+      boolean at HIR-to-MIR, so a backend emits the reduction from a stated node instead of handing
+      the value to whatever its target language does with it contextually. That passthrough worked
+      only because every value type happened to expose a boolean conversion, and left the execution
+      backend to synthesize a different test per type with nothing telling it to. Each value type's
+      predicate semantics is settled against LRM Table 11-1.
 
 - [ ] R58 -- A design unit's definition reference has two realizations. Semantic modeling already
       states it once: a unit's definition is a class-level constant, and the constructor hands the

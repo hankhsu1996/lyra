@@ -1,6 +1,5 @@
 #include "lyra/lowering/hir_to_mir/expression/calls.hpp"
 
-#include <cstddef>
 #include <cstdint>
 #include <expected>
 #include <optional>
@@ -49,7 +48,6 @@
 #include "lyra/lowering/hir_to_mir/walk_frame.hpp"
 #include "lyra/mir/expr.hpp"
 #include "lyra/support/builtin_fn.hpp"
-#include "lyra/support/imported_runtime_class.hpp"
 #include "lyra/support/system_subroutine.hpp"
 
 namespace lyra::lowering::hir_to_mir {
@@ -72,14 +70,16 @@ constexpr base::ComponentIndex kTraversalVisitedIndex{1};
 template <ExprLowerer Lowerer>
 auto LowerAssociativeTraversal(
     Lowerer& lowerer, WalkFrame frame, const hir::CallExpr& c,
-    support::BuiltinFn fn, mir::TypeId result_type) -> diag::Result<mir::Expr> {
-  // The receiver, then the index whose neighbour is asked for (LRM 7.9.4).
-  const std::vector<hir::ExprId> operands = RequiredOperands(c, 2);
+    const hir::BuiltinMethodRef& b, mir::TypeId result_type)
+    -> diag::Result<mir::Expr> {
+  // The index whose neighbour is asked for (LRM 7.9.4); the array it is asked
+  // of is the object the entry acts on.
+  const std::vector<hir::ExprId> operands = RequiredOperands(c, 1);
   auto& unit_lowerer = lowerer.Owner();
   auto& unit = unit_lowerer.Unit();
   const auto& hir_exprs = lowerer.HirExprs();
-  const hir::ExprId recv_hir = operands[0];
-  const hir::ExprId idx_hir = operands[1];
+  const hir::ExprId recv_hir = ObjectActedOn(b);
+  const hir::ExprId idx_hir = operands[0];
   const mir::TypeId key_type =
       unit_lowerer.TranslateType(hir_exprs.Get(idx_hir).type);
 
@@ -102,7 +102,8 @@ auto LowerAssociativeTraversal(
       mir::Expr{
           .data =
               mir::CallExpr{
-                  .callee = mir::Direct{.target = fn, .receiver = map_read_id},
+                  .callee =
+                      mir::Direct{.target = b.method, .receiver = map_read_id},
                   .arguments = {idx_read_id}},
           .type = payload_type});
   const mir::LocalId completion = steps.Bindings().DeclareAnonymous(
@@ -120,49 +121,6 @@ auto LowerAssociativeTraversal(
 
   return steps.Build(ProjectCompletionComponent(
       body, completion, payload_type, kTraversalFound, result_type));
-}
-
-// True iff the library declares the entry on the type it builds, so the call
-// dispatches on no object and names that type as its qualifier instead.
-auto IsStaticFactory(const support::RuntimeEntry& entry) -> bool {
-  return std::holds_alternative<support::StaticFactory>(entry.declaration);
-}
-
-// Translates a HIR builtin-method ref to its MIR callee. The identifier is the
-// flat `support::BuiltinFn`; what varies is what the call dispatches on -- the
-// type a factory builds, which the call site qualifies it with, and the
-// receiver value for every other entry.
-auto MakeBuiltinMirCallee(
-    const UnitLowerer& unit_lowerer, const hir::BuiltinMethodRef& b,
-    const support::RuntimeEntry& entry, hir::TypeId hir_dispatch_type,
-    std::optional<mir::ExprId> receiver) -> mir::Direct {
-  if (IsStaticFactory(entry)) {
-    return mir::Direct{
-        .target = b.method,
-        .qualification = mir::TypeQualifier{
-            .type = unit_lowerer.TranslateType(hir_dispatch_type)}};
-  }
-  return mir::Direct{.target = b.method, .receiver = receiver};
-}
-
-// The LRM 7.12 family shares one closure shape across every unpacked-array
-// receiver; only the element type differs, and each such HIR type exposes it
-// as `element_type`.
-auto ArrayMethodReceiverElementType(const hir::Type& ty)
-    -> std::optional<hir::TypeId> {
-  if (const auto* ua = ty.As<hir::UnpackedArrayType>()) {
-    return ua->element_type;
-  }
-  if (const auto* da = ty.As<hir::DynamicArrayType>()) {
-    return da->element_type;
-  }
-  if (const auto* q = ty.As<hir::QueueType>()) {
-    return q->element_type;
-  }
-  if (const auto* aa = ty.As<hir::AssociativeArrayType>()) {
-    return aa->element_type;
-  }
-  return std::nullopt;
 }
 
 // The canonical-default prototype type for an entry whose result shape the
@@ -190,7 +148,9 @@ auto BuildArrayMethodClosure(
   const auto& hir_exprs = lowerer.HirExprs();
   const hir::Type& hir_recv_ty =
       unit_lowerer.Hir().types.Get(hir_receiver_type);
-  const auto element_type = ArrayMethodReceiverElementType(hir_recv_ty);
+  // The LRM 7.12 family shares one closure shape across every unpacked-array
+  // receiver; only the element type differs.
+  const auto element_type = ContainerElementType(hir_recv_ty);
   if (!element_type.has_value()) {
     throw InternalError(
         "BuildArrayMethodClosure: receiver is not an unpacked-array type");
@@ -405,31 +365,20 @@ auto LowerSystemSubroutineCall(
       desc.semantic);
 }
 
-// Built-in method dispatch (LRM 6.16 / 7.9 / 7.10 / 7.12 / 15.5).
-// AST -> HIR puts a type-bearing expression at `c.arguments[0]`: for an
-// instance call it is the receiver itself, for a call on a factory of the type
-// it builds it is a discardable bearer, and that type is what the callee
-// qualifies the factory with. Either way, the for-loop below skips index 0 and
-// starts the real user-argument scan at index 1.
+// Built-in method dispatch (LRM 6.16 / 7.9 / 7.10 / 7.12 / 9.7 / 15.5). The
+// call states the object the entry acts on, so every operand here is one the
+// callee takes.
 template <ExprLowerer Lowerer>
 auto LowerBuiltinMethodCall(
     Lowerer& lowerer, WalkFrame frame, const hir::CallExpr& c,
     const hir::BuiltinMethodRef& b, mir::TypeId result_type)
     -> diag::Result<mir::Expr> {
-  if (c.arguments.empty()) {
-    throw InternalError(
-        "BuiltinMethodRef call has no receiver / type-bearer argument");
-  }
-  if (!c.arguments.front().has_value()) {
-    throw InternalError(
-        "BuiltinMethodRef receiver / type-bearer unexpectedly elided");
-  }
   const support::RuntimeEntry entry = support::RuntimeEntryOf(b.method);
   // LRM 7.9.4 -- 7.9.7 traversal answers with two values and has to place one
   // of them, so it is not the plain member call the generic path below builds
   // for every other associative method.
   if (entry.writes_the_index_back) {
-    return LowerAssociativeTraversal(lowerer, frame, c, b.method, result_type);
+    return LowerAssociativeTraversal(lowerer, frame, c, b, result_type);
   }
   // LRM 20.5 conversions answer in a machine integer, which the destination's
   // declared representation then has to land, so each is a pair of steps
@@ -441,41 +390,38 @@ auto LowerBuiltinMethodCall(
   }
   const auto& unit_lowerer = lowerer.Owner();
   const auto& hir_exprs = lowerer.HirExprs();
-  const hir::TypeId hir_dispatch_type =
-      hir_exprs.Get(*c.arguments.front()).type;
 
   auto& block = *frame.current_block;
-  // A static call dispatches on a type, so `args[0]` is a discardable
-  // type-bearer and the type-namespace qualifier rides on the callee. Every
-  // other call dispatches on `args[0]`: a method that changes the object it
-  // acts on takes the place that object stands in, so the change lands where
-  // the source named it, and one that does not consumes a value.
+  // A method that changes the object it acts on takes the place that object
+  // stands in, so the change lands where the source named it; one that does not
+  // consumes a value.
   std::optional<mir::ExprId> receiver;
-  if (!IsStaticFactory(entry)) {
+  if (b.receiver.has_value()) {
+    const hir::Expr& object = hir_exprs.Get(*b.receiver);
     if (entry.mutates_receiver) {
-      auto recv_or =
-          lowerer.LowerLhsExpr(hir_exprs.Get(*c.arguments.front()), frame);
+      auto recv_or = lowerer.LowerLhsExpr(object, frame);
       if (!recv_or) return std::unexpected(std::move(recv_or.error()));
       receiver = TargetPlace(lowerer.Owner().Unit(), block, *recv_or);
     } else {
-      auto recv_or =
-          lowerer.LowerExpr(hir_exprs.Get(*c.arguments.front()), frame);
+      auto recv_or = lowerer.LowerExpr(object, frame);
       if (!recv_or) return std::unexpected(std::move(recv_or.error()));
       receiver = block.exprs.Add(*std::move(recv_or));
     }
   }
-  const mir::Direct mir_callee =
-      MakeBuiltinMirCallee(unit_lowerer, b, entry, hir_dispatch_type, receiver);
+  const mir::Direct mir_callee{.target = b.method, .receiver = receiver};
 
   std::vector<mir::ExprId> args;
-  args.reserve(c.arguments.size());
+  args.reserve(c.arguments.size() + 1);
 
-  // The scan starts past the type-bearing expression: it is the receiver for an
-  // instance call and discardable for a static one, and either way it is not an
-  // argument the callee takes.
-  const std::vector<hir::ExprId> operands = RequiredOperands(c);
-  for (std::size_t i = 1; i < operands.size(); ++i) {
-    auto arg_or = lowerer.LowerExpr(hir_exprs.Get(operands[i]), frame);
+  // An entry reaching the engine takes it as its leading argument, the way
+  // every runtime effect does.
+  if (entry.takes_the_runtime_handle) {
+    args.push_back(
+        block.exprs.Add(BuildCurrentRuntimeCallExpr(lowerer.Owner())));
+  }
+
+  for (const hir::ExprId operand : RequiredOperands(c)) {
+    auto arg_or = lowerer.LowerExpr(hir_exprs.Get(operand), frame);
     if (!arg_or) return std::unexpected(std::move(arg_or.error()));
     args.push_back(block.exprs.Add(*std::move(arg_or)));
   }
@@ -487,7 +433,7 @@ auto LowerBuiltinMethodCall(
   // one uniform shape per kind.
   if (entry.takes_closure) {
     auto closure_or = BuildArrayMethodClosure(
-        lowerer, frame, hir_dispatch_type,
+        lowerer, frame, hir_exprs.Get(ObjectActedOn(b)).type,
         c.with_clause.has_value() ? &*c.with_clause : nullptr);
     if (!closure_or) return std::unexpected(std::move(closure_or.error()));
     args.push_back(block.exprs.Add(*std::move(closure_or)));
@@ -507,75 +453,12 @@ auto LowerBuiltinMethodCall(
         BuildDefaultValueExpr(unit_lowerer.Unit(), block, proto_type)));
   }
 
-  // LRM 15.5.3: `e.triggered` reads the triggered flag out of
-  // RuntimeEffects. The runtime handle is a real trailing argument, threaded
-  // the same way every runtime effect threads it -- not a backend-fabricated
-  // one. (`-> e` is the only producer of the trigger kind and lowers through
-  // the event-trigger stmt path; `await` takes no runtime handle.)
-  if (b.method == support::BuiltinFn::kTriggered) {
-    args.push_back(
-        block.exprs.Add(BuildCurrentRuntimeCallExpr(lowerer.Owner())));
-  }
-
   return mir::Expr{
       .data = mir::CallExpr{.callee = mir_callee, .arguments = std::move(args)},
       .type = result_type};
 }
 
 }  // namespace
-
-// A call to a method the runtime library provides for an imported class (LRM
-// 9.7 `process`) lowers to a direct call on the library symbol. An instance
-// method dispatches on its handle; whether the runtime handle is also taken is
-// a per-method fact. The call dispatches on the managed handle itself, not on a
-// borrowed object pointer -- the runtime reads the process identity from the
-// handle. A suspending method (`await`) is
-// wrapped in an await by the statement lowering, the same as a task enable.
-template <ExprLowerer Lowerer>
-auto LowerImportedMethodCall(
-    Lowerer& lowerer, WalkFrame frame, const hir::CallExpr& c,
-    const hir::ImportedMethodRef& m, mir::TypeId result_type)
-    -> diag::Result<mir::Expr> {
-  auto& block = *frame.current_block;
-  std::vector<mir::ExprId> args;
-  args.reserve(c.arguments.size() + 1);
-
-  std::optional<mir::ExprId> receiver;
-  if (m.receiver.has_value()) {
-    auto receiver_or =
-        lowerer.LowerExpr(lowerer.HirExprs().Get(*m.receiver), frame);
-    if (!receiver_or) return std::unexpected(std::move(receiver_or.error()));
-    receiver = block.exprs.Add(*std::move(receiver_or));
-  }
-  // A static method (no receiver) threads the runtime handle as its leading
-  // argument; an instance method threads it after the receiver when the method
-  // needs the engine -- to schedule, or to identify the calling process.
-  if (support::ImportedRuntimeMethodTakesServices(m.method)) {
-    args.push_back(
-        block.exprs.Add(BuildCurrentRuntimeCallExpr(lowerer.Owner())));
-  }
-
-  for (const auto& arg : c.arguments) {
-    if (!arg.has_value()) {
-      throw InternalError("LowerImportedMethodCall: argument elided");
-    }
-    auto arg_or = lowerer.LowerExpr(lowerer.HirExprs().Get(*arg), frame);
-    if (!arg_or) return std::unexpected(std::move(arg_or.error()));
-    args.push_back(block.exprs.Add(*std::move(arg_or)));
-  }
-
-  return mir::Expr{
-      .data =
-          mir::CallExpr{
-              .callee =
-                  mir::Direct{
-                      .target =
-                          mir::ImportedRuntimeCallTarget{.method = m.method},
-                      .receiver = receiver,
-                      .qualification = std::nullopt},
-              .arguments = std::move(args)},
-      .type = result_type};
-}
 
 template <ExprLowerer Lowerer>
 auto LowerHirCallExpr(
@@ -623,9 +506,6 @@ auto LowerHirCallExpr(
           },
           [&](const hir::ForeignImportRef& imp) -> diag::Result<mir::Expr> {
             return LowerForeignImportCall(lowerer, frame, c, imp, result_type);
-          },
-          [&](const hir::ImportedMethodRef& im) -> diag::Result<mir::Expr> {
-            return LowerImportedMethodCall(lowerer, frame, c, im, result_type);
           },
           [](const hir::ExternalUnitSubroutineRef&) -> diag::Result<mir::Expr> {
             throw InternalError(

@@ -94,9 +94,10 @@ Sizing a container at run time has no parts to be built from -- it has a size an
 -- so it is an operation, and it names which one. `new[N]` and `new[N](src)` are different entries,
 not one entry told apart by how many operands arrived.
 
-The identity is `support::BuiltinFn`, qualified by the type whose namespace declares the entry,
-which is the shape `builtin-call-identity.md` already fixes for every other runtime entry: the
-receiver or qualifier carries the type-side context, the callee carries the function-side identity.
+The identity is `support::BuiltinFn`, which is the shape `builtin-call-identity.md` already fixes
+for every other runtime entry: the callee carries the function-side identity, and the type-side
+context is the receiver's type for an entry that acts on an object and the call's own type for one
+that builds a value.
 
 ### D3. Re-typing a value is a cast, not a construction
 

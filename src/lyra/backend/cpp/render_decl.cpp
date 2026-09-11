@@ -13,7 +13,6 @@
 #include "lyra/backend/cpp/render_stmt.hpp"
 #include "lyra/backend/cpp/render_type.hpp"
 #include "lyra/backend/cpp/scope_view.hpp"
-#include "lyra/base/overloaded.hpp"
 #include "lyra/mir/class.hpp"
 #include "lyra/mir/class_ref.hpp"
 #include "lyra/mir/compilation_unit.hpp"
@@ -24,26 +23,16 @@ namespace lyra::backend::cpp {
 namespace {
 
 // A field declaration is (name, type): the type carries the target storage
-// form, the name the source identifier. Mutable per-field state -- a cell's
-// declared representation, its initial value -- arrives as ordinary MIR
-// statements in the constructor body, not from type payload here. The field
-// value-initializes, except a net, whose fold (LRM 6.6) is a fixed structural
-// property the type names and the runtime net carries as data, so it is passed
-// to the net's constructor here rather than established by a later store.
+// form, the name the source identifier. Every per-field state -- a cell's
+// declared representation, a net's fold, an initial value -- arrives as
+// ordinary MIR statements in the constructor body, so the declaration
+// value-initializes and carries nothing else.
 auto RenderField(
     const mir::CompilationUnit& unit, const mir::FieldDecl& field,
     std::size_t indent) -> std::string {
-  const std::string type = RenderTypeAsCpp(unit, field.type);
-  const std::string init =
-      unit.types.Get(field.type)
-          .Visit(
-              Overloaded{
-                  [](const mir::ResolvedType& net) -> std::string {
-                    return std::format(
-                        "{{{}}}", NetResolutionCppLiteral(net.resolution));
-                  },
-                  [](const auto&) -> std::string { return "{}"; }});
-  return std::format("{}{} {}{};\n", Indent(indent), type, field.name, init);
+  return std::format(
+      "{}{} {}{{}};\n", Indent(indent), RenderTypeAsCpp(unit, field.type),
+      field.name);
 }
 
 // The value-init field declarations of any field-bearing storage -- a class's
@@ -312,9 +301,12 @@ auto RenderStaticConstant(
                          RenderExpr(view, view.Expr(c.value)));
 }
 
-// Whether the class declared any static property initializer (LRM 8.9 / 10.5).
-// With none, the value-init on each `inline static` declaration already
-// realizes the type-default case and no design-init body is emitted at all.
+// Whether the class has design-time work of its own (LRM 10.5): a static
+// property's written initializer (LRM 8.9), or a static-lifetime local whose
+// cell the class owns (LRM 6.21). A class with neither -- including one whose
+// statics are brought up by the instance of the scope that declares them --
+// has nothing to run, and the value-init on each `inline static` declaration
+// already realizes the type-default case, so no design-init body is emitted.
 auto HasStaticInit(const mir::Class& s) -> bool {
   return !s.static_init.Body().root_stmts.empty();
 }
@@ -382,7 +374,7 @@ auto RenderClass(const mir::CompilationUnit& unit, const mir::Class& s)
   // machinery routes each vtable slot to the one implementation the class
   // provides.
   bool base_emitted = false;
-  const auto append_base = [&](const std::string& rendered) {
+  const auto append_base = [&](std::string_view rendered) {
     out += base_emitted ? ", public " : " : public ";
     out += rendered;
     base_emitted = true;
@@ -390,14 +382,11 @@ auto RenderClass(const mir::CompilationUnit& unit, const mir::Class& s)
   if (s.base.has_value()) {
     append_base(RenderClassRefAsCpp(unit, *s.base));
   } else if (!s.is_interface_class) {
-    // A class extending nothing roots an SV class hierarchy, and only such an
-    // object is ever asked for a handle to itself (LRM 8.11) -- a scope names a
-    // runtime base and so took the branch above. Realizing that handle as a
-    // shared owner means the object has to record which owner refers to it, so
-    // the root carries the record and everything under it inherits one. An
-    // interface class declares no storage and is never constructed (LRM 8.26),
-    // so nothing asks it.
-    append_base("lyra::runtime::GcObject");
+    // A class extending nothing roots an SV class hierarchy -- a scope names a
+    // runtime base and so took the branch above -- and what this target roots
+    // one over is the object model's own answer. An interface class declares no
+    // storage and is never constructed (LRM 8.26), so nothing roots it.
+    append_base(ManagedObjectRootCppType());
   }
   for (const mir::ClassRef& iface : s.implements) {
     append_base(RenderClassRefAsCpp(unit, iface));

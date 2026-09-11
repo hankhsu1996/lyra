@@ -46,7 +46,7 @@ auto DriverAccess(
   return block.exprs.Add(
       mir::MakeFieldAccessExpr(
           self,
-          mir::FieldTarget{
+          mir::ClassFieldTarget{
               .owner = frame.current_class_id, .slot = driver.field},
           driver.type));
 }
@@ -106,9 +106,8 @@ auto LowerContinuousAssign(
     const mir::ExprId cell = named_or->owner;
     if (const auto* net = unit.types.Get(resolve_block.exprs.Get(cell).type)
                               .As<mir::ResolvedType>()) {
-      const mir::TypeId driver_type = unit.types.Intern(
-          mir::Type{mir::DriverType{
-              .value = net->value, .resolution = net->resolution}});
+      const mir::TypeId driver_type =
+          unit.types.Intern(mir::Type{mir::DriverType{.value = net->value}});
       mir::Class& mir_class = *resolve_frame.current_class;
       driver = AttachedDriver{
           .field = mir_class.fields.Add(

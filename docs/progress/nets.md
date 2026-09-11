@@ -69,12 +69,12 @@ This workstream reasons from these and does not restate them:
       and overlapping ones conflict exactly as whole-net drivers do. This is the whole-net rule read
       at bit granularity, so it needs no second mechanism -- a net is still never written, only
       driven, whichever part of it an assignment names.
-- [x] N3c -- Which fold a net uses is a property of the net's own type, stated once where the net
-      type is translated and carried down through every layer rather than assumed anywhere below.
-      Two nets of one data type resolve differently when their net types differ, so nothing
-      downstream can recover it from the value type. `wire` and `tri` name the same tri-state fold,
-      which is why the assumption held while they were the only net types; each type below adds its
-      fold beside it instead of replacing one.
+- [x] N3c -- Which fold a net uses is decided once, where the net type is translated, and reaches
+      the net as the install its construction names rather than being assumed anywhere below. Two
+      nets of one data type resolve differently when their net types differ, so nothing downstream
+      can recover it from the value type. `wire` and `tri` name the same tri-state fold, which is
+      why the assumption held while they were the only net types; each type below adds its fold
+      beside it instead of replacing one.
 - [ ] N4 -- A single-driver net type (`uwire`) reports a diagnostic when more than one driver
       attaches, naming each driver's source. The constraint is on the number of attached drivers,
       not on any current value.

@@ -1060,14 +1060,6 @@ auto lyra_rt_delay_real(
 // of what waits on that cell. Every such cell names `Observable` as its first
 // base, which is what makes the two addresses one under the platform ABI.
 auto lyra_rt_make_trigger(
-    void* observable, const void* lsb_bit_offset, const void* bit_width)
-    -> void* {
-  return Own(Trigger(
-      static_cast<Observable*>(observable), Read<PackedArray>(lsb_bit_offset),
-      Read<PackedArray>(bit_width)));
-}
-
-auto lyra_rt_make_observed_trigger(
     void* observable, const void* observation, const void* lsb_bit_offset,
     const void* bit_width) -> void* {
   return Own(Trigger(
@@ -1075,19 +1067,25 @@ auto lyra_rt_make_observed_trigger(
       Read<PackedArray>(lsb_bit_offset), Read<PackedArray>(bit_width)));
 }
 
-auto lyra_rt_make_observation(void* expression, const void* edge) -> void* {
-  return Own(Observation(TakeEvaluator(expression), Read<PackedArray>(edge)));
+auto lyra_rt_observation_on_reaching() -> void* {
+  return Own(Observation::OnReaching());
 }
 
-auto lyra_rt_make_qualified_observation(
+auto lyra_rt_observation_of_value(void* expression, const void* edge) -> void* {
+  return Own(
+      Observation::OfValue(TakeEvaluator(expression), Read<PackedArray>(edge)));
+}
+
+auto lyra_rt_observation_of_value_qualified(
     void* expression, const void* edge, void* condition) -> void* {
-  return Own(Observation(
-      TakeEvaluator(expression), Read<PackedArray>(edge),
-      TakeEvaluator(condition)));
+  return Own(
+      Observation::OfValueQualified(
+          TakeEvaluator(expression), Read<PackedArray>(edge),
+          TakeEvaluator(condition)));
 }
 
-auto lyra_rt_make_condition_observation(void* condition) -> void* {
-  return Own(Observation(TakeEvaluator(condition)));
+auto lyra_rt_observation_qualified(void* condition) -> void* {
+  return Own(Observation::Qualified(TakeEvaluator(condition)));
 }
 
 // The generated frame the process suspends is not a frame the engine ever sees
@@ -1988,6 +1986,31 @@ auto lyra_rt_packed_arithmetic_shift_right(
     const void* value, const void* amount) -> void* {
   return Own(
       Read<PackedArray>(value).ArithmeticShiftRight(Read<PackedArray>(amount)));
+}
+
+// The applying form of each shift (LRM 11.4.1). A generated module holds a
+// value as a handle a copy may alias, so what "applying" means here is a value
+// with the shift already in it, handed back for the caller to store where the
+// receiver came from.
+auto lyra_rt_packed_shift_left_assign(const void* value, const void* amount)
+    -> void* {
+  PackedArray applied = Read<PackedArray>(value);
+  applied.ShiftLeftAssign(Read<PackedArray>(amount));
+  return Own(std::move(applied));
+}
+
+auto lyra_rt_packed_logical_shift_right_assign(
+    const void* value, const void* amount) -> void* {
+  PackedArray applied = Read<PackedArray>(value);
+  applied.LogicalShiftRightAssign(Read<PackedArray>(amount));
+  return Own(std::move(applied));
+}
+
+auto lyra_rt_packed_arithmetic_shift_right_assign(
+    const void* value, const void* amount) -> void* {
+  PackedArray applied = Read<PackedArray>(value);
+  applied.ArithmeticShiftRightAssign(Read<PackedArray>(amount));
+  return Own(std::move(applied));
 }
 
 auto lyra_rt_packed_bitwise_xnor(const void* lhs, const void* rhs) -> void* {
@@ -3396,8 +3419,16 @@ auto lyra_rt_packed_net_get(void* net) -> void* {
   return Own(NetOf<PackedArray>(net).Get());
 }
 
-void lyra_rt_packed_net_initialize(void* net, const void* prototype) {
-  NetOf<PackedArray>(net).Initialize(Read<PackedArray>(prototype));
+void lyra_rt_packed_net_initialize_tri_state(void* net, const void* prototype) {
+  NetOf<PackedArray>(net).InitializeTriState(Read<PackedArray>(prototype));
+}
+
+void lyra_rt_packed_net_initialize_wired_and(void* net, const void* prototype) {
+  NetOf<PackedArray>(net).InitializeWiredAnd(Read<PackedArray>(prototype));
+}
+
+void lyra_rt_packed_net_initialize_wired_or(void* net, const void* prototype) {
+  NetOf<PackedArray>(net).InitializeWiredOr(Read<PackedArray>(prototype));
 }
 
 auto lyra_rt_packed_net_begin_takeover(void* net, const void* level) -> void* {
@@ -3432,8 +3463,16 @@ auto lyra_rt_tuple_net_get(void* net) -> void* {
   return Own(NetOf<RuntimeTuple>(net).Get());
 }
 
-void lyra_rt_tuple_net_initialize(void* net, const void* prototype) {
-  NetOf<RuntimeTuple>(net).Initialize(Read<RuntimeTuple>(prototype));
+void lyra_rt_tuple_net_initialize_tri_state(void* net, const void* prototype) {
+  NetOf<RuntimeTuple>(net).InitializeTriState(Read<RuntimeTuple>(prototype));
+}
+
+void lyra_rt_tuple_net_initialize_wired_and(void* net, const void* prototype) {
+  NetOf<RuntimeTuple>(net).InitializeWiredAnd(Read<RuntimeTuple>(prototype));
+}
+
+void lyra_rt_tuple_net_initialize_wired_or(void* net, const void* prototype) {
+  NetOf<RuntimeTuple>(net).InitializeWiredOr(Read<RuntimeTuple>(prototype));
 }
 
 auto lyra_rt_tuple_attach_driver(void* net) -> void* {
@@ -3452,8 +3491,16 @@ auto lyra_rt_union_net_get(void* net) -> void* {
   return Own(NetOf<RuntimeUnion>(net).Get());
 }
 
-void lyra_rt_union_net_initialize(void* net, const void* prototype) {
-  NetOf<RuntimeUnion>(net).Initialize(Read<RuntimeUnion>(prototype));
+void lyra_rt_union_net_initialize_tri_state(void* net, const void* prototype) {
+  NetOf<RuntimeUnion>(net).InitializeTriState(Read<RuntimeUnion>(prototype));
+}
+
+void lyra_rt_union_net_initialize_wired_and(void* net, const void* prototype) {
+  NetOf<RuntimeUnion>(net).InitializeWiredAnd(Read<RuntimeUnion>(prototype));
+}
+
+void lyra_rt_union_net_initialize_wired_or(void* net, const void* prototype) {
+  NetOf<RuntimeUnion>(net).InitializeWiredOr(Read<RuntimeUnion>(prototype));
 }
 
 auto lyra_rt_union_attach_driver(void* net) -> void* {
@@ -3472,8 +3519,21 @@ auto lyra_rt_unpackedarray_net_get(void* net) -> void* {
   return Own(NetOf<RuntimeUnpackedArray>(net).Get());
 }
 
-void lyra_rt_unpackedarray_net_initialize(void* net, const void* prototype) {
-  NetOf<RuntimeUnpackedArray>(net).Initialize(
+void lyra_rt_unpackedarray_net_initialize_tri_state(
+    void* net, const void* prototype) {
+  NetOf<RuntimeUnpackedArray>(net).InitializeTriState(
+      Read<RuntimeUnpackedArray>(prototype));
+}
+
+void lyra_rt_unpackedarray_net_initialize_wired_and(
+    void* net, const void* prototype) {
+  NetOf<RuntimeUnpackedArray>(net).InitializeWiredAnd(
+      Read<RuntimeUnpackedArray>(prototype));
+}
+
+void lyra_rt_unpackedarray_net_initialize_wired_or(
+    void* net, const void* prototype) {
+  NetOf<RuntimeUnpackedArray>(net).InitializeWiredOr(
       Read<RuntimeUnpackedArray>(prototype));
 }
 

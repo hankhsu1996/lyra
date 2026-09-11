@@ -58,16 +58,30 @@ what the construct means.
 - The type system: value types (integral, real, string, event, ...); object types in two forms -- an
   intra-unit object (a class of this unit) and an external-unit object (another compilation unit,
   named); two composing wrappers, owning pointer and vector; and four nominal / structural
-  categories that share one **field substrate** (`FieldDecl`, `FieldId`, `FieldAccess`) but stay
-  distinct types: the **tuple**, the one structural heterogeneous product (positional,
-  shape-interned); the **struct**, a nominal named field-bearing aggregate (declaration identity,
-  named fields), used for a compiler-generated promoted automatic scope reached through a `Shared<>`
-  wrapper; the **closure**, an anonymous concrete callable value (capture fields plus one invoke
-  body, a distinct type per site); and the **object** (`mir::Class`), the rich nominal object with
-  methods and dispatch. Structural versus nominal, and storage versus callable, are the ordinary
-  generic-language distinctions (C++/Rust/LLVM carry them). "Activation frame" is a lowering role
-  name for a `Shared<>` scope struct, not a type category; a closure is not a struct-with-invoke but
-  its own callable-value category.
+  categories: the **tuple**, the one structural heterogeneous product (positional, shape-interned);
+  the **struct**, a nominal named field-bearing aggregate (declaration identity, named fields), used
+  for a compiler-generated promoted automatic scope reached through a `Shared<>` wrapper; the
+  **closure**, an anonymous concrete callable value (capture fields plus one invoke body, a distinct
+  type per site); and the **object** (`mir::Class`), the rich nominal object with methods and
+  dispatch. The three nominal ones share one **field substrate** -- a field declaration, a field id
+  keyed within one declaration, and one access node over both -- while staying distinct types; the
+  tuple shares none of it, because a product declares its components nowhere and reaching one is an
+  operation on the value rather than a name in an arena. An access names the declaration it reaches
+  into, so what the substrate shares is the vocabulary and never the identity. Structural versus
+  nominal, and storage versus callable, are the ordinary generic-language distinctions
+  (C++/Rust/LLVM carry them). "Activation frame" is a lowering role name for a `Shared<>` scope
+  struct, not a type category; a closure is not a struct-with-invoke but its own callable-value
+  category.
+- An aggregate the **source declared** -- a structure or a union, packed or unpacked -- is a type of
+  its own that names its members, beside the anonymous product a lowering composes for itself. The
+  member names are part of what the type is, because the language renders a value by them (LRM
+  21.2.1.6) and two values of one type must render alike; a type that stated only the component
+  types would leave that answer outside the type. Its **value-domain projection** is the
+  representation it shares with a type that names nothing -- the product for an unpacked aggregate,
+  the single vector for a packed one -- so a value operation reads the projection and never the
+  names, exactly as an enumeration projects to its base. Reaching a member is unchanged by this: an
+  access names a member by its declaration-order position, the carrier below the source level that
+  LLVM IR and Rust MIR both use over a nominal record type, and the name is what presentation reads.
 - Capability wrappers: types that represent a storage place instead of being a value -- an
   observable cell, a reference, a net's resolved value, a net driver's contribution. A capability
   wrapper composes over the value type it represents, and the wrapper and that storage are distinct
@@ -310,6 +324,15 @@ implies; the diagnostic for any new forbidden shape is "what identity property d
   the operands, so the layer holding them states it. A node that leaves it open makes every backend
   decide what the program means rather than how to represent it, and the backend that decides
   differently is a wrong answer no one is positioned to see.
+
+  What this bans is a type that leaves the choice **open**, and the test is whether the types answer
+  completely: where a type admits several ways to be built, or a pair of types several conversions,
+  a node that names none of them has left the decision to its consumers and is the shape above.
+  Where the types admit exactly one, a consumer reading them is translating rather than deciding,
+  and the two backends cannot come out differently -- so a node whose type or type pair closes the
+  question is not this. Ask which it is before reaching for a discriminator, because one added where
+  the types already close the question is a second copy of an answer, and two copies can disagree.
+
 - A type that names a boundary or a foreign ABI rather than a value's own shape -- a "DPI carrier",
   a "C ABI type" -- carried as a MIR value type. The ABI classification of a foreign call's formal
   is a property of the _signature_, and belongs on the callable's declaration; the value that
@@ -319,14 +342,16 @@ implies; the diagnostic for any new forbidden shape is "what identity property d
   silently lowers the value as the wrong thing. Missing machine primitives are what make such a type
   look necessary; the fix is to complete them, not to wrap them. (A type names what a value _is_,
   not where it is going.)
-- One cast node standing for every reinterpretation, whose realization each backend selects from the
-  (source, destination) type pair. A cast node names exactly one operation -- reduce a value to a
-  machine boolean, re-type a reference without moving bits, name a code address as a different
-  function type, convert a machine integer's width or signedness -- so a conversion no node covers
-  fails to compile. Under a type-pair-dispatched node a pair a backend never handled is instead a
-  silent no-op, indistinguishable from a deliberate reinterpretation. A conversion that reshapes a
-  _value_ (integral resize, real <-> integral, packed <-> string) is a library call, never a cast
-  node. (A primitive means one thing; a backend does not re-derive semantics MIR declined to state.)
+- A cast node carrying a kind beside its two types. A cast says a value is read as another type, and
+  it names both already: the operand's type is what the value comes from, `Expr::type` is what it
+  goes to. A kind is derived from that pair -- SV's overloaded conversion syntax is resolved at
+  HIR-to-MIR, so what reaches here is one concrete pair -- and a classification stored beside the
+  thing it is derived from is a second copy that can disagree with it. What the pair does not excuse
+  is a backend passing a value through for a pair it cannot realize: a no-op is stated only where
+  the two representations are provably the same, and every other unhandled pair is refused. A
+  conversion that reshapes a _value_ (integral resize, real <-> integral, packed <-> string) is a
+  library call, never a cast node. (A node states a fact once; a backend refuses what it cannot do
+  rather than doing nothing.)
 - A backend that recovers a semantic fact MIR does not state by inferring it from a node's body
   contents or any side signal, instead of reading it from an explicit node or reference. A node's
   own structural context is not a side signal: the type of an operand it was handed, and the node

@@ -586,22 +586,17 @@ class Queue {
   std::optional<std::uint64_t> max_bound_ = std::nullopt;
 };
 
-// LRM 21.2.1.6 aggregate format. Mirrors `Formatter<DynamicArray<T>>`: walk
-// the elements, deferring each to its own `Formatter`. Empty queues compose
-// naturally because the loop runs zero times.
+// LRM 21.2.1.6 aggregate format: the elements the queue currently holds, front
+// to back, each deferring to its own type's `Formatter`.
 template <typename T>
 struct Formatter<Queue<T>> {
   static auto Format(const FormatSpec& spec, const Queue<T>& value)
       -> std::string {
-    std::string out = "'{";
+    PatternWriter pattern;
     for (std::size_t i = 0; i < value.RawSize(); ++i) {
-      if (i != 0) {
-        out += ", ";
-      }
-      out += lyra::value::Format(spec, MakeFormatArg(value.RawAt(i)));
+      pattern.Add(lyra::value::Format(spec, MakeFormatArg(value.RawAt(i))));
     }
-    out += "}";
-    return out;
+    return std::move(pattern).Finish();
   }
 };
 

@@ -45,11 +45,11 @@ struct Registration {
   std::uint64_t lsb_bit_offset = 0;
   std::uint64_t bit_width = 0;
 
-  // The event control this membership serves, where the wait is one (LRM
-  // 9.4.2): reaching it is a candidacy, and it decides. A membership that
-  // decides by being reached -- an implicit sensitivity, an unqualified event,
-  // a join, a scheduler queue -- names none. It is held rather than pointed at,
-  // so it lives as long as anything watching for that event control does.
+  // What decides whether reaching this membership is an event for the wait it
+  // serves (LRM 9.4.2): reaching it is a candidacy, and this decides. It holds
+  // nothing where being reached is the whole of it -- an implicit sensitivity,
+  // an unqualified event, a join, a scheduler queue. It is held rather than
+  // pointed at, so it lives as long as anything watching for that wait does.
   Observation observation;
 
   Registration() = default;

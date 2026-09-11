@@ -6,7 +6,9 @@
 // x or z, or that lies outside what the method admits leaves the queue
 // untouched, and a pop from a queue with no elements returns the value
 // Table 7-1 gives for the element type and leaves it with none (LRM 7.10.2,
-// Table 7-1).
+// Table 7-1). A method that changes the queue names it once, so an expression
+// reaching it -- an index into an array of queues, say -- takes its effect
+// once.
 module Top;
   integer values [$] = '{1, 2, 3};
   int size_after_pushes;
@@ -26,6 +28,14 @@ module Top;
   int size_after_bad_calls;
   integer guarded_first_after_bad;
   integer guarded_last_after_bad;
+
+  integer nested [2][$];
+  int reached_count = 0;
+
+  function automatic int ReachedOnce();
+    reached_count++;
+    return 1;
+  endfunction
 
   initial begin
     values.push_back(4);
@@ -54,6 +64,8 @@ module Top;
     guarded_first_after_bad = guarded[0];
     guarded_last_after_bad = guarded[1];
     guarded.insert(2, 5);
+
+    nested[ReachedOnce()].push_back(6);
   end
 
   final begin
@@ -94,6 +106,17 @@ module Top;
       $fatal(1, "guarded.size() was %0d, expected 3", guarded.size());
     if (guarded[2] !== 5)
       $fatal(1, "guarded[2] was %0d, expected 5", guarded[2]);
+
+    if (reached_count !== 1)
+      $fatal(1, "the index reaching the queue ran %0d times, expected 1",
+             reached_count);
+    if (nested[1].size() !== 1)
+      $fatal(1, "nested[1].size() was %0d, expected 1", nested[1].size());
+    if (nested[1][0] !== 6)
+      $fatal(1, "nested[1][0] was %0d, expected 6", nested[1][0]);
+    if (nested[0].size() !== 0)
+      $fatal(1, "push_back reached the wrong queue, leaving nested[0] at %0d",
+             nested[0].size());
     $display("All checks passed");
   end
 endmodule

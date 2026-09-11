@@ -400,12 +400,40 @@ auto MakeReturnConventionType(
   throw InternalError("MakeReturnConventionType: unknown ReturnConvention");
 }
 
+// A call to a built-in runtime entry, out of the operands the source wrote with
+// the object first. The object the entry acts on becomes the call's receiver
+// and the rest its arguments, so no layer below has to know which operand
+// position an object was written in; an entry that acts on none -- a factory
+// answering with the value it builds -- takes every operand as an argument.
+auto BuiltinCall(
+    support::BuiltinFn method, std::vector<std::optional<hir::ExprId>> operands,
+    std::optional<hir::WithClause> with_clause) -> hir::CallExpr {
+  const support::RuntimeEntry entry = support::RuntimeEntryOf(method);
+  if (std::holds_alternative<support::StaticFactory>(entry.declaration)) {
+    return hir::CallExpr{
+        .callee =
+            hir::BuiltinMethodRef{.method = method, .receiver = std::nullopt},
+        .arguments = std::move(operands),
+        .with_clause = std::move(with_clause)};
+  }
+  if (operands.empty() || !operands.front().has_value()) {
+    throw InternalError(
+        "AST->HIR call: a built-in entry acting on an object reached lowering "
+        "without one");
+  }
+  const hir::ExprId receiver = *operands.front();
+  return hir::CallExpr{
+      .callee = hir::BuiltinMethodRef{.method = method, .receiver = receiver},
+      .arguments = {operands.begin() + 1, operands.end()},
+      .with_clause = std::move(with_clause)};
+}
+
 // A method of an imported runtime-library class (LRM 9.7 `process`) is
-// recognized by the declaring class being a member of the built-in `std`
-// package, exactly as the handle type is; the runtime provides the body, so the
-// call routes to the library symbol rather than a lowered user method.
+// recognized by its declaring class, exactly as the handle type is; the runtime
+// carries the body out, so the call names a library entry rather than a lowered
+// user method.
 auto DetectImportedRuntimeMethod(const slang::ast::SubroutineSymbol& method)
-    -> std::optional<support::ImportedRuntimeMethod> {
+    -> std::optional<support::BuiltinFn> {
   const slang::ast::Scope* scope = method.getParentScope();
   if (scope == nullptr) {
     return std::nullopt;
@@ -414,33 +442,15 @@ auto DetectImportedRuntimeMethod(const slang::ast::SubroutineSymbol& method)
   if (owner.kind != slang::ast::SymbolKind::ClassType) {
     return std::nullopt;
   }
-  const auto& cls = owner.as<slang::ast::ClassType>();
-  const slang::ast::Scope* class_scope = cls.getParentScope();
-  if (class_scope == nullptr ||
-      class_scope != static_cast<const slang::ast::Scope*>(
-                         &class_scope->getCompilation().getStdPackage()) ||
-      cls.name != "process") {
+  const auto klass = ImportedRuntimeClassOf(owner.as<slang::ast::ClassType>());
+  if (!klass.has_value()) {
     return std::nullopt;
   }
-  if (method.name == "self") {
-    return support::ImportedRuntimeMethod::kProcessSelf;
+  switch (*klass) {
+    case support::ImportedRuntimeClass::kProcess:
+      return LowerProcessMethodName(method.name);
   }
-  if (method.name == "status") {
-    return support::ImportedRuntimeMethod::kProcessStatus;
-  }
-  if (method.name == "kill") {
-    return support::ImportedRuntimeMethod::kProcessKill;
-  }
-  if (method.name == "await") {
-    return support::ImportedRuntimeMethod::kProcessAwait;
-  }
-  if (method.name == "suspend") {
-    return support::ImportedRuntimeMethod::kProcessSuspend;
-  }
-  if (method.name == "resume") {
-    return support::ImportedRuntimeMethod::kProcessResume;
-  }
-  return std::nullopt;
+  throw InternalError("AST->HIR call: unknown imported runtime-library class");
 }
 
 // The unit a subroutine is declared directly in when that unit is reached by
@@ -652,18 +662,14 @@ auto LowerCallExpr(
     if (receiver_type.has_value() &&
         types.Get(*receiver_type).Is<hir::StringType>()) {
       if (auto kind = LowerStringMethodName(name); kind.has_value()) {
-        // LRM 6.16.1 through 6.16.15 -- string intrinsic methods. The
-        // receiver is arguments[0]; remaining arguments are the SV method
-        // parameters (e.g. substr's `i, j`).
+        // LRM 6.16.1 through 6.16.15 -- string intrinsic methods, each acting
+        // on the string; the remaining operands are the SV method parameters
+        // (e.g. substr's `i, j`).
         auto type_id = unit_lowerer.InternType(*call.type, span);
         if (!type_id) return std::unexpected(std::move(type_id.error()));
         return hir::Expr{
             .type = *type_id,
-            .data =
-                hir::CallExpr{
-                    .callee = hir::BuiltinMethodRef{.method = *kind},
-                    .arguments = std::move(arg_ids),
-                },
+            .data = BuiltinCall(*kind, std::move(arg_ids), std::nullopt),
             .span = span,
         };
       }
@@ -679,45 +685,35 @@ auto LowerCallExpr(
       if (!type_id) return std::unexpected(std::move(type_id.error()));
       return hir::Expr{
           .type = *type_id,
-          .data =
-              hir::CallExpr{
-                  .callee =
-                      hir::BuiltinMethodRef{
-                          .method = support::BuiltinFn::kTriggered,
-                      },
-                  .arguments = std::move(arg_ids),
-              },
+          .data = BuiltinCall(
+              support::BuiltinFn::kTriggered, std::move(arg_ids), std::nullopt),
           .span = span,
       };
     }
 
     if (receiver_type.has_value() &&
         types.Get(*receiver_type).Is<hir::QueueType>()) {
-      // LRM 7.10.2 queue-native methods. The receiver is arguments[0]; any
-      // method parameters (insert's index and item, push's item) follow as the
-      // remaining arguments. These methods take no `with` clause and are tried
-      // before the array-manipulation family so `size` / `delete` resolve to
-      // the queue-native form rather than the LRM 7.12 one.
+      // LRM 7.10.2 queue-native methods, each acting on the queue; the method
+      // parameters (insert's index and item, push's item) follow. These take no
+      // `with` clause and are tried before the array-manipulation family so
+      // `size` / `delete` resolve to the queue-native form rather than the LRM
+      // 7.12 one.
       if (auto kind = LowerQueueMethodName(name, arg_ids.size() - 1);
           kind.has_value()) {
         auto type_id = unit_lowerer.InternType(*call.type, span);
         if (!type_id) return std::unexpected(std::move(type_id.error()));
         return hir::Expr{
             .type = *type_id,
-            .data =
-                hir::CallExpr{
-                    .callee = hir::BuiltinMethodRef{.method = *kind},
-                    .arguments = std::move(arg_ids),
-                },
+            .data = BuiltinCall(*kind, std::move(arg_ids), std::nullopt),
             .span = span,
         };
       }
     }
 
-    // LRM 7.9 associative-array native methods. The receiver is arguments[0];
-    // the index (`exists`, the delete that names one entry) follows as the next
-    // argument. Like the queue's, these are tried before the LRM 7.12 family so
-    // a name both define resolves to the one the receiver's own clause states.
+    // LRM 7.9 associative-array native methods, each acting on the array; the
+    // index (`exists`, the delete that names one entry) follows. Like the
+    // queue's, these are tried before the LRM 7.12 family so a name both define
+    // resolves to the one the receiver's own clause states.
     if (receiver_type.has_value() &&
         unit_lowerer.Unit()
             .types.Get(*receiver_type)
@@ -728,11 +724,7 @@ auto LowerCallExpr(
         if (!type_id) return std::unexpected(std::move(type_id.error()));
         return hir::Expr{
             .type = *type_id,
-            .data =
-                hir::CallExpr{
-                    .callee = hir::BuiltinMethodRef{.method = *kind},
-                    .arguments = std::move(arg_ids),
-                },
+            .data = BuiltinCall(*kind, std::move(arg_ids), std::nullopt),
             .span = span,
         };
       }
@@ -787,11 +779,7 @@ auto LowerCallExpr(
         return hir::Expr{
             .type = *type_id,
             .data =
-                hir::CallExpr{
-                    .callee = hir::BuiltinMethodRef{.method = *kind},
-                    .arguments = std::move(arg_ids),
-                    .with_clause = std::move(with_clause),
-                },
+                BuiltinCall(*kind, std::move(arg_ids), std::move(with_clause)),
             .span = span,
         };
       }
@@ -808,13 +796,8 @@ auto LowerCallExpr(
       if (!type_id) return std::unexpected(std::move(type_id.error()));
       return hir::Expr{
           .type = *type_id,
-          .data =
-              hir::CallExpr{
-                  .callee =
-                      hir::BuiltinMethodRef{
-                          .method = support::BuiltinFn::kClog2},
-                  .arguments = std::move(arg_ids),
-              },
+          .data = BuiltinCall(
+              support::BuiltinFn::kClog2, std::move(arg_ids), std::nullopt),
           .span = span,
       };
     }
@@ -834,11 +817,7 @@ auto LowerCallExpr(
         if (!type_id) return std::unexpected(std::move(type_id.error()));
         return hir::Expr{
             .type = *type_id,
-            .data =
-                hir::CallExpr{
-                    .callee = hir::BuiltinMethodRef{.method = *real_fn},
-                    .arguments = std::move(arg_ids),
-                },
+            .data = BuiltinCall(*real_fn, std::move(arg_ids), std::nullopt),
             .span = span,
         };
       }
@@ -978,9 +957,9 @@ auto LowerCallExpr(
         "AST->HIR call: user call missing resolved SubroutineSymbol");
   }
 
-  // A method of an imported runtime-library class routes to the library symbol.
-  // A static method carries no receiver; an instance method lowers its handle,
-  // present in `thisClass`.
+  // A method of an imported runtime-library class routes to the library entry.
+  // A static method acts on no object; an instance method acts on the handle
+  // `thisClass` carries.
   if (const auto imported = DetectImportedRuntimeMethod(*sym)) {
     auto result_type = unit_lowerer.InternType(*call.type, span);
     if (!result_type) return std::unexpected(std::move(result_type.error()));
@@ -996,7 +975,7 @@ auto LowerCallExpr(
         .data =
             hir::CallExpr{
                 .callee =
-                    hir::ImportedMethodRef{
+                    hir::BuiltinMethodRef{
                         .method = *imported, .receiver = receiver},
                 .arguments = std::move(arg_ids),
             },

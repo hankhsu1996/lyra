@@ -72,11 +72,8 @@ auto LowerBinaryOp(hir::BinaryOp op) -> mir::BinaryOp {
       return mir::BinaryOp::kLogicalOr;
     case hir::BinaryOp::kLogicalShiftLeft:
     case hir::BinaryOp::kArithmeticShiftLeft:
-      return mir::BinaryOp::kShiftLeft;
     case hir::BinaryOp::kLogicalShiftRight:
-      return mir::BinaryOp::kLogicalShiftRight;
     case hir::BinaryOp::kArithmeticShiftRight:
-      return mir::BinaryOp::kArithmeticShiftRight;
     case hir::BinaryOp::kPower:
     case hir::BinaryOp::kBitwiseXnor:
     case hir::BinaryOp::kCaseEquality:
@@ -90,6 +87,47 @@ auto LowerBinaryOp(hir::BinaryOp op) -> mir::BinaryOp {
   throw InternalError(
       "LowerBinaryOp: the operator is performed by a library entry and is "
       "settled before a binary node is built");
+}
+
+auto LowerCompoundOperation(hir::BinaryOp op) -> CompoundOperation {
+  switch (op) {
+    case hir::BinaryOp::kLogicalShiftLeft:
+    case hir::BinaryOp::kArithmeticShiftLeft:
+      return support::BuiltinFn::kShiftLeftAssign;
+    case hir::BinaryOp::kLogicalShiftRight:
+      return support::BuiltinFn::kLogicalShiftRightAssign;
+    case hir::BinaryOp::kArithmeticShiftRight:
+      return support::BuiltinFn::kArithmeticShiftRightAssign;
+    case hir::BinaryOp::kAdd:
+    case hir::BinaryOp::kSub:
+    case hir::BinaryOp::kMul:
+    case hir::BinaryOp::kDiv:
+    case hir::BinaryOp::kMod:
+    case hir::BinaryOp::kBitwiseAnd:
+    case hir::BinaryOp::kBitwiseOr:
+    case hir::BinaryOp::kBitwiseXor:
+      return LowerBinaryOp(op);
+    case hir::BinaryOp::kEquality:
+    case hir::BinaryOp::kInequality:
+    case hir::BinaryOp::kGreaterEqual:
+    case hir::BinaryOp::kGreaterThan:
+    case hir::BinaryOp::kLessEqual:
+    case hir::BinaryOp::kLessThan:
+    case hir::BinaryOp::kLogicalAnd:
+    case hir::BinaryOp::kLogicalOr:
+    case hir::BinaryOp::kPower:
+    case hir::BinaryOp::kBitwiseXnor:
+    case hir::BinaryOp::kCaseEquality:
+    case hir::BinaryOp::kCaseInequality:
+    case hir::BinaryOp::kWildcardEquality:
+    case hir::BinaryOp::kWildcardInequality:
+    case hir::BinaryOp::kLogicalImplication:
+    case hir::BinaryOp::kLogicalEquivalence:
+      break;
+  }
+  throw InternalError(
+      "LowerCompoundOperation: the operator has no `op=` form (LRM 11.4.1) and "
+      "reaches no assignment");
 }
 
 auto BuildMirLogicalAnd(
@@ -259,20 +297,17 @@ auto MakeFromBoolCall(mir::ExprId bool_expr_id, mir::TypeId result_type)
   return mir::Expr{
       .data =
           mir::CallExpr{
-              .callee =
-                  mir::Direct{
-                      .target = support::BuiltinFn::kFromBool,
-                      .qualification = mir::TypeQualifier{.type = result_type}},
+              .callee = mir::Direct{.target = support::BuiltinFn::kFromBool},
               .arguments = {bool_expr_id}},
       .type = result_type};
 }
 
-// Wraps an operand in `BoolCastExpr` so a machine-boolean consumer -- a native
-// `&&` / `||` / `!`, or `kFromBool` -- can take it.
+// Reads an operand as a machine boolean, so a consumer that takes one -- a
+// native `&&` / `||` / `!`, or `kFromBool` -- can be given it.
 auto MakeBoolCast(const mir::CompilationUnit& unit, mir::ExprId operand_id)
     -> mir::Expr {
   return mir::Expr{
-      .data = mir::BoolCastExpr{.operand = operand_id},
+      .data = mir::CastExpr{.operand = operand_id},
       .type = unit.builtins.machine_bool};
 }
 

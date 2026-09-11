@@ -82,22 +82,40 @@ auto ProceduralScopeKindLabel(ProceduralScopeKind kind) -> std::string_view {
       "ProceduralScopeKindLabel: unknown hir::ProceduralScopeKind");
 }
 
+auto ReferenceBindingLabel(ReferenceBinding binding) -> std::string_view {
+  return binding == ReferenceBinding::kConstRef ? " const ref" : " ref";
+}
+
 auto FormatPublishedStorage(const PublishedStorage& storage) -> std::string {
   return std::visit(
       Overloaded{
           [](const VariableStorage&) { return std::string{}; },
-          [](const NetStorage& net) {
-            return std::format(" net={}", NetTypeLabel(net.net_type));
-          },
+          [](const NetStorage&) { return std::string{" net"}; },
           [](const ReferenceStorage& reference) {
-            return std::string{
-                reference.binding == ReferenceBinding::kConstRef ? " const ref"
-                                                                 : " ref"};
+            return std::string{ReferenceBindingLabel(reference.binding)};
           },
           [](const BorrowedObjectStorage&) {
             return std::string{" borrowed"};
           }},
       storage);
+}
+
+auto FormatStructuralDataObject(const StructuralDataObjectDecl& decl)
+    -> std::string {
+  return std::visit(
+      Overloaded{
+          [](const StructuralVariableDecl& var) {
+            return var.initializer.has_value()
+                       ? std::format(" init=Expr[{}]", var.initializer->value)
+                       : std::string{};
+          },
+          [](const StructuralNetDecl& net) {
+            return std::format(" net={}", NetTypeLabel(net.net_type));
+          },
+          [](const StructuralReferenceDecl& reference) {
+            return std::string{ReferenceBindingLabel(reference.binding)};
+          }},
+      decl.kind);
 }
 
 auto FormatClassRef(const ClassRef& ref) -> std::string {
@@ -771,7 +789,10 @@ class HirDumper {
             },
             [](const BuiltinMethodRef& b) -> std::string {
               return std::format(
-                  "BuiltinFn \"{}\"", support::RuntimeEntryOf(b.method).name);
+                  "BuiltinFn \"{}\"{}", support::RuntimeEntryOf(b.method).name,
+                  b.receiver.has_value()
+                      ? std::format(" recv=Expr[{}]", b.receiver->value)
+                      : std::string{});
             },
             [](const EnumMethodRef& e) -> std::string {
               return std::format(
@@ -796,14 +817,6 @@ class HirDumper {
                             "declaring_scope=hops:{}", f.declaring_scope->value)
                       : "declaring_scope=none",
                   decl.name);
-            },
-            [](const ImportedMethodRef& i) -> std::string {
-              return std::format(
-                  "ImportedMethod \"{}\"{}",
-                  support::ImportedRuntimeMethodSymbol(i.method),
-                  i.receiver.has_value()
-                      ? std::format(" recv=Expr[{}]", i.receiver->value)
-                      : std::string{});
             },
             [](const ExternalUnitSubroutineRef& e) -> std::string {
               return std::format(
@@ -1380,15 +1393,10 @@ class HirDumper {
     Indent();
     for (const StructuralDataObjectId id : s.structural_data_objects.Ids()) {
       const auto& v = s.structural_data_objects.Get(id);
-      std::string suffix = FormatPublishedStorage(StorageOf(v));
-      if (const auto* var = std::get_if<StructuralVariableDecl>(&v.kind);
-          var != nullptr && var->initializer.has_value()) {
-        suffix += std::format(" init=Expr[{}]", var->initializer->value);
-      }
       Line(
           std::format(
               "StructuralDataObject[{}] \"{}\" : Type[{}]{}", id.value, v.name,
-              v.type.value, suffix));
+              v.type.value, FormatStructuralDataObject(v)));
     }
     for (const InterfacePortId id : s.interface_ports.Ids()) {
       const auto& port = s.interface_ports.Get(id);

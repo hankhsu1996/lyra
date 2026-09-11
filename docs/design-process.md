@@ -88,7 +88,7 @@ paid for again at each of them.
 This beats any rule for one reason: it is greppable. A rule has no call sites and can only be
 invoked; consumers can be listed, and the list settles the argument.
 
-## Four searchable smells
+## Five searchable smells
 
 Each is the question above, pre-applied to a shape that recurs. Each has been a real defect here.
 
@@ -112,6 +112,25 @@ already held the inputs, or discover it was never a decision at all.
 **4. An `optional<T>` field, or an `if (empty)` branch.** Ask whether "absent" is genuinely
 reachable. Usually the thing always exists and only its _name_, _contents_, or _exposure_ is
 optional -- three different questions that an `optional` on the whole thing has collapsed into one.
+
+**5. Two alternatives of a closed set that no consumer tells apart.** They are one alternative. Each
+instance of this had a decision record behind it, and each record argued from a distinction nothing
+was using -- so the argument is never the thing to check. Three readings answer it, cheapest first,
+and only the last is an argument:
+
+- _Identical member lists._ A tell, and a noisy one: three separate operations here each hold one
+  expression id. Never conclude from this alone.
+- _The layer below merges them._ Two arms of one lowering constructing the same node underneath.
+  Close to proof -- the merge already happened and only the names upstream survived -- and invisible
+  otherwise, because both layers compile and both read as deliberate.
+- _Every consumer emits the same thing._ The deciding reading. Line the arms up across both backends
+  and the dump; where the output differs only in a name, or not at all, the alternatives were never
+  distinct.
+
+The fix is to collapse them and let whatever the consumers were really reading -- usually a type, or
+a pair of types -- say it. What made each split look necessary was that it turned an unhandled case
+into a build break; that property is kept by having each backend refuse what it cannot realize,
+rather than by naming the cases in the IR.
 
 ## Falsifying a proposed shape
 

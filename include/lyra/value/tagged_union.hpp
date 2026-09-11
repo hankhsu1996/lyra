@@ -1,6 +1,7 @@
 #pragma once
 
 #include <cstddef>
+#include <string>
 #include <type_traits>
 #include <utility>
 #include <variant>
@@ -8,6 +9,7 @@
 #include "lyra/base/simulation_error.hpp"
 #include "lyra/value/concepts.hpp"
 #include "lyra/value/empty.hpp"
+#include "lyra/value/format.hpp"
 #include "lyra/value/packed_array.hpp"
 
 namespace lyra::value {
@@ -158,6 +160,27 @@ class TaggedUnion {
 
  private:
   std::variant<Ts...> data_;
+};
+
+// LRM 21.2.1.6: a tagged union's one element is what its tag selects. Asking
+// each position whether it is the live one is what keeps a member the tag does
+// not select from being read at all, which reading it would make a run-time
+// error (LRM 11.9).
+template <typename... Ts>
+struct Formatter<TaggedUnion<Ts...>> {
+  static auto Format(const FormatSpec& spec, const TaggedUnion<Ts...>& value)
+      -> std::string {
+    PatternWriter pattern;
+    [&]<std::size_t... Is>(std::index_sequence<Is...>) {
+      ((value.template IsTagged<Is>()
+            ? pattern.Add(
+                  lyra::value::Format(
+                      spec, MakeFormatArg(value.template Get<Is>())))
+            : void()),
+       ...);
+    }(std::index_sequence_for<Ts...>{});
+    return std::move(pattern).Finish();
+  }
 };
 
 static_assert(LyraValue<TaggedUnion<PackedArray, PackedArray>>);

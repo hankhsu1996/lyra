@@ -77,14 +77,34 @@ void HashId(std::size_t& seed, TypeId id) {
   HashCombine(seed, std::hash<std::uint32_t>{}(id.value));
 }
 
+void HashIds(std::size_t& seed, const std::vector<TypeId>& ids) {
+  for (const TypeId id : ids) {
+    HashId(seed, id);
+  }
+}
+
+template <typename E>
+  requires std::is_enum_v<E>
+void HashEnum(std::size_t& seed, E value) {
+  HashField(seed, static_cast<std::uint64_t>(value));
+}
+
 // Hashes a packed array by the three attributes that decide what it means --
 // four-stateness, signedness, and the dimensions its width comes from.
 void HashPackedShape(std::size_t& seed, const PackedArrayType& packed) {
-  HashCombine(seed, std::hash<int>{}(static_cast<int>(packed.state_kind)));
-  HashCombine(seed, std::hash<int>{}(static_cast<int>(packed.signedness)));
+  HashEnum(seed, packed.state_kind);
+  HashEnum(seed, packed.signedness);
   for (const PackedRange& dim : packed.dims) {
-    HashCombine(seed, std::hash<std::int64_t>{}(dim.left));
-    HashCombine(seed, std::hash<std::int64_t>{}(dim.right));
+    HashField(seed, dim.left);
+    HashField(seed, dim.right);
+  }
+}
+
+void HashMembers(
+    std::size_t& seed, const std::vector<AggregateMember>& members) {
+  for (const AggregateMember& member : members) {
+    HashField(seed, member.name);
+    HashId(seed, member.type);
   }
 }
 
@@ -92,102 +112,115 @@ void HashPackedShape(std::size_t& seed, const PackedArrayType& packed) {
 
 auto Type::Hash::operator()(const Type& type) const -> std::size_t {
   std::size_t seed = std::hash<std::size_t>{}(type.data_.index());
-  type.Visit([&](const auto& t) {
-    using T = std::decay_t<decltype(t)>;
-    if constexpr (std::is_same_v<T, PackedArrayType>) {
-      HashPackedShape(seed, t);
-    } else if constexpr (std::is_same_v<T, EnumType>) {
-      HashPackedShape(seed, t.base);
-      for (const EnumMember& m : t.members) {
-        HashField(seed, m.name);
-        HashField(seed, m.value);
-      }
-    } else if constexpr (std::is_same_v<T, UnpackedArrayType>) {
-      HashId(seed, t.element_type);
-      HashField(seed, t.dim.left);
-      HashField(seed, t.dim.right);
-    } else if constexpr (std::is_same_v<T, DynamicArrayType>) {
-      HashId(seed, t.element_type);
-    } else if constexpr (std::is_same_v<T, QueueType>) {
-      HashId(seed, t.element_type);
-      if (t.max_bound) {
-        HashField(seed, *t.max_bound);
-      }
-    } else if constexpr (std::is_same_v<T, AssociativeArrayType>) {
-      HashId(seed, t.element_type);
-      HashId(seed, t.key_type);
-    } else if constexpr (std::is_same_v<T, ObjectType>) {
-      HashField(seed, t.class_id.value);
-    } else if constexpr (std::is_same_v<T, ExternalUnitObjectType>) {
-      HashField(seed, t.object.value);
-    } else if constexpr (std::is_same_v<T, CrossUnitClassType>) {
-      HashField(seed, t.unit_name);
-      HashField(seed, t.class_name);
-    } else if constexpr (std::is_same_v<T, RuntimeClassType>) {
-      HashField(seed, t.symbol);
-    } else if constexpr (std::is_same_v<T, MachineIntType>) {
-      HashCombine(seed, std::hash<int>{}(static_cast<int>(t.width)));
-      HashCombine(seed, std::hash<int>{}(static_cast<int>(t.signedness)));
-    } else if constexpr (std::is_same_v<T, MachineFloatType>) {
-      HashCombine(seed, std::hash<int>{}(static_cast<int>(t.width)));
-    } else if constexpr (std::is_same_v<T, MachineArrayType>) {
-      HashId(seed, t.element);
-      HashField(seed, t.size);
-    } else if constexpr (std::is_same_v<T, MachineFunctionType>) {
-      for (TypeId param : t.params) {
-        HashId(seed, param);
-      }
-      HashId(seed, t.result);
-    } else if constexpr (std::is_same_v<T, RuntimeLibraryType>) {
-      HashCombine(seed, std::hash<int>{}(static_cast<int>(t.kind)));
-    } else if constexpr (std::is_same_v<T, CoroutineType>) {
-      HashId(seed, t.payload);
-    } else if constexpr (std::is_same_v<T, ClosureType>) {
-      HashField(seed, t.closure_id.value);
-    } else if constexpr (std::is_same_v<T, StructType>) {
-      HashField(seed, t.struct_id.value);
-    } else if constexpr (std::is_same_v<T, RefType>) {
-      HashId(seed, t.pointee);
-      HashCombine(seed, std::hash<int>{}(static_cast<int>(t.mutability)));
-    } else if constexpr (std::is_same_v<T, PointerType>) {
-      HashId(seed, t.pointee);
-      HashCombine(seed, std::hash<int>{}(static_cast<int>(t.ownership)));
-      HashCombine(seed, std::hash<int>{}(static_cast<int>(t.mutability)));
-    } else if constexpr (std::is_same_v<T, ManagedRefType>) {
-      HashId(seed, t.pointee);
-    } else if constexpr (std::is_same_v<T, VectorType>) {
-      HashId(seed, t.element);
-    } else if constexpr (std::is_same_v<T, TupleType>) {
-      for (TypeId element : t.elements) {
-        HashId(seed, element);
-      }
-    } else if constexpr (std::is_same_v<T, UnionType>) {
-      for (TypeId element : t.elements) {
-        HashId(seed, element);
-      }
-    } else if constexpr (std::is_same_v<T, TaggedUnionType>) {
-      for (TypeId element : t.elements) {
-        HashId(seed, element);
-      }
-    } else if constexpr (std::is_same_v<T, ObservableType>) {
-      HashId(seed, t.value);
-    } else if constexpr (std::is_same_v<T, ResolvedType>) {
-      HashId(seed, t.value);
-      HashField(seed, t.resolution);
-    } else if constexpr (std::is_same_v<T, DriverType>) {
-      HashId(seed, t.value);
-      HashField(seed, t.resolution);
-    } else if constexpr (std::is_same_v<T, SampledHistoryType>) {
-      HashId(seed, t.value);
-    }
-    // The remaining variants are parameter-less; the variant index above
-    // is their whole identity.
-  });
+  type.Visit(
+      Overloaded{
+          [&](const PackedArrayType& t) { HashPackedShape(seed, t); },
+          [&](const EnumType& t) {
+            HashPackedShape(seed, t.base);
+            for (const EnumMember& member : t.members) {
+              HashField(seed, member.name);
+              HashField(seed, member.value);
+            }
+          },
+          [&](const PackedStructType& t) {
+            HashPackedShape(seed, t.base);
+            HashMembers(seed, t.members);
+          },
+          [&](const PackedUnionType& t) {
+            HashPackedShape(seed, t.base);
+            HashMembers(seed, t.members);
+          },
+          [&](const UnpackedArrayType& t) {
+            HashId(seed, t.element_type);
+            HashField(seed, t.dim.left);
+            HashField(seed, t.dim.right);
+          },
+          [&](const DynamicArrayType& t) { HashId(seed, t.element_type); },
+          [&](const QueueType& t) {
+            HashId(seed, t.element_type);
+            HashField(seed, t.max_bound.value_or(0));
+            HashField(seed, t.max_bound.has_value());
+          },
+          [&](const AssociativeArrayType& t) {
+            HashId(seed, t.element_type);
+            HashId(seed, t.key_type);
+          },
+          [](const WildcardIndexType&) {},
+          [](const StringType&) {},
+          [](const MachineCStringType&) {},
+          [](const MachineBoolType&) {},
+          [&](const MachineIntType& t) {
+            HashEnum(seed, t.width);
+            HashEnum(seed, t.signedness);
+          },
+          [&](const MachineFloatType& t) { HashEnum(seed, t.width); },
+          [&](const MachineArrayType& t) {
+            HashId(seed, t.element);
+            HashField(seed, t.size);
+          },
+          [&](const MachineFunctionType& t) {
+            HashIds(seed, t.params);
+            HashId(seed, t.result);
+          },
+          [](const EventType&) {},
+          [](const RealType&) {},
+          [](const ShortRealType&) {},
+          [](const RealTimeType&) {},
+          [](const ChandleType&) {},
+          [](const VoidType&) {},
+          [&](const ObjectType& t) { HashField(seed, t.class_id.value); },
+          [&](const ExternalUnitObjectType& t) {
+            HashField(seed, t.object.value);
+          },
+          [&](const CrossUnitClassType& t) {
+            HashField(seed, t.unit_name);
+            HashField(seed, t.class_name);
+          },
+          [&](const RuntimeClassType& t) { HashField(seed, t.symbol); },
+          [](const RuntimeEffectsType&) {},
+          [](const FilesType&) {},
+          [](const DiagnosticType&) {},
+          [&](const RuntimeLibraryType& t) { HashEnum(seed, t.kind); },
+          [&](const CoroutineType& t) { HashId(seed, t.payload); },
+          [&](const RefType& t) {
+            HashId(seed, t.pointee);
+            HashEnum(seed, t.mutability);
+          },
+          [&](const PointerType& t) {
+            HashId(seed, t.pointee);
+            HashEnum(seed, t.ownership);
+            HashEnum(seed, t.mutability);
+          },
+          [&](const ManagedRefType& t) { HashId(seed, t.pointee); },
+          [&](const VectorType& t) { HashId(seed, t.element); },
+          [&](const TupleType& t) { HashIds(seed, t.elements); },
+          [&](const UnpackedStructType& t) { HashMembers(seed, t.members); },
+          [&](const UnionType& t) { HashMembers(seed, t.members); },
+          [&](const TaggedUnionType& t) { HashMembers(seed, t.members); },
+          [](const EmptyType&) {},
+          [&](const ObservableType& t) { HashId(seed, t.value); },
+          [&](const ResolvedType& t) { HashId(seed, t.value); },
+          [&](const DriverType& t) { HashId(seed, t.value); },
+          [&](const SampledHistoryType& t) { HashId(seed, t.value); },
+          [](const EvaluationAttemptsType&) {},
+          [&](const StructType& t) { HashField(seed, t.struct_id.value); },
+          [&](const ClosureType& t) { HashField(seed, t.closure_id.value); }});
   return seed;
 }
 
+auto MemberTypes(const std::vector<AggregateMember>& members)
+    -> std::vector<TypeId> {
+  std::vector<TypeId> types;
+  types.reserve(members.size());
+  for (const AggregateMember& member : members) {
+    types.push_back(member.type);
+  }
+  return types;
+}
+
 auto Type::IsIntegralPacked() const -> bool {
-  return Is<PackedArrayType>() || Is<EnumType>();
+  return Is<PackedArrayType>() || Is<EnumType>() || Is<PackedStructType>() ||
+         Is<PackedUnionType>();
 }
 
 auto Type::PackedShape() const -> const PackedArrayType& {
@@ -197,7 +230,27 @@ auto Type::PackedShape() const -> const PackedArrayType& {
   if (const auto* enumeration = As<EnumType>()) {
     return enumeration->base;
   }
+  if (const auto* packed_struct = As<PackedStructType>()) {
+    return packed_struct->base;
+  }
+  if (const auto* packed_union = As<PackedUnionType>()) {
+    return packed_union->base;
+  }
   throw InternalError("mir: type has no packed shape; it is not integral");
+}
+
+auto Type::IsProduct() const -> bool {
+  return Is<TupleType>() || Is<UnpackedStructType>();
+}
+
+auto Type::ProductComponentTypes() const -> std::vector<TypeId> {
+  if (const auto* tuple = As<TupleType>()) {
+    return tuple->elements;
+  }
+  if (const auto* structure = As<UnpackedStructType>()) {
+    return MemberTypes(structure->members);
+  }
+  throw InternalError("mir: type is not a product");
 }
 
 auto Type::IsRealFamily() const -> bool {
@@ -233,11 +286,15 @@ auto Type::HeldValueTypes() const -> std::vector<TypeId> {
   using Held = std::vector<TypeId>;
   return Visit(
       Overloaded{
-          // An integral value is one vector of bits, and an enumeration is that
-          // vector under a set of names. Both are indivisible, as is every
-          // other value that is a single quantity, a single token, or nothing.
+          // An integral value is one vector of bits, and an enumeration or a
+          // packed aggregate is that vector under a set of names. All are
+          // indivisible, as is every other value that is a single quantity, a
+          // single token, or nothing: a packed member is a run of the one
+          // vector rather than a value held beside it.
           [](const PackedArrayType&) -> Held { return {}; },
           [](const EnumType&) -> Held { return {}; },
+          [](const PackedStructType&) -> Held { return {}; },
+          [](const PackedUnionType&) -> Held { return {}; },
           [](const WildcardIndexType&) -> Held { return {}; },
           [](const StringType&) -> Held { return {}; },
           [](const MachineCStringType&) -> Held { return {}; },
@@ -266,8 +323,13 @@ auto Type::HeldValueTypes() const -> std::vector<TypeId> {
           // A product holds every component at once; a union and a tagged sum
           // hold one at a time, which is still one of these.
           [](const TupleType& t) -> Held { return t.elements; },
-          [](const UnionType& t) -> Held { return t.elements; },
-          [](const TaggedUnionType& t) -> Held { return t.elements; },
+          [](const UnpackedStructType& t) -> Held {
+            return MemberTypes(t.members);
+          },
+          [](const UnionType& t) -> Held { return MemberTypes(t.members); },
+          [](const TaggedUnionType& t) -> Held {
+            return MemberTypes(t.members);
+          },
 
           // A cell holds the value it keeps, however it publishes a change to
           // it and however far back it remembers.

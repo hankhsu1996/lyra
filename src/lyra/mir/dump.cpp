@@ -168,6 +168,16 @@ class MirDumper {
     return out;
   }
 
+  static auto FormatMembers(const std::vector<AggregateMember>& members)
+      -> std::string {
+    std::string out;
+    for (const auto& member : members) {
+      if (!out.empty()) out += ", ";
+      out += std::format("{}=Type[{}]", member.name, member.type.value);
+    }
+    return out;
+  }
+
   [[nodiscard]] auto FormatClassRef(const ClassRef& ref) const -> std::string {
     return std::visit(
         Overloaded{
@@ -205,19 +215,6 @@ class MirDumper {
         s);
   }
 
-  static auto FormatNetResolution(NetResolution resolution)
-      -> std::string_view {
-    switch (resolution) {
-      case NetResolution::kTriState:
-        return "tri_state";
-      case NetResolution::kWiredAnd:
-        return "wired_and";
-      case NetResolution::kWiredOr:
-        return "wired_or";
-    }
-    throw InternalError("FormatNetResolution: unknown NetResolution");
-  }
-
   static auto FormatType(const Type& t) -> std::string {
     return t.Visit(
         Overloaded{
@@ -240,6 +237,22 @@ class MirDumper {
                   FormatStateKind(e.base.state_kind),
                   FormatSignedness(e.base.signedness),
                   FormatPackedDims(e.base.dims), members);
+            },
+            [](const PackedStructType& s) -> std::string {
+              return std::format(
+                  "PackedStruct(base=PackedArray(state={}, signed={}, "
+                  "dims={}), members=[{}])",
+                  FormatStateKind(s.base.state_kind),
+                  FormatSignedness(s.base.signedness),
+                  FormatPackedDims(s.base.dims), FormatMembers(s.members));
+            },
+            [](const PackedUnionType& u) -> std::string {
+              return std::format(
+                  "PackedUnion(base=PackedArray(state={}, signed={}, "
+                  "dims={}), members=[{}])",
+                  FormatStateKind(u.base.state_kind),
+                  FormatSignedness(u.base.signedness),
+                  FormatPackedDims(u.base.dims), FormatMembers(u.members));
             },
             [](const UnpackedArrayType& u) -> std::string {
               return std::format(
@@ -432,41 +445,29 @@ class MirDumper {
               }
               return std::format("Tuple(elems=[{}])", elements);
             },
+            [](const UnpackedStructType& s) -> std::string {
+              return std::format(
+                  "UnpackedStruct(members=[{}])", FormatMembers(s.members));
+            },
             [](const UnionType& u) -> std::string {
-              std::string elements;
-              for (std::size_t i = 0; i < u.elements.size(); ++i) {
-                if (i != 0) {
-                  elements += ", ";
-                }
-                elements += std::format("Type[{}]", u.elements[i].value);
-              }
-              return std::format("Union(elems=[{}])", elements);
+              return std::format(
+                  "Union(members=[{}])", FormatMembers(u.members));
             },
             [](const EmptyType&) -> std::string {
               return std::string{"Empty"};
             },
             [](const TaggedUnionType& u) -> std::string {
-              std::string elements;
-              for (std::size_t i = 0; i < u.elements.size(); ++i) {
-                if (i != 0) {
-                  elements += ", ";
-                }
-                elements += std::format("Type[{}]", u.elements[i].value);
-              }
-              return std::format("TaggedUnion(elems=[{}])", elements);
+              return std::format(
+                  "TaggedUnion(members=[{}])", FormatMembers(u.members));
             },
             [](const ObservableType& o) -> std::string {
               return std::format("Observable(value=Type[{}])", o.value.value);
             },
             [](const ResolvedType& r) -> std::string {
-              return std::format(
-                  "Resolved(value=Type[{}], resolution={})", r.value.value,
-                  FormatNetResolution(r.resolution));
+              return std::format("Resolved(value=Type[{}])", r.value.value);
             },
             [](const DriverType& d) -> std::string {
-              return std::format(
-                  "Driver(value=Type[{}], resolution={})", d.value.value,
-                  FormatNetResolution(d.resolution));
+              return std::format("Driver(value=Type[{}])", d.value.value);
             },
             [](const SampledHistoryType& h) -> std::string {
               return std::format(
@@ -524,12 +525,6 @@ class MirDumper {
         return "LogicalAnd";
       case BinaryOp::kLogicalOr:
         return "LogicalOr";
-      case BinaryOp::kShiftLeft:
-        return "ShiftLeft";
-      case BinaryOp::kLogicalShiftRight:
-        return "LogicalShiftRight";
-      case BinaryOp::kArithmeticShiftRight:
-        return "ArithmeticShiftRight";
     }
     throw InternalError("MirDumper: unknown BinaryOp");
   }
@@ -571,11 +566,6 @@ class MirDumper {
               return std::format(
                   "builtin=\"{}\"", support::RuntimeEntryOf(id).name);
             },
-            [](const ImportedRuntimeCallTarget& i) -> std::string {
-              return std::format(
-                  "imported_runtime=\"{}\"",
-                  support::ImportedRuntimeMethodSymbol(i.method));
-            },
             [](const ExternalUnitCallableTarget& e) -> std::string {
               return std::format(
                   R"(external_unit={}::{})", e.unit_name, e.callable_name);
@@ -591,18 +581,6 @@ class MirDumper {
         target);
   }
 
-  [[nodiscard]] static auto FormatQualification(
-      const std::optional<ScopeQualifier>& q) -> std::string {
-    if (!q.has_value()) return "";
-    return std::visit(
-        Overloaded{
-            [](const TypeQualifier& tq) -> std::string {
-              return std::format(", qualification=Type[{}]", tq.type.value);
-            },
-        },
-        *q);
-  }
-
   [[nodiscard]] auto FormatCallee(const Callee& callee) const -> std::string {
     return std::visit(
         Overloaded{
@@ -616,8 +594,8 @@ class MirDumper {
                       ? std::format(" at={}", d.position->value)
                       : std::string{};
               return std::format(
-                  "Direct[{}{}{}{}]", FormatDirectTarget(d.target), receiver,
-                  position, FormatQualification(d.qualification));
+                  "Direct[{}{}{}]", FormatDirectTarget(d.target), receiver,
+                  position);
             },
             [](const Indirect& i) -> std::string {
               return std::format("Indirect[code=Expr[{}]]", i.code.value);
@@ -698,9 +676,8 @@ class MirDumper {
             [](const MachineIntLiteral& lit) -> std::string {
               return std::format("MachineIntLiteral({})", lit.value);
             },
-            [](const FunctionCastExpr& c) -> std::string {
-              return std::format(
-                  "FunctionCastExpr operand=Expr[{}]", c.operand.value);
+            [](const CastExpr& c) -> std::string {
+              return std::format("CastExpr operand=Expr[{}]", c.operand.value);
             },
             [](const MachineArrayDataExpr& d) -> std::string {
               return std::format(
@@ -712,14 +689,6 @@ class MirDumper {
             },
             [](const MoveExpr& m) -> std::string {
               return std::format("MoveExpr operand=Expr[{}]", m.operand.value);
-            },
-            [](const PointerCastExpr& c) -> std::string {
-              return std::format(
-                  "PointerCastExpr operand=Expr[{}]", c.operand.value);
-            },
-            [](const IntCastExpr& c) -> std::string {
-              return std::format(
-                  "IntCastExpr operand=Expr[{}]", c.operand.value);
             },
             [this](const ReferenceExpr& r) -> std::string {
               return std::format(
@@ -734,10 +703,6 @@ class MirDumper {
               return std::format(
                   "BinaryExpr op={} lhs=Expr[{}] rhs=Expr[{}]",
                   FormatBinaryOp(b.op), b.lhs.value, b.rhs.value);
-            },
-            [](const BoolCastExpr& b) -> std::string {
-              return std::format(
-                  "BoolCastExpr operand=Expr[{}]", b.operand.value);
             },
             [](const ConditionalExpr& c) -> std::string {
               return std::format(
@@ -786,15 +751,29 @@ class MirDumper {
                   m.receiver.value,
                   std::visit(
                       Overloaded{
-                          [](const FieldTarget& t) -> std::string {
+                          [](const ClassFieldTarget& t) -> std::string {
                             return std::format(
                                 "Class[{}]::Field[{}]", t.owner.value,
                                 t.slot.value);
                           },
-                          [](const FieldId& id) -> std::string {
-                            return std::format("Field[{}]", id.value);
+                          [](const StructFieldTarget& t) -> std::string {
+                            return std::format(
+                                "Struct[{}]::Field[{}]", t.owner.value,
+                                t.slot.value);
                           },
-                          [](const ExternalFieldTarget& t) -> std::string {
+                          [](const ClosureFieldTarget& t) -> std::string {
+                            return std::format(
+                                "Closure[{}]::Field[{}]", t.owner.value,
+                                t.slot.value);
+                          },
+                          [](const ExternalUnitObjectFieldTarget& t)
+                              -> std::string {
+                            return std::format(
+                                "ExternalUnitObject(#{})::Field[{}]",
+                                t.owner.value, t.slot.value);
+                          },
+                          [](const CrossUnitClassFieldTarget& t)
+                              -> std::string {
                             return std::format(
                                 "External[{}::{}#{}]", t.unit_name,
                                 t.class_name, t.slot.value);
@@ -808,10 +787,6 @@ class MirDumper {
               return std::format(
                   "ClosureExpr closure=Closure[{}] field_inits={}",
                   cl.closure.value, cl.field_inits.size());
-            },
-            [](const ValueCastExpr& v) -> std::string {
-              return std::format(
-                  "ValueCastExpr operand=Expr[{}]", v.operand.value);
             },
             [](const CompositeExpr& c) -> std::string {
               return std::format(

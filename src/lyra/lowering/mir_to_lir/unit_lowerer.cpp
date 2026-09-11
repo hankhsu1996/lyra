@@ -466,6 +466,26 @@ auto UnitLowerer::ClassValueType(mir::ClassId cls) -> lir::TypeId {
           lir::ObjectType{.class_id = class_identities_.Get(cls).lir_class}});
 }
 
+auto UnitLowerer::StructValueType(mir::StructId record) -> lir::TypeId {
+  return out_.types.Intern(
+      lir::Type{lir::StructType{.struct_id = StructDeclaration(record)}});
+}
+
+auto UnitLowerer::ExternalUnitObjectValueType(mir::ExternalUnitObjectId object)
+    -> lir::TypeId {
+  return out_.types.Intern(
+      lir::Type{lir::ExternalUnitObjectType{
+          .object = external_unit_object_identities_.Get(object)}});
+}
+
+auto UnitLowerer::ExternalClassValueType(
+    const std::string& unit_name, const std::string& class_name) const
+    -> lir::TypeId {
+  return out_.types.Intern(
+      lir::Type{lir::CrossUnitClassType{
+          .unit_name = unit_name, .class_name = class_name}});
+}
+
 auto UnitLowerer::PromisedClass(
     const std::string& unit_name, const std::string& class_name) const
     -> const mir::ExternalClass& {
@@ -477,14 +497,6 @@ auto UnitLowerer::PromisedClass(
         "consumed promise describes");
   }
   return *promised;
-}
-
-auto UnitLowerer::ExternalClassValueType(
-    const std::string& unit_name, const std::string& class_name) const
-    -> lir::TypeId {
-  return out_.types.Intern(
-      lir::Type{lir::CrossUnitClassType{
-          .unit_name = unit_name, .class_name = class_name}});
 }
 
 auto UnitLowerer::ProductOf(std::vector<lir::TypeId> components)

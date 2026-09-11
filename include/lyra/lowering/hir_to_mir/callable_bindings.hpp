@@ -164,6 +164,7 @@ class CallableBindings {
   const mir::CompilationUnit* unit_;
   mir::CallableCode* code_;
   mir::ClosureDecl* closure_decl_ = nullptr;
+  mir::ClosureId closure_id_{};
   CallableBindings* parent_ = nullptr;
   mir::Block* capture_site_ = nullptr;
   CapturePolicy policy_;

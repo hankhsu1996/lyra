@@ -291,39 +291,33 @@ auto lyra_rt_delay_real(
     void* runtime, const void* duration, const void* unit_power,
     const void* precision_power) -> bool;
 
-// Builds one leaf of a wait: the place it watches, and which bits of that
-// place's packed encoding it reads, as a `(lsb_bit_offset, bit_width)` pair --
-// a width of zero being the whole of it, which is what a named event's leaf
-// carries. Nothing decides beyond being reached, which is the sensitivity the
-// standard gives a construct that names variables rather than an expression
-// (LRM 9.2.2.2.1), and is also the whole of an unqualified named-event wait
-// (LRM 15.5.1). The scalars cross as opaque packed values, like every scalar.
-// The leaf is a transient runtime value owned by the current call scope.
+// Builds one leaf of a wait: the place it watches, what decides whether what
+// happens there is an event -- which the leaves watching for one event share --
+// and which bits of that place's packed encoding it reads, as a
+// `(lsb_bit_offset, bit_width)` pair, a width of zero being the whole of it and
+// what a named event's leaf carries. The scalars cross as opaque packed values,
+// like every scalar. The leaf is a transient runtime value owned by the current
+// call scope.
 auto lyra_rt_make_trigger(
-    void* observable, const void* lsb_bit_offset, const void* bit_width)
-    -> void*;
-
-// The same leaf where an event control decides what a change there means: the
-// observation the leaves of one event expression share.
-auto lyra_rt_make_observed_trigger(
     void* observable, const void* observation, const void* lsb_bit_offset,
     const void* bit_width) -> void*;
 
-// What decides whether reaching a wait is an event for it (LRM 9.4.2): a
-// closure answering what the event expression is worth now, and the edge
-// specifier written on it, crossing as an opaque packed value like every
-// scalar. It is armed here with what the expression is worth at this moment.
-// Like a trigger it is transient, and the waits built from it hold it for as
-// long as they last.
-//
-// The qualified form carries an `iff` condition beside them, answering as a
-// one-bit value already reduced to LRM 12.4 truth. The condition-only form is a
-// named event's, whose trigger is the event itself, so the qualifier is the
-// whole of what can hold the wait back (LRM 9.4.2.3, 15.5).
-auto lyra_rt_make_observation(void* expression, const void* edge) -> void*;
-auto lyra_rt_make_qualified_observation(
+// What decides whether reaching a wait is an event for it (LRM 9.4.2). Two
+// halves, and one entry per combination of them, so the call states which form
+// it is building. A watched half is a closure answering what the event
+// expression is worth now together with the edge specifier written on it,
+// crossing as an opaque packed value like every scalar, and it is armed here
+// with what the expression is worth at this moment. A qualifying half is an
+// `iff` condition, answering as a one-bit value already reduced to LRM 12.4
+// truth (LRM 9.4.2.3). Watching nothing is what an implicit sensitivity carries
+// (LRM 9.2.2.2.1) and what an unqualified named-event wait carries, the trigger
+// there being the event itself (LRM 15.5.1). Like a trigger these are
+// transient, and the waits built from them hold them for as long as they last.
+auto lyra_rt_observation_on_reaching() -> void*;
+auto lyra_rt_observation_of_value(void* expression, const void* edge) -> void*;
+auto lyra_rt_observation_of_value_qualified(
     void* expression, const void* edge, void* condition) -> void*;
-auto lyra_rt_make_condition_observation(void* condition) -> void*;
+auto lyra_rt_observation_qualified(void* condition) -> void*;
 
 // Registers the running process to wake when what happens at one of `triggers`
 // is an event for the wait, the registration such a wait's suspend edge is
@@ -722,6 +716,12 @@ auto lyra_rt_packed_shift_left(const void* value, const void* amount) -> void*;
 auto lyra_rt_packed_logical_shift_right(const void* value, const void* amount)
     -> void*;
 auto lyra_rt_packed_arithmetic_shift_right(
+    const void* value, const void* amount) -> void*;
+auto lyra_rt_packed_shift_left_assign(const void* value, const void* amount)
+    -> void*;
+auto lyra_rt_packed_logical_shift_right_assign(
+    const void* value, const void* amount) -> void*;
+auto lyra_rt_packed_arithmetic_shift_right_assign(
     const void* value, const void* amount) -> void*;
 auto lyra_rt_packed_bitwise_xnor(const void* lhs, const void* rhs) -> void*;
 auto lyra_rt_packed_logical_implication(const void* lhs, const void* rhs)
@@ -1157,9 +1157,10 @@ void lyra_rt_unpackedarray_value_cell_store(void* cell, const void* value);
 auto lyra_rt_unpackedarray_value_cell_load(const void* cell) -> void*;
 
 // Nets and their drivers (LRM 6.5, 6.6). A net is storage of its own, like a
-// cell: `net_initialize` fixes its declared type once, and `net_get` answers
-// with the fold of its drivers' contributions. It takes no store -- a value
-// reaches a net only through a driver.
+// cell: one `net_initialize` entry per fold fixes the net's declared type and
+// the fold its net type picked, once, and `net_get` answers with the fold of
+// its drivers' contributions. It takes no store -- a value reaches a net only
+// through a driver.
 //
 // `attach_driver` issues one, and the handle it answers with is the net's to
 // own, so a source may hold it for as long as the net lives. `driver_set`
@@ -1172,7 +1173,9 @@ auto lyra_rt_unpackedarray_value_cell_load(const void* cell) -> void*;
 // fixed-size unpacked array, struct, or union whose elements are themselves
 // valid for a net.
 auto lyra_rt_packed_net_get(void* net) -> void*;
-void lyra_rt_packed_net_initialize(void* net, const void* prototype);
+void lyra_rt_packed_net_initialize_tri_state(void* net, const void* prototype);
+void lyra_rt_packed_net_initialize_wired_and(void* net, const void* prototype);
+void lyra_rt_packed_net_initialize_wired_or(void* net, const void* prototype);
 // Forcing a net and releasing it (LRM 10.6.2). What these change is the value
 // the net shows; its drivers go on updating their contributions underneath,
 // which is what the net answers with again once it is released.
@@ -1185,17 +1188,26 @@ auto lyra_rt_packed_attach_driver(void* net) -> void*;
 auto lyra_rt_packed_driver_get(void* driver) -> void*;
 void lyra_rt_packed_driver_set(void* driver, const void* value);
 auto lyra_rt_tuple_net_get(void* net) -> void*;
-void lyra_rt_tuple_net_initialize(void* net, const void* prototype);
+void lyra_rt_tuple_net_initialize_tri_state(void* net, const void* prototype);
+void lyra_rt_tuple_net_initialize_wired_and(void* net, const void* prototype);
+void lyra_rt_tuple_net_initialize_wired_or(void* net, const void* prototype);
 auto lyra_rt_tuple_attach_driver(void* net) -> void*;
 auto lyra_rt_tuple_driver_get(void* driver) -> void*;
 void lyra_rt_tuple_driver_set(void* driver, const void* value);
 auto lyra_rt_union_net_get(void* net) -> void*;
-void lyra_rt_union_net_initialize(void* net, const void* prototype);
+void lyra_rt_union_net_initialize_tri_state(void* net, const void* prototype);
+void lyra_rt_union_net_initialize_wired_and(void* net, const void* prototype);
+void lyra_rt_union_net_initialize_wired_or(void* net, const void* prototype);
 auto lyra_rt_union_attach_driver(void* net) -> void*;
 auto lyra_rt_union_driver_get(void* driver) -> void*;
 void lyra_rt_union_driver_set(void* driver, const void* value);
 auto lyra_rt_unpackedarray_net_get(void* net) -> void*;
-void lyra_rt_unpackedarray_net_initialize(void* net, const void* prototype);
+void lyra_rt_unpackedarray_net_initialize_tri_state(
+    void* net, const void* prototype);
+void lyra_rt_unpackedarray_net_initialize_wired_and(
+    void* net, const void* prototype);
+void lyra_rt_unpackedarray_net_initialize_wired_or(
+    void* net, const void* prototype);
 auto lyra_rt_unpackedarray_attach_driver(void* net) -> void*;
 auto lyra_rt_unpackedarray_driver_get(void* driver) -> void*;
 void lyra_rt_unpackedarray_driver_set(void* driver, const void* value);

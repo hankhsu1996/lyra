@@ -148,9 +148,7 @@ auto UnitLowerer::ResolveRouteTarget(
       InternType(value.getType(), SourceMapper().PointSpanOf(value.location));
   if (!type) return std::unexpected(std::move(type.error()));
 
-  auto storage =
-      DeclarationStorage(value, SourceMapper().PointSpanOf(value.location));
-  if (!storage) return std::unexpected(std::move(storage.error()));
+  const hir::PublishedStorage storage = DeclarationStorage(value);
 
   // This unit's own identity for the target when it declares it -- and for a
   // static a name reaches through a procedural scope (LRM 23.9 puts a block, a
@@ -159,9 +157,7 @@ auto UnitLowerer::ResolveRouteTarget(
   // sits rather than a step the route takes.
   if (const auto data_object = LookupStructuralDataObjectBinding(value)) {
     return hir::StructuralDataObjectLeaf{
-        .object = data_object->var_id,
-        .storage = *std::move(storage),
-        .type = *type};
+        .object = data_object->var_id, .storage = storage, .type = *type};
   }
   if (const auto procedural_static = LookupProceduralStatic(value)) {
     return hir::ProceduralStaticLeaf{
@@ -174,7 +170,7 @@ auto UnitLowerer::ResolveRouteTarget(
   // reaches has no statement either, which is why it is read off the frontend.
   return hir::OpaqueLeaf{
       .name = std::string{value.name},
-      .storage = *std::move(storage),
+      .storage = std::move(storage),
       .type = *type};
 }
 

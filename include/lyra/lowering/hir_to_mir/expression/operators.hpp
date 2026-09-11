@@ -9,6 +9,7 @@
 #include "lyra/hir/binary_op.hpp"
 #include "lyra/hir/expr.hpp"
 #include "lyra/lowering/hir_to_mir/expression/expr_lowerer.hpp"
+#include "lyra/lowering/hir_to_mir/lhs_store.hpp"
 #include "lyra/lowering/hir_to_mir/process_lowerer.hpp"
 #include "lyra/lowering/hir_to_mir/walk_frame.hpp"
 #include "lyra/mir/binary_op.hpp"
@@ -18,17 +19,24 @@
 namespace lyra::lowering::hir_to_mir {
 
 // The operator a target applies to two values of one type, for a source
-// operator that names one. A compound assignment routes its operator through
-// this too: LRM 11.4.1 admits only arithmetic, bitwise and shift compounds, so
-// every operator that can reach it names one.
+// operator that names one. An operator a library performs names none and does
+// not reach this.
 auto LowerBinaryOp(hir::BinaryOp op) -> mir::BinaryOp;
+
+// What an assignment applies to the value its target holds, for the operator
+// the source suffixed with `=` (LRM 11.4.1). The clause admits arithmetic,
+// bitwise and shift compounds; the first two are operators a target applies,
+// and a shift is applied by the entry that performs it, because a shift's
+// amount is sized on its own and no two-values-of-one-type operator can say
+// that. This is the one place that fork is taken.
+auto LowerCompoundOperation(hir::BinaryOp op) -> CompoundOperation;
 
 // HIR-to-MIR binary-operator realization. Takes the lowered operand ids
 // (already in `block`) and dispatches on `(op, lhs_type, rhs_type)`: an
 // operator a library performs lifts to a `CallExpr` against the entry that
 // performs it; real / string comparison and logical operators wrap in
-// `kFromBool` (with `BoolCastExpr` around the operands for the logical
-// family); the rest produce a native `BinaryExpr` for the backend to render
+// `kFromBool` (the logical family reading each operand as a machine boolean
+// first); the rest produce a native `BinaryExpr` for the backend to render
 // mechanically. The single producer of a binary operator, so it is also the one
 // place that guarantees a word-parallel operator's operands share a storage
 // domain (LRM 11.6.1), inserting the reconciling conversion any synthesized

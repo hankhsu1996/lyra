@@ -110,6 +110,14 @@ two ways.
    entries render types only via that dispatch; they never compose a target-language type literal
    directly. A runtime library type's spelling lives at one place; nowhere else.
 
+   A target also needs types for what MIR states as **structure** rather than as a value -- an
+   extent whose exit is an effect, the root a managed object is emitted over -- and no MIR type
+   variant names those, so no dispatch reaches them. They belong here even so, and for the reason
+   this entry exists rather than by exception: each is a library type's spelling, and this is where
+   a library type is spelled. What they are not is a dispatch. Nothing computes which one a site
+   wants -- the site knows -- so each is named outright, and giving them a selector to be looked up
+   by would be a lookup with no question in it.
+
 4. **Place access is one dispatch per MIR type variant, exhaustive over capability wrappers.** MIR
    states that the storage a wrapper represents is reached by dereferencing the wrapper's place
    (`mir.md` invariant 14); it does not state what that costs in a target. Each backend supplies it
@@ -302,7 +310,7 @@ The shape a conversion or factory call must hand the runtime therefore travels a
 operand: a node that names the type whose shape it is, and whose own type is that type's runtime
 descriptor. It carries no contents, because the width, signedness, state domain, and dimension stack
 are the named type's. It reaches render as its own leaf node, never composed by the consuming call's
-render from the call's type. A render branch that reads a call's type qualification to append shape
+render from the call's type. A render branch that reads the type a call is built at to append shape
 arguments is the forbidden shape; naming the type as an operand is the mechanical alternative.
 
 A value of that type would say the same thing, and is the wrong way to say it: nothing downstream

@@ -66,10 +66,7 @@ auto BuildFactoryCall(
       mir::Expr{
           .data =
               mir::CallExpr{
-                  .callee =
-                      mir::Direct{
-                          .target = factory,
-                          .qualification = mir::TypeQualifier{.type = type}},
+                  .callee = mir::Direct{.target = factory},
                   .arguments = std::move(arguments)},
           .type = type});
 }

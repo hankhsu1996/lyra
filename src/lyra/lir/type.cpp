@@ -55,6 +55,14 @@ void Combine(std::size_t& seed, const PackedArrayType& packed) {
   }
 }
 
+void CombineMembers(
+    std::size_t& seed, const std::vector<AggregateMember>& members) {
+  for (const AggregateMember& member : members) {
+    Combine(seed, member.name);
+    Combine(seed, member.type);
+  }
+}
+
 // Which runtime-library value this is. A reader that could not handle one needs
 // to know which of them it met, and the kind is the whole of what separates
 // them.
@@ -124,6 +132,14 @@ auto Type::Hash::operator()(const Type& type) const -> std::size_t {
   std::size_t seed = std::hash<std::size_t>{}(type.data_.index());
   type.Visit(
       Overloaded{
+          [&](const PackedStructType& t) {
+            Combine(seed, t.base);
+            CombineMembers(seed, t.members);
+          },
+          [&](const PackedUnionType& t) {
+            Combine(seed, t.base);
+            CombineMembers(seed, t.members);
+          },
           [&](const PackedArrayType& t) { Combine(seed, t); },
           [&](const EnumType& t) {
             Combine(seed, t.base);
@@ -200,16 +216,11 @@ auto Type::Hash::operator()(const Type& type) const -> std::size_t {
           [&](const ManagedRefType& t) { Combine(seed, t.pointee); },
           [&](const VectorType& t) { Combine(seed, t.element); },
           [&](const TupleType& t) { Combine(seed, t.elements); },
-          [&](const UnionType& t) { Combine(seed, t.elements); },
-          [&](const TaggedUnionType& t) { Combine(seed, t.elements); },
-          [&](const ResolvedType& t) {
-            Combine(seed, t.value);
-            Combine(seed, t.resolution);
-          },
-          [&](const DriverType& t) {
-            Combine(seed, t.value);
-            Combine(seed, t.resolution);
-          },
+          [&](const UnpackedStructType& t) { CombineMembers(seed, t.members); },
+          [&](const UnionType& t) { CombineMembers(seed, t.members); },
+          [&](const TaggedUnionType& t) { CombineMembers(seed, t.members); },
+          [&](const ResolvedType& t) { Combine(seed, t.value); },
+          [&](const DriverType& t) { Combine(seed, t.value); },
           [&](const ObservableType& t) { Combine(seed, t.value); },
           [&](const SampledHistoryType& t) { Combine(seed, t.value); },
           [](const EvaluationAttemptsType&) {}});
@@ -221,6 +232,8 @@ auto Type::KindName() const -> std::string_view {
       Overloaded{
           [](const PackedArrayType&) { return "packed array"; },
           [](const EnumType&) { return "enumeration"; },
+          [](const PackedStructType&) { return "packed structure"; },
+          [](const PackedUnionType&) { return "packed union"; },
           [](const UnpackedArrayType&) { return "unpacked array"; },
           [](const DynamicArrayType&) { return "dynamic array"; },
           [](const QueueType&) { return "queue"; },
@@ -258,6 +271,7 @@ auto Type::KindName() const -> std::string_view {
           [](const ManagedRefType&) { return "managed reference"; },
           [](const VectorType&) { return "vector"; },
           [](const TupleType&) { return "product"; },
+          [](const UnpackedStructType&) { return "unpacked structure"; },
           [](const UnionType&) { return "union"; },
           [](const TaggedUnionType&) { return "tagged union"; },
           [](const ResolvedType&) { return "net resolution node"; },
@@ -312,8 +326,47 @@ auto Type::IsAddressOnly() const -> bool {
          Is<SampledHistoryType>() || Is<EvaluationAttemptsType>();
 }
 
+auto MemberTypes(const std::vector<AggregateMember>& members)
+    -> std::vector<TypeId> {
+  std::vector<TypeId> types;
+  types.reserve(members.size());
+  for (const AggregateMember& member : members) {
+    types.push_back(member.type);
+  }
+  return types;
+}
+
 auto Type::IsIntegralPacked() const -> bool {
-  return Is<PackedArrayType>() || Is<EnumType>();
+  return Is<PackedArrayType>() || Is<EnumType>() || Is<PackedStructType>() ||
+         Is<PackedUnionType>();
+}
+
+auto Type::IsUnion() const -> bool {
+  return Is<UnionType>() || Is<TaggedUnionType>();
+}
+
+auto Type::UnionMemberTypes() const -> std::vector<TypeId> {
+  if (const auto* untagged = As<UnionType>()) {
+    return MemberTypes(untagged->members);
+  }
+  if (const auto* tagged = As<TaggedUnionType>()) {
+    return MemberTypes(tagged->members);
+  }
+  throw InternalError("lir: type is not a union");
+}
+
+auto Type::IsProduct() const -> bool {
+  return Is<TupleType>() || Is<UnpackedStructType>();
+}
+
+auto Type::ProductComponentTypes() const -> std::vector<TypeId> {
+  if (const auto* tuple = As<TupleType>()) {
+    return tuple->elements;
+  }
+  if (const auto* structure = As<UnpackedStructType>()) {
+    return MemberTypes(structure->members);
+  }
+  throw InternalError("lir: type is not a product");
 }
 
 auto Type::MachineIntegerSignedness() const -> std::optional<Signedness> {
@@ -332,6 +385,12 @@ auto Type::PackedShape() const -> const PackedArrayType& {
   }
   if (const auto* enumeration = As<EnumType>()) {
     return enumeration->base;
+  }
+  if (const auto* packed_struct = As<PackedStructType>()) {
+    return packed_struct->base;
+  }
+  if (const auto* packed_union = As<PackedUnionType>()) {
+    return packed_union->base;
   }
   throw InternalError("lir: type has no packed shape; it is not integral");
 }

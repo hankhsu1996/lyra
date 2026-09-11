@@ -16,9 +16,9 @@ Neither is a nominal SystemVerilog object (`object_model.md`) and neither is loo
 
 > There are **two nominal categories**, not one. A closure is a **`ClosureType`** (an anonymous
 > concrete callable value); a promoted scope is a **`StructType`** (a named generic aggregate)
-> reached through a `Shared<>` wrapper. They share **only** the field substrate -- `FieldDecl`,
-> `FieldId`, `FieldAccess`, `FieldInit`, `CallableCode` -- and share no type identity, declaration,
-> construction node, or target realization.
+> reached through a `Shared<>` wrapper. They share **only** the field substrate -- the field
+> declaration, the field id, the field initializer, the access node, and `CallableCode` -- and share
+> no type identity, declaration, construction node, field reference, or target realization.
 
 An earlier model fused both into one `StructType` distinguished by an `optional invoke`. That
 optional was a role discriminator: every consumer that touched the type re-derived whether it held a
@@ -70,10 +70,13 @@ Stated positively: each fixes one rule, and what is allowed or forbidden follows
    categories. A `ClosureDecl` is capture fields plus exactly one invoke body; a scope `StructDecl`
    is fields and no invoke. There is no fused type and no `is_closure` / `is_frame` discriminator.
 
-2. **The two categories share only the field substrate.** `FieldDecl`, `FieldId`, `FieldAccess`,
-   `FieldInit`, and `CallableCode` are shared; type identity, declaration, construction node, and
-   target realization are not. The shared vocabulary is narrow, so `object_model.md`'s
-   single-object-IR rule stands and no universal `Record` type appears.
+2. **The two categories share only the field substrate.** The field declaration, the field id, the
+   field initializer, the access node over them, and `CallableCode` are shared; type identity,
+   declaration, construction node, and target realization are not. Neither is the reference that
+   names a field at an access site: it states which declaration declares the field, so it has one
+   alternative per category and the id it carries is keyed within that one declaration. The shared
+   vocabulary is narrow, so `object_model.md`'s single-object-IR rule stands and no universal
+   `Record` type appears.
 
 3. **A closure's invoke reads captures through a read-only receiver.** The receiver is a
    `Borrowed<ClosureType>` (the invoke body's `locals[0]`); a captured read is field access over it.

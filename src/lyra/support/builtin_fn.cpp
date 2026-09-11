@@ -288,9 +288,15 @@ auto RuntimeEntryOf(BuiltinFn id) -> RuntimeEntry {
           .declaration = Method{"Realtoa"},
           .mutates_receiver = true};
     case BuiltinFn::kTrigger:
-      return {.name = "trigger", .declaration = Method{"Trigger"}};
+      return {
+          .name = "trigger",
+          .declaration = Method{"Trigger"},
+          .takes_the_runtime_handle = true};
     case BuiltinFn::kTriggered:
-      return {.name = "triggered", .declaration = Method{"Triggered"}};
+      return {
+          .name = "triggered",
+          .declaration = Method{"Triggered"},
+          .takes_the_runtime_handle = true};
     case BuiltinFn::kSampledHistoryInstall:
       return {
           .name = "sampled_history_install", .declaration = Method{"Install"}};
@@ -388,6 +394,18 @@ auto RuntimeEntryOf(BuiltinFn id) -> RuntimeEntry {
       return {.name = "atanh", .declaration = Method{"Atanh"}};
     case BuiltinFn::kInitialize:
       return {.name = "initialize", .declaration = Method{"Initialize"}};
+    case BuiltinFn::kNetInitializeTriState:
+      return {
+          .name = "net_initialize_tri_state",
+          .declaration = Method{"InitializeTriState"}};
+    case BuiltinFn::kNetInitializeWiredAnd:
+      return {
+          .name = "net_initialize_wired_and",
+          .declaration = Method{"InitializeWiredAnd"}};
+    case BuiltinFn::kNetInitializeWiredOr:
+      return {
+          .name = "net_initialize_wired_or",
+          .declaration = Method{"InitializeWiredOr"}};
     case BuiltinFn::kLoad:
       return {.name = "get", .declaration = Method{"Get"}};
     case BuiltinFn::kStore:
@@ -411,40 +429,61 @@ auto RuntimeEntryOf(BuiltinFn id) -> RuntimeEntry {
           .name = "current_runtime",
           .declaration = FreeFunction{"lyra::runtime::current_runtime"}};
     case BuiltinFn::kSubmitNba:
-      return {.name = "submit_nba", .declaration = Method{"SubmitNba"}};
+      return {
+          .name = "submit_nba",
+          .declaration = Method{"SubmitNba"},
+          .takes_the_runtime_handle = true};
     case BuiltinFn::kSubmitNbaAfter:
       return {
-          .name = "submit_nba_after", .declaration = Method{"SubmitNbaAfter"}};
+          .name = "submit_nba_after",
+          .declaration = Method{"SubmitNbaAfter"},
+          .takes_the_runtime_handle = true};
     case BuiltinFn::kSubmitNbaAfterReal:
       return {
           .name = "submit_nba_after_real",
-          .declaration = Method{"SubmitNbaAfterReal"}};
+          .declaration = Method{"SubmitNbaAfterReal"},
+          .takes_the_runtime_handle = true};
     case BuiltinFn::kRunDetached:
-      return {.name = "run_detached", .declaration = Method{"RunDetached"}};
+      return {
+          .name = "run_detached",
+          .declaration = Method{"RunDetached"},
+          .takes_the_runtime_handle = true};
     case BuiltinFn::kResumeInNbaRegion:
       return {
           .name = "resume_in_nba_region",
-          .declaration = FreeFunction{"lyra::runtime::ResumeInNbaRegion"}};
+          .declaration = FreeFunction{"lyra::runtime::ResumeInNbaRegion"},
+          .takes_the_runtime_handle = true,
+          .parks_the_caller = true};
     case BuiltinFn::kSubmitPostponed:
       return {
-          .name = "submit_postponed", .declaration = Method{"SubmitPostponed"}};
+          .name = "submit_postponed",
+          .declaration = Method{"SubmitPostponed"},
+          .takes_the_runtime_handle = true};
     case BuiltinFn::kSubmitObserved:
       return {
-          .name = "submit_observed", .declaration = Method{"SubmitObserved"}};
+          .name = "submit_observed",
+          .declaration = Method{"SubmitObserved"},
+          .takes_the_runtime_handle = true};
     case BuiltinFn::kSubmitViolationReport:
       return {
           .name = "submit_violation_report",
-          .declaration = Method{"SubmitViolationReport"}};
+          .declaration = Method{"SubmitViolationReport"},
+          .takes_the_runtime_handle = true};
     case BuiltinFn::kSubmitDeferredObserved:
       return {
           .name = "submit_deferred_observed",
-          .declaration = Method{"SubmitDeferredObserved"}};
+          .declaration = Method{"SubmitDeferredObserved"},
+          .takes_the_runtime_handle = true};
     case BuiltinFn::kSubmitDeferredFinal:
       return {
           .name = "submit_deferred_final",
-          .declaration = Method{"SubmitDeferredFinal"}};
+          .declaration = Method{"SubmitDeferredFinal"},
+          .takes_the_runtime_handle = true};
     case BuiltinFn::kFiles:
-      return {.name = "files", .declaration = Method{"Files"}};
+      return {
+          .name = "files",
+          .declaration = Method{"Files"},
+          .takes_the_runtime_handle = true};
     case BuiltinFn::kCancellationFor:
       return {
           .name = "cancellation_for", .declaration = Method{"CancellationFor"}};
@@ -462,7 +501,10 @@ auto RuntimeEntryOf(BuiltinFn id) -> RuntimeEntry {
     case BuiltinFn::kWriteln:
       return {.name = "writeln", .declaration = Method{"Writeln"}};
     case BuiltinFn::kDiagnostic:
-      return {.name = "diagnostic", .declaration = Method{"Diagnostic"}};
+      return {
+          .name = "diagnostic",
+          .declaration = Method{"Diagnostic"},
+          .takes_the_runtime_handle = true};
     case BuiltinFn::kEmitInfo:
       return {.name = "emit_info", .declaration = Method{"EmitInfo"}};
     case BuiltinFn::kEmitWarning:
@@ -473,16 +515,24 @@ auto RuntimeEntryOf(BuiltinFn id) -> RuntimeEntry {
       return {.name = "emit_fatal", .declaration = Method{"EmitFatal"}};
     case BuiltinFn::kRecordCoverage:
       return {
-          .name = "record_coverage", .declaration = Method{"RecordCoverage"}};
+          .name = "record_coverage",
+          .declaration = Method{"RecordCoverage"},
+          .takes_the_runtime_handle = true};
     case BuiltinFn::kTimeFormat:
-      return {.name = "time_format", .declaration = Method{"TimeFormat"}};
+      return {
+          .name = "time_format",
+          .declaration = Method{"TimeFormat"},
+          .takes_the_runtime_handle = true};
     case BuiltinFn::kSetTimeFormat:
       return {
-          .name = "set_time_format", .declaration = Method{"SetTimeFormat"}};
+          .name = "set_time_format",
+          .declaration = Method{"SetTimeFormat"},
+          .takes_the_runtime_handle = true};
     case BuiltinFn::kResetTimeFormat:
       return {
           .name = "reset_time_format",
-          .declaration = Method{"ResetTimeFormat"}};
+          .declaration = Method{"ResetTimeFormat"},
+          .takes_the_runtime_handle = true};
     case BuiltinFn::kScanString:
       return {
           .name = "scan_string",
@@ -528,7 +578,8 @@ auto RuntimeEntryOf(BuiltinFn id) -> RuntimeEntry {
     case BuiltinFn::kTestPlusargs:
       return {
           .name = "test_plusargs",
-          .declaration = FreeFunction{"lyra::runtime::TestPlusargs"}};
+          .declaration = FreeFunction{"lyra::runtime::TestPlusargs"},
+          .takes_the_runtime_handle = true};
     case BuiltinFn::kValuePlusargs:
       return {
           .name = "value_plusargs",
@@ -536,7 +587,8 @@ auto RuntimeEntryOf(BuiltinFn id) -> RuntimeEntry {
     case BuiltinFn::kRunHostCommand:
       return {
           .name = "run_host_command",
-          .declaration = FreeFunction{"lyra::runtime::RunHostCommand"}};
+          .declaration = FreeFunction{"lyra::runtime::RunHostCommand"},
+          .takes_the_runtime_handle = true};
     case BuiltinFn::kRunNullHostCommand:
       return {
           .name = "run_null_host_command",
@@ -559,43 +611,73 @@ auto RuntimeEntryOf(BuiltinFn id) -> RuntimeEntry {
           .declaration = FreeFunction{"lyra::runtime::WriteMemWithin"}};
     case BuiltinFn::kDelay:
       return {
-          .name = "delay", .declaration = FreeFunction{"lyra::runtime::Delay"}};
+          .name = "delay",
+          .declaration = FreeFunction{"lyra::runtime::Delay"},
+          .takes_the_runtime_handle = true,
+          .parks_the_caller = true};
     case BuiltinFn::kDelayReal:
       return {
           .name = "delay_real",
-          .declaration = FreeFunction{"lyra::runtime::DelayReal"}};
+          .declaration = FreeFunction{"lyra::runtime::DelayReal"},
+          .takes_the_runtime_handle = true,
+          .parks_the_caller = true};
+    case BuiltinFn::kObservationOnReaching:
+      return {
+          .name = "observation_on_reaching",
+          .declaration = StaticFactory{"OnReaching"}};
+    case BuiltinFn::kObservationOfValue:
+      return {
+          .name = "observation_of_value",
+          .declaration = StaticFactory{"OfValue"}};
+    case BuiltinFn::kObservationOfValueQualified:
+      return {
+          .name = "observation_of_value_qualified",
+          .declaration = StaticFactory{"OfValueQualified"}};
+    case BuiltinFn::kObservationQualified:
+      return {
+          .name = "observation_qualified",
+          .declaration = StaticFactory{"Qualified"}};
     case BuiltinFn::kWaitAny:
       return {
           .name = "wait_any",
-          .declaration = FreeFunction{"lyra::runtime::WaitAny"}};
+          .declaration = FreeFunction{"lyra::runtime::WaitAny"},
+          .takes_the_runtime_handle = true,
+          .parks_the_caller = true};
     case BuiltinFn::kSimTime:
       return {
           .name = "sim_time",
-          .declaration = FreeFunction{"lyra::runtime::SimTimeInUnit"}};
+          .declaration = FreeFunction{"lyra::runtime::SimTimeInUnit"},
+          .takes_the_runtime_handle = true};
     case BuiltinFn::kSTime:
       return {
           .name = "stime",
-          .declaration = FreeFunction{"lyra::runtime::STimeInUnit"}};
+          .declaration = FreeFunction{"lyra::runtime::STimeInUnit"},
+          .takes_the_runtime_handle = true};
     case BuiltinFn::kRealTime:
       return {
           .name = "realtime",
-          .declaration = FreeFunction{"lyra::runtime::RealTimeInUnit"}};
+          .declaration = FreeFunction{"lyra::runtime::RealTimeInUnit"},
+          .takes_the_runtime_handle = true};
     case BuiltinFn::kUrandom:
       return {
           .name = "urandom",
-          .declaration = FreeFunction{"lyra::runtime::Urandom"}};
+          .declaration = FreeFunction{"lyra::runtime::Urandom"},
+          .takes_the_runtime_handle = true};
     case BuiltinFn::kUrandomSeeded:
       return {
           .name = "urandom_seeded",
-          .declaration = FreeFunction{"lyra::runtime::UrandomSeeded"}};
+          .declaration = FreeFunction{"lyra::runtime::UrandomSeeded"},
+          .takes_the_runtime_handle = true};
     case BuiltinFn::kUrandomRange:
       return {
           .name = "urandom_range",
-          .declaration = FreeFunction{"lyra::runtime::UrandomRange"}};
+          .declaration = FreeFunction{"lyra::runtime::UrandomRange"},
+          .takes_the_runtime_handle = true};
     case BuiltinFn::kRandom:
       return {
           .name = "random",
-          .declaration = FreeFunction{"lyra::runtime::Random"}};
+          .declaration = FreeFunction{"lyra::runtime::Random"},
+          .takes_the_runtime_handle = true};
     case BuiltinFn::kDistUniform:
       return {
           .name = "dist_uniform",
@@ -627,10 +709,15 @@ auto RuntimeEntryOf(BuiltinFn id) -> RuntimeEntry {
     case BuiltinFn::kFinish:
       return {
           .name = "finish",
-          .declaration = FreeFunction{"lyra::runtime::Finish"}};
+          .declaration = FreeFunction{"lyra::runtime::Finish"},
+          .takes_the_runtime_handle = true,
+          .parks_the_caller = true};
     case BuiltinFn::kStop:
       return {
-          .name = "stop", .declaration = FreeFunction{"lyra::runtime::Stop"}};
+          .name = "stop",
+          .declaration = FreeFunction{"lyra::runtime::Stop"},
+          .takes_the_runtime_handle = true,
+          .parks_the_caller = true};
     case BuiltinFn::kResolveRoot:
       return {.name = "resolve_root", .declaration = Method{"ResolveRoot"}};
     case BuiltinFn::kResolveVisibleChild:
@@ -661,41 +748,80 @@ auto RuntimeEntryOf(BuiltinFn id) -> RuntimeEntry {
     case BuiltinFn::kForkWaitAll:
       return {
           .name = "fork_wait_all",
-          .declaration = FreeFunction{"lyra::runtime::ForkWaitAll"}};
+          .declaration = FreeFunction{"lyra::runtime::ForkWaitAll"},
+          .takes_the_runtime_handle = true,
+          .parks_the_caller = true};
     case BuiltinFn::kForkWaitFirst:
       return {
           .name = "fork_wait_first",
-          .declaration = FreeFunction{"lyra::runtime::ForkWaitFirst"}};
+          .declaration = FreeFunction{"lyra::runtime::ForkWaitFirst"},
+          .takes_the_runtime_handle = true,
+          .parks_the_caller = true};
     case BuiltinFn::kSpawnAll:
       return {
           .name = "spawn_all",
-          .declaration = FreeFunction{"lyra::runtime::SpawnAll"}};
+          .declaration = FreeFunction{"lyra::runtime::SpawnAll"},
+          .takes_the_runtime_handle = true};
     case BuiltinFn::kWaitFork:
       return {
           .name = "wait_fork",
-          .declaration = FreeFunction{"lyra::runtime::WaitFork"}};
+          .declaration = FreeFunction{"lyra::runtime::WaitFork"},
+          .takes_the_runtime_handle = true,
+          .parks_the_caller = true};
     case BuiltinFn::kDisableFork:
       return {
           .name = "disable_fork",
-          .declaration = FreeFunction{"lyra::runtime::DisableFork"}};
+          .declaration = FreeFunction{"lyra::runtime::DisableFork"},
+          .takes_the_runtime_handle = true};
     case BuiltinFn::kDisable:
       return {
           .name = "disable",
-          .declaration = FreeFunction{"lyra::runtime::Disable"}};
+          .declaration = FreeFunction{"lyra::runtime::Disable"},
+          .takes_the_runtime_handle = true};
     case BuiltinFn::kEnterTarget:
       return {
           .name = "enter_target",
-          .declaration =
-              FreeFunction{"lyra::runtime::EnterCancellationTarget"}};
+          .declaration = FreeFunction{"lyra::runtime::EnterCancellationTarget"},
+          .takes_the_runtime_handle = true};
     case BuiltinFn::kLeaveTarget:
       return {
           .name = "leave_target",
-          .declaration =
-              FreeFunction{"lyra::runtime::LeaveCancellationTarget"}};
+          .declaration = FreeFunction{"lyra::runtime::LeaveCancellationTarget"},
+          .takes_the_runtime_handle = true};
     case BuiltinFn::kEffectNamesTarget:
       return {
           .name = "effect_names_target",
           .declaration = FreeFunction{"lyra::runtime::EffectNamesTarget"}};
+    case BuiltinFn::kProcessSelf:
+      return {
+          .name = "process_self",
+          .declaration = FreeFunction{"lyra::runtime::ProcessSelf"},
+          .takes_the_runtime_handle = true};
+    case BuiltinFn::kProcessStatus:
+      return {
+          .name = "process_status",
+          .declaration = FreeFunction{"lyra::runtime::ProcessStatus"}};
+    case BuiltinFn::kProcessKill:
+      return {
+          .name = "process_kill",
+          .declaration = FreeFunction{"lyra::runtime::ProcessKill"},
+          .takes_the_runtime_handle = true};
+    case BuiltinFn::kProcessAwait:
+      return {
+          .name = "process_await",
+          .declaration = FreeFunction{"lyra::runtime::ProcessAwait"},
+          .takes_the_runtime_handle = true,
+          .parks_the_caller = true};
+    case BuiltinFn::kProcessSuspend:
+      return {
+          .name = "process_suspend",
+          .declaration = FreeFunction{"lyra::runtime::ProcessSuspend"},
+          .takes_the_runtime_handle = true};
+    case BuiltinFn::kProcessResume:
+      return {
+          .name = "process_resume",
+          .declaration = FreeFunction{"lyra::runtime::ProcessResume"},
+          .takes_the_runtime_handle = true};
     case BuiltinFn::kRegisterInitial:
       return {
           .name = "register_initial",
@@ -838,6 +964,21 @@ auto RuntimeEntryOf(BuiltinFn id) -> RuntimeEntry {
       return {
           .name = "arithmetic_shift_right",
           .declaration = Method{"ArithmeticShiftRight"}};
+    case BuiltinFn::kShiftLeftAssign:
+      return {
+          .name = "shift_left_assign",
+          .declaration = Method{"ShiftLeftAssign"},
+          .mutates_receiver = true};
+    case BuiltinFn::kLogicalShiftRightAssign:
+      return {
+          .name = "logical_shift_right_assign",
+          .declaration = Method{"LogicalShiftRightAssign"},
+          .mutates_receiver = true};
+    case BuiltinFn::kArithmeticShiftRightAssign:
+      return {
+          .name = "arithmetic_shift_right_assign",
+          .declaration = Method{"ArithmeticShiftRightAssign"},
+          .mutates_receiver = true};
     case BuiltinFn::kBitwiseXnor:
       return {.name = "bitwise_xnor", .declaration = Method{"BitwiseXnor"}};
     case BuiltinFn::kLogicalImplication:

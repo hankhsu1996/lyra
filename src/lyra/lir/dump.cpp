@@ -12,7 +12,6 @@
 #include "lyra/base/overloaded.hpp"
 #include "lyra/lir/function.hpp"
 #include "lyra/support/builtin_fn.hpp"
-#include "lyra/support/imported_runtime_class.hpp"
 
 namespace lyra::lir {
 
@@ -180,8 +179,8 @@ class LirDumper {
               return std::format(
                   "union({}, {})", u.index.value, FormatOperand(u.value));
             },
-            [&](const ValueCastInstr& cast) -> std::string {
-              return std::format("valuecast {}", FormatOperand(cast.operand));
+            [&](const CastInstr& cast) -> std::string {
+              return std::format("cast {}", FormatOperand(cast.operand));
             },
             [&](const AggregateExtractInstr& extract) -> std::string {
               return std::format(
@@ -219,15 +218,6 @@ class LirDumper {
             [&](const UnaryInstr& un) -> std::string {
               return std::format(
                   "{} {}", UnaryOpName(un.op), FormatOperand(un.operand));
-            },
-            [&](const BoolCastInstr& cast) -> std::string {
-              return std::format("bool {}", FormatOperand(cast.operand));
-            },
-            [&](const PointerCastInstr& cast) -> std::string {
-              return std::format("ptrcast {}", FormatOperand(cast.operand));
-            },
-            [&](const IntCastInstr& cast) -> std::string {
-              return std::format("intcast {}", FormatOperand(cast.operand));
             }},
         data);
   }
@@ -292,11 +282,7 @@ class LirDumper {
     return std::visit(
         Overloaded{
             [](const BuiltinTarget& b) -> std::string {
-              const std::string name{support::RuntimeEntryOf(b.fn).name};
-              if (!b.qualifier.has_value()) {
-                return name;
-              }
-              return std::format("{}<{}>", name, FormatType(*b.qualifier));
+              return std::string{support::RuntimeEntryOf(b.fn).name};
             },
             [&](const FunctionTarget& f) -> std::string {
               return unit_->functions.Get(f.function).name;
@@ -310,10 +296,6 @@ class LirDumper {
             [](const ConstructTarget&) -> std::string { return "Construct"; },
             [](const ForeignTarget& f) -> std::string {
               return std::format("extern {}", f.symbol);
-            },
-            [](const ImportedRuntimeTarget& i) -> std::string {
-              return std::string{
-                  support::ImportedRuntimeMethodEntryName(i.method)};
             },
             [](const ValueCellTarget& f) -> std::string {
               return std::string{ValueCellOpName(f.op)};

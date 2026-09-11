@@ -24,7 +24,6 @@
 #include "lyra/lowering/hir_to_mir/snapshot_local.hpp"
 #include "lyra/lowering/hir_to_mir/unit_lowerer.hpp"
 #include "lyra/lowering/hir_to_mir/walk_frame.hpp"
-#include "lyra/mir/binary_op.hpp"
 #include "lyra/mir/compilation_unit.hpp"
 #include "lyra/mir/expr.hpp"
 #include "lyra/mir/stmt.hpp"
@@ -231,9 +230,10 @@ auto LowerObservableAssign(
   auto lhs_or = process.LowerLhsExpr(hir_process.exprs.Get(a.lhs), frame);
   if (!lhs_or) return std::unexpected(std::move(lhs_or.error()));
 
-  const std::optional<mir::BinaryOp> compound_op =
-      a.compound_op.has_value() ? std::optional{LowerBinaryOp(*a.compound_op)}
-                                : std::nullopt;
+  const std::optional<CompoundOperation> compound_op =
+      a.compound_op.has_value()
+          ? std::optional{LowerCompoundOperation(*a.compound_op)}
+          : std::nullopt;
   const std::array<mir::ExprId, 1> operands{rhs_id};
   return ApplyAssignEffect(
       process, frame, a.timing, span, *lhs_or, operands,
@@ -257,12 +257,10 @@ auto LowerHirAssignExprProc(
         "is not a legal SV form (LRM A.6.2 grammar)");
   }
 
-  // Every target -- whole var, array / string element, struct / union member --
-  // lowers to one shape: the LHS is an op=-able write location, and the write
-  // is a single `AssignExpr{target, compound_op?, value}`. "Evaluate the
-  // left-hand side once" (LRM 11.4.1) is the backend's job on that single
-  // target. The blocking vs deferred (NBA) choice is the timing envelope
-  // inside.
+  // What a write to the target is belongs to the store built against it, and
+  // what belongs here is that the same write serves either timing: applied
+  // where the statement is reached, or frozen and applied when the update is
+  // due (LRM 10.4).
   return LowerObservableAssign(process, frame, a, span, result_type);
 }
 

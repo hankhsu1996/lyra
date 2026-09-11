@@ -20,14 +20,26 @@ runtime entry across every family. Receiver type carries the type-side context; 
 the function-side identity. Both HIR and MIR reference the same enum from the support layer (the
 same pattern that `support::SystemSubroutineId` already follows for `$xxx` calls).
 
-HIR's callee for a built-in method is `BuiltinMethodRef` carrying `support::BuiltinFn`. The struct
-is a one-field wrapper, symmetric with `SystemSubroutineRef { id }`.
+HIR's callee for a built-in method is `BuiltinMethodRef`, carrying the identity and the object the
+entry acts on. The object is stated rather than standing in an argument position, because whether an
+entry has one is the entry's own property: a method acts on the value the source named, a factory
+acts on nothing and answers with what it builds, and a method the library declares on a class it
+defines itself may be either. A reader that recovered this from an argument's position would be
+looking the entry up to find out what it was already holding, and one of the three shapes -- a
+type-associated method that acts on no object and bears no type -- has no argument position to stand
+in at all.
 
-What the namespace holds is every built-in the runtime library carries out, and nothing else. An
-operation the front end answers outright is not one: naming it here would make MIR carry a name for
-something it can never hold, and every layer below carry an arm for an alternative it can never see.
-The LRM defines two such operations as built-in methods, and each keeps its identity at the layer
-that still holds what answers it.
+What the namespace holds is every built-in the runtime library carries out, and nothing else. Which
+library class the source reached the operation through does not divide it: a class the library
+defines once and every unit imports (LRM 9.7 `process`) has no per-unit declaration behind its
+methods either, so they are runtime entries on the same terms as a queue's or a string's, and a
+second namespace for them would be one more table to keep in step for no fact it could state that
+this one cannot.
+
+An operation the front end answers outright is not one: naming it here would make MIR carry a name
+for something it can never hold, and every layer below carry an arm for an alternative it can never
+see. The LRM defines two such operations as built-in methods, and each keeps its identity at the
+layer that still holds what answers it.
 
 LRM 7.12.4 `item.index` is answered by the with-clause binding it names. The receiver is discarded
 and the value is the enclosing closure's index parameter -- a closure over an LRM 7.12 array method
@@ -44,21 +56,23 @@ synthesized callable to home on, and neither exists where names are resolved. So
 shape the source wrote, carried by a `SubroutineRef` arm of their own over a six-valued HIR-local
 identity. Nothing below HIR names them.
 
-MIR's callee for a built-in is one shape -- `Direct { target = BuiltinFn, qualification }` -- shared
-with user-method calls, where `target` is the symbol identity (several alternatives today, one
-identity space once callable identity is unified) and `qualification` is
-`Some(TypeQualifier{TypeId})` when the call site provides a type-namespace qualifier (e.g.
-`MyEnum::first`, `PackedArray::FromInt`) or `None` otherwise (instance calls, where the receiver is
-`args[0]`; or runtime helpers with no source-level qualifier). The instance / static / free
-distinction is **not** structural at MIR: at the generic-language layer these are one direct
-invocation, differing only in whether the callee's signature declares a self formal (driving the
-`args[0]`-as-receiver convention at any call site) and whether the call site provides a scope
-qualifier. The split into `BuiltinFnCallee` / `BuiltinStaticCallee` / `FreeFnCallee` arms was a
-backend-convenience pre-classification that violated `mir.md` invariant 10 (a field a backend's
-realization can ignore, restating what the id and signature already fix), and is gone.
+MIR's callee for a built-in is one shape -- `Direct { target = BuiltinFn }` -- shared with
+user-method calls, where `target` is the symbol identity (several alternatives today, one identity
+space once callable identity is unified). The instance / static / free distinction is **not**
+structural at MIR: at the generic-language layer these are one direct invocation, differing only in
+whether the callee binds an object. The split into `BuiltinFnCallee` / `BuiltinStaticCallee` /
+`FreeFnCallee` arms was a backend-convenience pre-classification that violated `mir.md` invariant 10
+(a field a backend's realization can ignore, restating what the id and signature already fix), and
+is gone.
 
-HIR-to-MIR is a near-identity translation: pass the `BuiltinFn` through as `Direct::target`, and set
-`Direct::qualification` to the SV-type qualifier the source named (when one was named).
+The scope a static entry is reached on is not carried either, for the same reason. A factory is
+declared on the type it builds, and the value a call to it answers with is of that type, so the
+call's own type already states it -- a second statement at the call site is a fact with two
+producers and nothing keeping them in step. No source-level qualifier survives to MIR to be carried
+instead: the one construct that writes one, an enumerated type's methods, is answered above MIR
+entirely.
+
+HIR-to-MIR is a near-identity translation: pass the `BuiltinFn` through as `Direct::target`.
 
 AST-to-HIR still dispatches by receiver type to choose which name-to-id lookup table to query --
 `first` on an associative array resolves to `kAssocFirst`, and `first` on an enumeration resolves to
@@ -207,6 +221,13 @@ factory on the type it builds, and what the entry does with the operands it is g
 the library, and one library serves both backends. So they are stated once, beside the identity, and
 each backend renders from them.
 
+A lowering's reader is on the same terms. Whether a call carries the engine handle, and whether a
+call parks the caller until something other than the call settles, look like lowering facts because
+a lowering is what reads them -- and they are not: both are true of the entry whoever calls it, and
+a list kept beside the lowering that reads one is the scattered declaration again with a different
+consumer. The first is checkable against the ABI prototype that has to agree with it, which is what
+keeps a property nobody reads for most entries from quietly going wrong.
+
 They were once a table per property, each with its own default arm for the entries it did not list,
 and that shape cost what a scattered declaration costs: adding an entry meant editing every table
 and nothing said which, the enumerated type methods the namespace no longer holds were refused by
@@ -228,17 +249,21 @@ that row names. No render-side special case for any entry.
   carries an arm for an operation it cannot meet; an operation the front end answers is named where
   it is answered instead.
 - HIR-to-MIR's built-in method translation is near-identity: it passes the `BuiltinFn` id through as
-  `Direct::target` and sets `Direct::qualification` only for a type-static builtin; the instance /
+  `Direct::target` and the object the entry acts on through as the callee's receiver; the instance /
   static / free distinction is read from the id and its signature at render, not carried as a Callee
   arm.
+- A method the runtime library provides for a class it defines and every unit imports (LRM 9.7
+  `process`) is one of these entries, so no layer carries a callee arm, a target arm, or a table of
+  its own for the library class a call was reached through.
 - AST-to-HIR keeps its receiver-type dispatch. The per-receiver name tables return
   `support::BuiltinFn` directly. Adding a new receiver type (e.g. user-defined class methods) is a
   new name table, not a new HIR-level enum or variant arm.
 - The backend reads `BuiltinFn` plus receiver MIR type and renders without any family-axis switch.
   Every property of an entry -- what the library calls it, how a call site reaches it, whether it
   updates the object it acts on or hands it back, which operands carry an index, a spread part, a
-  closure, or a result prototype -- is one row of one declaration in the support layer, so a
-  consumer reads the property it needs and no consumer lists the entries that have it.
+  closure, or a result prototype, whether the call carries the engine handle, whether it parks the
+  caller -- is one row of one declaration in the support layer, so a consumer reads the property it
+  needs and no consumer lists the entries that have it.
 - Neither layer carries a per-family variant arm or per-family enum. The per-family scaffolding (one
   `*MethodKind` enum and one `*MethodInfo` wrapper per LRM chapter) is gone from both HIR and MIR;
   the LRM-chapter organization survives only as comment-level grouping inside the flat

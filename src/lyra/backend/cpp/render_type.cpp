@@ -18,17 +18,12 @@
 
 namespace lyra::backend::cpp {
 
-auto NetResolutionCppLiteral(mir::NetResolution resolution)
-    -> std::string_view {
-  switch (resolution) {
-    case mir::NetResolution::kTriState:
-      return "lyra::support::NetResolution::kTriState";
-    case mir::NetResolution::kWiredAnd:
-      return "lyra::support::NetResolution::kWiredAnd";
-    case mir::NetResolution::kWiredOr:
-      return "lyra::support::NetResolution::kWiredOr";
-  }
-  throw InternalError("NetResolutionCppLiteral: unknown NetResolution");
+auto BodyCleanupExtentCppType() -> std::string_view {
+  return "lyra::runtime::ScopeExit";
+}
+
+auto ManagedObjectRootCppType() -> std::string_view {
+  return "lyra::runtime::GcObject";
 }
 
 auto RenderEachTypeAsCpp(
@@ -49,10 +44,17 @@ auto RenderTypeAsCpp(const mir::CompilationUnit& unit, mir::TypeId type_id)
           [](const mir::PackedArrayType&) -> std::string {
             return std::string{"lyra::value::PackedArray"};
           },
+          // An enumeration and a packed aggregate are their base integral --
+          // a `PackedArray`. What each declares beyond that is a set of names,
+          // which is not part of how a value is held and so gives it no
+          // representation of its own.
           [](const mir::EnumType&) -> std::string {
-            // An enum value is its base integral -- a `PackedArray`. The enum's
-            // nominal content is consumed at HIR-to-MIR, never emitted as a
-            // type.
+            return std::string{"lyra::value::PackedArray"};
+          },
+          [](const mir::PackedStructType&) -> std::string {
+            return std::string{"lyra::value::PackedArray"};
+          },
+          [](const mir::PackedUnionType&) -> std::string {
             return std::string{"lyra::value::PackedArray"};
           },
           [](const mir::StringType&) -> std::string {
@@ -284,10 +286,20 @@ auto RenderTypeAsCpp(const mir::CompilationUnit& unit, mir::TypeId type_id)
                 "lyra::value::Tuple<{}>",
                 JoinCommaSeparated(RenderEachTypeAsCpp(unit, t.elements)));
           },
+          // A declared structure realizes as the product its members make. The
+          // names it declares for them are not part of how a value is held, so
+          // they name nothing here.
+          [&](const mir::UnpackedStructType& s) -> std::string {
+            return std::format(
+                "lyra::value::Tuple<{}>",
+                JoinCommaSeparated(
+                    RenderEachTypeAsCpp(unit, mir::MemberTypes(s.members))));
+          },
           [&](const mir::UnionType& u) -> std::string {
             return std::format(
                 "lyra::value::Union<{}>",
-                JoinCommaSeparated(RenderEachTypeAsCpp(unit, u.elements)));
+                JoinCommaSeparated(
+                    RenderEachTypeAsCpp(unit, mir::MemberTypes(u.members))));
           },
           [](const mir::EmptyType&) -> std::string {
             return std::string{"lyra::value::Empty"};
@@ -295,7 +307,8 @@ auto RenderTypeAsCpp(const mir::CompilationUnit& unit, mir::TypeId type_id)
           [&](const mir::TaggedUnionType& u) -> std::string {
             return std::format(
                 "lyra::value::TaggedUnion<{}>",
-                JoinCommaSeparated(RenderEachTypeAsCpp(unit, u.elements)));
+                JoinCommaSeparated(
+                    RenderEachTypeAsCpp(unit, mir::MemberTypes(u.members))));
           },
           [&](const mir::ObservableType& o) -> std::string {
             return std::format(
@@ -318,16 +331,28 @@ auto RenderTypeAsCpp(const mir::CompilationUnit& unit, mir::TypeId type_id)
           [](const mir::EvaluationAttemptsType&) -> std::string {
             return "lyra::runtime::EvaluationAttempts";
           },
-          [](const auto&) -> std::string {
+          // A closure is emitted as a lambda, and C++ lets nothing name a
+          // lambda's type -- so there is no spelling to answer with, and this
+          // is not a spelling the target is missing. A closure value reaches
+          // its uses directly, and the body reaches its captures as the
+          // lambda's own bindings, so nothing asks.
+          [](const mir::ClosureType&) -> std::string {
             throw InternalError(
-                "RenderTypeAsCpp: MIR type not yet supported in the C++ "
-                "backend");
+                "RenderTypeAsCpp: a closure is emitted as a lambda, whose type "
+                "C++ lets nothing name -- please report this as a bug");
           },
       });
 }
 
 auto RenderTypeConstructionAsCpp(
     const mir::CompilationUnit& unit, mir::TypeId type_id) -> std::string {
+  // A type that is built by naming itself, which is what C++ spells a
+  // constructor with. The spelling comes from the naming dispatch rather than
+  // from here, so a type whose name this target has none for -- a closure,
+  // emitted as a lambda -- says so once, where it is named.
+  const auto by_naming_itself = [&](const auto&) -> std::string {
+    return RenderTypeAsCpp(unit, type_id);
+  };
   return unit.types.Get(type_id).Visit(
       Overloaded{
           // A wrapper that owns what it points at brings the pointee into
@@ -361,10 +386,59 @@ auto RenderTypeConstructionAsCpp(
                 "lyra::runtime::MakeSequence<{}>",
                 RenderTypeAsCpp(unit, v.element));
           },
-          // Every other type is built by naming itself.
-          [&](const auto&) -> std::string {
-            return RenderTypeAsCpp(unit, type_id);
-          }});
+          [&](const mir::PackedArrayType& t) { return by_naming_itself(t); },
+          [&](const mir::EnumType& t) { return by_naming_itself(t); },
+          [&](const mir::PackedStructType& t) { return by_naming_itself(t); },
+          [&](const mir::PackedUnionType& t) { return by_naming_itself(t); },
+          [&](const mir::StringType& t) { return by_naming_itself(t); },
+          [&](const mir::MachineCStringType& t) { return by_naming_itself(t); },
+          [&](const mir::MachineBoolType& t) { return by_naming_itself(t); },
+          [&](const mir::MachineIntType& t) { return by_naming_itself(t); },
+          [&](const mir::MachineFloatType& t) { return by_naming_itself(t); },
+          [&](const mir::MachineArrayType& t) { return by_naming_itself(t); },
+          [&](const mir::MachineFunctionType& t) {
+            return by_naming_itself(t);
+          },
+          [&](const mir::ChandleType& t) { return by_naming_itself(t); },
+          [&](const mir::EventType& t) { return by_naming_itself(t); },
+          [&](const mir::RealType& t) { return by_naming_itself(t); },
+          [&](const mir::ShortRealType& t) { return by_naming_itself(t); },
+          [&](const mir::RealTimeType& t) { return by_naming_itself(t); },
+          [&](const mir::UnpackedArrayType& t) { return by_naming_itself(t); },
+          [&](const mir::DynamicArrayType& t) { return by_naming_itself(t); },
+          [&](const mir::QueueType& t) { return by_naming_itself(t); },
+          [&](const mir::AssociativeArrayType& t) {
+            return by_naming_itself(t);
+          },
+          [&](const mir::WildcardIndexType& t) { return by_naming_itself(t); },
+          [&](const mir::ObjectType& t) { return by_naming_itself(t); },
+          [&](const mir::StructType& t) { return by_naming_itself(t); },
+          [&](const mir::ExternalUnitObjectType& t) {
+            return by_naming_itself(t);
+          },
+          [&](const mir::CrossUnitClassType& t) { return by_naming_itself(t); },
+          [&](const mir::RuntimeClassType& t) { return by_naming_itself(t); },
+          [&](const mir::RuntimeEffectsType& t) { return by_naming_itself(t); },
+          [&](const mir::FilesType& t) { return by_naming_itself(t); },
+          [&](const mir::DiagnosticType& t) { return by_naming_itself(t); },
+          [&](const mir::RuntimeLibraryType& t) { return by_naming_itself(t); },
+          [&](const mir::CoroutineType& t) { return by_naming_itself(t); },
+          [&](const mir::RefType& t) { return by_naming_itself(t); },
+          [&](const mir::VoidType& t) { return by_naming_itself(t); },
+          [&](const mir::TupleType& t) { return by_naming_itself(t); },
+          [&](const mir::UnpackedStructType& t) { return by_naming_itself(t); },
+          [&](const mir::UnionType& t) { return by_naming_itself(t); },
+          [&](const mir::TaggedUnionType& t) { return by_naming_itself(t); },
+          [&](const mir::EmptyType& t) { return by_naming_itself(t); },
+          [&](const mir::ObservableType& t) { return by_naming_itself(t); },
+          [&](const mir::ResolvedType& t) { return by_naming_itself(t); },
+          [&](const mir::DriverType& t) { return by_naming_itself(t); },
+          [&](const mir::SampledHistoryType& t) { return by_naming_itself(t); },
+          [&](const mir::EvaluationAttemptsType& t) {
+            return by_naming_itself(t);
+          },
+          [&](const mir::ClosureType& t) { return by_naming_itself(t); },
+      });
 }
 
 auto RenderClassRefAsCpp(

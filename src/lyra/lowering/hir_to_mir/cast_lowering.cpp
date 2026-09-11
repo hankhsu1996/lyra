@@ -50,10 +50,7 @@ auto BuildArrayFromArrayCall(
   return mir::Expr{
       .data =
           mir::CallExpr{
-              .callee =
-                  mir::Direct{
-                      .target = support::BuiltinFn::kFromArray,
-                      .qualification = mir::TypeQualifier{.type = dst_type}},
+              .callee = mir::Direct{.target = support::BuiltinFn::kFromArray},
               .arguments = std::move(arguments)},
       .type = dst_type};
 }
@@ -67,10 +64,7 @@ auto MakeRealFactoryCall(
   return mir::Expr{
       .data =
           mir::CallExpr{
-              .callee =
-                  mir::Direct{
-                      .target = entry,
-                      .qualification = mir::TypeQualifier{.type = dst_type}},
+              .callee = mir::Direct{.target = entry},
               .arguments = {operand_id}},
       .type = dst_type};
 }
@@ -99,10 +93,7 @@ auto BuildPackedArrayFromInt(
   return mir::Expr{
       .data =
           mir::CallExpr{
-              .callee =
-                  mir::Direct{
-                      .target = support::BuiltinFn::kFromInt,
-                      .qualification = mir::TypeQualifier{.type = dst_type}},
+              .callee = mir::Direct{.target = support::BuiltinFn::kFromInt},
               .arguments = {int_value, packed_type}},
       .type = dst_type};
 }
@@ -118,10 +109,7 @@ auto BuildPackedArrayConvertFrom(
   return mir::Expr{
       .data =
           mir::CallExpr{
-              .callee =
-                  mir::Direct{
-                      .target = support::BuiltinFn::kConvertFrom,
-                      .qualification = mir::TypeQualifier{.type = dst_type}},
+              .callee = mir::Direct{.target = support::BuiltinFn::kConvertFrom},
               .arguments = {src_id, packed_type}},
       .type = dst_type};
 }
@@ -134,12 +122,7 @@ auto MakeStringFromFactory(
   return mir::Expr{
       .data =
           mir::CallExpr{
-              .callee =
-                  mir::Direct{
-                      .target = id,
-                      .qualification =
-                          mir::TypeQualifier{.type = unit.builtins.string}},
-              .arguments = {src_id}},
+              .callee = mir::Direct{.target = id}, .arguments = {src_id}},
       .type = unit.builtins.string};
 }
 
@@ -201,10 +184,11 @@ auto BuildValueConversion(
   }
 
   // Integral -> integral: a reshape into the destination's declared
-  // representation. Crossing the enumeration boundary (LRM 6.19.3) changes the
-  // type a value is held to and not the bits it carries, so it is a cast over
-  // the reshaped value -- or over the operand itself, where the two
-  // representations already agree and nothing reshapes.
+  // representation. An integral type that names its content -- an enumeration
+  // (LRM 6.19.3), a packed structure or union (LRM 7.2.1 / 7.3.1) -- shares
+  // that representation with its base while being a type of its own, so
+  // crossing into or out of one changes the type a value is held to and not the
+  // bits it carries, which is what the cast below says and all it says.
   if (src_ty.IsIntegralPacked() && dst_ty.IsIntegralPacked()) {
     const auto& src_pa = src_ty.PackedShape();
     const auto& dst_pa = dst_ty.PackedShape();
@@ -216,21 +200,18 @@ auto BuildValueConversion(
     const bool same_shape = src_pa.signedness == dst_pa.signedness &&
                             src_pa.state_kind == dst_pa.state_kind &&
                             src_pa.dims == dst_pa.dims;
-    const bool src_is_enum = src_ty.Is<mir::EnumType>();
-    const bool dst_is_enum = dst_ty.Is<mir::EnumType>();
-    mir::ExprId body_id = operand_id;
+    // A reshape lands the bits at the destination type outright, so nothing
+    // restates it afterwards. What is left is the same representation under
+    // another type, which is the cast: the bits already fit, and only what the
+    // program holds the value to be changes.
     if (!same_shape) {
-      body_id = block.exprs.Add(
-          BuildPackedArrayConvertFrom(unit, block, operand_id, dst_type));
+      return BuildPackedArrayConvertFrom(unit, block, operand_id, dst_type);
     }
-    if (dst_is_enum || src_is_enum) {
-      return mir::Expr{
-          .data = mir::ValueCastExpr{.operand = body_id}, .type = dst_type};
-    }
-    if (same_shape) {
+    if (src_type == dst_type) {
       return operand_expr;
     }
-    return block.exprs.Get(body_id);
+    return mir::Expr{
+        .data = mir::CastExpr{.operand = operand_id}, .type = dst_type};
   }
 
   // Unpacked-array-of-byte -> string (LRM 21.3.4.3 $sscanf source lift).
@@ -254,9 +235,7 @@ auto BuildValueConversion(
         .data =
             mir::CallExpr{
                 .callee =
-                    mir::Direct{
-                        .target = support::BuiltinFn::kFromString,
-                        .qualification = mir::TypeQualifier{.type = dst_type}},
+                    mir::Direct{.target = support::BuiltinFn::kFromString},
                 .arguments = {operand_id, packed_type}},
         .type = dst_type};
   }
@@ -277,9 +256,7 @@ auto BuildValueConversion(
         .data =
             mir::CallExpr{
                 .callee =
-                    mir::Direct{
-                        .target = support::BuiltinFn::kFromString,
-                        .qualification = mir::TypeQualifier{.type = dst_type}},
+                    mir::Direct{.target = support::BuiltinFn::kFromString},
                 .arguments = {operand_id, element_type, count}},
         .type = dst_type};
   }
@@ -300,9 +277,7 @@ auto BuildValueConversion(
         .data =
             mir::CallExpr{
                 .callee =
-                    mir::Direct{
-                        .target = support::BuiltinFn::kFromPackedArray,
-                        .qualification = mir::TypeQualifier{.type = dst_type}},
+                    mir::Direct{.target = support::BuiltinFn::kFromPackedArray},
                 .arguments = {operand_id, element_type, count}},
         .type = dst_type};
   }
@@ -348,7 +323,7 @@ auto BuildValueConversion(
   // what re-typing the reference states.
   if (src_ty.Is<mir::ManagedRefType>() && dst_ty.Is<mir::ManagedRefType>()) {
     return mir::Expr{
-        .data = mir::PointerCastExpr{.operand = operand_id}, .type = dst_type};
+        .data = mir::CastExpr{.operand = operand_id}, .type = dst_type};
   }
 
   // Identity fallback: the lowering inserted a conversion the type system

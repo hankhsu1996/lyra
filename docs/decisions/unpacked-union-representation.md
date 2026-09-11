@@ -49,8 +49,10 @@ not a product with a different label.
    `UnionType` with a flag. `UnionType` carries no `tagged` field -- per `mir.md` invariant 7 the
    type is the classification, and there is no second union concept hiding behind a flag.
 
-2. **Member access is positional, by declaration-order index**, identical to struct / tuple. Field
-   names are dropped at HIR-to-MIR; the index is the carrier.
+2. **Member access is positional, by declaration-order index**, identical to struct / tuple. The
+   index is the carrier of the access; the member's name stays on the type, which is what the
+   language renders a value by
+   ([aggregate-names-are-type-content](aggregate-names-are-type-content.md)).
 
 3. **A union value is "(active member index, that member's value)" at the MIR semantic level.** This
    is a semantic statement, not a storage-layout claim; how a backend stores it is a realization
@@ -132,8 +134,10 @@ not a product with a different label.
 
 ## Cross-references
 
-- `../architecture/mir.md` -- `TupleType` as the single product type; invariant 7 (the type is the
-  classification); the forbidden flag-beside-the-type shape.
+- `../architecture/mir.md` -- the product beside the value that holds one member at a time;
+  invariant 7 (the type is the classification); the forbidden flag-beside-the-type shape.
+- [aggregate-names-are-type-content](aggregate-names-are-type-content.md) -- why a union's member
+  names stay on its type, which this entry's point 2 originally dropped.
 - [unpacked-struct-representation](unpacked-struct-representation.md) -- the sibling product
   representation, which left the union open.
 - [value-type-concepts](value-type-concepts.md) -- the `LyraValue` lattice the runtime

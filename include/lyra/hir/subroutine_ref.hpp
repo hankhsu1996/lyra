@@ -18,7 +18,6 @@
 #include "lyra/hir/subroutine_id.hpp"
 #include "lyra/hir/value_ref.hpp"
 #include "lyra/support/builtin_fn.hpp"
-#include "lyra/support/imported_runtime_class.hpp"
 #include "lyra/support/system_subroutine.hpp"
 
 namespace lyra::hir {
@@ -121,10 +120,14 @@ struct SystemSubroutineRef {
 };
 
 // Calls a built-in runtime method (LRM 6.16 string, 7.9 associative, 7.10
-// queue, 7.12 unpacked-array shared family, 15.5 named event). The id is the
-// flat closed namespace `support::BuiltinFn`, shared with MIR.
+// queue, 7.12 unpacked-array shared family, 15.5 named event, 9.7 process).
+// The id is the flat closed namespace `support::BuiltinFn`, shared with MIR.
+// `receiver` is the object the entry acts on, absent for one that acts on
+// none: a factory answering with the value it builds, and a method of a library
+// class that names the running process rather than one it is handed.
 struct BuiltinMethodRef {
-  support::BuiltinFn method;
+  support::BuiltinFn method{};
+  std::optional<ExprId> receiver;
 };
 
 // Calls a method LRM 6.19.5 defines on an enumerated type. The enumeration is
@@ -160,15 +163,6 @@ struct PastValueRef {
 struct ValueChangeRef {
   SampledHistoryId history;
   support::ValueChangeReading reading = support::ValueChangeReading::kRoseToOne;
-};
-
-// Calls a method the runtime library provides for an imported class (LRM 9.7
-// `process`). A bodyless external callable named by its library identity; the
-// receiver is present for an instance method and absent for a static one.
-struct ImportedMethodRef {
-  support::ImportedRuntimeMethod method =
-      support::ImportedRuntimeMethod::kProcessSelf;
-  std::optional<ExprId> receiver = std::nullopt;
 };
 
 // Calls a subroutine that belongs to another compilation unit -- a package
@@ -239,7 +233,7 @@ struct StaticMethodCallRef {
 using SubroutineRef = std::variant<
     StructuralSubroutineRef, MethodCallRef, StaticMethodCallRef,
     SystemSubroutineRef, BuiltinMethodRef, EnumMethodRef, PastValueRef,
-    ValueChangeRef, ForeignImportRef, ImportedMethodRef,
-    ExternalUnitSubroutineRef, ExternalUnitMethodRef, OpaqueUnitMethodRef>;
+    ValueChangeRef, ForeignImportRef, ExternalUnitSubroutineRef,
+    ExternalUnitMethodRef, OpaqueUnitMethodRef>;
 
 }  // namespace lyra::hir

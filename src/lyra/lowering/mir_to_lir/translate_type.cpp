@@ -57,18 +57,6 @@ auto TranslateMachineFloatWidth(mir::MachineFloatWidth w)
   throw InternalError("TranslateMachineFloatWidth: unknown MachineFloatWidth");
 }
 
-auto TranslateNetResolution(mir::NetResolution r) -> lir::NetResolution {
-  switch (r) {
-    case mir::NetResolution::kTriState:
-      return lir::NetResolution::kTriState;
-    case mir::NetResolution::kWiredAnd:
-      return lir::NetResolution::kWiredAnd;
-    case mir::NetResolution::kWiredOr:
-      return lir::NetResolution::kWiredOr;
-  }
-  throw InternalError("TranslateNetResolution: unknown NetResolution");
-}
-
 auto TranslatePointerOwnership(mir::PointerOwnership o)
     -> lir::PointerOwnership {
   switch (o) {
@@ -113,6 +101,17 @@ auto UnitLowerer::TranslateType(mir::TypeId id) -> lir::TypeId {
 }
 
 auto UnitLowerer::TranslateType(const mir::Type& ty) -> lir::Type {
+  const auto aggregate_members =
+      [&](const std::vector<mir::AggregateMember>& source) {
+        std::vector<lir::AggregateMember> translated;
+        translated.reserve(source.size());
+        for (const mir::AggregateMember& member : source) {
+          translated.push_back(
+              lir::AggregateMember{
+                  .name = member.name, .type = TranslateType(member.type)});
+        }
+        return translated;
+      };
   return ty.Visit(
       Overloaded{
           [&](const mir::PackedArrayType& pa) -> lir::Type {
@@ -128,6 +127,16 @@ auto UnitLowerer::TranslateType(const mir::Type& ty) -> lir::Type {
             return lir::Type{lir::EnumType{
                 .base = TranslatePackedArray(e.base),
                 .members = std::move(members)}};
+          },
+          [&](const mir::PackedStructType& s) -> lir::Type {
+            return lir::Type{lir::PackedStructType{
+                .base = TranslatePackedArray(s.base),
+                .members = aggregate_members(s.members)}};
+          },
+          [&](const mir::PackedUnionType& u) -> lir::Type {
+            return lir::Type{lir::PackedUnionType{
+                .base = TranslatePackedArray(u.base),
+                .members = aggregate_members(u.members)}};
           },
           [&](const mir::UnpackedArrayType& ua) -> lir::Type {
             return lir::Type{lir::UnpackedArrayType{
@@ -263,32 +272,24 @@ auto UnitLowerer::TranslateType(const mir::Type& ty) -> lir::Type {
             }
             return lir::Type{lir::TupleType{.elements = std::move(elements)}};
           },
+          [&](const mir::UnpackedStructType& s) -> lir::Type {
+            return lir::Type{lir::UnpackedStructType{
+                .members = aggregate_members(s.members)}};
+          },
           [&](const mir::UnionType& u) -> lir::Type {
-            std::vector<lir::TypeId> elements;
-            elements.reserve(u.elements.size());
-            for (const mir::TypeId element : u.elements) {
-              elements.push_back(TranslateType(element));
-            }
-            return lir::Type{lir::UnionType{.elements = std::move(elements)}};
+            return lir::Type{
+                lir::UnionType{.members = aggregate_members(u.members)}};
           },
           [&](const mir::TaggedUnionType& u) -> lir::Type {
-            std::vector<lir::TypeId> elements;
-            elements.reserve(u.elements.size());
-            for (const mir::TypeId element : u.elements) {
-              elements.push_back(TranslateType(element));
-            }
             return lir::Type{
-                lir::TaggedUnionType{.elements = std::move(elements)}};
+                lir::TaggedUnionType{.members = aggregate_members(u.members)}};
           },
           [&](const mir::ResolvedType& r) -> lir::Type {
-            return lir::Type{lir::ResolvedType{
-                .value = TranslateType(r.value),
-                .resolution = TranslateNetResolution(r.resolution)}};
+            return lir::Type{
+                lir::ResolvedType{.value = TranslateType(r.value)}};
           },
           [&](const mir::DriverType& d) -> lir::Type {
-            return lir::Type{lir::DriverType{
-                .value = TranslateType(d.value),
-                .resolution = TranslateNetResolution(d.resolution)}};
+            return lir::Type{lir::DriverType{.value = TranslateType(d.value)}};
           },
           [&](const mir::ObservableType& ob) -> lir::Type {
             return lir::Type{

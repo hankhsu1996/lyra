@@ -83,6 +83,27 @@ auto FlattenPackedAggregate(
   };
 }
 
+// The declared members of an aggregate, name and type in declaration order.
+// Where a packed member physically sits is not among them, being derived from
+// the kind of aggregate and the widths before it; nor is an unpacked member's
+// own declaration initializer (LRM 7.2.2), which is the value a default
+// construction composes at the site that needs one rather than part of what the
+// type is.
+template <typename Field>
+auto TranslateMembers(
+    UnitLowerer& unit_lowerer, const std::vector<Field>& fields)
+    -> std::vector<mir::AggregateMember> {
+  std::vector<mir::AggregateMember> members;
+  members.reserve(fields.size());
+  for (const Field& field : fields) {
+    members.push_back(
+        mir::AggregateMember{
+            .name = field.name,
+            .type = unit_lowerer.TranslateType(field.type)});
+  }
+  return members;
+}
+
 }  // namespace
 
 auto UnitLowerer::TranslateType(const hir::Type& type) -> mir::Type {
@@ -100,15 +121,16 @@ auto UnitLowerer::TranslateType(const hir::Type& type) -> mir::Type {
             return mir::Type{FlattenPackedArray(*this, src)};
           },
           [&](const hir::PackedStructType& src) -> mir::Type {
-            // Per-member position bakes into a constant-bounds slice at
-            // expression lowering, so MIR keeps no aggregate type -- only the
-            // vector the members are placed in.
-            return mir::Type{FlattenPackedAggregate(
-                ProjectPackedAggregate(*this, type), src.signedness)};
+            return mir::Type{mir::PackedStructType{
+                .base = FlattenPackedAggregate(
+                    ProjectPackedAggregate(*this, type), src.signedness),
+                .members = TranslateMembers(*this, src.fields)}};
           },
           [&](const hir::PackedUnionType& src) -> mir::Type {
-            return mir::Type{FlattenPackedAggregate(
-                ProjectPackedAggregate(*this, type), src.signedness)};
+            return mir::Type{mir::PackedUnionType{
+                .base = FlattenPackedAggregate(
+                    ProjectPackedAggregate(*this, type), src.signedness),
+                .members = TranslateMembers(*this, src.fields)}};
           },
           [&](const hir::EnumType& src) -> mir::Type {
             // An enumeration keeps a MIR type of its own, carrying its base's
@@ -137,36 +159,29 @@ auto UnitLowerer::TranslateType(const hir::Type& type) -> mir::Type {
             }};
           },
           [&](const hir::UnpackedStructType& src) -> mir::Type {
-            std::vector<mir::TypeId> elements;
-            elements.reserve(src.fields.size());
-            for (const auto& field : src.fields) {
-              elements.push_back(TranslateType(field.type));
-            }
-            return mir::Type{mir::TupleType{.elements = std::move(elements)}};
+            return mir::Type{mir::UnpackedStructType{
+                .members = TranslateMembers(*this, src.fields)}};
           },
           [&](const hir::UnpackedUnionType& src) -> mir::Type {
             // The untagged overlapping-storage form (LRM 7.3) maps to
             // `UnionType`; the tagged, type-checked sum form (LRM 7.3.2) to
             // `TaggedUnionType` -- MIR keeps them as distinct types because
             // their value spaces and access semantics genuinely differ.
-            std::vector<mir::TypeId> elements;
-            elements.reserve(src.fields.size());
-            for (const auto& field : src.fields) {
-              elements.push_back(TranslateType(field.type));
-            }
+            std::vector<mir::AggregateMember> members =
+                TranslateMembers(*this, src.fields);
             if (!src.tagged) {
-              return mir::Type{mir::UnionType{.elements = std::move(elements)}};
+              return mir::Type{mir::UnionType{.members = std::move(members)}};
             }
             // A `void` member (LRM 7.3.2) occupies a value slot, so its
             // component is the type carrying no information rather than the
             // absence of a type the SV keyword otherwise names.
-            for (mir::TypeId& element : elements) {
-              if (unit_.types.Get(element).Is<mir::VoidType>()) {
-                element = unit_.types.Intern(mir::Type{mir::EmptyType{}});
+            for (mir::AggregateMember& member : members) {
+              if (unit_.types.Get(member.type).Is<mir::VoidType>()) {
+                member.type = unit_.types.Intern(mir::Type{mir::EmptyType{}});
               }
             }
             return mir::Type{
-                mir::TaggedUnionType{.elements = std::move(elements)}};
+                mir::TaggedUnionType{.members = std::move(members)}};
           },
           [&](const hir::UnpackedArrayType& src) -> mir::Type {
             const mir::TypeId element = TranslateType(src.element_type);

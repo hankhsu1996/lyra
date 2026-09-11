@@ -166,8 +166,9 @@ auto PopulatePackageStaticStorage(
     install_block.AppendStmt(
         mir::ExprStmt{
             .expr = install_block.exprs.Add(
-                mir::MakeCapabilityInitializeCallExpr(
+                mir::MakeCapabilityInstallCallExpr(
                     make_cell(install_block, d.name, cell_type), prototype,
+                    support::BuiltinFn::kInitialize,
                     unit.builtins.void_type))});
 
     // Phase 2: a user initializer (LRM 10.5) writes the value through the cell.
@@ -232,25 +233,6 @@ auto PopulatePackageStaticStorage(
   return {};
 }
 
-// The fold a net's declared net type names (LRM 6.6). Each pair differs only in
-// source spelling: `wire` / `tri` resolve under the tri-state truth table,
-// `wand` / `triand` under wired-and, and `wor` / `trior` under wired-or
-// (LRM 6.6.3).
-auto TranslateNetResolution(hir::NetType net_type) -> mir::NetResolution {
-  switch (net_type) {
-    case hir::NetType::kWire:
-    case hir::NetType::kTri:
-      return mir::NetResolution::kTriState;
-    case hir::NetType::kWand:
-    case hir::NetType::kTriand:
-      return mir::NetResolution::kWiredAnd;
-    case hir::NetType::kWor:
-    case hir::NetType::kTrior:
-      return mir::NetResolution::kWiredOr;
-  }
-  throw InternalError("TranslateNetResolution: unknown NetType");
-}
-
 // Builds the design's way in: a nullary callable that constructs the root
 // object -- parentless, at the hierarchy's origin -- and returns it as the
 // generic scope. Construction is what a design does at its own root, so it is
@@ -308,7 +290,7 @@ void DefineRootFactory(mir::CompilationUnit& unit) {
       mir::ReturnStmt{
           .value = body.exprs.Add(
               mir::Expr{
-                  .data = mir::PointerCastExpr{.operand = built},
+                  .data = mir::CastExpr{.operand = built},
                   .type = owned_scope})});
 
   unit.root_factory = unit.callables.Add(
@@ -329,11 +311,9 @@ auto UnitLowerer::MemberCellType(
           [&](const hir::VariableStorage&) {
             return mir::ObservableCellOf(unit_.types, value_type);
           },
-          [&](const hir::NetStorage& net) {
+          [&](const hir::NetStorage&) {
             return unit_.types.Intern(
-                mir::Type{mir::ResolvedType{
-                    .value = value_type,
-                    .resolution = TranslateNetResolution(net.net_type)}});
+                mir::Type{mir::ResolvedType{.value = value_type}});
           },
           [&](const hir::ReferenceStorage& reference) {
             return unit_.types.Intern(
@@ -651,14 +631,14 @@ auto UnitLowerer::TranslateClassRef(const hir::ClassRef& ref) -> mir::ClassRef {
   return MakeExternalClassRef(std::get<hir::ExternalClassRef>(ref));
 }
 
-auto UnitLowerer::MakeExternalFieldTarget(
+auto UnitLowerer::MakeCrossUnitClassFieldTarget(
     const hir::ExternalClassPropertyTarget& target)
-    -> mir::ExternalFieldTarget {
+    -> mir::CrossUnitClassFieldTarget {
   unit_.AddExternalClassUnit(target.unit_name);
   RecordExternalClass(target.unit_name, target.class_name);
   // The properties a class publishes are a prefix of its own storage, so the
   // position counted out of the promise is the slot that class gave.
-  return mir::ExternalFieldTarget{
+  return mir::CrossUnitClassFieldTarget{
       .unit_name = target.unit_name,
       .class_name = target.class_name,
       .slot = mir::FieldId{target.property.value}};
@@ -705,11 +685,11 @@ auto UnitLowerer::TranslateClassPropertyTarget(
     const hir::ClassPropertyTarget& target) -> mir::FieldRef {
   if (const auto* local = std::get_if<hir::LocalClassPropertyTarget>(&target)) {
     const mir::ClassId owner = TranslateClass(local->owner);
-    return mir::FieldRef{mir::FieldTarget{
+    return mir::FieldRef{mir::ClassFieldTarget{
         .owner = owner,
         .slot = GetClassShape(owner).field_translation.Get(local->field)}};
   }
-  return mir::FieldRef{MakeExternalFieldTarget(
+  return mir::FieldRef{MakeCrossUnitClassFieldTarget(
       std::get<hir::ExternalClassPropertyTarget>(target))};
 }
 

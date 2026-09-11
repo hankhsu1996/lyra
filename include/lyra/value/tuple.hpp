@@ -1,20 +1,22 @@
 #pragma once
 
 #include <cstddef>
+#include <string>
 #include <tuple>
 #include <utility>
 
 #include "lyra/value/concepts.hpp"
+#include "lyra/value/format.hpp"
 #include "lyra/value/packed_array.hpp"
 
 namespace lyra::value {
 
 // A heterogeneous product value: a positional, fixed list of component value
-// types, each reached by its declaration-order index. The value-layer
-// realization of MIR's generic product type, not any one SystemVerilog
+// types, each reached by its declaration-order index. Not any one SystemVerilog
 // construct -- it backs every product the pipeline builds: a task's output
 // pack, an associative entry's (key, value) pair, and an SV unpacked struct
-// (LRM 7.2), whose member names are erased to positions before this layer. It
+// (LRM 7.2), whose members a value reaches by position whatever its type calls
+// them, so one realization serves the named and the anonymous alike. It
 // composes the LyraValue contract from its components: member-wise equality
 // yielding a 1-bit PackedArray, bit-identity, and unknown detection. A
 // component that owns variable-size storage carries its own copy semantics, so
@@ -162,6 +164,23 @@ class Tuple {
 
  private:
   std::tuple<Ts...> data_;
+};
+
+// LRM 21.2.1.6 assignment-pattern format: every component is present at once,
+// so every one of them is an element, each deferring to its own type's
+// `Formatter`.
+template <typename... Ts>
+struct Formatter<Tuple<Ts...>> {
+  static auto Format(const FormatSpec& spec, const Tuple<Ts...>& value)
+      -> std::string {
+    PatternWriter pattern;
+    [&]<std::size_t... Is>(std::index_sequence<Is...>) {
+      (pattern.Add(
+           lyra::value::Format(spec, MakeFormatArg(value.template Get<Is>()))),
+       ...);
+    }(std::index_sequence_for<Ts...>{});
+    return std::move(pattern).Finish();
+  }
 };
 
 // Every arity is a product, so the contract is asserted at none, one, and many

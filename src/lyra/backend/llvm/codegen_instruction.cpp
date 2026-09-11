@@ -86,29 +86,6 @@ auto ValuesHeldBy(const lir::Type& type) -> std::optional<lir::TypeId> {
   return std::nullopt;
 }
 
-// A leaf of a wait carries the observation that decides what a change there
-// means only where an event control is what waits (LRM 9.4.2); an implicit
-// sensitivity names none and supplies the cell and its bit range alone.
-auto TriggerConstruction(std::size_t argument_count) -> RuntimeOp {
-  return argument_count == 3 ? RuntimeOp::kMakeTrigger
-                             : RuntimeOp::kMakeObservedTrigger;
-}
-
-// What an observation is built over: the watched expression and its edge, both
-// of those plus an `iff` qualifier, or the qualifier alone -- which is a named
-// event's, whose trigger is the event itself so there is no value to watch
-// (LRM 9.4.2, 9.4.2.3, 15.5).
-auto ObservationConstruction(std::size_t argument_count) -> RuntimeOp {
-  switch (argument_count) {
-    case 1:
-      return RuntimeOp::kMakeConditionObservation;
-    case 2:
-      return RuntimeOp::kMakeObservation;
-    default:
-      return RuntimeOp::kMakeQualifiedObservation;
-  }
-}
-
 }  // namespace
 
 auto CodeGenFunction::LowerInstr(const lir::Instr& instr)
@@ -154,21 +131,8 @@ auto CodeGenFunction::LowerInstr(const lir::Instr& instr)
           [&](const lir::UnaryInstr& unary) -> diag::Result<llvm::Value*> {
             return LowerUnary(unary, result_type);
           },
-          [&](const lir::BoolCastInstr& cast) -> diag::Result<llvm::Value*> {
-            return LowerBoolCast(cast, result_type);
-          },
-          [&](const lir::PointerCastInstr& cast) -> diag::Result<llvm::Value*> {
-            // Every reference crosses as the same opaque handle, so retyping it
-            // moves no bits.
-            return LowerOperand(cast.operand);
-          },
-          [&](const lir::ValueCastInstr& cast) -> diag::Result<llvm::Value*> {
-            // The value's handle is what it was; only the type the program
-            // holds it to differs, and a handle carries no type.
-            return LowerOperand(cast.operand);
-          },
-          [&](const lir::IntCastInstr& cast) -> diag::Result<llvm::Value*> {
-            return LowerIntCast(cast, result_type);
+          [&](const lir::CastInstr& cast) -> diag::Result<llvm::Value*> {
+            return LowerCast(cast, result_type);
           }},
       instr.data);
 }
@@ -569,39 +533,45 @@ auto CodeGenFunction::LowerMachineUnary(const lir::UnaryInstr& unary)
   throw InternalError("llvm codegen: unknown unary operator");
 }
 
-auto CodeGenFunction::LowerBoolCast(
-    const lir::BoolCastInstr& cast, lir::TypeId result_type)
+// A cast says only which type a value is read as, so the pair of types is the
+// whole of what it states and the machine conversion follows from that pair.
+// Two types mapping to one machine type convert by nothing at all; a machine
+// boolean is what the value's own domain answers about it; and between two
+// machine integers the value resizes, repeating the sign bit only when the
+// *source* is signed, the destination's signedness saying how the result is
+// later read rather than what the added high bits hold. A pair outside those is
+// one this target does not carry, and is refused rather than passed through.
+auto CodeGenFunction::LowerCast(
+    const lir::CastInstr& cast, lir::TypeId result_type)
     -> diag::Result<llvm::Value*> {
-  auto domain = DomainOf(OperandType(cast.operand));
-  if (!domain) {
-    return std::unexpected(std::move(domain.error()));
-  }
   auto operand = LowerOperand(cast.operand);
   if (!operand) {
     return std::unexpected(std::move(operand.error()));
   }
-  const std::array<llvm::Value*, 1> args{*operand};
-  return builder_.CreateCall(
-      Entry(RuntimeSymbol(*domain, RuntimeOp::kToBool), result_type, args),
-      args);
-}
-
-// Widening repeats the sign bit only when the *source* is signed; the
-// destination's signedness says how the result is later read, not what the
-// added high bits hold. Narrowing discards high bits either way.
-auto CodeGenFunction::LowerIntCast(
-    const lir::IntCastInstr& cast, lir::TypeId result_type)
-    -> diag::Result<llvm::Value*> {
-  const auto& source = module_->Unit()
-                           .types.Get(OperandType(cast.operand))
-                           .Get<lir::MachineIntType>();
-  auto operand = LowerOperand(cast.operand);
-  if (!operand) {
-    return std::unexpected(std::move(operand.error()));
+  llvm::Type* target = module_->Types().Map(result_type);
+  if ((*operand)->getType() == target) {
+    return *operand;
+  }
+  const lir::TypeId operand_type = OperandType(cast.operand);
+  if (module_->Unit().types.Get(result_type).Is<lir::MachineBoolType>()) {
+    auto domain = DomainOf(operand_type);
+    if (!domain) {
+      return std::unexpected(std::move(domain.error()));
+    }
+    const std::array<llvm::Value*, 1> args{*operand};
+    return builder_.CreateCall(
+        Entry(RuntimeSymbol(*domain, RuntimeOp::kToBool), result_type, args),
+        args);
+  }
+  const std::optional<lir::Signedness> signedness =
+      module_->Unit().types.Get(operand_type).MachineIntegerSignedness();
+  if (!signedness) {
+    return Unsupported(
+        "llvm codegen: cast between two types this target has no conversion "
+        "between");
   }
   return builder_.CreateIntCast(
-      *operand, module_->Types().Map(result_type),
-      source.signedness == lir::Signedness::kSigned);
+      *operand, target, *signedness == lir::Signedness::kSigned);
 }
 
 auto CodeGenFunction::LowerCall(
@@ -619,7 +589,7 @@ auto CodeGenFunction::LowerCall(
   // The entry is resolved against what it is actually handed, so this target's
   // own encoding of the call is already in the argument list by the time the
   // entry's signature is read off it.
-  auto args = CallArgs(call, std::move(operands));
+  auto args = CallArgs(call, result_type, std::move(operands));
   if (!args) {
     return std::unexpected(std::move(args.error()));
   }
@@ -647,9 +617,10 @@ auto CodeGenFunction::Entry(
 }
 
 auto CodeGenFunction::CallArgs(
-    const lir::CallInstr& call, std::vector<llvm::Value*> operands)
+    const lir::CallInstr& call, lir::TypeId result_type,
+    std::vector<llvm::Value*> operands)
     -> diag::Result<std::vector<llvm::Value*>> {
-  auto encoding = EncodingOf(call);
+  auto encoding = EncodingOf(call, result_type);
   if (!encoding) {
     return std::unexpected(std::move(encoding.error()));
   }
@@ -762,13 +733,13 @@ auto CodeGenFunction::ResolveCallee(
             return llvm::FunctionCallee(
                 CallSignature(module_->Types().Map(result_type), args), body);
           },
-          [&](const lir::ConstructTarget& t)
+          [&](const lir::ConstructTarget&)
               -> diag::Result<llvm::FunctionCallee> {
-            auto construction = ConstructionOf(call, t.result);
+            auto construction = ConstructionOf(call, result_type);
             if (!construction) {
               return std::unexpected(std::move(construction.error()));
             }
-            return Entry(construction->symbol, t.result, args);
+            return Entry(construction->symbol, result_type, args);
           },
           // A foreign symbol is declared, never defined: the host resolves it.
           // The boundary already marshaled its operands and result to the
@@ -777,13 +748,6 @@ auto CodeGenFunction::ResolveCallee(
           [&](const lir::ForeignTarget& t)
               -> diag::Result<llvm::FunctionCallee> {
             return Entry(t.symbol, result_type, args);
-          },
-          // A method of a class the runtime library defines and every unit
-          // imports (LRM 9.7). The library realizes it once, whatever it is
-          // called on, so the method alone names the entry.
-          [&](const lir::ImportedRuntimeTarget& t)
-              -> diag::Result<llvm::FunctionCallee> {
-            return Entry(RuntimeSymbol(t.method), result_type, args);
           },
           [&](const lir::ValueCellTarget& t)
               -> diag::Result<llvm::FunctionCallee> {
@@ -859,9 +823,9 @@ auto CodeGenFunction::LowerArray(
 auto CodeGenFunction::LowerProduct(
     const lir::ProductInstr& product, lir::TypeId result_type)
     -> diag::Result<llvm::Value*> {
-  const auto* tuple =
-      module_->Unit().types.Get(result_type).As<lir::TupleType>();
-  if (tuple == nullptr || tuple->elements.size() != product.components.size()) {
+  const std::vector<lir::TypeId> components =
+      module_->Unit().types.Get(result_type).ProductComponentTypes();
+  if (components.size() != product.components.size()) {
     throw InternalError(
         "llvm codegen: a product's result type does not describe the "
         "components it is built from");
@@ -869,7 +833,7 @@ auto CodeGenFunction::LowerProduct(
   std::vector<llvm::Value*> boxed;
   boxed.reserve(product.components.size());
   for (std::uint32_t i = 0; i < product.components.size(); ++i) {
-    auto domain = DomainOf(tuple->elements[i]);
+    auto domain = DomainOf(components[i]);
     if (!domain) {
       return std::unexpected(std::move(domain.error()));
     }
@@ -897,19 +861,15 @@ auto CodeGenFunction::UnionMemberDomain(
     lir::TypeId union_type, std::uint32_t index) const
     -> diag::Result<support::ValueDomain> {
   const lir::Type& ty = module_->Unit().types.Get(union_type);
-  const std::vector<lir::TypeId>* members = nullptr;
-  if (const auto* untagged = ty.As<lir::UnionType>()) {
-    members = &untagged->elements;
-  } else if (const auto* tagged = ty.As<lir::TaggedUnionType>()) {
-    members = &tagged->elements;
-  } else {
+  if (!ty.IsUnion()) {
     throw InternalError(
         "llvm codegen: a union member selects into a non-union type");
   }
-  if (index >= members->size()) {
+  const std::vector<lir::TypeId> members = ty.UnionMemberTypes();
+  if (index >= members.size()) {
     throw InternalError("llvm codegen: a union member index is out of range");
   }
-  return DomainOf((*members)[index]);
+  return DomainOf(members[index]);
 }
 
 auto CodeGenFunction::LowerUnion(
@@ -979,7 +939,7 @@ auto CodeGenFunction::PartDomain(
     lir::TypeId container, base::ComponentIndex position) const
     -> diag::Result<std::optional<support::ValueDomain>> {
   const lir::Type& ty = module_->Unit().types.Get(container);
-  if (!ty.Is<lir::UnionType>() && !ty.Is<lir::TaggedUnionType>()) {
+  if (!ty.IsUnion()) {
     return std::nullopt;
   }
   auto domain = UnionMemberDomain(container, position.value);
@@ -1339,26 +1299,14 @@ auto CodeGenFunction::LowerNullConst(const lir::NullConst& constant)
 
 // The entry behind a builtin. What names it is the operation, plus -- where the
 // library realizes an operation once per value representation -- the
-// representation of the value it acts on. Which of those the builtin takes is
-// the builtin's own property, so it is read from its identity.
+// representation of a value the call carries, which is one it is handed for an
+// operation on a value and the one it answers with for a factory. Which of
+// those the builtin takes is the builtin's own property, so it is read from its
+// identity.
 auto CodeGenFunction::BuiltinCallee(
     const lir::BuiltinTarget& target, const lir::CallInstr& call,
     lir::TypeId result_type, std::span<llvm::Value* const> args)
     -> diag::Result<llvm::FunctionCallee> {
-  // The value that names an entry is the one the call qualifies itself with,
-  // or the argument at the position the builtin states where it qualifies
-  // itself with nothing.
-  const auto acted_on = [&](std::size_t operand) -> lir::TypeId {
-    if (target.qualifier.has_value()) {
-      return *target.qualifier;
-    }
-    if (operand >= call.args.size()) {
-      throw InternalError(
-          "llvm codegen: an entry named by a value names it through a "
-          "qualifier or an argument, and this call has neither");
-    }
-    return OperandType(call.args.at(operand));
-  };
   const auto over = [&](diag::Result<support::ValueDomain> domain)
       -> diag::Result<llvm::FunctionCallee> {
     if (!domain) {
@@ -1372,7 +1320,10 @@ auto CodeGenFunction::BuiltinCallee(
             return Entry(RuntimeSymbol(target.fn), result_type, args);
           },
           [&](const NamedByValue& named) -> diag::Result<llvm::FunctionCallee> {
-            return over(DomainOf(acted_on(named.operand)));
+            return over(DomainOf(OperandType(call.args.at(named.operand))));
+          },
+          [&](const NamedByResult&) -> diag::Result<llvm::FunctionCallee> {
+            return over(DomainOf(result_type));
           },
           [&](const NamedByWrapper&) -> diag::Result<llvm::FunctionCallee> {
             auto wrapper = WrapperBehind(OperandType(call.args.at(0)));
@@ -1388,7 +1339,7 @@ auto CodeGenFunction::BuiltinCallee(
             return over(StorageDomainBehind(OperandType(call.args.at(0))));
           },
           [&](const NamedByConversion&) -> diag::Result<llvm::FunctionCallee> {
-            auto destination = DomainOf(acted_on(0));
+            auto destination = DomainOf(result_type);
             if (!destination) {
               return std::unexpected(std::move(destination.error()));
             }
@@ -1640,11 +1591,7 @@ auto CodeGenFunction::ConstructionOf(
               case lir::RuntimeLibraryKind::kHierarchySegment:
                 return entry(RuntimeSymbol(RuntimeOp::kMakeSegment));
               case lir::RuntimeLibraryKind::kTrigger:
-                return entry(
-                    RuntimeSymbol(TriggerConstruction(call.args.size())));
-              case lir::RuntimeLibraryKind::kObservation:
-                return entry(
-                    RuntimeSymbol(ObservationConstruction(call.args.size())));
+                return entry(RuntimeSymbol(RuntimeOp::kMakeTrigger));
               case lir::RuntimeLibraryKind::kFormatSpec:
                 return entry(RuntimeSymbol(RuntimeOp::kMakeFormatSpec));
               case lir::RuntimeLibraryKind::kPackedRange:
@@ -1673,9 +1620,9 @@ auto CodeGenFunction::ConstructionOf(
               // The rest come into existence some other way, so a construction
               // naming one would have nothing to call. A print item is built as
               // one of its two forms and never as their sum; a time format, an
-              // open-array handle and a control effect are what some other
-              // entry answers with; a chunk is the element type a canonical
-              // buffer's pointer addresses rather than a value; and a
+              // open-array handle, a control effect and an observation are what
+              // some other entry answers with; a chunk is the element type a
+              // canonical buffer's pointer addresses rather than a value; and a
               // cancellation target and a channel's joint cancel state are
               // storage the owner holds and reaches by address.
               case lir::RuntimeLibraryKind::kPrintItem:
@@ -1684,6 +1631,7 @@ auto CodeGenFunction::ConstructionOf(
               case lir::RuntimeLibraryKind::kDpiLogicChunk:
               case lir::RuntimeLibraryKind::kDpiOpenArrayHandle:
               case lir::RuntimeLibraryKind::kControlEffect:
+              case lir::RuntimeLibraryKind::kObservation:
               case lir::RuntimeLibraryKind::kCancellationTarget:
               case lir::RuntimeLibraryKind::kChannelCancellation:
                 return no_construct();
@@ -1756,16 +1704,17 @@ auto CodeGenFunction::InItsOwnDomain(
 }
 
 auto CodeGenFunction::BuiltinErasedOperand(
-    const lir::BuiltinTarget& target, const lir::CallInstr& call) const
+    const lir::BuiltinTarget& target, const lir::CallInstr& call,
+    lir::TypeId result_type) const
     -> diag::Result<std::optional<ErasedArgument>> {
   const support::RuntimeEntry entry = support::RuntimeEntryOf(target.fn);
   // A value put into a positional part crosses in the domain the part states,
   // where the value it goes into holds no prototype for that part. It is the
   // call's last operand, everything before it naming which part. The value it
-  // goes into is the type the call is qualified with, because an entry that
-  // builds one takes no object to read it from.
+  // goes into is what the call answers with, because an entry that builds one
+  // takes no object to read it from.
   if (target.fn == support::BuiltinFn::kMakeActiveMember) {
-    auto part = PartDomain(*target.qualifier, *target.position);
+    auto part = PartDomain(result_type, *target.position);
     if (!part) {
       return std::unexpected(std::move(part.error()));
     }
@@ -1790,7 +1739,8 @@ auto CodeGenFunction::BuiltinErasedOperand(
   return InItsOwnDomain(call, *entry.index_operand);
 }
 
-auto CodeGenFunction::EncodingOf(const lir::CallInstr& call) const
+auto CodeGenFunction::EncodingOf(
+    const lir::CallInstr& call, lir::TypeId result_type) const
     -> diag::Result<CallEncoding> {
   using Encoded = diag::Result<CallEncoding>;
   // Only a target named by something other than a signature encodes anything: a
@@ -1802,14 +1752,14 @@ auto CodeGenFunction::EncodingOf(const lir::CallInstr& call) const
   return std::visit(
       Overloaded{
           [&](const lir::BuiltinTarget& t) -> Encoded {
-            auto erased = BuiltinErasedOperand(t, call);
+            auto erased = BuiltinErasedOperand(t, call, result_type);
             if (!erased) {
               return std::unexpected(std::move(erased.error()));
             }
             return CallEncoding{.erased = *erased};
           },
-          [&](const lir::ConstructTarget& t) -> Encoded {
-            auto construction = ConstructionOf(call, t.result);
+          [&](const lir::ConstructTarget&) -> Encoded {
+            auto construction = ConstructionOf(call, result_type);
             if (!construction) {
               return std::unexpected(std::move(construction.error()));
             }
@@ -1827,9 +1777,6 @@ auto CodeGenFunction::EncodingOf(const lir::CallInstr& call) const
           [](const lir::DispatchTarget&) -> Encoded { return CallEncoding{}; },
           [](const lir::IndirectTarget&) -> Encoded { return CallEncoding{}; },
           [](const lir::ForeignTarget&) -> Encoded { return CallEncoding{}; },
-          [](const lir::ImportedRuntimeTarget&) -> Encoded {
-            return CallEncoding{};
-          },
           [](const lir::ValueCellTarget&) -> Encoded { return CallEncoding{}; },
           [](const lir::ControlEffectTarget&) -> Encoded {
             return CallEncoding{};

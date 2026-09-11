@@ -86,14 +86,6 @@ auto RuntimeOpName(RuntimeOp op) -> std::string_view {
       return "make_segment";
     case RuntimeOp::kMakeTrigger:
       return "make_trigger";
-    case RuntimeOp::kMakeObservedTrigger:
-      return "make_observed_trigger";
-    case RuntimeOp::kMakeObservation:
-      return "make_observation";
-    case RuntimeOp::kMakeQualifiedObservation:
-      return "make_qualified_observation";
-    case RuntimeOp::kMakeConditionObservation:
-      return "make_condition_observation";
     case RuntimeOp::kMakePackedRange:
       return "make_packed_range";
     case RuntimeOp::kMakePackedType:
@@ -123,18 +115,6 @@ auto SelectsByStatedIndex(
   return unit.types.Get(container).Is<lir::AssociativeArrayType>();
 }
 
-auto NetResolutionOf(lir::NetResolution resolution) -> support::NetResolution {
-  switch (resolution) {
-    case lir::NetResolution::kTriState:
-      return support::NetResolution::kTriState;
-    case lir::NetResolution::kWiredAnd:
-      return support::NetResolution::kWiredAnd;
-    case lir::NetResolution::kWiredOr:
-      return support::NetResolution::kWiredOr;
-  }
-  throw InternalError("llvm codegen: unknown net resolution");
-}
-
 auto ValueDomainOf(const lir::CompilationUnit& unit, lir::TypeId type)
     -> std::optional<support::ValueDomain> {
   using Domain = std::optional<support::ValueDomain>;
@@ -143,10 +123,17 @@ auto ValueDomainOf(const lir::CompilationUnit& unit, lir::TypeId type)
           [](const lir::PackedArrayType&) -> Domain {
             return support::ValueDomain::kPacked;
           },
-          // An enumeration is a packed value at runtime. What its declared
-          // members answer (LRM 6.19.5) is settled where the source is read,
-          // so nothing reaching this layer needs more than the packed value.
+          // An enumeration and a packed aggregate are packed values at
+          // runtime: each is one vector under a set of names, and a name is
+          // not something a value carries, so neither takes a domain of its
+          // own.
           [](const lir::EnumType&) -> Domain {
+            return support::ValueDomain::kPacked;
+          },
+          [](const lir::PackedStructType&) -> Domain {
+            return support::ValueDomain::kPacked;
+          },
+          [](const lir::PackedUnionType&) -> Domain {
             return support::ValueDomain::kPacked;
           },
           [](const lir::StringType&) -> Domain {
@@ -169,7 +156,13 @@ auto ValueDomainOf(const lir::CompilationUnit& unit, lir::TypeId type)
           [](const lir::ChandleType&) -> Domain {
             return support::ValueDomain::kChandle;
           },
+          // A declared structure and the anonymous product a lowering composes
+          // realize as one product value; what the structure declares beyond
+          // it is the name of each member, which no value carries.
           [](const lir::TupleType&) -> Domain {
+            return support::ValueDomain::kTuple;
+          },
+          [](const lir::UnpackedStructType&) -> Domain {
             return support::ValueDomain::kTuple;
           },
           // An untagged union erases its tag and gives a cross-member read the
@@ -240,10 +233,6 @@ auto RuntimeSymbol(lir::ControlEffectTarget::Op op) -> std::string {
 
 auto RuntimeSymbol(lir::CoroutineTarget::Op op) -> std::string {
   return Symbol(lir::CoroutineOpName(op));
-}
-
-auto RuntimeSymbol(support::ImportedRuntimeMethod method) -> std::string {
-  return Symbol(support::ImportedRuntimeMethodEntryName(method));
 }
 
 auto MemberStorageKindOf(
@@ -359,6 +348,8 @@ auto MemberStorageKindOf(
           [&](const lir::ChandleType& t) { return value_of(t); },
           [&](const lir::PackedArrayType& t) { return value_of(t); },
           [&](const lir::EnumType& t) { return value_of(t); },
+          [&](const lir::PackedStructType& t) { return value_of(t); },
+          [&](const lir::PackedUnionType& t) { return value_of(t); },
           [&](const lir::UnpackedArrayType& t) { return value_of(t); },
           [&](const lir::DynamicArrayType& t) { return value_of(t); },
           [&](const lir::QueueType& t) { return value_of(t); },
@@ -368,6 +359,7 @@ auto MemberStorageKindOf(
           [&](const lir::ShortRealType& t) { return value_of(t); },
           [&](const lir::RealTimeType& t) { return value_of(t); },
           [&](const lir::TupleType& t) { return value_of(t); },
+          [&](const lir::UnpackedStructType& t) { return value_of(t); },
           [&](const lir::UnionType& t) { return value_of(t); },
           [&](const lir::TaggedUnionType& t) { return value_of(t); },
           [&](const lir::EmptyType& t) { return value_of(t); },
@@ -445,6 +437,12 @@ auto RuntimeSymbol(
             "llvm codegen: a net's resolved value takes no store; a value "
             "reaches a net through one of its drivers");
       }
+      if (fn == support::BuiltinFn::kInitialize) {
+        throw InternalError(
+            "llvm codegen: a net installs its declaration through the entry "
+            "naming its fold, because which truth table it resolves under is "
+            "part of what that declaration fixes");
+      }
       retains_nothing(fn);
       return spelled("net");
     case WrapperKind::kDriver:
@@ -488,7 +486,6 @@ auto EntryNamingOf(support::BuiltinFn fn) -> EntryNaming {
     case support::BuiltinFn::kPart:
     case support::BuiltinFn::kPartRef:
     case support::BuiltinFn::kTagMatches:
-    case support::BuiltinFn::kMakeActiveMember:
     case support::BuiltinFn::kRequire:
     case support::BuiltinFn::kSize:
     case support::BuiltinFn::kLen:
@@ -554,22 +551,19 @@ auto EntryNamingOf(support::BuiltinFn fn) -> EntryNaming {
     case support::BuiltinFn::kRound:
     case support::BuiltinFn::kTruncate:
     case support::BuiltinFn::kToBits:
-    case support::BuiltinFn::kFromBits:
     case support::BuiltinFn::kRealValue:
-    case support::BuiltinFn::kFromInt:
-    case support::BuiltinFn::kFromPackedArray:
-    case support::BuiltinFn::kFromByteArray:
-    case support::BuiltinFn::kFromString:
     case support::BuiltinFn::kConformBound:
     case support::BuiltinFn::kArrayConcatElement:
     case support::BuiltinFn::kArrayConcatSpread:
-    case support::BuiltinFn::kArrayConformSize:
     case support::BuiltinFn::kConcat:
     case support::BuiltinFn::kReplicate:
     case support::BuiltinFn::kPow:
     case support::BuiltinFn::kShiftLeft:
     case support::BuiltinFn::kLogicalShiftRight:
     case support::BuiltinFn::kArithmeticShiftRight:
+    case support::BuiltinFn::kShiftLeftAssign:
+    case support::BuiltinFn::kLogicalShiftRightAssign:
+    case support::BuiltinFn::kArithmeticShiftRightAssign:
     case support::BuiltinFn::kBitwiseXnor:
     case support::BuiltinFn::kLogicalImplication:
     case support::BuiltinFn::kLogicalEquivalence:
@@ -584,8 +578,6 @@ auto EntryNamingOf(support::BuiltinFn fn) -> EntryNaming {
     case support::BuiltinFn::kReductionNand:
     case support::BuiltinFn::kReductionNor:
     case support::BuiltinFn::kReductionXnor:
-    case support::BuiltinFn::kFromBool:
-    case support::BuiltinFn::kFromWords:
     case support::BuiltinFn::kReverse:
     case support::BuiltinFn::kSort:
     case support::BuiltinFn::kRsort:
@@ -606,6 +598,21 @@ auto EntryNamingOf(support::BuiltinFn fn) -> EntryNaming {
     case support::BuiltinFn::kUniqueIndex:
     case support::BuiltinFn::kMap:
       return NamedByValue{};
+
+    // The factories. Each builds a value out of operands that are the material
+    // of one -- a machine integer, a byte array, the text of a string, the
+    // member a union is to hold -- so none of them carries the representation
+    // the entry is realized for, and only what the call answers with does.
+    case support::BuiltinFn::kMakeActiveMember:
+    case support::BuiltinFn::kFromBits:
+    case support::BuiltinFn::kFromInt:
+    case support::BuiltinFn::kFromWords:
+    case support::BuiltinFn::kFromPackedArray:
+    case support::BuiltinFn::kFromByteArray:
+    case support::BuiltinFn::kFromString:
+    case support::BuiltinFn::kFromBool:
+    case support::BuiltinFn::kArrayConformSize:
+      return NamedByResult{};
 
     // LRM 7.6 assignment between unpacked array kinds crosses two container
     // representations and reads the source through the one it actually has, so
@@ -633,11 +640,15 @@ auto EntryNamingOf(support::BuiltinFn fn) -> EntryNaming {
     case support::BuiltinFn::kEndTakeover:
       return NamedByWrapper{};
 
-    // A driver is attached by the net that issues it, so what names the entry
-    // is the representation that net resolves in. A history's three operations
+    // A driver is attached by the net that issues it, and a fold is installed
+    // on the net that applies it, so in both cases what names the entry is the
+    // representation that net resolves in. A history's three operations
     // likewise take the storage they act on and are named by the one domain
     // every value in it is realized in (LRM 16.9.3).
     case support::BuiltinFn::kAttachDriver:
+    case support::BuiltinFn::kNetInitializeTriState:
+    case support::BuiltinFn::kNetInitializeWiredAnd:
+    case support::BuiltinFn::kNetInitializeWiredOr:
     case support::BuiltinFn::kSampledHistoryInstall:
     case support::BuiltinFn::kSampledHistoryPush:
     case support::BuiltinFn::kSampledHistoryAt:
@@ -719,6 +730,10 @@ auto EntryNamingOf(support::BuiltinFn fn) -> EntryNaming {
     case support::BuiltinFn::kRunNullHostCommand:
     case support::BuiltinFn::kDelay:
     case support::BuiltinFn::kDelayReal:
+    case support::BuiltinFn::kObservationOnReaching:
+    case support::BuiltinFn::kObservationOfValue:
+    case support::BuiltinFn::kObservationOfValueQualified:
+    case support::BuiltinFn::kObservationQualified:
     case support::BuiltinFn::kWaitAny:
     case support::BuiltinFn::kSimTime:
     case support::BuiltinFn::kSTime:
@@ -759,6 +774,12 @@ auto EntryNamingOf(support::BuiltinFn fn) -> EntryNaming {
     case support::BuiltinFn::kEnterTarget:
     case support::BuiltinFn::kLeaveTarget:
     case support::BuiltinFn::kEffectNamesTarget:
+    case support::BuiltinFn::kProcessSelf:
+    case support::BuiltinFn::kProcessStatus:
+    case support::BuiltinFn::kProcessKill:
+    case support::BuiltinFn::kProcessAwait:
+    case support::BuiltinFn::kProcessSuspend:
+    case support::BuiltinFn::kProcessResume:
     case support::BuiltinFn::kParent:
     case support::BuiltinFn::kHierarchicalPath:
     // An assertion's attempts hold machine words and no value of the design,

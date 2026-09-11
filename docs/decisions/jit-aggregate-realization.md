@@ -112,7 +112,7 @@ alternative, not retroactively make the erased object wrong.
   physical in-frame layout this extends to aggregates.
 - [integral-representation](integral-representation.md) -- the runtime-fat scalar class both
   backends share, the pure-reuse case aggregates contrast with.
-- [unpacked-struct-representation](unpacked-struct-representation.md) -- the struct is MIR's product
-  type (`TupleType`); this decides how that product is realized on the execution backend.
+- [unpacked-struct-representation](unpacked-struct-representation.md) -- the struct is a value
+  product; this decides how that product is realized on the execution backend.
 - `../architecture/lir.md` -- `AggregateExtractInstr` / `AggregateUpdateInstr` are logical value
   operations; physical realization is below LIR.

@@ -52,6 +52,13 @@ The absence is the legitimate kind: empty means there is genuinely no object to 
 second meaning smuggled into a missing value. The producer knows which it is, because the producer
 is what built the call.
 
+The rule belongs to the call rather than to one layer. A built-in call states its object the same
+way where names are resolved, so no lowering recovers from an argument's position what the front end
+already knew, and the entry's declaration is read once -- by the producer, to say which operand the
+object is -- instead of by every consumer that needs the answer. A type-associated method of a class
+the runtime library defines (LRM 9.7 `process::self`) is what makes this more than symmetry: it acts
+on no object and bears no type, so there is no argument position that could have stood for one.
+
 ### D2. Binding a receiver is a property of the call, not another alternative of the target
 
 The target says where the code is found -- by name in this unit's arena, by name across a unit

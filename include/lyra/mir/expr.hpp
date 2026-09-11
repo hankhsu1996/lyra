@@ -17,13 +17,14 @@
 #include "lyra/mir/class_id.hpp"
 #include "lyra/mir/closure.hpp"
 #include "lyra/mir/expr_id.hpp"
+#include "lyra/mir/external_unit_object_id.hpp"
 #include "lyra/mir/inc_dec_op.hpp"
 #include "lyra/mir/local_ref.hpp"
 #include "lyra/mir/static_constant_id.hpp"
 #include "lyra/mir/static_property_id.hpp"
+#include "lyra/mir/struct_id.hpp"
 #include "lyra/mir/unary_op.hpp"
 #include "lyra/support/builtin_fn.hpp"
-#include "lyra/support/imported_runtime_class.hpp"
 
 namespace lyra::mir {
 
@@ -64,17 +65,24 @@ struct UnaryExpr {
   ExprId operand;
 };
 
-// Reduces an operand to a machine `bool` -- the predicate-reduction primitive.
-// It stands wherever a value is consumed as a boolean: a condition context (an
-// if / while / for / do-while / ternary, LRM 12.4, true when the operand is
-// nonzero and false when it is zero, x, or z), an operand of a native logical
-// operator (`&&` / `||` / `!`), and the inner argument of a re-shape back to a
-// 1-bit packed value. The node kind, not the operand's type, is what tells a
-// backend to emit the reduction, so a condition never leaves the boolean
-// decision to a contextual conversion at the branch site. `Expr::type` is the
-// machine boolean it yields; the operand is any value a `bool(...)` conversion
-// accepts.
-struct BoolCastExpr {
+// The operand read as the type this expression has. A cast sits between two
+// types and carries both already: the operand's own type is what the value
+// comes from, `Expr::type` is what it goes to. That pair is the whole
+// statement, so nothing beside it names which cast this is -- a consumer that
+// has to tell them apart reads the two types, which is type dispatch and
+// belongs where a target answers every other question about a type.
+//
+// What reaches here moves no simulation value between representations. A
+// destination whose representation differs is a reshape, which is a library
+// call that lands at that type on its own; and reading an SV value out as a
+// machine scalar is a call for the same reason. So the pairs that arrive are
+// the ones a target can state outright: a value read as the machine boolean a
+// condition tests (LRM 12.4), a machine integer at another width, a
+// reference-like value at another pointee, a code address at the signature its
+// definition was generated with, and an integral type that names its content --
+// an enumeration, a packed structure or union -- read as the vector it shares a
+// representation with.
+struct CastExpr {
   ExprId operand;
 };
 
@@ -115,7 +123,12 @@ struct BlockExpr {
 };
 
 // `compound_op.has_value()` marks the assignment as `target op= value`;
-// `nullopt` is a simple write. `value` is already typed to match `target`.
+// `nullopt` is a simple write. `value` is already typed to match `target`. The
+// operator is one a target applies to two values of one type, which is all
+// `BinaryOp` holds: an operator a library performs is applied by the entry that
+// performs it, so an assignment of that kind is an ordinary call on the place
+// and never reaches here. "Evaluate the left-hand side once" (LRM 11.4.1) is a
+// property of the one target expression, whichever shape the assignment took.
 //
 // `target` is a place, whose write is a store, or a part of a value reached by
 // a run of calls, whose write leaves the owner holding an updated whole. What
@@ -137,20 +150,6 @@ struct IncDecExpr {
   ExprId target;
 };
 
-// A spelling / scope qualifier the call site provides at the point of
-// invocation -- the namespace path a direct call resolves through, exactly
-// the role `MyEnum::` plays in `MyEnum::first()` or `PackedArray::` in
-// `PackedArray::FromInt(...)`. Distinct from the symbol's declaration owner
-// (which the target's metadata knows): a qualifier is a property of this
-// call, not of the symbol. A qualifier is a path in general -- a package name
-// (LRM 26), or a package and then a type -- of which only the type form is
-// lowered, which is why one arm carries it.
-struct TypeQualifier {
-  TypeId type;
-};
-
-using ScopeQualifier = std::variant<TypeQualifier>;
-
 // Identity of a concrete callable at a call site: the class whose callable
 // arena declares (or implements) it, and the slot within that arena. Owner is
 // the declaring class, not the receiver's class; the two coincide when the
@@ -170,19 +169,6 @@ struct CallableTarget {
   CallableId slot;
 
   auto operator==(const CallableTarget&) const -> bool = default;
-};
-
-// The target of a call to a method the runtime library provides for an imported
-// class (LRM 9.7 `process`). A bodyless external callable whose implementation
-// is a runtime symbol; the identity names the method, and the backend renders
-// the call mechanically to that symbol -- no per-unit declaration and no
-// per-method backend branch. An instance method of such a class dispatches on
-// its handle, which the library takes positionally because a runtime symbol has
-// no receiver of its own to bind.
-struct ImportedRuntimeCallTarget {
-  support::ImportedRuntimeMethod method;
-
-  auto operator==(const ImportedRuntimeCallTarget&) const -> bool = default;
 };
 
 // Identity of a symbol in the DPI-C name space (LRM 35.4): the program-global
@@ -231,17 +217,15 @@ struct ExternalUnitClassMethodTarget {
 // The target of a `Direct` call -- the symbol identity. Each alternative is one
 // identity space, told apart by the table that resolves the name: this unit's
 // own callable arena (`CallableTarget`), the closed set of runtime library
-// entries (`BuiltinFn`, and `ImportedRuntimeCallTarget` for the methods the
-// library provides for an imported class, LRM 9.7), another compilation unit's
-// namespace (`ExternalUnitCallableTarget`) or one of its classes
+// entries (`BuiltinFn`), another compilation unit's namespace
+// (`ExternalUnitCallableTarget`) or one of its classes
 // (`ExternalUnitClassMethodTarget`), and the DPI-C name space
 // (`ForeignSymbolTarget`, LRM 35.4). Nothing here says whether the call
 // dispatches on an object -- that is the callee's receiver -- and none is
 // recovered from the receiver's runtime type.
 using DirectTarget = std::variant<
-    CallableTarget, support::BuiltinFn, ImportedRuntimeCallTarget,
-    ExternalUnitCallableTarget, ExternalUnitClassMethodTarget,
-    ForeignSymbolTarget>;
+    CallableTarget, support::BuiltinFn, ExternalUnitCallableTarget,
+    ExternalUnitClassMethodTarget, ForeignSymbolTarget>;
 
 // A direct call to a named symbol -- the code is found by name at compile
 // time. The single shape for every direct invocation: a user method, a
@@ -263,7 +247,6 @@ using DirectTarget = std::variant<
 struct Direct {
   DirectTarget target;
   std::optional<ExprId> receiver = std::nullopt;
-  std::optional<ScopeQualifier> qualification = std::nullopt;
   std::optional<base::ComponentIndex> position = std::nullopt;
 };
 
@@ -365,20 +348,6 @@ struct AddressOfExpr {
   ExprId operand;
 };
 
-// A code address named as another function type: the erasure that puts an entry
-// of one prototype into a table whose entries share a single type, and the
-// restoration that calls it back at its own prototype. `Expr::type` is the
-// function type the address is named as here.
-//
-// The two halves are one contract: an erased entry is called only after being
-// restored to the exact type its definition was generated with, and both sides
-// are generated from one description, so they cannot disagree. Distinct from a
-// pointer cast, which retypes what an address points at rather than what
-// calling it means.
-struct FunctionCastExpr {
-  ExprId operand;
-};
-
 // The borrowed pointer to a machine array's first element
 // (`std::array::data()`, Rust `as_ptr()`). Distinct from taking the array's own
 // address: this names the contiguous element storage, which is the form a
@@ -405,98 +374,78 @@ struct MoveExpr {
   ExprId operand;
 };
 
-// Re-types a reference as a reference to a different pointee type, moving no
-// bits and leaving the referent untouched. `operand` is a reference-typed
-// expression -- a borrowed pointer, or a handle to an object -- and
-// `Expr::type` is the destination reference type of the same wrapper. Used
-// where a runtime entry returns a type-erased pointer (`void*`) that the call
-// site re-types, and where a handle to a subclass reaches a variable declared
-// with the base class (LRM 8.14). Either way the lowering states the
-// destination type in MIR so the backend never picks it from context.
-struct PointerCastExpr {
-  ExprId operand;
-};
-
-// Converts a machine integer to a machine integer of a different width or
-// signedness. `operand` is a `MachineIntType` expression; `Expr::type` is the
-// destination `MachineIntType`. This moves bits -- it truncates or extends --
-// and is the primitive a foreign-call boundary crosses on: a call narrows the
-// widest machine integer to its declared C carrier and widens the carrier back.
-// A simulation value's resize is not this: an SV integral is a `PackedArray`
-// whose resize is a library call.
-struct IntCastExpr {
-  ExprId operand;
-};
-
-// The same value at another type that structures its bits identically --
-// crossing between an enumeration and its base (LRM 6.19.3) is the case this
-// arises for. Nothing is built and nothing moves; what changes is the type the
-// program ascribes to the value, which is why this is a cast and not a
-// construction. A destination whose representation differs is a reshape, which
-// is a library call and reaches this node already reshaped.
-struct ValueCastExpr {
-  ExprId operand;
-};
-
 // Identity of a class field at an access site: the class whose field arena
 // declares the field, and the slot within that arena. Owner is the declaring
 // class, not the receiver's class; the two coincide when the receiver's class
 // declares the field itself and diverge when the field is inherited from a
-// base. A backend reads the field name and type from this stated owner rather
-// than deriving them from the receiver's type.
-struct FieldTarget {
+// base (LRM 8.14).
+struct ClassFieldTarget {
   ClassId owner;
   FieldId slot;
 
-  auto operator==(const FieldTarget&) const -> bool = default;
+  auto operator==(const ClassFieldTarget&) const -> bool = default;
+};
+
+// Identity of a field of a compiler-generated nominal struct -- the shared
+// activation object a promoted automatic lives in (LRM 6.21) is one.
+struct StructFieldTarget {
+  StructId owner;
+  FieldId slot;
+
+  auto operator==(const StructFieldTarget&) const -> bool = default;
+};
+
+// Identity of a captured binding, which the closure declaration holds as a
+// field like any other storage a declaration declares.
+struct ClosureFieldTarget {
+  ClosureId owner;
+  FieldId slot;
+
+  auto operator==(const ClosureFieldTarget&) const -> bool = default;
+};
+
+// Identity of a member another compilation unit published on one of its
+// objects, at the position that unit's signature gave it.
+struct ExternalUnitObjectFieldTarget {
+  ExternalUnitObjectId owner;
+  FieldId slot;
+
+  auto operator==(const ExternalUnitObjectFieldTarget&) const -> bool = default;
 };
 
 // Identity of a property on an SV class another compilation unit declares: the
 // declaring unit, the class's canonical name -- matched at link time -- and the
-// slot that class gave the property, counted out of what it published. Peer of
-// `FieldTarget` with the class named by its parts rather than by an id, which
-// is how every identity crossing a unit boundary is carried.
-struct ExternalFieldTarget {
+// slot that class gave the property, counted out of what it published. The
+// class is named by its parts rather than by an id, which is how every identity
+// crossing a unit boundary is carried.
+struct CrossUnitClassFieldTarget {
   std::string unit_name;
   std::string class_name;
   FieldId slot;
 
-  auto operator==(const ExternalFieldTarget&) const -> bool = default;
+  auto operator==(const CrossUnitClassFieldTarget&) const -> bool = default;
 };
 
-// Which arena's field a `FieldAccessExpr` reaches. Three shapes because the
-// class case is where "which arena" is a semantic decision that also splits
-// on unit boundary:
-//
-// - `FieldTarget` (owner-qualified) is used when the receiver is a class
-//   instance whose class this unit declares. The receiver's runtime class
-//   type may not be the field's declaring class (inheritance), so the target
-//   states both.
-//
-// - `ExternalFieldTarget` is used when the receiver is an instance of an SV
-//   class another compilation unit declares -- that unit and the class's
-//   canonical name plus the property's source name, matched at link time.
-//
-// - Bare `FieldId` is used when the receiver is a struct value, a closure, or
-//   the object of another unit. Each carries its arena identity in its own type
-//   payload (`StructType.struct_id`, `ClosureType.closure_id`,
-//   `ExternalUnitObjectType.object`) and never participates in an inheritance
-//   chain, so the arena is uniquely determined by the receiver's type; stating
-//   it again would restate what the structural context already fixes.
+// Which field a `FieldAccessExpr` reaches, stated as the declaration that
+// declares it and the slot that declaration gave it. One alternative per
+// declaration kind, because the declaration kinds are what the arenas holding
+// field names are keyed by, and a name is resolved by reading the arena the
+// access states rather than by classifying what the receiver turned out to be.
 //
 // A field is declared somewhere, which is what separates it from a part named
 // by position: a product declares its components nowhere -- the type is the
 // component list -- so reaching one is an operation on the value rather than a
 // name in an arena, and it is a call.
-using FieldRef = std::variant<FieldTarget, FieldId, ExternalFieldTarget>;
+using FieldRef = std::variant<
+    ClassFieldTarget, StructFieldTarget, ClosureFieldTarget,
+    ExternalUnitObjectFieldTarget, CrossUnitClassFieldTarget>;
 
 // Field access through an explicit receiver expression: `receiver.field`. The
-// receiver is a field-bearing value -- a class instance, a closure, a
-// promoted-scope handle, a product -- reached by pointer or held directly,
-// which is the receiver expression's business and not this node's.
-// The receiver is explicit, so a backend never asks "what is the current
-// receiver?"; and for a class receiver the field is owner-qualified, so a
-// backend never derives which class arena to search from the receiver's type.
+// receiver is a value of whichever declaration the field names, reached by
+// pointer or held directly, which is the receiver expression's business and
+// not this node's. So a backend never asks "what is the current receiver?",
+// and never derives which arena declares the name from what the receiver's
+// type turns out to be.
 //
 // One node serves reading the field and writing it. Which of the two an
 // occurrence is follows from where it stands -- a value position reads, an
@@ -638,11 +587,10 @@ struct ReferenceExpr {
 
 using ExprData = std::variant<
     StringLiteral, NullLiteral, MachineBoolLiteral, MachineIntLiteral,
-    MachineFloatLiteral, ReferenceExpr, UnaryExpr, BinaryExpr, BoolCastExpr,
+    MachineFloatLiteral, ReferenceExpr, UnaryExpr, BinaryExpr, CastExpr,
     ConditionalExpr, BlockExpr, AssignExpr, IncDecExpr, CallExpr, DerefExpr,
-    AddressOfExpr, MachineArrayDataExpr, MoveExpr, PointerCastExpr,
-    FunctionCastExpr, IntCastExpr, FieldAccessExpr, ClosureExpr, CompositeExpr,
-    ValueCastExpr, AwaitExpr, VectorGetExpr>;
+    AddressOfExpr, MachineArrayDataExpr, MoveExpr, FieldAccessExpr, ClosureExpr,
+    CompositeExpr, AwaitExpr, VectorGetExpr>;
 
 struct Expr {
   ExprData data;
@@ -764,8 +712,7 @@ struct Expr {
 }
 
 // An active-member value whose live member is the one at `index`, carrying
-// `value`. Reached on the type it builds, which is what the call qualifies
-// itself with.
+// `value`.
 [[nodiscard]] inline auto MakeActiveMemberExpr(
     ExprId value, base::ComponentIndex index, TypeId built) -> Expr {
   return Expr{
@@ -774,7 +721,6 @@ struct Expr {
               .callee =
                   Direct{
                       .target = support::BuiltinFn::kMakeActiveMember,
-                      .qualification = TypeQualifier{.type = built},
                       .position = index},
               .arguments = {value}},
       .type = built};
@@ -877,19 +823,19 @@ struct Expr {
       .type = value};
 }
 
-// `wrapper.Initialize(prototype)` -- fixes the declared representation (and
-// default contents) once at construction. `prototype` is a value of that
-// declared type; only its representation is used. No runtime handle: it runs
-// before any process, so there are no subscribers to fire.
-[[nodiscard]] inline auto MakeCapabilityInitializeCallExpr(
-    ExprId wrapper, ExprId prototype, TypeId void_type) -> Expr {
+// Installs what a capability wrapper's declaration gives it, once at
+// construction. `entry` names which install this is -- a cell's declared
+// representation and default contents, a net's representation together with
+// the fold its net type picked (LRM 6.6) -- and `prototype` is a value of that
+// declared type, of which only the representation is used. No runtime handle:
+// it runs before any process, so there are no subscribers to fire.
+[[nodiscard]] inline auto MakeCapabilityInstallCallExpr(
+    ExprId wrapper, ExprId prototype, support::BuiltinFn entry,
+    TypeId void_type) -> Expr {
   return Expr{
       .data =
           CallExpr{
-              .callee =
-                  Direct{
-                      .target = support::BuiltinFn::kInitialize,
-                      .receiver = wrapper},
+              .callee = Direct{.target = entry, .receiver = wrapper},
               .arguments = {prototype}},
       .type = void_type};
 }

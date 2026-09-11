@@ -34,9 +34,9 @@ enum class ReceiverPlacement : std::uint8_t {
 };
 
 // What C++ names a callee, and where the object it dispatches on goes. Every
-// callee form -- an instance method, a type-qualified static, a free function,
-// an indirect closure, a type constructor -- answers with these two and nothing
-// else, so one site composes the call text out of them.
+// callee form -- an instance method, a factory on the type it builds, a free
+// function, an indirect closure, a type constructor -- answers with these two
+// and nothing else, so one site composes the call text out of them.
 struct CalleeSpelling {
   std::string name;
   ReceiverPlacement placement;
@@ -62,9 +62,6 @@ auto RenderReceiver(const ScopeView& view, const mir::Callee& callee)
           view.Unit().types.Get(expr.type).Is<mir::PointerType>() ? "->" : "."};
 }
 
-// A built-in runtime entry, spelled the way the library declares it. Nothing
-// here reads the call to decide that: which form the entry takes, and the
-// identifier it is written with, are the entry's own declaration.
 // What the name a callee spells is reached through, which is what decides
 // whether C++ can read an argument list after it: a name reached through a
 // value is dependent until the value's type is resolved, and the `template`
@@ -87,12 +84,14 @@ auto SpelledAt(
   return std::format("{}{}<{}>", dependent, identifier, position->value);
 }
 
-auto ResolveBuiltinSpelling(
-    const ScopeView& view, support::BuiltinFn id,
-    const std::optional<mir::ScopeQualifier>& qualification,
+// A runtime entry, spelled the way the library declares it. Nothing here reads
+// the call to decide that: which form the entry takes, and the identifier it is
+// written with, are the entry's own declaration.
+auto ResolveEntrySpelling(
+    const ScopeView& view, const support::RuntimeEntry& entry,
     const std::optional<RenderedReceiver>& receiver,
-    const std::optional<base::ComponentIndex>& position) -> CalleeSpelling {
-  const support::RuntimeEntry entry = support::RuntimeEntryOf(id);
+    const std::optional<base::ComponentIndex>& position,
+    mir::TypeId result_type) -> CalleeSpelling {
   return std::visit(
       Overloaded{
           [](const support::FreeFunction& f) -> CalleeSpelling {
@@ -106,32 +105,21 @@ auto ResolveBuiltinSpelling(
           [&](const support::Method& m) -> CalleeSpelling {
             if (!receiver.has_value()) {
               throw InternalError(
-                  "Direct builtin call: the instance form of a runtime entry "
-                  "is reached through the object it acts on, and this call "
-                  "names none -- please report this as a bug");
+                  "Direct call: the instance form of a runtime entry is "
+                  "reached through the object it acts on, and this call names "
+                  "none -- please report this as a bug");
             }
             return {
                 .name = SpelledAt(
                     m.identifier, position, NameReachedThrough::kAValue),
                 .placement = ReceiverPlacement::kIntoCalleeName};
           },
-          // A factory is reached on the type it builds, which the call site
-          // names as its qualifier; without one there is no scope to write.
+          // A factory is reached on the type it builds, which is the type of
+          // the value the call answers with.
           [&](const support::StaticFactory& s) -> CalleeSpelling {
-            if (!qualification.has_value()) {
-              throw InternalError(
-                  "Direct builtin call: a static factory is reached on the "
-                  "type it builds, and this call names none -- please report "
-                  "this as a bug");
-            }
-            const std::string scope = std::visit(
-                Overloaded{[&](const mir::TypeQualifier& q) -> std::string {
-                  return RenderTypeAsCpp(view.Unit(), q.type);
-                }},
-                *qualification);
             return {
                 .name = std::format(
-                    "{}::{}", scope,
+                    "{}::{}", RenderTypeAsCpp(view.Unit(), result_type),
                     SpelledAt(
                         s.identifier, position, NameReachedThrough::kAType)),
                 .placement = ReceiverPlacement::kIntoCalleeName};
@@ -144,19 +132,14 @@ auto ResolveBuiltinSpelling(
 // what that lookup found.
 auto ResolveDirectSpelling(
     const ScopeView& view, const mir::Direct& direct,
-    const std::optional<RenderedReceiver>& receiver) -> CalleeSpelling {
+    const std::optional<RenderedReceiver>& receiver, mir::TypeId result_type)
+    -> CalleeSpelling {
   return std::visit(
       Overloaded{
           // The owner prefix is a fixed function of the target's owner: it is
           // redundant for a non-virtual method and, for a virtual one a direct
           // call reaches (LRM 8.15 super), is what makes C++ bypass the vtable.
-          // No qualification is allowed today -- cross-class explicit
-          // qualification is gated on SV class support.
           [&](const mir::CallableTarget& t) -> CalleeSpelling {
-            if (direct.qualification.has_value()) {
-              throw InternalError(
-                  "Direct callable call: qualification is not yet implemented");
-            }
             const auto& cls = view.Unit().GetClass(t.owner);
             return {
                 .name = std::format(
@@ -165,17 +148,9 @@ auto ResolveDirectSpelling(
                 .placement = ReceiverPlacement::kIntoCalleeName};
           },
           [&](const support::BuiltinFn& id) -> CalleeSpelling {
-            return ResolveBuiltinSpelling(
-                view, id, direct.qualification, receiver, direct.position);
-          },
-          // The runtime library provides an imported class's methods (LRM 9.7)
-          // as symbols named by the method identity.
-          [](const mir::ImportedRuntimeCallTarget& t) -> CalleeSpelling {
-            return {
-                .name = std::format(
-                    "lyra::runtime::{}",
-                    support::ImportedRuntimeMethodSymbol(t.method)),
-                .placement = ReceiverPlacement::kIntoArgumentList};
+            return ResolveEntrySpelling(
+                view, support::RuntimeEntryOf(id), receiver, direct.position,
+                result_type);
           },
           // Another compilation unit's C++ peer is a namespace, so a callable
           // of it (LRM 26.3) is named through that namespace.
@@ -215,7 +190,7 @@ auto ResolveCalleeSpelling(
   return std::visit(
       Overloaded{
           [&](const mir::Direct& d) -> CalleeSpelling {
-            return ResolveDirectSpelling(view, d, receiver);
+            return ResolveDirectSpelling(view, d, receiver, result_type);
           },
           [&](const mir::Indirect& i) -> CalleeSpelling {
             return {

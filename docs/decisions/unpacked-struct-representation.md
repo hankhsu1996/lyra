@@ -1,6 +1,12 @@
 # Unpacked struct is a generic product type (MIR `TupleType`)
 
-Date: 2026-06-25 Status: accepted
+Date: 2026-06-25 Status: accepted, with points 1 and 2 superseded by
+[aggregate-names-are-type-content](aggregate-names-are-type-content.md): a declared aggregate keeps
+its member names in a type of its own, whose value-domain projection is the product this entry
+settles, so `TupleType` is no longer what it lowers to and no longer the only heterogeneous
+aggregate. What this entry decided that stands: the unpacked struct is a value and not an object,
+its realization is one generic product, member access is positional, and per-member defaults are
+composed at each site rather than stored on the type.
 
 ## Why this decision matters
 

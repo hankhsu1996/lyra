@@ -1,6 +1,7 @@
 #pragma once
 
 #include <optional>
+#include <variant>
 #include <vector>
 
 #include "lyra/mir/binary_op.hpp"
@@ -82,14 +83,23 @@ struct WriteTarget {
     mir::CompilationUnit& unit, mir::Block& block, const WriteTarget& target)
     -> mir::ExprId;
 
-// Builds `lhs = rhs` or `lhs op= rhs` against the target. Replacing the whole
-// of what a capability wrapper holds acts on the wrapper, so it is a call
-// taking the wrapper as its destination; every other write is a store into the
-// place the target designates, which a compound write reads and writes through
-// once.
+// What an assignment applies to the value its target holds (LRM 11.4.1): an
+// operator the target language applies to two values of one type, or the
+// library entry that applies one to the value a place holds. Which of the two
+// an operator is follows from the operator alone, and this layer is where an
+// assignment is built, so it is settled here and no consumer of the assignment
+// classifies anything.
+using CompoundOperation = std::variant<mir::BinaryOp, support::BuiltinFn>;
+
+// Builds `lhs = rhs` or `lhs op= rhs` against the target. Three shapes come out
+// of it, each an ordinary MIR node with nothing left to decide: replacing the
+// whole of what a capability wrapper holds acts on the wrapper, so it is a call
+// taking the wrapper as its destination; applying a library-performed operator
+// is a call on the place the target designates, which updates what that place
+// holds; every other write is a store into that place, compound or not.
 [[nodiscard]] auto BuildStoreExpr(
     mir::CompilationUnit& unit, mir::Block& block, const WriteTarget& target,
-    mir::ExprId rhs_id, std::optional<mir::BinaryOp> compound_op,
+    mir::ExprId rhs_id, std::optional<CompoundOperation> compound_op,
     mir::TypeId result_type) -> mir::Expr;
 
 }  // namespace lyra::lowering::hir_to_mir

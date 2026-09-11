@@ -19,7 +19,6 @@
 #include "lyra/lir/operator.hpp"
 #include "lyra/lir/type_id.hpp"
 #include "lyra/support/builtin_fn.hpp"
-#include "lyra/support/imported_runtime_class.hpp"
 
 namespace lyra::lir {
 
@@ -133,18 +132,13 @@ using Operand = std::variant<
     Use, IntConst, StrConst, RealConst, NullConst, BoolConst, PackedTypeRef,
     FuncRef, StaticRef>;
 
-// A runtime-library entry. A static factory is named by its type namespace as
-// well as its function -- `String::FromPackedArray` and `PackedArray::FromInt`
-// are different entries of one `fn` -- so the qualifying type rides the target.
-// It is absent for an entry that takes a receiver, whose type the receiver
-// already names.
-// `position` names the part the entry acts on where the call itself fixes it,
-// carried on the callee rather than among the arguments because the part named
-// has a type of its own. A target whose calls take only values writes it as one
-// more argument; one that resolves types writes it where it resolves them.
+// A runtime-library entry. `position` names the part the entry acts on where
+// the call itself fixes it, carried on the callee rather than among the
+// arguments because the part named has a type of its own. A target whose calls
+// take only values writes it as one more argument; one that resolves types
+// writes it where it resolves them.
 struct BuiltinTarget {
   support::BuiltinFn fn;
-  std::optional<TypeId> qualifier;
   std::optional<base::ComponentIndex> position = std::nullopt;
 };
 
@@ -200,13 +194,12 @@ struct IndirectTarget {
   Operand callee;
 };
 
-// The type the call builds a value of, which is the whole identity: a type has
-// one way to come into existence, so naming it names the entry. A wrapper that
-// owns what it points at brings the pointee into existence along with itself,
-// which is the same one way seen from the owner.
-struct ConstructTarget {
-  TypeId result;
-};
+// The one way the value's type comes into existence, which is the whole
+// identity -- and that type is what the call answers with, so the target names
+// nothing further. A wrapper that owns what it points at brings the pointee
+// into existence along with itself, which is that same one way seen from the
+// owner.
+struct ConstructTarget {};
 
 // A function this unit does not compile, called by its linkage name -- a body
 // another compilation unit emits, or a DPI-C import's foreign symbol (LRM
@@ -217,15 +210,6 @@ struct ConstructTarget {
 // sides have to agree on.
 struct ForeignTarget {
   std::string symbol;
-};
-
-// A method the runtime library provides for a class it defines once and every
-// unit imports (LRM 9.7 `process`). The identity is the method, never the
-// symbol behind it: which entry realizes it is the runtime library's agreement
-// with a backend, and a spelling stated here would be one backend's spelling
-// standing in every other consumer's way.
-struct ImportedRuntimeTarget {
-  support::ImportedRuntimeMethod method;
 };
 
 // An operation on a value cell -- storage that holds a value, written and read
@@ -309,13 +293,12 @@ auto CoroutineOpName(CoroutineTarget::Op op) -> std::string_view;
 // The target of a call: a runtime builtin, a function of this unit, a dispatch
 // slot the receiving value's own class fills, a code address the program
 // computed, a value constructor named by the call's result type, a foreign
-// symbol the host resolves, a method of an imported runtime-library class, a
-// value-cell operation, a control-effect operation, or an operation of the
-// coroutine protocol.
+// symbol the host resolves, a value-cell operation, a control-effect operation,
+// or an operation of the coroutine protocol.
 using CallTarget = std::variant<
     BuiltinTarget, FunctionTarget, DispatchTarget, IndirectTarget,
-    ConstructTarget, ForeignTarget, ImportedRuntimeTarget, ValueCellTarget,
-    ControlEffectTarget, CoroutineTarget>;
+    ConstructTarget, ForeignTarget, ValueCellTarget, ControlEffectTarget,
+    CoroutineTarget>;
 
 struct CallInstr {
   CallTarget target;
@@ -497,43 +480,20 @@ struct UnaryInstr {
   Operand operand;
 };
 
-// Reduces a value to a machine boolean, the type a conditional branch tests.
-// This is the explicit form of the contextual conversion a C++ target performs
-// implicitly in a boolean context.
-struct BoolCastInstr {
-  Operand operand;
-};
-
-// Reinterprets a reference-like value as a reference to the result type. It
-// moves no bits; it names the destination type that an implicit conversion
-// would otherwise leave for a consumer to infer.
-struct PointerCastInstr {
-  Operand operand;
-};
-
-// Names the result type for a value whose bits the destination structures
-// identically -- crossing between an enumeration and its base is what reaches
-// here. The peer of the pointer cast above on the value side: it moves no bits
-// and computes nothing, and exists because the type a value is held to is part
-// of what a program states.
-struct ValueCastInstr {
-  Operand operand;
-};
-
-// Converts a machine integer to the machine integer the result type names,
-// truncating or extending it. Extension follows the *source* type's signedness,
-// which is what decides whether the added high bits repeat the sign bit or are
-// zero. This is a machine conversion, not a simulation-value one: a packed
-// value's resize is a library call.
-struct IntCastInstr {
+// The operand read as the type this instruction's result has. Both types are
+// already carried -- the operand's own is what the value comes from, the
+// result's is what it goes to -- so nothing beside them says which cast this
+// is, and a target that emits different machine code for different pairs reads
+// the pair. A pair it does not realize is refused; only two types sharing a
+// machine representation convert by emitting nothing.
+struct CastInstr {
   Operand operand;
 };
 
 using InstrData = std::variant<
     CallInstr, ProductInstr, ArrayInstr, UnionInstr, AggregateExtractInstr,
     AggregateUpdateInstr, TagTestInstr, LoadInstr, StoreInstr, AddrOfInstr,
-    BinaryInstr, UnaryInstr, BoolCastInstr, PointerCastInstr, ValueCastInstr,
-    IntCastInstr>;
+    BinaryInstr, UnaryInstr, CastInstr>;
 
 // One instruction: it defines `result` (whose type lives on the function's
 // value arena) from `data`.

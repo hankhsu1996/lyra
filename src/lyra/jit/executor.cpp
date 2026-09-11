@@ -335,12 +335,11 @@ auto DefineRuntimeAbi(llvm::orc::LLJIT& jit)
   add("lyra_rt_delay", &lyra_rt_delay);
   add("lyra_rt_delay_real", &lyra_rt_delay_real);
   add("lyra_rt_make_trigger", &lyra_rt_make_trigger);
-  add("lyra_rt_make_observed_trigger", &lyra_rt_make_observed_trigger);
-  add("lyra_rt_make_observation", &lyra_rt_make_observation);
-  add("lyra_rt_make_qualified_observation",
-      &lyra_rt_make_qualified_observation);
-  add("lyra_rt_make_condition_observation",
-      &lyra_rt_make_condition_observation);
+  add("lyra_rt_observation_on_reaching", &lyra_rt_observation_on_reaching);
+  add("lyra_rt_observation_of_value", &lyra_rt_observation_of_value);
+  add("lyra_rt_observation_of_value_qualified",
+      &lyra_rt_observation_of_value_qualified);
+  add("lyra_rt_observation_qualified", &lyra_rt_observation_qualified);
   add("lyra_rt_wait_any", &lyra_rt_wait_any);
   add("lyra_rt_triggered", &lyra_rt_triggered);
   add("lyra_rt_trigger", &lyra_rt_trigger);
@@ -545,6 +544,11 @@ auto DefineRuntimeAbi(llvm::orc::LLJIT& jit)
       &lyra_rt_packed_logical_shift_right);
   add("lyra_rt_packed_arithmetic_shift_right",
       &lyra_rt_packed_arithmetic_shift_right);
+  add("lyra_rt_packed_shift_left_assign", &lyra_rt_packed_shift_left_assign);
+  add("lyra_rt_packed_logical_shift_right_assign",
+      &lyra_rt_packed_logical_shift_right_assign);
+  add("lyra_rt_packed_arithmetic_shift_right_assign",
+      &lyra_rt_packed_arithmetic_shift_right_assign);
   add("lyra_rt_packed_bitwise_xnor", &lyra_rt_packed_bitwise_xnor);
   add("lyra_rt_packed_logical_implication",
       &lyra_rt_packed_logical_implication);
@@ -1041,7 +1045,12 @@ auto DefineRuntimeAbi(llvm::orc::LLJIT& jit)
   add("lyra_rt_unpackedarray_value_cell_load",
       &lyra_rt_unpackedarray_value_cell_load);
   add("lyra_rt_packed_net_get", &lyra_rt_packed_net_get);
-  add("lyra_rt_packed_net_initialize", &lyra_rt_packed_net_initialize);
+  add("lyra_rt_packed_net_initialize_tri_state",
+      &lyra_rt_packed_net_initialize_tri_state);
+  add("lyra_rt_packed_net_initialize_wired_and",
+      &lyra_rt_packed_net_initialize_wired_and);
+  add("lyra_rt_packed_net_initialize_wired_or",
+      &lyra_rt_packed_net_initialize_wired_or);
   add("lyra_rt_packed_net_begin_takeover", &lyra_rt_packed_net_begin_takeover);
   add("lyra_rt_packed_net_drive_takeover", &lyra_rt_packed_net_drive_takeover);
   add("lyra_rt_packed_net_end_takeover", &lyra_rt_packed_net_end_takeover);
@@ -1049,18 +1058,32 @@ auto DefineRuntimeAbi(llvm::orc::LLJIT& jit)
   add("lyra_rt_packed_driver_get", &lyra_rt_packed_driver_get);
   add("lyra_rt_packed_driver_set", &lyra_rt_packed_driver_set);
   add("lyra_rt_tuple_net_get", &lyra_rt_tuple_net_get);
-  add("lyra_rt_tuple_net_initialize", &lyra_rt_tuple_net_initialize);
+  add("lyra_rt_tuple_net_initialize_tri_state",
+      &lyra_rt_tuple_net_initialize_tri_state);
+  add("lyra_rt_tuple_net_initialize_wired_and",
+      &lyra_rt_tuple_net_initialize_wired_and);
+  add("lyra_rt_tuple_net_initialize_wired_or",
+      &lyra_rt_tuple_net_initialize_wired_or);
   add("lyra_rt_tuple_attach_driver", &lyra_rt_tuple_attach_driver);
   add("lyra_rt_tuple_driver_get", &lyra_rt_tuple_driver_get);
   add("lyra_rt_tuple_driver_set", &lyra_rt_tuple_driver_set);
   add("lyra_rt_union_net_get", &lyra_rt_union_net_get);
-  add("lyra_rt_union_net_initialize", &lyra_rt_union_net_initialize);
+  add("lyra_rt_union_net_initialize_tri_state",
+      &lyra_rt_union_net_initialize_tri_state);
+  add("lyra_rt_union_net_initialize_wired_and",
+      &lyra_rt_union_net_initialize_wired_and);
+  add("lyra_rt_union_net_initialize_wired_or",
+      &lyra_rt_union_net_initialize_wired_or);
   add("lyra_rt_union_attach_driver", &lyra_rt_union_attach_driver);
   add("lyra_rt_union_driver_get", &lyra_rt_union_driver_get);
   add("lyra_rt_union_driver_set", &lyra_rt_union_driver_set);
   add("lyra_rt_unpackedarray_net_get", &lyra_rt_unpackedarray_net_get);
-  add("lyra_rt_unpackedarray_net_initialize",
-      &lyra_rt_unpackedarray_net_initialize);
+  add("lyra_rt_unpackedarray_net_initialize_tri_state",
+      &lyra_rt_unpackedarray_net_initialize_tri_state);
+  add("lyra_rt_unpackedarray_net_initialize_wired_and",
+      &lyra_rt_unpackedarray_net_initialize_wired_and);
+  add("lyra_rt_unpackedarray_net_initialize_wired_or",
+      &lyra_rt_unpackedarray_net_initialize_wired_or);
   add("lyra_rt_unpackedarray_attach_driver",
       &lyra_rt_unpackedarray_attach_driver);
   add("lyra_rt_unpackedarray_driver_get", &lyra_rt_unpackedarray_driver_get);
@@ -1195,9 +1218,7 @@ auto DescribeMember(
             unit.types.Get(type).KindName()));
   }
   // What each kind needs beside itself comes from the same type it was read
-  // from: the domain a value is realized in, and the fold a net's own type
-  // picked, since two nets of one data type resolve differently when their net
-  // types differ (LRM 6.6).
+  // from: the domain a value is realized in.
   const auto domain_of = [&](lir::TypeId value) -> support::ValueDomain {
     const std::optional<support::ValueDomain> domain =
         backend::llvm_backend::ValueDomainOf(unit, value);
@@ -1213,12 +1234,9 @@ auto DescribeMember(
     case backend::llvm_backend::MemberStorageKind::kObservableCell:
       return runtime::ObservableCellStorage{
           .domain = domain_of(data.Get<lir::ObservableType>().value)};
-    case backend::llvm_backend::MemberStorageKind::kResolvedNet: {
-      const auto& net = data.Get<lir::ResolvedType>();
+    case backend::llvm_backend::MemberStorageKind::kResolvedNet:
       return runtime::ResolvedNetStorage{
-          .domain = domain_of(net.value),
-          .resolution = backend::llvm_backend::NetResolutionOf(net.resolution)};
-    }
+          .domain = domain_of(data.Get<lir::ResolvedType>().value)};
     case backend::llvm_backend::MemberStorageKind::kSampledHistory:
       return runtime::SampledHistoryStorage{
           .domain = domain_of(data.Get<lir::SampledHistoryType>().value)};

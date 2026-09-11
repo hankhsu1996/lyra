@@ -211,7 +211,7 @@ void DefineExportSymbol(
 
   const mir::ExprId restored = body.exprs.Add(
       mir::Expr{
-          .data = mir::FunctionCastExpr{.operand = entry},
+          .data = mir::CastExpr{.operand = entry},
           .type = root.types.Intern(
               mir::Type{mir::MachineFunctionType{
                   .params = std::move(entry_params),

@@ -1,9 +1,15 @@
-// An assignment operator whose left-hand side is a bit-select or a
-// part-select reads those bits, applies the operator, and stores the result
-// back into the same bits, truncated to their width and leaving the rest of
-// the vector alone. Any left-hand index expression is evaluated only once,
-// so an index that has a side effect takes it once (LRM 11.4.1).
+// An assignment operator whose left-hand side designates a part of a value --
+// a bit-select or a part-select of a vector, an element of an unpacked array or
+// a queue, a member of a struct, a character of a string -- reads that part,
+// applies the operator, and stores the result back into it, truncated to its
+// width and leaving the rest of the value alone. Any left-hand index expression
+// is evaluated only once, so an index that has a side effect takes it once
+// (LRM 11.4.1).
 module Top;
+  typedef struct {
+    logic signed [15:0] field;
+  } Holder;
+
   logic [7:0] set_bit;
   logic [7:0] clear_bit;
   logic [15:0] add_const_range;
@@ -13,6 +19,14 @@ module Top;
   logic [15:0] truncated_add;
   logic [7:0] once_target;
   int once_index;
+
+  logic [15:0] shifted_range;
+  logic [15:0] shifted_element [2];
+  logic signed [15:0] shifted_queue_element [$];
+  Holder shifted_member;
+  string shifted_character;
+  logic [15:0] once_element [2];
+  int once_element_index;
 
   initial begin
     set_bit = 8'b0000_0000;
@@ -39,6 +53,26 @@ module Top;
     once_target = 8'b0000_0000;
     once_index = 3;
     once_target[once_index++] |= 1'b1;
+
+    shifted_range = 16'hFF00;
+    shifted_range[11:4] >>= 4;
+
+    shifted_element[0] = 16'h00F0;
+    shifted_element[0] <<= 4;
+
+    shifted_queue_element.push_back(-16'sd64);
+    shifted_queue_element[0] >>>= 2;
+
+    shifted_member.field = 16'sd48;
+    shifted_member.field >>>= 1;
+
+    shifted_character = "abc";
+    shifted_character[0] <<= 1;
+
+    once_element[0] = 16'h0001;
+    once_element[1] = 16'h0001;
+    once_element_index = 1;
+    once_element[once_element_index++] <<= 3;
   end
 
   final begin
@@ -61,6 +95,25 @@ module Top;
     if (once_index !== 4)
       $fatal(1, "index expression left once_index at %0d, expected 4",
              once_index);
+    if (shifted_range !== 16'hF0F0)
+      $fatal(1, "[11:4] >>= 4 gave %h, expected f0f0", shifted_range);
+    if (shifted_element[0] !== 16'h0F00)
+      $fatal(1, "element <<= 4 gave %h, expected 0f00", shifted_element[0]);
+    if (shifted_queue_element[0] !== -16'sd16)
+      $fatal(1, "queue element >>>= 2 gave %0d, expected -16",
+             shifted_queue_element[0]);
+    if (shifted_member.field !== 16'sd24)
+      $fatal(1, "member >>>= 1 gave %0d, expected 24", shifted_member.field);
+    if (shifted_character[0] !== 8'hC2)
+      $fatal(1, "character <<= 1 gave %h, expected c2", shifted_character[0]);
+    if (once_element[1] !== 16'h0008)
+      $fatal(1, "element <<= 3 gave %h, expected 0008", once_element[1]);
+    if (once_element[0] !== 16'h0001)
+      $fatal(1, "element <<= 3 reached the wrong element, leaving %h",
+             once_element[0]);
+    if (once_element_index !== 2)
+      $fatal(1, "index expression left once_element_index at %0d, expected 2",
+             once_element_index);
     $display("All checks passed");
   end
 endmodule

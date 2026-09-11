@@ -4,6 +4,7 @@
 #include <utility>
 #include <vector>
 
+#include "lyra/hir/type.hpp"
 #include "lyra/hir/type_id.hpp"
 #include "lyra/lowering/hir_to_mir/unit_lowerer.hpp"
 #include "lyra/mir/compilation_unit.hpp"
@@ -62,10 +63,14 @@ namespace lyra::lowering::hir_to_mir {
 // The element type of a container that holds elements of one type, absent for
 // a type that holds none. Which types those are is stated here and nowhere
 // else; a caller that must decide what a non-container means says so at its
-// own site.
+// own site. There is one of these per type universe, because the two layers
+// name types in different ones and no single function spans both.
 [[nodiscard]] auto ContainerElementType(
     const mir::CompilationUnit& unit, mir::TypeId type)
     -> std::optional<mir::TypeId>;
+
+[[nodiscard]] auto ContainerElementType(const hir::Type& type)
+    -> std::optional<hir::TypeId>;
 
 // The same, for a caller whose own construction guarantees a container. Where
 // that guarantee did not hold, the producer built something it should not
@@ -73,22 +78,32 @@ namespace lyra::lowering::hir_to_mir {
 [[nodiscard]] auto RequiredContainerElementType(
     const mir::CompilationUnit& unit, mir::TypeId container) -> mir::TypeId;
 
+// The element default a container carries for every position it does not hold
+// (LRM 7.4.5, Table 7-1): what an invalid read answers with, what a grow fills
+// a new slot with, and what an invalid write is discarded into. It is built
+// from the source container type, because a member's declaration initializer
+// (LRM 7.2.2) is part of that value and the lowered element type has dropped
+// it, so a container built without the source type in reach cannot reproduce
+// it.
+[[nodiscard]] auto BuildElementDefault(
+    const UnitLowerer& unit_lowerer, mir::Block& block, hir::TypeId container)
+    -> mir::ExprId;
+
 // Builds a container from an explicit element list, laid down once, whose
 // constructor arguments are `[element_default, elements, count]` plus the LRM
 // 7.10.5 bound for a bounded queue. This is the construction shape every site
-// producing such a value must use: the canonical-default element the
-// container's constructor requires is supplied here from the element type, and
-// the elements ride as one literal of the plain-data array of that element --
-// so the container is what the construction produces, never what the literal
-// itself claims to be. A uniform value is built by the repeat call below
-// instead.
+// producing such a value must use: the elements ride as one literal of the
+// plain-data array of that element, so the container is what the construction
+// produces, never what the literal itself claims to be. A uniform value is
+// built by the repeat call below instead.
 [[nodiscard]] auto BuildArrayConstructionCall(
     const mir::CompilationUnit& unit, mir::Block& block, mir::TypeId array_type,
-    std::vector<mir::ExprId> elements) -> mir::Expr;
+    mir::ExprId element_default, std::vector<mir::ExprId> elements)
+    -> mir::Expr;
 
 // Builds the construction call for a uniform array-container value: `count`
-// replications of `repeat_unit`, seeded with `element_default` (the wrapper's
-// OOB / discard source). The repeat unit rides as an aggregate literal and the
+// replications of `repeat_unit`, seeded with the element default above. The
+// repeat unit rides as an aggregate literal and the
 // count as a machine scalar, so the constructor arguments are
 // `[element_default, repeat_unit, count]` (plus the LRM 7.10.5 bound for a
 // bounded queue). This is the shape every site that produces an all-default or
@@ -117,6 +132,7 @@ namespace lyra::lowering::hir_to_mir {
 // what stands there instead, and the operand is never missing.
 [[nodiscard]] auto BuildAssociativeConstructionCall(
     const mir::CompilationUnit& unit, mir::Block& block, mir::TypeId assoc_type,
+    mir::ExprId element_default,
     std::vector<std::pair<mir::ExprId, mir::ExprId>> entries,
     std::optional<mir::ExprId> user_default) -> mir::Expr;
 

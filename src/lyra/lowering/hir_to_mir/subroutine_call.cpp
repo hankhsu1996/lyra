@@ -178,8 +178,7 @@ auto ReadMethodCallee(
         .formals = CalleeFormalsOf(unit_lowerer, ext->interface),
         .direct =
             mir::Direct{
-                .target = unit_lowerer.MakeExternalMethodTarget(ext->target),
-                .qualification = std::nullopt},
+                .target = unit_lowerer.MakeExternalMethodTarget(ext->target)},
         .slot = std::nullopt};
     if (ext->slot.has_value()) {
       facts.slot = unit_lowerer.MakeExternalVirtualSlot(*ext->slot);
@@ -201,8 +200,7 @@ auto ReadMethodCallee(
       .formals = CalleeFormalsOf(unit_lowerer, decl),
       .direct =
           mir::Direct{
-              .target = mir::CallableTarget{.owner = owner, .slot = slot},
-              .qualification = std::nullopt},
+              .target = mir::CallableTarget{.owner = owner, .slot = slot}},
       .slot = signature.virtual_dispatch.transform(
           [&](const mir::VirtualDispatchRole& role) {
             return CanonicalVirtualSlot(owner, slot, role);
@@ -354,10 +352,7 @@ auto PlanSubroutineCall(
           [](const hir::EnumMethodRef&) -> Planned { return std::nullopt; },
           [](const hir::PastValueRef&) -> Planned { return std::nullopt; },
           [](const hir::ValueChangeRef&) -> Planned { return std::nullopt; },
-          [](const hir::ForeignImportRef&) -> Planned { return std::nullopt; },
-          [](const hir::ImportedMethodRef&) -> Planned {
-            return std::nullopt;
-          }},
+          [](const hir::ForeignImportRef&) -> Planned { return std::nullopt; }},
       call.callee);
 }
 
@@ -450,7 +445,7 @@ auto BuildAmbientHandle(
               nav = frame.current_block->exprs.Add(
                   mir::MakeFieldAccessExpr(
                       nav,
-                      mir::FieldTarget{
+                      mir::ClassFieldTarget{
                           .owner = owner, .slot = anchor.borrowed_handle},
                       lowerer.Owner()
                           .GetClassShape(owner)
@@ -520,9 +515,7 @@ auto EmitSubroutineCall(
             return ResolvedCallee{
                 .callee =
                     mir::Direct{
-                        .target = named.callee.target,
-                        .receiver = *handle_or,
-                        .qualification = named.callee.qualification},
+                        .target = named.callee.target, .receiver = *handle_or},
                 .leading = std::nullopt};
           },
           [&](const DispatchedCallee& dispatched)
@@ -562,7 +555,7 @@ auto EmitSubroutineCall(
             }
             const mir::ExprId restored = block.exprs.Add(
                 mir::Expr{
-                    .data = mir::FunctionCastExpr{.operand = erased},
+                    .data = mir::CastExpr{.operand = erased},
                     .type = unit.types.Intern(
                         mir::Type{mir::MachineFunctionType{
                             .params = std::move(entry_params),

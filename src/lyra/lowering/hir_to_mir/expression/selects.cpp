@@ -73,7 +73,7 @@ auto ProjectedMemberAt(
 auto WrapPackedAsOwned(
     const mir::CompilationUnit& unit, mir::Block& block, mir::Expr access_call,
     mir::TypeId result_type) -> mir::Expr {
-  if (!unit.types.Get(result_type).Is<mir::PackedArrayType>()) {
+  if (!unit.types.Get(result_type).IsIntegralPacked()) {
     return access_call;
   }
   const mir::ExprId access_id = block.exprs.Add(std::move(access_call));
@@ -102,12 +102,12 @@ auto PartSelectNaturalType(
     -> mir::TypeId {
   const auto& source = unit.types.Get(source_type);
   const auto& field = unit.types.Get(field_type);
-  if (!source.Is<mir::PackedArrayType>() || !field.Is<mir::PackedArrayType>()) {
+  if (!source.IsIntegralPacked() || !field.IsIntegralPacked()) {
     return field_type;
   }
-  auto natural = field.Get<mir::PackedArrayType>();
+  mir::PackedArrayType natural = field.PackedShape();
   natural.signedness = mir::Signedness::kUnsigned;
-  natural.state_kind = source.Get<mir::PackedArrayType>().state_kind;
+  natural.state_kind = source.PackedShape().state_kind;
   return unit.types.Intern(mir::Type{std::move(natural)});
 }
 

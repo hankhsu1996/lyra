@@ -87,9 +87,10 @@ type's constructor arguments (e.g. `lyra::value::PackedArray(32, true, false)` f
 prototype. `std::array<T, N>{}` with default-constructed elements does not, because the default ctor
 cannot accept element-specific arguments.
 
-**Consequence:** backend emit must know the element type's default ctor args at every depth, and the
-storage form must accept a prototype value. The existing `RenderTypeDefaultCtorArgs` chain already
-produces these args for packed types; the unpacked path reuses the chain recursively.
+**Consequence:** the storage form must accept a prototype value, and something must produce one for
+the element type at every depth. That is the lowering's, not a backend's: the prototype reaches a
+backend as an ordinary operand of the construction, built from the source element type so a member's
+own declaration initializer is part of it.
 
 ### F5. `'{...}` is intrinsically expression-shaped
 

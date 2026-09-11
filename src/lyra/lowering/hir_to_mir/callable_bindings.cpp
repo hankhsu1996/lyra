@@ -25,6 +25,7 @@ CallableBindings::CallableBindings(
     : unit_(&unit),
       code_(&decl.invoke),
       closure_decl_(&decl),
+      closure_id_(closure_id),
       parent_(&parent),
       capture_site_(&capture_site),
       policy_(std::move(policy)) {
@@ -109,7 +110,10 @@ auto CallableBindings::MakeReadExpr(BodyBindingRef ref, mir::Block& block) const
                 closure_decl_->fields.Get(field).type;
             const mir::ExprId receiver = block.exprs.Add(
                 mir::MakeLocalRefExpr(self_local_, self_ptr_type_));
-            return mir::MakeFieldAccessExpr(receiver, field, field_type);
+            return mir::MakeFieldAccessExpr(
+                receiver,
+                mir::ClosureFieldTarget{.owner = closure_id_, .slot = field},
+                field_type);
           },
       },
       ref.ref);

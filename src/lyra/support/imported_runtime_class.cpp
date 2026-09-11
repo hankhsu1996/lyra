@@ -1,10 +1,18 @@
 #include "lyra/support/imported_runtime_class.hpp"
 
+#include <array>
+#include <optional>
 #include <string_view>
 
 #include "lyra/base/internal_error.hpp"
 
 namespace lyra::support {
+
+namespace {
+
+constexpr std::array kEveryImportedRuntimeClass{ImportedRuntimeClass::kProcess};
+
+}  // namespace
 
 auto ImportedRuntimeClassName(ImportedRuntimeClass klass) -> std::string_view {
   switch (klass) {
@@ -14,70 +22,14 @@ auto ImportedRuntimeClassName(ImportedRuntimeClass klass) -> std::string_view {
   throw InternalError("ImportedRuntimeClassName: unknown imported class");
 }
 
-auto ImportedRuntimeMethodSymbol(ImportedRuntimeMethod method)
-    -> std::string_view {
-  switch (method) {
-    case ImportedRuntimeMethod::kProcessSelf:
-      return "ProcessSelf";
-    case ImportedRuntimeMethod::kProcessStatus:
-      return "ProcessStatus";
-    case ImportedRuntimeMethod::kProcessKill:
-      return "ProcessKill";
-    case ImportedRuntimeMethod::kProcessAwait:
-      return "ProcessAwait";
-    case ImportedRuntimeMethod::kProcessSuspend:
-      return "ProcessSuspend";
-    case ImportedRuntimeMethod::kProcessResume:
-      return "ProcessResume";
+auto ImportedRuntimeClassNamed(std::string_view name)
+    -> std::optional<ImportedRuntimeClass> {
+  for (const ImportedRuntimeClass klass : kEveryImportedRuntimeClass) {
+    if (ImportedRuntimeClassName(klass) == name) {
+      return klass;
+    }
   }
-  throw InternalError("ImportedRuntimeMethodSymbol: unknown method");
-}
-
-auto ImportedRuntimeMethodEntryName(ImportedRuntimeMethod method)
-    -> std::string_view {
-  switch (method) {
-    case ImportedRuntimeMethod::kProcessSelf:
-      return "process_self";
-    case ImportedRuntimeMethod::kProcessStatus:
-      return "process_status";
-    case ImportedRuntimeMethod::kProcessKill:
-      return "process_kill";
-    case ImportedRuntimeMethod::kProcessAwait:
-      return "process_await";
-    case ImportedRuntimeMethod::kProcessSuspend:
-      return "process_suspend";
-    case ImportedRuntimeMethod::kProcessResume:
-      return "process_resume";
-  }
-  throw InternalError("ImportedRuntimeMethodEntryName: unknown method");
-}
-
-auto ImportedRuntimeMethodTakesServices(ImportedRuntimeMethod method) -> bool {
-  switch (method) {
-    case ImportedRuntimeMethod::kProcessSelf:
-    case ImportedRuntimeMethod::kProcessKill:
-    case ImportedRuntimeMethod::kProcessAwait:
-    case ImportedRuntimeMethod::kProcessSuspend:
-    case ImportedRuntimeMethod::kProcessResume:
-      return true;
-    case ImportedRuntimeMethod::kProcessStatus:
-      return false;
-  }
-  throw InternalError("ImportedRuntimeMethodTakesServices: unknown method");
-}
-
-auto ImportedRuntimeMethodSuspends(ImportedRuntimeMethod method) -> bool {
-  switch (method) {
-    case ImportedRuntimeMethod::kProcessAwait:
-      return true;
-    case ImportedRuntimeMethod::kProcessSelf:
-    case ImportedRuntimeMethod::kProcessStatus:
-    case ImportedRuntimeMethod::kProcessKill:
-    case ImportedRuntimeMethod::kProcessSuspend:
-    case ImportedRuntimeMethod::kProcessResume:
-      return false;
-  }
-  throw InternalError("ImportedRuntimeMethodSuspends: unknown method");
+  return std::nullopt;
 }
 
 }  // namespace lyra::support

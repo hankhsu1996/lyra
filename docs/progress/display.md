@@ -55,9 +55,9 @@ refused outright rather than left-justified.
       `, ` between elements; empty containers print `'{}`; multi-dimensional and mixed-container
       forms nest naturally. Singular integral elements follow the LRM "as it would unformatted" rule
       (default `$display` radix, i.e. decimal); singular string elements print quoted. `%0p`
-      produces identical text in this scope; LRM 21.2.1.6 allows it. Struct / union / string-typed /
-      real element formats land with their respective type workstreams; the enumeration element is
-      the recorded gap below.
+      produces identical text in this scope; LRM 21.2.1.6 allows it. A structure and a union format
+      as the same pattern, at any depth and as the whole operand, so no aggregate operand is left
+      without a rendering; what they do not carry is the names, the recorded gap below.
 - [x] DI8 -- `$sscanf` and `$fscanf` over a shared scanner core (LRM 21.3.4.3). Statement-position
       call (bare or blocking assign-RHS); conversions `%d` / `%h` / `%x` / `%b` / `%o` / `%s` / `%c`
       / `%%`; 4-state vocabulary (`x` / `z` / `?` / `_`) inside the integer conversions; single-char
@@ -185,13 +185,28 @@ makes, recorded per path as the wrong answer or the refusal that path gives; the
 right the case passes there and that record fails until its entry goes. What is written here is what
 the standard requires.
 
-- [ ] **`%p` of an enumeration inside an aggregate prints the integer** (LRM 21.2.1.6), where the
-      clause requires the enumeration name for every singular element an aggregate is traversed down
-      to, not only for an operand written as one. An operand written as one is right. What holds the
-      element is that a value's declared names are the compiler's to answer for, while the traversal
-      that reaches an element belongs to the formatter, and a print item states a value and a
-      conversion but no way to render an element -- so the two never meet. Closing it means a print
+- [ ] **`%p` prints an aggregate without the names its type declares** (LRM 21.2.1.6), where the
+      clause requires an unpacked or packed structure to print as an assignment pattern with named
+      elements, a union to print its first declared element by name, a tagged union to print
+      `tag:value`, and every singular element an aggregate is traversed down to -- an enumeration
+      among them -- to print the name its own type declares. An enumeration written as the whole
+      operand is right; nothing reached by traversal is.
+
+      One root holds all of it: a value's declared names are the compiler's to answer for, while the
+      traversal that reaches an element belongs to the formatter, and a print item states a value and
+      a conversion but no way to render an element -- so the two never meet. Closing it means a print
       item that carries how its elements render.
+
+      The half that was missing underneath is now there: an aggregate the source declared names its
+      members in its own MIR and LIR type
+      ([aggregate-names-are-type-content](../decisions/aggregate-names-are-type-content.md)), so a
+      per-type description is a function of the type and two values of one type cannot render
+      differently. Composing the text at the lowering instead does not close it -- a container's
+      element count exists only at run time, which is exactly why the enumeration case works for a
+      whole operand and nowhere else.
+
+      Until it lands, an aggregate prints as the pattern without names, which is a legal `%0p` and a
+      recorded defect for `%p`; the execution backend refuses the operand rather than answering.
 
 ## Out of Scope
 

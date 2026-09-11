@@ -208,6 +208,15 @@ enum class BuiltinFn : std::uint16_t {
   // before any process, so nothing is subscribed yet. Every later store
   // requires its value to already be at the installed representation.
   kInitialize,
+  // Installing what a net's declaration gives it, once at construction: the
+  // representation its data type fixes, and the fold its declared net type
+  // picked (LRM 6.6). One entry per fold -- tri-state for `wire` / `tri`,
+  // wired-and for `wand` / `triand`, wired-or for `wor` / `trior` (LRM 6.6.1,
+  // 6.6.3) -- because a fold is a truth table the net applies rather than a
+  // value a call can carry, and an operation is named here.
+  kNetInitializeTriState,
+  kNetInitializeWiredAnd,
+  kNetInitializeWiredOr,
   // Reading what a cell holds, and replacing it. Both act on the wrapper rather
   // than name its storage: a read answers with a value the cell decides how to
   // produce, and a write publishes the change to whatever the wrapper relates
@@ -433,6 +442,19 @@ enum class BuiltinFn : std::uint16_t {
   // their own, and a real expression, which can name a fraction of a unit.
   kDelay,
   kDelayReal,
+  // What decides whether reaching a wait is an event for it (LRM 9.4.2), built
+  // where the wait begins and held for as long as it lasts. Two halves, each
+  // present exactly where the source put one: an event control watches an
+  // expression's value at a stated edge, and a named event's trigger is the
+  // event itself so it watches nothing; either may carry an `iff` qualifier
+  // (LRM 9.4.2.3, 15.5). Four entries because the four combinations are what
+  // the language distinguishes and an absent half has no value to stand in for
+  // it, so which one a wait carries is settled where the source is read rather
+  // than by counting arguments.
+  kObservationOnReaching,
+  kObservationOfValue,
+  kObservationOfValueQualified,
+  kObservationQualified,
   // LRM 9.4.2 / 9.4.2.2 / 9.4.3 value-change wait. The runtime free function
   // every wait on a signal suspends on -- an `@(...)`, an `@*`, an
   // `always_comb` / `always_latch` body, a `wait (cond)`, a continuous
@@ -550,6 +572,17 @@ enum class BuiltinFn : std::uint16_t {
   kEnterTarget,
   kLeaveTarget,
   kEffectNamesTarget,
+  // LRM 9.7's `process` methods. The class is one the runtime library defines
+  // and every unit imports rather than declares, so no per-unit declaration
+  // names these and the library carries each of them out. `kProcessSelf` names
+  // the running process, so it acts on no object; the other five act on the
+  // handle one of those answered with.
+  kProcessSelf,
+  kProcessStatus,
+  kProcessKill,
+  kProcessAwait,
+  kProcessSuspend,
+  kProcessResume,
   // Lifecycle activation registration (LRM 9.2): binds a process body's
   // coroutine to the scope's startup (`kRegisterInitial`) or shutdown
   // (`kRegisterFinal`) lifecycle. Distinct callees, not one tagged call --
@@ -639,11 +672,11 @@ enum class BuiltinFn : std::uint16_t {
   kCurrentExportScope,
   kFindExportEntry,
   // The outer step of a value conversion: the static factory that lands a
-  // machine-level result in the destination's declared representation, which
-  // the call site names as the qualifier. `kFromInt` builds a target-shape
-  // vector from a machine integer and `kConvertFrom` reshapes another packed
-  // vector; `kFromPackedArray` and `kFromByteArray` build a string from packed
-  // bits (LRM 6.16) or from a byte unpacked array (LRM 21.3.4.3).
+  // machine-level result in the destination's declared representation, which is
+  // the type the call answers with. `kFromInt` builds a target-shape vector
+  // from a machine integer and `kConvertFrom` reshapes another packed vector;
+  // `kFromPackedArray` and `kFromByteArray` build a string from packed bits
+  // (LRM 6.16) or from a byte unpacked array (LRM 21.3.4.3).
   kFromInt,
   kFromWords,
   kConvertFrom,
@@ -652,16 +685,15 @@ enum class BuiltinFn : std::uint16_t {
   // The opposite direction, under the LRM 5.9 string-literal assignment rules:
   // an integral destination takes the text right-justified, an unpacked byte
   // array takes it left-justified. One factory named on whichever destination
-  // the call qualifies it with; that destination's declared representation
-  // reaches it as an operand naming its type (plus an element count for the
-  // array).
+  // the call answers with; that destination's declared representation reaches
+  // it as an operand naming its type (plus an element count for the array).
   kFromString,
   // LRM 7.6: one unpacked array kind taking another's elements. The three kinds
   // differ in what the destination declares and the source cannot supply -- a
-  // fixed-size array its element count, a queue its bound -- so the destination
-  // qualifies the call and states those as operands, while the elements
-  // themselves cross unchanged because the clause admits the assignment only
-  // where the element types are equivalent. Named rather than left to the
+  // fixed-size array its element count, a queue its bound -- so the call states
+  // those as operands, while the elements themselves cross unchanged because
+  // the clause admits the assignment only where the element types are
+  // equivalent. Named rather than left to the
   // type's own construction because building over an element list carries the
   // same operand count.
   kFromArray,
@@ -686,9 +718,9 @@ enum class BuiltinFn : std::uint16_t {
   // The step that fits a concatenation's parts to a fixed-size unpacked array
   // (LRM 10.10): the parts, accumulated into a dynamic array by the two steps
   // above, adopted into a target whose element count is fixed, which is an
-  // error when the counts differ. The target's type qualifies the call, as it
-  // does for any static factory, so the entry is named for the array it builds
-  // and not for the dynamic array it reads.
+  // error when the counts differ. The call answers with that target, as it does
+  // for any static factory, so the entry is named for the array it builds and
+  // not for the dynamic array it reads.
   kArrayConformSize,
   // A dynamic array sized at run time: empty at its declared element shape,
   // `new[N]`, and `new[N](src)` (LRM 7.5.1). Each is named because the
@@ -696,8 +728,8 @@ enum class BuiltinFn : std::uint16_t {
   // list both carry two operands -- so a target that cannot resolve overloads
   // would have nothing to read. Building one from an element list is not among
   // them: every container builds from a list the same way, so its own type
-  // names that factory. The array's type qualifies the call, as it does for
-  // any static factory.
+  // names that factory. The call answers with the array, as it does for any
+  // static factory.
   kMakeDynamicArrayDefault,
   kMakeDynamicArrayNew,
   kMakeDynamicArrayNewCopy,
@@ -723,6 +755,16 @@ enum class BuiltinFn : std::uint16_t {
   kShiftLeft,
   kLogicalShiftRight,
   kArithmeticShiftRight,
+  // The same three shifts applied to what a place holds, rather than computed
+  // from two values (LRM 11.4.1 `<<=` / `>>=` / `>>>=`). A compound assignment
+  // reads its destination exactly once, and an entry that answers with a value
+  // leaves the reading to whoever calls it -- so applying is its own operation,
+  // and it is the one a compound assignment names. Every other compound
+  // assignment operator is one a target applies to two values of one type and
+  // names no entry at all.
+  kShiftLeftAssign,
+  kLogicalShiftRightAssign,
+  kArithmeticShiftRightAssign,
   kBitwiseXnor,
   kLogicalImplication,
   kLogicalEquivalence,
@@ -771,7 +813,7 @@ struct Method {
 };
 
 // A factory on the type the entry builds. There is no object to act on, and
-// the call site names that type as the call's qualifier.
+// the type it is reached on is the type of the value the call answers with.
 struct StaticFactory {
   std::string_view identifier;
 };
@@ -799,6 +841,19 @@ struct RuntimeEntry {
   // Where the library declares the entry, and what a call site writes to reach
   // it.
   EntryDeclaration declaration;
+  // Whether the entry's implementation takes the engine handle -- to reach the
+  // scheduler, or to identify the process that is running. It is an ordinary
+  // operand, riding immediately after the object the entry acts on and first
+  // where there is none, so a call site composing the operands has to know
+  // whether to supply it and only the entry knows.
+  bool takes_the_runtime_handle = false;
+  // Whether a call to the entry parks the caller until something other than
+  // the call settles, so a statement calling it awaits (LRM 9.7 `await`, LRM
+  // 9.4 a delay, LRM 9.4.2 a value-change wait). Distinct from a callee that
+  // completes as a coroutine, which the call's own type states: the entry
+  // answers with an ordinary value and nothing about that value says the
+  // caller stopped.
+  bool parks_the_caller = false;
   // Whether the entry updates the object it acts on, so that object names a
   // place rather than a value -- which is what makes a receiver reaching
   // through a capability wrapper reach its write access. Where the update

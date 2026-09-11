@@ -9,7 +9,7 @@ A common case is a 2-state literal feeding a 4-state target -- `logic [7:0] a = 
 slang types `8'd5` as `bit[7:0]` and wraps it in a conversion to `logic[7:0]`. At the value level
 the bits do not change; only the state representation widens (a zero unknown plane is added).
 
-The C++ backend carried a render-time peephole that detected "a `ConversionExpr` whose operand is an
+The C++ backend carried a render-time peephole that detected "a conversion whose operand is an
 integer literal and whose destination only restates the same bits (same width, same signedness, no
 X/Z dropped by a 2-state target)" and emitted the literal directly in the destination shape,
 skipping the runtime conversion.
@@ -19,17 +19,17 @@ The question raised: should that fold move earlier -- into HIR-to-MIR -- so MIR 
 
 ## Decision
 
-No. MIR keeps the conversion faithfully: a `ConversionExpr` wrapping a literal stays. Constant
-folding is the downstream optimizer's job, not HIR-to-MIR's. The backend's render-time peephole is
-removed; the conversion render is a pure `(source kind, destination kind)` map that never inspects
-its operand.
+No. A conversion over a literal is lowered exactly as one over any other operand. Constant folding
+is the downstream optimizer's job, not HIR-to-MIR's. The backend's render-time peephole is removed;
+what renders a conversion is a function of the source and destination types and never inspects its
+operand.
 
 The deciding argument is symmetry. A 2-state -> 4-state conversion of a variable and of a constant
 are the same operation:
 
 ```
-a = y;       // y : bit[7:0]    -> ConversionExpr(y)
-a = 8'd5;    // 8'd5 : bit[7:0] -> ConversionExpr(8'd5)
+a = y;       // y : bit[7:0]    -> a conversion over y
+a = 8'd5;    // 8'd5 : bit[7:0] -> a conversion over 8'd5
 ```
 
 Folding only the constant case special-cases the node on whether its operand happens to be a literal
@@ -59,10 +59,10 @@ living in the render layer. Removing it, not relocating it, is the fix.
 
 ## Consequences
 
-- MIR carries a `ConversionExpr` over any operand, literal or not; the dumper shows the conversion
-  faithfully.
-- The conversion render is a pure `(source kind, destination kind)` map; the C++ output mirrors the
-  MIR (a runtime conversion for the constant case), and the C++ compiler / LLVM fold it downstream.
+- A conversion is lowered over any operand, literal or not, and the dump shows it faithfully.
+- What renders a conversion is a function of the source and destination types; the C++ output
+  mirrors the MIR (a runtime conversion for the constant case), and the C++ compiler / LLVM fold it
+  downstream.
 - Bit-changing constant conversions (`8'd5` -> `16'd5`) were never folded at MIR and still are not
   -- the same rule, applied uniformly: MIR faithful, optimizer folds.
 

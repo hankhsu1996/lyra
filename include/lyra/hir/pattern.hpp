@@ -42,9 +42,9 @@ struct VariablePattern {
 
 // LRM 12.6 tagged pattern `tagged Member [pattern]`: matches iff the tagged
 // union's active tag equals `member_index`; `value_pattern` (present for a
-// non-void member) is then recursively matched against the payload. Member
-// names are dropped -- position is the tag, consistent with the untagged /
-// packed handling.
+// non-void member) is then recursively matched against the payload. A member is
+// reached by where it sits rather than by its name -- position is the tag,
+// consistent with the untagged / packed handling.
 struct TaggedPattern {
   base::ComponentIndex member_index;
   std::optional<PatternId> value_pattern;

@@ -66,59 +66,29 @@ void VerifyInstr(
                   "place type");
             }
           },
-          [&](const PointerCastInstr& cast) {
+          // Between two packed values a cast only renames what the program
+          // holds the bits to be, so the two must structure their bits alike:
+          // where they do not, the reshape meant to precede this is missing
+          // and the value silently changes width.
+          [&](const CastInstr& cast) {
             const std::optional<TypeId> operand_type =
                 OperandType(fn, cast.operand);
-            const std::optional<AddressKind> from =
-                operand_type.has_value()
-                    ? unit.types.Get(*operand_type).Address()
-                    : std::nullopt;
-            if (!from || from != unit.types.Get(result_type).Address()) {
-              throw InternalError(
-                  "lir verify: pointer cast is not between two addresses of "
-                  "one kind");
+            if (!operand_type) {
+              throw InternalError("lir verify: cast operand has no type");
             }
-          },
-          [&](const IntCastInstr& cast) {
-            const std::optional<TypeId> operand_type =
-                OperandType(fn, cast.operand);
-            const auto is_machine_int = [&](TypeId type) {
-              return unit.types.Get(type).Is<MachineIntType>();
-            };
-            if (!operand_type || !is_machine_int(*operand_type)) {
+            const Type& from = unit.types.Get(*operand_type);
+            const Type& to = unit.types.Get(result_type);
+            if (from.IsIntegralPacked() && to.IsIntegralPacked() &&
+                from.PackedShape() != to.PackedShape()) {
               throw InternalError(
-                  "lir verify: integer cast of a non-machine-integer operand");
-            }
-            if (!is_machine_int(result_type)) {
-              throw InternalError(
-                  "lir verify: integer cast result is not a machine integer");
-            }
-          },
-          // A value cast names a type; it never reshapes. Both sides must
-          // structure their bits identically, or the reshape that was meant to
-          // precede it is missing and the value silently changes width.
-          [&](const ValueCastInstr& cast) {
-            const std::optional<TypeId> operand_type =
-                OperandType(fn, cast.operand);
-            if (!operand_type ||
-                !unit.types.Get(*operand_type).IsIntegralPacked() ||
-                !unit.types.Get(result_type).IsIntegralPacked()) {
-              throw InternalError(
-                  "lir verify: value cast between types that are not both "
-                  "integral");
-            }
-            if (unit.types.Get(*operand_type).PackedShape() !=
-                unit.types.Get(result_type).PackedShape()) {
-              throw InternalError(
-                  "lir verify: value cast changes its value's representation");
+                  "lir verify: cast changes its value's representation");
             }
           },
           [](const CallInstr&) {}, [](const ProductInstr&) {},
           [](const ArrayInstr&) {}, [](const UnionInstr&) {},
           [](const AggregateExtractInstr&) {},
           [](const AggregateUpdateInstr&) {}, [](const TagTestInstr&) {},
-          [](const BinaryInstr&) {}, [](const UnaryInstr&) {},
-          [](const BoolCastInstr&) {}},
+          [](const BinaryInstr&) {}, [](const UnaryInstr&) {}},
       instr.data);
 }
 

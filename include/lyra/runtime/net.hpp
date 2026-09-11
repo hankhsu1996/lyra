@@ -13,29 +13,11 @@
 #include "lyra/runtime/takeover.hpp"
 #include "lyra/runtime/trigger.hpp"
 #include "lyra/runtime/var.hpp"
-#include "lyra/support/net_resolution.hpp"
 #include "lyra/value/concepts.hpp"
 #include "lyra/value/net_resolution.hpp"
 #include "lyra/value/packed_array.hpp"
 
 namespace lyra::runtime {
-
-// The value layer's own naming of the fold a net's declared net type picked
-// (LRM 6.6). A net crosses into the runtime carrying the backend-facing
-// `support::NetResolution`; the per-bit resolution the value layer performs is
-// named by `value::NetResolution`, and this is the one place the two meet.
-[[nodiscard]] inline auto ToValueNetResolution(
-    support::NetResolution resolution) -> value::NetResolution {
-  switch (resolution) {
-    case support::NetResolution::kTriState:
-      return value::NetResolution::kTriState;
-    case support::NetResolution::kWiredAnd:
-      return value::NetResolution::kWiredAnd;
-    case support::NetResolution::kWiredOr:
-      return value::NetResolution::kWiredOr;
-  }
-  throw InternalError("ToValueNetResolution: unknown net resolution");
-}
 
 // The drive strength of a driver's contribution (LRM 28). Strength is a
 // property of what a driver contributes, not of the net's resolved value, so it
@@ -82,30 +64,32 @@ class Driver;
 // way the net re-resolves and publishes on a real change (LRM 9.4.2). The net
 // owns the contribution
 // storage; a `Driver<T>` names one contribution by an index the net issued, so
-// the storage stays the net's to reorganize. The fold is fixed at construction
-// from the declared net type and carried as data, not as a template parameter.
+// the storage stays the net's to reorganize.
 template <value::NetResolvable T>
 class ResolvedNet : public Observable {
  public:
-  explicit ResolvedNet(support::NetResolution resolution)
-      : resolution_(ToValueNetResolution(resolution)) {
-  }
+  ResolvedNet() = default;
 
-  // Fixes the net's declared type, once at construction, from a value carrying
-  // it. The net is therefore a readable, well-typed observable before any
-  // driver attaches. Its value at that point is the fold over no contributions
-  // at all, which is the same fold every later value comes from -- an empty
-  // driver set is not a case of its own. Installing twice is a lowering defect.
-  void Initialize(T prototype) {
-    if constexpr (std::same_as<T, value::PackedArray>) {
-      if (!resolved_.IsUninitialized()) {
-        throw InternalError(
-            "ResolvedNet::Initialize: the net's declared type is already "
-            "fixed");
-      }
-    }
-    nondriving_ = T::HighImpedanceLike(prototype);
-    resolved_ = FoldContributions(contributions_, nondriving_, resolution_);
+  // Fixes what the net's declaration gives it -- the declared type, from a
+  // value carrying it, and the fold its declared net type picked -- once at
+  // construction. The net is therefore a readable, well-typed observable
+  // before any driver attaches. Its value at that point is the fold over no
+  // contributions at all, which is the same fold every later value comes from
+  // -- an empty driver set is not a case of its own. Installing twice is a
+  // lowering defect.
+  //
+  // One entry per fold, since a fold has no spelling as a value the call could
+  // carry: tri-state for `wire` / `tri` (LRM 6.6.1 Table 6-2), wired-and for
+  // `wand` / `triand` and wired-or for `wor` / `trior` (LRM 6.6.3 Tables 6-3
+  // and 6-4).
+  void InitializeTriState(T prototype) {
+    Install(std::move(prototype), value::NetResolution::kTriState);
+  }
+  void InitializeWiredAnd(T prototype) {
+    Install(std::move(prototype), value::NetResolution::kWiredAnd);
+  }
+  void InitializeWiredOr(T prototype) {
+    Install(std::move(prototype), value::NetResolution::kWiredOr);
   }
 
   ResolvedNet(const ResolvedNet&) = delete;
@@ -160,6 +144,18 @@ class ResolvedNet : public Observable {
 
  private:
   friend class Driver<T>;
+
+  void Install(T prototype, value::NetResolution resolution) {
+    if constexpr (std::same_as<T, value::PackedArray>) {
+      if (!resolved_.IsUninitialized()) {
+        throw InternalError(
+            "ResolvedNet: the net's declared type is already fixed");
+      }
+    }
+    resolution_ = resolution;
+    nondriving_ = T::HighImpedanceLike(prototype);
+    resolved_ = FoldContributions(contributions_, nondriving_, resolution_);
+  }
 
   void UpdateContribution(
       RuntimeEffects& runtime, std::size_t index, const T& value) {
@@ -222,7 +218,7 @@ class ResolvedNet : public Observable {
 
   T resolved_{};
   T nondriving_{};
-  value::NetResolution resolution_;
+  value::NetResolution resolution_{};
   // The procedural continuous assignments this net has been put under (LRM
   // 10.6.2), absent until the first one starts, so a net nobody forces resolves
   // exactly as it did before the construct existed.

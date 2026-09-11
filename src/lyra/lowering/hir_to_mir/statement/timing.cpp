@@ -83,25 +83,6 @@ auto BuildConditionClosure(
   return block.exprs.Add(closure.Build(held_id));
 }
 
-// Materialises an observation into a local of `block`, so every leaf of the
-// event expression names one value rather than one each.
-auto DeclareObservation(
-    const mir::CompilationUnit& unit, WalkFrame frame, mir::Block& block,
-    std::vector<mir::ExprId> arguments) -> mir::LocalId {
-  const mir::ExprId observe_id = block.exprs.Add(
-      mir::Expr{
-          .data =
-              mir::CallExpr{
-                  .callee = mir::Construct{},
-                  .arguments = std::move(arguments)},
-          .type = unit.builtins.observation});
-  const mir::LocalId local = frame.bindings->DeclareAnonymous(
-      mir::LocalDecl{
-          .name = "_lyra_observation", .type = unit.builtins.observation});
-  block.AppendStmt(mir::LocalDeclStmt{.target = local, .init = observe_id});
-  return local;
-}
-
 // The observation one event expression is watched through (LRM 9.4.2): a
 // closure that answers what the expression is worth now, armed with what it is
 // worth here, and the `iff` qualifier where the source wrote one. It is one
@@ -122,35 +103,42 @@ auto BuildObservationLocal(
   std::vector<mir::ExprId> arguments{
       block.exprs.Add(closure.Build(value_id)),
       BuildIntLiteral(unit, block, static_cast<std::int64_t>(trigger.edge))};
-  if (trigger.condition.has_value()) {
-    auto condition =
-        BuildConditionClosure(lowerer, frame, block, *trigger.condition);
-    if (!condition) return std::unexpected(std::move(condition.error()));
-    arguments.push_back(*condition);
+  if (!trigger.condition.has_value()) {
+    return DeclareObservation(
+        unit, frame, block, support::BuiltinFn::kObservationOfValue,
+        std::move(arguments));
   }
-  return DeclareObservation(unit, frame, block, std::move(arguments));
+  auto condition =
+      BuildConditionClosure(lowerer, frame, block, *trigger.condition);
+  if (!condition) return std::unexpected(std::move(condition.error()));
+  arguments.push_back(*condition);
+  return DeclareObservation(
+      unit, frame, block, support::BuiltinFn::kObservationOfValueQualified,
+      std::move(arguments));
 }
 
 // What a wait carries where the only thing that can hold it back is an `iff`
 // qualifier (LRM 9.4.2.3): a named event's trigger is the event, so there is no
-// value to have moved. Without a qualifier nothing further decides, and the
-// wait names no observation at all.
+// value to have moved. Without a qualifier nothing further decides, and being
+// reached is the whole condition.
 auto BuildQualifierObservationLocal(
     ProcessLowerer& process, WalkFrame frame, mir::Block& block,
-    std::optional<hir::ExprId> condition)
-    -> diag::Result<std::optional<mir::LocalId>> {
+    std::optional<hir::ExprId> condition) -> diag::Result<mir::LocalId> {
+  auto& unit = process.Owner().Unit();
   if (!condition.has_value()) {
-    return std::optional<mir::LocalId>{std::nullopt};
+    return DeclareObservation(
+        unit, frame, block, support::BuiltinFn::kObservationOnReaching, {});
   }
   auto closure = BuildConditionClosure(process, frame, block, *condition);
   if (!closure) return std::unexpected(std::move(closure.error()));
-  return std::optional<mir::LocalId>{
-      DeclareObservation(process.Owner().Unit(), frame, block, {*closure})};
+  return DeclareObservation(
+      unit, frame, block, support::BuiltinFn::kObservationQualified,
+      {*closure});
 }
 
 // LRM 9.4.2.2 `@*`: the standard makes the wait sensitive to the variables the
 // controlled statement reads rather than to the value of an expression, so
-// being reached is the whole of the condition and no observation is built.
+// being reached is the whole of the condition.
 auto BuildImplicitEventWaitStmt(
     ProcessLowerer& process, WalkFrame frame, mir::Block& block,
     const hir::ImplicitEventControl& ie) -> mir::Stmt {
@@ -256,7 +244,7 @@ auto BuildEventWaitStmt(
           ObservedLeaf{.entry = leaf, .observation = *observation});
     }
   }
-  return BuildEventControlWaitStmt(block, frame, scope, leaves);
+  return BuildWaitStmt(block, frame, scope, leaves);
 }
 
 template auto BuildEventWaitStmt(
@@ -276,8 +264,7 @@ auto BuildNamedEventWaitStmt(
   if (!observation) return std::unexpected(std::move(observation.error()));
   const std::array<ObservedLeaf, 1> leaves{
       ObservedLeaf{.entry = nec.event, .observation = *observation}};
-  return BuildEventControlWaitStmt(
-      block, frame, process.EnclosingScopeLowerer(), leaves);
+  return BuildWaitStmt(block, frame, process.EnclosingScopeLowerer(), leaves);
 }
 
 auto BuildAnyEventWaitStmt(

@@ -186,8 +186,9 @@ class UnitLowerer {
   // enter that construction is a property only the base's promise states.
   auto TranslateBaseClassRef(const hir::ClassRef& ref) -> mir::ClassRef;
 
-  auto MakeExternalFieldTarget(const hir::ExternalClassPropertyTarget& target)
-      -> mir::ExternalFieldTarget;
+  auto MakeCrossUnitClassFieldTarget(
+      const hir::ExternalClassPropertyTarget& target)
+      -> mir::CrossUnitClassFieldTarget;
 
   // Takes this unit's record of what another unit promised about one of its
   // classes into MIR, once per class reached. Every reference that reads the
@@ -199,10 +200,10 @@ class UnitLowerer {
 
   // Convenience that dispatches a HIR class property reference to its MIR
   // `FieldRef` peer: the intra-unit arm translates the owner class and the
-  // field slot through the class registry, the cross-unit arm runs through
-  // `MakeExternalFieldTarget` so the external dependency is recorded in the
-  // same call. A caller reading a class property reaches for one entry
-  // point instead of visiting the variant at each access site.
+  // field slot through the class registry, the cross-unit arm records this
+  // unit's dependency on the declaring unit in the same call. A caller reading
+  // a class property reaches for one entry point instead of visiting the
+  // variant at each access site.
   auto TranslateClassPropertyTarget(const hir::ClassPropertyTarget& target)
       -> mir::FieldRef;
 

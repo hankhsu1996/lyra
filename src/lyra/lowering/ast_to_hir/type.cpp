@@ -43,27 +43,6 @@ namespace lyra::lowering::ast_to_hir {
 
 namespace {
 
-// A class the runtime library defines and every unit imports by reference is a
-// direct member of the built-in `std` package (LRM 9.7 `process` is the first
-// Lyra supports). Keying on the declaring package plus the name -- rather than
-// a bare name match anywhere -- is what makes this the library declaration's
-// identity, not a user class that happens to be named `process`.
-auto DetectImportedRuntimeClass(const slang::ast::ClassType& cls)
-    -> std::optional<support::ImportedRuntimeClass> {
-  const slang::ast::Scope* scope = cls.getParentScope();
-  if (scope == nullptr) {
-    return std::nullopt;
-  }
-  const auto& std_package = scope->getCompilation().getStdPackage();
-  if (scope != static_cast<const slang::ast::Scope*>(&std_package)) {
-    return std::nullopt;
-  }
-  if (cls.name == "process") {
-    return support::ImportedRuntimeClass::kProcess;
-  }
-  return std::nullopt;
-}
-
 // An enum nested in an imported runtime class (LRM 9.7 `process::state`) is a
 // value the runtime returns and the program compares, with no unit-emitted enum
 // declaration behind it. It lowers to its underlying integral type.
@@ -77,8 +56,7 @@ auto EnumBelongsToImportedRuntimeClass(const slang::ast::EnumType& enum_type)
   if (owner.kind != slang::ast::SymbolKind::ClassType) {
     return false;
   }
-  return DetectImportedRuntimeClass(owner.as<slang::ast::ClassType>())
-      .has_value();
+  return ImportedRuntimeClassOf(owner.as<slang::ast::ClassType>()).has_value();
 }
 
 auto LowerScalarAtom(slang::ast::ScalarType::Kind k) -> hir::BitAtom {
@@ -352,7 +330,7 @@ auto TranslateType(
       return hir::Type{hir::NullType{}};
     case slang::ast::SymbolKind::ClassType: {
       const auto& class_type = canonical.as<slang::ast::ClassType>();
-      if (const auto imported = DetectImportedRuntimeClass(class_type)) {
+      if (const auto imported = ImportedRuntimeClassOf(class_type)) {
         return hir::Type{hir::ImportedClassHandleType{.klass = *imported}};
       }
       auto class_ref_or = unit_lowerer.ResolveClassRef(class_type, decl_span);

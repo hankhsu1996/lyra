@@ -27,7 +27,6 @@
 #include "lyra/lowering/hir_to_mir/walk_frame.hpp"
 #include "lyra/mir/callable_code.hpp"
 #include "lyra/mir/expr.hpp"
-#include "lyra/mir/field.hpp"
 #include "lyra/mir/local.hpp"
 #include "lyra/mir/stmt.hpp"
 
@@ -50,7 +49,7 @@ struct AutomaticVarBinding {
 struct PromotedVarBinding {
   BindingOriginId handle_origin;
   mir::TypeId handle_type;
-  mir::FieldId field;
+  mir::StructFieldTarget field;
 };
 
 // Where one HIR procedural var of this body keeps its storage: an in-frame

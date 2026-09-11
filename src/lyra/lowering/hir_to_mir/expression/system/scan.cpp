@@ -81,7 +81,7 @@ auto LiftStringSource(
           "LiftStringSource: $sscanf unpacked-array source must have an "
           "8-bit integral element (LRM 21.3.4.3)");
     }
-  } else if (!source.Is<mir::PackedArrayType>()) {
+  } else if (!source.IsIntegralPacked()) {
     throw InternalError(
         "LiftStringSource: $sscanf source is not string, integral, or "
         "unpacked array of byte (LRM 21.3.4.3)");
@@ -256,7 +256,7 @@ auto LowerScanSystemSubroutineCall(
   mir::ExprId source_id{};
   mir::ExprId fd_id{};
   if (is_file) {
-    if (!unit.types.Get(raw_source_type).Is<mir::PackedArrayType>()) {
+    if (!unit.types.Get(raw_source_type).IsIntegralPacked()) {
       throw InternalError(
           "LowerScanSystemSubroutineCall: $fscanf fd is not packed-integer");
     }

@@ -19,13 +19,13 @@ storage it cannot name, and cannot count what its base declares. Across compilat
 see unpublished members at all, which is the same statement the North Star makes about incremental
 and separate compilation.
 
-The front end already states what this needs. `LocalClassPropertyTarget` carries the declaring class
-beside the property, and MIR keeps it as `FieldTarget`'s owner. Both consumers then drop it: the C++
-backend uses the owner only to look the name up and renders an unqualified `recv->name`, so the
-target language's own lookup finds the derived class's member; and MIR-to-LIR keeps the slot alone,
-leaving a member projection whose index is read against the type the chain arrived at. Two recorded
-defects are the same fact seen twice -- reading a shadowed property through `super` yields the
-derived class's own, and storing into an inherited member builds a place the LIR verifier rejects.
+The front end already states what this needs: a class property access carries the declaring class
+beside the property, and MIR keeps that owner. Both consumers then drop it: the C++ backend uses the
+owner only to look the name up and renders an unqualified `recv->name`, so the target language's own
+lookup finds the derived class's member; and MIR-to-LIR keeps the slot alone, leaving a member
+projection whose index is read against the type the chain arrived at. Two recorded defects are the
+same fact seen twice -- reading a shadowed property through `super` yields the derived class's own,
+and storing into an inherited member builds a place the LIR verifier rejects.
 
 ## Decision
 
@@ -85,6 +85,13 @@ the IR carries: LIR states the pair and nothing else.
 - A declaring class in another compilation unit is not resolvable at compile time, since the members
   it does not publish still take positions. That is the same case the path already refuses; when it
   lands, the position is what the runtime supplies rather than what lowering computes.
+- Every kind of declaration that declares fields is named this way, not only the class -- the
+  compiler-generated struct a promoted automatic scope lives in, the closure whose captures are its
+  fields, the object another unit published, and the class another unit declares. Only the class
+  makes the alternative derivation _wrong_, since only it inherits; the others make it merely
+  unnecessary, and an access that states its declaration anyway is what lets one reading resolve
+  every field name. The receiver's type is then checked against that declaration rather than
+  consulted to find it, which is the same relation the class case already had.
 - Not this decision: which method a call selects, and when a base's constructor and a class's
   property initializers run (8.7). Both are stated elsewhere and neither changes how storage is
   named.

@@ -59,8 +59,8 @@ struct BuiltinMirTypes {
   TypeId bit1;
   TypeId machine_bool;
   // The machine integer a runtime entry hands back as a plain value. It is the
-  // widest one, so a narrower machine integer is reached from it by an
-  // `IntCastExpr` rather than by an entry of its own.
+  // widest one, so a narrower machine integer is reached by reading this as
+  // that narrower type rather than by an entry of its own.
   TypeId machine_int64;
   // The machine word a packed value's storage is laid out in. A literal too
   // wide for one integer carrier states its bits as a run of these, which is
@@ -377,10 +377,10 @@ struct CompilationUnit {
   if (tu == nullptr) {
     throw InternalError("TaggedComponentType: type is not a tagged union");
   }
-  if (tag_index.value >= tu->elements.size()) {
+  if (tag_index.value >= tu->members.size()) {
     throw InternalError("TaggedComponentType: tag index out of range");
   }
-  return tu->elements[tag_index.value];
+  return tu->members[tag_index.value].type;
 }
 
 }  // namespace lyra::mir

@@ -15,6 +15,7 @@
 #include "lyra/backend/llvm/runtime_entry.hpp"
 #include "lyra/diag/diagnostic.hpp"
 #include "lyra/lir/function.hpp"
+#include "lyra/lir/type.hpp"
 #include "lyra/lir/type_id.hpp"
 #include "lyra/support/value_domain.hpp"
 
@@ -90,9 +91,7 @@ class CodeGenFunction {
       -> diag::Result<llvm::Value*>;
   auto LowerMachineUnary(const lir::UnaryInstr& unary)
       -> diag::Result<llvm::Value*>;
-  auto LowerBoolCast(const lir::BoolCastInstr& cast, lir::TypeId result_type)
-      -> diag::Result<llvm::Value*>;
-  auto LowerIntCast(const lir::IntCastInstr& cast, lir::TypeId result_type)
+  auto LowerCast(const lir::CastInstr& cast, lir::TypeId result_type)
       -> diag::Result<llvm::Value*>;
   auto LowerOperand(const lir::Operand& operand) -> diag::Result<llvm::Value*>;
 
@@ -162,7 +161,9 @@ class CodeGenFunction {
 
   // What a call's entry is handed, given the operands the call states. Nothing
   // here is anything the call means; it is this target's encoding of it.
-  auto CallArgs(const lir::CallInstr& call, std::vector<llvm::Value*> operands)
+  auto CallArgs(
+      const lir::CallInstr& call, lir::TypeId result_type,
+      std::vector<llvm::Value*> operands)
       -> diag::Result<std::vector<llvm::Value*>>;
 
   // The operands a call states, put into the form its entry takes them in.
@@ -188,14 +189,16 @@ class CodeGenFunction {
     std::optional<ErasedArgument> erased = std::nullopt;
     OperandForm operand_form = OperandsAsStated{};
   };
-  [[nodiscard]] auto EncodingOf(const lir::CallInstr& call) const
+  [[nodiscard]] auto EncodingOf(
+      const lir::CallInstr& call, lir::TypeId result_type) const
       -> diag::Result<CallEncoding>;
 
   // The erased operand of a call on a library entry, which is the one target
   // whose three roles -- a result prototype, a spread part, a coordinate -- are
   // read off the entry's own declaration.
   [[nodiscard]] auto BuiltinErasedOperand(
-      const lir::BuiltinTarget& target, const lir::CallInstr& call) const
+      const lir::BuiltinTarget& target, const lir::CallInstr& call,
+      lir::TypeId result_type) const
       -> diag::Result<std::optional<ErasedArgument>>;
 
   // The operand at one position, boxed into the domain its own type names.

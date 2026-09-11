@@ -65,13 +65,47 @@ struct EnumType {
   auto operator==(const EnumType&) const -> bool = default;
 };
 
-// LRM 7.2.1 / 7.3.1 packed struct and packed union have no MIR-level
-// distinct shape: HIR -> MIR translates `hir::PackedStructType` and
-// `hir::PackedUnionType` to their "single vector" projection
-// (`PackedArrayType`). Field accesses lower to constant-bounds RangeSelect
-// against that vector. An unpacked struct is a value product and maps to the
-// existing `TupleType`, not a distinct variant; an unpacked union (overlapping
-// member storage) is a separate representation problem.
+// A named member of an aggregate the source declared (LRM 7.2 / 7.2.1 / 7.3 /
+// 7.3.1). The position it sits at is what an access names it by; the name is
+// what LRM 21.2.1.6 prints for it. Where a member physically sits follows from
+// the kind of aggregate and the widths before it, so it is derived where it is
+// needed rather than carried here.
+struct AggregateMember {
+  std::string name;
+  TypeId type;
+
+  auto operator==(const AggregateMember&) const -> bool = default;
+};
+
+// The member types in declaration order, for a consumer that is answering
+// about the types alone. A member list is read directly wherever the names are
+// part of the answer.
+[[nodiscard]] auto MemberTypes(const std::vector<AggregateMember>& members)
+    -> std::vector<TypeId>;
+
+// LRM 7.2.1: a heterogeneous set of bit-fields packed into one vector, the
+// first member declared occupying the most significant bits. Every value
+// operation runs on `base`, the vector the members project onto -- the members
+// are what the aggregate declares of itself, which a bare vector of the same
+// width does not carry and which LRM 21.2.1.6 prints.
+struct PackedStructType {
+  PackedArrayType base;
+  std::vector<AggregateMember> members;
+
+  auto operator==(const PackedStructType&) const -> bool = default;
+};
+
+// LRM 7.3.1: members overlapping at the least significant bits of one vector.
+// A tagged union (LRM 7.3.2) additionally places a tag ahead of them, which
+// widens `base` and is bits of the vector like any other; nothing here
+// distinguishes the two forms, because no operation below the front end reaches
+// a packed member except through that vector.
+struct PackedUnionType {
+  PackedArrayType base;
+  std::vector<AggregateMember> members;
+
+  auto operator==(const PackedUnionType&) const -> bool = default;
+};
 
 // One declared unpacked dimension, `[left:right]`. Element order runs
 // left-to-right (LRM 7.6), so the leftmost element (index `left`) is storage
@@ -570,26 +604,35 @@ struct VectorType {
 };
 
 // A heterogeneous fixed product: an ordered list of component types, each
-// independent. MIR's only heterogeneous aggregate -- the generic-language
-// product type (the Rust / Python tuple, C++ `std::tuple` / `std::pair`),
-// where `VectorType` is the homogeneous one. It is what lets an associative
-// literal be a sequence of `(key, value)` pairs instead of two parallel lists,
-// so no associative-specific construction is needed.
+// independent. The anonymous generic-language product (the Rust / Python tuple,
+// C++ `std::tuple` / `std::pair`), where `VectorType` is the homogeneous one.
+// It is what lets an associative literal be a sequence of `(key, value)` pairs
+// instead of two parallel lists, so no associative-specific construction is
+// needed. A product a lowering composes for itself, never one the source
+// declared: a declared aggregate names its parts and this names none.
 struct TupleType {
   std::vector<TypeId> elements;
 
   auto operator==(const TupleType&) const -> bool = default;
 };
 
-// Overlapping member storage: one of an ordered list of component types is the
-// value at a time (the generic-language C `union`, distinct from the product
-// `TupleType` and from a tagged sum). The value-layer realization of an SV
-// untagged unpacked union (LRM 7.3); the member names are dropped to positions
-// at HIR-to-MIR, the index is the carrier. Carries component types only: a
-// tagged union is a separate concept rejected at the HIR-to-MIR gate, so no
-// flag distinguishes one here.
+// LRM 7.2 unpacked structure: a heterogeneous product whose members each hold
+// independent storage of their own type. Every value operation on it is the
+// product's; what it carries beyond one is the name the source declared for
+// each member, which LRM 21.2.1.6 prints.
+struct UnpackedStructType {
+  std::vector<AggregateMember> members;
+
+  auto operator==(const UnpackedStructType&) const -> bool = default;
+};
+
+// Overlapping member storage: one of an ordered list of members is the value at
+// a time (the generic-language C `union`, distinct from the product and from a
+// tagged sum). The value-layer realization of an SV untagged unpacked union
+// (LRM 7.3). A tagged union is a separate concept rejected at the HIR-to-MIR
+// gate, so no flag distinguishes one here.
 struct UnionType {
-  std::vector<TypeId> elements;
+  std::vector<AggregateMember> members;
 
   auto operator==(const UnionType&) const -> bool = default;
 };
@@ -610,12 +653,12 @@ struct EmptyType {
 // `UnionType`: an untagged union erases the tag and gives a cross-member read
 // a deterministic fallback; here the tag is observable through the pattern-
 // matching surface (LRM 12.6) and a member access whose type is inconsistent
-// with the tag is a run-time error. `elements` carries component types only,
-// positions carry the tag: names were dropped at HIR-to-MIR, exactly as for
-// `UnionType`. A `void` element -- allowed only in tagged unions (LRM 7.3.2)
-// -- carries `EmptyType`.
+// with the tag is a run-time error. A member's position is what the tag codes;
+// its name is what LRM 21.2.1.6 prints beside the value the tag selects. A
+// `void` member -- allowed only in tagged unions (LRM 7.3.2) -- carries
+// `EmptyType`.
 struct TaggedUnionType {
-  std::vector<TypeId> elements;
+  std::vector<AggregateMember> members;
 
   auto operator==(const TaggedUnionType&) const -> bool = default;
 };
@@ -634,22 +677,15 @@ struct ObservableType {
   auto operator==(const ObservableType&) const -> bool = default;
 };
 
-// How a net folds its drivers' contributions into its value (LRM 6.6). The
-// source net type picks it: `wire` and `tri` name the same tri-state fold, and
-// the wired-logic, charge-storage, pull, and supply net types each name their
-// own. It is part of the net's type because two nets of one data type resolve
-// differently when their net types differ, so nothing below can recover it from
-// the value type or invent it.
-enum class NetResolution : std::uint8_t { kTriState, kWiredAnd, kWiredOr };
-
 // A net's resolved storage: an observable value produced by resolving the
 // contributions of the net's drivers (LRM 6.5, 6.6). Readable and observable
 // like an `ObservableType` cell, but never written directly -- a value reaches
 // it through a driver, or through a procedural continuous assignment that
-// overrides what the drivers resolve to (LRM 10.6.2).
+// overrides what the drivers resolve to (LRM 10.6.2). The fold those
+// contributions resolve under (LRM 6.6) is installed at construction, so it is
+// the net's state rather than its type.
 struct ResolvedType {
   TypeId value;
-  NetResolution resolution;
 
   auto operator==(const ResolvedType&) const -> bool = default;
 };
@@ -685,11 +721,10 @@ struct EvaluationAttemptsType {
 };
 
 // The drive capability for a net: a handle to one of a `ResolvedType` net's
-// contributions. A driver updates only its own contribution; the net resolves,
-// so a driver carries the same resolution its net does.
+// contributions. A driver updates only its own contribution and never the
+// resolved value, which is the net's alone to arrive at.
 struct DriverType {
   TypeId value;
-  NetResolution resolution;
 
   auto operator==(const DriverType&) const -> bool = default;
 };
@@ -706,15 +741,16 @@ struct DriverType {
 class Type {
  private:
   using Data = std::variant<
-      PackedArrayType, EnumType, UnpackedArrayType, DynamicArrayType, QueueType,
-      AssociativeArrayType, WildcardIndexType, StringType, MachineCStringType,
-      MachineBoolType, MachineIntType, MachineFloatType, MachineArrayType,
-      MachineFunctionType, EventType, RealType, ShortRealType, RealTimeType,
-      ChandleType, VoidType, ObjectType, ExternalUnitObjectType,
-      CrossUnitClassType, RuntimeClassType, RuntimeEffectsType, FilesType,
-      DiagnosticType, RuntimeLibraryType, CoroutineType, RefType, PointerType,
-      ManagedRefType, VectorType, TupleType, UnionType, TaggedUnionType,
-      EmptyType, ObservableType, ResolvedType, DriverType, SampledHistoryType,
+      PackedArrayType, EnumType, PackedStructType, PackedUnionType,
+      UnpackedArrayType, DynamicArrayType, QueueType, AssociativeArrayType,
+      WildcardIndexType, StringType, MachineCStringType, MachineBoolType,
+      MachineIntType, MachineFloatType, MachineArrayType, MachineFunctionType,
+      EventType, RealType, ShortRealType, RealTimeType, ChandleType, VoidType,
+      ObjectType, ExternalUnitObjectType, CrossUnitClassType, RuntimeClassType,
+      RuntimeEffectsType, FilesType, DiagnosticType, RuntimeLibraryType,
+      CoroutineType, RefType, PointerType, ManagedRefType, VectorType,
+      TupleType, UnpackedStructType, UnionType, TaggedUnionType, EmptyType,
+      ObservableType, ResolvedType, DriverType, SampledHistoryType,
       EvaluationAttemptsType, StructType, ClosureType>;
 
  public:
@@ -722,14 +758,24 @@ class Type {
   }
 
   // True for any type whose value-level shape is a single packed vector: a
-  // packed array, or an enumeration through its base. A site that treats the
-  // type as its integral representation asks this; one that must tell the two
-  // apart matches on the alternatives directly.
+  // packed array, or an enumeration or packed aggregate through its base. A
+  // site that treats the type as its integral representation asks this; one
+  // that must tell them apart matches on the alternatives directly.
   [[nodiscard]] auto IsIntegralPacked() const -> bool;
 
   // The packed shape an integral type's value is structured by. A type that is
   // not integral has no such shape and is a caller error, never a width guess.
   [[nodiscard]] auto PackedShape() const -> const PackedArrayType&;
+
+  // True for a value built from all of its components at once -- the anonymous
+  // product a lowering composes and the structure the source declared. What
+  // separates the two is what the type says about the components, never how a
+  // value of it is composed, so a site asking how one is built asks this.
+  [[nodiscard]] auto IsProduct() const -> bool;
+
+  // The component types a product is built from, in order. A type that is not
+  // a product is a caller error.
+  [[nodiscard]] auto ProductComponentTypes() const -> std::vector<TypeId>;
 
   // True for the three SV floating-point types (LRM 6.12), which share one
   // value representation and one set of conversions -- the axis a cast or an
@@ -755,8 +801,8 @@ class Type {
   // value copies. A container holds its elements and its keys, a product and a
   // union their components, a cell the value it keeps. Empty for a value that
   // is one indivisible thing, for one that only refers to a value living
-  // elsewhere, and for a nominal type, whose members a registry declares rather
-  // than the type; a walk that must reach those asks that registry.
+  // elsewhere, and for a type whose members a registry declares rather than the
+  // type itself; a walk that must reach those asks that registry.
   [[nodiscard]] auto HeldValueTypes() const -> std::vector<TypeId>;
 
   template <typename T>

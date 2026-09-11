@@ -2,10 +2,13 @@
 
 #include <optional>
 
+#include <slang/ast/Compilation.h>
+#include <slang/ast/Scope.h>
 #include <slang/ast/expressions/ConversionExpression.h>
 #include <slang/ast/expressions/LiteralExpressions.h>
 #include <slang/ast/expressions/MiscExpressions.h>
 #include <slang/ast/expressions/OperatorExpressions.h>
+#include <slang/ast/symbols/CompilationUnitSymbols.h>
 
 #include "lyra/base/internal_error.hpp"
 
@@ -190,6 +193,30 @@ auto LowerStringMethodName(std::string_view name)
   if (name == "octtoa") return support::BuiltinFn::kOcttoa;
   if (name == "bintoa") return support::BuiltinFn::kBintoa;
   if (name == "realtoa") return support::BuiltinFn::kRealtoa;
+  return std::nullopt;
+}
+
+auto ImportedRuntimeClassOf(const slang::ast::ClassType& cls)
+    -> std::optional<support::ImportedRuntimeClass> {
+  const slang::ast::Scope* scope = cls.getParentScope();
+  if (scope == nullptr) {
+    return std::nullopt;
+  }
+  const auto& std_package = scope->getCompilation().getStdPackage();
+  if (scope != static_cast<const slang::ast::Scope*>(&std_package)) {
+    return std::nullopt;
+  }
+  return support::ImportedRuntimeClassNamed(cls.name);
+}
+
+auto LowerProcessMethodName(std::string_view name)
+    -> std::optional<support::BuiltinFn> {
+  if (name == "self") return support::BuiltinFn::kProcessSelf;
+  if (name == "status") return support::BuiltinFn::kProcessStatus;
+  if (name == "kill") return support::BuiltinFn::kProcessKill;
+  if (name == "await") return support::BuiltinFn::kProcessAwait;
+  if (name == "suspend") return support::BuiltinFn::kProcessSuspend;
+  if (name == "resume") return support::BuiltinFn::kProcessResume;
   return std::nullopt;
 }
 

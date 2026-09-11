@@ -32,7 +32,7 @@ auto RuntimeRecordBuilder::ErasedFunctionRef(
     const Class& cls, AbiAdapterId adapter) -> ExprId {
   return Add(
       Expr{
-          .data = FunctionCastExpr{.operand = FunctionRef(cls, adapter)},
+          .data = CastExpr{.operand = FunctionRef(cls, adapter)},
           .type = mir::ErasedFunction(unit_->types)});
 }
 

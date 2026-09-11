@@ -2,9 +2,10 @@
 
 Date: 2026-06-28 Status: accepted; the requirement that every write target be an op=-able location
 is superseded for value interiors by [value-projection-write](value-projection-write.md) (an
-interior write is an owner-relative value projection, not a location). The uniform
-compound-assignment node and the evaluate-once goal remain in force; genuine places keep the store
-model.
+interior write is an owner-relative value projection, not a location). The evaluate-once goal
+remains in force, and genuine places keep the store model. Decision point 4 -- "MIR carries one
+compound shape" -- is revised below: the node is uniform over every **target**, which is what this
+entry was arguing, and not over every **operator**.
 
 ## Context
 
@@ -102,6 +103,36 @@ write-side locations.
   This is the inconsistency above; it scales a special case across every operation (simple write,
   compound, future `ref` / `output` binding) instead of giving the target one write-location form
   that all operations consume.
+
+## Revised: uniform over targets, not over operators (2026-09-10)
+
+Decision point 4 said MIR carries **one** compound shape. It carries two, and which one an
+assignment takes is settled by its operator where the assignment is built.
+
+What forced it is that a compound assignment can name an operator no target applies to two values of
+one type. A shift is the case: its amount is sized on its own (LRM 11.4.1 leaves the right-hand
+operand self-determined), and the two right shifts differ in a way C++ reads off the operand's
+signedness rather than off the operator, so the library performs a shift and the operator set a
+`BinaryExpr` carries holds none. Under one compound shape, those three had to sit in that set anyway
+-- carried by no expression node, and every consumer meeting one asking which kind it had. The
+answer each consumer worked out was the same answer, twice, held in step by nothing.
+
+So the operator lifts to the operation once, where the assignment is built, and the two shapes are
+both ordinary nodes: an operator the target applies rides the store, and one the library performs is
+an ordinary call on the place, against an entry that updates what that place holds. Nothing below
+classifies an operator, and `mir::BinaryOp` holds exactly what a node carries.
+
+**What this does not change is the reason the node exists.** The survey says the compound form
+belongs to a source-fidelity layer and nowhere below it: Clang keeps `CompoundAssignOperator` in its
+AST and CodeGen emits load / apply / store; Rust's MIR building turns a builtin `op=` into a binary
+rvalue assignment and an overloaded one into a call to `op_assign`, so MIR has no compound node at
+all; SIL calls `+=(inout T, T)`; gimplification removes compound operators outright. Lyra keeps the
+node for the reason argued above -- MIR has no temporary vocabulary, so the desugar those languages
+perform would have to hoist every left-hand subscript here -- and the library-performed half is
+exactly Rust's overloaded arm, reached for the same reason.
+
+Evaluate-once is untouched and is now the same sentence for both shapes: the target is one
+expression, reached once, whether the store applies the operator or the entry does.
 
 ## Consequences
 
