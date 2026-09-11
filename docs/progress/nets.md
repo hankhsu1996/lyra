@@ -128,14 +128,29 @@ This workstream reasons from these and does not restate them:
       actual across its elements (LRM 23.3.3.5) is this with no select written anywhere in the
       source, which is how a design meets it without asking for it. A connection naming a whole net
       is the run that covers it, so it needs no path of its own.
+- [x] N11 -- Each side of a bidirectional connection is a sequence of runs, and what the connection
+      states is the two laid over one another (LRM 10.11's bit overlay rules, which LRM 23.3.3 gives
+      a port connection too). An actual naming a concatenation of nets contributes one run per
+      operand; a port standing for part of one of its own declarations contributes the run that part
+      covers, which the declaring unit answers for because only its own source says which part its
+      port is. The two sides correspond position-wise from the most significant end and their runs
+      need not fall at the same boundaries, so the overlay is taken in the pieces both sides have
+      whole.
+- [x] N12 -- An `alias` statement (LRM 10.11) is the same overlay with no port: each member is one
+      side, sharing positions is transitive so stating it between each member and the next states it
+      among all of them, and several statements accumulate. A member may itself be a concatenation,
+      which is what lets one name sit at several positions of what resolves together -- the
+      standard's own byte-swap example. What the standard requires of the members is decided over
+      the elaborated design and reported there: one net type across the list, sides of equal width,
+      no variable and no hierarchical reference, and no pair stated twice.
+- [x] N13 -- What resolves together is a run of positions that every name reaching it covers
+      entirely, so a declared net reaches one per run of its own positions rather than exactly one.
+      A connection cuts the runs its own ends fall inside, which is what lets two positions of one
+      name take part in two resolutions -- and a name no connection reached is the single run that
+      covers it.
 
 ## Out of scope
 
-- A bidirectional port whose connection names a concatenation of nets, one whose own internal name
-  is a select of a declaration, and the `alias` statement (LRM 10.11). Each is refused by name. What
-  remains for all three is turning what the source wrote into the runs it names -- pairing the two
-  sides and splitting whichever is wider, which the front end already does for `alias` -- since a
-  resolution over runs is what the model now carries.
 - A simulated net formed from dissimilar net types (LRM 23.3.3.7, Table 23-1), refused by name at
   elaboration. The standard defines the dominating type for a pair of nets, and the relation it
   tabulates is not transitive -- `tri0` dominates `trireg`, while `trireg` and `wand` tie, and so do

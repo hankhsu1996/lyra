@@ -32,6 +32,7 @@
 #include "lyra/hir/unit_signature.hpp"
 #include "lyra/lowering/ast_to_hir/constant_value.hpp"
 #include "lyra/lowering/ast_to_hir/instance_array_shape.hpp"
+#include "lyra/lowering/ast_to_hir/net_overlay.hpp"
 #include "lyra/lowering/ast_to_hir/published_projection.hpp"
 #include "lyra/lowering/ast_to_hir/sensitivity.hpp"
 #include "lyra/lowering/ast_to_hir/structural_scope_lowerer.hpp"
@@ -350,47 +351,37 @@ auto ConnectInterfacePort(
   return {};
 }
 
-// The join a bidirectional port connection states (LRM 23.3.3, 23.3.3.7). What
-// it needs of the actual is the net that expression bottoms out at and the run
-// of that net's positions it names, and the front end answers both: a value
-// path yields the root symbol and the bit range the statically known part of
-// the expression selects. So nothing here turns a declared coordinate into a
-// position -- a question over the elaborated design is answered before HIR, and
-// this is one.
-//
-// The child's port net is joined whole, because a port naming part of an
-// internal name is refused before this is reached.
+// The couplings a bidirectional port connection states (LRM 23.3.3, 23.3.3.7).
+// Both sides are a sequence of runs of net positions: the actual may name a
+// concatenation of nets, and the child's port may stand for part of one of its
+// own declarations, which that unit answers for on its signature because only
+// its own source says which part. The two are laid over each other from the
+// most significant end, exactly as LRM 10.11's bit overlay rules put the
+// members of an alias over one another.
 auto ConnectBidirectionalPort(
     StructuralScopeLowerer& scope, const slang::ast::Symbol& eval_scope,
     const slang::ast::Expression& actual, hir::Expr child_net,
-    std::uint64_t child_width, diag::SourceSpan span, WalkFrame frame)
-    -> diag::Result<hir::NetJoin> {
-  slang::ast::EvalContext eval_context(eval_scope);
-  const slang::ast::ValuePath path(actual, eval_context);
-  const slang::ast::ValueSymbol* root = path.rootSymbol();
-  if (path.lsp != &actual || path.rootExpr == nullptr || root == nullptr ||
-      root->kind != slang::ast::SymbolKind::Net) {
-    return PortConnectionUnsupported(
-        span,
-        "an inout port connected to a concatenation of nets is not yet "
-        "supported");
+    hir::PublishedRun child_run, diag::SourceSpan span, WalkFrame frame)
+    -> diag::Result<std::vector<hir::NetJoin>> {
+  auto outside = NetRunsOfLvalue(
+      scope, eval_scope, actual, span,
+      diag::DiagCode::kUnsupportedPortConnectionForm, frame);
+  if (!outside) return std::unexpected(std::move(outside.error()));
+  std::uint32_t named = 0;
+  for (const NetRun& run : *outside) {
+    named += run.width;
   }
-  const std::uint64_t width = path.lspBounds.second - path.lspBounds.first + 1;
-  if (width != child_width) {
+  if (named != child_run.width) {
     return PortConnectionUnsupported(
         span,
         "an inout port connected to a net of a different width is not yet "
         "supported");
   }
-  auto peer_or = scope.LowerExpr(*path.rootExpr, frame);
-  if (!peer_or) return std::unexpected(std::move(peer_or.error()));
-  return hir::NetJoin{
-      .span = span,
-      .here = frame.Exprs().Add(*std::move(peer_or)),
-      .here_offset = static_cast<std::uint32_t>(path.lspBounds.first),
-      .there = frame.Exprs().Add(std::move(child_net)),
-      .there_offset = 0,
-      .width = static_cast<std::uint32_t>(width)};
+  const NetSide inside = {NetRun{
+      .net = frame.Exprs().Add(std::move(child_net)),
+      .offset = child_run.position,
+      .width = child_run.width}};
+  return CoupleSides(*outside, inside, span);
 }
 
 // Records one instance's port connections as HIR. The instance is reached
@@ -588,11 +579,11 @@ auto ConnectElementPorts(
         // the contributions of all of them (LRM 23.3.3, 23.3.3.7), so it reads
         // nothing, drives nothing, and waits on nothing. It is therefore not a
         // data port connection at all, and is recorded as the join it is.
-        if (!projection->path.empty()) {
+        if (!projection->run.has_value()) {
           return PortConnectionUnsupported(
               span,
-              "an inout port naming part of an internal name is not yet "
-              "supported");
+              "an inout port standing for a part of an internal name that is "
+              "no run of its positions is not yet supported");
         }
         if (!std::holds_alternative<hir::NetStorage>(member.storage)) {
           throw InternalError(
@@ -607,13 +598,15 @@ auto ConnectElementPorts(
               "ConnectElementPorts: an inout port connection is stated as an "
               "assignment to the parent-side target");
         }
-        auto join = ConnectBidirectionalPort(
+        auto couplings = ConnectBidirectionalPort(
             scope, inst, expr->as<slang::ast::AssignmentExpression>().left(),
             unit_lowerer.MakeRoutedMemberRef(
                 home_frame, hir::RoutedRefDecl{.recipe = port_recipe}, span),
-            port->getType().getBitWidth(), span, frame);
-        if (!join) return std::unexpected(std::move(join.error()));
-        frame.current_structural_scope->net_joins.push_back(*std::move(join));
+            *projection->run, span, frame);
+        if (!couplings) return std::unexpected(std::move(couplings.error()));
+        for (const hir::NetJoin& coupling : *couplings) {
+          frame.current_structural_scope->net_joins.push_back(coupling);
+        }
         continue;
       }
       case hir::PortDirection::kConstRef:

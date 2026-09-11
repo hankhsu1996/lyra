@@ -31,12 +31,27 @@ scope.
 - The rule that a driver's contribution carries both a logic value and a drive strength, and that
   resolution consumes both: strength decides between contributions of unequal strength, and the net
   type's fold decides among those of equal strength.
+- What a position is, which the standard settles rather than this model: for a net of a built-in net
+  type, resolution runs per bit. LRM 6.7.1 makes a net "composed entirely of 4-state bits", each
+  carrying its own strength; LRM 6.5 makes every bit of a packed type an independent element; and
+  LRM 6.6.7 names the unit outright -- an _atomic net_ is one "whose value is updated and resolved
+  as a whole", and "a `logic` vector net is not an atomic net as each `logic` element is resolved
+  and updated independently". So a vector net is as many resolutions as it has bits, and what the
+  clause calls a single connection point is the set of them some connectivity relates.
 - What resolves: a physical net, the set of positions the elaborated design's connectivity places in
   one resolution (LRM 10.11, 23.3.3.7). It is an object of its own, carrying the fold, the net
   type's own contribution and any procedural continuous assignment over those positions -- the facts
-  a resolution needs and a name does not. A declared net is a name reaching a run of one, holding
-  its own contributions, its own observers and a copy of what that resolution produced over the
-  positions it reaches; a net no connection reached is the one name of a node covering it exactly.
+  a resolution needs and a name does not. Every name in one covers the whole of it, so a declared
+  net reaches one per run of its own positions, holding its own contributions, its own observers and
+  a copy of what each of those resolutions produced over the run it covers; a net no connection
+  reached is the one name of the single resolution covering it exactly.
+
+  **A physical net is therefore one object per run of positions the design connects identically,
+  rather than one per position.** That is a compression of the bit-wise model above and is what
+  gives it its own rule: a run is exactly a maximal set of positions that agree on what they are
+  connected to, so a connection reaching part of one leaves it no longer maximal and it is cut. A
+  design that connects whole nets writes one run per net and never meets the cut.
+
 - The rule that a resolution pools the contributions reaching its positions and never makes one
   resolution's value an input to another's.
 - The rule that one resolution has one net type, so a join requires the nets it reaches to state the
@@ -146,8 +161,9 @@ scope.
 - A join realized by giving each side a driver fed by the other side's resolved value. That is
   strength-reducing, which is the one property the standard names for a bidirectional connection,
   and it turns a resolution into a fixpoint over values that never met at a common strength.
-- A separate representation for a net no connection joined. One name reaching one resolution is the
-  rule, not a case beside it.
+- A separate representation for a net no connection joined. Such a net is the one run of positions
+  that covers it, reaching the one resolution over it, which is the same walk every other net takes
+  rather than a case beside it.
 - A fact the resolution owns kept on a name: the fold, the contribution the net type makes to its
   own resolution, or a procedural continuous assignment over the positions. A name cannot state one
   per run, so keeping any of them there makes two positions of one name unable to resolve

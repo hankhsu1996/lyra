@@ -93,6 +93,28 @@ module Cell(inout wire [1:0] p, input logic [1:0] d);
   assign p = d;
 endmodule
 
+// An actual may name a concatenation of nets, which LRM 10.11's bit overlay
+// rules lay over the port's own positions from the most significant end. The
+// port's upper run is then one resolution and its lower run another, so a
+// driver inside the child reaches whichever of the two nets covers the
+// position it drives.
+module Halves(inout wire [3:0] p);
+  logic [3:0] seen;
+
+  always_comb seen = p;
+  assign p[3] = 1'b0;
+  assign p[0] = 1'b1;
+endmodule
+
+// A port may stand for part of one of its own declarations (LRM 23.2.2.2), so
+// what a connection to it joins is that run rather than the whole declaration,
+// and the declaration's other positions resolve over their own drivers.
+module Window(.p(inner[2:1]));
+  inout wire [3:0] inner;
+
+  assign inner[3] = 1'b1;
+endmodule
+
 module Top;
   logic child_en;
   logic child_d;
@@ -142,6 +164,19 @@ module Top;
   wire [7:0] bus;
   logic [7:0] bus_d;
   Cell cells[3:0](.p(bus), .d(bus_d));
+
+  // The actual names two nets, so the port's upper two positions resolve with
+  // `upper` and its lower two with `lower`, and nothing relates the two runs.
+  wire [1:0] upper;
+  wire [1:0] lower;
+  Halves halves(.p({upper, lower}));
+  assign lower[1] = 1'b0;
+
+  // The child's port stands for two of its four positions, so only those are
+  // joined and the driver it has on another of them is unaffected.
+  wire [1:0] viewed;
+  Window window(.p(viewed));
+  assign viewed[0] = 1'b0;
 
   logic undriven;
   logic driven_from_child;
@@ -286,6 +321,20 @@ module Top;
       $fatal(1, "cells[0].p was %b, expected 01", cells[0].p);
     if (cells[3].p !== 2'b00)
       $fatal(1, "cells[3].p was %b, expected 00", cells[3].p);
+    // A concatenated actual puts the port's most significant positions over
+    // the leftmost net: the child's driver on p[3] reaches `upper`, its driver
+    // on p[0] reaches `lower`, and this module's driver on lower[1] reaches
+    // the child. Nothing carries between the two runs.
+    if (upper !== 2'b0z) $fatal(1, "upper was %b, expected 0z", upper);
+    if (lower !== 2'b01) $fatal(1, "lower was %b, expected 01", lower);
+    if (halves.seen !== 4'b0z01)
+      $fatal(1, "halves.seen was %b, expected 0z01", halves.seen);
+    // A port standing for part of an internal name joins that run alone, so
+    // the child's own driver on a position outside it still decides that
+    // position and the ones no driver reaches stay at high impedance.
+    if (viewed !== 2'bz0) $fatal(1, "viewed was %b, expected z0", viewed);
+    if (window.inner !== 4'b1z0z)
+      $fatal(1, "window.inner was %b, expected 1z0z", window.inner);
     $display("All checks passed");
   end
 endmodule

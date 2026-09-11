@@ -1,6 +1,7 @@
 #pragma once
 
 #include <cstdint>
+#include <optional>
 #include <variant>
 #include <vector>
 
@@ -63,13 +64,33 @@ struct PublishedSliceSelector {
 using PublishedSelector =
     std::variant<PublishedElementSelector, PublishedSliceSelector>;
 
+// Which of a member's own positions the part a port stands for covers, counted
+// from the low end. A connection states that runs of positions resolve together
+// (LRM 10.11, 23.3.3.7), and only the declaring unit's source can say which run
+// its port stands for -- the descent below states it in the coordinates that
+// unit declared, and no other unit can turn those into positions, so what
+// crosses is the answer rather than the question. A member with one indivisible
+// position is covered whole by a run of one.
+struct PublishedRun {
+  std::uint32_t position{};
+  std::uint32_t width{};
+
+  auto operator==(const PublishedRun&) const -> bool = default;
+};
+
 // A published member and the descent that reaches the part of it a port stands
 // for, in owner-to-leaf order. A port naming the whole declaration has an empty
 // path and needs no case of its own, since descending no steps reaches the
 // member.
+//
+// `run` is absent where the part is not a run of the member's own positions at
+// all, which is what naming an element of an unpacked declaration is: such a
+// part is reachable and readable, and is not something another name's positions
+// can be laid over.
 struct MemberProjection {
   PublishedMemberId member;
   std::vector<PublishedSelector> path;
+  std::optional<PublishedRun> run;
 
   auto operator==(const MemberProjection&) const -> bool = default;
 };
