@@ -17,6 +17,13 @@ contribution stands, with the reason it is exact; the single-driver constraint d
 the Seal barrier or to this model at all, because how many drivers a net may have is decided over
 the elaborated design before any of this exists.
 
+Decision 4's other expectation -- that Seal would be where net collapse canonicalizes -- is
+falsified by [joined-nets-are-one-resolution](joined-nets-are-one-resolution.md). Every input a join
+needs is final before Resolve begins and nothing observes a net until Initialize, so a connection
+joins its two nets where its route resolves and the barrier has no consumer. Decision 1 is widened
+there as well: what resolves is the nets a connection has joined, and a net nothing joined is the
+one-net case of it.
+
 ## Why this decision matters
 
 A SystemVerilog net (`wire`, `tri`, `wand`, `wor`, ...) is not a variable that happens to be written

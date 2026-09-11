@@ -4,9 +4,11 @@
 
 Define what a SystemVerilog net is and how its value is produced. A net's value is not written; it
 is the resolution of a set of independent driver contributions under the net type's resolution
-policy. This document owns the driver / contribution / resolution model and the distinction between
-a net and a variable. It is the design-global net-resolution concern that `reference_resolution.md`
-places outside its own scope.
+policy. What that resolution covers is not always one net: a bidirectional connection joins nets
+into one resolution over the contributions of all of them, and a net nothing joins is that same
+resolution over one. This document owns the driver / contribution / resolution model, what one
+resolution covers, and the distinction between a net and a variable. It is the design-global
+net-resolution concern that `reference_resolution.md` places outside its own scope.
 
 ## Owns
 
@@ -27,26 +29,37 @@ places outside its own scope.
 - The rule that a driver's contribution carries both a logic value and a drive strength, and that
   resolution consumes both: strength decides between contributions of unequal strength, and the net
   type's fold decides among those of equal strength.
+- What one resolution covers: the nets a bidirectional connection has joined, considered as one. A
+  join pools the contributions of both sides and never makes one side's resolved value an input to
+  the other's resolution, and every net it covers shows what that resolution produced and publishes
+  its own change under its own name.
+- The rule that one resolution has one net type, so a join requires the nets it covers to state the
+  same one.
 
 ## Does Not Own
 
 - The route by which a driver reaches a net across compilation units, and by which a net's value is
   read across units (`reference_resolution.md`).
-- The phases in which drivers attach, topology freezes, and contributions seed
+- The phases in which drivers attach, connections join, topology freezes, and contributions seed
   (`elaboration_lifecycle.md`).
 - The capability-type family and the observable-cell access protocol that a net's resolved value and
   a driver handle are members of (`mir.md`).
 - Waking dependent processes when a net's resolved value changes (`scheduling.md`).
-- Merging two or more nets into a single shared simulated net (net collapse), and bidirectional
-  (`inout`) net connectivity. Those unify distinct nets into one resolution domain and are a
-  cross-net connectivity concern, separate from resolving one net's own drivers.
+- Which connections join nets. Whether a construct places two nets in one resolution is a property
+  of the construct -- a port's direction, an alias statement -- and belongs to whatever owns that
+  construct; this document owns what being in one resolution means.
+- Joining a part of a net rather than the whole of it. A construct that states connectivity per bit
+  range, so that one net's bits belong to several resolutions at once, is a shape this model does
+  not carry.
 
 ## Core Invariants
 
 1. A net's value is the resolution of its contributions under the net type's resolver. With zero
    drivers the value is what the net type's own contribution resolves to; a single driver and many
    drivers are the N=1 and N>1 cases of the same resolution, with no separate single-driver
-   representation.
+   representation. Where a connection has joined nets, "its contributions" are the contributions of
+   every net that resolution covers; a net nothing joined is the one-net case of the same rule and
+   has no representation of its own.
 2. A driver is an independent contribution with identity and provenance. A driver writes only its
    own contribution and never the net's resolved value directly. The net owns the contribution
    storage; the driver names its contribution by a stable identity, never by a borrowed pointer into
@@ -68,18 +81,23 @@ places outside its own scope.
    contribution at the high-impedance strength decides no position, which is what makes a net with
    no drivers resolve to its net type's own contribution rather than to a case of its own.
 8. A net's resolved value carries no strength. This holds while no modelled construct makes one
-   net's resolved value an input to another resolution; a switch, a gate primitive, and net collapse
-   are the three that would, and the first two are outside this document's subject while the third
-   merges the contributions rather than the results.
+   net's resolved value an input to another resolution; a switch and a gate primitive are the two
+   that would, and both are outside this document's subject. A bidirectional connection is not one
+   of them: it pools the contributions rather than the results, which is what makes it
+   non-strength-reducing.
+9. One resolution has one net type. A join therefore requires the nets it covers to state the same
+   fold and the same contribution of the net type's own; where they differ, the standard names a
+   dominating type per pair of nets and that relation does not extend to the set a chain of
+   connections joins, so the program is reported rather than answered.
 
 ## Boundary to Adjacent Layers
 
 - `reference_resolution.md` owns the one route from a referrer to a target. A driver attaches to a
   net through that route, and a read of a net reaches the resolved value through that route; net
   resolution is the concern that doc names as design-global and out of its own scope.
-- `elaboration_lifecycle.md` owns when. Drivers attach during Resolve; the driver topology is frozen
-  at the Seal barrier and whatever validation needs the whole design's topology runs there;
-  contributions are seeded in Initialize; the processes that update contributions arm in Activate.
+- `elaboration_lifecycle.md` owns when. Drivers attach and connections join during Resolve, which
+  completes design-wide before anything observes a net; contributions are seeded in Initialize; the
+  processes that update contributions arm in Activate.
 - The front end owns which drivers a legal program may give a net, as `compiler_overview.md` places
   every question answered over the elaborated design before HIR. A rule the standard states as an
   error rather than as a value -- a net type that admits one driver, a nettype declared with no
@@ -114,9 +132,14 @@ places outside its own scope.
 - A value the net type contributes to itself modeled as a driver. It is never detached, never
   updated by anything outside the net, and never counted by a constraint on the driver set.
 - A net publishing to its observers because a contribution changed while the resolved value did not.
-- Two nets sharing one simulated cell introduced as a reference alias. Net collapse and `inout`
-  connectivity are a separate cross-net concern; they are not a special case of single-net
-  resolution.
+- Two nets joined by making one a reference to the other, or by deleting one and rebinding its name.
+  A net a connection joins goes on being read, waited on, sampled, forced, and reached by a
+  hierarchical name under its own name, so nothing may move or remove its storage.
+- A join realized by giving each side a driver fed by the other side's resolved value. That is
+  strength-reducing, which is the one property the standard names for a bidirectional connection,
+  and it turns a resolution into a fixpoint over values that never met at a common strength.
+- A separate representation for a net no connection joined. One resolution over one net is the rule,
+  not a case beside it.
 
 ## Notes / Examples
 
@@ -156,3 +179,11 @@ members overlay in no defined bit space. The cases a design has resolve exactly 
 member, several on the same member, and the undriven seed, which is the identity whichever member it
 carries -- and the combination the standard leaves undefined is reported as such rather than
 answered with an invented value.
+
+A bidirectional port connection is "a non-strength-reducing transistor connection" (LRM 23.3.3), and
+the standard settles what that means by merging the nets on both sides into one simulated net (LRM
+23.3.3.7). Merged, a pull inside the child and a strong driver in the parent meet at the strengths
+they were driven at and the strong one decides, which is the property the phrase names; a driver in
+either module reaches both names; and a chain of such connections is one resolution across every net
+in it, with no step in the chain resolving anything of its own. The derivation and what it rejects
+are in `decisions/joined-nets-are-one-resolution.md`.

@@ -641,12 +641,14 @@ auto EntryNamingOf(support::BuiltinFn fn) -> EntryNaming {
     case support::BuiltinFn::kEndTakeover:
       return NamedByWrapper{};
 
-    // A driver is attached by the net that issues it, and a fold is installed
-    // on the net that applies it, so in both cases what names the entry is the
-    // representation that net resolves in. A history's three operations
+    // A driver is attached by the net that issues it, a fold is installed on
+    // the net that applies it, and a join takes two nets that resolve in the
+    // same representation, so in each case what names the entry is the
+    // representation those nets resolve in. A history's three operations
     // likewise take the storage they act on and are named by the one domain
     // every value in it is realized in (LRM 16.9.3).
     case support::BuiltinFn::kAttachDriver:
+    case support::BuiltinFn::kNetJoin:
     case support::BuiltinFn::kNetInitializeTriState:
     case support::BuiltinFn::kNetInitializeWiredAnd:
     case support::BuiltinFn::kNetInitializeWiredOr:

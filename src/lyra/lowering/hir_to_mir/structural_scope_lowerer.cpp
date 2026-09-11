@@ -938,10 +938,11 @@ void InstallInterfacePortConnection(
 // implied continuous assignment between the two cells, materialized as the same
 // synthesized process a scope-level `assign` produces, registered as a process;
 // when the driven side is a net the edge attaches a driver rather than writing
-// the cell. A `ref` port instead binds the child's reference member --
+// the cell. The other two directions carry no edge and are emitted into the
+// resolve block instead: a `ref` port binds the child's reference member --
 // navigated by name from the owned child -- to the connected variable's cell,
-// emitted into the resolve block: one assignment of a reference, with no second
-// cell and no continuous assignment.
+// and a bidirectional port joins the two nets into one resolution. Each is one
+// statement, with no second cell and no continuous assignment.
 auto InstallPortConnections(
     StructuralScopeLowerer& lowerer, WalkFrame frame, WalkFrame resolve_frame,
     WalkFrame init_frame, WalkFrame activate_frame) -> diag::Result<void> {
@@ -957,20 +958,50 @@ auto InstallPortConnections(
       continue;
     }
     const auto& data = std::get<hir::DataPortConnection>(pc.kind);
-    // A `ref` port binds once and is done; the two value directions share the
-    // reactive edge built below and differ only in which end of it drives
-    // (LRM 23.3.3).
+    // A `ref` port binds once and is done, and a bidirectional one joins once;
+    // the two value directions share the reactive edge built below and differ
+    // only in which end of it drives (LRM 23.3.3).
     switch (data.direction) {
       case hir::PortDirection::kInput:
       case hir::PortDirection::kOutput:
         break;
-      // A unit publishes every direction the language admits, and AST-to-HIR
-      // refuses these two, so a recorded connection never carries one.
-      case hir::PortDirection::kInOut:
-      case hir::PortDirection::kConstRef:
-        throw InternalError(
-            "InstallPortConnections: a refused port direction reached the "
-            "connection switch");
+      case hir::PortDirection::kInOut: {
+        // A bidirectional connection joins the two nets into one resolution
+        // over the contributions of both (LRM 23.3.3, 23.3.3.7). It installs
+        // no driver and registers no process, because a transistor connection
+        // is not a reactive edge; it states no direction, because the
+        // connection has none, so which net the call names first says nothing.
+        const auto& cell = std::get<hir::PortCellEndpoint>(data.endpoint);
+        auto internal_or =
+            lowerer.LowerLhsExpr(hir_scope.exprs.Get(cell.cell), resolve_frame);
+        if (!internal_or) {
+          return std::unexpected(std::move(internal_or.error()));
+        }
+        auto external_or =
+            lowerer.LowerLhsExpr(hir_scope.exprs.Get(data.peer), resolve_frame);
+        if (!external_or) {
+          return std::unexpected(std::move(external_or.error()));
+        }
+        if (!internal_or->descent.empty() || !external_or->descent.empty()) {
+          throw InternalError(
+              "InstallPortConnections: a bidirectional connection names "
+              "a whole net on each side, decided where the connection is read");
+        }
+        const mir::ExprId internal = internal_or->owner;
+        const mir::TypeId net_ptr_type = unit_lowerer.Unit().types.Intern(
+            mir::Type{mir::PointerType{
+                .pointee = resolve_block.exprs.Get(internal).type,
+                .ownership = mir::PointerOwnership::kBorrowed}});
+        const mir::ExprId joined = resolve_block.exprs.Add(
+            mir::MakeAddressOfExpr(internal, net_ptr_type));
+        resolve_block.AppendStmt(
+            mir::ExprStmt{
+                .expr = resolve_block.exprs.Add(
+                    mir::MakeNetJoinCallExpr(
+                        external_or->owner, joined,
+                        unit_lowerer.Unit().builtins.void_type))});
+        continue;
+      }
       case hir::PortDirection::kRef: {
         // A `ref` port reaches the child's reference member by the same route
         // navigation a routed reference uses, then binds it to the peer's cell
@@ -1008,6 +1039,12 @@ auto InstallPortConnections(
         resolve_block.AppendStmt(mir::ExprStmt{.expr = bind});
         continue;
       }
+      // A unit publishes every direction the language admits, and AST-to-HIR
+      // refuses this one, so a recorded connection never carries it.
+      case hir::PortDirection::kConstRef:
+        throw InternalError(
+            "InstallPortConnections: a refused port direction reached the "
+            "connection switch");
     }
     const auto& cell = std::get<hir::PortCellEndpoint>(data.endpoint);
     const bool is_input = data.direction == hir::PortDirection::kInput;

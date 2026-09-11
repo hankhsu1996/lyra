@@ -100,7 +100,7 @@ form.
   since a `ref` needs no simulation-time reach.
 - A `const ref` port rides the const marker already on the type; a pass-through `ref` port rides the
   reference value being copyable (the child forwards its own reference into a deeper child).
-- `inout` ports stay out of scope: they are bidirectional net connections in the deferred
+- `inout` ports stay out of scope: they are bidirectional net connections belonging to the
   net-resolution domain (LRM 23.3.3.2), not references.
 
 ## Alternatives considered

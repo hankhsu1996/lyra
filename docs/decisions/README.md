@@ -262,6 +262,10 @@ the detail lives in the entry itself.
   levels and the truth table within one; a per-bit strength on the resolved value, a value-only fold
   per net type, compile-time strength resolution, and the single-driver check at a barrier are
   rejected.
+- [joined-nets-are-one-resolution](joined-nets-are-one-resolution.md) -- an `inout` port joins the
+  nets on both sides into one resolution over pooled contributions; both sides must state the same
+  net type, checked where the join happens, and re-driving the opposite side, a runtime dominance
+  table, contribution migration, and a Seal-time join are rejected.
 - [procedural-continuous-assignment](procedural-continuous-assignment.md) -- `assign` / `force` take
   a target over at one of two precedence levels through a call on its capability type, evaluated by
   the loop a continuous assignment already uses; a forced value is not a driver and needs no shadow

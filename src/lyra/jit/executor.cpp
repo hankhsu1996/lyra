@@ -1057,6 +1057,7 @@ auto DefineRuntimeAbi(llvm::orc::LLJIT& jit)
   add("lyra_rt_packed_net_drive_takeover", &lyra_rt_packed_net_drive_takeover);
   add("lyra_rt_packed_net_end_takeover", &lyra_rt_packed_net_end_takeover);
   add("lyra_rt_packed_attach_driver", &lyra_rt_packed_attach_driver);
+  add("lyra_rt_packed_net_join", &lyra_rt_packed_net_join);
   add("lyra_rt_packed_driver_get", &lyra_rt_packed_driver_get);
   add("lyra_rt_packed_driver_set", &lyra_rt_packed_driver_set);
   add("lyra_rt_tuple_net_get", &lyra_rt_tuple_net_get);
@@ -1069,6 +1070,7 @@ auto DefineRuntimeAbi(llvm::orc::LLJIT& jit)
   add("lyra_rt_tuple_net_initialize_retaining",
       &lyra_rt_tuple_net_initialize_retaining);
   add("lyra_rt_tuple_attach_driver", &lyra_rt_tuple_attach_driver);
+  add("lyra_rt_tuple_net_join", &lyra_rt_tuple_net_join);
   add("lyra_rt_tuple_driver_get", &lyra_rt_tuple_driver_get);
   add("lyra_rt_tuple_driver_set", &lyra_rt_tuple_driver_set);
   add("lyra_rt_union_net_get", &lyra_rt_union_net_get);
@@ -1081,6 +1083,7 @@ auto DefineRuntimeAbi(llvm::orc::LLJIT& jit)
   add("lyra_rt_union_net_initialize_retaining",
       &lyra_rt_union_net_initialize_retaining);
   add("lyra_rt_union_attach_driver", &lyra_rt_union_attach_driver);
+  add("lyra_rt_union_net_join", &lyra_rt_union_net_join);
   add("lyra_rt_union_driver_get", &lyra_rt_union_driver_get);
   add("lyra_rt_union_driver_set", &lyra_rt_union_driver_set);
   add("lyra_rt_unpackedarray_net_get", &lyra_rt_unpackedarray_net_get);
@@ -1094,6 +1097,7 @@ auto DefineRuntimeAbi(llvm::orc::LLJIT& jit)
       &lyra_rt_unpackedarray_net_initialize_retaining);
   add("lyra_rt_unpackedarray_attach_driver",
       &lyra_rt_unpackedarray_attach_driver);
+  add("lyra_rt_unpackedarray_net_join", &lyra_rt_unpackedarray_net_join);
   add("lyra_rt_unpackedarray_driver_get", &lyra_rt_unpackedarray_driver_get);
   add("lyra_rt_unpackedarray_driver_set", &lyra_rt_unpackedarray_driver_set);
   add("lyra_rt_unpackedarray_merge_conditional",

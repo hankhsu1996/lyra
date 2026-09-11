@@ -395,10 +395,6 @@ auto ConnectElementPorts(
       if (!r) return std::unexpected(std::move(r.error()));
       continue;
     }
-    if (data->direction == hir::PortDirection::kInOut) {
-      return PortConnectionUnsupported(
-          span, "inout port connection is not yet supported");
-    }
     const auto* port = conn->port.as_if<slang::ast::PortSymbol>();
     if (port == nullptr) {
       return PortConnectionUnsupported(
@@ -541,7 +537,53 @@ auto ConnectElementPorts(
         peer = frame.Exprs().Add(*std::move(peer_or));
         break;
       }
-      case hir::PortDirection::kInOut:
+      case hir::PortDirection::kInOut: {
+        // A bidirectional connection is not a directional edge: it joins the
+        // nets on both sides into one resolution (LRM 23.3.3, 23.3.3.7), so it
+        // reads nothing, drives nothing, and waits on nothing. What it names
+        // on each side has to be a whole net -- a part of one belongs to a
+        // resolution of its own, which this model does not carry.
+        if (!projection->path.empty()) {
+          return PortConnectionUnsupported(
+              span,
+              "an inout port naming part of an internal name is not yet "
+              "supported");
+        }
+        if (!std::holds_alternative<hir::NetStorage>(member.storage)) {
+          throw InternalError(
+              "ConnectElementPorts: a variable data type is not permitted on "
+              "either side of an inout port, so the front end rejects one");
+        }
+        // slang states an inout connection as an assignment to the parent-side
+        // target, the way it states an output one; the actual is that
+        // assignment's left side.
+        if (expr->kind != slang::ast::ExpressionKind::Assignment) {
+          throw InternalError(
+              "ConnectElementPorts: an inout port connection is stated as an "
+              "assignment to the parent-side target");
+        }
+        const auto& actual =
+            expr->as<slang::ast::AssignmentExpression>().left();
+        if (actual.kind != slang::ast::ExpressionKind::NamedValue &&
+            actual.kind != slang::ast::ExpressionKind::HierarchicalValue) {
+          return PortConnectionUnsupported(
+              span,
+              "an inout port connected to a part of a net, or to a "
+              "concatenation of nets, is not yet supported");
+        }
+        endpoint = cell_endpoint();
+        auto peer_or = scope.LowerExpr(actual, frame);
+        if (!peer_or) return std::unexpected(std::move(peer_or.error()));
+        // The two nets resolve to one value, so they have to be one type.
+        if (peer_or->type != type_id) {
+          return PortConnectionUnsupported(
+              span,
+              "an inout port connected to a net of a different type is not yet "
+              "supported");
+        }
+        peer = frame.Exprs().Add(*std::move(peer_or));
+        break;
+      }
       case hir::PortDirection::kConstRef:
         throw InternalError(
             "ConnectElementPorts: a direction this connection rejects reached "
