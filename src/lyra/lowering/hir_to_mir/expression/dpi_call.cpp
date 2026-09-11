@@ -128,8 +128,7 @@ auto MarshalSvToCarrier(
           block.exprs.Add(MakeToInt64Call(unit, sv_id));
       return block.exprs.Add(
           mir::Expr{
-              .data = mir::IntCastExpr{.operand = machine_int},
-              .type = carrier});
+              .data = mir::CastExpr{.operand = machine_int}, .type = carrier});
     }
     case support::DpiScalarAbi::kReal:
       return block.exprs.Add(
@@ -209,7 +208,7 @@ auto MarshalCarrierToSv(
       // serving every carrier width instead of one per width.
       const mir::ExprId machine_int = block.exprs.Add(
           mir::Expr{
-              .data = mir::IntCastExpr{.operand = call_id},
+              .data = mir::CastExpr{.operand = call_id},
               .type = unit_lowerer.Unit().builtins.machine_int64});
       const mir::ExprId packed_type =
           mir::BuildPackedTypeRef(unit_lowerer.Unit(), block, result_type);
@@ -1047,7 +1046,7 @@ auto SynthesizeForeignExportEntry(
     context_init = body.exprs.Add(
         mir::Expr{
             .data =
-                mir::PointerCastExpr{
+                mir::CastExpr{
                     .operand = body.exprs.Add(
                         mir::MakeLocalRefExpr(
                             *scope_param, unit.builtins.scope_ptr))},

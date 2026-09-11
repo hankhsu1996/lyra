@@ -281,6 +281,27 @@ cross-check predicts. This file owns only which instances are known and what is 
       that says being reached is the whole condition, and the runtime lost the partial leaf form
       that had stood for carrying none.
 
+- [x] T27 -- Reading a value as another type is one operation, and the two types it sits between are
+      its whole statement. Five nodes had carried it, and they were not five operations: two were
+      identical structures holding one operand, and the lowering below gave the code-address one and
+      the reference one the same instruction, so those two had stopped meaning different things
+      while both were still spelled. The C++ render gave three of the five the same cast, one a
+      shorter spelling of that cast, and one nothing at all -- which is the reading that says no
+      consumer was learning anything from the choice that the pair of types had not already said.
+
+      What made the split look necessary was that it turned a conversion nobody had implemented into
+      a build break. That property is worth keeping and does not need the split: a backend states a
+      no-op only where the two representations are provably the same and refuses every pair it
+      cannot realize, so the unimplemented pair is a diagnostic instead of a value that silently
+      crossed unconverted. The invariant the kinds had been standing in for -- that a cast between
+      two packed values must not change what the bits structure -- is one rule read off the two
+      types where the layer below is verified.
+
+      This reverses a Forbidden Shape, which had named the single node rather than the thing that
+      was wrong with the several.
+      [cast-is-a-pair-of-types](../decisions/cast-is-a-pair-of-types.md) holds the argument, the
+      survey of where a cast kind is real, and why it is not here.
+
 ## An aggregate's members
 
 - [x] T8 -- An aggregate the source declared keeps its member names through lowering, so what a

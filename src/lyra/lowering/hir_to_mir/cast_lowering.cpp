@@ -188,8 +188,7 @@ auto BuildValueConversion(
   // (LRM 6.19.3), a packed structure or union (LRM 7.2.1 / 7.3.1) -- shares
   // that representation with its base while being a type of its own, so
   // crossing into or out of one changes the type a value is held to and not the
-  // bits it carries: a cast over the reshaped value, or over the operand itself
-  // where the two representations already agree and nothing reshapes.
+  // bits it carries, which is what the cast below says and all it says.
   if (src_ty.IsIntegralPacked() && dst_ty.IsIntegralPacked()) {
     const auto& src_pa = src_ty.PackedShape();
     const auto& dst_pa = dst_ty.PackedShape();
@@ -212,7 +211,7 @@ auto BuildValueConversion(
       return operand_expr;
     }
     return mir::Expr{
-        .data = mir::ValueCastExpr{.operand = operand_id}, .type = dst_type};
+        .data = mir::CastExpr{.operand = operand_id}, .type = dst_type};
   }
 
   // Unpacked-array-of-byte -> string (LRM 21.3.4.3 $sscanf source lift).
@@ -324,7 +323,7 @@ auto BuildValueConversion(
   // what re-typing the reference states.
   if (src_ty.Is<mir::ManagedRefType>() && dst_ty.Is<mir::ManagedRefType>()) {
     return mir::Expr{
-        .data = mir::PointerCastExpr{.operand = operand_id}, .type = dst_type};
+        .data = mir::CastExpr{.operand = operand_id}, .type = dst_type};
   }
 
   // Identity fallback: the lowering inserted a conversion the type system

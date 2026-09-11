@@ -10,7 +10,7 @@ auto ReduceToCondition(
     -> mir::ExprId {
   return block.exprs.Add(
       mir::Expr{
-          .data = mir::BoolCastExpr{.operand = cond},
+          .data = mir::CastExpr{.operand = cond},
           .type = unit.builtins.machine_bool});
 }
 

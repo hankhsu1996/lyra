@@ -263,18 +263,14 @@ void CollectStorageLocals(
             [&](const mir::ReferenceExpr& e) { reads_only(e); },
             [&](const mir::UnaryExpr& e) { reads_only(e); },
             [&](const mir::BinaryExpr& e) { reads_only(e); },
-            [&](const mir::BoolCastExpr& e) { reads_only(e); },
+            [&](const mir::CastExpr& e) { reads_only(e); },
             [&](const mir::ConditionalExpr& e) { reads_only(e); },
             [&](const mir::BlockExpr& e) { reads_only(e); },
             [&](const mir::DerefExpr& e) { reads_only(e); },
             [&](const mir::MoveExpr& e) { reads_only(e); },
-            [&](const mir::PointerCastExpr& e) { reads_only(e); },
-            [&](const mir::FunctionCastExpr& e) { reads_only(e); },
-            [&](const mir::IntCastExpr& e) { reads_only(e); },
             [&](const mir::FieldAccessExpr& e) { reads_only(e); },
             [&](const mir::ClosureExpr& e) { reads_only(e); },
             [&](const mir::CompositeExpr& e) { reads_only(e); },
-            [&](const mir::ValueCastExpr& e) { reads_only(e); },
             [&](const mir::AwaitExpr& e) { reads_only(e); },
             [&](const mir::VectorGetExpr& e) { reads_only(e); }},
         expr.data);
@@ -2356,14 +2352,14 @@ auto FunctionLowerer::LowerExpr(const mir::Block& block, mir::ExprId id)
           [&](const mir::CallExpr& call) -> diag::Result<lir::Operand> {
             return LowerCall(block, call, type);
           },
-          [&](const mir::ValueCastExpr& cast) -> diag::Result<lir::Operand> {
+          [&](const mir::CastExpr& cast) -> diag::Result<lir::Operand> {
             auto operand = LowerExpr(block, cast.operand);
             if (!operand) {
               return std::unexpected(std::move(operand.error()));
             }
             return Emit(
                 unit_->TranslateType(type),
-                lir::ValueCastInstr{.operand = *std::move(operand)});
+                lir::CastInstr{.operand = *std::move(operand)});
           },
           [&](const mir::CompositeExpr& composite)
               -> diag::Result<lir::Operand> {
@@ -2436,24 +2432,6 @@ auto FunctionLowerer::LowerExpr(const mir::Block& block, mir::ExprId id)
                             .op = lir::CoroutineTarget::Op::
                                 kEnterOwnedEnvironment},
                     .args = {value}});
-          },
-          [&](const mir::PointerCastExpr& c) -> diag::Result<lir::Operand> {
-            auto operand = LowerExpr(block, c.operand);
-            if (!operand) {
-              return operand;
-            }
-            return Emit(
-                unit_->TranslateType(type),
-                lir::PointerCastInstr{.operand = *std::move(operand)});
-          },
-          [&](const mir::IntCastExpr& c) -> diag::Result<lir::Operand> {
-            auto operand = LowerExpr(block, c.operand);
-            if (!operand) {
-              return operand;
-            }
-            return Emit(
-                unit_->TranslateType(type),
-                lir::IntCastInstr{.operand = *std::move(operand)});
           },
           // A field in a storage arena is read through its place. A product's
           // component is not addressable, so it is extracted from the product's
@@ -2554,15 +2532,6 @@ auto FunctionLowerer::LowerExpr(const mir::Block& block, mir::ExprId id)
                 lir::BinaryInstr{
                     .op = op, .lhs = *std::move(lhs), .rhs = *std::move(rhs)});
           },
-          [&](const mir::BoolCastExpr& cast) -> diag::Result<lir::Operand> {
-            auto operand = LowerExpr(block, cast.operand);
-            if (!operand) {
-              return operand;
-            }
-            return Emit(
-                unit_->MachineBoolType(),
-                lir::BoolCastInstr{.operand = *std::move(operand)});
-          },
           [&](const mir::ConditionalExpr& cond) -> diag::Result<lir::Operand> {
             return LowerConditional(block, cond, type);
           },
@@ -2633,15 +2602,6 @@ auto FunctionLowerer::LowerExpr(const mir::Block& block, mir::ExprId id)
             // An await of nothing yields nothing, so what stands here is never
             // read.
             return *park;
-          },
-          [&](const mir::FunctionCastExpr& c) -> diag::Result<lir::Operand> {
-            auto operand = LowerExpr(block, c.operand);
-            if (!operand) {
-              return operand;
-            }
-            return Emit(
-                unit_->TranslateType(type),
-                lir::PointerCastInstr{.operand = *std::move(operand)});
           },
       },
       expr.data);

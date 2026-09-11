@@ -159,9 +159,8 @@ auto UnitLowerer::TranslateType(const hir::Type& type) -> mir::Type {
             }};
           },
           [&](const hir::UnpackedStructType& src) -> mir::Type {
-            return mir::Type{
-                mir::UnpackedStructType{
-                    .members = TranslateMembers(*this, src.fields)}};
+            return mir::Type{mir::UnpackedStructType{
+                .members = TranslateMembers(*this, src.fields)}};
           },
           [&](const hir::UnpackedUnionType& src) -> mir::Type {
             // The untagged overlapping-storage form (LRM 7.3) maps to

@@ -226,7 +226,7 @@ auto BuildOwnedInstance(
           .type = builtins.scope_ptr});
   return block.exprs.Add(
       mir::Expr{
-          .data = mir::PointerCastExpr{.operand = add_id},
+          .data = mir::CastExpr{.operand = add_id},
           .type = borrowed_pointer_type});
 }
 
@@ -668,7 +668,7 @@ auto MaterializeLeaf(
   if (std::holds_alternative<hir::ScopeLeaf>(leaf)) {
     return block.exprs.Add(
         mir::Expr{
-            .data = mir::PointerCastExpr{.operand = receiver.expr},
+            .data = mir::CastExpr{.operand = receiver.expr},
             .type = slot_type});
   }
 
@@ -722,8 +722,7 @@ auto MaterializeLeaf(
                         unit_lowerer, block, opaque->name)}},
             .type = void_ptr_type});
     return block.exprs.Add(
-        mir::Expr{
-            .data = mir::PointerCastExpr{.operand = raw}, .type = slot_type});
+        mir::Expr{.data = mir::CastExpr{.operand = raw}, .type = slot_type});
   }
 
   const StructuralScopeLowerer& scope = OwnScopeOf(receiver, "MaterializeLeaf");
@@ -1167,8 +1166,7 @@ void AppendOwnedChildConstruction(
   const mir::TypeId handle_type = owner_class.fields.Get(handle_field).type;
   const mir::ExprId typed_handle = arm_block.exprs.Add(
       mir::Expr{
-          .data = mir::PointerCastExpr{.operand = add_call_id},
-          .type = handle_type});
+          .data = mir::CastExpr{.operand = add_call_id}, .type = handle_type});
   const mir::ExprId member = arm_block.exprs.Add(
       mir::MakeFieldAccessExpr(
           self_read(),
@@ -1581,7 +1579,7 @@ auto SynthesizeSubroutineEntry(
       mir::MakeLocalRefExpr(self, unit.builtins.scope_ptr));
   const mir::ExprId typed = code.Body().exprs.Add(
       mir::Expr{
-          .data = mir::PointerCastExpr{.operand = self_ref},
+          .data = mir::CastExpr{.operand = self_ref},
           .type = cls.self_pointer_type});
   const mir::ExprId call = code.Body().exprs.Add(
       mir::Expr{
@@ -1652,8 +1650,7 @@ auto InstallGeneratedDefinition(
           code.Body().exprs.Add(mir::MakeLocalRefExpr(self, scope_ptr));
       const mir::ExprId typed = code.Body().exprs.Add(
           mir::Expr{
-              .data = mir::PointerCastExpr{.operand = self_ref},
-              .type = self_ptr});
+              .data = mir::CastExpr{.operand = self_ref}, .type = self_ptr});
       const mir::ExprId call = code.Body().exprs.Add(
           mir::Expr{
               .data =
@@ -2155,14 +2152,15 @@ auto StructuralScopeLowerer::PopulateBodies(WalkFrame parent_frame)
       const mir::FieldId field = DisableTargetField(scope_id);
       const mir::ExprId cell = ctor_block.exprs.Add(
           mir::MakeFieldAccessExpr(
-              self_read(), mir::FieldTarget{.owner = class_id_, .slot = field},
+              self_read(),
+              mir::ClassFieldTarget{.owner = class_id_, .slot = field},
               mir_class.fields.Get(field).type));
       const mir::ExprId addr = ctor_block.exprs.Add(
           mir::MakeAddressOfExpr(cell, disable_target_ptr_type));
       const mir::ExprId node = ctor_block.exprs.Add(
           mir::MakeFieldAccessExpr(
               self_read(),
-              mir::FieldTarget{
+              mir::ClassFieldTarget{
                   .owner = class_id_, .slot = name_node.borrowed_handle},
               mir_class.fields.Get(name_node.borrowed_handle).type));
       ctor_block.AppendStmt(

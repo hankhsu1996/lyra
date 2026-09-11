@@ -352,9 +352,7 @@ auto PlanSubroutineCall(
           [](const hir::EnumMethodRef&) -> Planned { return std::nullopt; },
           [](const hir::PastValueRef&) -> Planned { return std::nullopt; },
           [](const hir::ValueChangeRef&) -> Planned { return std::nullopt; },
-          [](const hir::ForeignImportRef&) -> Planned {
-            return std::nullopt;
-          }},
+          [](const hir::ForeignImportRef&) -> Planned { return std::nullopt; }},
       call.callee);
 }
 
@@ -447,7 +445,7 @@ auto BuildAmbientHandle(
               nav = frame.current_block->exprs.Add(
                   mir::MakeFieldAccessExpr(
                       nav,
-                      mir::FieldTarget{
+                      mir::ClassFieldTarget{
                           .owner = owner, .slot = anchor.borrowed_handle},
                       lowerer.Owner()
                           .GetClassShape(owner)
@@ -557,7 +555,7 @@ auto EmitSubroutineCall(
             }
             const mir::ExprId restored = block.exprs.Add(
                 mir::Expr{
-                    .data = mir::FunctionCastExpr{.operand = erased},
+                    .data = mir::CastExpr{.operand = erased},
                     .type = unit.types.Intern(
                         mir::Type{mir::MachineFunctionType{
                             .params = std::move(entry_params),

@@ -406,8 +406,7 @@ auto MakeReturnConventionType(
 // position an object was written in; an entry that acts on none -- a factory
 // answering with the value it builds -- takes every operand as an argument.
 auto BuiltinCall(
-    support::BuiltinFn method,
-    std::vector<std::optional<hir::ExprId>> operands,
+    support::BuiltinFn method, std::vector<std::optional<hir::ExprId>> operands,
     std::optional<hir::WithClause> with_clause) -> hir::CallExpr {
   const support::RuntimeEntry entry = support::RuntimeEntryOf(method);
   if (std::holds_alternative<support::StaticFactory>(entry.declaration)) {
@@ -443,8 +442,7 @@ auto DetectImportedRuntimeMethod(const slang::ast::SubroutineSymbol& method)
   if (owner.kind != slang::ast::SymbolKind::ClassType) {
     return std::nullopt;
   }
-  const auto klass =
-      ImportedRuntimeClassOf(owner.as<slang::ast::ClassType>());
+  const auto klass = ImportedRuntimeClassOf(owner.as<slang::ast::ClassType>());
   if (!klass.has_value()) {
     return std::nullopt;
   }
@@ -452,8 +450,7 @@ auto DetectImportedRuntimeMethod(const slang::ast::SubroutineSymbol& method)
     case support::ImportedRuntimeClass::kProcess:
       return LowerProcessMethodName(method.name);
   }
-  throw InternalError(
-      "AST->HIR call: unknown imported runtime-library class");
+  throw InternalError("AST->HIR call: unknown imported runtime-library class");
 }
 
 // The unit a subroutine is declared directly in when that unit is reached by

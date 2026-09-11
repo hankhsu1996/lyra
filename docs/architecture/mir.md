@@ -324,6 +324,15 @@ implies; the diagnostic for any new forbidden shape is "what identity property d
   the operands, so the layer holding them states it. A node that leaves it open makes every backend
   decide what the program means rather than how to represent it, and the backend that decides
   differently is a wrong answer no one is positioned to see.
+
+  What this bans is a type that leaves the choice **open**, and the test is whether the types answer
+  completely: where a type admits several ways to be built, or a pair of types several conversions,
+  a node that names none of them has left the decision to its consumers and is the shape above.
+  Where the types admit exactly one, a consumer reading them is translating rather than deciding,
+  and the two backends cannot come out differently -- so a node whose type or type pair closes the
+  question is not this. Ask which it is before reaching for a discriminator, because one added where
+  the types already close the question is a second copy of an answer, and two copies can disagree.
+
 - A type that names a boundary or a foreign ABI rather than a value's own shape -- a "DPI carrier",
   a "C ABI type" -- carried as a MIR value type. The ABI classification of a foreign call's formal
   is a property of the _signature_, and belongs on the callable's declaration; the value that
@@ -333,14 +342,16 @@ implies; the diagnostic for any new forbidden shape is "what identity property d
   silently lowers the value as the wrong thing. Missing machine primitives are what make such a type
   look necessary; the fix is to complete them, not to wrap them. (A type names what a value _is_,
   not where it is going.)
-- One cast node standing for every reinterpretation, whose realization each backend selects from the
-  (source, destination) type pair. A cast node names exactly one operation -- reduce a value to a
-  machine boolean, re-type a reference without moving bits, name a code address as a different
-  function type, convert a machine integer's width or signedness -- so a conversion no node covers
-  fails to compile. Under a type-pair-dispatched node a pair a backend never handled is instead a
-  silent no-op, indistinguishable from a deliberate reinterpretation. A conversion that reshapes a
-  _value_ (integral resize, real <-> integral, packed <-> string) is a library call, never a cast
-  node. (A primitive means one thing; a backend does not re-derive semantics MIR declined to state.)
+- A cast node carrying a kind beside its two types. A cast says a value is read as another type, and
+  it names both already: the operand's type is what the value comes from, `Expr::type` is what it
+  goes to. A kind is derived from that pair -- SV's overloaded conversion syntax is resolved at
+  HIR-to-MIR, so what reaches here is one concrete pair -- and a classification stored beside the
+  thing it is derived from is a second copy that can disagree with it. What the pair does not excuse
+  is a backend passing a value through for a pair it cannot realize: a no-op is stated only where
+  the two representations are provably the same, and every other unhandled pair is refused. A
+  conversion that reshapes a _value_ (integral resize, real <-> integral, packed <-> string) is a
+  library call, never a cast node. (A node states a fact once; a backend refuses what it cannot do
+  rather than doing nothing.)
 - A backend that recovers a semantic fact MIR does not state by inferring it from a node's body
   contents or any side signal, instead of reading it from an explicit node or reference. A node's
   own structural context is not a side signal: the type of an operand it was handed, and the node

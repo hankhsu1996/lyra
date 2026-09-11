@@ -179,8 +179,8 @@ class LirDumper {
               return std::format(
                   "union({}, {})", u.index.value, FormatOperand(u.value));
             },
-            [&](const ValueCastInstr& cast) -> std::string {
-              return std::format("valuecast {}", FormatOperand(cast.operand));
+            [&](const CastInstr& cast) -> std::string {
+              return std::format("cast {}", FormatOperand(cast.operand));
             },
             [&](const AggregateExtractInstr& extract) -> std::string {
               return std::format(
@@ -218,15 +218,6 @@ class LirDumper {
             [&](const UnaryInstr& un) -> std::string {
               return std::format(
                   "{} {}", UnaryOpName(un.op), FormatOperand(un.operand));
-            },
-            [&](const BoolCastInstr& cast) -> std::string {
-              return std::format("bool {}", FormatOperand(cast.operand));
-            },
-            [&](const PointerCastInstr& cast) -> std::string {
-              return std::format("ptrcast {}", FormatOperand(cast.operand));
-            },
-            [&](const IntCastInstr& cast) -> std::string {
-              return std::format("intcast {}", FormatOperand(cast.operand));
             }},
         data);
   }

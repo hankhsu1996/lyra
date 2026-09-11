@@ -302,12 +302,12 @@ auto MakeFromBoolCall(mir::ExprId bool_expr_id, mir::TypeId result_type)
       .type = result_type};
 }
 
-// Wraps an operand in `BoolCastExpr` so a machine-boolean consumer -- a native
-// `&&` / `||` / `!`, or `kFromBool` -- can take it.
+// Reads an operand as a machine boolean, so a consumer that takes one -- a
+// native `&&` / `||` / `!`, or `kFromBool` -- can be given it.
 auto MakeBoolCast(const mir::CompilationUnit& unit, mir::ExprId operand_id)
     -> mir::Expr {
   return mir::Expr{
-      .data = mir::BoolCastExpr{.operand = operand_id},
+      .data = mir::CastExpr{.operand = operand_id},
       .type = unit.builtins.machine_bool};
 }
 

@@ -140,6 +140,10 @@ the detail lives in the entry itself.
   convention are rejected.
 - [address-of-primitive](address-of-primitive.md) -- MIR carries an explicit place-to-pointer
   operator (`AddressOfExpr`), dual to `DerefExpr`; the backend never injects `&`.
+- [cast-is-a-pair-of-types](cast-is-a-pair-of-types.md) -- a cast is one node whose operand type and
+  result type are its whole statement, so no kind sits beside them; a backend refuses a pair it
+  cannot realize rather than passing the value through. One node per conversion, and a kind
+  enumeration on the node, are rejected.
 - [event-control-unification](event-control-unification.md) -- unified treatment of event control:
   every value-change wait (`always_comb` / `@*`, `@(...)`, `wait (cond)`, a continuous assignment)
   is one shape over a per-leaf `(observable, bit_range)` set. Its MIR carrier is superseded by the

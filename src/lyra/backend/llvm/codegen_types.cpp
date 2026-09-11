@@ -56,6 +56,10 @@ auto CodeGenTypes::Map(lir::TypeId id) -> llvm::Type* {
             return llvm::ArrayType::get(Map(m.element), m.size);
           },
           [&](const lir::MachineCStringType& t) { return address(t); },
+          // The machine family's callable axis. The signature it carries is
+          // what a call made through it is compiled against, not part of the
+          // address itself, which is why the address is all this maps to.
+          [&](const lir::MachineFunctionType& t) { return address(t); },
 
           // A simulation value the runtime realizes as an object it owns. Every
           // operation on one is a library call handed where the object lives,

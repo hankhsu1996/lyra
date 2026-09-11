@@ -78,7 +78,7 @@ auto BuildEnclosingScopeReceiver(
   }
   return block.exprs.Add(
       mir::Expr{
-          .data = mir::PointerCastExpr{.operand = nav},
+          .data = mir::CastExpr{.operand = nav},
           .type = frame.EnclosingClassAtHops(hops).cls->self_pointer_type});
 }
 

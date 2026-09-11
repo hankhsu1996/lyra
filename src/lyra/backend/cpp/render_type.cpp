@@ -426,9 +426,7 @@ auto RenderTypeConstructionAsCpp(
           [&](const mir::RefType& t) { return by_naming_itself(t); },
           [&](const mir::VoidType& t) { return by_naming_itself(t); },
           [&](const mir::TupleType& t) { return by_naming_itself(t); },
-          [&](const mir::UnpackedStructType& t) {
-            return by_naming_itself(t);
-          },
+          [&](const mir::UnpackedStructType& t) { return by_naming_itself(t); },
           [&](const mir::UnionType& t) { return by_naming_itself(t); },
           [&](const mir::TaggedUnionType& t) { return by_naming_itself(t); },
           [&](const mir::EmptyType& t) { return by_naming_itself(t); },

@@ -131,21 +131,8 @@ auto CodeGenFunction::LowerInstr(const lir::Instr& instr)
           [&](const lir::UnaryInstr& unary) -> diag::Result<llvm::Value*> {
             return LowerUnary(unary, result_type);
           },
-          [&](const lir::BoolCastInstr& cast) -> diag::Result<llvm::Value*> {
-            return LowerBoolCast(cast, result_type);
-          },
-          [&](const lir::PointerCastInstr& cast) -> diag::Result<llvm::Value*> {
-            // Every reference crosses as the same opaque handle, so retyping it
-            // moves no bits.
-            return LowerOperand(cast.operand);
-          },
-          [&](const lir::ValueCastInstr& cast) -> diag::Result<llvm::Value*> {
-            // The value's handle is what it was; only the type the program
-            // holds it to differs, and a handle carries no type.
-            return LowerOperand(cast.operand);
-          },
-          [&](const lir::IntCastInstr& cast) -> diag::Result<llvm::Value*> {
-            return LowerIntCast(cast, result_type);
+          [&](const lir::CastInstr& cast) -> diag::Result<llvm::Value*> {
+            return LowerCast(cast, result_type);
           }},
       instr.data);
 }
@@ -546,39 +533,45 @@ auto CodeGenFunction::LowerMachineUnary(const lir::UnaryInstr& unary)
   throw InternalError("llvm codegen: unknown unary operator");
 }
 
-auto CodeGenFunction::LowerBoolCast(
-    const lir::BoolCastInstr& cast, lir::TypeId result_type)
+// A cast says only which type a value is read as, so the pair of types is the
+// whole of what it states and the machine conversion follows from that pair.
+// Two types mapping to one machine type convert by nothing at all; a machine
+// boolean is what the value's own domain answers about it; and between two
+// machine integers the value resizes, repeating the sign bit only when the
+// *source* is signed, the destination's signedness saying how the result is
+// later read rather than what the added high bits hold. A pair outside those is
+// one this target does not carry, and is refused rather than passed through.
+auto CodeGenFunction::LowerCast(
+    const lir::CastInstr& cast, lir::TypeId result_type)
     -> diag::Result<llvm::Value*> {
-  auto domain = DomainOf(OperandType(cast.operand));
-  if (!domain) {
-    return std::unexpected(std::move(domain.error()));
-  }
   auto operand = LowerOperand(cast.operand);
   if (!operand) {
     return std::unexpected(std::move(operand.error()));
   }
-  const std::array<llvm::Value*, 1> args{*operand};
-  return builder_.CreateCall(
-      Entry(RuntimeSymbol(*domain, RuntimeOp::kToBool), result_type, args),
-      args);
-}
-
-// Widening repeats the sign bit only when the *source* is signed; the
-// destination's signedness says how the result is later read, not what the
-// added high bits hold. Narrowing discards high bits either way.
-auto CodeGenFunction::LowerIntCast(
-    const lir::IntCastInstr& cast, lir::TypeId result_type)
-    -> diag::Result<llvm::Value*> {
-  const auto& source = module_->Unit()
-                           .types.Get(OperandType(cast.operand))
-                           .Get<lir::MachineIntType>();
-  auto operand = LowerOperand(cast.operand);
-  if (!operand) {
-    return std::unexpected(std::move(operand.error()));
+  llvm::Type* target = module_->Types().Map(result_type);
+  if ((*operand)->getType() == target) {
+    return *operand;
+  }
+  const lir::TypeId operand_type = OperandType(cast.operand);
+  if (module_->Unit().types.Get(result_type).Is<lir::MachineBoolType>()) {
+    auto domain = DomainOf(operand_type);
+    if (!domain) {
+      return std::unexpected(std::move(domain.error()));
+    }
+    const std::array<llvm::Value*, 1> args{*operand};
+    return builder_.CreateCall(
+        Entry(RuntimeSymbol(*domain, RuntimeOp::kToBool), result_type, args),
+        args);
+  }
+  const std::optional<lir::Signedness> signedness =
+      module_->Unit().types.Get(operand_type).MachineIntegerSignedness();
+  if (!signedness) {
+    return Unsupported(
+        "llvm codegen: cast between two types this target has no conversion "
+        "between");
   }
   return builder_.CreateIntCast(
-      *operand, module_->Types().Map(result_type),
-      source.signedness == lir::Signedness::kSigned);
+      *operand, target, *signedness == lir::Signedness::kSigned);
 }
 
 auto CodeGenFunction::LowerCall(
@@ -1627,9 +1620,9 @@ auto CodeGenFunction::ConstructionOf(
               // The rest come into existence some other way, so a construction
               // naming one would have nothing to call. A print item is built as
               // one of its two forms and never as their sum; a time format, an
-              // open-array handle and a control effect are what some other
-              // entry answers with; a chunk is the element type a canonical
-              // buffer's pointer addresses rather than a value; and a
+              // open-array handle, a control effect and an observation are what
+              // some other entry answers with; a chunk is the element type a
+              // canonical buffer's pointer addresses rather than a value; and a
               // cancellation target and a channel's joint cancel state are
               // storage the owner holds and reaches by address.
               case lir::RuntimeLibraryKind::kPrintItem:
@@ -1638,6 +1631,7 @@ auto CodeGenFunction::ConstructionOf(
               case lir::RuntimeLibraryKind::kDpiLogicChunk:
               case lir::RuntimeLibraryKind::kDpiOpenArrayHandle:
               case lir::RuntimeLibraryKind::kControlEffect:
+              case lir::RuntimeLibraryKind::kObservation:
               case lir::RuntimeLibraryKind::kCancellationTarget:
               case lir::RuntimeLibraryKind::kChannelCancellation:
                 return no_construct();

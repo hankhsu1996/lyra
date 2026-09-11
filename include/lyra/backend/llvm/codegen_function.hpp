@@ -91,9 +91,7 @@ class CodeGenFunction {
       -> diag::Result<llvm::Value*>;
   auto LowerMachineUnary(const lir::UnaryInstr& unary)
       -> diag::Result<llvm::Value*>;
-  auto LowerBoolCast(const lir::BoolCastInstr& cast, lir::TypeId result_type)
-      -> diag::Result<llvm::Value*>;
-  auto LowerIntCast(const lir::IntCastInstr& cast, lir::TypeId result_type)
+  auto LowerCast(const lir::CastInstr& cast, lir::TypeId result_type)
       -> diag::Result<llvm::Value*>;
   auto LowerOperand(const lir::Operand& operand) -> diag::Result<llvm::Value*>;
 

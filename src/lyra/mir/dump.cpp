@@ -676,9 +676,8 @@ class MirDumper {
             [](const MachineIntLiteral& lit) -> std::string {
               return std::format("MachineIntLiteral({})", lit.value);
             },
-            [](const FunctionCastExpr& c) -> std::string {
-              return std::format(
-                  "FunctionCastExpr operand=Expr[{}]", c.operand.value);
+            [](const CastExpr& c) -> std::string {
+              return std::format("CastExpr operand=Expr[{}]", c.operand.value);
             },
             [](const MachineArrayDataExpr& d) -> std::string {
               return std::format(
@@ -690,14 +689,6 @@ class MirDumper {
             },
             [](const MoveExpr& m) -> std::string {
               return std::format("MoveExpr operand=Expr[{}]", m.operand.value);
-            },
-            [](const PointerCastExpr& c) -> std::string {
-              return std::format(
-                  "PointerCastExpr operand=Expr[{}]", c.operand.value);
-            },
-            [](const IntCastExpr& c) -> std::string {
-              return std::format(
-                  "IntCastExpr operand=Expr[{}]", c.operand.value);
             },
             [this](const ReferenceExpr& r) -> std::string {
               return std::format(
@@ -712,10 +703,6 @@ class MirDumper {
               return std::format(
                   "BinaryExpr op={} lhs=Expr[{}] rhs=Expr[{}]",
                   FormatBinaryOp(b.op), b.lhs.value, b.rhs.value);
-            },
-            [](const BoolCastExpr& b) -> std::string {
-              return std::format(
-                  "BoolCastExpr operand=Expr[{}]", b.operand.value);
             },
             [](const ConditionalExpr& c) -> std::string {
               return std::format(
@@ -800,10 +787,6 @@ class MirDumper {
               return std::format(
                   "ClosureExpr closure=Closure[{}] field_inits={}",
                   cl.closure.value, cl.field_inits.size());
-            },
-            [](const ValueCastExpr& v) -> std::string {
-              return std::format(
-                  "ValueCastExpr operand=Expr[{}]", v.operand.value);
             },
             [](const CompositeExpr& c) -> std::string {
               return std::format(

@@ -273,9 +273,8 @@ auto UnitLowerer::TranslateType(const mir::Type& ty) -> lir::Type {
             return lir::Type{lir::TupleType{.elements = std::move(elements)}};
           },
           [&](const mir::UnpackedStructType& s) -> lir::Type {
-            return lir::Type{
-                lir::UnpackedStructType{
-                    .members = aggregate_members(s.members)}};
+            return lir::Type{lir::UnpackedStructType{
+                .members = aggregate_members(s.members)}};
           },
           [&](const mir::UnionType& u) -> lir::Type {
             return lir::Type{

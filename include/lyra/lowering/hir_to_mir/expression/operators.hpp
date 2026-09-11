@@ -35,8 +35,8 @@ auto LowerCompoundOperation(hir::BinaryOp op) -> CompoundOperation;
 // (already in `block`) and dispatches on `(op, lhs_type, rhs_type)`: an
 // operator a library performs lifts to a `CallExpr` against the entry that
 // performs it; real / string comparison and logical operators wrap in
-// `kFromBool` (with `BoolCastExpr` around the operands for the logical
-// family); the rest produce a native `BinaryExpr` for the backend to render
+// `kFromBool` (the logical family reading each operand as a machine boolean
+// first); the rest produce a native `BinaryExpr` for the backend to render
 // mechanically. The single producer of a binary operator, so it is also the one
 // place that guarantees a word-parallel operator's operands share a storage
 // domain (LRM 11.6.1), inserting the reconciling conversion any synthesized

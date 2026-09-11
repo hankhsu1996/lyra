@@ -480,43 +480,20 @@ struct UnaryInstr {
   Operand operand;
 };
 
-// Reduces a value to a machine boolean, the type a conditional branch tests.
-// This is the explicit form of the contextual conversion a C++ target performs
-// implicitly in a boolean context.
-struct BoolCastInstr {
-  Operand operand;
-};
-
-// Reinterprets a reference-like value as a reference to the result type. It
-// moves no bits; it names the destination type that an implicit conversion
-// would otherwise leave for a consumer to infer.
-struct PointerCastInstr {
-  Operand operand;
-};
-
-// Names the result type for a value whose bits the destination structures
-// identically -- crossing between an enumeration and its base is what reaches
-// here. The peer of the pointer cast above on the value side: it moves no bits
-// and computes nothing, and exists because the type a value is held to is part
-// of what a program states.
-struct ValueCastInstr {
-  Operand operand;
-};
-
-// Converts a machine integer to the machine integer the result type names,
-// truncating or extending it. Extension follows the *source* type's signedness,
-// which is what decides whether the added high bits repeat the sign bit or are
-// zero. This is a machine conversion, not a simulation-value one: a packed
-// value's resize is a library call.
-struct IntCastInstr {
+// The operand read as the type this instruction's result has. Both types are
+// already carried -- the operand's own is what the value comes from, the
+// result's is what it goes to -- so nothing beside them says which cast this
+// is, and a target that emits different machine code for different pairs reads
+// the pair. A pair it does not realize is refused; only two types sharing a
+// machine representation convert by emitting nothing.
+struct CastInstr {
   Operand operand;
 };
 
 using InstrData = std::variant<
     CallInstr, ProductInstr, ArrayInstr, UnionInstr, AggregateExtractInstr,
     AggregateUpdateInstr, TagTestInstr, LoadInstr, StoreInstr, AddrOfInstr,
-    BinaryInstr, UnaryInstr, BoolCastInstr, PointerCastInstr, ValueCastInstr,
-    IntCastInstr>;
+    BinaryInstr, UnaryInstr, CastInstr>;
 
 // One instruction: it defines `result` (whose type lives on the function's
 // value arena) from `data`.

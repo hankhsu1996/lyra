@@ -27,9 +27,6 @@ namespace lyra::backend::cpp {
 
 namespace {
 
-auto RenderDerefExpr(const ScopeView& view, const mir::DerefExpr& d)
-    -> std::string;
-
 auto LookupLocalName(const ScopeView& view, const mir::LocalRef& ref)
     -> std::string {
   // Every local -- including `self` (`locals[0]`), which the method emit
@@ -101,14 +98,6 @@ auto RenderBinaryExpr(const ScopeView& view, const mir::BinaryExpr& b)
       RenderExpr(view, view.Expr(b.rhs)));
 }
 
-// Emits the host-bool reduction the node states, so a condition and a native
-// C++ logical operand read a value as a boolean the same way, without leaving
-// the boolean decision to a contextual conversion at the use site.
-auto RenderBoolCastExpr(const ScopeView& view, const mir::BoolCastExpr& b)
-    -> std::string {
-  return std::format("bool({})", RenderExpr(view, view.Expr(b.operand)));
-}
-
 auto RenderConditionalExpr(const ScopeView& view, const mir::ConditionalExpr& c)
     -> std::string {
   return std::format(
@@ -117,20 +106,21 @@ auto RenderConditionalExpr(const ScopeView& view, const mir::ConditionalExpr& c)
       RenderExpr(view, view.Expr(c.else_value)));
 }
 
-// Converts a machine integer to the machine integer named by the enclosing
-// `Expr::type` -- a truncation or an extension, which `static_cast` performs.
-// This is a machine conversion, not a simulation-value one: every SV value
-// reshape (integral resize, real <-> integral, packed <-> string) is a
-// `CallExpr` against a `lyra::value` factory and renders through the call path.
-auto RenderIntCastExpr(
-    const ScopeView& view, const mir::Expr& expr, const mir::IntCastExpr& cast)
+// The operand read as the type the expression has, written as the C++ cast
+// notation from the one to the other. That notation is the C++ spelling for
+// whichever conversion a pair of types calls for, so the pair decides the
+// conversion here as it does in the node, and this names no type of its own.
+//
+// The enclosing parentheses are load-bearing: cast notation is not a primary
+// expression, so a `->` or a `[` written after it would take the cast's own
+// operand instead, and the conversion would silently apply to the wrong thing.
+auto RenderCastExpr(
+    const ScopeView& view, const mir::Expr& expr, const mir::CastExpr& cast)
     -> std::string {
   return std::format(
-      "static_cast<{}>({})", RenderTypeAsCpp(view.Unit(), expr.type),
+      "(({})({}))", RenderTypeAsCpp(view.Unit(), expr.type),
       RenderExpr(view, view.Expr(cast.operand)));
 }
-
-}  // namespace
 
 // The C++ name of a closure capture, distinct from the field's source name. A
 // capture is realized as a lambda capture and shares the lambda's scope with
@@ -204,7 +194,8 @@ auto RenderFieldAccessExpr(const ScopeView& view, const mir::FieldAccessExpr& m)
 // scope and a name joined; what differs is which table the strings are read out
 // of, which is the whole of what separates one referent from another. A
 // function is named by its address, since C++ spells a bare function name as a
-// call.
+// call -- and that address, alone among these, is not a primary expression, so
+// it carries the parentheses that let it stand wherever the others do.
 auto RenderReferenceExpr(
     const ScopeView& view, const mir::ReferenceExpr& reference) -> std::string {
   return std::visit(
@@ -215,7 +206,7 @@ auto RenderReferenceExpr(
           [&](const mir::FunctionRef& fr) -> std::string {
             const mir::Class& cls = view.Class();
             return std::format(
-                "&{}::{}", ToCppName(cls.name),
+                "(&{}::{})", ToCppName(cls.name),
                 cls.abi_adapters.Get(fr.adapter).name);
           },
           [&](const mir::StaticConstantRef& r) -> std::string {
@@ -244,8 +235,6 @@ auto RenderReferenceExpr(
           }},
       reference.target);
 }
-
-namespace {
 
 auto RenderAssignExpr(const ScopeView& view, const mir::AssignExpr& a)
     -> std::string {
@@ -419,17 +408,7 @@ auto RenderDerefExpr(const ScopeView& view, const mir::DerefExpr& d)
 // `&place` emitted as the C++ address-of operator.
 auto RenderAddressOfExpr(const ScopeView& view, const mir::AddressOfExpr& a)
     -> std::string {
-  return std::format("&{}", RenderExpr(view, view.Expr(a.operand)));
-}
-
-// Re-types a reference as the reference type the expression's `type` states.
-// Renders as `static_cast<DestType>(operand)`; the destination spelling comes
-// from the type table, not from any local inference.
-auto RenderPointerCastExpr(
-    const ScopeView& view, const mir::PointerCastExpr& cast, mir::TypeId dest)
-    -> std::string {
-  return "static_cast<" + RenderTypeAsCpp(view.Unit(), dest) + ">(" +
-         RenderExpr(view, view.Expr(cast.operand)) + ")";
+  return std::format("(&{})", RenderExpr(view, view.Expr(a.operand)));
 }
 
 // How a machine float literal is written so the target reads back the value it
@@ -512,8 +491,8 @@ auto RenderExpr(const ScopeView& view, const mir::Expr& expr) -> std::string {
           [&](const mir::BinaryExpr& b) -> std::string {
             return RenderBinaryExpr(view, b);
           },
-          [&](const mir::BoolCastExpr& b) -> std::string {
-            return RenderBoolCastExpr(view, b);
+          [&](const mir::CastExpr& c) -> std::string {
+            return RenderCastExpr(view, expr, c);
           },
           [&](const mir::ConditionalExpr& c) -> std::string {
             return RenderConditionalExpr(view, c);
@@ -527,20 +506,11 @@ auto RenderExpr(const ScopeView& view, const mir::Expr& expr) -> std::string {
           [&](const mir::IncDecExpr& inc) -> std::string {
             return RenderIncDecExpr(view, inc);
           },
-          [&](const mir::IntCastExpr& cast) -> std::string {
-            return RenderIntCastExpr(view, expr, cast);
-          },
           [&](const mir::CallExpr& call) -> std::string {
             return RenderCallExpr(view, call, expr.type);
           },
           [&](const mir::DerefExpr& d) -> std::string {
             return RenderDerefExpr(view, d);
-          },
-          [&](const mir::FunctionCastExpr& c) -> std::string {
-            return std::format(
-                "reinterpret_cast<{}>({})",
-                RenderTypeAsCpp(view.Unit(), expr.type),
-                RenderExpr(view, view.Expr(c.operand)));
           },
           [&](const mir::MachineArrayDataExpr& d) -> std::string {
             return std::format(
@@ -553,20 +523,11 @@ auto RenderExpr(const ScopeView& view, const mir::Expr& expr) -> std::string {
             return std::format(
                 "std::move({})", RenderExpr(view, view.Expr(m.operand)));
           },
-          [&](const mir::PointerCastExpr& c) -> std::string {
-            return RenderPointerCastExpr(view, c, expr.type);
-          },
           [&](const mir::FieldAccessExpr& m) -> std::string {
             return RenderFieldAccessExpr(view, m);
           },
           [&](const mir::ClosureExpr& cl) -> std::string {
             return RenderClosureExpr(view, cl);
-          },
-          // The value is unchanged and so is its C++ type: an enumeration and
-          // its base share one runtime class, so ascribing the other type to a
-          // value spells nothing here.
-          [&](const mir::ValueCastExpr& v) -> std::string {
-            return RenderExpr(view, view.Expr(v.operand));
           },
           [&](const mir::CompositeExpr& c) -> std::string {
             return RenderPartsAsBraceInit(view, expr.type, c.parts);

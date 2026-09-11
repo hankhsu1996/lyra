@@ -56,8 +56,7 @@ auto EnumBelongsToImportedRuntimeClass(const slang::ast::EnumType& enum_type)
   if (owner.kind != slang::ast::SymbolKind::ClassType) {
     return false;
   }
-  return ImportedRuntimeClassOf(owner.as<slang::ast::ClassType>())
-      .has_value();
+  return ImportedRuntimeClassOf(owner.as<slang::ast::ClassType>()).has_value();
 }
 
 auto LowerScalarAtom(slang::ast::ScalarType::Kind k) -> hir::BitAtom {

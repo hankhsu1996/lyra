@@ -65,17 +65,24 @@ struct UnaryExpr {
   ExprId operand;
 };
 
-// Reduces an operand to a machine `bool` -- the predicate-reduction primitive.
-// It stands wherever a value is consumed as a boolean: a condition context (an
-// if / while / for / do-while / ternary, LRM 12.4, true when the operand is
-// nonzero and false when it is zero, x, or z), an operand of a native logical
-// operator (`&&` / `||` / `!`), and the inner argument of a re-shape back to a
-// 1-bit packed value. The node kind, not the operand's type, is what tells a
-// backend to emit the reduction, so a condition never leaves the boolean
-// decision to a contextual conversion at the branch site. `Expr::type` is the
-// machine boolean it yields; the operand is any value a `bool(...)` conversion
-// accepts.
-struct BoolCastExpr {
+// The operand read as the type this expression has. A cast sits between two
+// types and carries both already: the operand's own type is what the value
+// comes from, `Expr::type` is what it goes to. That pair is the whole
+// statement, so nothing beside it names which cast this is -- a consumer that
+// has to tell them apart reads the two types, which is type dispatch and
+// belongs where a target answers every other question about a type.
+//
+// What reaches here moves no simulation value between representations. A
+// destination whose representation differs is a reshape, which is a library
+// call that lands at that type on its own; and reading an SV value out as a
+// machine scalar is a call for the same reason. So the pairs that arrive are
+// the ones a target can state outright: a value read as the machine boolean a
+// condition tests (LRM 12.4), a machine integer at another width, a
+// reference-like value at another pointee, a code address at the signature its
+// definition was generated with, and an integral type that names its content --
+// an enumeration, a packed structure or union -- read as the vector it shares a
+// representation with.
+struct CastExpr {
   ExprId operand;
 };
 
@@ -341,20 +348,6 @@ struct AddressOfExpr {
   ExprId operand;
 };
 
-// A code address named as another function type: the erasure that puts an entry
-// of one prototype into a table whose entries share a single type, and the
-// restoration that calls it back at its own prototype. `Expr::type` is the
-// function type the address is named as here.
-//
-// The two halves are one contract: an erased entry is called only after being
-// restored to the exact type its definition was generated with, and both sides
-// are generated from one description, so they cannot disagree. Distinct from a
-// pointer cast, which retypes what an address points at rather than what
-// calling it means.
-struct FunctionCastExpr {
-  ExprId operand;
-};
-
 // The borrowed pointer to a machine array's first element
 // (`std::array::data()`, Rust `as_ptr()`). Distinct from taking the array's own
 // address: this names the contiguous element storage, which is the form a
@@ -378,40 +371,6 @@ struct MachineArrayDataExpr {
 // types carry no ownership to move, so lowering never wraps them here -- a
 // move primitive over an alias is a semantic type error.
 struct MoveExpr {
-  ExprId operand;
-};
-
-// Re-types a reference as a reference to a different pointee type, moving no
-// bits and leaving the referent untouched. `operand` is a reference-typed
-// expression -- a borrowed pointer, or a handle to an object -- and
-// `Expr::type` is the destination reference type of the same wrapper. Used
-// where a runtime entry returns a type-erased pointer (`void*`) that the call
-// site re-types, and where a handle to a subclass reaches a variable declared
-// with the base class (LRM 8.14). Either way the lowering states the
-// destination type in MIR so the backend never picks it from context.
-struct PointerCastExpr {
-  ExprId operand;
-};
-
-// Converts a machine integer to a machine integer of a different width or
-// signedness. `operand` is a `MachineIntType` expression; `Expr::type` is the
-// destination `MachineIntType`. This moves bits -- it truncates or extends --
-// and is the primitive a foreign-call boundary crosses on: a call narrows the
-// widest machine integer to its declared C carrier and widens the carrier back.
-// A simulation value's resize is not this: an SV integral is a `PackedArray`
-// whose resize is a library call.
-struct IntCastExpr {
-  ExprId operand;
-};
-
-// The same value at another type that structures its bits identically --
-// crossing between an integral type that names its content (an enumeration, a
-// packed structure or union) and the vector it shares a representation with.
-// Nothing is built and nothing moves; what changes is the type the program
-// ascribes to the value, which is why this is a cast and not a construction. A
-// destination whose representation differs is a reshape, which is a library
-// call that lands at that type on its own and never reaches this node.
-struct ValueCastExpr {
   ExprId operand;
 };
 
@@ -628,11 +587,10 @@ struct ReferenceExpr {
 
 using ExprData = std::variant<
     StringLiteral, NullLiteral, MachineBoolLiteral, MachineIntLiteral,
-    MachineFloatLiteral, ReferenceExpr, UnaryExpr, BinaryExpr, BoolCastExpr,
+    MachineFloatLiteral, ReferenceExpr, UnaryExpr, BinaryExpr, CastExpr,
     ConditionalExpr, BlockExpr, AssignExpr, IncDecExpr, CallExpr, DerefExpr,
-    AddressOfExpr, MachineArrayDataExpr, MoveExpr, PointerCastExpr,
-    FunctionCastExpr, IntCastExpr, FieldAccessExpr, ClosureExpr, CompositeExpr,
-    ValueCastExpr, AwaitExpr, VectorGetExpr>;
+    AddressOfExpr, MachineArrayDataExpr, MoveExpr, FieldAccessExpr, ClosureExpr,
+    CompositeExpr, AwaitExpr, VectorGetExpr>;
 
 struct Expr {
   ExprData data;

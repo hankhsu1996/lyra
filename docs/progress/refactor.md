@@ -563,12 +563,12 @@ enough to warrant its own focused review.
 - [x] R42 -- Retired `RuntimeNavCallee`. The three by-name scope operations (`kRegisterSignal` /
       `kGetSignal` / `kGetChild`) now ride `BuiltinFnCallee` with the signal / child name as a
       regular `StringLiteral` argument and the index list as an element list. The `kGetSignal` cast
-      is lifted to a new MIR `PointerCastExpr` primitive whose destination type is the call site's
-      slot type; the backend emits `static_cast<T>(...)` mechanically from a stated MIR fact. The
-      `kGetChild` index conversion moved into the runtime (which now accepts
-      `std::span<const value::PackedArray>` and calls `.ToInt64()` itself), so the render side has
-      no `.ToInt64()` injection and no `std::array{...}` wrapper. Every call -- regardless of callee
-      variant -- now renders as `fn(rendered_args...)`.
+      is lifted to a MIR cast whose destination type is the call site's slot type, so the backend
+      emits the conversion mechanically from a stated MIR fact. The `kGetChild` index conversion
+      moved into the runtime (which now accepts `std::span<const value::PackedArray>` and calls
+      `.ToInt64()` itself), so the render side has no `.ToInt64()` injection and no
+      `std::array{...}` wrapper. Every call -- regardless of callee variant -- now renders as
+      `fn(rendered_args...)`.
 
 - [x] R43 -- Replace the constructor-of-pointer fallback. The expression set grew a `NullLiteral`
       primitive that the default-value lowering emits directly for borrowed-pointer members; the
@@ -601,17 +601,13 @@ enough to warrant its own focused review.
       `Virtual { slot, static_receiver_type }` arm slots in as an additional `Callee` arm with no
       change to the others.
 
-- [x] R46 -- MIR's cast vocabulary is a set of single-meaning primitives, each carrying no kind axis
-      because each _is_ one kind: `BoolCastExpr` reduces a value to a machine boolean,
-      `PointerCastExpr` re-types a reference without moving bits, and `IntCastExpr` converts a
-      machine integer's width or signedness. The destination type is stated on the enclosing
-      `Expr::type`. A conversion no primitive covers therefore fails to compile, which is the
-      property a single node whose realization each backend selects from the (source, destination)
-      type pair cannot offer: there, a pair a backend never handled is a silent no-op. Every
-      conversion that reshapes a _value_ -- integral resize, real <-> integral, packed <-> string --
-      is a library call, not a cast node. `mir::ConversionExpr` (mirroring HIR's LRM-defined
-      `ConversionKind`) retires; HIR's `ConversionExpr` + `ConversionKind` stay as SV vocab in HIR
-      and collapse into these primitives at HIR-to-MIR.
+- [x] R46 -- A cast below the front end is one node stating two types: what the value comes from and
+      what it is read as. Every conversion that reshapes a _value_ -- integral resize, real <->
+      integral, packed <-> string -- is a library call and not a cast at all. HIR keeps SV's own
+      conversion vocabulary, which is where an overloaded source conversion is resolved, so what
+      reaches MIR is one concrete type pair. Settled by `decisions/cast-is-a-pair-of-types.md`,
+      which reversed the several-primitives shape this entry first landed and says how a backend
+      refuses a pair it cannot realize.
 
 - [x] R51 -- Naming a capability wrapper's storage is place formation, not a call. A bare wrapper
       place denotes the wrapper and a dereference of it denotes the storage it represents, so a
@@ -802,24 +798,14 @@ enough to warrant its own focused review.
       header collapses the copies by linkage name as it collects them, which is correct but is the
       consumer doing what the record should have done. **Blocker**: none.
 
-- [x] R57 -- A condition is a value; reducing it to a control predicate is an explicit conversion,
-      not a backend's contextual one. MIR already owns the primitive: `BoolCastExpr` reduces any
-      operand to a host bool, and a real or chandle `!` lowers through it. But `IfStmt`,
-      `WhileStmt`, the loop forms, and `ConditionalExpr` all carry a raw SV-typed condition, and the
-      C++ backend recovers the predicate by handing that value to C++'s contextual conversion -- a
-      passthrough render that works only because every value type happens to expose
-      `explicit operator bool`. The semantic fact "this value is read as a predicate here" is
-      therefore stated nowhere in MIR; each backend rediscovers it from the operand's type at the
-      branch site, which is exactly the re-derivation `mir.md` invariant 10 forbids, and an LLVM
-      backend must synthesize a different test per type (`icmp ne ptr null` for a chandle, a runtime
-      call for a `PackedArray`) with no MIR node telling it to. The asymmetry is visible today: `!h`
-      on a chandle carries an explicit `BoolCastExpr` while `if (h)` does not, for no reason other
-      than that `!`'s result must be re-shaped to a 1-bit integral. Target: every condition context
-      carries its condition already reduced through `BoolCastExpr` at HIR-to-MIR, and the backend's
-      condition-rendering passthrough disappears -- render emits the cast like any other node. No
-      new node kind is needed; the cut is to make the existing primitive mandatory where a predicate
-      is consumed, and to settle each value type's predicate semantics against LRM Table 11-1 while
-      doing so. **Blocker**: none.
+- [x] R57 -- A condition is a value, and reducing it to a control predicate is an explicit
+      conversion rather than a backend's contextual one. Every condition context -- `if`, the loop
+      forms, the conditional expression -- carries its condition already reduced to a machine
+      boolean at HIR-to-MIR, so a backend emits the reduction from a stated node instead of handing
+      the value to whatever its target language does with it contextually. That passthrough worked
+      only because every value type happened to expose a boolean conversion, and left the execution
+      backend to synthesize a different test per type with nothing telling it to. Each value type's
+      predicate semantics is settled against LRM Table 11-1.
 
 - [ ] R58 -- A design unit's definition reference has two realizations. Semantic modeling already
       states it once: a unit's definition is a class-level constant, and the constructor hands the

@@ -290,7 +290,7 @@ void DefineRootFactory(mir::CompilationUnit& unit) {
       mir::ReturnStmt{
           .value = body.exprs.Add(
               mir::Expr{
-                  .data = mir::PointerCastExpr{.operand = built},
+                  .data = mir::CastExpr{.operand = built},
                   .type = owned_scope})});
 
   unit.root_factory = unit.callables.Add(

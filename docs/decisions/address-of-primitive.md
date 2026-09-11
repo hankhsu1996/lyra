@@ -106,11 +106,10 @@ structural fact explicit.
   observable-pointer shapes (`AddressOf(MemberAccess)`, bare `MemberAccess`) are chosen at lowering,
   stored as an `ExprId` on `SensitivityRead`, and rendered through the ordinary expression path.
 
-- A future audit of the `RuntimeNavCallee::kGetSignal` `void*` -> `static_cast<Var<T>*>` injection
-  is now scoped: the right fix is to make the runtime API return the typed pointer (eliminating the
-  cast), not to grow a generic `CastExpr` primitive in MIR. The principle the engineer flagged --
-  avoid `void*` at the MIR/runtime boundary because it forces every backend to re-derive the cast --
-  is the same one this decision rests on.
+- The same principle governs the untyped pointer a by-name scope lookup hands back: a `void*` at the
+  MIR / runtime boundary forces every backend to work out what it stands for, so the conversion back
+  to the slot's own type is stated in MIR rather than injected by a render.
+  [cast-is-a-pair-of-types](cast-is-a-pair-of-types.md) says what that node is.
 
 - Render-side scaffolding that produces an entire C++ method declaration as a string template (e.g.
   `TimePrecisionPower()` virtual override) stays "C++ plumbing" under

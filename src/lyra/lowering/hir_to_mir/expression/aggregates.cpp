@@ -473,8 +473,7 @@ auto LowerHirAssignmentPatternReplicationExpr(
   // positions there are is what the structure's own type says (LRM 10.9). The
   // multiplier states the same number the type does, so nothing reads it.
   if (result_ty.IsProduct()) {
-    const std::size_t position_count =
-        result_ty.ProductComponentTypes().size();
+    const std::size_t position_count = result_ty.ProductComponentTypes().size();
     std::vector<mir::ExprId> components;
     components.reserve(position_count);
     for (std::size_t i = 0; i < position_count; ++i) {
