@@ -6,9 +6,14 @@
 
 ## Status
 
-Accepted. Completes what a connection point may name on a signature, which `unit-signature.md`
-already said had a projection standing in it; narrows one sentence of
-`value-projection-designator.md` and reverses nothing.
+Accepted, with the write half of D5 superseded. Completes what a connection point may name on a
+signature, which `unit-signature.md` already said had a projection standing in it; narrows one
+sentence of `value-projection-designator.md`.
+
+`names-a-view-offers.md` (2026-09-11) supersedes D5's answer for a name a modport offers for
+writing, and narrows its reading of a plain port identifier. What it keeps is D5's answer for a name
+offered only for reading, and every other decision here -- D2's projection is what the superseding
+entry publishes. Read D5 with that entry beside it.
 
 ## Why this decision matters
 

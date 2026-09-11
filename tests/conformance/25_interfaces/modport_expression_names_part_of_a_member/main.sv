@@ -6,9 +6,9 @@
 // name carries a different meaning per modport, and a module written once
 // against the name acts on whichever part the modport it was bound through
 // named. A port expression is self-determined and is not an assignment-like
-// context, and it is optional, so a port may connect to nothing internal at
-// all. Reading such a name is the interface evaluating that expression, so a
-// process sensitive to the name re-evaluates whenever any storage the
+// context, and it is optional (`.Nowhere()` below), so a port may connect to
+// nothing internal at all and a view declaring one is still a legal interface.
+// A name standing for an expression re-evaluates whenever any storage that
 // expression reads changes.
 interface Nibbles;
   logic [7:0] r;
@@ -17,7 +17,7 @@ interface Nibbles;
 
   modport low(output .Part(r[3:0]), input .Value(one), flag);
   modport high(output .Part(r[7:4]), input .Value(2), flag);
-  modport watch(input .Doubled(r + r), .Whole(r));
+  modport watch(input .Doubled(r + r), .Whole(r), output .Nowhere());
 endinterface
 
 module Writer (
@@ -31,9 +31,9 @@ module Writer (
   end
 endmodule
 
-// What a name a modport offers stands for is an expression, so a process
-// waiting on it waits on what that expression reads rather than on a signal of
-// its own -- a computed name and a plain one alike.
+// A name the view bound to an expression has no storage of its own, so what a
+// process waiting on it observes is whatever that expression reads -- and it
+// re-evaluates exactly when a name that is an interface item does.
 module Watcher (
     interface i
 );

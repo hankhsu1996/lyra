@@ -6,9 +6,8 @@
 // that answer -- together with the forms that have no cell at all, a folded
 // constant, a class property, a pattern binding, the object a subroutine was
 // invoked on -- into an Expr. Which declaration a name reaches is the step
-// before that, and it is settled here as well, because consumers that build no
-// Expr -- a check on what may be written, a read a process is sensitive to --
-// ask the same question.
+// before that, and it is settled here as well, because a read a process is
+// sensitive to builds no Expr and asks the same question.
 
 #include "lyra/diag/diagnostic.hpp"
 #include "lyra/hir/expr.hpp"
@@ -30,9 +29,8 @@ namespace lyra::lowering::ast_to_hir {
 // modport, where a port identifier lives in the modport's own name space and
 // stands for the interface item the modport named it after (LRM 25.5.4). What
 // storage that name is, and whether it may be written, are questions about the
-// item rather than about the identifier. A modport expression states a shape
-// the interface declared rather than one of its items, so it has no declaration
-// to answer with.
+// item rather than about the identifier. A name the view defined for itself
+// reaches no single declaration, so a caller tells those apart before asking.
 auto ResolveNamedDeclaration(
     const slang::ast::ValueSymbol& value, diag::SourceSpan span)
     -> diag::Result<const slang::ast::ValueSymbol*>;
@@ -52,20 +50,6 @@ auto NamesCurrentInstance(const slang::ast::Expression& expr) -> bool;
 auto LowerCurrentInstanceMember(
     UnitLowerer& unit_lowerer, WalkFrame frame,
     const slang::ast::Symbol& member, const slang::ast::Type& type,
-    diag::SourceSpan span) -> diag::Result<hir::Expr>;
-
-// `expr` as a name offered by the modport an interface port selected, or
-// nothing when it is anything else. Such a name stands for an expression the
-// interface evaluates (LRM 25.5.4), so both reading and writing it are the
-// interface carrying that out rather than storage the referrer reaches.
-auto NameOfferedByModport(const slang::ast::Expression& expr)
-    -> const slang::ast::HierarchicalValueExpression*;
-
-// Writing such a name, as the call which performs it. `value` is the already
-// lowered right side, which crosses as the call's one argument.
-auto LowerModportPortWrite(
-    UnitLowerer& unit_lowerer, WalkFrame frame,
-    const slang::ast::HierarchicalValueExpression& target, hir::ExprId value,
     diag::SourceSpan span) -> diag::Result<hir::Expr>;
 
 auto LowerNamedValueProc(

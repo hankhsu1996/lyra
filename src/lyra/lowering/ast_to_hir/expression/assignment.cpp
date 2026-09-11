@@ -11,9 +11,7 @@
 #include <slang/ast/types/Type.h>
 
 #include "lyra/base/internal_error.hpp"
-#include "lyra/diag/diag_code.hpp"
 #include "lyra/hir/conversion.hpp"
-#include "lyra/lowering/ast_to_hir/expression/references.hpp"
 #include "lyra/lowering/ast_to_hir/expression/slang_atoms.hpp"
 #include "lyra/lowering/ast_to_hir/process_lowerer.hpp"
 #include "lyra/lowering/ast_to_hir/statement/timing.hpp"
@@ -54,23 +52,6 @@ auto LowerAssignmentExprProc(
     const slang::ast::AssignmentExpression& as, diag::SourceSpan span)
     -> diag::Result<hir::Expr> {
   auto& unit_lowerer = proc.Owner();
-
-  // A name a modport offers stands for an expression the interface evaluates
-  // (LRM 25.5.4), so assigning to it is the interface carrying that assignment
-  // out. Reaching it needs the value first, which is what the call takes.
-  if (const auto* offered = NameOfferedByModport(as.left())) {
-    if (as.op.has_value() || as.isNonBlocking()) {
-      return diag::Fail(
-          span, diag::DiagCode::kUnsupportedExpressionForm,
-          "a compound or nonblocking assignment to a name a view offers is "
-          "not yet supported");
-    }
-    auto rhs_or = proc.LowerExpr(as.right(), frame);
-    if (!rhs_or) return std::unexpected(std::move(rhs_or.error()));
-    return LowerModportPortWrite(
-        unit_lowerer, frame, *offered, frame.Exprs().Add(*std::move(rhs_or)),
-        span);
-  }
 
   auto lhs_or = proc.LowerExpr(as.left(), frame);
   if (!lhs_or) return std::unexpected(std::move(lhs_or.error()));

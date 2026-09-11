@@ -492,29 +492,32 @@ auto StructuralScopeLowerer::PopulateNetMember(
   return {};
 }
 
-// The subroutines an interface carries out for the names one modport offers
-// (LRM 25.5.4). A name stands for an expression this interface evaluates, so
-// the read returns that expression and the write assigns to it; the expression
-// is lowered here, in the scope that wrote it, and what crosses to a module
-// written against the view is the pair rather than the expression.
+// The subroutine an interface evaluates one name a view offers only for reading
+// in (LRM 25.5.4). Nothing bounds such a name to an lvalue, so what crosses to
+// a module written against the view is this rather than the expression, which
+// names declarations that would mean nothing where the signature is read; it is
+// lowered here, in the scope that wrote it. Every other name a view offers
+// designates storage the referrer reaches, so it has nothing to build here.
 auto StructuralScopeLowerer::PopulateModportMember(
     const slang::ast::ModportSymbol& modport, WalkFrame frame)
     -> diag::Result<void> {
   for (const auto& item : modport.members()) {
     const auto* port = item.as_if<slang::ast::ModportPortSymbol>();
-    if (port == nullptr) continue;
+    if (port == nullptr || !ViewDefinesTheName(*port)) continue;
+    if (port->direction != slang::ast::ArgumentDirection::In) continue;
     const auto* connection = port->getConnectionExpr();
     if (connection == nullptr) {
       throw InternalError(
-          "PopulateModportMember: a name offering no expression was refused "
-          "where this unit's promise was derived");
+          "PopulateModportMember: a name the view defines is the expression it "
+          "was written with");
     }
     const auto span = owner_->SourceMapper().PointSpanOf(port->location);
     auto crossing = owner_->InternType(*connection->type, span);
     if (!crossing) return std::unexpected(std::move(crossing.error()));
-    const auto accessors = owner_->ModportAccessorsOf(*port);
+    const hir::StructuralSubroutineId evaluator =
+        owner_->ModportEvaluatorOf(*port);
 
-    // The read: one return of the expression the view bound the name to.
+    // One return of the expression the view bound the name to.
     const std::string read_name = ModportReadName(modport.name, port->name);
     hir::ProceduralBody read_body;
     OpenProceduralScope read_root{
@@ -539,74 +542,18 @@ auto StructuralScopeLowerer::PopulateModportMember(
             .span = span});
     read_body.root_scope = frame.SealScope(std::move(read_root));
     frame.current_structural_scope->structural_subroutines.Define(
-        accessors.getter, hir::SubroutineDecl{
-                              .name = read_name,
-                              .kind = hir::SubroutineKind::kFunction,
-                              .result_type = *crossing,
-                              .params = {},
-                              .result_var = result_var,
-                              .body = std::move(read_body),
-                              .root_stmt = read_root_stmt,
-                              .is_virtual = false,
-                              .is_prototype = false,
-                              .is_static = false,
-                              .overrides = std::nullopt});
-
-    if (!accessors.setter.has_value()) continue;
-
-    // The write: one assignment of the argument to that same expression, which
-    // the view's direction has already established is assignable.
-    const std::string write_name = ModportWriteName(modport.name, port->name);
-    hir::ProceduralBody write_body;
-    OpenProceduralScope write_root{
-        frame.ProceduralScopes().Declare(),
-        hir::ProceduralScopeKind::kSubroutineRoot, write_name};
-    const hir::ProceduralVarId arg = write_body.procedural_vars.Declare();
-    write_body.procedural_vars.Define(
-        arg, hir::ProceduralVarDecl{.name = "value", .type = *crossing});
-    write_root.declarations.push_back(arg);
-    ProcessLowerer write_lowerer(*owner_, *port);
-    auto target = write_lowerer.LowerExpr(
-        *connection,
-        frame.WithProceduralBody(&write_body).WithOpenScope(&write_root));
-    if (!target) return std::unexpected(std::move(target.error()));
-    const hir::ExprId assigned = write_body.exprs.Add(
-        hir::Expr{
-            .type = *crossing,
-            .data = hir::PrimaryExpr{hir::ProceduralVarRef{.var = arg}},
-            .span = span});
-    const hir::ExprId assign = write_body.exprs.Add(
-        hir::Expr{
-            .type = *crossing,
-            .data =
-                hir::AssignExpr{
-                    .timing = hir::ImmediateEffect{},
-                    .lhs = write_body.exprs.Add(*std::move(target)),
-                    .compound_op = std::nullopt,
-                    .rhs = assigned},
-            .span = span});
-    const hir::StmtId write_root_stmt = write_body.stmts.Add(
-        hir::Stmt{
-            .label = std::nullopt,
-            .data = hir::ExprStmt{.expr = assign},
-            .span = span});
-    write_body.root_scope = frame.SealScope(std::move(write_root));
-    frame.current_structural_scope->structural_subroutines.Define(
-        *accessors.setter,
-        hir::SubroutineDecl{
-            .name = write_name,
-            .kind = hir::SubroutineKind::kFunction,
-            .result_type =
-                owner_->Unit().types.Intern(hir::Type{hir::VoidType{}}),
-            .params = {hir::SubroutineParam{
-                .var = arg, .direction = hir::ParamDirection::kInput}},
-            .result_var = std::nullopt,
-            .body = std::move(write_body),
-            .root_stmt = write_root_stmt,
-            .is_virtual = false,
-            .is_prototype = false,
-            .is_static = false,
-            .overrides = std::nullopt});
+        evaluator, hir::SubroutineDecl{
+                       .name = read_name,
+                       .kind = hir::SubroutineKind::kFunction,
+                       .result_type = *crossing,
+                       .params = {},
+                       .result_var = result_var,
+                       .body = std::move(read_body),
+                       .root_stmt = read_root_stmt,
+                       .is_virtual = false,
+                       .is_prototype = false,
+                       .is_static = false,
+                       .overrides = std::nullopt});
   }
   return {};
 }

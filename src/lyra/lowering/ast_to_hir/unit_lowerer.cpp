@@ -220,25 +220,19 @@ auto UnitLowerer::DeclareStructuralIdentities(const slang::ast::Scope& scope)
       MapSubroutineBinding(sub, frame, id);
       DeclareProceduralStatics(sub, sub, hir::ProceduralBodyRef{id}, frame);
     } else if (member.kind == slang::ast::SymbolKind::Modport) {
-      // A name a modport offers stands for an expression this unit evaluates
-      // (LRM 25.5.4), so it carries out a read and, where the view admits a
-      // write, an assignment. Both are subroutines of this scope and take
-      // their identities here with every other, so the signature can name them
-      // before any body is lowered.
+      // A name a view defines and offers only for reading stands for an
+      // expression this unit evaluates (LRM 25.5.4), which is a subroutine of
+      // this scope and takes its identity here with every other, so the
+      // signature can name it before any body is lowered. Every other name a
+      // view offers designates storage -- an item the view wrote no expression
+      // for is the interface's own, and every direction but `input` bounds the
+      // expression to an lvalue -- and storage is reached rather than asked
+      // for.
       for (const auto& item : member.as<slang::ast::Scope>().members()) {
         const auto* port = item.as_if<slang::ast::ModportPortSymbol>();
-        if (port == nullptr) continue;
-        const bool writable =
-            port->direction == slang::ast::ArgumentDirection::Out ||
-            port->direction == slang::ast::ArgumentDirection::InOut;
-        MapModportAccessors(
-            *port,
-            ModportAccessors{
-                .getter = decls.structural_subroutines.Declare(),
-                .setter =
-                    writable
-                        ? std::optional{decls.structural_subroutines.Declare()}
-                        : std::nullopt});
+        if (port == nullptr || !ViewDefinesTheName(*port)) continue;
+        if (port->direction != slang::ast::ArgumentDirection::In) continue;
+        MapModportEvaluator(*port, decls.structural_subroutines.Declare());
       }
     } else if (member.kind == slang::ast::SymbolKind::ProceduralBlock) {
       const auto& proc = member.as<slang::ast::ProceduralBlockSymbol>();
@@ -447,23 +441,24 @@ auto UnitLowerer::LookupStructuralDataObjectBinding(
   return it->second;
 }
 
-void UnitLowerer::MapModportAccessors(
-    const slang::ast::Symbol& port, ModportAccessors accessors) {
-  const auto [_, inserted] = modport_accessors_.emplace(&port, accessors);
+void UnitLowerer::MapModportEvaluator(
+    const slang::ast::Symbol& port, hir::StructuralSubroutineId evaluator) {
+  const auto [_, inserted] = modport_evaluators_.emplace(&port, evaluator);
   if (!inserted) {
     throw InternalError(
-        "UnitLowerer::MapModportAccessors: a name a modport offers is declared "
+        "UnitLowerer::MapModportEvaluator: a name a modport offers is declared "
         "once");
   }
 }
 
-auto UnitLowerer::ModportAccessorsOf(const slang::ast::Symbol& port) const
-    -> ModportAccessors {
-  const auto it = modport_accessors_.find(&port);
-  if (it == modport_accessors_.end()) {
+auto UnitLowerer::ModportEvaluatorOf(const slang::ast::Symbol& port) const
+    -> hir::StructuralSubroutineId {
+  const auto it = modport_evaluators_.find(&port);
+  if (it == modport_evaluators_.end()) {
     throw InternalError(
-        "UnitLowerer::ModportAccessorsOf: every name a modport offers takes "
-        "its identities with the unit's other structural declarations");
+        "UnitLowerer::ModportEvaluatorOf: every name a view offers only for "
+        "reading takes its identity with the unit's other structural "
+        "declarations");
   }
   return it->second;
 }

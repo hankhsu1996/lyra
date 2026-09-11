@@ -28,9 +28,24 @@ auto ProjectedTypeOf(const hir::PublishedSelector& step) -> hir::TypeId {
 
 }  // namespace
 
+auto ImportPublishedPath(
+    UnitLowerer& unit_lowerer, const hir::UnitSignature& signature,
+    std::span<const hir::PublishedSelector> path)
+    -> std::vector<hir::PublishedSelector> {
+  std::vector<hir::PublishedSelector> imported(path.begin(), path.end());
+  for (hir::PublishedSelector& step : imported) {
+    std::visit(
+        [&](auto& selector) {
+          selector.projected_type = unit_lowerer.ImportSignatureType(
+              signature, selector.projected_type);
+        },
+        step);
+  }
+  return imported;
+}
+
 auto ProjectPublishedPath(
     UnitLowerer& unit_lowerer, WalkFrame frame,
-    const hir::UnitSignature& signature,
     std::span<const hir::PublishedSelector> path, hir::Expr base,
     diag::SourceSpan span) -> hir::Expr {
   const hir::TypeId int_type = unit_lowerer.Unit().builtins.int_type;
@@ -73,10 +88,7 @@ auto ProjectPublishedPath(
             }},
         step);
     reached = hir::Expr{
-        .type =
-            unit_lowerer.ImportSignatureType(signature, ProjectedTypeOf(step)),
-        .data = std::move(data),
-        .span = span};
+        .type = ProjectedTypeOf(step), .data = std::move(data), .span = span};
   }
   return reached;
 }
