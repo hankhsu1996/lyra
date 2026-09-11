@@ -996,9 +996,8 @@ auto LowerCallExpr(
           slang::ast::SymbolKind::ClassType) {
     const auto& declaring_class =
         sym->getParentScope()->asSymbol().as<slang::ast::ClassType>();
-    auto class_ref = unit_lowerer.ResolveClassRef(declaring_class, span);
-    if (!class_ref) return std::unexpected(std::move(class_ref.error()));
-    auto callee = unit_lowerer.MakeMethodCallee(*class_ref, *sym, span);
+    auto callee =
+        unit_lowerer.MakeMethodCallee(frame, declaring_class, *sym, span);
     if (!callee) return std::unexpected(std::move(callee.error()));
     auto static_result_type = unit_lowerer.InternType(*call.type, span);
     if (!static_result_type) {
@@ -1034,9 +1033,8 @@ auto LowerCallExpr(
     if (!receiver_or) return std::unexpected(std::move(receiver_or.error()));
     const auto& declaring_class =
         sym->getParentScope()->asSymbol().as<slang::ast::ClassType>();
-    auto class_ref = unit_lowerer.ResolveClassRef(declaring_class, span);
-    if (!class_ref) return std::unexpected(std::move(class_ref.error()));
-    auto callee = unit_lowerer.MakeMethodCallee(*class_ref, *sym, span);
+    auto callee =
+        unit_lowerer.MakeMethodCallee(frame, declaring_class, *sym, span);
     if (!callee) return std::unexpected(std::move(callee.error()));
     auto method_result_type = unit_lowerer.InternType(*call.type, span);
     if (!method_result_type) {

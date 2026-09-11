@@ -182,9 +182,34 @@ auto EmitCppHostMain(
 
 }  // namespace
 
+// Whether the unit settles where any name lands while the design elaborates.
+// A coordinate type exists in a unit's pool exactly when the unit formed one,
+// so this reads the whole answer off the types rather than looking for the
+// places a coordinate is used.
+auto SettlesACoordinate(const mir::CompilationUnit& unit) -> bool {
+  return std::ranges::any_of(unit.types.Ids(), [&](mir::TypeId id) {
+    const auto* library = unit.types.Get(id).As<mir::RuntimeLibraryType>();
+    return library != nullptr &&
+           (library->kind == mir::RuntimeLibraryKind::kPropertyCoordinate ||
+            library->kind == mir::RuntimeLibraryKind::kBehaviorCoordinate);
+  });
+}
+
 auto EmitCpp(
     std::span<const mir::CompilationUnit> units,
-    const mir::CompilationUnit& root) -> CppArtifactSet {
+    const mir::CompilationUnit& root) -> diag::Result<CppArtifactSet> {
+  for (const mir::CompilationUnit& refused : units) {
+    if (SettlesACoordinate(refused)) {
+      return diag::Fail(
+          diag::DiagCode::kUnsupportedExpressionForm,
+          std::format(
+              "'{}' reaches a property or a behavior through a reference whose "
+              "class no signature publishes; this backend spells a member by "
+              "name and has none for a position settled while the design "
+              "elaborates, so it is not yet supported here",
+              refused.name));
+    }
+  }
   CppArtifactSet set;
   for (const auto& unit : units) {
     set.files.push_back(EmitCppDeclarations(unit));

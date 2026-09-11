@@ -234,6 +234,12 @@ auto ResolveCalleeSpelling(
                           }
                           return ToCppName(
                               introducer->behaviors[e.ordinal.value]);
+                        },
+                        [](const mir::ResolvedVirtualSlot&) -> std::string {
+                          throw InternalError(
+                              "RenderCall: a dispatch position that arrived as "
+                              "a value reached a backend that states it does "
+                              "not render one");
                         }},
                     v.slot),
                 .placement = ReceiverPlacement::kIntoCalleeName};

@@ -533,6 +533,7 @@ auto ParkForDelayTicks(
 }  // namespace lyra::runtime
 
 using lyra::runtime::ActivationValueCell;
+using lyra::runtime::BehaviorCoordinate;
 using lyra::runtime::CancellationTarget;
 using lyra::runtime::ChannelCancellation;
 using lyra::runtime::ClosureDefinition;
@@ -547,6 +548,8 @@ using lyra::runtime::DriverOf;
 using lyra::runtime::EnterCancellationTarget;
 using lyra::runtime::EvaluationAttempts;
 using lyra::runtime::FileTable;
+using lyra::runtime::FindBehavior;
+using lyra::runtime::FindProperty;
 using lyra::runtime::ForkWaitAllMustPark;
 using lyra::runtime::ForkWaitFirstMustPark;
 using lyra::runtime::GcNew;
@@ -574,6 +577,7 @@ using lyra::runtime::ProcessSelf;
 using lyra::runtime::ProcessStatus;
 using lyra::runtime::ProcessSuspend;
 using lyra::runtime::ProgramLifetime;
+using lyra::runtime::PropertyCoordinate;
 using lyra::runtime::Read;
 using lyra::runtime::RealTimeInUnit;
 using lyra::runtime::Region;
@@ -1406,6 +1410,34 @@ auto lyra_rt_object_method(
       static_cast<const ObjectDefinition*>(introduced_by), ordinal);
 }
 
+auto lyra_rt_class_find_property(const void* definition, const void* name)
+    -> const void* {
+  return FindProperty(
+      static_cast<const ObjectDefinition*>(definition),
+      static_cast<const char*>(name));
+}
+
+auto lyra_rt_class_find_behavior(const void* definition, const void* name)
+    -> const void* {
+  return FindBehavior(
+      static_cast<const ObjectDefinition*>(definition),
+      static_cast<const char*>(name));
+}
+
+auto lyra_rt_object_member_addr_at(void* object, const void* coordinate)
+    -> void* {
+  const auto& at = *static_cast<const PropertyCoordinate*>(coordinate);
+  return static_cast<ManagedObject*>(object)->MemberAddress(
+      at.declared_by, at.slot);
+}
+
+auto lyra_rt_object_method_at(void* object, const void* coordinate)
+    -> LyraMethodEntry {
+  const auto& at = *static_cast<const BehaviorCoordinate*>(coordinate);
+  return static_cast<const ManagedObject*>(object)->Method(
+      at.introduced_by, at.ordinal);
+}
+
 void lyra_rt_register_signal(void* self, const void* name, void* cell) {
   static_cast<Scope*>(self)->RegisterSignal(
       static_cast<const char*>(name), cell);
@@ -1413,6 +1445,10 @@ void lyra_rt_register_signal(void* self, const void* name, void* cell) {
 
 auto lyra_rt_find_signal(void* self, const void* name) -> void* {
   return static_cast<Scope*>(self)->FindSignal(static_cast<const char*>(name));
+}
+
+auto lyra_rt_find_class(void* self, const void* name) -> const void* {
+  return static_cast<Scope*>(self)->FindClass(static_cast<const char*>(name));
 }
 
 auto lyra_rt_find_subroutine(void* self, const void* name) -> void (*)() {

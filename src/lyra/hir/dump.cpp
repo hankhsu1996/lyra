@@ -181,6 +181,10 @@ auto FormatClassPropertyTarget(const ClassPropertyTarget& target)
             return std::format(
                 "Class[external={}::{}].{}", t.unit_name, t.class_name,
                 t.property.value);
+          },
+          [](const UnpublishedClassPropertyTarget& t) -> std::string {
+            return std::format(
+                "Class[unpublished].coordinate={}", t.coordinate.value);
           }},
       target);
 }
@@ -217,6 +221,20 @@ auto FormatExternalDispatchSlot(const ExternalDispatchSlot& slot)
       slot.behavior.value);
 }
 
+auto FormatCrossUnitDispatchSlot(const CrossUnitDispatchSlot& slot)
+    -> std::string {
+  return std::visit(
+      Overloaded{
+          [](const ExternalDispatchSlot& s) {
+            return FormatExternalDispatchSlot(s);
+          },
+          [](const UnpublishedBehaviorSlot& s) {
+            return std::format(
+                "Class[unpublished]#coordinate={}", s.coordinate.value);
+          }},
+      slot);
+}
+
 auto FormatOverriddenBehavior(const OverriddenBehavior& taken) -> std::string {
   return std::visit(
       Overloaded{
@@ -241,7 +259,7 @@ auto FormatMethodCallee(const MethodCallee& callee) -> std::string {
                 c.interface.kind == SubroutineKind::kTask ? "task" : "function",
                 c.slot.has_value()
                     ? std::format(
-                          " virtual={}", FormatExternalDispatchSlot(*c.slot))
+                          " virtual={}", FormatCrossUnitDispatchSlot(*c.slot))
                     : "");
           }},
       callee);
@@ -1340,7 +1358,9 @@ class HirDumper {
     return out;
   }
 
-  static auto FormatRoutedPathRecipe(const RoutedPathRecipe& r) -> std::string {
+  static auto FormatRouteWalk(
+      const RouteHead& head, const std::vector<PathStep>& steps)
+      -> std::string {
     std::string out = std::visit(
         Overloaded{
             [](const InUnitHead& h) {
@@ -1352,8 +1372,8 @@ class HirDumper {
                   "visible \"{}\"{}", h.head_name,
                   FormatIndices(h.head_indices));
             }},
-        r.head);
-    for (const auto& step : r.steps) {
+        head);
+    for (const auto& step : steps) {
       out += std::visit(
           Overloaded{
               [](const OwnedChildStep& owned) {
@@ -1388,6 +1408,11 @@ class HirDumper {
               }},
           step);
     }
+    return out;
+  }
+
+  static auto FormatRoutedPathRecipe(const RoutedPathRecipe& r) -> std::string {
+    std::string out = FormatRouteWalk(r.head, r.steps);
     out += std::visit(
         Overloaded{
             [](const StructuralDataObjectLeaf& l) {
@@ -1531,6 +1556,22 @@ class HirDumper {
       Line(
           std::format(
               "RoutedRef[{}] {}", id.value, FormatRoutedPathRecipe(r.recipe)));
+    }
+    for (const PropertyCoordinateId id : s.property_coordinates.Ids()) {
+      const auto& c = s.property_coordinates.Get(id);
+      Line(
+          std::format(
+              "PropertyCoordinate[{}] {} class \"{}\" property \"{}\"",
+              id.value, FormatRouteWalk(c.head, c.steps), c.class_name,
+              c.name));
+    }
+    for (const BehaviorCoordinateId id : s.behavior_coordinates.Ids()) {
+      const auto& c = s.behavior_coordinates.Get(id);
+      Line(
+          std::format(
+              "BehaviorCoordinate[{}] {} class \"{}\" behavior \"{}\"",
+              id.value, FormatRouteWalk(c.head, c.steps), c.class_name,
+              c.name));
     }
     for (const PortConnectionId id : s.port_connections.Ids()) {
       const auto& pc = s.port_connections.Get(id);

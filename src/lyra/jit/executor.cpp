@@ -321,6 +321,10 @@ auto DefineRuntimeAbi(llvm::orc::LLJIT& jit)
   add("lyra_rt_object_deref", &lyra_rt_object_deref);
   add("lyra_rt_object_method", &lyra_rt_object_method);
   add("lyra_rt_object_member_addr", &lyra_rt_object_member_addr);
+  add("lyra_rt_class_find_property", &lyra_rt_class_find_property);
+  add("lyra_rt_class_find_behavior", &lyra_rt_class_find_behavior);
+  add("lyra_rt_object_member_addr_at", &lyra_rt_object_member_addr_at);
+  add("lyra_rt_object_method_at", &lyra_rt_object_method_at);
   add("lyra_rt_closure_capture", &lyra_rt_closure_capture);
   add("lyra_rt_submit_nba", &lyra_rt_submit_nba);
   add("lyra_rt_submit_nba_after", &lyra_rt_submit_nba_after);
@@ -382,6 +386,7 @@ auto DefineRuntimeAbi(llvm::orc::LLJIT& jit)
   add("lyra_rt_register_signal", &lyra_rt_register_signal);
   add("lyra_rt_find_signal", &lyra_rt_find_signal);
   add("lyra_rt_find_subroutine", &lyra_rt_find_subroutine);
+  add("lyra_rt_find_class", &lyra_rt_find_class);
   add("lyra_rt_register_disable_target", &lyra_rt_register_disable_target);
   add("lyra_rt_find_disable_target", &lyra_rt_find_disable_target);
   add("lyra_rt_resolve_visible_child", &lyra_rt_resolve_visible_child);
@@ -1317,6 +1322,15 @@ struct PublishedSubroutines {
   std::vector<runtime::ScopeCallable> table;
 };
 
+// The classes one scope answers a name with (LRM 23.9), held here so the table
+// the definition names outlives every reference settled against it. Each is
+// named the way the class is linked, which is how the entry finds the
+// definition among the program's classes.
+struct DeclaredClasses {
+  std::vector<LoadedSubroutine> declared;
+  std::vector<runtime::ScopeClass> table;
+};
+
 // The symbols of the four entries the runtime reaches one scope through: the
 // three phases it drives an instance through, and the one that builds it. Each
 // is read off the function the compiled class names rather than composed a
@@ -1339,6 +1353,7 @@ struct LoadedScopeClass {
   std::int8_t time_precision_power = 0;
   std::vector<runtime::MemberStorageDescriptor> members;
   std::unique_ptr<PublishedSubroutines> published;
+  std::unique_ptr<DeclaredClasses> classes;
   std::unique_ptr<runtime::ScopeDefinition> definition;
 };
 
@@ -1461,6 +1476,18 @@ auto LoadScopeClasses(
               .name = subroutine.name,
               .symbol = unit.functions.Get(subroutine.body).name});
     }
+    // A class is named here by what it is linked under, which is what the
+    // program's own class list is keyed by -- so the join costs no second
+    // naming rule.
+    auto declares = std::make_unique<DeclaredClasses>();
+    declares->declared.reserve(cls.declares.size());
+    for (const lir::DeclaredClass& declared : cls.declares) {
+      declares->declared.push_back(
+          LoadedSubroutine{
+              .name = declared.name,
+              .symbol = lir::ClassSymbol(
+                  unit.name, unit.classes.Get(declared.declaration).name)});
+    }
     loaded.push_back(
         LoadedScopeClass{
             .name = lir::ClassSymbol(unit.name, cls.name),
@@ -1480,6 +1507,7 @@ auto LoadScopeClasses(
             .time_precision_power = metadata.time_precision_power,
             .members = *std::move(members),
             .published = std::move(published),
+            .classes = std::move(declares),
             .definition = std::make_unique<runtime::ScopeDefinition>()});
     // A member whose type reaches an object of this unit is a child this class
     // owns; one reaching a value reaches storage instead. The type says which,
@@ -1519,11 +1547,30 @@ struct LoadedTakeover {
 // realizing it produced, and the definition every value of it shares. The
 // realization is held here because the definition names it as plain data it
 // does not own, so it has to outlive the definition and stay where it was.
+// One name a class declares, and the position it gave that declaration among
+// its own.
+struct LoadedDeclaredName {
+  std::string name;
+  std::uint32_t position = 0;
+};
+
+// The names one class answers while a reference to it resolves, kept apart from
+// the positional schema the realization builds from them: one is the resolution
+// aid, the other is what an access reads. It sits behind its own allocation for
+// the reason a scope's callable surface does -- what the definition ends up
+// holding names these identifiers rather than copying them, so they keep their
+// addresses however the list of classes grows.
+struct DeclaredNames {
+  std::vector<LoadedDeclaredName> properties;
+  std::vector<LoadedDeclaredName> behaviors;
+};
+
 struct LoadedClass {
   std::string name;
   std::string definition_symbol;
   std::optional<std::string> base;
   std::vector<runtime::MemberStorageDescriptor> members;
+  std::unique_ptr<DeclaredNames> declared;
   // The symbol the body of each behavior this class introduces is emitted
   // under, in the order the class introduces them. A behavior declared with no
   // implementation names none (LRM 8.21 pure virtual).
@@ -1558,10 +1605,24 @@ auto LoadObjectClasses(const lir::CompilationUnit& unit)
     }
     std::vector<std::optional<std::string>> introductions;
     introductions.reserve(cls.introduces.size());
-    for (const std::optional<lir::FunctionId>& body : cls.introduces) {
+    auto declared = std::make_unique<DeclaredNames>();
+    declared->behaviors.reserve(cls.introduces.size());
+    for (const lir::Introduction& introduced : cls.introduces) {
+      declared->behaviors.push_back(
+          LoadedDeclaredName{
+              .name = introduced.name,
+              .position = static_cast<std::uint32_t>(introductions.size())});
       introductions.push_back(
-          body.has_value() ? std::optional{unit.functions.Get(*body).name}
-                           : std::nullopt);
+          introduced.body.has_value()
+              ? std::optional{unit.functions.Get(*introduced.body).name}
+              : std::nullopt);
+    }
+    declared->properties.reserve(cls.members.size());
+    for (std::size_t slot = 0; slot < cls.members.size(); ++slot) {
+      declared->properties.push_back(
+          LoadedDeclaredName{
+              .name = cls.members[slot].name,
+              .position = static_cast<std::uint32_t>(slot)});
     }
     std::vector<LoadedTakeover> takeovers;
     takeovers.reserve(cls.takeovers.size());
@@ -1586,6 +1647,7 @@ auto LoadObjectClasses(const lir::CompilationUnit& unit)
                 lir::ClassDefinitionSymbol(unit.name, cls.name),
             .base = ExtendedClassName(unit, cls),
             .members = *std::move(members),
+            .declared = std::move(declared),
             .introductions = std::move(introductions),
             .takeovers = std::move(takeovers),
             .realization = {},
@@ -1610,6 +1672,9 @@ auto LoadStructs(const lir::CompilationUnit& unit)
                 lir::StructDefinitionSymbol(unit.name, record.name),
             .base = std::nullopt,
             .members = *std::move(members),
+            // A compiler-generated record answers no name: nothing of the
+            // source reaches one, so nothing asks it for a member by name.
+            .declared = std::make_unique<DeclaredNames>(),
             .introductions = {},
             .takeovers = {},
             .realization = {},
@@ -1630,6 +1695,33 @@ auto MethodEntry(llvm::orc::LLJIT& jit, const std::string& symbol)
         "' did not resolve: " + llvm::toString(found.takeError()));
   }
   return found->toPtr<runtime::ErasedMethodEntry>();
+}
+
+// Joins the names one scope answers for to the classes they name. A class is
+// named here by what it is linked under, which is what this list is keyed by,
+// so the two sides agree with no naming rule of their own. Every definition
+// exists before any is filled, so this runs whichever order the classes were
+// loaded in.
+void FillDeclaredClasses(
+    LoadedScopeClass& scope, const std::vector<LoadedClass>& classes) {
+  DeclaredClasses& declares = *scope.classes;
+  declares.table.reserve(declares.declared.size());
+  for (const LoadedSubroutine& declared : declares.declared) {
+    const auto found =
+        std::ranges::find(classes, declared.symbol, &LoadedClass::name);
+    if (found == classes.end()) {
+      throw InternalError(
+          "jit executor: the class '" + declared.symbol +
+          "' a scope answers for is defined by no unit of this program");
+    }
+    declares.table.emplace_back(
+        runtime::AbiStringRef{
+            declared.name.data(),
+            static_cast<std::uint32_t>(declared.name.size())},
+        found->definition.get());
+  }
+  scope.definition->program.classes = runtime::ScopeClassTable{
+      declares.table.data(), static_cast<std::uint32_t>(declares.table.size())};
 }
 
 // Completes every class definition, each after the one it extends. What a class
@@ -1686,12 +1778,35 @@ void RealizeClasses(llvm::orc::LLJIT& jit, std::vector<LoadedClass>& classes) {
               .ordinal = taken.ordinal,
               .body = MethodEntry(jit, taken.body)});
     }
+    // The realization copies these entries, and each keeps naming the string it
+    // was built from rather than a copy of it -- so the table is a transient of
+    // this call while the strings behind it are not.
+    const auto describe = [](const std::vector<LoadedDeclaredName>& names) {
+      std::vector<runtime::DeclaredName> table;
+      table.reserve(names.size());
+      for (const LoadedDeclaredName& at : names) {
+        table.push_back(
+            runtime::DeclaredName{
+                .name =
+                    runtime::AbiStringRef{
+                        at.name.data(),
+                        static_cast<std::uint32_t>(at.name.size())},
+                .position = at.position});
+      }
+      return table;
+    };
+    const std::vector<runtime::DeclaredName> properties =
+        describe(entry.declared->properties);
+    const std::vector<runtime::DeclaredName> behaviors =
+        describe(entry.declared->behaviors);
     runtime::RealizeClass(
         runtime::ClassContribution{
             .base = base,
             .members = entry.members,
             .introductions = introductions,
-            .takeovers = takeovers},
+            .takeovers = takeovers,
+            .property_names = properties,
+            .behavior_names = behaviors},
         entry.realization, *entry.definition);
   };
   for (std::size_t index = 0; index < classes.size(); ++index) {
@@ -1958,6 +2073,7 @@ auto Execute(
 
   for (LoadedScopeClass& entry : loaded) {
     FillDefinition(*jit, entry);
+    FillDeclaredClasses(entry, objects);
   }
   RealizeClasses(*jit, objects);
   // Every closure has a body, so a name that does not resolve is not an absent

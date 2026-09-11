@@ -20,6 +20,7 @@
 #include "lyra/lowering/hir_to_mir/declared_scope.hpp"
 #include "lyra/lowering/hir_to_mir/lhs_store.hpp"
 #include "lyra/lowering/hir_to_mir/namespace_storage_initialization.hpp"
+#include "lyra/lowering/hir_to_mir/self_ref.hpp"
 #include "lyra/lowering/hir_to_mir/static_var_binding.hpp"
 #include "lyra/lowering/hir_to_mir/unit_lowerer.hpp"
 #include "lyra/lowering/hir_to_mir/walk_frame.hpp"
@@ -195,6 +196,19 @@ class StructuralScopeLowerer {
   [[nodiscard]] auto RoutedRefTarget(hir::RoutedRefId hir_id) const
       -> const RoutedRefMeta& {
     return routed_ref_targets_.Get(hir_id);
+  }
+
+  // Where the answer to one class name lives on this scope. It is filled in the
+  // resolve phase like a routed endpoint and read directly afterwards, so no
+  // access asks a name on the simulation path.
+  [[nodiscard]] auto PropertyCoordinateTarget(
+      hir::PropertyCoordinateId hir_id) const -> mir::FieldId {
+    return property_coordinate_targets_.Get(hir_id);
+  }
+
+  [[nodiscard]] auto BehaviorCoordinateTarget(
+      hir::BehaviorCoordinateId hir_id) const -> mir::FieldId {
+    return behavior_coordinate_targets_.Get(hir_id);
   }
 
   // The scope `hops` enclosing edges out from this one, in the same
@@ -392,6 +406,10 @@ class StructuralScopeLowerer {
       concurrent_assertion_fields_;
   base::Translation<hir::InterfacePortId, mir::FieldId> interface_port_fields_;
   base::Translation<hir::RoutedRefId, RoutedRefMeta> routed_ref_targets_;
+  base::Translation<hir::PropertyCoordinateId, mir::FieldId>
+      property_coordinate_targets_;
+  base::Translation<hir::BehaviorCoordinateId, mir::FieldId>
+      behavior_coordinate_targets_;
   base::Translation<hir::GenerateId, GenerateBindings> generate_bindings_;
   base::Translation<hir::InstanceMemberId, mir::FieldId>
       instance_member_fields_;
@@ -410,5 +428,25 @@ class StructuralScopeLowerer {
   // process of the scope has, and the instance to record.
   std::vector<ClassDeclLowerer> class_lowerers_;
 };
+
+// Which field a property access names. A class that published nothing left no
+// position to count, so what such an access states is the coordinate the design
+// settled -- which lives in a slot of the enclosing scope, and reading a slot
+// is an expression. That is why the answer is formed here, against a block,
+// rather than where a stated position is translated.
+template <typename Lowerer>
+auto BuildClassPropertyFieldRef(
+    Lowerer& lowerer, const WalkFrame& frame,
+    const hir::ClassPropertyTarget& target) -> mir::FieldRef {
+  if (const auto* settled =
+          std::get_if<hir::UnpublishedClassPropertyTarget>(&target)) {
+    return mir::ResolvedFieldTarget{
+        .coordinate =
+            frame.current_block->exprs.Add(BuildStructuralFieldAccessExpr(
+                frame, lowerer.Owner().Unit(), mir::EnclosingHops{0},
+                lowerer.PropertyCoordinateTarget(settled->coordinate)))};
+  }
+  return lowerer.Owner().TranslateClassPropertyTarget(target);
+}
 
 }  // namespace lyra::lowering::hir_to_mir

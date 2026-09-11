@@ -3,6 +3,7 @@
 #include <span>
 
 #include "lyra/backend/cpp/artifact.hpp"
+#include "lyra/diag/diagnostic.hpp"
 #include "lyra/mir/compilation_unit.hpp"
 
 namespace lyra::backend::cpp {
@@ -13,8 +14,14 @@ namespace lyra::backend::cpp {
 // needed because the host must include the header of any unit contributing a
 // DPI-C export wrapper reached only from foreign C (LRM 35.7), which no SV
 // referrer would pull in.
+// A unit reaching a property or a behavior through a reference with no class
+// view is refused whole rather than emitted with a gap. This backend realizes
+// an object as a target-language class and reaches a member by writing its
+// name, so a position settled while the design elaborates is one it has no
+// spelling for; what it cannot realize it declines, and never falls back to
+// another form.
 auto EmitCpp(
     std::span<const mir::CompilationUnit> units,
-    const mir::CompilationUnit& root) -> CppArtifactSet;
+    const mir::CompilationUnit& root) -> diag::Result<CppArtifactSet>;
 
 }  // namespace lyra::backend::cpp

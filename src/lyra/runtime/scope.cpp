@@ -80,6 +80,14 @@ auto Scope::FindSubroutine(std::string_view name) -> ErasedScopeCallable {
   throw SimulationError(NoSuchName("subroutine", name));
 }
 
+auto Scope::FindClass(std::string_view name) -> const ObjectDefinition* {
+  if (const ObjectDefinition* definition =
+          FindInClassTable(definition_->program.classes, name)) {
+    return definition;
+  }
+  throw SimulationError(NoSuchName("class", name));
+}
+
 auto Scope::FindDisableTarget() -> CancellationTarget* {
   if (disable_target_ != nullptr) {
     return disable_target_;

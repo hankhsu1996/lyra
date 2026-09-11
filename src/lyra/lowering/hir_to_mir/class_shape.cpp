@@ -2,7 +2,6 @@
 
 #include <cstddef>
 
-#include "lyra/mir/callable_code.hpp"
 #include "lyra/mir/class.hpp"
 
 namespace lyra::lowering::hir_to_mir {
@@ -23,7 +22,8 @@ auto ClassShape::OpenClass() const -> mir::Class {
       .abi_adapters = {},
       .static_constants = {},
       .static_properties = static_properties,
-      .named_callables = {}};
+      .named_callables = {},
+      .declares = declares};
   for (std::size_t i = 0; i < callable_signatures.size(); ++i) {
     cls.callables.Declare();
   }

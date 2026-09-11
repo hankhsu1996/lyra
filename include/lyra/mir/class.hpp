@@ -132,6 +132,12 @@ struct Class {
   // because a call site outside this unit spells it; a body the compiler
   // synthesized is not, because nothing spells one.
   std::vector<NamedCallable> named_callables;
+  // The classes this scope declares (LRM 23.9). Such a class is a type of this
+  // scope's instance (LRM 6.22) and is nameable only inside it, so a referrer
+  // outside has no name for it and reaches it by asking this scope -- which is
+  // what makes the list a relation the scope holds rather than a property of
+  // any class in it. Empty for a class, which declares none.
+  std::vector<ClassId> declares;
 };
 
 }  // namespace lyra::mir

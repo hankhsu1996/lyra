@@ -69,7 +69,7 @@ struct Member {
 // and the body this class answers it with. Taking one over without a body would
 // leave it exactly as it was, so nothing states that.
 struct DispatchTakeover {
-  DispatchRef method;
+  StatedDispatchRef method;
   FunctionId body;
 };
 
@@ -107,14 +107,34 @@ struct PublishedSubroutine {
 // describing it links under are three different symbols over those same parts,
 // so none of them is derivable from another and each is composed where it is
 // used.
+// One behavior a class introduces (LRM 8.20): the identifier a referrer spells,
+// and the body answering it -- absent where the class declares the behavior
+// without one (LRM 8.21 pure virtual). The name is here because a referrer that
+// cannot name the class counts no position for itself and asks by name instead;
+// nothing on the simulation path reads it.
+struct Introduction {
+  std::string name;
+  std::optional<FunctionId> body;
+};
+
+// One class a scope answers a name with (LRM 23.9). A class declared inside a
+// design element is nameable only inside the scope declaring it, so a referrer
+// outside reaches it by walking to that scope and asking -- the same way it
+// reaches a cell or a subroutine the scope's unit never published.
+struct DeclaredClass {
+  std::string name;
+  ClassId declaration;
+};
+
 struct Class {
   std::string name;
   std::optional<Base> base;
   std::vector<Member> members;
   FunctionId constructor{};
-  std::vector<std::optional<FunctionId>> introduces;
+  std::vector<Introduction> introduces;
   std::vector<DispatchTakeover> takeovers;
   std::vector<PublishedSubroutine> subroutines;
+  std::vector<DeclaredClass> declares;
 };
 
 // How values of this class stand in the runtime's object tree, or nothing where

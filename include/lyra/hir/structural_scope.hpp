@@ -12,6 +12,7 @@
 #include "lyra/base/pool_id.hpp"
 #include "lyra/base/registry.hpp"
 #include "lyra/base/time.hpp"
+#include "lyra/hir/class_coordinate_id.hpp"
 #include "lyra/hir/class_id.hpp"
 #include "lyra/hir/continuous_assign.hpp"
 #include "lyra/hir/expr.hpp"
@@ -327,6 +328,29 @@ struct RoutedRefDecl {
   RoutedPathRecipe recipe;
 };
 
+// A name on a class this artifact cannot name, and where that name lands on it.
+// Such a class is nameable only inside the scope declaring it (LRM 23.9) and is
+// a distinct type per instance of the element declaring it (LRM 6.22), so which
+// class an access reaches is a fact of the instance and never of this artifact:
+// one body serves every instance, and two of them may land on classes with
+// different layouts.
+//
+// So the class is reached the way everything else past a signature is reached
+// -- by walking to the scope and asking it by name -- and the answer, the
+// position the member name lands on, is what the slot holds. `head` and `steps`
+// are that walk; it ends at the scope rather than at anything the scope holds,
+// which is why it carries no leaf.
+//
+// Which position the answer counts is the arena this sits in: storage among the
+// declaring class's own properties, or an ordinal among the introducing class's
+// own behaviors.
+struct ClassNameDecl {
+  RouteHead head;
+  std::vector<PathStep> steps;
+  std::string class_name;
+  std::string name;
+};
+
 struct ConcurrentAssertionId {
   std::uint32_t value = base::kUnassignedId;
 
@@ -474,6 +498,8 @@ struct StructuralScope {
   base::Arena<InterfacePortDecl, InterfacePortId> interface_ports;
   base::Arena<PortConnection, PortConnectionId> port_connections;
   base::Arena<RoutedRefDecl, RoutedRefId> routed_refs;
+  base::Arena<ClassNameDecl, PropertyCoordinateId> property_coordinates;
+  base::Arena<ClassNameDecl, BehaviorCoordinateId> behavior_coordinates;
   // The cells something in this scope reads a sampled value of (LRM 16.5.1),
   // each named the way an event control names what it watches -- so one reached
   // across an instance boundary is carried by its route like any other. A cell

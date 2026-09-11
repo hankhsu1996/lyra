@@ -1212,6 +1212,26 @@ enough to warrant its own focused review.
       The execution backend answers all of it correctly, so the failure anyone can see is the C++
       backend's while the unsoundness is everyone's.
 
+- [ ] R80 -- The C++ backend has no diagnostic channel, so every construct it does not realize is
+      either an internal error telling the reader to report a bug, or a refusal stated somewhere
+      other than where the backend meets it. The renderer is a fold whose every entry answers with a
+      string, and nothing in it carries a result that can fail, so the only refusal it can raise is
+      a throw, and the one throw type admitted for a gap is the one reserved for a compiler
+      invariant. Every gap the backend has today is therefore hidden by the front end refusing
+      first, which holds only for as long as the two sets coincide.
+
+      The first form that broke the coincidence is answered where the backend is asked rather than
+      where it renders: the emit entry reads off the unit's own types whether the unit settles where
+      a name lands, and declines the unit whole. That is a capability statement, correct and cheap,
+      and it does not generalize -- a form with no footprint in the type pool has nowhere to be read
+      off, so the next one needs the channel rather than a second pre-check. Two pre-checks would be
+      the same decision in two places, which is the shape to avoid rather than repeat.
+
+      Not blocked. The execution backend already returns a diagnostic from the same depth, so what
+      is missing is the C++ side's plumbing and not the contract. Weigh it against the C++ backend's
+      remaining life: threading a result through the fold touches every entry in it and collides with
+      any other work in render.
+
 ## Out of Scope
 
 - Per-feature workstreams. Those live in the dedicated feature files (`operators.md`,

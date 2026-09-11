@@ -289,15 +289,32 @@ this list is what remembers.
       same through a view naming an ancestor, a view naming a contract the class conforms to, and no
       view at all.
 
-- [ ] Reaching a property or entering a behavior through such a reference. The front end resolves
-      the name against the class it knows, so these are legal programs; they are refused today. The
-      model is settled in `../decisions/structural-access-on-an-opaque-object.md` -- the name
-      resolves where the instance is known, and what reaches the body is the same coordinate a
-      referrer able to name the class would have formed, applied to whichever object the reference
-      holds. Two things are missing. A class cannot yet be asked what it declares under a given
-      name, which a runtime scope already answers for the names reached past its unit's signature.
-      And an access cannot yet state a coordinate that arrived as a value rather than one fixed
-      where the access was written.
+- [x] Reaching a property or entering a behavior through such a reference. The name resolves where
+      the instance is known: the walk reaches the scope declaring the class, that scope answers
+      which class the name means, and the class answers where the name lands on it -- all of it
+      once, while the design elaborates, so an access applies what was settled and looks nothing up.
+      Reading a property, writing one, entering a behavior that is not overridden and dispatching
+      one that is all work, in both directions of the hierarchy, and a class the reader cannot name
+      may still declare a property under a name its base already used without the reader reaching
+      the wrong one. **Which class an access lands on belongs to the instance and not to the
+      artifact**: one compiled body serves instances whose accesses reach classes with different
+      layouts, which is what rules out settling any of it where the body is compiled. A backend that
+      reaches a member by writing its name in the target language declines the form instead of
+      realizing it, since a position settled at elaboration has no such name.
+
+- [ ] Reaching a class's type-associated storage through such a reference (LRM 8.9, 8.10). A static
+      property needs no object, so it is not reached through the handle at all (LRM 8.3): the cell
+      belongs to whatever replicates the class declaration, which for a class a design element
+      declares is that element's instance. Reaching it is therefore the separate question of reading
+      another unit's instance storage by a name no signature carries, not the coordinate above, and
+      it is refused.
+
+- [ ] A collection of such handles -- an unpacked array or a queue of them -- reached through such a
+      reference. The coordinate side needs nothing new, since what follows a value with no class
+      view is decided by the operation and not by the syntax that produced the value. What blocks it
+      is that the execution backend has no value domain for a class handle, so a handle cannot be
+      held as an element at all; this is recorded against that backend rather than here, and it
+      stops the construct with no hierarchical name anywhere in sight.
 
 - [ ] An instance is still a backend-private shell rather than a generic object over its definition.
       The runtime no longer reaches generated behavior through a C++ base class, so a scope's

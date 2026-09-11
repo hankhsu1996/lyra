@@ -582,14 +582,13 @@ template <ExprLowerer Lowerer>
 auto LowerHirClassPropertyAccessExpr(
     Lowerer& lowerer, WalkFrame frame, const hir::ClassPropertyAccessExpr& sel,
     mir::TypeId result_type) -> diag::Result<mir::Expr> {
-  UnitLowerer& unit_lowerer = lowerer.Owner();
   auto& block = *frame.current_block;
   const auto& base_hir_expr = lowerer.HirExprs().Get(sel.base_value);
   auto base_or = lowerer.LowerExpr(base_hir_expr, frame);
   if (!base_or) return std::unexpected(std::move(base_or.error()));
   const mir::ExprId base_id = block.exprs.Add(*std::move(base_or));
   return mir::MakeFieldAccessExpr(
-      base_id, unit_lowerer.TranslateClassPropertyTarget(sel.target),
+      base_id, BuildClassPropertyFieldRef(lowerer, frame, sel.target),
       result_type);
 }
 
@@ -717,14 +716,13 @@ template <ExprLowerer Lowerer>
 auto LowerHirClassPropertyAccessExprLhs(
     Lowerer& lowerer, WalkFrame frame, const hir::ClassPropertyAccessExpr& sel,
     mir::TypeId result_type) -> diag::Result<mir::Expr> {
-  UnitLowerer& unit_lowerer = lowerer.Owner();
   auto& block = *frame.current_block;
   const auto& base_hir_expr = lowerer.HirExprs().Get(sel.base_value);
   auto base_or = lowerer.LowerExpr(base_hir_expr, frame);
   if (!base_or) return std::unexpected(std::move(base_or.error()));
   const mir::ExprId base_id = block.exprs.Add(*std::move(base_or));
   return mir::MakeFieldAccessExpr(
-      base_id, unit_lowerer.TranslateClassPropertyTarget(sel.target),
+      base_id, BuildClassPropertyFieldRef(lowerer, frame, sel.target),
       result_type);
 }
 

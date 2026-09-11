@@ -572,6 +572,20 @@ enum class BuiltinFn : std::uint16_t {
   kFindChild,
   kFindSubroutine,
   kFindDisableTarget,
+  // The definition of a class the scope's unit declares. A class declared
+  // inside a design element is a distinct type per instance of that element
+  // (LRM 6.22) and nameable only inside the scope declaring it (LRM 23.9), so
+  // which definition a name reaches is the scope's to answer and no referrer's
+  // to assume. Reached in the resolve phase like the four above.
+  kFindClass,
+  // Where a name lands on a class, asked of the class rather than of a scope:
+  // the storage a property occupies among what its declaring class declares, or
+  // the dispatch position a behavior holds among what its introducing class
+  // introduces (LRM 8.14, 8.20). Both are asked once while a reference
+  // resolves, and what they answer is applied at each access with no name in
+  // hand.
+  kClassFindProperty,
+  kClassFindBehavior,
   // Fork-join branch dispatch. Each entry spawns every branch as its own
   // coroutine and yields the parent's wait shape per LRM 9.3.2: `kForkWaitAll`
   // for `join` (resume after the last branch), `kForkWaitFirst` for

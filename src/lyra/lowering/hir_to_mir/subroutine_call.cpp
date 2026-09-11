@@ -100,9 +100,16 @@ struct NamedCallee {
 // The callee is a slot, and which implementation runs is the receiver's dynamic
 // type to decide (LRM 8.20). The receiver rides the callee rather than the
 // argument list, so nothing leads the arguments the source wrote.
+// Which dispatch position a call names, in the form a plan can state before a
+// body is being emitted into. A position this artifact counted is one already;
+// one the design settles is a slot of the enclosing scope, and reading a slot
+// is an expression, so it waits for the block that will hold it.
+using PlannedSlot =
+    std::variant<mir::VirtualSlot, hir::UnpublishedBehaviorSlot>;
+
 struct DispatchedCallee {
   hir::MethodReceiver receiver;
-  mir::VirtualSlot slot;
+  PlannedSlot slot;
 };
 
 // The callee is an entry a scope answered a name with, sealed with the route
@@ -166,7 +173,7 @@ struct MethodCalleeFacts {
   hir::SubroutineKind kind = hir::SubroutineKind::kFunction;
   std::vector<CalleeFormal> formals;
   mir::Direct direct;
-  std::optional<mir::VirtualSlot> slot;
+  std::optional<PlannedSlot> slot;
 };
 
 auto ReadMethodCallee(
@@ -181,7 +188,16 @@ auto ReadMethodCallee(
                 .target = unit_lowerer.MakeExternalMethodTarget(ext->target)},
         .slot = std::nullopt};
     if (ext->slot.has_value()) {
-      facts.slot = unit_lowerer.MakeExternalVirtualSlot(*ext->slot);
+      facts.slot = std::visit(
+          Overloaded{
+              [&](const hir::ExternalDispatchSlot& published) -> PlannedSlot {
+                return mir::VirtualSlot{
+                    unit_lowerer.MakeExternalVirtualSlot(published)};
+              },
+              [](const hir::UnpublishedBehaviorSlot& settled) -> PlannedSlot {
+                return settled;
+              }},
+          *ext->slot);
     }
     return facts;
   }
@@ -525,10 +541,20 @@ auto EmitSubroutineCall(
             if (!receiver_or) {
               return std::unexpected(std::move(receiver_or.error()));
             }
+            const mir::VirtualSlot slot = std::visit(
+                Overloaded{
+                    [](const mir::VirtualSlot& counted) { return counted; },
+                    [&](const hir::UnpublishedBehaviorSlot& settled) {
+                      return mir::VirtualSlot{mir::ResolvedVirtualSlot{
+                          .coordinate =
+                              block.exprs.Add(BuildStructuralFieldAccessExpr(
+                                  frame, unit, mir::EnclosingHops{0},
+                                  lowerer.BehaviorCoordinateTarget(
+                                      settled.coordinate)))}};
+                    }},
+                dispatched.slot);
             return ResolvedCallee{
-                .callee =
-                    mir::Virtual{
-                        .receiver = *receiver_or, .slot = dispatched.slot},
+                .callee = mir::Virtual{.receiver = *receiver_or, .slot = slot},
                 .leading = std::nullopt};
           },
           [&](const EntryCallee& entry) -> diag::Result<ResolvedCallee> {

@@ -245,6 +245,14 @@ class ProcessLowerer {
       -> const RoutedRefMeta& {
     return EnclosingScopeLowerer().RoutedRefTarget(hir_id);
   }
+  [[nodiscard]] auto PropertyCoordinateTarget(
+      hir::PropertyCoordinateId hir_id) const -> mir::FieldId {
+    return EnclosingScopeLowerer().PropertyCoordinateTarget(hir_id);
+  }
+  [[nodiscard]] auto BehaviorCoordinateTarget(
+      hir::BehaviorCoordinateId hir_id) const -> mir::FieldId {
+    return EnclosingScopeLowerer().BehaviorCoordinateTarget(hir_id);
+  }
 
   [[nodiscard]] auto Resolution() const -> TimeResolution {
     return time_resolution_;

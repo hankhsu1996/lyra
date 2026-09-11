@@ -379,26 +379,45 @@ auto FunctionLowerer::LowerCallTarget(
                       return unit_
                           ->PromisedClass(slot.unit_name, slot.class_name)
                           .is_interface_class;
-                    }},
+                    },
+                    // A class that publishes nothing publishes no commitment
+                    // either, and the coordinate that arrives was formed by
+                    // walking a lineage, so reaching here says it is one.
+                    [](const mir::ResolvedVirtualSlot&) { return false; }},
                 v.slot);
             if (through_an_interface) {
               return Unsupported(
                   "mir_to_lir: dispatching on a behavior an interface class "
                   "states is not yet supported");
             }
-            const lir::DispatchRef method = std::visit(
+            auto method = std::visit(
                 Overloaded{
-                    [&](const mir::LocalVirtualSlot& slot) {
+                    [&](const mir::LocalVirtualSlot& slot)
+                        -> diag::Result<lir::DispatchRef> {
                       return unit_->MethodRef(slot.owner_class, slot.slot);
                     },
-                    [&](const mir::ExternalVirtualSlot& slot) {
-                      return lir::DispatchRef{
+                    [&](const mir::ExternalVirtualSlot& slot)
+                        -> diag::Result<lir::DispatchRef> {
+                      return lir::StatedDispatchRef{
                           .introduced_by = unit_->ExternalClassValueType(
                               slot.unit_name, slot.class_name),
                           .ordinal = lir::DispatchOrdinal{slot.ordinal.value}};
+                    },
+                    [&](const mir::ResolvedVirtualSlot& slot)
+                        -> diag::Result<lir::DispatchRef> {
+                      auto coordinate = LowerExpr(block, slot.coordinate);
+                      if (!coordinate) {
+                        return std::unexpected(std::move(coordinate.error()));
+                      }
+                      return lir::SuppliedDispatchRef{
+                          .coordinate = *std::move(coordinate)};
                     }},
                 v.slot);
-            return lir::CallTarget{lir::DispatchTarget{.method = method}};
+            if (!method) {
+              return std::unexpected(std::move(method.error()));
+            }
+            return lir::CallTarget{
+                lir::DispatchTarget{.method = *std::move(method)}};
           }},
       callee);
 }
@@ -1353,38 +1372,48 @@ auto FunctionLowerer::LowerCondition(const mir::Block& block, mir::ExprId id)
   return value;
 }
 
-auto FunctionLowerer::MemberRefOf(const mir::FieldRef& field)
+auto FunctionLowerer::MemberRefOf(
+    const mir::Block& block, const mir::FieldRef& field, lir::TypeId reached)
     -> diag::Result<lir::MemberRef> {
   return std::visit(
       Overloaded{
           [&](const mir::ClassFieldTarget& t) -> diag::Result<lir::MemberRef> {
-            return lir::MemberRef{
+            return lir::StatedMemberRef{
                 .declared_by = unit_->ClassValueType(t.owner),
                 .slot = lir::MemberSlot{t.slot.value}};
           },
           [&](const mir::StructFieldTarget& t) -> diag::Result<lir::MemberRef> {
-            return lir::MemberRef{
+            return lir::StatedMemberRef{
                 .declared_by = unit_->StructValueType(t.owner),
                 .slot = lir::MemberSlot{t.slot.value}};
           },
           [&](const mir::ClosureFieldTarget& t)
               -> diag::Result<lir::MemberRef> {
-            return lir::MemberRef{
+            return lir::StatedMemberRef{
                 .declared_by = unit_->ClosureValueType(t.owner),
                 .slot = lir::MemberSlot{t.slot.value}};
           },
           [&](const mir::ExternalUnitObjectFieldTarget& t)
               -> diag::Result<lir::MemberRef> {
-            return lir::MemberRef{
+            return lir::StatedMemberRef{
                 .declared_by = unit_->ExternalUnitObjectValueType(t.owner),
                 .slot = lir::MemberSlot{t.slot.value}};
           },
           [&](const mir::CrossUnitClassFieldTarget& t)
               -> diag::Result<lir::MemberRef> {
-            return lir::MemberRef{
+            return lir::StatedMemberRef{
                 .declared_by =
                     unit_->ExternalClassValueType(t.unit_name, t.class_name),
                 .slot = lir::MemberSlot{t.slot.value}};
+          },
+          [&](const mir::ResolvedFieldTarget& t)
+              -> diag::Result<lir::MemberRef> {
+            auto coordinate = LowerExpr(block, t.coordinate);
+            if (!coordinate) {
+              return std::unexpected(std::move(coordinate.error()));
+            }
+            return lir::SuppliedMemberRef{
+                .coordinate = *std::move(coordinate), .reached = reached};
           },
       },
       field);
@@ -1630,7 +1659,8 @@ auto FunctionLowerer::LowerPlace(const mir::Block& block, mir::ExprId id)
             return ReferencePlace(reference.target, expr.type);
           },
           [&](const mir::FieldAccessExpr& field) -> diag::Result<lir::Place> {
-            auto member = MemberRefOf(field.field);
+            auto member = MemberRefOf(
+                block, field.field, unit_->TranslateType(expr.type));
             if (!member) {
               return std::unexpected(std::move(member.error()));
             }

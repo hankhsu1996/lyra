@@ -3,6 +3,7 @@
 #include <string>
 #include <variant>
 
+#include "lyra/hir/class_coordinate_id.hpp"
 #include "lyra/hir/class_id.hpp"
 #include "lyra/hir/field_id.hpp"
 #include "lyra/hir/method_id.hpp"
@@ -70,8 +71,22 @@ struct ExternalClassPropertyTarget {
   auto operator==(const ExternalClassPropertyTarget&) const -> bool = default;
 };
 
-using ClassPropertyTarget =
-    std::variant<LocalClassPropertyTarget, ExternalClassPropertyTarget>;
+// A reference to a class property (LRM 8.4) on a class a design element
+// declares, which is nameable only inside the scope declaring it (LRM 23.9) and
+// so publishes on no signature. This unit can count no position for it and
+// states none: the coordinate is settled where the design elaborates, against
+// the class the reached storage was declared with, and this names the scope
+// slot holding what that settled.
+struct UnpublishedClassPropertyTarget {
+  PropertyCoordinateId coordinate;
+
+  auto operator==(const UnpublishedClassPropertyTarget&) const
+      -> bool = default;
+};
+
+using ClassPropertyTarget = std::variant<
+    LocalClassPropertyTarget, ExternalClassPropertyTarget,
+    UnpublishedClassPropertyTarget>;
 
 // A reference to a class static property (LRM 8.9) at an access site: the
 // declaring class and the slot within its static-property arena. Owner-
@@ -136,6 +151,17 @@ struct ExternalDispatchSlot {
   PublishedBehaviorId behavior;
 
   auto operator==(const ExternalDispatchSlot&) const -> bool = default;
+};
+
+// A dispatch position on a class a design element declares. Which class
+// introduced the behavior is found by walking what each class promised about
+// the one it extends, and such a class promises nothing, so this unit states
+// the name the source wrote and nothing more: the walk runs where the design
+// elaborates and this names the scope slot holding what it landed on.
+struct UnpublishedBehaviorSlot {
+  BehaviorCoordinateId coordinate;
+
+  auto operator==(const UnpublishedBehaviorSlot&) const -> bool = default;
 };
 
 // Which behavior a method takes over (LRM 8.20). One this unit's own class

@@ -246,7 +246,11 @@ auto EmitAndWriteSources(
     std::span<const mir::CompilationUnit> units,
     const mir::CompilationUnit& root, const std::filesystem::path& dir,
     SourceFormatting formatting) -> diag::Result<void> {
-  auto set = backend::cpp::EmitCpp(units, root);
+  auto emitted = backend::cpp::EmitCpp(units, root);
+  if (!emitted) {
+    return std::unexpected(std::move(emitted.error()));
+  }
+  const backend::cpp::CppArtifactSet& set = *emitted;
   for (const auto& file : set.files) {
     if (auto r = WriteFile(dir / file.relpath, file.content); !r) {
       return r;

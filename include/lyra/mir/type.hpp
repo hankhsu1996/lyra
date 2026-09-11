@@ -494,6 +494,16 @@ enum class RuntimeLibraryKind : std::uint8_t {
   // scope, which the region naming that scope binds and consumes.
   kCancellationTarget,
   kControlEffect,
+  // Where a name lands on a class no signature publishes:
+  // `lyra::runtime::PropertyCoordinate` pairs the class declaring a property
+  // with the position it gave it, and `lyra::runtime::BehaviorCoordinate` pairs
+  // the class introducing a behavior with its ordinal there. A class answers a
+  // name with one while a reference to it resolves, and the access applies it
+  // to
+  // whichever object it runs on, so nothing looks a name up on the simulation
+  // path.
+  kPropertyCoordinate,
+  kBehaviorCoordinate,
 };
 
 struct RuntimeLibraryType {

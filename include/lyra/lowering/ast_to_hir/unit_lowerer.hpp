@@ -548,7 +548,7 @@ class UnitLowerer {
   // carries its dispatch role (LRM 8.20) and the interface a call marshals
   // against (LRM 13.5).
   auto MakeMethodCallee(
-      const hir::ClassRef& class_ref,
+      const WalkFrame& frame, const slang::ast::ClassType& owner,
       const slang::ast::SubroutineSymbol& method, diag::SourceSpan span)
       -> diag::Result<hir::MethodCallee>;
 
@@ -578,10 +578,13 @@ class UnitLowerer {
   // The instance-property peer of `MakeClassMethodTarget`. Local when the class
   // was interned by this unit; external when the class lives in another
   // compilation unit, in which case the property is named by its position in
-  // what that class published. A property that class kept to itself has no such
-  // position, and the access has nothing to compile against.
+  // what that class published. A class that published nothing leaves no
+  // position to count, so the access instead carries the walk to the scope
+  // declaring it and the two names that scope answers -- which is why the
+  // declaring class arrives as the symbol rather than as a reference already
+  // resolved from it.
   [[nodiscard]] auto MakeClassPropertyTarget(
-      const hir::ClassRef& class_ref,
+      const WalkFrame& frame, const slang::ast::ClassType& owner,
       const slang::ast::ClassPropertySymbol& prop, diag::SourceSpan span)
       -> diag::Result<hir::ClassPropertyTarget>;
 
@@ -785,6 +788,21 @@ class UnitLowerer {
       -> hir::RoutedRefId;
   auto TakeRoutedRefsForFrame(ScopeFrameId slot_owner_frame)
       -> base::Arena<hir::RoutedRefDecl, hir::RoutedRefId>;
+
+  // The same, for where a name lands on a class this unit cannot name. Two
+  // accesses that walk to the same scope and ask it for the same name on the
+  // same class are one slot, for the reason two references over one route are
+  // one endpoint.
+  auto MapOrGetPropertyCoordinate(
+      ScopeFrameId slot_owner_frame, hir::ClassNameDecl decl)
+      -> hir::PropertyCoordinateId;
+  auto MapOrGetBehaviorCoordinate(
+      ScopeFrameId slot_owner_frame, hir::ClassNameDecl decl)
+      -> hir::BehaviorCoordinateId;
+  auto TakePropertyCoordinatesForFrame(ScopeFrameId slot_owner_frame)
+      -> base::Arena<hir::ClassNameDecl, hir::PropertyCoordinateId>;
+  auto TakeBehaviorCoordinatesForFrame(ScopeFrameId slot_owner_frame)
+      -> base::Arena<hir::ClassNameDecl, hir::BehaviorCoordinateId>;
 
   // The compilation-unit declaration pass (LRM 23.6 / 23.9 / 27): before any
   // executable body lowers, walk the whole unit's scope tree and mint every
@@ -1217,6 +1235,12 @@ class UnitLowerer {
       classes_by_scope_;
   std::map<ScopeFrameId, base::Arena<hir::RoutedRefDecl, hir::RoutedRefId>>
       routed_refs_by_frame_;
+  std::map<
+      ScopeFrameId, base::Arena<hir::ClassNameDecl, hir::PropertyCoordinateId>>
+      property_coordinates_by_frame_;
+  std::map<
+      ScopeFrameId, base::Arena<hir::ClassNameDecl, hir::BehaviorCoordinateId>>
+      behavior_coordinates_by_frame_;
   std::uint32_t next_scope_frame_ = 0;
   std::uint32_t next_with_clause_ = 0;
   std::unordered_map<const slang::ast::Symbol*, MintedProceduralScope>

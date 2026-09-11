@@ -76,6 +76,9 @@ struct ClassShape {
   base::Translation<hir::StaticPropertyId, StaticStorageHome>
       static_property_translation;
   std::vector<mir::ClassId> contained;
+  // The classes this scope declares (LRM 23.9), which it answers a name with
+  // for a referrer that has none of its own.
+  std::vector<mir::ClassId> declares;
   // Whether the class is final (LRM 8.13). A structural class always is; an SV
   // class carries the source-declared value.
   bool is_final = false;

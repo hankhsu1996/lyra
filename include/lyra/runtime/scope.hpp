@@ -126,6 +126,13 @@ class Scope {
       -> ErasedScopeCallable;
   [[nodiscard]] auto FindDisableTarget() -> CancellationTarget*;
 
+  // The definition of a class this scope's unit declares. Such a class is a
+  // distinct type per instance of the element declaring it (LRM 6.22), so which
+  // definition a name reaches is this scope's to answer and no referrer's to
+  // assume. Asked while a reference resolves, never on the simulation path.
+  [[nodiscard]] auto FindClass(std::string_view name)
+      -> const ObjectDefinition*;
+
   // Walks the enclosing chain (starting at `this`) and at each level scans
   // the level's children for one whose canonical instance name plus indices
   // match. Returns the matched child itself, so the caller's descent suffix

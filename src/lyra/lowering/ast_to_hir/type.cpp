@@ -603,9 +603,8 @@ auto BuildInterfaceForwardingMethod(
 
   const auto& impl_class =
       impl.getParentScope()->asSymbol().as<slang::ast::ClassType>();
-  auto impl_ref = unit_lowerer.ResolveClassRef(impl_class, span);
-  if (!impl_ref) return std::unexpected(std::move(impl_ref.error()));
-  auto impl_callee = unit_lowerer.MakeMethodCallee(*impl_ref, impl, span);
+  auto impl_callee =
+      unit_lowerer.MakeMethodCallee(class_frame, impl_class, impl, span);
   if (!impl_callee) return std::unexpected(std::move(impl_callee.error()));
   const hir::ExprId call = body.exprs.Add(
       hir::Expr{
@@ -847,8 +846,12 @@ auto UnitLowerer::MakeClassMethodTarget(
 }
 
 auto UnitLowerer::MakeMethodCallee(
-    const hir::ClassRef& class_ref, const slang::ast::SubroutineSymbol& method,
-    diag::SourceSpan span) -> diag::Result<hir::MethodCallee> {
+    const WalkFrame& frame, const slang::ast::ClassType& owner,
+    const slang::ast::SubroutineSymbol& method, diag::SourceSpan span)
+    -> diag::Result<hir::MethodCallee> {
+  auto owner_ref = ResolveClassRef(owner, span);
+  if (!owner_ref) return std::unexpected(std::move(owner_ref.error()));
+  const hir::ClassRef& class_ref = *owner_ref;
   auto target = MakeClassMethodTarget(class_ref, method);
   if (const auto* local = std::get_if<hir::LocalClassMethodTarget>(&target)) {
     return *local;
@@ -860,12 +863,28 @@ auto UnitLowerer::MakeMethodCallee(
   // produce.
   auto interface = MakeExternalCalleeInterface(method, span);
   if (!interface) return std::unexpected(std::move(interface.error()));
-  std::optional<hir::ExternalDispatchSlot> slot;
+  const auto& ext = std::get<hir::ExternalClassRef>(class_ref);
+  std::optional<hir::CrossUnitDispatchSlot> slot;
   if (method.isVirtual()) {
-    auto resolved = MakeExternalDispatchSlot(
-        std::get<hir::ExternalClassRef>(class_ref), method.name, span);
-    if (!resolved) return std::unexpected(std::move(resolved.error()));
-    slot = *std::move(resolved);
+    // Which class introduced the behavior is found by walking what each class
+    // promised about the one it extends, and a class publishing nothing leaves
+    // nothing to walk. So the walk to the scope declaring it crosses instead,
+    // and that scope answers where the name lands while the design elaborates.
+    if (DeclaredByADesignElement(ext)) {
+      auto route = RouteToDeclaringScope(frame, *owner.getParentScope(), span);
+      if (!route) return std::unexpected(std::move(route.error()));
+      slot = hir::UnpublishedBehaviorSlot{
+          .coordinate = MapOrGetBehaviorCoordinate(
+              frame.Current(), hir::ClassNameDecl{
+                                   .head = std::move(route->head),
+                                   .steps = std::move(route->steps),
+                                   .class_name = ext.class_name,
+                                   .name = std::string{method.name}})};
+    } else {
+      auto resolved = MakeExternalDispatchSlot(ext, method.name, span);
+      if (!resolved) return std::unexpected(std::move(resolved.error()));
+      slot = *std::move(resolved);
+    }
   }
   return hir::ExternalMethodCallee{
       .target = std::get<hir::ExternalClassMethodTarget>(std::move(target)),
@@ -910,16 +929,6 @@ auto UnitLowerer::MakeExternalDispatchSlot(
     }
     at = published->base;
   }
-  if (DeclaredByADesignElement(cls)) {
-    return diag::Fail(
-        span, diag::DiagCode::kUnsupportedExpressionForm,
-        std::format(
-            "'{}' is called on '{}::{}', a class a design element declares and "
-            "so publishes on no signature; resolving such a name at "
-            "elaboration "
-            "is not yet supported",
-            method_name, cls.unit_name, cls.class_name));
-  }
   return diag::Fail(
       span, diag::DiagCode::kUnsupportedExpressionForm,
       std::format(
@@ -946,8 +955,12 @@ auto UnitLowerer::MakeExternalCalleeInterface(
 }
 
 auto UnitLowerer::MakeClassPropertyTarget(
-    const hir::ClassRef& class_ref, const slang::ast::ClassPropertySymbol& prop,
-    diag::SourceSpan span) -> diag::Result<hir::ClassPropertyTarget> {
+    const WalkFrame& frame, const slang::ast::ClassType& owner,
+    const slang::ast::ClassPropertySymbol& prop, diag::SourceSpan span)
+    -> diag::Result<hir::ClassPropertyTarget> {
+  auto owner_ref = ResolveClassRef(owner, span);
+  if (!owner_ref) return std::unexpected(std::move(owner_ref.error()));
+  const hir::ClassRef& class_ref = *owner_ref;
   if (const auto* local = std::get_if<hir::LocalClassRef>(&class_ref)) {
     return hir::LocalClassPropertyTarget{
         .owner = local->class_id, .field = LookupClassPropertyFieldId(prop)};
@@ -972,16 +985,19 @@ auto UnitLowerer::MakeClassPropertyTarget(
     }
     at = published->base;
   }
+  // The class publishes on no signature, so no position could be counted here
+  // and none is stated: the walk to the scope declaring it is what crosses, and
+  // that scope answers where the name lands while the design elaborates.
   if (DeclaredByADesignElement(ext)) {
-    return diag::Fail(
-        span, diag::DiagCode::kUnsupportedExpressionForm,
-        std::format(
-            "'{}' is reached on '{}::{}', a class a design element declares "
-            "and "
-            "so publishes on no signature; resolving such a name at "
-            "elaboration "
-            "is not yet supported",
-            prop.name, ext.unit_name, ext.class_name));
+    auto route = RouteToDeclaringScope(frame, *owner.getParentScope(), span);
+    if (!route) return std::unexpected(std::move(route.error()));
+    return hir::UnpublishedClassPropertyTarget{
+        .coordinate = MapOrGetPropertyCoordinate(
+            frame.Current(), hir::ClassNameDecl{
+                                 .head = std::move(route->head),
+                                 .steps = std::move(route->steps),
+                                 .class_name = ext.class_name,
+                                 .name = std::string{prop.name}})};
   }
   return diag::Fail(
       span, diag::DiagCode::kUnsupportedExpressionForm,
