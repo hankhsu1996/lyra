@@ -201,9 +201,8 @@ stylistic.
 - One subsystem header per family declares the per-kind handlers it owns. Operators (unary, binary,
   conditional, conversion), references (named-value, hierarchical), calls, selects (element-select,
   range-select, member-access), aggregates (concat, replication, assignment-pattern,
-  replicated-assignment-pattern, new-array), assignment (assignment, inc / dec, assignability
-  validation), and inside (inside operator, inside-item). On the statement side: blocks, loops,
-  branches, timing.
+  replicated-assignment-pattern, new-array), assignment (assignment, inc / dec), and inside (inside
+  operator, inside-item). On the statement side: blocks, loops, branches, timing.
 - One subsystem implementation defines the handlers and any anonymous-namespace helpers private to
   the family. Subsystem `.cpp` files include the pass class header (for the `Lowerer&` parameter
   type and for recursion via `lowerer.LowerX(...)`) and the subsystem header.
@@ -258,8 +257,7 @@ stylistic.
   both the slang-keyed dedup cache and the output's type table together (the dedup invariant is
   enforced structurally, not by caller discipline). `MakeRefExpr` becomes a subsystem-local helper
   in `references.cpp` (its only consumer). `MakeReturnConventionType` becomes a subsystem-local
-  helper in `calls.cpp` (its only consumer). `LowerInsideItemImpl` and `ValidateAssignableImpl` live
-  in `inside.hpp` and `assignment.hpp` respectively.
+  helper in `calls.cpp` (its only consumer). `LowerInsideItemImpl` lives in `inside.hpp`.
 - The architecture contract `lowering_organization.md` gains invariants 10-12 and the "Multi-File
   Organization Within a Pass Layer" section codifying this shape so the HIR-to-MIR (R10) and
   MIR-to-cpp (R11) migrations land on the same pattern.

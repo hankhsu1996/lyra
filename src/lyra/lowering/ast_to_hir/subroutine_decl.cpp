@@ -257,9 +257,8 @@ auto ClassifyDpiScalarResult(
 
 // The direction of a DPI-C formal argument (LRM 35.5.1.2). `ref` is illegal in
 // import declarations (LRM 35.5.4), so only input / output / inout arrive here.
-auto ClassifyDpiDirection(
-    const slang::ast::FormalArgumentSymbol& formal, diag::SourceSpan span)
-    -> diag::Result<support::DpiDirection> {
+auto ClassifyDpiDirection(const slang::ast::FormalArgumentSymbol& formal)
+    -> support::DpiDirection {
   switch (formal.direction) {
     case slang::ast::ArgumentDirection::In:
       return support::DpiDirection::kInput;
@@ -268,9 +267,10 @@ auto ClassifyDpiDirection(
     case slang::ast::ArgumentDirection::InOut:
       return support::DpiDirection::kInout;
     case slang::ast::ArgumentDirection::Ref:
-      return diag::Fail(
-          span, diag::DiagCode::kUnsupportedDpi,
-          "DPI-C ref argument is not allowed in an import declaration");
+      throw InternalError(
+          "ClassifyDpiDirection: a DPI import declares no ref argument, and "
+          "the front end refuses one, so reaching this means an import was "
+          "accepted that the language forbids");
   }
   throw InternalError("ClassifyDpiDirection: unknown ArgumentDirection");
 }
@@ -479,8 +479,7 @@ auto ClassifyDpiParams(
   abi_params.reserve(sym.getArguments().size());
   for (const auto* formal : sym.getArguments()) {
     const auto floc = mapper.PointSpanOf(formal->location);
-    auto direction = ClassifyDpiDirection(*formal, floc);
-    if (!direction) return std::unexpected(std::move(direction.error()));
+    const support::DpiDirection direction = ClassifyDpiDirection(*formal);
     auto abi = ClassifyDpiType(formal->getType(), floc);
     if (!abi) return std::unexpected(std::move(abi.error()));
     auto param_type = unit_lowerer.InternType(*abi->marshaled_type, floc);
@@ -489,7 +488,7 @@ auto ClassifyDpiParams(
         hir::DpiParamAbi{
             .sv_type = *param_type,
             .carrier = std::move(abi->carrier),
-            .direction = *direction});
+            .direction = direction});
   }
   return abi_params;
 }

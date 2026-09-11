@@ -15,11 +15,17 @@ used to reveal the next gap during discovery.
 
 ## Method
 
-Iterative gap discovery: point the compiler at the design, find the first unsupported construct,
-record it here, support it, then repeat -- each fix reveals the next gap. Because the pipeline stops
-at the first error, the list below is the **observed frontier**, not a closed set: it grows as items
-are closed. To widen each pass, individual modules are compiled as their own top so one module's
-first blocker does not hide every other module's.
+Point the compiler at the design and read what it could not lower. One run reports every unit and
+every member it stopped on, so the list below is what a pass found rather than what a pass found
+first.
+
+**It was iterative until 2026-09-10, and the two things that changed are worth keeping.** Lowering
+used to return on its first failure, so a run yielded one gap however many stood behind it, and a
+pass was: find one construct, support it, run again. The workaround for that -- compile each module
+as its own top, so one module's first blocker does not hide every other module's -- is no longer
+needed and is not what widens a pass now. What remains true is that a list is still not a closed
+set: a construct behind one that failed inside the same body is still unseen, because a body that
+will not lower is reported and abandoned rather than lowered further.
 
 The whole Ibex RTL already parses, type-checks, and elaborates through the frontend with no errors
 -- every gap below is in feature lowering or the missing execution path, not in the frontend.

@@ -196,10 +196,12 @@ auto LowerExprImpl(
         if constexpr (kProcedural) {
           return LowerIncDecExprProc(lowerer, frame, un, span);
         } else {
-          return diag::Fail(
-              span, diag::DiagCode::kUnsupportedStructuralExpressionForm,
-              "increment / decrement is not legal outside procedural code "
-              "(LRM 11.3.6, 11.4.2)");
+          // The front end refuses an increment or a decrement outside
+          // procedural code, so a structural walk meeting one means it
+          // accepted an expression the language does not admit there.
+          throw InternalError(
+              "structural expression lowering: an increment or decrement "
+              "reached a structural expression");
         }
       }
       return LowerUnaryExpr(lowerer, frame, un, span);
@@ -222,10 +224,12 @@ auto LowerExprImpl(
         return LowerAssignmentExprProc(
             lowerer, frame, expr.as<slang::ast::AssignmentExpression>(), span);
       } else {
-        return diag::Fail(
-            span, diag::DiagCode::kUnsupportedStructuralExpressionForm,
-            "an assignment expression is not legal in a structural expression "
-            "(LRM 10.3); structural code has no general assignment");
+        // As above: the front end refuses an assignment expression in this
+        // position, so reaching here means one was accepted where the language
+        // admits none.
+        throw InternalError(
+            "structural expression lowering: an assignment expression reached "
+            "a structural expression");
       }
 
     case slang::ast::ExpressionKind::ValueRange: {
@@ -270,10 +274,14 @@ auto LowerExprImpl(
       if constexpr (kProcedural) {
         return LowerUnboundedLiteralProc(lowerer, frame, span);
       } else {
+        // LRM 7.10 makes `$` the last index of a queue and says nothing about
+        // where it may be written, and the front end admits it here, so what
+        // is missing is this walk's reach rather than the source's right to
+        // write it.
         return diag::Fail(
             span, diag::DiagCode::kUnsupportedStructuralExpressionForm,
-            "`$` is only legal as a procedural queue index or slice bound "
-            "(LRM 7.10)");
+            "a queue index of `$` is not yet supported outside procedural "
+            "code (LRM 7.10)");
       }
 
     case slang::ast::ExpressionKind::Concatenation:
@@ -410,20 +418,10 @@ auto ProcessLowerer::LowerExpr(
   return LowerExprImpl(*this, frame, expr);
 }
 
-auto ProcessLowerer::ValidateAssignableProcedural(
-    const slang::ast::Expression& expr) -> diag::Result<void> {
-  return ValidateAssignableImpl(*owner_, true, expr);
-}
-
 auto StructuralScopeLowerer::LowerExpr(
     const slang::ast::Expression& expr, WalkFrame frame)
     -> diag::Result<hir::Expr> {
   return LowerExprImpl(*this, frame, expr);
-}
-
-auto StructuralScopeLowerer::ValidateAssignableStructural(
-    const slang::ast::Expression& expr) -> diag::Result<void> {
-  return ValidateAssignableImpl(*owner_, false, expr);
 }
 
 }  // namespace lyra::lowering::ast_to_hir

@@ -132,8 +132,6 @@ class ProcessLowerer {
   auto LowerForeachStmt(
       const slang::ast::ForeachLoopStatement& fs, WalkFrame frame)
       -> diag::Result<hir::Stmt>;
-  auto ValidateAssignableProcedural(const slang::ast::Expression& expr)
-      -> diag::Result<void>;
 
  private:
   UnitLowerer* owner_;

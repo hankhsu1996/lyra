@@ -67,11 +67,6 @@ auto StructuralScopeLowerer::LowerContinuousAssign(
   }
   const auto& assign = assignment_expr.as<slang::ast::AssignmentExpression>();
 
-  // Structural (continuous-assign) context: structural-var targets only.
-  auto validate_lhs = ValidateAssignableStructural(assign.left());
-  if (!validate_lhs) {
-    return std::unexpected(std::move(validate_lhs.error()));
-  }
   auto lhs_or = LowerExpr(assign.left(), frame);
   if (!lhs_or) return std::unexpected(std::move(lhs_or.error()));
 

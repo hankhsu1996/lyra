@@ -56,8 +56,8 @@ struct StructuralDataObjectBinding {
 };
 
 // Keyed by `ValueSymbol`, the common base of a variable and a net: both are
-// named structural signals a reference or a continuous-assignment target binds
-// to the same way.
+// named structural signals a reference binds to the same way, whatever the
+// reference goes on to do with what it reaches.
 using StructuralDataObjectBindings = std::unordered_map<
     const slang::ast::ValueSymbol*, StructuralDataObjectBinding>;
 

@@ -53,7 +53,19 @@ enum class Referent {
   kThisHandle,
   kVariableStorage,
   kNetStorage,
-  kUnsupported,
+  // A declaration a value reference may denote and that nothing here lowers.
+  // One value per construct rather than one for all of them, so the refusal
+  // states what it met: which construct it is, is decided here, where the
+  // front end's kinds are already being read, and nowhere else.
+  kUnsupportedSpecparam,
+  kUnsupportedModportPort,
+  kUnsupportedPrimitivePort,
+  kUnsupportedClockingSignal,
+  kUnsupportedAssertionLocal,
+  kUnsupportedStructureMember,
+  // Not something a value reference can denote at all. Only a value symbol
+  // reaches this classification, so no program produces this answer.
+  kNotAValue,
 };
 
 // True when the symbol is the `this` handle (LRM 8.11) of the scope that
@@ -86,7 +98,7 @@ auto IsCurrentInstanceHandle(const slang::ast::Symbol& sym) -> bool {
 // classification of each (a plausible referent like a specparam is a conscious
 // entry, not a silent omission), and a kind added by a future slang release
 // fails to compile until it is classified here.
-auto ClassifyReferent(const slang::ast::Symbol& sym) -> Referent {
+auto ClassifyReferent(const slang::ast::ValueSymbol& sym) -> Referent {
   using slang::ast::SymbolKind;
   switch (sym.kind) {
     case SymbolKind::Parameter:
@@ -109,6 +121,22 @@ auto ClassifyReferent(const slang::ast::Symbol& sym) -> Referent {
       return Referent::kPatternBinding;
     case SymbolKind::Net:
       return Referent::kNetStorage;
+
+    // The rest of what a value reference can denote: a construct a legal
+    // program reaches and this compiler does not carry.
+    case SymbolKind::Specparam:
+      return Referent::kUnsupportedSpecparam;
+    case SymbolKind::ModportPort:
+      return Referent::kUnsupportedModportPort;
+    case SymbolKind::PrimitivePort:
+      return Referent::kUnsupportedPrimitivePort;
+    case SymbolKind::ClockVar:
+      return Referent::kUnsupportedClockingSignal;
+    case SymbolKind::LocalAssertionVar:
+      return Referent::kUnsupportedAssertionLocal;
+    case SymbolKind::Field:
+      return Referent::kUnsupportedStructureMember;
+
     case SymbolKind::Unknown:
     case SymbolKind::Root:
     case SymbolKind::Definition:
@@ -152,7 +180,6 @@ auto ClassifyReferent(const slang::ast::Symbol& sym) -> Referent {
     case SymbolKind::MultiPort:
     case SymbolKind::InterfacePort:
     case SymbolKind::Modport:
-    case SymbolKind::ModportPort:
     case SymbolKind::ModportClocking:
     case SymbolKind::Instance:
     case SymbolKind::InstanceBody:
@@ -166,7 +193,6 @@ auto ClassifyReferent(const slang::ast::Symbol& sym) -> Referent {
     case SymbolKind::GenerateBlockArray:
     case SymbolKind::ProceduralBlock:
     case SymbolKind::StatementBlock:
-    case SymbolKind::Field:
     case SymbolKind::Subroutine:
     case SymbolKind::ContinuousAssign:
     case SymbolKind::ElabSystemTask:
@@ -175,17 +201,13 @@ auto ClassifyReferent(const slang::ast::Symbol& sym) -> Referent {
     case SymbolKind::UninstantiatedDef:
     case SymbolKind::ConstraintBlock:
     case SymbolKind::DefParam:
-    case SymbolKind::Specparam:
     case SymbolKind::Primitive:
-    case SymbolKind::PrimitivePort:
     case SymbolKind::PrimitiveInstance:
     case SymbolKind::SpecifyBlock:
     case SymbolKind::Sequence:
     case SymbolKind::Property:
     case SymbolKind::AssertionPort:
     case SymbolKind::ClockingBlock:
-    case SymbolKind::ClockVar:
-    case SymbolKind::LocalAssertionVar:
     case SymbolKind::LetDecl:
     case SymbolKind::Checker:
     case SymbolKind::CheckerInstance:
@@ -202,9 +224,55 @@ auto ClassifyReferent(const slang::ast::Symbol& sym) -> Referent {
     case SymbolKind::AnonymousProgram:
     case SymbolKind::NetAlias:
     case SymbolKind::ConfigBlock:
-      return Referent::kUnsupported;
+      return Referent::kNotAValue;
   }
   throw InternalError("ClassifyReferent: unknown slang SymbolKind");
+}
+
+// The refusal for a declaration a value reference may denote and that nothing
+// here lowers. Every kind the classification sends here is a construct, so
+// every one names itself and cites the clause that defines it -- a reader who
+// meets one can search for the construct and ask for it, which a shared
+// sentence gives nobody. The set is closed by the classification above; a kind
+// arriving from outside it has been misclassified there.
+auto UnsupportedReferentMessage(Referent referent) -> std::string_view {
+  switch (referent) {
+    case Referent::kUnsupportedSpecparam:
+      return "a specparam is not yet supported (LRM 6.20.4)";
+    case Referent::kUnsupportedModportPort:
+      return "a name a modport offers is reachable only through the port that "
+             "selects the view, which is not yet supported here (LRM 25.5)";
+    case Referent::kUnsupportedPrimitivePort:
+      return "a port of a user-defined primitive is not yet supported (LRM 29)";
+    case Referent::kUnsupportedClockingSignal:
+      return "a signal of a clocking block is not yet supported (LRM 14.3)";
+    case Referent::kUnsupportedAssertionLocal:
+      return "a local variable of an assertion is not yet supported (LRM "
+             "16.10)";
+    case Referent::kUnsupportedStructureMember:
+      return "a structure or union member named on its own, rather than "
+             "through "
+             "the value that holds it, is not yet supported (LRM 7.2)";
+    case Referent::kPatternBinding:
+    case Referent::kParameterConstant:
+    case Referent::kEnumConstant:
+    case Referent::kClassProperty:
+    case Referent::kThisHandle:
+    case Referent::kVariableStorage:
+    case Referent::kNetStorage:
+    case Referent::kNotAValue:
+      break;
+  }
+  throw InternalError(
+      "UnsupportedReferentMessage: a classification that is not a refusal was "
+      "asked for the construct it refuses");
+}
+
+auto FailOnUnsupportedReferent(Referent referent, diag::SourceSpan span)
+    -> diag::Result<hir::Expr> {
+  return diag::Fail(
+      span, diag::DiagCode::kUnsupportedNonVariableNamedReference,
+      std::string{UnsupportedReferentMessage(referent)});
 }
 
 // A pattern-bound identifier (LRM 12.6) resolves to the `VariablePattern` node
@@ -586,7 +654,8 @@ auto LowerNamedValueProc(
     return MakeIterationElementRefExpr(unit_lowerer, named, *clause, span);
   }
 
-  switch (ClassifyReferent(sym)) {
+  const Referent referent = ClassifyReferent(sym);
+  switch (referent) {
     case Referent::kParameterConstant:
       return MakeParameterConstantExpr(
           unit_lowerer, frame, sym, *named.type, span);
@@ -624,10 +693,17 @@ auto LowerNamedValueProc(
       return LowerValueRef(
           unit_lowerer, frame, sym.as<slang::ast::ValueSymbol>(), *named.type,
           span);
-    case Referent::kUnsupported:
-      return diag::Fail(
-          span, diag::DiagCode::kUnsupportedNonVariableNamedReference,
-          "reference to non-variable declaration is not supported");
+    case Referent::kUnsupportedSpecparam:
+    case Referent::kUnsupportedModportPort:
+    case Referent::kUnsupportedPrimitivePort:
+    case Referent::kUnsupportedClockingSignal:
+    case Referent::kUnsupportedAssertionLocal:
+    case Referent::kUnsupportedStructureMember:
+      return FailOnUnsupportedReferent(referent, span);
+    case Referent::kNotAValue:
+      throw InternalError(
+          "LowerNamedValueProc: a named value resolved to a declaration that "
+          "denotes no value");
   }
   throw InternalError("LowerNamedValueProc: unknown Referent");
 }
@@ -658,7 +734,8 @@ auto LowerHierarchicalValue(
   auto declaration = ResolveNamedDeclaration(hve.symbol, span);
   if (!declaration) return std::unexpected(std::move(declaration.error()));
   const slang::ast::ValueSymbol& target = **declaration;
-  switch (ClassifyReferent(target)) {
+  const Referent referent = ClassifyReferent(target);
+  switch (referent) {
     // A hierarchically reached constant folds to its value; the path is not
     // navigated because the value is fixed at elaboration.
     case Referent::kParameterConstant:
@@ -672,11 +749,17 @@ auto LowerHierarchicalValue(
           "hierarchical reference to a class property is not yet supported");
     case Referent::kThisHandle:
       return FailOnCurrentInstanceHandle(span);
-    case Referent::kUnsupported:
-      return diag::Fail(
-          span, diag::DiagCode::kUnsupportedExpressionForm,
-          "hierarchical reference to this declaration kind is not yet "
-          "supported");
+    case Referent::kUnsupportedSpecparam:
+    case Referent::kUnsupportedModportPort:
+    case Referent::kUnsupportedPrimitivePort:
+    case Referent::kUnsupportedClockingSignal:
+    case Referent::kUnsupportedAssertionLocal:
+    case Referent::kUnsupportedStructureMember:
+      return FailOnUnsupportedReferent(referent, span);
+    case Referent::kNotAValue:
+      throw InternalError(
+          "hierarchical value lowering: a path resolved to a declaration that "
+          "denotes no value");
     case Referent::kPatternBinding:
       return MakePatternVarRefExpr(
           unit_lowerer, target.as<slang::ast::PatternVarSymbol>(), *hve.type,
@@ -712,7 +795,8 @@ auto LowerNamedValueStructural(
   if (auto clause = frame.FindIterationClause(sym)) {
     return MakeIterationElementRefExpr(unit_lowerer, named, *clause, span);
   }
-  switch (ClassifyReferent(sym)) {
+  const Referent referent = ClassifyReferent(sym);
+  switch (referent) {
     case Referent::kParameterConstant:
       return MakeParameterConstantExpr(
           unit_lowerer, frame, sym, *named.type, span);
@@ -746,10 +830,17 @@ auto LowerNamedValueStructural(
     }
     case Referent::kThisHandle:
       return FailOnCurrentInstanceHandle(span);
-    case Referent::kUnsupported:
-      return diag::Fail(
-          span, diag::DiagCode::kUnsupportedNonVariableNamedReference,
-          "reference to non-variable declaration is not supported");
+    case Referent::kUnsupportedSpecparam:
+    case Referent::kUnsupportedModportPort:
+    case Referent::kUnsupportedPrimitivePort:
+    case Referent::kUnsupportedClockingSignal:
+    case Referent::kUnsupportedAssertionLocal:
+    case Referent::kUnsupportedStructureMember:
+      return FailOnUnsupportedReferent(referent, span);
+    case Referent::kNotAValue:
+      throw InternalError(
+          "LowerNamedValueStructural: a named value resolved to a declaration "
+          "that denotes no value");
   }
   throw InternalError("LowerNamedValueStructural: unknown Referent");
 }

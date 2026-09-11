@@ -20,7 +20,6 @@
 #include "lyra/hir/expr.hpp"
 #include "lyra/hir/expr_builders.hpp"
 #include "lyra/hir/value_ref.hpp"
-#include "lyra/lowering/ast_to_hir/expression/assignment.hpp"
 #include "lyra/lowering/ast_to_hir/unit_lowerer.hpp"
 
 namespace lyra::lowering::ast_to_hir {
@@ -146,11 +145,17 @@ auto LowerNamedEventControl(
   auto expr_or = proc.LowerExpr(sig.expr, frame);
   if (!expr_or) return std::unexpected(std::move(expr_or.error()));
 
+  // LRM 15.5 admits an event wherever a variable of its type may be declared,
+  // so a name reaching one through an array element or a class handle is a
+  // legal event control the route does not carry yet. What the front end
+  // accepted is the measure, so this says what is missing rather than what the
+  // source may write.
   const std::optional<hir::ReferenceRoute> route = AsWatchedStorage(*expr_or);
   if (!route.has_value()) {
     return diag::Fail(
         span, diag::DiagCode::kUnsupportedEventTriggerForm,
-        "named event reference must be a plain structural variable");
+        "waiting on an event reached this way is not yet supported; an event "
+        "declared in a structural scope is (LRM 15.5)");
   }
   auto condition = LowerEventCondition(proc, frame, sig);
   if (!condition) return std::unexpected(std::move(condition.error()));
@@ -362,8 +367,6 @@ auto LowerIntraAssignmentStmt(
     ProcessLowerer& proc, WalkFrame frame,
     const slang::ast::AssignmentExpression& as, diag::SourceSpan span)
     -> diag::Result<hir::Stmt> {
-  auto validate = ValidateAssignableImpl(proc.Owner(), true, as.left());
-  if (!validate) return std::unexpected(std::move(validate.error()));
   auto type_or = proc.Owner().InternType(*as.type, span);
   if (!type_or) return std::unexpected(std::move(type_or.error()));
   const hir::TypeId type = *type_or;
@@ -481,10 +484,14 @@ auto LowerEventTriggerStmt(
     -> diag::Result<hir::Stmt> {
   auto expr_or = proc.LowerExpr(et.target, frame);
   if (!expr_or) return std::unexpected(std::move(expr_or.error()));
+  // The front end refuses a target that is not an event at all, so what
+  // reaches here is a legal event the route does not carry yet -- the same set
+  // the wait side meets, for the same reason.
   if (!AsWatchedStorage(*expr_or).has_value()) {
     return diag::Fail(
         span, diag::DiagCode::kUnsupportedStatementForm,
-        "event trigger target must be a plain named-event reference");
+        "triggering an event reached this way is not yet supported; an event "
+        "declared in a structural scope is (LRM 15.5)");
   }
   auto timing_or = LowerTriggerTiming(proc, frame, et, span);
   if (!timing_or) return std::unexpected(std::move(timing_or.error()));

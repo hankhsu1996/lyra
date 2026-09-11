@@ -54,6 +54,15 @@ layer directly.
       include-lookup order. Each changes what program the source text denotes, so each is design
       material rather than an invocation setting; none has been needed yet.
 
+- [x] D10 -- One run reports every construct the compiler could not lower, rather than the first. A
+      refusal is collected and the walk goes on across the units of a compilation, the members of a
+      unit, and the scopes nested in one; a stage that reported anything is the last one that runs,
+      and what it produced is discarded. This is the loop's own length: a compiler answering one gap
+      per run makes the number of runs the number of gaps, and no stage can be made fast enough to
+      make up for that. What is still unseen is a gap standing behind another **inside one body**,
+      which is abandoned at its first refusal. `decisions/reporting-every-gap-in-one-run.md` settles
+      the shape.
+
 ## Out of Scope
 
 - New SystemVerilog feature coverage. This file tracks the developer feedback loop, not language

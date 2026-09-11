@@ -80,10 +80,12 @@ auto Compile(
 
   // Step 1: lower the whole compilation to a flat set of self-contained HIR
   // units -- every package, then every module body -- each tagged with its
-  // kind.
-  auto lowered = lowering::ast_to_hir::LowerCompilationToHir(facts);
-  if (!lowered) {
-    sink.Report(std::move(lowered.error()));
+  // kind. Every unit is attempted, so what the sink holds afterwards is the
+  // whole account of what this compilation cannot lower; what comes back when
+  // any of them failed is not the design, and the stages below do not run on
+  // it.
+  auto lowered = lowering::ast_to_hir::LowerCompilationToHir(facts, sink);
+  if (sink.HasErrors()) {
     return result;
   }
 
@@ -97,15 +99,15 @@ auto Compile(
   std::vector<mir::CompilationUnit> mir_units;
   std::vector<lir::CompilationUnit> lir_units;
   std::vector<ElaboratedUnitMetadata> unit_metadata;
-  mir_units.reserve(lowered->units.size());
-  lir_units.reserve(lowered->units.size());
-  unit_metadata.reserve(lowered->units.size());
-  for (const auto& hir_unit : lowered->units) {
+  mir_units.reserve(lowered.units.size());
+  lir_units.reserve(lowered.units.size());
+  unit_metadata.reserve(lowered.units.size());
+  for (const auto& hir_unit : lowered.units) {
     auto unit = LowerUnitPipeline(
         hir_unit, stop_after, result.artifacts.parse->diag_sources);
     if (!unit) {
       sink.Report(std::move(unit.error()));
-      return result;
+      continue;
     }
     if (unit->mir) {
       mir_units.push_back(*std::move(unit->mir));
@@ -118,6 +120,14 @@ auto Compile(
     }
   }
 
+  // A unit that stopped leaves the set below short of the design, and the one
+  // step that reads across the units would then report the absence of what
+  // this run already accounted for. Every unit was attempted first, so the
+  // sink holds the whole account by the time this is read.
+  if (sink.HasErrors()) {
+    return result;
+  }
+
   // Step 3: write the design-root unit. The one whole-design step -- it reads
   // across the units to synthesize the root and resolve the package
   // initialization plan -- so it stands apart from the per-unit lowering
@@ -127,7 +137,7 @@ auto Compile(
   std::optional<ElaboratedUnitMetadata> root_metadata;
   if (want_mir) {
     auto design_root = SynthesizeDesignRoot(
-        mir_units, *tops, lowered->signatures, stop_after,
+        mir_units, *tops, lowered.signatures, stop_after,
         result.artifacts.parse->diag_sources);
     if (!design_root) {
       sink.Report(std::move(design_root.error()));
@@ -138,7 +148,7 @@ auto Compile(
     root_metadata = std::move(design_root->metadata);
   }
 
-  result.artifacts.hir_units = std::move(lowered->units);
+  result.artifacts.hir_units = std::move(lowered.units);
   if (want_mir) {
     result.artifacts.mir_units = std::move(mir_units);
     result.artifacts.root_unit = std::move(root_unit);

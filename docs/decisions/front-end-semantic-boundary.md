@@ -10,6 +10,10 @@ Accepted. D3's navigation-segment classifier is widened by `unit-signature.md`: 
 another unit's instance body crosses the boundary, but the step is still typed when its target is a
 declaration that unit published, and by-name only when it is not.
 
+D1's forbidden shape held on the read path from the day this was written and on the write path only
+from 2026-09-10, when the last classifier reading the declaration table's membership was removed --
+see "What the write path owed" below.
+
 ## Why this decision matters
 
 Two sensitivity defects share one root cause: Lyra reconstructs semantic facts that the front-end
@@ -129,6 +133,69 @@ one translation; they must not each re-derive it.
    at t > 0 (order independence and real re-trigger, not t = 0 settling); an `always_comb` whose
    dependency is read only inside a called function; and an `always @*` reading a cross-scope signal
    declared before it.
+
+## What the write path owed
+
+D1 and D3 were realized for reading and observing and not for writing, and the gap outlived this
+entry by two months because nothing in it named the write path as a separate site. A walk over the
+target expression ran ahead of the assignment lowering and asked, of every name it met, whether the
+declaration table held it -- which is D1's forbidden shape exactly, in the direction this entry did
+not enumerate. It decided three unrelated things with it: whether the program was legal
+SystemVerilog, whether the target was a net or a variable, and whether the target was reachable.
+
+**The front end owns the first, and had already answered it.** slang verifies that an assignment's
+target is an lvalue whose every element can be assigned to, and refuses the program otherwise, so
+every refusal that walk reached for legality was unreachable behind a front-end error. **The
+reference owns the other two**: what a name reaches is stated by the route it lowers to, and what
+may be done with it is stated by the endpoint's capability type. Neither was ever the walk's to
+answer, and because it answered them from a table that only records this unit's own declarations,
+its answer for a target in another instance was to refuse a continuous assignment LRM 10.3 makes
+canonical.
+
+So a continuous assignment to a target reached by a hierarchical name (LRM 10.3, 23.6) needs no
+mechanism of its own: it is the assignment already lowered, against the reference already
+translated, driving through the driver a net already attaches at Resolve. What Lyra legitimately
+refuses about a target is whether it lowers the construct yet, and that answer belongs where the
+lowering runs out of vocabulary rather than in a pass ahead of it.
+
+**The general rule, which is D1 stated for every direction: a fact the front end has resolved is
+translated once and consulted, never recomputed, by any consumer.** A second walk that recomputes it
+does not merely duplicate work -- it computes a different answer, because it has less to compute
+from, and nothing compares the two.
+
+**D1 is now a build failure rather than a sentence, and that is the part worth carrying.** A gap of
+this shape sits between two axes the architecture holds independent -- which construct states a
+target's value, and how the target is named -- and no test run can see it, because each axis is
+covered on its own and only the combination is wrong. Every suite stays green. So the instrument is
+not a case but a check over the boundary itself: the declaration registry has two owners, and any
+other site naming it is a construct deciding for its own case what the route decides for every case.
+Written as a sentence here, that rule was true, correct, and unable to reach the site that broke it
+for two months; the check would have failed the build the day it was written.
+
+## What a refusal at this boundary is allowed to say
+
+The same boundary decides what a refusal downstream of the front end may claim, and a sweep of every
+one of them found the claim wrong more often than the code. Three verdicts are available and the
+error policy already assigns them; what had gone missing is that one situation was spelled all three
+ways.
+
+- **The front end refuses the program.** The site is then unreachable -- lowering does not run when
+  the front end reported an error -- and it is usually one arm of a dispatch over the front end's
+  own enumeration, so the arm has to exist. It states a compiler invariant break, because reaching
+  it means the front end accepted what the language forbids. A user-facing refusal there claims a
+  gap that is not one.
+- **The front end accepts the program and this compiler does not carry it.** That is a gap, it is
+  stated as one, and the message names the construct rather than telling the reader their correct
+  code is wrong.
+- **The front end accepts it and the standard forbids it.** The refusal is this compiler's alone and
+  cites the clause -- and the clause is read before it is cited, which is the step that fails: a
+  refusal was found citing a clause that, read, says the opposite of what the refusal claimed.
+
+**Two signals find these mechanically, and neither is a function name.** A diagnostic from the "this
+program is illegal" family raised after the front end is a candidate by construction, since that
+family is the front end's job. So is a refusal phrased as a rule about the source -- "must be a
+...", "is not legal". Each candidate is then settled by feeding the front end alone the program the
+site refuses, which is one command and decides which of the three verdicts applies.
 
 ## Consequences
 

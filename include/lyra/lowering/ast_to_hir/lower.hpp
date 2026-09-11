@@ -6,6 +6,7 @@
 #include <slang/ast/Compilation.h>
 
 #include "lyra/diag/diagnostic.hpp"
+#include "lyra/diag/sink.hpp"
 #include "lyra/frontend/slang_source_mapper.hpp"
 #include "lyra/hir/compilation_unit.hpp"
 #include "lyra/hir/unit_signatures.hpp"
@@ -69,8 +70,16 @@ struct HirCompilation {
 // only its own scope, the shared frontend, and the signatures of the units its
 // own declarations name -- so the result is a flat set of self-contained units
 // with no cross-unit HIR references.
-auto LowerCompilationToHir(const LowerCompilationFacts& facts)
-    -> diag::Result<HirCompilation>;
+//
+// A unit that cannot be lowered is reported and the remaining units are lowered
+// anyway, so one run accounts for every unit. What comes back is then the units
+// that did lower, which is not the design and which the caller is expected to
+// discard; whether that happened is the sink's answer, not a second one carried
+// here. Independence is what makes this sound: a unit reads its peers'
+// published signatures and never their bodies.
+auto LowerCompilationToHir(
+    const LowerCompilationFacts& facts, diag::DiagnosticSink& sink)
+    -> HirCompilation;
 
 // A top-level block is an auto-promoted, uninstantiated module, named twice
 // because the two names answer different questions and coincide only when the

@@ -209,8 +209,9 @@ auto WhyItMustBeConnected(PortConnectionRule rule) -> std::string_view {
 
 }  // namespace
 
-auto LowerCompilationToHir(const LowerCompilationFacts& facts)
-    -> diag::Result<HirCompilation> {
+auto LowerCompilationToHir(
+    const LowerCompilationFacts& facts, diag::DiagnosticSink& sink)
+    -> HirCompilation {
   const auto packages = CollectPackages(facts);
   const auto compilation_units = CollectCompilationUnits(facts);
   const auto units_to_compile = CollectUnits(facts);
@@ -248,24 +249,39 @@ auto LowerCompilationToHir(const LowerCompilationFacts& facts)
   // This is the design-scope reading of the same ordering a single unit already
   // applies to its own declarations. A declaration reads only its own unit, so
   // nothing orders this pass and no cycle among units can arise.
+  //
+  // A unit whose declarations fail is reported and the rest declare anyway, so
+  // one run accounts for every unit. Bodies are not attempted after any such
+  // failure: a body resolves names against what the units published, so it
+  // would fail for want of a promise nobody made, and every one of those
+  // follow-on errors buries the account this pass exists to give.
   hir::UnitSignatures signatures;
   for (const auto& lowerer : lowerers) {
     if (auto r = lowerer->Declare(); !r) {
-      return std::unexpected(std::move(r.error()));
+      sink.Report(std::move(r.error()));
+      continue;
     }
     signatures.Publish(lowerer->TakeSignature());
+  }
+  if (sink.HasErrors()) {
+    return HirCompilation{.units = {}, .signatures = std::move(signatures)};
   }
 
   // Each unit's bodies lower against what the design's units published. Which
   // of those promises a unit depends on is the set it reads: a name it first
   // reaches from inside a body is reached after any set fixed in advance, and
   // whether a name is on a promise does not depend on who asked.
+  // A unit whose bodies fail is reported and the rest lower anyway. Nothing
+  // here reads another unit's bodies, so a unit that stopped takes nothing
+  // with it -- which is the same property that lets the units lower in any
+  // order.
   std::vector<hir::CompilationUnit> units;
   units.reserve(lowerers.size());
   for (const auto& lowerer : lowerers) {
     auto unit = lowerer->LowerBodies(signatures);
     if (!unit) {
-      return std::unexpected(std::move(unit.error()));
+      sink.Report(std::move(unit.error()));
+      continue;
     }
     units.push_back(*std::move(unit));
   }
