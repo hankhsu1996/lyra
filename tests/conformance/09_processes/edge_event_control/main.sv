@@ -5,7 +5,21 @@
 // significant bit of the expression, so a change confined to the other bits is
 // no edge whatever it does to the value, and the same rule reads a bit-select,
 // a part-select and an indexed part-select through the bits each of them names.
+// The operand is any integral type (LRM 6.11.1), so an enumeration, a packed
+// structure and a packed union are read for their least significant bit like
+// any vector -- which is why a move to a numerically smaller enumerator can be
+// a posedge and a move to a larger one no edge at all.
 module Top;
+  typedef enum bit [7:0] {EVEN_LOW = 8'h22, EVEN_HIGH = 8'h44, ODD = 8'h11} code_t;
+  typedef struct packed {
+    bit [3:0] upper;
+    bit [3:0] lower;
+  } pair_t;
+  typedef union packed {
+    bit [7:0] whole;
+    pair_t split;
+  } either_t;
+
   logic rising = 1'b0;
   logic falling = 1'b1;
   logic never_rises = 1'b1;
@@ -21,6 +35,10 @@ module Top;
   logic [7:0] ascending_part = 8'h00;
   logic [7:0] descending_part = 8'h00;
 
+  code_t code = EVEN_LOW;
+  pair_t pair = 8'h00;
+  either_t either = 8'hFF;
+
   time rising_at;
   time falling_at;
   int never_rises_woke;
@@ -35,6 +53,9 @@ module Top;
   time ranged_at;
   time ascending_part_at;
   time descending_part_at;
+  time code_at;
+  time pair_at;
+  time either_at;
 
   initial begin
     @(posedge rising);
@@ -104,6 +125,21 @@ module Top;
   end
 
   initial begin
+    @(posedge code);
+    code_at = $time;
+  end
+
+  initial begin
+    @(posedge pair);
+    pair_at = $time;
+  end
+
+  initial begin
+    @(negedge either);
+    either_at = $time;
+  end
+
+  initial begin
     #5;
     never_rises = 1'b0;
     whole = 8'hF0;
@@ -111,6 +147,9 @@ module Top;
     ranged = 8'b1000_0000;
     ascending_part = 8'b0100_0000;
     descending_part = 8'b0100_0000;
+    code = EVEN_HIGH;
+    pair.upper = 4'hF;
+    either.split.upper = 4'h0;
     #5;
     rising = 1'b1;
     falling = 1'b0;
@@ -124,6 +163,9 @@ module Top;
     ranged[4] = 1'b1;
     ascending_part[3] = 1'b1;
     descending_part[3] = 1'b1;
+    code = ODD;
+    pair.lower = 4'h1;
+    either.whole = 8'h0E;
     #5;
     both_ways = 1'b0;
   end
@@ -158,6 +200,10 @@ module Top;
     if (descending_part_at !== 10)
       $fatal(1, "descending_part_at was %0d, expected 10",
              descending_part_at);
+    if (code_at !== 10) $fatal(1, "code_at was %0d, expected 10", code_at);
+    if (pair_at !== 10) $fatal(1, "pair_at was %0d, expected 10", pair_at);
+    if (either_at !== 10)
+      $fatal(1, "either_at was %0d, expected 10", either_at);
     $display("All checks passed");
   end
 endmodule

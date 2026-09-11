@@ -6,8 +6,22 @@
 // bits pass through unchanged. A member may itself be a part-select, in which
 // case only the bits it selects are written. The whole right-hand side is
 // evaluated before any member is written, so a concatenation on both sides
-// exchanges values rather than duplicating one of them.
+// exchanges values rather than duplicating one of them. A member is any
+// integral type (LRM 6.11.1) -- an enumeration, a packed structure and a packed
+// union each take their share of the bits exactly as a vector of their width
+// does, since the concatenation is a packed vector of bits and writing through
+// it is writing bits.
 module Top;
+  typedef enum bit [7:0] {LOW = 8'h11, HIGH = 8'h22} opcode_t;
+  typedef struct packed {
+    bit [3:0] upper;
+    bit [3:0] lower;
+  } pair_t;
+  typedef union packed {
+    bit [7:0] whole;
+    pair_t split;
+  } either_t;
+
   logic [7:0] high, mid, low;
   bit [3:0] narrow;
   bit [7:0] middle;
@@ -15,6 +29,11 @@ module Top;
   logic [7:0] unknown_high, unknown_low;
   logic [7:0] partial_a, partial_b;
   logic [7:0] swap_a, swap_b;
+
+  opcode_t opcode;
+  pair_t pair;
+  either_t either;
+  bit [7:0] tail;
 
   initial begin
     {high, mid, low} = 24'h123456;
@@ -28,6 +47,8 @@ module Top;
     swap_a = 8'hAA;
     swap_b = 8'hBB;
     {swap_a, swap_b} = {swap_b, swap_a};
+
+    {opcode, pair, either, tail} = 32'h225AC37E;
   end
 
   final begin
@@ -51,6 +72,18 @@ module Top;
 
     if (swap_a !== 8'hBB) $fatal(1, "swap_a was %h, expected bb", swap_a);
     if (swap_b !== 8'hAA) $fatal(1, "swap_b was %h, expected aa", swap_b);
+
+    if (opcode !== HIGH)
+      $fatal(1, "opcode was %h, expected 22", opcode);
+    if (pair.upper !== 4'h5)
+      $fatal(1, "pair.upper was %h, expected 5", pair.upper);
+    if (pair.lower !== 4'hA)
+      $fatal(1, "pair.lower was %h, expected a", pair.lower);
+    if (either.whole !== 8'hC3)
+      $fatal(1, "either.whole was %h, expected c3", either.whole);
+    if (either.split.upper !== 4'hC)
+      $fatal(1, "either.split.upper was %h, expected c", either.split.upper);
+    if (tail !== 8'h7E) $fatal(1, "tail was %h, expected 7e", tail);
     $display("All checks passed");
   end
 endmodule

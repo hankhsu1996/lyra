@@ -119,14 +119,18 @@ under each item, and the conformance gaps at the end.
       -- a concatenation, an operator over them, a select whose index is itself read -- and its
       operand may be an element or a field of an unpacked aggregate as well as a packed select of
       any depth, direction or base, including an indexed part-select (LRM 11.5.1 direction
-      translation). A procedure that is not waiting at the control has nothing watching there, so a
-      change while it is elsewhere is not detected. An entry may carry an `iff` qualifier (LRM
-      9.4.2.3), which gates the event without gating the watching: it is read where the watched
-      expression changes and never when the qualifier itself does, so a change in the qualifier
-      alone reaches nothing, and a change it holds back still moves what the wait compares against
-      next. It qualifies a named event as well, and binds tighter than the `or` of an event list.
-  - [ ] An edge event control on a non-packed-bit-vector operand, and a value-change event control
-        on a non-value operand (LRM 9.4.2): only packed-vector / value operands are accepted.
+      translation). An edge reads any integral operand (LRM 6.11.1), an enumeration and a packed
+      structure or union included, since each is one packed vector and the edge is its least
+      significant bit -- so a move to a numerically smaller enumerator can be a posedge and a move
+      to a larger one no edge at all. A procedure that is not waiting at the control has nothing
+      watching there, so a change while it is elsewhere is not detected. An entry may carry an `iff`
+      qualifier (LRM 9.4.2.3), which gates the event without gating the watching: it is read where
+      the watched expression changes and never when the qualifier itself does, so a change in the
+      qualifier alone reaches nothing, and a change it holds back still moves what the wait compares
+      against next. It qualifies a named event as well, and binds tighter than the `or` of an event
+      list.
+  - [ ] A value-change event control on a non-value operand (LRM 9.4.2): only value operands are
+        accepted.
   - [ ] A nested timing control inside an event-list entry: only signal events compose in a list
         today.
 - [x] T6 -- The non-blocking event trigger `->> e` (LRM 15.5.1), with and without a control. The

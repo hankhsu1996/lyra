@@ -307,9 +307,12 @@ class Type {
   explicit Type(Data data) : data_(std::move(data)) {
   }
 
-  // A single bit or a packed array of bits -- the integral operands an edge
-  // event, a bit / part select, and an unpacked-array element read accept.
-  [[nodiscard]] auto IsBitVector() const -> bool;
+  // True for the types LRM 6.11.1 calls integral: a basic integer type, a
+  // packed array, a packed structure, a packed union, or an enumeration. The
+  // same clause names a narrower set, the simple bit vector types, which
+  // excludes the packed aggregates and the multidimensional packed array; a
+  // rule the standard states over integral operands means this wider one.
+  [[nodiscard]] auto IsIntegral() const -> bool;
 
   // True for the value types -- those a value-change event can react to (LRM
   // 9.4.2). A handle / event / void is not a value and drives no such event.

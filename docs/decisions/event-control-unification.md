@@ -7,7 +7,7 @@
 ## Status
 
 Accepted. The unification -- one shape for every value-change wait, over a per-leaf
-`(observable, bit_range)` set -- stands, and has since widened past value change. Three things it
+`(observable, bit_range)` set -- stands, and has since widened past value change. Four things it
 settled no longer hold.
 
 **The wait families are two, not three.** This entry's table put a named event's waiter list beside
@@ -37,6 +37,17 @@ began; the bit range stays exactly where this entry put it and does the negative
 over a wait a write cannot have reached. The frontend LSB-reduce goes with the decision it served:
 reducing a leaf to the expression's least significant bit is unsound as a bound on what the write
 could have reached, since an expression's own LSB may read any bit of an operand.
+
+**Nothing this entry left out of scope is out of scope.** It deferred two things. The first was a
+list of operand types -- "ascending / negative base packed ranges, multi-dim packed events, struct /
+unpacked event triggers" -- awaiting type infrastructure; run against the tree, an ascending range,
+a negative base, a multi-dimensional packed array and a packed structure are each accepted under an
+edge and each wakes, and an unpacked structure is not a gap here at all, because binding refuses it
+under the clause's singular-value rule. What an edge operand may be is the standard's integral set
+(LRM 6.11.1) and nothing narrower. The second was the compound event expression, whose prescribed
+mechanism -- per-trigger snapshot variables and a deferred edge helper -- belongs to the leaf-filter
+model the paragraph above supersedes; `@(posedge (a & b))` and `@(posedge {a, b})` both wake today,
+because the wait holds the whole expression rather than a set of leaves.
 
 ## Why this decision matters
 
@@ -137,15 +148,6 @@ Closed under this PR:
   named-event path is orthogonal to the unification.
 - New tests cover constant bit-select, range-select, indexed part-select (`+:` / `-:`), edge keyword
   combinations, event-list with mixed bit-select members, and `LRM 9.4.2` "no false wake" anchors.
-
-Out of scope but unblocked by this design:
-
-- Compound event expressions: the snapshot + re-eval wrapper is the natural next step. The HIR
-  carries `EventTrigger.sensitivity_list` for every event expression, so the wrapper just needs to
-  iterate triggers, materialise per-trigger snapshot vars, and call the deferred edge helper.
-- Ascending / negative base packed ranges, multi-dim packed events, struct / unpacked event
-  triggers. Each is bounded by a separate workstream (PackedArray direction handling, multi-dim
-  initializer emit, type infrastructure).
 
 ## Alternatives considered
 

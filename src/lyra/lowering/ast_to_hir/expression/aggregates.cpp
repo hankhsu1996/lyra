@@ -110,8 +110,7 @@ auto LowerConcatExpr(
   auto type_id = unit_lowerer.InternType(*cc.type, span);
   if (!type_id) return std::unexpected(std::move(type_id.error()));
   const hir::Type& result_ty = unit_lowerer.Unit().types.Get(*type_id);
-  if (!result_ty.Is<hir::StringType>() && !result_ty.Is<hir::ScalarBitType>() &&
-      !result_ty.Is<hir::PackedArrayType>() &&
+  if (!result_ty.IsIntegral() && !result_ty.Is<hir::StringType>() &&
       !result_ty.Is<hir::QueueType>() &&
       !result_ty.Is<hir::UnpackedArrayType>() &&
       !result_ty.Is<hir::DynamicArrayType>()) {
@@ -217,8 +216,7 @@ auto LowerReplicationExpr(
   auto type_id = unit_lowerer.InternType(*rp.type, span);
   if (!type_id) return std::unexpected(std::move(type_id.error()));
   const hir::Type& result_ty = unit_lowerer.Unit().types.Get(*type_id);
-  if (!result_ty.Is<hir::StringType>() && !result_ty.Is<hir::ScalarBitType>() &&
-      !result_ty.Is<hir::PackedArrayType>()) {
+  if (!result_ty.IsIntegral() && !result_ty.Is<hir::StringType>()) {
     return diag::Fail(
         span, diag::DiagCode::kUnsupportedExpressionForm,
         "replication result type is neither string nor packed "

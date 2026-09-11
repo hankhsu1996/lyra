@@ -46,12 +46,13 @@ enough to warrant its own focused review.
       inverse of the original framing -- two frontend lowering gates were over-broad and rejected
       forms the architecture and the LRM both allow. Both are now lifted: the `@(expr)`
       event-control path admits any value-change-observable operand as an any-change event (the
-      legal `@(string)` / `@(real)` / `@(enum)`) while still requiring a packed bit-vector for an
-      edge (the runtime classifies an edge only on a `PackedArray` cell), and the
-      input-port-connection path admits any value type (the driver rides the generic
-      continuous-assign path). `hir::Type::IsValueChangeObservable` is the single HIR-level
-      predicate both gates share. A value-type x construct coverage matrix backs it (`@`, `wait`,
-      `always_comb`, `@*`, continuous assignment, input port over string / real / enum / unpacked).
+      legal `@(string)` / `@(real)` / `@(enum)`), and the input-port-connection path admits any
+      value type (the driver rides the generic continuous-assign path). An edge carries no
+      restriction of its own either: binding admits only an integral operand, and every integral
+      value is one packed vector at run time, which is what classifying an edge needs.
+      `hir::Type::IsValueChangeObservable` is the single HIR-level predicate the value-change gate
+      uses. A value-type x construct coverage matrix backs it (`@`, `wait`, `always_comb`, `@*`,
+      continuous assignment, input port over string / real / enum / unpacked).
 
 - [x] R3 -- Collapse the runtime's dual hierarchy into a single object tree. The mirrored
       `RuntimeScope` tree and the bind-time `RuntimeBindContext` are gone; there is now one runtime
