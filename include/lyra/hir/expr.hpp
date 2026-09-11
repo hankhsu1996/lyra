@@ -222,9 +222,9 @@ struct ClassNewExpr {
 };
 
 // LRM 11.9 tagged union expression `tagged Member primary`. `member_index` is
-// the declaration-order position of the tagged member inside the union type
-// (names are dropped, position is the tag). `payload` is absent when the
-// member is `void`.
+// the declaration-order position of the tagged member inside the union type,
+// which is the tag: a member is reached by where it sits, never by its name.
+// `payload` is absent when the member is `void`.
 struct TaggedUnionExpr {
   base::ComponentIndex member_index;
   std::optional<ExprId> payload;

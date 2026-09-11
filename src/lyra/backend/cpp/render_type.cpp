@@ -44,10 +44,17 @@ auto RenderTypeAsCpp(const mir::CompilationUnit& unit, mir::TypeId type_id)
           [](const mir::PackedArrayType&) -> std::string {
             return std::string{"lyra::value::PackedArray"};
           },
+          // An enumeration and a packed aggregate are their base integral --
+          // a `PackedArray`. What each declares beyond that is a set of names,
+          // which is not part of how a value is held and so gives it no
+          // representation of its own.
           [](const mir::EnumType&) -> std::string {
-            // An enum value is its base integral -- a `PackedArray`. The enum's
-            // nominal content is consumed at HIR-to-MIR, never emitted as a
-            // type.
+            return std::string{"lyra::value::PackedArray"};
+          },
+          [](const mir::PackedStructType&) -> std::string {
+            return std::string{"lyra::value::PackedArray"};
+          },
+          [](const mir::PackedUnionType&) -> std::string {
             return std::string{"lyra::value::PackedArray"};
           },
           [](const mir::StringType&) -> std::string {
@@ -279,10 +286,20 @@ auto RenderTypeAsCpp(const mir::CompilationUnit& unit, mir::TypeId type_id)
                 "lyra::value::Tuple<{}>",
                 JoinCommaSeparated(RenderEachTypeAsCpp(unit, t.elements)));
           },
+          // A declared structure realizes as the product its members make. The
+          // names it declares for them are not part of how a value is held, so
+          // they name nothing here.
+          [&](const mir::UnpackedStructType& s) -> std::string {
+            return std::format(
+                "lyra::value::Tuple<{}>",
+                JoinCommaSeparated(
+                    RenderEachTypeAsCpp(unit, mir::MemberTypes(s.members))));
+          },
           [&](const mir::UnionType& u) -> std::string {
             return std::format(
                 "lyra::value::Union<{}>",
-                JoinCommaSeparated(RenderEachTypeAsCpp(unit, u.elements)));
+                JoinCommaSeparated(
+                    RenderEachTypeAsCpp(unit, mir::MemberTypes(u.members))));
           },
           [](const mir::EmptyType&) -> std::string {
             return std::string{"lyra::value::Empty"};
@@ -290,7 +307,8 @@ auto RenderTypeAsCpp(const mir::CompilationUnit& unit, mir::TypeId type_id)
           [&](const mir::TaggedUnionType& u) -> std::string {
             return std::format(
                 "lyra::value::TaggedUnion<{}>",
-                JoinCommaSeparated(RenderEachTypeAsCpp(unit, u.elements)));
+                JoinCommaSeparated(
+                    RenderEachTypeAsCpp(unit, mir::MemberTypes(u.members))));
           },
           [&](const mir::ObservableType& o) -> std::string {
             return std::format(
@@ -370,6 +388,8 @@ auto RenderTypeConstructionAsCpp(
           },
           [&](const mir::PackedArrayType& t) { return by_naming_itself(t); },
           [&](const mir::EnumType& t) { return by_naming_itself(t); },
+          [&](const mir::PackedStructType& t) { return by_naming_itself(t); },
+          [&](const mir::PackedUnionType& t) { return by_naming_itself(t); },
           [&](const mir::StringType& t) { return by_naming_itself(t); },
           [&](const mir::MachineCStringType& t) { return by_naming_itself(t); },
           [&](const mir::MachineBoolType& t) { return by_naming_itself(t); },
@@ -406,6 +426,9 @@ auto RenderTypeConstructionAsCpp(
           [&](const mir::RefType& t) { return by_naming_itself(t); },
           [&](const mir::VoidType& t) { return by_naming_itself(t); },
           [&](const mir::TupleType& t) { return by_naming_itself(t); },
+          [&](const mir::UnpackedStructType& t) {
+            return by_naming_itself(t);
+          },
           [&](const mir::UnionType& t) { return by_naming_itself(t); },
           [&](const mir::TaggedUnionType& t) { return by_naming_itself(t); },
           [&](const mir::EmptyType& t) { return by_naming_itself(t); },

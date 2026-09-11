@@ -471,22 +471,18 @@ class DynamicArray {
   std::vector<T> data_;
 };
 
-// LRM 21.2.1.6 aggregate format. Mirrors `Formatter<UnpackedArray<T>>` --
-// no `FormatContext` thread-through (aggregates never carry context-bound
-// kinds); empty arrays compose naturally because the loop runs zero times.
+// LRM 21.2.1.6 aggregate format: the elements the array currently holds, in
+// order, each deferring to its own type's `Formatter`. No `FormatContext` is
+// threaded through, aggregates never carrying a context-bound kind.
 template <typename T>
 struct Formatter<DynamicArray<T>> {
   static auto Format(const FormatSpec& spec, const DynamicArray<T>& value)
       -> std::string {
-    std::string out = "'{";
+    PatternWriter pattern;
     for (std::size_t i = 0; i < value.RawSize(); ++i) {
-      if (i != 0) {
-        out += ", ";
-      }
-      out += lyra::value::Format(spec, MakeFormatArg(value.RawAt(i)));
+      pattern.Add(lyra::value::Format(spec, MakeFormatArg(value.RawAt(i))));
     }
-    out += "}";
-    return out;
+    return std::move(pattern).Finish();
   }
 };
 

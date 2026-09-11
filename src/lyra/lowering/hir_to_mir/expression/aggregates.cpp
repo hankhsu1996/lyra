@@ -255,7 +255,7 @@ auto LowerHirAssignmentPatternExpr(
         BuildElementDefault(lowerer.Owner(), block, hir_result_type),
         std::move(element_ids));
   }
-  if (result_ty.Is<mir::TupleType>()) {
+  if (result_ty.IsProduct()) {
     return mir::Expr{
         .data = mir::CompositeExpr{.parts = std::move(element_ids)},
         .type = result_type};
@@ -472,10 +472,12 @@ auto LowerHirAssignmentPatternReplicationExpr(
   // to carry out: the items land in member positions here, and how many
   // positions there are is what the structure's own type says (LRM 10.9). The
   // multiplier states the same number the type does, so nothing reads it.
-  if (const auto* tuple = result_ty.As<mir::TupleType>()) {
+  if (result_ty.IsProduct()) {
+    const std::size_t position_count =
+        result_ty.ProductComponentTypes().size();
     std::vector<mir::ExprId> components;
-    components.reserve(tuple->elements.size());
-    for (std::size_t i = 0; i < tuple->elements.size(); ++i) {
+    components.reserve(position_count);
+    for (std::size_t i = 0; i < position_count; ++i) {
       components.push_back(item_ids[i % item_ids.size()]);
     }
     return mir::Expr{

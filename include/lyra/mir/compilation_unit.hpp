@@ -377,10 +377,10 @@ struct CompilationUnit {
   if (tu == nullptr) {
     throw InternalError("TaggedComponentType: type is not a tagged union");
   }
-  if (tag_index.value >= tu->elements.size()) {
+  if (tag_index.value >= tu->members.size()) {
     throw InternalError("TaggedComponentType: tag index out of range");
   }
-  return tu->elements[tag_index.value];
+  return tu->members[tag_index.value].type;
 }
 
 }  // namespace lyra::mir

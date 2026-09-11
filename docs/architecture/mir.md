@@ -72,6 +72,16 @@ what the construct means.
   (C++/Rust/LLVM carry them). "Activation frame" is a lowering role name for a `Shared<>` scope
   struct, not a type category; a closure is not a struct-with-invoke but its own callable-value
   category.
+- An aggregate the **source declared** -- a structure or a union, packed or unpacked -- is a type of
+  its own that names its members, beside the anonymous product a lowering composes for itself. The
+  member names are part of what the type is, because the language renders a value by them (LRM
+  21.2.1.6) and two values of one type must render alike; a type that stated only the component
+  types would leave that answer outside the type. Its **value-domain projection** is the
+  representation it shares with a type that names nothing -- the product for an unpacked aggregate,
+  the single vector for a packed one -- so a value operation reads the projection and never the
+  names, exactly as an enumeration projects to its base. Reaching a member is unchanged by this: an
+  access names a member by its declaration-order position, the carrier below the source level that
+  LLVM IR and Rust MIR both use over a nominal record type, and the name is what presentation reads.
 - Capability wrappers: types that represent a storage place instead of being a value -- an
   observable cell, a reference, a net's resolved value, a net driver's contribution. A capability
   wrapper composes over the value type it represents, and the wrapper and that storage are distinct

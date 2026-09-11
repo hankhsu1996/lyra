@@ -97,9 +97,7 @@ auto DescribeMemory(
             // declared width, carried by a default value of the key type; a
             // dump reads the stored keys and needs no prototype.
             const mir::TypeId key = unit_lowerer.TranslateType(a.key_type);
-            if (!unit_lowerer.Unit()
-                     .types.Get(key)
-                     .Is<mir::PackedArrayType>()) {
+            if (!unit_lowerer.Unit().types.Get(key).IsIntegralPacked()) {
               return diag::Fail(
                   diag::DiagCode::kUnsupportedSubroutineArgument,
                   std::format(
@@ -169,7 +167,7 @@ auto LowerMemFileSystemSubroutineCallStmt(
   // bit vector, or a packed struct / union / enum. A non-packed leaf (an
   // unpacked struct, say) is not a memory word.
   const mir::TypeId elem_mir = unit_lowerer.TranslateType(addressing->element);
-  if (!unit.types.Get(elem_mir).Is<mir::PackedArrayType>()) {
+  if (!unit.types.Get(elem_mir).IsIntegralPacked()) {
     return diag::Fail(
         diag::DiagCode::kUnsupportedSubroutineArgument,
         std::format(

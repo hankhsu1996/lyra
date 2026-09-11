@@ -10,8 +10,8 @@ namespace lyra::value {
 
 struct RuntimeValue;
 
-// The runtime-owned realization of an unpacked struct (LRM 7.2), MIR's generic
-// product type `TupleType`. A product value that owns its components by value:
+// The runtime-owned realization of a product -- an unpacked struct (LRM 7.2)
+// among them. A product value that owns its components by value:
 // copy is a component-wise deep copy, destruction is C++ RAII, so a component
 // never borrows caller storage.
 //

@@ -1,28 +1,29 @@
 #pragma once
 
 #include <cstddef>
+#include <string>
 #include <type_traits>
 #include <utility>
 #include <variant>
 
 #include "lyra/base/simulation_error.hpp"
 #include "lyra/value/concepts.hpp"
+#include "lyra/value/format.hpp"
 #include "lyra/value/packed_array.hpp"
 
 namespace lyra::value {
 
 // An active-member value: holds exactly one of its component value types at a
-// time, identified by a declaration-order index. The value-layer realization of
-// MIR's UnionType -- the runtime form of an SV untagged unpacked union (LRM
-// 7.3), whose member names are erased to positions before this layer. Members
-// are reached by index, never by type, because a union may declare two members
-// of the same type. SystemVerilog gives no reliable semantics to reading a
-// member other than the one last written, so the union stores only the active
-// member; a read of an inactive member returns that member's default -- a
-// deterministic fallback for an operation SV leaves undefined, not a value any
-// program may depend on. The LyraValue contract composes from the active
-// member: equality is same-active-member-and-equal-value, never a cross-member
-// comparison.
+// time, identified by a declaration-order index. The runtime form of an SV
+// untagged unpacked union (LRM 7.3), whose members a value reaches by position
+// whatever its type calls them. Members are reached by index, never by type,
+// because a union may declare two members of the same type. SystemVerilog gives
+// no reliable semantics to reading a member other than the one last written, so
+// the union stores only the active member; a read of an inactive member returns
+// that member's default -- a deterministic fallback for an operation SV leaves
+// undefined, not a value any program may depend on. The LyraValue contract
+// composes from the active member: equality is
+// same-active-member-and-equal-value, never a cross-member comparison.
 template <typename... Ts>
 class Union {
  public:
@@ -208,6 +209,22 @@ class Union {
 
  private:
   std::variant<Ts...> data_;
+};
+
+// LRM 21.2.1.6: "For unions, only the first declared elements shall be
+// printed", so the pattern holds one element whichever member is live --
+// reading the first through `Get` gives the live value where it is the live
+// member and that member's default otherwise, which is the same stand-in a
+// cross-member read answers with.
+template <typename... Ts>
+struct Formatter<Union<Ts...>> {
+  static auto Format(const FormatSpec& spec, const Union<Ts...>& value)
+      -> std::string {
+    PatternWriter pattern;
+    pattern.Add(
+        lyra::value::Format(spec, MakeFormatArg(value.template Get<0>())));
+    return std::move(pattern).Finish();
+  }
 };
 
 static_assert(LyraValue<Union<PackedArray, PackedArray>>);

@@ -100,6 +100,14 @@ void HashPackedShape(std::size_t& seed, const PackedArrayType& packed) {
   }
 }
 
+void HashMembers(
+    std::size_t& seed, const std::vector<AggregateMember>& members) {
+  for (const AggregateMember& member : members) {
+    HashField(seed, member.name);
+    HashId(seed, member.type);
+  }
+}
+
 }  // namespace
 
 auto Type::Hash::operator()(const Type& type) const -> std::size_t {
@@ -113,6 +121,14 @@ auto Type::Hash::operator()(const Type& type) const -> std::size_t {
               HashField(seed, member.name);
               HashField(seed, member.value);
             }
+          },
+          [&](const PackedStructType& t) {
+            HashPackedShape(seed, t.base);
+            HashMembers(seed, t.members);
+          },
+          [&](const PackedUnionType& t) {
+            HashPackedShape(seed, t.base);
+            HashMembers(seed, t.members);
           },
           [&](const UnpackedArrayType& t) {
             HashId(seed, t.element_type);
@@ -178,8 +194,9 @@ auto Type::Hash::operator()(const Type& type) const -> std::size_t {
           [&](const ManagedRefType& t) { HashId(seed, t.pointee); },
           [&](const VectorType& t) { HashId(seed, t.element); },
           [&](const TupleType& t) { HashIds(seed, t.elements); },
-          [&](const UnionType& t) { HashIds(seed, t.elements); },
-          [&](const TaggedUnionType& t) { HashIds(seed, t.elements); },
+          [&](const UnpackedStructType& t) { HashMembers(seed, t.members); },
+          [&](const UnionType& t) { HashMembers(seed, t.members); },
+          [&](const TaggedUnionType& t) { HashMembers(seed, t.members); },
           [](const EmptyType&) {},
           [&](const ObservableType& t) { HashId(seed, t.value); },
           [&](const ResolvedType& t) { HashId(seed, t.value); },
@@ -191,8 +208,19 @@ auto Type::Hash::operator()(const Type& type) const -> std::size_t {
   return seed;
 }
 
+auto MemberTypes(const std::vector<AggregateMember>& members)
+    -> std::vector<TypeId> {
+  std::vector<TypeId> types;
+  types.reserve(members.size());
+  for (const AggregateMember& member : members) {
+    types.push_back(member.type);
+  }
+  return types;
+}
+
 auto Type::IsIntegralPacked() const -> bool {
-  return Is<PackedArrayType>() || Is<EnumType>();
+  return Is<PackedArrayType>() || Is<EnumType>() || Is<PackedStructType>() ||
+         Is<PackedUnionType>();
 }
 
 auto Type::PackedShape() const -> const PackedArrayType& {
@@ -202,7 +230,27 @@ auto Type::PackedShape() const -> const PackedArrayType& {
   if (const auto* enumeration = As<EnumType>()) {
     return enumeration->base;
   }
+  if (const auto* packed_struct = As<PackedStructType>()) {
+    return packed_struct->base;
+  }
+  if (const auto* packed_union = As<PackedUnionType>()) {
+    return packed_union->base;
+  }
   throw InternalError("mir: type has no packed shape; it is not integral");
+}
+
+auto Type::IsProduct() const -> bool {
+  return Is<TupleType>() || Is<UnpackedStructType>();
+}
+
+auto Type::ProductComponentTypes() const -> std::vector<TypeId> {
+  if (const auto* tuple = As<TupleType>()) {
+    return tuple->elements;
+  }
+  if (const auto* structure = As<UnpackedStructType>()) {
+    return MemberTypes(structure->members);
+  }
+  throw InternalError("mir: type is not a product");
 }
 
 auto Type::IsRealFamily() const -> bool {
@@ -238,11 +286,15 @@ auto Type::HeldValueTypes() const -> std::vector<TypeId> {
   using Held = std::vector<TypeId>;
   return Visit(
       Overloaded{
-          // An integral value is one vector of bits, and an enumeration is that
-          // vector under a set of names. Both are indivisible, as is every
-          // other value that is a single quantity, a single token, or nothing.
+          // An integral value is one vector of bits, and an enumeration or a
+          // packed aggregate is that vector under a set of names. All are
+          // indivisible, as is every other value that is a single quantity, a
+          // single token, or nothing: a packed member is a run of the one
+          // vector rather than a value held beside it.
           [](const PackedArrayType&) -> Held { return {}; },
           [](const EnumType&) -> Held { return {}; },
+          [](const PackedStructType&) -> Held { return {}; },
+          [](const PackedUnionType&) -> Held { return {}; },
           [](const WildcardIndexType&) -> Held { return {}; },
           [](const StringType&) -> Held { return {}; },
           [](const MachineCStringType&) -> Held { return {}; },
@@ -271,8 +323,13 @@ auto Type::HeldValueTypes() const -> std::vector<TypeId> {
           // A product holds every component at once; a union and a tagged sum
           // hold one at a time, which is still one of these.
           [](const TupleType& t) -> Held { return t.elements; },
-          [](const UnionType& t) -> Held { return t.elements; },
-          [](const TaggedUnionType& t) -> Held { return t.elements; },
+          [](const UnpackedStructType& t) -> Held {
+            return MemberTypes(t.members);
+          },
+          [](const UnionType& t) -> Held { return MemberTypes(t.members); },
+          [](const TaggedUnionType& t) -> Held {
+            return MemberTypes(t.members);
+          },
 
           // A cell holds the value it keeps, however it publishes a change to
           // it and however far back it remembers.

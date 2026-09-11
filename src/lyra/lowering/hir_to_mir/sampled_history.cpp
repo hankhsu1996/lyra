@@ -28,12 +28,12 @@ namespace {
 auto BitSelectType(mir::CompilationUnit& unit, mir::TypeId value_type)
     -> std::optional<mir::TypeId> {
   const mir::Type& value = unit.types.Get(value_type);
-  if (!value.Is<mir::PackedArrayType>()) {
+  if (!value.IsIntegralPacked()) {
     return std::nullopt;
   }
   return unit.types.Intern(
       mir::Type{mir::PackedArrayType{
-          .state_kind = value.Get<mir::PackedArrayType>().state_kind,
+          .state_kind = value.PackedShape().state_kind,
           .signedness = mir::Signedness::kUnsigned,
           .dims = {mir::PackedRange{.left = 0, .right = 0}}}});
 }

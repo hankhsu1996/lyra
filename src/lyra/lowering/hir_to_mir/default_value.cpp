@@ -223,15 +223,37 @@ auto BuildDefaultValueExpr(
             BuildDefaultValueExpr(unit, block, members[kFirstMember.value])),
         kFirstMember, type);
   };
+  const auto product_default =
+      [&](std::span<const mir::TypeId> components) -> mir::Expr {
+    std::vector<mir::ExprId> parts;
+    parts.reserve(components.size());
+    for (const mir::TypeId component : components) {
+      parts.push_back(
+          block.exprs.Add(BuildDefaultValueExpr(unit, block, component)));
+    }
+    return mir::Expr{
+        .data = mir::CompositeExpr{.parts = std::move(parts)}, .type = type};
+  };
   return ty.Visit(
       Overloaded{
           [&](const mir::PackedArrayType& pa) -> mir::Expr {
             return block.exprs.Get(BuildIntegralLiteral(
                 unit, block, type, DefaultIntegralConstant(pa)));
           },
+          // An enumeration and a packed aggregate default as the vector they
+          // are: LRM Table 6-7 reads the default off the state domain, which
+          // the base carries and the names do not affect.
           [&](const mir::EnumType& e) -> mir::Expr {
             return block.exprs.Get(BuildIntegralLiteral(
                 unit, block, type, DefaultIntegralConstant(e.base)));
+          },
+          [&](const mir::PackedStructType& s) -> mir::Expr {
+            return block.exprs.Get(BuildIntegralLiteral(
+                unit, block, type, DefaultIntegralConstant(s.base)));
+          },
+          [&](const mir::PackedUnionType& u) -> mir::Expr {
+            return block.exprs.Get(BuildIntegralLiteral(
+                unit, block, type, DefaultIntegralConstant(u.base)));
           },
           [&](const mir::StringType&) -> mir::Expr {
             // Software string literal -> `value::String("")` via the
@@ -269,28 +291,22 @@ auto BuildDefaultValueExpr(
             return BuildArrayRepeatCall(
                 unit, block, type, element_default, {element_default}, size_id);
           },
-          // LRM Table 7-1: an unpacked struct defaults member-wise -- each
-          // component takes its own type's default, recursively. Synthesized at
-          // each use rather than stored on the interned type, so structs with
-          // the same component types but different member initializers share
-          // one type.
+          // LRM Table 7-1: a product defaults component-wise -- each takes its
+          // own type's default, recursively. Synthesized at each use rather
+          // than stored on the type, because a member's own declaration
+          // initializer (LRM 7.2.2) takes precedence over it and is a value the
+          // source states, not part of what the type is.
           [&](const mir::TupleType& t) -> mir::Expr {
-            const std::vector<mir::TypeId> element_types = t.elements;
-            std::vector<mir::ExprId> components;
-            components.reserve(element_types.size());
-            for (const mir::TypeId elem : element_types) {
-              components.push_back(
-                  block.exprs.Add(BuildDefaultValueExpr(unit, block, elem)));
-            }
-            return mir::Expr{
-                .data = mir::CompositeExpr{.parts = std::move(components)},
-                .type = type};
+            return product_default(t.elements);
+          },
+          [&](const mir::UnpackedStructType& s) -> mir::Expr {
+            return product_default(mir::MemberTypes(s.members));
           },
           [&](const mir::UnionType& u) -> mir::Expr {
-            return first_member_default(u.elements);
+            return first_member_default(mir::MemberTypes(u.members));
           },
           [&](const mir::TaggedUnionType& u) -> mir::Expr {
-            return first_member_default(u.elements);
+            return first_member_default(mir::MemberTypes(u.members));
           },
           [&](const mir::DynamicArrayType& da) -> mir::Expr {
             return BuildDynamicArrayDefault(

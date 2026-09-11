@@ -57,7 +57,7 @@ auto Unsupported(std::string message) -> std::unexpected<diag::Diagnostic> {
 // composed from parts.
 auto AssembledFrom(const lir::Type& built, std::vector<lir::Operand> parts)
     -> lir::InstrData {
-  if (built.Is<lir::TupleType>()) {
+  if (built.IsProduct()) {
     return lir::ProductInstr{.components = std::move(parts)};
   }
   if (built.Is<lir::MachineArrayType>()) {
@@ -179,10 +179,10 @@ auto LocalNamedBy(const mir::Block& block, mir::ExprId id)
 }
 
 // A value type whose runtime realization is an opaque handle into transient
-// storage the boundary releases at each suspension: a packed value (or the
-// enumeration and packed struct/union projections that share its shape), a
-// string, a real-family value (real / shortreal / realtime), an unpacked struct
-// product value, or a dynamic array. A local of such a type that a suspending
+// storage the boundary releases at each suspension: an integral value (a packed
+// array, or the enumeration and packed aggregate that share its shape), a
+// string, a real-family value (real / shortreal / realtime), a product, or a
+// dynamic array. A local of such a type that a suspending
 // body reads across a suspension needs activation-stable storage, because its
 // handle cannot outlive the stretch that produced it. A pointer, a reference,
 // an object handle, or a machine scalar is not one of these -- it is stable
@@ -190,7 +190,7 @@ auto LocalNamedBy(const mir::Block& block, mir::ExprId id)
 auto IsActivationValueType(const mir::Type& type) -> bool {
   return type.IsIntegralPacked() || type.Is<mir::StringType>() ||
          type.Is<mir::RealType>() || type.Is<mir::ShortRealType>() ||
-         type.Is<mir::RealTimeType>() || type.Is<mir::TupleType>() ||
+         type.Is<mir::RealTimeType>() || type.IsProduct() ||
          type.Is<mir::DynamicArrayType>();
 }
 

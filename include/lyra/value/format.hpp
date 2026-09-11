@@ -3,6 +3,8 @@
 #include <cstdint>
 #include <span>
 #include <string>
+#include <string_view>
+#include <utility>
 #include <variant>
 
 namespace lyra::value {
@@ -19,6 +21,12 @@ template <typename T>
 class Queue;
 template <typename K, typename V>
 class AssociativeArray;
+template <typename... Ts>
+class Tuple;
+template <typename... Ts>
+class Union;
+template <typename... Ts>
+class TaggedUnion;
 
 enum class FormatKind : std::uint8_t {
   kDecimal,
@@ -152,6 +160,12 @@ struct FormatArg {
   explicit FormatArg(const Queue<T>& value);
   template <typename K, typename V>
   explicit FormatArg(const AssociativeArray<K, V>& value);
+  template <typename... Ts>
+  explicit FormatArg(const Tuple<Ts...>& value);
+  template <typename... Ts>
+  explicit FormatArg(const Union<Ts...>& value);
+  template <typename... Ts>
+  explicit FormatArg(const TaggedUnion<Ts...>& value);
 };
 
 // Build a FormatArg that borrows `value`. `value` must outlive every
@@ -206,12 +220,66 @@ template <typename K, typename V>
 FormatArg::FormatArg(const AssociativeArray<K, V>& value)
     : FormatArg(MakeFormatArg(value)) {
 }
+template <typename... Ts>
+FormatArg::FormatArg(const Tuple<Ts...>& value)
+    : FormatArg(MakeFormatArg(value)) {
+}
+template <typename... Ts>
+FormatArg::FormatArg(const Union<Ts...>& value)
+    : FormatArg(MakeFormatArg(value)) {
+}
+template <typename... Ts>
+FormatArg::FormatArg(const TaggedUnion<Ts...>& value)
+    : FormatArg(MakeFormatArg(value)) {
+}
 
 // Drive the type-erased dispatch. The runtime print loop calls this once
 // per `PrintValueItem`. Equivalent to `std::format` for a single arg slot.
 [[nodiscard]] auto Format(
     const FormatSpec& spec, FormatArg arg, const FormatContext& ctx = {})
     -> std::string;
+
+// Composes the assignment pattern an aggregate renders as (LRM 21.2.1.6). How
+// much white space the pattern carries is the tool's to choose -- the clause
+// asks only that the result read as the pattern syntax -- so the choice is made
+// here and every aggregate spells it the same way. An aggregate with no
+// elements composes naturally, nothing having been added.
+//
+// The clause names some elements: a structure's members, a union's tag, an
+// associative entry's key. Only a caller holding the name can supply one, and a
+// name a type declares is not one a value carries -- nothing reaching a
+// formatter says which type a value came from. So an aggregate whose names live
+// on its type writes the unnamed elements the same clause allows for `%0p`, and
+// the named form `%p` asks for is not yet supported.
+class PatternWriter {
+ public:
+  void Add(std::string_view element) {
+    Separate();
+    out_ += element;
+  }
+
+  void Add(std::string_view name, std::string_view element) {
+    Separate();
+    out_ += name;
+    out_ += ':';
+    out_ += element;
+  }
+
+  [[nodiscard]] auto Finish() && -> std::string {
+    out_ += '}';
+    return std::move(out_);
+  }
+
+ private:
+  void Separate() {
+    if (!std::exchange(first_, false)) {
+      out_ += ", ";
+    }
+  }
+
+  std::string out_{"'{"};
+  bool first_ = true;
+};
 
 // Specializations for the closed leaf set. Each is declared here so a caller
 // building a format_fn for `T` has the declaration at instantiation time,
@@ -293,6 +361,18 @@ struct PrintValueItem {
   }
   template <typename K, typename V>
   PrintValueItem(const AssociativeArray<K, V>& value, FormatSpec spec)
+      : spec(spec), arg(MakeFormatArg(value)) {
+  }
+  template <typename... Ts>
+  PrintValueItem(const Tuple<Ts...>& value, FormatSpec spec)
+      : spec(spec), arg(MakeFormatArg(value)) {
+  }
+  template <typename... Ts>
+  PrintValueItem(const Union<Ts...>& value, FormatSpec spec)
+      : spec(spec), arg(MakeFormatArg(value)) {
+  }
+  template <typename... Ts>
+  PrintValueItem(const TaggedUnion<Ts...>& value, FormatSpec spec)
       : spec(spec), arg(MakeFormatArg(value)) {
   }
 };

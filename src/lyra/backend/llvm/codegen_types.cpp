@@ -63,6 +63,8 @@ auto CodeGenTypes::Map(lir::TypeId id) -> llvm::Type* {
           // nothing to do with it if it did.
           [&](const lir::PackedArrayType& t) { return address(t); },
           [&](const lir::EnumType& t) { return address(t); },
+          [&](const lir::PackedStructType& t) { return address(t); },
+          [&](const lir::PackedUnionType& t) { return address(t); },
           [&](const lir::UnpackedArrayType& t) { return address(t); },
           [&](const lir::DynamicArrayType& t) { return address(t); },
           [&](const lir::QueueType& t) { return address(t); },
@@ -72,6 +74,7 @@ auto CodeGenTypes::Map(lir::TypeId id) -> llvm::Type* {
           [&](const lir::ShortRealType& t) { return address(t); },
           [&](const lir::RealTimeType& t) { return address(t); },
           [&](const lir::TupleType& t) { return address(t); },
+          [&](const lir::UnpackedStructType& t) { return address(t); },
           [&](const lir::UnionType& t) { return address(t); },
           [&](const lir::TaggedUnionType& t) { return address(t); },
           [&](const lir::EmptyType& t) { return address(t); },

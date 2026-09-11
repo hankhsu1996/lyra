@@ -283,14 +283,34 @@ cross-check predicts. This file owns only which instances are known and what is 
 
 ## An aggregate's members
 
-- [ ] T8 -- An unpacked struct keeps its field names through lowering, so a member access names a
-      field rather than a position in a product. Field names are dropped at the front-end boundary
-      today, and a settled decision says they are: an unpacked struct is the generic value product,
-      and a product declares its components nowhere. So what this item needs first is that argument
-      re-opened -- whether a nominal source aggregate is the same concept as the transient products
-      lowering builds -- rather than an implementation.
-      [unpacked-struct-representation](../decisions/unpacked-struct-representation.md) holds the
-      rationale to argue against.
+- [x] T8 -- An aggregate the source declared keeps its member names through lowering, so what a
+      value renders as is settled by its type rather than left outside it. The argument this item
+      said it needed first was re-opened and went the other way from the settled decision: the
+      language renders a value by the names its type declares (LRM 21.2.1.6), so the names are
+      observable behaviour rather than presentation, and a shape-interned product has no key to hang
+      them off. Reaching a member is unchanged and stays positional, which is what every IR that
+      carries a record type does -- the item as first written asked for a named access too, and the
+      survey did not support it.
+
+      What the item had underestimated is how far the same root reached. It named the unpacked
+      structure; the union, the tagged union, and both packed aggregates had lost their names the
+      same way, the packed pair by having no type of their own at all below the front end. All five
+      now name their members, and each projects to the representation it already had -- the product,
+      or the single vector -- so no value operation and no runtime realization changed.
+
+      **The names existing below the front end was the precondition, not the whole of it.** What
+      still has to reach the formatter is described in [`display.md`](display.md), whose recorded gap
+      names the mechanism: a print item that carries how its elements render. A container's elements
+      are counted at run time, so nothing composed at the lowering can reach them -- which is why the
+      one place this works today, an enumeration written as the whole operand, works only there.
+
+      Giving the packed pair a type of their own is what turned seven latent wrong answers into
+      build-visible ones: every site that had asked "is this integral?" by testing for the plain
+      vector stopped seeing a packed aggregate, and each was a question about integrality that had
+      been spelled as a question about one alternative. Two more sites had been reading the anonymous
+      product to mean a declared structure.
+      [aggregate-names-are-type-content](../decisions/aggregate-names-are-type-content.md) holds the
+      argument, and what the two superseded records keep.
 
 ## Callable and assignment identity
 

@@ -686,27 +686,22 @@ class ArraySliceRef {
   bool anchor_known_;
 };
 
-// LRM 21.2.1.6 aggregate format. Per the per-type Formatter trait the
-// container walks its own elements and recursively defers each element to
-// `Format(spec, MakeFormatArg(elem))`. Aggregates only ever carry
-// `kAssignmentPattern`, which rewrites to `kDecimal` at the integral leaf
-// and never reaches a context-bound kind (`%t` is rejected on aggregate
-// operands upstream), so no `FormatContext` is threaded through. Multi-dim
-// and mixed-container nesting (`int arr[3][]`) fall out because every
-// nested element type carries its own Formatter.
+// LRM 21.2.1.6 aggregate format. What a container decides is which values
+// become elements; each of them then defers to its own type's `Formatter`, so
+// multi-dimensional and mixed-container nesting (`int arr[3][]`) falls out
+// without this knowing it happened. Aggregates only ever carry
+// `kAssignmentPattern`, which rewrites to `kDecimal` at the integral leaf and
+// never reaches a context-bound kind (`%t` is rejected on aggregate operands
+// upstream), so no `FormatContext` is threaded through.
 template <typename T>
 struct Formatter<UnpackedArray<T>> {
   static auto Format(const FormatSpec& spec, const UnpackedArray<T>& value)
       -> std::string {
-    std::string out = "'{";
+    PatternWriter pattern;
     for (std::size_t i = 0; i < value.RawSize(); ++i) {
-      if (i != 0) {
-        out += ", ";
-      }
-      out += lyra::value::Format(spec, MakeFormatArg(value.RawAt(i)));
+      pattern.Add(lyra::value::Format(spec, MakeFormatArg(value.RawAt(i))));
     }
-    out += "}";
-    return out;
+    return std::move(pattern).Finish();
   }
 };
 

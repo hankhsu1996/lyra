@@ -830,9 +830,9 @@ auto CodeGenFunction::LowerArray(
 auto CodeGenFunction::LowerProduct(
     const lir::ProductInstr& product, lir::TypeId result_type)
     -> diag::Result<llvm::Value*> {
-  const auto* tuple =
-      module_->Unit().types.Get(result_type).As<lir::TupleType>();
-  if (tuple == nullptr || tuple->elements.size() != product.components.size()) {
+  const std::vector<lir::TypeId> components =
+      module_->Unit().types.Get(result_type).ProductComponentTypes();
+  if (components.size() != product.components.size()) {
     throw InternalError(
         "llvm codegen: a product's result type does not describe the "
         "components it is built from");
@@ -840,7 +840,7 @@ auto CodeGenFunction::LowerProduct(
   std::vector<llvm::Value*> boxed;
   boxed.reserve(product.components.size());
   for (std::uint32_t i = 0; i < product.components.size(); ++i) {
-    auto domain = DomainOf(tuple->elements[i]);
+    auto domain = DomainOf(components[i]);
     if (!domain) {
       return std::unexpected(std::move(domain.error()));
     }
@@ -868,19 +868,15 @@ auto CodeGenFunction::UnionMemberDomain(
     lir::TypeId union_type, std::uint32_t index) const
     -> diag::Result<support::ValueDomain> {
   const lir::Type& ty = module_->Unit().types.Get(union_type);
-  const std::vector<lir::TypeId>* members = nullptr;
-  if (const auto* untagged = ty.As<lir::UnionType>()) {
-    members = &untagged->elements;
-  } else if (const auto* tagged = ty.As<lir::TaggedUnionType>()) {
-    members = &tagged->elements;
-  } else {
+  if (!ty.IsUnion()) {
     throw InternalError(
         "llvm codegen: a union member selects into a non-union type");
   }
-  if (index >= members->size()) {
+  const std::vector<lir::TypeId> members = ty.UnionMemberTypes();
+  if (index >= members.size()) {
     throw InternalError("llvm codegen: a union member index is out of range");
   }
-  return DomainOf((*members)[index]);
+  return DomainOf(members[index]);
 }
 
 auto CodeGenFunction::LowerUnion(
@@ -950,7 +946,7 @@ auto CodeGenFunction::PartDomain(
     lir::TypeId container, base::ComponentIndex position) const
     -> diag::Result<std::optional<support::ValueDomain>> {
   const lir::Type& ty = module_->Unit().types.Get(container);
-  if (!ty.Is<lir::UnionType>() && !ty.Is<lir::TaggedUnionType>()) {
+  if (!ty.IsUnion()) {
     return std::nullopt;
   }
   auto domain = UnionMemberDomain(container, position.value);

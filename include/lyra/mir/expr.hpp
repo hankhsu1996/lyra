@@ -405,11 +405,12 @@ struct IntCastExpr {
 };
 
 // The same value at another type that structures its bits identically --
-// crossing between an enumeration and its base (LRM 6.19.3) is the case this
-// arises for. Nothing is built and nothing moves; what changes is the type the
-// program ascribes to the value, which is why this is a cast and not a
-// construction. A destination whose representation differs is a reshape, which
-// is a library call and reaches this node already reshaped.
+// crossing between an integral type that names its content (an enumeration, a
+// packed structure or union) and the vector it shares a representation with.
+// Nothing is built and nothing moves; what changes is the type the program
+// ascribes to the value, which is why this is a cast and not a construction. A
+// destination whose representation differs is a reshape, which is a library
+// call that lands at that type on its own and never reaches this node.
 struct ValueCastExpr {
   ExprId operand;
 };

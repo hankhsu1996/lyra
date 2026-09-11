@@ -34,11 +34,14 @@ the detail lives in the entry itself.
   recursively (one dim per node); MIR stays flat and HIR-to-MIR flattens.
 - [unpacked-array-representation](unpacked-array-representation.md) -- representation of a
   fixed-size unpacked array.
-- [unpacked-struct-representation](unpacked-struct-representation.md) -- an unpacked struct is the
-  generic product type (MIR `TupleType`), positional access, defaults synthesized at lowering.
+- [unpacked-struct-representation](unpacked-struct-representation.md) -- an unpacked struct is a
+  value product and not an object, positional access, defaults synthesized at lowering.
 - [unpacked-union-representation](unpacked-union-representation.md) -- the sibling the struct
   decision left open: overlapping storage is neither a product nor a sum, and this settles which one
   MIR models it as.
+- [aggregate-names-are-type-content](aggregate-names-are-type-content.md) -- an aggregate the source
+  declared names its members in its own type, whose value-domain projection is the product or the
+  vector a type naming nothing already has.
 - [unpacked-range-belongs-to-type](unpacked-range-belongs-to-type.md) -- an unpacked array's index
   range is part of its type, not a size carried beside it; packed arrays are carved out.
 - [selector-coordinate-resolution](selector-coordinate-resolution.md) -- `a[1:7]`, `b[7:1]`, and

@@ -99,6 +99,41 @@ struct EnumType {
   auto operator==(const EnumType&) const -> bool = default;
 };
 
+// A named member of an aggregate the source declared. The position it sits at
+// is what an access names it by; the name is what LRM 21.2.1.6 prints for it.
+struct AggregateMember {
+  std::string name;
+  TypeId type;
+
+  auto operator==(const AggregateMember&) const -> bool = default;
+};
+
+// The member types in declaration order, for a consumer answering about the
+// types alone. A member list is read directly wherever the names are part of
+// the answer.
+[[nodiscard]] auto MemberTypes(const std::vector<AggregateMember>& members)
+    -> std::vector<TypeId>;
+
+// LRM 7.2.1 packed structure: every value operation runs on `base`, the one
+// vector the members are placed in; the members are what the aggregate declares
+// of itself and a bare vector of the same width does not carry.
+struct PackedStructType {
+  PackedArrayType base;
+  std::vector<AggregateMember> members;
+
+  auto operator==(const PackedStructType&) const -> bool = default;
+};
+
+// LRM 7.3.1 packed union: members overlapping at the least significant bits of
+// one vector. A tagged union places a tag ahead of them, which widens `base`
+// and is bits of the vector like any other.
+struct PackedUnionType {
+  PackedArrayType base;
+  std::vector<AggregateMember> members;
+
+  auto operator==(const PackedUnionType&) const -> bool = default;
+};
+
 struct UnpackedArrayType {
   TypeId element_type;
   std::uint64_t size;
@@ -327,20 +362,31 @@ struct VectorType {
   auto operator==(const VectorType&) const -> bool = default;
 };
 
+// The anonymous product a lowering composes for itself: a product the source
+// declared names its parts and this names none.
 struct TupleType {
   std::vector<TypeId> elements;
 
   auto operator==(const TupleType&) const -> bool = default;
 };
 
+// LRM 7.2 unpacked structure: every value operation on it is the product's,
+// and what it carries beyond one is the name the source declared for each
+// member.
+struct UnpackedStructType {
+  std::vector<AggregateMember> members;
+
+  auto operator==(const UnpackedStructType&) const -> bool = default;
+};
+
 struct UnionType {
-  std::vector<TypeId> elements;
+  std::vector<AggregateMember> members;
 
   auto operator==(const UnionType&) const -> bool = default;
 };
 
 struct TaggedUnionType {
-  std::vector<TypeId> elements;
+  std::vector<AggregateMember> members;
 
   auto operator==(const TaggedUnionType&) const -> bool = default;
 };
@@ -396,16 +442,17 @@ struct EvaluationAttemptsType {
 class Type {
  private:
   using Data = std::variant<
-      PackedArrayType, EnumType, UnpackedArrayType, DynamicArrayType, QueueType,
-      AssociativeArrayType, WildcardIndexType, StringType, MachineCStringType,
-      MachineBoolType, MachineIntType, MachineFloatType, MachineArrayType,
-      MachineFunctionType, EventType, RealType, ShortRealType, RealTimeType,
-      ChandleType, VoidType, EmptyType, ObjectType, ExternalUnitObjectType,
-      CrossUnitClassType, RuntimeClassType, ClosureType, StructType,
-      RuntimeEffectsType, FilesType, DiagnosticType, RuntimeLibraryType,
-      CoroutineType, RefType, PointerType, ManagedRefType, VectorType,
-      TupleType, UnionType, TaggedUnionType, ResolvedType, DriverType,
-      ObservableType, SampledHistoryType, EvaluationAttemptsType>;
+      PackedArrayType, EnumType, PackedStructType, PackedUnionType,
+      UnpackedArrayType, DynamicArrayType, QueueType, AssociativeArrayType,
+      WildcardIndexType, StringType, MachineCStringType, MachineBoolType,
+      MachineIntType, MachineFloatType, MachineArrayType, MachineFunctionType,
+      EventType, RealType, ShortRealType, RealTimeType, ChandleType, VoidType,
+      EmptyType, ObjectType, ExternalUnitObjectType, CrossUnitClassType,
+      RuntimeClassType, ClosureType, StructType, RuntimeEffectsType, FilesType,
+      DiagnosticType, RuntimeLibraryType, CoroutineType, RefType, PointerType,
+      ManagedRefType, VectorType, TupleType, UnpackedStructType, UnionType,
+      TaggedUnionType, ResolvedType, DriverType, ObservableType,
+      SampledHistoryType, EvaluationAttemptsType>;
 
  public:
   explicit Type(Data data) : data_(std::move(data)) {
@@ -451,10 +498,30 @@ class Type {
   [[nodiscard]] auto IsAddressOnly() const -> bool;
 
   // True for any type whose value-level shape is a single packed vector: a
-  // packed array, or an enumeration through its base. This is the precondition
-  // of asking for a packed shape, so a consumer that does not already know it
-  // asks here rather than listing the integral types itself.
+  // packed array, or an enumeration or packed aggregate through its base. This
+  // is the precondition of asking for a packed shape, so a consumer that does
+  // not already know it asks here rather than listing the integral types
+  // itself.
   [[nodiscard]] auto IsIntegralPacked() const -> bool;
+
+  // True for a value that holds one of its members at a time (LRM 7.3 /
+  // 7.3.2), which is what makes reaching a member of one a choice of domain
+  // where reaching a product's component is not.
+  [[nodiscard]] auto IsUnion() const -> bool;
+
+  // The member types of a union, in declaration order. A type that is not a
+  // union is a caller error.
+  [[nodiscard]] auto UnionMemberTypes() const -> std::vector<TypeId>;
+
+  // True for a value built from all of its components at once -- the anonymous
+  // product a lowering composes and the structure the source declared. What
+  // separates the two is what the type says about the components, never how a
+  // value of it is composed.
+  [[nodiscard]] auto IsProduct() const -> bool;
+
+  // The component types a product value is built from, in order. A type that
+  // is not a product is a caller error.
+  [[nodiscard]] auto ProductComponentTypes() const -> std::vector<TypeId>;
 
   // How this type's sign bit is read as a machine integer, and nothing for a
   // type that is not one. What makes a type a machine integer is that its

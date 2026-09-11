@@ -54,6 +54,8 @@ auto ObservableCellOf(const TypePool& types, TypeId value_type) -> TypeId {
           // that fires subscribers on change.
           [&](const PackedArrayType&) { return wrap(); },
           [&](const EnumType&) { return wrap(); },
+          [&](const PackedStructType&) { return wrap(); },
+          [&](const PackedUnionType&) { return wrap(); },
           [&](const UnpackedArrayType&) { return wrap(); },
           [&](const DynamicArrayType&) { return wrap(); },
           [&](const QueueType&) { return wrap(); },
@@ -63,6 +65,7 @@ auto ObservableCellOf(const TypePool& types, TypeId value_type) -> TypeId {
           [&](const ShortRealType&) { return wrap(); },
           [&](const RealTimeType&) { return wrap(); },
           [&](const TupleType&) { return wrap(); },
+          [&](const UnpackedStructType&) { return wrap(); },
           [&](const UnionType&) { return wrap(); },
           [&](const TaggedUnionType&) { return wrap(); },
           [&](const EmptyType&) { return wrap(); },

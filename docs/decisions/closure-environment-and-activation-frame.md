@@ -186,8 +186,10 @@ is never rewritten when the layout is canonicalized.
   and the promoted locals it stands in for are written into it as ordinary field assignments -- a
   scope frame comes into existence empty and is filled, so no aggregate literal over it is built and
   none is stated. A named-field literal is vocabulary this decision left room for and nothing ever
-  needed; an unpacked struct of the source language is a `TupleType`, and composing one is the
-  structural product's literal, not a nominal one.
+  needed: an aggregate the source declared keeps a type of its own that names its members
+  ([aggregate-names-are-type-content](aggregate-names-are-type-content.md)), and composing one is
+  still the product's literal, because a member is reached by its position and the names are what
+  rendering reads.
 - The binding / capture contract (`binding_and_capture.md`) keeps its origin identity and
   forwarding; the materialized capture is a `ClosureDecl` field.
 

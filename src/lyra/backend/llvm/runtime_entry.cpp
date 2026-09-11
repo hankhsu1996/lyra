@@ -123,10 +123,17 @@ auto ValueDomainOf(const lir::CompilationUnit& unit, lir::TypeId type)
           [](const lir::PackedArrayType&) -> Domain {
             return support::ValueDomain::kPacked;
           },
-          // An enumeration is a packed value at runtime. What its declared
-          // members answer (LRM 6.19.5) is settled where the source is read,
-          // so nothing reaching this layer needs more than the packed value.
+          // An enumeration and a packed aggregate are packed values at
+          // runtime: each is one vector under a set of names, and a name is
+          // not something a value carries, so neither takes a domain of its
+          // own.
           [](const lir::EnumType&) -> Domain {
+            return support::ValueDomain::kPacked;
+          },
+          [](const lir::PackedStructType&) -> Domain {
+            return support::ValueDomain::kPacked;
+          },
+          [](const lir::PackedUnionType&) -> Domain {
             return support::ValueDomain::kPacked;
           },
           [](const lir::StringType&) -> Domain {
@@ -149,7 +156,13 @@ auto ValueDomainOf(const lir::CompilationUnit& unit, lir::TypeId type)
           [](const lir::ChandleType&) -> Domain {
             return support::ValueDomain::kChandle;
           },
+          // A declared structure and the anonymous product a lowering composes
+          // realize as one product value; what the structure declares beyond
+          // it is the name of each member, which no value carries.
           [](const lir::TupleType&) -> Domain {
+            return support::ValueDomain::kTuple;
+          },
+          [](const lir::UnpackedStructType&) -> Domain {
             return support::ValueDomain::kTuple;
           },
           // An untagged union erases its tag and gives a cross-member read the
@@ -335,6 +348,8 @@ auto MemberStorageKindOf(
           [&](const lir::ChandleType& t) { return value_of(t); },
           [&](const lir::PackedArrayType& t) { return value_of(t); },
           [&](const lir::EnumType& t) { return value_of(t); },
+          [&](const lir::PackedStructType& t) { return value_of(t); },
+          [&](const lir::PackedUnionType& t) { return value_of(t); },
           [&](const lir::UnpackedArrayType& t) { return value_of(t); },
           [&](const lir::DynamicArrayType& t) { return value_of(t); },
           [&](const lir::QueueType& t) { return value_of(t); },
@@ -344,6 +359,7 @@ auto MemberStorageKindOf(
           [&](const lir::ShortRealType& t) { return value_of(t); },
           [&](const lir::RealTimeType& t) { return value_of(t); },
           [&](const lir::TupleType& t) { return value_of(t); },
+          [&](const lir::UnpackedStructType& t) { return value_of(t); },
           [&](const lir::UnionType& t) { return value_of(t); },
           [&](const lir::TaggedUnionType& t) { return value_of(t); },
           [&](const lir::EmptyType& t) { return value_of(t); },

@@ -168,6 +168,16 @@ class MirDumper {
     return out;
   }
 
+  static auto FormatMembers(const std::vector<AggregateMember>& members)
+      -> std::string {
+    std::string out;
+    for (const auto& member : members) {
+      if (!out.empty()) out += ", ";
+      out += std::format("{}=Type[{}]", member.name, member.type.value);
+    }
+    return out;
+  }
+
   [[nodiscard]] auto FormatClassRef(const ClassRef& ref) const -> std::string {
     return std::visit(
         Overloaded{
@@ -227,6 +237,22 @@ class MirDumper {
                   FormatStateKind(e.base.state_kind),
                   FormatSignedness(e.base.signedness),
                   FormatPackedDims(e.base.dims), members);
+            },
+            [](const PackedStructType& s) -> std::string {
+              return std::format(
+                  "PackedStruct(base=PackedArray(state={}, signed={}, "
+                  "dims={}), members=[{}])",
+                  FormatStateKind(s.base.state_kind),
+                  FormatSignedness(s.base.signedness),
+                  FormatPackedDims(s.base.dims), FormatMembers(s.members));
+            },
+            [](const PackedUnionType& u) -> std::string {
+              return std::format(
+                  "PackedUnion(base=PackedArray(state={}, signed={}, "
+                  "dims={}), members=[{}])",
+                  FormatStateKind(u.base.state_kind),
+                  FormatSignedness(u.base.signedness),
+                  FormatPackedDims(u.base.dims), FormatMembers(u.members));
             },
             [](const UnpackedArrayType& u) -> std::string {
               return std::format(
@@ -419,28 +445,20 @@ class MirDumper {
               }
               return std::format("Tuple(elems=[{}])", elements);
             },
+            [](const UnpackedStructType& s) -> std::string {
+              return std::format(
+                  "UnpackedStruct(members=[{}])", FormatMembers(s.members));
+            },
             [](const UnionType& u) -> std::string {
-              std::string elements;
-              for (std::size_t i = 0; i < u.elements.size(); ++i) {
-                if (i != 0) {
-                  elements += ", ";
-                }
-                elements += std::format("Type[{}]", u.elements[i].value);
-              }
-              return std::format("Union(elems=[{}])", elements);
+              return std::format(
+                  "Union(members=[{}])", FormatMembers(u.members));
             },
             [](const EmptyType&) -> std::string {
               return std::string{"Empty"};
             },
             [](const TaggedUnionType& u) -> std::string {
-              std::string elements;
-              for (std::size_t i = 0; i < u.elements.size(); ++i) {
-                if (i != 0) {
-                  elements += ", ";
-                }
-                elements += std::format("Type[{}]", u.elements[i].value);
-              }
-              return std::format("TaggedUnion(elems=[{}])", elements);
+              return std::format(
+                  "TaggedUnion(members=[{}])", FormatMembers(u.members));
             },
             [](const ObservableType& o) -> std::string {
               return std::format("Observable(value=Type[{}])", o.value.value);

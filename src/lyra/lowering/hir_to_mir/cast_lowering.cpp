@@ -184,10 +184,12 @@ auto BuildValueConversion(
   }
 
   // Integral -> integral: a reshape into the destination's declared
-  // representation. Crossing the enumeration boundary (LRM 6.19.3) changes the
-  // type a value is held to and not the bits it carries, so it is a cast over
-  // the reshaped value -- or over the operand itself, where the two
-  // representations already agree and nothing reshapes.
+  // representation. An integral type that names its content -- an enumeration
+  // (LRM 6.19.3), a packed structure or union (LRM 7.2.1 / 7.3.1) -- shares
+  // that representation with its base while being a type of its own, so
+  // crossing into or out of one changes the type a value is held to and not the
+  // bits it carries: a cast over the reshaped value, or over the operand itself
+  // where the two representations already agree and nothing reshapes.
   if (src_ty.IsIntegralPacked() && dst_ty.IsIntegralPacked()) {
     const auto& src_pa = src_ty.PackedShape();
     const auto& dst_pa = dst_ty.PackedShape();
@@ -199,21 +201,18 @@ auto BuildValueConversion(
     const bool same_shape = src_pa.signedness == dst_pa.signedness &&
                             src_pa.state_kind == dst_pa.state_kind &&
                             src_pa.dims == dst_pa.dims;
-    const bool src_is_enum = src_ty.Is<mir::EnumType>();
-    const bool dst_is_enum = dst_ty.Is<mir::EnumType>();
-    mir::ExprId body_id = operand_id;
+    // A reshape lands the bits at the destination type outright, so nothing
+    // restates it afterwards. What is left is the same representation under
+    // another type, which is the cast: the bits already fit, and only what the
+    // program holds the value to be changes.
     if (!same_shape) {
-      body_id = block.exprs.Add(
-          BuildPackedArrayConvertFrom(unit, block, operand_id, dst_type));
+      return BuildPackedArrayConvertFrom(unit, block, operand_id, dst_type);
     }
-    if (dst_is_enum || src_is_enum) {
-      return mir::Expr{
-          .data = mir::ValueCastExpr{.operand = body_id}, .type = dst_type};
-    }
-    if (same_shape) {
+    if (src_type == dst_type) {
       return operand_expr;
     }
-    return block.exprs.Get(body_id);
+    return mir::Expr{
+        .data = mir::ValueCastExpr{.operand = operand_id}, .type = dst_type};
   }
 
   // Unpacked-array-of-byte -> string (LRM 21.3.4.3 $sscanf source lift).

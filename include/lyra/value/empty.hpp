@@ -1,6 +1,9 @@
 #pragma once
 
+#include <string>
+
 #include "lyra/value/concepts.hpp"
+#include "lyra/value/format.hpp"
 #include "lyra/value/packed_array.hpp"
 
 namespace lyra::value {
@@ -43,6 +46,18 @@ struct Empty {
   // NOLINTNEXTLINE(readability-named-parameter)
   [[nodiscard]] static auto CountBits(const PackedArray&) -> PackedArray {
     return PackedArray::Int(0);
+  }
+};
+
+// A value carrying no bits renders as no text: the tag alone says which member
+// a tagged union holds (LRM 7.3.2), so there is nothing beside it to print.
+// Answering here is what keeps a fold over a tagged union's components from
+// having to know this component exists.
+template <>
+struct Formatter<Empty> {
+  // NOLINTNEXTLINE(readability-named-parameter)
+  static auto Format(const FormatSpec&, const Empty&) -> std::string {
+    return std::string{};
   }
 };
 
