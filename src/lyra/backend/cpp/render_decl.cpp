@@ -301,9 +301,12 @@ auto RenderStaticConstant(
                          RenderExpr(view, view.Expr(c.value)));
 }
 
-// Whether the class declared any static property initializer (LRM 8.9 / 10.5).
-// With none, the value-init on each `inline static` declaration already
-// realizes the type-default case and no design-init body is emitted at all.
+// Whether the class has design-time work of its own (LRM 10.5): a static
+// property's written initializer (LRM 8.9), or a static-lifetime local whose
+// cell the class owns (LRM 6.21). A class with neither -- including one whose
+// statics are brought up by the instance of the scope that declares them --
+// has nothing to run, and the value-init on each `inline static` declaration
+// already realizes the type-default case, so no design-init body is emitted.
 auto HasStaticInit(const mir::Class& s) -> bool {
   return !s.static_init.Body().root_stmts.empty();
 }

@@ -214,6 +214,19 @@ auto LowerDelayControl(
   return hir::DelayControl{.duration = frame.Exprs().Add(*std::move(duration))};
 }
 
+// An event control stands wherever the wider forms of LRM A.6.5 do: what it
+// names is a suspension, and that is the whole of what those forms are. Which
+// wider form it is widened into belongs to the caller, because the position the
+// control was written in is what fixes which of them admits it.
+template <typename Control>
+auto AsWiderControl(hir::AnyEventControl event) -> Control {
+  return std::visit(
+      Overloaded{
+          [](hir::EventControl e) -> Control { return std::move(e); },
+          [](hir::NamedEventControl n) -> Control { return std::move(n); }},
+      std::move(event));
+}
+
 // `controlled` is the statement the control gates. Only `@*` reads it: LRM
 // 9.4.2.2 defines its sensitivity as the reads of that statement, so the
 // control cannot be built until the statement has lowered and each read's
@@ -233,9 +246,7 @@ auto LowerTimingControl(
     case slang::ast::TimingControlKind::EventList: {
       auto event_or = LowerEventControl(proc, frame, tc, span);
       if (!event_or) return std::unexpected(std::move(event_or.error()));
-      return std::visit(
-          [](auto event) { return hir::TimingControl{std::move(event)}; },
-          *std::move(event_or));
+      return AsWiderControl<hir::TimingControl>(*std::move(event_or));
     }
     case slang::ast::TimingControlKind::ImplicitEvent: {
       const auto& reads = proc.Owner().Sensitivity().AnalyzeReads(
@@ -257,23 +268,6 @@ auto LowerTimingControl(
           span, diag::DiagCode::kUnsupportedTimingControlKind,
           "this timing control kind is not yet supported");
   }
-}
-
-// The statement-prefix spelling of a `delay_or_event_control`, for the blocking
-// form, whose control is a suspension of the procedure and so a statement. The
-// repeat form has no such spelling -- it is a count of suspensions rather than
-// one -- and the caller expands it.
-auto AsStatementTiming(const hir::DelayOrEventControl& control)
-    -> hir::TimingControl {
-  return std::visit(
-      Overloaded{
-          [](const hir::RepeatedEventControl&) -> hir::TimingControl {
-            throw InternalError(
-                "AsStatementTiming: a repeat event control is a count of "
-                "waits, which no single timing control spells");
-          },
-          [](const auto& plain) -> hir::TimingControl { return plain; }},
-      control);
 }
 
 // The name a held right-hand side carries. LRM 9.4.5 gives it no name of its
@@ -338,9 +332,7 @@ auto LowerDelayOrEventControl(
     case slang::ast::TimingControlKind::EventList: {
       auto event_or = LowerEventControl(proc, frame, tc, span);
       if (!event_or) return std::unexpected(std::move(event_or.error()));
-      return std::visit(
-          [](auto event) { return hir::DelayOrEventControl{std::move(event)}; },
-          *std::move(event_or));
+      return AsWiderControl<hir::DelayOrEventControl>(*std::move(event_or));
     }
     case slang::ast::TimingControlKind::RepeatedEvent: {
       const auto& repeated = tc.as<slang::ast::RepeatedEventControl>();
@@ -432,24 +424,33 @@ auto LowerIntraAssignmentStmt(
   auto control = LowerDelayOrEventControl(proc, inner, *as.timingControl, span);
   if (!control) return std::unexpected(std::move(control.error()));
 
-  if (const auto* repeated =
-          std::get_if<hir::RepeatedEventControl>(&*control)) {
-    // LRM 9.4.5: the count is how many occurrences the assignment waits out, so
-    // a count of none reaches the assignment where the statement stands.
-    const hir::StmtId nothing = plain(hir::EmptyStmt{});
-    const hir::StmtId wait = plain(
-        hir::TimedStmt{
-            .timing = std::visit(
-                [](auto entry) { return hir::TimingControl{std::move(entry)}; },
-                repeated->event),
-            .stmt = nothing});
+  // Each form of the control says how the assignment reaches its own
+  // suspension. Three of them are a single wait, which prefixes the assignment
+  // as one statement; the repeat form is a count of waits, which no single
+  // timing control spells, so it becomes a loop over an empty body with the
+  // assignment after it -- and LRM 9.4.5's count of none then reaches the
+  // assignment where the statement stands, by the loop not iterating.
+  const auto wait_then_assign = [&](hir::TimingControl timing) {
     statements.push_back(
-        plain(hir::RepeatStmt{.count = repeated->count, .body = wait}));
-    statements.push_back(assign);
-  } else {
-    statements.push_back(plain(
-        hir::TimedStmt{.timing = AsStatementTiming(*control), .stmt = assign}));
-  }
+        plain(hir::TimedStmt{.timing = std::move(timing), .stmt = assign}));
+  };
+  std::visit(
+      Overloaded{
+          [&](hir::DelayControl d) { wait_then_assign(d); },
+          [&](hir::EventControl e) { wait_then_assign(std::move(e)); },
+          [&](hir::NamedEventControl n) { wait_then_assign(std::move(n)); },
+          [&](hir::RepeatedEventControl r) {
+            const hir::StmtId nothing = plain(hir::EmptyStmt{});
+            const hir::StmtId wait = plain(
+                hir::TimedStmt{
+                    .timing =
+                        AsWiderControl<hir::TimingControl>(std::move(r.event)),
+                    .stmt = nothing});
+            statements.push_back(
+                plain(hir::RepeatStmt{.count = r.count, .body = wait}));
+            statements.push_back(assign);
+          }},
+      *std::move(control));
 
   return hir::Stmt{
       .label = std::nullopt,

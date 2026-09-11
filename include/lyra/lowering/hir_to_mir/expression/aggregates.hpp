@@ -17,25 +17,32 @@ namespace lyra::lowering::hir_to_mir {
 // An aggregate value-build's meaning is independent of the enclosing scope, so
 // one template over the pass class serves both contexts. Explicit
 // instantiations for the two pass classes live in the implementation file.
+//
+// Every one of them carries the source result type beside the lowered one. Two
+// things a build needs are legible only in the source type: the dimension a
+// keyed index resolves against, and the element default a container carries for
+// every position it does not hold, which includes a member's declaration
+// initializer (LRM 7.2.2) that the lowered element type has dropped.
 template <ExprLowerer Lowerer>
 auto LowerHirConcatExpr(
     Lowerer& lowerer, WalkFrame frame, const hir::ConcatExpr& c,
-    mir::TypeId result_type) -> diag::Result<mir::Expr>;
+    hir::TypeId hir_result_type, mir::TypeId result_type)
+    -> diag::Result<mir::Expr>;
 template <ExprLowerer Lowerer>
 auto LowerHirAssignmentPatternExpr(
     Lowerer& lowerer, WalkFrame frame, const hir::AssignmentPatternExpr& a,
-    mir::TypeId result_type) -> diag::Result<mir::Expr>;
+    hir::TypeId hir_result_type, mir::TypeId result_type)
+    -> diag::Result<mir::Expr>;
 template <ExprLowerer Lowerer>
 auto LowerHirAssignmentPatternReplicationExpr(
     Lowerer& lowerer, WalkFrame frame,
-    const hir::AssignmentPatternReplicationExpr& a, mir::TypeId result_type)
-    -> diag::Result<mir::Expr>;
+    const hir::AssignmentPatternReplicationExpr& a, hir::TypeId hir_result_type,
+    mir::TypeId result_type) -> diag::Result<mir::Expr>;
 // A keyed pattern is the one aggregate build whose shape is not readable from
 // the lowered type: an index names an element, so resolving it to an offset
 // takes the dimension, and a default stands for however many elements are
 // left, which takes the element count. A packed array's type carries neither
-// once it is the flat bit plane MIR gives it, so the unflattened type comes
-// along for exactly that.
+// once it is the flat bit plane MIR gives it.
 template <ExprLowerer Lowerer>
 auto LowerHirAssignmentPatternKeyedExpr(
     Lowerer& lowerer, WalkFrame frame, const hir::AssignmentPatternKeyedExpr& k,
@@ -44,8 +51,8 @@ auto LowerHirAssignmentPatternKeyedExpr(
 template <ExprLowerer Lowerer>
 auto LowerHirAssociativeAssignmentPatternExpr(
     Lowerer& lowerer, WalkFrame frame,
-    const hir::AssociativeAssignmentPatternExpr& a, mir::TypeId result_type)
-    -> diag::Result<mir::Expr>;
+    const hir::AssociativeAssignmentPatternExpr& a, hir::TypeId hir_result_type,
+    mir::TypeId result_type) -> diag::Result<mir::Expr>;
 
 // Replication (LRM 11.4.12) is an ordinary value expression, legal wherever a
 // value is, so it is one template over the pass class like the other aggregate

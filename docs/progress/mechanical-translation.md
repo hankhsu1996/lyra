@@ -337,7 +337,7 @@ cross-check predicts. This file owns only which instances are known and what is 
 
 ## Exhaustiveness
 
-- [ ] T13 -- Every consumer of a closed set says what each alternative means, so gaining one breaks
+- [x] T13a -- Every consumer of a closed set says what each alternative means, so gaining one breaks
       the build. A generic catch-all arm switches that off, and where the arm answers instead of
       refusing it answers a new alternative plausibly and wrongly. This is a different axis from the
       rest of this file -- extension safety rather than decision-making -- and it is why several of
@@ -371,22 +371,63 @@ cross-check predicts. This file owns only which instances are known and what is 
       enumeration with a default; and a descent step is an ordinary call, so a consumer reaching
       every coordinate of one walks its operands rather than enumerating a selector set of its own.
 
-      What is left is not one shape. Four arms answer a target-language question with a default --
-      how a value of a type is constructed, what a member's declaration initializes to, which
-      machine type a lowered type maps to, which timing control a delay-or-event form spells -- and
-      each needs its own derivation of what the default was standing in for. Two more walk a body's
-      expressions asking which operand names storage, which is a question about value category that
-      MIR states nowhere. The type pool's own hash was a third, falling through to "these carry no
-      payload" over a chain the compiler cannot check; it now consumes the set the way the layer
-      below already did, one arm per alternative, so a type variant gained anywhere says what its
-      identity is or fails to build.
+      The type pool's own hash fell through to "these carry no payload" over a chain the compiler
+      cannot check; it now consumes the set the way the layer below already did, one arm per
+      alternative, so a type variant gained anywhere says what its identity is or fails to build.
 
-      One more is absent-versus-empty rather than a catch-all arm, and it is the shape a walker's
-      own idea of emptiness takes at the top: a class always carries a design-init body, empty when
-      no static property declares an initializer, and the C++ backend reads that emptiness to decide
-      whether the class needs a startup hook at all. Either answer is defensible -- the empty body is
-      the zero case handled by not iterating, and an absent one states the fact -- so what this needs
-      is the derivation, not a fix under an existing rule.
+      Four more answered a question with a default, and each is now one arm per alternative carrying
+      its own reason. Which machine type a lowered type maps to answered "an address" for every type
+      it did not name; that is the right answer for most of them and unfalsifiable for the rest,
+      because a pointer is exactly what a wrong mapping produces and the target accepts it. It now
+      says per type which of four things it is: a machine type naming itself, a value the runtime
+      realizes as an object of its own, storage reached by where it lives, or a value that already
+      is an address. How a value of a type is constructed answered "name the type", which is right
+      for every type but the three wrappers that bring what they point at into existence along with
+      themselves. What a member's declaration initializes to fell through to the translated type's
+      canonical default for everything but an unpacked struct and a fixed unpacked array; an
+      unpacked union -- which the standard's table gives the first member's type default rather than
+      that member's written initializer -- had been answering correctly for a reason nothing stated,
+      and a variable-size container had not been answering correctly at all. That is the one arm
+      here whose rewrite changed behaviour, and it is what the item predicts a defaulting arm hides:
+      the table reads itself again below a container too, so a queue, a dynamic array, and an
+      associative array had been taking the value an invalid read answers with from the lowered
+      element type, which drops every member initializer. And which timing
+      control a delay-or-event form spells refused the repeat form while its one caller had already
+      branched to keep that form away from it, which is one decision made in two places; the caller
+      now says what each of the four forms does, and LRM 9.4.5's count of none reaches the
+      assignment by a loop not iterating rather than by an arm of its own.
+
+      The last of them was the walk that decides which of a body's locals need an address, whose
+      catch-all answered "this kind asks for nothing" over every expression kind it did not name --
+      including the kinds that designate part of a local to write it. Every kind says so for itself
+      now. What that walk is doing at all is a separate question, and it is T13b below.
+
+      The absent-versus-empty question is settled, and the answer is that nothing changes. A class
+      carries a design-init body holding whatever it brings up before any process runs, and the
+      target emits a startup hook only where that body has statements. Both arms produce the same
+      program, so this is a spelling rather than an operation, and it dispatches on the body's own
+      statement list rather than on anything worked out elsewhere. Making the body absent instead
+      would not remove the derivation, only move it into the producer, which would reach the same
+      answer from the same list and hand every consumer a nullable to open first -- because whether
+      a class has design-time work of its own is settled while lowering, when a class declared
+      inside a structural scope has its statics brought up by that scope's instance instead.
+      Emitting the hook unconditionally is the shape where zero falls out of N, and what it costs is
+      not looks: the hook is a dynamic initializer per class, every scope of a design is a class,
+      and a design's translation unit is compiled unoptimized by default.
+
+- [ ] T13b -- Whether a local needs an address is stated where it is known, rather than recovered by
+      a pass that reads the whole body before any of it is lowered. Today the execution lowering
+      walks every expression of a body twice over -- once asking which locals a write or an
+      address-of reaches, once asking which are lent by reference -- and only then begins. That is a
+      decision being made at the layer with the least information about it: what the walk is
+      recovering is value category, which the layer above states nowhere, so each operand's position
+      has to be read back out of the tree it already sits in.
+
+      This is a different axis from T13a and does not close with it. T13a made the walk total, so a
+      new expression kind now says whether it asks for an address instead of silently answering that
+      it does not; the walk still exists. Retiring it means a semantic layer that states which
+      occurrences are places, which is the same question as whether a value has an address at all --
+      so it closes with that decision rather than here, and nothing about it should be built twice.
 
 ## Small and mechanical
 

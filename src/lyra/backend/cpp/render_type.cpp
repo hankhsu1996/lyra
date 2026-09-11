@@ -328,6 +328,13 @@ auto RenderTypeAsCpp(const mir::CompilationUnit& unit, mir::TypeId type_id)
 
 auto RenderTypeConstructionAsCpp(
     const mir::CompilationUnit& unit, mir::TypeId type_id) -> std::string {
+  // A type that is built by naming itself, which is what C++ spells a
+  // constructor with. The spelling comes from the naming dispatch rather than
+  // from here, so a type whose name this target has none for -- a closure,
+  // emitted as a lambda -- says so once, where it is named.
+  const auto by_naming_itself = [&](const auto&) -> std::string {
+    return RenderTypeAsCpp(unit, type_id);
+  };
   return unit.types.Get(type_id).Visit(
       Overloaded{
           // A wrapper that owns what it points at brings the pointee into
@@ -361,10 +368,56 @@ auto RenderTypeConstructionAsCpp(
                 "lyra::runtime::MakeSequence<{}>",
                 RenderTypeAsCpp(unit, v.element));
           },
-          // Every other type is built by naming itself.
-          [&](const auto&) -> std::string {
-            return RenderTypeAsCpp(unit, type_id);
-          }});
+          [&](const mir::PackedArrayType& t) { return by_naming_itself(t); },
+          [&](const mir::EnumType& t) { return by_naming_itself(t); },
+          [&](const mir::StringType& t) { return by_naming_itself(t); },
+          [&](const mir::MachineCStringType& t) { return by_naming_itself(t); },
+          [&](const mir::MachineBoolType& t) { return by_naming_itself(t); },
+          [&](const mir::MachineIntType& t) { return by_naming_itself(t); },
+          [&](const mir::MachineFloatType& t) { return by_naming_itself(t); },
+          [&](const mir::MachineArrayType& t) { return by_naming_itself(t); },
+          [&](const mir::MachineFunctionType& t) {
+            return by_naming_itself(t);
+          },
+          [&](const mir::ChandleType& t) { return by_naming_itself(t); },
+          [&](const mir::EventType& t) { return by_naming_itself(t); },
+          [&](const mir::RealType& t) { return by_naming_itself(t); },
+          [&](const mir::ShortRealType& t) { return by_naming_itself(t); },
+          [&](const mir::RealTimeType& t) { return by_naming_itself(t); },
+          [&](const mir::UnpackedArrayType& t) { return by_naming_itself(t); },
+          [&](const mir::DynamicArrayType& t) { return by_naming_itself(t); },
+          [&](const mir::QueueType& t) { return by_naming_itself(t); },
+          [&](const mir::AssociativeArrayType& t) {
+            return by_naming_itself(t);
+          },
+          [&](const mir::WildcardIndexType& t) { return by_naming_itself(t); },
+          [&](const mir::ObjectType& t) { return by_naming_itself(t); },
+          [&](const mir::StructType& t) { return by_naming_itself(t); },
+          [&](const mir::ExternalUnitObjectType& t) {
+            return by_naming_itself(t);
+          },
+          [&](const mir::CrossUnitClassType& t) { return by_naming_itself(t); },
+          [&](const mir::RuntimeClassType& t) { return by_naming_itself(t); },
+          [&](const mir::RuntimeEffectsType& t) { return by_naming_itself(t); },
+          [&](const mir::FilesType& t) { return by_naming_itself(t); },
+          [&](const mir::DiagnosticType& t) { return by_naming_itself(t); },
+          [&](const mir::RuntimeLibraryType& t) { return by_naming_itself(t); },
+          [&](const mir::CoroutineType& t) { return by_naming_itself(t); },
+          [&](const mir::RefType& t) { return by_naming_itself(t); },
+          [&](const mir::VoidType& t) { return by_naming_itself(t); },
+          [&](const mir::TupleType& t) { return by_naming_itself(t); },
+          [&](const mir::UnionType& t) { return by_naming_itself(t); },
+          [&](const mir::TaggedUnionType& t) { return by_naming_itself(t); },
+          [&](const mir::EmptyType& t) { return by_naming_itself(t); },
+          [&](const mir::ObservableType& t) { return by_naming_itself(t); },
+          [&](const mir::ResolvedType& t) { return by_naming_itself(t); },
+          [&](const mir::DriverType& t) { return by_naming_itself(t); },
+          [&](const mir::SampledHistoryType& t) { return by_naming_itself(t); },
+          [&](const mir::EvaluationAttemptsType& t) {
+            return by_naming_itself(t);
+          },
+          [&](const mir::ClosureType& t) { return by_naming_itself(t); },
+      });
 }
 
 auto RenderClassRefAsCpp(

@@ -128,19 +128,20 @@ auto LowerExprImpl(L& lowerer, const hir::Expr& expr, WalkFrame frame)
                 lowerer, frame, sel, result_type);
           },
           [&](const hir::ConcatExpr& c) -> diag::Result<mir::Expr> {
-            return LowerHirConcatExpr(lowerer, frame, c, result_type);
+            return LowerHirConcatExpr(
+                lowerer, frame, c, expr.type, result_type);
           },
           [&](const hir::ReplicationExpr& r) -> diag::Result<mir::Expr> {
             return LowerHirReplicationExpr(lowerer, frame, r, result_type);
           },
           [&](const hir::AssignmentPatternExpr& a) -> diag::Result<mir::Expr> {
             return LowerHirAssignmentPatternExpr(
-                lowerer, frame, a, result_type);
+                lowerer, frame, a, expr.type, result_type);
           },
           [&](const hir::AssignmentPatternReplicationExpr& a)
               -> diag::Result<mir::Expr> {
             return LowerHirAssignmentPatternReplicationExpr(
-                lowerer, frame, a, result_type);
+                lowerer, frame, a, expr.type, result_type);
           },
           [&](const hir::AssignmentPatternKeyedExpr& k)
               -> diag::Result<mir::Expr> {
@@ -154,7 +155,7 @@ auto LowerExprImpl(L& lowerer, const hir::Expr& expr, WalkFrame frame)
           [&](const hir::AssociativeAssignmentPatternExpr& a)
               -> diag::Result<mir::Expr> {
             return LowerHirAssociativeAssignmentPatternExpr(
-                lowerer, frame, a, result_type);
+                lowerer, frame, a, expr.type, result_type);
           },
           [&](const hir::ClassNewExpr& n) -> diag::Result<mir::Expr> {
             // `new` allocates a managed object and runs its constructor: a
@@ -257,7 +258,8 @@ auto LowerLhsExprImpl(L& lowerer, const hir::Expr& expr, WalkFrame frame)
           // the run of destinations the source spelled, and each run reaches
           // its own place from inside it.
           [&](const hir::ConcatExpr& c) -> diag::Result<WriteTarget> {
-            return as_place(LowerHirConcatExpr(lowerer, frame, c, result_type));
+            return as_place(
+                LowerHirConcatExpr(lowerer, frame, c, expr.type, result_type));
           },
           // The front end verifies that an assignment's target is an lvalue
           // whose every element can be assigned to, and refuses the program

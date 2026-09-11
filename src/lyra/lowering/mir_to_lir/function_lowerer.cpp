@@ -213,6 +213,7 @@ void CollectStorageLocals(
       lent[local->value] = true;
     }
   };
+  const auto reads_only = [](const auto&) {};
   for (const mir::ExprId id : block.exprs.Ids()) {
     const mir::Expr& expr = block.exprs.Get(id);
     std::visit(
@@ -249,7 +250,33 @@ void CollectStorageLocals(
             [&](const mir::MachineArrayDataExpr& e) {
               mark(LocalNamedBy(block, e.array));
             },
-            [](const auto&) {}},
+            // Every other kind reads its operands and asks for no address: a
+            // value read any number of times is still a value, and a value
+            // built out of other values needs nowhere for them to live. Each
+            // says so for itself, so a kind added anywhere has to answer here
+            // rather than inherit a silent no.
+            [&](const mir::StringLiteral& e) { reads_only(e); },
+            [&](const mir::NullLiteral& e) { reads_only(e); },
+            [&](const mir::MachineBoolLiteral& e) { reads_only(e); },
+            [&](const mir::MachineIntLiteral& e) { reads_only(e); },
+            [&](const mir::MachineFloatLiteral& e) { reads_only(e); },
+            [&](const mir::ReferenceExpr& e) { reads_only(e); },
+            [&](const mir::UnaryExpr& e) { reads_only(e); },
+            [&](const mir::BinaryExpr& e) { reads_only(e); },
+            [&](const mir::BoolCastExpr& e) { reads_only(e); },
+            [&](const mir::ConditionalExpr& e) { reads_only(e); },
+            [&](const mir::BlockExpr& e) { reads_only(e); },
+            [&](const mir::DerefExpr& e) { reads_only(e); },
+            [&](const mir::MoveExpr& e) { reads_only(e); },
+            [&](const mir::PointerCastExpr& e) { reads_only(e); },
+            [&](const mir::FunctionCastExpr& e) { reads_only(e); },
+            [&](const mir::IntCastExpr& e) { reads_only(e); },
+            [&](const mir::FieldAccessExpr& e) { reads_only(e); },
+            [&](const mir::ClosureExpr& e) { reads_only(e); },
+            [&](const mir::CompositeExpr& e) { reads_only(e); },
+            [&](const mir::ValueCastExpr& e) { reads_only(e); },
+            [&](const mir::AwaitExpr& e) { reads_only(e); },
+            [&](const mir::VectorGetExpr& e) { reads_only(e); }},
         expr.data);
   }
   for (const mir::BlockId id : block.child_scopes.Ids()) {

@@ -103,8 +103,7 @@ auto LowerAssociativeTraversal(
           .data =
               mir::CallExpr{
                   .callee =
-                      mir::Direct{
-                          .target = b.method, .receiver = map_read_id},
+                      mir::Direct{.target = b.method, .receiver = map_read_id},
                   .arguments = {idx_read_id}},
           .type = payload_type});
   const mir::LocalId completion = steps.Bindings().DeclareAnonymous(
@@ -122,26 +121,6 @@ auto LowerAssociativeTraversal(
 
   return steps.Build(ProjectCompletionComponent(
       body, completion, payload_type, kTraversalFound, result_type));
-}
-
-// The LRM 7.12 family shares one closure shape across every unpacked-array
-// receiver; only the element type differs, and each such HIR type exposes it
-// as `element_type`.
-auto ArrayMethodReceiverElementType(const hir::Type& ty)
-    -> std::optional<hir::TypeId> {
-  if (const auto* ua = ty.As<hir::UnpackedArrayType>()) {
-    return ua->element_type;
-  }
-  if (const auto* da = ty.As<hir::DynamicArrayType>()) {
-    return da->element_type;
-  }
-  if (const auto* q = ty.As<hir::QueueType>()) {
-    return q->element_type;
-  }
-  if (const auto* aa = ty.As<hir::AssociativeArrayType>()) {
-    return aa->element_type;
-  }
-  return std::nullopt;
 }
 
 // The canonical-default prototype type for an entry whose result shape the
@@ -169,7 +148,9 @@ auto BuildArrayMethodClosure(
   const auto& hir_exprs = lowerer.HirExprs();
   const hir::Type& hir_recv_ty =
       unit_lowerer.Hir().types.Get(hir_receiver_type);
-  const auto element_type = ArrayMethodReceiverElementType(hir_recv_ty);
+  // The LRM 7.12 family shares one closure shape across every unpacked-array
+  // receiver; only the element type differs.
+  const auto element_type = ContainerElementType(hir_recv_ty);
   if (!element_type.has_value()) {
     throw InternalError(
         "BuildArrayMethodClosure: receiver is not an unpacked-array type");
