@@ -1162,6 +1162,7 @@ enough to warrant its own focused review.
       one C++ keyword, because what they guard is the single mechanism rather than a list of names
       somebody thought of. **They will only ever go red on the nightly**, since the default test set
       runs the execution backend and `cpp_tests` is the only thing that compiles emitted text.
+
 - [ ] R77 -- The value layer states every aggregate operation twice, once for each realization. A
       product, a union and a fixed-size unpacked array each exist as a monomorphized template the
       C++ backend instantiates and as a type-erased class the execution backend holds, and the two
