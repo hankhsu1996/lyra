@@ -146,6 +146,73 @@ struct MintedProceduralScope {
   hir::ProceduralScopeId scope;
 };
 
+// A contiguous run of positions kept out of one dimension, counted the way that
+// dimension's declared range counts positions. It names no dimension of its
+// own: a part select is written before the walk that reads it knows what the
+// path lands on, and keeping every position is the run spanning the whole of
+// whatever that turns out to be.
+struct KeptPositions {
+  std::uint32_t first;
+  std::uint32_t count;
+};
+
+// One dimension of a declaration standing for objects, and the run of its
+// positions in play (LRM 23.3.3.4, 23.3.3.5). So a port that binds every object
+// it stands for and a name that selected a part of one are the same statement
+// at two widths.
+//
+// LRM 23.3.3.5 pairs two such dimensions left index to left index, which is a
+// statement about ends rather than about coordinates. So the conversion between
+// a position and the offset of that position from the left end is the whole of
+// the pairing, and both directions of it live here: one side of a connection
+// converts to an offset, the other converts back.
+struct OpenDimension {
+  hir::UnpackedRange declared;
+  KeptPositions kept;
+
+  // How far in from the left end the element at `position` sits.
+  [[nodiscard]] auto OffsetFromLeft(std::uint32_t position) const
+      -> std::uint32_t {
+    return Ascending() ? position - kept.first
+                       : kept.first + kept.count - 1 - position;
+  }
+
+  // The position of the element sitting `offset` places in from the left end,
+  // which is `OffsetFromLeft` read the other way.
+  [[nodiscard]] auto PositionFromLeft(std::uint32_t offset) const
+      -> std::uint32_t {
+    return Ascending() ? kept.first + offset
+                       : kept.first + kept.count - 1 - offset;
+  }
+
+ private:
+  // Whether position zero is the left end. A position is counted from the lower
+  // end of the declared range, so the two ends coincide exactly when the range
+  // ascends.
+  [[nodiscard]] auto Ascending() const -> bool {
+    return declared.left <= declared.right;
+  }
+};
+
+// Every position of every dimension, which is what a declaration nothing has
+// selected out of leaves in play. A declaration standing for one object has no
+// dimension, so it leaves nothing, which is what makes a scalar port the empty
+// case of a ranged one everywhere below.
+[[nodiscard]] inline auto WholeDimensions(
+    std::span<const hir::UnpackedRange> dims) -> std::vector<OpenDimension> {
+  std::vector<OpenDimension> open;
+  open.reserve(dims.size());
+  for (const hir::UnpackedRange& dim : dims) {
+    open.push_back(
+        OpenDimension{
+            .declared = dim,
+            .kept = KeptPositions{
+                .first = 0,
+                .count = static_cast<std::uint32_t>(dim.ElementCount())}});
+  }
+  return open;
+}
+
 // How a reader reaches a scope elsewhere on the elaborated hierarchy: where
 // navigation starts, and the descent from there. What the route ends at is not
 // part of it, so one walk serves both a reference to storage some scope holds
@@ -158,6 +225,11 @@ struct ScopeRoute {
   // the walk states which unit it stopped in; a route that stops on no object
   // ended at a scope, and nothing past it was promised to anyone.
   std::optional<std::string> unit_name;
+  // The coordinates of that landing the name left open, outermost first. A
+  // name reaching one object leaves none, so this is empty for every reference
+  // to storage; a connection may leave some, because a port is handed on whole
+  // or in part and both are several objects rather than one.
+  std::vector<OpenDimension> open;
 };
 
 // A reach that stays inside one unit's layout: out `hops` enclosing edges to
@@ -178,6 +250,9 @@ struct PublishedHop {
   const hir::UnitSignature* signature;
   hir::PublishedMemberId member;
   std::string unit_name;
+  // How many objects the member stands for, as the promise declares them.
+  // Empty where it stands for one.
+  std::vector<hir::UnpackedRange> dims;
 };
 
 // One hop of a descent: the step it stands as, and the unit whose object it
@@ -189,6 +264,10 @@ struct PublishedHop {
 struct DescentHop {
   hir::PathStep step;
   std::optional<std::string> declared_unit;
+  // How many objects this unit's own declaration says the hop stands over,
+  // outermost first. Empty where it declares nothing about the hop, and empty
+  // where what it declares stands for one object.
+  std::vector<hir::UnpackedRange> declared_dims;
 };
 
 // The declarations of one structural scope that a peer may name before the
@@ -373,17 +452,30 @@ class UnitLowerer {
     return it->second;
   }
 
+  // The objects that port stands for, as its own type states them: which unit
+  // they belong to, and the declared range of each dimension.
+  [[nodiscard]] auto InterfacePortObjects(const slang::ast::Symbol& port) const
+      -> hir::ObjectsBehindType {
+    auto behind = hir::ObjectsBehind(unit_.types, InterfacePortType(port));
+    if (!behind.has_value()) {
+      throw InternalError(
+          "UnitLowerer::InterfacePortObjects: an interface port stands for "
+          "instances of the unit its connection named");
+    }
+    return *std::move(behind);
+  }
+
+  // How many instances that port stands for, as the declared range of each
+  // dimension, outermost first. Empty where it stands for one.
+  [[nodiscard]] auto InterfacePortDimensions(
+      const slang::ast::Symbol& port) const -> std::vector<hir::UnpackedRange> {
+    return InterfacePortObjects(port).shape.dims;
+  }
+
   // Which unit's instances that port carries.
   [[nodiscard]] auto InterfaceUnitOf(const slang::ast::Symbol& port) const
       -> std::string {
-    const auto behind =
-        hir::ObjectsBehind(unit_.types, InterfacePortType(port));
-    if (!behind.has_value()) {
-      throw InternalError(
-          "UnitLowerer::InterfaceUnitOf: an interface port stands for "
-          "instances of the unit its connection named");
-    }
-    return std::string{behind->unit_name};
+    return std::string{InterfacePortObjects(port).unit_name};
   }
 
   // Whether `internal` is the declaration a `ref` / `const ref` port reaches,
@@ -913,11 +1005,26 @@ class UnitLowerer {
   // step down. Which of those steps are typed and which are answered by name is
   // decided the way it is for every other descent, so a name may continue past
   // what the interface published (LRM 25.10) rather than stopping there.
+  // A coordinate the path did not write stays open, because a port is handed on
+  // whole or in part and both name several objects at once (LRM 23.3.3.4).
   // Nothing when the path is of a shape the walk does not take.
   [[nodiscard]] auto ReachThroughInterfacePort(
       const WalkFrame& frame,
       const slang::ast::HierarchicalReference& reference)
       -> std::optional<ScopeRoute>;
+
+  // The same, for a name, which reaches exactly one object: a reach that left a
+  // coordinate open is several and so is not one.
+  [[nodiscard]] auto ReachOneThroughInterfacePort(
+      const WalkFrame& frame,
+      const slang::ast::HierarchicalReference& reference)
+      -> std::optional<ScopeRoute> {
+    auto reach = ReachThroughInterfacePort(frame, reference);
+    if (!reach.has_value() || !reach->open.empty()) {
+      return std::nullopt;
+    }
+    return reach;
+  }
 
   // The reads of a dependency set that name a cell, as the entries watching it.
   // A read of anything else contributes none, so a constant read alongside a

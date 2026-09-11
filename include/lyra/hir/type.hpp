@@ -396,28 +396,27 @@ struct UnpackedShape {
 // The same reading, for a declaration that stands for objects of another unit
 // rather than for values. An interface's `Inner bank[2]()` publishes a member
 // of type `array[2] of object{Inner}`, and this answers: an `Inner` at the
-// bottom, belonging to unit `Inner`, one coordinate to reach one of them, two
-// in all (LRM 23.2.2, 25.3). Nothing where the bottom is a value -- a
-// declaration no name descends through and no connection binds objects to.
+// bottom, belonging to unit `Inner`, under one declared range (LRM 23.2.2,
+// 25.3). Nothing where the bottom is a value -- a declaration no name descends
+// through and no connection binds objects to.
+//
+// A connection pairs these objects with a port's own left index to left index
+// (LRM 23.3.3.5), which each range's direction decides, so the nesting is
+// stated the way the declaration wrote it.
 struct ObjectsBehindType {
-  TypeId element_type;
+  UnpackedShape shape;
   std::string_view unit_name;
-  std::size_t dimensions;
-  std::uint64_t count;
 };
 
 [[nodiscard]] inline auto ObjectsBehind(const TypePool& types, TypeId type)
     -> std::optional<ObjectsBehindType> {
-  const UnpackedShape shape = UnpackedShapeOf(types, type);
+  UnpackedShape shape = UnpackedShapeOf(types, type);
   const auto* object = types.Get(shape.element_type).As<UnitObjectType>();
   if (object == nullptr) {
     return std::nullopt;
   }
   return ObjectsBehindType{
-      .element_type = shape.element_type,
-      .unit_name = object->unit_name,
-      .dimensions = shape.dims.size(),
-      .count = shape.ElementCount()};
+      .shape = std::move(shape), .unit_name = object->unit_name};
 }
 
 }  // namespace lyra::hir

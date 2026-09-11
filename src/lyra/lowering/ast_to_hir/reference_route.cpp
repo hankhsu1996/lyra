@@ -39,6 +39,25 @@ namespace lyra::lowering::ast_to_hir {
 
 namespace {
 
+// The dimensions a name left open, with the outermost narrowed to the part the
+// name kept. A name that selected no part narrows nothing, which is the case
+// where what it kept is already the whole of the dimension. Nothing where a
+// part was named and no dimension is open to narrow -- the walk left the
+// declarations behind before reaching it, so there is no shape to state the
+// part against.
+auto NarrowOutermost(
+    std::vector<OpenDimension> open, std::optional<KeptPositions> part)
+    -> std::optional<std::vector<OpenDimension>> {
+  if (!part.has_value()) {
+    return open;
+  }
+  if (open.empty()) {
+    return std::nullopt;
+  }
+  open.front().kept = *part;
+  return open;
+}
+
 // The compilation unit a value is declared directly in when that unit is a
 // namespace -- a package (LRM 26.2) or the anonymous `$unit` scope (LRM
 // 3.12.1) -- or nullptr when the value belongs to an instantiated scope and is
@@ -261,7 +280,7 @@ auto UnitLowerer::RouteToUnitObject(
   // lowered, so what tells them apart is how the name got there and never what
   // it resolved to.
   if (reference.isViaIfacePort()) {
-    auto through = ReachThroughInterfacePort(frame, reference);
+    auto through = ReachOneThroughInterfacePort(frame, reference);
     if (!through.has_value()) {
       return diag::Fail(
           span, diag::DiagCode::kUnsupportedExpressionForm,
@@ -311,7 +330,8 @@ auto UnitLowerer::TranslateReferenceRoute(
         frame.Current(), ScopeRoute{
                              .head = hir::InUnitHead{.hops = hops},
                              .steps = {},
-                             .unit_name = std::nullopt});
+                             .unit_name = std::nullopt,
+                             .open = {}});
   };
   if (data_object_hops.has_value()) {
     return in_unit_route(*data_object_hops);
@@ -356,21 +376,32 @@ auto UnitLowerer::ReachThroughInterfacePort(
   // step the instance answers, exactly as they are past a module instance.
   ScopeRoute reach = RouteThroughInterfacePort(frame, *port);
   ScopeRoute route{
-      .head = std::move(reach.head), .steps = {}, .unit_name = std::nullopt};
+      .head = std::move(reach.head),
+      .steps = {},
+      .unit_name = std::nullopt,
+      .open = {}};
   std::vector<DescentHop> hops;
   hops.reserve(path.size());
   hops.push_back(
       DescentHop{
           .step = std::move(reach.steps.front()),
-          .declared_unit = std::move(reach.unit_name)});
+          .declared_unit = std::move(reach.unit_name),
+          .declared_dims = InterfacePortDimensions(*port)});
 
   // Whether the name ends at an object or at something inside one, which is
-  // what says how far the descent runs: a name whose target is an instance ends
-  // at that object, and one whose target is a member or a subroutine ends at
-  // the object that owns it.
+  // what says how far the descent runs: a name whose target is an instance, or
+  // a set of them, ends there, and one whose target is a member or a subroutine
+  // ends at the object that owns it.
   const bool target_is_object =
       reference.target != nullptr &&
-      reference.target->kind == slang::ast::SymbolKind::Instance;
+      (reference.target->kind == slang::ast::SymbolKind::Instance ||
+       reference.target->kind == slang::ast::SymbolKind::InstanceArray);
+
+  // The contiguous part of the landing the name kept, where it named one. A
+  // part of an instance array is not a scope, so nothing can be selected out of
+  // it and the path says nothing after it: it applies to whatever the walk
+  // ended on.
+  std::optional<KeptPositions> part;
 
   for (std::size_t hop = 1; hop < path.size(); ++hop) {
     if (path[hop].symbol == reference.target && !target_is_object) {
@@ -387,17 +418,32 @@ auto UnitLowerer::ReachThroughInterfacePort(
           hops.back().step);
       continue;
     }
+    // A part selects out of the same hop for the same reason a coordinate does;
+    // what differs is that it leaves several objects rather than one, so it
+    // narrows a dimension instead of settling it.
+    if (const auto* span = std::get_if<std::pair<std::int32_t, std::int32_t>>(
+            &path[hop].selector)) {
+      if (span->first < 0 || span->second < span->first) return std::nullopt;
+      part = KeptPositions{
+          .first = static_cast<std::uint32_t>(span->first),
+          .count = static_cast<std::uint32_t>(span->second - span->first + 1)};
+      break;
+    }
     hops.push_back(
         DescentHop{
             .step =
                 hir::OpaqueStep{
                     .name = std::string{path[hop].symbol->name}, .indices = {}},
-            .declared_unit = std::nullopt});
+            .declared_unit = std::nullopt,
+            .declared_dims = {}});
     if (path[hop].symbol == reference.target) {
       break;
     }
   }
   ClassifyDescent(route, hops);
+  auto open = NarrowOutermost(std::move(route.open), part);
+  if (!open.has_value()) return std::nullopt;
+  route.open = *std::move(open);
   return route;
 }
 
@@ -416,11 +462,15 @@ auto UnitLowerer::RouteThroughInterfacePort(
         "UnitLowerer::RouteThroughInterfacePort: an interface port is a member "
         "of a scope enclosing every reader of it");
   }
+  // The route lands on the port itself, so every object it stands for is still
+  // in play; a name that picks one out of them says so in a coordinate the
+  // caller walks on from here.
   return ScopeRoute{
       .head = hir::InUnitHead{.hops = *hops},
       .steps = {hir::PathStep{
           hir::InterfacePortStep{.port = binding->port, .indices = {}}}},
-      .unit_name = InterfaceUnitOf(port)};
+      .unit_name = InterfaceUnitOf(port),
+      .open = WholeDimensions(InterfacePortDimensions(port))};
 }
 
 auto UnitLowerer::ReachOwnScope(
@@ -582,12 +632,14 @@ auto UnitLowerer::RouteToScope(
                       hir::OwnedChildStep{
                           .child = obinding->child,
                           .indices = std::move(indices)},
-                  .declared_unit = std::move(declared_unit)});
+                  .declared_unit = std::move(declared_unit),
+                  .declared_dims = {}});
           std::ranges::reverse(descent);
           ScopeRoute route{
               .head = hir::InUnitHead{.hops = *hops},
               .steps = {},
-              .unit_name = std::nullopt};
+              .unit_name = std::nullopt,
+              .open = {}};
           ClassifyDescent(route, descent);
           return route;
         }
@@ -606,7 +658,8 @@ auto UnitLowerer::RouteToScope(
                   .head_name = std::string{owned->name},
                   .head_indices = std::move(indices)},
           .steps = {},
-          .unit_name = std::nullopt};
+          .unit_name = std::nullopt,
+          .open = {}};
       ClassifyDescent(route, descent);
       return route;
     }
@@ -621,7 +674,8 @@ auto UnitLowerer::RouteToScope(
               .step =
                   hir::OwnedChildStep{
                       .child = obinding->child, .indices = std::move(indices)},
-              .declared_unit = std::move(declared_unit)});
+              .declared_unit = std::move(declared_unit),
+              .declared_dims = {}});
     } else {
       descent.push_back(
           DescentHop{
@@ -629,7 +683,8 @@ auto UnitLowerer::RouteToScope(
                   hir::OpaqueStep{
                       .name = std::string{owned->name},
                       .indices = std::move(indices)},
-              .declared_unit = std::nullopt});
+              .declared_unit = std::nullopt,
+              .declared_dims = {}});
     }
     scope = next;
   }
@@ -649,8 +704,9 @@ auto UnitLowerer::PromisedObjectMember(
   }
   // A published member a name continues through stands for objects; one
   // standing for values is a leaf and never a step. Which unit those objects
-  // belong to is the promise's own statement, so the answer comes out of the
-  // promise rather than out of the unit that made it.
+  // belong to, and how many of them there are, are the promise's own statement,
+  // so both answers come out of the promise rather than out of the unit that
+  // made it.
   const auto behind = hir::ObjectsBehind(
       signature->types, signature->instance_class->members.Get(*member).type);
   if (!behind.has_value()) {
@@ -659,7 +715,8 @@ auto UnitLowerer::PromisedObjectMember(
   return PublishedHop{
       .signature = signature,
       .member = *member,
-      .unit_name = std::string{behind->unit_name}};
+      .unit_name = std::string{behind->unit_name},
+      .dims = std::move(behind->shape.dims)};
 }
 
 void UnitLowerer::ClassifyDescent(
@@ -672,11 +729,27 @@ void UnitLowerer::ClassifyDescent(
   // by name and the route lands on no unit however deep it went.
   bool typed = std::holds_alternative<hir::InUnitHead>(route.head);
   std::optional<std::string> standing;
+  // What the last step stands over, carried alongside the unit it lands in:
+  // the two are one statement about that landing, and a hop coordinate settles
+  // one of them, so the walk keeps both and the caller reads the end of it.
+  std::vector<OpenDimension> open;
+  // A coordinate the name wrote settles the outermost dimension still open, so
+  // what a step leaves open is what it stands over less what it already picked.
+  // A hop this unit declares nothing about stands over nothing it can state, so
+  // it leaves nothing open whatever the name picked out of it.
+  const auto settled = [](std::span<const hir::UnpackedRange> dims,
+                          std::size_t picked) {
+    return WholeDimensions(dims.subspan(std::min(picked, dims.size())));
+  };
   route.steps.reserve(hops.size());
   for (DescentHop& hop : hops) {
     auto* opaque = std::get_if<hir::OpaqueStep>(&hop.step);
     if (opaque == nullptr) {
       standing = std::move(hop.declared_unit);
+      open = settled(
+          hop.declared_dims,
+          std::visit(
+              [](const auto& step) { return step.indices.size(); }, hop.step));
       route.steps.push_back(std::move(hop.step));
       continue;
     }
@@ -686,10 +759,12 @@ void UnitLowerer::ClassifyDescent(
     if (!promised.has_value()) {
       typed = false;
       standing.reset();
+      open.clear();
       route.steps.push_back(std::move(hop.step));
       continue;
     }
     standing = promised->unit_name;
+    open = settled(promised->dims, opaque->indices.size());
     route.steps.emplace_back(
         hir::SignatureMemberStep{
             .object = ExternalUnitObjectOf(promised->signature->unit_name),
@@ -697,6 +772,7 @@ void UnitLowerer::ClassifyDescent(
             .indices = std::move(opaque->indices)});
   }
   route.unit_name = typed ? std::move(standing) : std::nullopt;
+  route.open = std::move(open);
 }
 
 auto UnitLowerer::ResolveValueTarget(
@@ -779,6 +855,13 @@ auto UnitLowerer::ObservedThroughModport(
         "scope's own interface port is not yet supported");
   }
   ScopeRoute route = RouteThroughInterfacePort(frame, *through);
+  // A read of such a name states no coordinate, so a port standing for several
+  // instances leaves the route with nothing to say which of them changed.
+  if (!route.open.empty()) {
+    return refuse(
+        "waiting on a name a view offers through a port carrying a range is "
+        "not yet supported");
+  }
   const hir::ExternalUnitObjectId object =
       ExternalUnitObjectOf(*route.unit_name);
   const hir::PublishedModport* published = hir::FindModport(

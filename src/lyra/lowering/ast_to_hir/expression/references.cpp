@@ -459,7 +459,7 @@ auto LowerInterfacePortValue(
     const slang::ast::HierarchicalValueExpression& hve,
     const slang::ast::ValueSymbol& declaration, diag::SourceSpan span)
     -> diag::Result<hir::Expr> {
-  auto through = unit_lowerer.ReachThroughInterfacePort(frame, hve.ref);
+  auto through = unit_lowerer.ReachOneThroughInterfacePort(frame, hve.ref);
   if (!through.has_value()) {
     return diag::Fail(
         span, diag::DiagCode::kUnsupportedExpressionForm,
@@ -494,7 +494,7 @@ auto ResolveOfferedName(
     UnitLowerer& unit_lowerer, WalkFrame frame,
     const slang::ast::HierarchicalValueExpression& hve, diag::SourceSpan span)
     -> diag::Result<OfferedName> {
-  auto through = unit_lowerer.ReachThroughInterfacePort(frame, hve.ref);
+  auto through = unit_lowerer.ReachOneThroughInterfacePort(frame, hve.ref);
   if (!through.has_value() || !through->unit_name.has_value()) {
     return diag::Fail(
         span, diag::DiagCode::kUnsupportedExpressionForm,
