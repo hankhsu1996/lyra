@@ -3,6 +3,7 @@
 #include <optional>
 #include <string>
 #include <utility>
+#include <variant>
 #include <vector>
 
 #include "lyra/base/arena.hpp"
@@ -20,6 +21,7 @@
 #include "lyra/mir/external_unit_object.hpp"
 #include "lyra/mir/external_unit_object_id.hpp"
 #include "lyra/mir/foreign_linkage.hpp"
+#include "lyra/mir/namespace_storage_phase.hpp"
 #include "lyra/mir/static_variable_id.hpp"
 #include "lyra/mir/struct_decl.hpp"
 #include "lyra/mir/struct_id.hpp"
@@ -43,6 +45,43 @@ struct StaticVariableDecl {
   std::string name;
   TypeId type;
 };
+
+// A unit whose instances are a tree of objects the runtime drives (LRM 23.3):
+// the class at the root of that tree.
+struct RootedTree {
+  ClassId root;
+};
+
+// A unit that is a namespace rather than a hierarchy -- a package (LRM 26.2) or
+// the compilation-unit scope (LRM 3.12.1). Such a namespace owns every cell of
+// the program no instance holds: its own variables (LRM 26.2), the
+// static-lifetime locals of its subroutines (LRM 6.21), and the
+// type-associated cells of the classes it declares (LRM 8.9). These are the two
+// bodies the design root calls at time zero to bring all of them up.
+//
+// `install_storage` gives every cell its declared representation and language
+// default and fires nothing; `initialize_storage` then runs each value
+// initializer through its cell (LRM 10.5). The design root runs the first for
+// every unit of the design before the second for any, so an initializer that
+// reads another unit's cell always reaches installed storage -- at worst a
+// default. Every such unit publishes both -- one that owns no cell runs a body
+// that brings up none -- so the design root calls both without first asking
+// what this one supplied.
+//
+// Neither answers to a name. The source declares neither, and SystemVerilog
+// leaves no spelling reserved to the compiler (LRM 5.6.1), so a word minted for
+// them is a word the unit's own namespace could also answer; the design root
+// reaches them by which of the two they are instead.
+struct BroughtUpNamespace {
+  CallableId install_storage;
+  CallableId initialize_storage;
+};
+
+// What a unit contributes to the program it links into. A hierarchy's storage
+// comes up with the instances that hold it and a namespace has no instances, so
+// a unit is one or the other, and neither can be asked of a unit that is not
+// it.
+using UnitContent = std::variant<RootedTree, BroughtUpNamespace>;
 
 // Named TypeIds the lowering and rendering reuse. Most are language or runtime
 // atomic types (the literal `int` type, the 1-bit selector type, the `void`
@@ -113,12 +152,9 @@ struct CompilationUnit {
   BuiltinMirTypes builtins;
   // Every class declaration of this unit, owned here exactly once and reached
   // by its identity, with a declare-then-define lifecycle so a class can be
-  // named before its body is built. `root` is the class this unit's object tree
-  // is rooted at, present when the unit declares one; a unit that declares only
-  // a namespace -- its storage and its callables held by the unit itself --
-  // roots no tree and names none.
+  // named before its body is built.
   base::Registry<Class, ClassId> classes;
-  std::optional<ClassId> root;
+  UnitContent content;
   // One entry per unit this one reaches an object of, with what each promised
   // taken into this unit's types, under the same declare-then-define lifecycle
   // a class has: a type may name one of these objects -- an interface port's
@@ -144,11 +180,10 @@ struct CompilationUnit {
   // unit that reads the whole design. A class's own callables live on that
   // class; these are the unit-level namespace's, one scope up.
   base::Arena<CallableDecl, CallableId> callables;
-  // The nullary callable that builds this unit's root object and hands it out
-  // as the generic scope a runtime drives, present only on the design root. A
-  // process starts with nothing to call a constructor on, so the design states
-  // its one way in here rather than leaving a host to agree on a name for it.
-  std::optional<CallableId> root_factory;
+  // The names this unit's namespace answers and which body each reaches (LRM
+  // 26.3). A subroutine the source declared is here because another unit spells
+  // it; a body the compiler synthesized is not.
+  std::vector<NamedCallable> named_callables;
   // Static variables the unit's namespace owns directly rather than through one
   // of its classes -- a package's variables (LRM 26.2), one program-global cell
   // each, shared and reached by name. A class's own static storage lives on
@@ -186,16 +221,16 @@ struct CompilationUnit {
   // include and link edge to each referenced unit. Recorded once per distinct
   // unit name.
   std::vector<std::string> external_class_units;
-  // The packages whose variables this package's variable initializers read
-  // directly (LRM 26.2 / 10.5) -- the by-name dependency the design root uses
-  // to pick a stable value-initialization order. It records only reads written
-  // directly in an initializer expression; a read reached through a called
-  // function does not contribute yet. This is a preference, not a correctness
-  // input: every cell is installed with its default before any initializer
-  // runs, so a missed or cyclic dependency only means a read observes a
-  // default, never an uninstalled cell. Empty for a non-package unit and for a
-  // package with no initializer that reads another package's variable.
-  std::vector<std::string> direct_initializer_package_reads;
+  // The units whose namespace storage this unit's own initializers read
+  // directly (LRM 26.2 / 8.9 / 10.5) -- the by-name dependency the design root
+  // uses to pick a stable order to bring namespaces up in. It records only
+  // reads written directly in an initializer expression; a read reached through
+  // a called function does not contribute yet. This is a preference, not a
+  // correctness input: every cell is installed with its default before any
+  // initializer runs, so a missed or cyclic dependency only means a read
+  // observes a default, never an uninstalled cell. Empty for a unit that roots
+  // an object tree and for one no initializer of which reaches another.
+  std::vector<std::string> direct_initializer_unit_reads;
 
   CompilationUnit()
       : builtins{
@@ -360,6 +395,64 @@ struct CompilationUnit {
     external_class_units.push_back(std::move(unit_name));
   }
 };
+
+// The tree this unit's instances are, or the namespace it brings up --
+// whichever it is, and nothing where it is the other. Neither can be answered
+// for a unit that is not it, so asking for the one a reader can use is also how
+// it learns which kind it has; a reader that wants only the kind asks and drops
+// the answer.
+[[nodiscard]] inline auto RootedTreeOf(const CompilationUnit& unit)
+    -> const RootedTree* {
+  return std::get_if<RootedTree>(&unit.content);
+}
+
+[[nodiscard]] inline auto BroughtUpNamespaceOf(const CompilationUnit& unit)
+    -> const BroughtUpNamespace* {
+  return std::get_if<BroughtUpNamespace>(&unit.content);
+}
+
+// What reaches one body of a unit's namespace from outside it: the linkage name
+// the source wrote in the DPI-C name space, which is program-global and belongs
+// to no unit (LRM 35.4); the identifier the unit's own namespace answers (LRM
+// 26.3); which of the two bring-up entries it is; or nothing at all.
+struct ReachedByLinkageName {
+  std::string_view name;
+};
+struct ReachedByName {
+  std::string_view name;
+};
+struct ReachedByStoragePhase {
+  NamespaceStoragePhase phase;
+};
+struct ReachedByNothing {};
+
+using NamespaceReach = std::variant<
+    ReachedByLinkageName, ReachedByName, ReachedByStoragePhase,
+    ReachedByNothing>;
+
+// How `id` is reached from outside the unit that owns it. Every target names it
+// from this one answer, so no two arrive at different names for one body and
+// none works out for itself which kind of body it is looking at.
+[[nodiscard]] inline auto NamespaceReachOf(
+    const CompilationUnit& unit, CallableId id) -> NamespaceReach {
+  const CallableDecl& callable = unit.callables.Get(id);
+  if (callable.foreign.has_value()) {
+    return ReachedByLinkageName{callable.foreign->foreign_name};
+  }
+  if (const BroughtUpNamespace* ns = BroughtUpNamespaceOf(unit)) {
+    if (id == ns->install_storage) {
+      return ReachedByStoragePhase{NamespaceStoragePhase::kInstall};
+    }
+    if (id == ns->initialize_storage) {
+      return ReachedByStoragePhase{NamespaceStoragePhase::kInitialize};
+    }
+  }
+  if (const std::optional<std::string_view> name =
+          NameOf(unit.named_callables, id)) {
+    return ReachedByName{*name};
+  }
+  return ReachedByNothing{};
+}
 
 [[nodiscard]] inline auto MakeStringLiteral(
     TypeId string_type, std::string text) -> Expr {

@@ -30,8 +30,8 @@
 #include "lyra/lowering/hir_to_mir/expression/dpi_call.hpp"
 #include "lyra/lowering/hir_to_mir/integral_literal.hpp"
 #include "lyra/lowering/hir_to_mir/lhs_store.hpp"
+#include "lyra/lowering/hir_to_mir/namespace_storage_initialization.hpp"
 #include "lyra/lowering/hir_to_mir/net_declaration.hpp"
-#include "lyra/lowering/hir_to_mir/package_initialization.hpp"
 #include "lyra/lowering/hir_to_mir/process_lowerer.hpp"
 #include "lyra/lowering/hir_to_mir/runtime_call.hpp"
 #include "lyra/lowering/hir_to_mir/sampled_history.hpp"
@@ -1211,8 +1211,6 @@ auto StructuralScopeLowerer::DeclareShape() -> diag::Result<mir::ClassId> {
 
   ClassShape shape;
   shape.name = name_;
-  shape.base =
-      mir::ClassRef{mir::RuntimeClassRef{.symbol = "lyra::runtime::Scope"}};
   shape.is_final = true;
   shape.self_pointer_type = self_pointer_type;
   shape.time_resolution = hir_scope.time_resolution;
@@ -1415,8 +1413,6 @@ auto StructuralScopeLowerer::DeclareShape() -> diag::Result<mir::ClassId> {
     const mir::ClassId node_class = unit_lowerer.Unit().DeclareClass();
     ClassShape node_shape;
     node_shape.name = std::format("{}__{}", name_, segment);
-    node_shape.base =
-        mir::ClassRef{mir::RuntimeClassRef{.symbol = "lyra::runtime::Scope"}};
     node_shape.is_final = true;
     node_shape.self_pointer_type = unit_lowerer.Unit().types.Intern(
         mir::Type{mir::PointerType{
@@ -1616,52 +1612,66 @@ auto SynthesizeSubroutineEntry(
 // none.
 auto InstallGeneratedDefinition(
     mir::CompilationUnit& unit, mir::Class& cls, mir::ClassId cls_id,
-    mir::CallableCode& ctor_code, std::optional<mir::CallableId> resolve_body,
-    std::optional<mir::CallableId> init_body,
-    std::optional<mir::CallableId> create_body) -> std::vector<mir::ExprId> {
+    mir::CallableCode& ctor_code, mir::CallableId resolve_body,
+    mir::CallableId init_body, mir::CallableId create_body)
+    -> std::vector<mir::ExprId> {
   const mir::TypeId scope_ptr = unit.builtins.scope_ptr;
   const mir::TypeId self_ptr = cls.self_pointer_type;
   const mir::TypeId void_type = unit.builtins.void_type;
-  const auto make_adapter =
-      [&](std::string name,
-          std::optional<mir::CallableId> body) -> mir::AbiAdapterId {
+  // An adapter over the generic scope receiver, with nothing in it. The
+  // construction entry takes this shape because what it runs is the class's
+  // constructor, which is a body block on the protocol rather than a callable
+  // of the arena, so the backend supplies it.
+  const auto empty_adapter = [&]() -> mir::AbiAdapterId {
+    mir::CallableCode code = mir::CallableCode::Defined();
+    code.params = {
+        code.locals.Add(mir::LocalDecl{.name = "self", .type = scope_ptr})};
+    code.result_type = void_type;
+    return cls.abi_adapters.Add(
+        mir::AbiAdapter{
+            .code = std::move(code), .published = mir::UnpublishedEntry{}});
+  };
+  const auto make_adapter = [&](mir::CallableId body) -> mir::AbiAdapterId {
     mir::CallableCode code = mir::CallableCode::Defined();
     const mir::LocalId self =
         code.locals.Add(mir::LocalDecl{.name = "self", .type = scope_ptr});
     code.params = {self};
     code.result_type = void_type;
-    if (body.has_value()) {
-      const mir::ExprId self_ref =
-          code.Body().exprs.Add(mir::MakeLocalRefExpr(self, scope_ptr));
-      const mir::ExprId typed = code.Body().exprs.Add(
-          mir::Expr{
-              .data = mir::CastExpr{.operand = self_ref}, .type = self_ptr});
-      const mir::ExprId call = code.Body().exprs.Add(
-          mir::Expr{
-              .data =
-                  mir::CallExpr{
-                      .callee =
-                          mir::Direct{
-                              .target =
-                                  mir::CallableTarget{
-                                      .owner = cls_id, .slot = *body},
-                              .receiver = typed},
-                      .arguments = {}},
-              .type = void_type});
-      code.Body().AppendStmt(mir::ExprStmt{.expr = call});
-    }
+    const mir::ExprId self_ref =
+        code.Body().exprs.Add(mir::MakeLocalRefExpr(self, scope_ptr));
+    const mir::ExprId typed = code.Body().exprs.Add(
+        mir::Expr{
+            .data = mir::CastExpr{.operand = self_ref}, .type = self_ptr});
+    const mir::ExprId call = code.Body().exprs.Add(
+        mir::Expr{
+            .data =
+                mir::CallExpr{
+                    .callee =
+                        mir::Direct{
+                            .target =
+                                mir::CallableTarget{
+                                    .owner = cls_id, .slot = body},
+                            .receiver = typed},
+                    .arguments = {}},
+            .type = void_type});
+    code.Body().AppendStmt(mir::ExprStmt{.expr = call});
     return cls.abi_adapters.Add(
         mir::AbiAdapter{
-            .name = std::move(name),
-            .code = std::move(code),
-            .published = mir::UnpublishedEntry{}});
+            .code = std::move(code), .published = mir::UnpublishedEntry{}});
   };
-  const mir::AbiAdapterId resolve_abi =
-      make_adapter("ResolveStateAbi", resolve_body);
-  const mir::AbiAdapterId init_abi =
-      make_adapter("InitializeStateAbi", init_body);
-  const mir::AbiAdapterId create_abi =
-      make_adapter("CreateProcessesAbi", create_body);
+  // Extending the runtime's scope is what puts this class on the object tree,
+  // and the three bodies are what it supplies to be driven through, so the two
+  // are one statement. The record below is a second reading of it, for a target
+  // whose runtime is entered through a function pointer; a target that reaches
+  // the bodies directly reads the statement and composes no record at all.
+  cls.base = mir::ClassRef{mir::RuntimeClassRef{
+      .symbol = "lyra::runtime::Scope",
+      .resolve_state = resolve_body,
+      .initialize_state = init_body,
+      .create_processes = create_body}};
+  const mir::AbiAdapterId resolve_abi = make_adapter(resolve_body);
+  const mir::AbiAdapterId init_abi = make_adapter(init_body);
+  const mir::AbiAdapterId create_abi = make_adapter(create_body);
 
   // The names this scope answers, one constant per namespace: the table the
   // runtime holds is a pointer into contiguous storage, so the records must
@@ -1673,10 +1683,8 @@ auto InstallGeneratedDefinition(
     mir::StaticConstantId records;
     std::uint32_t count = 0;
   };
-  const auto publish = [&](std::string constant_name,
-                           auto&& name_of) -> NameTable {
+  const auto publish = [&](auto&& name_of) -> NameTable {
     mir::StaticConstantDecl decl;
-    decl.name = std::move(constant_name);
     mir::RuntimeRecordBuilder records(unit, decl.body.exprs);
     std::vector<mir::ExprId> entries;
     for (const mir::AbiAdapterId adapter_id : cls.abi_adapters.Ids()) {
@@ -1702,21 +1710,18 @@ auto InstallGeneratedDefinition(
         .count = count};
   };
   const NameTable exports = publish(
-      "kExports",
       [](const mir::AbiAdapterPublication& p) -> std::optional<std::string> {
         const auto* linkage = std::get_if<mir::ForeignLinkage>(&p);
         return linkage == nullptr ? std::nullopt
                                   : std::optional{linkage->foreign_name};
       });
   const NameTable subroutines = publish(
-      "kSubroutines",
       [](const mir::AbiAdapterPublication& p) -> std::optional<std::string> {
         const auto* entry = std::get_if<mir::SubroutineEntry>(&p);
         return entry == nullptr ? std::nullopt : std::optional{entry->name};
       });
 
   mir::StaticConstantDecl def;
-  def.name = "kDefinition";
   mir::RuntimeRecordBuilder definition(unit, def.body.exprs);
   const auto build_table = [&](const NameTable& table) -> mir::ExprId {
     const mir::ExprId records_ref = definition.Add(
@@ -1752,8 +1757,7 @@ auto InstallGeneratedDefinition(
        definition.FunctionRef(cls, init_abi),
        definition.FunctionRef(cls, create_abi), export_table,
        subroutine_table});
-  const mir::AbiAdapterId construct_abi =
-      make_adapter("ConstructAbi", std::nullopt);
+  const mir::AbiAdapterId construct_abi = empty_adapter();
   def.value = definition.Construct(
       mir::RuntimeLibraryKind::kScopeDefinition,
       {program, definition.FunctionRef(cls, construct_abi)});
@@ -2030,20 +2034,19 @@ auto StructuralScopeLowerer::PopulateBodies(WalkFrame parent_frame)
     }
   }
 
-  // The design root's Initialize phase brings up the packages' variables (LRM
-  // 26.2 / 10.5). A package owns no runtime tree node, so the root calls its
-  // receiver-less callables here, before the top modules initialize -- this
-  // scope's Initialize runs parent-first, and the design root is every module's
-  // ancestor. It runs design-wide in two passes: install every package's cells
-  // (their declared type and default), then run every package's value
-  // initializers, so a value initializer that reads another package's variable
-  // always reaches installed storage. The plan is resolved by the whole-design
+  // The design root's Initialize phase brings up what every namespace unit owns
+  // (LRM 26.2 / 8.9 / 10.5). Such a unit owns no runtime tree node, so the root
+  // calls its receiver-less callables here, before the top modules initialize
+  // -- this scope's Initialize runs parent-first, and the design root is every
+  // module's ancestor. It runs design-wide in two passes: install every unit's
+  // cells (their declared type and default), then run every unit's value
+  // initializers, so a value initializer that reads another unit's cell always
+  // reaches installed storage. The plan is resolved by the whole-design
   // assembly and realized here; this scope carries it only for the design root,
   // so a source unit's scope and a nested scope both leave it empty.
-  const auto call_package = [&](const std::string& pkg,
-                                std::string_view callable,
-                                std::vector<mir::ExprId> args) {
-    unit_lowerer.Unit().AddExternalReferencedUnit(pkg);
+  const auto call_namespace_unit = [&](const std::string& unit_name,
+                                       mir::NamespaceStoragePhase phase) {
+    unit_lowerer.Unit().AddExternalReferencedUnit(unit_name);
     const mir::ExprId call = initialize_block.exprs.Add(
         mir::Expr{
             .data =
@@ -2051,18 +2054,17 @@ auto StructuralScopeLowerer::PopulateBodies(WalkFrame parent_frame)
                     .callee =
                         mir::Direct{
                             .target =
-                                mir::ExternalUnitCallableTarget{
-                                    .unit_name = pkg,
-                                    .callable_name = std::string{callable}}},
-                    .arguments = std::move(args)},
+                                mir::ExternalUnitStorageTarget{
+                                    .unit_name = unit_name, .phase = phase}},
+                    .arguments = {}},
             .type = void_type});
     initialize_block.AppendStmt(mir::ExprStmt{.expr = call});
   };
-  for (const std::string& pkg : package_init_plan_.install_order) {
-    call_package(pkg, kPackageInstallCallableName, {});
+  for (const std::string& unit : namespace_storage_plan_.units) {
+    call_namespace_unit(unit, mir::NamespaceStoragePhase::kInstall);
   }
-  for (const std::string& pkg : package_init_plan_.value_initialize_order) {
-    call_package(pkg, kPackageInitializeCallableName, {});
+  for (const std::string& unit : namespace_storage_plan_.units) {
+    call_namespace_unit(unit, mir::NamespaceStoragePhase::kInitialize);
   }
 
   // Commit the class of every procedural scope's name node. A name node is
@@ -2075,7 +2077,6 @@ auto StructuralScopeLowerer::PopulateBodies(WalkFrame parent_frame)
         unit_lowerer.GetClassShape(name_node.class_id);
     mir::Class node_class;
     node_class.name = node_shape.name;
-    node_class.base = node_shape.base;
     node_class.is_final = node_shape.is_final;
     node_class.self_pointer_type = node_shape.self_pointer_type;
     node_class.time_resolution = node_shape.time_resolution;
@@ -2094,10 +2095,27 @@ auto StructuralScopeLowerer::PopulateBodies(WalkFrame parent_frame)
       node_ctor_code.params.push_back(node_ctor_prefix_local_ids.back());
     }
     node_ctor_code.result_type = void_type;
+    // A name node has no work in any phase, which is three bodies with no
+    // statements rather than three phases it does not have -- the same shape a
+    // scope with work carries, so nothing downstream tells the two apart.
+    const auto empty_phase = [&]() -> mir::CallableId {
+      mir::CallableCode code = mir::CallableCode::Defined();
+      CallableBindings bindings(unit_lowerer.Unit(), code);
+      code.params = {bindings.Declare(
+          BindingOriginId::Receiver(),
+          mir::LocalDecl{
+              .name = "self", .type = node_shape.self_pointer_type})};
+      code.result_type = void_type;
+      return node_class.callables.Add(
+          mir::CallableDecl{
+              .code = std::move(code),
+              .foreign = std::nullopt,
+              .virtual_dispatch = std::nullopt});
+    };
     const std::vector<mir::ExprId> node_base_trailing_args =
         InstallGeneratedDefinition(
             unit_lowerer.Unit(), node_class, name_node.class_id, node_ctor_code,
-            std::nullopt, std::nullopt, std::nullopt);
+            empty_phase(), empty_phase(), empty_phase());
     FinalizeConstructor(
         unit_lowerer.Unit(), node_class, std::move(node_ctor_code),
         node_ctor_prefix_local_ids, node_base_trailing_args);
@@ -2247,6 +2265,10 @@ auto StructuralScopeLowerer::PopulateBodies(WalkFrame parent_frame)
        hir_scope.structural_subroutines.Ids()) {
     const auto& src = hir_scope.structural_subroutines.Get(sub_id);
     const DeclaredCallable& declared = declared_subroutines_.Get(sub_id);
+    // A subroutine the source declared is what a hierarchical name and a call
+    // from another unit both spell, so the scope's class records the name.
+    mir_class.named_callables.push_back(
+        mir::NamedCallable{.name = src.name, .body = declared.callable});
     ProcessLowerer subroutine_lowerer(
         unit_lowerer, this, hir_scope.time_resolution, src.body, src.root_stmt,
         src.name, ctor_frame, scopes_, declared.statics);
@@ -2254,14 +2276,14 @@ auto StructuralScopeLowerer::PopulateBodies(WalkFrame parent_frame)
     if (!code_or) return std::unexpected(std::move(code_or.error()));
     mir_class.callables.Define(
         declared.callable, mir::CallableDecl{
-                               .name = src.name,
                                .code = *std::move(code_or),
                                .foreign = std::nullopt,
                                .virtual_dispatch = std::nullopt});
     subroutine_callables.push_back(declared.callable);
     for (const StaticVarBinding& binding : declared.statics) {
       auto integ = IntegrateStaticInitializer(
-          subroutine_lowerer, src.body, init_frame, init_frame, binding);
+          subroutine_lowerer, src.body,
+          StorageBringUp{.install = init_frame, .value = init_frame}, binding);
       if (!integ) return std::unexpected(std::move(integ.error()));
     }
   }
@@ -2291,7 +2313,6 @@ auto StructuralScopeLowerer::PopulateBodies(WalkFrame parent_frame)
             .definition = std::move(entry.definition)});
     mir_class.abi_adapters.Add(
         mir::AbiAdapter{
-            .name = std::format("{}__export", export_decl.foreign_name),
             .code = std::move(entry.code),
             .published = std::move(entry.linkage)});
   }
@@ -2307,7 +2328,6 @@ auto StructuralScopeLowerer::PopulateBodies(WalkFrame parent_frame)
     const mir::CallableId method_id = subroutine_callables[sub_id.value];
     mir_class.abi_adapters.Add(
         mir::AbiAdapter{
-            .name = std::format("{}__entry", name),
             .code = SynthesizeSubroutineEntry(
                 unit_lowerer.Unit(), mir_class, class_id_, method_id),
             .published = mir::SubroutineEntry{.name = name}});
@@ -2323,7 +2343,6 @@ auto StructuralScopeLowerer::PopulateBodies(WalkFrame parent_frame)
     if (!code_or) return std::unexpected(std::move(code_or.error()));
     const mir::CallableId body = mir_class.callables.Add(
         mir::CallableDecl{
-            .name = ProcessCallableName(id),
             .code = *std::move(code_or),
             .foreign = std::nullopt,
             .virtual_dispatch = std::nullopt});
@@ -2331,7 +2350,8 @@ auto StructuralScopeLowerer::PopulateBodies(WalkFrame parent_frame)
         unit_lowerer, activate_frame, body, p.kind == hir::ProcessKind::kFinal);
     for (const StaticVarBinding& binding : statics) {
       auto integ = IntegrateStaticInitializer(
-          process_lowerer, p.body, init_frame, init_frame, binding);
+          process_lowerer, p.body,
+          StorageBringUp{.install = init_frame, .value = init_frame}, binding);
       if (!integ) return std::unexpected(std::move(integ.error()));
     }
   }
@@ -2359,8 +2379,7 @@ auto StructuralScopeLowerer::PopulateBodies(WalkFrame parent_frame)
   // no test would obviously catch. What sharing would save is a wait.
   for (const hir::SampledHistoryId id : hir_scope.sampled_histories.Ids()) {
     auto sampler_or = LowerSampledHistorySampler(
-        *this, ctor_frame, std::format("sampled_history_{}__sampler", id.value),
-        id, hir_scope.sampled_histories.Get(id));
+        *this, ctor_frame, id, hir_scope.sampled_histories.Get(id));
     if (!sampler_or) return std::unexpected(std::move(sampler_or.error()));
     const mir::CallableId body =
         mir_class.callables.Add(std::move(*sampler_or));
@@ -2371,7 +2390,8 @@ auto StructuralScopeLowerer::PopulateBodies(WalkFrame parent_frame)
   // this scope's declarations the way a process of it does, and the frame they
   // stand on is this scope's own.
   for (ClassDeclLowerer& class_lowerer : class_lowerers_) {
-    auto class_r = class_lowerer.PopulateBodies(ctor_frame, init_frame);
+    auto class_r = class_lowerer.PopulateBodies(
+        ctor_frame, StorageBringUp{.install = init_frame, .value = init_frame});
     if (!class_r) return std::unexpected(std::move(class_r.error()));
   }
 
@@ -2477,33 +2497,28 @@ auto StructuralScopeLowerer::PopulateBodies(WalkFrame parent_frame)
 
   auto& unit = unit_lowerer.Unit();
 
-  // The resolve, initialize, and activate phases are ordinary callables run by
-  // the runtime after construction (LRM 23.3.3.2 / 6.8 / 9.2), each present
-  // only when the scope has work for it. `self` is the phase's own receiver,
-  // typed as this class. The body is added under its plain name; the runtime
-  // reaches it through a per-phase ABI adapter installed in the scope's
-  // definition.
-  const auto add_body =
-      [&](mir::Block& block, mir::CallableCode& code, mir::LocalId self,
-          std::string name) -> std::optional<mir::CallableId> {
-    if (block.root_stmts.empty()) {
-      return std::nullopt;
-    }
+  // The three bodies the runtime drives this scope through after construction
+  // (LRM 23.3.3.2 / 6.8 / 9.2). `self` is the body's own receiver, typed as
+  // this class. Which body is which is said once, where the class states that
+  // it stands on the object tree; none of them answers to a name, because a
+  // name would sit in the same name space as the scope's own subroutines and a
+  // method spelled the same way would then share it.
+  // A phase with no work is a body with no statements, not an absent body:
+  // whether emitting one is worth avoiding is a question for the layer that
+  // removes dead work, and answering it here would cost every consumer a case.
+  const auto add_body = [&](mir::CallableCode& code,
+                            mir::LocalId self) -> mir::CallableId {
     code.params = {self};
     code.result_type = void_type;
     return mir_class.callables.Add(
         mir::CallableDecl{
-            .name = std::move(name),
             .code = std::move(code),
             .foreign = std::nullopt,
             .virtual_dispatch = std::nullopt});
   };
-  const std::optional<mir::CallableId> resolve_body =
-      add_body(resolve_block, resolve_code, resolve_self_id, "ResolveState");
-  const std::optional<mir::CallableId> init_body = add_body(
-      initialize_block, initialize_code, init_self_id, "InitializeState");
-  const std::optional<mir::CallableId> create_body = add_body(
-      activate_block, activate_code, activate_self_id, "CreateProcesses");
+  const mir::CallableId resolve_body = add_body(resolve_code, resolve_self_id);
+  const mir::CallableId init_body = add_body(initialize_code, init_self_id);
+  const mir::CallableId create_body = add_body(activate_code, activate_self_id);
 
   const std::vector<mir::ExprId> base_trailing_args =
       InstallGeneratedDefinition(

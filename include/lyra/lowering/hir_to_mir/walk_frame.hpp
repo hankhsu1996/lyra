@@ -235,4 +235,17 @@ struct WalkFrame {
   }
 };
 
+// Where the owner of a cell that outlives every activation brings it up, in the
+// two phases every such cell takes: `install` receives the cell's declared
+// representation and default, and `value` the LRM 10.5 value initializer. An
+// owner that brings both up in one body names it twice; a namespace unit keeps
+// them apart, so that every cell in the design is installed before any
+// initializer reads one. The two travel together wherever a cell comes up, and
+// pairing the wrong install with a value would put a cell's representation
+// where its contents go, so they cross as one value.
+struct StorageBringUp {
+  WalkFrame install;
+  WalkFrame value;
+};
+
 }  // namespace lyra::lowering::hir_to_mir

@@ -33,9 +33,24 @@ struct CrossUnitClassRef {
 
 // A reference to a class the runtime library defines, named by the library
 // symbol itself. No compilation unit declares it, so there is no unit to name
-// it through and nothing to resolve: the symbol is the identity.
+// it through and nothing to resolve: the symbol is all a target needs to reach
+// it.
+//
+// Extending it is what puts an object in the runtime's tree, and the runtime
+// drives every object of that tree through three bodies, in the order they
+// stand here: every route and alias is bound while the tree is complete and
+// nothing has run, then every cell takes the value its declaration gives it
+// (LRM 10.5), then every process is created (LRM 9.2). Each is entered on one
+// instance and returns before the next begins, which is why the three are
+// separate bodies rather than one body with phases inside it. They are what the
+// extending class supplies to this base, so they stand with it: a class on the
+// tree that states no way to run, and a way to run on a class that is not on
+// the tree, are both unspellable.
 struct RuntimeClassRef {
   std::string symbol;
+  CallableId resolve_state;
+  CallableId initialize_state;
+  CallableId create_processes;
 
   auto operator==(const RuntimeClassRef&) const -> bool = default;
 };

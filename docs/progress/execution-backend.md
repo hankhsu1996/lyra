@@ -335,11 +335,16 @@ each meets the same lifetime question above.
       call, which crosses erased because it follows the clause rather than the receiver. Erasing an
       index and an element makes them one type, so the algorithms are the ones the other backend
       runs rather than a second family beside them.
-- [ ] Storage reached by name rather than through a receiver, for a class's static property and
-      static constant. A package or `$unit` variable runs: such storage is named by its linkage
-      symbol, a place opens at that symbol and dereferences it, and the execution session resolves
-      the name to the address the design's own storage sits at. A class's statics are the same shape
-      and need the symbol a class mints for them, which nothing publishes yet.
+- [x] **Storage reached by name rather than through a receiver.** A cell the whole program shares is
+      named by its linkage symbol, a place opens at that symbol and dereferences it, and the
+      execution session resolves the name to the address the design's own storage sits at. A cell a
+      class owns rather than an object of it is that same storage under a name qualified one step
+      further, so it reaches this backend the way a namespace variable does and nothing about the
+      class survives the lowering. What brings it up is whatever brings up the thing that replicates
+      its declaration -- the declaring instance, or the declaring namespace's own two design-wide
+      bodies -- so a class needs no startup body of its own, and every such cell takes both its
+      declared representation and a value, the type's default where the source wrote none. Settled
+      in `../decisions/type-associated-storage-is-the-declarers.md`.
 - [x] **Where a base class's storage sits inside a derived object.** A member is named by the
       declaration that declares it together with the slot that declaration gave it, never by a
       position read against whatever the access arrived at -- so a class that redeclares a name its

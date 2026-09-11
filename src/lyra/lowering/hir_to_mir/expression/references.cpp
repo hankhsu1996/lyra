@@ -222,10 +222,14 @@ auto LowerHirIntegralConstant(const hir::IntegralConstant& c)
 // A static property (LRM 8.9) belongs to the type rather than to an object of
 // it, so it is reached without a receiver. Where its cell sits follows from
 // what replicates the class declaration, which the shape settled; the reference
-// states how far out of this body that replication sits, where one exists.
+// states how far out of this body that replication sits, where one exists. The
+// reference names the cell rather than the value it holds, so the dispatcher
+// reads through it the way it does any other cell.
 auto LowerStaticPropertyRefExpr(
     UnitLowerer& unit_lowerer, const WalkFrame& frame,
     const hir::StaticPropertyRef& r, mir::TypeId result_type) -> mir::Expr {
+  const mir::TypeId cell_type =
+      mir::ObservableCellOf(unit_lowerer.Unit().types, result_type);
   if (const auto* local =
           std::get_if<hir::LocalStaticPropertyTarget>(&r.target)) {
     const mir::ClassId owner = unit_lowerer.TranslateClass(local->owner);
@@ -239,7 +243,7 @@ auto LowerStaticPropertyRefExpr(
     // on an instance exactly when a structural scope replicates the class, and
     // that is the same condition the reference records its hops under.
     return BuildStaticStorageAccess(
-        unit_lowerer.Unit(), frame, home, result_type,
+        unit_lowerer.Unit(), frame, home, cell_type,
         mir::EnclosingHops{
             r.declaring_scope_hops.value_or(hir::StructuralHops{}).value});
   }
@@ -248,7 +252,7 @@ auto LowerStaticPropertyRefExpr(
           mir::ReferenceExpr{
               .target = unit_lowerer.MakeExternalStaticPropertyRef(
                   std::get<hir::ExternalStaticPropertyTarget>(r.target))},
-      .type = result_type};
+      .type = cell_type};
 }
 
 auto LowerHirPrimaryExprProc(

@@ -28,8 +28,10 @@ namespace lyra::mir {
 // The data dual of a static method. A runtime scope's generated-behavior
 // record is one such constant; the constructor hands its address to the
 // runtime base.
+// It carries no name: nothing in the source declares one, so its position in
+// the class's own arena is the whole of its identity, and what it is spelled as
+// in a target language is that target's to mint.
 struct StaticConstantDecl {
-  std::string name;
   TypeId type;
   Block body;
   ExprId value;
@@ -41,12 +43,12 @@ struct StaticConstantDecl {
 // axis, but a class of its own: unlike `FieldDecl` a static property has no
 // per-instance replication, and unlike `StaticConstantDecl` its value is a
 // run-time cell writable through ordinary assignment.
-// The source-written `= value` initializer, when present, is a design-init
-// fact (LRM 10.5): the assignment lands as an `AssignExpr` statement in the
-// class's `static_init` body, not on this declaration -- initializer timing
-// (once at program startup, before any initial / always) and per-cell
-// identity are separate concerns, and the class-wide statement list is the
-// one home a backend reads for construction-time state.
+// What the cell starts out holding is a design-init fact (LRM 10.5) and is not
+// on this declaration: the assignment lands in whatever brings the cell's owner
+// up, which is the declaring instance's construction where a structural scope
+// replicates the class and the declaring unit's namespace bring-up where
+// nothing does. Initializer timing and per-cell identity are separate concerns,
+// and a statement list is the one home a backend reads for either.
 struct StaticPropertyDecl {
   std::string name;
   TypeId type;
@@ -125,18 +127,11 @@ struct Class {
   // type-associated axis: a static property is one cell owned by the type,
   // never a member replicated into each instance.
   base::Arena<StaticPropertyDecl, StaticPropertyId> static_properties;
-  // The class-level design-init body (LRM 10.5): a receiver-less callable the
-  // runtime invokes once at program startup, before any initial or always
-  // procedure and before any instance's constructor. Its body is a sequence
-  // of `AssignExpr` statements, one per source-written static property
-  // initializer in declaration order; a static property without a source
-  // initializer takes its type's Table 7-1 default and gets no statement
-  // here. Peer to `constructor.code` on the axis "code the runtime runs at
-  // construction time," but per-class rather than per-instance and
-  // signature-less: `code.params` is empty (no `self`, no formals), and
-  // `code.result_type` is void. Always a definition; a class with no static
-  // initializer simply defines an empty one.
-  CallableCode static_init = CallableCode::Defined();
+  // The names this class answers and which body each reaches (LRM 8.3, one
+  // name space over a class's members). A method the source declared is here
+  // because a call site outside this unit spells it; a body the compiler
+  // synthesized is not, because nothing spells one.
+  std::vector<NamedCallable> named_callables;
 };
 
 }  // namespace lyra::mir

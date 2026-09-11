@@ -1398,13 +1398,13 @@ auto UnitLowerer::PopulateClassBody(PendingClassBody& pending)
     }
     decl.base_call = *std::move(stated_base_call);
   }
-  // A static property initializer (LRM 8.9 / 10.5) runs once at design init,
-  // not per instance, so its expression lands in the class's `static_init`
-  // arena rather than the constructor body's. It cannot read a per-instance
-  // formal or `self`, and the lowering routes that no such receiver is in
-  // scope; a downstream initializer that names another static property of
-  // the same class reads it as `Cls::other_prop` (a `StaticPropertyRef`),
-  // never through the constructor's receiver.
+  // A static property initializer (LRM 8.9 / 10.5) runs once for the cell
+  // rather than once per instance constructed, so its expression lands in the
+  // arena the class keeps for that rather than the constructor body's. It
+  // cannot read a per-instance formal or `self`, and the lowering routes that
+  // no such receiver is in scope; a downstream initializer that names another
+  // static property of the same class reads it as `Cls::other_prop` (a
+  // `StaticPropertyRef`), never through the constructor's receiver.
   const WalkFrame static_init_frame =
       class_frame.WithProceduralBody(&decl.static_init);
   for (const auto& prop :

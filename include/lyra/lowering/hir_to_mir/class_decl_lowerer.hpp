@@ -71,11 +71,12 @@ class ClassDeclLowerer {
   // and commits it to the compilation unit. Any cross-class query the
   // bodies make resolves against the unit's declarations, never against
   // another class's still-in-progress state.
-  // `declaring_init_frame` is where the scope that declares the class brings up
-  // its instance's own storage: a class it replicates keeps its cells there, so
-  // that is where their initializers run -- once per instance, and before any
-  // process (LRM 10.5).
-  auto PopulateBodies(WalkFrame declaring_frame, WalkFrame declaring_init_frame)
+  // `owner_bring_up` is where whatever replicates this class's declaration
+  // brings its own storage up, which is where the class's type-associated cells
+  // come up too: a structural scope's instance, once per instance, or the
+  // namespace unit's two design-wide bodies -- either way before any process
+  // (LRM 8.9, 10.5).
+  auto PopulateBodies(WalkFrame declaring_frame, StorageBringUp owner_bring_up)
       -> diag::Result<void>;
 
  private:

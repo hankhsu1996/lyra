@@ -10,7 +10,6 @@
 07_aggregate_data_types/unpacked_structure_whole_assignment: "local is not addressable storage"
 08_classes/constructor_argument_directions: "a constructor with an output / inout / ref argument is not yet supported"
 08_classes/interface_class_implements: "dispatching on a behavior an interface class states is not yet supported"
-08_classes/package_declared_class: "a class's static property is not yet reachable on this backend"
 08_classes/this_names_the_current_instance: "the self_handle builtin answers with the handle referring to the object a body runs on"
 09_processes/fork_branch_outlives_enclosing_scope: "storage kept alive by a shared owner needs a slot the collector can see, which generated storage is not yet"
 09_processes/fork_branch_shares_enclosing_variables: "storage kept alive by a shared owner needs a slot the collector can see, which generated storage is not yet"

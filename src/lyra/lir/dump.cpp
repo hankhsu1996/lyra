@@ -118,7 +118,7 @@ class LirDumper {
 
   void DumpClosure(ClosureId id) {
     const Closure& closure = unit_->closures.Get(id);
-    Line(std::format("Closure \"{}\" (#{})", closure.name, id.value));
+    Line(std::format("Closure (#{})", id.value));
     Indent();
     for (std::size_t i = 0; i < closure.captures.size(); ++i) {
       Line(
@@ -271,8 +271,12 @@ class LirDumper {
               return std::format(
                   "CrossUnit(\"{}::{}\")", e.unit_name, e.class_name);
             },
-            [](const RuntimeBase& e) -> std::string {
-              return std::format("Runtime(\"{}\")", e.symbol);
+            [](const ObjectTreeBase& e) -> std::string {
+              return std::format(
+                  "ObjectTree(resolve=Fn[{}], initialize=Fn[{}], "
+                  "create=Fn[{}])",
+                  e.resolve_state.value, e.initialize_state.value,
+                  e.create_processes.value);
             }},
         base);
   }

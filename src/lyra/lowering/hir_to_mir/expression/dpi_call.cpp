@@ -897,7 +897,6 @@ auto MakeForeignImportDecl(
     mir::CompilationUnit& unit, const hir::ForeignImportDecl& import)
     -> mir::CallableDecl {
   return mir::CallableDecl{
-      .name = import.name,
       .code = MakeForeignSignature(
           unit, import.params, import.ret_abi, import.is_task),
       .foreign = mir::ForeignLinkage{.foreign_name = import.foreign_name},

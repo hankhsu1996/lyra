@@ -25,8 +25,8 @@ exist in SV:
 - **Plain SV class method** (LRM 8.6): receiver is a `C*` where `C` does not inherit
   `runtime::Scope`, which only a class the runtime builds as a node of the object tree does. Emit
   succeeds; the C++ compiler then refuses with `no member named 'Services' in 'C'`.
-- **Class static initializer / static method** (LRM 8.9 / 8.10): no receiver, same failure mode as
-  package function.
+- **Type-associated method** (LRM 8.10) and the body that brings a class's type-associated storage
+  up (LRM 8.9): no receiver, same failure mode as package function.
 
 `mir.md` invariant 11 already admits receiver-less callables: "A type-associated (static) function
 has no receiver and no `self` binding; the receiver is a property of an instance method, not of
@@ -124,14 +124,14 @@ incidentally coupled under the module-only design; they are semantically indepen
   "Runtime ops as methods on `Scope`". Also introduces a synthetic runtime object for packages that
   today have none, purely to give the runtime handle a container.
 
-- **Capability-typed `ProcessLowerer` split.** Model the six body kinds (module process, module
-  structural subroutine, class method, class constructor, class static_init, package function) as
-  separate lowerer types, each carrying only the ambient facts its body can use. Rejected because
-  the observed bug class funneled through exactly two helpers (the services-call builder and the
-  enclosing-scope lowerer) and the crash count did not motivate a type-system- level refactor. The
-  concern -- lowering helpers reaching ambient state that some body kinds lack -- is real, but
-  addressed adequately by localizing runtime reach into `current_runtime()` and by fixing the
-  specific eager-deref site in the enclosing-scope lowerer.
+- **Capability-typed `ProcessLowerer` split.** Model the body kinds (module process, module
+  structural subroutine, class method, class constructor, package function) as separate lowerer
+  types, each carrying only the ambient facts its body can use. Rejected because the observed bug
+  class funneled through exactly two helpers (the services-call builder and the enclosing-scope
+  lowerer) and the crash count did not motivate a type-system- level refactor. The concern --
+  lowering helpers reaching ambient state that some body kinds lack -- is real, but addressed
+  adequately by localizing runtime reach into `current_runtime()` and by fixing the specific
+  eager-deref site in the enclosing-scope lowerer.
 
 - **Global variable, not `thread_local`.** Simpler by one qualifier; effectively equivalent under
   today's single-simulation-thread model. Rejected because `thread_local` is the honest general form
@@ -238,12 +238,13 @@ incidentally coupled under the module-only design; they are semantically indepen
   now fire correctly, pending on behalf of whichever process reached the check -- including none,
   when a variable initializer reaches it before any process exists.
 
-- Not addressed here: class `static_init` executed at C++ `dynamic-static-init` lifetime
-  (pre-`main`, pre-Runtime). Static initializer bodies that transitively use the runtime still fail
-  because there is no attached Runtime on any thread at that point. Fixing this requires moving
-  static_init from C++ static-init-order lifetime into the runtime elaboration lifecycle
-  (post-Runtime-construction, pre-initial). Orthogonal to the ambient-runtime mechanism; tracked
-  separately.
+- Not addressed here, and since closed: a class's type-associated cells were brought up at C++
+  `dynamic-static-init` lifetime (pre-`main`, pre-Runtime), so an initializer that transitively used
+  the runtime failed for want of an attached Runtime. This entry named the fix as moving that work
+  into the runtime elaboration lifecycle, post-Runtime-construction and pre-`initial`, and
+  [type-associated-storage-is-the-declarers](type-associated-storage-is-the-declarers.md) is where
+  that happened: such a cell now comes up wherever its declarer's own storage does, which is inside
+  the lifecycle on both backends. Orthogonal to the ambient-runtime mechanism, as this entry said.
 
 ## Cross-references
 

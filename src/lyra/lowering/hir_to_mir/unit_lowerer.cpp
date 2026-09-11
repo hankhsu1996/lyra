@@ -29,7 +29,7 @@
 #include "lyra/lowering/hir_to_mir/default_value.hpp"
 #include "lyra/lowering/hir_to_mir/expression/dpi_call.hpp"
 #include "lyra/lowering/hir_to_mir/lhs_store.hpp"
-#include "lyra/lowering/hir_to_mir/package_initialization.hpp"
+#include "lyra/lowering/hir_to_mir/namespace_storage_initialization.hpp"
 #include "lyra/lowering/hir_to_mir/process_lowerer.hpp"
 #include "lyra/lowering/hir_to_mir/runtime_call.hpp"
 #include "lyra/lowering/hir_to_mir/static_var_binding.hpp"
@@ -64,12 +64,20 @@ auto BorrowedObjectHandles(const mir::TypePool& types, mir::TypeId value_type)
           .mutability = mir::Mutability::kMutable}});
 }
 
-// The other units whose variables `body` reads. A body is a tree of blocks --
-// a predicate that declares identifiers (LRM 12.6.3) puts the arms it guards in
-// one of its own -- so the answer is the union over the whole tree.
+// The other units whose namespace-owned cells `body` reads -- a variable of the
+// namespace itself, or one of its classes' type-associated cells, the two being
+// one kind of storage differing in how far the name is qualified. A body is a
+// tree of blocks -- a predicate that declares identifiers (LRM 12.6.3) puts the
+// arms it guards in one of its own -- so the answer is the union over the whole
+// tree.
 auto UnitsReadBy(const mir::Block& body, std::string_view own_unit)
     -> std::unordered_set<std::string> {
   std::unordered_set<std::string> units;
+  const auto note = [&](std::string_view unit_name) {
+    if (unit_name != own_unit) {
+      units.emplace(unit_name);
+    }
+  };
   for (const mir::ExprId id : body.exprs.Ids()) {
     const auto* reference =
         std::get_if<mir::ReferenceExpr>(&body.exprs.Get(id).data);
@@ -77,9 +85,12 @@ auto UnitsReadBy(const mir::Block& body, std::string_view own_unit)
       continue;
     }
     if (const auto* ref =
-            std::get_if<mir::ExternalUnitVariableRef>(&reference->target);
-        ref != nullptr && ref->unit_name != own_unit) {
-      units.insert(ref->unit_name);
+            std::get_if<mir::ExternalUnitVariableRef>(&reference->target)) {
+      note(ref->unit_name);
+    }
+    if (const auto* ref =
+            std::get_if<mir::ExternalStaticPropertyRef>(&reference->target)) {
+      note(ref->unit_name);
     }
   }
   for (const mir::BlockId id : body.child_scopes.Ids()) {
@@ -88,36 +99,26 @@ auto UnitsReadBy(const mir::Block& body, std::string_view own_unit)
   return units;
 }
 
-// Synthesizes the two receiver-less callables that bring a package's cells up
-// at time zero: `Install` installs every cell's declared representation and
-// default, and `Initialize` runs each LRM 10.5 value initializer through its
-// cell. What they cover is everything the namespace owns -- its variables (LRM
+// Brings the cells the unit's namespace owns directly up in the two bodies the
+// design root runs at time zero: `install_frame` receives each cell's declared
+// representation and default, and `value_frame` each LRM 10.5 value
+// initializer. What this covers is the namespace's own -- its variables (LRM
 // 26.2) and the static-lifetime locals its subroutines declare, which are the
-// same one-program-global-cell storage. Neither callable takes a parameter: a
-// package has no `self`, and neither operation needs one. The design root
-// installs every package before initializing any, so a value initializer always
-// reaches installed storage. Such a cell is reached by name (`unit::name`), so
-// an initializer's references to sibling or other-package variables lower
-// through the same by-name path with no enclosing scope or receiver; the
-// other-package reads are recorded as the unit's initializer dependency.
-auto PopulatePackageStaticStorage(
+// same one-program-global-cell storage; the cells the unit's classes own join
+// the same two bodies from the class lowering. The design root installs every
+// unit before initializing any, so a value initializer always reaches installed
+// storage. Such a cell is reached by name (`unit::name`), so an initializer's
+// references to sibling or other-unit variables lower through the same by-name
+// path with no enclosing scope or receiver.
+auto PopulateNamespaceOwnStorage(
     UnitLowerer& unit_lowerer, const hir::StructuralScope& scope,
     const base::Translation<hir::StructuralSubroutineId, StaticVarBindings>&
         subroutine_statics,
-    const DeclaredScopes& scope_nodes) -> diag::Result<void> {
+    const DeclaredScopes& scope_nodes, const WalkFrame& install_frame,
+    const WalkFrame& value_frame) -> diag::Result<void> {
   mir::CompilationUnit& unit = unit_lowerer.Unit();
-
-  mir::CallableCode install_code = mir::CallableCode::Defined();
-  install_code.result_type = unit.builtins.void_type;
-  mir::Block& install_block = install_code.Body();
-  const WalkFrame install_frame = WalkFrame{}.WithBlock(&install_block);
-
-  mir::CallableCode value_code = mir::CallableCode::Defined();
-  value_code.result_type = unit.builtins.void_type;
-  CallableBindings value_bindings(unit, value_code);
-  mir::Block& value_block = value_code.Body();
-  const WalkFrame value_frame =
-      WalkFrame{}.WithBlock(&value_block).WithBindings(&value_bindings);
+  mir::Block& install_block = *install_frame.current_block;
+  mir::Block& value_block = *value_frame.current_block;
 
   // The package root scope is an ExprLowerer over its own expressions: a
   // variable initializer's operands are literals, operators, and by-name
@@ -201,104 +202,42 @@ auto PopulatePackageStaticStorage(
         src.name, WalkFrame{}, scope_nodes, statics);
     for (const StaticVarBinding& binding : statics) {
       auto integ = IntegrateStaticInitializer(
-          body_lowerer, src.body, install_frame, value_frame, binding);
+          body_lowerer, src.body,
+          StorageBringUp{.install = install_frame, .value = value_frame},
+          binding);
       if (!integ) return std::unexpected(std::move(integ.error()));
     }
   }
 
-  // Every package publishes both entries. A package that declares no variable
-  // publishes a body that installs none and a body that initializes none --
-  // zero declarations is a count, not another kind of package -- so the design
-  // root calls both without first finding out what this one supplied.
-  //
-  // The initializer's direct other-package variable reads are the by-name
-  // dependency the design root prefers an order on.
-  const std::unordered_set<std::string> reads =
-      UnitsReadBy(value_block, unit.name);
-  unit.direct_initializer_package_reads.assign(reads.begin(), reads.end());
-  std::ranges::sort(unit.direct_initializer_package_reads);
-
-  unit.callables.Add(
-      mir::CallableDecl{
-          .name = std::string{kPackageInstallCallableName},
-          .code = std::move(install_code),
-          .foreign = std::nullopt,
-          .virtual_dispatch = std::nullopt});
-  unit.callables.Add(
-      mir::CallableDecl{
-          .name = std::string{kPackageInitializeCallableName},
-          .code = std::move(value_code),
-          .foreign = std::nullopt,
-          .virtual_dispatch = std::nullopt});
   return {};
 }
 
-// Builds the design's way in: a nullary callable that constructs the root
-// object -- parentless, at the hierarchy's origin -- and returns it as the
-// generic scope. Construction is what a design does at its own root, so it is
-// stated here as ordinary construction rather than left for a host artifact to
-// hand-compose; everything else about starting a run is the same for every
-// design and is the host's.
-void DefineRootFactory(mir::CompilationUnit& unit) {
-  if (!unit.root.has_value()) {
-    throw InternalError("DefineRootFactory: the design root has no root class");
-  }
-  const mir::ClassId root_class = *unit.root;
-  const mir::Class& root = unit.GetClass(root_class);
-  const mir::TypeId owned_scope = unit.types.Intern(
-      mir::Type{mir::PointerType{
-          .pointee = unit.types.Intern(
-              mir::Type{
-                  mir::RuntimeClassType{.symbol = "lyra::runtime::Scope"}}),
-          .ownership = mir::PointerOwnership::kUnique,
-          .mutability = mir::Mutability::kMutable}});
+// Publishes the two bodies the design root calls, and records what the value
+// body reads of other units. Every namespace unit publishes both entries. One
+// that owns no cell publishes a body that installs none and a body that
+// initializes none -- zero declarations is a count, not another kind of unit --
+// so the design root calls both without first finding out what this one
+// supplied. The value body's direct reads of another unit's cells are the
+// by-name dependency the design root prefers an order on.
+void PublishNamespaceStorageBringUp(
+    mir::CompilationUnit& unit, mir::CallableCode install_code,
+    mir::CallableCode value_code) {
+  const std::unordered_set<std::string> reads =
+      UnitsReadBy(value_code.Body(), unit.name);
+  unit.direct_initializer_unit_reads.assign(reads.begin(), reads.end());
+  std::ranges::sort(unit.direct_initializer_unit_reads);
 
-  mir::CallableCode code = mir::CallableCode::Defined();
-  code.body.emplace();
-  code.result_type = owned_scope;
-  mir::Block& body = code.Body();
-
-  const mir::ExprId label = body.exprs.Add(
-      mir::Expr{
-          .data = mir::StringLiteral{.value = root.name},
-          .type = unit.builtins.string});
-  const mir::ExprId indices = body.exprs.Add(
-      mir::Expr{
-          .data = mir::CompositeExpr{.parts = {}},
-          .type = mir::MachineArrayOf(unit.types, unit.builtins.int_type, 0)});
-  const mir::ExprId segment = body.exprs.Add(
-      mir::Expr{
-          .data =
-              mir::CallExpr{
-                  .callee = mir::Construct{}, .arguments = {label, indices}},
-          .type = unit.builtins.hierarchy_segment});
-  const mir::ExprId no_parent = body.exprs.Add(
-      mir::Expr{.data = mir::NullLiteral{}, .type = unit.builtins.scope_ptr});
-  const mir::ExprId built = body.exprs.Add(
-      mir::Expr{
-          .data =
-              mir::CallExpr{
-                  .callee = mir::Construct{},
-                  .arguments = {no_parent, segment}},
-          .type = unit.types.Intern(
-              mir::Type{mir::PointerType{
-                  .pointee = unit.types.Intern(
-                      mir::Type{mir::ObjectType{.class_id = root_class}}),
-                  .ownership = mir::PointerOwnership::kUnique,
-                  .mutability = mir::Mutability::kMutable}})});
-  body.AppendStmt(
-      mir::ReturnStmt{
-          .value = body.exprs.Add(
-              mir::Expr{
-                  .data = mir::CastExpr{.operand = built},
-                  .type = owned_scope})});
-
-  unit.root_factory = unit.callables.Add(
-      mir::CallableDecl{
-          .name = "BuildRoot",
-          .code = std::move(code),
-          .foreign = std::nullopt,
-          .virtual_dispatch = std::nullopt});
+  unit.content = mir::BroughtUpNamespace{
+      .install_storage = unit.callables.Add(
+          mir::CallableDecl{
+              .code = std::move(install_code),
+              .foreign = std::nullopt,
+              .virtual_dispatch = std::nullopt}),
+      .initialize_storage = unit.callables.Add(
+          mir::CallableDecl{
+              .code = std::move(value_code),
+              .foreign = std::nullopt,
+              .virtual_dispatch = std::nullopt})};
 }
 
 }  // namespace
@@ -447,17 +386,19 @@ auto UnitLowerer::RunObjectRoot() -> diag::Result<mir::CompilationUnit> {
   return std::move(unit_);
 }
 
-auto UnitLowerer::RunDesignRoot(PackageInitializationPlan package_init_plan)
+auto UnitLowerer::RunDesignRoot(
+    NamespaceStorageInitializationPlan namespace_storage_plan)
     -> diag::Result<mir::CompilationUnit> {
-  if (auto root = PopulateModuleRoot(std::move(package_init_plan)); !root) {
+  if (auto root = PopulateModuleRoot(std::move(namespace_storage_plan));
+      !root) {
     return std::unexpected(std::move(root.error()));
   }
-  DefineRootFactory(unit_);
   return std::move(unit_);
 }
 
 auto UnitLowerer::PopulateModuleRoot(
-    PackageInitializationPlan package_init_plan) -> diag::Result<void> {
+    NamespaceStorageInitializationPlan namespace_storage_plan)
+    -> diag::Result<void> {
   WalkFrame root_frame;
   if (auto prologue = PublishUnitDeclarations(); !prologue) {
     return std::unexpected(std::move(prologue.error()));
@@ -465,17 +406,18 @@ auto UnitLowerer::PopulateModuleRoot(
 
   // Two-sweep structural lowering: the first sweep mints every class identity
   // and settles its declaration; the second lowers every body and commits the
-  // composed class to the unit. The design root's package initialization plan
-  // rides on the root scope's lowering and is empty for a source module.
+  // composed class to the unit. The design root's plan for bringing up what the
+  // namespace units own rides on the root scope's lowering and is empty for a
+  // source module.
   StructuralScopeLowerer root(
       *this, nullptr, hir::InstanceClassName(hir_->name), hir_->root_scope,
-      std::move(package_init_plan));
+      std::move(namespace_storage_plan));
   auto top_r = root.DeclareShape();
   if (!top_r) return std::unexpected(std::move(top_r.error()));
   auto body_r = root.PopulateBodies(root_frame);
   if (!body_r) return std::unexpected(std::move(body_r.error()));
 
-  unit_.root = *top_r;
+  unit_.content = mir::RootedTree{.root = *top_r};
   return {};
 }
 
@@ -510,10 +452,33 @@ auto UnitLowerer::RunNamespace() -> diag::Result<mir::CompilationUnit> {
         SignatureBoundVars(src), src.name));
   }
 
+  // The two bodies the design root calls at time zero. They exist before
+  // anything that fills them, because everything the namespace owns comes up in
+  // them -- its own variables and the type-associated cells of the classes it
+  // declares -- and the class lowering writes into them as it goes.
+  mir::CallableCode install_code = mir::CallableCode::Defined();
+  install_code.result_type = unit_.builtins.void_type;
+  const WalkFrame install_frame = WalkFrame{}.WithBlock(&install_code.Body());
+
+  mir::CallableCode value_code = mir::CallableCode::Defined();
+  value_code.result_type = unit_.builtins.void_type;
+  CallableBindings value_bindings(unit_, value_code);
+  const WalkFrame value_frame =
+      WalkFrame{}.WithBlock(&value_code.Body()).WithBindings(&value_bindings);
+
+  if (auto own = PopulateNamespaceOwnStorage(
+          *this, scope, subroutine_statics, package_scope_nodes, install_frame,
+          value_frame);
+      !own) {
+    return std::unexpected(std::move(own.error()));
+  }
+
   // The classes this unit declares. A namespace replicates nothing, so an
   // object of one belongs to no instance and its bodies name no scope's
   // declarations -- which is the same relation a module's scope carries, with
-  // the instance absent rather than a second arrangement.
+  // the instance absent rather than a second arrangement. Nothing replicates
+  // the class, so its type-associated cells are its own and come up where the
+  // namespace brings up the rest of what it owns (LRM 8.9, 10.5).
   std::vector<ClassDeclLowerer> class_lowerers;
   class_lowerers.reserve(scope.declared_classes.size());
   for (const hir::ClassId hir_class : scope.declared_classes) {
@@ -527,7 +492,10 @@ auto UnitLowerer::RunNamespace() -> diag::Result<mir::CompilationUnit> {
     }
   }
   for (ClassDeclLowerer& class_lowerer : class_lowerers) {
-    if (auto r = class_lowerer.PopulateBodies(WalkFrame{}, WalkFrame{}); !r) {
+    if (auto r = class_lowerer.PopulateBodies(
+            WalkFrame{},
+            StorageBringUp{.install = install_frame, .value = value_frame});
+        !r) {
       return std::unexpected(std::move(r.error()));
     }
   }
@@ -544,12 +512,16 @@ auto UnitLowerer::RunNamespace() -> diag::Result<mir::CompilationUnit> {
         src.name, WalkFrame{}, package_scope_nodes, subroutine_statics.Get(id));
     auto code_or = subroutine_lowerer.Run(src);
     if (!code_or) return std::unexpected(std::move(code_or.error()));
-    subroutine_callables.Append(unit_.callables.Add(
+    const mir::CallableId body = unit_.callables.Add(
         mir::CallableDecl{
-            .name = src.name,
             .code = *std::move(code_or),
             .foreign = std::nullopt,
-            .virtual_dispatch = std::nullopt}));
+            .virtual_dispatch = std::nullopt});
+    // A package subroutine is what another unit spells (LRM 26.3), so the
+    // unit's namespace records the name against the body it reaches.
+    unit_.named_callables.push_back(
+        mir::NamedCallable{.name = src.name, .body = body});
+    subroutine_callables.Append(body);
   }
 
   // Each exported package subroutine (LRM 26.3, 35.7) is receiver-less: its
@@ -576,19 +548,14 @@ auto UnitLowerer::RunNamespace() -> diag::Result<mir::CompilationUnit> {
             .definition = std::move(entry.definition)});
     unit_.callables.Add(
         mir::CallableDecl{
-            .name = entry.linkage.foreign_name,
             .code = std::move(entry.code),
             .foreign = std::move(entry.linkage),
             .virtual_dispatch = std::nullopt});
   }
 
-  if (auto vars = PopulatePackageStaticStorage(
-          *this, scope, subroutine_statics, package_scope_nodes);
-      !vars) {
-    return std::unexpected(std::move(vars.error()));
-  }
+  PublishNamespaceStorageBringUp(
+      unit_, std::move(install_code), std::move(value_code));
 
-  unit_.root = std::nullopt;
   return std::move(unit_);
 }
 

@@ -132,6 +132,31 @@ a pair of types -- say it. What made each split look necessary was that it turne
 into a build break; that property is kept by having each backend refuse what it cannot realize,
 rather than by naming the cases in the IR.
 
+## An optimization belongs to the layer that owns it
+
+A distinction that exists only to avoid emitting work is an optimization, and a layer that encodes
+one has taken a decision away from the layer whose job it is. The tell is a shape carrying "there is
+nothing here" as structure rather than as content: an `optional` that is absent exactly when a list
+would have been empty, a body synthesized only when it would have had statements, an arm skipped
+because what it emits does nothing. Each one buys emitted work not done, and each one is paid for by
+every consumer above the optimizer, in a branch and in a case its own vocabulary now has to admit.
+
+**The reason to keep the uniform shape is not that the saving is small.** It is that the upper
+layers are where generality lives: what they can express is the compiler's coverage, and every
+special case admitted to save work narrows it. The saving is available in full one layer down, taken
+by a pass that needs no one else to know it happened. Simplicity upstream is what makes the upper
+layers general; the optimizer is what makes the output small. Those are two jobs, and the trade
+between them is not a trade -- it is a division.
+
+**This holds whether or not the optimizer is switched on.** Lyra's execution backend currently runs
+only the passes that make a suspending body executable and nothing that removes dead work, so a body
+emitted empty stays empty in the module. That is a fact about today's pipeline, not about where the
+decision belongs. A shape defended by "the optimizer removes it anyway" is defended by a fact that
+can change; a shape defended by "removing it is not this layer's decision" is not.
+
+The sibling of `north_star.md` invariant 3, which says correctness is independent of optimization.
+This says uniformity is too.
+
 ## Falsifying a proposed shape
 
 Four checks, all cheap:

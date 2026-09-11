@@ -2,7 +2,6 @@
 
 #include <memory>
 #include <string>
-#include <string_view>
 
 #include "lyra/diag/diagnostic.hpp"
 
@@ -56,15 +55,5 @@ class EmittedModule {
 // what was met.
 auto EmitModule(const lir::CompilationUnit& unit)
     -> diag::Result<EmittedModule>;
-
-// The linkage symbol under which a declaration publishes the runtime definition
-// its values are built from -- a scope class, or a closure. A construct
-// references the definition of what it builds by this name and the host
-// resolves it to the built definition object, whether the declaration belongs
-// to this unit or to another; the runtime record has one shape, so naming it
-// has one rule. A unit publishes its root class under the unit's own name,
-// which is what a cross-unit reference knows. One source of truth so the
-// producing reference and the resolving host never drift.
-auto DefinitionSymbolName(std::string_view declaration_name) -> std::string;
 
 }  // namespace lyra::backend::llvm_backend

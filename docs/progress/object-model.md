@@ -155,10 +155,14 @@ each stage establishes, not how.
       static method has no receiver and cannot be virtual. Each layer keeps the two categories in
       disjoint arenas -- an instance member and a type-associated one never share identity space --
       and the initializer of a static property runs once per cell, before any initial or always
-      procedure (LRM 10.5), rather than on each construction. Because a static property needs no
-      receiver, it also reads from a structural expression (a continuous-assignment right-hand
-      side), which re-evaluates when the cell changes; an instance property has no structural form,
-      having no receiver to reach it through.
+      procedure (LRM 10.5), rather than on each construction. What runs it is whatever brings up the
+      thing that replicates the class declaration, so such a class needs no startup moment of its
+      own; a property the source left without a value takes its type's default at that same moment
+      rather than whatever its storage was born as. Because a static property needs no receiver, a
+      name reaches it from outside every body of the class and it reads from a structural expression
+      (a continuous-assignment right-hand side), which re-evaluates when the cell changes -- which
+      is what makes it observable storage where an instance property, having no receiver to reach it
+      through, is a plain value.
 
 - [x] A static-lifetime local of a method (LRM 6.21): a variable a method declares `static` belongs
       to the class rather than to an object of it, so every call reaches the same cell however many

@@ -129,8 +129,8 @@ auto BuildSampledHistoryExpr(
 
 auto LowerSampledHistorySampler(
     const StructuralScopeLowerer& lowerer, const WalkFrame& ctor_frame,
-    std::string name, hir::SampledHistoryId id,
-    const hir::SampledHistoryDecl& history) -> diag::Result<mir::CallableDecl> {
+    hir::SampledHistoryId id, const hir::SampledHistoryDecl& history)
+    -> diag::Result<mir::CallableDecl> {
   mir::CompilationUnit& unit = lowerer.Owner().Unit();
   const hir::StructuralScope& hir_scope = lowerer.HirScope();
   const mir::TypeId self_ptr_type = ctor_frame.current_class->self_pointer_type;
@@ -208,7 +208,6 @@ auto LowerSampledHistorySampler(
   code.params = {self_id};
   code.result_type = unit.builtins.coroutine_void;
   return mir::CallableDecl{
-      .name = std::move(name),
       .code = std::move(code),
       .foreign = std::nullopt,
       .virtual_dispatch = std::nullopt};

@@ -33,12 +33,28 @@ struct CrossUnitBase {
   std::string class_name;
 };
 
-// A base class the runtime library defines, named by the library symbol.
-struct RuntimeBase {
-  std::string symbol;
+// The runtime's object tree as a base: what a class extends by standing in that
+// tree, and the three functions it supplies to be driven through.
+//
+// The runtime drives every object of the tree through them, in the order they
+// stand here: every route and alias is bound while the tree is complete and
+// nothing has run, then every cell takes the value its declaration gives it
+// (LRM 10.5), then every process is created (LRM 9.2). Each is entered on one
+// instance and returns before the next begins, which is why the three are
+// separate functions rather than one with phases inside it. Standing in the
+// tree and being driven are one fact, so a class in the tree that states no way
+// to run, and a way to run on a class outside it, are both unspellable.
+//
+// What the runtime calls the class it provides is a spelling of whichever
+// target emits against that library, so it is not here: this states that the
+// base is the runtime's, and how the class stands in it.
+struct ObjectTreeBase {
+  FunctionId resolve_state;
+  FunctionId initialize_state;
+  FunctionId create_processes;
 };
 
-using Base = std::variant<IntraUnitBase, CrossUnitBase, RuntimeBase>;
+using Base = std::variant<IntraUnitBase, CrossUnitBase, ObjectTreeBase>;
 
 // A typed member of whatever declares it -- the storage a member place reaches
 // by a member projection. Its position in the declaring list is its member
@@ -86,6 +102,11 @@ struct PublishedSubroutine {
 // way a member's position is its identity above, and a body is absent where the
 // behavior is declared without an implementation (LRM 8.21); no value answers
 // such a behavior, because a class leaving one unanswered is never constructed.
+// `name` is the class's own, as its unit declared it -- not a symbol. What the
+// class links under, what its constructor links under, and what the record
+// describing it links under are three different symbols over those same parts,
+// so none of them is derivable from another and each is composed where it is
+// used.
 struct Class {
   std::string name;
   std::optional<Base> base;
@@ -96,26 +117,27 @@ struct Class {
   std::vector<PublishedSubroutine> subroutines;
 };
 
-// Whether values of this class are nodes of the runtime object tree. Extending
-// a base the runtime library defines is what puts an object in that tree, and a
-// scope is the only thing that extends one. Extending a class -- this unit's or
-// another's -- is what a class of the source language does, and says nothing
-// about the tree.
+// How values of this class stand in the runtime's object tree, or nothing where
+// they stand outside it. Extending a class -- this unit's or another's -- is
+// what a class of the source language does and says nothing about the tree, so
+// which base a class has is the whole of the answer.
 //
 // One level is the whole answer because a scope is sealed: nothing extends one,
-// so a class either extends the runtime base itself or stands outside the tree
-// entirely. Walking a lineage here would be looking for a shape the source
-// language cannot write.
-[[nodiscard]] inline auto IsObjectTreeNode(const Class& cls) -> bool {
+// so a class either takes the tree as its base or stands outside it entirely.
+// Walking a lineage here would be looking for a shape the source language
+// cannot write.
+[[nodiscard]] inline auto ObjectTreeBaseOf(const Class& cls)
+    -> const ObjectTreeBase* {
   if (!cls.base.has_value()) {
-    return false;
+    return nullptr;
   }
-  return std::visit(
-      Overloaded{
-          [](const RuntimeBase&) { return true; },
-          [](const IntraUnitBase&) { return false; },
-          [](const CrossUnitBase&) { return false; }},
-      *cls.base);
+  return std::get_if<ObjectTreeBase>(&*cls.base);
+}
+
+// Whether they stand in it at all, for a reader that wants nothing else. Asking
+// this is the read above with the answer dropped, so the two cannot disagree.
+[[nodiscard]] inline auto IsObjectTreeNode(const Class& cls) -> bool {
+  return ObjectTreeBaseOf(cls) != nullptr;
 }
 
 // A class of another unit this one reaches a property on, as far as that unit
@@ -149,8 +171,10 @@ struct ExternalUnitObject {
 // Its captures are initialized where a value of it is built rather than by a
 // body of its own, and nothing dispatches on it, so it shares the member
 // vocabulary with a class and no part of its interface.
+// It carries no name: the source declares no closure, so its position in its
+// unit is the whole of its identity and what it links under is composed from
+// that.
 struct Closure {
-  std::string name;
   std::vector<Member> captures;
   FunctionId invoke{};
 };
@@ -160,6 +184,7 @@ struct Closure {
 // reached the same way a property and a capture are; what it does not share is
 // any code, since a struct is storage a builder fills rather than a thing that
 // runs.
+// `name` is the struct's own, as its unit named it -- not a symbol.
 struct Struct {
   std::string name;
   std::vector<Member> fields;
@@ -235,7 +260,7 @@ struct CompilationUnit {
                     .unit_name = cross.unit_name,
                     .class_name = cross.class_name}});
           },
-          [](const RuntimeBase&) -> std::optional<TypeId> {
+          [](const ObjectTreeBase&) -> std::optional<TypeId> {
             return std::nullopt;
           }},
       base);

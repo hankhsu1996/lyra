@@ -9,6 +9,7 @@
 #include <vector>
 
 #include "lyra/backend/cpp/formatting.hpp"
+#include "lyra/backend/cpp/naming.hpp"
 #include "lyra/backend/cpp/render_expr.hpp"
 #include "lyra/backend/cpp/render_type.hpp"
 #include "lyra/backend/cpp/scope_view.hpp"
@@ -144,7 +145,7 @@ auto ResolveDirectSpelling(
             return {
                 .name = std::format(
                     "{}::{}", ToCppName(cls.name),
-                    cls.callables.Get(t.slot).name),
+                    CppCallableName(cls.named_callables, t.slot)),
                 .placement = ReceiverPlacement::kIntoCalleeName};
           },
           [&](const support::BuiltinFn& id) -> CalleeSpelling {
@@ -169,7 +170,17 @@ auto ResolveDirectSpelling(
             return {
                 .name = std::format(
                     "{}::{}::{}", ToCppName(t.unit_name),
-                    ToCppName(t.class_name), t.method_name),
+                    ToCppName(t.class_name), ToCppName(t.method_name)),
+                .placement = ReceiverPlacement::kIntoCalleeName};
+          },
+          // A body that brings up another unit's namespace answers to no name,
+          // so it is named through that unit's namespace by which of the two it
+          // is -- the same identifier that unit emitted it under.
+          [](const mir::ExternalUnitStorageTarget& t) -> CalleeSpelling {
+            return {
+                .name = std::format(
+                    "{}::{}", ToCppName(t.unit_name),
+                    CppStorageEntryName(t.phase)),
                 .placement = ReceiverPlacement::kIntoCalleeName};
           },
           // A DPI-C symbol is program-global, so it is spelled unqualified
@@ -203,10 +214,11 @@ auto ResolveCalleeSpelling(
                 .name = std::visit(
                     Overloaded{
                         [&](const mir::LocalVirtualSlot& l) -> std::string {
-                          return view.Unit()
-                              .GetClass(l.owner_class)
-                              .callables.Get(l.slot)
-                              .name;
+                          return CppCallableName(
+                              view.Unit()
+                                  .GetClass(l.owner_class)
+                                  .named_callables,
+                              l.slot);
                         },
                         [&](const mir::ExternalVirtualSlot& e) -> std::string {
                           const mir::ExternalClass* introducer =
@@ -219,7 +231,8 @@ auto ResolveCalleeSpelling(
                                 "RenderCall: a dispatch names a behavior no "
                                 "consumed promise describes");
                           }
-                          return introducer->behaviors[e.ordinal.value];
+                          return ToCppName(
+                              introducer->behaviors[e.ordinal.value]);
                         }},
                     v.slot),
                 .placement = ReceiverPlacement::kIntoCalleeName};

@@ -590,7 +590,6 @@ auto LowerDisableWatcher(
   code.params = {self_id};
   code.result_type = unit.builtins.coroutine_void;
   return mir::CallableDecl{
-      .name = AssertionName(id, "disable"),
       .code = std::move(code),
       .foreign = std::nullopt,
       .virtual_dispatch = std::nullopt};
@@ -675,7 +674,6 @@ auto LowerProcess(
   code.params = {self_id};
   code.result_type = unit.builtins.coroutine_void;
   return mir::CallableDecl{
-      .name = AssertionName(id, "process"),
       .code = std::move(code),
       .foreign = std::nullopt,
       .virtual_dispatch = std::nullopt};
@@ -725,19 +723,16 @@ auto LowerConcurrentAssertion(
 
   const mir::CallableId pass_id = mir_class.callables.Add(
       mir::CallableDecl{
-          .name = AssertionName(id, "pass"),
           .code = *std::move(pass),
           .foreign = std::nullopt,
           .virtual_dispatch = std::nullopt});
   const mir::CallableId fail_id = mir_class.callables.Add(
       mir::CallableDecl{
-          .name = AssertionName(id, "fail"),
           .code = *std::move(fail),
           .foreign = std::nullopt,
           .virtual_dispatch = std::nullopt});
   const mir::CallableId advance_id = mir_class.callables.Add(
       mir::CallableDecl{
-          .name = AssertionName(id, "advance"),
           .code = *std::move(advance),
           .foreign = std::nullopt,
           .virtual_dispatch = std::nullopt});

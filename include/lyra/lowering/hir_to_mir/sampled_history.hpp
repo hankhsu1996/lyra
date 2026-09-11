@@ -1,7 +1,5 @@
 #pragma once
 
-#include <string>
-
 #include "lyra/diag/diagnostic.hpp"
 #include "lyra/hir/sampled_history.hpp"
 #include "lyra/lowering/hir_to_mir/expression/expr_lowerer.hpp"
@@ -27,8 +25,8 @@ namespace lyra::lowering::hir_to_mir {
 // or not anything is reading it, so it is lowered as one.
 [[nodiscard]] auto LowerSampledHistorySampler(
     const StructuralScopeLowerer& lowerer, const WalkFrame& ctor_frame,
-    std::string name, hir::SampledHistoryId id,
-    const hir::SampledHistoryDecl& history) -> diag::Result<mir::CallableDecl>;
+    hir::SampledHistoryId id, const hir::SampledHistoryDecl& history)
+    -> diag::Result<mir::CallableDecl>;
 
 // `$past`: the value the tick it names settled, and nothing else (LRM 16.9.3).
 template <ExprLowerer Lowerer>

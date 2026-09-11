@@ -212,16 +212,6 @@ enough to warrant its own focused review.
       carried by its result type, so every backend reads it from there; no return statement,
       closure, or lowering frame restates it as a flag of its own.
 
-- [x] R15 -- Give `mir::Process` a `name` field, so the C++ method name, static-frame struct name,
-      static-frame field name, and any future LLVM-IR function symbol all flow from a single
-      MIR-level identifier instead of each backend re-deriving "process_N" from a position-in-scope
-      iteration index. `mir::MethodDecl::name` already plays this role for methods; processes are
-      anonymous in SV (LRM 9.2) so HIR-to-MIR synthesises a positional identifier (`"process_0"`
-      etc.) and threads it into the lowering so the returned `Process` is constant -- no post-hoc
-      mutation. The `WithStaticFrame(...)` install in the cpp backend now reads
-      `process.name + "__static"` rather than computing from an iteration index; the walker-state
-      propagation of the frame field name continues until R18 dissolves the walk frame.
-
 - [x] R16 -- Give every MIR callable body an explicit `self` first binding -- `locals[0]` is a local
       of borrowed-pointer-to-enclosing-class type, named `self`. Route every class-member access
       through a new `mir::MemberAccessExpr { receiver, var }` whose receiver reaches `self` via
@@ -241,10 +231,10 @@ enough to warrant its own focused review.
       `static auto <name>(M* self, ...) -> ... { ... }`, with the C++ constructor delegating its
       body to a `static init(this)` call; closures as
       `[self = <enclosing self>, cap1 = ..., &cap2 = ...](closure_params) -> R { ... }` -- every
-      capture is name-explicit, the clause never contains `[this]`, `[=]`, or `[&]`.
-      `CreateProcesses()` remains a virtual instance method (C++ requires it) and emits
-      `AddProcess(kind, process_N(this))`. The receiver-related `RenderContext` machinery disappears
-      in lockstep. See `docs/decisions/callable-receiver.md`.
+      capture is name-explicit, the clause never contains `[this]`, `[=]`, or `[&]`. The body that
+      creates a scope's processes registers each one over the receiver it was handed. The
+      receiver-related `RenderContext` machinery disappears in lockstep. See
+      `docs/decisions/callable-receiver.md`.
 
 - [x] R17 -- Selector and packed-struct field access lower to explicit built-in method calls for
       element access, slice, and the borrowed-to-owned materialisation. The dedicated element-select

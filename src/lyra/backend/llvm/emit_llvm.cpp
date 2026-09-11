@@ -1,7 +1,5 @@
-#include <format>
 #include <memory>
 #include <string>
-#include <string_view>
 #include <utility>
 
 #include <llvm/IR/LLVMContext.h>
@@ -38,10 +36,6 @@ auto EmittedModule::Release() && -> Owned {
 auto EmitModule(const lir::CompilationUnit& unit)
     -> diag::Result<EmittedModule> {
   return CodeGenModule(unit).Run();
-}
-
-auto DefinitionSymbolName(std::string_view declaration_name) -> std::string {
-  return std::format("{}.definition", declaration_name);
 }
 
 }  // namespace lyra::backend::llvm_backend

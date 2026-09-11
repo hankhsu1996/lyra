@@ -20,6 +20,7 @@
 #include "lyra/mir/external_unit_object_id.hpp"
 #include "lyra/mir/inc_dec_op.hpp"
 #include "lyra/mir/local_ref.hpp"
+#include "lyra/mir/namespace_storage_phase.hpp"
 #include "lyra/mir/static_constant_id.hpp"
 #include "lyra/mir/static_property_id.hpp"
 #include "lyra/mir/struct_id.hpp"
@@ -198,6 +199,20 @@ struct ExternalUnitCallableTarget {
   auto operator==(const ExternalUnitCallableTarget&) const -> bool = default;
 };
 
+// Identity of one of the two bodies bringing up another unit's namespace.
+// Neither is
+// declared by the source, so neither answers to a name, and SystemVerilog
+// leaves no spelling reserved to the compiler (LRM 5.6.1) -- a word minted for
+// one would sit in the same name space as that unit's own subroutines. The two
+// ends agree on which body is meant by which of the two it is, so this is its
+// own identity space rather than a name in the unit's.
+struct ExternalUnitStorageTarget {
+  std::string unit_name;
+  NamespaceStoragePhase phase;
+
+  auto operator==(const ExternalUnitStorageTarget&) const -> bool = default;
+};
+
 // Identity of a method another compilation unit declares on a class -- an
 // instance method (LRM 8.6), including one on the object that unit's instances
 // are (LRM 25.7), or a type-associated method (LRM 8.10). The declaring class
@@ -219,13 +234,15 @@ struct ExternalUnitClassMethodTarget {
 // own callable arena (`CallableTarget`), the closed set of runtime library
 // entries (`BuiltinFn`), another compilation unit's namespace
 // (`ExternalUnitCallableTarget`) or one of its classes
-// (`ExternalUnitClassMethodTarget`), and the DPI-C name space
-// (`ForeignSymbolTarget`, LRM 35.4). Nothing here says whether the call
+// (`ExternalUnitClassMethodTarget`), the fixed entries another unit's namespace
+// brings itself up through (`ExternalUnitStorageTarget`), and the DPI-C name
+// space (`ForeignSymbolTarget`, LRM 35.4). Nothing here says whether the call
 // dispatches on an object -- that is the callee's receiver -- and none is
 // recovered from the receiver's runtime type.
 using DirectTarget = std::variant<
     CallableTarget, support::BuiltinFn, ExternalUnitCallableTarget,
-    ExternalUnitClassMethodTarget, ForeignSymbolTarget>;
+    ExternalUnitClassMethodTarget, ExternalUnitStorageTarget,
+    ForeignSymbolTarget>;
 
 // A direct call to a named symbol -- the code is found by name at compile
 // time. The single shape for every direct invocation: a user method, a
@@ -534,10 +551,12 @@ struct PackedTypeRef {
 // `owner` is the class whose static-property arena declares the cell (a
 // derived source access like `Derived::inherited_prop` still names the base
 // class here, mirroring the owner-qualification rule for inherited instance
-// access). `Expr::type` is the property's type; as a place it appears
-// wherever a `FieldAccessExpr` on a class instance would but without the
-// receiver operand, and it is legal both as an rvalue and as an `AssignExpr`
-// target.
+// access). `Expr::type` is the property's observable-cell type, so a read
+// wraps it in `Get` and a write in `Set`: the property needs no object, so a
+// name outside every body of the class reaches it and a continuous assignment
+// may take it as an operand (LRM 10.3.2) -- which is what a plain value cannot
+// answer for and an instance property, reachable only through a receiver, never
+// has to.
 struct StaticPropertyRef {
   ClassId owner;
   StaticPropertyId prop;
@@ -561,7 +580,8 @@ struct ExternalUnitVariableRef {
 // compilation unit. Its owner has no unit-local id here; the property is
 // named by (declaring unit, class canonical name, property name). A backend
 // renders the access as the qualified `unit::Class::prop` after including
-// the declaring unit's header.
+// the declaring unit's header. `Expr::type` is the property's observable-cell
+// type, exactly as on the intra-unit reference, so the two read alike.
 struct ExternalStaticPropertyRef {
   std::string unit_name;
   std::string class_name;

@@ -10,8 +10,9 @@
 
 namespace lyra::lir {
 
-// The members a declaration holds, with the name it holds them under so a
-// consumer that cannot use one can say whose it was. A member projection is
+// The members a declaration holds, with what a consumer that cannot use one
+// can call it -- the declaration's own name, or which kind of declaration it is
+// where the source gave it none. A member projection is
 // meaningful only against the declaration its base names: an object holds the
 // storage its instances own, whether this unit compiles the class or another
 // unit published it, and a closure holds the captures its values own.

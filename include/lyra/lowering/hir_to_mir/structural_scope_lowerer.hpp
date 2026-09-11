@@ -19,7 +19,7 @@
 #include "lyra/lowering/hir_to_mir/declared_callable.hpp"
 #include "lyra/lowering/hir_to_mir/declared_scope.hpp"
 #include "lyra/lowering/hir_to_mir/lhs_store.hpp"
-#include "lyra/lowering/hir_to_mir/package_initialization.hpp"
+#include "lyra/lowering/hir_to_mir/namespace_storage_initialization.hpp"
 #include "lyra/lowering/hir_to_mir/static_var_binding.hpp"
 #include "lyra/lowering/hir_to_mir/unit_lowerer.hpp"
 #include "lyra/lowering/hir_to_mir/walk_frame.hpp"
@@ -82,12 +82,12 @@ class StructuralScopeLowerer {
   StructuralScopeLowerer(
       UnitLowerer& unit_lowerer, const StructuralScopeLowerer* parent,
       std::string name, const hir::StructuralScope& hir_scope,
-      PackageInitializationPlan package_init_plan = {})
+      NamespaceStorageInitializationPlan namespace_storage_plan = {})
       : owner_(&unit_lowerer),
         parent_(parent),
         name_(std::move(name)),
         hir_scope_(&hir_scope),
-        package_init_plan_(std::move(package_init_plan)) {
+        namespace_storage_plan_(std::move(namespace_storage_plan)) {
   }
 
   // Mints this class's identity, builds its structural shape, publishes the
@@ -383,7 +383,7 @@ class StructuralScopeLowerer {
   // Non-empty only on the design root's own scope, the sole scope whose
   // elaboration spans the whole design. Every source unit's scope and every
   // nested scope leaves it empty.
-  PackageInitializationPlan package_init_plan_;
+  NamespaceStorageInitializationPlan namespace_storage_plan_;
   base::Translation<hir::StructuralDataObjectId, mir::FieldId>
       data_object_fields_;
   base::Translation<hir::SampledHistoryId, mir::FieldId>

@@ -67,12 +67,14 @@ callable-bearing part of PK4 reuse; PK1 is independent of it.
       for the same reason -- one program-global cell, keeping its value from one call to the next,
       its initializer applied once at time zero rather than on each entry. Initialization (LRM 10.5)
       runs at time zero, driven by the design root before the top modules initialize, in two
-      design-wide passes: every package's cells are installed with their declared type and default
-      first, then every package's value initializers run, so an initializer that reads another
-      package's variable always reaches installed storage. The relative order of initializers is
-      unspecified by the LRM; the design root picks a stable, best-effort order (a dependency before
-      its dependent where a direct read makes it known) as a quality-of-implementation choice, and
-      an unknown or cyclic dependency degrades to reading a default, never a crash.
+      design-wide passes over everything each namespace owns -- its variables, its subroutines'
+      static locals, and the type-associated cells of the classes it declares: every unit's cells
+      are installed with their declared type and default first, then every unit's value initializers
+      run, so an initializer that reads another unit's cell always reaches installed storage. The
+      relative order of initializers is unspecified by the LRM; the design root picks a stable,
+      best-effort order (a dependency before its dependent where a direct read makes it known) as a
+      quality-of-implementation choice, and an unknown or cyclic dependency degrades to reading a
+      default, never a crash.
   - [ ] An initializer read reached through a called function contributes to the preferred
         initialization order.
   - [ ] Two packages that reference each other's symbols emit non-circular headers (a header-only

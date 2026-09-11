@@ -27,8 +27,8 @@ Before this decision, MIR carried the variable initializer two ways:
 
 1. `mir::MemberDecl.initializer: ExprId` -- the init expression as a field on the declaration
    itself.
-2. `constructor.body.root_stmts` -- the constructor-time statement sequence (`AttachChild`,
-   `RegisterSignal`, `CreateProcesses`, generate construction, ...).
+2. `constructor.body.root_stmts` -- the constructor-time statement sequence (building a child,
+   registering a signal, creating a process, generate construction, ...).
 
 The C++ backend plucked path (1) into an inline class-body NSDMI (`Var<int> a{1};`) and rendered
 path (2) inside a static `init(Self* self)` helper. A `RenderContext::in_class_member_init_` flag
@@ -44,10 +44,10 @@ to a C++-specific syntactic mode dependency that a LIR / LLVM-IR backend would h
 **MIR has exactly one shape for construction-time work: statements in `constructor.body.root_stmts`.
 For every value-assignable member, HIR-to-MIR inserts an
 `AssignExpr(MemberAccess(self, var), value)` statement at the position the variable is declared in
-source order, before any `RegisterSignal` / `AttachChild` / `CreateProcesses` for the same scope.
-The value is the user-supplied expression when present, otherwise the LRM Table 6-7 type default;
-the statement shape is uniform either way. The `mir::MemberDecl.initializer` field is removed; a
-member declaration carries name and type only.**
+source order, before the same scope registers a signal, builds a child, or creates a process. The
+value is the user-supplied expression when present, otherwise the LRM Table 6-7 type default; the
+statement shape is uniform either way. The `mir::MemberDecl.initializer` field is removed; a member
+declaration carries name and type only.**
 
 Vars whose type has no value-assignment semantics -- owned children (pointer, vector), borrowed
 handles to objects, cross-instance reference slots (borrowed pointers filled in Resolve), and named

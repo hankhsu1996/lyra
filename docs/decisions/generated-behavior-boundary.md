@@ -5,8 +5,8 @@ Date: 2026-07-01 Status: accepted
 ## Context
 
 The runtime drives every design instance through a small set of generated behaviors: the
-post-construction lifecycle bodies (`ResolveState` / `InitializeState` / `CreateProcesses`, see
-`elaboration-lifecycle-phases`) plus constant identity (def name, time precision). How generated
+post-construction lifecycle bodies -- Resolve, Initialize, Activate, see
+`elaboration-lifecycle-phases` -- plus constant identity (def name, time precision). How generated
 code supplies those behaviors to the runtime is the runtime/generated boundary this decision fixes.
 
 The C++ backend supplies them by emitting a real subclass `class Test : public Instance` with
