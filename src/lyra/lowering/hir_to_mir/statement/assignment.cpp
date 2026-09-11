@@ -62,10 +62,10 @@ auto LowerDestructuringAssign(
   const auto& mir_types = process.Owner().Unit().types;
   for (const hir::ExprId op_id : lhs_concat.operands) {
     const hir::Expr& op = hir_proc.exprs.Get(op_id);
-    if (!hir_types.Get(op.type).IsBitVector()) {
+    if (!hir_types.Get(op.type).IsIntegral()) {
       throw InternalError(
           "LowerDestructuringAssign: destructuring operand is not "
-          "a packed integral type");
+          "an integral type");
     }
     // Width and state domain are properties of the operand's MIR type, which
     // is what the snapshot is sliced against.

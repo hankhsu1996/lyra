@@ -217,9 +217,7 @@ auto LowerFileReadCall(
           "$fread: the integral form takes no start / count arguments (LRM "
           "21.3.4.4 ignores them)");
     }
-  } else if (!unit_lowerer.Hir()
-                  .types.Get(memory->element_type)
-                  .IsBitVector()) {
+  } else if (!unit_lowerer.Hir().types.Get(memory->element_type).IsIntegral()) {
     return diag::Fail(
         diag::DiagCode::kUnsupportedSubroutineArgument,
         "$fread into a memory is supported for a one-dimensional unpacked "

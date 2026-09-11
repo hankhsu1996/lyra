@@ -71,17 +71,13 @@ auto LowerSignalEventTrigger(
   auto expr_or = proc.LowerExpr(sig.expr, frame);
   if (!expr_or) return std::unexpected(std::move(expr_or.error()));
 
+  // An edge is a transition of the expression's least significant bit, so it
+  // needs an integral operand -- which binding already requires, so an edge
+  // carries no restriction of its own. What remains is the control without one,
+  // which reacts to the whole value and so needs a value (LRM 9.4.2).
   const auto& expr_type = proc.Owner().Unit().types.Get(expr_or->type);
-  if (sig.edge != slang::ast::EdgeKind::None) {
-    // The runtime classifies an edge only on a packed bit-vector cell (LRM
-    // 9.4.2 Table 9-2); slang already restricts an edge to an integral operand.
-    if (!expr_type.IsBitVector()) {
-      return diag::Fail(
-          span, diag::DiagCode::kUnsupportedEventTriggerForm,
-          "edge event control is only supported on a packed bit-vector "
-          "operand");
-    }
-  } else if (!expr_type.IsValueChangeObservable()) {
+  if (sig.edge == slang::ast::EdgeKind::None &&
+      !expr_type.IsValueChangeObservable()) {
     return diag::Fail(
         span, diag::DiagCode::kUnsupportedEventTriggerForm,
         "value-change event control on a non-value operand is not yet "
@@ -130,18 +126,13 @@ auto AsWatchedStorage(const hir::Expr& expr)
 
 // LRM 15.5.2 `@e;` on a named event. Distinguished from value-change `@(sig)`
 // by the controlled expression's type. A trigger is the event itself, so the
-// control watches the event's storage and no value is read from it -- and no
-// edge polarity applies, which is why an edge qualifier is rejected here.
+// control watches the event's storage and no value is read from it; an edge
+// needs an integral operand, which an event is not, so binding refuses one and
+// no polarity reaches this far.
 auto LowerNamedEventControl(
     ProcessLowerer& proc, WalkFrame frame,
     const slang::ast::SignalEventControl& sig, diag::SourceSpan span)
     -> diag::Result<hir::NamedEventControl> {
-  if (sig.edge != slang::ast::EdgeKind::None) {
-    return diag::Fail(
-        span, diag::DiagCode::kUnsupportedEventTriggerForm,
-        "edge specifier is not valid on a named event");
-  }
-
   auto expr_or = proc.LowerExpr(sig.expr, frame);
   if (!expr_or) return std::unexpected(std::move(expr_or.error()));
 

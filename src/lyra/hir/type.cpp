@@ -159,8 +159,37 @@ auto Type::Hash::operator()(const Type& type) const -> std::size_t {
           [seed](const VoidType&) { return seed; }});
 }
 
-auto Type::IsBitVector() const -> bool {
-  return Is<ScalarBitType>() || Is<PackedArrayType>();
+auto Type::IsIntegral() const -> bool {
+  // One arm per HIR type and no catch-all, so a type added later fails to
+  // compile here until it says which side it is on.
+  return Visit(
+      Overloaded{
+          [](const ScalarBitType&) { return true; },
+          [](const PackedArrayType&) { return true; },
+          [](const PackedStructType&) { return true; },
+          [](const PackedUnionType&) { return true; },
+          [](const EnumType&) { return true; },
+          [](const UnpackedStructType&) { return false; },
+          [](const UnpackedUnionType&) { return false; },
+          [](const UnpackedArrayType&) { return false; },
+          [](const DynamicArrayType&) { return false; },
+          [](const QueueType&) { return false; },
+          [](const AssociativeArrayType&) { return false; },
+          [](const WildcardIndexType&) { return false; },
+          [](const StringType&) { return false; },
+          [](const EventType&) { return false; },
+          [](const RealType&) { return false; },
+          [](const ShortRealType&) { return false; },
+          [](const RealTimeType&) { return false; },
+          [](const ChandleType&) { return false; },
+          [](const ClassHandleType&) { return false; },
+          [](const OpaqueObjectHandleType&) { return false; },
+          [](const ImportedClassHandleType&) { return false; },
+          [](const UnitObjectType&) { return false; },
+          [](const OpaqueScopeType&) { return false; },
+          [](const NullType&) { return false; },
+          [](const VoidType&) { return false; },
+      });
 }
 
 auto Type::IsValueChangeObservable() const -> bool {

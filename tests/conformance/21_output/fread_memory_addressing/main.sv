@@ -3,8 +3,20 @@
 // says otherwise, and stops when the memory is full or the file is spent
 // unless a count says otherwise. Each word takes as many whole bytes as it
 // spans -- one for an 8-bit word, two for a 9-bit one -- and locations the
-// load does not reach keep the value they had (LRM 21.3.4.4).
+// load does not reach keep the value they had (LRM 21.3.4.4). A word is any
+// integral type (LRM 6.11.1), so a memory of enumerations or of packed
+// structures loads exactly as one of vectors of the same width does.
 module Top;
+  typedef enum bit [31:0] {
+    NONE = 32'h00000000,
+    FIRST = 32'h01020304,
+    SECOND = 32'h05060708
+  } word_t;
+  typedef struct packed {
+    bit [15:0] upper;
+    bit [15:0] lower;
+  } halves_t;
+
   int fd;
 
   bit [31:0] ascending[0:3];
@@ -24,6 +36,12 @@ module Top;
 
   bit [31:0] short_file[0:3];
   int short_file_count;
+
+  word_t enumerated[0:2];
+  int enumerated_count;
+
+  halves_t structured[0:1];
+  int structured_count;
 
   initial begin
     fd = $fopen("sixteen.bin", "wb");
@@ -61,6 +79,14 @@ module Top;
     $fclose(fd);
     fd = $fopen("seven.bin", "rb");
     short_file_count = $fread(short_file, fd);
+    $fclose(fd);
+
+    fd = $fopen("sixteen.bin", "rb");
+    enumerated_count = $fread(enumerated, fd, , 2);
+    $fclose(fd);
+
+    fd = $fopen("sixteen.bin", "rb");
+    structured_count = $fread(structured, fd);
     $fclose(fd);
   end
 
@@ -125,6 +151,30 @@ module Top;
     if (short_file[3] !== 32'h0)
       $fatal(1, "short_file[3] was %h, expected the value it started with",
              short_file[3]);
+
+    if (enumerated_count !== 8)
+      $fatal(1, "loading two enumerated words returned %0d, expected 8",
+             enumerated_count);
+    if (enumerated[0] !== FIRST)
+      $fatal(1, "enumerated[0] was %h, expected 01020304", enumerated[0]);
+    if (enumerated[1] !== SECOND)
+      $fatal(1, "enumerated[1] was %h, expected 05060708", enumerated[1]);
+    if (enumerated[2] !== NONE)
+      $fatal(1, "enumerated[2] was %h, expected the value it started with",
+             enumerated[2]);
+
+    if (structured_count !== 8)
+      $fatal(1, "filling two structured words returned %0d, expected 8",
+             structured_count);
+    if (structured[0].upper !== 16'h0102)
+      $fatal(1, "structured[0].upper was %h, expected 0102",
+             structured[0].upper);
+    if (structured[0].lower !== 16'h0304)
+      $fatal(1, "structured[0].lower was %h, expected 0304",
+             structured[0].lower);
+    if (structured[1].upper !== 16'h0506)
+      $fatal(1, "structured[1].upper was %h, expected 0506",
+             structured[1].upper);
     $display("All checks passed");
   end
 endmodule
