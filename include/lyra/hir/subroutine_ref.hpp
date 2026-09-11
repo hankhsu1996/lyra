@@ -94,9 +94,16 @@ using MethodReceiver =
 // naming the base's implementation demands it whatever the callee answers
 // (LRM 8.15). Whether the method is type-associated (LRM 8.10) is not among
 // them: a call to one is a different reference, which is where that shows.
+// Which dispatch position a call on another unit's class names (LRM 8.20): the
+// coordinate the introducing class published, or the one the design settles
+// while it elaborates, for a class that publishes on no signature and so left
+// nothing to count a position out of.
+using CrossUnitDispatchSlot =
+    std::variant<ExternalDispatchSlot, UnpublishedBehaviorSlot>;
+
 struct ExternalMethodCallee {
   ExternalClassMethodTarget target;
-  std::optional<ExternalDispatchSlot> slot;
+  std::optional<CrossUnitDispatchSlot> slot;
   ExternalCalleeInterface interface;
 };
 

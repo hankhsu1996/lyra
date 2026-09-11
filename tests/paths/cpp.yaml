@@ -8,5 +8,7 @@
 # A case may appear in this file or in the defect record, never both.
 08_classes/constructor_argument_directions: "a constructor with an output / inout / ref argument is not yet supported"
 16_assertions/procedural_concurrent_assertion_queues_where_it_runs: "a concurrent assertion embedded in a procedure is not yet lowered"
-23_hierarchy/downward_name_reaches_each_declaration_kind: "resolving such a name at elaboration is not yet supported"
-23_hierarchy/upward_name_reaches_a_class_property: "resolving such a name at elaboration is not yet supported"
+23_hierarchy/downward_name_reaches_each_declaration_kind: "reaches a property or a behavior through a reference whose class no signature publishes"
+23_hierarchy/hierarchical_name_enters_a_class_behavior: "reaches a property or a behavior through a reference whose class no signature publishes"
+23_hierarchy/hierarchical_name_writes_a_class_property: "reaches a property or a behavior through a reference whose class no signature publishes"
+23_hierarchy/upward_name_reaches_a_class_property: "reaches a property or a behavior through a reference whose class no signature publishes"

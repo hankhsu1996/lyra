@@ -86,6 +86,12 @@ ADMITTED: dict[str, str] = {
         "leaves as a string the simulation reports itself by rather than as an "
         "identifier"
     ),
+    "refused.name": (
+        "a unit this backend declines to emit is named in the diagnostic that "
+        "declines it, which reaches the reader rather than the artifact -- and "
+        "the name it has to carry is the one the reader compiled, not one "
+        "spelled for a language that never sees this unit"
+    ),
 }
 
 LINE_COMMENT = re.compile(r"//[^\n]*")

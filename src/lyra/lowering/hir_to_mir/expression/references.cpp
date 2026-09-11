@@ -296,8 +296,7 @@ auto LowerHirPrimaryExprProc(
             const mir::ExprId self_ref = frame.current_block->exprs.Add(
                 MakeSelfRefExpr(frame, self_type));
             return mir::MakeFieldAccessExpr(
-                self_ref,
-                process.Owner().TranslateClassPropertyTarget(r.target),
+                self_ref, BuildClassPropertyFieldRef(process, frame, r.target),
                 result_type);
           },
           [&](const hir::StaticPropertyRef& r) -> mir::Expr {

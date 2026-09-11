@@ -122,7 +122,7 @@ class UnitLowerer {
   // that one class and nothing else -- where the behavior lands in a whole
   // value is a layout question, answered from the lineage below this pass.
   [[nodiscard]] auto MethodRef(mir::ClassId owner, mir::CallableId callable)
-      -> lir::DispatchRef;
+      -> lir::StatedDispatchRef;
 
   // The LIR function a class's constructor lowers to. Every class defines its
   // own construction, so every one of them has this function, and it is named
@@ -158,7 +158,7 @@ class UnitLowerer {
     base::Translation<mir::CallableId, std::optional<lir::FunctionId>> methods;
     base::Translation<mir::CallableId, std::optional<lir::DispatchOrdinal>>
         ordinals;
-    std::vector<std::optional<lir::FunctionId>> introduces;
+    std::vector<lir::Introduction> introduces;
   };
 
   // The LIR identities taken on behalf of one MIR closure: the declaration its

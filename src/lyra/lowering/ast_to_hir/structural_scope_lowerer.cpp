@@ -175,6 +175,8 @@ auto StructuralScopeLowerer::Run(WalkFrame parent_frame)
   if (!pc) return std::unexpected(std::move(pc.error()));
 
   scope.routed_refs = owner_->TakeRoutedRefsForFrame(frame_);
+  scope.property_coordinates = owner_->TakePropertyCoordinatesForFrame(frame_);
+  scope.behavior_coordinates = owner_->TakeBehaviorCoordinatesForFrame(frame_);
   return scope;
 }
 

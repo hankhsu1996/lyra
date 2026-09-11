@@ -359,21 +359,25 @@ auto UnitLowerer::DeclaringScopeHopsFrom(
     return std::nullopt;
   }
   if (&decl_unit != &scope_->asSymbol()) {
-    // A module or interface declares the class, so an object of it belongs to
-    // one instance -- and what crosses a unit boundary is that unit's
-    // signature, which carries no instance of a scope inside it.
+    // A module or interface declares the class, so what the class keeps for
+    // itself is replicated with that element's instance -- and what crosses a
+    // unit boundary is that unit's signature, which carries no instance of a
+    // scope inside it. Every use of this answer needs that instance, so none
+    // of them names itself here.
     return diag::Fail(
         span, diag::DiagCode::kUnsupportedClassFeature,
-        "constructing a class another compilation unit declares inside one of "
-        "its scopes is not yet supported");
+        "a class another compilation unit declares inside one of its scopes "
+        "keeps what it holds for itself on that scope's instance, which no "
+        "signature carries; reaching it is not yet supported");
   }
   const slang::ast::Scope& declaring = DeclaringStructuralScope(cls);
   const auto hops = frame.HopsTo(LookupScopeFrame(declaring));
   if (!hops.has_value()) {
     return diag::Fail(
         span, diag::DiagCode::kUnsupportedClassFeature,
-        "constructing a class declared in a scope this body does not stand "
-        "inside is not yet supported");
+        "a class declared in a scope this body does not stand inside keeps "
+        "what it holds for itself on an instance this body cannot reach; that "
+        "is not yet supported");
   }
   return *hops;
 }

@@ -218,7 +218,9 @@ class FunctionLowerer {
   // the contents live.
   auto WrapperContentsPlace(const mir::Block& block, mir::ExprId wrapper)
       -> diag::Result<lir::Place>;
-  auto MemberRefOf(const mir::FieldRef& field) -> diag::Result<lir::MemberRef>;
+  auto MemberRefOf(
+      const mir::Block& block, const mir::FieldRef& field, lir::TypeId reached)
+      -> diag::Result<lir::MemberRef>;
   // Reads the value held where an expression names storage, whichever way it
   // names it. A cell is address-only and holds no value a reader can take out
   // of it, so an expression whose own type is one is rejected: what such a

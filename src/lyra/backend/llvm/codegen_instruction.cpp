@@ -302,33 +302,59 @@ auto CodeGenFunction::ResolvePlaceAddress(const lir::Place& place)
 }
 
 auto CodeGenFunction::MemberStorage(
-    llvm::Value* owner, lir::TypeId reached, lir::MemberRef member)
+    llvm::Value* owner, lir::TypeId reached, const lir::MemberRef& member)
     -> diag::Result<llvm::Value*> {
-  llvm::Value* const slot = llvm::ConstantInt::get(
-      llvm::Type::getInt32Ty(module_->Context()), member.slot.value);
-  switch (MemberOwnerOf(reached)) {
-    case MemberOwner::kScope: {
-      const std::array<llvm::Value*, 2> args{owner, slot};
-      return builder_.CreateCall(
-          Entry(
-              RuntimeSymbol(RuntimeOp::kMemberAddress), module_->Types().Ptr(),
-              args),
-          args);
-    }
-    case MemberOwner::kObject: {
-      auto declared_by = module_->DefinitionRef(member.declared_by);
-      if (!declared_by) {
-        return std::unexpected(std::move(declared_by.error()));
-      }
-      const std::array<llvm::Value*, 3> args{owner, *declared_by, slot};
-      return builder_.CreateCall(
-          Entry(
-              RuntimeSymbol(RuntimeOp::kObjectMemberAddress),
-              module_->Types().Ptr(), args),
-          args);
-    }
-  }
-  throw InternalError("llvm codegen: a member step reached unknown storage");
+  return std::visit(
+      Overloaded{
+          [&](const lir::StatedMemberRef& declared)
+              -> diag::Result<llvm::Value*> {
+            llvm::Value* const slot = llvm::ConstantInt::get(
+                llvm::Type::getInt32Ty(module_->Context()),
+                declared.slot.value);
+            switch (MemberOwnerOf(reached)) {
+              case MemberOwner::kScope: {
+                const std::array<llvm::Value*, 2> args{owner, slot};
+                return builder_.CreateCall(
+                    Entry(
+                        RuntimeSymbol(RuntimeOp::kMemberAddress),
+                        module_->Types().Ptr(), args),
+                    args);
+              }
+              case MemberOwner::kObject: {
+                auto declared_by = module_->DefinitionRef(declared.declared_by);
+                if (!declared_by) {
+                  return std::unexpected(std::move(declared_by.error()));
+                }
+                const std::array<llvm::Value*, 3> args{
+                    owner, *declared_by, slot};
+                return builder_.CreateCall(
+                    Entry(
+                        RuntimeSymbol(RuntimeOp::kObjectMemberAddress),
+                        module_->Types().Ptr(), args),
+                    args);
+              }
+            }
+            throw InternalError(
+                "llvm codegen: a member step reached unknown storage");
+          },
+          // A position that arrived as a value names no declaration to read an
+          // owner kind off, and only an object is ever reached this way: a
+          // scope's members are counted out of a signature, which is what
+          // publishing one means.
+          [&](const lir::SuppliedMemberRef& supplied)
+              -> diag::Result<llvm::Value*> {
+            auto coordinate = LowerOperand(supplied.coordinate);
+            if (!coordinate) {
+              return std::unexpected(std::move(coordinate.error()));
+            }
+            const std::array<llvm::Value*, 2> args{owner, *coordinate};
+            return builder_.CreateCall(
+                Entry(
+                    RuntimeSymbol(RuntimeOp::kObjectMemberAddressAt),
+                    module_->Types().Ptr(), args),
+                args);
+          }},
+      member);
 }
 
 // The type of the storage the chain has arrived at where step `index` applies,
@@ -716,22 +742,47 @@ auto CodeGenFunction::ResolveCallee(
                   "llvm codegen: a dispatched call states no value to dispatch "
                   "on");
             }
-            auto introduced_by = module_->DefinitionRef(t.method.introduced_by);
-            if (!introduced_by) {
-              return std::unexpected(std::move(introduced_by.error()));
+            auto body = std::visit(
+                Overloaded{
+                    [&](const lir::StatedDispatchRef& method)
+                        -> diag::Result<llvm::Value*> {
+                      auto introduced_by =
+                          module_->DefinitionRef(method.introduced_by);
+                      if (!introduced_by) {
+                        return std::unexpected(
+                            std::move(introduced_by.error()));
+                      }
+                      const std::array<llvm::Value*, 3> lookup{
+                          args[0], *introduced_by,
+                          llvm::ConstantInt::get(
+                              llvm::Type::getInt32Ty(module_->Context()),
+                              method.ordinal.value)};
+                      return builder_.CreateCall(
+                          Entry(
+                              RuntimeSymbol(RuntimeOp::kObjectMethod),
+                              module_->Types().Ptr(), lookup),
+                          lookup);
+                    },
+                    [&](const lir::SuppliedDispatchRef& method)
+                        -> diag::Result<llvm::Value*> {
+                      auto coordinate = LowerOperand(method.coordinate);
+                      if (!coordinate) {
+                        return std::unexpected(std::move(coordinate.error()));
+                      }
+                      const std::array<llvm::Value*, 2> lookup{
+                          args[0], *coordinate};
+                      return builder_.CreateCall(
+                          Entry(
+                              RuntimeSymbol(RuntimeOp::kObjectMethodAt),
+                              module_->Types().Ptr(), lookup),
+                          lookup);
+                    }},
+                t.method);
+            if (!body) {
+              return std::unexpected(std::move(body.error()));
             }
-            const std::array<llvm::Value*, 3> lookup{
-                args[0], *introduced_by,
-                llvm::ConstantInt::get(
-                    llvm::Type::getInt32Ty(module_->Context()),
-                    t.method.ordinal.value)};
-            llvm::Value* body = builder_.CreateCall(
-                Entry(
-                    RuntimeSymbol(RuntimeOp::kObjectMethod),
-                    module_->Types().Ptr(), lookup),
-                lookup);
             return llvm::FunctionCallee(
-                CallSignature(module_->Types().Map(result_type), args), body);
+                CallSignature(module_->Types().Map(result_type), args), *body);
           },
           [&](const lir::ConstructTarget&)
               -> diag::Result<llvm::FunctionCallee> {
@@ -1411,8 +1462,21 @@ auto CodeGenFunction::CapturePlaceOf(const lir::Place& place) const
   }
   // A closure extends nothing, so the slot its declaration gave a capture is
   // already where that capture sits in the value.
-  return CapturePlace{
-      .closure = std::move(holder), .index = member->member.slot.value};
+  return std::visit(
+      Overloaded{
+          [&](const lir::StatedMemberRef& capture) {
+            return CapturePlace{
+                .closure = std::move(holder), .index = capture.slot.value};
+          },
+          // A closure publishes on no signature and is reached by no name, so
+          // nothing ever settles where one of its captures lands; a step that
+          // did would have been built for some other declaration.
+          [](const lir::SuppliedMemberRef&) -> CapturePlace {
+            throw InternalError(
+                "llvm codegen: a capture of a closure is named by a position "
+                "settled elsewhere");
+          }},
+      member->member);
 }
 
 auto CodeGenFunction::StorageReached(lir::TypeId operand) const
@@ -1620,11 +1684,14 @@ auto CodeGenFunction::ConstructionOf(
               // The rest come into existence some other way, so a construction
               // naming one would have nothing to call. A print item is built as
               // one of its two forms and never as their sum; a time format, an
-              // open-array handle, a control effect and an observation are what
-              // some other entry answers with; a chunk is the element type a
-              // canonical buffer's pointer addresses rather than a value; and a
-              // cancellation target and a channel's joint cancel state are
-              // storage the owner holds and reaches by address.
+              // open-array handle, a control effect, an observation and a
+              // coordinate are what some other entry answers with; a chunk is
+              // the element type a canonical buffer's pointer addresses rather
+              // than a value; and a cancellation target and a channel's joint
+              // cancel state are storage the owner holds and reaches by
+              // address.
+              case lir::RuntimeLibraryKind::kPropertyCoordinate:
+              case lir::RuntimeLibraryKind::kBehaviorCoordinate:
               case lir::RuntimeLibraryKind::kPrintItem:
               case lir::RuntimeLibraryKind::kTimeFormat:
               case lir::RuntimeLibraryKind::kDpiBitChunk:

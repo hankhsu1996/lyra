@@ -116,6 +116,61 @@ auto UnitLowerer::TakeRoutedRefsForFrame(ScopeFrameId slot_owner_frame)
   return out;
 }
 
+namespace {
+
+// The slot for `decl` in `slots`, reusing one that already asks the same scope
+// for the same name on the same class.
+template <typename Id>
+auto MapOrGetClassName(
+    base::Arena<hir::ClassNameDecl, Id>& slots, hir::ClassNameDecl decl) -> Id {
+  for (const Id id : slots.Ids()) {
+    const hir::ClassNameDecl& at = slots.Get(id);
+    if (at.head == decl.head && at.steps == decl.steps &&
+        at.class_name == decl.class_name && at.name == decl.name) {
+      return id;
+    }
+  }
+  return slots.Add(std::move(decl));
+}
+
+}  // namespace
+
+auto UnitLowerer::MapOrGetPropertyCoordinate(
+    ScopeFrameId slot_owner_frame, hir::ClassNameDecl decl)
+    -> hir::PropertyCoordinateId {
+  return MapOrGetClassName(
+      property_coordinates_by_frame_[slot_owner_frame], std::move(decl));
+}
+
+auto UnitLowerer::MapOrGetBehaviorCoordinate(
+    ScopeFrameId slot_owner_frame, hir::ClassNameDecl decl)
+    -> hir::BehaviorCoordinateId {
+  return MapOrGetClassName(
+      behavior_coordinates_by_frame_[slot_owner_frame], std::move(decl));
+}
+
+auto UnitLowerer::TakePropertyCoordinatesForFrame(ScopeFrameId slot_owner_frame)
+    -> base::Arena<hir::ClassNameDecl, hir::PropertyCoordinateId> {
+  const auto it = property_coordinates_by_frame_.find(slot_owner_frame);
+  if (it == property_coordinates_by_frame_.end()) {
+    return {};
+  }
+  auto out = std::move(it->second);
+  property_coordinates_by_frame_.erase(it);
+  return out;
+}
+
+auto UnitLowerer::TakeBehaviorCoordinatesForFrame(ScopeFrameId slot_owner_frame)
+    -> base::Arena<hir::ClassNameDecl, hir::BehaviorCoordinateId> {
+  const auto it = behavior_coordinates_by_frame_.find(slot_owner_frame);
+  if (it == behavior_coordinates_by_frame_.end()) {
+    return {};
+  }
+  auto out = std::move(it->second);
+  behavior_coordinates_by_frame_.erase(it);
+  return out;
+}
+
 auto UnitLowerer::MakeRoutedMemberRef(
     ScopeFrameId slot_owner_frame, hir::RoutedRefDecl decl,
     diag::SourceSpan span) -> hir::Expr {

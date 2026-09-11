@@ -209,6 +209,11 @@ auto RenderFieldAccessExpr(const ScopeView& view, const mir::FieldAccessExpr& m)
             }
             return through_receiver(
                 ToCppName(declaring->fields.Get(t.slot).name));
+          },
+          [](const mir::ResolvedFieldTarget&) -> std::string {
+            throw InternalError(
+                "RenderFieldAccessExpr: a storage position that arrived as a "
+                "value reached a backend that states it does not render one");
           }},
       m.field);
 }

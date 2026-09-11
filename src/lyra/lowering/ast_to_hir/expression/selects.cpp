@@ -222,8 +222,8 @@ auto LowerMemberAccessExpr(
               .declaring_scope_hops = *declaring_hops},
           *type_id, span);
     }
-    auto target =
-        lowerer.Owner().MakeClassPropertyTarget(*owner_ref, prop, span);
+    auto target = lowerer.Owner().MakeClassPropertyTarget(
+        frame, declaring_class, prop, span);
     if (!target) {
       return std::unexpected(std::move(target.error()));
     }

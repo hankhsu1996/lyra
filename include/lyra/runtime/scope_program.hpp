@@ -10,6 +10,7 @@
 namespace lyra::runtime {
 
 class Scope;
+struct ObjectDefinition;
 
 // The time unit or precision power a scope reports when it declares no
 // timescale of its own (the synthetic `$root`). The engine's design-global
@@ -113,6 +114,49 @@ struct ScopeCallableTable {
   return nullptr;
 }
 
+// One class a scope answers for by name: the identifier the source gave the
+// class, and the definition every object of it is built from. A class declared
+// inside a design element is a distinct type per instance of that element (LRM
+// 6.22) and is nameable only inside the scope declaring it (LRM 23.9), so a
+// referrer outside reaches it the way it reaches anything else past a signature
+// -- by walking to the scope and asking.
+struct ScopeClass {
+  AbiStringRef name;
+  const ObjectDefinition* definition = nullptr;
+
+  constexpr ScopeClass() = default;
+  constexpr ScopeClass(AbiStringRef name, const ObjectDefinition* definition)
+      : name(name), definition(definition) {
+  }
+};
+
+// The classes a scope answers for, crossing the generated-runtime boundary as
+// plain data. Empty for a scope whose unit declares none.
+struct ScopeClassTable {
+  const ScopeClass* data = nullptr;
+  std::uint32_t size = 0;
+
+  constexpr ScopeClassTable() = default;
+  constexpr ScopeClassTable(const ScopeClass* data, std::uint32_t size)
+      : data(data), size(size) {
+  }
+
+  [[nodiscard]] constexpr auto Entries() const -> std::span<const ScopeClass> {
+    return {data, size};
+  }
+};
+
+// The definition published under `name`, or null when the table holds none.
+[[nodiscard]] inline auto FindInClassTable(
+    ScopeClassTable table, std::string_view name) -> const ObjectDefinition* {
+  for (const ScopeClass& published : table.Entries()) {
+    if (std::string_view{published.name.data, published.name.size} == name) {
+      return published.definition;
+    }
+  }
+  return nullptr;
+}
+
 // One scope's generated behavior plus its constant metadata. Every scope -- a
 // unit instance or a generate scope -- has one. The lifecycle entries run this
 // scope's own work only; the runtime owns child traversal and phase ordering.
@@ -121,7 +165,8 @@ struct ScopeCallableTable {
 // DPI-C export's name is the program-global C identifier the foreign side calls
 // (LRM 35.4) while a subroutine's is the SV identifier a hierarchical name
 // spells (LRM 23.6), and one declaration may carry both under different
-// spellings.
+// spellings. The classes its unit declares are a third name space, holding
+// declarations rather than entries.
 struct ScopeProgram {
   ScopeMetadata metadata;
   ScopeEntry resolve_state = &ScopeNoOp;
@@ -129,7 +174,15 @@ struct ScopeProgram {
   ScopeEntry create_processes = &ScopeNoOp;
   ScopeCallableTable exports;
   ScopeCallableTable subroutines;
+  ScopeClassTable classes;
 
+  // The constructor is what a backend that builds this record in its own
+  // generated text calls, so it takes what such a backend can supply. The
+  // classes are not among them: answering a class name serves a referrer that
+  // reaches a member by a position settled while the design elaborates, which a
+  // backend spelling members by name does not do -- so a program built through
+  // this constructor answers no class name, and one whose classes are filled in
+  // afterwards answers every one its unit declares.
   constexpr ScopeProgram() = default;
   constexpr ScopeProgram(
       ScopeMetadata metadata, ScopeEntry resolve_state,

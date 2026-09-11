@@ -68,6 +68,8 @@ enum class RuntimeLibraryKind : std::uint8_t {
   kObservation,
   kCancellationTarget,
   kControlEffect,
+  kPropertyCoordinate,
+  kBehaviorCoordinate,
 };
 
 struct PackedRange {

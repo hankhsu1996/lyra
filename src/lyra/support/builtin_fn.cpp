@@ -760,6 +760,16 @@ auto RuntimeEntryOf(BuiltinFn id) -> RuntimeEntry {
     case BuiltinFn::kFindSubroutine:
       return {
           .name = "find_subroutine", .declaration = Method{"FindSubroutine"}};
+    case BuiltinFn::kFindClass:
+      return {.name = "find_class", .declaration = Method{"FindClass"}};
+    case BuiltinFn::kClassFindProperty:
+      return {
+          .name = "class_find_property",
+          .declaration = FreeFunction{"lyra::runtime::FindProperty"}};
+    case BuiltinFn::kClassFindBehavior:
+      return {
+          .name = "class_find_behavior",
+          .declaration = FreeFunction{"lyra::runtime::FindBehavior"}};
     case BuiltinFn::kForkWaitAll:
       return {
           .name = "fork_wait_all",

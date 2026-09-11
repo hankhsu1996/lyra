@@ -371,6 +371,10 @@ auto UnitLowerer::TranslateRuntimeLibrary(mir::RuntimeLibraryKind kind)
       return RecordUnsupportedType("the fiber a DPI-C task import runs on");
     case mir::RuntimeLibraryKind::kControlEffect:
       return mirror(lir::RuntimeLibraryKind::kControlEffect);
+    case mir::RuntimeLibraryKind::kPropertyCoordinate:
+      return mirror(lir::RuntimeLibraryKind::kPropertyCoordinate);
+    case mir::RuntimeLibraryKind::kBehaviorCoordinate:
+      return mirror(lir::RuntimeLibraryKind::kBehaviorCoordinate);
     case mir::RuntimeLibraryKind::kScopeProgram:
     case mir::RuntimeLibraryKind::kScopeDefinition:
     case mir::RuntimeLibraryKind::kScopeMetadata:

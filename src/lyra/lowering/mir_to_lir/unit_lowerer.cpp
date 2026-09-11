@@ -295,7 +295,15 @@ auto UnitLowerer::TakeClassIdentities(const mir::Class& cls)
     if (mir::IntroducesSlot(decl.virtual_dispatch)) {
       ordinal = lir::DispatchOrdinal{
           .value = static_cast<std::uint32_t>(identities.introduces.size())};
-      identities.introduces.push_back(body);
+      // A referrer that cannot name the class asks for the behavior by the
+      // identifier the source wrote, so the introduction carries it. A callable
+      // the source never named introduces nothing, so there is always one.
+      const std::optional<std::string_view> name =
+          mir::NameOf(cls.named_callables, callable);
+      identities.introduces.push_back(
+          lir::Introduction{
+              .name = std::string{name.value_or(std::string_view{})},
+              .body = body});
     }
     methods.push_back(body);
     ordinals.push_back(ordinal);
@@ -337,6 +345,17 @@ auto UnitLowerer::LowerClass(mir::ClassId owner, const mir::Class& cls)
   // them, so what is left is to hand the list over.
   const ClassIdentities& identities = class_identities_.Get(owner);
   out.introduces = identities.introduces;
+
+  // A scope answers for the classes it declares, by the identifier each carries
+  // through compilation -- which is the one the referrer composes too, from the
+  // same declaration.
+  out.declares.reserve(cls.declares.size());
+  for (const mir::ClassId declared : cls.declares) {
+    out.declares.push_back(
+        lir::DeclaredClass{
+            .name = mir_->classes.Get(declared).name,
+            .declaration = class_identities_.Get(declared).lir_class});
+  }
 
   // A class's bodies become functions of the program, and a body's own name is
   // unique only within its class -- so the class qualifies it, being itself
@@ -418,7 +437,7 @@ auto UnitLowerer::TakenOver(
               -> std::optional<lir::DispatchTakeover> {
             return lir::DispatchTakeover{
                 .method =
-                    lir::DispatchRef{
+                    lir::StatedDispatchRef{
                         .introduced_by = ExternalClassValueType(
                             taken.unit_name, taken.class_name),
                         .ordinal = lir::DispatchOrdinal{taken.ordinal.value}},
@@ -439,7 +458,7 @@ auto UnitLowerer::MethodFunction(
 }
 
 auto UnitLowerer::MethodRef(mir::ClassId owner, mir::CallableId callable)
-    -> lir::DispatchRef {
+    -> lir::StatedDispatchRef {
   const std::optional<lir::DispatchOrdinal>& ordinal =
       class_identities_.Get(owner).ordinals.Get(callable);
   // A dispatch names the callable that introduced the behavior, which is the
@@ -449,7 +468,7 @@ auto UnitLowerer::MethodRef(mir::ClassId owner, mir::CallableId callable)
     throw InternalError(
         "mir_to_lir: a dispatch names a callable that introduces no behavior");
   }
-  return lir::DispatchRef{
+  return lir::StatedDispatchRef{
       .introduced_by = ClassValueType(owner), .ordinal = *ordinal};
 }
 

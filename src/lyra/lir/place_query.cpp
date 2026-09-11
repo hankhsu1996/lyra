@@ -40,6 +40,35 @@ auto ExtendedBy(const CompilationUnit& unit, TypeId type)
           [](const auto&) -> std::optional<TypeId> { return std::nullopt; }});
 }
 
+// The type the member `stated` names, reached on a place that has arrived at
+// `carrier`. Every failure here is this artifact disagreeing with itself: the
+// step names a declaration, so a step naming one the place has not reached, or
+// a slot that declaration does not have, could only have been built wrongly.
+auto StatedMemberType(
+    const CompilationUnit& unit, TypeId carrier, const StatedMemberRef& member)
+    -> TypeId {
+  const std::optional<MemberList> declared =
+      DeclaredMembers(unit, member.declared_by);
+  if (!declared) {
+    throw InternalError(
+        "lir: member projection names a declaration that declares no members");
+  }
+  if (!CarriesMembersOf(unit, carrier, member.declared_by)) {
+    throw InternalError(
+        std::format(
+            "lir: member step names '{}', which the place has not reached a "
+            "carrier of",
+            declared->owner));
+  }
+  if (member.slot.value >= declared->members.size()) {
+    throw InternalError(
+        std::format(
+            "lir: member slot {} out of range on '{}'", member.slot.value,
+            declared->owner));
+  }
+  return declared->members[member.slot.value].type;
+}
+
 }  // namespace
 
 auto CarriesMembersOf(
@@ -126,28 +155,18 @@ auto PlaceType(
               current = *target;
             },
             [&](const MemberProjection& projection) {
-              const MemberRef& member = projection.member;
-              const std::optional<MemberList> declared =
-                  DeclaredMembers(unit, member.declared_by);
-              if (!declared) {
-                throw InternalError(
-                    "lir: member projection names a declaration that declares "
-                    "no members");
-              }
-              if (!CarriesMembersOf(unit, current, member.declared_by)) {
-                throw InternalError(
-                    std::format(
-                        "lir: member step names '{}', which the place has not "
-                        "reached a carrier of",
-                        declared->owner));
-              }
-              if (member.slot.value >= declared->members.size()) {
-                throw InternalError(
-                    std::format(
-                        "lir: member slot {} out of range on '{}'",
-                        member.slot.value, declared->owner));
-              }
-              current = declared->members[member.slot.value].type;
+              current = std::visit(
+                  Overloaded{
+                      [&](const StatedMemberRef& member) -> TypeId {
+                        return StatedMemberType(unit, current, member);
+                      },
+                      // The declaration is one nothing here names, so there is
+                      // no member list to count against and the step states
+                      // what it reaches.
+                      [](const SuppliedMemberRef& member) -> TypeId {
+                        return member.reached;
+                      }},
+                  projection.member);
             }},
         step);
   }

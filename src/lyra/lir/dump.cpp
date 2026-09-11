@@ -105,12 +105,22 @@ class LirDumper {
         std::format(
             "constructor: {}", unit_->functions.Get(cls.constructor).name));
     for (std::size_t i = 0; i < cls.introduces.size(); ++i) {
-      Line(std::format("introduces[{}]: {}", i, FormatBody(cls.introduces[i])));
+      const Introduction& introduced = cls.introduces[i];
+      Line(
+          std::format(
+              "introduces[{}] \"{}\": {}", i, introduced.name,
+              FormatBody(introduced.body)));
+    }
+    for (const DeclaredClass& declared : cls.declares) {
+      Line(
+          std::format(
+              "declares \"{}\": Class[{}]", declared.name,
+              declared.declaration.value));
     }
     for (const DispatchTakeover& taken : cls.takeovers) {
       Line(
           std::format(
-              "overrides {}: {}", FormatDispatchRef(taken.method),
+              "overrides {}: {}", FormatStatedDispatchRef(taken.method),
               unit_->functions.Get(taken.body).name));
     }
     Dedent();
@@ -255,10 +265,23 @@ class LirDumper {
                             : std::string{"(unanswered)"};
   }
 
-  [[nodiscard]] static auto FormatDispatchRef(DispatchRef method)
+  [[nodiscard]] static auto FormatStatedDispatchRef(StatedDispatchRef method)
       -> std::string {
     return std::format(
         "{}#{}", FormatType(method.introduced_by), method.ordinal.value);
+  }
+
+  [[nodiscard]] auto FormatDispatchRef(const DispatchRef& method) const
+      -> std::string {
+    return std::visit(
+        Overloaded{
+            [](const StatedDispatchRef& d) -> std::string {
+              return FormatStatedDispatchRef(d);
+            },
+            [&](const SuppliedDispatchRef& r) -> std::string {
+              return std::format("resolved:{}", FormatOperand(r.coordinate));
+            }},
+        method);
   }
 
   [[nodiscard]] static auto FormatBase(const Base& base) -> std::string {
@@ -332,9 +355,19 @@ class LirDumper {
           Overloaded{
               [&](const DerefProjection&) { out += ".deref"; },
               [&](const MemberProjection& m) {
-                out += std::format(
-                    ".member({}:{})", FormatType(m.member.declared_by),
-                    m.member.slot.value);
+                out += std::visit(
+                    Overloaded{
+                        [&](const StatedMemberRef& member) -> std::string {
+                          return std::format(
+                              ".member({}:{})", FormatType(member.declared_by),
+                              member.slot.value);
+                        },
+                        [&](const SuppliedMemberRef& member) -> std::string {
+                          return std::format(
+                              ".member(resolved:{})",
+                              FormatOperand(member.coordinate));
+                        }},
+                    m.member);
               }},
           step);
     }

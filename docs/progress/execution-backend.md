@@ -73,6 +73,12 @@ ownership, or native in-frame layout) for every value.
       is the one value domain whose value is the handle itself: it owns nothing, so nothing is lost
       by carrying it as the bare pointer. A class handle does not share the shape -- it carries a
       share of ownership beside the address, so it is a value living in storage like every other.
+- [ ] **A class handle as a value domain.** A handle lives in a member slot and in a local, and it
+      compares, copies and dispatches there; what it cannot be is an _element_. The erased value a
+      container holds admits every domain the backend realizes and not this one, so an unpacked
+      array or a queue of handles refuses as soon as one is stored -- with no hierarchical name and
+      no inheritance anywhere near it. Every operation such a collection then supports follows from
+      the domain rather than from the collection, so this is one answer and not one per container.
 - [x] **The unpacked struct** (LRM 7.2) -- realized on the execution backend as a product value
       domain: a runtime-owned product that owns its components by value and crosses as an opaque
       handle, so the generated side never inspects a component's representation. It default-

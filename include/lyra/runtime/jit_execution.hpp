@@ -230,6 +230,24 @@ auto lyra_rt_object_method(
     void* object, const void* introduced_by, std::uint32_t ordinal)
     -> LyraMethodEntry;
 
+// Where a name lands on a class, for a referrer with no name for that class and
+// so no way to count a position out of it. Both run while a reference to such a
+// class resolves and neither is reached from the simulation path; each answers
+// with a coordinate the two entries below then apply, once per access, with no
+// name in hand.
+auto lyra_rt_class_find_property(const void* definition, const void* name)
+    -> const void*;
+auto lyra_rt_class_find_behavior(const void* definition, const void* name)
+    -> const void*;
+
+// The same two answers as the pair above, with the coordinate arriving whole
+// instead of in parts. What the access states is the only difference: one reads
+// the pair off a declaration it can name, the other reads it out of a value.
+auto lyra_rt_object_member_addr_at(void* object, const void* coordinate)
+    -> void*;
+auto lyra_rt_object_method_at(void* object, const void* coordinate)
+    -> LyraMethodEntry;
+
 // The handle one capture crosses back to the body as, by declaration index. A
 // captured pointer answers the pointer it holds; a captured value answers the
 // storage the closure owns, which outlives every read of it. A body reaches its
@@ -491,6 +509,7 @@ auto lyra_rt_find_signal(void* self, const void* name) -> void*;
 // type. What a caller does with the answer is restore it to the prototype its
 // own call site was compiled against.
 auto lyra_rt_find_subroutine(void* self, const void* name) -> void (*)();
+auto lyra_rt_find_class(void* self, const void* name) -> const void*;
 
 // Publishes what a `disable` naming this scope terminates, and reads it back
 // (LRM 9.6.2). Neither carries a name, a scope having exactly one.

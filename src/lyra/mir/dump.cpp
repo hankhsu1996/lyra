@@ -223,6 +223,9 @@ class MirDumper {
               return std::format(
                   "External({}::{}#{})", e.unit_name, e.class_name,
                   e.ordinal.value);
+            },
+            [](const ResolvedVirtualSlot& r) -> std::string {
+              return std::format("Resolved(Expr[{}])", r.coordinate.value);
             }},
         s);
   }
@@ -405,6 +408,10 @@ class MirDumper {
                   return "RuntimeLibrary(DpiScopeGuard)";
                 case RuntimeLibraryKind::kForeignTaskAwaitable:
                   return "RuntimeLibrary(ForeignTaskAwaitable)";
+                case RuntimeLibraryKind::kPropertyCoordinate:
+                  return "RuntimeLibrary(PropertyCoordinate)";
+                case RuntimeLibraryKind::kBehaviorCoordinate:
+                  return "RuntimeLibrary(BehaviorCoordinate)";
               }
               throw InternalError("dump: unknown RuntimeLibraryKind");
             },
@@ -808,6 +815,10 @@ class MirDumper {
                             return std::format(
                                 "External[{}::{}#{}]", t.unit_name,
                                 t.class_name, t.slot.value);
+                          },
+                          [](const ResolvedFieldTarget& t) -> std::string {
+                            return std::format(
+                                "Resolved[Expr[{}]]", t.coordinate.value);
                           }},
                       m.field));
             },
@@ -865,6 +876,13 @@ class MirDumper {
       Dedent();
     }
     Dedent();
+
+    for (const ClassId declared : s.declares) {
+      Line(
+          std::format(
+              "Declares: Class[{}] \"{}\"", declared.value,
+              unit_->GetClass(declared).name));
+    }
 
     Line("Fields:");
     Indent();

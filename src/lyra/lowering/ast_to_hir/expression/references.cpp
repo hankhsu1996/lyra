@@ -376,7 +376,8 @@ auto MakeClassPropertyRefExpr(
             .declaring_scope_hops = *declaring_hops},
         *type_id, span);
   }
-  auto target = unit_lowerer.MakeClassPropertyTarget(*owner_ref, prop, span);
+  auto target =
+      unit_lowerer.MakeClassPropertyTarget(frame, owner_class, prop, span);
   if (!target) {
     return std::unexpected(std::move(target.error()));
   }

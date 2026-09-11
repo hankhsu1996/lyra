@@ -168,12 +168,25 @@ struct DispatchOrdinal {
 // which is what lets a call name one without knowing what the value it is made
 // on turns out to be -- and lets it name one a class of another compilation
 // unit introduced, since naming the introducer is all a call does.
-struct DispatchRef {
+struct StatedDispatchRef {
   TypeId introduced_by;
   DispatchOrdinal ordinal;
 
-  auto operator==(const DispatchRef&) const -> bool = default;
+  auto operator==(const StatedDispatchRef&) const -> bool = default;
 };
+
+// The same pair, carried by an operand instead of written here, for a call
+// whose class belongs to an instance rather than to this artifact. Which class
+// introduced the behavior and which of its introductions this is are settled
+// where the design elaborates; what the receiver turns out to be still decides
+// the body.
+struct SuppliedDispatchRef {
+  Operand coordinate;
+
+  auto operator==(const SuppliedDispatchRef&) const -> bool = default;
+};
+
+using DispatchRef = std::variant<StatedDispatchRef, SuppliedDispatchRef>;
 
 // The body the value the call is made on answers one behavior with (LRM 8.20).
 // The value is the call's first argument, as it is for a function named
@@ -415,12 +428,27 @@ struct DerefProjection {};
 // the same name, so a slot alone does not say which storage is meant -- and
 // which of the two an access means is fixed where the access is written, never
 // by the object it runs on (LRM 8.14).
-struct MemberRef {
+struct StatedMemberRef {
   TypeId declared_by;
   MemberSlot slot;
 
-  auto operator==(const MemberRef&) const -> bool = default;
+  auto operator==(const StatedMemberRef&) const -> bool = default;
 };
+
+// The same pair, carried by an operand instead of written here. Which
+// declaration it names belongs to an instance rather than to this artifact, so
+// one body serves instances whose accesses land on declarations with different
+// layouts and nothing compiled here could have counted a slot. What the step
+// reaches is stated outright, because a chain that cannot name the declaration
+// cannot read the member's type off one either.
+struct SuppliedMemberRef {
+  Operand coordinate;
+  TypeId reached;
+
+  auto operator==(const SuppliedMemberRef&) const -> bool = default;
+};
+
+using MemberRef = std::variant<StatedMemberRef, SuppliedMemberRef>;
 
 // Selects a member of whatever the projection has reached so far -- an
 // instance's own storage, or the captures a closure value holds. What the chain

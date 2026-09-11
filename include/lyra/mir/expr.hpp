@@ -303,11 +303,24 @@ struct ExternalVirtualSlot {
   auto operator==(const ExternalVirtualSlot&) const -> bool = default;
 };
 
-// The slot a virtual call names -- an intra-unit position or a cross-unit
-// by-name identity. Peer of `DirectTarget`'s local / external variant
-// structure: identity representation follows the compilation-unit boundary,
-// never split across two dispatch node kinds.
-using VirtualSlot = std::variant<LocalVirtualSlot, ExternalVirtualSlot>;
+// The dispatch position a call names, evaluated rather than stated. The class
+// the call names publishes on no signature, so nothing this unit compiles could
+// count a position out of it; which position the source name means was settled
+// where the design elaborated and arrives here as a value. What class the
+// receiver turns out to be still decides the body, exactly as it does for a
+// stated position (LRM 8.22).
+struct ResolvedVirtualSlot {
+  ExprId coordinate;
+
+  auto operator==(const ResolvedVirtualSlot&) const -> bool = default;
+};
+
+// The slot a virtual call names -- an intra-unit position, a cross-unit by-name
+// identity, or one that arrived as a value. Peer of `DirectTarget`'s local /
+// external variant structure: identity representation follows the
+// compilation-unit boundary, never split across two dispatch node kinds.
+using VirtualSlot =
+    std::variant<LocalVirtualSlot, ExternalVirtualSlot, ResolvedVirtualSlot>;
 
 // A virtually-dispatched call: the receiver is evaluated once and then the
 // implementation of the named slot on that receiver's dynamic type runs
@@ -454,9 +467,21 @@ struct CrossUnitClassFieldTarget {
 // by position: a product declares its components nowhere -- the type is the
 // component list -- so reaching one is an operation on the value rather than a
 // name in an arena, and it is a call.
+// Which storage the access reaches, evaluated rather than stated. The class the
+// access names publishes on no signature, so no arena of this unit holds the
+// name and no position could be counted; where the name lands was settled where
+// the design elaborated and arrives here as a value the access applies to
+// whichever object the receiver holds.
+struct ResolvedFieldTarget {
+  ExprId coordinate;
+
+  auto operator==(const ResolvedFieldTarget&) const -> bool = default;
+};
+
 using FieldRef = std::variant<
     ClassFieldTarget, StructFieldTarget, ClosureFieldTarget,
-    ExternalUnitObjectFieldTarget, CrossUnitClassFieldTarget>;
+    ExternalUnitObjectFieldTarget, CrossUnitClassFieldTarget,
+    ResolvedFieldTarget>;
 
 // Field access through an explicit receiver expression: `receiver.field`. The
 // receiver is a value of whichever declaration the field names, reached by

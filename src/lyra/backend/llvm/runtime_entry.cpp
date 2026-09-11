@@ -52,6 +52,14 @@ auto RuntimeOpName(RuntimeOp op) -> std::string_view {
       return "object_member_addr";
     case RuntimeOp::kObjectMethod:
       return "object_method";
+    case RuntimeOp::kClassFindProperty:
+      return "class_find_property";
+    case RuntimeOp::kClassFindBehavior:
+      return "class_find_behavior";
+    case RuntimeOp::kObjectMemberAddressAt:
+      return "object_member_addr_at";
+    case RuntimeOp::kObjectMethodAt:
+      return "object_method_at";
     case RuntimeOp::kClosureCapture:
       return "closure_capture";
     case RuntimeOp::kConst:
@@ -305,6 +313,11 @@ auto MemberStorageKindOf(
               // range inside that descriptor is reached through is the
               // descriptor, so a member names the whole and never a part.
               case lir::RuntimeLibraryKind::kPackedType:
+              // A coordinate is settled once for the whole run and read by
+              // every access afterwards, so a member naming one points at
+              // storage that outlives it rather than owning a copy.
+              case lir::RuntimeLibraryKind::kPropertyCoordinate:
+              case lir::RuntimeLibraryKind::kBehaviorCoordinate:
                 return MemberStorageKind::kBorrowedHandle;
               // The rest are transients of one call -- what a print or a format
               // is assembled from, what a boundary object images an argument
@@ -767,6 +780,9 @@ auto EntryNamingOf(support::BuiltinFn fn) -> EntryNaming {
     case support::BuiltinFn::kFindSubroutine:
     case support::BuiltinFn::kFindChild:
     case support::BuiltinFn::kFindDisableTarget:
+    case support::BuiltinFn::kFindClass:
+    case support::BuiltinFn::kClassFindProperty:
+    case support::BuiltinFn::kClassFindBehavior:
     case support::BuiltinFn::kForkWaitAll:
     case support::BuiltinFn::kForkWaitFirst:
     case support::BuiltinFn::kSpawnAll:

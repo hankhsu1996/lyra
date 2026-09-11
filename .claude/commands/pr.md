@@ -1,13 +1,15 @@
 ---
 description: Create a pull request with a well-formatted description
-allowed-tools: Bash(git status:*), Bash(git log:*), Bash(git diff:*), Bash(git add:*), Bash(git commit:*), Bash(git push:*), Bash(git branch:*), Bash(git fetch:*), Bash(git rev-list:*), Bash(git rebase:*), Bash(gh pr create:*), Bash(bazel build:*), Bash(bazel test:*), Bash(clang-format:*), Bash(find:*)
+allowed-tools: Bash(git status:*), Bash(git log:*), Bash(git diff:*), Bash(git add:*), Bash(git commit:*), Bash(git push:*), Bash(git branch:*), Bash(git fetch:*), Bash(git rev-list:*), Bash(git rebase:*), Bash(gh pr create:*), Bash(bazel build:*), Bash(bazel test:*), Bash(clang-format:*), Bash(npm run format:*), Bash(buildifier:*), Bash(find:*)
 ---
 
 # Pull Request
 
 Create a PR following the project format.
 
-Assumes the working tree is already clean and commits are made. If you need to format, lint, or commit, use `/commit` or `/commit-pr` instead.
+Assumes the working tree is already clean and the commits are made. Formatting, linting and
+committing belong to whoever ran before this; stop and say so if the tree is dirty rather than
+doing them here.
 
 ## Context
 
@@ -63,8 +65,12 @@ change in front of you.
 1. Check context above; ensure working tree is clean
 2. If commits behind main > 0:
    - `git rebase origin/main`
-   - Re-run clang-format (a rebase can drift C++ formatting against upstream):
-     - `find src include tests -name '*.cpp' -o -name '*.hpp' | xargs clang-format -i`
+   - Re-run **every** formatter this repository has -- `CLAUDE.md`'s Commands block is the list, and
+     a second one here is the copy that goes stale. A hunk git resolved by itself is two formatted
+     texts and stays formatted; a hunk you resolved by hand is new text no formatter has seen. Which
+     file that lands in is decided by what upstream touched rather than by what this branch is
+     about, so the language you were editing says nothing about which formatter is owed. Docs
+     conflict as readily as source, and the format job gates the PR just as the build does.
 3. **Run the gate** -- this is the tree that will land, and where step 2 rebased, it is one nothing
    has built or tested before:
 

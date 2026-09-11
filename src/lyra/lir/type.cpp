@@ -108,6 +108,10 @@ auto RuntimeLibraryKindName(RuntimeLibraryKind kind) -> const char* {
       return "cancellation target";
     case RuntimeLibraryKind::kControlEffect:
       return "control effect";
+    case RuntimeLibraryKind::kPropertyCoordinate:
+      return "property coordinate";
+    case RuntimeLibraryKind::kBehaviorCoordinate:
+      return "behavior coordinate";
   }
   throw InternalError("lir::RuntimeLibraryKindName: unknown kind");
 }

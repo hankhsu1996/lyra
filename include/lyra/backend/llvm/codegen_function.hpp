@@ -296,7 +296,7 @@ class CodeGenFunction {
   [[nodiscard]] auto MemberOwnerOf(lir::TypeId owner) const -> MemberOwner;
 
   auto MemberStorage(
-      llvm::Value* owner, lir::TypeId reached, lir::MemberRef member)
+      llvm::Value* owner, lir::TypeId reached, const lir::MemberRef& member)
       -> diag::Result<llvm::Value*>;
 
   [[nodiscard]] auto ReachedType(
