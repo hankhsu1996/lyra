@@ -199,6 +199,13 @@ the detail lives in the entry itself.
   the `new` enters the constructor, so its arguments cross as themselves. A registered entry taking
   a span of arguments, a per-arity signature on the definition, and splitting in the backend are
   rejected.
+- [constructing-another-units-class](constructing-another-units-class.md) -- a construction reaches
+  its constructor by the identity it reaches the class's declaration by, so the declaring unit
+  decides where each answer is read and nothing after it; the constructor is named the way every
+  other cross-unit method is, a construction reads nothing about it, and a class states the complete
+  argument list its base construction carries where its own declaration is read. Putting what a base
+  construction needs on the promise, letting an empty list mean two things, filling a default from
+  the declaring scope, and a call target of LIR's own are rejected.
 - [dispatch-position-is-a-lineage-coordinate](dispatch-position-is-a-lineage-coordinate.md) -- a
   class states the behaviors it introduces and the ones it takes over, never its lineage's; a
   behavior is named by the declaration that introduced it plus an ordinal within it, and flattening

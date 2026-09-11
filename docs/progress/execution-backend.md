@@ -353,10 +353,10 @@ each meets the same lifetime question above.
       object holds for what that body names; and constructing enters the base's construction first,
       on that same object, so what the base establishes is in place before any property initializer
       or constructor statement of the extending class can read it (LRM 8.7). The C++ backend never
-      had to answer either, because the host language answers them. Two narrower refusals remain: a
-      base another compilation unit declares, on the boundary every cross-unit class reference meets
-      here, and a base constructor formal the forwarding call leaves to its default, since nothing
-      fills a default in where no call is written.
+      had to answer either, because the host language answers them. What a base construction carries
+      is stated where the class is read, so nothing here establishes it: one narrower refusal
+      remains, a base that left a formal to its default value, and it is raised before either
+      backend sees the class.
 - [x] Building an object whose constructor takes arguments. The runtime owns the heap, so it is what
       brings an object into existence; which body then initializes it is settled where the object is
       asked for, and the generated code enters that constructor the way it enters a base's.
@@ -386,8 +386,13 @@ each meets the same lifetime question above.
       inherited property or behavior is found by walking that chain -- and reading each promise on
       the way is what makes its unit a dependency. What a class keeps to itself (LRM 8.18 `local`)
       is on no promise and sits behind everything it published, so adding one moves nothing a
-      referrer counted. Settled in `../decisions/reaching-past-a-published-class.md`. What still
-      refuses: constructing a class whose base another unit declares, and the type-associated
+      referrer counted. Settled in `../decisions/reaching-past-a-published-class.md`. Constructing
+      one is the same construction as any other: the allocation reaches the class's definition by
+      the name its unit links it under and the constructor by that name and one more segment, so
+      which unit declares the class decides where each answer is read and nothing after it
+      (`../decisions/constructing-another-units-class.md`). Until that landed the construction fell
+      out of the lowering entirely and the object came back with no property initialized, which is
+      the one shape here that answered rather than refused. What still refuses: the type-associated
       storage of a class a unit declares, which no symbol names yet.
 - [ ] `this` as a value in its own right (LRM 8.11), so an object can be returned, passed, and
       compared from inside its own method. A body holds a borrowed pointer to the object it runs on,

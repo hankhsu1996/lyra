@@ -1,6 +1,7 @@
 #pragma once
 
 #include <optional>
+#include <span>
 #include <string>
 #include <string_view>
 
@@ -51,15 +52,23 @@ auto LowerSubroutineDecl(
     UnitLowerer& unit_lowerer, const slang::ast::SubroutineSymbol& sym,
     WalkFrame frame) -> diag::Result<hir::SubroutineDecl>;
 
+// The arguments a base construction carries, read off whichever expression the
+// front end resolved it into: a `super.new(...)` the source wrote is a
+// new-class expression, while arguments written on the extends specifier
+// (LRM 8.17) are bound as an ordinary call of the base constructor. Both are
+// fully bound, so what this answers already carries whatever the call left to a
+// default.
+auto BaseCallArguments(const slang::ast::Expression& base_call)
+    -> std::span<const slang::ast::Expression* const>;
+
 // Lowers a class constructor (LRM 8.7) into its callable and its optional
 // base-construction call as one operation. The base-call is here rather than
 // on the caller because its arguments evaluate in the constructor's own
 // binding frame -- a formal parameter reference in `super.new(a)` must resolve
 // to the same procedural var the body would read -- and only the subroutine
 // lowerer holds that frame while the body lowers. `base_call_ast`, when
-// present, is the slang `NewClassExpression` returned by
-// `ClassType::getBaseConstructorCall()`; the caller retrieves it once and
-// hands it in here.
+// present, is what `ClassType::getBaseConstructorCall()` answered; the caller
+// retrieves it once and hands it in here.
 struct ConstructorAndBaseCall {
   hir::SubroutineDecl constructor;
   std::optional<hir::BaseCall> base_call;

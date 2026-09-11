@@ -1252,11 +1252,11 @@ class HirDumper {
           "Method", id.value, c.methods.Get(id), c.procedural_scopes);
     }
     DumpSubroutine("Constructor", 0, c.constructor, c.procedural_scopes);
-    if (c.base_call.has_value()) {
+    if (c.base.has_value()) {
       std::string args;
-      for (std::size_t i = 0; i < c.base_call->arguments.size(); ++i) {
+      for (std::size_t i = 0; i < c.base_call.arguments.size(); ++i) {
         if (i != 0) args += ", ";
-        args += std::format("Expr[{}]", c.base_call->arguments[i].value);
+        args += std::format("Expr[{}]", c.base_call.arguments[i].value);
       }
       Line(std::format("BaseCall: ({})", args));
     }

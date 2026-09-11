@@ -3,6 +3,7 @@
 #include <format>
 #include <optional>
 #include <string>
+#include <string_view>
 
 #include "lyra/base/overloaded.hpp"
 #include "lyra/lir/compilation_unit.hpp"
@@ -20,10 +21,10 @@ auto DeclarationName(const CompilationUnit& unit, TypeId type)
           [&](const ExternalUnitObjectType& e) -> std::optional<std::string> {
             const ExternalUnitObject& object =
                 unit.external_unit_objects.Get(e.object);
-            return std::format("{}.{}", object.unit_name, object.class_name);
+            return ClassLinkageName(object.unit_name, object.class_name);
           },
           [](const CrossUnitClassType& c) -> std::optional<std::string> {
-            return std::format("{}.{}", c.unit_name, c.class_name);
+            return ClassLinkageName(c.unit_name, c.class_name);
           },
           [&](const ClosureType& c) -> std::optional<std::string> {
             return unit.closures.Get(c.closure_id).name;
@@ -34,6 +35,15 @@ auto DeclarationName(const CompilationUnit& unit, TypeId type)
           [](const auto&) -> std::optional<std::string> {
             return std::nullopt;
           }});
+}
+
+auto ClassLinkageName(std::string_view unit_name, std::string_view class_name)
+    -> std::string {
+  return std::format("{}.{}", unit_name, class_name);
+}
+
+auto ConstructorSymbolName(std::string_view declaration_name) -> std::string {
+  return std::format("{}.constructor", declaration_name);
 }
 
 }  // namespace lyra::lir

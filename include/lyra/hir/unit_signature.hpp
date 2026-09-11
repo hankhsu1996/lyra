@@ -87,9 +87,10 @@ struct InstanceClassSignature {
 };
 
 // One class of the source language a unit publishes (LRM 26.2 puts a package's
-// declarations on its signature): its canonical name, the properties it
-// declares in the order that fixes their slots, and the behaviors it introduces
-// in the order that fixes their ordinals.
+// declarations on its signature), named by the canonical name a referrer
+// reaches it under. Two of the fields below are ordered lists rather than sets:
+// a property's slot and a behavior's ordinal are counted out of them, so their
+// order is as much a part of the promise as their contents.
 //
 // A class states what it adds and nothing about the lineage it extends, so a
 // referrer counts a position out of the class that declares it and never

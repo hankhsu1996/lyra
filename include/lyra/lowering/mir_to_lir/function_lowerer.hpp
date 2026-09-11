@@ -112,12 +112,24 @@ class FunctionLowerer {
   using LocalBinding = std::variant<
       PlaceBinding, ValueBinding, ActivationValueBinding, CellBinding>;
 
+  // What entering one class's constructor takes: the type the object it runs on
+  // is opened as, and the callee. Both are answered from the class's identity
+  // alone, so a class this unit compiles and one another unit declares differ
+  // in where each answer is read and in nothing after.
+  struct EnteredConstructor {
+    lir::TypeId object_type;
+    lir::CallTarget callee;
+  };
+  // How the constructor of the class `cls` names is entered, or nothing where
+  // there is no body to enter -- a base the runtime library defines comes into
+  // existence with the object and is entered by whatever builds it.
+  auto ConstructorOf(const mir::ClassRef& cls)
+      -> std::optional<EnteredConstructor>;
+
   // Enters the base's constructor on this same object, ahead of the body (LRM
   // 8.7). The base's members sit ahead of this class's in one shared
   // numbering, so the base initializes its own through the receiver it is
-  // handed. A base the runtime library defines comes into existence with the
-  // object itself and is entered by whatever builds it, so nothing is called
-  // for one here.
+  // handed.
   auto ConstructBase() -> diag::Result<void>;
 
   auto LowerBlockInto(const mir::Block& block) -> diag::Result<void>;
@@ -260,14 +272,14 @@ class FunctionLowerer {
   auto EnterCoroutine(
       const mir::Block& block, const mir::CallExpr& call, mir::TypeId type,
       std::optional<lir::Operand> completion) -> diag::Result<lir::Operand>;
-  // Brings an object of `class_id` into existence and enters the construction
-  // the program asked for on it (LRM 8.3, 8.7). The heap is the runtime's, so
-  // what it answers is an object whose properties hold their storage's
-  // default; the body that brings them to their initial values is this
-  // program's own and is entered like any other.
+  // Brings an object into existence and enters the construction the program
+  // asked for on it (LRM 8.3, 8.7). The heap is the runtime's, so what it
+  // answers is an object whose properties hold their storage's default; the
+  // body that brings them to their initial values is this program's own and is
+  // entered like any other.
   auto LowerObjectConstruction(
-      const mir::Block& block, const mir::CallExpr& call, mir::ClassId class_id,
-      mir::TypeId type) -> diag::Result<lir::Operand>;
+      const mir::Block& block, const mir::CallExpr& call, mir::TypeId type)
+      -> diag::Result<lir::Operand>;
   // A reference is the address of the cell its referent lives in.
   auto LowerReferenceBind(
       const mir::Block& block, const mir::CallExpr& call, mir::TypeId type)

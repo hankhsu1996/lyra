@@ -208,12 +208,13 @@ struct ConstructTarget {
   TypeId result;
 };
 
-// A function outside the program, called by its linkage name -- a DPI-C
-// import's foreign symbol (LRM 35.4). The host resolves the name: a link line
-// for an ahead-of-time image, the execution session for a JIT one. The
-// signature is the call's own, since every operand and the result are already
-// the ABI carriers the boundary marshaled to, so the target carries nothing but
-// the name.
+// A function this unit does not compile, called by its linkage name -- a body
+// another compilation unit emits, or a DPI-C import's foreign symbol (LRM
+// 35.4). The host resolves the name: a link line for an ahead-of-time image,
+// the execution session for a JIT one. The signature is the call's own, so the
+// target carries nothing but the name -- which the caller composes from what it
+// already knows the callee by, and which is therefore the whole of what the two
+// sides have to agree on.
 struct ForeignTarget {
   std::string symbol;
 };

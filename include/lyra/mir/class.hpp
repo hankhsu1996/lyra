@@ -67,7 +67,9 @@ struct ConstructorDecl {
   CallableCode code = CallableCode::Defined();
   // What the base's constructor is entered with (LRM 8.7), each argument
   // evaluated in this constructor's own local scope. Which base that is, and
-  // whether the class has one, is the class's own declaration.
+  // whether the class has one, is the class's own declaration. The list is
+  // every argument that construction takes, so a consumer forwards it as it
+  // stands and supplies nothing of its own.
   std::vector<ExprId> base_args;
 };
 

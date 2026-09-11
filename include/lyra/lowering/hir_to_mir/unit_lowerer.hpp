@@ -180,13 +180,20 @@ class UnitLowerer {
   // variant itself.
   auto TranslateClassRef(const hir::ClassRef& ref) -> mir::ClassRef;
 
+  // The same, for the class a class extends, which is the one class reference
+  // whose promise this unit's own lowering reads: a construction enters the
+  // base's ahead of its own, and whether a forward the language supplies can
+  // enter that construction is a property only the base's promise states.
+  auto TranslateBaseClassRef(const hir::ClassRef& ref) -> mir::ClassRef;
+
   auto MakeExternalFieldTarget(const hir::ExternalClassPropertyTarget& target)
       -> mir::ExternalFieldTarget;
 
   // Takes this unit's record of what another unit promised about one of its
-  // classes into MIR, once per class reached. Every reference to a property or
-  // a behavior on one runs through here, so a reference and the record its
-  // position is counted out of cannot come apart.
+  // classes into MIR, once per class reached. Every reference that reads the
+  // promise runs through here -- a property, a behavior, and the class a class
+  // extends -- so such a reference and the record it reads cannot come apart.
+  // A reference that merely names the class reads nothing and records nothing.
   auto RecordExternalClass(
       const std::string& unit_name, const std::string& class_name) -> void;
 

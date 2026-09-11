@@ -14,6 +14,7 @@
 #include "lyra/base/overloaded.hpp"
 #include "lyra/lir/class_id.hpp"
 #include "lyra/lir/compilation_unit.hpp"
+#include "lyra/lir/declaration_name.hpp"
 #include "lyra/lir/function.hpp"
 #include "lyra/lir/function_id.hpp"
 #include "lyra/lowering/mir_to_lir/function_lowerer.hpp"
@@ -231,11 +232,7 @@ auto UnitLowerer::UnitCallableSymbol(const mir::CallableDecl& callable) const
 }
 
 auto UnitLowerer::ClassSymbol(const mir::Class& cls) const -> std::string {
-  // A class's name is the declaring unit's own statement and is unique only
-  // there, while the whole program links into one name space, so the unit
-  // qualifies it. A referrer composes the same symbol from the unit and class
-  // its signature named, which is what lets the two agree with no shared table.
-  return std::format("{}.{}", mir_->name, cls.name);
+  return lir::ClassLinkageName(mir_->name, cls.name);
 }
 
 auto UnitLowerer::ClosureSymbol(mir::ClosureId closure) const -> std::string {
@@ -325,8 +322,7 @@ auto UnitLowerer::LowerClass(mir::ClassId owner, const mir::Class& cls)
   // unique only within its class -- so the class symbol qualifies it, being
   // itself unique program-wide.
   auto constructor =
-      FunctionLowerer(*this, cls, std::format("{}.constructor", out.name))
-          .Run();
+      FunctionLowerer(*this, cls, lir::ConstructorSymbolName(out.name)).Run();
   if (!constructor) {
     return std::unexpected(std::move(constructor.error()));
   }

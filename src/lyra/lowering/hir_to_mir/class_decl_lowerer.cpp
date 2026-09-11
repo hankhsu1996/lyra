@@ -187,7 +187,7 @@ auto ClassDeclLowerer::DeclareShape(ClassShape* declaring_shape)
 
   std::optional<mir::ClassRef> base_ref;
   if (hir_class.base.has_value()) {
-    base_ref = unit_lowerer.TranslateClassRef(*hir_class.base);
+    base_ref = unit_lowerer.TranslateBaseClassRef(*hir_class.base);
   }
   std::vector<mir::ClassRef> implements;
   implements.reserve(hir_class.implements.size());
@@ -418,21 +418,15 @@ auto ClassDeclLowerer::PopulateBodies(
       ctor_lowerer.RegisterConstructorFormals(ctor, frame, ctor_params);
   if (!formals_or) return std::unexpected(std::move(formals_or.error()));
 
-  // Base construction (LRM 8.7): a derived class always forwards to its base
-  // -- explicit `super.new(args)` when the source wrote one, an implicit
-  // `super.new()` otherwise. The class states which base it forwards to, so
-  // what is published here is what that call carries, which makes
-  // base-constructor ordering a stated fact rather than a backend convention.
-  //
-  // The implicit case states no arguments, which is only right where the base
-  // constructor declares none: a default value belongs to the declaration and
-  // is filled in where a call is written (LRM 13.5.3), and an implicit forward
-  // is written nowhere.
+  // Base construction (LRM 8.7): a derived class always forwards to its base,
+  // and what that forward carries came with the base itself. Publishing it here
+  // is what makes base-constructor ordering a stated fact rather than a backend
+  // convention.
   std::vector<mir::ExprId> base_args;
   if (hir_class.base.has_value()) {
-    // The base's own construction prefix leads its arguments, before whatever
-    // the source wrote: a base that belongs to the same instance this class
-    // does is handed that instance, which only this constructor holds.
+    // The base's own construction prefix leads its arguments: a base that
+    // belongs to the same instance this class does is handed that instance,
+    // which only this constructor holds.
     for (const mir::LocalId prefix : BaseCtorPrefixLocals(
              unit_lowerer, *hir_class.base, ctor_prefix_local_ids)) {
       base_args.push_back(ctor_block.exprs.Add(
@@ -441,12 +435,10 @@ auto ClassDeclLowerer::PopulateBodies(
                   mir::ReferenceExpr{.target = mir::LocalRef{.var = prefix}},
               .type = ctor_code.locals.Get(prefix).type}));
     }
-    if (hir_class.base_call.has_value()) {
-      for (const hir::ExprId arg : hir_class.base_call->arguments) {
-        auto arg_or = ctor_lowerer.LowerExpr(ctor.body.exprs.Get(arg), frame);
-        if (!arg_or) return std::unexpected(std::move(arg_or.error()));
-        base_args.push_back(ctor_block.exprs.Add(*std::move(arg_or)));
-      }
+    for (const hir::ExprId arg : hir_class.base_call.arguments) {
+      auto arg_or = ctor_lowerer.LowerExpr(ctor.body.exprs.Get(arg), frame);
+      if (!arg_or) return std::unexpected(std::move(arg_or.error()));
+      base_args.push_back(ctor_block.exprs.Add(*std::move(arg_or)));
     }
   }
 

@@ -474,11 +474,6 @@ auto TranslateType(
   }
 }
 
-// LRM 8.7: a class the source declares without a `function new` still has a
-// constructor -- the implicit `new`, whose only effect is the property
-// initialization every class performs. It is modeled as a constructor with no
-// formals and an empty body; the initialization itself is composed onto the
-// body separately, the same way it is for a user-written constructor.
 // Looks up the given method name in `derived_cls`'s base chain for a pure
 // virtual prototype (LRM 8.21) an implementation on `derived_cls` should
 // override. Slang's `checkForOverride` establishes a
@@ -533,6 +528,12 @@ auto FindOverriddenPureInImplementsChain(
   return nullptr;
 }
 
+// LRM 8.7: a class the source declares without a `function new` still has a
+// constructor -- the implicit `new`, whose only effect is the property
+// initialization every class performs. It is modeled as a constructor with no
+// formals and an empty body; what construction does is composed onto that body
+// afterwards, the same way it is for a user-written constructor -- the property
+// initializers, and the arguments the base's construction is entered with.
 auto SynthesizeDefaultConstructor(
     hir::TypeId void_type, diag::SourceSpan span, const WalkFrame& class_frame)
     -> hir::SubroutineDecl {
@@ -830,6 +831,21 @@ auto LowerDefinedClassMethod(
   // derived declaration repeated the keyword (LRM 8.20, 8.26.2).
   method_decl->is_virtual = true;
   return method_decl;
+}
+
+// How many formals the constructor of the class `cls` extends declares. Read
+// only where the front end resolved no base call, which it does exactly when
+// every one of them has a default value, so this is the count of defaults the
+// construction owes.
+auto BaseConstructorFormalCount(const slang::ast::ClassType& cls)
+    -> std::size_t {
+  const slang::ast::Type* base = cls.getBaseClass();
+  if (base == nullptr) {
+    return 0;
+  }
+  const auto& declared = base->getCanonicalType().as<slang::ast::ClassType>();
+  const slang::ast::SubroutineSymbol* constructor = declared.getConstructor();
+  return constructor == nullptr ? 0 : constructor->getArguments().size();
 }
 
 }  // namespace
@@ -1322,6 +1338,10 @@ auto UnitLowerer::PopulateClassBody(PendingClassBody& pending)
   // The class's `new` (LRM 8.7), lowered once every method identity exists so
   // its body reaches them the same way any other body does.
   std::optional<hir::SubroutineDecl> user_constructor;
+  // What entering the base's construction carries, while it is still being
+  // worked out: the constructor lowering answers it where the source wrote the
+  // call, and the block below settles every other way it arrives.
+  std::optional<hir::BaseCall> stated_base_call;
   if (constructor_sym != nullptr) {
     // LRM 8.7 gives a constructor the argument conventions of any other
     // subroutine call, but a construction yields the object it built and so
@@ -1335,15 +1355,11 @@ auto UnitLowerer::PopulateClassBody(PendingClassBody& pending)
             "supported");
       }
     }
-    // `getBaseConstructorCall` returns the `super.new(...)` slang lifted out of
-    // the ctor body: null when the source did not write one (LRM 8.7 implicit
-    // forwarding, materialized as an empty stated base call in HIR-to-MIR) or
-    // when this class has no base.
     auto ctor_or = LowerConstructorDecl(
         *this, *constructor_sym, class_frame, cls.getBaseConstructorCall());
     if (!ctor_or) return std::unexpected(std::move(ctor_or.error()));
     user_constructor = std::move(ctor_or->constructor);
-    decl.base_call = std::move(ctor_or->base_call);
+    stated_base_call = std::move(ctor_or->base_call);
   }
 
   // Forward every interface pure virtual this class satisfies by inheritance
@@ -1370,6 +1386,40 @@ auto UnitLowerer::PopulateClassBody(PendingClassBody& pending)
   ProcessLowerer init_lowerer(*this, cls);
   const WalkFrame init_frame =
       class_frame.WithProceduralBody(&constructor.body);
+
+  // A class that extends another always enters its base's construction, so the
+  // arguments that construction carries are settled here whether or not the
+  // source wrote them: an explicit `super.new(...)`, the arguments on an
+  // extends specifier, or the base constructor's own default values (LRM 8.7,
+  // 8.17). The front end resolves the first two into one fully bound call and
+  // answers nothing for the third, having first established that every formal
+  // of the base constructor has a default -- so an answer of nothing is the
+  // third case, and how many defaults it owes is what the base declares.
+  if (decl.base.has_value()) {
+    if (!stated_base_call.has_value()) {
+      if (const auto* written = cls.getBaseConstructorCall()) {
+        hir::BaseCall lowered;
+        const auto actuals = BaseCallArguments(*written);
+        lowered.arguments.reserve(actuals.size());
+        for (const auto* actual : actuals) {
+          auto arg_or = init_lowerer.LowerExpr(*actual, init_frame);
+          if (!arg_or) return std::unexpected(std::move(arg_or.error()));
+          lowered.arguments.push_back(
+              constructor.body.exprs.Add(*std::move(arg_or)));
+        }
+        stated_base_call = std::move(lowered);
+      } else if (BaseConstructorFormalCount(cls) != 0) {
+        return diag::Fail(
+            span, diag::DiagCode::kUnsupportedClassFeature,
+            "a base constructor formal left to its default value is not yet "
+            "supported; state the argument in super.new or on the extends "
+            "specifier");
+      } else {
+        stated_base_call = hir::BaseCall{};
+      }
+    }
+    decl.base_call = *std::move(stated_base_call);
+  }
   // A static property initializer (LRM 8.9 / 10.5) runs once at design init,
   // not per instance, so its expression lands in the class's `static_init`
   // arena rather than the constructor body's. It cannot read a per-instance
