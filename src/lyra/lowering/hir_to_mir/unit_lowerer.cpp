@@ -560,10 +560,8 @@ auto UnitLowerer::RunNamespace() -> diag::Result<mir::CompilationUnit> {
             .callable_name =
                 scope.structural_subroutines.Get(export_decl.subroutine).name},
         result_type, export_decl);
-    unit_.foreign_surface.push_back(
-        mir::ForeignSymbol{
-            .linkage = entry.linkage,
-            .definition = std::move(entry.definition)});
+    // A name a namespace owns needs no entry beside its callable: that callable
+    // is the program-global symbol and carries the prototype it publishes.
     unit_.callables.Add(
         mir::CallableDecl{
             .code = std::move(entry.code),

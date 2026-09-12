@@ -157,7 +157,7 @@ auto main(int argc, char** argv) -> int {
     lyra::diag::DiagnosticSink sink;
     auto result = lyra::compiler::Compile(
         driver, lyra::compiler::LoweringPolicy{.assertions = args.assertions},
-        sink, lyra::cli::LoweringDepth(args));
+        sink, lyra::cli::FrontEndDepth(args));
 
     // `run` executes the simulation; its stdout/stderr are the simulation's
     // own, so compile-phase warnings must not bleed into them. Surface slang
@@ -180,16 +180,24 @@ auto main(int argc, char** argv) -> int {
       return 1;
     }
 
-    return lyra::cli::RunCommand(
+    const int exit_code = lyra::cli::RunCommand(
         lyra::cli::CommandContext{
             .args = &args,
             .artifacts = &result.artifacts,
+            .sink = &sink,
             .mgr = mgr,
             .dpi_inputs = *dpi_inputs,
             .formatting = args.format ? lyra::driver::SourceFormatting::kOn
                                       : lyra::driver::SourceFormatting::kOff,
-            .report = &report,
             .program_path = program_path});
+
+    // Everything a command met went into the same sink the stages above it
+    // write to, so what reaches the terminal is decided once, here, and a
+    // command never renders anything itself.
+    if (sink.HasErrors()) {
+      report(sink, mgr);
+    }
+    return exit_code;
   } catch (const lyra::InternalError& e) {
     fmt::print(stderr, "{}", lyra::diag::RenderInternalError(e.what()));
     return 2;

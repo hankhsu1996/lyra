@@ -202,16 +202,16 @@ auto RenderBuildScript(
 // or write files Lyra has just written, which is about the emission and not
 // about style, so it is not swallowed either.
 auto FormatSources(
-    std::span<const backend::cpp::CppArtifact> files,
-    const std::filesystem::path& dir) -> diag::Result<void> {
+    std::span<const std::string> relpaths, const std::filesystem::path& dir)
+    -> diag::Result<void> {
   auto clang_format = support::FindOnPath("clang-format");
   if (!clang_format) {
     return diag::Fail(
         diag::DiagCode::kHostIoError, std::move(clang_format.error()));
   }
   std::vector<std::string> args = {"-i", "-style=Google"};
-  for (const auto& file : files) {
-    args.push_back((dir / file.relpath).string());
+  for (const std::string& relpath : relpaths) {
+    args.push_back((dir / relpath).string());
   }
   auto run = support::RunProcessCaptured(*clang_format, args);
   if (!run) {
@@ -236,28 +236,6 @@ auto CopyDpiSources(
   for (const DpiLinkInput& input : inputs) {
     if (auto r = CopyFileWritable(input.source, dir / DpiSourceRelPath(input));
         !r) {
-      return r;
-    }
-  }
-  return {};
-}
-
-auto EmitAndWriteSources(
-    std::span<const mir::CompilationUnit> units,
-    const mir::CompilationUnit& root, const std::filesystem::path& dir,
-    SourceFormatting formatting) -> diag::Result<void> {
-  auto emitted = backend::cpp::EmitCpp(units, root);
-  if (!emitted) {
-    return std::unexpected(std::move(emitted.error()));
-  }
-  const backend::cpp::CppArtifactSet& set = *emitted;
-  for (const auto& file : set.files) {
-    if (auto r = WriteFile(dir / file.relpath, file.content); !r) {
-      return r;
-    }
-  }
-  if (formatting == SourceFormatting::kOn) {
-    if (auto r = FormatSources(set.files, dir); !r) {
       return r;
     }
   }
@@ -355,15 +333,46 @@ auto CompileProgram(
 
 }  // namespace
 
-auto AssembleProject(
-    const RuntimeLocation& runtime, std::span<const mir::CompilationUnit> units,
-    const mir::CompilationUnit& root, const std::filesystem::path& dir,
-    SourceFormatting formatting, const HostBuild& host,
-    std::span<const DpiLinkInput> dpi_inputs) -> diag::Result<void> {
-  if (auto r = EmitAndWriteSources(units, root, dir, formatting); !r) {
+auto CppProjectSink::Take(
+    const mir::CompilationUnit& unit, const compiler::UnitProgramRecord& record)
+    -> diag::Result<void> {
+  if (auto refusal = backend::cpp::RefusalFor(record); refusal.has_value()) {
+    return std::unexpected(std::move(*refusal));
+  }
+  return Write(backend::cpp::EmitCppUnit(unit));
+}
+
+auto CppProjectSink::Finish(
+    const mir::CompilationUnit& root,
+    std::span<const compiler::UnitProgramRecord> records)
+    -> diag::Result<void> {
+  if (auto r = Write(backend::cpp::EmitCppUnit(root)); !r) {
     return r;
   }
-  if (auto r = WriteDpiSurface(runtime, units, root, dir); !r) {
+  if (auto r = Write(backend::cpp::EmitCppHostMain(records, root)); !r) {
+    return r;
+  }
+  if (formatting_ == SourceFormatting::kOn) {
+    return FormatSources(written_, dir_);
+  }
+  return {};
+}
+
+auto CppProjectSink::Write(backend::cpp::CppArtifact file)
+    -> diag::Result<void> {
+  if (auto r = WriteFile(dir_ / file.relpath, file.content); !r) {
+    return r;
+  }
+  written_.push_back(std::move(file.relpath));
+  return {};
+}
+
+auto AssembleProject(
+    const RuntimeLocation& runtime,
+    std::span<const compiler::UnitProgramRecord> records,
+    const std::filesystem::path& dir, const HostBuild& host,
+    std::span<const DpiLinkInput> dpi_inputs) -> diag::Result<void> {
+  if (auto r = WriteDpiSurface(runtime, records, dir); !r) {
     return r;
   }
   if (auto r = CopyDpiSources(dpi_inputs, dir); !r) {
@@ -408,15 +417,12 @@ auto BuildProject(
 }
 
 auto RunInPlace(
-    const RuntimeLocation& runtime, std::span<const mir::CompilationUnit> units,
-    const mir::CompilationUnit& root, const std::filesystem::path& work_dir,
-    SourceFormatting formatting, const HostBuild& host,
+    const RuntimeLocation& runtime,
+    std::span<const compiler::UnitProgramRecord> records,
+    const std::filesystem::path& work_dir, const HostBuild& host,
     std::span<const std::string> child_args,
     std::span<const DpiLinkInput> dpi_inputs) -> diag::Result<int> {
-  if (auto r = EmitAndWriteSources(units, root, work_dir, formatting); !r) {
-    return std::unexpected(std::move(r.error()));
-  }
-  if (auto r = WriteDpiSurface(runtime, units, root, work_dir); !r) {
+  if (auto r = WriteDpiSurface(runtime, records, work_dir); !r) {
     return std::unexpected(std::move(r.error()));
   }
   const auto program = work_dir / kProgramName;

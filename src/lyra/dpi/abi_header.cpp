@@ -10,7 +10,7 @@
 
 #include "lyra/base/internal_error.hpp"
 #include "lyra/base/overloaded.hpp"
-#include "lyra/mir/callable.hpp"
+#include "lyra/compiler/unit_program_record.hpp"
 #include "lyra/mir/type.hpp"
 #include "lyra/mir/type_id.hpp"
 
@@ -23,9 +23,8 @@ namespace {
 // set is closed: a foreign signature names only machine scalars, a borrowed
 // pointer to one, a canonical vector chunk, or an open-array handle, so
 // anything else reaching here is a boundary the lowering should have rejected.
-auto RenderTypeAsC(const mir::CompilationUnit& unit, mir::TypeId id)
-    -> std::string {
-  return unit.types.Get(id).Visit(
+auto RenderTypeAsC(const mir::TypePool& types, mir::TypeId id) -> std::string {
+  return types.Get(id).Visit(
       Overloaded{
           [](const mir::VoidType&) -> std::string { return "void"; },
           [](const mir::MachineIntType& m) -> std::string {
@@ -58,7 +57,7 @@ auto RenderTypeAsC(const mir::CompilationUnit& unit, mir::TypeId id)
             return std::format(
                 "{}{}*",
                 p.mutability == mir::Mutability::kReadOnly ? "const " : "",
-                RenderTypeAsC(unit, p.pointee));
+                RenderTypeAsC(types, p.pointee));
           },
           [](const mir::RuntimeLibraryType& r) -> std::string {
             if (r.kind == mir::RuntimeLibraryKind::kDpiBitChunk) {
@@ -89,19 +88,20 @@ auto RenderTypeAsC(const mir::CompilationUnit& unit, mir::TypeId id)
 // The name is the caller's to supply: it is the linkage name, which lives in
 // the DPI-C name space (LRM 35.4) rather than among the names a unit answers.
 auto RenderPrototype(
-    const mir::CompilationUnit& unit, const mir::CallableDecl& callable,
+    const mir::TypePool& types, mir::TypeId prototype,
     std::string_view linkage_name) -> std::string {
-  const mir::CallableCode& code = callable.code;
+  const auto& signature = types.Get(prototype).Get<mir::MachineFunctionType>();
   std::string params;
-  for (std::size_t i = 0; i < code.params.size(); ++i) {
+  for (std::size_t i = 0; i < signature.params.size(); ++i) {
     if (i != 0) params += ", ";
-    params += RenderTypeAsC(unit, code.locals.Get(code.params[i]).type);
+    params += RenderTypeAsC(types, signature.params[i]);
   }
   if (params.empty()) {
     params = "void";
   }
   return std::format(
-      "{} {}({})", RenderTypeAsC(unit, code.result_type), linkage_name, params);
+      "{} {}({})", RenderTypeAsC(types, signature.result), linkage_name,
+      params);
 }
 
 struct ForeignEntry {
@@ -137,16 +137,12 @@ auto FindOnSurface(const ForeignSurface& surface, std::string_view name)
 // such declaration to agree, and the frontend rejects a design where they do
 // not, so a disagreement reaching here means an inconsistent surface got past
 // that check.
-void RecordCallable(
-    const mir::CompilationUnit& unit, const mir::CallableDecl& callable,
+void RecordForeignName(
+    const mir::TypePool& types, const compiler::ForeignName& name,
     ForeignSurface& surface) {
-  if (!callable.foreign.has_value()) {
-    return;
-  }
   ForeignEntry entry{
-      .name = callable.foreign->foreign_name,
-      .prototype =
-          RenderPrototype(unit, callable, callable.foreign->foreign_name)};
+      .name = name.linkage_name,
+      .prototype = RenderPrototype(types, name.prototype, name.linkage_name)};
   if (const ForeignEntry* seen = FindOnSurface(surface, entry.name);
       seen != nullptr) {
     if (seen->prototype != entry.prototype) {
@@ -158,19 +154,13 @@ void RecordCallable(
     }
     return;
   }
-  // A callable this design defines is an entry point the C side calls; one it
-  // declares without defining is what the C side must define. The presence of a
-  // body is what separates them -- neither side carries a tag.
-  (callable.code.body.has_value() ? surface.exports : surface.imports)
+  // A name the design supplies a body for is an entry point the C side calls;
+  // one it only declares is what the C side must define. Which of the two it is
+  // follows from who owns the body, which the record already answers.
+  const bool the_c_side_defines_it =
+      std::holds_alternative<compiler::DefinedByTheForeignSide>(name.body);
+  (the_c_side_defines_it ? surface.imports : surface.exports)
       .push_back(std::move(entry));
-}
-
-// A DPI-C name is program-global and belongs to no class (LRM 35.4, 35.7), so
-// the unit's own callables are the whole of its foreign surface.
-void CollectUnit(const mir::CompilationUnit& unit, ForeignSurface& surface) {
-  for (const mir::CallableDecl& callable : unit.callables) {
-    RecordCallable(unit, callable, surface);
-  }
 }
 
 auto RenderSection(
@@ -185,14 +175,14 @@ auto RenderSection(
 
 }  // namespace
 
-auto RenderAbiHeader(
-    std::span<const mir::CompilationUnit> units,
-    const mir::CompilationUnit& root) -> std::string {
+auto RenderAbiHeader(std::span<const compiler::UnitProgramRecord> records)
+    -> std::string {
   ForeignSurface surface;
-  for (const mir::CompilationUnit& unit : units) {
-    CollectUnit(unit, surface);
+  for (const compiler::UnitProgramRecord& record : records) {
+    for (const compiler::ForeignName& name : record.foreign_names) {
+      RecordForeignName(record.foreign_types, name, surface);
+    }
   }
-  CollectUnit(root, surface);
 
   std::string out;
   out +=

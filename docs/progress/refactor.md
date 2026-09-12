@@ -1371,6 +1371,64 @@ enough to warrant its own focused review.
 
       Not blocked. It sits in the execution backend's own surface rather than in any lowering.
 
+- [ ] R89 -- A compile holds every whole-design representation at once, so its peak memory is their
+      sum and not the largest of them. Measured on a generated design: the peak tracks the total
+      source and does not move when the same content is split into four units or into two hundred
+      and fifty-six, which is what a sum looks like and a maximum does not. Two of the three are now
+      released where their last reader finishes -- the elaborated front-end tree, and each unit's
+      HIR as that unit is lowered -- which took 28% off a lowering run's peak and 19% off a dump's.
+
+      Nothing below HIR is held any more. Each unit is lowered, handed to whoever asked for it,
+      and released before the next one starts, so a compile no longer returns a bag of every
+      stage's artifacts and the command that wanted them drives the loop itself. What the steps
+      reading across the design get instead is a small record each unit publishes: which namespace
+      it brings up and against what, which foreign names it takes part in with their prototypes,
+      and whether a backend can realize it. A prototype crosses in a pool the record carries,
+      because whoever reads it does so where the producing unit's arenas are gone.
+
+      The same record settles two questions that had been answered separately, each by walking a
+      whole unit: which foreign names the program publishes, and which of them the program itself
+      must define. It also carries the one fact a backend needs before it writes anything, so
+      every unit can be refused before the first byte is written and a run that meets a gap names
+      every gap rather than the first.
+
+      Measured on a generated design of five megabytes of source: lowering it to MIR peaked at
+      1371 MiB and now peaks at 613, and emitting the whole C++ project costs 608 -- which is to
+      say rendering and writing the design now costs one unit more than lowering it. What remains
+      linear in the design is HIR, which is still built for every unit in one pass before any of
+      it is consumed; that is the next term and a different subject.
+
+      Deriving the published facts before any body lowers is a further step and a different gain --
+      it lets the design root be assembled while unit bodies are still being lowered. That one
+      belongs to the signature workstream rather than here.
+
+      **Where this ends is that the record is not needed at all**, and it is worth stating because
+      the record is a bridge rather than a destination. A design's link-level unit is a referrer
+      like any other: what it may read is the signatures of the units it references. Three things it
+      reads today are not on any signature, and each has an owner that runs after compilation. A
+      symbol several units would each define is the linker's, by whatever the target offers for a
+      definition emitted more than once. An initialization order is the runtime's, composed at
+      startup from what each unit registered about itself -- which is also what lets the order
+      prefer a dependency without anyone reading across units to find it. The union of the foreign
+      name space is a build artifact for a user's own sources, assembled from per-unit fragments by
+      whatever collects the files. Once those three have moved, the link-level unit is synthesized
+      from the named tops and their signatures alone, every unit goes from HIR to a finished
+      artifact without anything reading across, and this entry's whole subject is a property of the
+      pipeline rather than a thing to maintain.
+
+- [ ] R90 -- How far a lowering runs is a value carried at run time, and what it answers with
+      carries one optional product per stage down to that depth. Which of them are filled follows
+      from the depth and from nothing else, so a caller that asked for an executable body knows one
+      is there and has no way to say so: it reads every product through a check that turns an
+      unfilled slot into a compiler bug. That is a closed set of alternatives -- one per depth --
+      spelled as a tag beside always-present spare fields, which is the shape stating alternatives
+      as a variant exists to make unspellable.
+
+      The depth should decide the type rather than the contents: asking for a depth answers with
+      that depth's products, and a caller that asked for a body is handed one rather than an option
+      of one. It reaches the per-unit pipeline, the link-level unit's products, and every command
+      that drives either, so it is a subject of its own rather than a cleanup.
+
 ## Out of Scope
 
 - Per-feature workstreams. Those live in the dedicated feature files (`operators.md`,

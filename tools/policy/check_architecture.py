@@ -183,6 +183,23 @@ Rules:
         `ContainerElementType` now does.
         Scope: every .cpp/.hpp under src/lyra and include/lyra.
 
+  A022  Nothing holds a sequence of compilation units. A unit is compiled
+        alone and released as it is handed on, so a parameter, member or
+        local whose type is a sequence of them is a step able to read every
+        unit's contents at once -- which is the one thing a unit boundary
+        exists to forbid, and which costs a peak proportional to the design
+        rather than to its largest unit. Whatever such a step actually reads
+        about each unit is a record the unit publishes, and the record is
+        what crosses.
+        The admitted entries carry their reason and the reasons are not
+        alike. A linker holds every artifact by right, and an in-process
+        execution session is a linker. A lowering that builds the whole
+        design's form before handing any of it on is instead the shape this
+        rule is named for, admitted because it is where the remaining work
+        is rather than because it is correct. An entry whose file no longer
+        matches fails until it goes, so the record only shrinks.
+        Scope: every .cpp/.hpp under src/lyra and include/lyra.
+
 When a rule fires, the printed message includes a fixed reminder that the
 fix is to change the ownership boundary, NOT to rename the function.
 
@@ -973,6 +990,61 @@ A021_STANDING = frozenset({
 })
 
 
+# Rule A022
+A022_PATTERN = re.compile(
+    r"\b(?:std::)?(?:span\s*<\s*const\s+|vector\s*<\s*)"
+    r"(?:hir|mir|lir)::CompilationUnit\s*>")
+
+A022_ADMITTED: dict[str, str] = {
+    "include/lyra/jit/executor.hpp": (
+        "an in-process execution session is the linker -- it resolves "
+        "symbols across modules as it loads them -- so it holds every one by "
+        "the right a system linker holds every object file"
+    ),
+    "src/lyra/jit/executor.cpp": (
+        "that session, on the other side of its own entry point"
+    ),
+    "src/lyra/cli/commands.cpp": (
+        "the bodies handed to that session, gathered as each unit is lowered "
+        "so the form each was lowered from is released on the way"
+    ),
+    "include/lyra/lowering/ast_to_hir/lower.hpp": (
+        "the whole design's HIR, built in one pass before any of it is "
+        "lowered further -- the shape this rule is named for, standing "
+        "because a unit's published surface is derived in a phase that runs "
+        "across every unit before any body is lowered"
+    ),
+    "src/lyra/lowering/ast_to_hir/compilation_lowerer.cpp": (
+        "that same set, where it is built"
+    ),
+}
+
+
+def check_a022(repo_root: Path) -> list[str]:
+    errors = []
+    seen: set[str] = set()
+    for path, rel in iter_lyra_files(repo_root):
+        for lineno, line in enumerate(
+                path.read_text().splitlines(), start=1):
+            if not A022_PATTERN.search(strip_comment(line)):
+                continue
+            seen.add(rel)
+            if rel in A022_ADMITTED:
+                continue
+            errors.append(
+                f"  {rel}:{lineno}: A022 holds a sequence of compilation "
+                f"units; what a step reads about each one is a record that "
+                f"unit publishes, and only the record crosses"
+            )
+    for rel in sorted(set(A022_ADMITTED) - seen):
+        errors.append(
+            f"  {rel}: A022 the record still admits this file, which holds no "
+            f"such sequence now; drop the entry, so the record only ever "
+            f"shrinks"
+        )
+    return errors
+
+
 def overloaded_bodies(text: str) -> list[tuple[int, str]]:
     """Each `Overloaded{...}` arm list in `text`, as (offset of `{`, source)."""
     bodies = []
@@ -1496,6 +1568,7 @@ CHECKS = [
     ("A019 LIR names a MIR identity", check_a019),
     ("A020 switch over a closed set carries default", check_a020),
     ("A021 visit arm declared auto", check_a021),
+    ("A022 holds a sequence of compilation units", check_a022),
 ]
 
 
