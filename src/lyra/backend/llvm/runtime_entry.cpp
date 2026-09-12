@@ -106,6 +106,8 @@ auto RuntimeOpName(RuntimeOp op) -> std::string_view {
       return "make_format_spec";
     case RuntimeOp::kMakeFormatArg:
       return "make_format_arg";
+    case RuntimeOp::kMakeFormatArgWithPattern:
+      return "make_format_arg_with_pattern";
     case RuntimeOp::kMakeDpiBitBuffer:
       return "make_dpi_bit_buffer";
     case RuntimeOp::kMakeDpiLogicBuffer:
@@ -717,6 +719,7 @@ auto EntryNamingOf(support::BuiltinFn fn) -> EntryNaming {
     case support::BuiltinFn::kIsCancelled:
     case support::BuiltinFn::kFormat:
     case support::BuiltinFn::kFormatRuntime:
+    case support::BuiltinFn::kMakeRenderedFormatArg:
     case support::BuiltinFn::kWrite:
     case support::BuiltinFn::kWriteln:
     case support::BuiltinFn::kDiagnostic:

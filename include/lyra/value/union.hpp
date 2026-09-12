@@ -1,7 +1,6 @@
 #pragma once
 
 #include <cstddef>
-#include <string>
 #include <type_traits>
 #include <utility>
 #include <variant>
@@ -232,22 +231,6 @@ class Union {
 
  private:
   std::variant<Ts...> data_;
-};
-
-// LRM 21.2.1.6: "For unions, only the first declared elements shall be
-// printed", so the pattern holds one element whichever member is live --
-// reading the first through `Get` gives the live value where it is the live
-// member and that member's default otherwise, which is the same stand-in a
-// cross-member read answers with.
-template <typename... Ts>
-struct Formatter<Union<Ts...>> {
-  static auto Format(const FormatSpec& spec, const Union<Ts...>& value)
-      -> std::string {
-    PatternWriter pattern;
-    pattern.Add(
-        lyra::value::Format(spec, MakeFormatArg(value.template Get<0>())));
-    return std::move(pattern).Finish();
-  }
 };
 
 static_assert(LyraValue<Union<PackedArray, PackedArray>>);

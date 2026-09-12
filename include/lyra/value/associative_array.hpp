@@ -593,24 +593,6 @@ class AssociativeArray {
   std::map<K, V, typename AssocKeyTraits<K>::Less> data_;
 };
 
-// LRM 21.2.1.6 aggregate format: one element per entry in key order, each
-// element the entry's value under the name its key prints as. Key and value
-// each defer to their own type's `Formatter`, so a string key prints quoted.
-template <typename K, typename V>
-struct Formatter<AssociativeArray<K, V>> {
-  static auto Format(
-      const FormatSpec& spec, const AssociativeArray<K, V>& value)
-      -> std::string {
-    PatternWriter pattern;
-    value.ForEachEntry([&](const K& key, const V& elem) {
-      pattern.Add(
-          lyra::value::Format(spec, MakeFormatArg(key)),
-          lyra::value::Format(spec, MakeFormatArg(elem)));
-    });
-    return std::move(pattern).Finish();
-  }
-};
-
 static_assert(LyraValue<AssociativeArray<String, PackedArray>>);
 static_assert(LyraValue<AssociativeArray<PackedArray, PackedArray>>);
 static_assert(Sized<AssociativeArray<String, PackedArray>>);

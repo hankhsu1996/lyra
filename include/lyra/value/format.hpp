@@ -3,8 +3,6 @@
 #include <cstdint>
 #include <span>
 #include <string>
-#include <string_view>
-#include <utility>
 #include <variant>
 
 namespace lyra::value {
@@ -16,20 +14,6 @@ class ObjectRef;
 class ManagedRef;
 template <typename Host>
 class RealValue;
-template <typename T>
-class UnpackedArray;
-template <typename T>
-class DynamicArray;
-template <typename T>
-class Queue;
-template <typename K, typename V>
-class AssociativeArray;
-template <typename... Ts>
-class Tuple;
-template <typename... Ts>
-class Union;
-template <typename... Ts>
-class TaggedUnion;
 
 enum class FormatKind : std::uint8_t {
   kDecimal,
@@ -135,8 +119,19 @@ struct FormatArg {
   using FormatFn =
       std::string (*)(const FormatSpec&, const void*, const FormatContext&);
 
+  // How this operand reads under the conversion it meets. Null where its type
+  // defines no reading but the assignment pattern -- an aggregate, for which
+  // LRM 21.2.1.6 states the one and the language states no other.
   const void* ptr = nullptr;
   FormatFn format_fn = nullptr;
+  // The text LRM 21.2.1.6 renders this operand as, which only its own type can
+  // answer -- the names a structure declares, the name an enumeration declares
+  // for the value. Composed where that type was still in hand, and borrowed
+  // under the same contract as the value, because a format string the program
+  // computes reaches no directive until it is parsed and so neither side knows
+  // yet whether a `%p` is coming. Null where the type states nothing the value
+  // does not.
+  const String* pattern = nullptr;
 
   FormatArg() = default;
   FormatArg(const void* ptr, FormatFn format_fn)
@@ -158,20 +153,17 @@ struct FormatArg {
   explicit FormatArg(const ManagedRef& value);
   template <typename Host>
   explicit FormatArg(const RealValue<Host>& value);
-  template <typename T>
-  explicit FormatArg(const UnpackedArray<T>& value);
-  template <typename T>
-  explicit FormatArg(const DynamicArray<T>& value);
-  template <typename T>
-  explicit FormatArg(const Queue<T>& value);
-  template <typename K, typename V>
-  explicit FormatArg(const AssociativeArray<K, V>& value);
-  template <typename... Ts>
-  explicit FormatArg(const Tuple<Ts...>& value);
-  template <typename... Ts>
-  explicit FormatArg(const Union<Ts...>& value);
-  template <typename... Ts>
-  explicit FormatArg(const TaggedUnion<Ts...>& value);
+
+  // The same operand, carrying the text its type renders it as. An enumeration
+  // is its base integral under every other conversion, so it keeps its value
+  // beside the text.
+  FormatArg(const PackedArray& value, const String& pattern);
+
+  // An operand that reads only as the text its type renders it as, every other
+  // conversion being one the language leaves undefined for it and this refuses
+  // -- the same shape a handle already takes, whose one defined conversion is
+  // the assignment pattern too.
+  [[nodiscard]] static auto Rendered(const String& pattern) -> FormatArg;
 };
 
 // Build a FormatArg that borrows `value`. `value` must outlive every
@@ -189,10 +181,9 @@ template <typename T>
         const T& v = *static_cast<const T*>(p);
         // Per-formatter signature lookup: those that consult design-wide
         // context (`%t` needing `TimeFormat`) declare `Format(spec, value,
-        // ctx)`; those that do not (string, aggregate -- never reach a
-        // context-bound kind) declare just `Format(spec, value)`. The lambda
-        // absorbs both shapes so the `FormatArg.format_fn` signature stays
-        // uniform.
+        // ctx)`; a string, which reaches no context-bound kind, declares just
+        // `Format(spec, value)`. The lambda absorbs both shapes so the
+        // `FormatArg.format_fn` signature stays uniform.
         if constexpr (requires { Formatter<T>::Format(spec, v, ctx); }) {
           return Formatter<T>::Format(spec, v, ctx);
         } else {
@@ -216,35 +207,17 @@ inline FormatArg::FormatArg(const ObjectRef& value)
 inline FormatArg::FormatArg(const ManagedRef& value)
     : FormatArg(MakeFormatArg(value)) {
 }
+inline FormatArg::FormatArg(const PackedArray& value, const String& pattern)
+    : FormatArg(MakeFormatArg(value)) {
+  this->pattern = &pattern;
+}
+inline auto FormatArg::Rendered(const String& pattern) -> FormatArg {
+  FormatArg arg;
+  arg.pattern = &pattern;
+  return arg;
+}
 template <typename Host>
 FormatArg::FormatArg(const RealValue<Host>& value)
-    : FormatArg(MakeFormatArg(value)) {
-}
-template <typename T>
-FormatArg::FormatArg(const UnpackedArray<T>& value)
-    : FormatArg(MakeFormatArg(value)) {
-}
-template <typename T>
-FormatArg::FormatArg(const DynamicArray<T>& value)
-    : FormatArg(MakeFormatArg(value)) {
-}
-template <typename T>
-FormatArg::FormatArg(const Queue<T>& value) : FormatArg(MakeFormatArg(value)) {
-}
-template <typename K, typename V>
-FormatArg::FormatArg(const AssociativeArray<K, V>& value)
-    : FormatArg(MakeFormatArg(value)) {
-}
-template <typename... Ts>
-FormatArg::FormatArg(const Tuple<Ts...>& value)
-    : FormatArg(MakeFormatArg(value)) {
-}
-template <typename... Ts>
-FormatArg::FormatArg(const Union<Ts...>& value)
-    : FormatArg(MakeFormatArg(value)) {
-}
-template <typename... Ts>
-FormatArg::FormatArg(const TaggedUnion<Ts...>& value)
     : FormatArg(MakeFormatArg(value)) {
 }
 
@@ -253,48 +226,6 @@ FormatArg::FormatArg(const TaggedUnion<Ts...>& value)
 [[nodiscard]] auto Format(
     const FormatSpec& spec, FormatArg arg, const FormatContext& ctx = {})
     -> std::string;
-
-// Composes the assignment pattern an aggregate renders as (LRM 21.2.1.6). How
-// much white space the pattern carries is the tool's to choose -- the clause
-// asks only that the result read as the pattern syntax -- so the choice is made
-// here and every aggregate spells it the same way. An aggregate with no
-// elements composes naturally, nothing having been added.
-//
-// The clause names some elements: a structure's members, a union's tag, an
-// associative entry's key. Only a caller holding the name can supply one, and a
-// name a type declares is not one a value carries -- nothing reaching a
-// formatter says which type a value came from. So an aggregate whose names live
-// on its type writes the unnamed elements the same clause allows for `%0p`, and
-// the named form `%p` asks for is not yet supported.
-class PatternWriter {
- public:
-  void Add(std::string_view element) {
-    Separate();
-    out_ += element;
-  }
-
-  void Add(std::string_view name, std::string_view element) {
-    Separate();
-    out_ += name;
-    out_ += ':';
-    out_ += element;
-  }
-
-  [[nodiscard]] auto Finish() && -> std::string {
-    out_ += '}';
-    return std::move(out_);
-  }
-
- private:
-  void Separate() {
-    if (!std::exchange(first_, false)) {
-      out_ += ", ";
-    }
-  }
-
-  std::string out_{"'{"};
-  bool first_ = true;
-};
 
 // Specializations for the closed leaf set. Each is declared here so a caller
 // building a format_fn for `T` has the declaration at instantiation time,
@@ -395,34 +326,6 @@ struct PrintValueItem {
   }
   template <typename Host>
   PrintValueItem(const RealValue<Host>& value, FormatSpec spec)
-      : spec(spec), arg(MakeFormatArg(value)) {
-  }
-  template <typename T>
-  PrintValueItem(const UnpackedArray<T>& value, FormatSpec spec)
-      : spec(spec), arg(MakeFormatArg(value)) {
-  }
-  template <typename T>
-  PrintValueItem(const DynamicArray<T>& value, FormatSpec spec)
-      : spec(spec), arg(MakeFormatArg(value)) {
-  }
-  template <typename T>
-  PrintValueItem(const Queue<T>& value, FormatSpec spec)
-      : spec(spec), arg(MakeFormatArg(value)) {
-  }
-  template <typename K, typename V>
-  PrintValueItem(const AssociativeArray<K, V>& value, FormatSpec spec)
-      : spec(spec), arg(MakeFormatArg(value)) {
-  }
-  template <typename... Ts>
-  PrintValueItem(const Tuple<Ts...>& value, FormatSpec spec)
-      : spec(spec), arg(MakeFormatArg(value)) {
-  }
-  template <typename... Ts>
-  PrintValueItem(const Union<Ts...>& value, FormatSpec spec)
-      : spec(spec), arg(MakeFormatArg(value)) {
-  }
-  template <typename... Ts>
-  PrintValueItem(const TaggedUnion<Ts...>& value, FormatSpec spec)
       : spec(spec), arg(MakeFormatArg(value)) {
   }
 };

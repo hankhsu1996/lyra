@@ -49,15 +49,17 @@ refused outright rather than left-justified.
       resolve through the closure's `self` capture and are read at fire time -- so they see
       NBA-committed values, which is the LRM 21.2.2 semantic. The postponed queue uses the same
       swap-and-drain shape NBA uses; re-entrant submission during the drain is rejected.
-- [x] DI7 -- `%p` / `%0p` assignment-pattern format for aggregate types (LRM 21.2.1.6). Scope: fixed
-      unpacked and dynamic array of integral elements, including mixed-container nesting
-      (`int     arr[3][]`, `int arr[][3]`, `int arr[][]`). Output is `'{<elem>, <elem>, ...}` with
-      `, ` between elements; empty containers print `'{}`; multi-dimensional and mixed-container
-      forms nest naturally. Singular integral elements follow the LRM "as it would unformatted" rule
-      (default `$display` radix, i.e. decimal); singular string elements print quoted. `%0p`
-      produces identical text in this scope; LRM 21.2.1.6 allows it. A structure and a union format
-      as the same pattern, at any depth and as the whole operand, so no aggregate operand is left
-      without a rendering; what they do not carry is the names, the recorded gap below.
+- [x] DI7 -- `%p` / `%0p` assignment-pattern format (LRM 21.2.1.6), over every type whose rendering
+      its own declaration decides. A structure prints its members under the names it declares for
+      them, packed and unpacked alike; a union prints only its first declared member; a tagged union
+      prints the member its tag names; and an enumeration prints the name declared for the value,
+      wherever the traversal reaches one. A container prints its elements in index order --
+      `'{<elem>, <elem>, ...}` with `, ` between them, an associative array labelling each entry
+      with its index, an empty container printing `'{}` -- and multi-dimensional and mixed-container
+      nesting (`int arr[3][]`, `int arr[][3]`, `int arr[][]`) falls out of that. A singular element
+      follows the LRM "as it would unformatted" rule (default `$display` radix, i.e. decimal) and a
+      string element prints quoted. `%0p` produces identical text, which LRM 21.2.1.6 permits by
+      leaving the shorter form to the tool.
 - [x] DI8 -- `$sscanf` and `$fscanf` over a shared scanner core (LRM 21.3.4.3). Statement-position
       call (bare or blocking assign-RHS); conversions `%d` / `%h` / `%x` / `%b` / `%o` / `%s` / `%c`
       / `%%`; 4-state vocabulary (`x` / `z` / `?` / `_`) inside the integer conversions; single-char
@@ -184,36 +186,6 @@ sanctions; the runtime-parsed path continues silently.
       stores it where the source named it, so no position needs a path of its own. `$readmemh` /
       `$readmemb` never shared this: they are void tasks, so they do not appear in expression
       position at all.
-
-## Conformance gaps the corpus records
-
-Behaviour the corpus asks for and does not get. Each is a case that runs and keeps every check it
-makes, recorded per path as the wrong answer or the refusal that path gives; the day a path answers
-right the case passes there and that record fails until its entry goes. What is written here is what
-the standard requires.
-
-- [ ] **`%p` prints an aggregate without the names its type declares** (LRM 21.2.1.6), where the
-      clause requires an unpacked or packed structure to print as an assignment pattern with named
-      elements, a union to print its first declared element by name, a tagged union to print
-      `tag:value`, and every singular element an aggregate is traversed down to -- an enumeration
-      among them -- to print the name its own type declares. An enumeration written as the whole
-      operand is right; nothing reached by traversal is.
-
-      One root holds all of it: a value's declared names are the compiler's to answer for, while the
-      traversal that reaches an element belongs to the formatter, and a print item states a value and
-      a conversion but no way to render an element -- so the two never meet. Closing it means a print
-      item that carries how its elements render.
-
-      The half that was missing underneath is now there: an aggregate the source declared names its
-      members in its own MIR and LIR type
-      ([aggregate-names-are-type-content](../decisions/aggregate-names-are-type-content.md)), so a
-      per-type description is a function of the type and two values of one type cannot render
-      differently. Composing the text at the lowering instead does not close it -- a container's
-      element count exists only at run time, which is exactly why the enumeration case works for a
-      whole operand and nowhere else.
-
-      Until it lands, an aggregate prints as the pattern without names, which is a legal `%0p` and a
-      recorded defect for `%p`; the execution backend refuses the operand rather than answering.
 
 ## Out of Scope
 

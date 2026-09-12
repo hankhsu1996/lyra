@@ -511,6 +511,10 @@ auto RuntimeEntryOf(BuiltinFn id) -> RuntimeEntry {
       return {
           .name = "format_runtime",
           .declaration = FreeFunction{"lyra::value::FormatRuntime"}};
+    case BuiltinFn::kMakeRenderedFormatArg:
+      return {
+          .name = "make_rendered_format_arg",
+          .declaration = StaticFactory{"Rendered"}};
     case BuiltinFn::kWrite:
       return {.name = "write", .declaration = Method{"Write"}};
     case BuiltinFn::kWriteln:

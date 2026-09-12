@@ -5,7 +5,6 @@
 #include <functional>
 #include <ranges>
 #include <span>
-#include <string>
 #include <utility>
 #include <vector>
 
@@ -469,21 +468,6 @@ class DynamicArray {
 
   detail::OobShield<T> shield_;
   std::vector<T> data_;
-};
-
-// LRM 21.2.1.6 aggregate format: the elements the array currently holds, in
-// order, each deferring to its own type's `Formatter`. No `FormatContext` is
-// threaded through, aggregates never carrying a context-bound kind.
-template <typename T>
-struct Formatter<DynamicArray<T>> {
-  static auto Format(const FormatSpec& spec, const DynamicArray<T>& value)
-      -> std::string {
-    PatternWriter pattern;
-    for (std::size_t i = 0; i < value.RawSize(); ++i) {
-      pattern.Add(lyra::value::Format(spec, MakeFormatArg(value.RawAt(i))));
-    }
-    return std::move(pattern).Finish();
-  }
 };
 
 static_assert(LyraValue<DynamicArray<PackedArray>>);

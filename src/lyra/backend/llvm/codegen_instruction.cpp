@@ -1669,8 +1669,15 @@ auto CodeGenFunction::ConstructionOf(
               // generated entry and outlives the print the entry ends with.
               case lir::RuntimeLibraryKind::kPrintValueItem:
                 return over_operand(RuntimeOp::kMakePrintValueItem);
+              // An operand, and an operand carrying the text its own type
+              // renders it as (LRM 21.2.1.6), are two operations: the second
+              // is the construction that brings that text, and each answers
+              // with an entry of its own name.
               case lir::RuntimeLibraryKind::kFormatArg:
-                return over_operand(RuntimeOp::kMakeFormatArg);
+                return over_operand(
+                    call.args.size() == 1
+                        ? RuntimeOp::kMakeFormatArg
+                        : RuntimeOp::kMakeFormatArgWithPattern);
               // The DPI-C boundary temporaries (LRM 35.5.6.1, Annex H.7.7).
               // Each images one SV value in the canonical form the C side
               // reads, so the entry is one function over every value it can

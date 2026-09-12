@@ -4874,6 +4874,15 @@ auto lyra_rt_string_make_format_arg(const void* value) -> void* {
   return Own(MakeFormatArg(Read<String>(value)));
 }
 
+auto lyra_rt_packed_make_format_arg_with_pattern(
+    const void* value, const void* pattern) -> void* {
+  return Own(FormatArg(Read<PackedArray>(value), Read<String>(pattern)));
+}
+
+auto lyra_rt_make_rendered_format_arg(const void* pattern) -> void* {
+  return Own(FormatArg::Rendered(Read<String>(pattern)));
+}
+
 auto lyra_rt_chandle_make_format_arg(void* value) -> void* {
   return Own(MakeFormatArg(Held(Chandle{value})));
 }

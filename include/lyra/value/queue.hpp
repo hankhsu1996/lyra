@@ -8,7 +8,6 @@
 #include <optional>
 #include <ranges>
 #include <span>
-#include <string>
 #include <utility>
 
 #include "lyra/value/array_case_equal.hpp"
@@ -584,20 +583,6 @@ class Queue {
   detail::OobShield<T> shield_;
   std::deque<T> data_;
   std::optional<std::uint64_t> max_bound_ = std::nullopt;
-};
-
-// LRM 21.2.1.6 aggregate format: the elements the queue currently holds, front
-// to back, each deferring to its own type's `Formatter`.
-template <typename T>
-struct Formatter<Queue<T>> {
-  static auto Format(const FormatSpec& spec, const Queue<T>& value)
-      -> std::string {
-    PatternWriter pattern;
-    for (std::size_t i = 0; i < value.RawSize(); ++i) {
-      pattern.Add(lyra::value::Format(spec, MakeFormatArg(value.RawAt(i))));
-    }
-    return std::move(pattern).Finish();
-  }
 };
 
 static_assert(LyraValue<Queue<PackedArray>>);

@@ -366,6 +366,13 @@ enum class BuiltinFn : std::uint16_t {
   // hierarchical name a `%m` renders and the scope's time unit for a `%t` are
   // call-site facts absent from the format text, so they ride as operands too.
   kFormatRuntime,
+  // An operand of such a format string whose type decides its whole rendering
+  // (LRM 21.2.1.6): it carries the text and nothing else, because the clause
+  // defines no other conversion for it and so there is no value reading to
+  // carry. A factory rather than a constructor, an operand that reads by
+  // conversion and one that reads only as its pattern being two ways of making
+  // one thing out of the same argument type.
+  kMakeRenderedFormatArg,
   kWrite,
   kWriteln,
   // Diagnostic subsystem accessor and severity-fixed emit operations.

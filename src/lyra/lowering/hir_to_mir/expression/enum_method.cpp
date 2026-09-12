@@ -399,11 +399,9 @@ auto LowerStepCall(
 
 }  // namespace
 
-template <ExprLowerer Lowerer>
 auto BuildEnumNameCallExpr(
-    Lowerer& lowerer, WalkFrame frame, mir::ExprId value_id,
+    UnitLowerer& unit_lowerer, WalkFrame frame, mir::ExprId value_id,
     mir::TypeId enum_type, diag::SourceSpan span) -> diag::Result<mir::Expr> {
-  auto& unit_lowerer = lowerer.Owner();
   const auto& unit = unit_lowerer.Unit();
 
   // The callable homes on a class the intra-unit call can name; a package
@@ -458,7 +456,7 @@ auto LowerEnumMethod(
       if (!value_or) return std::unexpected(std::move(value_or.error()));
       const mir::ExprId value_id = block.exprs.Add(*std::move(value_or));
       return BuildEnumNameCallExpr(
-          lowerer, frame, value_id, enumeration.type, bearer.span);
+          lowerer.Owner(), frame, value_id, enumeration.type, bearer.span);
     }
     case hir::EnumMethod::kNext:
       return LowerStepCall(
@@ -477,11 +475,5 @@ template auto LowerEnumMethod(
 template auto LowerEnumMethod(
     const StructuralScopeLowerer&, WalkFrame, const hir::CallExpr&,
     hir::EnumMethodRef, mir::TypeId) -> diag::Result<mir::Expr>;
-template auto BuildEnumNameCallExpr(
-    ProcessLowerer&, WalkFrame, mir::ExprId, mir::TypeId, diag::SourceSpan)
-    -> diag::Result<mir::Expr>;
-template auto BuildEnumNameCallExpr(
-    const StructuralScopeLowerer&, WalkFrame, mir::ExprId, mir::TypeId,
-    diag::SourceSpan) -> diag::Result<mir::Expr>;
 
 }  // namespace lyra::lowering::hir_to_mir

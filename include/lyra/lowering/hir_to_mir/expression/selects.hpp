@@ -24,6 +24,16 @@ namespace lyra::lowering::hir_to_mir {
 // the read side only; a write reaches a member through the member-access
 // lowering below.
 
+// `arr[i]` element access (LRM 7.4.5 / 7.5 / 7.10). The container kind of what
+// the call dispatches on picks the runtime overload, and the raw source index
+// passes through, plus that value's declared range for the unpacked family --
+// every selectable value resolves the coordinate against its own range. The
+// index is the one the source would have written, so a declared range that
+// does not start at zero takes its own coordinates here too.
+[[nodiscard]] auto BuildElementAccessCallExpr(
+    UnitLowerer& unit_lowerer, mir::Block& block, mir::ExprId base_id,
+    mir::ExprId idx_id, mir::TypeId result_type) -> mir::Expr;
+
 // The `width` bits starting at `bit_offset`, as an owned value of
 // `result_type`. Unguarded: the caller states which bits it wants.
 [[nodiscard]] auto BuildPackedRunRead(
