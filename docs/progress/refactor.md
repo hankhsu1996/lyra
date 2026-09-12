@@ -600,7 +600,7 @@ enough to warrant its own focused review.
       which reversed the several-primitives shape this entry first landed and says how a backend
       refuses a pair it cannot realize.
 
-- [x] R51 -- Naming a capability wrapper's storage is place formation, not a call. A bare wrapper
+- [x] R83 -- Naming a capability wrapper's storage is place formation, not a call. A bare wrapper
       place denotes the wrapper and a dereference of it denotes the storage it represents, so a
       write that descends into a part starts from that dereference and a by-reference lending lends
       that storage -- while rebinding a reference stays a store into the bare place, structurally
@@ -1217,7 +1217,7 @@ enough to warrant its own focused review.
       C++ identifier, so only the C++ projection could see the failure while the unsoundness was
       everyone's.
 
-- [x] R80 -- The front end records the identifier a variable was declared under and records none for
+- [x] R84 -- The front end records the identifier a variable was declared under and records none for
       a variable it introduced itself, so R79's rule holds from the layer that answers what the
       design wrote. A held right-hand side of an intra-assignment delay (LRM 9.4.5), a `foreach`
       bound and its continuation flag, a crossing result and a forwarded one had each carried a word
@@ -1238,7 +1238,7 @@ enough to warrant its own focused review.
       only by treating the two as one subject -- which is the argument against splitting a rule by
       the layer it happens to land in.
 
-- [ ] R81 -- A policy check's own allowlists go stale silently, so a check keeps passing for a
+- [ ] R85 -- A policy check's own allowlists go stale silently, so a check keeps passing for a
       reason that stopped being true. Each of these scripts carries lists naming paths, functions or
       expressions that are exempt, and nothing confirms any entry still matches anything: an entry
       whose subject was renamed or deleted stops exempting what it was written for, and the summary

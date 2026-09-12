@@ -500,7 +500,7 @@ cross-check predicts. This file owns only which instances are known and what is 
 
 ## Naming ownership
 
-- [ ] T23 -- Every name a render emits comes from something that owns naming, and re-viewing an
+- [ ] T28 -- Every name a render emits comes from something that owns naming, and re-viewing an
       object reference has no owner. Three owners exist -- type mapping for a type, place access for
       a wrapper's access protocol, the shared runtime-entry declaration for an operation -- and "the
       same object, seen as another class" is stated as a cast node rather than a call, so a backend
