@@ -54,6 +54,22 @@ Rules:
         finished progress file cannot be deleted without stranding the
         pointer. State the permanent fact instead.
 
+  D007  An entry that carries an id uses it once in the file that
+        defines it.
+        Scope: docs/progress/**.
+        Two branches open at the same time each append an entry to one
+        queue and each take what was the next free number. They edit
+        different lines, so the merge is clean and the collision is
+        silent -- an id is prose, which no build and no test reads. What
+        it costs is every pointer written afterwards: two notes citing
+        the same id name different entries, and neither is wrong.
+        Carrying one is optional and several progress docs carry none,
+        writing each entry as a sentence instead. That is not a gap this
+        rule should close: an id is a shorthand for referring to an entry
+        in conversation, not part of what the entry states. So what this
+        covers is the files that use the convention, and a file with no
+        ids is silently in scope and correctly reports nothing.
+
 Usage:
   python3 tools/policy/check_docs.py
 """
@@ -132,6 +148,15 @@ DESIGNATION_PATTERN = re.compile(r"\b(?:IEEE|LRM)\s+\d[\d.-]*")
 # Rule D006
 PERMANENT_DIRS = ("docs/architecture/", "docs/decisions/", "docs/glossary/")
 PROGRESS_REFERENCE_PATTERN = re.compile(r"progress/[A-Za-z0-9_.-]+\.md")
+
+# Rule D007
+# A progress entry opens with a checkbox and an id. A suffixed id (`R17a`) is
+# a sub-entry standing on its own, so it is a distinct id rather than a second
+# use of the one it extends.
+PROGRESS_DIR = "docs/progress/"
+PROGRESS_ENTRY_PATTERN = re.compile(
+    r"^- \[[ x]\] ([A-Z]+[0-9]+[a-z]*) --", re.MULTILINE
+)
 
 
 def strip_fenced(text: str) -> str:
@@ -284,6 +309,32 @@ def check_d006(repo_root: Path) -> list[str]:
     return errors
 
 
+def reused_ids(text: str) -> list[tuple[str, int, int]]:
+    first_seen: dict[str, int] = {}
+    reused = []
+    for m in PROGRESS_ENTRY_PATTERN.finditer(text):
+        entry_id = m.group(1)
+        line = line_of(text, m.start())
+        if entry_id in first_seen:
+            reused.append((entry_id, first_seen[entry_id], line))
+        else:
+            first_seen[entry_id] = line
+    return reused
+
+
+def check_d007(repo_root: Path) -> list[str]:
+    errors = []
+    for path, rel in iter_docs(repo_root):
+        if not rel.startswith(PROGRESS_DIR):
+            continue
+        for entry_id, first, again in reused_ids(path.read_text()):
+            errors.append(
+                f"  {rel}:{again}: D007 reuses id '{entry_id}', "
+                f"already taken at line {first}"
+            )
+    return errors
+
+
 # Self-tests
 def run_self_tests() -> bool:
     def expect(cond, msg):
@@ -385,6 +436,20 @@ def run_self_tests() -> bool:
         not PROGRESS_REFERENCE_PATTERN.search("progress is tracked elsewhere"),
         "D006 false-pos: the bare word is not a citation")
 
+    # D007 fires on a reused id and reports where each use is.
+    ok &= expect(
+        reused_ids("- [ ] R9 -- one\n- [x] R9 -- two\n") == [("R9", 1, 2)],
+        "D007 detects a reused id")
+    ok &= expect(
+        reused_ids("- [ ] R17 -- one\n- [x] R17a -- two\n") == [],
+        "D007 false-pos: a suffixed id is an id of its own")
+    ok &= expect(
+        reused_ids("- [ ] R9 -- one\n- [x] R10 -- two\n") == [],
+        "D007 false-pos: distinct ids in one file")
+    ok &= expect(
+        reused_ids("Cited twice in prose: R9 and R9 again.\n") == [],
+        "D007 false-pos: a citation in prose is not an entry")
+
     return ok
 
 
@@ -396,6 +461,7 @@ CHECKS = [
     ("D004 index omits a document in its directory", check_d004),
     ("D005 reader-facing README states a count", check_d005),
     ("D006 permanent doc cites the progress queue", check_d006),
+    ("D007 progress entry id is used twice", check_d007),
 ]
 
 VIOLATION_HINT = """
