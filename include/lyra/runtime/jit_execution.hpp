@@ -158,6 +158,10 @@ void lyra_rt_release_coroutine(void* runtime);
 void lyra_rt_register_initial(void* self, void* unit_instance, void* coroutine);
 void lyra_rt_register_final(void* self, void* unit_instance, void* coroutine);
 
+void lyra_rt_enter_scope_static_init(void* runtime, void* unit_instance);
+void lyra_rt_enter_namespace_static_init(void* runtime);
+void lyra_rt_leave_static_init(void* runtime);
+
 // LRM 9.3.2 Table 9-1. Each takes the branches one `fork` spawned, in source
 // order, and hands them to the engine, which does not run any of them until the
 // spawning process blocks or terminates. `spawn_all` is `join_none`, whose

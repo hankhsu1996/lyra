@@ -791,6 +791,9 @@ auto EntryNamingOf(support::BuiltinFn fn) -> EntryNaming {
     case support::BuiltinFn::kDisable:
     case support::BuiltinFn::kRegisterInitial:
     case support::BuiltinFn::kRegisterFinal:
+    case support::BuiltinFn::kEnterScopeStaticInit:
+    case support::BuiltinFn::kEnterNamespaceStaticInit:
+    case support::BuiltinFn::kLeaveStaticInit:
     case support::BuiltinFn::kMakeDynamicArrayDefault:
     case support::BuiltinFn::kMakeDynamicArrayNew:
     case support::BuiltinFn::kMakeDynamicArrayNewCopy:

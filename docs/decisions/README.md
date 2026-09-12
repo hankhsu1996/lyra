@@ -466,6 +466,10 @@ the detail lives in the entry itself.
 
 ### Runtime execution and scheduling
 
+- [static-initializer-draws-from-its-container](static-initializer-draws-from-its-container.md) -- a
+  randomization call draws from the generator installed for whatever is running, and a static
+  initialization installs one just as a process does, seeded from the container the standard names
+  rather than from whatever process happens to be executing.
 - [owner-transition-and-observation](owner-transition-and-observation.md) -- every mutation of
   observable storage reports one thing, whether the owner transitioned, and publication is a
   function of that alone; forming a designation is itself such a mutation; an event control's

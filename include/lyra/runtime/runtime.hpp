@@ -2,6 +2,7 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <deque>
 #include <map>
 #include <memory>
 #include <string>
@@ -18,6 +19,7 @@
 #include "lyra/runtime/plusargs.hpp"
 #include "lyra/runtime/region.hpp"
 #include "lyra/runtime/registration.hpp"
+#include "lyra/runtime/rng.hpp"
 #include "lyra/runtime/runtime_effects.hpp"
 #include "lyra/runtime/stream_dispatcher.hpp"
 #include "lyra/runtime/time_slot.hpp"
@@ -95,6 +97,13 @@ class Runtime final : public RuntimeEffects {
   // functions) and by the fork spawn path. Public because the free
   // registration functions live outside this class.
   void RegisterProcessInRegistry(std::shared_ptr<RuntimeProcess> process);
+
+  // Takes a static initialization on as what randomization calls draw from,
+  // and gives it back. The generator starts from `seed`, which the container's
+  // initialization RNG chose (LRM 18.14.1). Public because the entries
+  // generated code reaches live outside this class.
+  void EnterStaticInit(RandomSeed seed);
+  void LeaveStaticInit();
 
  private:
   friend class RuntimeEffects;
@@ -180,6 +189,16 @@ class Runtime final : public RuntimeEffects {
   RegistrationList draining_;
   std::vector<std::shared_ptr<RuntimeProcess>> processes_;
   RuntimeProcess* current_process_ = nullptr;
+  // The generator every randomization system call draws from (LRM 18.13,
+  // 18.14). Whichever is running installs one: a process the generator it was
+  // seeded with, a static initialization one seeded from its container's
+  // initialization RNG.
+  DrawRng* drawing_rng_ = nullptr;
+  // The generators of the static initializations under way, which own no object
+  // to keep one on, and whose entry and exit are two separate calls from
+  // generated code with no frame spanning them -- so the runtime holds the
+  // stack. A deque because the pointer above stays valid across a push.
+  std::deque<DisplacingRng> displacing_rngs_;
   SimTime now_ = 0;
   std::int8_t global_precision_power_ = kDefaultTimePrecisionPower;
   value::TimeFormat time_format_;
@@ -207,5 +226,21 @@ void RegisterInitialProcess(
     Scope* owning_scope, Scope* unit_instance, Coroutine<void> coroutine);
 void RegisterFinalProcess(
     Scope* owning_scope, Scope* unit_instance, Coroutine<void> coroutine);
+
+// A static initializer runs before any procedure starts (LRM 10.5, 26.2), so
+// the generator it draws from cannot be a process's. LRM 18.14.1 names the one
+// it is instead: the initialization RNG of the module, interface, or program
+// instance -- or of the package -- the declaration sits in, which the standard
+// requires to serve static initializers as well as static processes. These
+// bracket such a run: the enclosing generated body enters one, initializes, and
+// leaves on every way out.
+//
+// `unit_instance` is the scope holding those seeds: the scope itself unless the
+// declaration sits in a generate scope, which keeps no seeds of its own. A
+// namespace has no instance at all (LRM 26.2), so its own entry names none and
+// starts from the default seed.
+void EnterScopeStaticInit(RuntimeEffects& runtime, Scope* unit_instance);
+void EnterNamespaceStaticInit(RuntimeEffects& runtime);
+void LeaveStaticInit(RuntimeEffects& runtime);
 
 }  // namespace lyra::runtime

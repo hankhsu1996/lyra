@@ -855,6 +855,22 @@ auto RuntimeEntryOf(BuiltinFn id) -> RuntimeEntry {
       return {
           .name = "register_final",
           .declaration = FreeFunction{"lyra::runtime::RegisterFinalProcess"}};
+    case BuiltinFn::kEnterScopeStaticInit:
+      return {
+          .name = "enter_scope_static_init",
+          .declaration = FreeFunction{"lyra::runtime::EnterScopeStaticInit"},
+          .takes_the_runtime_handle = true};
+    case BuiltinFn::kEnterNamespaceStaticInit:
+      return {
+          .name = "enter_namespace_static_init",
+          .declaration =
+              FreeFunction{"lyra::runtime::EnterNamespaceStaticInit"},
+          .takes_the_runtime_handle = true};
+    case BuiltinFn::kLeaveStaticInit:
+      return {
+          .name = "leave_static_init",
+          .declaration = FreeFunction{"lyra::runtime::LeaveStaticInit"},
+          .takes_the_runtime_handle = true};
     case BuiltinFn::kToInt64:
       return {.name = "to_int64", .declaration = Method{"ToInt64"}};
     case BuiltinFn::kRound:

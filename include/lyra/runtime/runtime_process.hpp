@@ -124,7 +124,7 @@ class RuntimeProcess : public std::enable_shared_from_this<RuntimeProcess> {
   // The generator every randomization system call made from this process draws
   // from (LRM 18.14.2), and the one a process spawned from here takes its own
   // seed out of.
-  [[nodiscard]] auto Rng() -> ProcessRng& {
+  [[nodiscard]] auto Rng() -> DrawRng& {
     return rng_;
   }
 
@@ -508,7 +508,7 @@ class RuntimeProcess : public std::enable_shared_from_this<RuntimeProcess> {
   ProcessKind kind_;
   Scope* owning_scope_;
   Coroutine<void> coroutine_;
-  ProcessRng rng_;
+  DrawRng rng_;
   // The frame the engine will resume next for this process (invariant: a
   // non-executing process has exactly one active leaf). Starts at the top frame
   // and follows the innermost parked frame as waits block it.

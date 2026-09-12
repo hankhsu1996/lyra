@@ -1329,6 +1329,19 @@ enough to warrant its own focused review.
       the same question from opposite ends: this is one concept wearing three words, that is one
       word standing for two kinds of name.
 
+- [ ] R86 -- The C++ backend decides a class method is pure virtual from the absence of a body
+      alone, where the language it is writing makes that marker legal only on a method that also
+      takes part in dynamic dispatch. Both facts are stated on the declaration and only one is read,
+      so the emitted text is well formed today for a reason no reader of that site can see: the one
+      lowering that leaves a class method bodyless is the one that marks it virtual, and nothing
+      holds those two together. A bodyless method reaching the render without a dispatch role emits
+      a marker its enclosing declaration cannot carry, which fails in the target's own compiler
+      rather than in anything that gates a merge.
+
+      Not blocked, and it is a one-line reading rather than a design: the site asks for both facts
+      instead of one. It is written down rather than taken because it belongs to declaration
+      rendering, which the subject that found it does not otherwise touch.
+
 ## Out of Scope
 
 - Per-feature workstreams. Those live in the dedicated feature files (`operators.md`,

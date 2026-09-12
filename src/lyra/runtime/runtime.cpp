@@ -257,6 +257,17 @@ void Runtime::RegisterProcessInRegistry(
   processes_.push_back(std::move(process));
 }
 
+void Runtime::EnterStaticInit(RandomSeed seed) {
+  displacing_rngs_.push_back(
+      DisplacingRng{.rng = DrawRng{seed}, .displaced = drawing_rng_});
+  drawing_rng_ = &displacing_rngs_.back().rng;
+}
+
+void Runtime::LeaveStaticInit() {
+  drawing_rng_ = displacing_rngs_.back().displaced;
+  displacing_rngs_.pop_back();
+}
+
 auto Runtime::SlotAt(SimTime when) -> TimeSlot& {
   if (when < now_) {
     throw InternalError(
@@ -399,6 +410,28 @@ void RegisterFinalProcess(
       std::make_shared<RuntimeProcess>(
           owning_scope, ProcessKind::kFinal, std::move(coroutine),
           unit_instance->InitializationSeeds().NextSeed()));
+}
+
+void EnterScopeStaticInit(RuntimeEffects& runtime, Scope* unit_instance) {
+  // NOLINTNEXTLINE(cppcoreguidelines-pro-type-static-cast-downcast)
+  static_cast<Runtime&>(runtime).EnterStaticInit(
+      unit_instance->InitializationSeeds().NextSeed());
+}
+
+void EnterNamespaceStaticInit(RuntimeEffects& runtime) {
+  // A namespace is not instantiated, so nothing holds its seeds across runs of
+  // anything: its initialization RNG exists for this one bring-up and hands out
+  // the one seed it is ever asked for. Starting a fresh one here is that
+  // generator, which is what gives every package the same starting point and
+  // keeps one package's draws out of another's (LRM 18.14.1).
+  InitializationRng seeds;
+  // NOLINTNEXTLINE(cppcoreguidelines-pro-type-static-cast-downcast)
+  static_cast<Runtime&>(runtime).EnterStaticInit(seeds.NextSeed());
+}
+
+void LeaveStaticInit(RuntimeEffects& runtime) {
+  // NOLINTNEXTLINE(cppcoreguidelines-pro-type-static-cast-downcast)
+  static_cast<Runtime&>(runtime).LeaveStaticInit();
 }
 
 }  // namespace lyra::runtime

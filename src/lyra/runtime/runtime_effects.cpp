@@ -87,11 +87,14 @@ ProcessExecutionGuard::ProcessExecutionGuard(
     RuntimeEffects& effects, RuntimeProcess& process)
     : effects_(&effects),
       previous_process_(
-          std::exchange(AsRuntime(effects).current_process_, &process)) {
+          std::exchange(AsRuntime(effects).current_process_, &process)),
+      previous_rng_(
+          std::exchange(AsRuntime(effects).drawing_rng_, &process.Rng())) {
 }
 
 ProcessExecutionGuard::~ProcessExecutionGuard() {
   AsRuntime(*effects_).current_process_ = previous_process_;
+  AsRuntime(*effects_).drawing_rng_ = previous_rng_;
 }
 
 auto RuntimeEffects::Stream() -> StreamDispatcher& {
@@ -327,6 +330,17 @@ auto RuntimeEffects::HasCurrentProcess() const -> bool {
 
 auto RuntimeEffects::TryCurrentProcess() -> RuntimeProcess* {
   return AsRuntime(*this).current_process_;
+}
+
+auto RuntimeEffects::DrawingRng() -> DrawRng& {
+  DrawRng* rng = AsRuntime(*this).drawing_rng_;
+  if (rng == nullptr) {
+    throw InternalError(
+        "RuntimeEffects::DrawingRng: a randomization call reached the runtime "
+        "with no process and no static initialization running -- please report "
+        "this as a bug");
+  }
+  return *rng;
 }
 
 auto RuntimeEffects::Now() const -> SimTime {

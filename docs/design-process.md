@@ -3,6 +3,42 @@
 How to arrive at a design in this codebase, and how to falsify one. Comment rules live in
 `code-comments.md`; doc-writing rules live in `style.md`.
 
+## What you are reading it for, not what you are allowed to read
+
+Read anything to learn what a construct has to do -- the north star, an architecture doc, the LRM,
+and the code itself. What decides whether that reading helps is which question you brought to it.
+
+- _What shape is here?_ -- you will copy it, whatever you intended.
+- _What must this construct do?_ -- you are reading requirements.
+
+The code is the dangerous one, and not because it is low-level: its comments cite the standard, so
+reading it feels like reading the standard. What is actually there is the answer somebody reached
+once, with their entity list, their split, and their vocabulary already chosen. Take the facts it
+holds and nobody else does -- what runs before what, who calls whom, whether a state is reachable --
+and refuse it the question of what the shape should be.
+
+"Read the code last" does not cover this, because reading it last and still letting it answer that
+question is exactly what happens.
+
+**The test is on the sentence, not on your intentions.** Write the requirement in one sentence, and
+look for a name in it:
+
+> An initialization RNG still lacks its second consumer.
+
+Every noun there exists already, so that sentence is a diff against today's code wearing a
+requirement's clothes. The requirement was:
+
+> Every draw comes from whatever is running, and its sequence does not depend on the order other
+> things run in.
+
+No existing name appears, so it could have been written against an empty repository -- which is the
+property that matters. **A requirement sentence naming a type, a function, or a file is a shape you
+read and mistook for a need.**
+
+This is the first step, not a replacement for the ones below: derive from the requirement, then
+compare against `decisions/`, and argue explicitly where the two disagree (see the last section).
+Deriving without looking is the point; landing without comparing is not.
+
 ## Start from the layer's motivation, not from its invariant list
 
 Every architecture doc opens with a Purpose that says why its layer exists. That paragraph is the
