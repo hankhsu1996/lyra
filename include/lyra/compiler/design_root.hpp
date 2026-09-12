@@ -5,6 +5,7 @@
 
 #include "lyra/compiler/compile.hpp"
 #include "lyra/compiler/unit_metadata.hpp"
+#include "lyra/compiler/unit_program_record.hpp"
 #include "lyra/diag/diagnostic.hpp"
 #include "lyra/diag/source_manager.hpp"
 #include "lyra/hir/unit_signatures.hpp"
@@ -29,18 +30,20 @@ struct DesignRootArtifacts {
 // brings up the packages' variables (LRM 26.2 / 10.5). Being a unit, it goes on
 // down the same MIR -> LIR -> backend vertical as the rest.
 //
-// This is the one whole-design step -- it reads across the units to resolve the
-// package-initialization plan and to name the tops -- so it is held apart from
-// the per-unit lowering, which reads a single unit. What it takes from them is
-// what a hand-written top would take from a header: their interfaces (name,
-// root presence, exported callables and variables), never their bodies. Symbol
-// resolution proper still happens where it does for any program, at link time.
+// This is the one whole-design step -- it resolves the package-initialization
+// plan, defines the program-global foreign symbols, and names the tops -- so it
+// is held apart from the per-unit lowering, which reads a single unit. What it
+// takes from the units is what each of them published, which is what a
+// hand-written top would take from a header. A unit's own lowered form is not
+// among these inputs, so a unit is finished with as soon as a backend has
+// written it. Symbol resolution proper still happens where it does for any
+// program, at link time.
 //
 // Instantiating the tops makes this a referrer like any other, so `signatures`
 // is what it reads about them: each states the class its instances are, which
 // is what the root's handle to one is typed by.
 auto SynthesizeDesignRoot(
-    std::span<const mir::CompilationUnit> units,
+    std::span<const UnitProgramRecord> records,
     std::span<const lowering::ast_to_hir::TopLevelUnit> tops,
     const hir::UnitSignatures& signatures, StopAfter stop_after,
     const diag::SourceManager& source_manager)

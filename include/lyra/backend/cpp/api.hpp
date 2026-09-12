@@ -1,27 +1,39 @@
 #pragma once
 
+#include <optional>
 #include <span>
 
 #include "lyra/backend/cpp/artifact.hpp"
+#include "lyra/compiler/unit_program_record.hpp"
 #include "lyra/diag/diagnostic.hpp"
 #include "lyra/mir/compilation_unit.hpp"
 
 namespace lyra::backend::cpp {
 
-// Emit a translation unit per source unit in `units`, plus the design-root unit
-// `root` and the host `main` that constructs it. The design has one root, not a
-// list of tops, so the root is named on its own; the full `units` list is still
-// needed because the host must include the header of any unit contributing a
-// DPI-C export wrapper reached only from foreign C (LRM 35.7), which no SV
-// referrer would pull in.
-// A unit reaching a property or a behavior through a reference with no class
-// view is refused whole rather than emitted with a gap. This backend realizes
-// an object as a target-language class and reaches a member by writing its
-// name, so a position settled while the design elaborates is one it has no
-// spelling for; what it cannot realize it declines, and never falls back to
-// another form.
-auto EmitCpp(
-    std::span<const mir::CompilationUnit> units,
-    const mir::CompilationUnit& root) -> diag::Result<CppArtifactSet>;
+// Why this backend cannot realize the unit the record describes, or nothing
+// where it can. A unit reaching a property or a behavior through a reference
+// with no class view is refused whole rather than emitted with a gap: this
+// backend realizes an object as a target-language class and reaches a member by
+// writing its name, so a position settled while the design elaborates is one it
+// has no spelling for, and what it cannot realize it declines rather than
+// falling back to another form.
+//
+// It answers from what a unit published, so every unit can be asked before any
+// of them is rendered -- which is what lets a run that meets a gap name every
+// one of them.
+auto RefusalFor(const compiler::UnitProgramRecord& record)
+    -> std::optional<diag::Diagnostic>;
+
+// The translation unit one compiled unit becomes. The design root is a unit
+// like any other here.
+auto EmitCppUnit(const mir::CompilationUnit& unit) -> CppArtifact;
+
+// The program entry, which constructs the design root. Besides the root's own
+// header it includes the header of every unit that defines a symbol only
+// foreign C refers to (LRM 35.7), because no SV referrer pulls one in; which
+// units those are is what each record states.
+auto EmitCppHostMain(
+    std::span<const compiler::UnitProgramRecord> records,
+    const mir::CompilationUnit& root) -> CppArtifact;
 
 }  // namespace lyra::backend::cpp

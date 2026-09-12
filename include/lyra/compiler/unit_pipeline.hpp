@@ -4,6 +4,7 @@
 
 #include "lyra/compiler/compile.hpp"
 #include "lyra/compiler/unit_metadata.hpp"
+#include "lyra/compiler/unit_program_record.hpp"
 #include "lyra/diag/diagnostic.hpp"
 #include "lyra/diag/source_manager.hpp"
 #include "lyra/hir/compilation_unit.hpp"
@@ -12,13 +13,18 @@
 
 namespace lyra::compiler {
 
-// The lowered outputs of one compilation unit's vertical: its MIR, and for an
-// executable unit its LIR body and definition metadata. Each optional is
-// std::nullopt when the requested `StopAfter` stops before that stage, and the
-// LIR / metadata pair is always absent for a package (a namespace has no
-// executable body).
+// The lowered outputs of one compilation unit's vertical: its MIR, the
+// program-level facts assembling the design reads about it, and for an
+// executable unit its LIR body and definition metadata. The LIR / metadata
+// pair is absent for a package (a namespace has no executable body) and for a
+// request that stops at MIR.
+//
+// The program record outlives the MIR beside it, which is what lets the
+// whole-design step run on a name and a prototype per unit rather than on the
+// units themselves.
 struct UnitArtifacts {
-  std::optional<mir::CompilationUnit> mir;
+  mir::CompilationUnit mir;
+  UnitProgramRecord program_record;
   std::optional<lir::CompilationUnit> lir;
   std::optional<ElaboratedUnitMetadata> metadata;
 };

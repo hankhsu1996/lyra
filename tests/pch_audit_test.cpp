@@ -149,7 +149,7 @@ TEST(PchCoverage, EveryInputIsCovered) {
   ASSERT_FALSE(lyra_exe.empty());
 
   auto loc_or = lyra::driver::ResolveRuntimeLocation(lyra_exe.string());
-  ASSERT_TRUE(loc_or) << loc_or.error();
+  ASSERT_TRUE(loc_or) << loc_or.error().primary.message;
 
   // The same compiler Lyra defaults to, so the audit measures what a plain
   // `lyra run` on this host would produce.
