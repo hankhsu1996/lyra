@@ -17,10 +17,11 @@
 #include "lyra/diag/source_span.hpp"
 #include "lyra/hir/expr.hpp"
 #include "lyra/hir/primary.hpp"
+#include "lyra/lowering/hir_to_mir/block_builder.hpp"
 #include "lyra/lowering/hir_to_mir/cast_lowering.hpp"
 #include "lyra/lowering/hir_to_mir/condition.hpp"
-#include "lyra/lowering/hir_to_mir/expression/enum_method.hpp"
 #include "lyra/lowering/hir_to_mir/integral_literal.hpp"
+#include "lyra/lowering/hir_to_mir/pattern_rendering.hpp"
 #include "lyra/lowering/hir_to_mir/process_lowerer.hpp"
 #include "lyra/lowering/hir_to_mir/runtime_call.hpp"
 #include "lyra/lowering/hir_to_mir/self_ref.hpp"
@@ -73,71 +74,6 @@ auto LowerFormatOperand(Lowerer& lowerer, WalkFrame frame, hir::ExprId hir_arg)
   return *std::move(lowered_or);
 }
 
-// LRM 21.2.1.6: an enumeration prints the name its type declares for the value,
-// and the base type's own rendering -- decimal for this family of tasks -- for
-// a value the type declares no name for. `name` answers with the empty string
-// in exactly that case (LRM 6.19.5), so the length of its answer is what
-// chooses between the two. The text prints unquoted, a quoted element being
-// what the clause asks of a string rather than of an enumeration.
-template <ExprLowerer Lowerer>
-auto BuildEnumPatternItem(
-    Lowerer& lowerer, WalkFrame frame, mir::Expr value, diag::SourceSpan span)
-    -> diag::Result<mir::RuntimePrintItem> {
-  auto& unit = lowerer.Owner().Unit();
-  auto& block = *frame.current_block;
-  const mir::TypeId enum_type = value.type;
-  const mir::ExprId value_id = block.exprs.Add(std::move(value));
-
-  auto name_or =
-      BuildEnumNameCallExpr(lowerer, frame, value_id, enum_type, span);
-  if (!name_or) return std::unexpected(std::move(name_or.error()));
-  const mir::ExprId name_id = block.exprs.Add(*std::move(name_or));
-
-  // An element of an assignment pattern occupies no field of its own, so the
-  // base rendering states a width of none rather than the natural one a
-  // directive would otherwise ask for.
-  const std::vector<mir::RuntimePrintItem> base_items = {mir::RuntimePrintValue(
-      value_id, enum_type,
-      mir::FormatSpec(
-          value::FormatKind::kDecimal, mir::FormatModifiers{.width = 0}))};
-  const mir::ExprId base_array =
-      block.exprs.Add(BuildPrintItemsArray(unit, block, base_items, 0));
-  const mir::ExprId runtime_id =
-      block.exprs.Add(BuildCurrentRuntimeCallExpr(lowerer.Owner()));
-  const mir::ExprId base_text =
-      block.exprs.Add(BuildFormatCallExpr(unit, block, runtime_id, base_array));
-
-  const mir::ExprId name_length = block.exprs.Add(
-      mir::Expr{
-          .data =
-              mir::CallExpr{
-                  .callee =
-                      mir::Direct{
-                          .target = support::BuiltinFn::kLen,
-                          .receiver = name_id},
-                  .arguments = {}},
-          .type = unit.builtins.int_type});
-  const mir::ExprId has_name = block.exprs.Add(
-      mir::Expr{
-          .data =
-              mir::BinaryExpr{
-                  .op = mir::BinaryOp::kInequality,
-                  .lhs = name_length,
-                  .rhs = BuildIntLiteral(unit, block, 0)},
-          .type = unit.builtins.bit1});
-  const mir::ExprId text = block.exprs.Add(
-      mir::Expr{
-          .data =
-              mir::ConditionalExpr{
-                  .condition = ReduceToCondition(unit, block, has_name),
-                  .then_value = name_id,
-                  .else_value = base_text},
-          .type = unit.builtins.string});
-  return mir::RuntimePrintValue(
-      text, unit.builtins.string,
-      mir::FormatSpec(value::FormatKind::kString, mir::FormatModifiers{}));
-}
-
 template <ExprLowerer Lowerer>
 auto BuildPrintValueItem(
     Lowerer& lowerer, WalkFrame frame, hir::ExprId hir_arg,
@@ -152,9 +88,9 @@ auto BuildPrintValueItem(
   const mir::Type& value_type = lowerer.Owner().Unit().types.Get(lowered.type);
   const bool is_string = value_type.Is<mir::StringType>();
   const bool is_integral_packed = value_type.IsIntegralPacked();
-  const bool is_enumeration = value_type.Is<mir::EnumType>();
   const bool is_handle =
       value_type.Is<mir::ChandleType>() || value_type.Is<mir::ManagedRefType>();
+  const hir::TypeId source_type = lowerer.HirExprs().Get(hir_arg).type;
 
   // LRM 21.2.1.6 gives a handle a text under the assignment pattern and the
   // language gives it one under no other conversion. slang does not filter the
@@ -181,15 +117,104 @@ auto BuildPrintValueItem(
         lowerer.Owner().Unit().builtins.string);
   }
 
-  if (spec.kind == value::FormatKind::kAssignmentPattern && is_enumeration) {
-    return BuildEnumPatternItem(
-        lowerer, frame, std::move(lowered),
-        lowerer.HirExprs().Get(hir_arg).span);
-  }
-
   const mir::TypeId type = lowered.type;
   const mir::ExprId value = block.exprs.Add(std::move(lowered));
+
+  // A type that decides how a value of it reads (LRM 21.2.1.6) is rendered
+  // where that type is still in hand, and what reaches the runtime is the text
+  // -- occupying whatever field the directive asked of the operand as a whole.
+  if (spec.kind == value::FormatKind::kAssignmentPattern &&
+      TypeStatesItsRendering(
+          PatternRenderingOf(lowerer.Owner(), source_type))) {
+    auto text_or = BuildPatternRendering(
+        lowerer.Owner(), frame, value, source_type,
+        lowerer.HirExprs().Get(hir_arg).span);
+    if (!text_or) return std::unexpected(std::move(text_or.error()));
+    return mir::RuntimePrintValue(
+        *text_or, lowerer.Owner().Unit().builtins.string,
+        mir::FormatSpec(value::FormatKind::kString, spec.modifiers));
+  }
+
   return mir::RuntimePrintValue(value, type, std::move(spec));
+}
+
+// One operand of a format string the program computes (LRM 21.3.3). Such a
+// string reaches no directive until it is parsed, so each operand carries the
+// readings its type has: an enumeration carries its value beside its declared
+// name, a radix conversion of it printing the one and `%p` the other, while an
+// aggregate carries only the text, the clause defining no other conversion for
+// it.
+//
+// Each operand is named once and every use of it is a read of that name, so an
+// operand read twice is evaluated once -- which is what an operand whose
+// evaluation the design can observe requires.
+template <ExprLowerer Lowerer>
+auto BuildRuntimeFormatOperand(
+    Lowerer& lowerer, WalkFrame frame, hir::ExprId hir_arg)
+    -> diag::Result<mir::ExprId> {
+  auto& unit = lowerer.Owner().Unit();
+  auto& block = *frame.current_block;
+  const hir::Expr& source = lowerer.HirExprs().Get(hir_arg);
+
+  auto lowered_or = LowerFormatOperand(lowerer, frame, hir_arg);
+  if (!lowered_or) return std::unexpected(std::move(lowered_or.error()));
+  const mir::TypeId value_type = lowered_or->type;
+  const mir::LocalId value = frame.bindings->DeclareAnonymous(value_type);
+  block.AppendStmt(
+      mir::LocalDeclStmt{
+          .target = value, .init = block.exprs.Add(*std::move(lowered_or))});
+  const auto read_value = [&] {
+    return block.exprs.Add(mir::MakeLocalRefExpr(value, value_type));
+  };
+
+  const auto make_arg = [&](std::vector<mir::ExprId> parts) {
+    return block.exprs.Add(
+        mir::Expr{
+            .data =
+                mir::CallExpr{
+                    .callee = mir::Construct{}, .arguments = std::move(parts)},
+            .type = unit.builtins.format_arg});
+  };
+
+  // The text is named too, so the two halves of an operand that reads only as
+  // its pattern are one object rather than two renderings of one value.
+  const auto bind_text = [&]() -> diag::Result<mir::LocalId> {
+    auto text_or = BuildPatternRendering(
+        lowerer.Owner(), frame, read_value(), source.type, source.span);
+    if (!text_or) return std::unexpected(std::move(text_or.error()));
+    const mir::LocalId text =
+        frame.bindings->DeclareAnonymous(unit.builtins.string);
+    block.AppendStmt(mir::LocalDeclStmt{.target = text, .init = *text_or});
+    return text;
+  };
+  const auto read = [&](mir::LocalId text) {
+    return block.exprs.Add(mir::MakeLocalRefExpr(text, unit.builtins.string));
+  };
+
+  switch (PatternRenderingOf(lowerer.Owner(), source.type)) {
+    case PatternRendering::kValueDecides:
+      return make_arg({read_value()});
+    case PatternRendering::kBesideTheValue: {
+      auto text_or = bind_text();
+      if (!text_or) return std::unexpected(std::move(text_or.error()));
+      return make_arg({read_value(), read(*text_or)});
+    }
+    case PatternRendering::kInsteadOfTheValue: {
+      auto text_or = bind_text();
+      if (!text_or) return std::unexpected(std::move(text_or.error()));
+      return block.exprs.Add(
+          mir::Expr{
+              .data =
+                  mir::CallExpr{
+                      .callee =
+                          mir::Direct{
+                              .target =
+                                  support::BuiltinFn::kMakeRenderedFormatArg},
+                      .arguments = {read(*text_or)}},
+              .type = unit.builtins.format_arg});
+    }
+  }
+  throw InternalError("BuildRuntimeFormatOperand: unknown pattern rendering");
 }
 
 // The string LRM 21.2.1.5 `%m` names: the hierarchical name of the scope the
@@ -464,7 +489,6 @@ auto BuildRuntimeFormatCallExpr(
     Lowerer& lowerer, WalkFrame frame, const hir::CallExpr& call,
     std::size_t arg_offset) -> diag::Result<mir::Expr> {
   auto& unit = lowerer.Owner().Unit();
-  auto& block = *frame.current_block;
   const std::vector<hir::ExprId> args = FlattenCallArgs(call);
 
   if (arg_offset >= args.size()) {
@@ -473,30 +497,33 @@ auto BuildRuntimeFormatCallExpr(
         "subroutine's argument-count policy should have rejected the call");
   }
 
+  // Naming each operand and formatting through those names are the steps of one
+  // block expression, so a name lives exactly as long as the call that borrows
+  // it and an operand evaluated once stays evaluated once wherever the call is
+  // written -- including inside an arm the design may not take.
+  BlockBuilder steps(frame);
+  const WalkFrame& step_frame = steps.Frame();
+  mir::Block& body = steps.Body();
+
   // An integral or unpacked-byte-array format string carries its text as bytes
   // (LRM 21.3.3), so it reaches the parse as a string value through the same
   // conversion any other bits-to-text operand takes.
-  auto format_or = LowerFormatOperand(lowerer, frame, args[arg_offset]);
+  auto format_or = LowerFormatOperand(lowerer, step_frame, args[arg_offset]);
   if (!format_or) return std::unexpected(std::move(format_or.error()));
-  const mir::ExprId lowered_format = block.exprs.Add(*std::move(format_or));
+  const mir::ExprId lowered_format = body.exprs.Add(*std::move(format_or));
   const mir::ExprId format_id =
-      ConvertToType(unit, block, lowered_format, unit.builtins.string);
+      ConvertToType(unit, body, lowered_format, unit.builtins.string);
 
   std::vector<mir::ExprId> operands;
   operands.reserve(args.size() - arg_offset - 1);
   for (std::size_t i = arg_offset + 1; i < args.size(); ++i) {
-    auto lowered_or = LowerFormatOperand(lowerer, frame, args[i]);
-    if (!lowered_or) return std::unexpected(std::move(lowered_or.error()));
-    const mir::ExprId value = block.exprs.Add(*std::move(lowered_or));
-    operands.push_back(block.exprs.Add(
-        mir::Expr{
-            .data =
-                mir::CallExpr{.callee = mir::Construct{}, .arguments = {value}},
-            .type = unit.builtins.format_arg}));
+    auto operand_or = BuildRuntimeFormatOperand(lowerer, step_frame, args[i]);
+    if (!operand_or) return std::unexpected(std::move(operand_or.error()));
+    operands.push_back(*operand_or);
   }
   const mir::TypeId operands_type = mir::MachineArrayOf(
       unit.types, unit.builtins.format_arg, operands.size());
-  const mir::ExprId operands_array = block.exprs.Add(
+  const mir::ExprId operands_array = body.exprs.Add(
       mir::Expr{
           .data = mir::CompositeExpr{.parts = std::move(operands)},
           .type = operands_type});
@@ -504,11 +531,11 @@ auto BuildRuntimeFormatCallExpr(
   // The hierarchical name a `%m` renders and the scope's time unit a `%t`
   // scales against are facts of the call site, not of the format text, so they
   // reach the parse as operands.
-  const mir::ExprId path_id = BuildHierarchicalNameExpr(lowerer, frame);
+  const mir::ExprId path_id = BuildHierarchicalNameExpr(lowerer, step_frame);
 
   const mir::ExprId runtime_id =
-      block.exprs.Add(BuildCurrentRuntimeCallExpr(lowerer.Owner()));
-  const mir::ExprId time_format_id = block.exprs.Add(
+      body.exprs.Add(BuildCurrentRuntimeCallExpr(lowerer.Owner()));
+  const mir::ExprId time_format_id = body.exprs.Add(
       mir::Expr{
           .data =
               mir::CallExpr{
@@ -519,17 +546,19 @@ auto BuildRuntimeFormatCallExpr(
                   .arguments = {}},
           .type = unit.builtins.time_format});
   const mir::ExprId time_unit_power = BuildIntLiteral(
-      unit, block, static_cast<std::int64_t>(lowerer.Resolution().unit_power));
+      unit, body, static_cast<std::int64_t>(lowerer.Resolution().unit_power));
 
-  return mir::Expr{
-      .data =
-          mir::CallExpr{
-              .callee =
-                  mir::Direct{.target = support::BuiltinFn::kFormatRuntime},
-              .arguments =
-                  {format_id, operands_array, path_id, time_format_id,
-                   time_unit_power}},
-      .type = unit.builtins.string};
+  const mir::ExprId formatted = body.exprs.Add(
+      mir::Expr{
+          .data =
+              mir::CallExpr{
+                  .callee =
+                      mir::Direct{.target = support::BuiltinFn::kFormatRuntime},
+                  .arguments =
+                      {format_id, operands_array, path_id, time_format_id,
+                       time_unit_power}},
+          .type = unit.builtins.string});
+  return steps.Build(formatted);
 }
 
 auto BuildPrintItemsArray(

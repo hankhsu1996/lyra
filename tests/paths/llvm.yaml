@@ -22,8 +22,6 @@
 13_tasks_and_functions/function_struct_return: "local is not addressable storage"
 13_tasks_and_functions/task_enables_subroutine: "storage of this kind is not yet lendable by reference"
 16_assertions/procedural_concurrent_assertion_queues_where_it_runs: "a concurrent assertion embedded in a procedure is not yet lowered"
-21_output/assignment_pattern_format_of_aggregate_members: "the runtime library publishes no entry named lyra_rt_tuple_make_print_value_item"
-21_output/assignment_pattern_format_of_enumeration_elements: "the runtime library publishes no entry named lyra_rt_unpackedarray_make_print_value_item"
 23_hierarchy/ref_port_is_waited_on: "the cell a reference binds is not yet nameable on this backend"
 23_hierarchy/ref_port_aliases_connected_variable: "mir_to_lir: storage of this kind is not yet lendable by reference"
 35_dpi/concurrent_context_call_chains_keep_scope: "the scope a DPI-C context import makes current is not yet lowerable to LIR"

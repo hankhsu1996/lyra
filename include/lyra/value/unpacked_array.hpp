@@ -727,25 +727,6 @@ class ArraySliceRef {
   bool anchor_known_;
 };
 
-// LRM 21.2.1.6 aggregate format. What a container decides is which values
-// become elements; each of them then defers to its own type's `Formatter`, so
-// multi-dimensional and mixed-container nesting (`int arr[3][]`) falls out
-// without this knowing it happened. Aggregates only ever carry
-// `kAssignmentPattern`, which rewrites to `kDecimal` at the integral leaf and
-// never reaches a context-bound kind (`%t` is rejected on aggregate operands
-// upstream), so no `FormatContext` is threaded through.
-template <typename T>
-struct Formatter<UnpackedArray<T>> {
-  static auto Format(const FormatSpec& spec, const UnpackedArray<T>& value)
-      -> std::string {
-    PatternWriter pattern;
-    for (std::size_t i = 0; i < value.RawSize(); ++i) {
-      pattern.Add(lyra::value::Format(spec, MakeFormatArg(value.RawAt(i))));
-    }
-    return std::move(pattern).Finish();
-  }
-};
-
 // Left-justifies a byte sequence into `count` elements: the first byte lands at
 // the array's left bound and runs toward the right, an element past the end of
 // the sequence keeps the element type's default, and bytes beyond the last

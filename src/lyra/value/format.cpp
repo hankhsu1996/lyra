@@ -101,6 +101,20 @@ auto ApplyFieldWidth(std::string body, const FormatSpec& spec) -> std::string {
 
 auto Format(const FormatSpec& spec, FormatArg arg, const FormatContext& ctx)
     -> std::string {
+  // LRM 21.2.1.6 renders a value by facts its type declares, which the
+  // operand brings with it because nothing here can reach them from a value.
+  if (spec.kind == FormatKind::kAssignmentPattern && arg.pattern != nullptr) {
+    return ApplyFieldWidth(std::string{arg.pattern->View()}, spec);
+  }
+  // An operand the clause defines under the assignment pattern and under no
+  // other conversion carries no reading for this one, which is a program
+  // asking for something the language does not define rather than anything
+  // this can answer.
+  if (arg.format_fn == nullptr) {
+    throw SimulationError(
+        "an aggregate is printed only by the assignment pattern conversion "
+        "(LRM 21.2.1.6)");
+  }
   return arg.format_fn(spec, arg.ptr, ctx);
 }
 
@@ -186,9 +200,9 @@ auto Formatter<PackedArray>::Format(
   // would unformatted", and the default $display radix is decimal. It occupies
   // no field: the white space a pattern carries is the tool's to choose, and an
   // element sits inside a pattern rather than in the columns the directive
-  // asked of the whole. Rewriting the spec here is what makes that true at
-  // every depth, since the recursion through an aggregate hands each element
-  // the pattern spec the directive was written with.
+  // asked of the whole. The rewrite is here rather than at whatever reached the
+  // element, so an integral answers alike whether it is the whole operand or
+  // one position of a pattern something else composed.
   if (spec.kind == FormatKind::kAssignmentPattern) {
     FormatSpec element_spec = spec;
     element_spec.kind = FormatKind::kDecimal;

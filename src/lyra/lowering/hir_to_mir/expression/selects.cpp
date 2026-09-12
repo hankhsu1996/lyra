@@ -180,23 +180,6 @@ auto BuildSliceFormLiteral(
   return BuildIntLiteral(unit, block, static_cast<std::int64_t>(form));
 }
 
-// `arr[i]` element access (LRM 7.4.5 / 7.5 / 7.10). The container kind of what
-// the call dispatches on picks the runtime overload, and the raw source index
-// passes through, plus that value's declared range for the unpacked family --
-// every selectable value resolves the coordinate against its own range.
-auto BuildElementAccessCallExpr(
-    UnitLowerer& unit_lowerer, mir::Block& block, mir::ExprId base_id,
-    mir::ExprId idx_id, mir::TypeId result_type) -> mir::Expr {
-  std::vector<mir::ExprId> args = {idx_id};
-  AppendReceiverRange(unit_lowerer, block, block.exprs.Get(base_id).type, args);
-  return mir::Expr{
-      .data =
-          mir::CallExpr{
-              .callee = ElementAccessCallee(base_id),
-              .arguments = std::move(args)},
-      .type = result_type};
-}
-
 // The coordinates one element step descends by: the source index, then
 // whatever the value's family takes from its static type rather than from the
 // value. The same list the read-side access passes, because reading a part and
@@ -447,6 +430,19 @@ auto UnpackedMemberReach(
 }
 
 }  // namespace
+
+auto BuildElementAccessCallExpr(
+    UnitLowerer& unit_lowerer, mir::Block& block, mir::ExprId base_id,
+    mir::ExprId idx_id, mir::TypeId result_type) -> mir::Expr {
+  std::vector<mir::ExprId> args = {idx_id};
+  AppendReceiverRange(unit_lowerer, block, block.exprs.Get(base_id).type, args);
+  return mir::Expr{
+      .data =
+          mir::CallExpr{
+              .callee = ElementAccessCallee(base_id),
+              .arguments = std::move(args)},
+      .type = result_type};
+}
 
 auto BuildPackedRunRead(
     UnitLowerer& unit_lowerer, mir::Block& block, mir::ExprId base,

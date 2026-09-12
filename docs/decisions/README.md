@@ -82,6 +82,8 @@ the detail lives in the entry itself.
   reduction / `map` operate over an ordered `(index, element)` stream; ordering stays in-place.
 - [format-dispatch](format-dispatch.md) -- value formatting dispatches through `Formatter<T>` and
   `FormatArg`.
+- [rendering-a-value-by-its-type](rendering-a-value-by-its-type.md) -- how a value reads under LRM
+  21.2.1.6 is a callable synthesized per type, not a description handed to a formatter.
 
 ### Lowering and IR shape
 

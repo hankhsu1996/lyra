@@ -9,6 +9,7 @@
 #include "lyra/hir/expr.hpp"
 #include "lyra/hir/subroutine_ref.hpp"
 #include "lyra/lowering/hir_to_mir/expression/expr_lowerer.hpp"
+#include "lyra/lowering/hir_to_mir/unit_lowerer.hpp"
 #include "lyra/lowering/hir_to_mir/walk_frame.hpp"
 #include "lyra/mir/expr.hpp"
 #include "lyra/mir/type_id.hpp"
@@ -36,10 +37,10 @@ auto LowerEnumMethod(
 // and the empty string where it does not. Shared with the assignment-pattern
 // rendering of an enumeration (LRM 21.2.1.6), which prints that name when there
 // is one, so both reach one synthesized callable per enum rather than each
-// building its own.
-template <ExprLowerer Lowerer>
+// building its own. What it reads is the enum's member table and the block the
+// frame names, neither of which the pass class takes part in.
 auto BuildEnumNameCallExpr(
-    Lowerer& lowerer, WalkFrame frame, mir::ExprId value_id,
+    UnitLowerer& unit_lowerer, WalkFrame frame, mir::ExprId value_id,
     mir::TypeId enum_type, diag::SourceSpan span) -> diag::Result<mir::Expr>;
 
 }  // namespace lyra::lowering::hir_to_mir

@@ -161,9 +161,12 @@ value-domain projection is the representation it shares with a type that names n
   now names the concept.
 - A cast between an integral type and the type it shares a representation with is stated by the
   types differing, not by either one being an enumeration.
-- `%p` on a declared aggregate formats as the assignment pattern without the names, which is a legal
-  `%0p` and not yet what `%p` requires. The names now exist below the front end, which was the
-  precondition; carrying them into the print operation is the step that remains.
+- The names now exist below the front end, which was the precondition for `%p`. Carrying them into
+  the print operation was the step that remained, and it is
+  [rendering-a-value-by-its-type](rendering-a-value-by-its-type.md): a callable synthesized per
+  type. That entry also answers point 4's open half without the second type it anticipated -- the
+  rendering is keyed by the SystemVerilog type, where a packed tagged union is still told from an
+  untagged one, so nothing below the front end has to tell them apart.
 
 ## Cross-references
 

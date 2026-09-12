@@ -1680,6 +1680,14 @@ auto lyra_rt_format_runtime(
     const void* time_format, const void* timeunit_power) -> void*;
 auto lyra_rt_packed_make_format_arg(const void* value) -> void*;
 auto lyra_rt_string_make_format_arg(const void* value) -> void*;
+// The same operand, carrying the text LRM 21.2.1.6 renders it as -- composed
+// where the type that decides it was still in hand, because a format string
+// the program computes reaches no directive until it is parsed.
+auto lyra_rt_packed_make_format_arg_with_pattern(
+    const void* value, const void* pattern) -> void*;
+// An operand that reads only as that text, there being no other conversion the
+// language defines for what it stands for.
+auto lyra_rt_make_rendered_format_arg(const void* pattern) -> void*;
 auto lyra_rt_chandle_make_format_arg(void* value) -> void*;
 auto lyra_rt_managedref_make_format_arg(const void* value) -> void*;
 

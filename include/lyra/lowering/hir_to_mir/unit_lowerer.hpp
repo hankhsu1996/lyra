@@ -271,6 +271,16 @@ class UnitLowerer {
     return enum_step_helpers_;
   }
 
+  // Per-unit dedup of the callables synthesized for the LRM 21.2.1.6
+  // assignment-pattern rendering, keyed by the SystemVerilog type whose
+  // declaration decides the text. Keyed there rather than by the MIR type
+  // because the clause reads facts a lowering answers and stops carrying -- a
+  // packed union's tag among them.
+  [[nodiscard]] auto PatternRenderHelpers()
+      -> std::unordered_map<hir::TypeId, mir::CallableTarget>& {
+    return pattern_render_helpers_;
+  }
+
  private:
   // Lowers a scope whose root is an object type into the unit's top class,
   // which the unit then names as its root. The package initialization plan is
@@ -317,6 +327,7 @@ class UnitLowerer {
   base::SymbolTable<mir::ClassId, ClassShape> declarations_;
   std::unordered_map<mir::TypeId, mir::CallableTarget> enum_name_helpers_;
   std::unordered_map<mir::TypeId, mir::CallableTarget> enum_step_helpers_;
+  std::unordered_map<hir::TypeId, mir::CallableTarget> pattern_render_helpers_;
 };
 
 }  // namespace lyra::lowering::hir_to_mir

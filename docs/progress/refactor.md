@@ -1342,6 +1342,35 @@ enough to warrant its own focused review.
       instead of one. It is written down rather than taken because it belongs to declaration
       rendering, which the subject that found it does not otherwise touch.
 
+- [ ] R87 -- A `for` whose init declares more than one binding emits C++ that does not compile. MIR
+      states the init as a list, and the C++ render spells each declaration with its own `auto`, so
+      two of them land as `for (auto a = ..., auto b = ...)`. Nothing produced two until a lowering
+      tried, and the failure is in the emitted text rather than in a check, so it surfaces as a host
+      compile error naming no construct.
+
+      The target shape is the render refusing what it cannot spell, since a backend meeting IR it
+      does not realize returns `diag::Unsupported` rather than emitting text that will not build.
+      Whether the render should instead spell several declarations -- one `auto`, comma-separated,
+      which is legal C++ only when the deduced types agree -- is the open half: MIR admits inits of
+      different types and C++ does not, so the answer may be that the IR is what should say only one
+      declaration is allowed.
+
+      Not blocked, and nothing produces it today: the foreach lowering declares the odd binding
+      ahead of the loop for exactly this reason, and the assignment-pattern rendering now does too.
+      Found by writing the second one.
+
+- [ ] R88 -- The execution backend publishes no entry for the guard a tagged-union member access
+      carries (LRM 11.9), so an ordinary read of a packed tagged union's member refuses there with
+      `the runtime library publishes no entry named lyra_rt_packed_require`. Reproduced on a
+      four-line program whose only content is `pt.Bits`; the C++ backend runs it.
+
+      The target shape is the entry, beside the other value-domain entries. What makes it worth an
+      entry here rather than a note is that the guard is the general "yield the receiver when a
+      condition holds, raise otherwise" operation, so every construct the language checks while
+      evaluating an access meets it, not only this one.
+
+      Not blocked. It sits in the execution backend's own surface rather than in any lowering.
+
 ## Out of Scope
 
 - Per-feature workstreams. Those live in the dedicated feature files (`operators.md`,

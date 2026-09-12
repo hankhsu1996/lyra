@@ -2,7 +2,6 @@
 
 #include <cstddef>
 #include <cstdint>
-#include <string>
 #include <tuple>
 #include <utility>
 
@@ -221,23 +220,6 @@ class Tuple {
   }
 
   std::tuple<Ts...> data_;
-};
-
-// LRM 21.2.1.6 assignment-pattern format: every component is present at once,
-// so every one of them is an element, each deferring to its own type's
-// `Formatter`.
-template <typename... Ts>
-struct Formatter<Tuple<Ts...>> {
-  static auto Format(const FormatSpec& spec, const Tuple<Ts...>& value)
-      -> std::string {
-    PatternWriter pattern;
-    [&]<std::size_t... Is>(std::index_sequence<Is...>) {
-      (pattern.Add(
-           lyra::value::Format(spec, MakeFormatArg(value.template Get<Is>()))),
-       ...);
-    }(std::index_sequence_for<Ts...>{});
-    return std::move(pattern).Finish();
-  }
 };
 
 // Every arity is a product, so the contract is asserted at none, one, and many

@@ -29,9 +29,6 @@ template <typename T> struct Formatter;        // primary, undefined
 template <> struct Formatter<PackedArray> { static auto Format(spec, value, ctx) -> string; };
 template <> struct Formatter<String>      { static auto Format(spec, value) -> string; };
 template <> struct Formatter<double>      { static auto Format(spec, value, ctx) -> string; };
-template <typename U> struct Formatter<UnpackedArray<U>> {
-  static auto Format(spec, value) -> string;  // no ctx; recurses
-};
 // ... etc.
 
 struct FormatArg {
@@ -102,6 +99,13 @@ and throw on `nullptr`.
 
 ## Aggregate `%p` shape (LRM 21.2.1.6)
 
+**Superseded in part by [rendering-a-value-by-its-type](rendering-a-value-by-its-type.md):** an
+aggregate no longer reaches a formatter at all, its text being composed by a callable synthesized
+for its type, and the `Formatter<T>` set is the leaf types alone. The output decisions below are
+unchanged and are made there instead -- what moved is who composes the text, not what it says. Point
+3 holds with the shared text now carrying the names the clause asks for, which its own "nothing
+meaningfully shorter" reasoning does not disturb.
+
 Decisions about the OUTPUT shape, independent of dispatch:
 
 1. **Output is `'{<e0>, <e1>, ...}` with `, ` between elements.** Empty container prints `'{}`.
@@ -118,10 +122,9 @@ Decisions about the OUTPUT shape, independent of dispatch:
 
 ## Consequences
 
-- **Open extension.** Adding `struct` / `union` / `enum` / `class` / `chandle` is a single
-  `Formatter<T>` specialization per type; nothing in the central dispatch changes.
-- **`%p` for queue / associative array** drops in the same way once those containers land -- one
-  `Formatter` specialization that walks the container's element shape.
+- **Open extension.** Adding a leaf type is a single `Formatter<T>` specialization; nothing in the
+  central dispatch changes. A type whose text its own declaration decides extends the rendering
+  above this layer instead -- see [rendering-a-value-by-its-type](rendering-a-value-by-its-type.md).
 - **Per-element string concatenation per `%p` call** is unchanged from any direct-walk approach; no
   intermediate aggregate value tree is built. Memory per call is proportional to output text length
   only.

@@ -627,6 +627,9 @@ auto DefineRuntimeAbi(llvm::orc::LLJIT& jit)
   add("lyra_rt_format_runtime", &lyra_rt_format_runtime);
   add("lyra_rt_packed_make_format_arg", &lyra_rt_packed_make_format_arg);
   add("lyra_rt_string_make_format_arg", &lyra_rt_string_make_format_arg);
+  add("lyra_rt_packed_make_format_arg_with_pattern",
+      &lyra_rt_packed_make_format_arg_with_pattern);
+  add("lyra_rt_make_rendered_format_arg", &lyra_rt_make_rendered_format_arg);
   add("lyra_rt_chandle_make_format_arg", &lyra_rt_chandle_make_format_arg);
   add("lyra_rt_managedref_make_format_arg",
       &lyra_rt_managedref_make_format_arg);
