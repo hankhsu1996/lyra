@@ -166,6 +166,12 @@ member is a net.
 - A view offering a name that reaches nothing inside its interface no longer stops the interface
   from compiling; it is refused where the name is used, which is what LRM 23.2.2.1 admits the
   declaration for.
+- **What a view's name means comes out of the interface's published record, so a referrer reaches
+  one exactly where it compiles against that interface.** An interface port gives it that, and so
+  does declaring the instance; a hierarchical path descending through a module does not, because a
+  module publishes no child of its own (LRM 25.10 gives that to an interface alone). The boundary is
+  the signature's and not the view's -- an ordinary member of the same instance is reached over that
+  path today, by name at run time, which is a reach that answers without a declaration to read.
 - A signature now carries a type inside a modport, so importing one answers those types out of the
   reader's pool like every other type it carries. It is the first type to live there, and a copy
   carries an unlisted one unchanged -- right for a name or a position, wrong for a type.

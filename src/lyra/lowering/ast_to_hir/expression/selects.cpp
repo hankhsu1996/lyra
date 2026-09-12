@@ -197,10 +197,6 @@ auto LowerMemberAccessExpr(
   }
   if (sel.member.kind == slang::ast::SymbolKind::ClassProperty) {
     const auto& prop = sel.member.as<slang::ast::ClassPropertySymbol>();
-    const auto& declaring_class =
-        prop.getParentScope()->asSymbol().as<slang::ast::ClassType>();
-    auto owner_ref = lowerer.Owner().ResolveClassRef(declaring_class, span);
-    if (!owner_ref) return std::unexpected(std::move(owner_ref.error()));
     // LRM 8.9 permits reaching a static property through a handle
     // (`p.static_prop`), and LRM 8.3 says accessing a static member through a
     // null handle is legal because no per-instance dereference is required.
@@ -210,18 +206,13 @@ auto LowerMemberAccessExpr(
     // it, and fabricating a receiver to stand in for "no instance" would
     // conflict with the receiver-of-instance-methods-only rule.
     if (prop.lifetime == slang::ast::VariableLifetime::Static) {
-      auto declaring_hops =
-          lowerer.Owner().DeclaringScopeHopsFrom(declaring_class, frame, span);
-      if (!declaring_hops) {
-        return std::unexpected(std::move(declaring_hops.error()));
-      }
-      return hir::MakeRefExpr(
-          hir::StaticPropertyRef{
-              .target =
-                  lowerer.Owner().MakeStaticPropertyTarget(*owner_ref, prop),
-              .declaring_scope_hops = *declaring_hops},
-          *type_id, span);
+      auto property =
+          lowerer.Owner().ResolveStaticPropertyTarget(frame, prop, span);
+      if (!property) return std::unexpected(std::move(property.error()));
+      return hir::MakeRefExpr(*property, *type_id, span);
     }
+    const auto& declaring_class =
+        prop.getParentScope()->asSymbol().as<slang::ast::ClassType>();
     auto target = lowerer.Owner().MakeClassPropertyTarget(
         frame, declaring_class, prop, span);
     if (!target) {

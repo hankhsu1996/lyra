@@ -4,14 +4,30 @@
 // (LRM 9.2.2.2.1). Nothing narrows that to the procedure's own scope: a signal
 // named through a hierarchical path, in either order of declaration, and a
 // signal a called function reads without taking it as an argument are read by
-// the block like any other (LRM 9.2.2.2.1, 9.2.2.2.2).
+// the block like any other (LRM 9.2.2.2.1, 9.2.2.2.2). A static class property
+// is one of those variables -- LRM 8.9 makes it the single copy a class shares,
+// usable with no object of that type -- and the exception 9.2.2.2.1 states is
+// for a reference to a class object, which naming one through the class scope
+// resolution operator is not. Where the class itself is declared changes
+// nothing about that, so one outside any design unit and one inside the module
+// are read alike.
+class Shared;
+  static int level = 0;
+endclass
+
 module Top;
+  class Owned;
+    static int level = 0;
+  endclass
+
   int local_a;
   int local_b;
   int local_sum;
 
   logic [7:0] enclosing;
   logic [7:0] from_function;
+  int from_shared;
+  int from_owned;
 
   function automatic logic [7:0] read_enclosing();
     return enclosing;
@@ -19,6 +35,8 @@ module Top;
 
   always_comb local_sum = local_a + local_b;
   always_comb from_function = read_enclosing();
+  always_comb from_shared = Shared::level + 100;
+  always_comb from_owned = Owned::level + 200;
 
   if (1) begin : src
     logic [7:0] v;
@@ -58,6 +76,8 @@ module Top;
     src.v = 8'd9;
     p.sig = 8'd3;
     q.sig = 8'd4;
+    Shared::level = 7;
+    Owned::level = 8;
     #1;
   end
 
@@ -68,6 +88,10 @@ module Top;
     if (rdr.o !== 8'd9) $fatal(1, "rdr.o was %0d, expected 9", rdr.o);
     if (p.got !== 8'd4) $fatal(1, "p.got was %0d, expected 4", p.got);
     if (q.got !== 8'd3) $fatal(1, "q.got was %0d, expected 3", q.got);
+    if (from_shared !== 107)
+      $fatal(1, "from_shared was %0d, expected 107", from_shared);
+    if (from_owned !== 208)
+      $fatal(1, "from_owned was %0d, expected 208", from_owned);
     $display("All checks passed");
   end
 endmodule

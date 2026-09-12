@@ -59,6 +59,20 @@ under each item, and the conformance gaps at the end.
       (LRM 9.4.2.2). Slang's flow analysis produces the implicit read sets; the body runs at t = 0
       (always_comb / always_latch) or after the first wait (`@*`), then waits on any change to the
       read set.
+
+      What a read in that set contributes follows from what the name denotes, and every kind of
+      declaration says so rather than sharing one answer. A net or a variable is waited on wherever
+      its cell lives. A static class property is one too -- LRM 8.9 makes it the single copy a class
+      shares, usable with no object of that type -- and the class may be declared inside the module
+      or outside every design unit alike. A name a view offers contributes what the interface says
+      it reads (LRM 25.5.4). A value fixed before simulation starts contributes nothing, which a
+      parameter, an enumeration name and a specparam each are. LRM 9.2.2.2.1 excludes a reference
+      through a class object and a variable the block itself declares, so an instance property and
+      `this` contribute nothing either. **A read whose kind this compiler does not carry, or whose
+      storage it cannot reach from the reading scope, is refused by name** -- a subscription is never
+      quietly left out, because a process that does not wake gives a wrong answer with nothing to
+      see.
+
   - [ ] Sensitivity narrowed below whole-variable granularity for a read that is not a range of
         bits: a process reading one element or one field wakes on any write to the variable
         containing it, where one reading a bit range of a packed value already wakes only on a write

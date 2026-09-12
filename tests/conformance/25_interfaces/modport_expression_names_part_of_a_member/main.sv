@@ -44,12 +44,31 @@ module Watcher (
   always_comb whole = i.Whole;
 endmodule
 
+// What a view offers is a property of the interface's declaration, so an
+// interface port is one way to reach it and not the only one: a scope that
+// declares the instance names the view on it directly, under as many views as
+// it likes, and reading, writing, and waiting on those names work there exactly
+// as they do through a port.
+module Local;
+  Nibbles own ();
+  logic [8:0] doubled;
+
+  always_comb doubled = own.watch.Doubled;
+
+  initial begin
+    own.r = 8'h00;
+    #1 own.low.Part = own.low.Value;
+    #2 own.high.Part = 4'h5;
+  end
+endmodule
+
 module Top;
   Nibbles n ();
 
   Writer low (.i(n.low));
   Writer high (.i(n.high));
   Watcher w (.i(n.watch));
+  Local loc ();
 
   initial n.flag = 1'b1;
 
@@ -75,6 +94,11 @@ module Top;
       $fatal(1, "low.saw_flag was %b, expected 1", low.saw_flag);
     if (high.saw_flag !== 1'b1)
       $fatal(1, "high.saw_flag was %b, expected 1", high.saw_flag);
+    // The scope that declares the instance wrote each nibble through a
+    // different view of it, and its own process saw the computed name move.
+    if (loc.own.r !== 8'h51) $fatal(1, "loc.own.r was %h, expected 51", loc.own.r);
+    if (loc.doubled !== 9'h0a2)
+      $fatal(1, "loc.doubled was %h, expected 0a2", loc.doubled);
     $display("All checks passed");
   end
 endmodule

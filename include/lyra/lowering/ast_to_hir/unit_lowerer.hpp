@@ -39,6 +39,7 @@
 
 namespace slang::ast {
 class Expression;
+class ClassPropertySymbol;
 class ClassType;
 class HierarchicalReference;
 class InterfacePortSymbol;
@@ -989,18 +990,29 @@ class UnitLowerer {
       const slang::ast::HierarchicalReference& reference, diag::SourceSpan span)
       -> diag::Result<ScopeRoute>;
 
-  // Where a named value lives, as this unit reaches it. One answer serves
-  // every consumer of a reference -- reading it, writing it, and waiting on it
-  // changing. A variable or net resolves to a route from the reader to its
-  // cell, sealed once at elaboration; a variable of a namespace unit, which has
-  // no instance to route through, resolves to its name across the boundary. A
-  // constant resolves to nothing at all -- it names a value, not a cell, so
-  // there is nothing to read through and nothing to wait on -- as does a target
-  // whose route form is not yet supported. Asking here, once, is what stops one
-  // symbol being a value to one consumer and a signal to another.
+  // Where a declaration's cell lives, as this unit reaches it. One answer
+  // serves every consumer of a reference -- reading it, writing it, and waiting
+  // on it changing -- so no consumer can make one symbol a value to itself and
+  // a signal to the next. A cell on an instance resolves to a route from the
+  // reader to it, sealed once at elaboration; one a namespace unit owns, having
+  // no instance to route through, resolves to its name across the boundary.
+  //
+  // The caller states that the name denotes storage, by having classified it,
+  // so there is no answer here for a name that denotes something else. A route
+  // this compiler does not yet build is a refusal rather than an answer: it is
+  // a property of the compiler rather than of the name.
   [[nodiscard]] auto ResolveValueTarget(
-      const WalkFrame& frame, const slang::ast::ValueSymbol& value)
-      -> diag::Result<std::optional<hir::ValueTarget>>;
+      const WalkFrame& frame, const slang::ast::ValueSymbol& value,
+      diag::SourceSpan span) -> diag::Result<hir::ValueTarget>;
+
+  // Where a static class property's cell lives (LRM 8.9). It belongs to the
+  // type rather than to any object of it, so it is reached without a receiver,
+  // and how many such cells exist follows from what replicates the class
+  // declaration. Separate from the resolution above because the caller knows
+  // which of the two it is asking about, having classified the name.
+  [[nodiscard]] auto ResolveStaticPropertyTarget(
+      const WalkFrame& frame, const slang::ast::ClassPropertySymbol& prop,
+      diag::SourceSpan span) -> diag::Result<hir::StaticPropertyRef>;
 
   // The route to the scope that declares a callee, for a callee no unit's
   // signature mentions. It is the walk below, with the one reason that walk can
@@ -1061,9 +1073,12 @@ class UnitLowerer {
     return reach;
   }
 
-  // The reads of a dependency set that name a cell, as the entries watching it.
-  // A read of anything else contributes none, so a constant read alongside a
-  // signal leaves only the signal watched (LRM 9.2.2.2.1).
+  // A dependency set as the entries watching what it reads. What each read
+  // contributes follows from what its name denotes: a value fixed before
+  // simulation starts contributes nothing, so a constant read alongside a
+  // signal leaves only the signal watched (LRM 9.2.2.2.1). A read this compiler
+  // cannot watch is refused, because a process that does not wake answers
+  // wrongly and shows nothing.
   [[nodiscard]] auto TranslateSensitivityReads(
       const std::vector<SensitivityRead>& reads, const WalkFrame& frame)
       -> diag::Result<std::vector<hir::SensitivityEntry>>;
