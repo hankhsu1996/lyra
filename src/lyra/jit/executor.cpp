@@ -309,6 +309,10 @@ auto DefineRuntimeAbi(llvm::orc::LLJIT& jit)
   add("lyra_rt_release_coroutine", &lyra_rt_release_coroutine);
   add("lyra_rt_register_initial", &lyra_rt_register_initial);
   add("lyra_rt_register_final", &lyra_rt_register_final);
+  add("lyra_rt_enter_scope_static_init", &lyra_rt_enter_scope_static_init);
+  add("lyra_rt_enter_namespace_static_init",
+      &lyra_rt_enter_namespace_static_init);
+  add("lyra_rt_leave_static_init", &lyra_rt_leave_static_init);
   add("lyra_rt_spawn_all", &lyra_rt_spawn_all);
   add("lyra_rt_fork_wait_all", &lyra_rt_fork_wait_all);
   add("lyra_rt_fork_wait_first", &lyra_rt_fork_wait_first);

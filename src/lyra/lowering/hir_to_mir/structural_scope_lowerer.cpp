@@ -37,6 +37,7 @@
 #include "lyra/lowering/hir_to_mir/sampled_history.hpp"
 #include "lyra/lowering/hir_to_mir/self_ref.hpp"
 #include "lyra/lowering/hir_to_mir/sensitivity_wait.hpp"
+#include "lyra/lowering/hir_to_mir/static_init_extent.hpp"
 #include "lyra/lowering/hir_to_mir/static_var_binding.hpp"
 #include "lyra/lowering/hir_to_mir/walk_frame.hpp"
 #include "lyra/mir/class.hpp"
@@ -915,6 +916,26 @@ void AppendProcessRegistration(
                   .arguments = {reg_self, unit_instance, body_call}},
           .type = unit_lowerer.Unit().builtins.void_type});
   block.AppendStmt(mir::ExprStmt{.expr = reg_call});
+}
+
+// A variable declaration assignment runs before any procedure starts (LRM
+// 10.5), so a randomization call inside one draws from the initialization RNG
+// of the instance the declaration sits in rather than from any process's (LRM
+// 18.14.1). That instance is the scope itself unless this one is a generate
+// scope, which keeps no seeds of its own, so it is reached over the distance
+// this walk already knows.
+void WrapInScopeStaticInitExtent(
+    const UnitLowerer& unit_lowerer, const WalkFrame& init_frame,
+    mir::CallableCode& code) {
+  mir::Block extent;
+  EmitStaticInitBracket(
+      unit_lowerer, extent, support::BuiltinFn::kEnterScopeStaticInit,
+      {BuildEnclosingScopeReceiver(
+          init_frame.WithBlock(&extent), unit_lowerer.Unit(),
+          init_frame.HopsToUnitRoot())});
+  mir::Block closed = CloseStaticInitExtent(
+      unit_lowerer, std::move(extent), std::move(code.Body()));
+  code.Body() = std::move(closed);
 }
 
 // Composes the value a port member takes from the handles its connection
@@ -2629,6 +2650,7 @@ auto StructuralScopeLowerer::PopulateBodies(WalkFrame parent_frame)
             .virtual_dispatch = std::nullopt});
   };
   const mir::CallableId resolve_body = add_body(resolve_code, resolve_self_id);
+  WrapInScopeStaticInitExtent(unit_lowerer, init_frame, initialize_code);
   const mir::CallableId init_body = add_body(initialize_code, init_self_id);
   const mir::CallableId create_body = add_body(activate_code, activate_self_id);
 

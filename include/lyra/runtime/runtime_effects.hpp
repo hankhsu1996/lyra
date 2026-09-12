@@ -8,6 +8,7 @@
 #include "lyra/base/time.hpp"
 #include "lyra/runtime/coroutine.hpp"
 #include "lyra/runtime/region.hpp"
+#include "lyra/runtime/rng.hpp"
 #include "lyra/runtime/trigger.hpp"
 #include "lyra/value/format.hpp"
 #include "lyra/value/packed_array.hpp"
@@ -140,6 +141,12 @@ class RuntimeEffects {
   // to report a null scope rather than fault.
   [[nodiscard]] auto TryCurrentProcess() -> RuntimeProcess*;
 
+  // The generator a randomization system call draws from (LRM 18.13, 18.14).
+  // Generated code runs only inside a process or a static initialization, and
+  // each installs one, so a call reaching this without one is a gap in that
+  // bracketing rather than anything the design can express.
+  [[nodiscard]] auto DrawingRng() -> DrawRng&;
+
   [[nodiscard]] auto Now() const -> SimTime;
   [[nodiscard]] auto GlobalPrecisionPower() const -> std::int8_t;
 
@@ -202,8 +209,10 @@ class CurrentRuntimeGuard {
 };
 
 // Publication of `process` as this runtime's ambient execution identity for
-// the extent of a resume (LRM 9.5). Save-and-restore, so a nested foreign call
-// that re-enters generated code cannot lose the identity on the way back.
+// the extent of a resume (LRM 9.5), and of its generator as what a
+// randomization call made in that extent draws from (LRM 18.14.2).
+// Save-and-restore, so a nested foreign call that re-enters generated code
+// cannot lose either on the way back.
 class ProcessExecutionGuard {
  public:
   ProcessExecutionGuard(RuntimeEffects& effects, RuntimeProcess& process);
@@ -218,6 +227,7 @@ class ProcessExecutionGuard {
  private:
   RuntimeEffects* effects_;
   RuntimeProcess* previous_process_;
+  DrawRng* previous_rng_;
 };
 
 }  // namespace lyra::runtime

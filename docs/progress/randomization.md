@@ -36,6 +36,15 @@ Done when:
       the other order (LRM 18.13.1 -- 18.13.2). Both are thread stable: the values a process
       observes do not depend on the order in which processes execute.
 
+- [x] A randomization call made from a static initializer. LRM 18.14.1 requires the initialization
+      RNG to serve static initializers as well as static processes, and a variable declaration
+      assignment runs before any procedure starts (LRM 10.5, and LRM 26.2 for a package), so such a
+      call has no process to draw from. Every position reaches one now: a module-level variable, a
+      static declaration inside a procedural block, a package variable, a `static` class property,
+      and a `static` local of a subroutine. Two instances of one module draw alike, and a package
+      draws independently of every other, because each container's generator starts from the same
+      default seed and none of them advances another's.
+
 - [ ] Manual seeding and state save / restore: `srandom`, `get_randstate`, and `set_randstate` (LRM
       18.13.3 -- 18.13.5), reached on a process through its process handle (LRM 9.7). The RNG state
       is an opaque string whose length and content the standard leaves to the implementation, and
@@ -123,9 +132,10 @@ object lifetime are in place.
 
 - LRM 18.14 lists what random stability applies to and does not list `$random` among them, while LRM
   20.14 gives `$random` an optional seed argument rather than a required one, so what an
-  argumentless `$random` draws from is not stated. It draws from the calling process, the same
-  generator `$urandom` reads, which makes an unseeded draw a signed reading of the same bits and
-  gives it that call's thread locality without introducing a design-wide generator.
+  argumentless `$random` draws from is not stated. It draws from whatever generator the call already
+  reads for `$urandom` -- the calling process's, or the static initialization's -- which makes an
+  unseeded draw a signed reading of the same bits and gives it the same locality without introducing
+  a design-wide generator.
 
 ## Cross-References
 

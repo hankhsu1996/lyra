@@ -1330,6 +1330,20 @@ void lyra_rt_register_final(void* self, void* unit_instance, void* coroutine) {
       std::move(*static_cast<Coroutine<void>*>(coroutine)));
 }
 
+void lyra_rt_enter_scope_static_init(void* runtime, void* unit_instance) {
+  EnterScopeStaticInit(
+      *static_cast<RuntimeEffects*>(runtime),
+      static_cast<Scope*>(unit_instance));
+}
+
+void lyra_rt_enter_namespace_static_init(void* runtime) {
+  EnterNamespaceStaticInit(*static_cast<RuntimeEffects*>(runtime));
+}
+
+void lyra_rt_leave_static_init(void* runtime) {
+  LeaveStaticInit(*static_cast<RuntimeEffects*>(runtime));
+}
+
 auto lyra_rt_make_segment(void* label, LyraSpan indices) -> void* {
   return GeneratedCallScope::Current().Arena().New<HierarchySegment>(
       std::string(static_cast<const char*>(label)), PackedValuesOf(indices));

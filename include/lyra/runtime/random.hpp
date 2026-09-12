@@ -3,45 +3,24 @@
 #include <algorithm>
 #include <cstdint>
 
-#include "lyra/base/simulation_error.hpp"
+#include "lyra/runtime/rng.hpp"
 #include "lyra/runtime/runtime_effects.hpp"
-#include "lyra/runtime/runtime_process.hpp"
 #include "lyra/value/packed_array.hpp"
 
 namespace lyra::runtime {
 
-namespace detail {
-
-// The generator the calling process draws from (LRM 18.14.2). A static
-// variable's initializer runs ahead of every procedure (LRM 6.8), so a legal
-// program can reach a randomization call with no process executing; that is a
-// generator this implementation does not provide yet rather than a violated
-// invariant.
-inline auto DrawingProcessRng(RuntimeEffects& runtime) -> ProcessRng& {
-  RuntimeProcess* process = runtime.TryCurrentProcess();
-  if (process == nullptr) {
-    throw SimulationError(
-        "a random number function called outside any process is not yet "
-        "supported");
-  }
-  return process->Rng();
-}
-
-}  // namespace detail
-
 // $urandom (LRM 18.13.1).
 inline auto Urandom(RuntimeEffects& runtime) -> value::PackedArray {
-  return value::PackedArray::IntUnsigned(
-      detail::DrawingProcessRng(runtime).NextValue());
+  return value::PackedArray::IntUnsigned(runtime.DrawingRng().NextValue());
 }
 
 // $urandom with a seed (LRM 18.13.1): the seed determines the sequence, so it
-// restarts the calling process's generator before the draw and the same seed
+// restarts the generator this call draws from before drawing, and the same seed
 // replays the same values.
 inline auto UrandomSeeded(
     RuntimeEffects& runtime, const value::PackedArray& seed)
     -> value::PackedArray {
-  ProcessRng& rng = detail::DrawingProcessRng(runtime);
+  DrawRng& rng = runtime.DrawingRng();
   rng.Reseed(RandomSeed{static_cast<std::uint32_t>(seed.ToInt64())});
   return value::PackedArray::IntUnsigned(rng.NextValue());
 }
@@ -58,7 +37,7 @@ inline auto UrandomRange(
   const std::uint32_t lower = std::min(high, low);
   const std::uint32_t upper = std::max(high, low);
   const std::uint64_t span = std::uint64_t{upper} - lower + 1;
-  ProcessRng& rng = detail::DrawingProcessRng(runtime);
+  DrawRng& rng = runtime.DrawingRng();
   // Rejection rather than a modulo of the raw draw: the low values would
   // otherwise come up more often whenever the span does not divide the
   // generator's range, which is every span that is not a power of two. A span
@@ -76,12 +55,12 @@ inline auto UrandomRange(
 // a generator of its own and states no source for the bits when the call
 // carries no seed, and LRM 18.14 does not list `$random` among what random
 // stability covers, so nothing fixes where an unseeded draw comes from. It
-// comes from the calling process, which makes it a signed reading of the same
-// 32 bits `$urandom` answers with, and gives it that call's thread locality.
+// comes from the generator the call draws from, which makes it a signed
+// reading of the same 32 bits `$urandom` answers with and gives it the same
+// locality.
 inline auto Random(RuntimeEffects& runtime) -> value::PackedArray {
   return value::PackedArray::Int(
-      static_cast<std::int32_t>(
-          detail::DrawingProcessRng(runtime).NextValue()));
+      static_cast<std::int32_t>(runtime.DrawingRng().NextValue()));
 }
 
 }  // namespace lyra::runtime

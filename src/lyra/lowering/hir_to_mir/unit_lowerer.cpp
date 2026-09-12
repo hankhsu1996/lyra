@@ -31,6 +31,7 @@
 #include "lyra/lowering/hir_to_mir/namespace_storage_initialization.hpp"
 #include "lyra/lowering/hir_to_mir/process_lowerer.hpp"
 #include "lyra/lowering/hir_to_mir/runtime_call.hpp"
+#include "lyra/lowering/hir_to_mir/static_init_extent.hpp"
 #include "lyra/lowering/hir_to_mir/static_var_binding.hpp"
 #include "lyra/lowering/hir_to_mir/structural_scope_lowerer.hpp"
 #include "lyra/lowering/hir_to_mir/walk_frame.hpp"
@@ -212,20 +213,37 @@ auto PopulateNamespaceOwnStorage(
   return {};
 }
 
+// A namespace's variable declaration assignments run before any procedure
+// starts (LRM 26.2), so a randomization call inside one draws from the
+// namespace's own initialization RNG rather than from any process's (LRM
+// 18.14.1). A namespace is not instantiated, so nothing is named here: the
+// entry starts the generator the standard gives every package.
+void WrapInNamespaceStaticInitExtent(
+    const UnitLowerer& unit_lowerer, mir::CallableCode& code) {
+  mir::Block extent;
+  EmitStaticInitBracket(
+      unit_lowerer, extent, support::BuiltinFn::kEnterNamespaceStaticInit, {});
+  mir::Block closed = CloseStaticInitExtent(
+      unit_lowerer, std::move(extent), std::move(code.Body()));
+  code.Body() = std::move(closed);
+}
+
 // Publishes the two bodies the design root calls, and records what the value
 // body reads of other units. Every namespace unit publishes both entries. One
 // that owns no cell publishes a body that installs none and a body that
 // initializes none -- zero declarations is a count, not another kind of unit --
 // so the design root calls both without first finding out what this one
 // supplied. The value body's direct reads of another unit's cells are the
-// by-name dependency the design root prefers an order on.
+// by-name dependency the design root prefers an order on, read off the
+// initializers before the extent is wrapped around them.
 void PublishNamespaceStorageBringUp(
-    mir::CompilationUnit& unit, mir::CallableCode install_code,
-    mir::CallableCode value_code) {
+    const UnitLowerer& unit_lowerer, mir::CompilationUnit& unit,
+    mir::CallableCode install_code, mir::CallableCode value_code) {
   const std::unordered_set<std::string> reads =
       UnitsReadBy(value_code.Body(), unit.name);
   unit.direct_initializer_unit_reads.assign(reads.begin(), reads.end());
   std::ranges::sort(unit.direct_initializer_unit_reads);
+  WrapInNamespaceStaticInitExtent(unit_lowerer, value_code);
 
   unit.content = mir::BroughtUpNamespace{
       .install_storage = unit.callables.Add(
@@ -554,7 +572,7 @@ auto UnitLowerer::RunNamespace() -> diag::Result<mir::CompilationUnit> {
   }
 
   PublishNamespaceStorageBringUp(
-      unit_, std::move(install_code), std::move(value_code));
+      *this, unit_, std::move(install_code), std::move(value_code));
 
   return std::move(unit_);
 }

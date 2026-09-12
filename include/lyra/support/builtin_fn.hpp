@@ -640,6 +640,15 @@ enum class BuiltinFn : std::uint16_t {
   // scope handle; the coroutine to register is a regular argument.
   kRegisterInitial,
   kRegisterFinal,
+  // The extent a static initializer draws inside (LRM 18.14.1): entered before
+  // the initializers a body runs and left on every way out of them, so a
+  // randomization call made before any procedure starts has the generator the
+  // standard gives it. A scope names the instance holding its seeds; a
+  // namespace has none to name, so the two are distinct callees rather than
+  // one taking an absent operand.
+  kEnterScopeStaticInit,
+  kEnterNamespaceStaticInit,
+  kLeaveStaticInit,
   // The inner step of a value conversion: reading the source out as a machine
   // integer. HIR-to-MIR dispatches on the (src, dst) type pair and emits a
   // `CallExpr` to the matching entry, which the backend renders with no
