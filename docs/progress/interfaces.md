@@ -215,12 +215,26 @@ B  The interface port
       procedural continuous assignment. The expression itself is never recognized at the referrer
       and no form of it is folded.
 
+      An interface port is one way to reach such a name and not the only one. What a view offers is
+      a property of the interface's declaration, so a scope that declares the instance itself names
+      the view on it directly -- reading, writing and waiting all work there as they do through a
+      port, under as many views of the one instance as the source writes. Which of the two reaches a
+      use takes is the reference's own statement, and a read, which states no path, is taken through
+      a port of the reading scope where that scope carries the view on one and by a route to the
+      instance where it does not.
+
       A view offering a name that reaches nothing inside its interface is legal and is refused where
       the name is used rather than where the view is declared, so an interface declaring one still
       compiles. Waiting on a name whose view the reading scope carries on more than one of its own
       ports is refused -- a read states no path, so which port it came through is not recoverable
       there. Taking over part of a target with `force` is refused for any target, not only one a
       view names.
+
+  - [ ] A name a view offers on an interface instance reached past another unit's signature -- a
+        hierarchical path descending into a module, which publishes no child of its own (LRM 25.10
+        gives that only to an interface). What the name means comes out of the interface's published
+        modport record, which a referrer can only read where it compiles against that interface, so
+        this waits on what a module publishes rather than on anything about views.
 
 ### Stage D -- Subroutines across the boundary
 

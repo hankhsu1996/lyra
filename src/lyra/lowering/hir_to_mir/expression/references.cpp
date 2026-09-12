@@ -195,9 +195,11 @@ auto LowerIterationBindingRefExpr(
 // result is the variable's observable-cell type, so the dispatcher reaches its
 // value one dereference further, exactly as an intra-unit signal's cell.
 auto LowerExternalUnitValueRefExpr(
-    mir::CompilationUnit& unit, const hir::ExternalUnitValueRef& r,
-    mir::TypeId value_type) -> mir::Expr {
-  const mir::TypeId cell_type = mir::ObservableCellOf(unit.types, value_type);
+    UnitLowerer& unit_lowerer, const hir::ExternalUnitValueRef& r)
+    -> mir::Expr {
+  mir::CompilationUnit& unit = unit_lowerer.Unit();
+  const mir::TypeId cell_type = mir::ObservableCellOf(
+      unit.types, unit_lowerer.TranslateType(r.value_type));
   // A reference into this unit's own namespace has the arena the storage lives
   // in, so it names the position; one into another unit has only the identifier
   // that unit published, and consuming that promise is what makes the unit a
@@ -241,9 +243,9 @@ auto LowerHirIntegralConstant(const hir::IntegralConstant& c)
 // reads through it the way it does any other cell.
 auto LowerStaticPropertyRefExpr(
     UnitLowerer& unit_lowerer, const WalkFrame& frame,
-    const hir::StaticPropertyRef& r, mir::TypeId result_type) -> mir::Expr {
-  const mir::TypeId cell_type =
-      mir::ObservableCellOf(unit_lowerer.Unit().types, result_type);
+    const hir::StaticPropertyRef& r) -> mir::Expr {
+  const mir::TypeId cell_type = mir::ObservableCellOf(
+      unit_lowerer.Unit().types, unit_lowerer.TranslateType(r.value_type));
   if (const auto* local =
           std::get_if<hir::LocalStaticPropertyTarget>(&r.target)) {
     const mir::ClassId owner = unit_lowerer.TranslateClass(local->owner);
@@ -314,8 +316,7 @@ auto LowerHirPrimaryExprProc(
                 result_type);
           },
           [&](const hir::StaticPropertyRef& r) -> mir::Expr {
-            return LowerStaticPropertyRefExpr(
-                process.Owner(), frame, r, result_type);
+            return LowerStaticPropertyRefExpr(process.Owner(), frame, r);
           },
           [&](const hir::RoutedRef& c) -> mir::Expr {
             return LowerReferenceRouteExpr(
@@ -325,8 +326,7 @@ auto LowerHirPrimaryExprProc(
             return LowerIterationBindingRefExpr(r, frame);
           },
           [&](const hir::ExternalUnitValueRef& r) -> mir::Expr {
-            return LowerExternalUnitValueRefExpr(
-                process.Owner().Unit(), r, result_type);
+            return LowerExternalUnitValueRefExpr(process.Owner(), r);
           },
       },
       p);
@@ -374,8 +374,7 @@ auto LowerHirPrimaryExprStructural(
                 "appear in structural expressions");
           },
           [&](const hir::StaticPropertyRef& r) -> mir::Expr {
-            return LowerStaticPropertyRefExpr(
-                lowerer.Owner(), frame, r, result_type);
+            return LowerStaticPropertyRefExpr(lowerer.Owner(), frame, r);
           },
           [&](const hir::RoutedRef& c) -> mir::Expr {
             return LowerReferenceRouteExpr(
@@ -385,8 +384,7 @@ auto LowerHirPrimaryExprStructural(
             return LowerIterationBindingRefExpr(r, frame);
           },
           [&](const hir::ExternalUnitValueRef& r) -> mir::Expr {
-            return LowerExternalUnitValueRefExpr(
-                lowerer.Owner().Unit(), r, result_type);
+            return LowerExternalUnitValueRefExpr(lowerer.Owner(), r);
           },
       },
       p);

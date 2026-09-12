@@ -90,6 +90,11 @@ struct ClassPropertyRef {
 struct StaticPropertyRef {
   StaticPropertyTarget target;
   std::optional<StructuralHops> declaring_scope_hops;
+  // The cell's own type. It rides on the reference rather than on an
+  // expression built from one because a change observation reaches the cell
+  // with no expression standing anywhere, and because the declaring class may
+  // compile separately, in which case no member of this unit states it.
+  TypeId value_type;
 
   auto operator==(const StaticPropertyRef&) const -> bool = default;
 };
@@ -140,13 +145,16 @@ struct ExternalUnitValueRef {
 using ReferenceRoute = std::variant<DirectMemberRef, RoutedRef>;
 
 // Where a value's cell is, as the reader reaches it: through a reader-relative
-// route to a cell in the reader's own unit, or by name across the boundary to a
+// route to a cell in the reader's own unit, by name across the boundary to a
 // namespace unit's one program-global cell (LRM 26.2, 3.12.1), which has no
-// per-instance storage to route to. One target serves every consumer of the
-// reference -- value read, value write, and change observation -- so the name
-// is neutral to the consumer and owned by none of them. A value with no cell at
-// all has no target: a compile-time constant folds where it is used, leaving
-// nothing to read through and nothing to observe.
-using ValueTarget = std::variant<ReferenceRoute, ExternalUnitValueRef>;
+// per-instance storage to route to, or on whatever replicates a class
+// declaration, for a cell the type owns rather than any object of it (LRM 8.9).
+// One target serves every consumer of the reference -- value read, value write,
+// and change observation -- so the name is neutral to the consumer and owned by
+// none of them. A value with no cell at all has no target: a compile-time
+// constant folds where it is used, leaving nothing to read through and nothing
+// to observe.
+using ValueTarget =
+    std::variant<ReferenceRoute, ExternalUnitValueRef, StaticPropertyRef>;
 
 }  // namespace lyra::hir

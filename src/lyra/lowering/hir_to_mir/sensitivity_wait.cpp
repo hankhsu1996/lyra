@@ -36,8 +36,12 @@ auto BuildObservableCellExpr(
                 frame, unit, BindEndpoint(lowerer, frame, route)));
           },
           [&](const hir::ExternalUnitValueRef& pkg) -> mir::ExprId {
-            return block.exprs.Add(LowerExternalUnitValueRefExpr(
-                unit, pkg, lowerer.Owner().TranslateType(pkg.value_type)));
+            return block.exprs.Add(
+                LowerExternalUnitValueRefExpr(lowerer.Owner(), pkg));
+          },
+          [&](const hir::StaticPropertyRef& property) -> mir::ExprId {
+            return block.exprs.Add(
+                LowerStaticPropertyRefExpr(lowerer.Owner(), frame, property));
           },
       },
       entry.ref);
@@ -48,12 +52,22 @@ namespace {
 // The same storage as a borrowed pointer, which is the form a registration
 // hands the runtime. A route answers for this form itself, because an endpoint
 // that reached out of the unit already holds a pointer and composing one from
-// the cell would send that case through a dereference and back. A namespace's
-// cell is reached as the cell itself, so its pointer is that cell's address.
+// the cell would send that case through a dereference and back. Every other
+// form is reached as the cell itself, so its pointer is that cell's address.
 auto BuildObservablePtrExpr(
     mir::Block& block, const WalkFrame& frame, mir::CompilationUnit& unit,
     const StructuralScopeLowerer& lowerer, const hir::SensitivityEntry& entry)
     -> mir::ExprId {
+  const auto address_of_cell = [&]() -> mir::ExprId {
+    const mir::ExprId cell =
+        BuildObservableCellExpr(block, frame, unit, lowerer, entry);
+    const mir::TypeId ptr_type = unit.types.Intern(
+        mir::Type{mir::PointerType{
+            .pointee = block.exprs.Get(cell).type,
+            .ownership = mir::PointerOwnership::kBorrowed,
+            .mutability = mir::Mutability::kMutable}});
+    return block.exprs.Add(mir::MakeAddressOfExpr(cell, ptr_type));
+  };
   return std::visit(
       Overloaded{
           [&](const hir::ReferenceRoute& route) -> mir::ExprId {
@@ -61,14 +75,10 @@ auto BuildObservablePtrExpr(
                 block, frame, unit, BindEndpoint(lowerer, frame, route));
           },
           [&](const hir::ExternalUnitValueRef&) -> mir::ExprId {
-            const mir::ExprId cell =
-                BuildObservableCellExpr(block, frame, unit, lowerer, entry);
-            const mir::TypeId ptr_type = unit.types.Intern(
-                mir::Type{mir::PointerType{
-                    .pointee = block.exprs.Get(cell).type,
-                    .ownership = mir::PointerOwnership::kBorrowed,
-                    .mutability = mir::Mutability::kMutable}});
-            return block.exprs.Add(mir::MakeAddressOfExpr(cell, ptr_type));
+            return address_of_cell();
+          },
+          [&](const hir::StaticPropertyRef&) -> mir::ExprId {
+            return address_of_cell();
           },
       },
       entry.ref);

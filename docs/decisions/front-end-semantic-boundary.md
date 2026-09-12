@@ -12,7 +12,8 @@ declaration that unit published, and by-name only when it is not.
 
 D1's forbidden shape held on the read path from the day this was written and on the write path only
 from 2026-09-10, when the last classifier reading the declaration table's membership was removed --
-see "What the write path owed" below.
+see "What the write path owed" below. A third breach, on the observation path and by a mechanism
+this entry did not describe, is "What an absence at this boundary is allowed to mean".
 
 ## Why this decision matters
 
@@ -196,6 +197,38 @@ program is illegal" family raised after the front end is a candidate by construc
 family is the front end's job. So is a refusal phrased as a rule about the source -- "must be a
 ...", "is not legal". Each candidate is then settled by feeding the front end alone the program the
 site refuses, which is one command and decides which of the three verdicts applies.
+
+## What an absence at this boundary is allowed to mean
+
+D1 was breached a third way, on the observation path, in the same function the "Immediate changes"
+above repaired for `HopsTo` -- and no reading of D1 catches it, because nothing here looks like a
+classification being re-derived. A resolution answered with an **absence**, and that absence stood
+for two unrelated outcomes: a name that denotes a value with no cell at all, and a reach this
+compiler cannot build. Whoever received it decided which. Three consumers did, and each decided
+differently: one reported a compiler bug, one refused by name, and one skipped the read -- so a
+process lost the subscription its body required and never woke, with nothing printed.
+
+That third disposition is the one to watch for. An abort and a refusal are both visible; skipping
+produces no output at all, which is why it survives every suite. And the two outcomes cannot be told
+apart downstream by any amount of care, because the information separating them was discarded at the
+producer, which is the only place that had it.
+
+**So a resolution answers what a name denotes with a total classification of the declaration kinds
+the language admits, and a reach this compiler cannot build is a refusal raised where the reach is
+attempted.** The gap is a property of the compiler and not of the name, so it is never an
+alternative of the classification: made one, every consumer has to decide what it means, and the
+decision is invisible at each of them.
+
+**The classification is the front end's fact, so it is D1 again with the direction named.** It
+existed here already, total over the front end's own symbol kinds with no catch-all -- and the
+consumer that broke asked a narrower question of its own instead, two kinds where the classification
+names a dozen. **A narrower predicate standing in for a classification can only subtract, and what
+it subtracts is every kind it did not think of** -- here a static class property, which the standard
+makes a variable shared by a class (LRM 8.9), so a legal program read one and waited on nothing.
+
+Two more signals, beside the two above, and both are shapes rather than names: a resolution whose
+result is an `optional` where absence is the union of several outcomes rather than one, and a
+consumer that answers an absence by continuing its loop.
 
 ## Consequences
 

@@ -633,6 +633,11 @@ class HirDumper {
             [](const ExternalUnitValueRef& r) -> std::string {
               return std::format("var={}::{}", r.unit_name, r.variable_name);
             },
+            [](const StaticPropertyRef& r) -> std::string {
+              return std::format(
+                  "var=StaticProperty[{}]",
+                  FormatStaticPropertyTarget(r.target));
+            },
         },
         target);
   }
@@ -1570,17 +1575,15 @@ class HirDumper {
       const auto& c = s.property_coordinates.Get(id);
       Line(
           std::format(
-              "PropertyCoordinate[{}] {} class \"{}\" property \"{}\"",
-              id.value, FormatRouteWalk(c.head, c.steps), c.class_name,
-              c.name));
+              R"(PropertyCoordinate[{}] {} class "{}" property "{}")", id.value,
+              FormatRouteWalk(c.head, c.steps), c.class_name, c.name));
     }
     for (const BehaviorCoordinateId id : s.behavior_coordinates.Ids()) {
       const auto& c = s.behavior_coordinates.Get(id);
       Line(
           std::format(
-              "BehaviorCoordinate[{}] {} class \"{}\" behavior \"{}\"",
-              id.value, FormatRouteWalk(c.head, c.steps), c.class_name,
-              c.name));
+              R"(BehaviorCoordinate[{}] {} class "{}" behavior "{}")", id.value,
+              FormatRouteWalk(c.head, c.steps), c.class_name, c.name));
     }
     for (const PortConnectionId id : s.port_connections.Ids()) {
       const auto& pc = s.port_connections.Get(id);

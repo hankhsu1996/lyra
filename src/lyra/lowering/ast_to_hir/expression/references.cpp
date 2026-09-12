@@ -28,7 +28,6 @@
 #include "lyra/hir/primary.hpp"
 #include "lyra/hir/published_modport.hpp"
 #include "lyra/hir/value_ref.hpp"
-#include "lyra/lowering/ast_to_hir/connected_interface.hpp"
 #include "lyra/lowering/ast_to_hir/constant_value.hpp"
 #include "lyra/lowering/ast_to_hir/expression/selects.hpp"
 #include "lyra/lowering/ast_to_hir/integral_constant.hpp"
@@ -45,31 +44,9 @@ namespace {
 // does not depend on the path used to reach it; a variable or net binds to a
 // runtime storage cell; a class property reaches the invoking object's field;
 // `this` is that object itself, which is no cell at all. One classification
-// serves every reference-lowering entry so a symbol cannot be read as a
-// constant through one syntax and rejected through another.
-enum class Referent {
-  kPatternBinding,
-  kParameterConstant,
-  kEnumConstant,
-  kClassProperty,
-  kThisHandle,
-  kVariableStorage,
-  kNetStorage,
-  // A declaration a value reference may denote and that nothing here lowers.
-  // One value per construct rather than one for all of them, so the refusal
-  // states what it met: which construct it is, is decided here, where the
-  // front end's kinds are already being read, and nowhere else.
-  kUnsupportedSpecparam,
-  kUnsupportedModportPort,
-  kUnsupportedPrimitivePort,
-  kUnsupportedClockingSignal,
-  kUnsupportedAssertionLocal,
-  kUnsupportedStructureMember,
-  // Not something a value reference can denote at all. Only a value symbol
-  // reaches this classification, so no program produces this answer.
-  kNotAValue,
-};
-
+// serves every consumer of a name -- including the reads a process is sensitive
+// to, which build no expression at all -- so a symbol cannot be read as a
+// constant by one of them and turned away by another.
 // True when the symbol is the `this` handle (LRM 8.11) of the scope that
 // declares it. The front end synthesizes one such variable per scope that can
 // name the current instance -- a non-static method, a constraint block, and
@@ -93,6 +70,8 @@ auto IsCurrentInstanceHandle(const slang::ast::Symbol& sym) -> bool {
   return false;
 }
 
+}  // namespace
+
 // Total over slang's symbol kinds with no `default`: a kind that ought to lower
 // to a real referent must not hide in a catch-all and surface as a spurious
 // "unsupported" -- the failure mode that let a hierarchically reached parameter
@@ -100,44 +79,73 @@ auto IsCurrentInstanceHandle(const slang::ast::Symbol& sym) -> bool {
 // classification of each (a plausible referent like a specparam is a conscious
 // entry, not a silent omission), and a kind added by a future slang release
 // fails to compile until it is classified here.
-auto ClassifyReferent(const slang::ast::ValueSymbol& sym) -> Referent {
+auto ResolveReferent(
+    const slang::ast::ValueSymbol& value, diag::SourceSpan span)
+    -> diag::Result<NamedReferent> {
   using slang::ast::SymbolKind;
-  switch (sym.kind) {
+  const auto declared = [&](Referent kind) -> diag::Result<NamedReferent> {
+    return NamedReferent{.symbol = &value, .kind = kind};
+  };
+  switch (value.kind) {
+    // A modport gives its port identifiers a name space of their own (LRM
+    // 25.5.4), in which a name either stands for the interface item the view
+    // named it after or is one the view computed and the interface declares
+    // nowhere. Which of the two a name is, is a property of the declaration.
+    case SymbolKind::ModportPort: {
+      const auto& port = value.as<slang::ast::ModportPortSymbol>();
+      if (ViewDefinesTheName(port)) {
+        return declared(Referent::kViewDefinedName);
+      }
+      const auto* item =
+          port.internalSymbol == nullptr
+              ? nullptr
+              : port.internalSymbol->as_if<slang::ast::ValueSymbol>();
+      if (item == nullptr) {
+        return diag::Fail(
+            span, diag::DiagCode::kUnsupportedExpressionForm,
+            "a modport port connected to nothing inside its interface is not "
+            "yet supported");
+      }
+      return ResolveReferent(*item, span);
+    }
+
     case SymbolKind::Parameter:
-      return Referent::kParameterConstant;
+      return declared(Referent::kParameterConstant);
     case SymbolKind::EnumValue:
-      return Referent::kEnumConstant;
+      return declared(Referent::kEnumConstant);
     case SymbolKind::ClassProperty:
-      return Referent::kClassProperty;
+      return declared(Referent::kClassProperty);
     // One front-end kind, two referents: a variable a body declares, and the
     // handle to the object a method was invoked on (LRM 8.11), which declares
     // no storage and reaches no cell. Being total over the front end's kinds
     // cannot tell these apart, because the front end does not separate them.
     case SymbolKind::Variable:
-      return IsCurrentInstanceHandle(sym) ? Referent::kThisHandle
-                                          : Referent::kVariableStorage;
+      return declared(
+          IsCurrentInstanceHandle(value) ? Referent::kThisHandle
+                                         : Referent::kVariableStorage);
     case SymbolKind::FormalArgument:
     case SymbolKind::Iterator:
-      return Referent::kVariableStorage;
+      return declared(Referent::kVariableStorage);
     case SymbolKind::PatternVar:
-      return Referent::kPatternBinding;
+      return declared(Referent::kPatternBinding);
     case SymbolKind::Net:
-      return Referent::kNetStorage;
+      return declared(Referent::kNetStorage);
 
-    // The rest of what a value reference can denote: a construct a legal
-    // program reaches and this compiler does not carry.
+    // A specparam is a constant (LRM 6.20.4) and belongs with the two above by
+    // what it is; it stands here because the front end declares it apart.
     case SymbolKind::Specparam:
-      return Referent::kUnsupportedSpecparam;
-    case SymbolKind::ModportPort:
-      return Referent::kUnsupportedModportPort;
+      return declared(Referent::kSpecparam);
+
+    // The rest of what a value reference can denote, each with its own
+    // vocabulary in the standard.
     case SymbolKind::PrimitivePort:
-      return Referent::kUnsupportedPrimitivePort;
+      return declared(Referent::kPrimitivePort);
     case SymbolKind::ClockVar:
-      return Referent::kUnsupportedClockingSignal;
+      return declared(Referent::kClockingSignal);
     case SymbolKind::LocalAssertionVar:
-      return Referent::kUnsupportedAssertionLocal;
+      return declared(Referent::kAssertionLocal);
     case SymbolKind::Field:
-      return Referent::kUnsupportedStructureMember;
+      return declared(Referent::kStructureMember);
 
     case SymbolKind::Unknown:
     case SymbolKind::Root:
@@ -226,10 +234,12 @@ auto ClassifyReferent(const slang::ast::ValueSymbol& sym) -> Referent {
     case SymbolKind::AnonymousProgram:
     case SymbolKind::NetAlias:
     case SymbolKind::ConfigBlock:
-      return Referent::kNotAValue;
+      return declared(Referent::kNotAValue);
   }
-  throw InternalError("ClassifyReferent: unknown slang SymbolKind");
+  throw InternalError("ResolveReferent: unknown slang SymbolKind");
 }
+
+namespace {
 
 // The refusal for a declaration a value reference may denote and that nothing
 // here lowers. Every kind the classification sends here is a construct, so
@@ -239,19 +249,16 @@ auto ClassifyReferent(const slang::ast::ValueSymbol& sym) -> Referent {
 // arriving from outside it has been misclassified there.
 auto UnsupportedReferentMessage(Referent referent) -> std::string_view {
   switch (referent) {
-    case Referent::kUnsupportedSpecparam:
+    case Referent::kSpecparam:
       return "a specparam is not yet supported (LRM 6.20.4)";
-    case Referent::kUnsupportedModportPort:
-      return "a name a modport offers is reachable only through the port that "
-             "selects the view, which is not yet supported here (LRM 25.5)";
-    case Referent::kUnsupportedPrimitivePort:
+    case Referent::kPrimitivePort:
       return "a port of a user-defined primitive is not yet supported (LRM 29)";
-    case Referent::kUnsupportedClockingSignal:
+    case Referent::kClockingSignal:
       return "a signal of a clocking block is not yet supported (LRM 14.3)";
-    case Referent::kUnsupportedAssertionLocal:
+    case Referent::kAssertionLocal:
       return "a local variable of an assertion is not yet supported (LRM "
              "16.10)";
-    case Referent::kUnsupportedStructureMember:
+    case Referent::kStructureMember:
       return "a structure or union member named on its own, rather than "
              "through "
              "the value that holds it, is not yet supported (LRM 7.2)";
@@ -262,6 +269,7 @@ auto UnsupportedReferentMessage(Referent referent) -> std::string_view {
     case Referent::kThisHandle:
     case Referent::kVariableStorage:
     case Referent::kNetStorage:
+    case Referent::kViewDefinedName:
     case Referent::kNotAValue:
       break;
   }
@@ -270,12 +278,16 @@ auto UnsupportedReferentMessage(Referent referent) -> std::string_view {
       "asked for the construct it refuses");
 }
 
+}  // namespace
+
 auto FailOnUnsupportedReferent(Referent referent, diag::SourceSpan span)
-    -> diag::Result<hir::Expr> {
+    -> std::unexpected<diag::Diagnostic> {
   return diag::Fail(
       span, diag::DiagCode::kUnsupportedNonVariableNamedReference,
       std::string{UnsupportedReferentMessage(referent)});
 }
+
+namespace {
 
 // A pattern-bound identifier (LRM 12.6) resolves to the `VariablePattern` node
 // that declares it. That node is reached the same way from every context --
@@ -354,28 +366,17 @@ auto MakeClassPropertyRefExpr(
   auto type_id = unit_lowerer.InternType(type, span);
   if (!type_id) return std::unexpected(std::move(type_id.error()));
   const auto& prop = sym.as<slang::ast::ClassPropertySymbol>();
-  const auto& owner_class =
-      sym.getParentScope()->asSymbol().as<slang::ast::ClassType>();
-  auto owner_ref = unit_lowerer.ResolveClassRef(owner_class, span);
-  if (!owner_ref) return std::unexpected(std::move(owner_ref.error()));
   // LRM 8.9: a static-lifetime property belongs to the type rather than to any
   // object of it, so its reference form carries neither the enclosing method's
-  // receiver nor a fabricated stand-in. What it does carry is how far out the
-  // instance replicating the class sits, where one does -- reaching a cell is
-  // not reaching an object. Instance properties and static properties take
-  // structurally disjoint reference primaries.
+  // receiver nor a fabricated stand-in. Instance properties and static
+  // properties take structurally disjoint reference primaries.
   if (prop.lifetime == slang::ast::VariableLifetime::Static) {
-    auto declaring_hops =
-        unit_lowerer.DeclaringScopeHopsFrom(owner_class, frame, span);
-    if (!declaring_hops) {
-      return std::unexpected(std::move(declaring_hops.error()));
-    }
-    return hir::MakeRefExpr(
-        hir::StaticPropertyRef{
-            .target = unit_lowerer.MakeStaticPropertyTarget(*owner_ref, prop),
-            .declaring_scope_hops = *declaring_hops},
-        *type_id, span);
+    auto property = unit_lowerer.ResolveStaticPropertyTarget(frame, prop, span);
+    if (!property) return std::unexpected(std::move(property.error()));
+    return hir::MakeRefExpr(*property, *type_id, span);
   }
+  const auto& owner_class =
+      sym.getParentScope()->asSymbol().as<slang::ast::ClassType>();
   auto target =
       unit_lowerer.MakeClassPropertyTarget(frame, owner_class, prop, span);
   if (!target) {
@@ -426,28 +427,26 @@ auto ValueTargetRefExpr(
           [&](const hir::ExternalUnitValueRef& external) -> hir::Expr {
             return wrap(external);
           },
+          [&](const hir::StaticPropertyRef& property) -> hir::Expr {
+            return wrap(property);
+          },
       },
       target);
 }
 
 // Lowers a reference to a value that has a cell -- a variable or a net --
 // wherever that cell lives, through the one resolver. Shared by every
-// named-value entry once each has ruled out the forms its context admits that
-// have no cell, and that ruling out is the whole of what makes the resolution
-// total. Absence here therefore says a referent that reaches no cell was
-// classified as storage, never that a name failed to resolve.
+// named-value entry once each has classified what the name denotes, which is
+// what lets the resolver answer about storage alone.
 auto LowerValueRef(
     UnitLowerer& unit_lowerer, WalkFrame frame,
     const slang::ast::ValueSymbol& value, const slang::ast::Type& type,
     diag::SourceSpan span) -> diag::Result<hir::Expr> {
   auto type_id = unit_lowerer.InternType(type, span);
   if (!type_id) return std::unexpected(std::move(type_id.error()));
-  auto target = unit_lowerer.ResolveValueTarget(frame, value);
+  auto target = unit_lowerer.ResolveValueTarget(frame, value, span);
   if (!target) return std::unexpected(std::move(target.error()));
-  if (!target->has_value()) {
-    throw InternalError("LowerValueRef: storage symbol has no reachable cell");
-  }
-  return ValueTargetRefExpr(**target, *type_id, span);
+  return ValueTargetRefExpr(*target, *type_id, span);
 }
 
 // LRM 25.3: a name reached through an interface port, which is the port's own
@@ -495,22 +494,24 @@ auto ResolveOfferedName(
     UnitLowerer& unit_lowerer, WalkFrame frame,
     const slang::ast::HierarchicalValueExpression& hve, diag::SourceSpan span)
     -> diag::Result<OfferedName> {
-  auto through = unit_lowerer.ReachOneThroughInterfacePort(frame, hve.ref);
+  // The view offering the name is the scope the port identifier is declared in
+  // (LRM 25.5.4).
+  const auto& selected =
+      hve.symbol.getParentScope()->asSymbol().as<slang::ast::ModportSymbol>();
+  // The object the view sits on is reached the way this unit reaches that
+  // interface instance -- through the port a connection bound it to, or by a
+  // route down to an instance the design declares inside this unit. Which of
+  // the two is a fact about the object and not about the name, so it is the
+  // same question a name reaching an ordinary member of that instance asks.
+  auto through =
+      hve.ref.isViaIfacePort()
+          ? unit_lowerer.ReachOneThroughInterfacePort(frame, hve.ref)
+          : unit_lowerer.RouteToScope(frame, *selected.getParentScope());
   if (!through.has_value() || !through->unit_name.has_value()) {
     return diag::Fail(
         span, diag::DiagCode::kUnsupportedExpressionForm,
         "a name a view offers, reached past what the interface promised, is "
         "not yet supported");
-  }
-  const slang::ast::ModportSymbol* selected =
-      ConnectedInterfaceOf(hve.ref.path[0]
-                               .symbol->as<slang::ast::InterfacePortSymbol>()
-                               .getConnection())
-          .modport;
-  if (selected == nullptr) {
-    throw InternalError(
-        "ResolveOfferedName: a name a view offers was reached through a port "
-        "that selected no view");
   }
   const hir::ExternalUnitObjectId object =
       unit_lowerer.ExternalUnitObjectOf(*through->unit_name);
@@ -518,7 +519,7 @@ auto ResolveOfferedName(
   // before anything else can grow the arena.
   const hir::PublishedModport* view = hir::FindModport(
       unit_lowerer.Unit().external_unit_objects.Get(object).modports,
-      selected->name);
+      selected.name);
   const hir::PublishedModportPort* offered =
       view == nullptr ? nullptr : view->Find(hve.symbol.name);
   if (offered == nullptr) {
@@ -622,30 +623,6 @@ auto LowerViewDefinedName(
 
 }  // namespace
 
-auto ResolveNamedDeclaration(
-    const slang::ast::ValueSymbol& value, diag::SourceSpan span)
-    -> diag::Result<const slang::ast::ValueSymbol*> {
-  const auto* port = value.as_if<slang::ast::ModportPortSymbol>();
-  if (port == nullptr) return &value;
-  if (ViewDefinesTheName(*port)) {
-    throw InternalError(
-        "ResolveNamedDeclaration: a name a view defines reaches what the view "
-        "promised for it, and is told apart from an item before anything asks "
-        "which declaration it is");
-  }
-  const auto* item =
-      port->internalSymbol == nullptr
-          ? nullptr
-          : port->internalSymbol->as_if<slang::ast::ValueSymbol>();
-  if (item == nullptr) {
-    return diag::Fail(
-        span, diag::DiagCode::kUnsupportedExpressionForm,
-        "a modport port connected to nothing inside its interface is not yet "
-        "supported");
-  }
-  return item;
-}
-
 auto NamesCurrentInstance(const slang::ast::Expression& expr) -> bool {
   const auto* named = expr.as_if<slang::ast::NamedValueExpression>();
   return named != nullptr && IsCurrentInstanceHandle(named->symbol);
@@ -682,24 +659,34 @@ auto LowerNamedValueProc(
     return MakeIterationElementRefExpr(unit_lowerer, named, *clause, span);
   }
 
-  const Referent referent = ClassifyReferent(sym);
+  auto resolved = ResolveReferent(sym, span);
+  if (!resolved) return std::unexpected(std::move(resolved.error()));
+  const slang::ast::ValueSymbol& target = *resolved->symbol;
+  const Referent referent = resolved->kind;
   switch (referent) {
+    // A name a view offers lives in the modport's own name space (LRM 25.5.4),
+    // and a plain identifier resolves against the scope's own members, so no
+    // spelling reaches one here.
+    case Referent::kViewDefinedName:
+      throw InternalError(
+          "LowerNamedValueProc: a plain identifier does not reach a name a "
+          "view offers");
     case Referent::kParameterConstant:
       return MakeParameterConstantExpr(
-          unit_lowerer, frame, sym, *named.type, span);
+          unit_lowerer, frame, target, *named.type, span);
     case Referent::kEnumConstant:
-      return MakeEnumConstantExpr(unit_lowerer, sym, *named.type, span);
+      return MakeEnumConstantExpr(unit_lowerer, target, *named.type, span);
     // Inside an instance method, a class property named without an explicit
     // handle (LRM 8.4) reaches the invoking object through the method's
     // receiver, so it lowers to a receiver-relative property reference.
     case Referent::kClassProperty:
       return MakeClassPropertyRefExpr(
-          unit_lowerer, frame, sym, *named.type, span);
+          unit_lowerer, frame, target, *named.type, span);
     case Referent::kThisHandle:
       return MakeCurrentInstanceHandleExpr(unit_lowerer, *named.type, span);
     case Referent::kPatternBinding:
       return MakePatternVarRefExpr(
-          unit_lowerer, sym.as<slang::ast::PatternVarSymbol>(), *named.type,
+          unit_lowerer, target.as<slang::ast::PatternVarSymbol>(), *named.type,
           span);
     // Subroutine formals (LRM 13.5) and foreach iterators (LRM 12.7.3) are
     // variable-family symbols too, so this arm covers a name bound to the
@@ -707,7 +694,7 @@ auto LowerNamedValueProc(
     // lexical binding wins: only a name the body does not declare is a value
     // reached through the object graph.
     case Referent::kVariableStorage: {
-      const auto& var = sym.as<slang::ast::VariableSymbol>();
+      const auto& var = target.as<slang::ast::VariableSymbol>();
       if (auto local = proc.LookupProceduralVar(var)) {
         const hir::TypeId type =
             frame.current_procedural_body->procedural_vars.Get(*local).type;
@@ -718,15 +705,12 @@ auto LowerNamedValueProc(
     }
     // A net (LRM 6.5) is always a structural signal, never a procedural local.
     case Referent::kNetStorage:
-      return LowerValueRef(
-          unit_lowerer, frame, sym.as<slang::ast::ValueSymbol>(), *named.type,
-          span);
-    case Referent::kUnsupportedSpecparam:
-    case Referent::kUnsupportedModportPort:
-    case Referent::kUnsupportedPrimitivePort:
-    case Referent::kUnsupportedClockingSignal:
-    case Referent::kUnsupportedAssertionLocal:
-    case Referent::kUnsupportedStructureMember:
+      return LowerValueRef(unit_lowerer, frame, target, *named.type, span);
+    case Referent::kSpecparam:
+    case Referent::kPrimitivePort:
+    case Referent::kClockingSignal:
+    case Referent::kAssertionLocal:
+    case Referent::kStructureMember:
       return FailOnUnsupportedReferent(referent, span);
     case Referent::kNotAValue:
       throw InternalError(
@@ -751,19 +735,17 @@ auto LowerHierarchicalValue(
     -> diag::Result<hir::Expr> {
   const auto span = unit_lowerer.SourceMapper().SpanOf(hve.sourceRange);
 
-  // A name the view defined for itself is on no member list (LRM 25.5.4), so
-  // it resolves against the view rather than against the members. An item the
-  // view named without an expression is the interface's own item, and falls
-  // through to reach it the way every other name on the port does.
-  if (hve.ref.isViaIfacePort() && ViewDefinesTheName(hve.symbol)) {
-    return LowerViewDefinedName(unit_lowerer, frame, hve, span);
-  }
-
-  auto declaration = ResolveNamedDeclaration(hve.symbol, span);
-  if (!declaration) return std::unexpected(std::move(declaration.error()));
-  const slang::ast::ValueSymbol& target = **declaration;
-  const Referent referent = ClassifyReferent(target);
+  auto resolved = ResolveReferent(hve.symbol, span);
+  if (!resolved) return std::unexpected(std::move(resolved.error()));
+  const slang::ast::ValueSymbol& target = *resolved->symbol;
+  const Referent referent = resolved->kind;
   switch (referent) {
+    // A name the view defined for itself is on no member list (LRM 25.5.4), so
+    // it resolves against the view rather than against the members. An item the
+    // view named without an expression is the interface's own item, and is
+    // reached the way every other name on that instance is.
+    case Referent::kViewDefinedName:
+      return LowerViewDefinedName(unit_lowerer, frame, hve, span);
     // A hierarchically reached constant folds to its value; the path is not
     // navigated because the value is fixed at elaboration.
     case Referent::kParameterConstant:
@@ -771,18 +753,22 @@ auto LowerHierarchicalValue(
           unit_lowerer, frame, target, *hve.type, span);
     case Referent::kEnumConstant:
       return MakeEnumConstantExpr(unit_lowerer, target, *hve.type, span);
+    // A path through the design hierarchy ends at an object, and a property is
+    // reached from there by the member access that names it (LRM 8.4), so no
+    // spelling makes a property the end of the path: the class scope resolution
+    // operator is refused after a dotted path, and a package-scoped class is
+    // resolved as a name rather than as a hierarchy walk.
     case Referent::kClassProperty:
-      return diag::Fail(
-          span, diag::DiagCode::kUnsupportedExpressionForm,
-          "hierarchical reference to a class property is not yet supported");
+      throw InternalError(
+          "LowerHierarchicalValue: a hierarchical path ends at an object, not "
+          "at a property of one");
     case Referent::kThisHandle:
       return FailOnCurrentInstanceHandle(span);
-    case Referent::kUnsupportedSpecparam:
-    case Referent::kUnsupportedModportPort:
-    case Referent::kUnsupportedPrimitivePort:
-    case Referent::kUnsupportedClockingSignal:
-    case Referent::kUnsupportedAssertionLocal:
-    case Referent::kUnsupportedStructureMember:
+    case Referent::kSpecparam:
+    case Referent::kPrimitivePort:
+    case Referent::kClockingSignal:
+    case Referent::kAssertionLocal:
+    case Referent::kStructureMember:
       return FailOnUnsupportedReferent(referent, span);
     case Referent::kNotAValue:
       throw InternalError(
@@ -799,16 +785,9 @@ auto LowerHierarchicalValue(
       }
       auto type_id = unit_lowerer.InternType(*hve.type, span);
       if (!type_id) return std::unexpected(std::move(type_id.error()));
-      auto reached = unit_lowerer.ResolveValueTarget(frame, target);
+      auto reached = unit_lowerer.ResolveValueTarget(frame, target, span);
       if (!reached) return std::unexpected(std::move(reached.error()));
-      // A path this unit cannot yet express reaches a real cell the user
-      // named, so it is a lowering gap rather than a compiler-bug invariant.
-      if (!reached->has_value()) {
-        return diag::Fail(
-            span, diag::DiagCode::kUnsupportedExpressionForm,
-            "hierarchical reference to this target form is not yet supported");
-      }
-      return ValueTargetRefExpr(**reached, *type_id, span);
+      return ValueTargetRefExpr(*reached, *type_id, span);
     }
   }
   throw InternalError("LowerHierarchicalValue: unknown Referent");
@@ -823,22 +802,29 @@ auto LowerNamedValueStructural(
   if (auto clause = frame.FindIterationClause(sym)) {
     return MakeIterationElementRefExpr(unit_lowerer, named, *clause, span);
   }
-  const Referent referent = ClassifyReferent(sym);
+  auto resolved = ResolveReferent(sym, span);
+  if (!resolved) return std::unexpected(std::move(resolved.error()));
+  const slang::ast::ValueSymbol& target = *resolved->symbol;
+  const Referent referent = resolved->kind;
   switch (referent) {
+    // As in a process: a plain identifier resolves against the scope's own
+    // members, and a name a view offers lives in the modport's name space.
+    case Referent::kViewDefinedName:
+      throw InternalError(
+          "LowerNamedValueStructural: a plain identifier does not reach a name "
+          "a view offers");
     case Referent::kParameterConstant:
       return MakeParameterConstantExpr(
-          unit_lowerer, frame, sym, *named.type, span);
+          unit_lowerer, frame, target, *named.type, span);
     case Referent::kEnumConstant:
-      return MakeEnumConstantExpr(unit_lowerer, sym, *named.type, span);
+      return MakeEnumConstantExpr(unit_lowerer, target, *named.type, span);
     case Referent::kPatternBinding:
       return MakePatternVarRefExpr(
-          unit_lowerer, sym.as<slang::ast::PatternVarSymbol>(), *named.type,
+          unit_lowerer, target.as<slang::ast::PatternVarSymbol>(), *named.type,
           span);
     case Referent::kVariableStorage:
     case Referent::kNetStorage:
-      return LowerValueRef(
-          unit_lowerer, frame, sym.as<slang::ast::ValueSymbol>(), *named.type,
-          span);
+      return LowerValueRef(unit_lowerer, frame, target, *named.type, span);
     // A static property (LRM 8.9) belongs to the type rather than to an object
     // of it, so it is reached without a receiver and reads here exactly as it
     // does in a process -- a structural expression stands in the same scope a
@@ -846,10 +832,10 @@ auto LowerNamedValueStructural(
     // replicating the class. An instance property is reachable only through a
     // receiver, which a structural expression has none of.
     case Referent::kClassProperty: {
-      const auto& prop = sym.as<slang::ast::ClassPropertySymbol>();
+      const auto& prop = target.as<slang::ast::ClassPropertySymbol>();
       if (prop.lifetime == slang::ast::VariableLifetime::Static) {
         return MakeClassPropertyRefExpr(
-            unit_lowerer, frame, sym, *named.type, span);
+            unit_lowerer, frame, target, *named.type, span);
       }
       return diag::Fail(
           span, diag::DiagCode::kUnsupportedStructuralExpressionForm,
@@ -858,12 +844,11 @@ auto LowerNamedValueStructural(
     }
     case Referent::kThisHandle:
       return FailOnCurrentInstanceHandle(span);
-    case Referent::kUnsupportedSpecparam:
-    case Referent::kUnsupportedModportPort:
-    case Referent::kUnsupportedPrimitivePort:
-    case Referent::kUnsupportedClockingSignal:
-    case Referent::kUnsupportedAssertionLocal:
-    case Referent::kUnsupportedStructureMember:
+    case Referent::kSpecparam:
+    case Referent::kPrimitivePort:
+    case Referent::kClockingSignal:
+    case Referent::kAssertionLocal:
+    case Referent::kStructureMember:
       return FailOnUnsupportedReferent(referent, span);
     case Referent::kNotAValue:
       throw InternalError(

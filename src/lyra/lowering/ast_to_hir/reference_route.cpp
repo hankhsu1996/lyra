@@ -30,7 +30,6 @@
 #include "lyra/lowering/ast_to_hir/connected_interface.hpp"
 #include "lyra/lowering/ast_to_hir/expression/references.hpp"
 #include "lyra/lowering/ast_to_hir/sensitivity.hpp"
-#include "lyra/lowering/ast_to_hir/subroutine_decl.hpp"
 #include "lyra/lowering/ast_to_hir/unit_identity.hpp"
 #include "lyra/lowering/ast_to_hir/unit_lowerer.hpp"
 #include "lyra/lowering/ast_to_hir/walk_frame.hpp"
@@ -831,25 +830,14 @@ void UnitLowerer::ClassifyDescent(
 }
 
 auto UnitLowerer::ResolveValueTarget(
-    const WalkFrame& frame, const slang::ast::ValueSymbol& value)
-    -> diag::Result<std::optional<hir::ValueTarget>> {
-  // Only a variable or a net has a cell. A parameter, genvar, or enum value is
-  // a compile-time constant that folds where it is used, so there is nothing to
-  // reach: no route to seal and nothing to observe. Deciding this once, ahead
-  // of both ways of reaching a cell, is what stops a constant declared in a
-  // namespace unit from being mistaken for that unit's program-global cell.
-  if (value.kind != slang::ast::SymbolKind::Variable &&
-      value.kind != slang::ast::SymbolKind::Net) {
-    return std::nullopt;
-  }
-
+    const WalkFrame& frame, const slang::ast::ValueSymbol& value,
+    diag::SourceSpan span) -> diag::Result<hir::ValueTarget> {
   // A namespace unit has no instance, so its cell is reached by name rather
   // than by a route out of the reader's own storage (LRM 26.2, 3.12.1). The
   // same by-name form serves a referrer in another unit and the owning unit's
   // own body, neither of which has a receiver to route through.
   if (const auto* unit = DeclaringUnitOfValue(value)) {
-    auto value_type =
-        InternType(value.getType(), SourceMapper().PointSpanOf(value.location));
+    auto value_type = InternType(value.getType(), span);
     if (!value_type) return std::unexpected(std::move(value_type.error()));
     return hir::ValueTarget{hir::ExternalUnitValueRef{
         .unit_name = CompilationUnitName(*unit),
@@ -859,8 +847,33 @@ auto UnitLowerer::ResolveValueTarget(
 
   auto route = TranslateReferenceRoute(frame, value);
   if (!route) return std::unexpected(std::move(route.error()));
-  if (!route->has_value()) return std::nullopt;
+  if (!route->has_value()) {
+    return diag::Fail(
+        span, diag::DiagCode::kUnsupportedExpressionForm,
+        std::format(
+            "reaching the storage `{}` names from here is not yet supported",
+            value.name));
+  }
   return hir::ValueTarget{*std::move(*route)};
+}
+
+auto UnitLowerer::ResolveStaticPropertyTarget(
+    const WalkFrame& frame, const slang::ast::ClassPropertySymbol& prop,
+    diag::SourceSpan span) -> diag::Result<hir::StaticPropertyRef> {
+  const auto& owner_class =
+      prop.getParentScope()->asSymbol().as<slang::ast::ClassType>();
+  auto owner_ref = ResolveClassRef(owner_class, span);
+  if (!owner_ref) return std::unexpected(std::move(owner_ref.error()));
+  auto declaring_hops = DeclaringScopeHopsFrom(owner_class, frame, span);
+  if (!declaring_hops) {
+    return std::unexpected(std::move(declaring_hops.error()));
+  }
+  auto value_type = InternType(prop.getType(), span);
+  if (!value_type) return std::unexpected(std::move(value_type.error()));
+  return hir::StaticPropertyRef{
+      .target = MakeStaticPropertyTarget(*owner_ref, prop),
+      .declaring_scope_hops = *declaring_hops,
+      .value_type = *value_type};
 }
 
 auto UnitLowerer::ObservedThroughModport(
@@ -878,10 +891,14 @@ auto UnitLowerer::ObservedThroughModport(
         "by the view");
   }
 
-  // The port is the whole route to what stands behind it, so the one this
-  // reader waits through is the one whose connection selected this very view. A
-  // read carries no path of its own, so a reader holding two such ports has
-  // stated no choice between them.
+  // How the object was reached is a property of the reference, and a read
+  // carries none -- so it is recovered from the reader: a scope holding this
+  // very view on a port of its own reached it that way, because that port is
+  // the whole of what stands for the interface there. The port decides it
+  // before any route is tried, because climbing out of this unit and back down
+  // arrives at the same object by a reach a separately compiled unit does not
+  // have. A reader holding the same view on two ports has stated no choice
+  // between them.
   const slang::ast::InstanceBodySymbol* reader = nullptr;
   for (const slang::ast::Scope* s = frame.reader_scope;
        s != nullptr && reader == nullptr; s = s->asSymbol().getParentScope()) {
@@ -904,17 +921,24 @@ auto UnitLowerer::ObservedThroughModport(
     }
     through = port;
   }
-  if (through == nullptr) {
+
+  // No such port, so the interface is one this scope's own hierarchy declares
+  // and the object is reached by the route that reaches any name on it.
+  std::optional<ScopeRoute> reached =
+      through != nullptr
+          ? std::optional{RouteThroughInterfacePort(frame, *through)}
+          : RouteToScope(frame, *view->asSymbol().getParentScope());
+  if (!reached.has_value() || !reached->unit_name.has_value()) {
     return refuse(
-        "waiting on a name a view offers reached other than through this "
-        "scope's own interface port is not yet supported");
+        "waiting on a name a view offers on an interface this scope neither "
+        "declares nor carries on a port of its own is not yet supported");
   }
-  ScopeRoute route = RouteThroughInterfacePort(frame, *through);
-  // A read of such a name states no coordinate, so a port standing for several
+  ScopeRoute route = *std::move(reached);
+  // A read of such a name states no coordinate, so a reach standing for several
   // instances leaves the route with nothing to say which of them changed.
   if (!route.open.empty()) {
     return refuse(
-        "waiting on a name a view offers through a port carrying a range is "
+        "waiting on a name a view offers through a reach carrying a range is "
         "not yet supported");
   }
   const hir::ExternalUnitObjectId object =
@@ -978,37 +1002,84 @@ auto UnitLowerer::TranslateSensitivityReads(
   std::vector<hir::SensitivityEntry> out;
   out.reserve(reads.size());
   for (const auto& read : reads) {
-    // A name a view defined for itself stands for an expression the interface
-    // evaluates (LRM 25.5.4), so it is no single declaration to wait on. What
-    // waiting on it means is waiting on every member that expression reads,
-    // which the interface publishes alongside the name. An item the view named
-    // without an expression is one declaration, and is waited on as one.
-    if (ViewDefinesTheName(*read.symbol)) {
-      auto entries = ObservedThroughModport(
-          read.symbol->as<slang::ast::ModportPortSymbol>(), frame);
-      if (!entries) return std::unexpected(std::move(entries.error()));
-      out.insert(out.end(), entries->begin(), entries->end());
-      continue;
-    }
-    auto declaration = ResolveNamedDeclaration(
-        *read.symbol, SourceMapper().PointSpanOf(read.symbol->location));
-    if (!declaration) return std::unexpected(std::move(declaration.error()));
-    auto target = ResolveValueTarget(frame, **declaration);
-    if (!target) return std::unexpected(std::move(target.error()));
-    if (!target->has_value()) continue;
+    const auto span = SourceMapper().PointSpanOf(read.symbol->location);
+    auto resolved = ResolveReferent(*read.symbol, span);
+    if (!resolved) return std::unexpected(std::move(resolved.error()));
+    const slang::ast::ValueSymbol& target = *resolved->symbol;
+
     // A footprint is meaningful only for a signal the runtime bit-addresses: a
     // packed bit vector, which renders to one observable cell whose change set
     // is read per bit. For an enum, unpacked aggregate, string, or real the
     // runtime observes the whole signal on any change, so the read carries no
     // footprint regardless of the flat-bit view the DFA computed over its own
     // encoding.
-    const auto& read_type = (*declaration)->getType();
-    out.push_back(
-        hir::SensitivityEntry{
-            .ref = *std::move(*target),
-            .footprint = read_type.isIntegral() && !read_type.isEnum()
-                             ? read.footprint
-                             : std::nullopt});
+    const auto observe = [&](hir::ValueTarget cell) {
+      const slang::ast::Type& read_type = target.getType();
+      out.push_back(
+          hir::SensitivityEntry{
+              .ref = std::move(cell),
+              .footprint = read_type.isIntegral() && !read_type.isEnum()
+                               ? read.footprint
+                               : std::nullopt});
+    };
+
+    switch (resolved->kind) {
+      // A name a view defined for itself stands for an expression the interface
+      // evaluates (LRM 25.5.4), so it is no single declaration to wait on. What
+      // waiting on it means is waiting on every member that expression reads,
+      // which the interface publishes alongside the name.
+      case Referent::kViewDefinedName: {
+        auto entries = ObservedThroughModport(
+            target.as<slang::ast::ModportPortSymbol>(), frame);
+        if (!entries) return std::unexpected(std::move(entries.error()));
+        out.insert(out.end(), entries->begin(), entries->end());
+        break;
+      }
+      // A value fixed before simulation starts never changes, so a read of one
+      // subscribes to nothing -- a parameter or an enumeration name (LRM 6.20,
+      // 6.19), and a specparam, which LRM 6.20.4 makes a constant too however
+      // little of it this compiler carries elsewhere.
+      case Referent::kParameterConstant:
+      case Referent::kEnumConstant:
+      case Referent::kSpecparam:
+        break;
+      // LRM 9.2.2.2.1 excludes a variable the block itself declares, and the
+      // surface a read set comes from has applied that already.
+      case Referent::kPatternBinding:
+        break;
+      // The same clause excludes a reference to a class object, which a handle
+      // to the invoking object is.
+      case Referent::kThisHandle:
+        break;
+      // A static property is the one copy its class shares and is usable with
+      // no object of that type (LRM 8.9), so it is a variable read within the
+      // block like any other. An instance property is reached through an
+      // object, which the clause above excludes.
+      case Referent::kClassProperty: {
+        const auto& prop = target.as<slang::ast::ClassPropertySymbol>();
+        if (prop.lifetime != slang::ast::VariableLifetime::Static) break;
+        auto property = ResolveStaticPropertyTarget(frame, prop, span);
+        if (!property) return std::unexpected(std::move(property.error()));
+        observe(hir::ValueTarget{*std::move(property)});
+        break;
+      }
+      case Referent::kVariableStorage:
+      case Referent::kNetStorage: {
+        auto cell = ResolveValueTarget(frame, target, span);
+        if (!cell) return std::unexpected(std::move(cell.error()));
+        observe(*std::move(cell));
+        break;
+      }
+      case Referent::kPrimitivePort:
+      case Referent::kClockingSignal:
+      case Referent::kAssertionLocal:
+      case Referent::kStructureMember:
+        return FailOnUnsupportedReferent(resolved->kind, span);
+      case Referent::kNotAValue:
+        throw InternalError(
+            "TranslateSensitivityReads: a read resolved to a declaration that "
+            "denotes no value");
+    }
   }
   return out;
 }

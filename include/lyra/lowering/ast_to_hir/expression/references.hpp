@@ -5,9 +5,9 @@
 // cell is gets settled once, for every consumer of a name; this file turns
 // that answer -- together with the forms that have no cell at all, a folded
 // constant, a class property, a pattern binding, the object a subroutine was
-// invoked on -- into an Expr. Which declaration a name reaches is the step
-// before that, and it is settled here as well, because a read a process is
-// sensitive to builds no Expr and asks the same question.
+// invoked on -- into an Expr. What a name denotes is the step before that, and
+// it is settled here as well, because a read a process is sensitive to builds
+// no Expr and asks the same question.
 
 #include "lyra/diag/diagnostic.hpp"
 #include "lyra/hir/expr.hpp"
@@ -25,15 +25,67 @@ class ValueSymbol;
 
 namespace lyra::lowering::ast_to_hir {
 
-// The declaration a name reaches: the named symbol itself, except through a
-// modport, where a port identifier lives in the modport's own name space and
-// stands for the interface item the modport named it after (LRM 25.5.4). What
-// storage that name is, and whether it may be written, are questions about the
-// item rather than about the identifier. A name the view defined for itself
-// reaches no single declaration, so a caller tells those apart before asking.
-auto ResolveNamedDeclaration(
+// What kind of declaration a name reaches, one value per kind the language
+// admits, so that every consumer of a name says what it does about each. Each
+// name states the construct and never what this compiler does about it: what a
+// kind is good for differs by consumer, so a value fixed at elaboration is a
+// folded operand to one and nothing to subscribe to for another, and a name
+// carrying a verdict would be wrong for one of them.
+enum class Referent {
+  // Values fixed before simulation starts (LRM 6.20, 6.19, 6.20.4).
+  kParameterConstant,
+  kEnumConstant,
+  kSpecparam,
+  // Declarations with a cell.
+  kVariableStorage,
+  kNetStorage,
+  kClassProperty,
+  // The object a subroutine was invoked on (LRM 8.11), which is no cell.
+  kThisHandle,
+  // An identifier a pattern introduces (LRM 12.6), declared by the pattern.
+  kPatternBinding,
+  // A name a view computed for itself (LRM 25.5.4). The interface declares it
+  // nowhere -- the view adds the name rather than narrowing one the interface
+  // declared -- so what it means is the interface's own statement and not a
+  // property of any storage this scope can reach.
+  kViewDefinedName,
+  // Declarations a value reference may denote whose own vocabulary lives in
+  // another clause of the standard.
+  kPrimitivePort,
+  kClockingSignal,
+  kAssertionLocal,
+  kStructureMember,
+  // Not something a value reference can denote at all. Only a value symbol
+  // reaches this classification, so no program produces this answer.
+  kNotAValue,
+};
+
+// What a name resolved to, and what kind of declaration that is. A port
+// identifier lives in its modport's own name space and stands for the
+// interface item the view named it after (LRM 25.5.4), so an identifier the
+// view merely narrowed arrives here as the item; one the view computed arrives
+// as the port, which is the only declaration there is for it.
+struct NamedReferent {
+  const slang::ast::ValueSymbol* symbol;
+  Referent kind;
+};
+
+// What a name denotes, for every consumer of a name: a read a process is
+// sensitive to builds no Expr and asks exactly this question.
+//
+// A reach this compiler cannot express is not one of these. That is a property
+// of the compiler rather than of the name, so it is a refusal raised where the
+// reach is attempted.
+auto ResolveReferent(
     const slang::ast::ValueSymbol& value, diag::SourceSpan span)
-    -> diag::Result<const slang::ast::ValueSymbol*>;
+    -> diag::Result<NamedReferent>;
+
+// The refusal for a declaration a value reference may denote and that nothing
+// here lowers. Every kind sent here is a construct, so every one names itself
+// and cites the clause that defines it -- a reader who meets one can search for
+// the construct and ask for it, which a shared sentence gives nobody.
+auto FailOnUnsupportedReferent(Referent referent, diag::SourceSpan span)
+    -> std::unexpected<diag::Diagnostic>;
 
 // True when `expr` is the `this` keyword (LRM 8.11) -- the handle to the object
 // the subroutine it appears in was invoked on. The front end spells it as an

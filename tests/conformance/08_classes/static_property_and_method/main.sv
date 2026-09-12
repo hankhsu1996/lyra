@@ -6,8 +6,10 @@
 // variable per object, so writes through two handles do not meet. A static
 // method needs no object and may likewise be called on the class, on a
 // subclass, or through a handle. Because a static property needs no object
-// it is an ordinary operand of a continuous assignment, which re-evaluates
-// whenever the operand changes (LRM 8.9, 8.10, 8.23, 10.3.2).
+// it is an ordinary operand of anything that reads a variable and re-evaluates
+// when it changes: a continuous assignment, a combinational procedure, and a
+// level-sensitive wait all watch the one cell and move with it after time zero
+// (LRM 8.9, 8.10, 8.23, 9.2.2.2.1, 9.4.3, 10.3.2).
 module Top;
   class Registry;
     static int counter = 5;
@@ -38,8 +40,19 @@ module Top;
   int r_second;
   int r2_first;
 
+  int counter_after_change;
+
   int counter_continuous;
   assign counter_continuous = Registry::counter;
+
+  int counter_combinational;
+  always_comb counter_combinational = Registry::counter + 100;
+
+  int counter_after_wait;
+  initial begin
+    wait (Registry::counter == 40);
+    counter_after_wait = Registry::counter + 200;
+  end
 
   initial begin
     Registry r;
@@ -60,6 +73,11 @@ module Top;
     r_second = r.bump();
     r2 = new;
     r2_first = r2.bump();
+
+    // Past time zero, so what the readers hold is what a change woke them to
+    // recompute rather than what the first settle happened to leave.
+    #1 Registry::counter = 40;
+    #1 counter_after_change = Registry::counter;
   end
 
   final begin
@@ -81,9 +99,18 @@ module Top;
     if (r_first !== 1) $fatal(1, "r_first was %0d, expected 1", r_first);
     if (r_second !== 2) $fatal(1, "r_second was %0d, expected 2", r_second);
     if (r2_first !== 1) $fatal(1, "r2_first was %0d, expected 1", r2_first);
-    if (counter_continuous !== 9)
-      $fatal(1, "counter_continuous was %0d, expected 9",
+    if (counter_after_change !== 40)
+      $fatal(1, "counter_after_change was %0d, expected 40",
+             counter_after_change);
+    if (counter_continuous !== 40)
+      $fatal(1, "counter_continuous was %0d, expected 40",
              counter_continuous);
+    if (counter_combinational !== 140)
+      $fatal(1, "counter_combinational was %0d, expected 140",
+             counter_combinational);
+    if (counter_after_wait !== 240)
+      $fatal(1, "counter_after_wait was %0d, expected 240",
+             counter_after_wait);
     $display("All checks passed");
   end
 endmodule
