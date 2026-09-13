@@ -23,7 +23,15 @@ enum class FourStateBit : std::uint8_t {
   kUnknown
 };
 
-[[nodiscard]] auto WordCountForBits(std::uint64_t bit_width) -> std::size_t;
+[[nodiscard]] constexpr auto WordCountForBits(std::uint64_t bit_width)
+    -> std::size_t {
+  // 0 bits is the `PackedArray()` sentinel "uninitialized" shape; an empty
+  // storage vector matches it. Non-zero widths round up to whole words.
+  // Overflow-safe form: never compute `bit_width + 63`.
+  const std::uint64_t whole = bit_width / 64U;
+  const std::uint64_t remainder = bit_width % 64U;
+  return static_cast<std::size_t>(whole + (remainder == 0U ? 0U : 1U));
+}
 
 auto MaskUnusedTopBits(std::span<std::uint64_t> words, std::uint64_t bit_width)
     -> void;
@@ -42,7 +50,6 @@ class PackedWords {
   [[nodiscard]] auto Words() -> std::span<std::uint64_t>;
   [[nodiscard]] auto Words() const -> std::span<const std::uint64_t>;
 
-  auto SetZero() -> void;
   auto SetOne() -> void;
 
  private:
@@ -86,7 +93,6 @@ class BitView {
   [[nodiscard]] auto GetBit(std::uint64_t offset) const -> TwoStateBit;
   auto SetBit(std::uint64_t offset, TwoStateBit value) -> void;
   auto SetZero() -> void;
-  auto SetOne() -> void;
 
   [[nodiscard]] auto AsConst() const -> ConstBitView;
 
@@ -128,9 +134,6 @@ class LogicView {
   [[nodiscard]] auto GetBit(std::uint64_t offset) const -> FourStateBit;
   auto SetBit(std::uint64_t offset, FourStateBit value) -> void;
   auto SetZero() -> void;
-  auto SetOne() -> void;
-  auto SetUnknown() -> void;
-  auto SetHighImpedance() -> void;
 
   [[nodiscard]] auto AsConst() const -> ConstLogicView;
 
@@ -155,9 +158,6 @@ class BitValue {
   [[nodiscard]] auto View(std::uint64_t offset, std::uint64_t width) const
       -> ConstBitView;
 
-  auto SetZero() -> void;
-  auto SetOne() -> void;
-
  private:
   PackedWords value_;
 };
@@ -175,25 +175,9 @@ class LogicValue {
   [[nodiscard]] auto View(std::uint64_t offset, std::uint64_t width) const
       -> ConstLogicView;
 
-  auto SetZero() -> void;
-  auto SetOne() -> void;
-  auto SetUnknown() -> void;
-  auto SetHighImpedance() -> void;
-
  private:
   PackedWords value_;
   PackedWords unknown_;
 };
-
-auto CopySameWidth(ConstBitView src, BitView dst) -> void;
-auto CopySameWidth(ConstLogicView src, LogicView dst) -> void;
-
-inline auto CopySameWidth(BitView src, BitView dst) -> void {
-  CopySameWidth(src.AsConst(), dst);
-}
-
-inline auto CopySameWidth(LogicView src, LogicView dst) -> void {
-  CopySameWidth(src.AsConst(), dst);
-}
 
 }  // namespace lyra::value

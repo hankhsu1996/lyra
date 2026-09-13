@@ -1428,6 +1428,20 @@ enough to warrant its own focused review.
       that depth's products, and a caller that asked for a body is handed one rather than an option
       of one. It reaches the per-unit pipeline, the link-level unit's products, and every command
       that drives either, so it is a subject of its own rather than a cleanup.
+- [ ] R91 -- Converting a packed value between widths, or between the two-state and the four-state
+      domain, is spelled one bit at a time. The conversion clears the whole destination by assigning
+      each bit in turn, copies the overlapping bits one at a time, then sign-extends the rest the
+      same way, so a 64-bit conversion costs on the order of two hundred shift-and-mask pairs where
+      both sides start at bit zero and the words could move whole. The view layer's bulk clear is
+      per-bit for the same reason and the conversions are its only caller.
+
+      Target: word-wise wherever source and destination are word-aligned -- whole words copied, the
+      top word masked once, the sign extension a fill of the words above the source's width -- with
+      a per-bit path left only for an unaligned remainder. The bulk clear becomes word writes.
+
+      Not blocked, and deliberately not taken yet: what justifies it is how much of a run's time
+      sits in width conversion, and that number does not exist. Measure on the benchmark corpus
+      first, then cut, so the change is reported against a before and an after.
 
 ## Out of Scope
 
