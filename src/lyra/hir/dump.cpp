@@ -276,10 +276,8 @@ auto FormatMethodCallee(const MethodCallee& callee) -> std::string {
 
 class HirDumper {
  public:
-  auto Dump(const std::vector<CompilationUnit>& units) -> std::string {
-    for (const auto& u : units) {
-      DumpUnit(u);
-    }
+  auto Dump(const CompilationUnit& unit) -> std::string {
+    DumpUnit(unit);
     return std::move(out_);
   }
 
@@ -2489,9 +2487,9 @@ class HirDumper {
 
 }  // namespace
 
-auto DumpHir(const std::vector<CompilationUnit>& units) -> std::string {
+auto DumpHir(const CompilationUnit& unit) -> std::string {
   HirDumper dumper;
-  return dumper.Dump(units);
+  return dumper.Dump(unit);
 }
 
 }  // namespace lyra::hir

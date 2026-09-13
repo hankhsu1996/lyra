@@ -3,7 +3,7 @@
 #include <span>
 #include <string>
 
-#include "lyra/mir/compilation_unit.hpp"
+#include "lyra/compiler/unit_program_record.hpp"
 
 namespace lyra::dpi {
 
@@ -15,11 +15,13 @@ namespace lyra::dpi {
 // several units that may each declare one name collapse to its one prototype. A
 // design with no DPI-C declaration renders the same header with no prototypes.
 //
+// What each unit contributes is read from the record it published rather than
+// from the unit, so this needs nothing that a unit's own lowered form holds.
+//
 // The result is target-language-neutral: it projects the same prototypes an
 // execution backend links against, so a foreign source compiled against it is
 // correct whichever backend runs the design.
-auto RenderAbiHeader(
-    std::span<const mir::CompilationUnit> units,
-    const mir::CompilationUnit& root) -> std::string;
+auto RenderAbiHeader(std::span<const compiler::UnitProgramRecord> records)
+    -> std::string;
 
 }  // namespace lyra::dpi

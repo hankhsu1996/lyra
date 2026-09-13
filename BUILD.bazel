@@ -233,8 +233,10 @@ cc_library(
     includes = ["include"],
     visibility = ["//visibility:public"],
     deps = [
+        ":diag",
         ":mir",
         ":support",
+        ":unit_program_record",
     ],
 )
 
@@ -262,6 +264,7 @@ cc_library(
     visibility = ["//visibility:public"],
     deps = [
         ":mir",
+        ":unit_program_record",
     ],
 )
 
@@ -273,6 +276,19 @@ cc_library(
     includes = ["include"],
     visibility = ["//visibility:public"],
     deps = [":mir"],
+)
+
+cc_library(
+    name = "unit_program_record",
+    srcs = ["src/lyra/compiler/unit_program_record.cpp"],
+    hdrs = ["include/lyra/compiler/unit_program_record.hpp"],
+    copts = LYRA_COPTS,
+    includes = ["include"],
+    visibility = ["//visibility:public"],
+    deps = [
+        ":base",
+        ":mir",
+    ],
 )
 
 cc_library(
@@ -301,11 +317,17 @@ cc_library(
     name = "compiler",
     srcs = glob(
         ["src/lyra/compiler/*.cpp"],
-        exclude = ["src/lyra/compiler/unit_metadata.cpp"],
+        exclude = [
+            "src/lyra/compiler/unit_metadata.cpp",
+            "src/lyra/compiler/unit_program_record.cpp",
+        ],
     ),
     hdrs = glob(
         ["include/lyra/compiler/*.hpp"],
-        exclude = ["include/lyra/compiler/unit_metadata.hpp"],
+        exclude = [
+            "include/lyra/compiler/unit_metadata.hpp",
+            "include/lyra/compiler/unit_program_record.hpp",
+        ],
     ),
     copts = LYRA_COPTS,
     includes = ["include"],
@@ -321,6 +343,7 @@ cc_library(
         ":mir_to_lir",
         ":support",
         ":unit_metadata",
+        ":unit_program_record",
     ],
 )
 
@@ -340,6 +363,7 @@ cc_library(
         ":dpi",
         ":mir",
         ":support",
+        ":unit_program_record",
         "@bazel_tools//tools/cpp/runfiles",
     ],
 )

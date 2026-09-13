@@ -235,11 +235,13 @@ struct CompilationUnit {
   // holds. A package variable takes part; the cell a subroutine's
   // static-lifetime local keeps does not.
   std::vector<NamedStaticVariable> named_static_variables;
-  // The foreign names this unit takes part in (LRM 35), in declaration order.
-  // The program's foreign surface is the composition of these across units: a
-  // name is program-global and lives in its own name space, so no single unit
-  // owns it, and each states only its own part.
-  std::vector<ForeignSymbol> foreign_surface;
+  // The foreign names this unit declares on a scope (LRM 35.5.3), in
+  // declaration order. A name is program-global and lives in its own name
+  // space, and a scope's entry is compiled once per specialization of that
+  // scope, so none of them is the symbol -- the unit states them here for the
+  // program to define once. What a unit's own namespace owns is not among
+  // these: its callable is the symbol and already says so.
+  std::vector<ForeignScopeEntry> foreign_scope_entries;
   // Every compiler-generated nominal struct of this unit -- a promoted
   // automatic scope's storage. Its `StructId` is the struct's type identity; a
   // backend derives the C++ emission host from the struct's lexical synthesis

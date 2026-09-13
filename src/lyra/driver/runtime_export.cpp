@@ -54,12 +54,13 @@ auto CopyTree(
 }  // namespace
 
 auto ResolveRuntimeLocation(std::string_view binary_path)
-    -> std::expected<RuntimeLocation, std::string> {
+    -> diag::Result<RuntimeLocation> {
   std::string rf_error;
   std::unique_ptr<Runfiles> runfiles{
       Runfiles::Create(std::string(binary_path), &rf_error)};
   if (!runfiles) {
-    return std::unexpected(
+    return diag::Fail(
+        diag::DiagCode::kHostIoError,
         std::format("cannot access the Lyra runtime: {}", rf_error));
   }
   // The header closure is staged under `include/lyra/`; resolve one known
@@ -67,17 +68,21 @@ auto ResolveRuntimeLocation(std::string_view binary_path)
   const std::filesystem::path anchor =
       runfiles->Rlocation("_main/include/lyra/runtime/runtime.hpp");
   if (anchor.empty() || !std::filesystem::exists(anchor)) {
-    return std::unexpected("cannot locate the Lyra runtime headers");
+    return diag::Fail(
+        diag::DiagCode::kHostIoError, "cannot locate the Lyra runtime headers");
   }
   const std::filesystem::path lib =
       runfiles->Rlocation("_main/libcpp_runtime.a");
   if (lib.empty() || !std::filesystem::exists(lib)) {
-    return std::unexpected("cannot locate the Lyra runtime library");
+    return diag::Fail(
+        diag::DiagCode::kHostIoError, "cannot locate the Lyra runtime library");
   }
   const std::filesystem::path svdpi =
       runfiles->Rlocation("_main/third_party/systemverilog/svdpi.h");
   if (svdpi.empty() || !std::filesystem::exists(svdpi)) {
-    return std::unexpected("cannot locate the standard DPI-C header");
+    return diag::Fail(
+        diag::DiagCode::kHostIoError,
+        "cannot locate the standard DPI-C header");
   }
   return RuntimeLocation{
       .include_root = anchor.parent_path().parent_path().parent_path(),

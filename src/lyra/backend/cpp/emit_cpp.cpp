@@ -1,7 +1,9 @@
 #include <algorithm>
 #include <format>
+#include <optional>
 #include <span>
 #include <string>
+#include <variant>
 #include <vector>
 
 #include "lyra/backend/cpp/api.hpp"
@@ -13,6 +15,8 @@
 #include "lyra/backend/cpp/render_type.hpp"
 #include "lyra/backend/cpp/scope_view.hpp"
 #include "lyra/base/internal_error.hpp"
+#include "lyra/compiler/unit_program_record.hpp"
+#include "lyra/diag/diagnostic.hpp"
 #include "lyra/mir/class.hpp"
 #include "lyra/mir/compilation_unit.hpp"
 #include "lyra/mir/packed_type_descriptor.hpp"
@@ -56,10 +60,11 @@ auto CollectExternalUnitNames(const mir::CompilationUnit& unit)
 // has no SV referrer to pull its header into the include graph, so the program
 // entry must include it directly for that definition to land and link. An
 // import's prototype is a declaration, not a definition, and pulls nothing.
-auto DefinesForeignSymbol(const mir::CompilationUnit& unit) -> bool {
-  return std::ranges::any_of(unit.callables, [](const auto& callable) {
-    return callable.foreign.has_value() && callable.code.body.has_value();
-  });
+auto DefinesForeignSymbol(const compiler::UnitProgramRecord& record) -> bool {
+  return std::ranges::any_of(
+      record.foreign_names, [](const compiler::ForeignName& name) {
+        return std::holds_alternative<compiler::DefinedByTheUnit>(name.body);
+      });
 }
 
 // The include preamble every emitted unit header shares: the runtime umbrella
@@ -143,21 +148,34 @@ auto RenderUnitHeaderFile(const mir::CompilationUnit& unit) -> std::string {
 // for its definitions to land, which is the root's and any unit defining a
 // symbol only foreign C refers to.
 auto RenderHostMain(
-    std::span<const mir::CompilationUnit> units,
+    std::span<const compiler::UnitProgramRecord> records,
     const mir::CompilationUnit& root) -> std::string {
   const mir::RootedTree* tree = mir::RootedTreeOf(root);
   if (tree == nullptr) {
     throw InternalError("backend::cpp: the design root roots no tree");
   }
   const mir::Class& root_class = root.GetClass(tree->root);
-  std::string out;
-  out += std::format("#include \"{}\"\n", support::kHostEntryHeader);
-  for (const auto& unit : units) {
-    if (DefinesForeignSymbol(unit)) {
-      out += std::format("#include \"{}.hpp\"\n", ToCppName(unit.name));
+  // The root defines every symbol no single unit can own, so it is among these
+  // records as well as being the unit this entry constructs. A header is
+  // included once whichever way it was reached.
+  std::vector<std::string> headers;
+  const auto include = [&](std::string header) {
+    if (std::ranges::find(headers, header) == headers.end()) {
+      headers.push_back(std::move(header));
+    }
+  };
+  for (const compiler::UnitProgramRecord& record : records) {
+    if (DefinesForeignSymbol(record)) {
+      include(ToCppName(record.unit_name));
     }
   }
-  out += std::format("#include \"{}.hpp\"\n", ToCppName(root.name));
+  include(ToCppName(root.name));
+
+  std::string out;
+  out += std::format("#include \"{}\"\n", support::kHostEntryHeader);
+  for (const std::string& header : headers) {
+    out += std::format("#include \"{}.hpp\"\n", header);
+  }
   out += "\n";
   out += "auto main(int argc, char** argv) -> int {\n";
   out += std::format(
@@ -168,55 +186,33 @@ auto RenderHostMain(
   return out;
 }
 
-auto EmitCppDeclarations(const mir::CompilationUnit& unit) -> CppArtifact {
+}  // namespace
+
+auto RefusalFor(const compiler::UnitProgramRecord& record)
+    -> std::optional<diag::Diagnostic> {
+  if (!record.settles_an_elaborated_coordinate) {
+    return std::nullopt;
+  }
+  return diag::Make(
+      diag::DiagCode::kUnsupportedExpressionForm,
+      std::format(
+          "'{}' reaches a property or a behavior through a reference whose "
+          "class no signature publishes; this backend spells a member by name "
+          "and has none for a position settled while the design elaborates, so "
+          "it is not yet supported here",
+          record.unit_name));
+}
+
+auto EmitCppUnit(const mir::CompilationUnit& unit) -> CppArtifact {
   return {
       .relpath = std::format("{}.hpp", ToCppName(unit.name)),
       .content = RenderUnitHeaderFile(unit)};
 }
 
 auto EmitCppHostMain(
-    std::span<const mir::CompilationUnit> units,
+    std::span<const compiler::UnitProgramRecord> records,
     const mir::CompilationUnit& root) -> CppArtifact {
-  return {.relpath = "main.cpp", .content = RenderHostMain(units, root)};
-}
-
-}  // namespace
-
-// Whether the unit settles where any name lands while the design elaborates.
-// A coordinate type exists in a unit's pool exactly when the unit formed one,
-// so this reads the whole answer off the types rather than looking for the
-// places a coordinate is used.
-auto SettlesACoordinate(const mir::CompilationUnit& unit) -> bool {
-  return std::ranges::any_of(unit.types.Ids(), [&](mir::TypeId id) {
-    const auto* library = unit.types.Get(id).As<mir::RuntimeLibraryType>();
-    return library != nullptr &&
-           (library->kind == mir::RuntimeLibraryKind::kPropertyCoordinate ||
-            library->kind == mir::RuntimeLibraryKind::kBehaviorCoordinate);
-  });
-}
-
-auto EmitCpp(
-    std::span<const mir::CompilationUnit> units,
-    const mir::CompilationUnit& root) -> diag::Result<CppArtifactSet> {
-  for (const mir::CompilationUnit& refused : units) {
-    if (SettlesACoordinate(refused)) {
-      return diag::Fail(
-          diag::DiagCode::kUnsupportedExpressionForm,
-          std::format(
-              "'{}' reaches a property or a behavior through a reference whose "
-              "class no signature publishes; this backend spells a member by "
-              "name and has none for a position settled while the design "
-              "elaborates, so it is not yet supported here",
-              refused.name));
-    }
-  }
-  CppArtifactSet set;
-  for (const auto& unit : units) {
-    set.files.push_back(EmitCppDeclarations(unit));
-  }
-  set.files.push_back(EmitCppDeclarations(root));
-  set.files.push_back(EmitCppHostMain(units, root));
-  return set;
+  return {.relpath = "main.cpp", .content = RenderHostMain(records, root)};
 }
 
 }  // namespace lyra::backend::cpp

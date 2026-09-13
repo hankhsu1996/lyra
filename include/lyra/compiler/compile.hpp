@@ -8,12 +8,9 @@
 
 #include <slang/driver/Driver.h>
 
-#include "lyra/compiler/unit_metadata.hpp"
 #include "lyra/diag/sink.hpp"
 #include "lyra/frontend/load.hpp"
-#include "lyra/hir/compilation_unit.hpp"
-#include "lyra/lir/compilation_unit.hpp"
-#include "lyra/mir/compilation_unit.hpp"
+#include "lyra/lowering/ast_to_hir/lower.hpp"
 #include "lyra/support/assertion_policy.hpp"
 
 namespace lyra::compiler {
@@ -30,60 +27,46 @@ inline constexpr std::string_view kDesignRootUnitName = "$root";
 // member, which makes this an ordered scale and not a dispatch set.
 enum class StopAfter : std::uint8_t { kParse, kHir, kMir, kLir };
 
-// Move-only owning bag of artifacts produced by Compile. Each optional is
-// std::nullopt unless the corresponding stage ran and produced a value.
-// ParseResult owns the slang Compilation and the SourceManager that
-// diagnostics' SourceSpans refer to; callers must keep the artifacts alive
+// What reading the elaborated AST produces: which units the design begins at,
+// and the HIR of every unit. Neither member carries a front-end node, so the
+// AST is read by one call and has to outlive nothing but it.
+struct ElaboratedDesign {
+  std::vector<lowering::ast_to_hir::TopLevelUnit> tops;
+  lowering::ast_to_hir::HirCompilation hir;
+};
+
+// Move-only owning bag of what the front end produced for its caller to read.
+// A stage's product is present exactly when the request reads it, which is not
+// the same as the stage having run: the elaborated AST is released as soon as
+// lowering to HIR has read it, because holding a whole design's worth of it to
+// the end of the run is what a peak is made of. So absence here says "this
+// request does not read that", never "that stage did not run".
+//
+// Nothing below HIR is here. A unit's lowered form is handed to whoever asked
+// for it and released before the next unit is lowered, so it belongs to that
+// reader for as long as it exists and to no bag at all.
+//
+// The SourceManager a diagnostic's spans resolve through is not a stage
+// product and lives as long as the artifacts do, which callers must keep alive
 // for the duration of any Diagnostic-resolution work.
 struct CompileArtifacts {
   std::optional<frontend::ParseResult> parse;
-  std::optional<std::vector<hir::CompilationUnit>> hir_units;
-  // Every unit a backend emits: the source module units and the package units
-  // (LRM 26). A package has no executable body, so `mir_units` is a superset of
-  // the executable units `lir_units` covers -- the two are not co-indexed.
-  std::optional<std::vector<mir::CompilationUnit>> mir_units;
-  // The synthesized design-root unit, present exactly when `mir_units` is. Its
-  // constructor elaborates the design by building the top-level units as its
-  // owned children. It is a compiler output distinct from the source units, so
-  // the host constructs it directly rather than searching the source set.
-  std::optional<mir::CompilationUnit> root_unit;
-  // The executable body of each executable source unit (every module; no
-  // package). Each LIR unit is self-contained -- it owns its own type graph and
-  // holds no reference back to the MIR it was lowered from.
-  std::optional<std::vector<lir::CompilationUnit>> lir_units;
-  // The definition metadata of each compiled unit, co-indexed with `lir_units`:
-  // a compiled unit is its executable body plus these immutable source-level
-  // facts, held apart because LIR carries no source-language concept. A host
-  // builds the runtime definition from the two together.
-  std::optional<std::vector<ElaboratedUnitMetadata>> unit_metadata;
-  // The design-root unit lowered to its executable body plus metadata, present
-  // exactly when `lir_units` is. The execution backend loads it alongside the
-  // source units and runs its construct to elaborate the design, the same path
-  // the C++ backend takes through the root's constructor.
-  std::optional<lir::CompilationUnit> root_lir_unit;
-  std::optional<ElaboratedUnitMetadata> root_metadata;
+  std::optional<ElaboratedDesign> design;
 
   // Reading a stage's product asserts that the stage ran. Which optionals are
   // filled follows from how far down the pipeline the caller asked to go, and
-  // nothing in this type carries that choice: asking for LIR after stopping at
-  // MIR is a driver bug, and a bare dereference makes it undefined behaviour
-  // instead of a report. Each accessor names the stage it wanted.
+  // nothing in this type carries that choice: asking for HIR after stopping at
+  // elaboration is a driver bug, and a bare dereference makes it undefined
+  // behaviour instead of a report. Each accessor names the stage it wanted.
   //
   // Const, yet the compilation it hands back is not: what these artifacts own
   // is the pointer, and slang takes its own compilation mutably to serialize
   // or to look up the design root.
   [[nodiscard]] auto Elaboration() const -> slang::ast::Compilation&;
-  [[nodiscard]] auto HirUnits() const
-      -> const std::vector<hir::CompilationUnit>&;
-  [[nodiscard]] auto MirUnits() const
-      -> const std::vector<mir::CompilationUnit>&;
-  [[nodiscard]] auto RootUnit() const -> const mir::CompilationUnit&;
-  [[nodiscard]] auto LirUnits() const
-      -> const std::vector<lir::CompilationUnit>&;
-  [[nodiscard]] auto RootLirUnit() const -> const lir::CompilationUnit&;
-  [[nodiscard]] auto UnitMetadata() const
-      -> const std::vector<ElaboratedUnitMetadata>&;
-  [[nodiscard]] auto RootMetadata() const -> const ElaboratedUnitMetadata&;
+  [[nodiscard]] auto Design() const -> const ElaboratedDesign&;
+  // The design's HIR, to be drained: the stage below releases each unit as it
+  // lowers it, which is what keeps one unit resident instead of the design.
+  [[nodiscard]] auto DesignToLower() -> ElaboratedDesign&;
 
   CompileArtifacts() = default;
   CompileArtifacts(const CompileArtifacts&) = delete;
@@ -107,12 +90,16 @@ struct CompileResult {
   std::string slang_diagnostics;
 };
 
+// Runs the front end and lowers the compilation to HIR. Everything below HIR
+// is per unit and belongs to whoever consumes it, so it is driven separately:
+// a caller that wants MIR or an emitted artifact runs `LowerDesign` over what
+// comes back here and takes each unit as it is produced.
+//
 // The driver arrives configured -- its options parsed, its sources named --
 // and owns the text every resulting span points into, so it must outlive the
 // returned artifacts.
 auto Compile(
     slang::driver::Driver& driver, LoweringPolicy policy,
-    diag::DiagnosticSink& sink, StopAfter stop_after = StopAfter::kMir)
-    -> CompileResult;
+    diag::DiagnosticSink& sink, StopAfter stop_after) -> CompileResult;
 
 }  // namespace lyra::compiler

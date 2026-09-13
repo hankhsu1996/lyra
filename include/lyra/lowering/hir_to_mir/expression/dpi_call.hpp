@@ -73,16 +73,16 @@ auto LowerForeignImportCallStmtForm(
     const hir::ForeignImportRef& ref) -> std::optional<diag::Result<mir::Stmt>>;
 
 // The C-ABI adaptation of one exported subroutine (LRM 35.5): the entry's own
-// signature and body, the program-global name the foreign side reaches it by,
-// and where that name's definition lives. Kept as those facts rather than a
-// finished declaration because a subroutine of a scope is published as an entry
-// the scope holds and a package's as a linked symbol of the package's own
-// namespace, which is the caller's to place -- but which of the two it is
-// follows the target it dispatches into, which is settled here.
+// body, the program-global name the foreign side reaches it by, and the
+// prototype that name publishes. Kept as those facts rather than a finished
+// declaration because a subroutine of a scope is published as an entry the
+// scope holds and a package's as a linked symbol of the package's own
+// namespace, and which of the two applies is the caller's own situation rather
+// than something to restate here.
 struct ForeignExportEntry {
   mir::CallableCode code;
   mir::ForeignLinkage linkage;
-  mir::ForeignDefinition definition;
+  mir::TypeId signature;
 };
 
 // Builds that adaptation: C-ABI parameters marshal to the exported subroutine's

@@ -2432,10 +2432,9 @@ auto StructuralScopeLowerer::PopulateBodies(WalkFrame parent_frame)
         unit_lowerer, ctor_frame,
         mir::CallableTarget{.owner = class_id_, .slot = method_id},
         method_result_type, export_decl);
-    unit_lowerer.Unit().foreign_surface.push_back(
-        mir::ForeignSymbol{
-            .linkage = entry.linkage,
-            .definition = std::move(entry.definition)});
+    unit_lowerer.Unit().foreign_scope_entries.push_back(
+        mir::ForeignScopeEntry{
+            .linkage = entry.linkage, .signature = entry.signature});
     mir_class.abi_adapters.Add(
         mir::AbiAdapter{
             .code = std::move(entry.code),

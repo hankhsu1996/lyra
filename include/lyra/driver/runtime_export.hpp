@@ -1,8 +1,6 @@
 #pragma once
 
-#include <expected>
 #include <filesystem>
-#include <string>
 #include <string_view>
 
 #include "lyra/diag/diagnostic.hpp"
@@ -29,7 +27,7 @@ struct RuntimeLocation {
 // resolve relative to its own install location. Callers depend only on the
 // returned paths.
 auto ResolveRuntimeLocation(std::string_view binary_path)
-    -> std::expected<RuntimeLocation, std::string>;
+    -> diag::Result<RuntimeLocation>;
 
 // Copy the located runtime (header closure plus the static library) into
 // `dest_dir`, matching the relative layout the emitted build recipe references,

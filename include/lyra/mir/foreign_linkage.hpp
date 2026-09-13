@@ -1,7 +1,6 @@
 #pragma once
 
 #include <string>
-#include <variant>
 
 #include "lyra/mir/type_id.hpp"
 
@@ -24,31 +23,18 @@ struct ForeignLinkage {
   std::string foreign_name;
 };
 
-// The unit that owns the callable defines the symbol, and that callable carries
-// the prototype the name publishes, so nothing more is stated here.
-struct UnitSymbolDefinition {};
-
-// The subroutine behind the name is compiled once per specialization of its
-// declaring scope, so the entries belong to the scopes rather than to any one
-// unit and no single callable's signature is the published one. The design as a
-// whole defines the symbol once for all of them, over the machine function type
-// stated here.
-struct PerScopeEntryDefinition {
-  TypeId signature;
-};
-
-// Where the definition of a foreign name the design supplies lives. A name the
-// design only declares is defined by the foreign side and takes part in no
-// unit's surface, so it is not one of these.
-using ForeignDefinition =
-    std::variant<UnitSymbolDefinition, PerScopeEntryDefinition>;
-
-// One foreign name this unit takes part in (LRM 35). A unit knows its own
-// foreign surface as it is built, so it states it here rather than leaving a
-// program-level consumer to search the unit's classes for linkage.
-struct ForeignSymbol {
+// A foreign name whose entry sits on a scope rather than in a unit's namespace
+// (LRM 35.5.3). The subroutine behind it is compiled once per specialization of
+// that scope, so no one of those entries is the published symbol and no single
+// callable's signature is the published prototype; the program defines the
+// symbol once for all of them, over the machine function type stated here.
+//
+// A name a unit's own namespace owns needs no entry of this kind: its callable
+// is the symbol and carries the prototype. So is a name the design only
+// declares, which the foreign side defines.
+struct ForeignScopeEntry {
   ForeignLinkage linkage;
-  ForeignDefinition definition;
+  TypeId signature;
 };
 
 }  // namespace lyra::mir

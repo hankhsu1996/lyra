@@ -120,6 +120,25 @@ the design.
    declaration a unit never published cannot move one that it did. A backend realizes this rule with
    whatever its target provides; it never re-decides it.
 
+9. **The design's own link-level unit is a unit, and invariant 2 binds it.** A design needs one
+   artifact nothing in the source declares -- the one whose construct elaborates the design by
+   building the tops. It is synthesized rather than lowered from a source module, and that changes
+   nothing about what it may read: the signatures of the units it references, and no unit's
+   contents. Work that cannot be expressed that way is not this unit's, and the party it belongs to
+   is whoever runs after compilation. Symbol uniqueness across units is the linker's, by the same
+   mechanism any target uses for a definition several artifacts emit. Composing what each unit
+   registers -- an initialization order, the union of a foreign name space -- is the runtime's or
+   the build's. A compiler that does either itself has to read every unit, which is the one thing a
+   unit boundary exists to forbid.
+
+10. **A backend is a choice of linker, not a choice of pipeline.** What an artifact is varies -- an
+    object file, a target-language source compiled separately, a module loaded into an execution
+    session -- and so does the party that resolves names across artifacts. Nothing upstream of the
+    artifact varies with that choice. An execution session is a linker: it resolves symbols across
+    modules as it loads them, which is the same job a system linker does earlier. So a backend that
+    needs a different pipeline shape from another backend has put something in the wrong place, and
+    the thing in the wrong place is upstream of both.
+
 ## Boundary to Adjacent Layers
 
 - `compilation_unit_model.md` defines the unit and its signature; this doc defines what a unit's
@@ -139,6 +158,10 @@ the design.
 - An emitted artifact that contains more than one unit's bodies, or that enumerates all units (a
   global "wiring" file). This is the canonical violation: it serializes otherwise-independent
   compilation and reintroduces an undeclared whole-design dependency.
+- A synthesized link-level unit that reads the units' contents rather than their signatures. Being
+  synthesized rather than lowered from source is not a licence: it is a referrer like any other, and
+  a step that needs two units' contents at once is a link step or a runtime step wearing a
+  compiler's clothes.
 - A referrer's artifact that names, includes, or casts to the type of a unit it does not reference
   -- in particular, an opaque-segment realization naming the target unit's internal type, member, or
   field. Naming a referenced unit's own published declaration is not this shape: that declaration is

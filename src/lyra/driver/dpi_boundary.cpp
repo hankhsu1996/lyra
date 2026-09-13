@@ -62,11 +62,10 @@ auto ValidateDpiLinkInputs(std::span<const std::string> sources)
 }
 
 auto WriteDpiSurface(
-    const RuntimeLocation& runtime, std::span<const mir::CompilationUnit> units,
-    const mir::CompilationUnit& root, const std::filesystem::path& dir)
-    -> diag::Result<void> {
-  if (auto r =
-          WriteFile(dir / kDpiAbiHeader, dpi::RenderAbiHeader(units, root));
+    const RuntimeLocation& runtime,
+    std::span<const compiler::UnitProgramRecord> records,
+    const std::filesystem::path& dir) -> diag::Result<void> {
+  if (auto r = WriteFile(dir / kDpiAbiHeader, dpi::RenderAbiHeader(records));
       !r) {
     return r;
   }

@@ -209,6 +209,15 @@ Four checks, all cheap:
   flattens it at the point of use, so does the second. Two shapes for one rule is what "the code is
   getting messy" is made of, and it is invisible from inside either axis: each is locally
   reasonable, and no reader of one is looking at the other.
+- **Does this step need two units' _contents_ at once?** Contents against declarations is the whole
+  distinction: reading what another unit declared is a dependency, reading its body is a broken
+  boundary. A step that needs the second is not a compilation step -- it is a link step or a runtime
+  step wearing a compiler's clothes, and whoever it really belongs to runs after compilation. The
+  check is worth running on anything that feels like "assembly", because such a step reads as
+  obviously necessary from inside: somebody has to decide the order, somebody has to make the name
+  unique. Somebody does; it is not the compiler. What the shape costs before anyone calls it a
+  design problem is a memory peak proportional to the design rather than to its largest unit, which
+  is measured and not hypothetical.
 - **How much machinery does this shape need, next to its neighbors?** A memo, a recursion, an extra
   "unknown" state threaded through several returns -- each is evidence about the shape, not about
   the problem. The mechanical form of the check is to try placing the work inside a contract some

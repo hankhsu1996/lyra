@@ -1242,10 +1242,7 @@ auto SynthesizeForeignExportEntry(
   return ForeignExportEntry{
       .code = std::move(code),
       .linkage = mir::ForeignLinkage{.foreign_name = export_decl.foreign_name},
-      .definition = through_scope
-                        ? mir::ForeignDefinition{mir::PerScopeEntryDefinition{
-                              .signature = signature}}
-                        : mir::ForeignDefinition{mir::UnitSymbolDefinition{}}};
+      .signature = signature};
 }
 
 }  // namespace lyra::lowering::hir_to_mir

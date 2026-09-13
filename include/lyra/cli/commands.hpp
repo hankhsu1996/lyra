@@ -38,24 +38,34 @@ class Reporter {
   diag::RenderOptions opts_;
 };
 
-// What a command receives: the request, what the compiler produced from it,
+// What a command receives: the request, what the front end produced from it,
 // and the channel for anything that goes wrong. A command reads this and
 // returns the process exit code; nothing else about the invocation is visible
 // to it.
+//
+// The artifacts are not const: everything below HIR is driven by the command
+// itself, and driving it takes each unit's HIR out as that unit is lowered, so
+// what is resident at any moment is one unit.
+//
+// A command writes what went wrong into the sink and renders nothing. Every
+// stage above it already writes there, so one account covers the whole run and
+// what reaches the terminal is decided in one place -- which is also why a
+// command answering with nothing always means the same thing.
 // Members are non-owning pointers rather than references: this outlives
 // nothing, and a reference member would make the type unassignable for no gain.
 struct CommandContext {
   const ParsedArgs* args;
-  const compiler::CompileArtifacts* artifacts;
+  compiler::CompileArtifacts* artifacts;
+  diag::DiagnosticSink* sink;
   const diag::SourceManager* mgr;
   std::span<const driver::DpiLinkInput> dpi_inputs;
   driver::SourceFormatting formatting;
-  const Reporter* report;
   std::string_view program_path;
 };
 
-// How far the compiler has to lower for a command to have what it reads.
-auto LoweringDepth(const ParsedArgs& args) -> compiler::StopAfter;
+// How far the front end has to run for a command to have what it drives from:
+// elaboration alone, or the HIR everything below it is lowered from.
+auto FrontEndDepth(const ParsedArgs& args) -> compiler::StopAfter;
 
 auto RunCommand(const CommandContext& ctx) -> int;
 

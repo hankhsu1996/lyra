@@ -5,9 +5,9 @@
 #include <string>
 #include <vector>
 
+#include "lyra/compiler/unit_program_record.hpp"
 #include "lyra/diag/diagnostic.hpp"
 #include "lyra/driver/runtime_export.hpp"
-#include "lyra/mir/compilation_unit.hpp"
 
 namespace lyra::driver {
 
@@ -38,9 +38,9 @@ auto ValidateDpiLinkInputs(std::span<const std::string> sources)
 // declares no DPI-C gets the same header with no prototypes -- so no consumer
 // needs a case for its absence.
 auto WriteDpiSurface(
-    const RuntimeLocation& runtime, std::span<const mir::CompilationUnit> units,
-    const mir::CompilationUnit& root, const std::filesystem::path& dir)
-    -> diag::Result<void>;
+    const RuntimeLocation& runtime,
+    std::span<const compiler::UnitProgramRecord> records,
+    const std::filesystem::path& dir) -> diag::Result<void>;
 
 // Compiles the DPI-C link inputs into one shared library and returns its path.
 // An ahead-of-time image links these sources into the program, so it needs no

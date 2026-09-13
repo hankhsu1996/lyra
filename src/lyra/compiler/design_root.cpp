@@ -11,9 +11,9 @@
 #include <variant>
 #include <vector>
 
-#include "lyra/base/internal_error.hpp"
 #include "lyra/base/overloaded.hpp"
 #include "lyra/compiler/unit_metadata.hpp"
+#include "lyra/compiler/unit_program_record.hpp"
 #include "lyra/hir/compilation_unit.hpp"
 #include "lyra/hir/external_unit_object.hpp"
 #include "lyra/hir/structural_scope.hpp"
@@ -91,24 +91,25 @@ void OrderNamespaceUnit(
 }
 
 // Resolves the whole-design plan for bringing up what each unit's namespace
-// owns, from the compiled units. A namespace unit is one that states a
-// namespace to bring up; every one of them takes part in both phases, so
+// owns, from what each unit's record states. A namespace unit is one whose
+// record carries a bring-up; every one of them takes part in both phases, so
 // nothing here asks what a given one supplied. The order prefers a unit a
 // given initializer reads directly to come first, which the relative order of
 // initializers does not require -- it is what makes one run's output match the
 // next. The names are walked sorted so the result is deterministic for a given
 // design.
 auto BuildNamespaceStorageInitializationPlan(
-    std::span<const mir::CompilationUnit> units)
+    std::span<const UnitProgramRecord> records)
     -> lowering::hir_to_mir::NamespaceStorageInitializationPlan {
   std::unordered_map<std::string, std::vector<std::string>> initializer_reads;
   std::vector<std::string> names;
-  for (const mir::CompilationUnit& unit : units) {
-    if (mir::BroughtUpNamespaceOf(unit) == nullptr) {
+  for (const UnitProgramRecord& unit : records) {
+    if (!unit.namespace_bring_up.has_value()) {
       continue;
     }
-    names.push_back(unit.name);
-    initializer_reads.emplace(unit.name, unit.direct_initializer_unit_reads);
+    names.push_back(unit.unit_name);
+    initializer_reads.emplace(
+        unit.unit_name, unit.namespace_bring_up->initializer_unit_reads);
   }
   std::ranges::sort(names);
 
@@ -121,32 +122,6 @@ auto BuildNamespaceStorageInitializationPlan(
     OrderNamespaceUnit(name, initializer_reads, covered, placed, plan.units);
   }
   return plan;
-}
-
-// Re-interns a foreign boundary type into the design root's own type pool. A
-// type identity belongs to the unit that interned it, so a signature read from
-// a unit means nothing in the root until every type it names is interned there
-// too. The set is the closed one a foreign signature can name (LRM 35.5.6,
-// Annex H): machine scalars, a borrowed pointer to one, and the canonical
-// vector and open-array handles.
-auto ReinternForeignType(
-    mir::CompilationUnit& root, const mir::CompilationUnit& unit,
-    mir::TypeId id) -> mir::TypeId {
-  const mir::Type& data = unit.types.Get(id);
-  if (const auto* pointer = data.As<mir::PointerType>()) {
-    return root.types.Intern(
-        mir::Type{mir::PointerType{
-            .pointee = ReinternForeignType(root, unit, pointer->pointee),
-            .ownership = pointer->ownership,
-            .mutability = pointer->mutability}});
-  }
-  if (data.Is<mir::VoidType>() || data.Is<mir::MachineIntType>() ||
-      data.Is<mir::MachineFloatType>() || data.Is<mir::MachineCStringType>() ||
-      data.Is<mir::RuntimeLibraryType>()) {
-    return root.types.Intern(data);
-  }
-  throw InternalError(
-      "ReinternForeignType: this type does not cross a foreign boundary");
 }
 
 // Defines, in the design root, the program-global symbol a foreign source calls
@@ -248,33 +223,34 @@ void DefineExportSymbol(
 // own entry, but the name is one symbol; LRM 35.5.4 requires their prototypes
 // to agree, which the frontend has already checked.
 void DefineExportSymbols(
-    mir::CompilationUnit& root, std::span<const mir::CompilationUnit> units) {
+    mir::CompilationUnit& root, std::span<const UnitProgramRecord> records) {
   std::unordered_set<std::string> defined;
-  for (const mir::CompilationUnit& unit : units) {
-    for (const mir::ForeignSymbol& symbol : unit.foreign_surface) {
+  for (const UnitProgramRecord& unit : records) {
+    for (const ForeignName& name : unit.foreign_names) {
       std::visit(
           Overloaded{
-              // The unit that owns the callable defines the symbol itself, so
-              // the design has nothing left to define for this name.
-              [](const mir::UnitSymbolDefinition&) {},
-              [&](const mir::PerScopeEntryDefinition& per_scope) {
-                if (!defined.insert(symbol.linkage.foreign_name).second) {
+              // The user's own C supplies the body, so the design defines
+              // nothing for this name.
+              [](const DefinedByTheForeignSide&) {},
+              // The declaring unit's own artifact carries the definition, so
+              // the program has nothing left to define.
+              [](const DefinedByTheUnit&) {},
+              [&](const DefinedByTheProgram&) {
+                if (!defined.insert(name.linkage_name).second) {
                   return;
                 }
-                const auto& signature = unit.types.Get(per_scope.signature)
-                                            .Get<mir::MachineFunctionType>();
-                std::vector<mir::TypeId> params;
-                params.reserve(signature.params.size());
-                for (const mir::TypeId param : signature.params) {
-                  params.push_back(ReinternForeignType(root, unit, param));
-                }
-                const mir::MachineFunctionType local{
-                    .params = std::move(params),
-                    .result =
-                        ReinternForeignType(root, unit, signature.result)};
-                DefineExportSymbol(root, symbol.linkage, local);
+                const mir::TypeId adopted = AdoptForeignType(
+                    root.types, unit.foreign_types, name.prototype);
+                // Held by value: defining the symbol interns into the same
+                // pool this was read from.
+                const mir::MachineFunctionType local =
+                    root.types.Get(adopted).Get<mir::MachineFunctionType>();
+                DefineExportSymbol(
+                    root,
+                    mir::ForeignLinkage{.foreign_name = name.linkage_name},
+                    local);
               }},
-          symbol.definition);
+          name.body);
     }
   }
 }
@@ -282,7 +258,7 @@ void DefineExportSymbols(
 }  // namespace
 
 auto SynthesizeDesignRoot(
-    std::span<const mir::CompilationUnit> units,
+    std::span<const UnitProgramRecord> records,
     std::span<const lowering::ast_to_hir::TopLevelUnit> tops,
     const hir::UnitSignatures& signatures, StopAfter stop_after,
     const diag::SourceManager& source_manager)
@@ -290,11 +266,11 @@ auto SynthesizeDesignRoot(
   const hir::CompilationUnit root_hir = BuildDesignRootHir(tops, signatures);
   lowering::hir_to_mir::UnitLowerer root_lowerer(root_hir, source_manager);
   auto root_mir = root_lowerer.RunDesignRoot(
-      BuildNamespaceStorageInitializationPlan(units));
+      BuildNamespaceStorageInitializationPlan(records));
   if (!root_mir) {
     return std::unexpected(std::move(root_mir.error()));
   }
-  DefineExportSymbols(*root_mir, units);
+  DefineExportSymbols(*root_mir, records);
   DesignRootArtifacts artifacts{
       .mir = *std::move(root_mir),
       .lir = std::nullopt,
