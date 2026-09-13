@@ -210,9 +210,15 @@ auto UnitLowerer::DeclareStructuralIdentities(const slang::ast::Scope& scope)
       // A DPI-C import declares no body and reserves no subroutine id; the
       // unit interns its record on first sight from either side. What it does
       // record here is the scope it is declared in, which a `context` import
-      // observes during its foreign call (LRM 35.5.3).
+      // observes during its foreign call (LRM 35.5.3) -- and only an
+      // instantiated scope is one. A namespace is never instantiated, so its
+      // declarations name none and a call to one observes no scope, whether it
+      // is made from inside the namespace or from a unit that imported the
+      // name.
       if (sub.flags.has(slang::ast::MethodFlags::DPIImport)) {
-        MapForeignImportScope(sub, frame);
+        if (unit_.role != hir::UnitRole::kNamespace) {
+          MapForeignImportScope(sub, frame);
+        }
         continue;
       }
       const hir::StructuralSubroutineId id =

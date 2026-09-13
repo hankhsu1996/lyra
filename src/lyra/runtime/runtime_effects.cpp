@@ -88,13 +88,13 @@ ProcessExecutionGuard::ProcessExecutionGuard(
     : effects_(&effects),
       previous_process_(
           std::exchange(AsRuntime(effects).current_process_, &process)),
-      previous_rng_(
-          std::exchange(AsRuntime(effects).drawing_rng_, &process.Rng())) {
+      previous_running_(
+          std::exchange(AsRuntime(effects).running_, &process.Running())) {
 }
 
 ProcessExecutionGuard::~ProcessExecutionGuard() {
   AsRuntime(*effects_).current_process_ = previous_process_;
-  AsRuntime(*effects_).drawing_rng_ = previous_rng_;
+  AsRuntime(*effects_).running_ = previous_running_;
 }
 
 auto RuntimeEffects::Stream() -> StreamDispatcher& {
@@ -280,7 +280,7 @@ void RuntimeEffects::Spawn(Coroutine<void> coroutine) {
   // at its root and the order the branches then run in does not move any of it.
   auto child = std::make_shared<RuntimeProcess>(
       parent.OwningScope(), ProcessKind::kSpawned, std::move(coroutine),
-      parent.Rng().NextSeed());
+      parent.Running().rng.NextSeed());
   const CoroutineHandle handle = child->TopHandle();
   // The spawned activity is enabled within whatever disable targets the spawner
   // is inside (LRM 9.6.2), so it takes that membership here rather than
@@ -332,15 +332,19 @@ auto RuntimeEffects::TryCurrentProcess() -> RuntimeProcess* {
   return AsRuntime(*this).current_process_;
 }
 
-auto RuntimeEffects::DrawingRng() -> DrawRng& {
-  DrawRng* rng = AsRuntime(*this).drawing_rng_;
-  if (rng == nullptr) {
+auto RuntimeEffects::Running() -> RunningState& {
+  RunningState* running = AsRuntime(*this).running_;
+  if (running == nullptr) {
     throw InternalError(
-        "RuntimeEffects::DrawingRng: a randomization call reached the runtime "
-        "with no process and no static initialization running -- please report "
-        "this as a bug");
+        "RuntimeEffects::Running: a generated body reached the runtime with no "
+        "process and no static initialization running -- please report this as "
+        "a bug");
   }
-  return *rng;
+  return *running;
+}
+
+auto RuntimeEffects::TryRunning() -> RunningState* {
+  return AsRuntime(*this).running_;
 }
 
 auto RuntimeEffects::Now() const -> SimTime {

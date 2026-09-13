@@ -21,7 +21,7 @@ RuntimeProcess::RuntimeProcess(
     : kind_(kind),
       owning_scope_(owning_scope),
       coroutine_(std::move(coroutine)),
-      rng_(seed),
+      running_(RunningState{.rng = DrawRng{seed}, .dpi_scopes = {}}),
       // Before the body runs, the top frame is the active leaf (what the engine
       // schedules to start the process); a wait moves the leaf inward.
       current_leaf_(coroutine_.Token()) {

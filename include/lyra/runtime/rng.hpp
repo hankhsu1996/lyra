@@ -62,13 +62,4 @@ class DrawRng {
   std::mt19937 engine_;
 };
 
-// The generator of a static initialization (LRM 18.14.1), which owns no object
-// to keep one on. It carries the generator it displaced, so leaving restores
-// whatever was drawing before.
-struct DisplacingRng {
-  DrawRng rng;
-  // Null where nothing was drawing before this one started.
-  DrawRng* displaced = nullptr;
-};
-
 }  // namespace lyra::runtime

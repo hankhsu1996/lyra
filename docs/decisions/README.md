@@ -472,6 +472,10 @@ the detail lives in the entry itself.
   randomization call draws from the generator installed for whatever is running, and a static
   initialization installs one just as a process does, seeded from the container the standard names
   rather than from whatever process happens to be executing.
+- [dpi-context-scope-is-an-extent](dpi-context-scope-is-an-extent.md) -- the scope a `context`
+  import makes current is stated as an entering call and a cleanup that gives it back on every way
+  out, never as a value whose destructor does it, and the chain it pushes onto belongs to whatever
+  is running rather than to a process.
 - [owner-transition-and-observation](owner-transition-and-observation.md) -- every mutation of
   observable storage reports one thing, whether the owner transitioned, and publication is a
   function of that alone; forming a designation is itself such a mutation; an event control's

@@ -4,8 +4,7 @@
 #include <string_view>
 
 #include "lyra/base/simulation_error.hpp"
-#include "lyra/runtime/runtime_effects.hpp"
-#include "lyra/runtime/runtime_process.hpp"
+#include "lyra/runtime/dpi_context.hpp"
 #include "lyra/runtime/scope.hpp"
 
 namespace lyra::runtime {
@@ -39,9 +38,7 @@ auto AmbientRunContext::Current() -> AmbientRunContext& {
 }
 
 auto CurrentExportScope() -> Scope* {
-  RuntimeProcess* process =
-      AmbientRunContext::Current().Effects().TryCurrentProcess();
-  Scope* scope = process == nullptr ? nullptr : process->CurrentDpiScope();
+  Scope* scope = CurrentDpiScope();
   if (scope == nullptr) {
     // The foreign side reached an instance-bound export with no scope
     // established. An import declared in a package or at `$unit` scope observes

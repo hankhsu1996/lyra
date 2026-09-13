@@ -44,10 +44,10 @@ and the element types Annex H.7.3 puts in C-compatible representation.
 
 On the execution backend scalar import (D10) is in, and by-pointer marshaling with it: a foreign
 call lowers to an external-linkage symbol, the by-value carriers marshal, and a canonical buffer
-carries a packed value across in either direction. What is left of the import surface (D11) is an
-open array whose actual is an unpacked array, and the scope a `context` import makes current;
-neither is blocked by anything DPI owns (`execution-backend.md`). Export and tasks there (D12)
-follow once the C++-backend items fix their shape.
+carries a packed value across in either direction, and a `context` import's scope is made current
+around its foreign call. What is left of the import surface (D11) is an open array whose actual is
+an unpacked array, which is not blocked by anything DPI owns (`execution-backend.md`). Export and
+tasks there (D12) follow once the C++-backend items fix their shape.
 
 ## Sub-Steps
 
@@ -173,8 +173,12 @@ protocol on top of it.
       handles, set / get scope, resolve a scope to and from its fully qualified name, per-scope user
       data, and time queries (a scope's effective unit and precision, and the current time scaled to
       it). A context import observes the instantiated scope of its declaration, established for the
-      duration of its foreign call; the current scope rides the calling process, so two
-      time-consuming context imports suspended concurrently never observe each other's scope. Every
+      duration of its foreign call and given back however that call ends; the current scope belongs
+      to whatever is running, so two time-consuming context imports suspended concurrently never
+      observe each other's scope, and one reached before any procedure starts -- from a variable
+      declaration assignment, a static class property, or a subroutine's static local (LRM 10.5,
+      26.2) -- observes the same scope a call from a procedure does. A declaration in a package or
+      at `$unit` scope is never instantiated and so observes none, wherever it is called from. Every
       export is a context function reached through the same run context (LRM 35.7).
 
 ### Open arrays
@@ -242,9 +246,8 @@ surface at a time; export and tasks follow once the C++-backend items fix their 
       scalar, and a `chandle` crosses in either direction and round-trips its identity. An open
       array images a single packed actual; one whose actual is an unpacked array is refused, and not
       by anything DPI owns -- imaging walks the actual down to its leaves, which the erased value
-      layer has no walk for (`execution-backend.md`). What is left of this item is that walk and the
-      scope a `context` import makes current, which does not lower to LIR. A `real` import rides on
-      the real value domain, not on this item.
+      layer has no walk for (`execution-backend.md`). What is left of this item is that walk. A
+      `real` import rides on the real value domain, not on this item.
 - [ ] D12 -- Export and DPI tasks on the execution backend, once the C++-backend export and task
       items (D4-D6c) define the shape.
 

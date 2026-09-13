@@ -195,6 +195,16 @@ struct Block {
             .then_scope = then_scope_id,
             .else_scope = std::nullopt});
   }
+
+  // Append `body` paired with a `cleanup` that runs on every way out of it,
+  // registering both as child scopes of this scope and consuming them. This is
+  // the second half of an extent whose first half -- whatever entering it does
+  // -- the caller has already appended here.
+  auto AppendFinally(Block body, Block cleanup) -> StmtId {
+    const BlockId body_id = child_scopes.Add(std::move(body));
+    const BlockId cleanup_id = child_scopes.Add(std::move(cleanup));
+    return AppendStmt(FinallyStmt{.body = body_id, .cleanup = cleanup_id});
+  }
 };
 
 }  // namespace lyra::mir

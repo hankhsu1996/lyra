@@ -14,7 +14,6 @@
 #include "lyra/runtime/plusargs.hpp"
 #include "lyra/runtime/runtime.hpp"
 #include "lyra/runtime/runtime_effects.hpp"
-#include "lyra/runtime/scope.hpp"
 
 namespace lyra::runtime {
 
@@ -34,22 +33,24 @@ auto RunDesignHost(int argc, char** argv, const RootBuilder& builder) -> int {
   // precedes the simulation (LRM 3.12). An error here has no activation to
   // leave and no final procedure to reach, so it is reported and the run never
   // starts.
-  Scope* root_scope = nullptr;
   try {
-    auto root = builder();
-    root_scope = root.get();
-    runtime.BindDesign(std::make_unique<Design>(std::move(root)));
+    runtime.BindDesign(std::make_unique<Design>(builder()));
   } catch (const std::exception&) {
     ReportRaisedError(runtime, std::current_exception());
     return EXIT_FAILURE;
   }
 
-  const AmbientRunContext run_context{root_scope, runtime};
   return RunSimulation(runtime);
 }
 
 auto RunSimulation(Runtime& runtime) -> int {
   try {
+    // Foreign code reaches the run with plain C arguments and nothing to find
+    // it by, so what it resolves a scope against is anchored for as long as the
+    // run lasts -- which starts at the first thing a run does, initializing
+    // state, since a context import can already be reached from there (LRM
+    // 10.5, 35.5.3).
+    const AmbientRunContext run_context{&runtime.DesignRoot(), runtime};
     return runtime.Run();
   } catch (const std::exception&) {
     ReportRaisedError(runtime, std::current_exception());

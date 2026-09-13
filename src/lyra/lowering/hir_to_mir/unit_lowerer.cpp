@@ -31,7 +31,6 @@
 #include "lyra/lowering/hir_to_mir/namespace_storage_initialization.hpp"
 #include "lyra/lowering/hir_to_mir/process_lowerer.hpp"
 #include "lyra/lowering/hir_to_mir/runtime_call.hpp"
-#include "lyra/lowering/hir_to_mir/static_init_extent.hpp"
 #include "lyra/lowering/hir_to_mir/static_var_binding.hpp"
 #include "lyra/lowering/hir_to_mir/structural_scope_lowerer.hpp"
 #include "lyra/lowering/hir_to_mir/walk_frame.hpp"
@@ -221,11 +220,15 @@ auto PopulateNamespaceOwnStorage(
 void WrapInNamespaceStaticInitExtent(
     const UnitLowerer& unit_lowerer, mir::CallableCode& code) {
   mir::Block extent;
-  EmitStaticInitBracket(
+  AppendRuntimeEffectStmt(
       unit_lowerer, extent, support::BuiltinFn::kEnterNamespaceStaticInit, {});
-  mir::Block closed = CloseStaticInitExtent(
-      unit_lowerer, std::move(extent), std::move(code.Body()));
-  code.Body() = std::move(closed);
+
+  mir::Block cleanup;
+  AppendRuntimeEffectStmt(
+      unit_lowerer, cleanup, support::BuiltinFn::kLeaveStaticInit, {});
+
+  extent.AppendFinally(std::move(code.Body()), std::move(cleanup));
+  code.Body() = std::move(extent);
 }
 
 // Publishes the two bodies the design root calls, and records what the value

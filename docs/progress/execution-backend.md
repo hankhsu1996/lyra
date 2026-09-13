@@ -461,6 +461,13 @@ each meets the same lifetime question above.
       walk at the element type and an erased one cannot: its elements are type-erased values, so the
       walk has no leaf type to end at. Formatting an aggregate is the same gap seen from another
       side, which is why `%p` over a container has no entry either.
+- [ ] A scope's declared timescale, which this backend does not carry into what a loaded design
+      knows about its scopes. Every scope therefore reports having none of its own, so the DPI-C
+      time queries answer with the simulation's precision instead of the scope's unit (LRM 3.14.2.3,
+      Annex H.13) -- a wrong answer rather than a refusal, recorded against the case that reads it.
+- [ ] A DPI-C export's foreign entry point, which this backend lowers as a body but publishes
+      nowhere the foreign side can link against, so it is refused (LRM 35.7). Reaching it needs the
+      design's own symbols resolvable from the foreign object, which is what `dpi.md` D12 waits on.
 - [x] **A region that consumes a control effect** -- what a named block, a named fork, and a task
       need so that `disable` of one resumes execution after it (LRM 9.6.2). A named procedural block
       runs here whether or not anything disables it, a self-`disable` leaves its own region, and an
