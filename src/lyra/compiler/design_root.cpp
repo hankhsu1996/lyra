@@ -12,18 +12,15 @@
 #include <vector>
 
 #include "lyra/base/overloaded.hpp"
-#include "lyra/compiler/unit_metadata.hpp"
 #include "lyra/compiler/unit_program_record.hpp"
 #include "lyra/hir/compilation_unit.hpp"
 #include "lyra/hir/external_unit_object.hpp"
 #include "lyra/hir/structural_scope.hpp"
 #include "lyra/hir/unit_signature.hpp"
 #include "lyra/hir/unit_signatures.hpp"
-#include "lyra/lir/verify.hpp"
 #include "lyra/lowering/hir_to_mir/callable_bindings.hpp"
 #include "lyra/lowering/hir_to_mir/namespace_storage_initialization.hpp"
 #include "lyra/lowering/hir_to_mir/unit_lowerer.hpp"
-#include "lyra/lowering/mir_to_lir/lower.hpp"
 #include "lyra/mir/compilation_unit.hpp"
 #include "lyra/mir/type_builders.hpp"
 
@@ -260,9 +257,9 @@ void DefineExportSymbols(
 auto SynthesizeDesignRoot(
     std::span<const UnitProgramRecord> records,
     std::span<const lowering::ast_to_hir::TopLevelUnit> tops,
-    const hir::UnitSignatures& signatures, StopAfter stop_after,
+    const hir::UnitSignatures& signatures,
     const diag::SourceManager& source_manager)
-    -> diag::Result<DesignRootArtifacts> {
+    -> diag::Result<mir::CompilationUnit> {
   const hir::CompilationUnit root_hir = BuildDesignRootHir(tops, signatures);
   lowering::hir_to_mir::UnitLowerer root_lowerer(root_hir, source_manager);
   auto root_mir = root_lowerer.RunDesignRoot(
@@ -271,22 +268,7 @@ auto SynthesizeDesignRoot(
     return std::unexpected(std::move(root_mir.error()));
   }
   DefineExportSymbols(*root_mir, records);
-  DesignRootArtifacts artifacts{
-      .mir = *std::move(root_mir),
-      .lir = std::nullopt,
-      .metadata = std::nullopt};
-
-  if (stop_after < StopAfter::kLir) {
-    return artifacts;
-  }
-  auto root_lir = lowering::mir_to_lir::LowerUnit(artifacts.mir);
-  if (!root_lir) {
-    return std::unexpected(std::move(root_lir.error()));
-  }
-  artifacts.lir = *std::move(root_lir);
-  lir::Verify(*artifacts.lir);
-  artifacts.metadata = BuildUnitMetadata(artifacts.mir);
-  return artifacts;
+  return *std::move(root_mir);
 }
 
 }  // namespace lyra::compiler

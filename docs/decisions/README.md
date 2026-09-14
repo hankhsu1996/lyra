@@ -103,6 +103,11 @@ the detail lives in the entry itself.
   the stage goes on, so one run accounts for every unit and every member rather than for the first
   that stopped; a stage that reported anything is the last one that runs, and what it produced is
   discarded.
+- [the-request-names-its-products](the-request-names-its-products.md) -- what a compilation step
+  answers with is decided by what was asked of it, so no caller asks whether a product it requested
+  is there and the only absence left means the run failed; a depth fixed at compile time, one entry
+  answering with an alternative per depth, a refusing accessor, and lowering only the units that
+  root objects are rejected.
 - [foreach-lowering](foreach-lowering.md) -- the lowering shape of `foreach`.
 - [compound-assignment-write-location](compound-assignment-write-location.md) -- one node per write
   target, evaluating the left-hand side exactly once (LRM 11.4.1); revised so an operator the

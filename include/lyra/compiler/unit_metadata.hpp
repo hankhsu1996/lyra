@@ -2,6 +2,8 @@
 
 #include <cstdint>
 
+#include "lyra/lir/compilation_unit.hpp"
+
 namespace lyra::mir {
 struct CompilationUnit;
 }  // namespace lyra::mir
@@ -20,11 +22,18 @@ struct ElaboratedUnitMetadata {
   std::int8_t time_precision_power = 0;
 };
 
+// One compiled unit, which is those two things. Neither half means anything
+// without the other, so they are produced and carried as one.
+struct ExecutableUnit {
+  lir::CompilationUnit body;
+  ElaboratedUnitMetadata definition;
+};
+
 // A unit's definition metadata is a source-level fact known once elaboration
 // fixes the unit's root scope: its precision is the root's declared resolution.
 // Derived from MIR so the executable body downstream never carries these
-// source-language concepts. The unit must have a root class (a module or the
-// design root, not a package).
+// source-language concepts. A unit whose object tree has no root (LRM 26) gives
+// its scopes no precision to state, and answers with the default.
 auto BuildUnitMetadata(const mir::CompilationUnit& unit)
     -> ElaboratedUnitMetadata;
 

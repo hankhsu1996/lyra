@@ -4,6 +4,7 @@
 #include <utility>
 
 #include "lyra/compiler/unit_metadata.hpp"
+#include "lyra/compiler/unit_program_record.hpp"
 #include "lyra/hir/compilation_unit.hpp"
 #include "lyra/lir/verify.hpp"
 #include "lyra/lowering/hir_to_mir/unit_lowerer.hpp"
@@ -11,9 +12,9 @@
 
 namespace lyra::compiler {
 
-auto LowerUnitPipeline(
-    const hir::CompilationUnit& unit, StopAfter stop_after,
-    const diag::SourceManager& source_manager) -> diag::Result<UnitArtifacts> {
+auto LowerUnitToSemantic(
+    const hir::CompilationUnit& unit, const diag::SourceManager& source_manager)
+    -> diag::Result<SemanticUnit> {
   lowering::hir_to_mir::UnitLowerer lowerer(unit, source_manager);
   auto mir = unit.role == hir::UnitRole::kNamespace ? lowerer.RunNamespace()
                                                     : lowerer.RunObjectRoot();
@@ -22,24 +23,19 @@ auto LowerUnitPipeline(
   }
   mir::CompilationUnit lowered = *std::move(mir);
   UnitProgramRecord record = ProgramRecordOf(lowered);
-  UnitArtifacts artifacts{
-      .mir = std::move(lowered),
-      .program_record = std::move(record),
-      .lir = std::nullopt,
-      .metadata = std::nullopt};
+  return SemanticUnit{
+      .mir = std::move(lowered), .program_record = std::move(record)};
+}
 
-  if (stop_after < StopAfter::kLir) {
-    return artifacts;
+auto LowerUnitToExecutable(const mir::CompilationUnit& unit)
+    -> diag::Result<ExecutableUnit> {
+  auto body = lowering::mir_to_lir::LowerUnit(unit);
+  if (!body) {
+    return std::unexpected(std::move(body.error()));
   }
-
-  auto lir = lowering::mir_to_lir::LowerUnit(artifacts.mir);
-  if (!lir) {
-    return std::unexpected(std::move(lir.error()));
-  }
-  artifacts.lir = *std::move(lir);
-  lir::Verify(*artifacts.lir);
-  artifacts.metadata = BuildUnitMetadata(artifacts.mir);
-  return artifacts;
+  lir::Verify(*body);
+  return ExecutableUnit{
+      .body = *std::move(body), .definition = BuildUnitMetadata(unit)};
 }
 
 }  // namespace lyra::compiler

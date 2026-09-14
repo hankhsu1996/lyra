@@ -1,7 +1,6 @@
 #include "lyra/cli/commands.hpp"
 
 #include <filesystem>
-#include <format>
 #include <iostream>
 #include <optional>
 #include <span>
@@ -79,7 +78,7 @@ auto RunDumpAst(const CommandContext& ctx) -> int {
   slang::JsonWriter writer;
   writer.setPrettyPrint(true);
 
-  slang::ast::Compilation& compilation = ctx.artifacts->Elaboration();
+  slang::ast::Compilation& compilation = *ctx.elaborated->compilation;
   slang::ast::ASTSerializer serializer(compilation, writer);
   serializer.setTryConstantFold(false);
 
@@ -102,31 +101,14 @@ auto RunDumpAst(const CommandContext& ctx) -> int {
   return 0;
 }
 
-// A product of the depth the command drove to. Absent here is a driver bug:
-// which optionals are filled follows from that depth and from nothing else.
-template <typename T>
-auto Required(const std::optional<T>& product, std::string_view stage)
-    -> const T& {
-  if (!product.has_value()) {
-    throw InternalError(std::format("cli: this run produced no {}", stage));
-  }
-  return *product;
-}
-
-// Drives everything below HIR to the depth this command reads. What a command
-// does with each unit as it arrives is the only part that varies, so it is the
-// only part a command states.
-//
-// Lowering reports every gap it meets rather than stopping at the first, so
-// there is no one diagnostic to hand back and the account is read from the
-// sink.
-template <typename Consume>
-auto DriveDesign(
-    const CommandContext& ctx, compiler::StopAfter depth, Consume consume)
-    -> std::optional<compiler::LoweredDesign> {
-  compiler::ElaboratedDesign& design = ctx.artifacts->DesignToLower();
-  return compiler::LowerDesign(
-      design.hir, design.tops, depth, *ctx.mgr, *ctx.sink, std::move(consume));
+// The design every command below the front end drives from. Lowering to HIR is
+// where the elaborated AST's last reader finishes, so it is taken here, once
+// per run, and a whole design's worth of it stops being resident.
+auto DesignOf(const CommandContext& ctx)
+    -> std::optional<compiler::ElaboratedDesign> {
+  return compiler::LowerToHir(
+      std::move(ctx.elaborated->compilation), ctx.elaborated->source_mapper,
+      compiler::LoweringPolicy{.assertions = ctx.args->assertions}, *ctx.sink);
 }
 
 // Writes the design's emitted C++ sources into `dir` and answers with what
@@ -136,16 +118,20 @@ auto DriveDesign(
 auto WriteCppSources(
     const CommandContext& ctx, const std::filesystem::path& dir)
     -> std::optional<std::vector<compiler::UnitProgramRecord>> {
+  auto design = DesignOf(ctx);
+  if (!design) {
+    return std::nullopt;
+  }
   driver::CppProjectSink sources(dir, ctx.formatting);
-  auto lowered = DriveDesign(
-      ctx, compiler::StopAfter::kMir,
-      [&](compiler::UnitArtifacts unit) -> diag::Result<void> {
+  auto lowered = compiler::LowerToSemantic(
+      *design, ctx.elaborated->diag_sources, *ctx.sink,
+      [&](compiler::SemanticUnit unit) -> diag::Result<void> {
         return sources.Take(unit.mir, unit.program_record);
       });
   if (!lowered) {
     return std::nullopt;
   }
-  if (auto written = sources.Finish(lowered->root.mir, lowered->records);
+  if (auto written = sources.Finish(lowered->root, lowered->records);
       !written) {
     ctx.sink->Report(std::move(written.error()));
     return std::nullopt;
@@ -154,7 +140,11 @@ auto WriteCppSources(
 }
 
 auto RunDumpHir(const CommandContext& ctx) -> int {
-  for (hir::CompilationUnit& slot : ctx.artifacts->DesignToLower().hir.units) {
+  auto design = DesignOf(ctx);
+  if (!design) {
+    return 1;
+  }
+  for (hir::CompilationUnit& slot : design->hir.units) {
     const hir::CompilationUnit unit = std::move(slot);
     fmt::print("{}", hir::DumpHir(unit));
   }
@@ -162,33 +152,38 @@ auto RunDumpHir(const CommandContext& ctx) -> int {
 }
 
 auto RunDumpMir(const CommandContext& ctx) -> int {
-  auto lowered = DriveDesign(
-      ctx, compiler::StopAfter::kMir,
-      [](compiler::UnitArtifacts unit) -> diag::Result<void> {
+  auto design = DesignOf(ctx);
+  if (!design) {
+    return 1;
+  }
+  auto lowered = compiler::LowerToSemantic(
+      *design, ctx.elaborated->diag_sources, *ctx.sink,
+      [](compiler::SemanticUnit unit) -> diag::Result<void> {
         fmt::print("{}", mir::DumpMir(unit.mir));
         return {};
       });
   if (!lowered) {
     return 1;
   }
-  fmt::print("{}", mir::DumpMir(lowered->root.mir));
+  fmt::print("{}", mir::DumpMir(lowered->root));
   return 0;
 }
 
 auto RunDumpLir(const CommandContext& ctx) -> int {
-  auto lowered = DriveDesign(
-      ctx, compiler::StopAfter::kLir,
-      [](compiler::UnitArtifacts unit) -> diag::Result<void> {
-        // A namespace has no executable body, so it reaches here with none.
-        if (unit.lir.has_value()) {
-          fmt::print("{}", lir::DumpLir(*unit.lir));
-        }
+  auto design = DesignOf(ctx);
+  if (!design) {
+    return 1;
+  }
+  auto lowered = compiler::LowerToExecutable(
+      *design, ctx.elaborated->diag_sources, *ctx.sink,
+      [](compiler::ExecutableUnit unit) -> diag::Result<void> {
+        fmt::print("{}", lir::DumpLir(unit.body));
         return {};
       });
   if (!lowered) {
     return 1;
   }
-  fmt::print("{}", lir::DumpLir(Required(lowered->root.lir, "LIR")));
+  fmt::print("{}", lir::DumpLir(lowered->root.body));
   return 0;
 }
 
@@ -202,18 +197,19 @@ auto RunDumpLlvm(const CommandContext& ctx) -> int {
     fmt::print("{}", emitted->Print());
     return {};
   };
-  auto lowered = DriveDesign(
-      ctx, compiler::StopAfter::kLir,
-      [&](compiler::UnitArtifacts unit) -> diag::Result<void> {
-        if (!unit.lir.has_value()) {
-          return {};
-        }
-        return print(*unit.lir);
+  auto design = DesignOf(ctx);
+  if (!design) {
+    return 1;
+  }
+  auto lowered = compiler::LowerToExecutable(
+      *design, ctx.elaborated->diag_sources, *ctx.sink,
+      [&](compiler::ExecutableUnit unit) -> diag::Result<void> {
+        return print(unit.body);
       });
   if (!lowered) {
     return 1;
   }
-  if (auto printed = print(Required(lowered->root.lir, "LIR")); !printed) {
+  if (auto printed = print(lowered->root.body); !printed) {
     ctx.sink->Report(std::move(printed.error()));
     return 1;
   }
@@ -342,17 +338,15 @@ auto RunJitBackend(const CommandContext& ctx) -> int {
   // one execution session before the design runs. That is the one path here
   // that holds the design: what it holds is the executable bodies, and the MIR
   // each was lowered from is released as it goes.
-  std::vector<lir::CompilationUnit> bodies;
-  std::vector<compiler::ElaboratedUnitMetadata> definitions;
-  auto lowered = DriveDesign(
-      ctx, compiler::StopAfter::kLir,
-      [&](compiler::UnitArtifacts unit) -> diag::Result<void> {
-        // A namespace has no executable body, so what a session loads is the
-        // units that have one.
-        if (unit.lir.has_value()) {
-          bodies.push_back(*std::move(unit.lir));
-          definitions.push_back(Required(unit.metadata, "unit metadata"));
-        }
+  auto design = DesignOf(ctx);
+  if (!design) {
+    return 1;
+  }
+  std::vector<compiler::ExecutableUnit> units;
+  auto lowered = compiler::LowerToExecutable(
+      *design, ctx.elaborated->diag_sources, *ctx.sink,
+      [&](compiler::ExecutableUnit unit) -> diag::Result<void> {
+        units.push_back(std::move(unit));
         return {};
       });
   if (!lowered) {
@@ -369,10 +363,8 @@ auto RunJitBackend(const CommandContext& ctx) -> int {
   // The design-root unit's construct elaborates the whole design, building the
   // top-level units as its owned children, so the JIT runs the design once from
   // that one entry rather than per top.
-  auto exit_code = jit::Execute(
-      bodies, definitions, Required(lowered->root.lir, "LIR"),
-      Required(lowered->root.metadata, "unit metadata"), dpi_library,
-      ctx.args->child_args);
+  auto exit_code =
+      jit::Execute(units, lowered->root, dpi_library, ctx.args->child_args);
   if (!exit_code) {
     ctx.sink->Report(std::move(exit_code.error()));
     return 1;
@@ -394,33 +386,10 @@ auto RunBackend(const CommandContext& ctx) -> int {
               "this execution backend is not yet implemented"));
       return 1;
   }
-  return 1;
+  throw InternalError("run: the request names no execution backend");
 }
 
 }  // namespace
-
-// How far the front end has to run for a command to have what it drives from.
-// Everything below HIR is the command's own to drive, so the only question
-// here is whether the request reads the elaborated design at all. Exhaustive
-// on purpose: a new command must state its own answer rather than inherit one
-// silently.
-auto FrontEndDepth(const ParsedArgs& args) -> compiler::StopAfter {
-  switch (args.cmd) {
-    case CommandKind::kCheck:
-    case CommandKind::kDumpAst:
-      return compiler::StopAfter::kParse;
-    case CommandKind::kDumpHir:
-    case CommandKind::kDumpMir:
-    case CommandKind::kDumpLir:
-    case CommandKind::kDumpLlvm:
-    case CommandKind::kRun:
-    case CommandKind::kEmitCpp:
-    case CommandKind::kCompile:
-    case CommandKind::kCacheClear:
-      return compiler::StopAfter::kHir;
-  }
-  return compiler::StopAfter::kHir;
-}
 
 auto RunCommand(const CommandContext& ctx) -> int {
   switch (ctx.args->cmd) {
