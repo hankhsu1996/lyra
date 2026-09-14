@@ -128,13 +128,24 @@ auto UnitLowerer::Run() -> diag::Result<lir::CompilationUnit> {
   }
 
   // A callable the unit's namespace owns -- a package's own body (LRM 26.3) --
-  // is a body like any other and becomes a function of the unit. Only one this
-  // program defines does: a DPI-C import is reached as a foreign symbol and
-  // declares no body here.
+  // is a body like any other and becomes a function of the unit. What a C
+  // linkage name says about one decides the other two cases: with no body it is
+  // a DPI-C import, reached as a foreign symbol and defined elsewhere; with one
+  // it is the entry point of an export.
   for (const mir::CallableId id : mir_->callables.Ids()) {
     const mir::CallableDecl& callable = mir_->callables.Get(id);
     if (!callable.code.body.has_value()) {
       continue;
+    }
+    // This backend lowers an export's body but does not publish the name
+    // anywhere the foreign side can link against, so the symbol is unresolved
+    // wherever the user's C calls it (LRM 35.7).
+    if (callable.foreign.has_value()) {
+      return std::unexpected(
+          diag::Make(
+              diag::DiagCode::kUnsupportedDpi,
+              "mir_to_lir: the foreign entry point a DPI-C export publishes is "
+              "not yet reachable on this backend"));
     }
     auto fn =
         FunctionLowerer(*this, callable.code, UnitCallableSymbol(id)).Run();

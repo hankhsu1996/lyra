@@ -37,7 +37,6 @@
 #include "lyra/lowering/hir_to_mir/sampled_history.hpp"
 #include "lyra/lowering/hir_to_mir/self_ref.hpp"
 #include "lyra/lowering/hir_to_mir/sensitivity_wait.hpp"
-#include "lyra/lowering/hir_to_mir/static_init_extent.hpp"
 #include "lyra/lowering/hir_to_mir/static_var_binding.hpp"
 #include "lyra/lowering/hir_to_mir/walk_frame.hpp"
 #include "lyra/mir/class.hpp"
@@ -928,14 +927,18 @@ void WrapInScopeStaticInitExtent(
     const UnitLowerer& unit_lowerer, const WalkFrame& init_frame,
     mir::CallableCode& code) {
   mir::Block extent;
-  EmitStaticInitBracket(
+  AppendRuntimeEffectStmt(
       unit_lowerer, extent, support::BuiltinFn::kEnterScopeStaticInit,
       {BuildEnclosingScopeReceiver(
           init_frame.WithBlock(&extent), unit_lowerer.Unit(),
           init_frame.HopsToUnitRoot())});
-  mir::Block closed = CloseStaticInitExtent(
-      unit_lowerer, std::move(extent), std::move(code.Body()));
-  code.Body() = std::move(closed);
+
+  mir::Block cleanup;
+  AppendRuntimeEffectStmt(
+      unit_lowerer, cleanup, support::BuiltinFn::kLeaveStaticInit, {});
+
+  extent.AppendFinally(std::move(code.Body()), std::move(cleanup));
+  code.Body() = std::move(extent);
 }
 
 // Composes the value a port member takes from the handles its connection

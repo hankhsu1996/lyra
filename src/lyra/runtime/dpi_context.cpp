@@ -4,20 +4,30 @@
 
 #include "lyra/runtime/ambient_run_context.hpp"
 #include "lyra/runtime/dpi_scope_registry.hpp"
+#include "lyra/runtime/running_state.hpp"
 #include "lyra/runtime/runtime_effects.hpp"
-#include "lyra/runtime/runtime_process.hpp"
 #include "lyra/runtime/scope.hpp"
+#include "lyra/runtime/scope_program.hpp"
 #include "lyra/runtime/sim_time.hpp"
 
 namespace lyra::runtime {
 
-DpiScopeGuard::DpiScopeGuard(RuntimeEffects& effects, Scope* decl_scope)
-    : process_(&effects.CurrentProcess()) {
-  process_->PushDpiScope(decl_scope);
+void EnterDpiScope(RuntimeEffects& effects, Scope* decl_scope) {
+  effects.Running().dpi_scopes.Enter(decl_scope);
 }
 
-DpiScopeGuard::~DpiScopeGuard() {
-  process_->PopDpiScope();
+void LeaveDpiScope(RuntimeEffects& effects) {
+  effects.Running().dpi_scopes.Leave();
+}
+
+auto CurrentDpiScope() -> Scope* {
+  RunningState* running = AmbientRunContext::Current().Effects().TryRunning();
+  return running == nullptr ? nullptr : running->dpi_scopes.Current();
+}
+
+auto ReplaceDpiScope(Scope* scope) -> Scope* {
+  RunningState* running = AmbientRunContext::Current().Effects().TryRunning();
+  return running == nullptr ? nullptr : running->dpi_scopes.Replace(scope);
 }
 
 }  // namespace lyra::runtime
@@ -40,13 +50,9 @@ auto Directory() -> lyra::runtime::DpiScopeRegistry& {
   return lyra::runtime::AmbientRunContext::Current().ScopeRegistry();
 }
 
-// The process whose foreign call is running, or null when none is executing --
-// a query from C that is not an imported function, which svGetScope reports as
-// a null scope rather than a fault.
-auto ForeignProcess() -> lyra::runtime::RuntimeProcess* {
-  return lyra::runtime::AmbientRunContext::Current()
-      .Effects()
-      .TryCurrentProcess();
+// The run a time query reads its clock and its precision from.
+auto Effects() -> lyra::runtime::RuntimeEffects& {
+  return lyra::runtime::AmbientRunContext::Current().Effects();
 }
 
 // Resolves a time-query scope handle: a null handle is legal (the query is at
@@ -66,28 +72,48 @@ auto ResolveTimeScope(void* scope, const lyra::runtime::Scope** resolved)
   return true;
 }
 
+struct TimePowers {
+  std::int8_t unit;
+  std::int8_t precision;
+};
+
+// The powers of ten a time query answers in. A scope carrying no timescale of
+// its own reports the unspecified sentinel rather than a power (LRM 3.14.2.3),
+// and a query naming no scope is at the simulation level; both are the same
+// answer, which is the simulation's own precision.
+auto EffectiveTimePowers(
+    const lyra::runtime::Scope* scope, std::int8_t global_power) -> TimePowers {
+  const auto effective = [global_power](std::int8_t declared) {
+    return declared == lyra::runtime::kUnspecifiedTimePower ? global_power
+                                                            : declared;
+  };
+  if (scope == nullptr) {
+    return TimePowers{.unit = global_power, .precision = global_power};
+  }
+  return TimePowers{
+      .unit = effective(scope->TimeUnitPower()),
+      .precision = effective(scope->TimePrecisionPower())};
+}
+
 }  // namespace
 
 // The Annex H context and time surface, linked into the simulation binary and
 // resolved against the user's C by name. `svScope` is `void*`; a handle is a
-// `runtime::Scope*`. The current scope is the top of the executing process's
-// DPI scope chain; the directory answers the name and user-data queries; a time
-// query reports the scope's effective unit or precision, or the
-// simulation-level value for a null scope. Errors follow the svdpi contract --
-// a null handle, null out slot, or invalid handle yields the documented null /
-// -1 -- and never throw across the C boundary.
+// `runtime::Scope*`. The current scope is the top of the running DPI scope
+// chain; the directory answers the name and user-data queries; a time query
+// reports the scope's effective unit or precision, or the simulation-level
+// value for a null scope. Errors follow the svdpi contract -- a null handle,
+// null out slot, or invalid handle yields the documented null / -1 -- and never
+// throw across the C boundary.
 extern "C" {
 
 auto svGetScope() -> void* {
-  lyra::runtime::RuntimeProcess* process = ForeignProcess();
-  return process == nullptr ? nullptr : process->CurrentDpiScope();
+  return lyra::runtime::CurrentDpiScope();
 }
 
 auto svSetScope(void* scope) -> void* {
-  lyra::runtime::RuntimeProcess* process = ForeignProcess();
-  return process == nullptr ? nullptr
-                            : process->ReplaceDpiScope(
-                                  static_cast<lyra::runtime::Scope*>(scope));
+  return lyra::runtime::ReplaceDpiScope(
+      static_cast<lyra::runtime::Scope*>(scope));
 }
 
 auto svGetNameFromScope(void* scope) -> const char* {
@@ -116,13 +142,10 @@ auto svGetTime(void* scope, void* time) -> int {
   if (!ResolveTimeScope(scope, &resolved)) {
     return -1;
   }
-  lyra::runtime::RuntimeEffects& effects =
-      lyra::runtime::AmbientRunContext::Current().Effects();
-  const std::int8_t unit = resolved != nullptr ? resolved->TimeUnitPower()
-                                               : effects.GlobalPrecisionPower();
-  const lyra::SimDuration divisor =
-      lyra::runtime::TimeUnitDivisor(unit, effects.GlobalPrecisionPower());
-  const std::uint64_t scaled = effects.Now() / divisor;
+  const std::int8_t global = Effects().GlobalPrecisionPower();
+  const lyra::SimDuration divisor = lyra::runtime::TimeUnitDivisor(
+      EffectiveTimePowers(resolved, global).unit, global);
+  const std::uint64_t scaled = Effects().Now() / divisor;
   auto* out = static_cast<SvTimeVal*>(time);
   out->type = kVpiSimTime;
   out->high = static_cast<std::uint32_t>(scaled >> 32U);
@@ -139,11 +162,8 @@ auto svGetTimeUnit(void* scope, void* time_unit) -> int {
   if (!ResolveTimeScope(scope, &resolved)) {
     return -1;
   }
-  lyra::runtime::RuntimeEffects& effects =
-      lyra::runtime::AmbientRunContext::Current().Effects();
-  const std::int8_t unit_power = resolved != nullptr
-                                     ? resolved->TimeUnitPower()
-                                     : effects.GlobalPrecisionPower();
+  const std::int8_t unit_power =
+      EffectiveTimePowers(resolved, Effects().GlobalPrecisionPower()).unit;
   // A time power is a small signed number (LRM 3.14): -9 is ns, so widening it
   // with sign extension is the meaning, not the byte read this check looks for.
   // NOLINTNEXTLINE(bugprone-signed-char-misuse)
@@ -159,11 +179,8 @@ auto svGetTimePrecision(void* scope, void* time_precision) -> int {
   if (!ResolveTimeScope(scope, &resolved)) {
     return -1;
   }
-  lyra::runtime::RuntimeEffects& effects =
-      lyra::runtime::AmbientRunContext::Current().Effects();
-  const std::int8_t precision = resolved != nullptr
-                                    ? resolved->TimePrecisionPower()
-                                    : effects.GlobalPrecisionPower();
+  const std::int8_t precision =
+      EffectiveTimePowers(resolved, Effects().GlobalPrecisionPower()).precision;
   // A time power is a small signed number (LRM 3.14): -9 is ns, so widening it
   // with sign extension is the meaning, not the byte read this check looks for.
   // NOLINTNEXTLINE(bugprone-signed-char-misuse)

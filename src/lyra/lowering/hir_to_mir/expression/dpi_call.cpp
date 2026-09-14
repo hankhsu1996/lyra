@@ -504,7 +504,7 @@ auto MakeForeignSymbolCall(
 
 // The function import call the boundary needs no statements for: every actual
 // crosses by value and no callback has to be arranged, so the call is one
-// expression -- no boundary objects, no scope guard. Each actual is marshaled
+// expression -- no boundary objects, no extent. Each actual is marshaled
 // to its ABI carrier, the foreign symbol is called over the carriers, and a
 // non-void result is marshaled back to the declared SV type. A task never
 // reaches here; its await needs a coroutine.
@@ -659,43 +659,41 @@ auto PopulateForeignImportBoundary(
   return ret_temp;
 }
 
-// The DPI scope a `context` import observes (LRM 35.5.3): an RAII guard pushing
-// the declaration's own instantiated scope on the calling process's DPI scope
-// chain, so an export the foreign side calls back resolves against that scope.
-// It opens the boundary, so its scope-exit pop is the last effect, on a normal
-// return or an unwind. A declaration in a namespace that is never instantiated
-// -- a package or `$unit` scope -- observes no scope and pushes a null one; the
-// push still happens, so the call never inherits an enclosing chain entry that
-// is not its declaration's.
-auto BuildDpiScopeGuard(
+// The scope a `context` import makes current (LRM 35.5.3): the instantiated
+// scope of its own declaration, reached over the distance the walk already
+// knows. A declaration in a namespace that is never instantiated -- a package
+// or `$unit` scope -- has none, and enters a null one rather than leaving the
+// call to report an enclosing chain entry that is not its declaration's.
+auto BuildDeclaringScopeExpr(
     UnitLowerer& unit_lowerer, const WalkFrame& frame,
-    std::optional<hir::StructuralHops> declaring_scope) -> mir::LocalDeclStmt {
+    std::optional<hir::StructuralHops> declaring_scope) -> mir::ExprId {
   mir::CompilationUnit& unit = unit_lowerer.Unit();
-  mir::Block& body = *frame.current_block;
-  const mir::TypeId guard_type = unit.types.Intern(
-      mir::Type{mir::RuntimeLibraryType{
-          .kind = mir::RuntimeLibraryKind::kDpiScopeGuard}});
-  const mir::LocalId guard = frame.bindings->DeclareAnonymous(guard_type);
-  const mir::ExprId services_id =
-      body.exprs.Add(BuildCurrentRuntimeCallExpr(unit_lowerer));
-  const mir::ExprId decl_scope_id =
-      declaring_scope.has_value()
-          ? BuildEnclosingScopeReceiver(
-                frame, unit,
-                mir::EnclosingHops{.value = declaring_scope->value})
-          : body.exprs.Add(
-                mir::Expr{
-                    .data = mir::NullLiteral{},
-                    .type = unit.builtins.scope_ptr});
-  return mir::LocalDeclStmt{
-      .target = guard,
-      .init = body.exprs.Add(
-          mir::Expr{
-              .data =
-                  mir::CallExpr{
-                      .callee = mir::Construct{},
-                      .arguments = {services_id, decl_scope_id}},
-              .type = guard_type})};
+  if (declaring_scope.has_value()) {
+    return BuildEnclosingScopeReceiver(
+        frame, unit, mir::EnclosingHops{.value = declaring_scope->value});
+  }
+  return frame.current_block->exprs.Add(
+      mir::Expr{.data = mir::NullLiteral{}, .type = unit.builtins.scope_ptr});
+}
+
+// Closes the extent a `context` import's foreign call runs inside (LRM 35.5.3)
+// around `boundary`, whose statements the caller has already lowered into it.
+// Entering names the declaration's scope; the cleanup gives back whatever was
+// current before, on every way out -- a return, a raised effect, or falling off
+// the end.
+void CloseDpiScopeExtent(
+    UnitLowerer& unit_lowerer, const WalkFrame& frame, mir::Block&& boundary,
+    std::optional<hir::StructuralHops> declaring_scope) {
+  mir::Block& block = *frame.current_block;
+  AppendRuntimeEffectStmt(
+      unit_lowerer, block, support::BuiltinFn::kEnterDpiScope,
+      {BuildDeclaringScopeExpr(unit_lowerer, frame, declaring_scope)});
+
+  mir::Block cleanup;
+  AppendRuntimeEffectStmt(
+      unit_lowerer, cleanup, support::BuiltinFn::kLeaveDpiScope, {});
+
+  block.AppendFinally(std::move(boundary), std::move(cleanup));
 }
 
 // Whether crossing the boundary takes statements rather than one expression.
@@ -728,11 +726,14 @@ auto LowerForeignImportSequenced(
 
   BlockBuilder steps(frame);
   const WalkFrame& cframe = steps.Frame();
-  if (import.is_context) {
-    steps.Body().AppendStmt(
-        BuildDpiScopeGuard(unit_lowerer, cframe, declaring_scope));
-  }
-  auto ret_temp = PopulateForeignImportBoundary(lowerer, cframe, c, import);
+
+  // LRM 35.5.3 instruments a call only where the import is `context`, so a
+  // plain import's boundary is the sequence itself and stands inside no extent.
+  mir::Block extent_body;
+  const WalkFrame bframe =
+      import.is_context ? cframe.WithBlock(&extent_body) : cframe;
+
+  auto ret_temp = PopulateForeignImportBoundary(lowerer, bframe, c, import);
   if (!ret_temp) return std::unexpected(std::move(ret_temp.error()));
 
   if (!ret_temp->has_value()) {
@@ -740,15 +741,38 @@ auto LowerForeignImportSequenced(
         "LowerForeignImportSequenced: a boundary that returns nothing has no "
         "expression to stand as -- please report this as a bug");
   }
-  mir::Block& body = steps.Body();
+  mir::Block& body = *bframe.current_block;
   const mir::TypeId call_type =
       CarrierTypeId(unit, support::ScalarCarrier{import.ret_abi});
   const mir::ExprId ret_ref =
       body.exprs.Add(mir::MakeLocalRefExpr(**ret_temp, call_type));
   const mir::ExprId result_id = body.exprs.Add(MarshalCarrierToSv(
-      unit_lowerer, cframe, ret_ref, support::ScalarCarrier{import.ret_abi},
+      unit_lowerer, bframe, ret_ref, support::ScalarCarrier{import.ret_abi},
       result_type));
-  return steps.Build(result_id);
+  if (!import.is_context) return steps.Build(result_id);
+
+  // The value is settled inside the extent and read after it, so the binding
+  // holding it is declared ahead of the extent rather than within it.
+  const mir::LocalId result = cframe.bindings->DeclareAnonymous(result_type);
+  steps.Body().AppendStmt(
+      mir::LocalDeclStmt{
+          .target = result,
+          .init = steps.Body().exprs.Add(
+              BuildDefaultValueExpr(unit, steps.Body(), result_type))});
+  body.AppendStmt(
+      mir::ExprStmt{
+          .expr = body.exprs.Add(
+              mir::Expr{
+                  .data =
+                      mir::AssignExpr{
+                          .target = body.exprs.Add(
+                              mir::MakeLocalRefExpr(result, result_type)),
+                          .value = result_id},
+                  .type = result_type})});
+  CloseDpiScopeExtent(
+      unit_lowerer, cframe, std::move(extent_body), declaring_scope);
+  return steps.Build(
+      steps.Body().exprs.Add(mir::MakeLocalRefExpr(result, result_type)));
 }
 
 // The task import call (LRM 35.5.2): a task has no SV return, so the call
@@ -767,8 +791,6 @@ auto LowerForeignImportSequenced(
 // suspends the caller. Both facts are stated here as ordinary MIR -- a call to
 // the runtime's fiber entry over a closure of the whole boundary, awaited --
 // rather than left for a backend to infer from the callee being a foreign task.
-// The scope guard stays outside the fiber, on the awaiting coroutine, so the
-// scope is pushed on the process before the native stack is entered.
 template <ExprLowerer Lowerer>
 auto LowerForeignImportTask(
     Lowerer& lowerer, WalkFrame frame, const hir::CallExpr& c,
@@ -778,17 +800,23 @@ auto LowerForeignImportTask(
   auto& unit_lowerer = lowerer.Owner();
   auto& unit = unit_lowerer.Unit();
   ClosureBuilder outer(unit, frame);
-  if (import.is_context) {
-    outer.Body().AppendStmt(
-        BuildDpiScopeGuard(unit_lowerer, outer.Frame(), declaring_scope));
-  }
 
-  ClosureBuilder fiber_body(unit, outer.Frame());
+  // What hands control to the foreign side here is the await, not the call
+  // inside the fiber: the scope has to be current before the native stack is
+  // entered and still current when the fiber resumes, so the extent is the
+  // awaiting coroutine's. The whole await is lowered through the block that
+  // becomes the extent's body, so the closure and every operand it captures
+  // resolve against one arena.
+  mir::Block extent_body;
+  const WalkFrame await_frame =
+      import.is_context ? outer.Frame().WithBlock(&extent_body) : outer.Frame();
+
+  ClosureBuilder fiber_body(unit, await_frame);
   auto ret_temp =
       PopulateForeignImportBoundary(lowerer, fiber_body.Frame(), c, import);
   if (!ret_temp) return std::unexpected(std::move(ret_temp.error()));
 
-  mir::Block& body = outer.Body();
+  mir::Block& body = *await_frame.current_block;
   const mir::TypeId awaitable = unit.types.Intern(
       mir::Type{mir::RuntimeLibraryType{
           .kind = mir::RuntimeLibraryKind::kForeignTaskAwaitable}});
@@ -808,6 +836,10 @@ auto LowerForeignImportTask(
               mir::Expr{
                   .data = mir::AwaitExpr{.awaitable = run_id},
                   .type = unit.builtins.void_type})});
+  if (import.is_context) {
+    CloseDpiScopeExtent(
+        unit_lowerer, outer.Frame(), std::move(extent_body), declaring_scope);
+  }
   return outer.BuildCoroutine();
 }
 
@@ -943,13 +975,18 @@ auto LowerForeignImportCallStmtForm(
 
   BlockBuilder steps(frame);
   const WalkFrame& cframe = steps.Frame();
-  if (import.is_context) {
-    steps.Body().AppendStmt(
-        BuildDpiScopeGuard(lowerer.Owner(), cframe, ref.declaring_scope));
-  }
-  auto crossed = PopulateForeignImportBoundary(lowerer, cframe, c, import);
+
+  mir::Block extent_body;
+  const WalkFrame bframe =
+      import.is_context ? cframe.WithBlock(&extent_body) : cframe;
+
+  auto crossed = PopulateForeignImportBoundary(lowerer, bframe, c, import);
   if (!crossed) {
     return diag::Result<mir::Stmt>{std::unexpected(std::move(crossed.error()))};
+  }
+  if (import.is_context) {
+    CloseDpiScopeExtent(
+        lowerer.Owner(), cframe, std::move(extent_body), ref.declaring_scope);
   }
   mir::Stmt stmt = steps.BuildStatement();
   stmt.label = label;

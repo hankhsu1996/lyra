@@ -70,6 +70,15 @@ void Runtime::BindDesign(std::unique_ptr<Design> design) {
   WalkResolve(design_->Root());
 }
 
+auto Runtime::DesignRoot() -> Scope& {
+  if (design_ == nullptr) {
+    throw InternalError(
+        "Runtime::DesignRoot: no design is bound -- please report this as a "
+        "bug");
+  }
+  return design_->Root();
+}
+
 void Runtime::WalkResolve(Scope& scope) {
   scope.Resolve();
   scope.ForEachChild([this](Scope& child) { WalkResolve(child); });
@@ -258,14 +267,16 @@ void Runtime::RegisterProcessInRegistry(
 }
 
 void Runtime::EnterStaticInit(RandomSeed seed) {
-  displacing_rngs_.push_back(
-      DisplacingRng{.rng = DrawRng{seed}, .displaced = drawing_rng_});
-  drawing_rng_ = &displacing_rngs_.back().rng;
+  displacing_.push_back(
+      DisplacingState{
+          .state = RunningState{.rng = DrawRng{seed}, .dpi_scopes = {}},
+          .displaced = running_});
+  running_ = &displacing_.back().state;
 }
 
 void Runtime::LeaveStaticInit() {
-  drawing_rng_ = displacing_rngs_.back().displaced;
-  displacing_rngs_.pop_back();
+  running_ = displacing_.back().displaced;
+  displacing_.pop_back();
 }
 
 auto Runtime::SlotAt(SimTime when) -> TimeSlot& {

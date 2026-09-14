@@ -656,6 +656,14 @@ enum class BuiltinFn : std::uint16_t {
   kEnterScopeStaticInit,
   kEnterNamespaceStaticInit,
   kLeaveStaticInit,
+  // The extent a `context` DPI import's foreign call runs inside (LRM 35.5.3):
+  // entered before the call so the foreign side reports the instantiated scope
+  // of the import declaration, and left on every way out of it so what was
+  // reported before is reported again. A declaration in a namespace is never
+  // instantiated and names no scope, which it enters as a null one rather than
+  // leaving the chain to report an enclosing entry that is not its own.
+  kEnterDpiScope,
+  kLeaveDpiScope,
   // The inner step of a value conversion: reading the source out as a machine
   // integer. HIR-to-MIR dispatches on the (src, dst) type pair and emits a
   // `CallExpr` to the matching entry, which the backend renders with no

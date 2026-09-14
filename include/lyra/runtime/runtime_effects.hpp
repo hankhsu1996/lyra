@@ -8,7 +8,7 @@
 #include "lyra/base/time.hpp"
 #include "lyra/runtime/coroutine.hpp"
 #include "lyra/runtime/region.hpp"
-#include "lyra/runtime/rng.hpp"
+#include "lyra/runtime/running_state.hpp"
 #include "lyra/runtime/trigger.hpp"
 #include "lyra/value/format.hpp"
 #include "lyra/value/packed_array.hpp"
@@ -141,11 +141,16 @@ class RuntimeEffects {
   // to report a null scope rather than fault.
   [[nodiscard]] auto TryCurrentProcess() -> RuntimeProcess*;
 
-  // The generator a randomization system call draws from (LRM 18.13, 18.14).
-  // Generated code runs only inside a process or a static initialization, and
-  // each installs one, so a call reaching this without one is a gap in that
-  // bracketing rather than anything the design can express.
-  [[nodiscard]] auto DrawingRng() -> DrawRng&;
+  // What is running: the generator a randomization system call draws from (LRM
+  // 18.13, 18.14) and the scope chain a DPI-C foreign call reports through (LRM
+  // 35.5.3). Generated code runs only inside a process or a static
+  // initialization, and each installs one, so a call reaching this without one
+  // is a gap in that bracketing rather than anything the design can express.
+  [[nodiscard]] auto Running() -> RunningState&;
+  // Nullable form of `Running()`, for a query that can arrive from foreign code
+  // while nothing of the design is executing -- `svGetScope` outside an
+  // imported subroutine (LRM 35.5.3) reports a null scope rather than faulting.
+  [[nodiscard]] auto TryRunning() -> RunningState*;
 
   [[nodiscard]] auto Now() const -> SimTime;
   [[nodiscard]] auto GlobalPrecisionPower() const -> std::int8_t;
@@ -227,7 +232,7 @@ class ProcessExecutionGuard {
  private:
   RuntimeEffects* effects_;
   RuntimeProcess* previous_process_;
-  DrawRng* previous_rng_;
+  RunningState* previous_running_;
 };
 
 }  // namespace lyra::runtime

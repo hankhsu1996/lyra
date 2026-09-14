@@ -875,6 +875,16 @@ auto RuntimeEntryOf(BuiltinFn id) -> RuntimeEntry {
           .name = "leave_static_init",
           .declaration = FreeFunction{"lyra::runtime::LeaveStaticInit"},
           .takes_the_runtime_handle = true};
+    case BuiltinFn::kEnterDpiScope:
+      return {
+          .name = "enter_dpi_scope",
+          .declaration = FreeFunction{"lyra::runtime::EnterDpiScope"},
+          .takes_the_runtime_handle = true};
+    case BuiltinFn::kLeaveDpiScope:
+      return {
+          .name = "leave_dpi_scope",
+          .declaration = FreeFunction{"lyra::runtime::LeaveDpiScope"},
+          .takes_the_runtime_handle = true};
     case BuiltinFn::kToInt64:
       return {.name = "to_int64", .declaration = Method{"ToInt64"}};
     case BuiltinFn::kRound:

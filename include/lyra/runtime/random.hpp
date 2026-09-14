@@ -11,7 +11,7 @@ namespace lyra::runtime {
 
 // $urandom (LRM 18.13.1).
 inline auto Urandom(RuntimeEffects& runtime) -> value::PackedArray {
-  return value::PackedArray::IntUnsigned(runtime.DrawingRng().NextValue());
+  return value::PackedArray::IntUnsigned(runtime.Running().rng.NextValue());
 }
 
 // $urandom with a seed (LRM 18.13.1): the seed determines the sequence, so it
@@ -20,7 +20,7 @@ inline auto Urandom(RuntimeEffects& runtime) -> value::PackedArray {
 inline auto UrandomSeeded(
     RuntimeEffects& runtime, const value::PackedArray& seed)
     -> value::PackedArray {
-  DrawRng& rng = runtime.DrawingRng();
+  DrawRng& rng = runtime.Running().rng;
   rng.Reseed(RandomSeed{static_cast<std::uint32_t>(seed.ToInt64())});
   return value::PackedArray::IntUnsigned(rng.NextValue());
 }
@@ -37,7 +37,7 @@ inline auto UrandomRange(
   const std::uint32_t lower = std::min(high, low);
   const std::uint32_t upper = std::max(high, low);
   const std::uint64_t span = std::uint64_t{upper} - lower + 1;
-  DrawRng& rng = runtime.DrawingRng();
+  DrawRng& rng = runtime.Running().rng;
   // Rejection rather than a modulo of the raw draw: the low values would
   // otherwise come up more often whenever the span does not divide the
   // generator's range, which is every span that is not a power of two. A span
@@ -60,7 +60,7 @@ inline auto UrandomRange(
 // locality.
 inline auto Random(RuntimeEffects& runtime) -> value::PackedArray {
   return value::PackedArray::Int(
-      static_cast<std::int32_t>(runtime.DrawingRng().NextValue()));
+      static_cast<std::int32_t>(runtime.Running().rng.NextValue()));
 }
 
 }  // namespace lyra::runtime

@@ -138,21 +138,9 @@ auto CancellationTarget(
 void EmitTargetBracket(
     ProcessLowerer& process, const WalkFrame& frame,
     const StaticStorageHome& target, support::BuiltinFn bracket) {
-  UnitLowerer& unit_lowerer = process.Owner();
-  mir::CompilationUnit& unit = unit_lowerer.Unit();
-  mir::Block& block = *frame.current_block;
-
-  const mir::ExprId reached = CancellationTarget(process, frame, target);
-  const mir::ExprId services =
-      block.exprs.Add(BuildCurrentRuntimeCallExpr(unit_lowerer));
-  const mir::ExprId call = block.exprs.Add(
-      mir::Expr{
-          .data =
-              mir::CallExpr{
-                  .callee = mir::Direct{.target = bracket},
-                  .arguments = {services, reached}},
-          .type = unit.builtins.void_type});
-  block.AppendStmt(mir::ExprStmt{.expr = call});
+  AppendRuntimeEffectStmt(
+      process.Owner(), *frame.current_block, bracket,
+      {CancellationTarget(process, frame, target)});
 }
 
 }  // namespace
@@ -177,11 +165,7 @@ auto BuildCancellableRegion(
   EmitTargetBracket(
       process, cleanup_frame, target, support::BuiltinFn::kLeaveTarget);
 
-  const mir::BlockId body_id = region_body.child_scopes.Add(std::move(body));
-  const mir::BlockId cleanup_id =
-      region_body.child_scopes.Add(std::move(cleanup));
-  region_body.AppendStmt(
-      mir::FinallyStmt{.body = body_id, .cleanup = cleanup_id});
+  region_body.AppendFinally(std::move(body), std::move(cleanup));
 
   const mir::TypeId effect_type = unit.types.Intern(
       mir::Type{mir::RuntimeLibraryType{

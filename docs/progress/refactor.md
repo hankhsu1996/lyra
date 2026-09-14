@@ -1444,6 +1444,17 @@ enough to warrant its own focused review.
       sits in width conversion, and that number does not exist. Measure on the benchmark corpus
       first, then cut, so the change is reported against a before and an after.
 
+- [ ] R92 -- Composing a runtime call's engine handle is spelled at roughly twenty lowering sites
+      rather than once. Each interns the handle expression itself and then builds the argument list
+      around it, so the convention that the handle comes first is held by every site repeating it.
+      The sites that append a plain effect statement now have one emitter; the rest produce a value
+      and would need a companion for the expression form, which is what makes this a shape to settle
+      rather than a mechanical replacement.
+
+      Not blocked. Written down rather than taken because converting the value-producing sites
+      changes how a chained runtime call is built everywhere, which is wider than the subject that
+      made the duplication visible.
+
 ## Out of Scope
 
 - Per-feature workstreams. Those live in the dedicated feature files (`operators.md`,
