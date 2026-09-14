@@ -473,13 +473,6 @@ enum class RuntimeLibraryKind : std::uint8_t {
   // reference to that image, and the only one of the two a prototype names.
   kDpiOpenArray,
   kDpiOpenArrayHandle,
-  // The RAII bracket a `context` DPI import's marshaling body opens over its
-  // declaration scope (LRM 35.5.3): `lyra::runtime::DpiScopeGuard`, constructed
-  // from the run services and the declaration scope, pushing that scope on the
-  // calling process's DPI scope chain for the foreign call's duration and
-  // popping it when the body's scope exits. An inert scoped value MIR never
-  // inspects; its lifetime -- not its contents -- is the effect.
-  kDpiScopeGuard,
   // What a DPI-C import task's foreign call is awaited through (LRM 35.5.2):
   // `lyra::runtime::ForeignTaskAwaitable`, which runs the call on a fiber whose
   // native stack can be parked while simulation time advances, so an exported

@@ -25,6 +25,7 @@
 #include "lyra/runtime/delay.hpp"
 #include "lyra/runtime/diagnostic.hpp"
 #include "lyra/runtime/distribution.hpp"
+#include "lyra/runtime/dpi_context.hpp"
 #include "lyra/runtime/evaluation_attempts.hpp"
 #include "lyra/runtime/file_table.hpp"
 #include "lyra/runtime/fork.hpp"
@@ -1342,6 +1343,15 @@ void lyra_rt_enter_namespace_static_init(void* runtime) {
 
 void lyra_rt_leave_static_init(void* runtime) {
   LeaveStaticInit(*static_cast<RuntimeEffects*>(runtime));
+}
+
+void lyra_rt_enter_dpi_scope(void* runtime, void* decl_scope) {
+  EnterDpiScope(
+      *static_cast<RuntimeEffects*>(runtime), static_cast<Scope*>(decl_scope));
+}
+
+void lyra_rt_leave_dpi_scope(void* runtime) {
+  LeaveDpiScope(*static_cast<RuntimeEffects*>(runtime));
 }
 
 auto lyra_rt_make_segment(void* label, LyraSpan indices) -> void* {

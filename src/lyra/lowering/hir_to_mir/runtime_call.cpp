@@ -3,6 +3,8 @@
 #include <filesystem>
 #include <format>
 #include <string>
+#include <utility>
+#include <vector>
 
 #include "lyra/diag/source_manager.hpp"
 #include "lyra/diag/source_span.hpp"
@@ -25,6 +27,25 @@ auto FormatRuntimeOriginString(
 
 auto BuildCurrentRuntimeCallExpr(const UnitLowerer& unit_lowerer) -> mir::Expr {
   return mir::MakeCurrentRuntimeCallExpr(unit_lowerer.Unit().builtins.effects);
+}
+
+void AppendRuntimeEffectStmt(
+    const UnitLowerer& unit_lowerer, mir::Block& block,
+    support::BuiltinFn entry, std::vector<mir::ExprId> operands) {
+  std::vector<mir::ExprId> arguments;
+  arguments.reserve(operands.size() + 1);
+  arguments.push_back(
+      block.exprs.Add(BuildCurrentRuntimeCallExpr(unit_lowerer)));
+  arguments.insert(arguments.end(), operands.begin(), operands.end());
+  block.AppendStmt(
+      mir::ExprStmt{
+          .expr = block.exprs.Add(
+              mir::Expr{
+                  .data =
+                      mir::CallExpr{
+                          .callee = mir::Direct{.target = entry},
+                          .arguments = std::move(arguments)},
+                  .type = unit_lowerer.Unit().builtins.void_type})});
 }
 
 auto BuildStringValueExpr(

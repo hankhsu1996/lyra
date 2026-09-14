@@ -11,7 +11,6 @@
 #include "lyra/backend/cpp/naming.hpp"
 #include "lyra/base/internal_error.hpp"
 #include "lyra/base/overloaded.hpp"
-#include "lyra/mir/class.hpp"
 #include "lyra/mir/class_id.hpp"
 #include "lyra/mir/compilation_unit.hpp"
 #include "lyra/mir/type.hpp"
@@ -245,8 +244,6 @@ auto RenderTypeAsCpp(const mir::CompilationUnit& unit, mir::TypeId type_id)
                 return std::string{"lyra::value::DpiOpenArray"};
               case mir::RuntimeLibraryKind::kDpiOpenArrayHandle:
                 return std::string{"const svOpenArrayHandle"};
-              case mir::RuntimeLibraryKind::kDpiScopeGuard:
-                return std::string{"lyra::runtime::DpiScopeGuard"};
               case mir::RuntimeLibraryKind::kForeignTaskAwaitable:
                 return std::string{"lyra::runtime::ForeignTaskAwaitable"};
               case mir::RuntimeLibraryKind::kPropertyCoordinate:

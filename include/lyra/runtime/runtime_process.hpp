@@ -12,6 +12,7 @@
 #include "lyra/runtime/process_kind.hpp"
 #include "lyra/runtime/registration.hpp"
 #include "lyra/runtime/rng.hpp"
+#include "lyra/runtime/running_state.hpp"
 
 namespace lyra::runtime {
 
@@ -121,11 +122,14 @@ class RuntimeProcess : public std::enable_shared_from_this<RuntimeProcess> {
 
   [[nodiscard]] auto Kind() const -> ProcessKind;
 
-  // The generator every randomization system call made from this process draws
-  // from (LRM 18.14.2), and the one a process spawned from here takes its own
-  // seed out of.
-  [[nodiscard]] auto Rng() -> DrawRng& {
-    return rng_;
+  // What is in force while this process runs: the generator its randomization
+  // calls draw from and a process spawned from here takes its seed out of (LRM
+  // 18.14.2), and the DPI scope chain its foreign calls report through (LRM
+  // 35.5.3). It belongs to the process rather than to the run so that a
+  // generator survives a suspension and two foreign calls suspended on
+  // different processes never share a chain.
+  [[nodiscard]] auto Running() -> RunningState& {
+    return running_;
   }
 
   // The scope this process's runtime side effects attribute to. Inherited
@@ -264,35 +268,6 @@ class RuntimeProcess : public std::enable_shared_from_this<RuntimeProcess> {
   // owns `fe` and must keep it alive until the call returns.
   auto EnterForeignExecution(CoroutineHandle continuation, ForeignExecution& fe)
       -> bool;
-
-  // The DPI current-scope chain (LRM 35.5.3). A `context` import brackets its
-  // foreign call by pushing the scope of its declaration and popping on return;
-  // `svGetScope` reads the top, `svSetScope` replaces it. The chain lives on
-  // the process, not a thread-global, so two foreign calls suspended on
-  // different processes never share one -- the invariant a shared thread-local
-  // would break once time-consuming foreign calls interleave. It is non-empty
-  // only inside a context import's foreign call.
-  void PushDpiScope(Scope* scope) {
-    dpi_scope_chain_.push_back(scope);
-  }
-  void PopDpiScope() {
-    dpi_scope_chain_.pop_back();
-  }
-  [[nodiscard]] auto CurrentDpiScope() const -> Scope* {
-    return dpi_scope_chain_.empty() ? nullptr : dpi_scope_chain_.back();
-  }
-  // `svSetScope` (LRM 35.5.3): retarget the current chain's scope, reporting
-  // the previous one. Outside any context import the chain is empty and there
-  // is no chain to retarget, so it is a no-op reporting null rather than
-  // fabricating a frame with no lifetime boundary to pop it.
-  auto ReplaceDpiScope(Scope* scope) -> Scope* {
-    if (dpi_scope_chain_.empty()) {
-      return nullptr;
-    }
-    Scope* previous = dpi_scope_chain_.back();
-    dpi_scope_chain_.back() = scope;
-    return previous;
-  }
 
   // Enter (LRM 9.6.2) a disable target: until the target is left, a `disable`
   // of it reaches this execution, and a check finds it among the targets this
@@ -508,7 +483,7 @@ class RuntimeProcess : public std::enable_shared_from_this<RuntimeProcess> {
   ProcessKind kind_;
   Scope* owning_scope_;
   Coroutine<void> coroutine_;
-  DrawRng rng_;
+  RunningState running_;
   // The frame the engine will resume next for this process (invariant: a
   // non-executing process has exactly one active leaf). Starts at the top frame
   // and follows the innermost parked frame as waits block it.
@@ -529,10 +504,6 @@ class RuntimeProcess : public std::enable_shared_from_this<RuntimeProcess> {
   // internally to the fiber, so its completion is not what continues the
   // process; this frame is. Null when no foreign call is outstanding.
   CoroutineHandle foreign_continuation_ = nullptr;
-  // The DPI current-scope chain (LRM 35.5.3), one frame per active context
-  // import in this process's foreign call chain. Empty outside any context
-  // import.
-  std::vector<Scope*> dpi_scope_chain_;
   // Held by every deferred report this process has pending; null when it has
   // none, which is also the state a flush point leaves it in.
   std::shared_ptr<DeferredReportEpoch> deferred_report_epoch_;

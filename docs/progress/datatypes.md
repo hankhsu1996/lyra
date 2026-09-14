@@ -114,6 +114,13 @@ LRM 6.8: a static-lifetime variable declaration may carry an initializer express
       shortreal, and string parameter values; aggregate parameter types (unpacked array, queue,
       packed struct) are blocked behind their respective type workstreams. Type parameters
       (`parameter type T = int;`) ride on the type lowering path, not the expression path.
+- [ ] SI3 -- An initializer that calls a subroutine carrying static-lifetime state of its own aborts
+      the run as a compiler invariant, saying a conversion the store needed was never emitted. The
+      three neighbours all work, which is what places it: the same subroutine called from a
+      procedure, a subroutine with no static local called from an initializer, and the static
+      local's own initializer, which runs before time zero as LRM 6.21 requires and is observed
+      correctly. Reduces to a module-level `int x = f();` where `f` declares one `static int`, on
+      both backends.
 
 ### Cross-references
 

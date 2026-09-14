@@ -1,11 +1,14 @@
 #pragma once
 
 #include <string>
+#include <vector>
 
 #include "lyra/diag/source_manager.hpp"
 #include "lyra/diag/source_span.hpp"
 #include "lyra/lowering/hir_to_mir/unit_lowerer.hpp"
 #include "lyra/mir/expr.hpp"
+#include "lyra/mir/expr_id.hpp"
+#include "lyra/support/builtin_fn.hpp"
 
 namespace lyra::mir {
 struct CompilationUnit;
@@ -34,6 +37,15 @@ namespace lyra::lowering::hir_to_mir {
 // body.
 [[nodiscard]] auto BuildCurrentRuntimeCallExpr(const UnitLowerer& unit_lowerer)
     -> mir::Expr;
+
+// Appends a statement calling `entry`, a runtime entry that answers nothing and
+// reads the engine handle first, over `operands`. The handle is composed here,
+// so a caller supplies only what the entry takes after it; `operands` are
+// already interned into `block`. Both ends of an extent are one of these --
+// what entering it does, and what leaving it gives back.
+void AppendRuntimeEffectStmt(
+    const UnitLowerer& unit_lowerer, mir::Block& block,
+    support::BuiltinFn entry, std::vector<mir::ExprId> operands);
 
 // Materializes compile-time text as a `value::String` operand and interns it:
 // a string literal is a raw C string in the target, so a construction of the

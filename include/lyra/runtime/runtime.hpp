@@ -20,6 +20,7 @@
 #include "lyra/runtime/region.hpp"
 #include "lyra/runtime/registration.hpp"
 #include "lyra/runtime/rng.hpp"
+#include "lyra/runtime/running_state.hpp"
 #include "lyra/runtime/runtime_effects.hpp"
 #include "lyra/runtime/stream_dispatcher.hpp"
 #include "lyra/runtime/time_slot.hpp"
@@ -63,6 +64,10 @@ class Runtime final : public RuntimeEffects {
   // Initializing state and creating processes are simulation activity at time
   // zero, so they belong to the run rather than to binding.
   void BindDesign(std::unique_ptr<Design> design);
+  // The `$root` of the bound design. What a foreign call resolves a scope name
+  // against is the design, so the boundary that stands the run up reads it from
+  // here rather than from whoever happened to allocate the tree.
+  [[nodiscard]] auto DesignRoot() -> Scope&;
   auto Run() -> int;
 
   // The simulation reached its end -- the design asked (LRM 20.2), or a
@@ -98,10 +103,10 @@ class Runtime final : public RuntimeEffects {
   // registration functions live outside this class.
   void RegisterProcessInRegistry(std::shared_ptr<RuntimeProcess> process);
 
-  // Takes a static initialization on as what randomization calls draw from,
-  // and gives it back. The generator starts from `seed`, which the container's
-  // initialization RNG chose (LRM 18.14.1). Public because the entries
-  // generated code reaches live outside this class.
+  // Takes a static initialization on as what is running, and gives it back.
+  // Its generator starts from `seed`, which the container's initialization RNG
+  // chose (LRM 18.14.1). Public because the entries generated code reaches live
+  // outside this class.
   void EnterStaticInit(RandomSeed seed);
   void LeaveStaticInit();
 
@@ -189,16 +194,16 @@ class Runtime final : public RuntimeEffects {
   RegistrationList draining_;
   std::vector<std::shared_ptr<RuntimeProcess>> processes_;
   RuntimeProcess* current_process_ = nullptr;
-  // The generator every randomization system call draws from (LRM 18.13,
-  // 18.14). Whichever is running installs one: a process the generator it was
-  // seeded with, a static initialization one seeded from its container's
-  // initialization RNG.
-  DrawRng* drawing_rng_ = nullptr;
-  // The generators of the static initializations under way, which own no object
-  // to keep one on, and whose entry and exit are two separate calls from
-  // generated code with no frame spanning them -- so the runtime holds the
-  // stack. A deque because the pointer above stays valid across a push.
-  std::deque<DisplacingRng> displacing_rngs_;
+  // What is running, which is what a randomization call draws from (LRM 18.13,
+  // 18.14) and what a DPI-C foreign call reports its scope through (LRM
+  // 35.5.3). Whichever is running installs one: a process the state it owns,
+  // a static initialization one of its own.
+  RunningState* running_ = nullptr;
+  // The static initializations under way, which own no object to keep their
+  // state on, and whose entry and exit are two separate calls from generated
+  // code with no frame spanning them -- so the runtime holds the stack. A deque
+  // because the pointer above stays valid across a push.
+  std::deque<DisplacingState> displacing_;
   SimTime now_ = 0;
   std::int8_t global_precision_power_ = kDefaultTimePrecisionPower;
   value::TimeFormat time_format_;
