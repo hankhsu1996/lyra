@@ -10,15 +10,6 @@
 
 namespace lyra::value {
 
-auto WordCountForBits(std::uint64_t bit_width) -> std::size_t {
-  // 0 bits is the `PackedArray()` sentinel "uninitialized" shape; an empty
-  // storage vector matches it. Non-zero widths round up to whole words.
-  // Overflow-safe form: never compute `bit_width + 63`.
-  const std::uint64_t whole = bit_width / 64U;
-  const std::uint64_t remainder = bit_width % 64U;
-  return static_cast<std::size_t>(whole + (remainder == 0U ? 0U : 1U));
-}
-
 auto MaskUnusedTopBits(std::span<std::uint64_t> words, std::uint64_t bit_width)
     -> void {
   if (bit_width == 0U) {
@@ -69,12 +60,6 @@ auto PackedWords::Words() -> std::span<std::uint64_t> {
 
 auto PackedWords::Words() const -> std::span<const std::uint64_t> {
   return {words_.data(), words_.size()};
-}
-
-auto PackedWords::SetZero() -> void {
-  for (auto& w : words_) {
-    w = 0U;
-  }
 }
 
 auto PackedWords::SetOne() -> void {
@@ -136,12 +121,6 @@ auto BitView::SetBit(std::uint64_t offset, TwoStateBit value) -> void {
 auto BitView::SetZero() -> void {
   for (std::uint64_t i = 0; i < bit_width_; ++i) {
     SetBit(i, TwoStateBit::kZero);
-  }
-}
-
-auto BitView::SetOne() -> void {
-  for (std::uint64_t i = 0; i < bit_width_; ++i) {
-    SetBit(i, TwoStateBit::kOne);
   }
 }
 
@@ -233,24 +212,6 @@ auto LogicView::SetZero() -> void {
   }
 }
 
-auto LogicView::SetOne() -> void {
-  for (std::uint64_t i = 0; i < bit_width_; ++i) {
-    SetBit(i, FourStateBit::kOne);
-  }
-}
-
-auto LogicView::SetUnknown() -> void {
-  for (std::uint64_t i = 0; i < bit_width_; ++i) {
-    SetBit(i, FourStateBit::kUnknown);
-  }
-}
-
-auto LogicView::SetHighImpedance() -> void {
-  for (std::uint64_t i = 0; i < bit_width_; ++i) {
-    SetBit(i, FourStateBit::kHighImpedance);
-  }
-}
-
 auto LogicView::AsConst() const -> ConstLogicView {
   return ConstLogicView{
       std::span<const std::uint64_t>{value_words_.data(), value_words_.size()},
@@ -285,14 +246,6 @@ auto BitValue::View(std::uint64_t offset, std::uint64_t width) const
   return ConstBitView{value_.Words(), offset, width};
 }
 
-auto BitValue::SetZero() -> void {
-  value_.SetZero();
-}
-
-auto BitValue::SetOne() -> void {
-  value_.SetOne();
-}
-
 LogicValue::LogicValue(std::uint64_t bit_width)
     : value_(bit_width), unknown_(bit_width) {
   value_.SetOne();
@@ -321,56 +274,6 @@ auto LogicValue::View(std::uint64_t offset, std::uint64_t width) const
     -> ConstLogicView {
   ValidateViewRange(value_.WordCount(), offset, width, "LogicValue::View");
   return ConstLogicView{value_.Words(), unknown_.Words(), offset, width};
-}
-
-auto LogicValue::SetZero() -> void {
-  View().SetZero();
-}
-
-auto LogicValue::SetOne() -> void {
-  View().SetOne();
-}
-
-auto LogicValue::SetUnknown() -> void {
-  View().SetUnknown();
-}
-
-auto LogicValue::SetHighImpedance() -> void {
-  View().SetHighImpedance();
-}
-
-auto CopySameWidth(ConstBitView src, BitView dst) -> void {
-  if (src.Width() != dst.Width()) {
-    throw InternalError("CopySameWidth(Bit): width mismatch");
-  }
-  PackedWordVector tmp(WordCountForBits(src.Width()), std::uint64_t{0});
-  BitView tmp_view{
-      std::span<std::uint64_t>{tmp.data(), tmp.size()}, 0U, src.Width()};
-  for (std::uint64_t i = 0; i < src.Width(); ++i) {
-    tmp_view.SetBit(i, src.GetBit(i));
-  }
-  const ConstBitView ctv = tmp_view.AsConst();
-  for (std::uint64_t i = 0; i < src.Width(); ++i) {
-    dst.SetBit(i, ctv.GetBit(i));
-  }
-}
-
-auto CopySameWidth(ConstLogicView src, LogicView dst) -> void {
-  if (src.Width() != dst.Width()) {
-    throw InternalError("CopySameWidth(Logic): width mismatch");
-  }
-  PackedWordVector vt(WordCountForBits(src.Width()), std::uint64_t{0});
-  PackedWordVector ut(WordCountForBits(src.Width()), std::uint64_t{0});
-  LogicView tmp_view{
-      std::span<std::uint64_t>{vt.data(), vt.size()},
-      std::span<std::uint64_t>{ut.data(), ut.size()}, 0U, src.Width()};
-  for (std::uint64_t i = 0; i < src.Width(); ++i) {
-    tmp_view.SetBit(i, src.GetBit(i));
-  }
-  const ConstLogicView ctv = tmp_view.AsConst();
-  for (std::uint64_t i = 0; i < src.Width(); ++i) {
-    dst.SetBit(i, ctv.GetBit(i));
-  }
 }
 
 }  // namespace lyra::value
