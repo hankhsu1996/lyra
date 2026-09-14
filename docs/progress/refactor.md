@@ -1428,6 +1428,7 @@ enough to warrant its own focused review.
       that depth's products, and a caller that asked for a body is handed one rather than an option
       of one. It reaches the per-unit pipeline, the link-level unit's products, and every command
       that drives either, so it is a subject of its own rather than a cleanup.
+
 - [ ] R91 -- Converting a packed value between widths, or between the two-state and the four-state
       domain, is spelled one bit at a time. The conversion clears the whole destination by assigning
       each bit in turn, copies the overlapping bits one at a time, then sign-extends the rest the
