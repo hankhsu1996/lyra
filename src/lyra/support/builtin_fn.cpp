@@ -885,6 +885,12 @@ auto RuntimeEntryOf(BuiltinFn id) -> RuntimeEntry {
           .name = "leave_dpi_scope",
           .declaration = FreeFunction{"lyra::runtime::LeaveDpiScope"},
           .takes_the_runtime_handle = true};
+    case BuiltinFn::kClaimNamespaceInitialize:
+      return {
+          .name = "claim_namespace_initialize",
+          .declaration =
+              FreeFunction{"lyra::runtime::ClaimNamespaceInitialization"},
+          .takes_the_runtime_handle = true};
     case BuiltinFn::kToInt64:
       return {.name = "to_int64", .declaration = Method{"ToInt64"}};
     case BuiltinFn::kRound:

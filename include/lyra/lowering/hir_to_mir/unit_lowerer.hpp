@@ -15,7 +15,7 @@
 #include "lyra/hir/subroutine_ref.hpp"
 #include "lyra/hir/type.hpp"
 #include "lyra/lowering/hir_to_mir/class_shape.hpp"
-#include "lyra/lowering/hir_to_mir/namespace_storage_initialization.hpp"
+#include "lyra/lowering/hir_to_mir/design_namespaces.hpp"
 #include "lyra/mir/class_id.hpp"
 #include "lyra/mir/class_ref.hpp"
 #include "lyra/mir/compilation_unit.hpp"
@@ -58,12 +58,12 @@ class UnitLowerer {
 
   // Lowers the synthetic design-root unit: a module whose root class is the
   // one nothing else constructs, so it alone carries the design's way in, and
-  // whose Initialize phase also installs and initializes the packages'
-  // variables (LRM 26.2 / 10.5). The plan is a whole-design fact the assembly
-  // resolves and passes in; the lowering only realizes it into cross-unit
-  // calls, so this special input stays at the design-root boundary and never
-  // reaches a source unit's lowering.
-  auto RunDesignRoot(NamespaceStorageInitializationPlan namespace_storage_plan)
+  // whose Initialize phase also brings up the namespaces' variables (LRM 26.2 /
+  // 10.5). Which namespaces those are is read off the signatures the root
+  // consumes and passed in; the lowering turns each into cross-unit calls, so
+  // this input stays at the design-root boundary and never reaches a source
+  // unit's lowering.
+  auto RunDesignRoot(DesignNamespaces namespaces)
       -> diag::Result<mir::CompilationUnit>;
 
   // Lowers a unit that roots no object -- a package (LRM 26) or the `$unit`
@@ -283,13 +283,11 @@ class UnitLowerer {
 
  private:
   // Lowers a scope whose root is an object type into the unit's top class,
-  // which the unit then names as its root. The package initialization plan is
-  // empty for a source module and carries the design root's resolved plan (LRM
-  // 26.2 / 10.5), which the root scope's Initialize phase realizes into
-  // cross-unit install and initialize calls.
-  auto PopulateModuleRoot(
-      NamespaceStorageInitializationPlan namespace_storage_plan)
-      -> diag::Result<void>;
+  // which the unit then names as its root. The namespace list is empty for a
+  // source module and names every namespace of the design for the design root
+  // (LRM 26.2 / 10.5), whose Initialize phase turns each into a cross-unit
+  // install and initialize call.
+  auto PopulateModuleRoot(DesignNamespaces namespaces) -> diag::Result<void>;
 
   // Everything one class declaration can be named by before it settles: its
   // own identity, the object type that names it, and one identity per method a

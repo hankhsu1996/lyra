@@ -1354,6 +1354,12 @@ void lyra_rt_leave_dpi_scope(void* runtime) {
   LeaveDpiScope(*static_cast<RuntimeEffects*>(runtime));
 }
 
+auto lyra_rt_claim_namespace_initialize(void* runtime, const char* name)
+    -> std::int64_t {
+  return ClaimNamespaceInitialization(
+      *static_cast<RuntimeEffects*>(runtime), name);
+}
+
 auto lyra_rt_make_segment(void* label, LyraSpan indices) -> void* {
   return GeneratedCallScope::Current().Arena().New<HierarchySegment>(
       std::string(static_cast<const char*>(label)), PackedValuesOf(indices));

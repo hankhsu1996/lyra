@@ -235,12 +235,13 @@ struct CompilationUnit {
   // holds. A package variable takes part; the cell a subroutine's
   // static-lifetime local keeps does not.
   std::vector<NamedStaticVariable> named_static_variables;
-  // The foreign names this unit declares on a scope (LRM 35.5.3), in
-  // declaration order. A name is program-global and lives in its own name
-  // space, and a scope's entry is compiled once per specialization of that
-  // scope, so none of them is the symbol -- the unit states them here for the
-  // program to define once. What a unit's own namespace owns is not among
-  // these: its callable is the symbol and already says so.
+  // The foreign names this unit declares on a scope (LRM 35.5.3), each named
+  // once and in declaration order. A name is program-global and lives in its
+  // own name space, and a scope's entry is compiled once per specialization of
+  // that scope, so none of those entries is the symbol -- this is what the unit
+  // states of the name itself, which is the prototype a foreign source compiles
+  // against and the symbol it links to. What a unit's own namespace owns is not
+  // among these: its callable is the symbol and already says so.
   std::vector<ForeignScopeEntry> foreign_scope_entries;
   // Every compiler-generated nominal struct of this unit -- a promoted
   // automatic scope's storage. Its `StructId` is the struct's type identity; a
@@ -268,16 +269,6 @@ struct CompilationUnit {
   // include and link edge to each referenced unit. Recorded once per distinct
   // unit name.
   std::vector<std::string> external_class_units;
-  // The units whose namespace storage this unit's own initializers read
-  // directly (LRM 26.2 / 8.9 / 10.5) -- the by-name dependency the design root
-  // uses to pick a stable order to bring namespaces up in. It records only
-  // reads written directly in an initializer expression; a read reached through
-  // a called function does not contribute yet. This is a preference, not a
-  // correctness input: every cell is installed with its default before any
-  // initializer runs, so a missed or cyclic dependency only means a read
-  // observes a default, never an uninstalled cell. Empty for a unit that roots
-  // an object tree and for one no initializer of which reaches another.
-  std::vector<std::string> direct_initializer_unit_reads;
 
   CompilationUnit()
       : builtins{

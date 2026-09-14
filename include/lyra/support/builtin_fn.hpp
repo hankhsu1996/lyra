@@ -664,6 +664,12 @@ enum class BuiltinFn : std::uint16_t {
   // leaving the chain to report an enclosing entry that is not its own.
   kEnterDpiScope,
   kLeaveDpiScope,
+  // Whether this call is the one bring-up a namespace's initializers get (LRM
+  // 26.2). A namespace is reached both by the design's own bring-up and by
+  // every namespace whose initializers read its cells, so the entry answers
+  // true once and false afterwards, and taking the claim before descending is
+  // what ends a cycle among them.
+  kClaimNamespaceInitialize,
   // The inner step of a value conversion: reading the source out as a machine
   // integer. HIR-to-MIR dispatches on the (src, dst) type pair and emits a
   // `CallExpr` to the matching entry, which the backend renders with no

@@ -149,10 +149,17 @@ only the external linkage is the backend's shell.
 The C name is a program-global symbol in the DPI name space and never a class member (LRM 35.4,
 35.7), while the subroutine behind it may be compiled once per specialization of the scope declaring
 it -- so the two are separated. A scope **publishes** an entry, taking the scope it runs against
-ahead of the C formals; the symbol resolves that entry against the scope in effect and calls it, and
-belongs to the design root, the one place a name several scopes may export has an owner (LRM 35.4).
-A package subroutine has no receiver and a package has one form, so the two collapse: the package's
+ahead of the C formals; the symbol resolves that entry against the scope in effect and calls it. A
+package subroutine has no receiver and a package has one form, so the two collapse: the package's
 own namespace defines the symbol directly.
+
+**Where that symbol is defined is settled by
+[program-facts-belong-after-compilation](program-facts-belong-after-compilation.md), which reverses
+this entry on that one point.** It read "belongs to the design root, the one place a name several
+scopes may export has an owner" -- true of ownership and wrong about what follows from it. A symbol
+several artifacts may define needs a merge rule rather than an owner, and choosing an owner is the
+only one of the two that costs a read of every unit. Each unit declaring such a scope now defines
+the symbol, and the party assembling the program keeps one.
 
 The entry obtains its context (design object, engine, and, for an export declared in a scope, the
 calling instance) from a **thread-local ambient context** installed for the duration of a run, not

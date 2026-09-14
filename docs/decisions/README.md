@@ -403,6 +403,14 @@ the detail lives in the entry itself.
 
 ### Compile-time model and specialization
 
+- [program-facts-belong-after-compilation](program-facts-belong-after-compilation.md) -- the
+  design's link-level unit reads signatures and nothing else, so what is genuinely program-wide
+  moves to whoever runs after compilation: a namespace's initializers order themselves by claiming
+  their one bring-up and calling what they read, a foreign symbol no unit owns is defined by every
+  unit that declares it and the assembling party keeps one, the union of the foreign name space is a
+  step of the build, and whether a target can realize a unit is asked as that unit is rendered.
+  Keeping the per-unit record, computing the order at compile time, lazy initialization on first
+  read, and a linkage that permits dropping an unreferenced definition are rejected.
 - [unit-signature](unit-signature.md) -- what each unit kind publishes and how that set is known to
   be complete; a signature member is named where the referrer compiles, a name past a signature
   resolves at elaboration; the signature is an artifact separate from code, and that split decides

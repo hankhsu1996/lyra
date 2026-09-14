@@ -18,8 +18,8 @@
 #include "lyra/lowering/hir_to_mir/class_decl_lowerer.hpp"
 #include "lyra/lowering/hir_to_mir/declared_callable.hpp"
 #include "lyra/lowering/hir_to_mir/declared_scope.hpp"
+#include "lyra/lowering/hir_to_mir/design_namespaces.hpp"
 #include "lyra/lowering/hir_to_mir/lhs_store.hpp"
-#include "lyra/lowering/hir_to_mir/namespace_storage_initialization.hpp"
 #include "lyra/lowering/hir_to_mir/self_ref.hpp"
 #include "lyra/lowering/hir_to_mir/static_var_binding.hpp"
 #include "lyra/lowering/hir_to_mir/unit_lowerer.hpp"
@@ -88,12 +88,12 @@ class StructuralScopeLowerer {
   StructuralScopeLowerer(
       UnitLowerer& unit_lowerer, const StructuralScopeLowerer* parent,
       std::optional<std::string> name, const hir::StructuralScope& hir_scope,
-      NamespaceStorageInitializationPlan namespace_storage_plan = {})
+      DesignNamespaces namespaces = {})
       : owner_(&unit_lowerer),
         parent_(parent),
         name_(std::move(name)),
         hir_scope_(&hir_scope),
-        namespace_storage_plan_(std::move(namespace_storage_plan)) {
+        namespaces_(std::move(namespaces)) {
   }
 
   // Mints this class's identity, builds its structural shape, publishes the
@@ -398,7 +398,7 @@ class StructuralScopeLowerer {
   // Non-empty only on the design root's own scope, the sole scope whose
   // elaboration spans the whole design. Every source unit's scope and every
   // nested scope leaves it empty.
-  NamespaceStorageInitializationPlan namespace_storage_plan_;
+  DesignNamespaces namespaces_;
   base::Translation<hir::StructuralDataObjectId, mir::FieldId>
       data_object_fields_;
   base::Translation<hir::SampledHistoryId, mir::FieldId>

@@ -72,14 +72,17 @@ callable-bearing part of PK4 reuse; PK1 is independent of it.
       static locals, and the type-associated cells of the classes it declares: every unit's cells
       are installed with their declared type and default first, then every unit's value initializers
       run, so an initializer that reads another unit's cell always reaches installed storage. The
-      relative order of initializers is unspecified by the LRM; the design root picks a stable,
-      best-effort order (a dependency before its dependent where a direct read makes it known) as a
-      quality-of-implementation choice, and an unknown or cyclic dependency degrades to reading a
-      default, never a crash.
-  - [ ] An initializer read reached through a called function contributes to the preferred
-        initialization order.
-  - [ ] Two packages that reference each other's symbols emit non-circular headers (a header-only
-        emission limit, shared with cross-package subroutine calls, not specific to variables).
+      relative order of initializers is unspecified by the LRM, and nothing computes one: each
+      package's initializers take that package's one bring-up before running and call the packages
+      they read first, so a dependency runs ahead of its dependent wherever a direct read makes it
+      known, an unknown or cyclic dependency degrades to reading a default rather than crashing, and
+      the same design produces the same order every run.
+  - [ ] An initializer read reached through a called function runs that package's initializers
+        first, the way a read written directly in an initializer does.
+  - [ ] Two units that reference each other emit a C++ project that compiles. Two packages are the
+        shortest case and it is not specific to them, nor to variables: a unit's declarations and
+        its bodies share one emitted file, so mutual reference makes the two files include each
+        other. The execution backend runs such a design.
   - [ ] A package variable whose type is outside the supported storage families is rejected rather
         than mis-emitted.
   - [ ] A net declared at package scope (LRM 26.2) is rejected; a package holds variables, not nets.

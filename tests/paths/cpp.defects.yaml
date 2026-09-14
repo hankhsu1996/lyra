@@ -8,3 +8,4 @@
 #
 # A case may appear in this file or in the refusal record, never both.
 11_operators/real_shortreal_result_type: "narrow_square was 1.000244155526, expected 1.000244140625"
+26_packages/packages_that_reference_each_other: "'offset_pkg'"

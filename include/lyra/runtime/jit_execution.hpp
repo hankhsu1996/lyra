@@ -165,6 +165,9 @@ void lyra_rt_leave_static_init(void* runtime);
 void lyra_rt_enter_dpi_scope(void* runtime, void* decl_scope);
 void lyra_rt_leave_dpi_scope(void* runtime);
 
+auto lyra_rt_claim_namespace_initialize(void* runtime, const char* name)
+    -> std::int64_t;
+
 // LRM 9.3.2 Table 9-1. Each takes the branches one `fork` spawned, in source
 // order, and hands them to the engine, which does not run any of them until the
 // spawning process blocks or terminates. `spawn_all` is `join_none`, whose

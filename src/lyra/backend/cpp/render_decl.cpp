@@ -441,14 +441,22 @@ auto RenderClass(
   return text;
 }
 
+// How a free callable's definition is reached. A plain callable is `inline`,
+// because its definition sits in the header every caller includes; a foreign
+// one takes C linkage, since its symbol is program-global (LRM 35.4) and is
+// reached from outside this language, which is also why it is defined outright
+// rather than inline.
+auto RenderFreeCallableStorage(const mir::CallableDecl& callable)
+    -> std::string_view {
+  return callable.foreign.has_value() ? R"(extern "C")" : "inline";
+}
+
 // The free-function signature of a callable the unit's namespace or the DPI-C
 // name space owns: its storage class, the symbol it is reached by, its named
-// parameters, and its result type. A plain callable is `inline`, because its
-// definition sits in the header every caller includes; a foreign one takes C
-// linkage, since its symbol is program-global (LRM 35.4). Every use of this --
-// an import's declaration, an export entry point's definition, a package
-// function's definition -- reads the one signature the callable carries, so no
-// two of them can disagree.
+// parameters, and its result type. Every use of this -- an import's
+// declaration, an export entry point's definition, a package function's
+// definition -- reads the one signature the callable carries, so no two of them
+// can disagree.
 auto RenderFreeCallableSignature(
     const mir::CompilationUnit& unit, mir::CallableId id,
     const mir::CallableDecl& callable) -> std::string {
@@ -459,8 +467,7 @@ auto RenderFreeCallableSignature(
     params.push_back(RenderCallableParam(unit, code, param));
   }
   return std::format(
-      "{} auto {}({}) -> {}",
-      callable.foreign.has_value() ? R"(extern "C")" : "inline",
+      "{} auto {}({}) -> {}", RenderFreeCallableStorage(callable),
       CppUnitCallableName(unit, id), JoinCommaSeparated(params),
       RenderTypeAsCpp(unit, code.result_type));
 }
@@ -476,10 +483,26 @@ auto RenderFreeCallable(
     const mir::CompilationUnit& unit, mir::CallableId id,
     const mir::CallableDecl& callable) -> std::string {
   std::string out;
+  // A symbol several artifacts may each define is kept once by whichever party
+  // resolves names across them. Here that party is the preprocessor: this
+  // backend assembles the program by including every artifact into one
+  // translation unit, so the first definition to arrive is the one the program
+  // holds and the rest state nothing. Each is generated from the name and the
+  // prototype alone, so they are the same text.
+  const bool kept_once = callable.foreign.has_value() &&
+                         mir::ExpectsOtherDefinitions(*callable.foreign);
+  if (kept_once) {
+    const std::string guard =
+        CppOneDefinitionGuard(callable.foreign->foreign_name);
+    out += std::format("#ifndef {}\n#define {}\n", guard, guard);
+  }
   out +=
       std::format("{} {{\n", RenderFreeCallableSignature(unit, id, callable));
   out += RenderBlockStatements(ScopeView::ForNamespace(unit, callable.code), 1);
   out += "}\n";
+  if (kept_once) {
+    out += "#endif\n";
+  }
   return out;
 }
 

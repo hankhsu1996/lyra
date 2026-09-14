@@ -14,6 +14,7 @@
 
 #include "lyra/backend/cpp/api.hpp"
 #include "lyra/diag/diag_code.hpp"
+#include "lyra/dpi/abi_header.hpp"
 #include "lyra/driver/dpi_boundary.hpp"
 #include "lyra/driver/file_output.hpp"
 #include "lyra/driver/pch.hpp"
@@ -333,23 +334,24 @@ auto CompileProgram(
 
 }  // namespace
 
-auto CppProjectSink::Take(
-    const mir::CompilationUnit& unit, const compiler::UnitProgramRecord& record)
+auto CppProjectSink::Take(const mir::CompilationUnit& unit)
     -> diag::Result<void> {
-  if (auto refusal = backend::cpp::RefusalFor(record); refusal.has_value()) {
+  if (auto refusal = backend::cpp::RefusalFor(unit); refusal.has_value()) {
     return std::unexpected(std::move(*refusal));
   }
-  return Write(backend::cpp::EmitCppUnit(unit));
+  if (auto r = Write(backend::cpp::EmitCppUnit(unit)); !r) {
+    return r;
+  }
+  dpi::CollectAbiFragment(unit, dpi_fragments_);
+  return {};
 }
 
-auto CppProjectSink::Finish(
-    const mir::CompilationUnit& root,
-    std::span<const compiler::UnitProgramRecord> records)
+auto CppProjectSink::Finish(const mir::CompilationUnit& root)
     -> diag::Result<void> {
   if (auto r = Write(backend::cpp::EmitCppUnit(root)); !r) {
     return r;
   }
-  if (auto r = Write(backend::cpp::EmitCppHostMain(records, root)); !r) {
+  if (auto r = Write(backend::cpp::EmitCppHostMain(root)); !r) {
     return r;
   }
   if (formatting_ == SourceFormatting::kOn) {
@@ -369,10 +371,10 @@ auto CppProjectSink::Write(backend::cpp::CppArtifact file)
 
 auto AssembleProject(
     const RuntimeLocation& runtime,
-    std::span<const compiler::UnitProgramRecord> records,
+    std::span<const dpi::AbiFragment> dpi_fragments,
     const std::filesystem::path& dir, const HostBuild& host,
     std::span<const DpiLinkInput> dpi_inputs) -> diag::Result<void> {
-  if (auto r = WriteDpiSurface(runtime, records, dir); !r) {
+  if (auto r = WriteDpiSurface(runtime, dpi_fragments, dir); !r) {
     return r;
   }
   if (auto r = CopyDpiSources(dpi_inputs, dir); !r) {
@@ -418,11 +420,11 @@ auto BuildProject(
 
 auto RunInPlace(
     const RuntimeLocation& runtime,
-    std::span<const compiler::UnitProgramRecord> records,
+    std::span<const dpi::AbiFragment> dpi_fragments,
     const std::filesystem::path& work_dir, const HostBuild& host,
     std::span<const std::string> child_args,
     std::span<const DpiLinkInput> dpi_inputs) -> diag::Result<int> {
-  if (auto r = WriteDpiSurface(runtime, records, work_dir); !r) {
+  if (auto r = WriteDpiSurface(runtime, dpi_fragments, work_dir); !r) {
     return std::unexpected(std::move(r.error()));
   }
   const auto program = work_dir / kProgramName;

@@ -7,6 +7,7 @@
 #include <memory>
 #include <string>
 #include <string_view>
+#include <unordered_set>
 #include <variant>
 #include <vector>
 
@@ -110,6 +111,15 @@ class Runtime final : public RuntimeEffects {
   void EnterStaticInit(RandomSeed seed);
   void LeaveStaticInit();
 
+  // Takes the one bring-up a namespace's initializers get, answering false
+  // where something already took it. A namespace's initializers run before any
+  // procedure starts (LRM 26.2) and each is reached both by the design's own
+  // bring-up and by every namespace whose initializers read it, so the entry
+  // is asked more than once and must run once. Held for the run rather than in
+  // the generated code, so a second design brought up in one process starts
+  // with none of them taken.
+  auto ClaimNamespaceInitialization(std::string_view name) -> bool;
+
  private:
   friend class RuntimeEffects;
   friend class CurrentRuntimeGuard;
@@ -204,6 +214,11 @@ class Runtime final : public RuntimeEffects {
   // code with no frame spanning them -- so the runtime holds the stack. A deque
   // because the pointer above stays valid across a push.
   std::deque<DisplacingState> displacing_;
+  // The namespaces whose one bring-up has been taken. A namespace reaches its
+  // initializers through whichever of its readers got there first, so what
+  // orders them is this set plus the calls each one makes, and no party holds
+  // the whole graph.
+  std::unordered_set<std::string> initialized_namespaces_;
   SimTime now_ = 0;
   std::int8_t global_precision_power_ = kDefaultTimePrecisionPower;
   value::TimeFormat time_format_;
@@ -247,5 +262,18 @@ void RegisterFinalProcess(
 void EnterScopeStaticInit(RuntimeEffects& runtime, Scope* unit_instance);
 void EnterNamespaceStaticInit(RuntimeEffects& runtime);
 void LeaveStaticInit(RuntimeEffects& runtime);
+
+// Whether this call is the one that brings up the namespace named `name`: 1 on
+// the call that takes it, which happens exactly once per run, and 0 on every
+// other. Its initializers must have run before any procedure starts (LRM 26.2),
+// and a namespace whose own initializers read another's cells reaches that one
+// first, so the entry is called both by the design's bring-up and by each such
+// reader; taking the claim before descending is what ends a cycle among them.
+//
+// A machine word rather than a host `bool` because the generated-code ABI
+// spends that return type on one question -- whether a call parks its caller --
+// and this parks nobody.
+auto ClaimNamespaceInitialization(RuntimeEffects& runtime, const char* name)
+    -> std::int64_t;
 
 }  // namespace lyra::runtime

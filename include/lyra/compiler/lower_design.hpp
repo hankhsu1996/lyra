@@ -3,12 +3,10 @@
 #include <expected>
 #include <optional>
 #include <utility>
-#include <vector>
 
 #include "lyra/compiler/compile.hpp"
 #include "lyra/compiler/design_root.hpp"
 #include "lyra/compiler/unit_pipeline.hpp"
-#include "lyra/compiler/unit_program_record.hpp"
 #include "lyra/diag/diagnostic.hpp"
 #include "lyra/diag/sink.hpp"
 #include "lyra/diag/source_manager.hpp"
@@ -17,23 +15,21 @@
 
 namespace lyra::compiler {
 
-// What is left of a design once every unit has been modelled and handed on:
-// the record each one published, and the synthesized design root. The root's
-// own record is the last of them, so a reader of the program's foreign name
-// space sees the symbols the root defines alongside the ones the units declare.
+// What is left of a design once every unit has been modelled and handed on: the
+// synthesized design root, which is the one artifact no unit produced. Nothing
+// of the units survives here -- whatever a consumer wanted of one it took while
+// the unit was in its hands.
 struct SemanticDesign {
-  std::vector<UnitProgramRecord> records;
   mir::CompilationUnit root;
 };
 
 // The same, for a design taken all the way to the form something runs.
 struct ExecutableDesign {
-  std::vector<UnitProgramRecord> records;
   ExecutableUnit root;
 };
 
-// Models the whole design semantically, then composes the one whole-design
-// step. Each unit is handed to `consume` and released before the next is
+// Models the whole design semantically, then composes the one step no unit
+// produces. Each unit is handed to `consume` and released before the next is
 // lowered, so what is resident at any moment is one unit and the design's size
 // reaches the peak only through what a consumer chooses to keep.
 //
@@ -50,8 +46,6 @@ auto LowerToSemantic(
     ElaboratedDesign& design, const diag::SourceManager& sources,
     diag::DiagnosticSink& sink, Consume consume)
     -> std::optional<SemanticDesign> {
-  std::vector<UnitProgramRecord> records;
-  records.reserve(design.hir.units.size() + 1);
   for (hir::CompilationUnit& slot : design.hir.units) {
     const hir::CompilationUnit hir_unit = std::move(slot);
     auto unit = LowerUnitToSemantic(hir_unit, sources);
@@ -59,7 +53,6 @@ auto LowerToSemantic(
       sink.Report(std::move(unit.error()));
       continue;
     }
-    records.push_back(unit->program_record);
     if (auto taken = consume(*std::move(unit)); !taken) {
       sink.Report(std::move(taken.error()));
     }
@@ -68,15 +61,12 @@ auto LowerToSemantic(
     return std::nullopt;
   }
 
-  auto root = SynthesizeDesignRoot(
-      records, design.tops, design.hir.signatures, sources);
+  auto root = SynthesizeDesignRoot(design.tops, design.hir.signatures, sources);
   if (!root) {
     sink.Report(std::move(root.error()));
     return std::nullopt;
   }
-  records.push_back(ProgramRecordOf(*root));
-  return SemanticDesign{
-      .records = std::move(records), .root = *std::move(root)};
+  return SemanticDesign{.root = *std::move(root)};
 }
 
 // The same design, taken one layer further: every unit reaches `consume` as the
@@ -104,8 +94,7 @@ auto LowerToExecutable(
     sink.Report(std::move(root.error()));
     return std::nullopt;
   }
-  return ExecutableDesign{
-      .records = std::move(semantic->records), .root = *std::move(root)};
+  return ExecutableDesign{.root = *std::move(root)};
 }
 
 }  // namespace lyra::compiler

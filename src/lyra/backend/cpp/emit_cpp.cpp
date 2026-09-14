@@ -1,9 +1,6 @@
 #include <algorithm>
 #include <format>
-#include <optional>
-#include <span>
 #include <string>
-#include <variant>
 #include <vector>
 
 #include "lyra/backend/cpp/api.hpp"
@@ -15,8 +12,6 @@
 #include "lyra/backend/cpp/render_type.hpp"
 #include "lyra/backend/cpp/scope_view.hpp"
 #include "lyra/base/internal_error.hpp"
-#include "lyra/compiler/unit_program_record.hpp"
-#include "lyra/diag/diagnostic.hpp"
 #include "lyra/mir/class.hpp"
 #include "lyra/mir/compilation_unit.hpp"
 #include "lyra/mir/packed_type_descriptor.hpp"
@@ -53,18 +48,6 @@ auto CollectExternalUnitNames(const mir::CompilationUnit& unit)
     add(name);
   }
   return names;
-}
-
-// Whether the unit defines a symbol in the program-global DPI-C name space --
-// an export's entry point (LRM 35.7). A unit whose only consumer is foreign C
-// has no SV referrer to pull its header into the include graph, so the program
-// entry must include it directly for that definition to land and link. An
-// import's prototype is a declaration, not a definition, and pulls nothing.
-auto DefinesForeignSymbol(const compiler::UnitProgramRecord& record) -> bool {
-  return std::ranges::any_of(
-      record.foreign_names, [](const compiler::ForeignName& name) {
-        return std::holds_alternative<compiler::DefinedByTheUnit>(name.body);
-      });
 }
 
 // The include preamble every emitted unit header shares: the runtime umbrella
@@ -143,39 +126,20 @@ auto RenderUnitHeaderFile(const mir::CompilationUnit& unit) -> std::string {
 // The program entry. A design's whole contribution to it is the class its
 // `$root` is an instance of and the label that root carries, so that is all
 // this writes; every invariant host-boundary concern is behind the runtime
-// entry it hands off to, and a new one is added there rather than here. The
-// includes are the design's own: each unit whose header the entry must pull in
-// for its definitions to land, which is the root's and any unit defining a
-// symbol only foreign C refers to.
-auto RenderHostMain(
-    std::span<const compiler::UnitProgramRecord> records,
-    const mir::CompilationUnit& root) -> std::string {
+// entry it hands off to, and a new one is added there rather than here. It
+// includes the design root's header and nothing else: a symbol only foreign C
+// calls is defined by the unit that declares it, and the root reaches every
+// such unit -- the namespaces it brings up, and the design elements it builds.
+auto RenderHostMain(const mir::CompilationUnit& root) -> std::string {
   const mir::RootedTree* tree = mir::RootedTreeOf(root);
   if (tree == nullptr) {
     throw InternalError("backend::cpp: the design root roots no tree");
   }
   const mir::Class& root_class = root.GetClass(tree->root);
-  // The root defines every symbol no single unit can own, so it is among these
-  // records as well as being the unit this entry constructs. A header is
-  // included once whichever way it was reached.
-  std::vector<std::string> headers;
-  const auto include = [&](std::string header) {
-    if (std::ranges::find(headers, header) == headers.end()) {
-      headers.push_back(std::move(header));
-    }
-  };
-  for (const compiler::UnitProgramRecord& record : records) {
-    if (DefinesForeignSymbol(record)) {
-      include(ToCppName(record.unit_name));
-    }
-  }
-  include(ToCppName(root.name));
 
   std::string out;
   out += std::format("#include \"{}\"\n", support::kHostEntryHeader);
-  for (const std::string& header : headers) {
-    out += std::format("#include \"{}.hpp\"\n", header);
-  }
+  out += std::format("#include \"{}.hpp\"\n", ToCppName(root.name));
   out += "\n";
   out += "auto main(int argc, char** argv) -> int {\n";
   out += std::format(
@@ -188,31 +152,14 @@ auto RenderHostMain(
 
 }  // namespace
 
-auto RefusalFor(const compiler::UnitProgramRecord& record)
-    -> std::optional<diag::Diagnostic> {
-  if (!record.settles_an_elaborated_coordinate) {
-    return std::nullopt;
-  }
-  return diag::Make(
-      diag::DiagCode::kUnsupportedExpressionForm,
-      std::format(
-          "'{}' reaches a property or a behavior through a reference whose "
-          "class no signature publishes; this backend spells a member by name "
-          "and has none for a position settled while the design elaborates, so "
-          "it is not yet supported here",
-          record.unit_name));
-}
-
 auto EmitCppUnit(const mir::CompilationUnit& unit) -> CppArtifact {
   return {
       .relpath = std::format("{}.hpp", ToCppName(unit.name)),
       .content = RenderUnitHeaderFile(unit)};
 }
 
-auto EmitCppHostMain(
-    std::span<const compiler::UnitProgramRecord> records,
-    const mir::CompilationUnit& root) -> CppArtifact {
-  return {.relpath = "main.cpp", .content = RenderHostMain(records, root)};
+auto EmitCppHostMain(const mir::CompilationUnit& root) -> CppArtifact {
+  return {.relpath = "main.cpp", .content = RenderHostMain(root)};
 }
 
 }  // namespace lyra::backend::cpp
