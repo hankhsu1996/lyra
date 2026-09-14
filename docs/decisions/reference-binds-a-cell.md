@@ -1,6 +1,6 @@
 # A reference binds a cell, and every referent is one
 
-Date: 2026-08-27 Status: accepted
+Date: 2026-08-27 Status: accepted, reopened 2026-09-03 (see the closing section)
 
 ## Context
 
@@ -34,8 +34,16 @@ it is that for every referent.
 
 2. **A local whose storage is lent by reference lives in a cell.** MIR-to-LIR already had to know
    which locals need an address; those become cell locals instead of frame places. The cell is built
-   where the local is declared, so each entry to that declaration is a fresh variable with its own
-   storage, and the declaration's initializer is the write that installs the cell's representation.
+   where the local is declared, so each entry to that declaration begins a fresh variable, and the
+   declaration's initializer is the write that installs the cell's representation.
+
+   **What kind of storage a local gets and how long that storage lives are separate questions.**
+   Being lent decides the kind, and it decides it for every local; how long it lives is the
+   declaring scope's, because that is what an automatic local's lifetime is. So the cell is a slot
+   of the body's own frame, begun where the declaration runs and ended on every way out of the
+   scope, including the one the driver takes when it ends the execution instead of resuming it.
+   Fusing the two questions is what made a lent local of a suspending body unreachable: it was given
+   the storage whose lifetime it needed, and with it a kind no reference can name.
 
 3. **That cell is the signal cell, not the non-observable procedural one.** The two share a storage
    core but not their spelling at the boundary: a cell's address crosses as one `void*`, every cell
@@ -98,14 +106,80 @@ it is that for every referent.
   of a signal, and a strobe's captured destination are all the same bind: the first two run, and the
   strobe waits on the file service that renders it rather than on anything about references.
 
-- A local lent by reference costs a cell for the enclosing generated call. That is the same
-  accumulation any transient in a loop already has under the opaque-handle value model, not a new
-  lifetime class.
+- A local lent by reference costs a cell-sized slot of the frame its body already has, begun and
+  ended by the compiler the way a C++ local's constructor and destructor are. It is not a new
+  lifetime class and it accumulates nothing: a declaration reached many times uses the one slot.
+
+- A suspension therefore has a second successor. The driver may end an execution that is parked
+  rather than resume it, and that is a way out of every scope the body has open -- so each
+  suspension names the block that ends what those scopes began, which the destroy path runs before
+  the frame goes. No statement of the body runs there; being ended is not something the body
+  observes.
 
 - Storage that is not a cell still cannot be lent, and each remaining case is a question about where
-  a value lives rather than about what a reference is: a suspending body's local lives in the
-  activation frame, a class property is a member owning its value rather than a cell holding it, and
-  a part of a value aggregate has no independent storage to lend at all.
+  a value lives rather than about what a reference is: a class property is a member owning its value
+  rather than a cell holding it, and a part of a value aggregate has no independent storage to lend
+  at all. The second is not answered by giving it storage --
+  [value-projection-write](value-projection-write.md) D4 fixes it as an owner-relative projection
+  reference, which names no interior pointer, and what that costs here is a second constitution for
+  a reference rather than a second kind of cell.
+
+- A formal that lends what it was lent hands on the alias it holds rather than binding storage
+  afresh, because a referent that is already a reference of the formal's own type denotes the
+  storage at the end of the chain and never the reference in between (LRM 23.3.3.2).
+
+## Reopened: this settled how a place is lent by settling how every place is represented
+
+The contract this decision answers a question from -- each backend states, per place type, how a
+load through it is realized, how a store through it is, and how it is lent -- has the place deciding
+all three. What this decision did instead was let the third determine the first two:
+
+> A constraint on how a place is lent was allowed to determine how the place itself is represented.
+
+That is backwards, and the cascade it produced is the reason to say so rather than leave it. Every
+referent became one cell kind; a plain local therefore acquired a cell's lifetime; that lifetime had
+no obvious owner, so it was approximated by whichever region was nearby -- the per-call one, then an
+execution-lifetime one when the first was wrong across a suspension, then a slot of the frame when
+neither could give a stable address. Three storage regimes for one concept, none of them a property
+of the variable.
+
+The driver was the one-word reference: a single pointer cannot say which of two layouts it names.
+That is true of a single pointer and not of a wider reference, and the two nearest rejections above
+do not reach the wider one. "A polymorphic storage core" rejects one pointer over two layouts. "A
+runtime reference object that records which storage it views" is rejected for adding an object per
+bind, which assumes a heap object -- the C++ backend's is a pair of raw pointers, passed by value,
+allocating nothing -- and for buying nothing, which is the part that does not hold: it buys not
+turning every plain local into a cell, and that is the root of the cascade. The cascade had not
+happened yet when this was written.
+
+The same rejection names its own reopening condition -- "it is what a backend with real stack
+storage needs" -- and that condition now holds: a value's storage can live in a frame slot sized by
+what the runtime states, with the compiler emitting both ends, on every way out including the one a
+driver takes when it ends a parked execution rather than resuming it.
+
+**What replaces it is a contract rather than a layout**: a reference carries the referent's address
+plus enough erased place-class information to perform the three place operations -- load, store, and
+re-lend -- without exposing value representation. Plain-versus-signal is not the permanent set; an
+array element, a class property, an interface member and force/release-aware storage are all place
+classes this compiler will meet, so a two-valued tag would force the ABI open again for each.
+
+That contract is not written yet, because what "the referent's address" points at is not yet
+decided. Two questions were fused here and only the first is settled:
+
+- **Settled.** A lending requirement must not decide a place's representation.
+- **Open, and now answered.** Whether a place owns a value's representation, or holds a handle to an
+  independently lived one. The second is already written down --
+  [jit-value-realization](jit-value-realization.md) invariant 6 makes a value handle aliasable by a
+  copy and every apparent mutation functional, which is what leaves a procedural local's
+  representation ownerless. What is new is that the same backend does the first everywhere else: a
+  signal's storage holds its value by value, and so does a lent local's. The two answers want
+  different things from a reference -- the address of a slot holding a handle, or the address of the
+  representation itself. [storage-owns-its-value](storage-owns-its-value.md) takes the first: a
+  storage entity owns its value's representation, and a reference is pointer-like to that storage.
+
+This decision stands as the description of what the execution backend does, and not as the reason it
+should. What replaces it is the contract its reopening asked for, which the answer above makes
+designable but does not itself write.
 
 ## Cross-references
 

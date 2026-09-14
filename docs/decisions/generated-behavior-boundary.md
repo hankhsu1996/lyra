@@ -43,11 +43,11 @@ through a backend-language object ABI. Two principles, kept separate:
   through an explicit runtime contract -- a definition of native entries and constant metadata --
   not through a backend-language-specific object ABI (a C++ vtable, subclass, or `this`). This is
   the reason for the decision.
-- **Semantic state is Lyra-owned (parallel).** `object_lifetime` already requires language-visible
-  mutable state to live in Lyra-owned, traceable storage, never in opaque backend execution state.
-  This decision applies the same shape -- Lyra owns the model, the backend owns control-flow
-  realization -- to behavior. The principle corroborates the direction but does not by itself imply
-  data-driven dispatch; state ownership and dispatch mechanism are independent axes.
+- **Semantic state is Lyra-owned (parallel).** `lifetime` already requires language-visible mutable
+  state to live in Lyra-owned, traceable storage, never in opaque backend execution state. This
+  decision applies the same shape -- Lyra owns the model, the backend owns control-flow realization
+  -- to behavior. The principle corroborates the direction but does not by itself imply data-driven
+  dispatch; state ownership and dispatch mechanism are independent axes.
 
 The shape splits into two layers, because a scope's lifecycle behavior and its constant metadata are
 a **scope** concern (a generate scope has its own processes, def name, and precision) while
@@ -256,9 +256,9 @@ capabilities are a distinct optional field or a feature bit, not an overloaded n
   to be a C++ frontend.
 - **One flat dispatch table collapsing lifecycle and SV virtual.** Couples the closed lifecycle
   contract's evolution to open class-virtual semantics. They share a representation, not a concept.
-- **The GC / lifetime principle as the sole justification.** `object_lifetime`'s state-ownership
-  rule does not by itself imply data-driven dispatch; using it as the primary argument over-extends
-  it. The primary argument is the backend-neutral behavior ABI.
+- **The GC / lifetime principle as the sole justification.** `lifetime`'s state-ownership rule does
+  not by itself imply data-driven dispatch; using it as the primary argument over-extends it. The
+  primary argument is the backend-neutral behavior ABI.
 - **One definition on `Scope` with an `Instance`-typed entry receiver.** Conflates scope-level
   behavior (every scope, including a generate scope, has lifecycle bodies) with unit-level identity
   (only the unit root is an `Instance`). A `GenScope` is not an `Instance`, so its lifecycle entry
@@ -302,7 +302,7 @@ capabilities are a distinct optional field or a feature bit, not an overloaded n
 - `docs/architecture/object_model.md` (dispatch as a logical slot; one override machinery)
 - `docs/decisions/callable-receiver.md` (explicit-`self` callable bodies)
 - `docs/architecture/activation.md` (payload-neutral activation token)
-- `docs/architecture/object_lifetime.md` (semantic state is Lyra-owned)
+- `docs/architecture/lifetime.md` (semantic state is Lyra-owned)
 - `docs/architecture/specialization_model.md` (what a specialization is)
 - `docs/decisions/specialization-identity.md` (the deterministic specialization name used for
   linking)

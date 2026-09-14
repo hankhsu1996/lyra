@@ -1,14 +1,88 @@
-# Object Lifetime
+# Lifetime
 
 ## Purpose
 
-A SystemVerilog class object is a dynamically allocated, language-managed object: created by `new`
-at arbitrary simulation time, never explicitly freed, with no user-visible destructor, freely
-copyable by handle, identity-comparable, and free to form arbitrary object graphs including cycles.
-The simulator -- not the SystemVerilog program -- owns reclamation.
+Every piece of state this compiler produces belongs to exactly one lifetime regime, and this
+document says which regimes exist, why each is the way it is, and what each is analogous to.
+SystemVerilog needs more than one because the language is two languages: an object half whose
+reference model the standard says is Java's, and a value half that is C++'s and Ada's. Neither
+half's answer works for the other, so borrowing one for the other is the recurring design error this
+document exists to prevent.
 
-This document fixes the lifetime model for such objects and the storage discipline that makes
-precise reclamation possible:
+## The regimes, and why there are three
+
+| Regime         | Holds                           | Ends when                     | Who ends it                         | Its analogue                        |
+| -------------- | ------------------------------- | ----------------------------- | ----------------------------------- | ----------------------------------- |
+| **Automatic**  | a body's own locals             | the declaring scope ends      | the compiler, by emitting the end   | a C++ or Ada local                  |
+| **Managed**    | class objects reached by handle | nothing can reach it any more | a tracing collector, at a safepoint | a Java or C# object                 |
+| **Structural** | a module or scope's members     | the design is torn down       | construction's own inverse          | a C++ member of a long-lived object |
+
+The first two are the language's two halves and the split is forced, not chosen:
+
+- **A value has no identity.** `b = a` on a value makes an independent copy, so "is anything still
+  referring to it" is not a question that can be asked. A collector answers exactly that question,
+  so it has nothing to decide about a value.
+- **An object is nothing but identity.** `b = a` on a handle makes both names mean one object, so
+  its end cannot be tied to any one scope. Scope-based ending has nothing to decide about it.
+
+So the two mechanisms are not alternatives that a tidier design would collapse; each is the only
+answer to its own half. What a design can get wrong is applying one to the other -- reaching for a
+collector for values, or for a scope for objects -- and both mistakes read as simplifications.
+
+## Ending a value is the compiler's to emit, and the program never spells it
+
+SystemVerilog has no destructor, and it is tempting to read that as "nothing ends". C++ users do not
+write `~vector()` either; the compiler emits it, at every exit from the scope, including the ones
+the source does not mention. **A language having no destructor syntax says what a program may spell,
+not what an implementation must do.**
+
+Java is the case where both are true at once, and the reason is worth keeping: its primitives are
+flat, so there is nothing to end, and everything else is collected. That is why the absence is real
+there and only apparent here.
+
+"Every exit" includes the one no statement of the body spells and no reader thinks of first: an
+execution that is parked and never resumed, because whoever drives it ended it instead. That is an
+exit from every scope the body has open, so it owes the same endings, and a backend that reaches its
+scope exits only through statements will silently leak exactly there. It is the same path a
+coroutine's destroy takes in C++, where the language emits it and nobody has to notice.
+
+Which leaves the question that decides how much of this a value costs: **does the value's
+representation own anything?** A flat run of bits owns nothing and ends by the scope's storage going
+away, with nothing emitted. A run-time-sized container owns storage and must be ended. So the
+automatic regime's real work is confined to the values of the second kind, and a representation that
+gives the first kind something to own is paying that work for nothing
+(`../decisions/jit-value-realization.md` states the current realization and what it defers).
+
+## A regime is a property of the state, never of the code around it
+
+The automatic regime says a value ends when its declaring scope does. That is a fact about the
+declaration, and it stays the same fact however the body is written. Two things follow, and the
+second is the one that is easy to lose.
+
+**Where the storage physically sits is not part of the regime.** A local of a body that can suspend
+has to survive the suspension, so it is placed wherever survival requires -- and that is the same
+automatic object, placed by ordinary lowering. A language with coroutines does not gain a second
+kind of local; the transform promotes the ones that must survive. A model that names them
+differently has recorded a lowering result as a semantic distinction.
+
+**Where the storage is reclaimed from is not part of the regime either.** A region whose lifetime
+happens to cover a value is a way of freeing it, not a statement of how long it lives. The moment a
+value's end is read off which region it was allocated from, the region's shape -- and therefore the
+shape of the control flow that opened it -- has become the answer to a question about the
+declaration. The tell is that two variables with identical declarations get different treatment
+because of something about the bodies they sit in.
+
+Neither observation forbids regions. A region is a legitimate way to allocate, and pooling the
+short-lived temporaries of one call is an ordinary optimization. What it may not be is the place a
+value's lifetime is _stated_.
+
+## The managed regime
+
+The rest of this document fixes the managed regime and the storage discipline that makes precise
+reclamation possible. A SystemVerilog class object is a dynamically allocated, language-managed
+object: created by `new` at arbitrary simulation time, never explicitly freed, with no user-visible
+destructor, freely copyable by handle, identity-comparable, and free to form arbitrary object graphs
+including cycles. The simulator -- not the SystemVerilog program -- owns reclamation.
 
 > Managed object liveness is reachability. A managed object is retained while reachable from runtime
 > roots through managed-reference edges; an unreachable object is eligible for reclamation by a
@@ -50,6 +124,10 @@ lifetime never depends on the heap's.
 
 ## Owns
 
+- The **set of lifetime regimes** and the rule that every piece of state belongs to exactly one, so
+  that "how long does this live" has a single answer wherever it is asked.
+- The rule that **a value's end is emitted and an object's end is discovered**, and that neither
+  mechanism is applied to the other half.
 - The lifetime meaning of the **managed reference** (`gc<T>`): a traced edge that retains its
   target, with shallow-copy and identity that perform no retain/release, null a legal value, and
   cycles permitted. The reference _kind_ on the reference-kind axis is owned by `object_model.md`;
@@ -163,6 +241,23 @@ lifetime never depends on the heap's.
 
 ## Forbidden Shapes
 
+- **A collector asked to decide when a value ends.** A value is copied rather than referred to, so
+  there is no reachability question for it to answer, and tracing every value's storage puts the
+  collector on the path values are copied along.
+- **A scope asked to decide when an object ends.** A handle outlives whatever scope built the
+  object, so tying the object's end to that scope ends it while other handles still name it.
+- **A regime chosen by which mechanism already exists** rather than by which half the state is in.
+  Both mistakes above arrive as simplifications -- one mechanism instead of two -- and the thing
+  they simplify away is the distinction between having identity and not.
+- **An automatic value whose ending is emitted at the exits a statement spells and nowhere else.**
+  An execution ended while it is parked leaves every open scope without running one of them, so the
+  ending is owed on that path too, and it is the path nothing in the source points at.
+- **A value's end read off the region it was allocated from.** The region is a way of freeing, not a
+  statement of lifetime; once it is the statement, the shape of the surrounding control flow decides
+  how long a declaration's value lives, and two identical declarations get different answers.
+- **A second lifetime regime introduced because the first could not physically hold something.**
+  Survival across a suspension, and an address a reference can name, are placement requirements.
+  Meeting one by inventing a regime records a lowering constraint as a semantic class.
 - A managed value that can survive a safepoint living only in opaque backend execution state -- a
   backend coroutine-frame local, a captured-callback environment, an awaiter's private field, or
   arbitrary foreign storage. (Invariants 4, 7, 10.)
@@ -207,8 +302,17 @@ frame-relative; backend execution state holds only control bookkeeping and the L
 the frame. At a safepoint during the `#10`, the collector reaches the object through the scheduling
 record, then the frame, then `h`.
 
-The initial collector is a realization choice, not contract: precise, stop-the-world, non-moving,
-single-threaded mark-sweep. Non-moving keeps borrowed receivers, virtual-interface handles, and
-foreign pointers stable; the accepted cost is free-list allocation and fragmentation over long runs.
-Generational, incremental, or moving strategies are later collector choices that change none of the
-invariants above.
+The collector is precise, stop-the-world and single-threaded mark-sweep, and those three are a
+realization choice. **Non-moving is not**: a reference to a class property is a pointer into a
+managed object, so relocating one invalidates a reference the program still holds
+(`../decisions/referenceable-objects-have-stable-addresses.md`). A relocating collector is
+admissible only with a mechanism that leaves that pointer correct -- pinning an object while a
+reference into it is outstanding -- and never by changing what a reference is. Non-moving also keeps
+borrowed receivers, virtual-interface handles, and foreign pointers stable; the accepted cost is
+free-list allocation and fragmentation over long runs. Generational and incremental strategies
+change none of this.
+
+The same reference makes reclamation, not only relocation, the object's business: an object with an
+outstanding interior reference goes on existing for that reference's bounded life, the way LRM
+13.5.2 keeps a detached container element alive. That is a fact recorded about the object, so it is
+the collector's to honor and not a second kind of owning edge.

@@ -190,8 +190,8 @@ whether or not a view word is part of the shape.
 - `../architecture/object_model.md` -- invariant 4's split between an object's identity and a
   reference's static view, which this entry realizes, and invariant 2's fourth identity
   representation.
-- `../architecture/object_lifetime.md` -- the terminal lifetime model, whose receiver-rooting
-  invariant is what removes D5.
+- `../architecture/lifetime.md` -- the terminal lifetime model, whose receiver-rooting invariant is
+  what removes D5.
 - `object-model.md` -- Decision 3, precise tracing over reference counting, and the shared-ownership
   staging this projection currently rides.
 - `structural-access-on-an-opaque-object.md` -- what happens when a source name continues past such

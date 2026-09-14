@@ -163,6 +163,6 @@ D8. There is no registration-target interface. Because the detach in D3 is point
   not a construct hint the scheduler reads, and the engine still branches only on queue and region.
 - `../architecture/identity_and_ownership.md` -- duplicate ownership as a forbidden shape, and the
   rule that a needed lookup is a symptom of misplaced ownership.
-- `../architecture/object_lifetime.md` -- managed object lifetime is reference-counted today, so a
+- `../architecture/lifetime.md` -- managed object lifetime is reference-counted today, so a
   registration carries no tracing obligation; a future precise collector may reuse the activation
   and scheduling identity established here, but nothing in this decision anticipates it.
