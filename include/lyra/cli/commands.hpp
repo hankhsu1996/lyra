@@ -6,13 +6,13 @@
 #include <fmt/core.h>
 
 #include "lyra/cli/command_line.hpp"
-#include "lyra/compiler/compile.hpp"
 #include "lyra/diag/diagnostic.hpp"
 #include "lyra/diag/render.hpp"
 #include "lyra/diag/sink.hpp"
 #include "lyra/diag/source_manager.hpp"
 #include "lyra/driver/cpp_build.hpp"
 #include "lyra/driver/dpi_boundary.hpp"
+#include "lyra/frontend/load.hpp"
 
 namespace lyra::cli {
 
@@ -38,14 +38,15 @@ class Reporter {
   diag::RenderOptions opts_;
 };
 
-// What a command receives: the request, what the front end produced from it,
+// What a command receives: the request, what the front end elaborated from it,
 // and the channel for anything that goes wrong. A command reads this and
 // returns the process exit code; nothing else about the invocation is visible
 // to it.
 //
-// The artifacts are not const: everything below HIR is driven by the command
-// itself, and driving it takes each unit's HIR out as that unit is lowered, so
-// what is resident at any moment is one unit.
+// The elaboration is not const: a command that reads past it lowers it to HIR
+// and takes the AST as it does, because that is where the front end's own
+// account of the design stops being read. How far past it a command goes is
+// the command's own business.
 //
 // A command writes what went wrong into the sink and renders nothing. Every
 // stage above it already writes there, so one account covers the whole run and
@@ -55,17 +56,12 @@ class Reporter {
 // nothing, and a reference member would make the type unassignable for no gain.
 struct CommandContext {
   const ParsedArgs* args;
-  compiler::CompileArtifacts* artifacts;
+  frontend::ParseResult* elaborated;
   diag::DiagnosticSink* sink;
-  const diag::SourceManager* mgr;
   std::span<const driver::DpiLinkInput> dpi_inputs;
   driver::SourceFormatting formatting;
   std::string_view program_path;
 };
-
-// How far the front end has to run for a command to have what it drives from:
-// elaboration alone, or the HIR everything below it is lowered from.
-auto FrontEndDepth(const ParsedArgs& args) -> compiler::StopAfter;
 
 auto RunCommand(const CommandContext& ctx) -> int;
 

@@ -991,9 +991,13 @@ A021_STANDING = frozenset({
 
 
 # Rule A022
+# A compiled unit wears more than one spelling -- one layer's compilation unit,
+# or the body plus the metadata defining it -- and the rule is about holding a
+# sequence of whole units, so every spelling of one is matched. A wrapper the
+# element type gains must not be what switches the rule off.
 A022_PATTERN = re.compile(
     r"\b(?:std::)?(?:span\s*<\s*const\s+|vector\s*<\s*)"
-    r"(?:hir|mir|lir)::CompilationUnit\s*>")
+    r"(?:(?:hir|mir|lir)::CompilationUnit|compiler::ExecutableUnit)\s*>")
 
 A022_ADMITTED: dict[str, str] = {
     "include/lyra/jit/executor.hpp": (
@@ -1005,8 +1009,8 @@ A022_ADMITTED: dict[str, str] = {
         "that session, on the other side of its own entry point"
     ),
     "src/lyra/cli/commands.cpp": (
-        "the bodies handed to that session, gathered as each unit is lowered "
-        "so the form each was lowered from is released on the way"
+        "the units handed to that session, gathered as each is lowered so the "
+        "form it was lowered from is released on the way"
     ),
     "include/lyra/lowering/ast_to_hir/lower.hpp": (
         "the whole design's HIR, built in one pass before any of it is "

@@ -1416,18 +1416,29 @@ enough to warrant its own focused review.
       artifact without anything reading across, and this entry's whole subject is a property of the
       pipeline rather than a thing to maintain.
 
-- [ ] R90 -- How far a lowering runs is a value carried at run time, and what it answers with
-      carries one optional product per stage down to that depth. Which of them are filled follows
-      from the depth and from nothing else, so a caller that asked for an executable body knows one
-      is there and has no way to say so: it reads every product through a check that turns an
-      unfilled slot into a compiler bug. That is a closed set of alternatives -- one per depth --
-      spelled as a tag beside always-present spare fields, which is the shape stating alternatives
-      as a variant exists to make unspellable.
+- [x] R90 -- How far a lowering runs is no longer a value. A request is made by calling for what it
+      reads -- the elaborated source, the design's HIR, every unit modelled semantically, every unit
+      in the form something runs -- and what comes back is that and nothing optional, so no caller
+      asks whether a product it requested is there. The only absence left is at the outermost
+      boundary and means the run failed, which is what the collect-and-continue rule already
+      requires. `decisions/the-request-names-its-products.md` holds the derivation and the survey.
 
-      The depth should decide the type rather than the contents: asking for a depth answers with
-      that depth's products, and a caller that asked for a body is handed one rather than an option
-      of one. It reaches the per-unit pipeline, the link-level unit's products, and every command
-      that drives either, so it is a subject of its own rather than a cleanup.
+      A command now states its depth once, by calling for what it reads. It used to state it twice:
+      a switch over the command kinds answered how far the front end had to run, and a second switch
+      ran the command and read what it liked, with nothing holding the two together. A command that
+      asked for less than it read compiled and reported a compiler bug at run time.
+
+      A compiled unit's two halves -- the body and the metadata defining it -- now travel as one
+      value, so the execution session takes a sequence of units rather than two it had to index in
+      step. That coupling was stated in prose on the entry it crossed.
+
+      **Doing it falsified the reading three consumers had written down.** Each guarded its
+      per-unit work with a test for a missing executable body, explaining that a namespace has
+      none. Every unit has one, a package included, because a package's variable initializers and
+      its subroutines are code like any other -- so all three guards were always taken, and dumping
+      a design with a package shows the package's own executable unit. The comments were a day old.
+      Had they been believed rather than checked, the honest-looking fix -- skip the units that root
+      no objects -- would have dropped every package's initializers from what a session loads.
 
 - [ ] R91 -- Converting a packed value between widths, or between the two-state and the four-state
       domain, is spelled one bit at a time. The conversion clears the whole destination by assigning

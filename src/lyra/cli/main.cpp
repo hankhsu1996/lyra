@@ -21,7 +21,6 @@
 #include "lyra/diag/diagnostic.hpp"
 #include "lyra/diag/render.hpp"
 #include "lyra/diag/sink.hpp"
-#include "lyra/diag/source_manager.hpp"
 #include "lyra/driver/cpp_build.hpp"
 #include "lyra/driver/dpi_boundary.hpp"
 #include "lyra/driver/pch.hpp"
@@ -155,37 +154,26 @@ auto main(int argc, char** argv) -> int {
     }
 
     lyra::diag::DiagnosticSink sink;
-    auto result = lyra::compiler::Compile(
-        driver, lyra::compiler::LoweringPolicy{.assertions = args.assertions},
-        sink, lyra::cli::FrontEndDepth(args));
+    auto front_end = lyra::compiler::RunFrontEnd(driver);
 
     // `run` executes the simulation; its stdout/stderr are the simulation's
-    // own, so compile-phase warnings must not bleed into them. Surface slang
-    // diagnostics for run only when they carry errors (which abort below);
-    // other commands always show them. Use `compile`/`dump` to see warnings.
-    const bool suppress_compile_warnings =
-        args.cmd == CommandKind::kRun && result.slang_ok && !sink.HasErrors();
-    if (!suppress_compile_warnings && !result.slang_diagnostics.empty()) {
-      fmt::print(stderr, "{}", result.slang_diagnostics);
+    // own, so compile-phase warnings must not bleed into them. An account that
+    // refuses the source is printed whatever the command is, because then
+    // there is no simulation to protect. Use `compile`/`dump` to see warnings.
+    const bool wants_warnings = args.cmd != CommandKind::kRun;
+    if ((wants_warnings || !front_end.elaborated) &&
+        !front_end.diagnostics.empty()) {
+      fmt::print(stderr, "{}", front_end.diagnostics);
     }
-
-    const lyra::diag::SourceManager* mgr =
-        result.artifacts.parse ? &result.artifacts.parse->diag_sources
-                               : nullptr;
-    if (sink.HasErrors()) {
-      report(sink, mgr);
-      return 1;
-    }
-    if (!result.slang_ok) {
+    if (!front_end.elaborated) {
       return 1;
     }
 
     const int exit_code = lyra::cli::RunCommand(
         lyra::cli::CommandContext{
             .args = &args,
-            .artifacts = &result.artifacts,
+            .elaborated = &*front_end.elaborated,
             .sink = &sink,
-            .mgr = mgr,
             .dpi_inputs = *dpi_inputs,
             .formatting = args.format ? lyra::driver::SourceFormatting::kOn
                                       : lyra::driver::SourceFormatting::kOff,
@@ -195,7 +183,7 @@ auto main(int argc, char** argv) -> int {
     // write to, so what reaches the terminal is decided once, here, and a
     // command never renders anything itself.
     if (sink.HasErrors()) {
-      report(sink, mgr);
+      report(sink, &front_end.elaborated->diag_sources);
     }
     return exit_code;
   } catch (const lyra::InternalError& e) {

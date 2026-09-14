@@ -1901,10 +1901,8 @@ auto LoadClosures(const lir::CompilationUnit& unit)
 }  // namespace
 
 auto Execute(
-    std::span<const lir::CompilationUnit> units,
-    std::span<const compiler::ElaboratedUnitMetadata> metadata,
-    const lir::CompilationUnit& root_unit,
-    const compiler::ElaboratedUnitMetadata& root_metadata,
+    std::span<const compiler::ExecutableUnit> units,
+    const compiler::ExecutableUnit& root_unit,
     const std::optional<std::filesystem::path>& dpi_library,
     std::span<const std::string> simulation_arguments) -> diag::Result<int> {
   llvm::InitializeNativeTarget();
@@ -1923,10 +1921,10 @@ auto Execute(
   // unit, distinguished only as the bootstrap entry below.
   std::vector<const lir::CompilationUnit*> loaded_units;
   loaded_units.reserve(units.size() + 1);
-  for (const lir::CompilationUnit& unit : units) {
-    loaded_units.push_back(&unit);
+  for (const compiler::ExecutableUnit& unit : units) {
+    loaded_units.push_back(&unit.body);
   }
-  loaded_units.push_back(&root_unit);
+  loaded_units.push_back(&root_unit.body);
 
   // Generation runs ahead of any state the run needs, so a unit this backend
   // cannot lower is refused with none of the design yet standing.
@@ -1973,8 +1971,8 @@ auto Execute(
   // Each definition owns a stable address for the whole run; the runtime holds
   // pointers into it.
   std::vector<LoadedScopeClass> loaded;
-  for (std::size_t i = 0; i < units.size(); ++i) {
-    auto unit_classes = LoadScopeClasses(units[i], metadata[i]);
+  for (const compiler::ExecutableUnit& unit : units) {
+    auto unit_classes = LoadScopeClasses(unit.body, unit.definition);
     if (!unit_classes) {
       return std::unexpected(std::move(unit_classes.error()));
     }
@@ -1982,14 +1980,15 @@ auto Execute(
         loaded.end(), std::make_move_iterator(unit_classes->begin()),
         std::make_move_iterator(unit_classes->end()));
   }
-  if (!root_unit.root.has_value()) {
+  const lir::CompilationUnit& root_body = root_unit.body;
+  if (!root_body.root.has_value()) {
     throw InternalError("jit executor: the design root roots no object tree");
   }
   const std::string root_class_symbol = lir::ClassSymbol(
-      root_unit.name,
+      root_body.name,
       lir::SymbolPartOf(
-          root_unit.classes.Get(*root_unit.root).name, root_unit.root->value));
-  auto root_classes = LoadScopeClasses(root_unit, root_metadata);
+          root_body.classes.Get(*root_body.root).name, root_body.root->value));
+  auto root_classes = LoadScopeClasses(root_body, root_unit.definition);
   if (!root_classes) {
     return std::unexpected(std::move(root_classes.error()));
   }
