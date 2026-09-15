@@ -1,6 +1,9 @@
 #pragma once
 
+#include <cstddef>
 #include <cstdint>
+#include <expected>
+#include <functional>
 #include <string>
 #include <unordered_map>
 #include <utility>
@@ -37,6 +40,54 @@ struct ClassTranslation {
   // before any declaration is.
   base::Translation<hir::MethodId, mir::CallableId> methods;
 };
+
+// A reading a type's own declaration decides about a value of it, rather than
+// one the value decides for itself. Each is realized as a type-associated
+// function the unit owns -- it takes the value and no object, so no class is
+// its owner.
+//
+// It is half of a key and so is not a dispatch set: nothing reads it to decide
+// anything, and what tells two of them apart is equality. One reading does not
+// stand for another, so a type with several has one function per reading, and a
+// reading added later arrives with the body that builds it at the site that
+// asks -- there is no consumer positioned to answer for it wrongly.
+enum class TypeOwnedReading : std::uint8_t {
+  // LRM 21.2.1.6: the assignment-pattern text, which a structure, a union and a
+  // container have and nothing else does.
+  kAssignmentPatternText,
+  // LRM 6.19.5.5: the name an enumeration declares for a value.
+  kEnumerationName,
+  // LRM 6.19.5.3 / 6.19.5.4: one traversal of an enumeration's member order,
+  // shared by `next` and `prev`, which differ only in the sign of the step.
+  kEnumerationStep,
+};
+
+// Which reading of which type. The type is the SystemVerilog one because the
+// declaration is what decides, and a lowering answers facts it then stops
+// carrying: a packed tagged union reads as its tag and the member that tag
+// names where an untagged one reads as its first member, while both project
+// onto one vector below the front end.
+struct TypeOwnedReadingKey {
+  TypeOwnedReading reading;
+  hir::TypeId type;
+
+  auto operator==(const TypeOwnedReadingKey&) const -> bool = default;
+};
+
+}  // namespace lyra::lowering::hir_to_mir
+
+template <>
+struct std::hash<lyra::lowering::hir_to_mir::TypeOwnedReadingKey> {
+  auto operator()(lyra::lowering::hir_to_mir::TypeOwnedReadingKey key)
+      const noexcept -> std::size_t {
+    const std::size_t reading =
+        std::hash<std::uint8_t>{}(static_cast<std::uint8_t>(key.reading));
+    const std::size_t type = std::hash<lyra::hir::TypeId>{}(key.type);
+    return reading ^ (type << 1U);
+  }
+};
+
+namespace lyra::lowering::hir_to_mir {
 
 // Lowers one HIR compilation unit into one MIR compilation unit, holding that
 // unit as it is built along with everything the declaration stages settled
@@ -224,10 +275,12 @@ class UnitLowerer {
       -> mir::ExternalVirtualSlot;
 
   // Receiver-less callable of a unit's namespace (LRM 26.3 package function or
-  // task), reached the same way by a body of that unit and by a body outside
-  // it. The dependency it records is the callable one, never the class one.
-  auto MakeExternalCallableTarget(const hir::ExternalUnitSubroutineRef& ref)
-      -> mir::ExternalUnitCallableTarget;
+  // task). A body of that same unit names the position its declaration sits at,
+  // because it holds the arena; a body outside it has only the identifier the
+  // namespace published, and reading that promise is what records the
+  // dependency -- the callable one, never the class one.
+  auto MakeNamespaceCallableTarget(const hir::ExternalUnitSubroutineRef& ref)
+      -> mir::DirectTarget;
 
   // A callable another unit published on the object its instances are (LRM
   // 25.7), named by that unit, that object's class, and the callable's own
@@ -259,26 +312,21 @@ class UnitLowerer {
     return declarations_.Get(id);
   }
 
-  // Per-unit dedup of the callables synthesized for the LRM 6.19.5 `name` and
-  // shared `next` / `prev` step operations, keyed by the enum's MIR type. One
-  // callable per enum is reused across every call site.
-  [[nodiscard]] auto EnumNameHelpers()
-      -> std::unordered_map<mir::TypeId, mir::CallableTarget>& {
-    return enum_name_helpers_;
-  }
-  [[nodiscard]] auto EnumStepHelpers()
-      -> std::unordered_map<mir::TypeId, mir::CallableTarget>& {
-    return enum_step_helpers_;
-  }
-
-  // Per-unit dedup of the callables synthesized for the LRM 21.2.1.6
-  // assignment-pattern rendering, keyed by the SystemVerilog type whose
-  // declaration decides the text. Keyed there rather than by the MIR type
-  // because the clause reads facts a lowering answers and stops carrying -- a
-  // packed union's tag among them.
-  [[nodiscard]] auto PatternRenderHelpers()
-      -> std::unordered_map<hir::TypeId, mir::CallableTarget>& {
-    return pattern_render_helpers_;
+  // The type-associated function answering one reading of one type, synthesized
+  // by `build` the first time this unit asks for it and shared by every site
+  // afterwards -- so two values of one type cannot read differently, and no
+  // site re-derives what belongs to the type.
+  template <typename Build>
+  auto TypeOwnedFunction(TypeOwnedReadingKey key, Build&& build)
+      -> diag::Result<mir::UnitCallableTarget> {
+    if (const auto it = type_owned_readings_.find(key);
+        it != type_owned_readings_.end()) {
+      return mir::UnitCallableTarget{.slot = it->second};
+    }
+    auto slot_or = std::forward<Build>(build)();
+    if (!slot_or) return std::unexpected(std::move(slot_or.error()));
+    type_owned_readings_.emplace(key, *slot_or);
+    return mir::UnitCallableTarget{.slot = *slot_or};
   }
 
  private:
@@ -323,9 +371,7 @@ class UnitLowerer {
   // names a peer. Lives only on the lowerer; the finished compilation unit
   // holds the only authoritative class representation.
   base::SymbolTable<mir::ClassId, ClassShape> declarations_;
-  std::unordered_map<mir::TypeId, mir::CallableTarget> enum_name_helpers_;
-  std::unordered_map<mir::TypeId, mir::CallableTarget> enum_step_helpers_;
-  std::unordered_map<hir::TypeId, mir::CallableTarget> pattern_render_helpers_;
+  std::unordered_map<TypeOwnedReadingKey, mir::CallableId> type_owned_readings_;
 };
 
 }  // namespace lyra::lowering::hir_to_mir

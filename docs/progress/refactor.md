@@ -1498,6 +1498,20 @@ enough to warrant its own focused review.
       other's contract. Until there is one, such a case says in its own text which of the two it
       is.
 
+- [ ] R95 -- A body a unit's namespace owns takes no LIR function identity, so a call to one inside
+      the very unit that defines it is lowered as a reach for a linker symbol rather than as a call
+      to a function the unit holds. Every class body is reserved an identity before any body is
+      lowered, which is what lets a call name the callee directly; the namespace's own bodies are
+      appended as they are lowered instead, so nothing can name one and a caller composes the symbol
+      string a second time.
+
+      The symbol is composed from the same parts at both ends, so the two agree and nothing is
+      wrong today. What it costs is that an intra-unit call carries a string where an identity
+      exists, and the string is the one thing that cannot be checked: a caller and a definition that
+      compose it differently fail at link time with no compiler in between. Reserving an identity
+      per namespace body before the bodies are lowered, exactly as a class's are, makes the call a
+      `FunctionTarget` and leaves the symbol to the definition alone.
+
 ## Out of Scope
 
 - Per-feature workstreams. Those live in the dedicated feature files (`operators.md`,

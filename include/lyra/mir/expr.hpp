@@ -186,19 +186,28 @@ struct ForeignSymbolTarget {
   auto operator==(const ForeignSymbolTarget&) const -> bool = default;
 };
 
-// Identity of a receiver-less callable a unit's namespace owns -- a package
-// function or task (LRM 26.3). It carries no unit-local id: it names the owning
-// unit and the callable by name, resolved against that unit's interface at link
-// time, exactly as `ExternalUnitObjectType` names an instantiated child. One
-// target kind covers every caller, the owning unit's own bodies included,
-// because every body a namespace owns answers to the identifier the source
-// declared it under -- so the name is total here, and a caller inside the unit
-// reaches its sibling by the same thing a caller outside it does. A namespace's
-// storage is the case this does not extend to: that pool also holds the
-// static-lifetime cells of the unit's subroutines, which the source never
-// named, so a cell is reached by its position rather than by a name that for
-// some of them does not exist. A backend renders this as the free qualified
-// form `unit_name::callable_name(args)`.
+// Identity of a receiver-less callable this unit's own namespace owns -- a
+// package function or task (LRM 26.3), and the type-associated functions the
+// compiler synthesizes. Its identity is the position its declaration sits at,
+// which every body has; being reachable by an identifier is a separate relation
+// the namespace holds over that position, stated only where the source declared
+// one, so a synthesized body takes no part in it and needs no name of the
+// compiler's own. This is the same shape a namespace's storage already has,
+// whose pool likewise holds cells the source never named.
+struct UnitCallableTarget {
+  CallableId slot;
+
+  auto operator==(const UnitCallableTarget&) const -> bool = default;
+};
+
+// Identity of a receiver-less callable *another* unit's namespace owns -- a
+// package function or task (LRM 26.3) reached across the boundary. It carries
+// no unit-local id, because a position means nothing outside the arena that
+// minted it: it names the owning unit and the callable by name, resolved
+// against that unit's interface at link time, exactly as
+// `ExternalUnitObjectType` names an instantiated child. Only a body the source
+// declared can be named this way, which is the whole of what a namespace
+// publishes.
 struct ExternalUnitCallableTarget {
   std::string unit_name;
   std::string callable_name;
@@ -207,12 +216,11 @@ struct ExternalUnitCallableTarget {
 };
 
 // Identity of one of the two bodies bringing up another unit's namespace.
-// Neither is
-// declared by the source, so neither answers to a name, and SystemVerilog
-// leaves no spelling reserved to the compiler (LRM 5.6.1) -- a word minted for
-// one would sit in the same name space as that unit's own subroutines. The two
-// ends agree on which body is meant by which of the two it is, so this is its
-// own identity space rather than a name in the unit's.
+// Neither is declared by the source, so neither answers to a name, and
+// SystemVerilog leaves no spelling reserved to the compiler (LRM 5.6.1) -- a
+// word minted for one would sit in the same name space as that unit's own
+// subroutines. The two ends agree on which body is meant by which of the two it
+// is, so this is its own identity space rather than a name in the unit's.
 struct ExternalUnitStorageTarget {
   std::string unit_name;
   NamespaceStoragePhase phase;
@@ -237,23 +245,26 @@ struct ExternalUnitClassMethodTarget {
 };
 
 // The target of a `Direct` call -- the symbol identity. Each alternative is one
-// identity space, told apart by the table that resolves the name: this unit's
-// own callable arena (`CallableTarget`), the closed set of runtime library
-// entries (`BuiltinFn`), another compilation unit's namespace
+// identity space, told apart by the table that resolves the name: a class of
+// this unit (`CallableTarget`), this unit's own namespace
+// (`UnitCallableTarget`), the closed set of runtime library entries
+// (`BuiltinFn`), another compilation unit's namespace
 // (`ExternalUnitCallableTarget`) or one of its classes
 // (`ExternalUnitClassMethodTarget`), the fixed entries another unit's namespace
 // brings itself up through (`ExternalUnitStorageTarget`), and the DPI-C name
-// space (`ForeignSymbolTarget`, LRM 35.4). Nothing here says whether the call
-// dispatches on an object -- that is the callee's receiver -- and none is
-// recovered from the receiver's runtime type.
+// space (`ForeignSymbolTarget`, LRM 35.4). Inside this unit a body is named by
+// its position and outside it by what the namespace published, so the two
+// namespace alternatives are total and do not overlap. Nothing here says
+// whether the call dispatches on an object -- that is the callee's receiver --
+// and none is recovered from the receiver's runtime type.
 using DirectTarget = std::variant<
-    CallableTarget, support::BuiltinFn, ExternalUnitCallableTarget,
-    ExternalUnitClassMethodTarget, ExternalUnitStorageTarget,
-    ForeignSymbolTarget>;
+    CallableTarget, UnitCallableTarget, support::BuiltinFn,
+    ExternalUnitCallableTarget, ExternalUnitClassMethodTarget,
+    ExternalUnitStorageTarget, ForeignSymbolTarget>;
 
-// A direct call to a named symbol -- the code is found by name at compile
-// time. The single shape for every direct invocation: a user method, a
-// built-in, another compilation unit's subroutine, a name in the DPI-C space.
+// A direct call whose callee is settled at compile time. The single shape for
+// every direct invocation: a user method, a built-in, a subroutine of this
+// unit's namespace or of another's, a name in the DPI-C space.
 //
 // The object the call dispatches on rides here, distinct from user-supplied
 // `CallExpr::arguments`, so the call carries exactly the arguments the SV
@@ -617,10 +628,10 @@ struct ExternalUnitVariableRef {
 
 // A static property (LRM 8.9 / 8.10) declared on a class of another
 // compilation unit. Its owner has no unit-local id here; the property is
-// named by (declaring unit, class canonical name, property name). A backend
-// renders the access as the qualified `unit::Class::prop` after including
-// the declaring unit's header. `Expr::type` is the property's observable-cell
-// type, exactly as on the intra-unit reference, so the two read alike.
+// named by (declaring unit, class canonical name, property name), which a
+// backend resolves once it has taken in what that unit published. `Expr::type`
+// is the property's observable-cell type, exactly as on the intra-unit
+// reference, so the two read alike.
 struct ExternalStaticPropertyRef {
   std::string unit_name;
   std::string class_name;

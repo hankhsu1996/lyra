@@ -138,11 +138,11 @@ auto StaticPropertySymbol(
       {SymbolPart::Name(unit_name), std::move(cls), std::move(property)});
 }
 
-auto NamespaceCallableSymbol(
-    std::string_view unit_name, std::string_view callable_name) -> std::string {
+auto NamespaceCallableSymbol(std::string_view unit_name, SymbolPart callable)
+    -> std::string {
   return SymbolName(
       SymbolCategory::kNamespaceCallable,
-      {SymbolPart::Name(unit_name), SymbolPart::Name(callable_name)});
+      {SymbolPart::Name(unit_name), callable});
 }
 
 auto NamespaceStorageInstallSymbol(std::string_view unit_name) -> std::string {

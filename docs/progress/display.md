@@ -59,7 +59,10 @@ refused outright rather than left-justified.
       nesting (`int arr[3][]`, `int arr[][3]`, `int arr[][]`) falls out of that. A singular element
       follows the LRM "as it would unformatted" rule (default `$display` radix, i.e. decimal) and a
       string element prints quoted. `%0p` produces identical text, which LRM 21.2.1.6 permits by
-      leaving the shorter form to the tool.
+      leaving the shorter form to the tool. The conversion is available wherever the language lets
+      such a value be written, a package subroutine and the compilation-unit scope included: what
+      answers for a type takes no object, so nothing about what encloses the call decides whether it
+      can be asked.
 - [x] DI8 -- `$sscanf` and `$fscanf` over a shared scanner core (LRM 21.3.4.3). Statement-position
       call (bare or blocking assign-RHS); conversions `%d` / `%h` / `%x` / `%b` / `%o` / `%s` / `%c`
       / `%%`; 4-state vocabulary (`x` / `z` / `?` / `_`) inside the integer conversions; single-char

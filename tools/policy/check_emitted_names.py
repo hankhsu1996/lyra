@@ -53,6 +53,7 @@ EMITTERS = [
 MAPPERS = [
     "ToCppName",
     "UnitNamespaceOf",
+    "CppUnitScope",
     "CppClassCallableName",
     "CppAbiAdapterName",
     "CppStaticConstantName",

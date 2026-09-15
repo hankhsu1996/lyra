@@ -24,7 +24,7 @@
 #include "lyra/mir/binary_op.hpp"
 #include "lyra/mir/callable.hpp"
 #include "lyra/mir/callable_code.hpp"
-#include "lyra/mir/class.hpp"
+#include "lyra/mir/callable_id.hpp"
 #include "lyra/mir/compilation_unit.hpp"
 #include "lyra/mir/expr.hpp"
 #include "lyra/mir/local.hpp"
@@ -105,13 +105,13 @@ auto RenderingKindOf(const UnitLowerer& unit_lowerer, hir::TypeId type)
   return RenderingKind::kValueDecides;
 }
 
-// Builds one type's rendering and every rendering it reaches. Each homes on the
-// class the print site is being lowered into, which is what the per-unit cache
-// keys it beside.
+// Builds one type's rendering and every rendering it reaches. Each is a
+// type-associated function of the unit, over one value parameter and no object,
+// so it reads nothing of the site that first asked for it -- which is what lets
+// every site in the unit share the one body.
 class Renderer {
  public:
-  Renderer(UnitLowerer& unit_lowerer, WalkFrame home, diag::SourceSpan span)
-      : unit_lowerer_(&unit_lowerer), home_(home), span_(span) {
+  explicit Renderer(UnitLowerer& unit_lowerer) : unit_lowerer_(&unit_lowerer) {
   }
 
   // The text a value of `type` reads as, written into the block `frame` names.
@@ -144,7 +144,8 @@ class Renderer {
       const WalkFrame& frame, const std::string& name, mir::ExprId element_text)
       -> mir::ExprId;
 
-  auto Helper(hir::TypeId type) -> diag::Result<mir::CallableTarget>;
+  auto RenderingFunction(hir::TypeId type)
+      -> diag::Result<mir::UnitCallableTarget>;
   auto Synthesize(hir::TypeId type) -> diag::Result<mir::CallableId>;
   auto BuildBody(const WalkFrame& frame, mir::LocalId value, hir::TypeId type)
       -> diag::Result<mir::ExprId>;
@@ -180,8 +181,6 @@ class Renderer {
       support::BuiltinFn entry) -> mir::ExprId;
 
   UnitLowerer* unit_lowerer_;
-  WalkFrame home_;
-  diag::SourceSpan span_;
 };
 
 auto Renderer::Text(const WalkFrame& frame, std::string_view literal)
@@ -248,7 +247,7 @@ auto Renderer::Render(
   if (RenderingKindOf(Owner(), type) == RenderingKind::kValueDecides) {
     return FormatLeaf(frame, value, Owner().TranslateType(type));
   }
-  auto target_or = Helper(type);
+  auto target_or = RenderingFunction(type);
   if (!target_or) return std::unexpected(std::move(target_or.error()));
   return frame.current_block->exprs.Add(
       mir::Expr{
@@ -259,17 +258,12 @@ auto Renderer::Render(
           .type = StringType()});
 }
 
-auto Renderer::Helper(hir::TypeId type) -> diag::Result<mir::CallableTarget> {
-  auto& cache = Owner().PatternRenderHelpers();
-  if (const auto it = cache.find(type); it != cache.end()) {
-    return it->second;
-  }
-  auto slot_or = Synthesize(type);
-  if (!slot_or) return std::unexpected(std::move(slot_or.error()));
-  const mir::CallableTarget target{
-      .owner = home_.current_class_id, .slot = *slot_or};
-  cache.emplace(type, target);
-  return target;
+auto Renderer::RenderingFunction(hir::TypeId type)
+    -> diag::Result<mir::UnitCallableTarget> {
+  return Owner().TypeOwnedFunction(
+      TypeOwnedReadingKey{
+          .reading = TypeOwnedReading::kAssignmentPatternText, .type = type},
+      [&] { return Synthesize(type); });
 }
 
 auto Renderer::Synthesize(hir::TypeId type) -> diag::Result<mir::CallableId> {
@@ -279,7 +273,11 @@ auto Renderer::Synthesize(hir::TypeId type) -> diag::Result<mir::CallableId> {
   code.params = {value};
   code.result_type = StringType();
 
-  WalkFrame frame = home_;
+  // The body reads its one parameter and calls the runtime and the renderings
+  // of the types it reaches, so the frame it is built against carries a
+  // binding context and a block and nothing else. Taking the asking site's
+  // frame would let whichever site asked first decide a body every site shares.
+  WalkFrame frame;
   frame.bindings = &bindings;
   frame.current_block = &code.Body();
 
@@ -287,7 +285,7 @@ auto Renderer::Synthesize(hir::TypeId type) -> diag::Result<mir::CallableId> {
   if (!text_or) return std::unexpected(std::move(text_or.error()));
   code.Body().AppendStmt(mir::ReturnStmt{.value = *text_or});
 
-  return home_.current_class->callables.Add(
+  return Unit().callables.Add(
       mir::CallableDecl{
           .code = std::move(code),
           .foreign = std::nullopt,
@@ -470,8 +468,8 @@ auto Renderer::BuildEnumeration(
   const mir::TypeId mir_type = Owner().TranslateType(type);
   mir::Block& block = *frame.current_block;
 
-  auto name_or = BuildEnumNameCallExpr(
-      Owner(), frame, Read(frame, value, mir_type), mir_type, span_);
+  auto name_or =
+      BuildEnumNameCallExpr(Owner(), Read(frame, value, mir_type), type);
   if (!name_or) return std::unexpected(std::move(name_or.error()));
   const mir::ExprId name = block.exprs.Add(*std::move(name_or));
   const mir::ExprId base_text =
@@ -775,16 +773,8 @@ auto Renderer::BuildAssociativeEntries(
 
 auto BuildPatternRendering(
     UnitLowerer& unit_lowerer, WalkFrame frame, mir::ExprId value,
-    hir::TypeId type, diag::SourceSpan span) -> diag::Result<mir::ExprId> {
-  // The callables home on a class an intra-unit call can name; a package
-  // namespace has none.
-  if (frame.current_class == nullptr) {
-    return diag::Fail(
-        span, diag::DiagCode::kUnsupportedExpressionForm,
-        "the assignment-pattern format of a declared type in a package "
-        "context is not yet supported");
-  }
-  Renderer renderer(unit_lowerer, frame, span);
+    hir::TypeId type) -> diag::Result<mir::ExprId> {
+  Renderer renderer(unit_lowerer);
   return renderer.Render(frame, value, type);
 }
 

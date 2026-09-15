@@ -66,6 +66,10 @@ class Registry {
     return slots_.size();
   }
 
+  [[nodiscard]] auto empty() const -> bool {
+    return slots_.empty();
+  }
+
   // The identities this registry has handed out, whether or not each is defined
   // yet. Reading them from here is what keeps a walk from rebuilding an id out
   // of its own loop counter.

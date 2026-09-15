@@ -237,19 +237,23 @@ auto RenderReferenceExpr(
                     owner_cls.named_static_properties, r.prop));
           },
           [&](const mir::StaticVariableRef& r) -> std::string {
-            // A body of the declaring unit reaches it directly: the emitted
-            // namespace is the one the body is already inside.
-            return CppStaticVariableName(
-                view.Unit().named_static_variables, r.variable);
+            // Named through the declaring unit's namespace even from a body of
+            // that unit: a class body is inside its own class's scope first,
+            // where a member of the same identifier would answer instead.
+            return std::format(
+                "{}::{}", CppUnitScope(view.Unit().name),
+                CppStaticVariableName(
+                    view.Unit().named_static_variables, r.variable));
           },
           [&](const mir::ExternalUnitVariableRef& r) -> std::string {
             return std::format(
-                "{}::{}", ToCppName(r.unit_name), ToCppName(r.variable_name));
+                "{}::{}", CppUnitScope(r.unit_name),
+                ToCppName(r.variable_name));
           },
           [&](const mir::ExternalStaticPropertyRef& r) -> std::string {
             return std::format(
-                "{}::{}::{}", ToCppName(r.unit_name), ToCppName(r.class_name),
-                ToCppName(r.property_name));
+                "{}::{}::{}", CppUnitScope(r.unit_name),
+                ToCppName(r.class_name), ToCppName(r.property_name));
           }},
       reference.target);
 }

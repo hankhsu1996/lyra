@@ -602,6 +602,11 @@ class MirDumper {
                   CallableLabel(
                       unit_->GetClass(c.owner).named_callables, c.slot));
             },
+            [this](const UnitCallableTarget& c) -> std::string {
+              return std::format(
+                  R"(callable=Unit.{} "{}")", c.slot.value,
+                  CallableLabel(unit_->named_callables, c.slot));
+            },
             [](const support::BuiltinFn& id) -> std::string {
               return std::format(
                   "builtin=\"{}\"", support::RuntimeEntryOf(id).name);

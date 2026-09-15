@@ -601,10 +601,24 @@ auto UnitLowerer::RunNamespace() -> diag::Result<mir::CompilationUnit> {
     }
   }
 
-  // The callable each package subroutine lowered to, recorded where it is
-  // created so an export below names its own by identity.
+  // The callable each package subroutine lowered to, so an export below names
+  // its own by identity. Every identity and every name is published before any
+  // body is lowered: a body may call a sibling the source declared after it, or
+  // itself, and what such a call names is the position -- which has to exist,
+  // and to answer to the identifier the source spelled, before the body that
+  // spells it is walked.
   base::Translation<hir::StructuralSubroutineId, mir::CallableId>
       subroutine_callables{scope.structural_subroutines.size()};
+  for (const hir::StructuralSubroutineId id :
+       scope.structural_subroutines.Ids()) {
+    const mir::CallableId body = unit_.callables.Declare();
+    // A package subroutine is what another unit spells (LRM 26.3), so the
+    // unit's namespace records the name against the body it reaches.
+    unit_.named_callables.push_back(
+        mir::NamedCallable{
+            .name = scope.structural_subroutines.Get(id).name, .body = body});
+    subroutine_callables.Append(body);
+  }
   for (const hir::StructuralSubroutineId id :
        scope.structural_subroutines.Ids()) {
     const hir::SubroutineDecl& src = scope.structural_subroutines.Get(id);
@@ -613,35 +627,26 @@ auto UnitLowerer::RunNamespace() -> diag::Result<mir::CompilationUnit> {
         WalkFrame{}, package_scope_nodes, subroutine_statics.Get(id));
     auto code_or = subroutine_lowerer.Run(src);
     if (!code_or) return std::unexpected(std::move(code_or.error()));
-    const mir::CallableId body = unit_.callables.Add(
-        mir::CallableDecl{
-            .code = *std::move(code_or),
-            .foreign = std::nullopt,
-            .virtual_dispatch = std::nullopt});
-    // A package subroutine is what another unit spells (LRM 26.3), so the
-    // unit's namespace records the name against the body it reaches.
-    unit_.named_callables.push_back(
-        mir::NamedCallable{.name = src.name, .body = body});
-    subroutine_callables.Append(body);
+    unit_.callables.Define(
+        subroutine_callables.Get(id), mir::CallableDecl{
+                                          .code = *std::move(code_or),
+                                          .foreign = std::nullopt,
+                                          .virtual_dispatch = std::nullopt});
   }
 
   // Each exported package subroutine (LRM 26.3, 35.7) is receiver-less: its
-  // C entry point recovers the run's services instead of a calling
-  // instance and calls the package's own free function by name.
+  // C entry point recovers the run's services instead of a calling instance,
+  // and enters the body this unit's namespace already holds.
   for (const hir::ForeignExportDecl& export_decl : scope.foreign_exports) {
     const mir::CallableId callable_id =
         subroutine_callables.Get(export_decl.subroutine);
     const mir::TypeId result_type =
         unit_.callables.Get(callable_id).code.result_type;
-    // A package subroutine has no receiver and a package has one form, so its
-    // entry is reached by a plain linked name: the unit's own namespace defines
-    // the program-global symbol directly.
+    // A package subroutine has no receiver and a package has one form, so the
+    // entry calls the body this unit's own namespace holds, naming the position
+    // it already has in hand.
     ForeignExportEntry entry = SynthesizeForeignExportEntry(
-        *this, WalkFrame{},
-        mir::ExternalUnitCallableTarget{
-            .unit_name = unit_.name,
-            .callable_name =
-                scope.structural_subroutines.Get(export_decl.subroutine).name},
+        *this, WalkFrame{}, mir::UnitCallableTarget{.slot = callable_id},
         result_type, export_decl);
     // A name a namespace owns needs no entry beside its callable: that callable
     // is the program-global symbol and carries the prototype it publishes.
@@ -808,9 +813,22 @@ auto UnitLowerer::MakeExternalVirtualSlot(const hir::ExternalDispatchSlot& slot)
       .ordinal = mir::BehaviorOrdinal{slot.behavior.value}};
 }
 
-auto UnitLowerer::MakeExternalCallableTarget(
-    const hir::ExternalUnitSubroutineRef& ref)
-    -> mir::ExternalUnitCallableTarget {
+auto UnitLowerer::MakeNamespaceCallableTarget(
+    const hir::ExternalUnitSubroutineRef& ref) -> mir::DirectTarget {
+  // A call into this unit's own namespace has the arena the body lives in, so
+  // it names the position; one into another unit has only the identifier that
+  // unit published, and consuming that promise is what makes the unit a
+  // dependency whose header and link edge the backend then emits.
+  if (ref.unit_name == unit_.name) {
+    const std::optional<mir::CallableId> body =
+        mir::CallableNamed(unit_.named_callables, ref.subroutine_name);
+    if (!body.has_value()) {
+      throw InternalError(
+          "MakeNamespaceCallableTarget: this unit's namespace publishes no "
+          "subroutine under the identifier a call inside it spells");
+    }
+    return mir::UnitCallableTarget{.slot = *body};
+  }
   unit_.AddExternalReferencedUnit(ref.unit_name);
   return mir::ExternalUnitCallableTarget{
       .unit_name = ref.unit_name, .callable_name = ref.subroutine_name};

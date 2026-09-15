@@ -261,10 +261,15 @@ auto UnitLowerer::UnitCallableSymbol(mir::CallableId id) const -> std::string {
             return std::string{r.name};
           },
           [&](const mir::ReachedByName& r) {
-            return lir::NamespaceCallableSymbol(mir_->name, r.name);
+            return lir::NamespaceCallableSymbol(
+                mir_->name, lir::SymbolPart::Name(r.name));
           },
           [&](const mir::ReachedByStoragePhase& r) {
             return StorageEntrySymbol(mir_->name, r.phase);
+          },
+          [&](const mir::ReachedByPosition& r) {
+            return lir::NamespaceCallableSymbol(
+                mir_->name, lir::SymbolPart::Ordinal(r.slot.value));
           }},
       mir::NamespaceReachOf(*mir_, id));
 }
