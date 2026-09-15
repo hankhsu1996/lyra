@@ -70,6 +70,14 @@ Rules:
         covers is the files that use the convention, and a file with no
         ids is silently in scope and correctly reports nothing.
 
+  D008  A cross-reference spelled as a quoted path must resolve.
+        Scope: every tracked markdown file.
+        These docs name a sibling doc three ways -- from the repo root,
+        from the citing file (`../architecture/lir.md`), and from `docs/`
+        (`architecture/lir.md`) -- and only the first is a D001 path and
+        only a bracketed link is a D002 one. A rename is what breaks a
+        cross-reference, and it breaks every spelling equally.
+
 Usage:
   python3 tools/policy/check_docs.py
 """
@@ -157,6 +165,13 @@ PROGRESS_DIR = "docs/progress/"
 PROGRESS_ENTRY_PATTERN = re.compile(
     r"^- \[[ x]\] ([A-Z]+[0-9]+[a-z]*) --", re.MULTILINE
 )
+
+# Rule D008
+# Narrower than D001's pattern by the `.md` tail, so the rule reaches only
+# cross-references and not the source paths, globs, and tool names D001
+# covers. The leading character class admits no `~`, which leaves out a path
+# into the reader's own home -- nothing this tree can resolve either way.
+CITED_DOC_PATTERN = re.compile(r"`([A-Za-z0-9_.][A-Za-z0-9_./-]*\.md)`")
 
 
 def strip_fenced(text: str) -> str:
@@ -335,6 +350,28 @@ def check_d007(repo_root: Path) -> list[str]:
     return errors
 
 
+def check_d008(repo_root: Path) -> list[str]:
+    tops = repo_top_level_dirs(repo_root)
+    docs_root = repo_root / "docs"
+    errors = []
+    for path, rel in iter_docs(repo_root):
+        text = path.read_text()
+        for m in CITED_DOC_PATTERN.finditer(text):
+            cited = m.group(1)
+            head = cited.split("/", 1)[0]
+            if "/" not in cited or head in tops:
+                continue
+            bases = (path.parent, docs_root, repo_root)
+            if any((base / cited).exists() for base in bases):
+                continue
+            errors.append(
+                f"  {rel}:{line_of(text, m.start())}: D008 cites "
+                f"'{cited}', which resolves against neither this directory "
+                f"nor docs/"
+            )
+    return errors
+
+
 # Self-tests
 def run_self_tests() -> bool:
     def expect(cond, msg):
@@ -450,6 +487,22 @@ def run_self_tests() -> bool:
         reused_ids("Cited twice in prose: R9 and R9 again.\n") == [],
         "D007 false-pos: a citation in prose is not an entry")
 
+    # D008 captures the two spellings D001 and D002 both miss.
+    relative = "../architecture/lifetime.md"
+    m3 = CITED_DOC_PATTERN.search(f"see `{relative}` for it")
+    ok &= expect(m3 is not None and m3.group(1) == relative,
+                 "D008 captures a file-relative cross-reference")
+    m4 = CITED_DOC_PATTERN.search("`architecture/lir.md` holds the contract")
+    ok &= expect(m4 is not None and m4.group(1) == "architecture/lir.md",
+                 "D008 captures a docs-root-relative cross-reference")
+    m5 = CITED_DOC_PATTERN.search("the `lifetime.md` contract")
+    ok &= expect(m5 is not None and "/" not in m5.group(1),
+                 "D008 leaves a bare filename to be skipped")
+    ok &= expect(not CITED_DOC_PATTERN.search("`~/wiki/lyra/map.md`"),
+                 "D008 false-pos: a path into the reader's home")
+    ok &= expect(not CITED_DOC_PATTERN.search("`src/lyra/value/packed.cpp`"),
+                 "D008 false-pos: a source path is D001's")
+
     return ok
 
 
@@ -462,6 +515,7 @@ CHECKS = [
     ("D005 reader-facing README states a count", check_d005),
     ("D006 permanent doc cites the progress queue", check_d006),
     ("D007 progress entry id is used twice", check_d007),
+    ("D008 quoted cross-reference does not resolve", check_d008),
 ]
 
 VIOLATION_HINT = """
