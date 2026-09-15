@@ -116,10 +116,10 @@ auto RenderUnitStaticVariables(const mir::CompilationUnit& unit)
 }
 
 // A unit's C++ peer is a namespace holding everything the unit declares. That
-// is the unit boundary made literal: inside it every class the unit owns is
-// reached by the one name it carries, and outside it every reference qualifies
-// by the unit -- the same two forms whether the unit is rooted in a design
-// element or is a rootless package.
+// is the unit boundary made literal: a class the unit owns is reached by the
+// one name it carries, and everything the namespace itself holds is reached
+// through the namespace -- the same forms whether the unit is rooted in a
+// design element or is a rootless package.
 auto RenderUnitHeaderFile(const mir::CompilationUnit& unit) -> std::string {
   const UnitCallableText callables = RenderUnitCallables(unit);
   const ClassText classes = RenderUnitClasses(unit);
@@ -180,8 +180,7 @@ auto RenderHostMain(
   out += "auto main(int argc, char** argv) -> int {\n";
   out += std::format(
       "  return lyra::runtime::RunDesign<{}::{}>(argc, argv, \"{}\");\n",
-      UnitNamespaceOf(root.name), CppClassName(root_class, tree->root),
-      root.name);
+      CppUnitScope(root.name), CppClassName(root_class, tree->root), root.name);
   out += "}\n";
   return out;
 }

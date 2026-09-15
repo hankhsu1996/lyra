@@ -208,10 +208,15 @@ struct CompilationUnit {
   // apart.
   std::vector<ExternalClass> external_classes;
   // Callables the unit's namespace owns directly rather than through one of its
-  // classes -- a package's functions and tasks (LRM 26.3), and both directions
-  // of the DPI-C boundary (LRM 35.5): the prototype of every import the unit
-  // takes part in, and the program-global symbol of every export it defines.
-  // All are receiver-less. A DPI-C name is program-global, in a name space no
+  // classes -- a package's functions and tasks (LRM 26.3), both directions of
+  // the DPI-C boundary (LRM 35.5) (the prototype of every import the unit takes
+  // part in, and the program-global symbol of every export it defines), and the
+  // type-associated functions the compiler synthesizes for the readings a type
+  // decides about a value of it (LRM 6.19.5, 21.2.1.6).
+  // All are receiver-less, which is what puts them here rather than on a class:
+  // a type-associated function takes the value and no object, so no class owns
+  // one even where the unit has classes, and every unit has a namespace whether
+  // or not it has any. A DPI-C name is program-global, in a name space no
   // compilation-unit scope contains (LRM 35.4, 35.7), so no class ever owns
   // one. Which direction a foreign callable is reads off its body: an import is
   // the declaration the user's C defines, an export symbol the definition the
@@ -220,7 +225,11 @@ struct CompilationUnit {
   // entries, so the entry is not one of these and the symbol belongs to the
   // unit that reads the whole design. A class's own callables live on that
   // class; these are the unit-level namespace's, one scope up.
-  base::Arena<CallableDecl, CallableId> callables;
+  // Identity is minted separately from content, because a body here is named
+  // before it exists: a subroutine of this namespace may call a sibling the
+  // source declared after it, or itself, and what such a call names is the
+  // position.
+  base::Registry<CallableDecl, CallableId> callables;
   // The names this unit's namespace answers and which body each reaches (LRM
   // 26.3). A subroutine the source declared is here because another unit spells
   // it; a body the compiler synthesized is not.
@@ -422,10 +431,11 @@ struct CompilationUnit {
   // HIR-to-MIR when a reference names a receiver-less callable or a static
   // variable of another unit.
   //
-  // This unit is not a dependency of itself, and that is settled here rather
-  // than by each caller: whether a reference crosses the boundary is a property
-  // of the list, so a site that reaches a sibling of its own namespace needs no
-  // rule of its own and a site added later cannot forget one.
+  // This unit is not a dependency of itself, and that is settled here because
+  // one caller cannot settle it: the design root realizes a plan of unit names
+  // it does not inspect, so it asks for every one of them and the list decides
+  // which are outside. A site that does read what it reaches names the position
+  // instead and never arrives here at all.
   void AddExternalReferencedUnit(std::string unit_name) {
     if (unit_name == name) {
       return;
@@ -470,16 +480,18 @@ struct CompilationUnit {
   return std::get_if<BroughtUpNamespace>(&unit.content);
 }
 
-// What reaches one body of a unit's namespace: the linkage name the source
-// wrote in the DPI-C name space, which is program-global and belongs to no unit
-// (LRM 35.4); the identifier the unit's own namespace answers (LRM 26.3); or
-// which of the two bring-up entries it is.
+// What spells one body of a unit's namespace: the linkage name the source wrote
+// in the DPI-C name space, which is program-global and belongs to no unit (LRM
+// 35.4); the identifier the unit's own namespace answers (LRM 26.3); which of
+// the two bring-up entries it is; or, where nothing names it, the position it
+// sits at.
 //
-// Every namespace body is one of these three. That is what separates a body
-// from a cell, whose pool also takes the static-lifetime storage of the unit's
-// subroutines and so holds storage nothing names -- a distinction worth having
-// in front of you, because it is the whole reason a cell is reached by its
-// position while a body is reached by what answers for it.
+// The position is the general case and the three before it are the special
+// ones. A namespace holds what the source declared and what the compiler
+// synthesized alike, in one pool for bodies and one for cells; the position is
+// what every entry of either has, and an identifier is a relation over that
+// position, stated only where the source wrote one. So an entry answering to
+// nothing is an answer rather than a case to work around.
 struct ReachedByLinkageName {
   std::string_view name;
 };
@@ -489,11 +501,18 @@ struct ReachedByName {
 struct ReachedByStoragePhase {
   NamespaceStoragePhase phase;
 };
+// A body nothing names, spelled from where it sits. A target mints the spelling
+// into a range no source name reaches; nothing outside this unit can ask for
+// it, which is why a position suffices.
+struct ReachedByPosition {
+  CallableId slot;
+};
 
-using NamespaceReach =
-    std::variant<ReachedByLinkageName, ReachedByName, ReachedByStoragePhase>;
+using NamespaceReach = std::variant<
+    ReachedByLinkageName, ReachedByName, ReachedByStoragePhase,
+    ReachedByPosition>;
 
-// How `id` is reached. Every target names it from this one answer, so no two
+// How `id` is spelled. Every target names it from this one answer, so no two
 // arrive at different names for one body and none works out for itself which
 // kind of body it is looking at.
 [[nodiscard]] inline auto NamespaceReachOf(
@@ -514,10 +533,7 @@ using NamespaceReach =
           NameOf(unit.named_callables, id)) {
     return ReachedByName{*name};
   }
-  throw InternalError(
-      "NamespaceReachOf: a unit's namespace holds a body that answers to no "
-      "identifier, no linkage name and neither bring-up entry, so nothing "
-      "could call it -- please report this as a bug");
+  return ReachedByPosition{id};
 }
 
 [[nodiscard]] inline auto MakeStringLiteral(

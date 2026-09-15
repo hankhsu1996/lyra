@@ -10,7 +10,6 @@
 // What the print operation carries is the text that callable answers with.
 
 #include "lyra/diag/diagnostic.hpp"
-#include "lyra/diag/source_span.hpp"
 #include "lyra/hir/type_id.hpp"
 #include "lyra/lowering/hir_to_mir/unit_lowerer.hpp"
 #include "lyra/lowering/hir_to_mir/walk_frame.hpp"
@@ -47,6 +46,6 @@ enum class PatternRendering : std::uint8_t {
 // and so is the answer. Only for a type whose rendering is not the value's own.
 [[nodiscard]] auto BuildPatternRendering(
     UnitLowerer& unit_lowerer, WalkFrame frame, mir::ExprId value,
-    hir::TypeId type, diag::SourceSpan span) -> diag::Result<mir::ExprId>;
+    hir::TypeId type) -> diag::Result<mir::ExprId>;
 
 }  // namespace lyra::lowering::hir_to_mir

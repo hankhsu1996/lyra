@@ -148,6 +148,15 @@ auto ResolveDirectSpelling(
                     CppClassCallableName(cls, t.slot)),
                 .placement = ReceiverPlacement::kIntoCalleeName};
           },
+          // This unit's C++ peer is a namespace too, so a body of its own is
+          // named through that namespace exactly as another unit's body is.
+          [&](const mir::UnitCallableTarget& t) -> CalleeSpelling {
+            return {
+                .name = std::format(
+                    "{}::{}", CppUnitScope(view.Unit().name),
+                    CppUnitCallableName(view.Unit(), t.slot)),
+                .placement = ReceiverPlacement::kIntoCalleeName};
+          },
           [&](const support::BuiltinFn& id) -> CalleeSpelling {
             return ResolveEntrySpelling(
                 view, support::RuntimeEntryOf(id), receiver, direct.position,
@@ -158,7 +167,7 @@ auto ResolveDirectSpelling(
           [](const mir::ExternalUnitCallableTarget& t) -> CalleeSpelling {
             return {
                 .name = std::format(
-                    "{}::{}", ToCppName(t.unit_name),
+                    "{}::{}", CppUnitScope(t.unit_name),
                     ToCppName(t.callable_name)),
                 .placement = ReceiverPlacement::kIntoCalleeName};
           },
@@ -170,7 +179,7 @@ auto ResolveDirectSpelling(
           [](const mir::ExternalUnitClassMethodTarget& t) -> CalleeSpelling {
             return {
                 .name = std::format(
-                    "{}::{}::{}", ToCppName(t.unit_name),
+                    "{}::{}::{}", CppUnitScope(t.unit_name),
                     ToCppName(t.class_name), ToCppName(t.method_name)),
                 .placement = ReceiverPlacement::kIntoCalleeName};
           },
@@ -180,7 +189,7 @@ auto ResolveDirectSpelling(
           [](const mir::ExternalUnitStorageTarget& t) -> CalleeSpelling {
             return {
                 .name = std::format(
-                    "{}::{}", ToCppName(t.unit_name),
+                    "{}::{}", CppUnitScope(t.unit_name),
                     CppStorageEntryName(t.phase)),
                 .placement = ReceiverPlacement::kIntoCalleeName};
           },

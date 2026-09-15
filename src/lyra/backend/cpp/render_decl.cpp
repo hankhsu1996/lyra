@@ -445,10 +445,9 @@ auto RenderClass(
 // name space owns: its storage class, the symbol it is reached by, its named
 // parameters, and its result type. A plain callable is `inline`, because its
 // definition sits in the header every caller includes; a foreign one takes C
-// linkage, since its symbol is program-global (LRM 35.4). Every use of this --
-// an import's declaration, an export entry point's definition, a package
-// function's definition -- reads the one signature the callable carries, so no
-// two of them can disagree.
+// linkage, since its symbol is program-global (LRM 35.4). Every declaration and
+// every definition reads the one signature the callable carries, so the two
+// ends of one body cannot disagree.
 auto RenderFreeCallableSignature(
     const mir::CompilationUnit& unit, mir::CallableId id,
     const mir::CallableDecl& callable) -> std::string {
@@ -518,14 +517,18 @@ auto RenderUnitClasses(const mir::CompilationUnit& unit) -> ClassText {
 // export's entry point name the unit's classes the way every other body does.
 auto RenderUnitCallables(const mir::CompilationUnit& unit) -> UnitCallableText {
   UnitCallableText text;
+  // Every one is declared before any class of the unit, because a class's body
+  // may call one -- a type-associated function the compiler synthesized is
+  // reached from wherever the source wrote the construct that needs it -- and
+  // the definitions land after the classes so an export's entry point can name
+  // them. Only a callable this program defines has a definition to land.
   for (const mir::CallableId id : unit.callables.Ids()) {
     const mir::CallableDecl& callable = unit.callables.Get(id);
-    if (!callable.code.body.has_value()) {
-      text.declarations +=
-          RenderFreeCallableSignature(unit, id, callable) + ";\n";
-      continue;
+    text.declarations +=
+        RenderFreeCallableSignature(unit, id, callable) + ";\n";
+    if (callable.code.body.has_value()) {
+      AppendSection(text.definitions, RenderFreeCallable(unit, id, callable));
     }
-    AppendSection(text.definitions, RenderFreeCallable(unit, id, callable));
   }
   return text;
 }

@@ -81,6 +81,21 @@ struct NamedCallable {
   return std::nullopt;
 }
 
+// The body `name` reaches among `named`, or nothing where this name space
+// answers no such identifier. The relation read the other way: a reference
+// written inside the declaring unit arrives carrying what the source spelled,
+// and what it names is a position in that unit's own arena.
+[[nodiscard]] inline auto CallableNamed(
+    std::span<const NamedCallable> named, std::string_view name)
+    -> std::optional<CallableId> {
+  for (const NamedCallable& entry : named) {
+    if (entry.name == name) {
+      return entry.body;
+    }
+  }
+  return std::nullopt;
+}
+
 // The lifecycle entries the runtime drives are reached through the definition
 // itself and answer to no name.
 struct UnpublishedEntry {
