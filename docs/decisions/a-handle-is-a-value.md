@@ -134,5 +134,5 @@ for the collector's sake.
   root set, which D6 adds no member to.
 - [object-model](object-model.md) -- the managed reference realized by precise tracing, and the
   shared-owner staging that realization admits.
-- `../architecture/object_lifetime.md` -- traceability as a recursive type property, which D6 states
-  at the value.
+- `../architecture/lifetime.md` -- traceability as a recursive type property, which D6 states at the
+  value.

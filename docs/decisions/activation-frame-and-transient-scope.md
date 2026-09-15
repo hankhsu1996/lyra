@@ -18,9 +18,9 @@ The concepts already exist and are already separate in the architecture:
   token the scheduler holds, the completion slot, the ownership/continuation/cancellation relations,
   the lineage, the registration set). It is backend-neutral, and its "Does Not Own" is explicit that
   storage layout and frame allocation are below it.
-- `object_lifetime.md` owns the **activation frame** -- the Lyra-owned storage holding the
-  language-visible values that live with an activation across a suspension. Same lifetime as the
-  activation, different responsibility, realized per backend.
+- `lifetime.md` owns the **activation frame** -- the Lyra-owned storage holding the language-visible
+  values that live with an activation across a suspension. Same lifetime as the activation,
+  different responsibility, realized per backend.
 
 ## Decision
 
@@ -41,14 +41,14 @@ its own name.
 
 - **"activation frame" is the architecture's neutral name; the execution backend's type is not
   one.** The storage a value-typed local needs to survive a suspension is the activation frame
-  (`object_lifetime.md`), and on a backend whose bodies are real C++ that frame **is** the coroutine
-  frame. On the execution backend it is not: there the generated body has a frame of its own, and
-  what the runtime holds is only the values. Naming the runtime type after the architecture's
-  concept hid that second frame, so the type is `ActivationValueStore` -- a store, of values,
-  belonging to one execution -- and what lives in it is an `ActivationValueCell<T>`, which had the
-  right word all along. The LIR operation that allocates, reads and writes such a value is
-  `ValueCellTarget`. The store is a distinct type from the per-stretch arena even though both
-  allocate the same way, so the two lifetimes cannot be passed for each other.
+  (`lifetime.md`), and on a backend whose bodies are real C++ that frame **is** the coroutine frame.
+  On the execution backend it is not: there the generated body has a frame of its own, and what the
+  runtime holds is only the values. Naming the runtime type after the architecture's concept hid
+  that second frame, so the type is `ActivationValueStore` -- a store, of values, belonging to one
+  execution -- and what lives in it is an `ActivationValueCell<T>`, which had the right word all
+  along. The LIR operation that allocates, reads and writes such a value is `ValueCellTarget`. The
+  store is a distinct type from the per-stretch arena even though both allocate the same way, so the
+  two lifetimes cannot be passed for each other.
 
 - **`GeneratedCallScope` is the transient, per-stretch store only.** It owns the values one stretch
   of generated code materializes and releases them when the stretch returns. It is never an
@@ -97,8 +97,8 @@ destroys its locals when its body completes, one step before the frame it sits i
 was gone before anything that reads an execution's result could read it, which surfaced as a task's
 `output` arriving as a default value with no error anywhere.
 
-`object_lifetime.md` had already ruled it out twice, and both readings were available at the time: a
-value that outlives a safepoint may not live "in opaque backend execution state -- a backend
+`lifetime.md` had already ruled it out twice, and both readings were available at the time: a value
+that outlives a safepoint may not live "in opaque backend execution state -- a backend
 coroutine-frame local", and an execution's storage may not be reachable "only through opaque backend
 execution state". Hanging the store on the scheduling record is not a merge of two concepts; it is
 what those two lines require. The storage stays a per-backend type -- a backend whose bodies hold
@@ -122,8 +122,8 @@ allocates the place the callee completes into.
 
 - `architecture/activation.md` -- the activation (control) concept and the lineage-vs-execution
   forbidden shape.
-- `architecture/object_lifetime.md` -- the activation frame as traceable storage, and the deferred
-  GC model.
+- `architecture/lifetime.md` -- the activation frame as traceable storage, and the deferred GC
+  model.
 - [jit-value-realization](jit-value-realization.md) -- the opaque-handle baseline and the
   per-stretch transient scope this names.
 - [cross-suspension-value-storage](cross-suspension-value-storage.md) -- the activation-frame value

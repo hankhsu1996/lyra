@@ -12,13 +12,13 @@ graph a code generator can consume.
 LIR's vocabulary is what those execution-model IRs share:
 
 - Basic blocks with explicit successor lists, forming control-flow graphs per callable.
-- Typed values, each either a transient computed value or a place -- storage named as a base local
-  plus a projection chain. Which one a value is, is explicit.
+- Typed values, each either a transient computed value or storage named by a place -- a base local
+  plus a projection chain. Which one a local is, is explicit.
 - A self-contained type graph: every value, place, and call is typed by a LIR-owned type identity.
 - Low-level operations: arithmetic, comparisons, loads, stores, calls.
 - Effect ordering within a block.
-- An explicit protocol to the scheduling runtime: entry, suspend, resume, completion appear as CFG
-  edges and call instructions, not as conventions implied by node order.
+- An explicit protocol to the scheduling runtime: entry, suspend, resume, abandonment, and
+  completion appear as CFG edges and call instructions, not as conventions implied by node order.
 
 MIR is the source language LIR is lowered from. The semantic vocabulary of MIR -- structured `if` /
 loop, expression-level operators, member access through a receiver, callables with parameter lists,
@@ -49,9 +49,11 @@ below LIR, at LIR-to-LLVM.
   projection, return, and call argument. Each is translated from a generic-PL type at MIR-to-LIR and
   carries no live reference back to MIR.
 - The place vocabulary: a place is a base local plus a projection chain of member and dereference
-  steps. Every load, store, and address-of names a place by logical identity. There is no index or
-  slice step: a value aggregate's interior is not independently addressable, and an array of storage
-  is reached through the indirection its elements already carry.
+  steps, spelled inside the instruction that consumes it and never held. Every load, store, and
+  address-of names a place by logical identity, and address-of is the one operation that turns the
+  path into a value the program can retain. There is no index or slice step: a value aggregate's
+  interior is not independently addressable and is reached by value projection, and storage behind
+  an indirection is reached by a dereference step.
 - The transient-value vocabulary: a computed value with a pure dataflow origin, not backed by a
   named memory location.
 - The value-aggregate selector vocabulary: which subvalue a step names -- a product's component
@@ -67,7 +69,7 @@ below LIR, at LIR-to-LLVM.
 - Foreign symbols: the linkage name of a callable defined outside the program, which a call may
   target. LIR states the name and the machine types the call crosses on; how the name is resolved --
   a link line, an execution session -- is below LIR.
-- The boundary protocol to the scheduling runtime (entry, suspend, resume, completion).
+- The boundary protocol to the scheduling runtime (entry, suspend, resume, abandonment, completion).
 
 ## Does Not Own
 
@@ -97,8 +99,8 @@ identity is the suspect, not the analysis.
    holds the undecided state in its own shape and never in LIR. _Machine-execution consequence:
    control flow is the graph the codegen consumes; structured constructs do not survive at this
    layer._
-2. Each LIR value is either a place or a transient value, and which one is explicit. Which one a
-   local is follows a canonical lowering rule, not the source language's notion of a variable: a
+2. Each LIR local either names storage or is a transient value, and which one is explicit. Which one
+   a local is follows a canonical lowering rule, not the source language's notion of a variable: a
    local is a place -- named storage -- exactly when the canonical lowering needs an address for it
    (its address is taken, it is assigned after its initialization, or it holds a control-flow join).
    A value computed once and consumed is a transient value with a pure dataflow origin. The rule
@@ -120,14 +122,22 @@ identity is the suspect, not the analysis.
    object-model decisions MIR fixed -- whether a handle is shared, a reference is managed, a member
    is observable -- and acts on them. _Machine-execution consequence: lowering is one-way; LIR reads
    upstream decisions and acts on them, never re-decides them._
-6. The runtime protocol is explicit: suspend and resume points appear as CFG edges, not as lowering
-   conventions implied by node order. _Machine-execution consequence: the scheduler's boundary is
-   visible to the optimizer as edges, not as a side convention only the lowering knows._
+6. The runtime protocol is explicit: suspend, resume, and abandonment appear as CFG edges, not as
+   lowering conventions implied by node order. A suspension names both ways control can leave it --
+   the driver resumes the body, or ends it where it stands -- so what the second owes is in the
+   graph rather than assumed. _Machine-execution consequence: the scheduler's boundary is visible to
+   the optimizer as edges, not as a side convention only the lowering knows._
 7. LIR carries no source-language semantics. Every node is a generic machine-execution operation; no
    SV-specific shape -- an out-of-bounds guard, an index-validity predicate, an NBA region, an event
    control -- survives, because each was lowered to generic control flow or a runtime call at
    HIR-to-MIR. _Machine-execution consequence: a source-language concept reaching LIR is an upstream
    leak, never a LIR node to model._
+8. A place is an access path, not an entity. It is spelled inside the instruction that consumes it,
+   is not an operand and not a local, and does not cross a control-flow edge; address-of is the one
+   operation that turns a path into something the program retains, and its result is an ordinary
+   value. _Machine-execution consequence: what a callee receives, what a local holds, and what
+   survives a suspension is always a value, so no consumer re-evaluates a path whose base or
+   projection may have changed since._
 
 ## Boundary to Adjacent Layers
 
@@ -174,9 +184,11 @@ shape is "what identity property does this break".
   out-of-bounds default, an NBA region, an event control. These are lowered to generic control flow
   or runtime calls at HIR-to-MIR; one reappearing at LIR is an upstream leak, never a LIR node to
   add.
-- Affine-ownership machinery -- move semantics, drop elaboration, borrow checking -- at LIR. LIR's
-  value model is value-copy plus explicit borrowed references; it does not reconstruct a
-  source-language ownership discipline.
+- A source language's ownership discipline reconstructed at LIR -- move semantics, borrow checking.
+  LIR's value model is value-copy plus explicit borrowed references, and an affine discipline is a
+  rule about what a program may write, decided where the program is still that language. (Deriving
+  where storage is released is not this: it is a lowering computing a fact about the code in front
+  of it, which is what an execution-model IR is for, and both peers named in Purpose do it.)
 - Implicit control flow. Every control transfer is an explicit edge. (Machine-execution IRs do not
   carry implicit transitions; the codegen relies on edges being explicit.)
 - Reintroducing semantic structure that MIR has already lowered away.
@@ -227,7 +239,7 @@ other; LIR has no implicit receiver. A direct call to a statically known callabl
 environment and arguments to a named function. LIR knows only "call target" and "arguments"; the
 capture policy that built the environment was MIR's.
 
-A place is the logical path -- `self.counter`, `array[i]`, `*p` -- the way Rust's MIR names a field
+A place is the logical path -- `self.counter`, `*p`, `(*p).flag` -- the way Rust's MIR names a field
 projection rather than `base + N`. The same place is valid on every target; only the derivation
 below LIR turns it into an address. A member access lowers to a place whose projection names the
 member by its logical identity, not by an offset. An observable signal arrives already as a
@@ -245,8 +257,11 @@ values are represented: a packed value reached through an opaque handle is an or
 value, and a place holding one is loaded and stored like any other. The cell that holds it is what
 may only be addressed.
 
-A place denotes independently addressable storage -- storage with an identity of its own -- not
-merely something a source-level assignment can target. Assignability and place-ness are different
+A place is the access path to independently addressable storage -- storage with an identity of its
+own -- not merely something a source-level assignment can target. Path and identity are two phases,
+and the split is what makes the vocabulary safe: the path is written where an instruction consumes
+it and locates whatever its base and projections reach at that moment, while the identity a program
+retains is the value address-of yields (`storage.md`). Assignability and place-ness are different
 questions: in a value language, `s.b = x` on a struct is assignable but names no independent
 storage, because the struct is a value and `s.b` is a part of it, not a location. So the place
 vocabulary is for mutable, independently addressable storage (a local that needs an address, an
@@ -268,10 +283,12 @@ value-aggregate family: a packed slice, a container element, and a union member 
 sub-accesses, so a sub-write is a functional whole-value update, never a store into an independently
 addressable sub-place. One extract and one update carry every one of them, and the selector says
 only which subvalue is named -- a product's component slot, the one member an active-member value
-holds at a time, a runtime coordinate, a fixed-width window. Which library entry realizes a step,
-and whether it is an instruction or a call at all, is a realization question answered below LIR; it
-never decides which node the step is expressed as. A whole-value mutating method on a value receiver
--- a container's `delete`, a queue's `push` -- follows the same rule: it is realized as a functional
+holds at a time, a runtime coordinate, a fixed-width window. All of this follows from the
+realization MIR fixed for the aggregate; what the source language lets a second name denote is a
+separate question, and `storage.md` owns it. Which library entry realizes a step, and whether it is
+an instruction or a call at all, is a realization question answered below LIR; it never decides
+which node the step is expressed as. A whole-value mutating method on a value receiver -- a
+container's `delete`, a queue's `push` -- follows the same rule: it is realized as a functional
 operation whose result is stored back through the receiver's owner, not an in-place mutation of the
 value. How a target keeps value semantics for such a store is below LIR: a target with
 language-level value copies may fulfill it by mutating a private copy in place, while one whose

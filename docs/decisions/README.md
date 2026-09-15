@@ -210,11 +210,137 @@ the detail lives in the entry itself.
 - [reference-as-data-type](reference-as-data-type.md) -- a reference is a direction at HIR and a
   data type at MIR; one type serves `ref` formals and `ref` ports, preserving the observable-cell
   protocol.
-- [reference-binds-a-cell](reference-binds-a-cell.md) -- what that protocol makes a reference on the
-  execution backend: the address of a value cell, so every referent is one and a local whose storage
-  is lent gets a cell where it is declared. A callee has one formal, so the reference cannot vary
-  with the storage its caller lends; the address of the referent's own storage, a runtime reference
-  object, and a polymorphic storage core are rejected.
+- [reference-binds-a-cell](reference-binds-a-cell.md) (reopened) -- what that protocol makes a
+  reference on the execution backend: the address of a value cell, so every referent is one and a
+  local whose storage is lent gets a cell where it is declared. Being lent decides what kind of
+  storage a local gets and the declaring scope decides how long it lives, so the cell is a slot of
+  the body's own frame, begun and ended by the compiler on every way out -- including the one a
+  suspension takes when its driver ends the execution rather than resuming it. A callee has one
+  formal, so the reference cannot vary with the storage its caller lends; the address of the
+  referent's own storage, a runtime reference object, and a polymorphic storage core are rejected.
+  Reopened 2026-09-03: it answers how a place is lent by deciding how every place is represented,
+  which is the wrong way round, and the wider reference its rejections argue against is what the
+  other backend already runs. The ownership question its reopening left open is answered by
+  [storage-owns-its-value](storage-owns-its-value.md), and the contract it asked for is written by
+  [reference-is-a-tagged-pointer](reference-is-a-tagged-pointer.md).
+- [inline-member-slots](inline-member-slots.md) -- a storage block whose owner cannot move holds its
+  slots inline, one allocation for the block rather than one per member: an object's properties and
+  a scope's members qualify, and a closure's captures did not until
+  [construct-in-final-home](construct-in-final-home.md) stopped the closure value moving -- the
+  per-slot indirection was what made that block movable at all. A slot stays non-movable, since a
+  cell's identity is its address. Keeping per-slot allocation everywhere, making slots movable, a
+  `std::vector` of slots, and a separate block type for closures are rejected; variant space
+  amplification is the value representation's problem, not this one's.
+- [construct-in-final-home](construct-in-final-home.md) -- a long-lived runtime object whose
+  execution state binds to its own address is constructed where it will live, so a closure value is
+  built into the region or the execution that will own it rather than in the arena and moved. One
+  construction entry takes the home to fill, captures become inline, and a coroutine body's frame is
+  built at construction, so the deferral that existed only to survive the move disappears. A
+  nonblocking assignment costs one allocation instead of N + 3. Build-then-move, an entry per
+  destination, a permanent capture indirection, and relocatable slots are rejected.
+- [referenceable-objects-have-stable-addresses](referenceable-objects-have-stable-addresses.md) -- a
+  class object a reference can point into neither moves nor is reclaimed while that reference lives,
+  so a property reference is an ordinary interior pointer. Non-moving stops being a mere realization
+  choice, and a future relocating collector pins rather than changing what a reference is. That an
+  outstanding `ref` keeps the object alive is Lyra policy where the standard is silent, framed as a
+  property of the object -- the analogue of LRM 13.5.2's detached container element -- so a
+  reference still never owns. An indirect collector-aware property reference, pinning adopted now, a
+  dangling property reference, and making a property reference a managed edge are rejected.
+- [container-element-storage](container-element-storage.md) -- a variable-size container stores
+  logical membership and ordering while its elements live in stable storage it does not move: a
+  queue keeps the ordering of element slots, an associative array maps keys to entry storage,
+  removal separates membership from lifetime, every traversal walks membership so a detached element
+  is never visited, and recreating an associative key makes a new identity. A linked list, the
+  current contiguous buffer, storage held in the map's own nodes, per-container keep-alive
+  machinery, refcounting each slot, and a stable-element library container are rejected.
+- [array-element-storage](array-element-storage.md) -- a fixed and a dynamic array give each index a
+  persistent slot and a reference binds the slot, so ordering methods permute values among existing
+  slots, and a dynamic array generation is a contiguous run that resize replaces whole, retaining
+  the old generation while a reference into it lives. The discriminator against the queue and the
+  associative array is single-element removal, which only those two have. Element identity for
+  arrays, per-element slots for the dynamic array, per-element detachment, and splitting the two
+  array kinds are rejected; LRM 7.12.2 does not say whether an ordering method moves elements or
+  values, so that half is Lyra policy rather than a requirement.
+- [call-scoped-borrow-registration](call-scoped-borrow-registration.md) -- who keeps a detached
+  element alive: nobody takes ownership. The arena goes on owning the storage and a call extent
+  registers a borrow, so retired storage is reclaimed once membership has ended and the last
+  borrowing invocation has. The unit is the live call extent, deduplicated per storage identity
+  within one invocation; forwarding a reference is not a bind, and nothing touches the access path.
+  Shared-pointer counting, transferring ownership to a frame, a container-side retire list, a
+  carried lifetime token, and block-granularity registration are rejected.
+- [update-events-are-per-variable](update-events-are-per-variable.md) -- a write anywhere inside a
+  variable is one update of that variable, emitted by the compiler from the place it already knows;
+  a wait is an expression whose dependency set and previous result live in the subscription, and an
+  event is reported only where the result changed. LRM 4.3 puts the update on a net or variable,
+  9.4.2 puts the filter on the expression and permits reevaluating more often, and 13.5.2's
+  enumeration says a component is not a variable -- so there is no ancestor chain, only one variable
+  and several expressions reading it. It closes the hole `storage-owns-its-value` opened by taking
+  the component write off the containing cell's store path. Parent pointers on component storage, an
+  update per component level, deriving the update set at run time, and restoring the whole-value
+  store are rejected.
+- [event-subscription-model](event-subscription-model.md) -- a subscription holds a waiter and a
+  list of event-expression leaves, each owning its dependencies, its previous evaluated result, its
+  change-or-edge predicate and an optional `iff` gate. A dependency's update reevaluates a leaf; a
+  gate is read only after the leaf triggers and is never depended on. Edge and bit-range become fast
+  paths over reevaluate-and-compare rather than primitives, dependencies are typed as event sources
+  rather than variables, and a level-sensitive `wait` needs no leaf of its own -- it is already a
+  loop around change leaves, which is why a compound `wait` condition is safe today while a compound
+  `@` expression is refused. One dependency set per subscription, an `iff` operand as a dependency,
+  edge and bit range as primitives, a `wait`-specific subscription kind, and variable-typed
+  dependencies are rejected.
+- [object-is-an-event-source](object-is-an-event-source.md) -- the second kind of event source the
+  entry above named and did not define: an object carries one coarse source covering all of its
+  properties, a write publishes to the innermost object its place dereferenced and otherwise to the
+  declared variable, and a leaf depends on the sources its evaluation reached rather than on the
+  ones its syntax names, recollected at every reevaluation so a handle write rebinds. LRM 9.4.2
+  permits reevaluating for members the expression never reads, which is what makes one source per
+  object conforming, and the clause's own example fires `@(p.status)` on the handle write itself
+  when the new object's member already differs. A null handle is an illegal access rather than a
+  state the model represents. A per-property source, observable property storage, deriving the
+  object dependency from the syntax, static and dynamic as two kinds of dependency, depending on the
+  handle alone, and a parent pointer from property storage are rejected. It sharpens
+  `update-events-are-per-variable` invariant 4 rather than reversing it: a place may name a target
+  whose identity is resolved at run time.
+- [event-source-has-two-realizations](event-source-has-two-realizations.md) -- what a source costs
+  to have, settled by counting rather than by intuition: a declared variable's source is provisioned
+  because 83% of a design's cells are genuinely subscribed to, while a class object's is
+  materialized on demand because almost none are. One semantic concept, two physical realizations,
+  and no realization difference may reach the layer that reasons about dependencies. A hash table
+  keyed by the storage address is refused for the declared variable outright -- it would be paid on
+  83% of writes to buy the 17% that need nothing -- which is the shape an intuition about sparsity
+  leads to. Go's address-keyed `semtable` and HotSpot's inflate-on-contention mark word are the
+  precedents for the sparse side and are wrong for the dense one. One representation for both, a
+  lazy declared-variable source, and intrinsic state on every object are rejected. The physical
+  shape of the declared-variable source is deliberately left open: most cells need one, so shrinking
+  it is worth a multiple of making it conditional.
+- [source-anchors-an-intrusive-ring](source-anchors-an-intrusive-ring.md) -- the physical shape the
+  entry above left open: a source is a 16-byte intrusive ring anchor holding nothing else, a
+  membership is 24 bytes of two links and one payload pointer, and the predicate lives once on the
+  leaf. Measured field by field, 32 of the 48 bytes a cell spends today are ones a list header is
+  defined never to have, and 24 of the 48 on every membership are the leaf's fire condition riding
+  along -- including on the scheduler-queue memberships that churn every delta cycle. Ibex's
+  observation machinery falls 38-48%, from 231 KiB to 143-121, the spread being whether a
+  single-leaf subscription and its one membership are one allocation. A one-pointer `hlist` anchor
+  is strictly smaller and is rejected anyway, because the node shape is exclusive and only the ring
+  splices a whole queue onto another in constant time, which the scheduler does every delta cycle. A
+  zero-byte source, the fire condition on the membership, and a per-target membership type are also
+  rejected; compile-time fanout survives as a specialization above the runtime shape.
+- [observability-is-not-a-storage-property](observability-is-not-a-storage-property.md) --
+  referenceability does not imply observability: a storage object carries no subscriber metadata
+  merely because something may pass it by `ref`, plain and observable storage are two forms, and
+  observability is a simulator concern separate from storage identity. A class property is not made
+  observable by `@(p.status)` having to work, because LRM 9.4.2 requires the event expression to be
+  reevaluated and explicitly permits reevaluating more often than the members are referenced. One
+  unified cell, per-property subscribers, and demand-driven observability under separate compilation
+  are rejected.
+- [reference-is-a-tagged-pointer](reference-is-a-tagged-pointer.md) -- a reference is one machine
+  word: a pointer plus a tag in its low bits naming the storage form, never an owner plus an index
+  or a path to re-evaluate, with the tag check gone wherever the form is statically known. Every
+  referent LRM 13.5.2 admits is enumerated and resolves to two kinds rather than the six the prior
+  warning anticipated. A generic descriptor, two pointers, a type per form, and keeping one unified
+  cell are rejected. It requires the address answer to `container-element-storage`'s open fork, and
+  conflicts with `../architecture/lifetime.md`'s claim that a moving collector would change no
+  invariant.
 - [object-model](object-model.md) -- a module / scope and an SV class are one generic nominal object
   type; an SV class handle is a managed reference via precise tracing GC.
 - [object-model-storage](object-model-storage.md) -- a compilation unit owns one canonical registry
@@ -332,7 +458,10 @@ the detail lives in the entry itself.
   opaque handle into the runtime library (the baseline realization), and a `GeneratedCallScope` owns
   the transient values one generated entry creates -- the JIT counterpart of C++ stack/RAII.
   Physical-layout / in-frame value lowering is a later optimization, not a correctness prerequisite;
-  cross-suspension and managed-value lifetime is out of scope for the call scope.
+  cross-suspension and managed-value lifetime is out of scope for the call scope. Its revisit
+  condition has fired, and the ownership half of it -- invariant 6, that a handle may be aliased so
+  nothing writes into a value object -- is answered by
+  [storage-owns-its-value](storage-owns-its-value.md); the ABI half stands.
 - [runtime-entry-naming](runtime-entry-naming.md) -- a runtime entry is named by the operation it
   performs and typed by the call that reaches it, so neither its symbol nor its signature is written
   down a second time; the symbol has one form, what the library does not realize is stated per
@@ -346,10 +475,10 @@ the detail lives in the entry itself.
 - [cross-suspension-value-storage](cross-suspension-value-storage.md) -- a value-typed non-managed
   procedural local in a suspending body is an activation-frame value: overwritten in place, owned by
   the activation (which also RAII-owns the generated coroutine), reached through a frame-held handle
-  so its value outlives the per-stretch scope. Every coroutine value local gets one (no liveness
-  analysis); the cell shares a storage core with the signal cell but is not observable, and the
-  access is a `ValueCellTarget` LIR call so the backend stays mechanical. Native in-frame layout, a
-  backend-private arena, and a narrow liveness pass are rejected.
+  so its value outlives the per-stretch scope. Every coroutine value local that is not lent gets one
+  (no liveness analysis); the cell shares a storage core with the signal cell but is not observable,
+  and the access is a `ValueCellTarget` LIR call so the backend stays mechanical. Native in-frame
+  layout, a backend-private arena, and a narrow liveness pass are rejected.
 - [managed-value-realization](managed-value-realization.md) -- a managed value never lives in
   storage this compiler does not describe, because the coroutine frame is delegated to LLVM and its
   contents are not enumerable. Three described storages -- the static instance tree, activation
@@ -366,7 +495,7 @@ the detail lives in the entry itself.
   scope). A speculative slot/trace/GC shape is rejected. The entry's own rejection of a fused
   activation record is **withdrawn**: it left the storage nowhere to live but a coroutine body's
   local, which dies one step before the frame around it, and both readings that forbid it were
-  already in `object_lifetime.md`.
+  already in `lifetime.md`.
 - [root-unit-elaboration](root-unit-elaboration.md) -- design elaboration is the synthetic `$root`
   unit's `construct` entry, which builds the top-level modules as its owned children; there is no
   design-level free function. Engine / bind / run stay host runner policy and never enter MIR; both

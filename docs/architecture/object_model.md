@@ -112,9 +112,9 @@ reference -- destroys a distinction a consumer has to read.
    (a reference-counted, acyclic-by-construction owner), and managed (a language-managed object
    handle: null is a legal value, identity is comparable, copies are shallow, it is created by
    construction, and it is never explicitly freed; its lifetime model -- retained while reachable,
-   reclaimed by precise tracing -- is owned by `object_lifetime.md`). A SystemVerilog class handle
-   is a managed reference, distinct from a shared one. Whether an object is a node in the runtime
-   tree is read from its base lineage, never from the reference kind that reaches it. _Object-model
+   reclaimed by precise tracing -- is owned by `lifetime.md`). A SystemVerilog class handle is a
+   managed reference, distinct from a shared one. Whether an object is a node in the runtime tree is
+   read from its base lineage, never from the reference kind that reaches it. _Object-model
    consequence: topology, lifetime, and category are three axes; collapsing any two -- "a unique
    reference means a tree child", "a class handle is a shared pointer" -- loses a distinction a
    backend must read._
@@ -171,9 +171,9 @@ reference -- destroys a distinction a consumer has to read.
    reachable and reclaimed by a precise tracing collector; an unreachable cycle is reclaimed by
    reachability, not leaked. The collector algorithm and cadence are realization choices; the
    reachability model and the storage discipline that makes tracing precise are the contract, owned
-   by `object_lifetime.md`. _Object-model consequence: the object model commits to
-   reachability-based reclamation, not to a reference-counted meaning; a class handle's lifetime
-   contract lives in `object_lifetime.md`._
+   by `lifetime.md`. _Object-model consequence: the object model commits to reachability-based
+   reclamation, not to a reference-counted meaning; a class handle's lifetime contract lives in
+   `lifetime.md`._
 
 10. **A compilation unit owns one canonical registry of its local nominal object declarations, and
     identity, lexical name resolution, and emitted placement are three separate relations.** Every

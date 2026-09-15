@@ -340,8 +340,8 @@ this list is what remembers.
 - `../architecture/object_model.md` -- the object-model contract: the one nominal-object reference,
   the override relation, the construction model, the reference kinds, and the registry (invariant
   10).
-- `../architecture/object_lifetime.md` -- the managed-object lifetime contract: reachability,
-  precise tracing, activation frames, safepoints, and roots.
+- `../architecture/lifetime.md` -- the managed-object lifetime contract: reachability, precise
+  tracing, activation frames, safepoints, and roots.
 - `../architecture/mir.md`, `../architecture/callable.md`, `../architecture/runtime_model.md`,
   `../architecture/elaboration_lifecycle.md` -- the contracts this work satisfies and that the
   object model doc is a peer to.

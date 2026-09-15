@@ -83,8 +83,8 @@ Lyra-owned, traceable storage -- the activation frame and traceable closures -- 
 Lyra-visible runtime records, never through opaque backend execution state. An activation frame is
 owned by its execution record (it is not itself a managed object) and exposes a trace operation; the
 managed edges inside it are what the collector follows. This storage discipline, the root
-categories, and the safepoint contract are owned by `../architecture/object_lifetime.md`; reclaiming
-cyclic garbage is part of the model, not a gap.
+categories, and the safepoint contract are owned by `../architecture/lifetime.md`; reclaiming cyclic
+garbage is part of the model, not a gap.
 
 ## Consequences
 
@@ -96,7 +96,7 @@ cyclic garbage is part of the model, not a gap.
 - The managed reference is the SystemVerilog class handle's reference kind, distinct from the shared
   (acyclic, reference-counted) one. Its lifetime is realized by precise tracing garbage collection,
   and cyclic object graphs are reclaimed by reachability. The lifetime contract and the storage
-  discipline that makes tracing precise are owned by `../architecture/object_lifetime.md`.
+  discipline that makes tracing precise are owned by `../architecture/lifetime.md`.
 - A backend may realize the managed reference through shared ownership as an implementation staging
   mechanism while other pipeline surfaces mature. This staging does not satisfy the terminal
   managed-lifetime requirement -- cyclic reclamation remains precise tracing's job -- and does not
@@ -105,8 +105,8 @@ cyclic garbage is part of the model, not a gap.
 ## Cross-references
 
 - `../architecture/object_model.md` -- the object-model contract these choices sit inside.
-- `../architecture/object_lifetime.md` -- the managed-object lifetime contract Decision 3
-  establishes: reachability, precise tracing, activation frames, safepoints, and roots.
+- `../architecture/lifetime.md` -- the managed-object lifetime contract Decision 3 establishes:
+  reachability, precise tracing, activation frames, safepoints, and roots.
 - `lifetime-extended-automatic-scope.md` -- the shared reference's acyclic-DAG contract that
   Decision 1 declines to violate.
 - `reference-as-data-type.md` -- the observable-cell reference type Decision 1 declines to fold

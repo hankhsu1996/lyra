@@ -43,6 +43,24 @@ earns its space with its reason; abstract principles without consequences do not
 In both cases the rules under Core Principles still apply: no narrative framing, no "currently /
 historically / not yet / migration", no platitudes that are trivially true of any reasonable system.
 
+### A forbidden shape is tested per item, never per bullet
+
+Each doc states the test its own forbidden shapes answer to -- which property of the identity in
+Purpose does this break. Apply it to **each thing a bullet names**, not to the bullet. A bullet that
+names several things and gives one reason bans whatever the reason justifies plus whatever happened
+to be listed beside it, and the difference is invisible afterwards: a reader meets one sentence and
+the ban reads as settled.
+
+This is not hypothetical, and it is the common shape rather than the rare one -- of the forbidden
+shapes across `architecture/`, better than a third name more than one thing in their opening
+sentence. One banned drop elaboration alongside move semantics and borrow checking, under the reason
+that the layer does not reconstruct a source language's ownership discipline. True of the other two;
+drop elaboration is how any compiler decides where to release storage, and both IRs that doc names
+as its peers do it. It stood for months and was found only when it blocked work.
+
+So: if the reason cannot be re-derived for a listed item on its own, that item belongs in its own
+bullet with its own reason, or it does not belong in the list.
+
 ### When status genuinely has to be stated
 
 Principle 5 bans "not yet" from an architecture doc, and a contract for something unbuilt still has

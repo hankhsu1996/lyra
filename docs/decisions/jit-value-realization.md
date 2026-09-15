@@ -66,7 +66,7 @@ The accurate framing, which documentation must not overstate into a final value 
 
 3. **A future cross-suspension local value does not live in `GeneratedCallScope`.** That class of
    value needs an activation frame / process frame; if it carries a managed edge, that storage is
-   runtime-traceable per `object_lifetime.md`.
+   runtime-traceable per `lifetime.md`.
 
 4. **The scheme does not pollute the LIR type system.** LIR describes logical values; the `void*`
    handle is one realization of the JIT/runtime ABI, below LIR, never a LIR-level type.
@@ -103,6 +103,34 @@ two are not to be reasoned about together.
   feature for a benefit (LLVM value optimization, no per-value runtime call) that is not needed for
   correctness. Revisit as an optimization once the correctness baseline is broad.
 
+  **That condition has fired, and what it turned up is not the optimization it anticipated.** Every
+  non-managed value domain is realized now. What the breadth exposed is in the lifetime half of this
+  decision rather than the ABI half: `GeneratedCallScope` owns one entry's transients, and two more
+  regimes have since been added beside it for values it cannot own -- one for a value that outlives
+  a stretch, one for a value a reference must be able to address. Three regimes for one concept, and
+  which one a variable gets follows from properties of the enclosing body rather than of the
+  variable.
+
+  Why they could accumulate is invariant 6, stated here from the beginning: a handle may be aliased
+  by a copy, so nothing writes into a value object and holding one implies no ownership. Measurement
+  on 2026-09-03 confirms the invariant still holds in the emitted code -- two live source locals
+  share one handle, and a later assignment to one replaces the handle rather than the object. What
+  the measurement adds is the asymmetry beside it: storage elsewhere in this project already holds
+  its value by value rather than by handle, so the ownerless case is the procedural local on this
+  backend and nothing else.
+
+  So the revisit is open, and it is a question about ownership rather than about layout: whether a
+  place owns a value's representation or holds a handle to an independently lived one -- invariant 6
+  being the written form of the second answer, taken when only the transient case was in view. The
+  ABI half of this decision -- values crossing as opaque handles, the runtime performing every
+  operation -- is not what is in question and is not changed by either answer.
+
+  **Answered 2026-09-11 by [storage-owns-its-value](storage-owns-its-value.md)**: a storage entity
+  owns the representation of its current value, so invariant 6 no longer describes the aggregates
+  whose components the language gives an identity of their own. Value semantics there come from
+  copying at assignment rather than from an immutable representation. The ABI half stands, as this
+  paragraph anticipated.
+
 - **A per-type special case for `PackedArray` (in-frame while others stay handles).** `PackedArray`
   is already an opaque handle like every other value type; carving it out now trades the uniform ABI
   for a partial lowering with no correctness payoff. Native small-scalar lowering, if pursued, is a
@@ -119,8 +147,8 @@ two are not to be reasoned about together.
 
 ## Cross-references
 
-- `architecture/object_lifetime.md` (language-visible state lives in Lyra-owned storage; managed
-  values are runtime-traceable -- the opaque-handle scheme keeps value state in runtime storage, and
+- `architecture/lifetime.md` (language-visible state lives in Lyra-owned storage; managed values are
+  runtime-traceable -- the opaque-handle scheme keeps value state in runtime storage, and
   cross-suspension managed values need traceable frames).
 - `architecture/lir.md` (LIR carries logical value types; physical layout is a separate derivation
   below LIR -- the future optimization path).

@@ -7,7 +7,7 @@ Date: 2026-09-01 Status: accepted
 A SystemVerilog class handle is a managed reference whose lifetime is reachability, realized by a
 precise tracing collector ([object-model](object-model.md) Decision 3). Precision has one structural
 requirement: every managed reference that can be live at a safepoint must be enumerable exactly
-(`../architecture/object_lifetime.md` invariants 3 and 4).
+(`../architecture/lifetime.md` invariants 3 and 4).
 
 This entry settles where a managed value lives on the execution backend. It is the question that
 gates every other class question there -- dispatch, type-associated storage, and base placement are
@@ -112,8 +112,8 @@ descend into it.
 
 The tree is not moved into the managed heap. It carries an ordered, observable lifecycle -- the
 elaboration phases and a teardown -- while a managed heap's contract is that reclamation is
-unordered and unobservable with no finalizer (`../architecture/object_lifetime.md` invariant 9). One
-object cannot satisfy both.
+unordered and unobservable with no finalizer (`../architecture/lifetime.md` invariant 9). One object
+cannot satisfy both.
 
 A design that declares no class contains no managed edge anywhere in its tree, and traceability is a
 recursive property of the type, so root enumeration for such a design visits nothing.
@@ -122,8 +122,8 @@ recursive property of the type, so root enumeration for such a design visits not
 
 Both are already runtime calls, so generated code carries no safepoint construct, no poll, and no
 root-registration sequence. A managed allocation is reachable from a root before the next safepoint
-(`../architecture/object_lifetime.md` invariant 8), which is a property of where the allocation
-entry publishes its result, not of an instruction the emitter places.
+(`../architecture/lifetime.md` invariant 8), which is a property of where the allocation entry
+publishes its result, not of an instruction the emitter places.
 
 ### D5. Reclamation is staged; the storage discipline is not
 
@@ -185,9 +185,9 @@ one; it is not a lifetime model and no consumer reads it as one.
 - **A separate traceable-frame path beside the value-cell path, selected by whether a local's type
   is managed.** It is the shape [cross-suspension-value-storage](cross-suspension-value-storage.md)
   left room for, and it makes "where does a local live" have two answers chosen by a predicate. One
-  described frame gives the same answer for both, and invariant 7 of
-  `../architecture/object_lifetime.md` -- only managed-carrying state participates in tracing --
-  then follows from the slot's type instead of from the routing.
+  described frame gives the same answer for both, and invariant 7 of `../architecture/lifetime.md`
+  -- only managed-carrying state participates in tracing -- then follows from the slot's type
+  instead of from the routing.
 
 ## Consequences
 
@@ -206,8 +206,8 @@ one; it is not a lifetime model and no consumer reads it as one.
 
 ## Cross-references
 
-- `../architecture/object_lifetime.md` -- the managed-object lifetime contract this realizes:
-  reachability, precise tracing, the activation frame as traceable storage, roots, and safepoints.
+- `../architecture/lifetime.md` -- the managed-object lifetime contract this realizes: reachability,
+  precise tracing, the activation frame as traceable storage, roots, and safepoints.
 - `../architecture/object_model.md` -- the managed reference as one kind on the reference axis, and
   the object model a class shares with a module instance.
 - [object-model](object-model.md) -- Decision 3, precise tracing over reference counting and an

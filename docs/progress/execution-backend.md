@@ -14,7 +14,8 @@ Done when a design compiles and runs through this backend end to end, matching t
 answers wherever both accept the source.
 
 Contracts: `../architecture/backend_contract.md`, `../architecture/lir.md`,
-`../architecture/runtime_distribution.md`, `../architecture/object_lifetime.md`.
+`../architecture/runtime_distribution.md`, `../architecture/storage.md`,
+`../architecture/lifetime.md`.
 
 ## Agreement with the C++ backend
 
@@ -52,6 +53,24 @@ the stretch that made it.
       store into longer-lived storage copies or promotes (the one non-copying path, a method return,
       stays in the caller's scope). Settled in
       `../decisions/activation-frame-and-transient-scope.md`.
+
+- [ ] **One ownership model for a procedural value, instead of three.** A local's value has three
+      possible homes here -- the per-stretch scope, the execution's own store, or a slot of the
+      generated frame -- and which one it gets follows from whether the body can suspend and whether
+      anything lends the local, neither of which is a property of the variable. The declaration says
+      the whole of what the lifetime is, so it is the only thing that should decide.
+
+      Two things are established and one is not. **Established:** the third home arrived because a
+      lending requirement was allowed to decide how every storage is represented, which is backwards
+      and is recorded in `../decisions/reference-binds-a-cell.md`. Also established, and written down
+      long before this: a procedural local names a representation nothing ever writes into, so
+      holding one implies no ownership and a region has to stand in
+      (`../decisions/jit-value-realization.md` invariant 6). What measurement added is the asymmetry
+      beside it -- a signal's storage, and a lent local's, hold their value by value rather than by
+      handle, so the ownerless case is this one and nothing else. **Not established:** whether a
+      place should own a value's representation or hold a handle to an independently lived one. The
+      two answers want different things from a reference and from where a representation lives, so
+      the remaining work waits on that rather than on any mechanism.
 
 The rest are further values that outlive the stretch that made them, none on the execution backend
 yet. Each is another instance of the same lifetime question, so the first to land decides whether it
@@ -180,24 +199,48 @@ ownership, or native in-frame layout) for every value.
 - [ ] **A managed value across a suspension, and its reclamation.** A traceable frame and precise
       reclamation, neither of which is implemented: what a handle keeps alive it keeps by shared
       ownership, so an unreachable cycle is not reclaimed on either backend. Contract:
-      `../architecture/object_lifetime.md`.
+      `../architecture/lifetime.md`.
 - [ ] **A reference argument aliasing storage that is not a cell.** A reference binds the cell its
       referent lives in, so a signal is lent by taking the address of the cell it already is, and a
       write through the reference raises the update event a write to that signal owes its
-      subscribers. A plain local is lent the same way, since a local whose storage is lent is given
-      a cell where it is declared. What is left refuses because the referent's value lives somewhere
-      no address reaches: a suspending body's local lives in the activation frame, a class property
-      is a member owning its value rather than a cell holding it, and a part of a value aggregate is
-      no independent storage at all. An `output` / `inout` argument is not subject to this -- it
-      copies out through the actual's own write path.
-- [ ] **Writing into a local that holds a value rather than storage.** A local carrying an ordinary
-      value is an SSA value here, and an interior write names the storage its whole value lives in,
-      so the two do not meet: a value has no address to rebuild through. It costs the case that
-      gives an array a value at some positions and a default at the rest, which builds the array and
-      then writes the named positions over it. The C++ path takes the same shape, so this is a
-      storage-model gap on this path rather than anything about the construct. Whichever answer the
-      reference work above settles on -- a local that can be addressed, or an interior write that
-      does not need one -- covers this too.
+      subscribers. A local is lent the same way whether or not its body can suspend: being lent is
+      what decides that it needs a cell, and the scope that declares it is what decides how long
+      that cell lives, so the cell is a slot of the body's own frame -- begun where the declaration
+      runs, ended on every way out, including the one taken when the driver ends a parked execution
+      rather than resuming it. A formal that lends what it was lent hands on the alias it holds, so
+      a chain of `ref` ports denotes the one variable at its end. What is left refuses because the
+      referent's value lives somewhere no address reaches: a class property is a member owning its
+      value rather than a cell holding it, and a component of an aggregate is realized here as part
+      of one value rather than as storage of its own -- for which the accepted answer is an
+      owner-relative projection reference rather than an interior address, and realizing one here is
+      what remains. An `output` / `inout` argument is not subject to this -- it copies out through
+      the actual's own write path.
+- [ ] **A component of an aggregate is storage of its own.** The language gives a member of an
+      unpacked structure and an element of an unpacked array an identity a second name may denote,
+      independent of the position it sits at and of the value its parent currently holds
+      (`../architecture/storage.md`). Three behaviours follow, and this backend offers none of them
+      because it realizes an aggregate as one value and reaches a part of it by extracting and
+      rebuilding. A component can be lent, so a `ref` actual may name a member or an element and a
+      write through it reaches that component and nothing else. A whole assignment to a fixed-size
+      aggregate writes into the components that are already there (LRM 7.6), so a reference to one
+      goes on denoting it and observes the new value, rather than the store replacing the value
+      those components were part of. And a variable-size container preserves every element's
+      identity across an insertion or a removal at any position (LRM 7.10.3), with an element
+      removed while a reference is bound going on existing for whoever holds it and its writes
+      invisible through the container (LRM 13.5.2).
+
+      The three are one question rather than three: whether a component's identity is independent of
+      the value its parent holds. `../decisions/storage-owns-its-value.md` settles that a storage
+      entity owns its value's representation and a component with identity is itself storage, and
+      settles the fixed unpacked array and the unpacked struct; what a variable-size container's
+      element storage becomes is deliberately still open there, as is how the IR names a component's
+      storage at all.
+
+- [x] **Writing into a local that holds a value rather than storage.** A local needs storage exactly
+      when the body needs an address for it, and every way a body asks for one counts: assigning it,
+      designating a part of it to write, and calling a method that changes it -- the last two
+      because a value aggregate has no addressable interior, so both are a whole value rebuilt and
+      stored back through the local. A local a body only reads stays the value it was bound to.
 
 ## Value realization: two tracks today, one native model deferred
 

@@ -68,17 +68,20 @@ the driving adapter coroutine owns for the activation's whole life, distinct fro
   is the baseline; aliasing the cell is a later optimization, not this decision.
 
 - **The mechanism is gated on non-managed value types.** A managed value that must be traced does
-  not live in this cell; that is the separate traceable-frame path (`object_lifetime.md`), routed by
-  type. The cell mechanism reads the type and takes only the non-managed runtime value domains.
+  not live in this cell; that is the separate traceable-frame path (`lifetime.md`), routed by type.
+  The cell mechanism reads the type and takes only the non-managed runtime value domains.
 
 ## Invariants
 
 1. A value whose lifetime crosses a suspension does not live in a per-stretch `GeneratedCallScope`.
    Its storage is an activation-owned cell reached through a frame-held handle.
 
-2. In a suspending body, every value-typed non-managed local and parameter is an activation cell.
-   The choice is decided from the result type at MIR-to-LIR, never from a cross-suspension liveness
-   analysis the emitter runs.
+2. In a suspending body, every value-typed non-managed local and parameter that is not lent is an
+   activation cell. The choice is decided from the result type at MIR-to-LIR, never from a
+   cross-suspension liveness analysis the emitter runs. A lent local is not one: it lives in a cell
+   of the body's own frame whether or not the body suspends, because being lent is what decides its
+   storage and the declaring scope is what decides its lifetime
+   ([reference-binds-a-cell](reference-binds-a-cell.md)).
 
 3. An activation value cell is not observable. A write to it is never an update event and wakes no
    subscriber; it never routes through the signal cell's notifying store.
@@ -102,11 +105,17 @@ the driving adapter coroutine owns for the activation's whole life, distinct fro
 
 - **Native in-frame value layout as the cross-suspension fix.** Laying a value's bytes in the
   coroutine frame (matching the C++ backend) covers a place and a spilled transient uniformly, but
-  it needs the physical-layout derivation `lir.md` defers and a destructor discipline the emitter
-  cannot place: which slots the coroutine passes make frame-resident is their decision, so the
-  emitter cannot emit the matching destructor set for a non-trivial value. It is realistically
-  partial (trivially destructible values only), leaving the general case on the cell anyway. It
-  stays the later optimization, not the correctness path.
+  it needs the physical-layout derivation `lir.md` defers: a size and an alignment per concrete
+  type, which is the monomorphization the value model still owes. So it stays the later
+  optimization, not the correctness path.
+
+  The half of this that was thought impossible turned out not to be. Ending a non-trivial value in
+  the frame was read as the emitter's to place and out of its reach, on the ground that which slots
+  the coroutine passes make frame-resident is their decision. It is not the same question: where the
+  bytes end up is theirs, and where the ending runs is the emitter's, since the emitter is the one
+  that knows the scopes. A lent local proves it -- its cell is a frame slot the compiler begins at
+  the declaration and ends on every way out, the abandon path included
+  ([reference-binds-a-cell](reference-binds-a-cell.md)).
 
 - **A backend-private arena for cross-suspension values, invisible to the storage model.** Storage a
   value crosses a suspension in must be a first-class runtime concept the activation owns, not an
@@ -148,5 +157,5 @@ the driving adapter coroutine owns for the activation's whole life, distinct fro
   frame.
 - `architecture/lir.md` -- a place is frame storage; its physical realization is a below-LIR
   concern.
-- `architecture/object_lifetime.md` -- the traceable activation frame for managed values, the
-  separate path this mechanism is gated away from by type.
+- `architecture/lifetime.md` -- the traceable activation frame for managed values, the separate path
+  this mechanism is gated away from by type.
