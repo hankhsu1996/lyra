@@ -1466,7 +1466,7 @@ enough to warrant its own focused review.
       changes how a chained runtime call is built everywhere, which is wider than the subject that
       made the duplication visible.
 
-- [ ] R91 -- A body a unit's namespace owns takes no LIR function identity, so a call to one inside
+- [ ] R93 -- A body a unit's namespace owns takes no LIR function identity, so a call to one inside
       the very unit that defines it is lowered as a reach for a linker symbol rather than as a call
       to a function the unit holds. Every class body is reserved an identity before any body is
       lowered, which is what lets a call name the callee directly; the namespace's own bodies are
