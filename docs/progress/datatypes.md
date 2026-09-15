@@ -8,14 +8,14 @@ parameters and typedef, real, tagged union, default initialization, and value re
 ## Actionable
 
 The datatype surface in scope is complete but for the gaps below. Real, string, fixed-size unpacked
-arrays, the integral-family declaration initializers, and parameter references in expressions are
-complete; enum is complete but for the package-context method gap E4 below. The variable-size
-aggregate family (dynamic array, queue, associative array) is complete as a value surface; what an
-element reference into one has to survive is not, and is recorded with the conformance gaps below.
-Unpacked struct and union, tagged and untagged, are complete. Default initialization (LRM Table 6-7)
-and value representation, including a wide value carrying X/Z across the 64-bit word boundary, are
-complete. Chandle is complete. Bit-stream casting is complete between fixed-size types; the
-dynamically sized form is the one gap, recorded below.
+arrays, the integral-family declaration initializers, parameter references in expressions, and enum
+including its methods wherever they may be written are complete. The variable-size aggregate family
+(dynamic array, queue, associative array) is complete as a value surface; what an element reference
+into one has to survive is not, and is recorded with the conformance gaps below. Unpacked struct and
+union, tagged and untagged, are complete. Default initialization (LRM Table 6-7) and value
+representation, including a wide value carrying X/Z across the 64-bit word boundary, are complete.
+Chandle is complete. Bit-stream casting is complete between fixed-size types; the dynamically sized
+form is the one gap, recorded below.
 
 ## Tagged union
 
@@ -36,8 +36,10 @@ integral -> enum requires an explicit cast.
       Non-member receivers fall back to a zero default; the LRM Table 6-7 4-state `'x` behaviour
       belongs to default initialization.
 - [x] E3 -- `name()` method (LRM 6.19.5.6); empty string for non-member values.
-- [ ] E4 -- `name` / `next` / `prev` invoked from inside a package subroutine's body are not yet
-      supported; the same methods in a module, interface, or program context are complete.
+- [x] E4 -- `name` / `next` / `prev` answer wherever the language lets them be written, including
+      where nothing encloses the code that asks: a package subroutine's body and the
+      compilation-unit scope. What a type's own declaration decides is computed by a function taking
+      the value and no object, so a namespace has nothing to supply and nothing to refuse.
 
 ### Cross-references
 

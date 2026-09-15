@@ -126,9 +126,8 @@ auto BuildPrintValueItem(
   if (spec.kind == value::FormatKind::kAssignmentPattern &&
       TypeStatesItsRendering(
           PatternRenderingOf(lowerer.Owner(), source_type))) {
-    auto text_or = BuildPatternRendering(
-        lowerer.Owner(), frame, value, source_type,
-        lowerer.HirExprs().Get(hir_arg).span);
+    auto text_or =
+        BuildPatternRendering(lowerer.Owner(), frame, value, source_type);
     if (!text_or) return std::unexpected(std::move(text_or.error()));
     return mir::RuntimePrintValue(
         *text_or, lowerer.Owner().Unit().builtins.string,
@@ -180,7 +179,7 @@ auto BuildRuntimeFormatOperand(
   // its pattern are one object rather than two renderings of one value.
   const auto bind_text = [&]() -> diag::Result<mir::LocalId> {
     auto text_or = BuildPatternRendering(
-        lowerer.Owner(), frame, read_value(), source.type, source.span);
+        lowerer.Owner(), frame, read_value(), source.type);
     if (!text_or) return std::unexpected(std::move(text_or.error()));
     const mir::LocalId text =
         frame.bindings->DeclareAnonymous(unit.builtins.string);

@@ -83,7 +83,12 @@ the detail lives in the entry itself.
 - [format-dispatch](format-dispatch.md) -- value formatting dispatches through `Formatter<T>` and
   `FormatArg`.
 - [rendering-a-value-by-its-type](rendering-a-value-by-its-type.md) -- how a value reads under LRM
-  21.2.1.6 is a callable synthesized per type, not a description handed to a formatter.
+  21.2.1.6 is a callable synthesized per type, not a description handed to a formatter. Where that
+  callable is homed is revised by the next entry.
+- [a-type-owned-computation-has-no-object](a-type-owned-computation-has-no-object.md) -- a
+  computation a type owns takes no object, so the unit's namespace owns it and its identity is the
+  position it sits at; a name is a relation over that position, held only where the source wrote
+  one.
 
 ### Lowering and IR shape
 

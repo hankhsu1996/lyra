@@ -1,6 +1,7 @@
 # How a value reads is program computation, not data handed to a formatter
 
-Date: 2026-09-11 Status: accepted
+Date: 2026-09-11 Status: accepted; point 3's homing is revised by
+[a-type-owned-computation-has-no-object](a-type-owned-computation-has-no-object.md)
 
 ## Why this decision matters
 

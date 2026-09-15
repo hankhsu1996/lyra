@@ -177,15 +177,25 @@ inline constexpr auto kCppReservedWords = std::to_array<std::string_view>(
   return out;
 }
 
-// The namespace a unit's declarations live in. That a unit's emitted peer is a
-// namespace is one decision, and two kinds of site spell it: the header that
-// opens the unit's own, and every reference that qualifies into another's. They
-// have to agree or the reference resolves to nothing, so the mapping is
-// answered here rather than at each of them -- which also tells a reader which
-// of the identifiers around it is a namespace and which is a class.
+// The name of the namespace a unit's declarations live in, as the header that
+// opens it writes it. That a unit's emitted peer is a namespace is one
+// decision, answered here rather than at each site that spells it -- which also
+// tells a reader which of the identifiers around it is a namespace and which is
+// a class.
 [[nodiscard]] inline auto UnitNamespaceOf(std::string_view unit_name)
     -> std::string {
   return ToCppName(unit_name);
+}
+
+// The prefix every reference into a unit's namespace qualifies by, its own
+// unit's included. It starts at the global scope because a class carries its
+// own name inside its body and a unit's namespace carries the same identifier
+// as the class at the root of that unit's hierarchy: from inside such a class
+// the unqualified prefix names the class, and the namespace behind it becomes
+// unreachable.
+[[nodiscard]] inline auto CppUnitScope(std::string_view unit_name)
+    -> std::string {
+  return std::format("::{}", UnitNamespaceOf(unit_name));
 }
 
 // The C++ identifier a declaration the compiler synthesized is emitted under.
@@ -334,7 +344,9 @@ inline constexpr auto kCppReservedWords = std::to_array<std::string_view>(
 
 // The C++ identifier one body of a unit's namespace is emitted under. Another
 // unit's emitted text may name it, so what reaches it decides the spelling
-// rather than the position it happens to sit at.
+// where anything does; a body nothing reaches from outside takes a minted name
+// over the position it sits at, the way a class's own unnamed bodies already
+// do.
 [[nodiscard]] inline auto CppUnitCallableName(
     const mir::CompilationUnit& unit, mir::CallableId body) -> std::string {
   return std::visit(
@@ -345,6 +357,9 @@ inline constexpr auto kCppReservedWords = std::to_array<std::string_view>(
           [](const mir::ReachedByName& r) { return ToCppName(r.name); },
           [](const mir::ReachedByStoragePhase& r) {
             return CppStorageEntryName(r.phase);
+          },
+          [](const mir::ReachedByPosition& r) {
+            return MintedCppName("body", r.slot.value);
           }},
       mir::NamespaceReachOf(unit, body));
 }
