@@ -8,7 +8,6 @@
 #include <vector>
 
 #include "lyra/backend/cpp/artifact.hpp"
-#include "lyra/compiler/unit_program_record.hpp"
 #include "lyra/diag/diagnostic.hpp"
 #include "lyra/driver/dpi_boundary.hpp"
 #include "lyra/driver/pch.hpp"
@@ -47,19 +46,23 @@ class CppProjectSink {
       : dir_(std::move(dir)), formatting_(formatting) {
   }
 
-  auto Take(
-      const mir::CompilationUnit& unit,
-      const compiler::UnitProgramRecord& record) -> diag::Result<void>;
+  // Writes the unit's translation unit, and keeps what the unit states of the
+  // program's foreign name space (LRM 35) -- which the project's own assembly
+  // writes, because the party that reads it is the user's C compiler rather
+  // than this project.
+  auto Take(const mir::CompilationUnit& unit) -> diag::Result<void>;
 
-  // Closes the project: the design root's own translation unit, the program
-  // entry, and whatever has to see every file at once. The entry names each
-  // unit whose definitions only foreign C reaches, which is what the records
-  // state, so neither it nor anything after it can be written until every unit
-  // has been taken.
-  auto Finish(
-      const mir::CompilationUnit& root,
-      std::span<const compiler::UnitProgramRecord> records)
-      -> diag::Result<void>;
+  // Closes the project: the design root's own translation unit and the program
+  // entry, neither of which may be written until every unit has been taken.
+  auto Finish(const mir::CompilationUnit& root) -> diag::Result<void>;
+
+  // Hands over what each unit stated of the program's foreign name space, in
+  // the order the units were taken. Assembling them into the one header a
+  // foreign source includes is a step of the build, and this is what it works
+  // from; nothing here reads them again.
+  [[nodiscard]] auto TakeDpiFragments() -> std::vector<dpi::AbiFragment> {
+    return std::move(dpi_fragments_);
+  }
 
  private:
   auto Write(backend::cpp::CppArtifact file) -> diag::Result<void>;
@@ -69,6 +72,7 @@ class CppProjectSink {
   // Formatting runs one process over every file rather than one per file, so
   // what was written is remembered while the text itself is not.
   std::vector<std::string> written_;
+  std::vector<dpi::AbiFragment> dpi_fragments_;
 };
 
 // Completes a self-contained C++ project in `dir` around sources a
@@ -83,7 +87,7 @@ class CppProjectSink {
 // argument.
 auto AssembleProject(
     const RuntimeLocation& runtime,
-    std::span<const compiler::UnitProgramRecord> records,
+    std::span<const dpi::AbiFragment> dpi_fragments,
     const std::filesystem::path& dir, const HostBuild& host,
     std::span<const DpiLinkInput> dpi_inputs) -> diag::Result<void>;
 
@@ -102,16 +106,16 @@ auto BuildProject(
     -> diag::Result<std::filesystem::path>;
 
 // Emit, build, and run the design in `work_dir`, returning the program's exit
-// code. `root` is the design-root unit the program constructs. `child_args` are
-// forwarded verbatim as argv to the built program (LRM 21.6 plusargs land
-// here). `dpi_inputs` are the foreign sources compiled and linked into the
-// program (LRM 35). This is the ephemeral path behind `run`: it compiles
+// code. `child_args` are forwarded verbatim as argv to the built program (LRM
+// 21.6 plusargs land here). `dpi_inputs` are the foreign sources compiled and
+// linked into the program (LRM 35). This is the ephemeral path behind `run`:
+// it compiles
 // against the installed runtime and never materializes a portable project,
 // which is why copying a runtime tree per invocation is not on its critical
 // path.
 auto RunInPlace(
     const RuntimeLocation& runtime,
-    std::span<const compiler::UnitProgramRecord> records,
+    std::span<const dpi::AbiFragment> dpi_fragments,
     const std::filesystem::path& work_dir, const HostBuild& host,
     std::span<const std::string> child_args,
     std::span<const DpiLinkInput> dpi_inputs) -> diag::Result<int>;

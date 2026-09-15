@@ -62,10 +62,14 @@ auto ValidateDpiLinkInputs(std::span<const std::string> sources)
 }
 
 auto WriteDpiSurface(
-    const RuntimeLocation& runtime,
-    std::span<const compiler::UnitProgramRecord> records,
+    const RuntimeLocation& runtime, std::span<const dpi::AbiFragment> fragments,
     const std::filesystem::path& dir) -> diag::Result<void> {
-  if (auto r = WriteFile(dir / kDpiAbiHeader, dpi::RenderAbiHeader(records));
+  for (const dpi::AbiFragment& fragment : fragments) {
+    if (auto r = WriteFile(dir / fragment.relpath, fragment.text); !r) {
+      return r;
+    }
+  }
+  if (auto r = WriteFile(dir / kDpiAbiHeader, dpi::RenderAbiHeader(fragments));
       !r) {
     return r;
   }

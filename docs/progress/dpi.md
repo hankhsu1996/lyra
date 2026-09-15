@@ -17,9 +17,11 @@ as the driver; the distinct execution model where an external C program drives a
 linked library is a separate roadmap capability, out of scope here. The DPI type mapping between an
 SV type and its C ABI type (LRM 35.5.6) is a backend type-mapping concern, so the MIR representation
 is backend-agnostic: the same MIR is materialized by the C++ backend as an `extern "C"` entry linked
-by the emitted build recipe, and by the LLVM / JIT backend as an external-linkage symbol resolved by
-its execution session. Lyra never compiles the user's C; it provides the ABI surface (a generated
-header, resolved symbol names) and orchestrates linkage.
+by the emitted build recipe, and by the LLVM / JIT backend as a symbol its execution session
+resolves. A name several scopes may export belongs to no one unit, so every unit declaring such a
+scope defines it and each backend uses its own target's rule for keeping one definition. Lyra never
+compiles the user's C; it provides the ABI surface (a generated header, resolved symbol names) and
+orchestrates linkage.
 
 The settled IR, value, and boundary model -- import as the external arm of the one callable,
 marshaling as a cross-ABI carrier conversion through runtime primitives, the export context, and the

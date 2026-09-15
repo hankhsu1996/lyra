@@ -1,6 +1,6 @@
 #include "lyra/dpi/abi_header.hpp"
 
-#include <cstddef>
+#include <algorithm>
 #include <format>
 #include <span>
 #include <string>
@@ -10,7 +10,10 @@
 
 #include "lyra/base/internal_error.hpp"
 #include "lyra/base/overloaded.hpp"
-#include "lyra/compiler/unit_program_record.hpp"
+#include "lyra/mir/callable.hpp"
+#include "lyra/mir/callable_code.hpp"
+#include "lyra/mir/compilation_unit.hpp"
+#include "lyra/mir/foreign_linkage.hpp"
 #include "lyra/mir/type.hpp"
 #include "lyra/mir/type_id.hpp"
 
@@ -82,26 +85,53 @@ auto RenderTypeAsC(const mir::TypePool& types, mir::TypeId id) -> std::string {
           }});
 }
 
-// The full C declarator of one foreign callable, the text a user's compiler
-// checks their definition or call against. It is the callable's own signature
-// spelled in C, so it cannot drift from the one an emitted artifact publishes.
-// The name is the caller's to supply: it is the linkage name, which lives in
-// the DPI-C name space (LRM 35.4) rather than among the names a unit answers.
+// The full C declarator of one foreign name, the text a user's compiler checks
+// their definition or call against. The name is the caller's to supply: it is
+// the linkage name, which lives in the DPI-C name space (LRM 35.4) rather than
+// among the names a unit answers.
+//
+// The types are the caller's too, because a prototype reaches this from two
+// spellings -- an interned function type for an entry that sits on a scope, the
+// callable's own signature for a name a unit's namespace owns -- and both are
+// the same list. Rendering them in one place is what keeps the two spellings
+// from publishing prototypes that differ.
 auto RenderPrototype(
+    const mir::TypePool& types, mir::TypeId result,
+    std::span<const mir::TypeId> params, std::string_view linkage_name)
+    -> std::string {
+  std::string rendered;
+  for (const mir::TypeId param : params) {
+    if (!rendered.empty()) rendered += ", ";
+    rendered += RenderTypeAsC(types, param);
+  }
+  if (rendered.empty()) {
+    rendered = "void";
+  }
+  return std::format(
+      "{} {}({})", RenderTypeAsC(types, result), linkage_name, rendered);
+}
+
+// The declarator of a foreign name whose prototype is an interned function type
+// (LRM 35.5.6).
+auto RenderPrototypeOfType(
     const mir::TypePool& types, mir::TypeId prototype,
     std::string_view linkage_name) -> std::string {
   const auto& signature = types.Get(prototype).Get<mir::MachineFunctionType>();
-  std::string params;
-  for (std::size_t i = 0; i < signature.params.size(); ++i) {
-    if (i != 0) params += ", ";
-    params += RenderTypeAsC(types, signature.params[i]);
+  return RenderPrototype(
+      types, signature.result, signature.params, linkage_name);
+}
+
+// The declarator of a foreign name a callable carries the prototype of, as the
+// bindings a body can name rather than as a type.
+auto RenderPrototypeOfCallable(
+    const mir::CompilationUnit& unit, const mir::CallableCode& code,
+    std::string_view linkage_name) -> std::string {
+  std::vector<mir::TypeId> params;
+  params.reserve(code.params.size());
+  for (const mir::LocalId param : code.params) {
+    params.push_back(code.locals.Get(param).type);
   }
-  if (params.empty()) {
-    params = "void";
-  }
-  return std::format(
-      "{} {}({})", RenderTypeAsC(types, signature.result), linkage_name,
-      params);
+  return RenderPrototype(unit.types, code.result_type, params, linkage_name);
 }
 
 struct ForeignEntry {
@@ -109,58 +139,24 @@ struct ForeignEntry {
   std::string prototype;
 };
 
-// The program's foreign surface, split by what the C side does with each name:
-// it defines an import and calls an export. That is exactly the header's two
+// The unit's foreign surface, split by what the C side does with each name: it
+// defines an import and calls an export. That is exactly the fragment's two
 // sections, so the split happens once here and neither section filters.
 struct ForeignSurface {
   std::vector<ForeignEntry> imports;
   std::vector<ForeignEntry> exports;
 };
 
-// The entry already on the surface under this name, whichever section it sits
-// in: a foreign name is program-global (LRM 35.4, 35.7), so one name is one
-// symbol and the two sections never both hold it.
-auto FindOnSurface(const ForeignSurface& surface, std::string_view name)
-    -> const ForeignEntry* {
-  for (const ForeignEntry& entry : surface.imports) {
-    if (entry.name == name) return &entry;
-  }
-  for (const ForeignEntry& entry : surface.exports) {
-    if (entry.name == name) return &entry;
-  }
-  return nullptr;
-}
-
-// Adds one foreign declaration to the surface. A foreign name may be declared
-// in several places and each place lowers its own copy, so a repeat is expected
-// and collapses to the one symbol the C side sees. LRM 35.5.4 requires every
-// such declaration to agree, and the frontend rejects a design where they do
-// not, so a disagreement reaching here means an inconsistent surface got past
-// that check.
-void RecordForeignName(
-    const mir::TypePool& types, const compiler::ForeignName& name,
-    ForeignSurface& surface) {
-  ForeignEntry entry{
-      .name = name.linkage_name,
-      .prototype = RenderPrototype(types, name.prototype, name.linkage_name)};
-  if (const ForeignEntry* seen = FindOnSurface(surface, entry.name);
-      seen != nullptr) {
-    if (seen->prototype != entry.prototype) {
-      throw InternalError(
-          std::format(
-              "RenderAbiHeader: DPI-C name '{}' reached the ABI surface with "
-              "conflicting prototypes '{}' and '{}'",
-              entry.name, seen->prototype, entry.prototype));
-    }
-    return;
-  }
-  // A name the design supplies a body for is an entry point the C side calls;
-  // one it only declares is what the C side must define. Which of the two it is
-  // follows from who owns the body, which the record already answers.
-  const bool the_c_side_defines_it =
-      std::holds_alternative<compiler::DefinedByTheForeignSide>(name.body);
-  (the_c_side_defines_it ? surface.imports : surface.exports)
-      .push_back(std::move(entry));
+// Whether this unit already states the name. One declaration is enough for the
+// unit, and the front end has already rejected a unit whose declarations of one
+// name disagree, so the repeat is nothing to report.
+auto AlreadyStated(const ForeignSurface& surface, std::string_view name)
+    -> bool {
+  const auto named = [&](const ForeignEntry& entry) {
+    return entry.name == name;
+  };
+  return std::ranges::any_of(surface.imports, named) ||
+         std::ranges::any_of(surface.exports, named);
 }
 
 auto RenderSection(
@@ -173,17 +169,65 @@ auto RenderSection(
   return out + "\n";
 }
 
+// Everything the unit states about the foreign name space. A name the unit
+// supplies a body for is an entry point the C side calls; one it only declares
+// is what the C side must define, and which of the two it is follows from
+// whether the callable has a body rather than from anything restating it. An
+// entry that sits on a scope is compiled once per specialization of that scope,
+// so it is not among the unit's callables and is walked separately.
+auto SurfaceOf(const mir::CompilationUnit& unit) -> ForeignSurface {
+  ForeignSurface surface;
+  for (const mir::CallableDecl& callable : unit.callables) {
+    if (!callable.foreign.has_value() ||
+        AlreadyStated(surface, callable.foreign->foreign_name)) {
+      continue;
+    }
+    ForeignEntry entry{
+        .name = callable.foreign->foreign_name,
+        .prototype = RenderPrototypeOfCallable(
+            unit, callable.code, callable.foreign->foreign_name)};
+    (callable.code.body.has_value() ? surface.exports : surface.imports)
+        .push_back(std::move(entry));
+  }
+  for (const mir::ForeignScopeEntry& entry : unit.foreign_scope_entries) {
+    if (AlreadyStated(surface, entry.linkage.foreign_name)) {
+      continue;
+    }
+    surface.exports.push_back(
+        ForeignEntry{
+            .name = entry.linkage.foreign_name,
+            .prototype = RenderPrototypeOfType(
+                unit.types, entry.signature, entry.linkage.foreign_name)});
+  }
+  return surface;
+}
+
 }  // namespace
 
-auto RenderAbiHeader(std::span<const compiler::UnitProgramRecord> records)
-    -> std::string {
-  ForeignSurface surface;
-  for (const compiler::UnitProgramRecord& record : records) {
-    for (const compiler::ForeignName& name : record.foreign_names) {
-      RecordForeignName(record.foreign_types, name, surface);
-    }
+void CollectAbiFragment(
+    const mir::CompilationUnit& unit, std::vector<AbiFragment>& fragments) {
+  const ForeignSurface surface = SurfaceOf(unit);
+  if (surface.imports.empty() && surface.exports.empty()) {
+    return;
   }
+  std::string text;
+  text += std::format(
+      "/* What '{}' states of this design's DPI-C boundary (LRM 35),\n"
+      "   generated by Lyra. Reached through the design's own DPI header. */\n",
+      unit.name);
+  text += RenderSection(
+      "Imported by the design; define these in your C sources.",
+      surface.imports);
+  text += RenderSection(
+      "Exported by the design; call these from your C sources.",
+      surface.exports);
+  fragments.push_back(
+      AbiFragment{
+          .relpath = std::format("dpi_{}.h", fragments.size()),
+          .text = std::move(text)});
+}
 
+auto RenderAbiHeader(std::span<const AbiFragment> fragments) -> std::string {
   std::string out;
   out +=
       "/* The DPI-C application binary interface of this design (LRM 35),\n"
@@ -196,13 +240,10 @@ auto RenderAbiHeader(std::span<const compiler::UnitProgramRecord> records)
   out += "#ifdef __cplusplus\n";
   out += "extern \"C\" {\n";
   out += "#endif\n\n";
-  out += RenderSection(
-      "Imported by the design; define these in your C sources.",
-      surface.imports);
-  out += RenderSection(
-      "Exported by the design; call these from your C sources.",
-      surface.exports);
-  out += "#ifdef __cplusplus\n";
+  for (const AbiFragment& fragment : fragments) {
+    out += std::format("#include \"{}\"\n", fragment.relpath);
+  }
+  out += "\n#ifdef __cplusplus\n";
   out += "}\n";
   out += "#endif\n\n";
   out += "#endif\n";

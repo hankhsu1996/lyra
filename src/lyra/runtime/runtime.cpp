@@ -266,6 +266,10 @@ void Runtime::RegisterProcessInRegistry(
   processes_.push_back(std::move(process));
 }
 
+auto Runtime::ClaimNamespaceInitialization(std::string_view name) -> bool {
+  return initialized_namespaces_.emplace(name).second;
+}
+
 void Runtime::EnterStaticInit(RandomSeed seed) {
   displacing_.push_back(
       DisplacingState{
@@ -438,6 +442,13 @@ void EnterNamespaceStaticInit(RuntimeEffects& runtime) {
   InitializationRng seeds;
   // NOLINTNEXTLINE(cppcoreguidelines-pro-type-static-cast-downcast)
   static_cast<Runtime&>(runtime).EnterStaticInit(seeds.NextSeed());
+}
+
+auto ClaimNamespaceInitialization(RuntimeEffects& runtime, const char* name)
+    -> std::int64_t {
+  // NOLINTNEXTLINE(cppcoreguidelines-pro-type-static-cast-downcast)
+  return static_cast<Runtime&>(runtime).ClaimNamespaceInitialization(name) ? 1
+                                                                           : 0;
 }
 
 void LeaveStaticInit(RuntimeEffects& runtime) {

@@ -5,8 +5,8 @@
 #include <string>
 #include <vector>
 
-#include "lyra/compiler/unit_program_record.hpp"
 #include "lyra/diag/diagnostic.hpp"
+#include "lyra/dpi/abi_header.hpp"
 #include "lyra/driver/runtime_export.hpp"
 
 namespace lyra::driver {
@@ -31,15 +31,16 @@ struct DpiLinkInput {
 auto ValidateDpiLinkInputs(std::span<const std::string> sources)
     -> diag::Result<std::vector<DpiLinkInput>>;
 
-// Writes the design's DPI-C boundary surface into `dir` (LRM 35): the generated
-// prototypes of every foreign-linkage callable the design declares, and the
-// standard header they are spelled in. A foreign source compiles against `dir`
-// whichever backend runs the design. Written for every design -- one that
-// declares no DPI-C gets the same header with no prototypes -- so no consumer
-// needs a case for its absence.
+// Writes the design's DPI-C boundary surface into `dir` (LRM 35): the header a
+// foreign source includes, naming the per-unit fragments already written there,
+// and the standard header those prototypes are spelled in. `fragments` is a
+// file list rather than anything read out of the design, which is what makes
+// assembling the union a step of the build. A foreign source compiles against
+// `dir` whichever backend runs the design. Written for every design -- one that
+// declares no DPI-C names no fragment -- so no consumer needs a case for its
+// absence.
 auto WriteDpiSurface(
-    const RuntimeLocation& runtime,
-    std::span<const compiler::UnitProgramRecord> records,
+    const RuntimeLocation& runtime, std::span<const dpi::AbiFragment> fragments,
     const std::filesystem::path& dir) -> diag::Result<void>;
 
 // Compiles the DPI-C link inputs into one shared library and returns its path.

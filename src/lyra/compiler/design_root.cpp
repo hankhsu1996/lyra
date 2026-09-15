@@ -1,28 +1,19 @@
 #include "lyra/compiler/design_root.hpp"
 
-#include <algorithm>
 #include <expected>
 #include <optional>
 #include <span>
 #include <string>
-#include <unordered_map>
-#include <unordered_set>
 #include <utility>
-#include <variant>
-#include <vector>
 
-#include "lyra/base/overloaded.hpp"
-#include "lyra/compiler/unit_program_record.hpp"
 #include "lyra/hir/compilation_unit.hpp"
 #include "lyra/hir/external_unit_object.hpp"
 #include "lyra/hir/structural_scope.hpp"
 #include "lyra/hir/unit_signature.hpp"
 #include "lyra/hir/unit_signatures.hpp"
-#include "lyra/lowering/hir_to_mir/callable_bindings.hpp"
-#include "lyra/lowering/hir_to_mir/namespace_storage_initialization.hpp"
+#include "lyra/lowering/hir_to_mir/design_namespaces.hpp"
 #include "lyra/lowering/hir_to_mir/unit_lowerer.hpp"
 #include "lyra/mir/compilation_unit.hpp"
-#include "lyra/mir/type_builders.hpp"
 
 namespace lyra::compiler {
 
@@ -32,9 +23,8 @@ namespace {
 // instantiated as its owned children. Its constructor then elaborates the
 // design through the same owned-child construction any parent uses for a
 // submodule, so no code path is special-cased for the top level. Its HIR
-// carries only this source-faithful structure; running the packages'
-// initializers is a whole-design composition step handled at lowering, not HIR
-// content.
+// carries only this source-faithful structure; reaching the packages' bring-up
+// entries is settled at lowering, not HIR content.
 auto BuildDesignRootHir(
     std::span<const lowering::ast_to_hir::TopLevelUnit> tops,
     const hir::UnitSignatures& signatures) -> hir::CompilationUnit {
@@ -55,207 +45,9 @@ auto BuildDesignRootHir(
   return root;
 }
 
-// Post-order DFS emitting `name` after the units its initializers read (LRM
-// 26.2 / 10.5), so a dependency precedes its dependent. The LRM leaves the
-// relative order of initializers unspecified; this is a stable, best-effort
-// preference, not a correctness input -- every cell is installed with its
-// default before any initializer runs, so a missed or cyclic dependency only
-// means a read observes a default, never an uninstalled cell. Visiting `name`
-// before descending makes a cyclic dependency terminate with a deterministic
-// order rather than recur; each unit's dependencies are walked in the caller's
-// stable name-sorted order, so the whole result is reproducible for a given
-// design. `covered` is the set this ordering ranges over, so a dependency
-// outside it is skipped rather than placed.
-void OrderNamespaceUnit(
-    const std::string& name,
-    const std::unordered_map<std::string, std::vector<std::string>>&
-        initializer_reads,
-    const std::unordered_set<std::string>& covered,
-    std::unordered_set<std::string>& placed,
-    std::vector<std::string>& ordered) {
-  if (!placed.insert(name).second) {
-    return;
-  }
-  if (const auto it = initializer_reads.find(name);
-      it != initializer_reads.end()) {
-    for (const std::string& read : it->second) {
-      if (covered.contains(read)) {
-        OrderNamespaceUnit(read, initializer_reads, covered, placed, ordered);
-      }
-    }
-  }
-  ordered.push_back(name);
-}
-
-// Resolves the whole-design plan for bringing up what each unit's namespace
-// owns, from what each unit's record states. A namespace unit is one whose
-// record carries a bring-up; every one of them takes part in both phases, so
-// nothing here asks what a given one supplied. The order prefers a unit a
-// given initializer reads directly to come first, which the relative order of
-// initializers does not require -- it is what makes one run's output match the
-// next. The names are walked sorted so the result is deterministic for a given
-// design.
-auto BuildNamespaceStorageInitializationPlan(
-    std::span<const UnitProgramRecord> records)
-    -> lowering::hir_to_mir::NamespaceStorageInitializationPlan {
-  std::unordered_map<std::string, std::vector<std::string>> initializer_reads;
-  std::vector<std::string> names;
-  for (const UnitProgramRecord& unit : records) {
-    if (!unit.namespace_bring_up.has_value()) {
-      continue;
-    }
-    names.push_back(unit.unit_name);
-    initializer_reads.emplace(
-        unit.unit_name, unit.namespace_bring_up->initializer_unit_reads);
-  }
-  std::ranges::sort(names);
-
-  // A read may name a unit this design does not compile, so ordering ranges
-  // only over the ones it does.
-  const std::unordered_set<std::string> covered(names.begin(), names.end());
-  std::unordered_set<std::string> placed;
-  lowering::hir_to_mir::NamespaceStorageInitializationPlan plan;
-  for (const std::string& name : names) {
-    OrderNamespaceUnit(name, initializer_reads, covered, placed, plan.units);
-  }
-  return plan;
-}
-
-// Defines, in the design root, the program-global symbol a foreign source calls
-// for one exported name whose subroutine is reached through a scope (LRM
-// 35.5.3). The subroutine is compiled once per specialization of its declaring
-// scope, so the symbol cannot call any one of them: it resolves the entry
-// against the scope the foreign call chain established, restores it to the
-// prototype its definition was generated with, and calls it.
-//
-// A name is program-global, so no unit can own the symbol -- two scopes may
-// export the same one. The design root is where the whole design is read, so it
-// is where the one definition is built.
-void DefineExportSymbol(
-    mir::CompilationUnit& root, const mir::ForeignLinkage& linkage,
-    const mir::MachineFunctionType& signature) {
-  mir::CallableCode code = mir::CallableCode::Defined();
-  code.body.emplace();
-  lowering::hir_to_mir::CallableBindings bindings(root, code);
-  mir::Block& body = code.Body();
-
-  std::vector<mir::TypeId> entry_params{root.builtins.scope_ptr};
-  for (const mir::TypeId type : signature.params) {
-    code.params.push_back(bindings.DeclareAnonymous(type));
-    entry_params.push_back(type);
-  }
-  code.result_type = signature.result;
-
-  const mir::LocalId scope = bindings.DeclareAnonymous(root.builtins.scope_ptr);
-  body.AppendStmt(
-      mir::LocalDeclStmt{
-          .target = scope,
-          .init = body.exprs.Add(
-              mir::Expr{
-                  .data =
-                      mir::CallExpr{
-                          .callee =
-                              mir::Direct{
-                                  .target =
-                                      support::BuiltinFn::kCurrentExportScope},
-                          .arguments = {}},
-                  .type = root.builtins.scope_ptr})});
-
-  const mir::ExprId scope_ref =
-      body.exprs.Add(mir::MakeLocalRefExpr(scope, root.builtins.scope_ptr));
-  const mir::ExprId name = body.exprs.Add(
-      mir::Expr{
-          .data = mir::StringLiteral{.value = linkage.foreign_name},
-          .type = root.types.Intern(mir::Type{mir::MachineCStringType{}})});
-  const mir::ExprId entry = body.exprs.Add(
-      mir::Expr{
-          .data =
-              mir::CallExpr{
-                  .callee =
-                      mir::Direct{
-                          .target = support::BuiltinFn::kFindExportEntry},
-                  .arguments = {scope_ref, name}},
-          .type = mir::ErasedFunction(root.types)});
-
-  const mir::ExprId restored = body.exprs.Add(
-      mir::Expr{
-          .data = mir::CastExpr{.operand = entry},
-          .type = root.types.Intern(
-              mir::Type{mir::MachineFunctionType{
-                  .params = std::move(entry_params),
-                  .result = signature.result}})});
-  std::vector<mir::ExprId> call_args;
-  call_args.reserve(code.params.size() + 1);
-  call_args.push_back(
-      body.exprs.Add(mir::MakeLocalRefExpr(scope, root.builtins.scope_ptr)));
-  for (const mir::LocalId param : code.params) {
-    call_args.push_back(body.exprs.Add(
-        mir::MakeLocalRefExpr(param, code.locals.Get(param).type)));
-  }
-  const mir::ExprId call = body.exprs.Add(
-      mir::Expr{
-          .data =
-              mir::CallExpr{
-                  .callee = mir::Indirect{.code = restored},
-                  .arguments = std::move(call_args)},
-          .type = signature.result});
-  // A void entry is called for its effect and returns nothing; any other hands
-  // its result straight back.
-  if (root.types.Get(signature.result).Is<mir::VoidType>()) {
-    body.AppendStmt(mir::ExprStmt{.expr = call});
-    body.AppendStmt(mir::ReturnStmt{.value = std::nullopt});
-  } else {
-    body.AppendStmt(mir::ReturnStmt{.value = call});
-  }
-
-  root.callables.Add(
-      mir::CallableDecl{
-          .code = std::move(code),
-          .foreign = linkage,
-          .virtual_dispatch = std::nullopt});
-}
-
-// Every exported name the design must define over per-scope entries, defined
-// once. Several scopes may export one C name (LRM 35.4), and each publishes its
-// own entry, but the name is one symbol; LRM 35.5.4 requires their prototypes
-// to agree, which the frontend has already checked.
-void DefineExportSymbols(
-    mir::CompilationUnit& root, std::span<const UnitProgramRecord> records) {
-  std::unordered_set<std::string> defined;
-  for (const UnitProgramRecord& unit : records) {
-    for (const ForeignName& name : unit.foreign_names) {
-      std::visit(
-          Overloaded{
-              // The user's own C supplies the body, so the design defines
-              // nothing for this name.
-              [](const DefinedByTheForeignSide&) {},
-              // The declaring unit's own artifact carries the definition, so
-              // the program has nothing left to define.
-              [](const DefinedByTheUnit&) {},
-              [&](const DefinedByTheProgram&) {
-                if (!defined.insert(name.linkage_name).second) {
-                  return;
-                }
-                const mir::TypeId adopted = AdoptForeignType(
-                    root.types, unit.foreign_types, name.prototype);
-                // Held by value: defining the symbol interns into the same
-                // pool this was read from.
-                const mir::MachineFunctionType local =
-                    root.types.Get(adopted).Get<mir::MachineFunctionType>();
-                DefineExportSymbol(
-                    root,
-                    mir::ForeignLinkage{.foreign_name = name.linkage_name},
-                    local);
-              }},
-          name.body);
-    }
-  }
-}
-
 }  // namespace
 
 auto SynthesizeDesignRoot(
-    std::span<const UnitProgramRecord> records,
     std::span<const lowering::ast_to_hir::TopLevelUnit> tops,
     const hir::UnitSignatures& signatures,
     const diag::SourceManager& source_manager)
@@ -263,11 +55,11 @@ auto SynthesizeDesignRoot(
   const hir::CompilationUnit root_hir = BuildDesignRootHir(tops, signatures);
   lowering::hir_to_mir::UnitLowerer root_lowerer(root_hir, source_manager);
   auto root_mir = root_lowerer.RunDesignRoot(
-      BuildNamespaceStorageInitializationPlan(records));
+      lowering::hir_to_mir::DesignNamespaces{
+          .units = signatures.NamespaceUnitNames()});
   if (!root_mir) {
     return std::unexpected(std::move(root_mir.error()));
   }
-  DefineExportSymbols(*root_mir, records);
   return *std::move(root_mir);
 }
 

@@ -42,9 +42,9 @@ the design.
 ## Does Not Own
 
 - Where the runtime library lives and how a binary locates it, and the foreign-language ABI surface
-  an emitted project publishes to a user's own sources (see `runtime_distribution.md`). That surface
-  is program-level rather than per-unit; the reasoning for why that is not the aggregate artifact
-  this doc forbids lives there.
+  an emitted project publishes to a user's own sources (see `runtime_distribution.md`). Each unit
+  states its own part of that surface and the build assembles the union, so it is no exception to
+  the per-unit rule below; what the name space is and who checks it lives there.
 - The compilation-unit boundary itself and what a unit's signature is (see
   `compilation_unit_model.md`).
 - When and into what a cross-unit reference resolves, semantically (see `reference_resolution.md`);
@@ -246,9 +246,11 @@ initialization is not a per-instance constructor action but two receiver-less ca
 root invokes during the Initialize phase, before the top modules initialize: one installs every
 package's cells (declared type and default) design-wide, then one runs each package's value
 initializers -- so a value initializer that reads another package's cell always reaches installed
-storage. The LRM leaves the relative order of initializers unspecified; the design root chooses a
-stable, best-effort order, and a cell whose dependency is unknown or cyclic reads a default rather
-than failing.
+storage. The LRM leaves the relative order of initializers unspecified, and no party computes one:
+the root calls every package in a stable order, each initializer takes its package's one bring-up
+before descending, and a package whose own initializers read another calls that one first. The order
+is therefore those calls executed, which makes a cyclic dependency terminate on a default rather
+than fail and leaves nothing reading across units to decide it.
 
 Any artifact that aggregates multiple units' bodies into one is forbidden, however a build step
 packages the emitted sources: the per-unit artifact boundary and the segment-classification rules

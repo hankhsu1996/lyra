@@ -318,6 +318,17 @@ inline constexpr auto kCppReservedWords = std::to_array<std::string_view>(
   return MintedCppName("constant", id.value);
 }
 
+// The preprocessor guard that keeps one definition of a symbol several units
+// may each define. This backend assembles the program by including every unit's
+// artifact into one translation unit, so what resolves a name across artifacts
+// here is the preprocessor, and a guard is how it is told to keep the first
+// definition and drop the rest. Every unit composes it from the symbol alone,
+// which is what makes their guards the same one.
+[[nodiscard]] inline auto CppOneDefinitionGuard(std::string_view symbol)
+    -> std::string {
+  return std::format("{}one_definition_{}", kMintedPrefix, symbol);
+}
+
 // The C++ identifier one of the two bodies bringing up a unit's namespace is
 // emitted under. Another unit's emitted text names it, and the source declares
 // no name for it, so both ends compose it from which of the two it is.

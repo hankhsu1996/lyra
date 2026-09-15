@@ -99,4 +99,17 @@ auto SynthesizeForeignExportEntry(
     mir::DirectTarget target, mir::TypeId result_type,
     const hir::ForeignExportDecl& export_decl) -> ForeignExportEntry;
 
+// Records what `unit` states of one exported name whose entries sit on scopes
+// (LRM 35.5.3): its prototype, and the program-global symbol a foreign source
+// calls. Those entries are compiled once per specialization of the scope, so
+// the symbol cannot call any one of them -- it resolves the entry against the
+// scope the foreign call chain established, restores it to the prototype it was
+// generated with, and calls it. The body is a function of the name and the
+// prototype alone, which is why every unit declaring a scope that exports the
+// name can define it identically and leave keeping one to whoever assembles the
+// program (LRM 35.4). States nothing where `unit` already states that name.
+void PublishForeignScopeName(
+    mir::CompilationUnit& unit, const mir::ForeignLinkage& linkage,
+    mir::TypeId signature);
+
 }  // namespace lyra::lowering::hir_to_mir
